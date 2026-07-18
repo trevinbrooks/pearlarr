@@ -28,14 +28,14 @@ def normalize_basename(name: str) -> str:
 
     SeaDex/PocketBase JSON is NFC, but a macOS (APFS/HFS) disk scan can hand
     Sonarr the same name in NFD, so `"é"` (NFC) != `"é"` (NFD) under a plain
-    `dict` lookup; trailing whitespace and case can drift too. Normalizing
+    `dict` lookup. Trailing whitespace and case can drift too. Normalizing
     BOTH keyspaces (our SeaDex-recorded names and the on-disk leaves) through
     this one function is what lets our authoritative map match the files Sonarr
     actually found - so a grabbed file is never skipped over a unicode/whitespace
     mismatch.
 
     Args:
-        name: A filename (basename or full path; only the text is folded).
+        name: A filename (basename or full path - only the text is folded).
 
     Returns:
         The NFC-normalized, stripped, case-folded leaf.
@@ -62,7 +62,7 @@ class ImportWaitMode(StrEnum):
 
     A `StrEnum` so each member IS its config/CLI string (`ImportWaitMode.OFF`
     is and serializes as `"off"`). The mode only controls *when* the import
-    runs; all non-off modes share the same durable `PendingImport`
+    runs. All non-off modes share the same durable `PendingImport`
     substrate.
     """
 
@@ -100,15 +100,15 @@ class ImportReadiness(Enum):
     """
 
     IMPORTED = auto()
-    """The files are imported (we queued a ManualImport, or Sonarr already handled them); drop the durable
+    """The files are imported (we queued a ManualImport, or Sonarr already handled them). Drop the durable
     record."""
 
     RETRY = auto()
-    """Not ready yet (Sonarr hasn't seen/parsed the files, is mid-import, or a call failed transiently); poll
+    """Not ready yet (Sonarr hasn't seen/parsed the files, is mid-import, or a call failed transiently). Poll
     again until the readiness deadline."""
 
     LEAVE = auto()
-    """Nothing we can import right now (no candidate maps to one of our episodes, or the attempt raised); leave
+    """Nothing we can import right now (no candidate maps to one of our episodes, or the attempt raised). Leave
     the record pending for a later run."""
 
 
@@ -121,20 +121,20 @@ class PendingState(StrEnum):
     """
 
     QUEUED = "queued"
-    """Still downloading (or never reached completion this poll); it waits."""
+    """Still downloading (or never reached completion this poll). It waits."""
 
     IMPORTING = "importing"
     """The download finished and an import command was accepted, but the episode files haven't landed yet (a
     remote-mount copy is in flight)."""
 
     IMPORTED = "imported"
-    """The episode files are verified present; the record is dropped."""
+    """The episode files are verified present. The record is dropped."""
 
     ERRORED = "errored"
-    """The download errored in qBittorrent; left for a later run."""
+    """The download errored in qBittorrent. Left for a later run."""
 
     MISSING = "missing"
-    """The torrent is gone from qBittorrent; the record is dropped."""
+    """The torrent is gone from qBittorrent. The record is dropped."""
 
 
 def classify_pending(
@@ -156,8 +156,8 @@ def classify_pending(
             present in Sonarr (the only signal that promotes to `IMPORTED`).
 
     Returns:
-        `MISSING` / `ERRORED` for those terminal outcomes; `None` (still
-        downloading) -> `QUEUED`; COMPLETE with files present -> `IMPORTED`;
+        `MISSING` / `ERRORED` for those terminal outcomes, `None` (still
+        downloading) -> `QUEUED`, COMPLETE with files present -> `IMPORTED`,
         COMPLETE without files present -> `IMPORTING`.
     """
 
@@ -194,7 +194,7 @@ class ImportProbe:
 
     imported_count: int = 0
     """How many of the intended episodes already hold the recommended file - the "files inserted" bar
-    numerator. Meaningful only with `target_count` > 0 (a complete seed map); 0 otherwise."""
+    numerator. Meaningful only with `target_count` > 0 (a complete seed map) - 0 otherwise."""
 
     target_count: int = 0
     """The intended-episode denominator for the bar, fixed to the persisted seed set so the bar can't rescale
@@ -213,7 +213,7 @@ class ImportProgress(NamedTuple):
     total: int
     determinate: bool
     """True only when the persisted seed map covers every intended file, so `done`/`total` are the true full
-    set; when False the importing row stays indeterminate (spinner only) and must NOT promote."""
+    set. When False the importing row stays indeterminate (spinner only) and must NOT promote."""
 
 
 class OutcomeCategory(Enum):
@@ -226,7 +226,7 @@ class OutcomeCategory(Enum):
     """The torrent imported."""
 
     DEFERRED = ("⚠", "~", "yellow")
-    """Left pending for a later run (a download timeout, or an import that hasn't landed yet); not a failure,
+    """Left pending for a later run (a download timeout, or an import that hasn't landed yet). Not a failure,
     just unfinished."""
 
     FAILED = ("✖", "x", "bold red")
@@ -285,7 +285,7 @@ class Outcome(Enum):
     dropped: bool
     """Whether the engine removes the record from the durable store on this outcome. True for EXACTLY
     `IMPORTED` (files verified present) and `MISSING` (gone from qBittorrent) - the two records that must never
-    be retried; a test pins this set so the word and the drop can't diverge."""
+    be retried. A test pins this set so the word and the drop can't diverge."""
 
     def __init__(
         self,
@@ -312,7 +312,7 @@ class Outcome(Enum):
 
 
 # qBittorrent reports a torrent with no meaningful ETA as 8_640_000 seconds
-# (100 days), its "infinite" sentinel; treat it (and anything at/above it) as
+# (100 days), its "infinite" sentinel. Treat it (and anything at/above it) as
 # "unknown" rather than rendering a nonsense countdown.
 _QBIT_ETA_INFINITE = 8_640_000
 
@@ -377,8 +377,8 @@ def sanitize_torrent_telemetry(
     """Fold one qBittorrent info row's raw telemetry into sanitized fields.
 
     Pure (no I/O), so the sentinel handling is unit-testable without a client.
-    A NaN/blank `progress` folds to 0.0 and is clamped to `[0, 1]`; a 0/idle
-    or negative `dlspeed` and the 8_640_000 "∞" `eta` become None; bytes are
+    A NaN/blank `progress` folds to 0.0 and is clamped to `[0, 1]`. A 0/idle
+    or negative `dlspeed` and the 8_640_000 "∞" `eta` become None. Bytes are
     coerced to non-negative ints (None when unknown) and `completed` is clamped
     to `size`. Inputs are typed `object` because the values come off an
     untyped qBittorrent attribute read (`getattr`), which can hand back None.
@@ -436,18 +436,18 @@ class PendingImport:
     """The Sonarr series id the files belong to."""
 
     file_episode_map: dict[str, list[int]]
-    """Basename -> authoritative Sonarr episode ids; the primary file->episode mapping. Repaired and extended
+    """Basename -> authoritative Sonarr episode ids. The primary file->episode mapping. Repaired and extended
     in place at import time when a grabbed file wasn't parseable at grab time, so the map self-heals."""
 
     episode_ids: list[int]
     """Legacy read-only fallback: new seeds always write `[]` (a value could only duplicate
-    `file_episode_map`); readers still fold it in so an old persisted record rehydrates."""
+    `file_episode_map`). Readers still fold it in so an old persisted record rehydrates."""
 
     release_group: str
     """The SeaDex release group (authoritative)."""
 
     is_dual_audio: bool
-    """Whether the SeaDex release is dual-audio; selects the dual vs. single language list."""
+    """Whether the SeaDex release is dual-audio. Selects the dual vs. single language list."""
 
     seadex_files: list[str]
     """SeaDex filenames, for our regex quality parse."""
@@ -478,7 +478,7 @@ class PendingImport:
         """The cockpit/ledger/report row label: `title · group`.
 
         The release group disambiguates a series that grabbed several torrents
-        (their titles are identical); the infohash is the last-resort fallback.
+        (their titles are identical). The infohash is the last-resort fallback.
         """
 
         base = self.title or self.infohash

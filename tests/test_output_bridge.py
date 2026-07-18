@@ -1,10 +1,10 @@
 # pyright: strict
 """Tests for the logging bridge (`output.bridge`) + the real-seat wiring.
 
-Pin the adoption table (WARNING+ visible; sub-WARNING below the configured
-level never constructed, either party; first-party at-level sub-WARNING
-visible on every seat — the rich handler stands down while a bridge is
-installed; third-party at-level sub-WARNING file_only unless
+Pin the adoption table (WARNING+ visible. Sub-WARNING below the configured
+level never constructed, either party. First-party at-level sub-WARNING
+visible on every seat - the rich handler stands down while a bridge is
+installed. Third-party at-level sub-WARNING file_only unless
 configured DEBUG), the root-logger gate `setup_logger` opens for the bridge,
 construct-never-mutate (caplog safety), warnings capture,
 idempotent install surviving `setup_logger` rebuilds, the per-thread
@@ -197,7 +197,7 @@ class TestAdoption:
 
         Below WARNING and below the hub's level (INFO here), a third-party
         record is dropped before adoption - not constructed, not counted.
-        INFO itself adopts file_only (the file keeps the forensics; stdout
+        INFO itself adopts file_only (the file keeps the forensics. stdout
         loses library chatter at INFO+).
         """
 
@@ -289,7 +289,7 @@ class TestAdoption:
         """N2 holds for EVERY drain.
 
         A renderer logging while a DIRECT producer emit (reporter/`hub_note`
-        — the majority path) drives dispatch is adopted file-only too. The
+        - the majority path) drives dispatch is adopted file-only too. The
         hub's own baton read decides, not bridge-private state that only its
         own emits used to set.
         """
@@ -321,7 +321,7 @@ class TestAdoption:
         install_hub(OutputHub([first]))
         install_bridge()
         try:
-            install_hub(OutputHub([second]))  # closes the first hub; NO re-install
+            install_hub(OutputHub([second]))  # closes the first hub, NO re-install
             _third_party("bridge-test-swap").warning("flaky pool")
         finally:
             uninstall_bridge()
@@ -491,13 +491,13 @@ def _production_stack(
     """The real production wiring under `rich`, at `log_level` on logger AND hub.
 
     The hub (`FileLogSink` first) and bridge install BEFORE `setup_logger`
-    builds the rich console over a fake TTY; `apply_log_level` then lands the
+    builds the rich console over a fake TTY. `apply_log_level` then lands the
     level on every surface, as bootstrap does.
     """
 
     stream = TtyStringIO()
     monkeypatch.setattr(sys, "stdout", stream)
-    # Windows CI has no VT console; the fake TTY plays a modern terminal.
+    # Windows CI has no VT console, the fake TTY plays a modern terminal.
     monkeypatch.setattr("rich.console.detect_legacy_windows", lambda: False)
     hub = OutputHub([FileLogSink(str(tmp_path / "logs"))], console=RichRenderer())
     install_hub(hub)
@@ -546,7 +546,7 @@ class TestFullStackSeams:
     ) -> None:
         """An unmigrated INFO one-liner renders once per surface, both via the hub.
 
-        The raw handler stands down (no double render); the hub renderer places
+        The raw handler stands down (no double render). The hub renderer places
         the line and the `FileLogSink` keeps it.
         """
 
@@ -643,7 +643,7 @@ class TestFullStackSeams:
         del app_logger
         stream_one = TtyStringIO()
         monkeypatch.setattr(sys, "stdout", stream_one)
-        # Windows CI has no VT console; the fake TTY plays a modern terminal.
+        # Windows CI has no VT console, the fake TTY plays a modern terminal.
         monkeypatch.setattr("rich.console.detect_legacy_windows", lambda: False)
         hub = OutputHub([], console=RichRenderer())
         install_hub(hub)

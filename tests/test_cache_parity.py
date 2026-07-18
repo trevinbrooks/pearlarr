@@ -61,7 +61,7 @@ def _apply_ops(store: AbstractCacheStore) -> None:
     # + the hash-set replace (not append).
     store.update_cache(Arr.SONARR, 7, CacheRecord(coverage="S2", torrent_hashes=[None, "hc", "ha"]))
     # A cross-arr row + a duplicate/None hash list, to exercise the dedup + None
-    # marker; no fallback_satisfied key, pinning the default-False parity.
+    # marker. No fallback_satisfied key, pinning the default-False parity.
     store.update_cache(Arr.RADARR, 99, CacheRecord(name="Movie", torrent_hashes=["z", "z", None]))
 
     store.put_anilist_meta(7, {"fetched_at": _NEW, "data": {"title": "Show"}})
@@ -118,7 +118,7 @@ def _observe(store: AbstractCacheStore) -> dict[str, object]:
 class _JsonbBlock:
     """One whole-dict JSONB block's put/get/iter surface, for the isolation check.
 
-    `get` returns the single record under this block's fixed key (or None);
+    `get` returns the single record under this block's fixed key (or None).
     `iter_records` returns every record reachable through the block's collection
     reads (for `pending` that is both `get_pending` and `get_pending_for_series`).
     """
@@ -136,7 +136,7 @@ _ISO_SID = 7
 
 
 def _sonarr_parse_records(store: AbstractCacheStore) -> list[dict[str, Any]]:
-    """The sonarr_parse block's collection read (per-filename; it has no iterator)."""
+    """The sonarr_parse block's collection read (per-filename - it has no iterator)."""
 
     rec = store.get_sonarr_parse(_ISO_FILE)
     return [] if rec is None else [rec]
@@ -240,7 +240,7 @@ def test_fake_cache_store_observably_matches_real(tmp_path: Path) -> None:
         fake.drop_pending(Arr.SONARR, "hashA")
         real.drop_pending(Arr.SONARR, "hashA")
 
-        # save is a no-op for the fake and stages+promotes for the real; neither must
+        # save is a no-op for the fake and stages+promotes for the real. Neither must
         # disturb the observable reads that follow.
         fake.save(preview=False)
         real.save(preview=False)

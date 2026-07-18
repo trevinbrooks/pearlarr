@@ -46,7 +46,7 @@ def _torrent(
 
     The library type is a frozen `msgspec.Struct` (no `make_torrent_record`
     builder exists), so this defaults the boilerplate fields and exposes the
-    handful `build` varies; `files` stays empty since no test exercises them.
+    handful `build` varies. `files` stays empty since no test exercises them.
     """
 
     stamp = datetime(2026, 1, 1)
@@ -89,8 +89,8 @@ class TestGetSeadexDict:
         assert set(filt.build(entry)) == {"A"}
 
     def test_ignore_tags_match_is_case_insensitive(self) -> None:
-        # The seadex Tag is a str-enum whose value is canonical-case ("Dolby Vision");
-        # a natural-case config rule ("dolby vision") must still filter that release.
+        # The seadex Tag is a str-enum whose value is canonical-case ("Dolby Vision").
+        # A natural-case config rule ("dolby vision") must still filter that release.
         filt = make_release_filter(
             ignore_tags=["dolby vision"],
             trackers={"nyaa"},
@@ -150,7 +150,7 @@ class TestGetSeadexDict:
         assert set(result["A"].urls) == {"pub"}
 
     def test_keeps_private_only_group(self) -> None:
-        # A group with no public option is kept here; it's only dropped later in
+        # A group with no public option is kept here. It's only dropped later in
         # reduce_overlapping_downloads if the Arr already has a match.
         filt = make_release_filter(private_releases="warn", want_best=False, prefer_dual_audio=False)
         entry = _entry(
@@ -170,7 +170,7 @@ class TestPrivateFallback:
             _torrent(release_group="Alt", url="pub", tracker=Tracker.NYAA),
         )
         result = filt.build(entry)
-        # The private preferred pick stays (for the already-have check); the best
+        # The private preferred pick stays (for the already-have check). The best
         # public alternative rides along, marked as the fallback.
         assert set(result) == {"Best", "Alt"}
         assert result["Best"].urls["priv"].is_fallback is False
@@ -186,7 +186,7 @@ class TestPrivateFallback:
 
     def test_mixed_preferred_adds_fallback_for_private_only_group(self) -> None:
         # A private-only preferred group triggers the pool even when another
-        # preferred group is public (the gate is per-group, not per-entry); the
+        # preferred group is public (the gate is per-group, not per-entry). The
         # public preferred pick is NOT marked as a fallback.
         filt = make_release_filter(private_releases="fallback", want_best=True, prefer_dual_audio=False)
         entry = _entry(
@@ -472,7 +472,7 @@ class TestInteractivePick:
         result = filt.interactive_pick(seadex_dict, make_entry_record())
         assert list(result) == ["GroupA", "GroupC"]
         # The picker prints its rows straight to the terminal (that contract is pinned
-        # by test_tolerates_non_numeric_input); here we only drain them so the prompt
+        # by test_tolerates_non_numeric_input). Here we only drain them so the prompt
         # stays off the terminal under `-s`.
         capsys.readouterr()
 
@@ -480,7 +480,7 @@ class TestInteractivePick:
         self, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
     ) -> None:
         # A non-numeric pick (a typo) must not crash the entry with an uncaught
-        # ValueError; the bad token is skipped with a warning, so nothing is selected.
+        # ValueError. The bad token is skipped with a warning, so nothing is selected.
         filt = make_release_filter()
         seadex_dict = {"GroupA": rg_group({})}
         sd_entry = make_entry_record()

@@ -1,9 +1,9 @@
 # Changelog
 
 All notable, user-observable changes to Pearlarr are documented here.
-The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/); versions follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
+The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Versions follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-Pearlarr is a fork of [bbtufty/seadexarr](https://github.com/bbtufty/seadexarr); everything up to and including 0.9.0 is inherited upstream history.
+Pearlarr is a fork of [bbtufty/seadexarr](https://github.com/bbtufty/seadexarr). Everything up to and including 0.9.0 is inherited upstream history.
 
 ## [Unreleased]
 
@@ -48,7 +48,7 @@ Pearlarr is a fork of [bbtufty/seadexarr](https://github.com/bbtufty/seadexarr);
 ### Changed
 
 - `advanced.sleep_time` now defaults to `0` (was `2`), disabling the inter-query rate-limit sleep out of the box and enabling the concurrent episode-fetch fast path by default, so runs are noticeably faster.
-  Set a positive value to pace API queries again; existing configs that already set `sleep_time` explicitly are unaffected.
+  Set a positive value to pace API queries again. Existing configs that already set `sleep_time` explicitly are unaffected.
 
 ## [1.0.0] - 2026-07-12
 
@@ -63,12 +63,12 @@ Coming from upstream 0.9.x:
   Rewrite your `config.yml` against the new layout (`pearlarr config init` writes a commented starter, and [docs/configuration.md](docs/configuration.md) documents every key): `sonarr_url` is now `sonarr.url`, `qbit_info` is `qbittorrent.*`, `torrent_tags` is `qbittorrent.tags`, `seadex.public_only` is replaced by `seadex.private_releases`.
   Unknown or misspelled keys now fail at load instead of being ignored.
 - **The data location moved** off the install directory to one OS-standard data directory (`~/.local/share/pearlarr` on Linux, `~/Library/Application Support/pearlarr` on macOS).
-  `pearlarr config init` writes the new config there; set `PEARLARR_DATA_DIR` to relocate everything.
-  Logs follow the data directory instead of the working directory; `pearlarr paths` prints every resolved location.
+  `pearlarr config init` writes the new config there. Set `PEARLARR_DATA_DIR` to relocate everything.
+  Logs follow the data directory instead of the working directory. `pearlarr paths` prints every resolved location.
 - **The cache is not carried over**: the SQLite `cache.db` replaces `cache.json`, and the old file is not read.
-  The first run re-evaluates the library from scratch - cheap in the default matching mode, which checks what the arrs already have on disk; see [docs/deployment.md](docs/deployment.md#migrating-from-upstream-seadexarr) before enabling hash matching.
-- **Python 3.13 or newer is required** (3.12 support dropped); the Docker image runs 3.14.
-- **`SCHEDULE_TIME` is deprecated** in favor of `schedule.interval_hours` (on bare metal a still-set `SCHEDULE_TIME` wins, with a deprecation warning; the Docker image never reads it - set `PEARLARR_CRON`).
+  The first run re-evaluates the library from scratch - cheap in the default matching mode, which checks what the arrs already have on disk. See [docs/deployment.md](docs/deployment.md#migrating-from-upstream-seadexarr) before enabling hash matching.
+- **Python 3.13 or newer is required** (3.12 support dropped). The Docker image runs 3.14.
+- **`SCHEDULE_TIME` is deprecated** in favor of `schedule.interval_hours` (on bare metal a still-set `SCHEDULE_TIME` wins, with a deprecation warning. The Docker image never reads it - set `PEARLARR_CRON`).
 
 ### Added
 
@@ -77,21 +77,21 @@ Coming from upstream 0.9.x:
 - `notifications.wait_webhook_url`: a generic outbound webhook (ntfy, gotify, Home Assistant, ...) for the wait-pass summary, alongside the Discord webhook, with `notifications.wait_notify` controlling the push.
 - `imports.post_import_category`: move a torrent to a different qBittorrent category (created if missing) once its import is verified complete, e.g. to give finished torrents different seeding rules.
 - Arr-side activity detection (`advanced.detect_arr_activity`, on by default): each run polls the arr's history and re-checks titles whose files were imported or deleted arr-side since the last run, so a quality upgrade or manual grab is re-evaluated without waiting for SeaDex to update.
-  The first scan covers the last 30 days; a coverage gap re-checks everything once.
+  The first scan covers the last 30 days. A coverage gap re-checks everything once.
 - AniBridge mappings as the primary ID/episode mapping source, mopping up titles the other sources miss.
 - `seadex.ignore_anilist_ids` (skip specific AniList IDs), `seadex.ignore_tags` (filter releases by SeaDex tag), and `qbittorrent.tags` (tag every added torrent).
 - Discord notifications are rich embeds with colors, links, and a version footer.
 - The console shows a live cockpit during startup and the import-wait pass (spinners, ticking timers, files-imported progress).
-- `advanced.log_format` picks the console surface (`auto`/`rich`/`plain`/`json`); `json` writes one JSON object per event to stdout - a versioned machine interface with a generated event catalog ([docs/output.md](docs/output.md)).
+- `advanced.log_format` picks the console surface (`auto`/`rich`/`plain`/`json`). `json` writes one JSON object per event to stdout - a versioned machine interface with a generated event catalog ([docs/output.md](docs/output.md)).
 - Rotated logs are dated per-run backups, kept for `advanced.log_retention_days` days, replacing the fixed ten-file cascade.
 - New CLI surface:
   - `run single --dry-run` (simulate without grabbing, caching, or notifying), `--movie-id`/`--series-id` (single-title runs by TMDB/TVDB ID), and `--import-wait-mode`/`--log-level` per-run overrides.
   - `config validate` and `config show` (effective config with secrets redacted, safe to paste into a bug report).
   - `cache stats` and `cache check`.
-  - `pearlarr --version`, `-h` everywhere; a bare group command prints its help.
+  - `pearlarr --version`, `-h` everywhere. A bare group command prints its help.
   - `replay FILE` (or `-` for stdin) re-renders a captured `log_format: json` / `--json` stream back into the readable text log grammar, for reading a docker-captured log after the fact.
 - `--json` on every subcommand (`paths`, `config init`/`validate`/`migrate`/`show`, `cache backup`/`restore`/`remove`/`stats`/`check`) emitting the same `schema_version` 1 envelope as run logs.
-- Every config key can be set by environment variable as `PEARLARR_<GROUP>__<KEY>` (for example `PEARLARR_SONARR__URL`); values are parsed as YAML and an environment override beats the file.
+- Every config key can be set by environment variable as `PEARLARR_<GROUP>__<KEY>` (for example `PEARLARR_SONARR__URL`). Values are parsed as YAML and an environment override beats the file.
 - The scheduled-run cadence is a config field, `schedule.interval_hours` (default 6), re-read each cycle so an edit takes effect without a restart.
 - Config schema versioning: `config_version` stamps the file, and a file from an older Pearlarr is migrated automatically in memory at every load (a nested-format file still saying `seadex.public_only` or `private_releases: allow` keeps loading, with a warning naming the fold).
   `pearlarr config migrate` rewrites the file itself at the current schema, keeping the previous file as `config.yml.bak`.
@@ -99,22 +99,22 @@ Coming from upstream 0.9.x:
 ### Changed
 
 - **Private releases are never grabbed** (SeaDex carries no download link for them, and no private-tracker auth is supported).
-  `seadex.private_releases` decides what happens when a title's preferred release is private-only: `warn` (default) warns and leaves the title uncached so it is re-checked every run; `fallback` grabs the entry's best public alternative, warning only when none exists.
-  Titles satisfied by a fallback are remembered; switching back to `warn` re-checks them and resurfaces the warning.
+  `seadex.private_releases` decides what happens when a title's preferred release is private-only: `warn` (default) warns and leaves the title uncached so it is re-checked every run. `fallback` grabs the entry's best public alternative, warning only when none exists.
+  Titles satisfied by a fallback are remembered. Switching back to `warn` re-checks them and resurfaces the warning.
 - Where multiple preferred release groups cover exactly the same files, only one is downloaded (preferring a public release) instead of all of them.
 - `advanced.max_torrents_to_add` defaults to `10` instead of unlimited, so a first run against a large library doesn't flood qBittorrent - later runs pick up where the cap stopped.
-  Preview runs ignore the cap and always report the whole library; set the key to `0` to remove the cap.
-- Only configured arrs run: a Sonarr-only (or Radarr-only) config skips the other arr with a ledger note instead of failing every cycle; explicitly selecting an unconfigured arr fails with a one-line error naming the missing keys; a half-configured arr (URL without API key, or the reverse) is warned about by name.
+  Preview runs ignore the cap and always report the whole library. Set the key to `0` to remove the cap.
+- Only configured arrs run: a Sonarr-only (or Radarr-only) config skips the other arr with a ledger note instead of failing every cycle. Explicitly selecting an unconfigured arr fails with a one-line error naming the missing keys. A half-configured arr (URL without API key, or the reverse) is warned about by name.
 - `run single` with no selection flags runs every configured arr, mirroring scheduled mode (previously it printed a usage hint and failed).
-- Failed CLI commands exit non-zero (previously always 0); a malformed config, missing backup, unreachable arr, or rejected API key is reported as a clean one-line error naming the config keys to check, instead of a traceback.
-- `cache backup` writes via a temp file so a failed backup can never destroy the previous good one; `cache restore` copies instead of consuming the backup, so a restore is repeatable.
+- Failed CLI commands exit non-zero (previously always 0). A malformed config, missing backup, unreachable arr, or rejected API key is reported as a clean one-line error naming the config keys to check, instead of a traceback.
+- `cache backup` writes via a temp file so a failed backup can never destroy the previous good one. `cache restore` copies instead of consuming the backup, so a restore is repeatable.
 - `config init` refuses to overwrite an existing `config.yml` unless `--force` is passed.
 - The Python import surface is internal as of 1.0.0: the supported interfaces are the CLI, the config schema, the JSON event stream, and the notification payloads.
 - Runtime dependencies bumped to current majors (typer 0.26, rich 15, qbittorrent-api 2026.6).
 
 ### Deprecated
 
-- `SCHEDULE_TIME` (Docker-era env var): set `schedule.interval_hours` (bare metal) or `PEARLARR_CRON` (Docker, which ignores `SCHEDULE_TIME`) instead; an invalid value now falls back to the configured cadence with a report instead of crashing the scheduler.
+- `SCHEDULE_TIME` (Docker-era env var): set `schedule.interval_hours` (bare metal) or `PEARLARR_CRON` (Docker, which ignores `SCHEDULE_TIME`) instead. An invalid value now falls back to the configured cadence with a report instead of crashing the scheduler.
 
 ### Removed
 

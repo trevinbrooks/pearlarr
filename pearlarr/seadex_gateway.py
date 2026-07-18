@@ -24,7 +24,7 @@ from seadex import EntryNotFoundError, EntryRecord
 from .output import hub_warn
 from .seadex_types import ProgressSink
 
-# Ids per batched `from_filter` query. Mirrors ANILIST_BATCH_SIZE; ~50
+# Ids per batched `from_filter` query. Mirrors ANILIST_BATCH_SIZE. ~50
 # `alID=NNNNNN` clauses stay well under the GET URL length limit (the spike
 # confirmed the OR-filter form and that perPage=500 means a 50-id batch never
 # paginates).
@@ -106,7 +106,7 @@ class SeaDexGateway(SeaDexSource):
         return self._outage
 
     def _note_outage(self, e: httpx.HTTPError) -> None:
-        """Warn ONCE that SeaDex is unreachable; the flag mutes every later call."""
+        """Warn ONCE that SeaDex is unreachable, muting every later call via the flag."""
 
         if not self._outage:
             hub_warn(f"SeaDex request failed ({type(e).__name__}) - affected titles will be skipped this run")
@@ -121,14 +121,14 @@ class SeaDexGateway(SeaDexSource):
         successfully-fetched batch that SeaDex didn't return are remembered as
         absent (so `entry` reports them NO_ENTRY without a call). A failed
         batch gets ONE immediate retry (a single transient 502 must not write off
-        the whole run); a batch that fails twice warns once and flips the outage
+        the whole run). A batch that fails twice warns once and flips the outage
         flag, so the remaining batches - and every later `entry` fallback -
         short-circuit to an OUTAGE miss instead of re-timing-out per id.
 
         Args:
             al_ids: Candidate AniList IDs for this run.
             progress: Boot cockpit step fed per-batch
-                fraction + "done/total" detail; None outside the cockpit.
+                fraction + "done/total" detail. None outside the cockpit.
 
         Returns:
             How many ids needed fetching (0 = nothing to do), for the
@@ -159,8 +159,8 @@ class SeaDexGateway(SeaDexSource):
     def _fetch_chunk(self, chunk: list[int]) -> dict[int, EntryRecord] | None:
         """One prefetch batch with a single immediate retry.
 
-        A lone transient blip (one 502 among many batches) is absorbed silently;
-        only a chunk that fails twice declares the outage and returns None.
+        A lone transient blip (one 502 among many batches) is absorbed silently.
+        Only a chunk that fails twice declares the outage and returns None.
         """
 
         try:
@@ -183,8 +183,8 @@ class SeaDexGateway(SeaDexSource):
     def entry(self, al_id: int) -> EntryRecord | SeaDexMiss:
         """Get the SeaDex entry for an AniList id, or a typed miss.
 
-        Served from the bulk-prefetch cache when warm; a prefetched-but-absent id
-        is NO_ENTRY without a call; an id that wasn't prefetched (e.g. a single-id
+        Served from the bulk-prefetch cache when warm. A prefetched-but-absent id
+        is NO_ENTRY without a call. An id that wasn't prefetched (e.g. a single-id
         run) falls back to a single `from_id` - unless the outage flag is set, in
         which case it degrades straight to OUTAGE without another network attempt.
         """
@@ -203,10 +203,10 @@ class SeaDexGateway(SeaDexSource):
 
         A missing entry (`EntryNotFoundError`) is NO_ENTRY, immediately - that's
         SeaDex answering, not failing. A failed request (any `httpx.HTTPError` -
-        connection failure, timeout, HTTP error status; the same breadth
+        connection failure, timeout, HTTP error status - the same breadth
         `prefetch` catches) gets ONE immediate silent retry, mirroring
         `_fetch_chunk` (a single transient 502 must not write off the whole
-        run); only a lookup that fails twice is OUTAGE, so the caller can report
+        run). Only a lookup that fails twice is OUTAGE, so the caller can report
         the skip truthfully - it warns once and mutes later lookups.
         """
 

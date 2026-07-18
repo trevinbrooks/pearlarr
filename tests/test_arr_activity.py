@@ -1,7 +1,7 @@
 # pyright: strict
 # pyright: reportPrivateUsage=false
 # The run-loop section reads the services hub's private dirty set (the wiring
-# under test); strict re-flags that and the repo disables it for tests.
+# under test). Strict re-flags that and the repo disables it for tests.
 """The arr-side activity scan (`ArrActivityMonitor`) and its run-loop wiring.
 
 Unit half: the checkpoint window math (lookback bootstrap / overlap / clamp),
@@ -75,7 +75,10 @@ def _monitor(cache: FakeCacheStore | None = None) -> tuple[ArrActivityMonitor, F
 
 
 class TestDateHelpers:
-    """`parse_history_date`/`format_history_date` round-trip; naive stamps assume UTC, offsets convert, garbage parses to `None`."""
+    """`parse_history_date`/`format_history_date` round-trip.
+
+    Naive stamps assume UTC, offsets convert, garbage parses to `None`.
+    """
 
     def test_round_trip(self) -> None:
         assert parse_history_date(format_history_date(_NOW)) == _NOW
@@ -242,7 +245,7 @@ class TestScan:
 
         assert scan.touched == frozenset()
         assert scan.rescan_all is False
-        # The fetch helper (arr_http) owns the user-facing warning; the monitor
+        # The fetch helper (arr_http) owns the operator-facing warning. The monitor
         # leaves only a debug breadcrumb, so one failure never warns twice.
         assert not any(r.levelno == logging.WARNING for r in capture.records)
         assert any(r.levelno == logging.DEBUG for r in capture.records)
@@ -282,7 +285,7 @@ class TestScan:
         assert cache.get_history_checkpoint(Arr.SONARR) == stored
 
     def test_empty_date_record_does_not_stash_a_checkpoint(self) -> None:
-        # An empty stored date would collapse the next window to the overlap;
+        # An empty stored date would collapse the next window to the overlap.
         # keep the old cursor and let the id dedup absorb the re-delivery.
         monitor, cache = _monitor()
         stored = HistoryCheckpoint(format_history_date(_NOW - timedelta(hours=3)), 12)

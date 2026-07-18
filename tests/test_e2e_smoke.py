@@ -6,10 +6,10 @@ These are the tests that prove `cli.run_single` -> `bootstrap.run_arrs` ->
 / `RadarrSync` hooks actually run a sync wired together, with ONLY the
 external network leaves faked:
 
-* the SeaDex library, faked at the composition root's `SeaDexEntry` leaf;
-* qBittorrent, left unconfigured so the whole run is a perpetual preview;
+* the SeaDex library, faked at the composition root's `SeaDexEntry` leaf.
+* qBittorrent, left unconfigured so the whole run is a perpetual preview.
 * the Arr HTTP (every raw endpoint rides the httpx-based `ArrHttp`) and the
-  AniList POST (on the shared web client), both mocked via `respx`;
+  AniList POST (on the shared web client), both mocked via `respx`.
 * the Nyaa source (`pynyaa`'s own httpx client), faked at
   `torrents.get_nyaa_torrent`.
 
@@ -39,8 +39,8 @@ from pearlarr.output import current_hub
 from .builders import make_config, make_entry_record, make_torrent_record
 from .http_mock import register_sonarr_reads, sonarr_fixture
 
-# Three-way id agreement: series fixture id 228 carries tvdbId 299502; the inline
-# mapping ties it to AniList 20920; the faked SeaDex entry answers for 20920.
+# Three-way id agreement: series fixture id 228 carries tvdbId 299502. The inline
+# mapping ties it to AniList 20920. The faked SeaDex entry answers for 20920.
 _TVDB = 299502
 _ANILIST = 20920
 _BASE = "http://sonarr.test/api/v3"
@@ -85,7 +85,7 @@ def test_sonarr_run_drives_real_composition_root(
         ),
     )
 
-    # Fake the two external leaves; both record so the resolved id's flow is provable.
+    # Fake the two external leaves. Both record so the resolved id's flow is provable.
     filter_calls: list[str] = []
     nyaa_calls: list[str] = []
 
@@ -156,7 +156,7 @@ def test_sonarr_run_drives_real_composition_root(
     # the run's installed hub, which run_single seated).
     assert current_hub().counts.mark().errors == 0
     # The reporter is actually wired into the run (test_reporter covers rendering in
-    # isolation; only here does it run through run_single) and the REAL plain
+    # isolation - only here does it run through run_single) and the REAL plain
     # stdout seat rendered the summary's structured line. Reading capsys also
     # keeps the cockpit off the terminal under `-s`.
     assert "run complete" in capsys.readouterr().out
@@ -208,7 +208,7 @@ def test_radarr_run_drives_real_composition_root(
     capsys: pytest.CaptureFixture[str],
 ) -> None:
     # The SeaDex entry the resolved id maps to: one grabbable Nyaa release (a
-    # movie is a single file; no episode parsing runs on the Radarr path).
+    # movie is a single file - no episode parsing runs on the Radarr path).
     entry = make_entry_record(
         anilist_id=_RADARR_ANILIST,
         torrents=(
@@ -219,7 +219,7 @@ def test_radarr_run_drives_real_composition_root(
         ),
     )
 
-    # Fake the two external leaves; both record so the resolved id's flow is provable.
+    # Fake the two external leaves. Both record so the resolved id's flow is provable.
     filter_calls: list[str] = []
     nyaa_calls: list[str] = []
 
@@ -283,7 +283,7 @@ def test_radarr_run_drives_real_composition_root(
     # the run's installed hub, which run_single seated).
     assert current_hub().counts.mark().errors == 0
     # The reporter is actually wired into the run (test_reporter covers rendering in
-    # isolation; only here does it run through run_single) and the REAL plain
+    # isolation - only here does it run through run_single) and the REAL plain
     # stdout seat rendered the summary's structured line. Reading capsys also
     # keeps the cockpit off the terminal under `-s`.
     assert "run complete" in capsys.readouterr().out

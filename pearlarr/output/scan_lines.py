@@ -98,7 +98,7 @@ _BLOCK_KEY_WIDTH: Final = 7
 
 _CAP_MESSAGE: Final = "Reached the maximum number of torrents for this run (advanced.max_torrents_to_add); stopping"
 
-# The summary guidance tips by cause; causes without a tip render no line. The
+# The summary guidance tips by cause. Causes without a tip render no line. The
 # PRIVATE_ONLY > NO_FALLBACK > STALE precedence is settled by whoever populates
 # `RunSummary.tip` (the producer), never re-derived here.
 _TIP_TEXTS: Final[dict[NeedsActionCause, str]] = {
@@ -199,7 +199,7 @@ def item_started_lines(event: ItemStarted) -> tuple[LegacyLine, ...]:
 def entry_header_lines(event: EntryHeader) -> tuple[LegacyLine, ...]:
     """An entry block's head: the ledger row plus its files/link continuation.
 
-    The focal "checking" row stays unstyled; "imported" reads green; every other
+    The focal "checking" row stays unstyled. "imported" reads green. Every other
     state dims. Absent coverage/url rows drop, and the incomplete note rides the
     LAST rendered detail line, console-side only.
     """
@@ -225,7 +225,7 @@ def ledger_row_lines(event: LedgerRow) -> tuple[LegacyLine, ...]:
 
 
 def entry_detail_lines(event: EntryDetail) -> tuple[LegacyLine, ...]:
-    """One labeled detail line under an entry; PLAIN renders a style-less kv."""
+    """One labeled detail line under an entry. PLAIN renders a style-less kv."""
 
     return (
         _detail_kv(
@@ -280,7 +280,7 @@ def grab_failed_lines(event: GrabFailed) -> tuple[LegacyLine, ...]:
 def grab_action_lines(event: GrabAction) -> tuple[LegacyLine, ...]:
     """The per-title action block: status, recommended groups, per-release rows.
 
-    The should-anything-render gate stays producer-side; this renders whatever
+    The should-anything-render gate stays producer-side. This renders whatever
     the event carries.
     """
 
@@ -317,7 +317,7 @@ def _summary_kv(key: str, value: str, *, value_style: str | None = None) -> Lega
 
 
 class SummaryRow(NamedTuple):
-    """One labeled row of a summary per-entry block; a falsy `value` is skipped."""
+    """One labeled row of a summary per-entry block. A falsy `value` is skipped."""
 
     label: str
     value: str | Text | None
@@ -354,7 +354,7 @@ def _needs_block(item: NeedsActionFact) -> Iterator[LegacyLine]:
 
 def _added_block(item: GrabFact, *, dry_run: bool) -> Iterator[LegacyLine]:
     # A dry run dims the whole block (group accent included) so the would-be
-    # grabs don't read as real; kv_string interpolates the Text to plain text
+    # grabs don't read as real. kv_string interpolates the Text to plain text
     # for the message.
     torrent_value = group_highlight(
         item.name,
@@ -383,14 +383,14 @@ def run_summary_lines(event: RunSummaryReady) -> tuple[LegacyLine, ...]:
 
     lines: list[LegacyLine] = [
         _BLANK,
-        # The DRY RUN note rides the rule title only; the message stays plain (the
+        # The DRY RUN note rides the rule title only. The message stays plain (the
         # text surfaces carry dry_run/note as structured fields via _fact_of).
         _info(title, TitledRule(title=rule_title, heavy=True)),
         _BLANK,
         _summary_kv("checked", str(tally.checked)),
     ]
 
-    # Needs-action ahead of "added": anything waiting on the user surfaces first.
+    # Needs-action ahead of "added": anything waiting on a decision surfaces first.
     needs = tally.needs_action
     lines.append(_summary_kv("needs action", str(len(needs)), value_style="yellow" if needs else None))
     for item in needs:

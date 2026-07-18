@@ -1,7 +1,7 @@
 # pyright: strict
 # pyright: reportPrivateUsage=false
 # The tests assert on the strat's private collaborators (_parse / _reconciler),
-# which strict re-flags; the repo disables reportPrivateUsage for tests.
+# which strict re-flags. The repo disables reportPrivateUsage for tests.
 """Unit tests for `ImportReconciler.build_pending_seeds` (via the strat).
 
 The seed-construction heart of the wait/import feature: it turns the filtered
@@ -40,7 +40,7 @@ class TestBuildPendingSeeds:
     """`build_pending_seeds` seeds a `PendingImport` per download+hash video url.
 
     Filenames map to episode ids via the parse cache (falling back flat when
-    unparsed); releases with no video files are skipped.
+    unparsed). Releases with no video files are skipped.
     """
 
     def test_seeds_only_download_with_hash(self) -> None:
@@ -70,7 +70,7 @@ class TestBuildPendingSeeds:
         assert seed.title == "Show"
         assert seed.file_episode_map == {normalize_basename("Show - 01.mkv"): [101]}
         assert seed.seadex_files == ["Show - 01.mkv"]
-        # episode_ids is a legacy read-only fallback; new seeds never write it.
+        # episode_ids is a legacy read-only fallback. New seeds never write it.
         assert seed.episode_ids == []
 
     def test_multi_file_pack_de_unions_flat_fallback(self) -> None:

@@ -1,7 +1,7 @@
 # pyright: strict
 # pyright: reportPrivateUsage=false
 # These assert on the loop/hub/strategy's private wiring (_filter / _ctx / _parse /
-# _reconciler), which strict re-flags; the repo disables reportPrivateUsage for tests.
+# _reconciler), which strict re-flags. The repo disables reportPrivateUsage for tests.
 """Construction-seam tests: the REAL `__init__` + `begin_run` rebind.
 
 The rest of the suite builds the hub/loop/strategy via `make_bare_instance`
@@ -60,7 +60,7 @@ def test_runner_adopts_placeholder_then_rebinds_fresh_ctx() -> None:
     assert all(vars(c)["_ctx"] is runner._ctx for c in holders)
 
     # Phase 2 (fresh mint): reset_run_stats swaps a fresh RunContext AND rebinds
-    # every ctx-holding collaborator to it; a missed rebind would route a
+    # every ctx-holding collaborator to it. A missed rebind would route a
     # collaborator's writes into the orphaned prior context (the drift the
     # begin_run fold guards against).
     first_ctx = runner._ctx
@@ -73,7 +73,7 @@ def test_runner_adopts_placeholder_then_rebinds_fresh_ctx() -> None:
 
 def test_services_read_selection_staleness_from_the_store_at_construction() -> None:
     # The real __init__ compares the store's vouched digest against the config's:
-    # an older vouch arms the run-wide re-check; a matching vouch or a fresh
+    # an older vouch arms the run-wide re-check. A matching vouch or a fresh
     # store (nothing vouched yet) stays quiet.
     config = make_config()
 
@@ -150,7 +150,7 @@ def test_sonarr_cross_check_builds_without_network_via_radarr_seam() -> None:
     # With ignore_movies_in_radarr on, SonarrSync.__init__ used to hard-build a
     # RadarrClient and eagerly fetch its library (in the constructor) - the one
     # arr client construction without a seam. The injected fake makes the REAL
-    # __init__ testable with the feature ON; empty mappings -> no movies collected.
+    # __init__ testable with the feature ON. Empty mappings -> no movies collected.
     deps = make_run_deps(config=make_config(url="http://sonarr", api_key="key", ignore_movies_in_radarr=True))
     services = RunServices(deps, Arr.SONARR)
     fake = FakeRadarrClient()

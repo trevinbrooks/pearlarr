@@ -30,7 +30,7 @@ class TestSingleInstanceLock:
             assert b is True
 
     def test_nonexistent_data_dir_degrades_to_noop(self, tmp_path: Path) -> None:
-        # A missing data dir makes the lock-file create fail; the guard must
+        # A missing data dir makes the lock-file create fail. The guard must
         # degrade to a best-effort True (not raise) so the run reaches config
         # validation, which surfaces the real, clean error.
         missing = tmp_path / "does-not-exist"

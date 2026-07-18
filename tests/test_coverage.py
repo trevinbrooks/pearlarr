@@ -51,7 +51,7 @@ class TestCoverageString:
 
 
 class TestEpisodesFromEpList:
-    """`episodes_from_ep_list` maps Sonarr episode dicts to `EpisodeRecord`s; `missing_only` filters to episodes without a file."""
+    """`episodes_from_ep_list` maps Sonarr episode dicts to `EpisodeRecord`s. `missing_only` filters to episodes without a file."""
 
     def test_none_returns_empty(self) -> None:
         assert episodes_from_ep_list(None) == []

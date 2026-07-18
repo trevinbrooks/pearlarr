@@ -16,19 +16,19 @@ from .config import Arr, LogFormat
 
 @dataclass(frozen=True, slots=True)
 class TitledRule:
-    """The payload for a titled section header; see `print_titled_rule` for the console look."""
+    """The payload for a titled section header. See `print_titled_rule` for the console look."""
 
     title: str
     style: str = "bold cyan"
     """Rich style applied to both the rule and the title."""
     heavy: bool = False
-    """`True` draws a heavy rule ("━", run boundaries); `False` draws a light rule ("─",
+    """`True` draws a heavy rule ("━", run boundaries). `False` draws a light rule ("─",
     per-title headers)."""
 
 
 @dataclass(frozen=True, slots=True)
 class SectionRule:
-    """The payload for a full-width separator rule; see `render_rule` for the "=" / "-" weight mapping."""
+    """The payload for a full-width separator rule. See `render_rule` for the "=" / "-" weight mapping."""
 
     char: str = "-"
 
@@ -63,14 +63,14 @@ type ConsoleRender = TitledRule | SectionRule | KvLine | StyledLine
 """The typed console-look payload of a `output.scan_lines.LegacyLine`.
 
 The hub's line builders (`output.scan_lines` / `output.wait_lines`) pair each
-plain message with one of these; `render_legacy_lines` draws them through the
+plain message with one of these. `render_legacy_lines` draws them through the
 shared payload renderers below (`render_kv` / `render_rule` /
 `print_titled_rule`). Lives here beside those renderers.
 """
 
-# True while the output bridge is installed: the hub owns every raw record —
+# True while the output bridge is installed: the hub owns every raw record -
 # WARNING+ in-context on the armed console seat (stderr fallback otherwise),
-# DEBUG chatter at the renderer's frontier indent — so the rich handler stands
+# DEBUG chatter at the renderer's frontier indent - so the rich handler stands
 # down entirely, or the same record renders twice (once per safety net). With
 # no bridge (standalone setup_logger) the legacy arms still render, so a
 # record can never vanish.
@@ -198,12 +198,12 @@ def console_supports_unicode(console: Console) -> bool:
 
 
 class RichConsoleHandler(logging.Handler):
-    """The rich-TTY fallback surface for RAW first-party records — and the shared Console's home.
+    """The rich-TTY fallback surface for RAW first-party records - and the shared Console's home.
 
     While a bridge is installed (`_hub_owns_console`) this handler renders
     NOTHING: the logging bridge (output/bridge.py) adopts every record and the
-    hub places it — WARNING+ on the armed console seat in-context (S5 pin 2)
-    or its stderr fallback, DEBUG chatter at the renderer's frontier indent —
+    hub places it - WARNING+ on the armed console seat in-context (S5 pin 2)
+    or its stderr fallback, DEBUG chatter at the renderer's frontier indent -
     so rendering here too would double them. With no bridge (library use, the
     pre-install window), everything below renders so a record can never
     vanish. Either way the handler stays attached: `console_of` resolves the
@@ -223,7 +223,7 @@ class RichConsoleHandler(logging.Handler):
     def __init__(self, console: Console, level: int = logging.NOTSET) -> None:
         super().__init__(level=level)
         self.console = console
-        # Probed once; the console identity is fixed for this handler's lifetime.
+        # Probed once. The console identity is fixed for this handler's lifetime.
         self._use_unicode = console_supports_unicode(console)
 
     def _print_line(self, record: logging.LogRecord, message: str) -> None:
@@ -279,10 +279,10 @@ class RichConsoleHandler(logging.Handler):
 
 
 def badge_line(levelno: int, message: str, *, use_unicode: bool) -> Text:
-    """`message` behind its level badge — the ONE home of the badge column grammar.
+    """`message` behind its level badge - the ONE home of the badge column grammar.
 
     A unicode console gets the glyph badge ("⚠ ...", the cockpit ledgers'
-    look); ASCII falls back to the padded word ("WARNING  ..."). Levels
+    look). ASCII falls back to the padded word ("WARNING  ..."). Levels
     without a badge fall back to the ERROR one (only the exc_info arm, which
     always badges, can reach that).
     """
@@ -294,7 +294,7 @@ def badge_line(levelno: int, message: str, *, use_unicode: bool) -> Text:
     return line
 
 
-# The level names the file logger honors; any other value (a typo) warns and
+# The level names the file logger honors. Any other value (a typo) warns and
 # falls back to INFO. Kept as an explicit table, so the string ladder isn't
 # reinvented for both the logger and the console handler below.
 _LOG_LEVELS = {
@@ -317,7 +317,7 @@ class LogLevel(StrEnum):
 
 
 def resolve_console_format(console_format: LogFormat) -> LogFormat:
-    """Fold "auto" to the tty-detected concrete format — the ONE fold home."""
+    """Fold "auto" to the tty-detected concrete format - the ONE fold home."""
 
     if console_format == "auto":
         return "rich" if sys.stdout.isatty() else "plain"
@@ -325,7 +325,7 @@ def resolve_console_format(console_format: LogFormat) -> LogFormat:
 
 
 def console_level(level: int) -> int:
-    """The RICH-console threshold for a logger level; the text surfaces use the raw level.
+    """The RICH-console threshold for a logger level. The text surfaces use the raw level.
 
     Applied by the handlers here and as the RichRenderer's diagnostic floor.
     The console always shows INFO+ so routine progress stays visible even when
@@ -343,7 +343,7 @@ def apply_log_level(logger: logging.Logger, log_level: str) -> None:
 
     The CLI bootstraps its logger before the config file can be read (config
     errors must be loggable), then calls this once the config's
-    `advanced.log_level` is known. Unknown names fall back to INFO; the
+    `advanced.log_level` is known. Unknown names fall back to INFO. The
     config validates the level, so that arm only serves programmatic callers.
     """
 
@@ -354,7 +354,7 @@ def apply_log_level(logger: logging.Logger, log_level: str) -> None:
     logging.getLogger().setLevel(level)
     for handler in logger.handlers:
         # The rich console handler setup_logger installed (plain/json attach
-        # no console handler at all); never the bridge.
+        # no console handler at all). Never the bridge.
         if isinstance(handler, RichConsoleHandler):
             handler.setLevel(console_level(level))
 
@@ -375,19 +375,19 @@ def setup_logger(
 ) -> logging.Logger:
     """Configure the app logger: level, plus a rich console handler on a TTY.
 
-    The hub's sinks own the file/plain/json surfaces (`output.textline`); the
+    The hub's sinks own the file/plain/json surfaces (`output.textline`). The
     logging module is an INPUT channel (the bridge adopts records into events)
     with one exception: under "rich"/"auto"-on-a-TTY a `RichConsoleHandler`
     is attached as the shared Console's home (`console_of`). It renders
-    nothing while a bridge is installed — the hub renders everything — and is
+    nothing while a bridge is installed - the hub renders everything - and is
     the raw-record TTY fallback only without one. Under plain/json NO console
-    handler is attached - level-only configuration; the bridge is the only
+    handler is attached - level-only configuration. The bridge is the only
     handler.
 
     Args:
-        log_level: Level name, case-insensitive; an unknown name falls back
+        log_level: Level name, case-insensitive. An unknown name falls back
             to INFO with a logged complaint.
-        console_format: "rich" attaches the styled console handler;
+        console_format: "rich" attaches the styled console handler.
             "plain"/"json" attach nothing (the hub's stdout seat renders).
             "auto" resolves here for programmatic callers - cli always
             passes a resolved value: rich when stdout is a TTY, plain otherwise.
@@ -406,7 +406,7 @@ def setup_logger(
         old_handler.close()
 
     # Resolve the configured level once through the name->constant table. Only
-    # the five standard names are accepted; anything else (a typo) falls back to
+    # the five standard names are accepted. Anything else (a typo) falls back to
     # INFO - the complaint is emitted below, AFTER the handler attach, so under
     # plain/json the bridge (the only handler) carries it to the hub and
     # logging.lastResort can never fire.
@@ -419,19 +419,19 @@ def setup_logger(
     # own gate (not stdlib's WARNING default) decides third-party records.
     logging.getLogger().setLevel(level)
 
-    # Defensive fold for programmatic callers; cli resolves before calling.
+    # Defensive fold for programmatic callers. cli resolves before calling.
     console_format = resolve_console_format(console_format)
 
     if console_format == "rich":
         # The shared Console's home (console_of) and the no-bridge fallback
-        # surface; under a bridge the handler stands down and the hub renders.
+        # surface. Under a bridge the handler stands down and the hub renders.
         console_handler = RichConsoleHandler(Console(file=sys.stdout))
         console_handler.setLevel(console_level(level))
         logger.addHandler(console_handler)
 
     # Only now can the invalid-level complaint reach the hub (and a rich console).
-    # Deliberately raw — the sanctioned straggler the bridge adopts (this module
-    # cannot lean on the hub it configures); allowlisted in tests/test_logging_ban.py.
+    # Deliberately raw - the sanctioned straggler the bridge adopts (this module
+    # cannot lean on the hub it configures). Allowlisted in tests/test_logging_ban.py.
     if invalid_log_level is not None:
         logger.critical(f"Invalid log level '{invalid_log_level}' - defaulting to 'INFO'")
 
@@ -460,7 +460,7 @@ ENTRY_LABEL_OFFSET = STATE_WIDTH + 1
 # status / group / added / kept / missing / skipped / anilist) - sit their VALUE
 # in the same column as the entry title, with the label in the indent gutter and
 # no colon, so the whole entry block reads as one aligned column. The label sits
-# at indent level DETAIL_INDENT; the value lands at the title column
+# at indent level DETAIL_INDENT. The value lands at the title column
 # (len(INDENT) + ENTRY_LABEL_OFFSET). kv adds one space between the padded key
 # and the value, so subtract it here. Derived from the same constants as the
 # title column, so the two can't drift.
@@ -497,7 +497,7 @@ def entry_string(state: EntryState, label: str) -> str:
     """Format the body of an entry-ledger line: "<state> <label>".
 
     state is padded to STATE_WIDTH so the label lines up across rows regardless
-    of state-word length. No indent is applied here; the caller wraps this with
+    of state-word length. No indent is applied here. The caller wraps this with
     indent_string(level=1). Season/episode/URL detail is carried on a separate
     continuation line (see log_entry_coverage), not here.
     """
@@ -532,7 +532,7 @@ def indent_string(
 ) -> str:
     """Indent a rendered console row by `level` levels, each `INDENT` wide.
 
-    For renderer surfaces and interactive prompt rows — never log messages:
+    For renderer surfaces and interactive prompt rows - never log messages:
     the renderer owns a diagnostic's placement, so a producer-baked indent
     double-indents the rich seat and pollutes the text-seat message field.
     """
@@ -549,7 +549,7 @@ def kv_string(
 ) -> str:
     """Format an aligned "key : value" detail line for flat-style output.
 
-    `key` is padded to `key_width` so the separators line up down a block;
+    `key` is padded to `key_width` so the separators line up down a block.
     `indent` counts indent levels. Pass `sep=""` for the colon-less gutter
     "label value" entry-detail format.
     """
@@ -576,10 +576,10 @@ def group_highlight(
     The release group is the thing worth spotting at a glance on a grab line, so
     it gets the same accent the live log gives groups (`group_style`). When the
     group already leads the torrent name (bare, or in the usual "[Group]" wrapper,
-    matched case-insensitively), that span is highlighted in place; otherwise the
+    matched case-insensitively), that span is highlighted in place. Otherwise the
     group is prepended in brackets so it always reads at the front - a match
-    buried mid-name doesn't count. Returns a styled rich `Text` for the console;
-    the file log sees its plain text via `str()` (so a prepended "[group] "
+    buried mid-name doesn't count. Returns a styled rich `Text` for the console.
+    The file log sees its plain text via `str()` (so a prepended "[group] "
     still shows, just without color).
 
     With no group (or no name), the plain name is returned unchanged, so the
@@ -591,7 +591,7 @@ def group_highlight(
         return name
 
     # Only treat the group as "already shown" when it leads the name - bare, or
-    # in the usual "[Group]" wrapper. A match buried mid-name doesn't count; we
+    # in the usual "[Group]" wrapper. A match buried mid-name doesn't count. We
     # prepend instead, so the group always reads at the front of the line.
     cf, gf = name.casefold(), group.casefold()
     if cf.startswith(gf):
@@ -610,7 +610,7 @@ def group_highlight(
         text.append(name[end:])
     else:
         # Not at the front - prepend it so the group always leads. Only the group
-        # name takes the accent; the brackets stay in base_style so a prepended
+        # name takes the accent. The brackets stay in base_style so a prepended
         # "[group]" matches the "[group]" already in a name (brackets base, name
         # accented) rather than coloring the whole wrapper.
         text.append("[")
@@ -621,7 +621,7 @@ def group_highlight(
 
 
 def pluralize(n: int, singular: str, plural: str | None = None) -> str:
-    """Pick the singular or plural form of a word based on a count; `plural` unset means `singular` + "s"."""
+    """Pick the singular or plural form of a word based on a count. `plural` unset means `singular` + "s"."""
 
     if n == 1:
         return singular
@@ -629,7 +629,7 @@ def pluralize(n: int, singular: str, plural: str | None = None) -> str:
 
 
 def count_noun(n: int, singular: str, plural: str | None = None) -> str:
-    """Format a count with its correctly pluralized noun, e.g. "3 movies"; `plural` unset means `singular` + "s"."""
+    """Format a count with its correctly pluralized noun, e.g. "3 movies". `plural` unset means `singular` + "s"."""
 
     return f"{n} {pluralize(n, singular, plural)}"
 

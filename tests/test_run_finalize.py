@@ -1,11 +1,11 @@
 # pyright: strict
 # pyright: reportPrivateUsage=false
 # Drives RunLoop._notify_wait_complete directly (the containment arm has no public
-# seam); the repo disables reportPrivateUsage for tests, strict re-flags it.
+# seam). The repo disables reportPrivateUsage for tests, strict re-flags it.
 """Guards the single end-of-run finalize site.
 
 When `max_torrents_to_add` is reached mid-run, `_grab` returns a pure bool
-(it no longer finalizes); `run_sync` breaks the per-item scan and runs the ONE
+(it no longer finalizes). `run_sync` breaks the per-item scan and runs the ONE
 post-loop `_finalize_run` site - the same site the normal end-of-run path
 reaches. These pin both halves of that hoist so a future change can't silently
 double-finalize or skip the blocking/import pass on the cap-reached break.
@@ -38,7 +38,7 @@ from .fakes import FakeArrItem, FakeStrategy, install_recording_hub
 class _FakeGateway:
     """Stands in for the AniList/SeaDex gateways: a cache-warm no-op (0 fetched)."""
 
-    # The loop reads the SeaDex outage flag for the boot note; never down here.
+    # The loop reads the SeaDex outage flag for the boot note. Never down here.
     outage: bool = False
 
     def load_cache(self) -> None:
@@ -101,13 +101,13 @@ def _engine(
 ) -> RunLoop:
     """A bare `RunLoop` wired with typed fakes for the run-loop collaborators.
 
-    The strategy reaches `run_sync` typed (it's an `ArrSync`); the rest are
+    The strategy reaches `run_sync` typed (it's an `ArrSync`). The rest are
     injected as bare attributes (the methods only read them), and `_finalize_run`
     is shadowed by the recorder so the single finalize site is observable. The
     `_services` hub is a bare real `RunServices` (the loop reads its `arr`,
     `begin_run`, `mark_dirty` and `is_preview`) whose per-id collaborators are
-    ctx-bind fakes; the `cache_store` backs the activity scan's checkpoint.
-    `config` overrides the loop's config (the activity-scan toggle tests);
+    ctx-bind fakes. The `cache_store` backs the activity scan's checkpoint.
+    `config` overrides the loop's config (the activity-scan toggle tests).
     `cache_store` shares one store across engines (the checkpoint replay tests).
     """
 
@@ -206,7 +206,7 @@ class _ItemRaisingStrategy(FakeStrategy):
 
     @override
     def item_anilist_ids(self, item: FakeArrItem, log_ignored: bool = True) -> dict[int, MappingEntry]:
-        # Only the per-item scan calls with the log_ignored default; the pre-loop
+        # Only the per-item scan calls with the log_ignored default. The pre-loop
         # activity/prefetch passes pass False and must stay healthy.
         if log_ignored and item.id == self._raise_on_item:
             raise RuntimeError("mapping lookup exploded")
@@ -232,7 +232,7 @@ class TestPerItemErrorContainment:
             boot=BootFlow(),
         )
 
-        # Item A raised before its per-id loop began; sibling item B still processed.
+        # Item A raised before its per-id loop began. Sibling item B still processed.
         assert strategy.process_calls == [5]
         # The per-item failure is an ERROR Diagnostic with its traceback.
         (error,) = [d for d in recording.of_type(Diagnostic) if d.severity is Severity.ERROR]
@@ -297,7 +297,7 @@ class TestSeaDexBootNote:
         return recording
 
     def test_outage_notes_unreachable_not_a_count(self, logger: logging.Logger) -> None:
-        # The prefetch "return" is how many ids NEEDED fetching; on an outage
+        # The prefetch "return" is how many ids NEEDED fetching. On an outage
         # none were actually fetched, so the old "N entries" note was a lie.
         seadex = _FakeGateway()
         seadex.outage = True
@@ -318,7 +318,7 @@ class TestSelectionRecheck:
     """The stale-selection announcement + the full-coverage vouch rule.
 
     Vouch state is read back through `selection_stale`: after a vouch, any
-    OTHER digest reads stale; with nothing vouched, everything reads fresh.
+    OTHER digest reads stale. With nothing vouched, everything reads fresh.
     """
 
     _NOTE = "Matching settings changed - rechecking cached entries"
@@ -370,7 +370,7 @@ class TestSelectionRecheck:
         assert self._NOTE not in self._notes(recording)
 
     def test_ignore_update_times_suppresses_the_announcement(self, logger: logging.Logger) -> None:
-        # The ignore flag already re-checks everything; announcing a selection
+        # The ignore flag already re-checks everything. Announcing a selection
         # re-check on top would be noise.
         _, recording = self._run(logger, stale=True, config=make_config(ignore_seadex_update_times=True))
 

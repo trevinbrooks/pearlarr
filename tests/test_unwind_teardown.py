@@ -9,7 +9,7 @@ step the leg happened to die in.
 
 These pin the EMIT ORDERING (the half bootstrap owns). What the ordering buys - the
 error actually landing at column 0 - is pinned against the real renderer in
-`test_output_rich_renderer.TestUnwindPlacement`; the run tail's own boundary calls
+`test_output_rich_renderer.TestUnwindPlacement`. The run tail's own boundary calls
 are pinned in `test_import_wait.TestFinalizeRunOrdering` / `TestFinalizeRunUnwind`.
 `RunFinished` is emitted exactly once per leg: the tail emits on success, and
 bootstrap's inner handler emits only when the leg died first. The fold's close
@@ -44,7 +44,7 @@ from pearlarr.run_services import RunDeps
 from .builders import make_config
 
 # The message each scripted failure carries, so the adopted ERROR is identifiable
-# in the recorded stream (the clean arm logs `str(e)`; the traceback arm doesn't).
+# in the recorded stream (the clean arm logs `str(e)`, the traceback arm doesn't).
 _SCHEMA_ERROR = "cache.db was written by a newer Pearlarr"
 
 
@@ -71,7 +71,7 @@ def _memory_resolver(
 def _failing_build(exc: Exception) -> object:
     """A `RunDeps.build` replacement that raises `exc` with the real signature.
 
-    Patched onto the class, so it is reached as a plain function (no `cls`); the
+    Patched onto the class, so it is reached as a plain function (no `cls`). The
     real `build` is a classmethod and the call site passes `arr` positionally.
     """
 
@@ -110,7 +110,7 @@ def _run_failing_leg(
     app_logger: logging.Logger,
     exc: Exception,
 ) -> tuple[bool, RecordingHub]:
-    """Drive one Sonarr leg whose `RunDeps.build` raises `exc`; record the stream.
+    """Drive one Sonarr leg whose `RunDeps.build` raises `exc`. Record the stream.
 
     The real hub AND the real logging bridge are installed (production parity), so
     the composition root's `hub_note` ERROR lands in the same event stream as the
@@ -186,14 +186,14 @@ class _StubDeps:
 
 
 class _FakeRunServices:
-    """The per-id hub bootstrap builds; never driven, since `RunLoop` is faked."""
+    """The per-id hub bootstrap builds. Never driven, since `RunLoop` is faked."""
 
     def __init__(self, deps: RunDeps, arr: Arr) -> None:
         del deps, arr
 
 
 class _FakeSonarrSync:
-    """The strategy handed to `run_sync`; the faked loop never consults it."""
+    """The strategy handed to `run_sync`. The faked loop never consults it."""
 
     def __init__(self, deps: RunDeps, services: _FakeRunServices) -> None:
         del deps, services
@@ -240,7 +240,7 @@ def _run_completing_leg(
     monkeypatch: pytest.MonkeyPatch,
     app_logger: logging.Logger,
 ) -> tuple[bool, RecordingHub]:
-    """Drive one Sonarr leg that completes normally; record the event stream.
+    """Drive one Sonarr leg that completes normally. Record the event stream.
 
     The construction seams are faked so the leg finishes without real deps: `build`
     returns a close-only stub, and `RunServices` / `RunLoop` / `SonarrSync` are
@@ -275,7 +275,7 @@ class TestCompletedLegSingleClose:
         completed, recording = _run_completing_leg(monkeypatch, app_logger)
 
         assert completed is True
-        # The unwind emit fires only on a dying leg; a normal return leaves the close
+        # The unwind emit fires only on a dying leg. A normal return leaves the close
         # to the run tail (faked to a no-op here). The real tail's emit is pinned in
         # test_import_wait.TestFinalizeRunOrdering, so zero here proves nothing doubled.
         assert recording.of_type(RunFinished) == []

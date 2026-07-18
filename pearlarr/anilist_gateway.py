@@ -19,7 +19,7 @@ from .log import count_noun
 from .seadex_types import AniListMediaNode, ProgressSink
 
 # How long a persisted AniList response stays usable before it's re-fetched.
-# title/format/coverImage are effectively static; episodes for a currently airing
+# title/format/coverImage are effectively static. Episodes for a currently airing
 # show drift, so this caps how stale that count can get (~one episode/week).
 ANILIST_CACHE_TTL_DAYS = 7
 
@@ -81,7 +81,7 @@ class AniListGateway:
 
         An entry that's already stored and still fresh keeps its original
         fetched_at (so the TTL actually expires it rather than resetting every
-        run); a missing OR stale entry is (re)written with the current time, so
+        run). A missing OR stale entry is (re)written with the current time, so
         an aged-out id is refreshed instead of being re-fetched on every run.
 
         Args:
@@ -133,7 +133,7 @@ class AniListGateway:
             al_ids: Candidate AniList IDs for this run
             preview: Forwarded to the post-fetch save's preview gate.
             progress: Boot cockpit step fed per-batch
-                fraction + "done/total" detail; None outside the cockpit.
+                fraction + "done/total" detail. None outside the cockpit.
 
         Returns:
             How many ids needed fetching (0 = fully cache-warm), for the
@@ -150,7 +150,7 @@ class AniListGateway:
         done = 0
         for start in range(0, total, ANILIST_BATCH_SIZE):
             chunk = missing[start : start + ANILIST_BATCH_SIZE]
-            # Ids unknown to AniList are simply absent from the result; the
+            # Ids unknown to AniList are simply absent from the result. The
             # per-id helpers will try once more on demand and degrade gracefully
             for al_id, data in self._client.query_batch(chunk).items():
                 self.al_cache[al_id] = data
@@ -167,13 +167,13 @@ class AniListGateway:
         """Resolve the typed Media node for an id: the run cache, then the wire.
 
         The get-or-fetch policy lives here, beside the cache it manages: a hit
-        parses the stored body; a miss queries AniList and stores the raw body
+        parses the stored body. A miss queries AniList and stores the raw body
         ONLY if it actually carried Media, so a transient failure (rate-limit,
         network) isn't cached as a permanent miss - the next call gets a fresh
         chance.
 
         Returns:
-            The parsed `AniListMediaNode`; all-`None` on a miss.
+            The parsed `AniListMediaNode`. All-`None` on a miss.
         """
 
         # Cache hit: parse the stored body's Media node.

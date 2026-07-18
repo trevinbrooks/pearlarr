@@ -1,11 +1,11 @@
 """Typed capability scope handles: position rides the handle, never the call site.
 
-The handle set is exactly Step / Entry / Wait (no SummaryScope — the
-summary is one atomic event; Run/Item boundaries are plain events with no
-handle ceremony; position-free one-liners are the `hub_note` family in
+The handle set is exactly Step / Entry / Wait (no SummaryScope - the
+summary is one atomic event. Run/Item boundaries are plain events with no
+handle ceremony. Position-free one-liners are the `hub_note` family in
 `runtime`). Handles are runtime-total: emitting on a closed handle demotes to
 an attributed `events.Diagnostic` (`placed_by=HANDLE`) instead of raising or
-corrupting layout; tests pin that no production path ever demotes.
+corrupting layout. Tests pin that no production path ever demotes.
 """
 
 from __future__ import annotations
@@ -50,10 +50,10 @@ from .runtime import emit_to_hub
 from ..manual_import import OutcomeCategory
 
 type Emit = Callable[[Event], None]
-"""The one producer-side seam: the hub satisfies it; tests pass a recorder."""
+"""The one producer-side seam: the hub satisfies it. Tests pass a recorder."""
 
 type CountsSource = Callable[[], SeverityCounts]
-"""Emit's counts twin: `hub_counts` satisfies it; tests bind their own counter."""
+"""Emit's counts twin: `hub_counts` satisfies it. Tests bind their own counter."""
 
 type EntryFact = EntryDetail | LedgerRow | ReleaseSkipped | GrabFailed | GrabAction
 """The entry-block facts an EntryScope can post (stamped with its ScopeId)."""
@@ -61,7 +61,7 @@ type EntryFact = EntryDetail | LedgerRow | ReleaseSkipped | GrabFailed | GrabAct
 
 @final
 class ScopeIds:
-    """Thread-safe ScopeId minter; serials are monotonic per minter.
+    """Thread-safe ScopeId minter. Serials are monotonic per minter.
 
     Factories default to the process-wide minter so serials never collide
     across factories.
@@ -86,7 +86,7 @@ class ScopeMark:
 
     Mints from `PROCESS_SCOPE_IDS` and emits through `runtime.emit_to_hub`
     at call time (the hub may be installed after the flow is built). Only the mark
-    pair — no handle semantics, no demotion.
+    pair - no handle semantics, no demotion.
     """
 
     def __init__(self, kind: ScopeKind, label: str) -> None:
@@ -128,7 +128,7 @@ class _ScopeBase:
     """Shared handle spine: emitter, label, open flag, and late-demotion.
 
     `_late` binds the emitter/kind word/label once, so call sites state only
-    WHAT was attempted and at which severity — runtime-total.
+    WHAT was attempted and at which severity - runtime-total.
     """
 
     _KIND_WORD: ClassVar[str] = "scope"
@@ -160,7 +160,7 @@ class StepScope(_ScopeBase):
     """One boot step: progress/note/warn producer-side, timing here, events out.
 
     Usable as a context manager: the step finishes on exit (FAILED when the body
-    raised; the exception still propagates — only presentation is owned here).
+    raised. The exception still propagates - only presentation is owned here).
     """
 
     _KIND_WORD: ClassVar[str] = "step"
@@ -175,7 +175,7 @@ class StepScope(_ScopeBase):
         emit(BootStepStarted(scope=scope, label=label))
 
     def progress(self, fraction: float, detail: str | None = None) -> None:
-        """Report 0-1 progress; the first report also emits the one-time slow heads-up."""
+        """Report 0-1 progress. The first report also emits the one-time slow heads-up."""
 
         if not self._open:
             self._late(f"progress {fraction:.2f}", Severity.INFO)
@@ -236,7 +236,7 @@ class StepScope(_ScopeBase):
 
 @final
 class EntryScope(_ScopeBase):
-    """One entry block: opened WITH its header (header-at-open); details stream."""
+    """One entry block: opened WITH its header (header-at-open). Details stream."""
 
     _KIND_WORD: ClassVar[str] = "entry"
 
@@ -254,7 +254,7 @@ class EntryScope(_ScopeBase):
         self._emit(replace(fact, scope=self._scope))
 
     def close(self) -> None:
-        """Idempotent; the reporter closes the previous entry before opening a sibling."""
+        """Idempotent. The reporter closes the previous entry before opening a sibling."""
 
         if not self._open:
             return
@@ -295,7 +295,7 @@ class WaitScope(_ScopeBase):
         self.close()
 
     def close(self) -> None:
-        """Idempotent; finish() closes the region, or callers close it explicitly."""
+        """Idempotent. finish() closes the region, or callers close it explicitly."""
 
         if not self._open:
             return

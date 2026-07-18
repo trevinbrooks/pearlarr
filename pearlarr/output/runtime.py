@@ -1,7 +1,7 @@
 """The process-global hub registry.
 
 Mirrors stdlib logging's process-global registry: cli installs the real hub once
-pre-loop; scope producers (the boot flow's mark, the wait narrator's factory) and
+pre-loop. Scope producers (the boot flow's mark, the wait narrator's factory) and
 `apply_log_level` reach it via `current_hub`. The default is a
 renderer-less hub, so emissions before install (tests, library use) drop silently
 instead of raising.
@@ -65,7 +65,7 @@ def install_hub(hub: OutputHub) -> None:
     """Make `hub` the process hub, closing any previously installed one.
 
     A repeat `run single` in one process must not leak the prior hub's open
-    FileLogSink (or double-rotate its cascade); the DEFAULT hub is never closed.
+    FileLogSink (or double-rotate its cascade). The DEFAULT hub is never closed.
     """
 
     global _hub
@@ -78,7 +78,7 @@ def uninstall_hub() -> None:
     """Close the installed hub and restore the renderer-less default (tests).
 
     Closing releases the outgoing hub's sink resources (an open FileLogSink
-    handle); emits on a closed hub drop silently. NEVER closes the default.
+    handle). Emits on a closed hub drop silently. NEVER closes the default.
     """
 
     global _hub

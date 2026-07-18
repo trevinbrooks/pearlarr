@@ -84,7 +84,7 @@ ipython_config.py
 
 # pyenv
 #   For a library or package, you might want to ignore these files since the code is
-#   intended to run in multiple environments; otherwise, check them in:
+#   intended to run in multiple environments. Otherwise, check them in:
 # .python-version
 
 # pipenv
@@ -124,7 +124,7 @@ ipython_config.py
 #   in the .venv directory. It is recommended not to include this directory in version control.
 .pixi
 
-# PEP 582; used by e.g. github.com/David-OConnor/pyflow and github.com/pdm-project/pdm
+# PEP 582. Used by e.g. github.com/David-OConnor/pyflow and github.com/pdm-project/pdm
 __pypackages__/
 
 # Celery stuff
@@ -243,6 +243,6 @@ anibridge_mappings_v3.json
 /scripts/demo/demo_run.gif
 
 # Rendered README assets: hosted as GitHub release assets, not tracked in-repo
-# (regenerated locally, uploaded per release; see CONTRIBUTING.md "Releasing").
+# (regenerated locally, uploaded per release. See CONTRIBUTING.md "Releasing").
 /docs/assets/demo_run.gif
 /docs/assets/example_post.png

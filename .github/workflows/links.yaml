@@ -3,7 +3,7 @@ name: Links
 # External-URL link check, weekly: link rot is a slow disease, and a flaky
 # remote host must not block PRs (per-PR checking stays offline in build.yaml).
 # While the repo is private this stays red on the public-only URLs (the PyPI
-# project page, raw.githubusercontent); it self-heals at the public flip.
+# project page, raw.githubusercontent). It self-heals at the public flip.
 on:
   schedule:
     - cron: "37 4 * * 1"

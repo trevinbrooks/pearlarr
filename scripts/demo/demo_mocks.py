@@ -1,7 +1,7 @@
 """Stateful mock Sonarr (:8989) + mock qBittorrent (:8080) for the demo recording.
 
 Maintainer tooling behind `scripts/demo/record.sh`, which regenerates
-`docs/assets/demo_run.gif`; nothing here ships in the package.
+`docs/assets/demo_run.gif`. Nothing here ships in the package.
 
 Timeline: the run grabs Frieren (PMR) and FMAB (McBalls). Frieren completes first,
 Sonarr reports it importBlocked -> Pearlarr steps in with a manual import. FMAB
@@ -382,7 +382,7 @@ class QuietHandler(BaseHTTPRequestHandler):
 
     @override
     def log_request(self, code: int | str = "-", size: int | str = "-") -> None:
-        """Quiet the happy path; errors still land in mocks.log via log_error."""
+        """Quiet the happy path. Errors still land in mocks.log via log_error."""
 
 
 class SonarrHandler(QuietHandler):

@@ -36,10 +36,10 @@ def register_sonarr_reads(
 
     All registered on the ambient respx router (every raw arr endpoint rides
     the httpx-based `ArrHttp`). `base` is the `http://host/api/v3`
-    prefix. `episode` drives the per-series fetch; `parse` (matched on the
+    prefix. `episode` drives the per-series fetch. `parse` (matched on the
     base path, query ignored) replays a captured parse for every SeaDex
-    filename; `qualitydefinition`/`language` default to empty (only touched
-    when an import payload is built); `history/since` replays an empty window
+    filename. `qualitydefinition`/`language` default to empty (only touched
+    when an import payload is built). `history/since` replays an empty window
     so the activity scan stays quiet. The library fetch (`/series`) is
     registered by the test itself.
     """

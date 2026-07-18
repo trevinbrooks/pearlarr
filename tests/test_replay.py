@@ -2,13 +2,13 @@
 """Tests for `pearlarr replay`: the JSON envelope stream re-rendered as text.
 
 Replay is a generic envelope formatter with no per-event knowledge, so these
-pin: a golden round-trip (real `JsonRenderer` output fed back through replay
+pin a golden round-trip (real `JsonRenderer` output fed back through replay
 reproduces the `ts LEVEL [bracket] message k=v` grammar, with path > component >
-origin > event bracket precedence and an appended traceback); tolerance of an
-unknown newer event; the old-capture fallback when `component` is absent;
-docker-style interleaved non-event lines counted and skipped; a foreign
-`schema_version` warned once; and the failure arms (no events / unreadable
-file) returning False and exiting 1.
+origin > event bracket precedence and an appended traceback). They also cover
+tolerance of an unknown newer event, the old-capture fallback when `component`
+is absent, docker-style interleaved non-event lines counted and skipped, and a
+foreign `schema_version` warned once. The failure arms (no events / unreadable
+file) return False and exit 1.
 """
 
 import io
@@ -259,7 +259,7 @@ def test_a_downstream_broken_pipe_ends_quietly(
     capsys: pytest.CaptureFixture[str],
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    # `pearlarr replay big.jsonl | head` closes stdout mid-stream; that is the
+    # `pearlarr replay big.jsonl | head` closes stdout mid-stream. That is the
     # consumer's choice, not a failure - exit 0, no error line.
     envelope = _envelope(
         schema_version=1, time=_FIXED_TIME, event="run_started", level="INFO", message="started", component="run"
@@ -313,7 +313,7 @@ def test_a_non_utf8_byte_never_aborts_the_capture(
     tmp_path: Path,
     capsys: pytest.CaptureFixture[str],
 ) -> None:
-    # Docker interleaves raw stderr; a binary fragment decodes to U+FFFD and is
+    # Docker interleaves raw stderr. A binary fragment decodes to U+FFFD and is
     # skipped as noise, and a bad byte INSIDE an envelope still renders - never a traceback.
     envelope = _envelope(
         schema_version=1, time=_FIXED_TIME, event="run_started", level="INFO", message="started", component="run"
@@ -335,7 +335,7 @@ def test_a_unicode_line_separator_inside_a_message_stays_one_event(
     tmp_path: Path,
     capsys: pytest.CaptureFixture[str],
 ) -> None:
-    # U+2028 is a str.splitlines boundary but not a stream line break; the event
+    # U+2028 is a str.splitlines boundary but not a stream line break. The event
     # must render whole, not tear into two skipped fragments.
     envelope = _envelope(
         schema_version=1,

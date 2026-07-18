@@ -18,7 +18,7 @@ def _rec(al_id: int) -> EntryRecord:
 class FakeSeaDex:
     """Stands in for `SeaDexEntry`: `from_filter` (batch) + `from_id` (single).
 
-    `fail_filter` / `fail_from_id` fail every call (a full outage);
+    `fail_filter` / `fail_from_id` fail every call (a full outage).
     `filter_blips` / `from_id_blips` fail just the first N calls then
     recover (a transient blip the retry absorbs).
     """
@@ -159,7 +159,7 @@ class TestSeaDexPrefetch:
 
         gateway.prefetch(ids)
 
-        assert len(fake.filter_calls) == 2  # chunk 1 + its retry; batches 2+3 short-circuited
+        assert len(fake.filter_calls) == 2  # chunk 1 + its retry, batches 2+3 short-circuited
         assert gateway.outage is True
         warnings = diagnostic_messages(recording, Severity.WARNING)
         assert len(warnings) == 1

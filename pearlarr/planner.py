@@ -33,7 +33,7 @@ class SkipNotice:
     """A release dropped for being private, for the caller to log.
 
     Rendered by the orchestrator as `"<groups> <reason>"` on a `skipped`
-    detail line. A warn-and-hold skip logs at WARNING; a drop covered by a
+    detail line. A warn-and-hold skip logs at WARNING. A drop covered by a
     public fallback logs at INFO.
     """
 
@@ -55,7 +55,7 @@ class PrivateOnlySkips:
     """What to log for the drop."""
     stale_held: bool = False
     """A hold where the Arr owns the preferred private release at a stale size and only a fallback could
-    stand in; a fallback never replaces an owned copy."""
+    stand in. A fallback never replaces an owned copy."""
     fallback_covered: bool = False
     """The owned-fallback soft-skip: the Arr genuinely owns a public fallback's files. Drives the cache's
     fallback-satisfied marker."""
@@ -73,7 +73,7 @@ class PlanResult:
     seadex_dict: SeadexDict
     """The same dict passed in, annotated in place with per-url `download` flags."""
     torrent_hashes: list[str | None]
-    """The unique torrent infohashes to remember; None for a hashless private torrent."""
+    """The unique torrent infohashes to remember. None for a hashless private torrent."""
     skips: PrivateOnlySkips
     """The private-only skip outcome from `reduce_overlapping_downloads`, folded onto run state by the caller."""
 
@@ -83,7 +83,7 @@ def normalize_rg(name: str | None) -> str | None:
 
     Delegates to `normalize_group` (strip whitespace and
     wrapping dashes, casefold) so the grab-time filter and the import-time
-    never-overwrite check share ONE normalization; this wrapper only adds the
+    never-overwrite check share ONE normalization. This wrapper only adds the
     None-tolerance. Returns None for a missing/blank name.
     """
 
@@ -235,13 +235,13 @@ class _MatchContext:
     """Per-entry invariants for the URL match loop.
 
     Computed once per entry in `filter_by_release_group` and shared by both
-    per-URL matchers; nothing here changes inside the loop (only each
+    per-URL matchers. Nothing here changes inside the loop (only each
     `url_item`'s `download`/`size_mismatch` flags flip).
     """
 
     arr_release_dict: ArrReleaseDict
     arr_sizes_by_norm: Mapping[str | None, list[int]]
-    """The Arr's file sizes merged under normalized group names; built once per entry rather than per URL."""
+    """The Arr's file sizes merged under normalized group names. Built once per entry rather than per URL."""
     overlapping_results: bool
     sonarr_by_key: dict[tuple[int, int], SonarrEpisode]
     all_seadex_rgs_per_episode: dict[str, set[str | None]]
@@ -253,10 +253,10 @@ class DownloadPlanner:
     """Decides which SeaDex releases to grab for one AniList entry.
 
     Constructed once per Arr run with the arr it plans for and the two config
-    flags it consults; every decision method takes the already-shaped
+    flags it consults. Every decision method takes the already-shaped
     `seadex_dict` plus the Arr's release info as arguments and returns a
     `PlanResult`. The planner keeps a logger only for the per-release
-    debug breadcrumbs; the user-facing private-only skip is returned as a
+    debug breadcrumbs. The operator-facing private-only skip is returned as a
     `SkipNotice`, never logged here.
     """
 
@@ -284,9 +284,9 @@ class DownloadPlanner:
         """Flip the download flags and return the full plan for an entry.
 
         Selects the hash-based or release-group-based strategy from the config
-        flag, then unions in the cached hashes (release-group path only — the
+        flag, then unions in the cached hashes (release-group path only - the
         hash path already lists every url's hash) and de-duplicates.
-        `seadex_dict` is annotated in place; `cached_hashes` are the torrent
+        `seadex_dict` is annotated in place. `cached_hashes` are the torrent
         hashes already remembered for this entry.
         """
 
@@ -466,7 +466,7 @@ class DownloadPlanner:
 
         Flips `url_item.download` in place. The blunt fallback used for
         Radarr and weirdly named TV: if the group isn't in the Arr's releases
-        (and nothing overlaps) grab it; if it is, grab it only when the file
+        (and nothing overlaps) grab it. If it is, grab it only when the file
         sizes are disjoint.
         """
 
@@ -474,7 +474,7 @@ class DownloadPlanner:
         # The release-group names, for the debug lines (insertion order preserved).
         arr_release_groups = ctx.arr_release_dict.keys()
 
-        # Match by the normalized name (like the per-episode path); the merged
+        # Match by the normalized name (like the per-episode path). The merged
         # size index was built once per entry (see _MatchContext).
         seadex_norm = normalize_rg(seadex_rg)
         if seadex_norm in ctx.arr_sizes_by_norm:
@@ -524,13 +524,13 @@ class DownloadPlanner:
 
         Flips `url_item.download` in place. For each parsed SeaDex episode
         we check whether it exists in the Sonarr index, whether the release
-        group matches, and whether the file sizes match; a release-group
+        group matches, and whether the file sizes match. A release-group
         mismatch with no covering alternative, or an all-sizes mismatch among
         the rg-matched episodes, flips download on.
         """
 
         # At this point, we need an episode list from Sonarr. A non-None but
-        # empty list still runs the (no-op) loop below; only an absent list skips.
+        # empty list still runs the (no-op) loop below. Only an absent list skips.
         if not ctx.has_ep_list:
             self.logger.debug(
                 "Skipping per-episode check: no Sonarr episode list available",
@@ -659,14 +659,14 @@ class DownloadPlanner:
 
         Mutates the download flags on seadex_dict in place and returns the
         private-only skip outcome (skipped flag, group names, notices to log).
-        Skipped entirely in interactive mode, where the user has already
-        hand-picked what to grab.
+        Skipped entirely in interactive mode, since hand-picking has already
+        decided what to grab.
         """
 
         skips = PrivateOnlySkips()
 
-        # In interactive mode the user has explicitly chosen which releases to
-        # grab, so don't second-guess them by dropping any
+        # In interactive mode, releases were explicitly hand-picked to
+        # grab, so don't second-guess that choice by dropping any
         if self.interactive:
             return skips
 
@@ -681,9 +681,9 @@ class DownloadPlanner:
 
         # Within ONE group, flagged urls with identical non-empty file-name sets
         # are the same release cross-seeded (distinct infohashes = duplicate
-        # downloads; the promotion branch above can flip several at once): keep
+        # downloads, the promotion branch above can flip several at once): keep
         # the first, unflag the rest. An empty fileset can't prove identity, so
-        # it's never deduped; cross-group overlap is the same-files logic above.
+        # it's never deduped. Cross-group overlap is the same-files logic above.
         for rg_item in seadex_dict.values():
             seen: set[frozenset[str]] = set()
             for u in rg_item.urls.values():
@@ -721,7 +721,7 @@ class DownloadPlanner:
 
         if len(public_flagged) == 0:
             # An unflagged public group in THIS same-files set can stand in
-            # (fallback or preferred; a flagged one would have taken the keeper
+            # (fallback or preferred, a flagged one would have taken the keeper
             # branch below). A public group covering OTHER files doesn't excuse
             # dropping this set, so the gate is per-set, never per-entry.
             fallback_rides = any(_is_fallback_group(seadex_dict[rg]) for rg in same_files)
@@ -752,7 +752,7 @@ class DownloadPlanner:
             # private release, just record a skip notice and skip. Flag the skip
             # so the caller doesn't cache the title as done. A riding fallback
             # here means an owned-at-stale-size preferred pick it must not
-            # replace (only reachable upgrade-pending; the soft-skip consumed
+            # replace (only reachable upgrade-pending, the soft-skip consumed
             # the other case): mark the stale hold for the summary row.
             # Invariant: a fallback substitute never replaces an owned copy of the
             # preferred private release - those sets hold and warn every run.
@@ -795,13 +795,13 @@ class DownloadPlanner:
                     return dropped
                 # Promotion refused with an unflagged fallback riding: an
                 # owned-at-stale-size pick a fallback must not replace. Mark the
-                # stale hold (no notice; the add-time private gate warns).
+                # stale hold (no notice, the add-time private gate warns).
                 if any(not _is_flagged(seadex_dict[rg]) and _is_fallback_group(seadex_dict[rg]) for rg in same_files):
                     skips.stale_held = True
             # Degrade to the first public group (the add-time gate then warns).
             keeper = public_flagged[0]
 
-        # Tell the user when the keeper is a non-preferred fallback standing in
+        # Note when the keeper is a non-preferred fallback standing in
         # for private preferred picks (a plain public-over-private keeper stays
         # a debug line, as ever).
         private_dropped = [rg for rg in flagged if not _is_public_group(seadex_dict[rg])]
@@ -837,10 +837,10 @@ class DownloadPlanner:
 
     @staticmethod
     def _promote_public_alternative(seadex_dict: SeadexDict, same_files: list[str]) -> str | None:
-        """Flip on an unflagged public group covering this set; None if there is none.
+        """Flip on an unflagged public group covering this set. None if there is none.
 
         Never a fallback group - a substitute must not replace an owned stale
-        copy of the preferred pick; the caller holds instead. Prefer a
+        copy of the preferred pick. The caller holds instead. Prefer a
         fully-public group - promotion only flips public urls, so a mixed
         group's private url would leave part of the set's coverage ungrabbed.
         """
@@ -871,7 +871,7 @@ class DownloadPlanner:
         """The INFO notice for flagged groups a promoted group now stands in for.
 
         The caller unflags them. Promotion never picks a fallback group, so the
-        verb is always "grabbing public alternative"; the keeper flow owns
+        verb is always "grabbing public alternative". The keeper flow owns
         "falling back to".
         """
 

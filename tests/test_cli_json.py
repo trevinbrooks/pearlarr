@@ -5,7 +5,7 @@ Every subcommand wraps its body in `cli_surface`, emitting the same typed events
 run commands do. With `--json` the JSON seat writes one envelope line per event
 to stdout (errors included, at level ERROR), stderr stays empty, and the exit
 semantics (the returned bool) are unchanged. The human-output byte-parity is
-pinned in test_cli.py; here we pin the machine surface and that the surface is
+pinned in test_cli.py. Here we pin the machine surface and that the surface is
 torn down cleanly after each command (`current_hub()` back to the default).
 """
 
@@ -233,7 +233,7 @@ class TestRedactionCanary:
 
 
 class TestHumanModeLeavesNoHub:
-    """A command restores the process default hub on exit; a later emit can't leak into its seat."""
+    """A command restores the process default hub on exit. A later emit can't leak into its seat."""
 
     def test_command_uninstalls_its_hub(self, capsys: pytest.CaptureFixture[str]) -> None:
         before = current_hub()

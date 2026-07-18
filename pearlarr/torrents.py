@@ -27,7 +27,7 @@ class TorrentAddError(Exception):
 
 # The expected external failures a grab can hit: the tracker scrape (all
 # httpx, incl. pynyaa's), the parse itself, and the qBittorrent add. The grab
-# pipeline contains these per release; anything else is a bug and propagates.
+# pipeline contains these per release. Anything else is a bug and propagates.
 GRAB_FAILURES: tuple[type[Exception], ...] = (
     TorrentParseError,
     TorrentAddError,
@@ -57,7 +57,7 @@ def _parse_rutracker(url: str, infohash: str | None, client: httpx.Client) -> Pa
     return get_rutracker_torrent(url=url, infohash=infohash, client=client)
 
 
-# One parser per supported tracker; PARSEABLE_TRACKERS derives from this table so
+# One parser per supported tracker. PARSEABLE_TRACKERS derives from this table so
 # the two can't drift. The grab pipeline pre-filters on the frozenset, so an
 # unparseable tracker is skipped there rather than reaching `add`'s raise.
 _PARSERS: dict[Tracker, _Parser] = {
@@ -160,7 +160,7 @@ class TorrentService:
             preview=preview,
         )
 
-        # Prefer the name qBittorrent reports; fall back to the release's
+        # Prefer the name qBittorrent reports. Fall back to the release's
         # title from the source page rather than the raw download link.
         return AddResult(outcome, torrent_name or source_name)
 
@@ -189,7 +189,7 @@ class TorrentService:
         infohash = item.infohash
 
         # A private torrent has no info hash, so we can't look it up by hash to
-        # dedup or to read its name back; just add it and let qBittorrent dedup
+        # dedup or to read its name back. Just add it and let qBittorrent dedup
         # internally. With a hash, skip the adding if it's already present
         if infohash is not None and self.qbit is not None:
             torr_info = self.qbit.torrents_info(torrent_hashes=infohash)

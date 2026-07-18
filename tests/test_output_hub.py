@@ -249,7 +249,7 @@ class _InterruptOnceRenderer(Renderer):
 class _ReArmableGate(Renderer):
     """Blocks inside `handle` once per armed episode until released.
 
-    `arm()` re-arms it for the next episode — the overflow-note-per-episode
+    `arm()` re-arms it for the next episode - the overflow-note-per-episode
     reset probe.
     """
 
@@ -371,7 +371,7 @@ class _EmitThenInterrupt(Renderer):
     """Emits a follow-up once, then raises KeyboardInterrupt from EVERY handle of the trigger event.
 
     This is the signal-mid-dispatch shape (the marker is a SIGTERM handler's
-    exit line; the repeat raise models a hostile arm on the flush's
+    exit line. The repeat raise models a hostile arm on the flush's
     best-effort re-dispatch).
     """
 
@@ -467,7 +467,7 @@ def test_strikes_carry_across_a_run_leg_boundary_and_only_begin_cycle_rearms() -
     hub = OutputHub([flaky, survivor])
     sub = hub._subs[0]
 
-    # Leg 1: one strike short of the limit — still armed across the leg boundary.
+    # Leg 1: one strike short of the limit - still armed across the leg boundary.
     for _ in range(STRIKE_LIMIT - 1):
         hub.emit(_EVENT)
     assert sub.strikes == STRIKE_LIMIT - 1
@@ -478,7 +478,7 @@ def test_strikes_carry_across_a_run_leg_boundary_and_only_begin_cycle_rearms() -
     assert flaky.closes == 0
 
     # Leg 2: the carried-over count makes the next failure the Nth strike, so the
-    # crossing (quarantine + close) fires across the boundary — never reset by it.
+    # crossing (quarantine + close) fires across the boundary - never reset by it.
     hub.emit(_EVENT)
     assert sub.strikes == STRIKE_LIMIT
     assert flaky.closes == 1
@@ -488,7 +488,7 @@ def test_strikes_carry_across_a_run_leg_boundary_and_only_begin_cycle_rearms() -
     assert flaky.calls == calls_at_quarantine
     assert flaky.closes == 1
 
-    # Only a cycle turnover re-arms the seat — the leg boundary never did.
+    # Only a cycle turnover re-arms the seat - the leg boundary never did.
     hub.begin_cycle(console_format="plain", level=logging.INFO)
     assert sub.strikes == 0
     hub.emit(_EVENT)
@@ -498,7 +498,7 @@ def test_strikes_carry_across_a_run_leg_boundary_and_only_begin_cycle_rearms() -
 def test_quarantine_closes_the_seat_exactly_once_at_the_crossing() -> None:
     """This test pins the live-leak fix: striking out closes the renderer (a struck boot Live must stop repainting).
 
-    Only the crossing fires it — never skipped events.
+    Only the crossing fires it - never skipped events.
     """
 
     flaky, survivor = _FailingRenderer(), RecordingRenderer()
@@ -555,7 +555,7 @@ def test_containment_notes_are_uncounted_while_a_file_surface_survives() -> None
     hub = OutputHub([flaky, survivor])
     mark = hub.counts.mark()
 
-    hub.emit(_EVENT)  # INFO event; the forensic WARNING note must not inflate the tally
+    hub.emit(_EVENT)  # INFO event. The forensic WARNING note must not inflate the tally
 
     since = hub.counts.counts_since(mark)
     assert (since.info, since.warning) == (1, 0)
@@ -591,7 +591,7 @@ def test_reentrant_emits_drain_fifo_before_the_outer_emit_returns() -> None:
 def test_a_lifecycle_reentrant_emit_enqueues_and_drains_after_the_turnover() -> None:
     """An emit from inside a renderer's lifecycle call (a bridge-adopted teardown debug) must not start a nested drain.
 
-    Starting one against a half-mutated subscriber list is unsafe; the
+    Starting one against a half-mutated subscriber list is unsafe. The
     lifecycle body holds the baton and drains the stragglers after.
     """
 
@@ -646,7 +646,7 @@ def test_an_unwinding_interrupt_still_flushes_the_queued_tail() -> None:
         hub.emit(_EVENT)
 
     # Crash fidelity, both halves: the IN-FLIGHT event's fan-out completes on the
-    # unwind path (the survivor gets the RunStarted the interrupt cut short —
+    # unwind path (the survivor gets the RunStarted the interrupt cut short -
     # even though the hostile arm re-raises on the best-effort re-dispatch), and
     # the QUEUED marker (a SIGTERM handler's exit line) flushes before the baton
     # is released.
@@ -671,7 +671,7 @@ def test_a_propagating_interrupt_never_strands_the_baton() -> None:
 def test_an_interrupt_before_the_drain_loop_cannot_wedge_the_baton(monkeypatch: pytest.MonkeyPatch) -> None:
     """An interrupt landing before _drain runs must leave no stale baton behind.
 
-    Emit only checks-and-calls; the baton is taken inside _drain's try. With the
+    Emit only checks-and-calls. The baton is taken inside _drain's try. With the
     old take-in-emit shape this KI left _drainer set forever and the follow-up
     emit dispatched nothing (the silent-dark-hub wedge).
     """
@@ -757,7 +757,7 @@ def test_overflow_sheds_newest_with_one_note_per_episode() -> None:
     assert f"q{QUEUE_CAP - 1}" in messages  # everything under the cap still renders
     assert "dropped-1" not in messages and "dropped-2" not in messages
     assert sum("overflowed" in m for m in messages) == 1  # one note, not one per drop
-    # Shed events were still counted at enqueue; the note itself is never counted.
+    # Shed events were still counted at enqueue. The note itself is never counted.
     since = hub.counts.counts_since(mark)
     assert (since.info, since.warning) == (QUEUE_CAP + 3, 0)
 
@@ -778,7 +778,7 @@ def test_overflow_never_sheds_a_structural_event(monkeypatch: pytest.MonkeyPatch
     drainer.start()
     assert gated.entered.wait(timeout=30.0)
 
-    # _EVENT is blocked mid-handle (already popped); fill the pending queue to the cap.
+    # _EVENT is blocked mid-handle (already popped). Fill the pending queue to the cap.
     for i in range(cap):
         hub.emit(Diagnostic(severity=Severity.INFO, message=f"q{i}"))
     structural = RunFinished(arr=Arr.SONARR)
@@ -831,7 +831,7 @@ def test_overflow_sheds_diagnostics_and_re_arms_the_note_per_episode(
     messages = [d.message for d in observer.of_type(Diagnostic)]
     assert sum("overflowed" in m for m in messages) == 2  # a fresh note for the new episode
 
-    # Shed diagnostics were counted at enqueue; the note itself is never counted.
+    # Shed diagnostics were counted at enqueue. The note itself is never counted.
     # Per episode: _EVENT + cap diagnostics + 2 dropped = cap + 3 info.
     since = hub.counts.counts_since(mark)
     assert (since.info, since.warning) == (2 * (cap + 3), 0)
@@ -908,7 +908,7 @@ def test_hub_tallies_every_emitted_event() -> None:
 
 
 def test_file_only_diagnostics_are_never_counted() -> None:
-    # Counts = what a visible surface could show; file_only forensics stay out.
+    # Counts = what a visible surface could show. file_only forensics stay out.
     recording = RecordingHub()
     mark = recording.hub.counts.mark()
 
@@ -1116,7 +1116,7 @@ def test_install_hub_closes_the_previously_installed_hub() -> None:
     install_hub(second)
     try:
         # A repeat run single in one process must not leak the prior hub's
-        # open FileLogSink; a re-install of the SAME hub never self-closes.
+        # open FileLogSink. A re-install of the SAME hub never self-closes.
         assert first_sink.closed
         install_hub(second)
         second.emit(_EVENT)
@@ -1180,7 +1180,7 @@ def test_a_once_key_shed_by_overflow_is_shed_whole_and_lands_on_re_emit() -> Non
     assert gated.entered.wait(timeout=30.0)
     for i in range(QUEUE_CAP):
         hub.emit(Diagnostic(severity=Severity.INFO, message=f"q{i}"))
-    hub.emit(keyed)  # at the cap: shed whole — key unregistered, uncounted
+    hub.emit(keyed)  # at the cap: shed whole - key unregistered, uncounted
 
     gated.release.set()
     drainer.join(timeout=30.0)
@@ -1190,7 +1190,7 @@ def test_a_once_key_shed_by_overflow_is_shed_whole_and_lands_on_re_emit() -> Non
 
     messages = [d.message for d in observer.of_type(Diagnostic)]
     assert messages.count("SeaDex unreachable") == 1
-    # Exactly ONE keyed warning tallied (the shed one was uncounted; the
+    # Exactly ONE keyed warning tallied (the shed one was uncounted. The
     # overflow note is file_only forensics and never counts).
     assert hub.counts.counts_since(mark).warning == 1
 
@@ -1237,7 +1237,7 @@ def test_a_mid_dispatch_lifecycle_call_keeps_the_baton_and_the_emit_order() -> N
     hub.emit(_EVENT)
 
     # Order preserved: the in-flight RunStarted completes its fan-out before the
-    # re-entrant diagnostic dispatches; nothing double-dispatches; baton released.
+    # re-entrant diagnostic dispatches. Nothing double-dispatches. Baton released.
     assert [type(e).__name__ for e in recorder.events] == ["RunStarted", "Diagnostic"]
     assert hub._drainer is None
 

@@ -43,9 +43,9 @@ Another Pearlarr run is active in ... - skipping this run
 Another Pearlarr run is active in ... - refusing to modify the cache
 ```
 
-Pearlarr takes a lock in the data directory so overlapping runs cannot corrupt the cache; the cache commands take the same lock.
+Pearlarr takes a lock in the data directory so overlapping runs cannot corrupt the cache. The cache commands take the same lock.
 Wait for the running pass to finish (a wait-for-completion pass can hold it for a while), or find the other `pearlarr` process if you did not expect one.
-A skipped scheduled cycle retries on the next one; a skipped `run single` exits 1 so your own scheduler can tell.
+A skipped scheduled cycle retries on the next one. A skipped `run single` exits 1 so your own scheduler can tell.
 
 ## The data directory is not writable
 
@@ -53,7 +53,7 @@ A skipped scheduled cycle retries on the next one; a skipped `run single` exits 
 Cannot write to the data directory ... - fix its permissions, or point
 ```
 
-The data directory (config, caches, and logs) must be writable by the user running Pearlarr.
+The data directory (config, caches, and logs) must be writable by the account running Pearlarr.
 Fix the directory's ownership or permissions, or point `--data-dir` / `PEARLARR_DATA_DIR` somewhere writable.
 Under Docker this is almost always a PUID/PGID mismatch with the mounted `./config` directory (see [deployment.md](deployment.md#permissions)).
 
@@ -65,7 +65,7 @@ Invalid configuration in ...
 Unreadable YAML in ...
 ```
 
-A run with no config writes the starter template and stops; fill it in and run again.
+A run with no config writes the starter template and stops. Fill it in and run again.
 A validation failure lists each offending key with what is wrong: unknown or misspelled keys fail loudly rather than being silently ignored.
 `pearlarr config validate` runs the same checks without starting a run, and [configuration.md](configuration.md) documents every key.
 
@@ -77,7 +77,7 @@ Config file ... uses an older config schema - migrated in memory ... run pearlar
 
 Harmless: the file was written for an older Pearlarr, and every load brings it forward in memory, so runs behave as if the file were current.
 The parenthesized part of the warning names each key or value that was folded, if any.
-`pearlarr config migrate` rewrites the file at the current schema and the warning stops; the previous file is kept beside it as `config.yml.bak`.
+`pearlarr config migrate` rewrites the file at the current schema and the warning stops. The previous file is kept beside it as `config.yml.bak`.
 See [configuration.md](configuration.md#the-config-schema-version) for what the rewrite does and does not preserve.
 
 ## Config from a newer Pearlarr
@@ -105,7 +105,7 @@ Neither sonarr nor radarr is configured - set sonarr.url and sonarr.api_key, or
 ... is set but ... is not - skipping
 ```
 
-A run needs at least one arr's `url` AND `api_key`; setting only one of the pair reads as "not configured" and the arr is skipped, with a warning naming the missing key.
+A run needs at least one arr's `url` AND `api_key`. Setting only one of the pair reads as "not configured" and the arr is skipped, with a warning naming the missing key.
 `pearlarr config validate` shows both arrs' status and names any half-configured gap.
 
 ## The arr connection fails
@@ -117,7 +117,7 @@ Could not reach ... at ...
 
 "Could not reach" is a network problem: check the `url` (scheme, host, port, and any URL base your reverse proxy adds), that the arr is actually running, and that nothing between them blocks the connection.
 "Rejected the API key" means the arr answered: re-copy the key from the arr's UI (Settings → General → Security) into `sonarr.api_key` / `radarr.api_key`.
-A failed arr aborts only that arr's run; the other arr still runs.
+A failed arr aborts only that arr's run. The other arr still runs.
 
 ## The qBittorrent connection fails
 
@@ -138,7 +138,7 @@ Could not fetch/parse the id-mapping sources - skipping this run
 Pearlarr downloads the ID-mapping sources at the start of a run and cannot resolve any title without them, so a fetch or parse failure skips the whole run rather than one title.
 It is almost always a first run with no network, or a proxy or firewall between Pearlarr and GitHub.
 The sources live on `github.com`/`objects.githubusercontent.com` and `raw.githubusercontent.com` (see [architecture.md](architecture.md#external-hosts)).
-Fix the connection or allowlist those hosts and the run succeeds; a scheduled cycle retries on its own, and once a source is cached (`advanced.cache_time` days) a later network blip falls back to the cached copy instead of skipping.
+Fix the connection or allowlist those hosts and the run succeeds. A scheduled cycle retries on its own, and once a source is cached (`advanced.cache_time` days) a later network blip falls back to the cached copy instead of skipping.
 
 ## Private-only releases
 
@@ -160,7 +160,7 @@ Titles with no public alternative stay in the summary's "needs action" list and 
 tracker not yet supported; grab manually
 ```
 
-"Not yet supported" means the winning release lives on a public tracker Pearlarr cannot parse download links from yet (currently supported: Nyaa, AnimeTosho, and RuTracker); the title is re-considered once support lands, or grab it manually meanwhile.
+"Not yet supported" means the winning release lives on a public tracker Pearlarr cannot parse download links from yet (currently supported: Nyaa, AnimeTosho, and RuTracker). The title is re-considered once support lands, or grab it manually meanwhile.
 "Not in your selected list" is your own `seadex.trackers` filter doing its job: add the tracker to the list if you want releases from it.
 
 ## Unknown tracker names
@@ -170,7 +170,7 @@ Unknown seadex.trackers value(s) ignored by matching:
 ```
 
 A name in `seadex.trackers` matched no tracker SeaDex uses, so it filters nothing, usually a typo.
-The warning lists the known names (matching is case-insensitive); the generated table in [configuration.md](configuration.md#seadex) has them too.
+The warning lists the known names (matching is case-insensitive). The generated table in [configuration.md](configuration.md#seadex) has them too.
 
 ## The config file is world-readable
 
@@ -179,7 +179,7 @@ is readable by other users and holds API keys -
 ```
 
 `config.yml` holds API keys and passwords in plain text, so Pearlarr warns when other users on the machine can read it.
-The warning names the exact `chmod` command to run; `pearlarr config init` creates the file owner-only to begin with.
+The warning names the exact `chmod` command to run. `pearlarr config init` creates the file owner-only to begin with.
 
 ## Slow or unusually busy runs
 
@@ -191,10 +191,10 @@ Matching settings changed - rechecking cached entries
 Four situations make a run noticeably slower, all expected:
 
 - **The first run** downloads and parses the ID-mapping sources and evaluates the whole library from scratch.
-  On a large library this takes minutes; later runs reuse the parsed mappings and the cache, and typically finish in well under a minute when little changed.
+  On a large library this takes minutes. Later runs reuse the parsed mappings and the cache, and typically finish in well under a minute when little changed.
 - **A long gap since the last run** (or a restored cache) exceeds the arr-activity lookback, so change detection cannot vouch for the interval and every cached title is re-checked once (the "history gap" note above).
-- **A changed matching preference** (anything in the `seadex` group, or `imports.languages_*`) makes the next full run re-check every cached title against the new rules once (the "Matching settings changed" note above); see [configuration.md](configuration.md#configuration-changes-and-the-cache).
-- **A SeaDex or mapping-source hiccup** makes affected titles count as unchecked; they are simply retried next run.
+- **A changed matching preference** (anything in the `seadex` group, or `imports.languages_*`) makes the next full run re-check every cached title against the new rules once (the "Matching settings changed" note above). See [configuration.md](configuration.md#configuration-changes-and-the-cache).
+- **A SeaDex or mapping-source hiccup** makes affected titles count as unchecked. They are simply retried next run.
 
 Runs are also deliberately paced (`advanced.sleep_time`) to be a polite API citizen, so "slow" is partly by design.
 
@@ -208,7 +208,7 @@ Removing the cache is a factory reset for when the database itself is suspect (a
 
 ## Where the logs live
 
-Every run writes `Pearlarr.log` under the data directory's `logs/` folder; `pearlarr paths` prints the exact location, and the per-OS defaults are listed in [deployment.md](deployment.md#the-data-directory).
+Every run writes `Pearlarr.log` under the data directory's `logs/` folder. `pearlarr paths` prints the exact location, and the per-OS defaults are listed in [deployment.md](deployment.md#the-data-directory).
 Previous runs are kept as dated `Pearlarr.log.<timestamp>` backups for `advanced.log_retention_days` days (see [output.md](output.md#the-log-file)).
 Logs are safe to paste into an issue: they never contain API keys, passwords, or webhook URLs ([SECURITY.md](../SECURITY.md#the-redaction-guarantee)).
 

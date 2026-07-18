@@ -1,4 +1,4 @@
-"""The typer command surface: subcommands, process wiring, and exit codes; `bootstrap.py` owns composition."""
+"""The typer command surface: subcommands, process wiring, and exit codes. `bootstrap.py` owns composition."""
 
 from __future__ import annotations
 
@@ -88,7 +88,7 @@ def _exit_on_failure(result: object, **_: object) -> None:
     0 and scripts can't detect the failure. Commands keep returning `bool` for
     programmatic callers (tests call them directly, bypassing this callback).
     The ROOT app's registration is the load-bearing one (a sub-command's False
-    propagates up through callback-less groups); the sub-app registrations are
+    propagates up through callback-less groups). The sub-app registrations are
     defense-in-depth, so don't "simplify" the root one away.
     """
 
@@ -173,7 +173,7 @@ def _open_cache_readonly(cache_path: str) -> Generator[CacheStore]:
     """Open cache.db read-only for a diagnostic command, closing it afterwards.
 
     Read-only (no descriptor re-stamp, no WAL switch, no fail-open quarantine) so
-    the diagnostic reflects the file as-is; a corrupt/not-a-database file raises
+    the diagnostic reflects the file as-is. A corrupt/not-a-database file raises
     `sqlite3.DatabaseError` from the first read, for the command to report.
     The caller checks the file exists first (`_echo_missing`).
     """
@@ -315,9 +315,9 @@ def _peek_config(config_path: str) -> AppConfig | None:
     """Silently read + validate the config for a pre-logger peek, or None.
 
     Never writes the starter template and never logs: `bootstrap.load_shared_config`
-    owns the first-run copy and the user-facing config errors. Only the load's
+    owns the first-run copy and the operator-facing config errors. Only the load's
     real failure set (unreadable file, bad YAML, failed validation) is
-    suppressed; anything else is a programming bug and must surface.
+    suppressed. Anything else is a programming bug and must surface.
     """
 
     with contextlib.suppress(OSError, yaml.YAMLError, ValidationError):
@@ -378,10 +378,10 @@ def _console_seat(console_format: LogFormat, caps_cache: CapsCache) -> Renderer:
     """The hub's console seat for a cycle's RESOLVED format.
 
     rich gets the cockpit renderer (boot/scan/wait regions over the shared
-    Console); plain and json get the matching stdout text seat.
+    Console). Plain and json get the matching stdout text seat.
     """
 
-    # "auto" is unreachable from production (cli resolves pre-begin_cycle);
+    # "auto" is unreachable from production (cli resolves pre-begin_cycle).
     # folded defensively for programmatic callers.
     console_format = resolve_console_format(console_format)
     if console_format == "rich":
@@ -392,11 +392,11 @@ def _console_seat(console_format: LogFormat, caps_cache: CapsCache) -> Renderer:
 
 
 def _install_output_hub(paths: AppPaths) -> tuple[OutputHub, FileLogSink]:
-    """Build + install the per-process OutputHub; its sinks own file/plain/json.
+    """Build + install the per-process OutputHub. Its sinks own file/plain/json.
 
     The FileLogSink is deliberately the first stable sink (`_subs[0]`):
     file-before-console dispatch, so a blocked tty can never starve the file.
-    Installed BEFORE `setup_logger` — required, so a record fired from inside
+    Installed BEFORE `setup_logger` - required, so a record fired from inside
     it (the invalid-level complaint) reaches the hub instead of
     `logging.lastResort`. `install_hub` closes any previously installed hub
     (a repeat `run single` in-process must not leak an open FileLogSink).
@@ -431,7 +431,7 @@ def _schedule_hours(config_path: str) -> float:
     """Hours between scheduled cycles: SCHEDULE_TIME env (deprecated) > config > 6.
 
     A valid positive finite SCHEDULE_TIME still wins (with a deprecation
-    warning); an invalid one is reported with the value actually used instead.
+    warning). An invalid one is reported with the value actually used instead.
     Both notices go through the hub so they reach the log file and render
     styled among the run's other lines. Config read failures - including a
     still-missing file - degrade to the default quietly (`_peek_config`).
@@ -457,7 +457,7 @@ def _schedule_hours(config_path: str) -> float:
 def _handle_sigterm(signum: int, frame: FrameType | None) -> NoReturn:
     """Scheduled mode's SIGTERM handler: announce, then exit 0 (a clean stop).
 
-    Docker stop / systemd deliver SIGTERM; the raise interrupts even the
+    Docker stop / systemd deliver SIGTERM. The raise interrupts even the
     inter-cycle `time.sleep`, so shutdown is prompt at any point in the loop.
     """
 
@@ -474,7 +474,7 @@ def run_scheduled(
 ) -> None:
     """Run every configured arr module on a loop (each schedule.interval_hours).
 
-    This is the bare-metal fallback scheduler; the container image runs
+    This is the bare-metal fallback scheduler. The container image runs
     supercronic instead.
     """
 
@@ -509,7 +509,7 @@ def run_scheduled(
         # configured arr (one config read + one download/parse per cycle, reused
         # by both). On an invalid-config/source failure bootstrap.run_arrs logs
         # the cause and the cycle is skipped, so it's retried next pass rather
-        # than crashing; a MISSING config instead exits 1 (typer.Exit from
+        # than crashing. A MISSING config instead exits 1 (typer.Exit from
         # bootstrap.load_shared_config) - retrying can't fill the template in.
         # No ad-hoc preamble here: the branded title (logged by run_arrs) leads
         # each cycle, so the scheduled path reads the same as a single run.
@@ -529,7 +529,7 @@ def run_scheduled(
         time.sleep(schedule_time * 3600)
 
 
-# Single run. The user-facing help lives on the decorator; the docstring below
+# Single run. The user-facing help lives on the decorator. The docstring below
 # (with its Args block) is for API readers and never reaches --help.
 @pearlarr_run.command(
     "single",
@@ -561,8 +561,8 @@ def run_single(
 ) -> bool:
     """Do a single Pearlarr run.
 
-    With no selection flag, every configured arr is run (like scheduled mode);
-    the flags narrow the run to one arr or one title.
+    With no selection flag, every configured arr is run (like scheduled mode).
+    The flags narrow the run to one arr or one title.
 
     Args:
         radarr: Only run the Radarr module.
@@ -580,7 +580,7 @@ def run_single(
             (cli > config > INFO).
     """
 
-    # Passing a flag or a movie/series ID narrows the run to that arr; with no
+    # Passing a flag or a movie/series ID narrows the run to that arr. With no
     # selection at all, run everything configured (mirrors scheduled mode). The
     # distinction is remembered so bootstrap.configured_arrs can refuse an explicit
     # request for an unconfigured arr instead of silently skipping it.
@@ -606,7 +606,7 @@ def run_single(
     hub.begin_cycle(console_format=console_format, level=logger.level)
 
     # Build the shared config + mappings once and run each requested arr. True
-    # when the run proceeded and every arr completed; False (exit 1) when the
+    # when the run proceeded and every arr completed. False (exit 1) when the
     # shared config/mappings couldn't be built, the selection was refused, or an
     # arr run failed.
     return bootstrap.run_arrs(
@@ -629,13 +629,13 @@ def config_init(
 ) -> bool:
     """Write a starter config.yml to the data directory.
 
-    The file lands in the resolved data directory (see the paths command);
-    override the location with --data-dir or PEARLARR_DATA_DIR. An existing
+    The file lands in the resolved data directory (see the paths command).
+    Override the location with --data-dir or PEARLARR_DATA_DIR. An existing
     config.yml is never overwritten unless --force is passed, so a re-run can't
     wipe out a filled-in configuration.
     """
 
-    # Install the cli surface first so every emit below renders through it; the
+    # Install the cli surface first so every emit below renders through it. The
     # data-dir failures deliberately stay on the pre-hub stderr path (they also
     # fire pre-hub on the run path, where a hub_error would drop silently).
     with cli_surface(json_output):
@@ -663,7 +663,7 @@ def _run_config_action[T](path: str, action: Callable[[str], T]) -> T | None:
     Unlike the run path (where `AppConfig.load` copies the starter template on
     a missing file), these commands must not create a config, so existence is
     checked first. Every failure mode is a clean echo to stderr, never a
-    traceback; the action must fail like `AppConfig.load` does.
+    traceback. The action must fail like `AppConfig.load` does.
     """
 
     if not os.path.exists(path):
@@ -722,7 +722,7 @@ def config_migrate(json_output: Annotated[bool, typer.Option("--json", help=_JSO
     Runs never require this - an older file is migrated in memory at every load -
     but the file itself keeps the old spelling until rewritten. The rewrite is
     the current annotated template with this file's values (and any schema fixes)
-    filled in; the previous file is saved beside it as config.yml.bak first. A
+    filled in. The previous file is saved beside it as config.yml.bak first. A
     file already at the current version is left untouched.
     """
 
@@ -744,7 +744,7 @@ def config_migrate(json_output: Annotated[bool, typer.Option("--json", help=_JSO
 
 
 # Values under these keys hold credentials (the webhook URLs embed tokens), so
-# `config show` masks them; matched case-insensitively as substrings of the
+# `config show` masks them. Matched case-insensitively as substrings of the
 # dumped key names.
 _SECRET_KEY_MARKERS = ("api_key", "password", "webhook", "discord", "username")
 
@@ -760,7 +760,7 @@ def _redact_secrets(node: JsonValue, *, mask_values: bool = False) -> JsonValue:
 
     Only non-None values are masked, so an unset secret still reads as `null`
     (the "is it even set?" question is usually why the dump is being shared).
-    URL/host values keep their host but mask any embedded `user:pass@` login;
+    URL/host values keep their host but mask any embedded `user:pass@` login.
     `mask_values` (set inside a `_MASK_ALL_SUBTREES` subtree) masks every
     value regardless of key name.
     """
@@ -797,7 +797,7 @@ def config_show(json_output: Annotated[bool, typer.Option("--json", help=_JSON_H
         if app_config is None:
             return False
 
-        # Redact before the emit; a model dump is always an object, the assert
+        # Redact before the emit. A model dump is always an object, the assert
         # only narrows the recursive helper's return type.
         redacted = _redact_secrets(app_config.model_dump(mode="json"))
         assert isinstance(redacted, dict)
@@ -834,7 +834,7 @@ def cache_backup(json_output: Annotated[bool, typer.Option("--json", help=_JSON_
                 ):
                     source.backup(dest)
             except sqlite3.DatabaseError as e:
-                # Report the corrupt/torn source cleanly and drop the torn temp file;
+                # Report the corrupt/torn source cleanly and drop the torn temp file.
                 # a previous good cache.backup.db is left untouched.
                 with contextlib.suppress(OSError):
                     os.remove(tmp_backup)

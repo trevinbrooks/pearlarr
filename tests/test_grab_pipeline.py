@@ -1,14 +1,14 @@
 # pyright: strict
 # pyright: reportPrivateUsage=false
 # The add-path assertions read the pipeline's private wiring (_grab / _ctx), which
-# strict re-flags; the repo disables reportPrivateUsage for tests.
+# strict re-flags. The repo disables reportPrivateUsage for tests.
 """Unit tests for the grab "produce" side (`GrabPipeline`).
 
 Pin the add path - `_add_one_url` registering durable `PendingImport`
 records, `add_torrent`'s cap bookkeeping, and `_grab` returning a pure
-cap-reached bool (it never finalizes; the engine owns the single finalize site).
+cap-reached bool (it never finalizes. The engine owns the single finalize site).
 Built bare (`object.__new__` via `make_bare_instance`) so no live qBittorrent
-login happens; the client `add` is faked by `FakeTorrents`.
+login happens. The client `add` is faked by `FakeTorrents`.
 """
 
 from collections.abc import Mapping
@@ -87,8 +87,8 @@ class TestGrabReturnsPureBool:
     """_grab signals cap-reached as a bool and never finalizes itself.
 
     GrabPipeline holds no reference back to the engine, so "without finalizing" is
-    now a structural property - the pipeline can't reach `_finalize_run` at all;
-    the test pins the cap-reached return value the engine's single finalize site
+    now a structural property - the pipeline can't reach `_finalize_run` at all.
+    The test pins the cap-reached return value the engine's single finalize site
     keys off.
     """
 
@@ -205,7 +205,7 @@ class TestGrabPushesNotice:
         assert embed.url == "https://releases.moe/7"
         assert embed.thumb_url == "https://img/cover"
         assert embed.image_url == "https://img/banner"
-        # A single-group grab hoists its pick into the description; the
+        # A single-group grab hoists its pick into the description. The
         # subtitle/notes stack trails as the nameless (header-free) field.
         assert embed.description == "**Grabbed · `PMR`**\n[Nyaa](https://nyaa.si/view/1)"
         assert [f.name for f in embed.fields] == ["Episodes", "Replacing", ""]
@@ -451,7 +451,7 @@ class TestGrabAndCacheCapStop:
 
         assert stop is True
         assert pipeline._ctx.torrents_added == 1
-        # The engine's single finalize site owns the save; no per-title write here.
+        # The engine's single finalize site owns the save. No per-title write here.
         assert pipeline.cache_store.get_entry(Arr.SONARR, 42) is None
         # A clean cap stop reports nothing extra (no phantom needs-action row).
         assert pipeline._ctx.stats.needs_action == []
@@ -461,8 +461,8 @@ class TestUpToDateTally:
     """The up-to-date counter accumulates across titles."""
 
     def test_two_up_to_date_titles_both_counted(self) -> None:
-        # MUTATION PIN: `stats.up_to_date += 1` degraded to `= 1` clamps at one;
-        # two nothing-to-download titles must tally 2.
+        # MUTATION PIN: `stats.up_to_date += 1` degraded to `= 1` clamps at one.
+        # Two nothing-to-download titles must tally 2.
         pipeline = _pipeline(torrents=FakeTorrents({}), sleep_time=0)
 
         for al_id in (1, 2):
@@ -500,7 +500,7 @@ class TestUnsupportedTrackerSkip:
 
     def test_skipped_but_loop_continues(self) -> None:
         # AniDex first, Nyaa second, under one group. The old raise unwound the whole
-        # url loop - dropping the grabbable Nyaa release too; now AniDex is skipped and
+        # url loop - dropping the grabbable Nyaa release too. Now AniDex is skipped and
         # the loop continues. Default config: private_releases warn, all trackers selected.
         anidex = _anidex_release(url="https://anidex.info/torrent/1", infohash="hA")
         nyaa = url_item(url="https://nyaa.si/view/2", infohash="hN", download=True)
@@ -513,7 +513,7 @@ class TestUnsupportedTrackerSkip:
 
         n_added, results = pipeline.add_torrent(seadex_dict, pending_seeds=seeds)
 
-        # AniDex never reached the service; only Nyaa was handed over and added.
+        # AniDex never reached the service. Only Nyaa was handed over and added.
         assert torrents.calls == ["hN"]
         assert n_added == 1
         assert pipeline._ctx.torrents_added == 1
@@ -655,7 +655,7 @@ class TestUnsupportedTrackerSkip:
         assert pipeline.cache_store.get_entry(Arr.SONARR, 7) is None
 
     def test_interactive_private_pick_reads_as_a_hand_picked_no_fallback(self) -> None:
-        # Interactive + fallback: a hold here is the user's own private pick, so
+        # Interactive + fallback: a hold here is a hand-picked private pick, so
         # the reason says so - but the kind stays NO_FALLBACK so the summary tip
         # never suggests enabling the fallback that's already on.
         private = url_item(url="https://ab.example/1", infohash="hP", is_public=False, download=True)
@@ -763,7 +763,7 @@ class TestUnsupportedTrackerSkip:
         assert pipeline._ctx.stats.needs_action == []
 
     def test_warn_mode_grab_clears_a_preseeded_marker(self) -> None:
-        # A prior fallback run left fallback_satisfied=True; a later genuine grab
+        # A prior fallback run left fallback_satisfied=True. A later genuine grab
         # recomputes False and clears it (the marker is always written - the
         # partial-merge upsert would otherwise preserve the stale True forever).
         nyaa = url_item(url="https://nyaa.si/view/2", infohash="hN", download=True)
@@ -858,7 +858,7 @@ class TestGrabFailureContainment:
     )
     def test_failure_is_one_clean_warning_no_traceback(self, error: Exception) -> None:
         # Every boundary failure mode lands as ONE typed GrabFailed event (the
-        # old path fell through to run_loop's per-id traceback arm; the frozen
+        # old path fell through to run_loop's per-id traceback arm. The frozen
         # fact carries no traceback by construction, and it tallies WARNING).
         torrents = FakeTorrents({}, raises={"h1": error})
         pipeline = _pipeline(torrents=torrents)
@@ -1028,7 +1028,7 @@ class TestFallbackHoldNeverCaches:
         assert "no public alternative" in rows[0].reason
 
     def test_interactive_partial_grab_still_caches(self) -> None:
-        # Interactive: the hold is the user's own hand-picked private release, so
+        # Interactive: the hold is a hand-picked private release, so
         # the plain gate stands - the partial grab caches the title as today.
         torrents = FakeTorrents({"hN": (AddOutcome.ADDED, "Show-Pub")})
         pipeline = _pipeline(torrents=torrents, private_releases="fallback", interactive=True, sleep_time=0)
@@ -1061,7 +1061,7 @@ class TestShouldCacheAsDone:
         added_this_title: int = 0,
         grab_failed: bool = False,
     ) -> bool:
-        """One truth-table row; every keyword is one axis of the predicate."""
+        """One truth-table row. Every keyword is one axis of the predicate."""
 
         pipeline = make_grab_pipeline(private_releases=private_releases, interactive=interactive)
         pipeline._ctx.per_title.private_only_skipped = private_only_skipped
@@ -1097,7 +1097,7 @@ class TestShouldCacheAsDone:
         assert self._predicate(private_only_skipped=True, added_this_title=1) is True
 
     def test_interactive_defuses_the_fallback_hold(self) -> None:
-        # The hold is the user's own hand-picked private release: plain gate stands.
+        # The hold is a hand-picked private release: plain gate stands.
         assert (
             self._predicate(
                 private_releases="fallback",

@@ -1,8 +1,8 @@
 # pyright: strict
 """CLI documentation pipeline: help-text completeness and style on the built command tree.
 
-The generator (docs/cli.md) hard-fails on a missing command or option help;
-these tests add the style rules it cannot judge: sentence-case starts, no
+The generator (docs/cli.md) hard-fails on a missing command or option help.
+These tests add the style rules it cannot judge: sentence-case starts, no
 trailing periods on option help, and no restated config defaults (the
 generated configuration reference owns defaults).
 """
@@ -17,7 +17,7 @@ from pearlarr.cli import pearlarr_cli
 type _Node = typer.core.TyperCommand | typer.core.TyperGroup
 
 # typer's own completion options ship their own help text (trailing period
-# included); the style rules govern our strings, not typer's.
+# included). The style rules govern our strings, not typer's.
 _TYPER_BUILTINS = frozenset({"install_completion", "show_completion"})
 
 
@@ -72,7 +72,7 @@ def test_option_help_is_sentence_case_without_trailing_period() -> None:
 
 
 def test_option_help_never_restates_config_defaults() -> None:
-    # The generated configuration reference owns defaults; help prose restating
+    # The generated configuration reference owns defaults. Help prose restating
     # them is the drift the single-source pipeline exists to kill.
     banned = re.compile(r"[Dd]efaults? to|[Dd]efault:|\(default")
     offenders = [path for path, param in _options() if param.help and banned.search(param.help)]

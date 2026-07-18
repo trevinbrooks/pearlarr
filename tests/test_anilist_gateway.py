@@ -1,7 +1,7 @@
 # pyright: strict
 """Contract tests for `AniListGateway`: the TTL gates, eviction, prefetch, and the per-id get-or-fetch resolvers.
 
-The gateway is driven over the in-memory `FakeCacheStore`; the HTTP/retry
+The gateway is driven over the in-memory `FakeCacheStore`. The HTTP/retry
 layer is already pinned in `test_anilist_client`, so the wire is faked with a
 checked scripted `AniListClient` subclass injected at construction.
 """
@@ -109,7 +109,7 @@ class TestLoadCacheTtlGate:
 
 
 class TestSaveCacheFreshSkip:
-    """save_cache keeps a still-fresh record's ORIGINAL stamp; rewrites the rest."""
+    """save_cache keeps a still-fresh record's ORIGINAL stamp. Rewrites the rest."""
 
     def test_fresh_keeps_stamp_stale_and_missing_rewritten(self) -> None:
         gateway, store = _make_gateway()
@@ -177,7 +177,7 @@ class TestPrefetch:
         assert client.batch_calls == []
 
     def test_51_missing_chunks_merges_persists_and_reports(self) -> None:
-        # 51 missing ids -> two id_in pages ([50, 1]); id 7 is unknown to AniList
+        # 51 missing ids -> two id_in pages ([50, 1]). id 7 is unknown to AniList
         # (absent from the batch result), which is just a miss, never a raise.
         client = _ScriptedClient(absent=frozenset({7}))
         gateway, store = _make_gateway(client)
@@ -191,7 +191,7 @@ class TestPrefetch:
         # Both pages rode the injected wire client (which binds the transport and
         # the retry narration itself - no per-call threading left to mis-wire).
         assert client.batch_calls == [ids[:ANILIST_BATCH_SIZE], ids[ANILIST_BATCH_SIZE:]]
-        # Both pages merged into the run cache; the absent id is simply absent.
+        # Both pages merged into the run cache. The absent id is simply absent.
         assert set(gateway.al_cache) == set(ids) - {7}
         # Persisted (via put_anilist_meta) before returning, so the batch's work
         # survives an early run exit.
@@ -220,7 +220,7 @@ class TestMediaResolution:
         assert gateway.banner(42) == "https://img/banner"
         assert gateway.media_format(42) == "TV"
         assert gateway.n_eps(42) == 12
-        # The first resolver fetched and stored the raw body; the other four
+        # The first resolver fetched and stored the raw body. The other four
         # were cache hits, so the wire saw exactly one query.
         assert client.query_calls == [42]
         assert 42 in gateway.al_cache

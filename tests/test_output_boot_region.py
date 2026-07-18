@@ -7,7 +7,7 @@ The RichRenderer's boot region draws the banner, graduates finished steps to
 durable scrollback lines, prints the capstone, degrades to the heads-up digest
 on a non-live rich console, and tears its single Live slot down whenever the
 boot section leaves the fold's frontier (ScopeClosed, ScanStarted, run/cycle
-boundaries). The pure ledger-line builders are pinned directly; the file/plain
+boundaries). The pure ledger-line builders are pinned directly. The file/plain
 surfaces render the same events through the `output.textline` grammar.
 """
 
@@ -137,7 +137,7 @@ def test_format_step_secs_bands() -> None:
 
 
 class TestBootRegion:
-    """Boot region: steps graduate to durable lines; the Live slot tears down at every scope/run/cycle boundary."""
+    """Boot region: steps graduate to durable lines. The Live slot tears down at every scope/run/cycle boundary."""
 
     def test_banner_renders_title_blank_and_data_dir(self) -> None:
         renderer, stream = _renderer()
@@ -211,7 +211,7 @@ class TestBootRegion:
             _finished("Refreshing mappings"),
             ScopeClosed(scope=_SECTION),
         )
-        # The live spinner shows liveness; no bare heads-up LINE lands in
+        # The live spinner shows liveness. No bare heads-up LINE lands in
         # scrollback (spinner frames carry a glyph + padding, never this form).
         assert "  Refreshing mappings…" not in _plain(wide).splitlines()
 
@@ -239,7 +239,7 @@ class TestBootRegion:
 
     def test_scan_started_tears_down_the_live_slot(self) -> None:
         # The trap: ScanStarted evicts the boot section in the fold WITHOUT
-        # any ScopeClosed; the spinner must not survive over the scan output.
+        # any ScopeClosed. The spinner must not survive over the scan output.
         renderer, _stream = _renderer()
 
         _feed(renderer, _opened(), _started("Fetching library"))
@@ -262,7 +262,7 @@ class TestBootRegion:
     def test_run_finished_leg_boundary_evicts_the_live_and_the_next_leg_starts_fresh(self) -> None:
         # G4: within one scheduled cycle each arr leg ends with RunFinished (never a
         # begin_cycle). The leg close must evict the boot Live so the next leg's boot
-        # section starts a FRESH slot — a leaked Live would be reused (stale region,
+        # section starts a FRESH slot - a leaked Live would be reused (stale region,
         # nested on rich's live stack), so the load-bearing pin is object identity.
         renderer, stream = _renderer()
 
@@ -322,7 +322,7 @@ class TestBootRegion:
             ScopeClosed(scope=_SECTION),
         )
 
-        # The durable line carries the final detail; the bar frames were transient.
+        # The durable line carries the final detail. The bar frames were transient.
         assert f"  ✔ Refreshing mappings{SEP}1/2 MB{SEP}0.61s" in _plain(stream)
 
     def test_raised_level_silences_the_durable_boot_lines(self) -> None:

@@ -1,27 +1,27 @@
-"""OutputHub: enqueue under one RLock; a single drainer dispatches outside it.
+"""OutputHub: enqueue under one RLock. A single drainer dispatches outside it.
 
 `emit` appends to a bounded queue under the hub lock, and the first emitter
 becomes the combiner: it drains the queue and calls renderers with the lock
-RELEASED, re-checking for new entries before handing the baton back — so no
+RELEASED, re-checking for new entries before handing the baton back - so no
 event ever waits for a future emit. Dispatch is lock-free, so it can never form
-the hub-lock→console-lock (ABBA) inversion; the lifecycle calls that DO hold the
+the hub-lock→console-lock (ABBA) inversion. The lifecycle calls that DO hold the
 hub lock across a renderer (`begin_cycle`/`close`/`_swap_console`, where
 `close` reaches `Live.stop`'s Console lock) stay deadlock-free by the
 separate lock-ordering guarantee, not by this drain. Deliberately not a consumer
 thread: this hub is the
 app's UI, and synchronous main-path dispatch keeps output ordered with program
-actions and crash-faithful; cross-thread events are rare stragglers the active
+actions and crash-faithful. Cross-thread events are rare stragglers the active
 drain picks up. Lifecycle calls (`begin_cycle`/`set_level`/`close`) park
-until no drain is in flight, so they never race a renderer's `handle` — and
+until no drain is in flight, so they never race a renderer's `handle` - and
 they hold the drain baton for their body, so a re-entrant emit from inside a
 renderer's lifecycle call (a bridge-adopted `logger.debug` in a teardown path)
 enqueues instead of draining against a half-mutated subscriber list.
 
 Renderers that raise strike out (3 per cycle) and are skipped until
-`begin_cycle` re-arms them — never a process-latching quarantine (the verified
+`begin_cycle` re-arms them - never a process-latching quarantine (the verified
 daemon hazard). Striking out also closes the renderer, so a quarantined seat
 releases its resources (a live spinner must stop repainting). `emit` itself never raises on a renderer bug, so presentation
-can never abort a run or the cache save; KeyboardInterrupt/SystemExit still
+can never abort a run or the cache save. KeyboardInterrupt/SystemExit still
 propagate (Ctrl-C must unwind). The hub reads the clock once per emit and hands
 every renderer the same instant, so cross-sink timestamps can never disagree.
 """
@@ -45,8 +45,8 @@ from ..config import LogFormat
 # Strikes per renderer per cycle before it is skipped until the next begin_cycle.
 STRIKE_LIMIT: Final = 3
 
-# Bound on the pending-event queue; overflow sheds the newest DIAGNOSTIC only (one
-# file-only note per episode) — structural/scan events are never shed. A blocking
+# Bound on the pending-event queue. Overflow sheds the newest DIAGNOSTIC only (one
+# file-only note per episode) - structural/scan events are never shed. A blocking
 # enqueue would re-form the ABBA deadlock.
 QUEUE_CAP: Final = 10_000
 
@@ -62,8 +62,10 @@ class Renderer(ABC):
     """
 
     writes_file_only: ClassVar[bool] = False
-    """True only for the surface that renders file_only diagnostics (the file sink); the
-    hub reads it to decide whether a containment note still has a home."""
+    """True only for the surface that renders file_only diagnostics (the file sink).
+
+    The hub reads it to decide whether a containment note still has a home.
+    """
 
     @abstractmethod
     def handle(self, event: Event, when: float) -> None: ...
@@ -101,7 +103,7 @@ class NullRenderer(Renderer):
 
 @dataclass(frozen=True, slots=True)
 class SeverityTally:
-    """A frozen per-severity count snapshot; marks and deltas are both this type."""
+    """A frozen per-severity count snapshot. Marks and deltas are both this type."""
 
     debug: int = 0
     info: int = 0
@@ -111,7 +113,7 @@ class SeverityTally:
 
     @property
     def errors(self) -> int:
-        """ERROR and CRITICAL together — the summary's "errors" notion."""
+        """ERROR and CRITICAL together - the summary's "errors" notion."""
 
         return self.error + self.critical
 
@@ -127,7 +129,7 @@ class SeverityTally:
 
 @dataclass(frozen=True, slots=True)
 class CountsMark:
-    """A baseline stamped on ONE counter; since() can never diff across hubs."""
+    """A baseline stamped on ONE counter. since() can never diff across hubs."""
 
     counts: SeverityCounts
     baseline: SeverityTally
@@ -138,14 +140,14 @@ class CountsMark:
 
 @final
 class SeverityCounts:
-    """Monotonic per-process tallies; runs take a mark() and read counts_since().
+    """Monotonic per-process tallies. Runs take a mark() and read counts_since().
 
     Never "reset per cycle", always deltas via marks.
     """
 
     def __init__(self) -> None:
         # RLock: a SIGTERM handler's emit can land while THIS thread is inside
-        # record(); re-entry may lose one increment, a Lock would deadlock.
+        # record(). Re-entry may lose one increment, a Lock would deadlock.
         self._lock = threading.RLock()
         self._counts: dict[Severity, int] = dict.fromkeys(Severity, 0)
 
@@ -154,7 +156,7 @@ class SeverityCounts:
             self._counts[severity] += 1
 
     def mark(self) -> SeverityTally:
-        """The current totals — hold it and diff later via counts_since()."""
+        """The current totals - hold it and diff later via counts_since()."""
 
         with self._lock:
             return SeverityTally(
@@ -189,7 +191,7 @@ class OutputHub:
     """The one dispatch point: every surface sees every event, in emit order.
 
     `renderers` are the stable sinks (file/json/...) and never contain a
-    console; the console renderer lives in its own tracked seat (`console` at
+    console. The console renderer lives in its own tracked seat (`console` at
     construction, thereafter swapped by `begin_cycle` via `console_factory`).
     """
 
@@ -230,7 +232,7 @@ class OutputHub:
 
     @property
     def level(self) -> int:
-        """The configured level — a lock-free int read for the bridge's early-out."""
+        """The configured level - a lock-free int read for the bridge's early-out."""
 
         return self._level
 
@@ -250,28 +252,28 @@ class OutputHub:
 
         Deliberately lock-free: the bridge consults it under handler locks for
         the file-only downgrade. The identity read is exact for the calling
-        thread — only the thread itself can have set the baton to itself.
+        thread - only the thread itself can have set the baton to itself.
         """
 
         return self._drainer is threading.current_thread()
 
     def emit(self, event: Event) -> None:
-        """Enqueue under the hub lock; the combiner dispatches outside it.
+        """Enqueue under the hub lock. The combiner dispatches outside it.
 
         Under the lock: closed/once-key gating, the severity tally (at enqueue,
-        so counts survive a dying renderer; file_only diagnostics are never
+        so counts survive a dying renderer. file_only diagnostics are never
         counted), one clock read, one queue append.
         If no drain is active the caller enters the combiner, which takes the
-        baton interrupt-safely and drains synchronously before returning;
-        otherwise the active drainer picks the event up (its loop re-checks the
-        queue before releasing the baton) — this covers both cross-thread emits
+        baton interrupt-safely and drains synchronously before returning.
+        Otherwise the active drainer picks the event up (its loop re-checks the
+        queue before releasing the baton) - this covers both cross-thread emits
         and re-entrant emits from inside a renderer's handle.
-        Overflow past the cap sheds only diagnostics — the unbounded bridge-fed
-        class; structural/scan events are appended even past the cap (fold inputs
+        Overflow past the cap sheds only diagnostics - the unbounded bridge-fed
+        class. Structural/scan events are appended even past the cap (fold inputs
         must never be lost), and never blocks (bounded blocking would re-form the
         ABBA deadlock through backpressure). Total
         against renderer bugs: a raise strikes the renderer and surfaces as a
-        file-only diagnostic to the survivors; emit itself never raises
+        file-only diagnostic to the survivors. emit itself never raises
         (KeyboardInterrupt/SystemExit still propagate). Emits on a closed hub
         drop silently.
         """
@@ -287,12 +289,12 @@ class OutputHub:
                     return
             when = self._clock()
             if isinstance(event, Diagnostic) and len(self._pending) >= QUEUE_CAP:
-                # Shed ONLY diagnostics — the unbounded bridge-fed class. Structural/
+                # Shed ONLY diagnostics - the unbounded bridge-fed class. Structural/
                 # scan events are O(library) and can't themselves overflow the cap, so
                 # its memory bound survives while fold inputs are never lost. A
-                # keyless diagnostic sheds rendering only (its tally stands); a
-                # once-keyed one is shed WHOLE — key unregistered, uncounted, dedup
-                # parity with the duplicate arm — so a re-emit after the queue
+                # keyless diagnostic sheds rendering only (its tally stands). A
+                # once-keyed one is shed WHOLE - key unregistered, uncounted, dedup
+                # parity with the duplicate arm - so a re-emit after the queue
                 # drains still lands instead of dying on a consumed key.
                 if key is None and not event.file_only:
                     self._counts.record(severity_of(event))
@@ -316,9 +318,9 @@ class OutputHub:
 
         The baton is taken INSIDE the try (emit only checks-and-calls), so an
         interrupt can never strand it between assignment and the clearing
-        finally. `took` marks THIS frame's take: a loser of the take race —
+        finally. `took` marks THIS frame's take: a loser of the take race -
         including a nested same-thread call from a mid-dispatch lifecycle call
-        (set_level/begin_cycle/close) — returns without touching the outer
+        (set_level/begin_cycle/close) - returns without touching the outer
         frame's baton or flushing re-entrantly.
         """
 
@@ -331,9 +333,9 @@ class OutputHub:
                 self._drainer = threading.current_thread()
             self._drain_loop()
         finally:
-            # A propagating KeyboardInterrupt/SystemExit must not strand the baton —
+            # A propagating KeyboardInterrupt/SystemExit must not strand the baton -
             # or the queued tail (a SIGTERM handler's exit marker lands mid-unwind):
-            # flush best-effort; the flush releases the baton itself.
+            # flush best-effort. The flush releases the baton itself.
             if took:
                 with self._lock:
                     stranded = self._drainer is threading.current_thread()
@@ -344,12 +346,12 @@ class OutputHub:
         """The combiner loop: pop + snapshot under the lock, dispatch outside it.
 
         The popped event rides `_in_flight` until the next locked section, so
-        an interrupt mid-dispatch can't lose it — the unwind flush re-dispatches
-        it (duplicates over loss, crash fidelity) — while the queue's occupancy
+        an interrupt mid-dispatch can't lose it - the unwind flush re-dispatches
+        it (duplicates over loss, crash fidelity) - while the queue's occupancy
         (the overflow cap) never counts it twice. The terminal arm clears
         queue/overflow state and releases the baton in ONE locked section, so a
-        cross-thread emit can never park behind a baton about to be cleared; the
-        empty re-check before that release is the combiner guarantee — no event
+        cross-thread emit can never park behind a baton about to be cleared. The
+        empty re-check before that release is the combiner guarantee - no event
         ever waits for a future emit.
         """
 
@@ -371,10 +373,10 @@ class OutputHub:
         """Re-dispatch the in-flight event, then flush the queued tail, while an exception unwinds `_drain`.
 
         Crash fidelity: the tail must be on screen/in the file when the process
-        dies. The in-flight re-dispatch is best-effort per renderer — even a
+        dies. The in-flight re-dispatch is best-effort per renderer - even a
         repeat interrupt there is contained, so one hostile arm can't cost the
         whole tail (the tail flush itself stays interruptible: a second Ctrl-C
-        still kills it). The finally releases the baton no matter what — a
+        still kills it). The finally releases the baton no matter what - a
         wedged baton would silence the hub for the process's remaining
         lifetime.
         """
@@ -390,7 +392,7 @@ class OutputHub:
                         sub.renderer.handle(event, when)
                     except Exception:
                         self._strike(sub)
-                    except BaseException:  # already unwinding; best-effort
+                    except BaseException:  # already unwinding, best-effort
                         continue
             self._drain_loop()
         finally:
@@ -421,8 +423,8 @@ class OutputHub:
     def _baton_held(self) -> Generator[None]:
         """Hold the drain baton for a lifecycle body (lock held, no other drainer).
 
-        A renderer's lifecycle call can log; the bridge adopts that into a
-        re-entrant emit, which must enqueue — never start a nested drain against
+        A renderer's lifecycle call can log. The bridge adopts that into a
+        re-entrant emit, which must enqueue - never start a nested drain against
         a half-mutated subscriber list. Callers drain after releasing the lock.
         """
 
@@ -461,7 +463,7 @@ class OutputHub:
         self._drain()
 
     def set_level(self, level: int) -> None:
-        """Forward the configured level; each surface applies its own floor semantics."""
+        """Forward the configured level. Each surface applies its own floor semantics."""
 
         with self._lock:
             self._await_no_drainer()
@@ -484,7 +486,7 @@ class OutputHub:
 
         The file sinks close LAST, after the teardown chatter the other closes
         enqueued (a bridge-adopted Live.stop failure, a region's contained-
-        teardown note) is handed to them — a close-path failure still leaves a
+        teardown note) is handed to them - a close-path failure still leaves a
         file trace. Emits after the file sinks close drop at the `_closed`
         gate: with no file surface left they are unrecordable on every route.
         """
@@ -514,7 +516,7 @@ class OutputHub:
                         sub.renderer.close()
 
     def _strike(self, sub: _Sub) -> None:
-        """One strike (under a brief lock re-acquire); crossing the limit also closes the renderer.
+        """One strike (under a brief lock re-acquire). Crossing the limit also closes the renderer.
 
         A quarantined seat must release its resources (a struck boot Live keeps
         repainting otherwise).
@@ -528,7 +530,7 @@ class OutputHub:
                 sub.renderer.close()
 
     def _dispatch(self, event: Event, when: float, subs: Sequence[_Sub]) -> None:
-        """Fan one event out to the snapshotted subs — no hub lock held here."""
+        """Fan one event out to the snapshotted subs - no hub lock held here."""
 
         failures: list[tuple[_Sub, Exception]] = []
         for sub in subs:
@@ -545,7 +547,7 @@ class OutputHub:
             self._note(message, exc, when, skip=sub)
 
     def _swap_console(self, console_format: LogFormat) -> None:
-        """Build the fresh console FIRST; only on success tear down the old seat."""
+        """Build the fresh console FIRST. Only on success tear down the old seat."""
 
         factory = self._console_factory
         if factory is None:  # pragma: no cover - guarded by the caller
@@ -565,17 +567,17 @@ class OutputHub:
         self._console_sub = sub
         self._console_format = console_format
         # No set_level here: begin_cycle (the only caller) applies the cycle's
-        # level to every sub — the fresh console included — right after the swap,
+        # level to every sub - the fresh console included - right after the swap,
         # and nothing dispatches in between (re-entrant emits enqueue under the
         # baton). A second call would just burn a strike twice on one bug.
 
     def _note(self, message: str, exc: Exception, when: float, *, skip: _Sub | None) -> None:
         """A containment note to the armed survivors.
 
-        Forensic (file_only, uncounted — a presentation bug must not inflate the
+        Forensic (file_only, uncounted - a presentation bug must not inflate the
         user-visible warnings tally) while a file_only surface survives to write
         it. When the casualty IS the file sink, the note escalates: visible,
-        ERROR, counted — a run must never silently lose its whole log file.
+        ERROR, counted - a run must never silently lose its whole log file.
         """
 
         with self._lock:
@@ -589,13 +591,13 @@ class OutputHub:
             file_only=file_only,
         )
         if not file_only:
-            # Counts = what a visible surface could show; this one is visible.
+            # Counts = what a visible surface could show. This one is visible.
             self._counts.record(note.severity)
         for sub in armed:
             try:
                 sub.renderer.handle(note, when)
             except Exception:
-                # A failure while reporting a failure just strikes — no recursion.
+                # A failure while reporting a failure just strikes - no recursion.
                 self._strike(sub)
         self._stderr_fallback(note)
 
@@ -603,7 +605,7 @@ class OutputHub:
         """With no armed console seat, visible WARNING+ diagnostics still reach a human via stderr.
 
         No armed seat means pre-begin_cycle or quarantined. Factory-less hubs
-        (the renderer-less default, recording hubs) keep dropping silently —
+        (the renderer-less default, recording hubs) keep dropping silently -
         library and test use must stay quiet.
         """
 
@@ -612,7 +614,7 @@ class OutputHub:
         if isinstance(event, Diagnostic) and not event.file_only and event.severity >= Severity.WARNING:
             # Contained like every renderer write: a broken/closed stderr must not
             # break the emit-never-raises contract (a last-resort surface has no
-            # fallback of its own — the failure just drops).
+            # fallback of its own - the failure just drops).
             with contextlib.suppress(Exception):
                 sys.stderr.write(f"{event.severity.name} [{event.origin}] {event.message}\n")
                 sys.stderr.flush()

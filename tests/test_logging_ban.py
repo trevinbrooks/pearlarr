@@ -2,12 +2,12 @@
 """The raw-logging ban: first-party WARNING+ goes through `hub_note`.
 
 Ruff's LOG015 bans the module-level `logging.*` convenience calls, but no
-lint rule can see a method call on an instance attribute — this canary is the
+lint rule can see a method call on an instance attribute - this canary is the
 enforcement for `logger.warning(...)` / `self.logger.error(...)` shapes,
 including the live stdlib aliases `warn` and `fatal`. `debug` is
 deliberately exempt: DEBUG chatter stays raw forever (the bridge files it).
-The allowlist names the one sanctioned straggler — `setup_logger`'s
-invalid-level critical in log.py — scoped to its enclosing function and pinned
+The allowlist names the one sanctioned straggler - `setup_logger`'s
+invalid-level critical in log.py - scoped to its enclosing function and pinned
 to exactly one call, so a second raw site even in that function trips.
 """
 
@@ -19,7 +19,7 @@ PACKAGE = Path(__file__).resolve().parent.parent / "pearlarr"
 
 BANNED_METHODS = frozenset({"warning", "warn", "error", "critical", "fatal", "exception", "info", "log"})
 
-# (path relative to the package, enclosing function, method) — the sanctioned straggler.
+# (path relative to the package, enclosing function, method) - the sanctioned straggler.
 ALLOWED = frozenset({("log.py", "setup_logger", "critical")})
 
 
@@ -58,7 +58,7 @@ def _raw_logging_calls(tree: ast.AST, rel: str) -> list[RawCall]:
             cursor = parents.get(cursor)
         return None
 
-    # ast.walk is breadth-first; sort back into source order.
+    # ast.walk is breadth-first. Sort back into source order.
     return sorted(
         (
             RawCall(rel, enclosing_function(node), node.func.attr, node.lineno)
@@ -106,8 +106,8 @@ def test_no_raw_first_party_logging_above_debug() -> None:
 
     offenders = [c for c in calls if (c.rel, c.function, c.method) not in ALLOWED]
     assert not offenders, (
-        "raw first-party logging is retired; emit through output.runtime.hub_note "
-        "(DEBUG stays raw; see this file's docstring):\n"
+        "raw first-party logging is retired. Emit through output.runtime.hub_note "
+        "(DEBUG stays raw. See this file's docstring):\n"
         + "\n".join(f"pearlarr/{c.rel}:{c.line} .{c.method}(...) in {c.function or '<module>'}" for c in offenders)
     )
     # The straggler stays EXACTLY one call: a second raw site sharing its

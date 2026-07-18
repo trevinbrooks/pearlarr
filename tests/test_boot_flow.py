@@ -5,7 +5,7 @@
 each IO step as a `StepScope`, and emits the
 capstone when the section earned one. These pin the emitted event stream
 (RecordingHub), the capstone gate (empty/failed sections and ERROR+ recorded on
-the hub since the first step suppress it; a DEFERRED warn does not), the
+the hub since the first step suppress it, a DEFERRED warn does not), the
 section reset across arrs, the one-shot slow heads-up, the close() safety net,
 and the production qBittorrent-unconfigured wiring through `RunDeps.build`.
 """
@@ -135,7 +135,7 @@ def test_step_failure_graduates_failed_and_reraises() -> None:
 
 
 def test_slow_heads_up_is_emitted_once_per_step() -> None:
-    # A slow step reports many progress ticks; the digest surfaces collapse them
+    # A slow step reports many progress ticks. The digest surfaces collapse them
     # to a single heads-up, so the one-shot lives producer-side.
     flow, recording, clock = _flow()
 
@@ -165,7 +165,7 @@ def test_capstone_measures_from_the_first_step() -> None:
 
 
 def test_error_recorded_mid_section_suppresses_the_capstone() -> None:
-    # An ERROR that doesn't raise still means the section isn't "ready"; the
+    # An ERROR that doesn't raise still means the section isn't "ready". The
     # facade sees it through the hub's severity counts. Errors logged through
     # the app logger reach these counts via the bridge in production.
     flow, recording, clock = _flow()
@@ -191,7 +191,7 @@ def test_a_warning_does_not_gate_the_capstone() -> None:
 
 def test_deferred_warn_still_allows_the_capstone() -> None:
     # A DEFERRED (warn) finish - qBittorrent unconfigured, a SeaDex outage - is a
-    # degraded but READY section; only failures and recorded errors gate it.
+    # degraded but READY section. Only failures and recorded errors gate it.
     flow, recording, clock = _flow()
 
     with flow.step("Connecting to qBittorrent") as step:
@@ -263,7 +263,7 @@ def test_empty_section_emits_no_capstone() -> None:
 def test_logger_error_via_the_bridge_suppresses_the_capstone() -> None:
     # The full production chain: logger.error -> HubBridgeHandler -> hub counts ->
     # capstone gate. conftest's autouse teardown uninstalls the bridge + hub and
-    # resets the app logger's handlers/level; propagate (flipped by install_bridge)
+    # resets the app logger's handlers/level. propagate (flipped by install_bridge)
     # is restored here.
     flow, recording, clock = _flow()
     app_logger = logging.getLogger(LOG_NAME)
@@ -314,7 +314,7 @@ def test_no_hub_step_still_propagates_caller_errors() -> None:
 
 
 def test_rundeps_build_warns_deferred_when_qbit_unconfigured(tmp_path: Path) -> None:
-    # Missing qBittorrent credentials put the whole run in perpetual preview; the
+    # Missing qBittorrent credentials put the whole run in perpetual preview. The
     # boot ledger must say so via a DEFERRED step instead of silently skipping
     # the qBittorrent step.
     flow, recording, _ = _flow()

@@ -4,7 +4,7 @@
 """The config schema-migration chain, the template splice, and the file rewrite.
 
 `tests/test_config.py::TestSchemaMigration` pins the load-path integration
-(in-memory migration + reporting); this module pins the pieces: version
+(in-memory migration + reporting). This module pins the pieces: version
 detection, each v0 fold, the comment-preserving template splice, and
 `upgrade_config_file`'s backup + atomic-rewrite contract.
 """
@@ -36,7 +36,7 @@ from pearlarr.seadex_types import Json
 
 
 class TestDeclaredVersion:
-    """Only an absent key means pre-versioning; anything not a non-negative int is left to validation."""
+    """Only an absent key means pre-versioning. Anything not a non-negative int is left to validation."""
 
     def test_version_shapes(self) -> None:
         assert declared_version({}) == 0
@@ -60,7 +60,7 @@ class TestMigrateMapping:
             assert mapping == {"config_version": version, "seadex": {"private_releases": "allow"}}
 
     def test_v0_folds_removed_schema_and_nothing_else(self) -> None:
-        # Only removed keys/values fold; a never-valid value (the typo'd mode)
+        # Only removed keys/values fold. A never-valid value (the typo'd mode)
         # passes through untouched for validation to reject by name.
         mapping: dict[str, Json] = {
             "seadex": {"public_only": False, "want_best": False},
@@ -92,7 +92,7 @@ class TestMigrateMapping:
 
 
 class TestRenderMigratedConfig:
-    """The splice keeps the template's docs and defaults; explicit values take over their lines."""
+    """The splice keeps the template's docs and defaults. Explicit values take over their lines."""
 
     def test_unset_keys_keep_the_template_lines(self) -> None:
         rendered = render_migrated_config(starter_template_text(), {"config_version": CONFIG_VERSION})
@@ -113,7 +113,7 @@ class TestRenderMigratedConfig:
         assert parsed["config_version"] == CONFIG_VERSION
         sonarr = parsed["sonarr"]
         assert is_json_obj(sonarr)
-        # A value needing quoting is re-quoted, not corrupted; false overrides
+        # A value needing quoting is re-quoted, not corrupted. false overrides
         # the template's sample `true`.
         assert sonarr["api_key"] == "key: with colon"
         assert sonarr["verify_ssl"] is False
@@ -128,7 +128,7 @@ class TestRenderMigratedConfig:
         assert imports["default_quality"] is None
 
     def test_long_and_multiline_scalars_survive_the_splice(self) -> None:
-        # yaml.safe_dump folds plain scalars at ~80 columns; a single-line
+        # yaml.safe_dump folds plain scalars at ~80 columns. A single-line
         # splice must never truncate (a password!) or emit an unparseable
         # fragment. Line breaks force the escaped double-quoted style.
         long_value = "word " * 30 + "end"
@@ -177,7 +177,7 @@ class TestUpgradeConfigFile:
         assert upgrade.migration.from_version == 0
         backup = path + ".bak"
         assert upgrade.backup_path == backup
-        # The backup is the previous bytes exactly; the rewrite is the annotated
+        # The backup is the previous bytes exactly. The rewrite is the annotated
         # template carrying the file's values, so the effective config is unchanged.
         assert Path(backup).read_bytes() == text.encode()
         rewritten = Path(path).read_text(encoding="utf-8")
@@ -190,7 +190,7 @@ class TestUpgradeConfigFile:
 
     @pytest.mark.skipif(os.name != "posix", reason="mode bits are POSIX-only")
     def test_rewrite_and_backup_are_owner_only(self, tmp_path: Path) -> None:
-        # Both files carry API keys; neither may land group/other-readable.
+        # Both files carry API keys. Neither may land group/other-readable.
         path = self._write(tmp_path, "seadex:\n  private_releases: allow\n")
         upgrade = upgrade_config_file(path)
         assert upgrade.backup_path is not None
@@ -252,7 +252,7 @@ class TestUpgradeConfigFile:
         monkeypatch: pytest.MonkeyPatch,
     ) -> None:
         # ENOSPC/permission failure mid-swap: the config survives untouched and
-        # the torn .tmp (it carries API keys) is removed; the backup - a
+        # the torn .tmp (it carries API keys) is removed. The backup - a
         # faithful copy of the still-intact config - may remain.
         text = "seadex:\n  private_releases: allow\n"
         path = self._write(tmp_path, text)

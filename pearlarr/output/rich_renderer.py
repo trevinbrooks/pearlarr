@@ -1,10 +1,10 @@
 """The rich console surface: diagnostics + the boot, scan, and wait cockpit arms.
 
-Diagnostics are position-free; this renderer is the single ambient placement
+Diagnostics are position-free. This renderer is the single ambient placement
 authority: its `breadcrumbs.BreadcrumbFold` instance decides where a
 diagnostic lands: indented while a boot section, item, wait region, or entry
 block is open, column 0 under RUN alone (before the first item and after the
-scan closes; mid-scan an item stays on the frontier until the next boundary,
+scan closes. Mid-scan an item stays on the frontier until the next boundary,
 so import-flow notes indent with the listing they land in). The boot
 events (banner / steps / capstone) drive the `boot_region.BootRegion`
 (the live spinner and the durable ledger lines).
@@ -13,9 +13,9 @@ LOGGER-parity gating, so the console shows exactly what the file logs.
 
 The renderer resolves the CURRENT shared Console at render time from the live
 `log.RichConsoleHandler` (`setup_logger` rebuilds handlers per
-cycle; the logger identity is stable). Printing through that shared Console
-keeps Live reflow safe — the same mechanism as the cockpits' graduation lines.
-Under plain/json (no rich handler) it no-ops; this seat is never built there
+cycle. The logger identity is stable). Printing through that shared Console
+keeps Live reflow safe - the same mechanism as the cockpits' graduation lines.
+Under plain/json (no rich handler) it no-ops. This seat is never built there
 (cli seats LineRenderer/JsonRenderer instead), and the FileLogSink always
 carries the record.
 """
@@ -97,7 +97,7 @@ def diagnostic_threshold(level: int, *, first_party: bool) -> int:
     """The console floor for a diagnostic.
 
     First-party keeps the `console_level` semantics (INFO floor except
-    DEBUG/CRITICAL); third-party floors at WARNING unless the configured level
+    DEBUG/CRITICAL). Third-party floors at WARNING unless the configured level
     is DEBUG, so a chatty library can't flood the ledger.
     """
 
@@ -108,10 +108,10 @@ def diagnostic_threshold(level: int, *, first_party: bool) -> int:
 
 
 def diagnostic_text(event: Diagnostic, *, indented: bool, use_unicode: bool) -> Text:
-    """The rendered console line for a diagnostic — pure, golden-testable.
+    """The rendered console line for a diagnostic - pure, golden-testable.
 
     WARNING+ get the badge (glyph, or the padded word when `use_unicode` is
-    off — one look, no drift); INFO/DEBUG render dim, in-context (the
+    off - one look, no drift). INFO/DEBUG render dim, in-context (the
     unconfigured-arr note's eventual look).
     """
 
@@ -133,7 +133,7 @@ class RichRenderer(Renderer):
         time_source: Callable[[], float] = time.monotonic,
     ) -> None:
         # `caps_cache` is the process-shared instance in production (cli
-        # wiring, stable across seat swaps); None builds one private cache
+        # wiring, stable across seat swaps). None builds one private cache
         # shared by this seat's surfaces (diagnostics + both regions).
         self._console_source = console_source
         self._caps = caps_cache if caps_cache is not None else CapsCache()
@@ -146,7 +146,7 @@ class RichRenderer(Renderer):
             level_source=self._current_level,
             time_source=time_source,
         )
-        # Each region owns one Live slot; a frontier departure tears its slot down
+        # Each region owns one Live slot. A frontier departure tears its slot down
         # no matter which event evicted the node (ScopeClosed, a RunFinished unwind).
         self._regions: tuple[tuple[ScopeKind, LiveRegion], ...] = (
             (ScopeKind.BOOT_SECTION, self._boot),
@@ -157,7 +157,7 @@ class RichRenderer(Renderer):
     def handle(self, event: Event, when: float) -> None:
         del when
         # Placement must be settled BEFORE rendering (fold-first also keeps the
-        # fold advancing when rendering raises); a region departure tears its live
+        # fold advancing when rendering raises). A region departure tears its live
         # slot down no matter which event evicted the node (ScopeClosed, a
         # RunFinished unwind, anything).
         open_before = tuple(self._frontier_has(kind) for kind, _ in self._regions)
@@ -281,11 +281,11 @@ class RichRenderer(Renderer):
 
         Gating is LOGGER parity (`render_legacy_lines`): at a configured
         WARNING the INFO scan lines vanish from the console exactly as they
-        vanish from the file — deliberately NOT the diagnostics' console floor.
+        vanish from the file - deliberately NOT the diagnostics' console floor.
         """
 
         # Skip building the (sometimes hefty, e.g. the run summary) scan lines
-        # when there's no console to render them; `_render_legacy` discards them.
+        # when there's no console to render them. `_render_legacy` discards them.
         if self._console_source() is None:
             return
         self._render_legacy(scan_event_lines(event))

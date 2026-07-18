@@ -36,7 +36,7 @@ Runs are incremental and safe to repeat: results live in a SQLite cache, a title
 
 ### uv / pipx / pip
 
-Pearlarr needs Python 3.13 or newer; [uv](https://docs.astral.sh/uv/) or pipx give it its own environment (and uv fetches a matching Python if your system's is too old):
+Pearlarr needs Python 3.13 or newer. [uv](https://docs.astral.sh/uv/) or pipx give it its own environment (and uv fetches a matching Python if your system's is too old):
 
 ```console
 $ uv tool install pearlarr    # or: pipx install pearlarr
@@ -53,7 +53,7 @@ $ mkdir -p ./config
 $ docker compose up -d pearlarr
 ```
 
-On first boot the container writes a starter `config.yml` into `./config` and restarts; each run fails with a one-line error until the file is filled in.
+On first boot the container writes a starter `config.yml` into `./config` and restarts. Each run fails with a one-line error until the file is filled in.
 Fill it in, then:
 
 ```console
@@ -61,7 +61,7 @@ $ docker compose restart pearlarr
 $ docker compose logs -f pearlarr
 ```
 
-The container schedules its own runs; set `PEARLARR_CRON` to change the cadence.
+The container schedules its own runs. Set `PEARLARR_CRON` to change the cadence.
 One-off commands run through the same service:
 
 ```console
@@ -91,7 +91,7 @@ That is the recommended way to check a new setup - read the preview's summary, a
 When the preview picks what you'd pick, add `qbittorrent.host`, `username`, and `password`, and the same command grabs for real.
 (`run single --dry-run` simulates a run with no side effects even after credentials are set.)
 
-Bare `pearlarr` runs the scheduled loop, one cycle every `schedule.interval_hours`; under Docker the container's cron owns the cadence instead.
+Bare `pearlarr` runs the scheduled loop, one cycle every `schedule.interval_hours`. Under Docker the container's cron owns the cadence instead.
 
 ## Configuration
 
@@ -110,7 +110,7 @@ Every key, with its default, allowed values, and description, is in [docs/config
 The starter config carries the same documentation as comments, and a `$schema` line gives editors completion and validation.
 The config is validated on load: an unknown or misspelled key fails with an error naming it rather than being silently ignored.
 
-`pearlarr config validate` checks the file and reports what a run would use; `pearlarr config show` prints the effective configuration with secrets redacted - safe to paste into a bug report.
+`pearlarr config validate` checks the file and reports what a run would use. `pearlarr config show` prints the effective configuration with secrets redacted - safe to paste into a bug report.
 
 ## Scope and limitations
 
@@ -118,7 +118,7 @@ The config is validated on load: an unknown or misspelled key fails with an erro
   A winning release on another public tracker is skipped with a warning and re-considered once support lands.
 - **Private releases are never grabbed** - SeaDex carries no download link for them, and no private-tracker auth is supported.
   `seadex.private_releases` decides what happens when a title's preferred release is private-only.
-- **qBittorrent is the only download client**; Usenet is out of scope.
+- **qBittorrent is the only download client**. Usenet is out of scope.
   More clients and trackers are on the roadmap.
 - **The supported interfaces** are the CLI, the config schema, the JSON event stream, and the notification payloads.
   Every Python import path is internal and may change without notice.
@@ -133,7 +133,7 @@ The config is validated on load: an unknown or misspelled key fails with an erro
 | Radarr | 5.x (the v3 API) |
 | qBittorrent | 4.1 or newer, WebUI enabled |
 | Python | 3.13+ (the Docker image ships its own 3.14) |
-| OS | Linux, macOS, Windows (CI covers Linux and Windows); Docker images for amd64 and arm64 |
+| OS | Linux, macOS, Windows (CI covers Linux and Windows). Docker images for amd64 and arm64 |
 
 ## Documentation
 

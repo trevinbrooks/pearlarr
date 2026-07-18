@@ -1,7 +1,7 @@
 # pyright: strict
 # pyright: reportPrivateUsage=false
 # These read the episode collaborator's private per-run state (eps._ep_list_cache /
-# eps._config) and call the private SonarrParseCache._sonarr_parse_is_fresh; strict
+# eps._config) and call the private SonarrParseCache._sonarr_parse_is_fresh. Strict
 # re-flags that and the repo disables reportPrivateUsage for tests.
 """Tests for the Sonarr sweep speedups.
 
@@ -85,7 +85,7 @@ class TestSonarrParseIsFresh:
     """`SonarrParseCache._sonarr_parse_is_fresh` treats positive parses as fresh within the TTL.
 
     Negative (empty) parses are fresh within the backstop only on a matching
-    series fingerprint; legacy fp-less empties are stale.
+    series fingerprint. Legacy fp-less empties are stale.
     """
 
     def test_positive_within_ttl_is_fresh(self) -> None:
@@ -157,7 +157,7 @@ def _eps_for(series_id: int) -> list[SonarrEpisode]:
 
 
 def _ids(*al_ids: int) -> dict[int, MappingEntry]:
-    """A `{al_id -> mapping}` dict; only the keys are read by the prefetch gate."""
+    """A `{al_id -> mapping}` dict. Only the keys are read by the prefetch gate."""
 
     return {aid: MappingEntry(anilist_id=aid) for aid in al_ids}
 
@@ -176,7 +176,7 @@ class _Sonarr:
     """A scripted Sonarr client for the prefetch warm.
 
     By default `episodes(sid)` returns a distinguishable one-episode list per
-    series (`_eps_for`); `return_none` degrades every fetch to a transient
+    series (`_eps_for`). `return_none` degrades every fetch to a transient
     miss, and `raise_on` makes the listed ids raise (the worker-degradation
     case). Records each `(series_id, quiet)` call so the dedup / not-fetched /
     quiet assertions read recorded state.
@@ -201,7 +201,7 @@ class _Services:
 
     `get_anilist_ids` resolves a series' tvdb id to its `{al_id -> mapping}`
     dict (`identity` returns `{tvdb_id: mapping}` for any series, mirroring the
-    always-mapped helper); `al_id_needs_scan` is the per-id needs-scan gate
+    always-mapped helper). `al_id_needs_scan` is the per-id needs-scan gate
     (`needs_scan=None` reports every id as scannable).
     """
 
@@ -243,7 +243,7 @@ class TestPrefetchEpisodes:
 
     def _eps(self, *, mapped: set[int], sleep_time: int = 0) -> tuple[SonarrEpisodes, _Sonarr]:
         sonarr = _Sonarr()
-        # Only "mapped" series resolve to a non-empty AniList mapping; needs_scan
+        # Only "mapped" series resolve to a non-empty AniList mapping. needs_scan
         # defaults to "every id scannable".
         services = _Services(mapping={sid: _ids(1) for sid in mapped})
         eps = make_sonarr_episodes(
@@ -278,12 +278,12 @@ class TestPrefetchEpisodes:
 
     def test_raising_series_does_not_abort_sweep(self) -> None:
         # CB5: a worker that RAISES (e.g. a non-JSON 200 response) must not abort the
-        # whole concurrent sweep; that series is left unwarmed, the rest still warm.
+        # whole concurrent sweep. That series is left unwarmed, the rest still warm.
         eps, sonarr = self._eps(mapped={1, 2})
         sonarr.raise_on = {1}
         warmed = eps.prefetch([_item(1), _item(2)])
 
-        assert eps._ep_list_cache == {2: _eps_for(2)}  # 1 raised -> unwarmed; 2 warmed
+        assert eps._ep_list_cache == {2: _eps_for(2)}  # 1 raised -> unwarmed, 2 warmed
         assert warmed == 2  # both attempted
 
     def test_sequential_path_matches_concurrent(self) -> None:
@@ -367,7 +367,7 @@ class TestAlIdNeedsScan:
         assert run.al_id_needs_scan(7) is True
 
     def test_ignore_update_times_forces_scan_when_entry_exists(self) -> None:
-        # A matching cached entry is normally skipped; ignore_seadex_update_times
+        # A matching cached entry is normally skipped. ignore_seadex_update_times
         # makes the loop re-process it, so the predicate must report needs-scan.
         cache = FakeCacheStore()
         cache.update_cache(Arr.SONARR, 7, {"updated_at": datetime(2021, 1, 1)})
@@ -461,7 +461,7 @@ class TestPrefetchSkipsUnchanged:
 class _ParseSonarr:
     """A scripted Sonarr `/parse` client recording each parsed filename.
 
-    `parse_episodes_from_seadex` only touches `sonarr.parse`; this scripts the
+    `parse_episodes_from_seadex` only touches `sonarr.parse`. This scripts the
     one result and records the calls so the not-parsed assertions read recorded
     state.
     """

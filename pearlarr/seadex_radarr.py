@@ -30,11 +30,11 @@ class RadarrSync(ArrSync[RadarrItem]):
         """Stand up the Radarr client from the injected shared collaborators.
 
         Args:
-            deps: The shared collaborators; the config/mappings
+            deps: The shared collaborators. The config/mappings
                 this strategy needs are read off it.
             services: The services hub the per-id hooks call into.
             radarr_client: A pre-built client to use instead of constructing
-                the real `RadarrClient` (which needs the connection keys);
+                the real `RadarrClient` (which needs the connection keys).
                 None builds the real one.
         """
 
@@ -42,11 +42,11 @@ class RadarrSync(ArrSync[RadarrItem]):
         self._config = deps.config
         self.logger = deps.logger
         # The resolver supplies the Anime-IDs candidate id-sets (from SQL) that
-        # `collect_anime_movies` filters with; the AniBridge view supplies its own.
+        # `collect_anime_movies` filters with. The AniBridge view supplies its own.
         self._mappings = deps.mappings
         self.anibridge = deps.mappings.anibridge
 
-        # An injected client (tests) is used as-is; otherwise the connection keys
+        # An injected client (tests) is used as-is. Otherwise the connection keys
         # are required only now, when a Radarr run actually runs.
         if radarr_client is not None:
             self.radarr: AbstractRadarrClient = radarr_client
@@ -142,7 +142,7 @@ class RadarrSync(ArrSync[RadarrItem]):
         anilist_title = run.get_anilist_title(al_id=al_id)
         run.log_al_title(anilist_title=anilist_title, sd_entry=sd_entry)
 
-        # Setup info for cache (URL so cached runs can link to SeaDex; movies have
+        # Setup info for cache (URL so cached runs can link to SeaDex - movies have
         # no episode coverage)
         cache_details: CacheRecord = {
             "name": anilist_title,
@@ -196,7 +196,7 @@ class RadarrSync(ArrSync[RadarrItem]):
                 seadex_dict=seadex_dict,
                 torrent_hashes=torrent_hashes,
                 cache_details=cache_details,
-                # Every edition's group (not just the first file's); the helper drops
+                # Every edition's group (not just the first file's). The helper drops
                 # the {None:[None]} placeholder and any real-file null key.
                 replaced_groups=clean_replaced_groups(radarr_release_dict),
             ),
@@ -225,7 +225,7 @@ class RadarrSync(ArrSync[RadarrItem]):
         """No-op: the series-pinned manual import is Sonarr-only (out of scope).
 
         Radarr never records a pending import (`grab_and_cache` passes no
-        `pending_seeds`), so this is never reached in practice; it returns a
+        `pending_seeds`), so this is never reached in practice. It returns a
         `LEAVE` probe (the safest terminal value - never drops a record, no files
         verified) to satisfy the `ArrSync` contract.
         """
@@ -262,7 +262,7 @@ class RadarrSync(ArrSync[RadarrItem]):
         """Get a dictionary of useful info for a Radarr movie."""
 
         # Accumulate sizes per release group (a movie can carry several files - an
-        # upgrade or a multi-edition); the user has all of them, so the planner dedups
+        # upgrade or a multi-edition). All of them are already present, so the planner dedups
         # against each. Mirrors Sonarr's per-episode accumulation rather than
         # collapsing to one file or hard-erroring on >1 group.
         radarr_release_dict: ArrReleaseDict = {}

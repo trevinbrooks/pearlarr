@@ -1,10 +1,10 @@
 # pyright: strict
 """Tests for the wait-pass narrator (`wait_view`).
 
-The engine pushes one immutable `WaitSnapshot` per poll cycle; the view
+The engine pushes one immutable `WaitSnapshot` per poll cycle. The view
 side is a single narrator (`HubWaitView`) that turns those pushes into
 hub events - rendering lives behind the hub (WaitRegion for the console, the
-textline sinks for file/plain/json; pinned in test_output_wait_region /
+textline sinks for file/plain/json, pinned in test_output_wait_region /
 test_output_textline). These pin the narrator's event grammar (lazy open,
 graduation dedup + exact field mapping, the close tally), the `make_wait_view`
 probe (wants_telemetry + the pulse interval), the pure `graduations` helper,
@@ -141,7 +141,7 @@ class TestHubWaitViewNarration:
         assert started == WaitStarted(total=2, pulse_s=300.0, scope=opened.scope)
         assert recording.of_type(WaitProgress) == [WaitProgress(snapshot=first, scope=opened.scope)]
 
-        # Later updates never re-open; the total stays the FIRST snapshot's.
+        # Later updates never re-open. The total stays the FIRST snapshot's.
         view.update(WaitSnapshot((_downloading("h1", "A"), _downloading("h2", "B"), _downloading("h3", "C"))))
         view.update(WaitSnapshot((_downloading("h1", "A"),)))
         assert len(recording.of_type(ScopeOpened)) == 1
@@ -177,7 +177,7 @@ class TestHubWaitViewNarration:
 
     def test_first_snapshot_terminals_graduate_after_the_start(self) -> None:
         # A documented divergence, pinned deliberately: the old views
-        # logged a first-snapshot graduation BEFORE their start line; the
+        # logged a first-snapshot graduation BEFORE their start line. The
         # narrator opens (ScopeOpened + WaitStarted) first.
         recording = RecordingHub()
         install_hub(recording.hub)

@@ -2,7 +2,7 @@ name: Release prepare
 
 # Opens the release PR: version bump + re-lock, regenerated version-pinned
 # schema URLs, and the CHANGELOG roll. Merging that PR is the human release
-# gate; release.yaml then publishes automatically off the merge.
+# gate. release.yaml then publishes automatically off the merge.
 #
 # Pushes as the pearlarr-release GitHub App (see CONTRIBUTING "Releasing")
 # because a branch pushed with the default GITHUB_TOKEN would never get check

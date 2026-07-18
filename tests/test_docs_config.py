@@ -1,8 +1,8 @@
 # pyright: strict
 """Config documentation pipeline: generated artifacts current, docstrings complete and clean.
 
-The generator itself hard-fails on a missing field or enum-member docstring;
-these tests add the byte-equality drift gate and the content rules the
+The generator itself hard-fails on a missing field or enum-member docstring.
+These tests add the byte-equality drift gate and the content rules the
 generator cannot judge (no restated defaults, env registry parity).
 """
 
@@ -52,7 +52,7 @@ def test_every_config_field_has_a_docstring() -> None:
 
 
 def test_config_docstrings_never_restate_defaults() -> None:
-    # The generator injects defaults and allowed values; prose restating them
+    # The generator injects defaults and allowed values. Prose restating them
     # is the drift the single-source pipeline exists to kill.
     banned = re.compile(r"[Dd]efaults? to|[Dd]efault:|\(default")
     offenders = [dotted for dotted, field in _leaf_fields() if field.description and banned.search(field.description)]
@@ -72,7 +72,7 @@ def _operational(names: Iterable[str]) -> set[str]:
 
 def test_env_registry_matches_the_tree() -> None:
     # Every operational PEARLARR_* variable mentioned anywhere (code, Docker,
-    # docs) is registered, and every registered one is actually mentioned;
+    # docs) is registered, and every registered one is actually mentioned.
     # config-override names are covered by the single pattern row, not each.
     scanned: set[str] = set()
     files = [

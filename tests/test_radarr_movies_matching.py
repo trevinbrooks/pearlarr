@@ -5,7 +5,7 @@ The season-0 gate + id-match loop extracted from `SonarrSync.process_al_id`:
 only a specials (season-0) mapping can match a Radarr movie, an unset mapping id
 never matches (the `is not None` guards make None == None a non-match), and a
 movie matching on both ids appears once. `process_al_id` keeps the outer
-feature guard and the skip logging; this pins the matching itself.
+feature guard and the skip logging. This pins the matching itself.
 """
 
 from pearlarr.mappings import MappingEntry
@@ -67,7 +67,7 @@ def test_unset_mapping_ids_never_match() -> None:
 
 
 def test_multiple_movies_keep_matches_in_order() -> None:
-    """Non-matching movies drop out; the matching ones keep library order."""
+    """Non-matching movies drop out. The matching ones keep library order."""
 
     mapping = MappingEntry(anilist_id=1, tvdb_season=0, tmdb_movie_id=42, imdb_id="tt0000042")
     first = RadarrMovie(title="First", tmdbId=42)

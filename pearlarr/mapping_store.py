@@ -13,7 +13,7 @@ hold the full parsed structures in memory.
 How this differs from `CacheStore` (deliberately a separate file and a separate db):
 
 * **Never preview-gated.** `cache.db` stages writes and only commits on a
-  non-preview save; this store is a pure derived cache of an *immutable download*,
+  non-preview save. This store is a pure derived cache of an *immutable download*,
   so a freshly parsed index is always committed, even on `--dry-run`. Each
   `replace_*` is its own atomic transaction.
 * **Atomic populate.** A source's rows and its `meta` digest stamp are written
@@ -21,16 +21,16 @@ How this differs from `CacheStore` (deliberately a separate file and a separate 
   kill leaving *digest-fresh + tables-empty*, which `is_fresh` would then
   trust and silently serve as empty mappings. The single transaction makes that
   state unreachable.
-* **No migration; rebuild on format change.** There is no `ALTER` path. The
+* **No migration, rebuild on format change.** There is no `ALTER` path. The
   table format is guarded by `SCHEMA_VERSION` (stored in `PRAGMA
-  user_version`); a mismatch simply DROPs and recreates the tables - safe, because
+  user_version`). A mismatch simply DROPs and recreates the tables - safe, because
   every row is re-derivable from the source files on the next run.
 * **Fail-open.** A corrupt/not-a-database file is quarantined and a fresh
   `:memory:` store started (one re-parse, the safe direction), mirroring
   `CacheStore`.
 
 `MappingResolver` builds this once per cycle inside `single_instance_lock`, so
-concurrent repopulation across processes is already prevented; the connection is
+concurrent repopulation across processes is already prevented. The connection is
 not shared across threads.
 """
 
@@ -40,7 +40,7 @@ from typing import Literal, NamedTuple, overload
 
 from .sqlite_util import connect, open_or_quarantine, rollback_and_close
 
-# Bump when the table layout below changes; a stored `user_version` that differs
+# Bump when the table layout below changes. A stored `user_version` that differs
 # triggers a DROP+rebuild (the data is a pure cache, re-derived from the sources).
 SCHEMA_VERSION = 2
 
@@ -56,13 +56,13 @@ SOURCE_ANIDB = "anidb"
 INLINE_DIGEST = "<inline>"
 
 # anime_ids query columns the resolver may filter / DISTINCT on. The Literal is
-# the checker-facing vocabulary; the tuple is the runtime allowlist guarding the
+# the checker-facing vocabulary. The tuple is the runtime allowlist guarding the
 # f-string interpolation (a column name cannot be a bound parameter). Keep in sync.
 type AnimeIdColumn = Literal["tvdb_id", "tmdb_movie_id", "imdb_id"]
 _ANIME_ID_COLUMNS = ("tvdb_id", "tmdb_movie_id", "imdb_id")
 
 # anibridge xref axes - a DIFFERENT vocabulary from the anime_ids columns above
-# ("tvdb", not "tvdb_id"). tvdb/tmdb ext ids are ints; imdb ids are strs.
+# ("tvdb", not "tvdb_id"). tvdb/tmdb ext ids are ints, imdb ids are strs.
 type AniBridgeAxis = Literal["tvdb", "tmdb_movie", "imdb"]
 
 _SCHEMA = """
@@ -139,7 +139,7 @@ _SOURCE_TABLES: dict[str, tuple[str, ...]] = {
     SOURCE_ANIDB: ("anidb_mapping", "anidb_ambiguous"),
 }
 
-# Drop in FK-free order; all tables are independent so any order works. Derived
+# Drop in FK-free order. All tables are independent so any order works. Derived
 # from _SOURCE_TABLES (plus the shared `meta` table) so a new source's tables are
 # dropped on a SCHEMA_VERSION rebuild automatically - no parallel hand-maintained
 # list to forget (which would leave a stale table that CREATE IF NOT EXISTS skips).
@@ -160,7 +160,7 @@ def _ensure_schema(conn: sqlite3.Connection) -> None:
     if version != SCHEMA_VERSION:
         conn.executescript(_DROP_ALL)
         conn.executescript(_SCHEMA)
-        # PRAGMA can't be parameterised; SCHEMA_VERSION is a trusted int constant.
+        # PRAGMA can't be parameterised. SCHEMA_VERSION is a trusted int constant.
         conn.execute(f"PRAGMA user_version={SCHEMA_VERSION}")
     else:
         conn.executescript(_SCHEMA)
@@ -211,7 +211,7 @@ class AniBridgeXrefRow(NamedTuple):
 
 
 class AniBridgeRangeRow(NamedTuple):
-    """One `anibridge_tvdb_range` row; a NULL `start_ep` marks an empty season."""
+    """One `anibridge_tvdb_range` row. A NULL `start_ep` marks an empty season."""
 
     anilist_id: int
     tvdb_id: int
@@ -311,7 +311,7 @@ class MappingStore:
         All in ONE transaction (legacy/deferred control means the first DELETE opens
         it and `commit` closes it), so a kill mid-populate rolls back to the prior
         state - never digest-fresh + empty. `write` is a callback given the live
-        connection; it only inserts rows.
+        connection. It only inserts rows.
         """
 
         try:
@@ -408,7 +408,7 @@ class MappingStore:
         """`AnimeIdRow`s matching `column == value`, in first-seen (rowid) order.
 
         Returns the full row so the caller can build a `MappingEntry`. Rows with no
-        `anilist_id` are excluded; `column` must be one of `_ANIME_ID_COLUMNS`
+        `anilist_id` are excluded. `column` must be one of `_ANIME_ID_COLUMNS`
         (it is interpolated, so it is allowlisted). The SELECT column order
         matches `AnimeIdRow`'s fields.
         """

@@ -54,7 +54,7 @@ body:
     id: config
     attributes:
       label: Config
-      description: Paste the output of `pearlarr config show` — it redacts API keys, passwords and webhook URLs by design, so it is safe to share. Never paste a raw config.yml.
+      description: Paste the output of `pearlarr config show` - it redacts API keys, passwords and webhook URLs by design, so it is safe to share. Never paste a raw config.yml.
       render: yaml
     validations:
       required: true
@@ -62,5 +62,5 @@ body:
     id: logs
     attributes:
       label: Log excerpt
-      description: "The relevant lines from the `logs/` folder in the data directory (`pearlarr paths` prints it; typically `~/.local/share/pearlarr/logs` on Linux, `~/Library/Application Support/pearlarr/logs` on macOS, `/config/logs` in Docker). Log files never contain your keys or webhook URLs, so excerpts are safe to paste."
+      description: "The relevant lines from the `logs/` folder in the data directory (`pearlarr paths` prints it). Typically `~/.local/share/pearlarr/logs` on Linux, `~/Library/Application Support/pearlarr/logs` on macOS, `/config/logs` in Docker. Log files never contain your keys or webhook URLs, so excerpts are safe to paste."
       render: text

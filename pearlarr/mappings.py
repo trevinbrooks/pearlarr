@@ -96,7 +96,7 @@ class MappingEntry:
     attaches `tvdb_mappings` (season -> episode ranges) only on a TVDB lookup,
     while the Kometa Anime-IDs records carry the flat `tvdb_season` /
     `tvdb_epoffset` fields. Both normalize into one typed record with attribute
-    reads; the `tvdb_mappings`-present-or-not distinction becomes the typed
+    reads. The `tvdb_mappings`-present-or-not distinction becomes the typed
     `mode` discriminant.
     """
 
@@ -127,7 +127,7 @@ def _coalesce_season_epoffset(raw: dict[str, Any]) -> tuple[int, int]:
     """Absent or explicit-null tvdb_season/tvdb_epoffset -> the -1/0 sentinels.
 
     Shared verbatim by `_entry_from_raw` and `_anime_ids_rows` so the two
-    derivations can't drift; `.get(key, default)` only fills an ABSENT key, so a
+    derivations can't drift. `.get(key, default)` only fills an ABSENT key, so a
     present-but-null JSON value (`"tvdb_season": null`) is folded here rather than
     reaching the NOT NULL columns. Season 0 is a meaningful special (never
     `or`-collapsed).
@@ -142,13 +142,13 @@ def _entry_from_raw(anilist_id: int, raw: AnimeIdsRecord | AniBridgeEntry) -> Ma
     """Build a `MappingEntry` from a producer's raw dict.
 
     The one place a loosely-typed producer dict (an AniBridge `_consumer_entry`
-    dict) becomes a typed record. Only the enumerated keys of `raw` are read;
-    defaults are `-1` / `0` for an AniBridge entry (which carries no
+    dict) becomes a typed record. Only the enumerated keys of `raw` are read.
+    Defaults are `-1` / `0` for an AniBridge entry (which carries no
     `tvdb_season` / `tvdb_epoffset`).
     """
 
     season, epoffset = _coalesce_season_epoffset(raw)
-    # Both AniBridge backings tag their entries source="anibridge"; a Kometa-style
+    # Both AniBridge backings tag their entries source="anibridge". A Kometa-style
     # raw dict (no key) is ANIME_IDS, so this derives provenance for either producer.
     source = MappingSource.ANIBRIDGE if raw.get("source") == "anibridge" else MappingSource.ANIME_IDS
     return MappingEntry(
@@ -229,7 +229,7 @@ ANIDB_MAPPINGS_URL = "https://raw.githubusercontent.com/Anime-Lists/anime-lists/
 ANIDB_MAPPINGS_FILE = "anime-list-master.xml"
 
 # anibridge-mappings ships daily-rolling release assets tagged by major version.
-# Bump ANIBRIDGE_RELEASE when a new (breaking) major lands; the cache filename is
+# Bump ANIBRIDGE_RELEASE when a new (breaking) major lands. The cache filename is
 # versioned to match so an old-format file is never parsed by the new loader.
 ANIBRIDGE_RELEASE = "v3"
 ANIBRIDGE_MAPPINGS_URL = (
@@ -261,7 +261,7 @@ def _parse_anime_mappings(path: str) -> AnimeIdsMap:
     """Load the Kometa Anime-IDs JSON map from disk."""
 
     with open(path, encoding="utf-8") as f:
-        # Raw JSON boundary: json.load returns Any; narrow to the known map shape.
+        # Raw JSON boundary: json.load returns Any. Narrow to the known map shape.
         return cast("AnimeIdsMap", json.load(f))
 
 
@@ -280,11 +280,11 @@ def _anime_ids_rows(anime_mappings: AnimeIdsMap) -> list[AnimeIdRow]:
         # NOT NULL `tvdb_season` / `tvdb_epoffset` columns and raise an
         # IntegrityError that aborts the whole populate (then the :memory:
         # fail-open re-parses the same data and re-raises, taking down the entire
-        # run); the shared helper folds it to the same sentinel an absent key gets.
+        # run). The shared helper folds it to the same sentinel an absent key gets.
         season, epoffset = _coalesce_season_epoffset(record)
         rows.append(
             AnimeIdRow(
-                # NULL anilist_id is kept here but filtered out at query time; the
+                # NULL anilist_id is kept here but filtered out at query time. The
                 # field is typed int per that IS NOT NULL contract, so cast the
                 # producer's nullable value (it rides through as a stored NULL).
                 anilist_id=cast("int", record.get("anilist_id")),
@@ -324,11 +324,11 @@ def _anidb_rows(root: ElementTree.Element) -> _AnidbParse:
 
     Runs once at populate time:
 
-    * An anidb id appearing in more than one `<anime>` element is *ambiguous*;
-      it is recorded and stored with no mapping rows, and
+    * An anidb id appearing in more than one `<anime>` element is *ambiguous*.
+      It is recorded and stored with no mapping rows, and
       `MappingResolver.anidb_mapping_dict` raises on it.
     * For an unambiguous id, each `<mapping-list>/<mapping>` with text is parsed
-      to `{tvdb_ep: anidb_ep}` keyed by `tvdbseason`; a repeated season is
+      to `{tvdb_ep: anidb_ep}` keyed by `tvdbseason`. A repeated season is
       last-wins. Malformed/unsupported mappings are skipped but tallied.
     """
 
@@ -357,7 +357,7 @@ def _anidb_rows(root: ElementTree.Element) -> _AnidbParse:
                 try:
                     season = int(i.attrib["tvdbseason"])
                     pairs = [x.split("-") for x in i.text.strip(";").split(";")]
-                    # orientation {tvdb_ep: anidb_ep}; last <mapping> per season wins
+                    # orientation {tvdb_ep: anidb_ep}. Last <mapping> per season wins
                     season_map[season] = {int(p[1]): int(p[0]) for p in pairs}
                 except (KeyError, ValueError, IndexError):
                     unsupported += 1
@@ -409,7 +409,7 @@ class MappingResolver(AnimeIdSets):
     Downloads-if-stale, then - only when a source's content digest changed -
     parses and indexes it into `mappings.db` (owned here). Lookups are answered
     from SQL. `get_anilist_ids` returns the AniList mappings plus the ids it
-    dropped because the user chose to ignore them, so the caller (not the
+    dropped because they're configured to be ignored, so the caller (not the
     resolver) owns the per-id logging.
     """
 
@@ -433,12 +433,12 @@ class MappingResolver(AnimeIdSets):
             sources: The three source configs, each tri-state
                 (disabled / download / pre-parsed inline).
             web: The shared web client the source downloads ride.
-            mappings_db: Path to the SQLite mapping cache; the in-memory
+            mappings_db: Path to the SQLite mapping cache. The in-memory
                 default is for tests / pre-parsed configs.
-            logger: For download/parse visibility (DEBUG;
+            logger: For download/parse visibility (DEBUG,
                 the boot cockpit owns the INFO-level startup narrative).
             progress: The boot cockpit's step handle, fed
-                streaming download progress for the live bar; with no cockpit,
+                streaming download progress for the live bar. With no cockpit,
                 progress falls back to throttled DEBUG lines.
         """
 
@@ -448,7 +448,7 @@ class MappingResolver(AnimeIdSets):
         self._web = web
         self._progress = progress
 
-        # The downloaded sources are cached next to mappings.db in the data dir; an
+        # The downloaded sources are cached next to mappings.db in the data dir. An
         # in-memory db (tests / pre-parsed configs) falls back to the default data
         # dir, so a source is never written to the working directory.
         base = os.path.dirname(os.path.abspath(mappings_db)) if mappings_db != ":memory:" else resolve_paths().data_dir
@@ -460,7 +460,7 @@ class MappingResolver(AnimeIdSets):
         # main loop don't recompute (and re-query) it twice per item.
         self._anilist_ids_cache: dict[ExternalIds, ResolvedMappings] = {}
 
-        # Set by _build; the AniBridge facade is SQL-backed (None when disabled).
+        # Set by _build. The AniBridge facade is SQL-backed (None when disabled).
         self.anibridge: AniBridge | None = None
         self._anime_enabled = False
         self._anidb_enabled = False
@@ -522,7 +522,7 @@ class MappingResolver(AnimeIdSets):
         else:
             assert isinstance(sources.anidb, ElementTree.Element)
             self._anidb_enabled = True
-            # Inline sources have no summary line; the skip tallies are dropped.
+            # Inline sources have no summary line. The skip tallies are dropped.
             parsed = _anidb_rows(sources.anidb)
             self._store.replace_anidb(INLINE_DIGEST, parsed.rows, parsed.ambiguous)
 
@@ -566,7 +566,7 @@ class MappingResolver(AnimeIdSets):
                             out.write(chunk)
                             got += len(chunk)
                             if got > MAX_DOWNLOAD_BYTES:
-                                # A runaway/hostile response must not fill the disk; the
+                                # A runaway/hostile response must not fill the disk. The
                                 # largest real source is a few tens of MB. OSError so the
                                 # refresh path's fall-open containment applies.
                                 raise OSError(
@@ -584,7 +584,7 @@ class MappingResolver(AnimeIdSets):
                                     self.logger.debug(f"Download progress for {label}: {suffix}")
                                 next_mark = got + (1 << 20)
             except httpx.HTTPStatusError as e:
-                # Callers contain OSError; translate at this boundary keeping the
+                # Callers contain OSError. Translate at this boundary keeping the
                 # status but never the message (it embeds the URL).
                 raise OSError(f"download failed: HTTP {e.response.status_code}") from e
             except httpx.HTTPError as e:
@@ -597,7 +597,7 @@ class MappingResolver(AnimeIdSets):
     def _maybe_download(self, file: str, url: str, label: str) -> None:
         """Download `file` if missing, or refresh it once it's past cache_time."""
 
-        # The data dir exists in the normal CLI flow (ensure_data_dir); create it
+        # The data dir exists in the normal CLI flow (ensure_data_dir). Create it
         # here too so the in-memory/standalone fallback never fails on a first write.
         os.makedirs(os.path.dirname(file), exist_ok=True)
 
@@ -644,7 +644,7 @@ class MappingResolver(AnimeIdSets):
         parsed = _anidb_rows(_parse_anidb_mappings(self._anidb_path))
         self._store.replace_anidb(digest, parsed.rows, parsed.ambiguous)
         # The skip tallies ride the summary only when nonzero: malformed is 0 on
-        # healthy upstream data; unsupported forms number in the hundreds.
+        # healthy upstream data. Unsupported forms number in the hundreds.
         skips = f", {parsed.malformed} malformed skipped" if parsed.malformed else ""
         if parsed.unsupported:
             skips += f", {parsed.unsupported} unsupported mapping forms"
@@ -693,7 +693,7 @@ class MappingResolver(AnimeIdSets):
         return " · ".join(names) if names else "none enabled"
 
     def close(self) -> None:
-        """Close the mapping store (idempotent); call once per cycle at teardown."""
+        """Close the mapping store (idempotent). Call once per cycle at teardown."""
 
         self._store.close()
 
@@ -727,7 +727,7 @@ class MappingResolver(AnimeIdSets):
         """Return `{tvdb_season: {tvdb_ep: anidb_ep}}` for an AniDB id + season.
 
         `{}` when the source is disabled, the id is unknown, or it has no
-        mapping for the season; raises `ValueError` when the id is ambiguous
+        mapping for the season. Raises `ValueError` when the id is ambiguous
         (appeared in more than one `<anime>` element). `tvdb_season` is the
         season AniList resolved to.
         """
@@ -779,7 +779,7 @@ class MappingResolver(AnimeIdSets):
             # doesn't cover - EXCEPT a degraded AniBridge entry, which Kometa
             # overrides in the Sonarr/tvdb context only (tvdb id passed). There
             # its missing season ranges drive a wrong-episode grab, so Kometa's
-            # explicit season wins; Radarr (no tvdb id) keeps AniBridge primary,
+            # explicit season wins. Radarr (no tvdb id) keeps AniBridge primary,
             # since the entry value is unused for movies and overriding would
             # silently flip the documented "AniBridge is primary" precedence.
             if self._anime_enabled:
@@ -788,7 +788,7 @@ class MappingResolver(AnimeIdSets):
                     if existing is None or (ids.tvdb is not None and _is_degraded_anibridge(existing)):
                         anilist_mappings[al_id] = entry
 
-            # Drop any AniList IDs the user has chosen to ignore.
+            # Drop any AniList IDs configured to be ignored.
             ids_to_drop = [al_id for al_id in self.ignore_anilist_ids if al_id in anilist_mappings]
             for al_id in ids_to_drop:
                 del anilist_mappings[al_id]
@@ -808,8 +808,8 @@ class MappingResolver(AnimeIdSets):
     ) -> dict[int, MappingEntry]:
         """Get mappings from the Anime ID mappings (served from SQL).
 
-        Returns a fresh {AniList id -> mapping} dict for this source alone;
-        cross-source precedence is `get_anilist_ids`' merge to apply.
+        Returns a fresh {AniList id -> mapping} dict for this source alone.
+        Cross-source precedence is `get_anilist_ids`' merge to apply.
 
         Args:
             ids: The external Arr ids to resolve (at least one).
@@ -844,8 +844,8 @@ class MappingResolver(AnimeIdSets):
     ) -> dict[int, MappingEntry]:
         """Get mappings from the AniBridge mappings (served from SQL).
 
-        Returns a fresh {AniList id -> mapping} dict for this source alone;
-        cross-source precedence is `get_anilist_ids`' merge to apply.
+        Returns a fresh {AniList id -> mapping} dict for this source alone.
+        Cross-source precedence is `get_anilist_ids`' merge to apply.
 
         Args:
             ids: The external Arr ids to resolve (at least one).

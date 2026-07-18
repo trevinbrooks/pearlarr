@@ -25,7 +25,7 @@ from .arr_http import BACKOFF_BASE_S, GET_RETRIES, RETRYABLE_STATUS
 RETRY_AFTER_CAP_S = 60
 
 # Identify ourselves to the hosts we scrape/post to (AniList's API terms ask
-# clients to be identifiable); also what a maintainer would see if this client
+# clients to be identifiable) - also what a maintainer would see if this client
 # ever misbehaves.
 USER_AGENT = f"pearlarr/{__version__}"
 
@@ -61,7 +61,7 @@ def get_with_retries(
     *,
     sleep: Callable[[float], None] = time.sleep,  # injectable backoff sleep (bypassed in tests)
 ) -> httpx.Response:
-    """GET `url`, retrying transient failures; NEVER raises on a status.
+    """GET `url`, retrying transient failures, NEVER raising on a status.
 
     The web twin of `ArrHttp._get_with_retries` (same retry count, backoff
     shape and retryable-status set) - GETs only, so it stays safe for
@@ -76,7 +76,7 @@ def get_with_retries(
         try:
             response = client.get(url)
         except httpx.TransportError:
-            pass  # transient by definition; the next attempt may recover
+            pass  # transient by definition - the next attempt may recover
         else:
             if response.status_code not in RETRYABLE_STATUS:
                 return response

@@ -8,8 +8,8 @@ the `QualitySource` vocabulary must match the schema enum. A regen of the
 captures (see `schemas/README.md`) that renames or drops a consumed property
 fails here, naming the model.field and component.
 
-Scope: declared fields only. The `_WireModel` write bodies get the same check;
-their `extra="allow"` passthrough of undeclared keys is out of scope by design
+Scope: declared fields only. The `_WireModel` write bodies get the same check.
+Their `extra="allow"` passthrough of undeclared keys is out of scope by design
 (passthrough carries whatever the wire had, so there is nothing to drift).
 """
 
@@ -66,7 +66,7 @@ class _Schema:
         return props
 
     def _deref(self, node: Json) -> dict[str, Json]:
-        """Resolve one `$ref` hop; a plain object node passes through."""
+        """Resolve one `$ref` hop. A plain object node passes through."""
 
         assert is_json_obj(node), f"{self.name}: expected an object node, got {type(node).__name__}"
         ref = node.get("$ref")
@@ -75,7 +75,7 @@ class _Schema:
         return node
 
     def _alias_path_problem(self, component: str, path: AliasPath) -> str | None:
-        """Walk an `AliasPath` through the component; the failing step, or None."""
+        """Walk an `AliasPath` through the component. The failing step, or None."""
 
         node = self.component(component)
         for step in path.path:
@@ -93,14 +93,14 @@ class _Schema:
         return None
 
     def field_problem(self, component: str, field_name: str, info: FieldInfo) -> str | None:
-        """None when the field's wire name resolves in the component; else the reason."""
+        """None when the field's wire name resolves in the component. Else the reason."""
 
         alias = info.validation_alias
         if alias is None or isinstance(alias, str):
             wire = alias or info.alias or field_name
             return None if wire in self.properties(component) else f"no property {wire!r}"
         if isinstance(alias, AliasChoices):
-            # Each choice is a candidate wire name; >=1 must exist per schema.
+            # Each choice is a candidate wire name. >=1 must exist per schema.
             names = [choice for choice in alias.choices if isinstance(choice, str)]
             assert len(names) == len(alias.choices), f"AliasChoices with a non-str choice: {alias.choices!r}"
             if any(name in self.properties(component) for name in names):
@@ -147,7 +147,7 @@ ROSTER: Final = (
     Spec(SonarrEpisode, "EpisodeResource", _SONARR),
     Spec(SonarrEpisodeFile, "EpisodeFileResource", _SONARR),
     # `offline` is set only by the local SxxExx regex fallback (never from
-    # the wire); it marks a parse the positional leg must treat as unknown.
+    # the wire). It marks a parse the positional leg must treat as unknown.
     Spec(ParsedFileInfo, "ParseResource", _SONARR, exempt=frozenset({"offline"})),
     Spec(ManualImportCandidate, "ManualImportResource", _SONARR),
     Spec(ManualImportFile, "ManualImportReprocessResource", _SONARR),
@@ -159,7 +159,7 @@ ROSTER: Final = (
     Spec(RadarrMovie, "MovieResource", _RADARR),
     Spec(MovieFile, "MovieFileResource", _RADARR),
     # `reason` is synthesized by a before-validator from the `data` map
-    # (no such property exists); test_history_data_backs_the_reason_lift pins `data`.
+    # (no such property exists). test_history_data_backs_the_reason_lift pins `data`.
     Spec(HistoryRecord, "HistoryResource", _BOTH, exempt=frozenset({"reason"})),
     Spec(Quality, "Quality", _BOTH),
     Spec(Revision, "Revision", _BOTH),

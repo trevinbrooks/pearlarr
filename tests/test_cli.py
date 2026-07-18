@@ -1,6 +1,6 @@
 # pyright: strict
 # pyright: reportPrivateUsage=false
-# `_schedule_hours` is a deliberately under-test private helper; the repo already
+# `_schedule_hours` is a deliberately under-test private helper. The repo already
 # disables reportPrivateUsage for all of tests/, but the strict directive above
 # re-enables it, so restore the repo's test policy here.
 """Tests for the Pearlarr CLI commands.
@@ -20,7 +20,7 @@ Pins the behaviors the commands must guarantee:
   through the Typer apps' result callback.
 * `config init` never overwrites a filled-in config.yml without `--force`.
 * `run single` with no selection flag runs every *configured* arr (scheduled-mode
-  symmetry); an explicit flag for an unconfigured arr refuses cleanly, an implicit
+  symmetry). An explicit flag for an unconfigured arr refuses cleanly, an implicit
   selection skips it with a dim ledger note - except a half-configured arr (url
   without api_key), whose skip warns by name (`configured_arrs`).
 * The inspection commands (`config validate` / `config show`) never write the
@@ -30,11 +30,11 @@ Pins the behaviors the commands must guarantee:
 * `advanced.log_level` is applied to CLI runs as soon as the config is read,
   and `--log-level` overrides it (cli > config).
 * A missing config exits 1 with the starter template written (no silent
-  skip-and-retry); an invalid config keeps the skip+retry contract in scheduled
-  mode; SIGTERM stops the scheduled loop with exit code 0.
+  skip-and-retry). An invalid config keeps the skip+retry contract in scheduled
+  mode. SIGTERM stops the scheduled loop with exit code 0.
 
 Each test points `resolve_paths()` at its own `tmp_path` via `PEARLARR_DATA_DIR`
-and calls the command functions directly (they return `bool`); the exit-code
+and calls the command functions directly (they return `bool`). The exit-code
 tests go through `CliRunner` since the callback only runs inside typer.
 """
 
@@ -139,7 +139,7 @@ def _build_cache(tmp_path: Path) -> None:
 class TestCacheRoundTrip:
     """`cache_backup`/`cache_restore`/`cache_remove` round-trip and clean up the cache db.
 
-    Backup-then-restore preserves data and clears a stale WAL/SHM sidecar; remove deletes the db and its sidecars.
+    Backup-then-restore preserves data and clears a stale WAL/SHM sidecar. Remove deletes the db and its sidecars.
     """
 
     def test_backup_then_restore_preserves_data(
@@ -156,7 +156,7 @@ class TestCacheRoundTrip:
         # Success is confirmed out loud (on stdout), not silently.
         assert f"Backed up cache to {tmp_path / 'cache.backup.db'}" in capsys.readouterr().out
 
-        # A stale WAL left next to cache.db must not shadow the restored snapshot;
+        # A stale WAL left next to cache.db must not shadow the restored snapshot.
         # restore clears the sidecars before swapping the copy into place.
         (tmp_path / "cache.db-wal").write_text("stale")
 
@@ -272,7 +272,7 @@ class TestActiveRunGuard:
         monkeypatch.setenv("PEARLARR_DATA_DIR", str(tmp_path))
         _build_cache(tmp_path)
 
-        # Holding the single-instance lock on the data dir simulates an active run;
+        # Holding the single-instance lock on the data dir simulates an active run.
         # remove must refuse and leave the live db untouched.
         with single_instance_lock(str(tmp_path)):
             assert cache_remove() is False
@@ -309,7 +309,7 @@ class TestActiveRunGuard:
         monkeypatch.setenv("PEARLARR_DATA_DIR", str(tmp_path))
         _build_cache(tmp_path)
 
-        # A mid-run snapshot would capture half-committed cycle state; backup
+        # A mid-run snapshot would capture half-committed cycle state. Backup
         # refuses like restore/remove and writes nothing.
         with single_instance_lock(str(tmp_path)):
             assert cache_backup() is False
@@ -373,11 +373,11 @@ class TestMissingFilesAreReportedNotRaised:
         _build_cache(tmp_path)
         assert cache_backup() is True
 
-        # The live db going corrupt is the very scenario backups exist for; the
+        # The live db going corrupt is the very scenario backups exist for. The
         # failed re-backup must leave the good snapshot restorable.
         (tmp_path / "cache.db").write_text("not a database")
         assert cache_backup() is False
-        # The failure line itself is pinned by test_failed_backup_leaves_no_partial_snapshot;
+        # The failure line itself is pinned by test_failed_backup_leaves_no_partial_snapshot.
         # here we only drain it so the real echo stays off the terminal under `-s`.
         capsys.readouterr()
 
@@ -408,7 +408,7 @@ class TestConfigInit:
             # The starter will be filled with API keys: it must land owner-only.
             assert (config.stat().st_mode & 0o777) == 0o600
 
-        # A filled-in config must survive an accidental re-run; the refusal is
+        # A filled-in config must survive an accidental re-run. The refusal is
         # a stderr line.
         config.write_text("sonarr: {url: http://mine}")
         assert config_init() is False
@@ -417,7 +417,7 @@ class TestConfigInit:
 
         assert config_init(force=True) is True
         assert config.read_text() == _starter_text()
-        # The write is proven by the file content above; drain the post-force echo so
+        # The write is proven by the file content above. Drain the post-force echo so
         # it can't spill to the terminal under `-s` (output after a mid-test
         # readouterr() is flushed there at teardown when global capture is off).
         capsys.readouterr()
@@ -451,7 +451,7 @@ class _RunArrsRecorder:
 
 
 class TestRunSingleSelection:
-    """No selection flag = every arr, implicitly; any flag/id narrows explicitly.
+    """No selection flag = every arr, implicitly. Any flag/id narrows explicitly.
 
     `run_arrs` is faked out, so these pin only the selection wiring: which
     `(arr, item_id)` pairs are requested and whether the request counts as
@@ -513,7 +513,7 @@ class TestConfiguredArrs:
         assert kept == [(Arr.SONARR, None)]
         # The note is a first-party INFO Diagnostic on the hub: a Sonarr-only
         # setup is normal, not an error. The message is FLAT (the rich console
-        # indents it via placement inside the open boot section); the arr name
+        # indents it via placement inside the open boot section). The arr name
         # is capitalized prose, not a lowercase config key.
         (skip,) = recording.of_type(Diagnostic)
         assert skip.severity is Severity.INFO
@@ -534,7 +534,7 @@ class TestConfiguredArrs:
         assert kept == [(Arr.SONARR, None)]
         # url XOR api_key is almost certainly an accident: the skip must be loud
         # and name the missing half, not read like an intentional single-arr setup.
-        # Dotted keys stay lowercase; the prose subject is capitalized.
+        # Dotted keys stay lowercase. The prose subject is capitalized.
         (warning,) = recording.of_type(Diagnostic)
         assert warning.severity is Severity.WARNING
         assert warning.message == "radarr.url is set but radarr.api_key is not - skipping Radarr"
@@ -561,7 +561,7 @@ class TestConfiguredArrs:
         (error,) = recording.of_type(Diagnostic)
         assert error.severity is Severity.ERROR
         assert "radarr.url" in error.message
-        # Prose subject capitalized; the dotted keys above stay lowercase.
+        # Prose subject capitalized. The dotted keys above stay lowercase.
         assert error.message.startswith("Radarr was selected but is not configured")
 
     def test_nothing_configured_reports_and_refuses(self, recording: RecordingHub) -> None:
@@ -572,7 +572,7 @@ class TestConfiguredArrs:
             config_path="config.yml",
         )
         assert kept is None
-        # Both per-arr skip notes precede the refusal; the ERROR is the verdict.
+        # Both per-arr skip notes precede the refusal. The ERROR is the verdict.
         (error,) = [d for d in recording.of_type(Diagnostic) if d.severity is Severity.ERROR]
         assert error.message == (
             "Neither sonarr nor radarr is configured - set sonarr.url and sonarr.api_key, or radarr.url and "
@@ -643,7 +643,7 @@ class TestRunFailuresAreCleanAndNonzero:
             ),
             "unauthorized": ArrAuthError("Sonarr at http://sonarr:8989 rejected the API key (status code 401)"),
             "contract": BoundaryContractError(
-                "none of the 3 SonarrSeries records validated; refusing to treat it as empty",
+                "none of the 3 SonarrSeries records validated. Refusing to treat it as empty",
             ),
         }
 
@@ -717,7 +717,7 @@ class TestRunFailuresAreCleanAndNonzero:
         assert run_single(sonarr=True) is False
         out = capsys.readouterr().out
         assert "Unreadable YAML" in out
-        assert "line 3" in out  # the position survives, so the user can find it
+        assert "line 3" in out  # the position survives, so it is easy to find
         assert "hunter2" not in out
         assert "Traceback" not in out
 
@@ -743,7 +743,7 @@ class TestRunFailuresAreCleanAndNonzero:
         capsys: pytest.CaptureFixture[str],
     ) -> None:
         # A brand-new user with no network hits the FIRST-ever source download
-        # (the refresh path falls open to the cached copy; a first download has
+        # (the refresh path falls open to the cached copy, a first download has
         # none): the downloader translates the httpx failure into an OSError,
         # which must surface as a one-line hint, not a ten-frame traceback.
         import pearlarr.mappings as mappings_mod
@@ -920,7 +920,7 @@ class TestConfigInspection:
 
 
 class TestConfigMigrate:
-    """`config migrate`: rewrites an old-schema file behind a backup; current files untouched."""
+    """`config migrate`: rewrites an old-schema file behind a backup. Current files untouched."""
 
     def test_migrates_an_old_file_keeping_values_and_a_backup(
         self,
@@ -1031,7 +1031,7 @@ class TestApplyLogLevel:
 class TestLogLevelWiring:
     """The headline fix: `advanced.log_level` reaches CLI runs, `--log-level` wins.
 
-    `apply_log_level` itself is pinned above; these pin that `run_arrs`
+    `apply_log_level` itself is pinned above. These pin that `run_arrs`
     actually calls it once the config is readable, with cli > config precedence
     (the original bug: the config level was dead on every CLI run).
     """
@@ -1148,7 +1148,7 @@ def _install_cycle_recorder(monkeypatch: pytest.MonkeyPatch) -> _CycleStampingRe
 
     def install(paths: AppPaths) -> tuple[OutputHub, FileLogSink]:
         hub = OutputHub([renderer])
-        install_hub(hub)  # emit_to_hub resolves this hub; conftest restores
+        install_hub(hub)  # emit_to_hub resolves this hub, conftest restores
         return hub, FileLogSink(paths.log_dir)
 
     monkeypatch.setattr("pearlarr.cli._install_output_hub", install)
@@ -1158,7 +1158,7 @@ def _install_cycle_recorder(monkeypatch: pytest.MonkeyPatch) -> _CycleStampingRe
 class TestLogFormatWiring:
     """`advanced.log_format` reaches `setup_logger` on both run commands.
 
-    The renderers themselves are pinned in test_log_format.py; these pin that
+    The renderers themselves are pinned in test_log_format.py. These pin that
     the run commands resolve the config format and thread `console_format`
     through (scheduled mode re-resolves each cycle, before the logger is
     rebuilt), AND that the hub + bridge are installed BEFORE setup_logger runs
@@ -1265,7 +1265,7 @@ def _drive_representative(hub: OutputHub) -> None:
 class TestHubSeats:
     """The REAL cli seat factory, pinned end-to-end.
 
-    Plain stdout is the file's bytes minus exactly the file_only lines; json is
+    Plain stdout is the file's bytes minus exactly the file_only lines. json is
     event-per-line.
     """
 
@@ -1314,7 +1314,7 @@ class TestHubSeats:
         events = [cast("dict[str, object]", json.loads(line)) for line in stream.getvalue().splitlines()]
         envelope = ["schema_version", "time", "event", "level", "message"]
         assert [list(obj)[:5] for obj in events] == [envelope] * len(events)
-        # One object per EVENT, in emit order; the file_only diagnostic stays out.
+        # One object per EVENT, in emit order. The file_only diagnostic stays out.
         assert [obj["event"] for obj in events] == [
             "run_started",
             "scan_started",
@@ -1341,14 +1341,14 @@ class TestMissingConfigExitsNonzero:
         config = Path(resolve_paths().config)
         assert config.read_text(encoding="utf-8") == _starter_text()
         assert "starter template was written" in result.output
-        # This arm exits now; the skip-and-retry wording belongs to the others.
+        # This arm exits now. The skip-and-retry wording belongs to the others.
         assert "Skipping this run" not in result.output
 
 
 class TestUnknownTrackerWarning:
     """Unknown `seadex.trackers` values warn at load - they silently match nothing.
 
-    Warn-not-reject: strict key validation already rejects unknown KEYS; an unknown
+    Warn-not-reject: strict key validation already rejects unknown KEYS. An unknown
     VALUE is a typo that would quietly filter out every release from that tracker.
     """
 
@@ -1421,7 +1421,7 @@ class TestUnwritableDataDir:
     """An unwritable data directory: one actionable stderr line + exit 1, no traceback.
 
     `ensure_data_dir`/`setup_logger` run before any logger exists, so the
-    report must go straight to stderr; `config init`'s template copy gets the
+    report must go straight to stderr. `config init`'s template copy gets the
     same treatment. An unreadable CONFIG in a healthy dir instead keeps the
     skip+retry contract - exiting would kill the scheduled daemon.
     """
@@ -1555,7 +1555,7 @@ class TestScheduledLifecycle:
         logger: logging.Logger,
         monkeypatch: pytest.MonkeyPatch,
     ) -> None:
-        # The in-memory migration keeps an old file running; the warn names what
+        # The in-memory migration keeps an old file running. The warn names what
         # was folded and the command that updates the file. The resolver stub
         # stops the run right after the config load (no network).
         recording = install_recording_hub()
@@ -1586,7 +1586,7 @@ class TestScheduledLifecycle:
         logger: logging.Logger,
         monkeypatch: pytest.MonkeyPatch,
     ) -> None:
-        # The knob must reach the sink with the CONFIGURED value, not a default;
+        # The knob must reach the sink with the CONFIGURED value, not a default.
         # the resolver stub stops the run right after (no network).
         install_recording_hub()
         paths = resolve_paths()
@@ -1686,7 +1686,7 @@ class TestRunLockContention:
         paths = resolve_paths()
         os.makedirs(paths.data_dir)
 
-        # Hold the run lock ourselves; run_arrs must find it taken and bail
+        # Hold the run lock ourselves. run_arrs must find it taken and bail
         # before ever reading the config (none exists here - a regression past
         # the guard would raise the missing-config typer.Exit).
         with single_instance_lock(paths.data_dir) as held:

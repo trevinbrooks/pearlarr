@@ -27,18 +27,18 @@ class EnvVar:
     name: str
 
     scope: Literal["app", "docker"]
-    """`app` is read by the application itself; `docker` only by the container entrypoint."""
+    """`app` is read by the application itself. `docker` only by the container entrypoint."""
 
     description: str
     """What the variable controls, in the compiled docs dialect (plain text + single backticks)."""
 
 
 ENV_VARS: tuple[EnvVar, ...] = (
-    EnvVar(DATA_DIR_ENV, "app", "Override the data directory; the global `--data-dir` flag wins over it."),
+    EnvVar(DATA_DIR_ENV, "app", "Override the data directory. The global `--data-dir` flag wins over it."),
     EnvVar(
         "PEARLARR_<GROUP>__<KEY>",
         "app",
-        "Override any config key by its double-underscore path; the value is parsed as YAML. "
+        "Override any config key by its double-underscore path. The value is parsed as YAML. "
         "See docs/configuration.md.",
     ),
     EnvVar("PEARLARR_CRON", "docker", "Cron schedule for the container's recurring runs."),

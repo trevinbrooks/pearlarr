@@ -1,7 +1,7 @@
 # pyright: strict
 # pyright: reportPrivateUsage=false
 # These reach into the strategy's private collaborators (strat._episodes /
-# strat._executor) to pin the seam; strict re-flags that and the repo disables
+# strat._executor) to pin the seam. Strict re-flags that and the repo disables
 # reportPrivateUsage for tests.
 """Seam tests for the composition split.
 
@@ -71,7 +71,7 @@ class _Item:
     """A stand-in Arr item exposing whatever id attributes a test sets.
 
     Declares the full `ArrItem` surface so it structurally satisfies the
-    `SonarrItem` / `RadarrItem` protocols; each test sets only the attributes
+    `SonarrItem` / `RadarrItem` protocols. Each test sets only the attributes
     the hook under test actually reads.
     """
 
@@ -373,8 +373,8 @@ class TestFilterToSingle:
 class TestRunStartHook:
     """get_items doubles as the run-start hook: it resets the per-run scratch.
 
-    The episode reset/fingerprint now lives on the SonarrEpisodes collaborator;
-    this stays at strategy level to pin that get_items actually routes through it.
+    The episode reset/fingerprint now lives on the SonarrEpisodes collaborator.
+    This stays at strategy level to pin that get_items actually routes through it.
     """
 
     def test_sonarr_get_items_clears_ep_list_cache(self) -> None:
@@ -432,7 +432,7 @@ class TestRadarrPrefetchEpisodes:
 
 
 class TestProcessAlIdThreadsServices:
-    """The per-id head runs through the held services; a missing entry stops this id."""
+    """The per-id head runs through the held services. A missing entry stops this id."""
 
     def test_radarr_no_seadex_entry_returns_false(self) -> None:
         run = _FakeRunServices()
@@ -603,7 +603,7 @@ def _make_sonarr_for_import(
     everything `import_completed` reaches over the network - and records the two
     import commands so a test asserts on recorded state. `episodes` defaults to
     empty, so the target episodes have NO file yet (they need importing) and the
-    done-check never short-circuits; pass episodes carrying a file to exercise the
+    done-check never short-circuits. Pass episodes carrying a file to exercise the
     "already imported" / never-overwrite paths. `queue` defaults to empty (Sonarr
     isn't tracking the download, so the strategy steps in). `commands` defaults to
     empty (no in-flight ManualImport, so the dedup guard never trips). The fake's
@@ -738,8 +738,8 @@ class TestImportCompletedQueueState:
     def test_import_blocked_steps_in_with_our_mapping(self) -> None:
         # Sonarr can't auto-import (importBlocked) -> our authoritative manual
         # import takes over and ISSUES the command. The copy is async, so right
-        # after issuing the probe reads RETRY + command_issued (NOT files_present);
-        # a later monitor cycle flips to files_present once the episode files land.
+        # after issuing the probe reads RETRY + command_issued (NOT files_present).
+        # A later monitor cycle flips to files_present once the episode files land.
         pending = pending_import(
             infohash="abc123",
             file_episode_map={"Show - 01 [1080p].mkv": [101]},
@@ -762,7 +762,7 @@ class TestImportCompletedQueueState:
         # Regression: import verification reads the episode FILES as the source of
         # truth, so the episode list must be re-fetched each poll, never served
         # stale from the per-run cache. Poll 1 (target absent) issues the import
-        # (RETRY + command_issued); once the copy lands, poll 2 must observe the
+        # (RETRY + command_issued). Once the copy lands, poll 2 must observe the
         # file -> IMPORTED + files_present, WITHOUT re-issuing. A stale cache would
         # keep files_present False forever (the monitor times out as "still
         # importing", and in move mode the import is never confirmed at all).
@@ -924,7 +924,7 @@ class TestImportCompletedPayload:
             episode_ids=[101],
         )
         # The candidate carries a *different* in-context quality and no
-        # authoritative episode/series info; the payload must ignore those.
+        # authoritative episode/series info. The payload must ignore those.
         candidate = manual_candidate(
             "/downloads/Show - 01 [1080p].mkv",
             quality={"quality": {"name": "HDTV-720p"}},
@@ -933,7 +933,7 @@ class TestImportCompletedPayload:
 
         probe = strat.import_completed(pending, "/downloads/Show")
 
-        # The command was issued; the copy is async, so the probe is RETRY +
+        # The command was issued. The copy is async, so the probe is RETRY +
         # command_issued (not yet files_present) right after issuing.
         assert probe.readiness is ImportReadiness.RETRY
         assert probe.command_issued is True
@@ -948,7 +948,7 @@ class TestImportCompletedPayload:
         assert entry.path == "/downloads/Show - 01 [1080p].mkv"
 
     def test_sonarr_structured_quality_wins_over_ours(self) -> None:
-        # Sonarr already parsed the release as (bluray, 1080); our filename parse
+        # Sonarr already parsed the release as (bluray, 1080). Our filename parse
         # would say WEB-DL, but Sonarr's structured parse takes precedence.
         pending = pending_import(
             file_episode_map={"Show - 01 [1080p][WEB-DL].mkv": [101]},
@@ -987,7 +987,7 @@ class TestImportCompletedPayload:
         assert revision.version == 1
 
     def test_our_parse_fills_when_sonarr_quality_unknown(self) -> None:
-        # Sonarr couldn't parse the release (Unknown); our filename parse of
+        # Sonarr couldn't parse the release (Unknown). Our filename parse of
         # (web, 1080) fills both axes -> WEBDL-1080p, and a real quality is emitted.
         pending = pending_import(
             file_episode_map={"Show - 01 [1080p][WEB-DL].mkv": [101]},
@@ -1023,7 +1023,7 @@ class TestImportCompletedPayload:
         assert inner.name == "WEBDL-1080p"
 
     def test_matches_disk_name_across_nfd_normalization(self) -> None:
-        # The seed map is keyed by an NFC name; the on-disk leaf arrives NFD
+        # The seed map is keyed by an NFC name. The on-disk leaf arrives NFD
         # (macOS). Normalization on both sides still matches -> the file imports,
         # never "no authoritative mapping".
         nfc = "Café - 01 [1080p].mkv"  # composed e-acute
@@ -1079,8 +1079,8 @@ class TestImportCompletedPayload:
 
         probe = strat.import_completed(pending, "/d")
 
-        # The good file's import command was issued (RETRY + command_issued); the
-        # sample is never queued.
+        # The good file's import command was issued (RETRY + command_issued).
+        # The sample is never queued.
         assert probe.readiness is ImportReadiness.RETRY
         assert probe.command_issued is True
         paths = [f.path for f in sonarr.execute_calls[0][0]]
@@ -1092,7 +1092,7 @@ class TestImportCompletedPayload:
         # the candidate WITH an "already imported" rejection (it fires whenever the
         # episode has any file on disk). That rejection must NOT veto our import:
         # we grabbed this exactly to replace the unidentifiable file, so we step in
-        # and ISSUE the command (RETRY + command_issued; the copy is async).
+        # and ISSUE the command (RETRY + command_issued, the copy is async).
         pending = pending_import(
             release_group="SubGroup",
             file_episode_map={"Show - 01 [1080p].mkv": [101]},
@@ -1116,8 +1116,8 @@ class TestImportCompletedPayload:
 
     def test_missing_group_import_then_recognized_terminates(self) -> None:
         # Loop-termination regression (mirrors the import->recognize round-trip):
-        # poll 1 imports over a missing-group file (RETRY + command_issued); the
-        # imported file now carries OUR group, so poll 2 reads it as RECOMMENDED ->
+        # poll 1 imports over a missing-group file (RETRY + command_issued).
+        # The imported file now carries OUR group, so poll 2 reads it as RECOMMENDED ->
         # nothing needed -> IMPORTED, with NO re-issue. Proves the fix can't loop.
         pending = pending_import(
             release_group="SubGroup",
@@ -1152,7 +1152,7 @@ class TestImportCompletedPayload:
             file_episode_map={"Show - 01 [1080p].mkv": [101]},
             episode_ids=[101],
         )
-        # A different file is on disk; ours isn't there yet.
+        # A different file is on disk. Ours isn't there yet.
         strat, sonarr = _make_sonarr_for_import(
             candidates=[manual_candidate("/d/Unrelated.mkv")],
         )
@@ -1204,13 +1204,13 @@ class TestImportCompletedPayload:
         probe = strat.import_completed(pending, "/d")
         assert probe.readiness is ImportReadiness.RETRY
         assert probe.command_issued is False
-        # The execute WAS attempted (Sonarr rejected it -> command_issued False); a
-        # regression returning RETRY without even trying would still set False here.
+        # The execute WAS attempted (Sonarr rejected it -> command_issued False).
+        # A regression returning RETRY without even trying would still set False here.
         assert len(sonarr.execute_calls) == 1
 
     def test_quality_defs_and_languages_cached_per_run(self) -> None:
         # Quality definitions + languages are fetched lazily ONCE and cached on the
-        # executor for the rest of the run. Run 1 caches the (a) values; before run 2
+        # executor for the rest of the run. Run 1 caches the (a) values. Before run 2
         # the source changes to (b), but a cached run must not re-fetch, so both polls
         # keep the (a) values. Drop the lazy-fetch guard and run 2 refetches (b),
         # flipping the executor's cache to (b) -> these assertions fail.
@@ -1237,7 +1237,7 @@ class TestImportCompletedPayload:
 
         strat.import_completed(pending, "/d")
 
-        # The source changes between polls; a cached run must ignore it.
+        # The source changes between polls. A cached run must ignore it.
         sonarr.quality_defs_return = defs_b
         sonarr.languages_return = langs_b
         strat.import_completed(pending, "/d")
@@ -1264,7 +1264,7 @@ class TestRadarrImportCompletedNoOp:
         assert strat.pending_import_series_id(_Item(id=5)) is None
 
     def test_import_progress_is_indeterminate_zero(self) -> None:
-        # Radarr records no pending imports; the progress hook returns the safe
+        # Radarr records no pending imports. The progress hook returns the safe
         # "no bar, promote nothing" value.
         strat = make_bare_instance(RadarrSync, logger=make_logger())
 
@@ -1272,10 +1272,10 @@ class TestRadarrImportCompletedNoOp:
 
 
 class TestManualImportWarningGating:
-    """The import warns loudly only at the deadline; otherwise it's debug.
+    """The import warns loudly only at the deadline. Otherwise it's debug.
 
     A missing intended file on an early poll is expected (the copy hasn't landed),
-    so it must NOT inflate the summary's warning count; only the final attempt
+    so it must NOT inflate the summary's warning count. Only the final attempt
     (at_deadline) warns loudly that a still-missing file is terminal.
     """
 
@@ -1330,7 +1330,7 @@ class TestDefaultQualityWarning:
     """An unmatched `imports.default_quality` warns once per run, at the consume seam.
 
     `quality_axes_from_name` stays pure (its silent-empty return is pinned
-    elsewhere); the executor is where the configured name meets the run's real
+    elsewhere). The executor is where the configured name meets the run's real
     Sonarr definitions, and it runs once per FILE - hence the once-per-run guard.
     """
 
@@ -1417,7 +1417,7 @@ class TestFolderScanFallback:
     """The dead-loop cure: a failed downloadId scan probes history and scans the folder.
 
     A download Sonarr's history maps to Imported/Failed/Ignored is queue-hidden
-    and its `downloadId=` scan 500s forever; without the fallback every poll
+    and its `downloadId=` scan 500s forever. Without the fallback every poll
     deferred "for a later run" until the pending TTL silently dropped it.
     """
 
@@ -1523,7 +1523,7 @@ class TestFolderScanFallback:
 
     def test_empty_folder_scan_does_not_pin_and_download_id_scan_recovers(self) -> None:
         # 200 [] = the folder isn't visible to Sonarr (or the translation is
-        # wrong). Pinning on it would wedge the record; instead the next poll
+        # wrong). Pinning on it would wedge the record. Instead the next poll
         # retries the recoverable downloadId scan first.
         strat, sonarr = self._strat(history=_dead_history(), folder_candidates=[])
         pending = pending_import()
@@ -1563,7 +1563,7 @@ class TestFolderScanFallback:
 
     def test_clean_verdict_empty_folder_stays_quiet(self) -> None:
         # A transient by-id blip self-heals next poll, so no warning fires at
-        # all (the by-id client read is quiet; the executor owns the noise).
+        # all (the by-id client read is quiet, the executor owns the noise).
         recording = install_recording_hub()
         strat, _ = self._strat(history=_clean_history(), folder_candidates=[])
 
@@ -1606,8 +1606,8 @@ class TestFolderScanFallback:
         assert sonarr.folder_candidate_calls == []
 
     def test_translated_in_flight_command_suppresses_reissue(self) -> None:
-        # A dead-tracked import POSTs translated paths and no downloadId; the
-        # next poll's guard must recognize it through the memoized translation
+        # A dead-tracked import POSTs translated paths and no downloadId.
+        # The next poll's guard must recognize it through the memoized translation
         # (the scripted command has no episode ids, so only the path arm can).
         strat, sonarr = self._strat(
             history=_dead_history(),
@@ -1634,7 +1634,7 @@ class TestFolderScanFallback:
         assert len(sonarr.execute_calls) == 1
 
     def test_single_file_content_path_scans_the_file(self) -> None:
-        # A single-FILE torrent's content_path IS the file; Sonarr's folder=
+        # A single-FILE torrent's content_path IS the file. Sonarr's folder=
         # param accepts a file path (its FileExists arm).
         strat, sonarr = self._strat(
             history=_dead_history(),
@@ -1782,7 +1782,7 @@ class TestRadarrProcessAlIdSeam:
         assert req.replaced_groups == ("OldGroup",)
 
     def test_multi_edition_movie_forwards_every_release_group(self) -> None:
-        # A multi-edition movie holds files from two groups; the GrabRequest (and
+        # A multi-edition movie holds files from two groups. The GrabRequest (and
         # so the notifier) must see both, in the release dict's insertion order -
         # not just the first file's group.
         run = _FakeRunServices(
@@ -1827,8 +1827,8 @@ class TestRadarrReleaseDict:
     """get_radarr_release_dict accumulates sizes per group and never hard-errors."""
 
     def test_multiple_distinct_groups_kept_not_errored(self) -> None:
-        # VU3: 2 distinct groups no longer raise (which skipped the movie every run);
-        # the dict carries both so the planner dedups against each.
+        # VU3: 2 distinct groups no longer raise (which skipped the movie every run).
+        # The dict carries both so the planner dedups against each.
         radarr = _FakeRadarr([MovieFile(release_group="A", size=100), MovieFile(release_group="B", size=200)])
         strat = make_bare_instance(RadarrSync, radarr=radarr)
 

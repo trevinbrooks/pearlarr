@@ -193,7 +193,7 @@ def test_discord_push_posts_the_wrapped_embed() -> None:
     assert isinstance(embeds, list)
     (sent,) = cast("list[dict[str, Json]]", embeds)
     expected = embed.to_payload()
-    # The timestamp is stamped at send time; everything else matches the boundary.
+    # The timestamp is stamped at send time. Everything else matches the boundary.
     assert {k: v for k, v in sent.items() if k != "timestamp"} == {
         k: v for k, v in expected.items() if k != "timestamp"
     }

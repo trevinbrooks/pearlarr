@@ -3,12 +3,12 @@
 
 Pins the contract:
 
-* "rich" (and "auto" on a TTY) attaches exactly ONE `RichConsoleHandler`;
-  it is the only non-bridge handler — no FileHandler anywhere (the hub's
+* "rich" (and "auto" on a TTY) attaches exactly ONE `RichConsoleHandler`.
+  It is the only non-bridge handler - no FileHandler anywhere (the hub's
   FileLogSink owns the file), no logger filters (severity tallies live on the
   hub's `SeverityCounts`).
 * "plain"/"json" (and "auto" off a TTY) attach NO console handler at all:
-  level-only configuration; the bridge is the only handler, so records still
+  level-only configuration. The bridge is the only handler, so records still
   reach the hub and `logging.lastResort` can never fire.
 * `console_of` -> None under plain/json, so the live cockpits never build -
   designed, not a bug (the hub seats LineRenderer/JsonRenderer instead).
@@ -16,10 +16,10 @@ Pins the contract:
   (`console_level` semantics) and forwards the raw level to the hub.
 * The stand-down seam: the rich handler renders raw records (badges for
   WARNING+, plain text below) UNLESS the registered console owner answers True
-  (the bridge adopts every record; the hub's renderer places it) — no owner
+  (the bridge adopts every record. The hub's renderer places it) - no owner
   keeps the legacy arms, so records can never vanish.
 * The invalid-level complaint fires AFTER handler attach: on a rich console
-  with no owner the legacy badge renders it; under plain/json it arrives as a
+  with no owner the legacy badge renders it. Under plain/json it arrives as a
   hub Diagnostic through the bridge (advisor #17's early-record path).
 """
 
@@ -86,7 +86,7 @@ class TestHandlerGraph:
 
     def test_plain_attaches_no_handler_at_all(self, build: _Builder) -> None:
         # Level-only configuration: the hub's LineRenderer owns plain stdout and
-        # the FileLogSink owns the file; the bridge is the only record path.
+        # the FileLogSink owns the file. The bridge is the only record path.
         logger = build("plain")
         assert _non_bridge_handlers(logger) == []
         assert logger.level == logging.INFO
@@ -102,7 +102,7 @@ class TestHandlerGraph:
         assert isinstance(handlers[0], RichConsoleHandler)
 
     def test_no_file_handler_and_no_filters_anywhere(self, build: _Builder) -> None:
-        # The FileLogSink owns the file; SeverityCounts owns the tallies.
+        # The FileLogSink owns the file. SeverityCounts owns the tallies.
         logger = build("rich")
         assert not any(isinstance(h, logging.FileHandler) for h in logger.handlers)
         assert logger.filters == []
@@ -119,7 +119,7 @@ class TestHandlerGraph:
 
 
 class TestFormatSelection:
-    """`console_format="auto"` picks rich only on a real TTY; an explicit "rich" forces it regardless."""
+    """`console_format="auto"` picks rich only on a real TTY. An explicit "rich" forces it regardless."""
 
     def test_auto_on_a_non_tty_attaches_nothing(self, build: _Builder) -> None:
         logger = build("auto")
@@ -179,7 +179,7 @@ class TestRichHandlerSeam:
     """The stand-down seam: while a bridge is installed, the hub owns the raw-record stream outright.
 
     WARNING+ render in-context on an armed seat (stderr fallback otherwise), DEBUG chatter at the renderer's
-    frontier indent - either way the handler stands down; with no bridge installed the legacy arms render
+    frontier indent - either way the handler stands down. With no bridge installed the legacy arms render
     instead (the standalone fallback).
     """
 
@@ -278,7 +278,7 @@ class TestInvalidLevelComplaint:
         del app_logger
         stream = TtyStringIO()
         monkeypatch.setattr(sys, "stdout", stream)
-        # Windows CI has no VT console; the fake TTY plays a modern terminal.
+        # Windows CI has no VT console. The fake TTY plays a modern terminal.
         monkeypatch.setattr("rich.console.detect_legacy_windows", lambda: False)
 
         setup_logger(log_level="BOGUS", console_format="rich")

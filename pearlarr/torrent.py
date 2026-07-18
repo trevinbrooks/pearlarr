@@ -98,7 +98,7 @@ def get_animetosho_torrent(
         raise TorrentParseError(f"AnimeTosho feed returned unexpected JSON (not a list) from {query_url}")
 
     # Find the feed entry whose link matches the page URL, skipping non-object
-    # entries; a non-str torrent_url folds to None (no link found).
+    # entries. A non-str torrent_url folds to None (no link found).
     parsed_url: str | None = None
     for entry in j:
         if not is_json_obj(entry):
@@ -132,7 +132,7 @@ def get_rutracker_torrent(
             the page carries no title.
     """
 
-    # No hash means no valid magnet ("urn:btih:None" is garbage); fail as the
+    # No hash means no valid magnet ("urn:btih:None" is garbage). Fail as the
     # usual parse miss before fetching anything.
     if infohash is None:
         raise TorrentParseError("RuTracker release has no infohash to build a magnet link from")

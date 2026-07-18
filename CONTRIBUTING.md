@@ -3,7 +3,7 @@
 ## Setup
 
 Pearlarr is developed with [uv](https://docs.astral.sh/uv/). Python 3.13 is the
-floor; development and the Docker image run 3.14, and CI
+floor. Development and the Docker image run 3.14, and CI
 (`.github/workflows/build.yaml`) tests both.
 
 ```console
@@ -35,7 +35,7 @@ CI (`.github/workflows/build.yaml`) runs the same gates on Python 3.13 and 3.14,
 plus a total-coverage floor and a changed-line coverage gate (diff-cover, 90%).
 Docs get their own CI job: codespell (`[tool.codespell]` in `pyproject.toml`),
 markdownlint (`.markdownlint-cli2.yaml` - generated files included on purpose),
-and offline lychee for local links and anchors (`lychee.toml`); external URLs
+and offline lychee for local links and anchors (`lychee.toml`). External URLs
 are checked weekly by `links.yaml`. Dependabot watches the GitHub Actions and
 pip ecosystems weekly. Run one test file with
 `uv run pytest tests/test_planner.py -q`.
@@ -43,7 +43,7 @@ pip ecosystems weekly. Run one test file with
 ### Suppressions
 
 Production code carries zero suppressions: no `# type: ignore`, no `# noqa`, no
-inline pyright directives — a PR adding one will be asked to remove it and fix
+inline pyright directives - a PR adding one will be asked to remove it and fix
 the underlying type instead. Tests are held to the same bar: every test module
 opens with a `# pyright: strict` header. The one sanctioned escape hatch is a
 module-level `# pyright: reportPrivateUsage=false` in a white-box test that
@@ -55,17 +55,17 @@ justification comment.
 - Tests are strict-typed and use recording fakes (`tests/fakes.py`) rather than
   `MagicMock`: a fake records the calls it received and returns typed values, so
   a drifted signature is a type error, not a silently green test.
-- Shared object builders live in `tests/builders.py`; prefer extending an
+- Shared object builders live in `tests/builders.py`. Prefer extending an
   existing fake or builder over an ad-hoc double.
 
 ### Verifying against live services
 
 The recording fakes are the supported development loop. When you need a live
 check, point a config at real Sonarr/Radarr instances and leave the
-`qbittorrent` credentials blank: that is preview mode — every decision is made
-and reported, nothing is grabbed, nothing is cached — and it is the safe live
+`qbittorrent` credentials blank: that is preview mode - every decision is made
+and reported, nothing is grabbed, nothing is cached - and it is the safe live
 harness. Never paste real API keys, hostnames, or webhook URLs into issues,
-docs, code, or screenshots; placeholders only.
+docs, code, or screenshots. Placeholders only.
 
 ## Running locally
 
@@ -81,13 +81,13 @@ Everything lives in one data directory (`pearlarr paths` prints it).
 
 One authored home per fact: enumerable facts (config keys, defaults, allowed
 values, env vars) are authored once, in code, and generated into every other
-surface. Never edit a generated file or island — edit the source and run:
+surface. Never edit a generated file or island - edit the source and run:
 
 ```console
 uv run python scripts/gen_docs.py
 ```
 
-Generated artifacts (each carries a `GENERATED` banner; CI and pre-commit fail
+Generated artifacts (each carries a `GENERATED` banner. CI and pre-commit fail
 on drift):
 
 | Artifact | Source |
@@ -101,7 +101,7 @@ on drift):
 
 ### Drift map
 
-Change X, also do Y — most rows are enforced mechanically, listed anyway so you
+Change X, also do Y - most rows are enforced mechanically, listed anyway so you
 can predict CI:
 
 | You changed | Also do |
@@ -110,7 +110,7 @@ can predict CI:
 | An enum a config field references | Docstring every member, then regenerate |
 | An environment variable | Register it in `pearlarr/env_registry.py`, then regenerate |
 | A CLI command, option, or help string | Regenerate (`docs/cli.md` is generated) |
-| An output event type or its JSON fields | Regenerate; a new event also needs a specimen + description in `scripts/gen_docs.py`, and an additive-only check against `docs/output.md`'s stability policy |
+| An output event type or its JSON fields | Regenerate. A new event also needs a specimen + description in `scripts/gen_docs.py`, and an additive-only check against `docs/output.md`'s stability policy |
 | A config key or cache schema (breaking) | An "Upgrade notes" entry in `CHANGELOG.md` |
 | A user-visible behavior | A `CHANGELOG.md` entry |
 | A user-facing message | Update any docs that quote it (the `docs/troubleshooting.md` anchors fail the suite mechanically) |
@@ -119,25 +119,25 @@ can predict CI:
 ### Writing rules
 
 - Docstrings are Google style. Types never appear in docstrings (the checkers
-  own types); no Sphinx roles; identifiers in single backticks.
+  own types). No Sphinx roles. Identifiers in single backticks.
 - Modules, packages, and classes always carry a docstring. Functions and
   methods are documented unless the full contract is legible from name +
-  signature; when in doubt, one line.
-- A documented field gets a per-field attribute docstring on the field itself —
+  signature. When in doubt, one line.
+- A documented field gets a per-field attribute docstring on the field itself -
   never an `Attributes:` section, a field-enumerating paragraph in the class
   docstring, or a `#` comment carrying the field's contract. The class
   docstring keeps only class-level posture (what the class is, how it reads or
   fails as a whole).
-- A docstring states the current contract. How the code came to be this way —
-  ports, replaced designs, fixed bugs — belongs in the changelog or the
+- A docstring states the current contract. How the code came to be this way -
+  ports, replaced designs, fixed bugs - belongs in the changelog or the
   architecture design notes, not in code.
-- Config-model attribute docstrings are a compiled dialect — plain text plus
-  single backticks only — because they render into YAML comments, markdown
+- Config-model attribute docstrings are a compiled dialect - plain text plus
+  single backticks only - because they render into YAML comments, markdown
   tables, and JSON Schema descriptions. State meaning, interactions, and
-  blank/`None` semantics; never defaults, types, or allowed-value lists (the
+  blank/`None` semantics. Never defaults, types, or allowed-value lists (the
   generator injects those).
 - Comments state a constraint the code cannot show, in 1–2 lines. Change
-  provenance (PR numbers, phase tags, dates) never appears in code — that is
+  provenance (PR numbers, phase tags, dates) never appears in code - that is
   git's job. A workaround for an external defect names the defect and the
   version observed against, so it can be retested and removed.
 - `# Invariant:` is a reserved comment prefix for load-bearing invariants at
@@ -153,11 +153,11 @@ can predict CI:
 
 1. Add the field to its group model in `pearlarr/config.py`, with an
    attribute docstring in the compiled dialect. Constrain it in the type
-   (`Literal`, an enum, `ge=`) so a bad value fails at load; new enum members
+   (`Literal`, an enum, `ge=`) so a bad value fails at load. New enum members
    get their own docstrings.
-2. `uv run python scripts/gen_docs.py` — the sample, schema, and reference
+2. `uv run python scripts/gen_docs.py` - the sample, schema, and reference
    tables update themselves.
-3. Read the key where the behavior lives; add tests.
+3. Read the key where the behavior lives. Add tests.
 4. If the key interacts with others, extend the group's prose island in
    `docs/configuration.md` (outside the `gen:` markers).
 5. Add a `CHANGELOG.md` entry (plus "Upgrade notes" if breaking).
@@ -168,25 +168,25 @@ can predict CI:
    `pearlarr/config.py` (a parity test pins the set against the seadex
    library's `Tracker` enum).
 2. If its releases carry a parseable download page, add a parser to the table
-   in `pearlarr/torrents.py` (`PARSEABLE_TRACKERS` derives from it) —
-   with tests; trackers without a parser are skipped with a warning.
+   in `pearlarr/torrents.py` (`PARSEABLE_TRACKERS` derives from it) -
+   with tests. Trackers without a parser are skipped with a warning.
 3. `uv run python scripts/gen_docs.py`.
 
 ## Commits
 
 `type(scope): imperative summary` at ≤72 characters (`feat(planner): …`,
-`fix(cache): …`); the body says why. Summaries must be meaningful without
-private context — no session or chat references.
+`fix(cache): …`). The body says why. Summaries must be meaningful without
+private context - no session or chat references.
 
 ## Releasing
 
-Releases are cut end to end by two workflows; the only human act is merging
-the release PR. Versions follow [Semantic Versioning](https://semver.org);
-every user-observable change lands with a `CHANGELOG.md` entry under
+Releases are cut end to end by two workflows. The only human act is merging
+the release PR. Versions follow [Semantic Versioning](https://semver.org).
+Every user-observable change lands with a `CHANGELOG.md` entry under
 `## [Unreleased]` (see the drift map above), and the prepare workflow promotes
 that section into the new version's notes.
 
-1. Land everything the release should carry on `main`; verify "Upgrade notes"
+1. Land everything the release should carry on `main`. Verify "Upgrade notes"
    covers every config/cache change.
 2. Run the **Release prepare** workflow (Actions tab, or
    `gh workflow run release_prepare.yaml -f version=X.Y.Z`). It bumps the
@@ -213,14 +213,14 @@ repository via `raw.githubusercontent.com`, so cloning Pearlarr never
 downloads a media byte (GitHub's release-asset CDN forces
 `application/octet-stream`, which PyPI's image proxy refuses to render). Its
 `main` branch always holds the newest release's media and serves the GitHub
-README; the immutable `vX.Y.Z` tag serves that version's PyPI page forever -
+README. The immutable `vX.Y.Z` tag serves that version's PyPI page forever -
 `hatch-fancy-pypi-readme` rewrites the package readme to it at build time
 (see `pyproject.toml`), and each GitHub release also attaches both files as a
 browsable per-version copy. Rulesets on the assets repository block force
 pushes, tag rewrites, and deletions, so published URLs never break. Both
 files bake
 the installed version into their pixels (the GIF's boot title, the embed's
-footer), which is why every release re-records them in CI; a failed re-record
+footer), which is why every release re-records them in CI. A failed re-record
 fails the release rather than shipping stale pixels. To iterate on the demo or
 the embed layout by hand (needs `vhs`, `ffmpeg`, and playwright's chromium via
 `uv run playwright install chromium`):
@@ -232,7 +232,7 @@ uv run python scripts/sample_grab_post.py    # writes docs/assets/example_post.p
 
 Two pieces of repository configuration back the automation. The
 `pearlarr-release` GitHub App (repository permissions: contents and pull
-requests, both read and write; installed on this repository and
+requests, both read and write. Installed on this repository and
 `pearlarr-assets`, with its client ID and private key in the
 `RELEASE_APP_CLIENT_ID` and `RELEASE_APP_PRIVATE_KEY` secrets) covers the two
 pushes the default token cannot make: the prepare workflow pushes a branch
@@ -250,11 +250,11 @@ workflow's own `GITHUB_TOKEN` - no long-lived registry secrets to rotate.
 
 ## Environment variables
 
-<!-- gen:env-vars - GENERATED by scripts/gen_docs.py from pearlarr/env_registry.py; do not edit between the markers; regenerate: uv run python scripts/gen_docs.py -->
+<!-- gen:env-vars - GENERATED by scripts/gen_docs.py from pearlarr/env_registry.py. Do not edit between the markers. Regenerate: uv run python scripts/gen_docs.py -->
 | Variable | Read by | Meaning |
 | --- | --- | --- |
-| `PEARLARR_DATA_DIR` | application | Override the data directory; the global `--data-dir` flag wins over it. |
-| `PEARLARR_<GROUP>__<KEY>` | application | Override any config key by its double-underscore path; the value is parsed as YAML. See docs/configuration.md. |
+| `PEARLARR_DATA_DIR` | application | Override the data directory. The global `--data-dir` flag wins over it. |
+| `PEARLARR_<GROUP>__<KEY>` | application | Override any config key by its double-underscore path. The value is parsed as YAML. See docs/configuration.md. |
 | `PEARLARR_CRON` | Docker entrypoint | Cron schedule for the container's recurring runs. |
 | `PEARLARR_RUN_ON_START` | Docker entrypoint | Whether the container starts with a catch-up run, before the cron cadence takes over. |
 <!-- /gen:env-vars -->

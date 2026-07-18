@@ -113,8 +113,8 @@ class WaitView(ABC):
     """
 
     wants_telemetry: bool = True
-    """Whether this pass's render surfaces show per-row download telemetry between heavy polls;
-    the engine skips the fast-lane qBittorrent read when it can't be seen. Per-instance (one
+    """Whether this pass's render surfaces show per-row download telemetry between heavy polls.
+    The engine skips the fast-lane qBittorrent read when it can't be seen. Per-instance (one
     narrator class serves both seats)."""
 
     @abstractmethod
@@ -131,7 +131,7 @@ class HubWaitView(WaitView):
     """The wait-pass narrator: turns engine snapshots into hub events.
 
     Holds producer state only (seen keys, the outcome tally, the last elapsed
-    clock); the renderers decide every look. The wait scope opens lazily on the
+    clock). The renderers decide every look. The wait scope opens lazily on the
     first snapshot, so a pass that never polls emits nothing.
     """
 
@@ -150,7 +150,7 @@ class HubWaitView(WaitView):
     @override
     def update(self, snapshot: WaitSnapshot) -> None:
         try:
-            if self._closed:  # defensive; the engine never updates after close
+            if self._closed:  # defensive - the engine never updates after close
                 return
             # Stamped first, so an interrupted narration still reports fresh elapsed.
             self._last_elapsed = snapshot.elapsed_s
@@ -199,7 +199,7 @@ class HubWaitView(WaitView):
             self._logger.debug("wait view close failed", exc_info=True)
         finally:
             # The placement scope must still close even when an interrupt aborts
-            # finish mid-dispatch; a no-op after a clean finish, and suppress
+            # finish mid-dispatch - a no-op after a clean finish, and suppress
             # keeps a propagating interrupt intact.
             with contextlib.suppress(BaseException):
                 scope.close()
@@ -209,7 +209,7 @@ def make_wait_view(logger: logging.Logger, *, poll_s: int, digest_interval: int 
     """The production narrator, probed off the logger's console.
 
     Args:
-        logger: The app logger; its rich console handler is
+        logger: The app logger. Its rich console handler is
             probed so `wants_telemetry` matches what the console will draw
             (per-row telemetry exists only on the live-TTY cockpit).
         poll_s: The poll cadence - the floor for the non-TTY digest interval.

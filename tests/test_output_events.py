@@ -224,5 +224,5 @@ def test_run_tally_field_names_mirror_run_stats() -> None:
 
 
 def test_needs_action_cause_member_names_mirror_needs_action_kind() -> None:
-    # from_stats maps by member NAME (NeedsActionCause[kind.name]); a rename breaks here.
+    # from_stats maps by member NAME (NeedsActionCause[kind.name]). A rename breaks here.
     assert [m.name for m in NeedsActionCause] == [m.name for m in NeedsActionKind]

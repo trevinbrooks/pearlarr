@@ -1,13 +1,13 @@
 """The closed output-event vocabulary: frozen facts only, no rich render types.
 
-Producers state WHAT happened; renderers own every look decision (glyphs, widths,
+Producers state WHAT happened. Renderers own every look decision (glyphs, widths,
 indents, styles). Emphasis rides the semantic `Accent`/`Span`/
-`StyledValue` value model — never a rich style string, never a pre-formatted
+`StyledValue` value model - never a rich style string, never a pre-formatted
 display string. `EntryState` (log.py) and `Outcome`/`OutcomeCategory`
 (manual_import.py) are reused, not mirrored, so the vocabulary can't drift from the
 domain enums. `Outcome` deliberately stays in manual_import: moving it INTO
-this module would cycle — manual_import -> output.events -> config
--> manual_import (config imports `ImportWaitMode`) — and reuse already prevents
+this module would cycle - manual_import -> output.events -> config
+-> manual_import (config imports `ImportWaitMode`) - and reuse already prevents
 the drift that relocation would have bought.
 """
 
@@ -28,7 +28,7 @@ if TYPE_CHECKING:
 
 
 class Severity(IntEnum):
-    """Event severity; values mirror stdlib logging so thresholds compare directly."""
+    """Event severity. Values mirror stdlib logging so thresholds compare directly."""
 
     DEBUG = 10
     INFO = 20
@@ -38,7 +38,7 @@ class Severity(IntEnum):
 
 
 class Accent(Enum):
-    """Semantic emphasis; the rich renderer maps it to theme styles, text sinks drop it."""
+    """Semantic emphasis. The rich renderer maps it to theme styles, text sinks drop it."""
 
     PLAIN = auto()
     DIM = auto()
@@ -72,17 +72,17 @@ class ScopeKind(Enum):
 
 @dataclass(frozen=True, slots=True)
 class ScopeId:
-    """A minted scope identity; events carrying one have compile-checked position."""
+    """A minted scope identity. Events carrying one have compile-checked position."""
 
     kind: ScopeKind
     serial: int
 
 
 class PlacedBy(Enum):
-    """How a diagnostic's rendered position was assigned — the record admits a guess."""
+    """How a diagnostic's rendered position was assigned - the record admits a guess."""
 
-    AMBIENT = auto()  # position-free; any rendered position is the frontier's guess
-    HANDLE = auto()  # demoted from a known (closed) scope; attribution is exact
+    AMBIENT = auto()  # position-free. Any rendered position is the frontier's guess
+    HANDLE = auto()  # demoted from a known (closed) scope. Attribution is exact
 
 
 # --- run / cycle lifecycle -------------------------------------------------------
@@ -111,12 +111,12 @@ class NextRunScheduled:
     at: datetime
 
 
-# --- scope boundaries (the breadcrumb fold's inputs; see breadcrumbs.py) ----------
+# --- scope boundaries (the breadcrumb fold's inputs, see breadcrumbs.py) ----------
 
 
 @dataclass(frozen=True, slots=True)
 class ScopeOpened:
-    """A handle-backed scope opened; `label` is the only home of its display name."""
+    """A handle-backed scope opened. `label` is the only home of its display name."""
 
     scope: ScopeId
     label: str
@@ -124,7 +124,7 @@ class ScopeOpened:
 
 @dataclass(frozen=True, slots=True)
 class ScopeClosed:
-    """A handle-backed scope closed; the fold also closes anything nested deeper."""
+    """A handle-backed scope closed. The fold also closes anything nested deeper."""
 
     scope: ScopeId
 
@@ -142,7 +142,7 @@ class BootStepStarted:
 
 @dataclass(frozen=True, slots=True)
 class BootStepProgressed:
-    """Ephemeral: live surfaces only; text/json sinks drop it."""
+    """Ephemeral: live surfaces only. Text/json sinks drop it."""
 
     scope: ScopeId
     fraction: float
@@ -151,7 +151,7 @@ class BootStepProgressed:
 
 @dataclass(frozen=True, slots=True)
 class BootStepSlow:
-    """One-time heads-up on a step's first progress report; text sinks map it 1:1."""
+    """One-time heads-up on a step's first progress report. Text sinks map it 1:1."""
 
     scope: ScopeId
     label: str
@@ -170,7 +170,7 @@ class BootStepFinished:
 
 @dataclass(frozen=True, slots=True)
 class BootReady:
-    """The boot capstone; the producer suppresses it on a failed section."""
+    """The boot capstone. The producer suppresses it on a failed section."""
 
     elapsed_s: float
 
@@ -180,7 +180,7 @@ class BootReady:
 
 @dataclass(frozen=True, slots=True)
 class ScanStarted:
-    """Opens the per-arr run node (a boundary event; no handle ceremony)."""
+    """Opens the per-arr run node (a boundary event, no handle ceremony)."""
 
     arr: Arr
     total: int
@@ -200,7 +200,7 @@ class ItemStarted:
 class EntryHeader:
     """One entry block's head, carried whole (the header-at-open commit rule).
 
-    The focal/dim distinction is renderer policy keyed on `state` — no
+    The focal/dim distinction is renderer policy keyed on `state` - no
     emphasis flag here (Accent is the emphasis mechanism where one is needed).
     """
 
@@ -235,7 +235,7 @@ class LedgerRow:
 
 
 class SkipReason(Enum):
-    """Why a release was skipped at add time; `severity` picks the line's level."""
+    """Why a release was skipped at add time. `severity` picks the line's level."""
 
     PRIVATE_ONLY = auto()
     UNSUPPORTED_TRACKER = auto()
@@ -243,7 +243,7 @@ class SkipReason(Enum):
 
     @property
     def severity(self) -> Severity:
-        """TRACKER_NOT_SELECTED is the user's own choice, so it stays INFO."""
+        """TRACKER_NOT_SELECTED is a deliberate choice, so it stays INFO."""
 
         return Severity.INFO if self is SkipReason.TRACKER_NOT_SELECTED else Severity.WARNING
 
@@ -261,7 +261,7 @@ class ReleaseSkipped:
 
 @dataclass(frozen=True, slots=True)
 class GrabFailed:
-    """A contained transient grab failure; the title retries next run."""
+    """A contained transient grab failure. The title retries next run."""
 
     group: str
     url: str
@@ -296,7 +296,7 @@ class RecommendedGroup:
 
 @dataclass(frozen=True, slots=True)
 class ReleaseName:
-    """A torrent name + its release group — the group_highlight data, unstyled."""
+    """A torrent name + its release group - the group_highlight data, unstyled."""
 
     name: str
     group: str
@@ -312,7 +312,7 @@ class ReleaseName:
 class GrabAction:
     """The whole per-title action block as one atomic fact.
 
-    A dry run IS `GrabStatus.WOULD_ADD` — no separate flag to drift from it.
+    A dry run IS `GrabStatus.WOULD_ADD` - no separate flag to drift from it.
     """
 
     status: GrabStatus
@@ -325,7 +325,7 @@ class GrabAction:
 
 @dataclass(frozen=True, slots=True)
 class CapReached:
-    """The `max_torrents` cap was reached; the run adds nothing further."""
+    """The `max_torrents` cap was reached. The run adds nothing further."""
 
     cap: int
 
@@ -346,7 +346,7 @@ class ScanFinished:
 
 @dataclass(frozen=True, slots=True)
 class GrabFact:
-    """One grab for the summary's "added" block — the owned twin of `reporter.GrabRecord`.
+    """One grab for the summary's "added" block - the owned twin of `reporter.GrabRecord`.
 
     Records map into facts at the reporter chokepoint.
     """
@@ -359,7 +359,7 @@ class GrabFact:
 
 
 class NeedsActionCause(Enum):
-    """Why a title needs the user — the owned twin of `reporter.NeedsActionKind`.
+    """Why a title needs attention - the owned twin of `reporter.NeedsActionKind`.
 
     Member names are test-pinned equal so the name-based mapping can't drift.
     """
@@ -388,7 +388,7 @@ class RunTally:
     """`RunStats` frozen at summary time.
 
     `from_stats` is the single conversion site (never two hand-maintained
-    field lists; a fields-parity test pins it).
+    field lists, a fields-parity test pins it).
     """
 
     checked: int
@@ -438,7 +438,7 @@ class RunTally:
 
 @dataclass(frozen=True, slots=True)
 class RunSummary:
-    """The whole end-of-run scoreboard as one value; the tally rides embedded whole.
+    """The whole end-of-run scoreboard as one value. The tally rides embedded whole.
 
     A noteless "DRY RUN" title is unrepresentable.
     """
@@ -461,7 +461,7 @@ class RunSummary:
 
 @dataclass(frozen=True, slots=True)
 class RunSummaryReady:
-    """Atomic (no SummaryScope); also a boundary closing item/entry nodes."""
+    """Atomic (no SummaryScope). Also a boundary closing item/entry nodes."""
 
     summary: RunSummary
 
@@ -485,11 +485,11 @@ class Phase(Enum):
     IMPORTING = auto()
     """The download finished and an import is in flight (indeterminate)."""
     TERMINAL = auto()
-    """A terminal `Outcome` was reached; these GRADUATE to scrollback and leave the live region."""
+    """A terminal `Outcome` was reached. These GRADUATE to scrollback and leave the live region."""
 
 
 # Speed samples a downloading row keeps for its sparkline (one per heavy poll,
-# so the default 30s cadence holds the last ~4 minutes); the producer bounds
+# so the default 30s cadence holds the last ~4 minutes). The producer bounds
 # TorrentView.speed_history to this window.
 SPARK_SAMPLES = 8
 
@@ -500,7 +500,7 @@ class TorrentView:
 
     Immutable so a snapshot is a value: the engine rebuilds the row each cycle
     (`dataclasses.replace` off the prior one) and the renderers draw it. Telemetry
-    fields are already sanitized (`manual_import.TorrentProbe`); `outcome` is
+    fields are already sanitized (`manual_import.TorrentProbe`). `outcome` is
     non-None iff `phase` is `TERMINAL`.
     """
 
@@ -515,7 +515,7 @@ class TorrentView:
     phase_elapsed_s: float = 0.0
     command_issued: bool = False
     import_done: int | None = None
-    """"Files inserted" bar for an IMPORTING row: both set -> a determinate done/total bar; both
+    """"Files inserted" bar for an IMPORTING row: both set -> a determinate done/total bar. Both
     `None` -> indeterminate (just the "importing" word)."""
     import_total: int | None = None
     """On a TERMINAL imported row, `import_done`/`import_total` carry the final files count for
@@ -532,7 +532,7 @@ class TorrentView:
 class WaitSnapshot:
     """An immutable description of the whole wait pass at one poll cycle.
 
-    The single value the engine pushes per poll cycle; the wait views/renderers
+    The single value the engine pushes per poll cycle. The wait views/renderers
     are pure functions of it. Derived aggregates are pure functions of the
     snapshot, independent of rendering.
     """
@@ -561,7 +561,7 @@ class WaitSnapshot:
     def overall_fraction(self) -> float:
         """An aggregate 0-1 progress for the header bar (download-completion based).
 
-        Terminal and importing rows count as a finished download (1.0); a still
+        Terminal and importing rows count as a finished download (1.0). A still
         downloading/queued row contributes its download fraction. Guards /0.
         """
 
@@ -582,7 +582,7 @@ class WaitStarted:
 
     total: int
     pulse_s: float
-    """The renderer's pulse throttle interval (max(poll_s, digest_interval)); the producer
+    """The renderer's pulse throttle interval (max(poll_s, digest_interval)). The producer
     computes it. No default: the producer must supply it."""
     scope: ScopeId | None = None
 
@@ -591,8 +591,8 @@ class WaitStarted:
 class WaitProgress:
     """The engine's pure per-poll snapshot.
 
-    The json surface drops it; the text sinks render only a throttled "still
-    waiting" pulse from it (mode-independent, like every text line — the file
+    The json surface drops it. The text sinks render only a throttled "still
+    waiting" pulse from it (mode-independent, like every text line - the file
     is the same whether stdout was a TTY or a pipe).
     """
 
@@ -627,7 +627,7 @@ class RunFinished:
     """The run-close boundary.
 
     Emitted at the end of `_finalize_run`, and by the unwind teardown only
-    when the leg dies before that tail close; the fold treats it idempotently
+    when the leg dies before that tail close. The fold treats it idempotently
     (defense in depth).
     """
 
@@ -658,7 +658,7 @@ type JsonObj = dict[str, JsonValue]
 
 
 # --- cli command facts ------------------------------------------------------------
-# Emitted only by a subcommand's --json / human seat, never during a run; the run
+# Emitted only by a subcommand's --json / human seat, never during a run. The run
 # renderers ignore them. Error/refusal arms reuse Diagnostic (via hub_error).
 
 
@@ -684,7 +684,7 @@ class StarterConfigWritten:
 class ConfigValidated:
     """`config validate` succeeded: the run-shaping facts it reports.
 
-    `migration_notes` None = the file is already at the current schema; non-None
+    `migration_notes` None = the file is already at the current schema. Non-None
     (possibly empty) = an older schema was migrated in memory at load. An empty
     missing-keys tuple = that arr is configured.
     """
@@ -829,7 +829,7 @@ def severity_of(event: Event) -> Severity:
             # problem itself, so an outcome-based tally would double-count it.
             return Severity.INFO
         case TorrentGraduated(outcome=outcome):
-            # Category-based; wait_graduation_line carries the same level.
+            # Category-based. wait_graduation_line carries the same level.
             return _category_severity(outcome.category)
         case (
             RunStarted()

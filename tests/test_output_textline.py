@@ -103,10 +103,10 @@ _WAIT = ScopeId(ScopeKind.WAIT_REGION, 3)
 def _format(event: Event, *events_before: Event) -> str | None:
     """The REAL plain sink's rendering of one event (None = wrote nothing).
 
-    Goldens pin the shipping `LineRenderer` path — not a parallel formatter —
+    Goldens pin the shipping `LineRenderer` path - not a parallel formatter -
     so an assembly change in `_GrammarSink._render` moves these bytes. Context
-    events render+fold first (their output is discarded via the stream mark);
-    the DEBUG threshold admits every line, matching the old unthresholded
+    events render+fold first (their output is discarded via the stream mark).
+    The DEBUG threshold admits every line, matching the old unthresholded
     `format_line`. The trailing newline is the sink's write framing, not part
     of the line.
     """
@@ -144,7 +144,7 @@ def test_run_started_omits_an_empty_version() -> None:
 
 
 def test_next_run_scheduled_at_keeps_the_offset_and_drops_microseconds() -> None:
-    # The producer emits an AWARE datetime; the serialized field must carry the
+    # The producer emits an AWARE datetime. The serialized field must carry the
     # UTC offset (the json "time" key's shape) and truncate to seconds.
     at = datetime(2026, 1, 2, 3, 4, 5, 678901, tzinfo=timezone(timedelta(hours=-5)))
     line = _format(NextRunScheduled(at=at))
@@ -168,8 +168,8 @@ def test_boot_step_finished_line_keeps_the_step_path() -> None:
 
 
 def test_warned_boot_step_stays_info_with_the_warn_on_the_outcome_field() -> None:
-    # Level stays INFO for every outcome (echo/ledger parity; a WARNING severity
-    # would double-count next to the caller's own logged warning) — the deferred
+    # Level stays INFO for every outcome (echo/ledger parity, a WARNING severity
+    # would double-count next to the caller's own logged warning) - the deferred
     # state rides outcome=warned.
     finished = BootStepFinished(
         scope=_STEP,
@@ -443,7 +443,7 @@ def test_a_warning_file_level_admits_per_line_within_the_summary(tmp_path: Path)
     sink.handle(_summary_ready(), _EPOCH)
     sink.close()
 
-    # Line-granular admission: the WARNING needs-action row lands; the INFO
+    # Line-granular admission: the WARNING needs-action row lands. The INFO
     # head line and the INFO added row drop.
     lines = (tmp_path / "Pearlarr.log").read_text(encoding="utf-8").splitlines()
     assert lines == [
@@ -582,7 +582,7 @@ def test_an_idle_cycle_never_churns_a_backup(tmp_path: Path) -> None:
 
 
 def test_pre_cycle_writes_append_and_rotation_fires_once_per_begin_cycle(tmp_path: Path) -> None:
-    # Only begin_cycle arms rotation — construction must not, or a record in the
+    # Only begin_cycle arms rotation - construction must not, or a record in the
     # install→begin_cycle window would rotate twice and strand a one-line backup.
     log = tmp_path / "Pearlarr.log"
     log.write_text("previous run\n", encoding="utf-8")
@@ -594,7 +594,7 @@ def test_pre_cycle_writes_append_and_rotation_fires_once_per_begin_cycle(tmp_pat
     assert list(tmp_path.glob("Pearlarr.log.*")) == []  # appended, no rotation
     log_text = log.read_text(encoding="utf-8")
     assert log_text.startswith("previous run\n") and "pre-cycle" in log_text
-    _pin_mtime(log, when)  # the append above bumped mtime; re-pin for a deterministic stamp
+    _pin_mtime(log, when)  # the append above bumped mtime, re-pin for a deterministic stamp
 
     sink.begin_cycle()
     sink.handle(RunStarted(version="cycle-one", data_dir="/d"), _EPOCH)
@@ -678,7 +678,7 @@ def test_apply_retention_days_before_any_rotation_is_a_no_op(tmp_path: Path) -> 
 def test_apply_retention_days_survives_an_undeletable_backup_and_prunes_the_rest(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    # Retention runs outside hub dispatch; a read-only backup must not kill the run.
+    # Retention runs outside hub dispatch. A read-only backup must not kill the run.
     sink = FileLogSink(str(tmp_path))
     stuck = _make_backup(tmp_path, "Pearlarr.log.2025-01-01_000000", age_days=30)
     doomed = _make_backup(tmp_path, "Pearlarr.log.2025-02-01_000000", age_days=29)
@@ -837,7 +837,7 @@ def test_pulse_lines_keep_line_and_file_byte_parity(tmp_path: Path) -> None:
 
     content = (tmp_path / "Pearlarr.log").read_text(encoding="utf-8")
     assert stream.getvalue() == content
-    assert content.count("still waiting") == 2  # 300 and 650 pulse; the start snapshot never does
+    assert content.count("still waiting") == 2  # 300 and 650 pulse, the start snapshot never does
 
 
 def test_a_new_wait_pass_rearms_the_pulse_skip_first() -> None:
@@ -864,7 +864,7 @@ def test_begin_cycle_disarms_the_pulse_until_the_next_wait_pass() -> None:
 
 
 def test_pulse_lines_drop_below_a_raised_threshold_but_the_cadence_advances() -> None:
-    # Line-granular admission applies to the pulse like any INFO line; the
+    # Line-granular admission applies to the pulse like any INFO line. The
     # throttle state advances regardless of level (the PulseThrottle contract).
     line_sink, stream = _line_sink()
     line_sink.set_level(logging.WARNING)
@@ -1144,9 +1144,9 @@ def test_no_fact_field_key_can_collide_with_the_json_envelope() -> None:
     for node in ast.walk(tree):
         match node:
             case ast.Call(func=ast.Name(id="Field"), args=[first, *_]):
-                # Literal keys check directly; a plain Name is a loop variable fed
-                # by in-file tuple literals (collected below); anything fancier is
-                # flagged — the canary must never go silently blind.
+                # Literal keys check directly. A plain Name is a loop variable fed
+                # by in-file tuple literals (collected below). Anything fancier is
+                # flagged - the canary must never go silently blind.
                 match first:
                     case ast.Constant(value=str(key)):
                         keys.append(key)
@@ -1200,8 +1200,8 @@ def test_skip_sets_are_event_members_pinned_to_their_current_membership() -> Non
     """The source skip sets are hand-maintained subsets of the Event union.
 
     (a) A renamed/removed event breaks the subset check loudly (import still
-    succeeds, but get_args no longer holds it); (b) the exact membership is
-    pinned, so adding or dropping a skip is a conscious, reviewed change — not
+    succeeds, but get_args no longer holds it). (b) The exact membership is
+    pinned, so adding or dropping a skip is a conscious, reviewed change - not
     a silent behavior shift.
     """
 

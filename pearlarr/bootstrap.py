@@ -4,7 +4,7 @@
 once (both arrs share them), then wires each requested arr its own
 RunDeps -> RunServices -> RunLoop stack and drives it inside an independent
 try block, so one arr crashing doesn't ruin the other. `cli.py` (the
-presentation layer) calls in; this module never imports it back.
+presentation layer) calls in. This module never imports it back.
 
 Boot weight: the heavy run machinery stays lazily imported inside the
 functions that use it (the boot-cockpit invariant: instant title first).
@@ -72,10 +72,10 @@ def load_shared_config(
 
     Returns None - after logging the specific cause - when the file is invalid
     (the bad keys are listed without a traceback) or unreadable, so the caller
-    skips this run and retries next cycle instead of crashing (the user may be
-    mid-edit). A MISSING file instead writes the starter template (inside
-    `AppConfig.load`) and exits 1: no retry can succeed until the user fills
-    it in, so a scheduled/container run must stop and say so rather than sleep
+    skips this run and retries next cycle instead of crashing (an edit may be
+    in progress). A MISSING file instead writes the starter template (inside
+    `AppConfig.load`) and exits 1: no retry can succeed until it is filled
+    in, so a scheduled/container run must stop and say so rather than sleep
     on it. `retry` is the pre-formatted scheduled-mode note (empty for a
     single run) stating when the loop retries.
     """
@@ -84,7 +84,7 @@ def load_shared_config(
         with boot.step("Reading config"):
             loaded = AppConfig.load(config)
         # An existing config predating the 0600-on-create hardening may still
-        # expose its API keys; warn (after the boot step closes) but keep running.
+        # expose its API keys. Warn (after the boot step closes) but keep running.
         if config_permissions_loose(config):
             hub_warn(
                 f"Config file {config} is readable by other users and holds API keys - "
@@ -99,7 +99,7 @@ def load_shared_config(
                 f"{', '.join(unknown_trackers)} (known, case-insensitive: "
                 f"{', '.join(sorted(KNOWN_TRACKERS))})"
             )
-        # An old-schema file loads via the in-memory migration; the warn names
+        # An old-schema file loads via the in-memory migration. The warn names
         # what was folded and the command that updates the file itself.
         outcome = loaded.migration()
         if outcome is not None:
@@ -152,7 +152,7 @@ def build_resolver(
 
     The resolver downloads-if-stale and (only when a source's content changed)
     parses+indexes the three large mapping sources into `mappings.db`, then
-    serves both arrs from SQL; it is injected (by `run_arrs`) into both, so
+    serves both arrs from SQL. It is injected (by `run_arrs`) into both, so
     that work happens a single time per run and is skipped entirely when the
     sources are unchanged. Returns None - after logging - when a source can't be
     fetched, so the caller skips this run and retries next cycle.
@@ -228,7 +228,7 @@ def configured_arrs(
             hub_warn(f"{other} is set but {keys[0]} is not - skipping {arr.capitalize()}")
         else:
             # Flat message: the rich console indents it via placement (the open
-            # boot section); the file/plain surfaces take a structured line.
+            # boot section). The file/plain surfaces take a structured line.
             hub_note(f"{arr.capitalize()} not configured - skipped")
 
     kept = [target for target in arrs if target.arr not in missing]
@@ -301,7 +301,7 @@ def _run_leg(target: ArrTarget, ctx: LegContext) -> bool:
         # An inner handler so a dying leg's open output frames close
         # BEFORE the except arms below log: a leg-fatal error is a
         # cycle-level fact, not a detail of the entry / item / boot step
-        # it died in; a completed leg's single close comes from the run tail.
+        # it died in. A completed leg's single close comes from the run tail.
         try:
             deps = RunDeps.build(
                 arr_name,
@@ -333,7 +333,7 @@ def _run_leg(target: ArrTarget, ctx: LegContext) -> bool:
                     drive(RadarrSync(deps, services))
         except BaseException:
             # Through the hub seam, not the reporter (deps is None when
-            # RunDeps.build itself failed); hub.emit contains renderer errors,
+            # RunDeps.build itself failed). hub.emit contains renderer errors,
             # so the emit cannot mask the in-flight leg-fatal Exception.
             emit_to_hub(RunFinished(arr=arr_name))
             raise
@@ -361,7 +361,7 @@ def _run_leg(target: ArrTarget, ctx: LegContext) -> bool:
             hub_error(f"{arr_name.capitalize()} rejected the API key - check {arr_name}.api_key in your config")
         else:
             # This leg presented more than one key - name every
-            # candidate (the config keys are what the user edits).
+            # candidate (the config keys are what gets edited).
             keys = " / ".join(f"{a}.api_key" for a in implicated)
             hub_error(
                 f"An arr rejected the API key during the {arr_name.capitalize()} run - check {keys} in your config"
@@ -375,7 +375,7 @@ def _run_leg(target: ArrTarget, ctx: LegContext) -> bool:
         return False
     finally:
         # Cap this arr's boot section so the next arr opens a fresh
-        # one; a no-op on the happy path (run_sync already ended it
+        # one. A no-op on the happy path (run_sync already ended it
         # before scanning), the safety net when a step failed.
         ctx.boot.end_section()
         if deps is not None:
@@ -397,14 +397,14 @@ def run_arrs(
 ) -> bool:
     """Build the shared config + mappings once, then run each requested arr.
 
-    Unconfigured arrs are dropped (or, when `explicit_selection` says the user
-    asked for them by flag, refused) via `configured_arrs`, and each survivor is
+    Unconfigured arrs are dropped (or, when `explicit_selection` says they were
+    asked for by flag, refused) via `configured_arrs`, and each survivor is
     run in its own `_run_leg` (which logs and closes independently, so one
     crashing doesn't ruin the other). The shared config read and mapping
     download/parse happen a single time, in that order with the selection check
     in between, so a run with nothing to do fails fast instead of fetching the
     mapping sources first.
-    Returns True when the run proceeded and every arr completed; False - after
+    Returns True when the run proceeded and every arr completed. False - after
     the cause is logged - when the shared deps couldn't be built, nothing
     runnable was selected, or an arr run failed (unreachable/unauthorized arr,
     qBittorrent connection failure, or an unexpected error), so a scripted
@@ -416,16 +416,16 @@ def run_arrs(
     returns it alongside the hub) - its retention window is only knowable once
     `app_config` is read, so it rides in as its own dep rather than through the
     hub's global registry. `import_wait_mode` is the resolved CLI override
-    threaded into each arr (None in scheduled mode); `log_level` is the CLI
+    threaded into each arr (None in scheduled mode). `log_level` is the CLI
     log-level override, applied as soon as the config is readable
-    (cli > config > INFO); `retry_note` is the scheduled-mode retry message
+    (cli > config > INFO). `retry_note` is the scheduled-mode retry message
     (None otherwise).
     """
 
     if not arrs:
         return True
 
-    # Guard against two runs sharing one data directory (cache.db + WAL); SQLite
+    # Guard against two runs sharing one data directory (cache.db + WAL). SQLite
     # keeps the file safe, but overlapping runs would duplicate work and could race
     # on imports. A different data dir gets its own lock, so intentional parallel
     # instances are still fine.
@@ -439,12 +439,12 @@ def run_arrs(
         boot = BootFlow(paths.data_dir)
         boot.banner()
         # The heavy run machinery is imported inside `_run_leg` (the boot-cockpit
-        # invariant: nothing heavy at module load); only the shared web client is
+        # invariant: nothing heavy at module load). Only the shared web client is
         # needed out here.
         from .web_client import make_web_client
 
         # One shared client for all non-arr web traffic this cycle (tracker
-        # scrapes, AniList, webhooks); both arr legs reuse its pool.
+        # scrapes, AniList, webhooks). Both arr legs reuse its pool.
         web = make_web_client()
         try:
             # In scheduled mode retry_note states the loop's next move on every
@@ -489,7 +489,7 @@ def run_arrs(
                     if not _run_leg(target, ctx):
                         all_arrs_completed = False
             finally:
-                # The resolver owns mappings.db (shared across both arrs); close it once
+                # The resolver owns mappings.db (shared across both arrs). Close it once
                 # the cycle is done so the connection / WAL handles are released.
                 mappings.close()
         finally:

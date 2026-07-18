@@ -3,7 +3,7 @@
 
 Pins behavior, not internals: the per-entry records + torrent-hash child rows,
 the JSONB meta/parse caches, pending imports, the descriptor, and - critically -
-the staged-write / preview gate (a preview never persists; a real save does) and
+the staged-write / preview gate (a preview never persists, a real save does) and
 the in-memory -> file promotion for a missing cache.
 """
 
@@ -25,7 +25,7 @@ from pearlarr.sqlite_util import is_corruption
 from .builders import make_entry_record
 
 # Stand-in for a config-file checksum. `CacheStore` only stamps and compares the
-# value it is handed; it never computes one, so any string works here.
+# value it is handed. It never computes one, so any string works here.
 CHECKSUM = "0123456789abcdef0123456789abcdef"
 
 
@@ -53,7 +53,7 @@ def _open(tmp_path: Path) -> CacheStore:
 
 
 class TestSchemaAndDescriptor:
-    """A missing db opens in-memory and reads empty; a saved db persists the version/checksum descriptor."""
+    """A missing db opens in-memory and reads empty. A saved db persists the version/checksum descriptor."""
 
     def test_missing_file_opens_in_memory(self, tmp_path: Path) -> None:
         store = _open(tmp_path)
@@ -109,7 +109,7 @@ class TestSchemaVersionGate:
     """The schema-version gate: older dbs migrate step-by-step, newer dbs are refused."""
 
     def test_fresh_db_is_stamped_through_promote(self, tmp_path: Path) -> None:
-        # The :memory: stand-in is stamped on create; the backup-API promote must
+        # The :memory: stand-in is stamped on create. The backup-API promote must
         # carry that stamp into the file it writes, or every fresh install would
         # look like a v0 db on its second run.
         store = _open(tmp_path)
@@ -404,7 +404,7 @@ class TestSelectionDigest:
         reopened.close()
 
     def test_preview_save_does_not_consume_a_pending_recheck(self, tmp_path: Path) -> None:
-        # Matching prefs changed (the committed digest is old); a preview run
+        # Matching prefs changed (the committed digest is old). A preview run
         # stages the new one, but its rollback must leave the re-check armed
         # for the next real run.
         store = _open(tmp_path)
@@ -490,7 +490,7 @@ class TestPendingImports:
         for h, rec in (("a", a), ("b", b), ("c", c), ("d", d)):
             store.put_pending(Arr.SONARR, h, rec)
 
-        # Only this series' records come back; the integer series_id binds directly.
+        # Only this series' records come back. The integer series_id binds directly.
         assert store.get_pending_for_series(Arr.SONARR, 5) == {"a": a, "b": b}
         assert store.get_pending_for_series(Arr.SONARR, 9) == {"c": c}
         assert store.get_pending_for_series(Arr.SONARR, 404) == {}
@@ -621,7 +621,7 @@ class TestRunLifecycle:
 
 
 class TestMaintenance:
-    """Eviction drops only stale or stampless records and keeps fresh ones; stats/integrity report accurate counts."""
+    """Eviction drops only stale or stampless records and keeps fresh ones. Stats/integrity report accurate counts."""
 
     def test_evict_anilist_meta_drops_only_stale(self, tmp_path: Path) -> None:
         store = _open(tmp_path)
@@ -719,7 +719,7 @@ class TestCorruptStore:
         store.save(preview=False)
         store.close()
 
-        # The corrupt file was moved aside; a fresh, working db took its place.
+        # The corrupt file was moved aside. A fresh, working db took its place.
         assert len(list(tmp_path.glob("cache.db.corrupt-*"))) == 1
         reopened = CacheStore.load(str(db), config_checksum=CHECKSUM)
         assert _entry_name(reopened, 7) == "Recovered"

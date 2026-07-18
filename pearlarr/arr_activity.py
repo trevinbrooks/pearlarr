@@ -27,8 +27,8 @@ HISTORY_QUERY_OVERLAP_HOURS = 26
 HISTORY_MAX_LOOKBACK_DAYS = 30
 
 # File-state-changing events (casefolded). Deletes are checked against the
-# upgrade reason (an upgrade-delete always pairs with an import event);
-# grabbed/renamed/failed/ignored change no file state and are excluded.
+# upgrade reason (an upgrade-delete always pairs with an import event).
+# Grabbed/renamed/failed/ignored change no file state and are excluded.
 _IMPORT_EVENTS = frozenset({"downloadfolderimported", "seriesfolderimported", "moviefolderimported"})
 _DELETE_EVENTS = frozenset({"episodefiledeleted", "moviefiledeleted"})
 
@@ -43,7 +43,7 @@ class ActivityScan:
     rescan_all: bool
     """Set when history coverage is broken - a checkpoint older than the lookback
     window, or an unreadable stored date - so the id cursor may have skipped file
-    changes; the caller must treat every entry as dirty once (`touched` is empty
+    changes. The caller must treat every entry as dirty once (`touched` is empty
     then)."""
 
 
@@ -78,7 +78,7 @@ class ArrActivityMonitor:
     """One arr's per-run history scan + checkpoint advance.
 
     `scan` reads the stored checkpoint, queries the overlapped window, dedups
-    on the id cursor and stashes the advanced checkpoint;
+    on the id cursor and stashes the advanced checkpoint.
     `commit_checkpoint` stages it through the cache store - only called by the
     run loop when the pass covered the whole library, and only persisted at a
     non-preview save point (so a dry run never advances the cursor).
@@ -99,8 +99,8 @@ class ArrActivityMonitor:
         """Scan the window since the checkpoint for arr-side file changes.
 
         Fetch failure (None) fails open: mark nothing dirty, leave the
-        checkpoint untouched (a coverage gap is then re-detected next pass); the
-        fetch helper owns the user-facing warning, so only a debug line lands
+        checkpoint untouched (a coverage gap is then re-detected next pass). The
+        fetch helper owns the operator-facing warning, so only a debug line lands
         here. An empty window stashes no checkpoint either (the bootstrap
         retries next pass). Own grabs - records whose `downloadId` matches a
         remembered or pending infohash - are suppressed. Broken coverage
@@ -109,7 +109,7 @@ class ArrActivityMonitor:
 
         Args:
             fetch: The strategy's `history_since` (takes the ISO8601 query date).
-            now: Clock override (aware UTC); defaults to `datetime.now(UTC)`.
+            now: Clock override (aware UTC). Defaults to `datetime.now(UTC)`.
         """
 
         now = now if now is not None else datetime.now(UTC)
@@ -130,7 +130,7 @@ class ArrActivityMonitor:
         fresh = [record for record in records if record.id > last_id]
         if fresh:
             newest = max(fresh, key=lambda record: record.id)
-            # An empty date would collapse the next window to the overlap; keep
+            # An empty date would collapse the next window to the overlap. Keep
             # the old cursor and let the id dedup absorb the re-delivery.
             if newest.date:
                 self._pending_checkpoint = HistoryCheckpoint(since_date=newest.date, last_id=newest.id)
