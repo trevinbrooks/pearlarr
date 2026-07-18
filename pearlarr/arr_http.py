@@ -468,6 +468,8 @@ class ArrHttp:
 
         if warn is None:
             return
+        if not self.streaks.active:
+            return
         now = self.clock()
         with self.streaks.lock:
             ended = [self.streaks.active.pop(key) for key in list(self.streaks.active) if key[0] == warn]
