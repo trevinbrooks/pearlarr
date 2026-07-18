@@ -399,7 +399,12 @@ _LANGUAGES_SINGLE_DEFAULT = ["Japanese"]
 
 
 class ImportsSettings(_ConfigBase):
-    """Wait-for-completion + Sonarr manual import. Sonarr only, Radarr is a no-op."""
+    """Wait-for-completion + manual import.
+
+    The wait modes, the blocking monitor, and the manual import itself are Sonarr
+    only. Pending-import tracking and `post_import_category` also cover Radarr
+    grabs (which Radarr's own completed-download handling imports).
+    """
 
     wait_mode: ImportWaitMode = ImportWaitMode.OFF
     """When, if ever, to wait for grabbed torrents to finish downloading and then drive Sonarr's import."""
@@ -439,9 +444,12 @@ class ImportsSettings(_ConfigBase):
     post_import_category: str | None = None
     """qBittorrent category applied to a torrent once every import that uses it is verified complete.
 
-    Useful to give finished torrents different seeding rules. A torrent shared
-    by several AniList entries moves only after ALL of their imports have
-    verified. Cleanup scripts that delete torrents with data should key off
+    Useful to give finished torrents different seeding rules. Applies to both
+    Sonarr and Radarr grabs: a torrent shared by several AniList entries - or by
+    both arrs - moves only after ALL of their imports have verified (Sonarr via
+    its manual import, Radarr via its own completed-download handling), so a
+    Radarr download is never moved out of Radarr's category before Radarr
+    imports it. Cleanup scripts that delete torrents with data should key off
     this category only: a later SeaDex update can attach a new entry to an
     already-moved torrent, and deleted data is then re-downloaded. Blank keeps
     the add-time category. Only applies when `wait_mode` is not `off`.

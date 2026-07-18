@@ -43,10 +43,12 @@ from pearlarr.mappings import MappingResolver, MappingSources
 from pearlarr.notify import Notifier
 from pearlarr.output import SeverityCounts, emit_to_hub
 from pearlarr.planner import DownloadPlanner
+from pearlarr.radarr_client import AbstractRadarrClient
 from pearlarr.reporter import RunContext, RunReporter
 from pearlarr.run_services import RunDeps, RunServices
 from pearlarr.seadex_filter import SeadexReleaseFilter
 from pearlarr.seadex_gateway import SeaDexMiss, SeaDexSource
+from pearlarr.seadex_radarr import RadarrSync
 from pearlarr.seadex_sonarr import SonarrSync
 from pearlarr.seadex_types import (
     EpisodeRecord,
@@ -63,7 +65,7 @@ from pearlarr.sonarr_mapper import FileEpisodeMapper
 from pearlarr.sonarr_parse import SonarrParseCache
 from pearlarr.torrents import AddOutcome, AddResult, TorrentService
 
-from .fakes import FakeSonarrClient
+from .fakes import FakeRadarrClient, FakeSonarrClient
 
 # The " · " display separator the cockpit/ledger/report rows join parts with.
 # Assertions build expected strings from this so a separator change is one edit.
@@ -1013,6 +1015,26 @@ def make_sonarr_sync(
     if ep_list_cache is not None:
         strat._episodes._ep_list_cache = ep_list_cache
     return strat
+
+
+def make_radarr_sync(
+    *,
+    radarr: AbstractRadarrClient | None = None,
+    config: AppConfig | None = None,
+    cache_store: AbstractCacheStore | None = None,
+) -> RadarrSync:
+    """Build a `RadarrSync` through its REAL `__init__`, injecting a typed client.
+
+    Mirrors `make_sonarr_sync`: a real `RunDeps` + services hub drives the real
+    constructor, so `cache_store` / `_evidence` / `_mappings` are wired exactly as
+    production builds them (the memo-reset via `get_items` works, the reconcile's
+    oldest-pending lookup shares the injected store). The scripted client feeds
+    the import-history evidence fetch.
+    """
+
+    deps = make_run_deps(config=config, cache_store=cache_store)
+    services = RunServices(deps, Arr.RADARR)
+    return RadarrSync(deps, services, radarr if radarr is not None else FakeRadarrClient())
 
 
 def make_sonarr_mapper(**attrs: Any) -> FileEpisodeMapper:

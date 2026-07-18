@@ -145,11 +145,13 @@ imports:
   mode: auto
 
   # qBittorrent category applied to a torrent once every import that uses it is verified complete.
-  # Useful to give finished torrents different seeding rules. A torrent shared by several AniList
-  # entries moves only after ALL of their imports have verified. Cleanup scripts that delete
-  # torrents with data should key off this category only: a later SeaDex update can attach a new
-  # entry to an already-moved torrent, and deleted data is then re-downloaded. Blank keeps the
-  # add-time category. Only applies when wait_mode is not off.
+  # Useful to give finished torrents different seeding rules. Applies to both Sonarr and Radarr
+  # grabs: a torrent shared by several AniList entries - or by both arrs - moves only after ALL of
+  # their imports have verified (Sonarr via its manual import, Radarr via its own completed-download
+  # handling), so a Radarr download is never moved out of Radarr's category before Radarr imports
+  # it. Cleanup scripts that delete torrents with data should key off this category only: a later
+  # SeaDex update can attach a new entry to an already-moved torrent, and deleted data is then
+  # re-downloaded. Blank keeps the add-time category. Only applies when wait_mode is not off.
   post_import_category:
 
   # Sonarr quality name, e.g. Bluray-2160p, filling the gaps when a file's quality cannot be

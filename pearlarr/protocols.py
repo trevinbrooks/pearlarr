@@ -35,7 +35,9 @@ class ImportCompleter(ABC):
         recommended release as imported, and otherwise drives a series-pinned
         manual import using *our* authoritative file->episode mapping (never
         Sonarr's blind parse, so it can't import an episode our mapping assigned
-        to another preferred torrent). Radarr is a no-op (out of scope).
+        to another preferred torrent). Radarr instead reads its own import
+        history as evidence and never drives the import itself (Radarr's completed
+        -download handling does that) - see `RadarrSync.import_completed`.
 
         Args:
             pending: The durable record for the completed torrent.
@@ -67,8 +69,21 @@ class ImportCompleter(ABC):
         to fill the importing row's bar as files land and to promote the row once
         every intended file is present. MUST NOT refresh downloads, read the queue,
         or issue commands - only the fresh episode files. `SonarrSync` counts the
-        seed targets that now hold the recommended release. `RadarrSync` records
-        no pending imports, so it returns an indeterminate zero.
+        seed targets that now hold the recommended release. `RadarrSync` never
+        enters the blocking monitor (the only caller), so it returns an
+        indeterminate zero.
+        """
+
+    @property
+    @abstractmethod
+    def supports_blocking_monitor(self) -> bool:
+        """Whether the engine may run the end-of-run blocking monitor for this strategy.
+
+        `SonarrSync` returns True: the interleaved wait/import cockpit is its
+        domain. `RadarrSync` returns False - Radarr records carry no episode
+        mapping and Radarr imports them itself, so they reconcile off import
+        history in every active mode (never the monitor). The run tail reads this
+        to decide whether BLOCKING/HYBRID monitors or just reconciles pre-summary.
         """
 
 
