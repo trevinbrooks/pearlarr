@@ -9,8 +9,9 @@ the id-cursor dedup, the coverage-gap rescan signal, the event + upgrade-reason
 + own-hash + item-id filters, and the fail-open contract. Run-loop half (reusing
 `test_run_finalize`'s `_engine` harness): touched items flow into
 `RunServices._dirty_al_ids` (all items on a gap), the checkpoint is staged
-only on full-library non-capped runs, and either config toggle disables the
-fetch entirely.
+only on full-library, non-capped, non-outage runs (held drift signals replay
+on the next healthy run), and either config toggle disables the fetch
+entirely.
 """
 
 import logging
@@ -32,7 +33,7 @@ from pearlarr.seadex_types import HistoryRecord
 
 from .builders import FakeCacheStore, make_config, make_logger
 from .fakes import CaptureHandler, FakeArrItem, FakeStrategy
-from .test_run_finalize import _engine, _FinalizeRecorder
+from .test_run_finalize import _engine, _FakeGateway, _FinalizeRecorder
 
 _NOW = datetime(2026, 7, 6, 12, 0, 0, tzinfo=UTC)
 
@@ -363,6 +364,49 @@ class TestRunLoopActivityWiring:
         engine = self._run(strategy, logger)
 
         assert engine.cache_store.get_history_checkpoint(Arr.SONARR) is None
+
+    @staticmethod
+    def _outage_engine(logger: logging.Logger, cache: FakeCacheStore) -> RunLoop:
+        gateway = _FakeGateway()
+        gateway.outage = True
+        return _engine(_FinalizeRecorder(), logger, seadex=gateway, cache_store=cache)
+
+    def test_outage_run_holds_the_checkpoint(self, logger: logging.Logger) -> None:
+        # A SeaDex-outage run skips every lookup, so committing would consume
+        # drift events the run never acted on (the 2026-07-15 incident shape).
+        cache = FakeCacheStore()
+        engine = self._outage_engine(logger, cache)
+        engine.run_sync(self._strategy(history=[_rec(1, item_id=3)]), item_id=None, dry_run=True, boot=BootFlow())
+
+        assert engine._services._dirty_al_ids == {11}  # detection itself still ran
+        assert cache.get_history_checkpoint(Arr.SONARR) is None
+
+    def test_consecutive_outage_runs_keep_holding(self, logger: logging.Logger) -> None:
+        cache = FakeCacheStore()
+        for _ in range(2):
+            engine = self._outage_engine(logger, cache)
+            engine.run_sync(self._strategy(history=[_rec(1, item_id=3)]), item_id=None, dry_run=True, boot=BootFlow())
+
+        assert cache.get_history_checkpoint(Arr.SONARR) is None
+
+    def test_held_checkpoint_replays_dirty_on_the_next_healthy_run(self, logger: logging.Logger) -> None:
+        # Outage run first: dirty derived but unactionable, checkpoint held.
+        cache = FakeCacheStore()
+        outage = self._outage_engine(logger, cache)
+        outage.run_sync(self._strategy(history=[_rec(1, item_id=3)]), item_id=None, dry_run=True, boot=BootFlow())
+
+        # Healthy run over the SAME store: the held cursor replays the same
+        # records through the id dedup, re-derives the dirty mark, and commits.
+        healthy = _engine(_FinalizeRecorder(), logger, cache_store=cache)
+        healthy.run_sync(
+            self._strategy(history=[_rec(1, item_id=3, date="2026-07-06T10:00:00Z")]),
+            item_id=None,
+            dry_run=True,
+            boot=BootFlow(),
+        )
+
+        assert healthy._services._dirty_al_ids == {11}
+        assert cache.get_history_checkpoint(Arr.SONARR) == HistoryCheckpoint("2026-07-06T10:00:00Z", 1)
 
     def test_detect_toggle_off_skips_the_fetch(self, logger: logging.Logger) -> None:
         strategy = self._strategy()
