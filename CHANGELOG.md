@@ -7,6 +7,8 @@ Pearlarr is a fork of [bbtufty/seadexarr](https://github.com/bbtufty/seadexarr).
 
 ## [Unreleased]
 
+## [1.0.6] - 2026-07-18
+
 ### Changed
 
 - `imports.post_import_category` now also applies to Radarr grabs, moving a movie's torrent once Radarr has imported it. Previously the setting was Sonarr-only.
