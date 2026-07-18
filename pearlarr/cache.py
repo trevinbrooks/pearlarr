@@ -148,6 +148,11 @@ class CacheSchemaError(RuntimeError):
     """
 
 
+def _has_column(conn: sqlite3.Connection, table: str, column: str) -> bool:
+    """Check if a column exists in a table via PRAGMA table_info."""
+    return column in {row[1] for row in conn.execute(f"PRAGMA table_info({table})")}
+
+
 def _migrate_0_to_1(conn: sqlite3.Connection) -> None:
     """v0 = any pre-versioning db. Add the columns that shipped after the first cut.
 
@@ -155,8 +160,7 @@ def _migrate_0_to_1(conn: sqlite3.Connection) -> None:
     already carry the manually applied ALTER that predates this gate.
     """
 
-    cols = {row[1] for row in conn.execute("PRAGMA table_info(entries)")}
-    if "fallback_satisfied" not in cols:
+    if not _has_column(conn, "entries", "fallback_satisfied"):
         conn.execute("ALTER TABLE entries ADD COLUMN fallback_satisfied INTEGER NOT NULL DEFAULT 0")
 
 
@@ -171,8 +175,7 @@ def _migrate_1_to_2(conn: sqlite3.Connection) -> None:
     just before the walk) is left alone.
     """
 
-    cols = {row[1] for row in conn.execute("PRAGMA table_info(pending_imports)")}
-    if "al_id" in cols:
+    if _has_column(conn, "pending_imports", "al_id"):
         return
     conn.execute(
         "CREATE TABLE pending_imports_v2 ("
