@@ -63,7 +63,7 @@ dependencies = [
     "rich == 15.0.0",
     "seadex == 0.7.2",
     "truststore == 0.10.4",
-    "typer == 0.26.8",
+    "typer==0.27.0",
     # Transitive (qbittorrent-api -> requests -> urllib3); floored for CVE currency.
     "urllib3>=2.7.0",
 ]
