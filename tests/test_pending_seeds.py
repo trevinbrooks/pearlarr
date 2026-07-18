@@ -152,6 +152,176 @@ class TestBuildPendingSeeds:
         assert seeds == {}
 
 
+class TestSeedGuards:
+    """The grab-time mirror of the import-side borrow gates.
+
+    A full-season parse never seeds, colliding claims resolve first-wins in
+    SeaDex file order, and a duplicate leaf seeds once. A refused file is left
+    unseeded so import-time assignment places or refuses it under the full
+    guard set.
+    """
+
+    def test_full_season_parse_never_seeds(self) -> None:
+        # An OP/ED whose bare-"S05" name Sonarr matches to the whole season:
+        # the parse record carries all 12 pairs, and none of them may seed
+        # (the old behavior imported this one file as every episode).
+        ep_list = [_ep(500 + e, 5, e) for e in range(1, 13)]
+        parse_cache = {
+            "Show S05 Ending.mkv": {"episodes": [{"season": 5, "episode": e} for e in range(1, 13)]},
+        }
+        seadex_dict = {
+            "RG": rg_group(
+                {"u1": url_item(files=["Show S05 Ending.mkv"], size=[1000], infohash="h1", download=True)},
+            ),
+        }
+
+        seeds = _strat(parse_cache)._reconciler.build_pending_seeds(
+            seadex_dict=seadex_dict,
+            ep_list=ep_list,
+            sonarr_series_id=7,
+            anilist_title="Show",
+        )
+
+        # Still tracked (it carries a video file), just never pre-assigned.
+        assert set(seeds) == {"h1"}
+        assert seeds["h1"].file_episode_map == {}
+        assert seeds["h1"].seadex_files == ["Show S05 Ending.mkv"]
+
+    def test_legitimate_double_episode_span_still_seeds(self) -> None:
+        ep_list = [_ep(101, 1, 1), _ep(102, 1, 2)]
+        parse_cache = {
+            "Show - 01-02.mkv": {"episodes": [{"season": 1, "episode": 1}, {"season": 1, "episode": 2}]},
+        }
+        seadex_dict = {
+            "RG": rg_group(
+                {"u1": url_item(files=["Show - 01-02.mkv"], size=[1000], infohash="h1", download=True)},
+            ),
+        }
+
+        seeds = _strat(parse_cache)._reconciler.build_pending_seeds(
+            seadex_dict=seadex_dict,
+            ep_list=ep_list,
+            sonarr_series_id=7,
+            anilist_title="Show",
+        )
+
+        assert seeds["h1"].file_episode_map == {normalize_basename("Show - 01-02.mkv"): [101, 102]}
+
+    def test_partially_resolving_span_is_not_seeded(self) -> None:
+        # A double-episode file straddling the entry boundary: only episode 1
+        # is in this entry's list, so seeding [101] would half-import the file.
+        ep_list = [_ep(101, 1, 1)]
+        parse_cache = {
+            "Show - 01-02.mkv": {"episodes": [{"season": 1, "episode": 1}, {"season": 1, "episode": 2}]},
+        }
+        seadex_dict = {
+            "RG": rg_group(
+                {"u1": url_item(files=["Show - 01-02.mkv"], size=[1000], infohash="h1", download=True)},
+            ),
+        }
+
+        seeds = _strat(parse_cache)._reconciler.build_pending_seeds(
+            seadex_dict=seadex_dict,
+            ep_list=ep_list,
+            sonarr_series_id=7,
+            anilist_title="Show",
+        )
+
+        assert seeds["h1"].file_episode_map == {}
+
+    def test_second_claim_of_a_seeded_id_is_not_seeded(self) -> None:
+        # "13" and "13v2" both parse to S02E13: the first file in SeaDex order
+        # wins, deterministically, and the later claimant is left for
+        # import-time assignment (which refuses the second claim of a taken id).
+        ep_list = [_ep(213, 2, 13)]
+        parse_cache = {
+            "Show - 13.mkv": {"episodes": [{"season": 2, "episode": 13}]},
+            "Show - 13v2.mkv": {"episodes": [{"season": 2, "episode": 13}]},
+        }
+        seadex_dict = {
+            "RG": rg_group(
+                {
+                    "u1": url_item(
+                        files=["Show - 13.mkv", "Show - 13v2.mkv"],
+                        size=[1000, 1001],
+                        infohash="h1",
+                        download=True,
+                    ),
+                },
+            ),
+        }
+
+        seeds = _strat(parse_cache)._reconciler.build_pending_seeds(
+            seadex_dict=seadex_dict,
+            ep_list=ep_list,
+            sonarr_series_id=7,
+            anilist_title="Show",
+        )
+
+        assert seeds["h1"].file_episode_map == {normalize_basename("Show - 13.mkv"): [213]}
+
+    def test_partial_collision_refuses_the_whole_later_file(self) -> None:
+        # The later file claims one taken id and one free one: assignment
+        # defers the whole file on any collision, so the seed refuses it whole
+        # rather than seeding the free half.
+        ep_list = [_ep(101, 1, 1), _ep(102, 1, 2)]
+        parse_cache = {
+            "Show - 01.mkv": {"episodes": [{"season": 1, "episode": 1}]},
+            "Show - 01-02.mkv": {"episodes": [{"season": 1, "episode": 1}, {"season": 1, "episode": 2}]},
+        }
+        seadex_dict = {
+            "RG": rg_group(
+                {
+                    "u1": url_item(
+                        files=["Show - 01.mkv", "Show - 01-02.mkv"],
+                        size=[1000, 2000],
+                        infohash="h1",
+                        download=True,
+                    ),
+                },
+            ),
+        }
+
+        seeds = _strat(parse_cache)._reconciler.build_pending_seeds(
+            seadex_dict=seadex_dict,
+            ep_list=ep_list,
+            sonarr_series_id=7,
+            anilist_title="Show",
+        )
+
+        assert seeds["h1"].file_episode_map == {normalize_basename("Show - 01.mkv"): [101]}
+
+    def test_duplicate_leaf_names_seed_once(self) -> None:
+        # The same basename in two folders collapses in the basename-keyed
+        # map: the first occurrence's claim stands and the copy is refused,
+        # so the map is deterministic and never double-claims the id.
+        ep_list = [_ep(101, 1, 1)]
+        parse_cache = {"Show - 01.mkv": {"episodes": [{"season": 1, "episode": 1}]}}
+        seadex_dict = {
+            "RG": rg_group(
+                {
+                    "u1": url_item(
+                        files=["FolderA/Show - 01.mkv", "FolderB/Show - 01.mkv"],
+                        size=[1000, 1000],
+                        infohash="h1",
+                        download=True,
+                    ),
+                },
+            ),
+        }
+
+        seeds = _strat(parse_cache)._reconciler.build_pending_seeds(
+            seadex_dict=seadex_dict,
+            ep_list=ep_list,
+            sonarr_series_id=7,
+            anilist_title="Show",
+        )
+
+        assert seeds["h1"].file_episode_map == {normalize_basename("Show - 01.mkv"): [101]}
+        # Both physical files stay tracked (the leaves list is disk truth).
+        assert seeds["h1"].seadex_files == ["Show - 01.mkv", "Show - 01.mkv"]
+
+
 class TestParseWriteVisibleToSeeds:
     """The parse cache (writer) and the seed builder (reader) are now separate objects.
 

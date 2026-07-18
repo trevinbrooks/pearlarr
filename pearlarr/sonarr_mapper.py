@@ -123,7 +123,9 @@ class FileEpisodeMapper:
         for exactly named files (see `allow_unscoped`). Fresh placements self-heal
         onto the record. SeaDex order keeps output and the absolute leg stable.
 
-        Returns `(merged_map, unplaceable_basenames)`.
+        Returns `(merged_map, unplaceable_basenames)`. A basename duplicated
+        across folders collapses in the basename-keyed pool, so it is reported
+        unplaceable at most once - and never when the map placed it.
         """
 
         on_disk = {
@@ -189,7 +191,13 @@ class FileEpisodeMapper:
         for norm_base, ids in result.assigned.items():
             pending.file_episode_map[norm_base] = ids
 
-        return {**seeded, **result.assigned}, result.skipped
+        merged = {**seeded, **result.assigned}
+        # A duplicate leaf (one basename in two folders) collapses in the
+        # basename-keyed pool: its second occurrence defers off the used-set
+        # and lands in skipped even though the name WAS placed. The warning
+        # follows the map - placed names drop out, repeats collapse.
+        skipped = [name for name in dict.fromkeys(result.skipped) if name not in merged]
+        return merged, skipped
 
     def _parsed_file_info(self, raw_base: str) -> ParsedFileInfo | None:
         """Sonarr `/parse` of one on-disk leaf, cached per run.

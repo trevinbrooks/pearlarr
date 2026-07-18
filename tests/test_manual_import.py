@@ -153,19 +153,51 @@ class TestNormalize:
 
 
 class TestEpisodeIdsForParsed:
-    """`episode_ids_for_parsed` maps parsed `(season, episode)` pairs to ids via the index, dropping unknowns."""
+    """`episode_ids_for_parsed` maps `/parse` pairs to ids under the seed-side borrow limits.
+
+    The pairs are Sonarr's series-matched resolution, so the grab-time seed
+    mirrors the import-time borrow gates: span cap, all-or-nothing resolution,
+    duplicate-claim collapse.
+    """
 
     def test_maps_via_index(self) -> None:
         idx = {(1, 1): 11, (1, 2): 12}
         parsed = [ParsedEpisode(season=1, episode=1), ParsedEpisode(season=1, episode=2)]
         assert episode_ids_for_parsed(parsed, idx) == [11, 12]
 
-    def test_drops_unknown(self) -> None:
+    def test_unknown_single_pair_is_not_seeded(self) -> None:
+        assert episode_ids_for_parsed([ParsedEpisode(season=9, episode=9)], {(1, 1): 11}) == []
+
+    def test_partially_resolving_span_refuses_the_whole_file(self) -> None:
+        # One pair in the map, one out: seeding the resolved half would
+        # half-import a multi-episode file, so nothing is seeded.
         idx = {(1, 1): 11}
         parsed = [
             ParsedEpisode(season=1, episode=1),
             ParsedEpisode(season=9, episode=9),
         ]
+        assert episode_ids_for_parsed(parsed, idx) == []
+
+    def test_full_season_span_never_seeds(self) -> None:
+        # A bare-"S05" extra matches the WHOLE season: the record carries every
+        # episode pair, and none of them may seed.
+        idx = {(5, e): 500 + e for e in range(1, 13)}
+        parsed = [ParsedEpisode(season=5, episode=e) for e in range(1, 13)]
+        assert episode_ids_for_parsed(parsed, idx) == []
+
+    def test_span_just_over_the_cap_is_refused(self) -> None:
+        idx = {(1, e): 10 + e for e in range(1, 5)}
+        parsed = [ParsedEpisode(season=1, episode=e) for e in range(1, 5)]
+        assert episode_ids_for_parsed(parsed, idx) == []
+
+    def test_triple_span_still_seeds(self) -> None:
+        idx = {(1, 1): 11, (1, 2): 12, (1, 3): 13}
+        parsed = [ParsedEpisode(season=1, episode=e) for e in (1, 2, 3)]
+        assert episode_ids_for_parsed(parsed, idx) == [11, 12, 13]
+
+    def test_duplicate_pairs_collapse_to_one_claim(self) -> None:
+        idx = {(1, 1): 11}
+        parsed = [ParsedEpisode(season=1, episode=1), ParsedEpisode(season=1, episode=1)]
         assert episode_ids_for_parsed(parsed, idx) == [11]
 
 

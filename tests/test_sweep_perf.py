@@ -32,6 +32,7 @@ from pearlarr.sonarr_parse import (
     SONARR_PARSE_NEG_CACHE_TTL_DAYS,
     ParseWindow,
     SonarrParseCache,
+    is_video_candidate,
 )
 
 from .builders import (
@@ -540,3 +541,28 @@ class TestParseEpisodesNegativeCache:
             assert rec is not None
             assert rec["episodes"] == []
             assert rec["series_fp"] == "fp"
+
+
+class TestIsVideoCandidate:
+    """Checksum and sidecar files never enter the candidate pool.
+
+    A seeded checksum file is never offered by Sonarr's manual-import scan,
+    so it would stick a record on "intended file missing" until the deadline.
+    All of these extensions were observed in real SeaDex releases.
+    """
+
+    def test_checksum_and_sidecar_extensions_rejected(self) -> None:
+        for name in (
+            "[Marin] Show - S01 [BD 1080p].blake3",
+            "checksum.md5",
+            "checksum.sha2",
+            "checksum.sha256",
+            "[Dae] Show - S01E01.mks",
+            "Animate Benefits - 01.tif",
+            "playlist.m3u8",
+        ):
+            assert not is_video_candidate(name)
+
+    def test_video_containers_kept(self) -> None:
+        assert is_video_candidate("[X] Show - S01E01.mkv")
+        assert is_video_candidate("[X] Show - S01E01.mp4")
