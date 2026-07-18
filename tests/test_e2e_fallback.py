@@ -648,6 +648,16 @@ def _body_files(body: dict[str, Json]) -> list[dict[str, Json]]:
     return [entry for entry in files if is_json_obj(entry)]
 
 
+def _assert_converged_imported(outcome: _RunOutcome, out: str) -> None:
+    """Assert that a record converged to imported state with no errors."""
+
+    assert outcome.ok is True
+    assert outcome.pending_after == frozenset()
+    assert 'imported title="Demo Batch · Thighs" files=2' in out
+    assert "complete imported=1 deferred=0 failed=0" in out
+    assert current_hub().counts.mark().errors == 0
+
+
 def test_dead_tracked_download_imports_via_folder_scan(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
@@ -658,11 +668,7 @@ def test_dead_tracked_download_imports_via_folder_scan(
 
     # Converged to IMPORTED although every downloadId scan 500'd AND the
     # ManualImport command reported `failed`: the episode FILES decided.
-    assert outcome.ok is True
-    assert outcome.pending_after == frozenset()
-    assert 'imported title="Demo Batch · Thighs" files=2' in out
-    assert "complete imported=1 deferred=0 failed=0" in out
-    assert current_hub().counts.mark().errors == 0
+    _assert_converged_imported(outcome, out)
 
     # The dated hub note, exactly once (memoized verdict, once per record per run).
     assert out.count(_DEAD_TRACKED_NOTE) == 1
@@ -717,11 +723,7 @@ def test_transient_scan_blip_does_not_pin_folder_mode(
     out = _flat(capsys.readouterr().out)
 
     # Converged through the NORMAL path after the one-poll blip.
-    assert outcome.ok is True
-    assert outcome.pending_after == frozenset()
-    assert 'imported title="Demo Batch · Thighs" files=2' in out
-    assert "complete imported=1 deferred=0 failed=0" in out
-    assert current_hub().counts.mark().errors == 0
+    _assert_converged_imported(outcome, out)
 
     # The empty folder scan ran exactly once - no pin, so the next poll went
     # straight back to the downloadId scan, which had healed.
@@ -756,11 +758,7 @@ def test_absolute_batch_empty_seed_self_heals_and_sibling_is_skipped(
 
     # The real Thighs incident shape: the entry's own files place exactly and
     # import. The out-of-entry sibling is skipped + warned, never a veto.
-    assert outcome.ok is True
-    assert outcome.pending_after == frozenset()
-    assert 'imported title="Demo Batch · Thighs" files=2' in out
-    assert "complete imported=1 deferred=0 failed=0" in out
-    assert current_hub().counts.mark().errors == 0
+    _assert_converged_imported(outcome, out)
 
     # The sibling surfaced loudly, exactly once (per-run memo, not per poll).
     assert out.count("1 file could not be matched to an episode and was not imported") == 1
