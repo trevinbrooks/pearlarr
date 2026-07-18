@@ -7,6 +7,8 @@ Pearlarr is a fork of [bbtufty/seadexarr](https://github.com/bbtufty/seadexarr);
 
 ## [Unreleased]
 
+## [1.0.5] - 2026-07-18
+
 ### Changed
 
 - Repeated identical Sonarr/Radarr connection warnings now coalesce: the first failure warns as before, repeats drop to the debug log with a running count, a "still failing - attempt N" reminder fires about every `imports.digest_interval` seconds, and a note reports when the call recovers. Import-wait polls (manual-import scans, the download-history probe, the import-time filename parse) also no longer retry inside each call - the poll loop itself is the retry - so a failing poll cycle emits one connection line instead of four and skips several seconds of backoff sleep.
