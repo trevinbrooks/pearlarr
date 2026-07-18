@@ -12,6 +12,8 @@ Pearlarr is a fork of [bbtufty/seadexarr](https://github.com/bbtufty/seadexarr).
 - Absolute-numbered batches now import even when the grab-time file mapping is missing and the folder holds files outside the entry (a sibling cour, a special, an NC extra). The import consults Sonarr's series-matched resolution of each absolute-only name - still strictly scoped to the entry's own episodes, and cross-checked against Sonarr's episode ids - so its files place exactly instead of relying on an all-or-nothing positional count that a single unmatchable file could veto ("N files could not be matched to an episode" repeating forever). Ambiguous names (a full-season parse, a match spanning several episodes, a half-resolved multi-episode name) are refused and retried rather than guessed.
 - The folder-scan fallback no longer warns "Could not fetch manual-import candidates ... - will retry" on the way to handling the download: the by-id scan fails quietly, the dated history note explains the fallback, and a warning now fires only when something is genuinely stuck (a dead-tracked download whose folder scan finds no files, or the folder scan itself failing).
 - Warnings and notes emitted while a series is being processed now indent with the entry listing instead of breaking it at the left margin.
+- Movies whose year parses as an episode number ("Chronicle.2020" read as S20E20) now import to the entry's sole resolved episode when that parsed episode provably does not exist in the series.
+- All-numberless specials batches ("Special 1".."Special N") now import in order when the file count exactly matches the entry's remaining episodes. Any numbered, seeded, or ambiguous file in the batch keeps the whole-batch refusal.
 
 ## [1.0.5] - 2026-07-18
 

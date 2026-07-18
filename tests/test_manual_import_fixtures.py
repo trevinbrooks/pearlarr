@@ -961,6 +961,188 @@ class TestAssignScopeGate:
         assert result.skipped == []
 
 
+class TestAssignBogusKeyDowngrade:
+    """A name key that exists nowhere in the series is noise, not identity.
+
+    The downgrade only ever feeds the 1:1 single-file fallback - a key that
+    resolves ANYWHERE in the series map stays real evidence.
+    """
+
+    def test_movie_year_bogus_key_places_the_sole_resolved_episode(self) -> None:
+        # "Chronicle.2020" parses S20E20 - a key the series doesn't have. One
+        # file, one resolved id: the parse artifact downgrades to numberless.
+        parsed = {"movie.mkv": _pinfo(season=20, episodes=(20,))}
+        ep_id_map = {(1, 1): 501}
+
+        result = assign_episode_ids(["movie.mkv"], parsed, [900], ep_id_map)
+
+        assert result.assigned == {"movie.mkv": [900]}
+        assert result.skipped == []
+
+    def test_resolving_key_is_never_downgraded(self) -> None:
+        # The same key EXISTS in the series (resolving outside our set): that
+        # is real evidence, so the out-of-set refusal stands.
+        parsed = {"movie.mkv": _pinfo(season=20, episodes=(20,))}
+        ep_id_map = {(20, 20): 555}
+
+        result = assign_episode_ids(["movie.mkv"], parsed, [900], ep_id_map)
+
+        assert result.assigned == {}
+        assert result.skipped == ["movie.mkv"]
+
+    def test_partially_real_multi_key_is_refused(self) -> None:
+        # One of the two parsed keys resolves in the series, so the signal is
+        # not provably bogus - the whole claim stays a refusal.
+        parsed = {"d.mkv": _pinfo(season=1, episodes=(5, 99))}
+        ep_id_map = {(1, 5): 505}
+
+        result = assign_episode_ids(["d.mkv"], parsed, [900], ep_id_map)
+
+        assert result.assigned == {}
+        assert result.skipped == ["d.mkv"]
+
+    def test_bogus_key_with_absolutes_is_not_downgraded(self) -> None:
+        # Absolute numbers are real signal even when the SxxEyy key is bogus,
+        # and the multi-absolute span keeps leg 2 refused too.
+        parsed = {"movie.mkv": _pinfo(season=20, episodes=(20,), absolutes=(20, 21))}
+        ep_id_map = {(1, 1): 501}
+
+        result = assign_episode_ids(["movie.mkv"], parsed, [900], ep_id_map)
+
+        assert result.assigned == {}
+        assert result.skipped == ["movie.mkv"]
+
+    def test_bogus_key_with_full_season_match_is_refused(self) -> None:
+        # A full-season parse means the file plausibly holds MANY episodes -
+        # cardinality evidence still vetoes the downgraded placement.
+        parsed = {"movie.mkv": _pinfo(season=20, episodes=(20,), full_season=True)}
+        ep_id_map = {(1, 1): 501}
+
+        result = assign_episode_ids(["movie.mkv"], parsed, [900], ep_id_map)
+
+        assert result.assigned == {}
+        assert result.skipped == ["movie.mkv"]
+
+    def test_bogus_key_with_single_matched_pair_still_places(self) -> None:
+        # The heal-mode special shape: the name parses S02E00 (nonexistent) and
+        # Sonarr matched one pair - a single pair never vetoes the fallback.
+        parsed = {"sp.mkv": _pinfo(season=2, episodes=(0,), matched=((1, 5),))}
+        ep_id_map = {(1, 5): 555}
+
+        result = assign_episode_ids(["sp.mkv"], parsed, [900], ep_id_map)
+
+        assert result.assigned == {"sp.mkv": [900]}
+        assert result.skipped == []
+
+
+class TestAssignNumberlessZip:
+    """The pristine numberless N:N zip - order is the only signal left."""
+
+    def test_numberless_batch_zips_in_name_order(self) -> None:
+        # Three numberless files, three leftover ids: name order maps onto
+        # airing order regardless of the on-disk listing order.
+        files = ["sp2.mkv", "sp1.mkv", "sp3.mkv"]
+        parsed = {name: _pinfo() for name in files}
+
+        result = assign_episode_ids(files, parsed, [901, 902, 903], {})
+
+        assert result.assigned == {"sp1.mkv": [901], "sp2.mkv": [902], "sp3.mkv": [903]}
+        assert result.skipped == []
+
+    def test_zip_orders_digits_naturally(self) -> None:
+        # "sp10" sorts after "sp2" - lexical order would hand sp10 the second id.
+        files = ["sp1.mkv", "sp2.mkv", "sp10.mkv"]
+        parsed = {name: _pinfo() for name in files}
+
+        result = assign_episode_ids(files, parsed, [901, 902, 903], {})
+
+        assert result.assigned == {"sp1.mkv": [901], "sp2.mkv": [902], "sp10.mkv": [903]}
+
+    def test_mixed_batch_never_zips(self) -> None:
+        # One file placed by leg 1 makes the parse map bigger than the
+        # leftovers: the numberless extras must not fill episode slots.
+        parsed = {
+            "e01.mkv": _pinfo(season=1, episodes=(1,)),
+            "op.mkv": _pinfo(),
+            "ed.mkv": _pinfo(),
+        }
+        ep_id_map = {(1, 1): 501}
+
+        result = assign_episode_ids(["e01.mkv", "op.mkv", "ed.mkv"], parsed, [501, 502, 503], ep_id_map)
+
+        assert result.assigned == {"e01.mkv": [501]}
+        assert sorted(result.skipped) == ["ed.mkv", "op.mkv"]
+
+    def test_seeded_sibling_parse_kills_the_zip(self) -> None:
+        # A parse for a file NOT in the batch (seeded or moved out) proves a
+        # prior placement - the pristine gate refuses the whole zip.
+        parsed = {
+            "seeded.mkv": _pinfo(),
+            "sp1.mkv": _pinfo(),
+            "sp2.mkv": _pinfo(),
+        }
+
+        result = assign_episode_ids(["sp1.mkv", "sp2.mkv"], parsed, [901, 902], {})
+
+        assert result.assigned == {}
+        assert sorted(result.skipped) == ["sp1.mkv", "sp2.mkv"]
+
+    def test_count_mismatch_refuses_both_ways(self) -> None:
+        # Two files onto one id, and one file onto two ids: neither the zip
+        # nor the degenerate arm ever places off a non-1:1 count.
+        two_files = {"sp1.mkv": _pinfo(), "sp2.mkv": _pinfo()}
+        one_file: dict[str, ParsedFileInfo | None] = {"sp1.mkv": _pinfo()}
+
+        surplus_files = assign_episode_ids(["sp1.mkv", "sp2.mkv"], two_files, [901], {})
+        surplus_ids = assign_episode_ids(["sp1.mkv"], one_file, [901, 902], {})
+
+        assert surplus_files.assigned == {}
+        assert sorted(surplus_files.skipped) == ["sp1.mkv", "sp2.mkv"]
+        assert surplus_ids.assigned == {}
+        assert surplus_ids.skipped == ["sp1.mkv"]
+
+    def test_none_parse_refuses_the_zip(self) -> None:
+        # A parse the caller couldn't get is no evidence - fail closed.
+        parsed: dict[str, ParsedFileInfo | None] = {
+            "sp1.mkv": _pinfo(),
+            "sp2.mkv": _pinfo(),
+            "sp3.mkv": None,
+        }
+
+        result = assign_episode_ids(["sp1.mkv", "sp2.mkv", "sp3.mkv"], parsed, [901, 902, 903], {})
+
+        assert result.assigned == {}
+        assert sorted(result.skipped) == ["sp1.mkv", "sp2.mkv", "sp3.mkv"]
+
+    def test_offline_parse_refuses_the_zip(self) -> None:
+        # The offline regex stand-in is blind to what the real parse would
+        # have seen, so it never counts as a real numberless parse.
+        parsed: dict[str, ParsedFileInfo | None] = {
+            "sp1.mkv": _pinfo(),
+            "sp2.mkv": _pinfo(),
+            "sp3.mkv": _pinfo(offline=True),
+        }
+
+        result = assign_episode_ids(["sp1.mkv", "sp2.mkv", "sp3.mkv"], parsed, [901, 902, 903], {})
+
+        assert result.assigned == {}
+        assert sorted(result.skipped) == ["sp1.mkv", "sp2.mkv", "sp3.mkv"]
+
+    def test_bogus_key_member_refuses_the_zip(self) -> None:
+        # The bogus-key downgrade is 1:1-only: two movies can share one bogus
+        # key, so a bogus-keyed member keeps the whole batch refused.
+        parsed = {
+            "sp1.mkv": _pinfo(),
+            "sp2.mkv": _pinfo(),
+            "movie.mkv": _pinfo(season=20, episodes=(20,)),
+        }
+
+        result = assign_episode_ids(["sp1.mkv", "sp2.mkv", "movie.mkv"], parsed, [901, 902, 903], {})
+
+        assert result.assigned == {}
+        assert sorted(result.skipped) == ["movie.mkv", "sp1.mkv", "sp2.mkv"]
+
+
 # --------------------------------------------------------------------------- #
 # classify_queue on the real captured queue
 # --------------------------------------------------------------------------- #
