@@ -16,6 +16,7 @@ from .output import hub_warn
 from .seadex_types import (
     CommandBody,
     CommandResource,
+    HistoryPage,
     HistoryRecord,
     Language,
     ManualImportCandidate,
@@ -24,6 +25,7 @@ from .seadex_types import (
     ParsedFileInfo,
     QualityDefinition,
     QueueRecord,
+    RemotePathMapping,
     SonarrEpisode,
     SonarrItem,
     SonarrSeries,
@@ -83,6 +85,20 @@ class AbstractSonarrClient(ABC):
         *,
         pending: PendingImport,
     ) -> list[ManualImportCandidate] | None: ...
+
+    @abstractmethod
+    def manual_import_candidates_by_folder(
+        self,
+        *,
+        folder: str,
+        title: str,
+    ) -> list[ManualImportCandidate] | None: ...
+
+    @abstractmethod
+    def history_for_download(self, *, download_id: str) -> HistoryPage | None: ...
+
+    @abstractmethod
+    def remote_path_mappings(self) -> list[RemotePathMapping] | None: ...
 
     @abstractmethod
     def manual_import_execute(
@@ -329,6 +345,105 @@ class SonarrClient(AbstractSonarrClient):
         # Validate each ManualImportResource at this boundary (junk candidates
         # skip with a warning), narrowing to the fields planning reads.
         return validate_each(ManualImportCandidate, raw)
+
+    @override
+    def manual_import_candidates_by_folder(
+        self,
+        *,
+        folder: str,
+        title: str,
+    ) -> list[ManualImportCandidate] | None:
+        """List manual-import candidates by scanning `folder` directly (no tracking).
+
+        The dead-loop fallback for `manual_import_candidates`: a download
+        Sonarr's history maps to Imported/Failed/Ignored is queue-hidden and its
+        `downloadId=` scan NREs (HTTP 500) forever, but the UI's browse path -
+        `folder=` alone - skips the tracked-download branch entirely. `folder`
+        may also be a single FILE path (Sonarr's `FileExists` arm handles it).
+
+        CONTRACT: this request must never carry `downloadId` (it re-enters the
+        poisoned tracked branch - the same NRE) and never `seriesId` (the
+        controller routes `seriesId.HasValue` to the LIBRARY folder scan before
+        it ever consults `folder`, returning the wrong files). Candidates still
+        carry `path`/`quality`/`rejections`; episode identity stays ours, so
+        the missing series pin costs nothing here.
+
+        Returns None (with a warning) on a non-200 / transient error; an empty
+        list means Sonarr genuinely sees no files at that path (not visible on
+        its mount, or the path needs remote-path translation).
+        """
+
+        raw = self._http.get_json_list(
+            "/api/v3/manualimport",
+            params={
+                "folder": folder,
+                # Same stance as the downloadId scan: never drop the candidate
+                # for a file that would replace an episode's existing file.
+                "filterExistingFiles": "false",
+            },
+            warn=f"Could not fetch folder-scan import candidates for {title} ({{detail}}) - will retry",
+            timeout=MANUAL_IMPORT_TIMEOUT_S,
+        )
+        if raw is None:
+            return None
+        return validate_each(ManualImportCandidate, raw)
+
+    @override
+    def history_for_download(self, *, download_id: str) -> HistoryPage | None:
+        """Sonarr's history for one download, newest first (`/api/v3/history`).
+
+        The dead-tracked probe read: one page-1, date-descending query whose
+        records the classifier walks for the newest relevant event. Paging is
+        pinned explicitly (a 23-file batch has ~46+ events; an unlucky default
+        page size would yield a false verdict). The endpoint is a paged
+        envelope, unlike `/history/since`.
+
+        Returns None (with a warning) on a non-200 / transient error - the
+        caller must treat that as "no verdict", never as clean history.
+        """
+
+        payload = self._http.get_json_dict(
+            "/api/v3/history",
+            params={
+                # Uppercased to match Sonarr's stored infohash form.
+                "downloadId": download_id.upper(),
+                "page": "1",
+                "pageSize": "100",
+                "sortKey": "date",
+                "sortDirection": "descending",
+            },
+            warn="Could not read Sonarr's history for a download ({detail}) - assuming it is healthy",
+        )
+        if payload is None:
+            return None
+
+        # A malformed envelope fails open to the same no-verdict None.
+        try:
+            return HistoryPage.model_validate(payload)
+        except ValidationError as e:
+            hub_warn(
+                f"Could not read Sonarr's history for a download (malformed response: "
+                f"{validation_summary(e)}) - assuming it is healthy"
+            )
+            return None
+
+    @override
+    def remote_path_mappings(self) -> list[RemotePathMapping] | None:
+        """All Sonarr remote path mappings (`/api/v3/remotepathmapping`).
+
+        Read by the folder-scan fallback to translate a download-client path
+        into Sonarr's filesystem view. Returns None (with a warning) on a
+        non-200 / transient error, so the caller can distinguish "no mappings
+        configured" (an empty list) from "couldn't ask".
+        """
+
+        raw = self._http.get_json_list(
+            "/api/v3/remotepathmapping",
+            warn="Could not fetch Sonarr's remote path mappings ({detail}) - using download paths as-is",
+        )
+        if raw is None:
+            return None
+        return validate_each(RemotePathMapping, raw)
 
     @override
     def manual_import_execute(

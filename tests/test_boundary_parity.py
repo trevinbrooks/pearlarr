@@ -123,6 +123,60 @@ _UNKNOWN_QUALITY: dict[str, object] = {
 
 
 @respx.mock
+def test_golden_body_dead_tracked_folder_import_omits_download_id() -> None:
+    """The dead-tracked wire shape: NO `downloadId` key at all, `importMode` forced to copy.
+
+    Drives the REAL client end-to-end through the fallback: the downloadId scan
+    500s (the poisoned tracked download), the history probe reports a prior
+    import, the folder scan serves the candidate. The POSTed body must OMIT
+    `downloadId` on every file (a downloadId there re-enters Sonarr's poisoned
+    tracked branch; a null is not the same as absent) and force copy under the
+    configured auto (the untracked Execute branch resolves Auto to MOVE).
+    """
+
+    candidate_quality: dict[str, object] = {
+        "quality": {"id": 3, "name": "WEBDL-1080p", "source": "web", "resolution": 1080},
+    }
+    respx.get(f"{_BASE}/manualimport", params={"downloadId": "ABC123"}).respond(status_code=500)
+    respx.get(f"{_BASE}/manualimport", params={"folder": "/d"}).respond(
+        json=[{"path": _CANDIDATE_PATH, "quality": candidate_quality, "rejections": []}],
+    )
+    respx.get(f"{_BASE}/history").respond(
+        json={"records": [{"id": 3, "eventType": "downloadFolderImported", "date": "2026-06-20T06:15:30Z"}]},
+    )
+    respx.get(f"{_BASE}/remotepathmapping").respond(json=[])
+    respx.get(f"{_BASE}/qualitydefinition").respond(json=[])
+    respx.get(f"{_BASE}/language").respond(json=[{"id": 8, "name": "Japanese"}])
+    post_route = respx.post(f"{_BASE}/command").respond(json={"id": 55})
+
+    client = _make_sonarr_client()
+    executor = ImportExecutor(make_run_deps(), client, FileEpisodeMapper(client))
+    probe = executor.run_manual_import(
+        pending_import(),
+        "/d",
+        snapshot=EpisodeSnapshot(episodes_by_id={}, recommended_groups=set()),
+    )
+
+    assert probe.readiness is ImportReadiness.RETRY
+    assert probe.command_issued is True
+    body: object = json.loads(post_route.calls.last.request.content)
+    assert body == {
+        "name": "ManualImport",
+        "importMode": "copy",
+        "files": [
+            {
+                "path": _CANDIDATE_PATH,
+                "seriesId": 7,
+                "episodeIds": [101],
+                "releaseGroup": "SubGroup",
+                "languages": [{"id": 8, "name": "Japanese"}],
+                "quality": candidate_quality,
+            },
+        ],
+    }
+
+
+@respx.mock
 def test_golden_body_matched_definition_reemits_definition_quality() -> None:
     """A resolved (source, resolution) re-emits the matched definition's nested quality VERBATIM.
 

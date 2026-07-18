@@ -35,6 +35,7 @@ from pearlarr.seadex_types import (
 )
 from pearlarr.sonarr_import_plan import (
     CandidateFile,
+    ContentPaths,
     EpisodeAssignment,
     ParsedQuality,
     QueueVerdict,
@@ -548,7 +549,7 @@ class TestManualImportInFlightFixture:
         assert manual_import_in_flight(
             self._commands(),
             _SAO_DOWNLOAD_ID,
-            "/downloads",
+            ContentPaths(raw="/downloads", sonarr_visible="/downloads"),
             set(),
         )
 
@@ -557,7 +558,7 @@ class TestManualImportInFlightFixture:
         assert not manual_import_in_flight(
             self._commands(),
             "ffffffffffffffffffffffffffffffffffffffff",
-            "/nowhere",
+            ContentPaths(raw="/nowhere", sonarr_visible="/nowhere"),
             set(),
         )
 
@@ -566,7 +567,7 @@ class TestManualImportInFlightFixture:
         assert manual_import_in_flight(
             self._commands(),
             "no-such-hash",
-            "/nowhere",
+            ContentPaths(raw="/nowhere", sonarr_visible="/nowhere"),
             {5645},
         )
 

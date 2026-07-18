@@ -35,6 +35,7 @@ from pearlarr.seadex_sonarr import SonarrSync
 from pearlarr.seadex_types import (
     ArrReleaseDict,
     CommandResource,
+    HistoryPage,
     Language,
     ManualImportCandidate,
     MovieFile,
@@ -42,6 +43,7 @@ from pearlarr.seadex_types import (
     QualityDefinition,
     QueueRecord,
     RadarrItem,
+    RemotePathMapping,
     SeadexDict,
     SonarrEpisode,
     SonarrItem,
@@ -1382,6 +1384,239 @@ class TestDefaultQualityWarning:
 
         assert len(sonarr.execute_calls) == 1
         assert self._default_quality_warnings(recording) == []
+
+
+def _dead_history() -> HistoryPage:
+    """A history page whose newest relevant event is a prior full import."""
+
+    return HistoryPage.model_validate(
+        {
+            "records": [
+                {"id": 3, "eventType": "downloadFolderImported", "date": "2026-06-20T06:15:30Z"},
+                {"id": 1, "eventType": "grabbed", "date": "2026-06-19T00:00:00Z"},
+            ],
+        },
+    )
+
+
+def _clean_history() -> HistoryPage:
+    """A history page whose newest relevant event is a grab (genuinely downloading)."""
+
+    return HistoryPage.model_validate(
+        {"records": [{"id": 9, "eventType": "grabbed", "date": "2026-07-17T00:00:00Z"}]},
+    )
+
+
+def _tv_mapping() -> RemotePathMapping:
+    """The incident-shaped mapping: qBittorrent's `/d` is Sonarr's `/remote/tv`."""
+
+    return RemotePathMapping.model_validate({"host": "seedbox", "remotePath": "/d/", "localPath": "/remote/tv/"})
+
+
+class TestFolderScanFallback:
+    """The dead-loop cure: a failed downloadId scan probes history and scans the folder.
+
+    A download Sonarr's history maps to Imported/Failed/Ignored is queue-hidden
+    and its `downloadId=` scan 500s forever; without the fallback every poll
+    deferred "for a later run" until the pending TTL silently dropped it.
+    """
+
+    @staticmethod
+    def _strat(
+        *,
+        history: HistoryPage | None,
+        folder_candidates: list[ManualImportCandidate] | None,
+        mappings: list[RemotePathMapping] | None = None,
+        config_overrides: dict[str, list[str] | str] | None = None,
+    ) -> tuple[SonarrSync, FakeSonarrClient]:
+        # candidates=None: the downloadId scan fails (the 500 shape) -> fallback.
+        strat, sonarr = _make_sonarr_for_import(candidates=None, config_overrides=config_overrides)
+        sonarr.history_page_return = history
+        sonarr.folder_candidates_return = folder_candidates
+        sonarr.path_mappings_return = mappings if mappings is not None else []
+        return strat, sonarr
+
+    def test_dead_tracked_imports_from_translated_folder_without_download_id(self) -> None:
+        recording = install_recording_hub()
+        strat, sonarr = self._strat(
+            history=_dead_history(),
+            folder_candidates=[manual_candidate("/remote/tv/Show/Show - 01 [1080p].mkv")],
+            mappings=[_tv_mapping()],
+        )
+
+        probe = strat.import_completed(pending_import(), "/d/Show")
+
+        assert probe.readiness is ImportReadiness.RETRY
+        assert probe.command_issued is True
+        # The folder scan received the TRANSLATED (Sonarr-visible) path.
+        assert [folder for folder, _ in sonarr.folder_candidate_calls] == ["/remote/tv/Show"]
+        [(files, mode)] = sonarr.execute_calls
+        # Configured mode auto is forced to copy: the untracked Execute branch
+        # with Auto resolves to MOVE and would rip the seeding files.
+        assert mode == "copy"
+        [entry] = files
+        assert entry.downloadId is None
+        # The wire dump must OMIT the key (unset), never send null.
+        assert "downloadId" not in entry.model_dump(exclude_unset=True)
+        assert entry.episodeIds == [101]
+        notes = diagnostic_messages(recording, Severity.INFO)
+        assert any("recorded this download as imported on 2026-06-20" in note for note in notes)
+
+    def test_dead_tracked_explicit_mode_is_honored(self) -> None:
+        strat, sonarr = self._strat(
+            history=_dead_history(),
+            folder_candidates=[manual_candidate("/d/Show/Show - 01 [1080p].mkv")],
+            config_overrides={"import_mode": "move"},
+        )
+
+        strat.import_completed(pending_import(), "/d/Show")
+
+        [(_, mode)] = sonarr.execute_calls
+        assert mode == "move"
+
+    def test_clean_probe_keeps_download_id_and_configured_mode(self) -> None:
+        # A transient blip on a genuinely-downloading torrent: the folder scan
+        # substitutes for the candidates, but the entries stay status-quo so the
+        # tracked lifecycle (copy-not-move, queue resolution) is preserved.
+        strat, sonarr = self._strat(
+            history=_clean_history(),
+            folder_candidates=[manual_candidate("/d/Show/Show - 01 [1080p].mkv")],
+        )
+
+        probe = strat.import_completed(pending_import(), "/d/Show")
+
+        assert probe.command_issued is True
+        [(files, mode)] = sonarr.execute_calls
+        assert mode == "auto"
+        assert files[0].downloadId == "abc123"
+
+    def test_probe_failure_defaults_to_status_quo_and_is_not_memoized(self) -> None:
+        strat, sonarr = self._strat(
+            history=None,
+            folder_candidates=[manual_candidate("/d/Show/Show - 01 [1080p].mkv")],
+        )
+        pending = pending_import()
+
+        strat.import_completed(pending, "/d/Show")
+        strat.import_completed(pending, "/d/Show")
+
+        # Status-quo-safe default: entries keep the downloadId (converges even
+        # in the dead-tracked state, just noisily - bounded, never a loop).
+        assert all(files[0].downloadId == "abc123" for files, _ in sonarr.execute_calls)
+        # A FAILED probe is never memoized: the second activation re-probed.
+        assert sonarr.history_probe_calls == ["abc123", "abc123"]
+
+    def test_dead_verdict_memoized_and_noted_once_per_run(self) -> None:
+        recording = install_recording_hub()
+        strat, sonarr = self._strat(
+            history=_dead_history(),
+            folder_candidates=[manual_candidate("/d/Show/Show - 01 [1080p].mkv")],
+        )
+        pending = pending_import()
+
+        strat.import_completed(pending, "/d/Show")
+        strat.import_completed(pending, "/d/Show")
+
+        assert sonarr.history_probe_calls == ["abc123"]
+        notes = [n for n in diagnostic_messages(recording, Severity.INFO) if "recorded this download" in n]
+        assert len(notes) == 1
+
+    def test_empty_folder_scan_does_not_pin_and_download_id_scan_recovers(self) -> None:
+        # 200 [] = the folder isn't visible to Sonarr (or the translation is
+        # wrong). Pinning on it would wedge the record; instead the next poll
+        # retries the recoverable downloadId scan first.
+        strat, sonarr = self._strat(history=_dead_history(), folder_candidates=[])
+        pending = pending_import()
+
+        probe = strat.import_completed(pending, "/d/Show")
+        assert probe.readiness is ImportReadiness.RETRY
+        assert probe.command_issued is False
+        assert sonarr.execute_calls == []
+
+        # The transient heals: the downloadId scan answers again and wins.
+        sonarr.candidates_return = [manual_candidate("/d/Show/Show - 01 [1080p].mkv")]
+        probe = strat.import_completed(pending, "/d/Show")
+
+        assert probe.command_issued is True
+        assert len(sonarr.candidate_calls) == 2
+        assert len(sonarr.folder_candidate_calls) == 1
+        assert sonarr.execute_calls[0][0][0].downloadId == "abc123"
+
+    def test_nonempty_folder_scan_pins_for_the_run_and_reset_unpins(self) -> None:
+        strat, sonarr = self._strat(
+            history=_dead_history(),
+            folder_candidates=[manual_candidate("/d/Show/Show - 01 [1080p].mkv")],
+        )
+        pending = pending_import()
+
+        strat.import_completed(pending, "/d/Show")
+        strat.import_completed(pending, "/d/Show")
+
+        # Pinned after the nonempty scan: the second poll went straight to the
+        # folder (one downloadId attempt total), and the run fetched the
+        # remote path mappings exactly once.
+        assert len(sonarr.candidate_calls) == 1
+        assert len(sonarr.folder_candidate_calls) == 2
+        assert sonarr.path_mapping_calls == 1
+
+        # The pin is per-run scratch: reset re-arms the downloadId scan.
+        strat._executor.reset()
+        sonarr.candidates_return = [manual_candidate("/d/Show/Show - 01 [1080p].mkv")]
+        strat.import_completed(pending, "/d/Show")
+        assert len(sonarr.candidate_calls) == 2
+
+    def test_empty_download_id_scan_is_not_a_trigger(self) -> None:
+        # [] (not None) means Sonarr ANSWERED "no files visible yet" - the
+        # existing retry semantics apply and the fallback stays out of it.
+        strat, sonarr = _make_sonarr_for_import(candidates=[])
+
+        probe = strat.import_completed(pending_import(), "/d/Show")
+
+        assert probe.readiness is ImportReadiness.RETRY
+        assert sonarr.history_probe_calls == []
+        assert sonarr.folder_candidate_calls == []
+
+    def test_translated_in_flight_command_suppresses_reissue(self) -> None:
+        # A dead-tracked import POSTs translated paths and no downloadId; the
+        # next poll's guard must recognize it through the memoized translation
+        # (the scripted command has no episode ids, so only the path arm can).
+        strat, sonarr = self._strat(
+            history=_dead_history(),
+            folder_candidates=[manual_candidate("/remote/tv/Show/Show - 01 [1080p].mkv")],
+            mappings=[_tv_mapping()],
+        )
+        pending = pending_import()
+
+        strat.import_completed(pending, "/d/Show")
+        assert len(sonarr.execute_calls) == 1
+
+        sonarr.commands_return = [
+            CommandResource.model_validate(
+                {
+                    "name": "ManualImport",
+                    "status": "started",
+                    "body": {"files": [{"path": "/remote/tv/Show/Show - 01 [1080p].mkv", "episodeIds": []}]},
+                },
+            ),
+        ]
+        probe = strat.import_completed(pending, "/d/Show")
+
+        assert probe.readiness is ImportReadiness.RETRY
+        assert len(sonarr.execute_calls) == 1
+
+    def test_single_file_content_path_scans_the_file(self) -> None:
+        # A single-FILE torrent's content_path IS the file; Sonarr's folder=
+        # param accepts a file path (its FileExists arm).
+        strat, sonarr = self._strat(
+            history=_dead_history(),
+            folder_candidates=[manual_candidate("/remote/tv/Show - 01 [1080p].mkv")],
+            mappings=[_tv_mapping()],
+        )
+
+        probe = strat.import_completed(pending_import(), "/d/Show - 01 [1080p].mkv")
+
+        assert probe.command_issued is True
+        assert [folder for folder, _ in sonarr.folder_candidate_calls] == ["/remote/tv/Show - 01 [1080p].mkv"]
 
 
 class TestResolveLanguageObjects:

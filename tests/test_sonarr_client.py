@@ -529,6 +529,148 @@ def test_manual_import_candidates_request_error_returns_none() -> None:
     assert _make_client().manual_import_candidates(pending=pending) is None
 
 
+# --- manual_import_candidates_by_folder() (GET /manualimport?folder=) --------
+
+
+@respx.mock
+def test_folder_scan_sends_folder_and_never_download_or_series_id() -> None:
+    """CONTRACT: the folder scan carries NEITHER `downloadId` NOR `seriesId`.
+
+    A `downloadId` re-enters the poisoned tracked branch (the NRE the fallback
+    exists to dodge); a `seriesId` makes the controller scan the LIBRARY folder
+    instead of ours. Candidates decode exactly like the downloadId scan.
+    """
+
+    route = respx.get(f"{_BASE}/manualimport").respond(json=sonarr_fixture("manualimport_yamada.json"))
+    candidates = _make_client().manual_import_candidates_by_folder(
+        folder="/remote/torrents/Show S01",
+        title="Yamada-kun",
+    )
+
+    assert candidates is not None
+    assert len(candidates) == 2
+    url = str(route.calls.last.request.url)
+    assert "folder=%2Fremote%2Ftorrents%2FShow+S01" in url
+    assert "filterExistingFiles=false" in url
+    assert "downloadId" not in url
+    assert "seriesId" not in url
+    # The scan must ride the long manual-import timeout (slow remote mounts).
+    timeout = cast("dict[str, float | None]", route.calls.last.request.extensions["timeout"])
+    assert timeout == {"connect": 120, "read": 120, "write": 120, "pool": 120}
+
+
+@respx.mock
+def test_folder_scan_non_200_returns_none_and_empty_stays_empty() -> None:
+    """A non-200 folder scan is None (retry); a 200 `[]` is a real empty answer."""
+
+    respx.get(f"{_BASE}/manualimport").respond(status_code=500)
+    assert _make_client().manual_import_candidates_by_folder(folder="/d", title="t") is None
+
+
+@respx.mock
+def test_folder_scan_empty_list_decodes_to_empty() -> None:
+    """200 `[]` (an invisible/untranslated folder) decodes to [], never None."""
+
+    respx.get(f"{_BASE}/manualimport").respond(json=[])
+    assert _make_client().manual_import_candidates_by_folder(folder="/nonexistent", title="t") == []
+
+
+@respx.mock
+def test_folder_scan_request_error_returns_none() -> None:
+    respx.get(f"{_BASE}/manualimport").mock(side_effect=httpx.ConnectError("boom"))
+    assert _make_client().manual_import_candidates_by_folder(folder="/d", title="t") is None
+
+
+# --- history_for_download() (GET /history) -----------------------------------
+
+
+@respx.mock
+def test_history_for_download_decodes_and_pins_paging() -> None:
+    """The probe pins page-1 / pageSize-100 / date-descending explicitly and uppercases the hash.
+
+    A 23-file batch has ~46+ events; an unlucky default page size would yield a
+    false verdict from a partial newest-first window.
+    """
+
+    envelope: dict[str, object] = {
+        "page": 1,
+        "pageSize": 100,
+        "totalRecords": 2,
+        "records": [
+            {"id": 32289, "eventType": "downloadFolderImported", "date": "2026-06-20T06:15:30Z"},
+            {"id": 31000, "eventType": "grabbed", "date": "2026-06-20T05:00:00Z"},
+        ],
+    }
+    route = respx.get(f"{_BASE}/history").respond(json=envelope)
+    page = _make_client().history_for_download(download_id="abcdef0123456789abcdef0123456789abcdef01")
+
+    assert page is not None
+    assert [r.event_type for r in page.records] == ["downloadFolderImported", "grabbed"]
+    assert page.records[0].date == "2026-06-20T06:15:30Z"
+    url = str(route.calls.last.request.url)
+    assert "downloadId=ABCDEF0123456789ABCDEF0123456789ABCDEF01" in url
+    assert "page=1" in url
+    assert "pageSize=100" in url
+    assert "sortKey=date" in url
+    assert "sortDirection=descending" in url
+
+
+@respx.mock
+def test_history_for_download_non_200_returns_none() -> None:
+    """A failed probe is None ("no verdict") - never read as clean history."""
+
+    respx.get(f"{_BASE}/history").respond(status_code=500)
+    assert _make_client().history_for_download(download_id="a" * 40) is None
+
+
+@respx.mock
+def test_history_for_download_junk_record_is_skipped_not_fatal() -> None:
+    """A junk `records[]` entry skips; the page (and its verdict) survives."""
+
+    envelope: dict[str, object] = {
+        "records": ["junk", {"eventType": "downloadFailed", "date": "2026-01-01T00:00:00Z"}],
+    }
+    respx.get(f"{_BASE}/history").respond(json=envelope)
+    page = _make_client().history_for_download(download_id="a" * 40)
+
+    assert page is not None
+    assert [r.event_type for r in page.records] == ["downloadFailed"]
+
+
+# --- remote_path_mappings() (GET /remotepathmapping) -------------------------
+
+
+@respx.mock
+def test_remote_path_mappings_decodes() -> None:
+    """Mappings decode host/remotePath/localPath; None only on failure."""
+
+    respx.get(f"{_BASE}/remotepathmapping").respond(
+        json=[
+            {
+                "host": "seedbox.example",
+                "remotePath": "/home/u/torrents/4k-tv/",
+                "localPath": "/remote/torrents/4k-tv/",
+                "id": 5,
+            },
+        ],
+    )
+    mappings = _make_client().remote_path_mappings()
+
+    assert mappings is not None
+    [mapping] = mappings
+    assert mapping.host == "seedbox.example"
+    assert mapping.remote_path == "/home/u/torrents/4k-tv/"
+    assert mapping.local_path == "/remote/torrents/4k-tv/"
+
+
+@respx.mock
+def test_remote_path_mappings_non_200_returns_none() -> None:
+    """Failure is None, distinct from "no mappings configured" ([])."""
+
+    respx.get(f"{_BASE}/remotepathmapping").respond(status_code=500)
+    assert _make_client().remote_path_mappings() is None
+
+
 # --- manual_import_execute() / refresh_monitored_downloads() (POST /command) -
 
 

@@ -642,12 +642,14 @@ class ManualImportFile(_WireModel):
     seriesId: int
     episodeIds: list[int]
     releaseGroup: str
-    downloadId: str
+    downloadId: str | None = None
+    """Left UNSET (omitted from the wire, never sent as null) for a
+    dead-tracked folder-mode entry - a downloadId there re-enters Sonarr's
+    poisoned tracked-download branch; every other entry carries the infohash."""
     languages: list[Language]
     quality: QualityModel | None = None
-    """The only optional field (omitted from the wire, never sent as `None`,
-    when unset - Sonarr then falls back to Unknown); the builder always sets
-    it."""
+    """Omitted from the wire, never sent as `None`, when unset - Sonarr then
+    falls back to Unknown; the builder always sets it."""
 
 
 # --- Sonarr queue (`/api/v3/queue` records) -------------------------------
@@ -721,6 +723,52 @@ class HistoryRecord(_ApiModel):
             if key.casefold() == "reason" and isinstance(value, str):
                 return {**record, "reason": value}
         return record
+
+
+class HistoryPage(_ApiModel):
+    """One `/api/v3/history` page envelope, reduced to its `records` array.
+
+    Unlike `/history/since` (a bare list), the base history endpoint pages its
+    records under a wrapper object. Only `records` is read: the probe pins the
+    paging/sort params explicitly on the request instead of reading them back.
+    A junk `records[]` entry is skipped WITHOUT dropping the page (a dropped
+    page would read as "no history" and misroute the probe).
+    """
+
+    records: tuple[HistoryRecord, ...] = ()
+
+    @field_validator("records", mode="before")
+    @classmethod
+    def _lenient_records(cls, value: object) -> object:
+        """Skip junk `records[]` entries; never fail the whole page over one."""
+
+        if not isinstance(value, list):
+            return ()
+        kept: list[HistoryRecord] = []
+        for entry in cast("list[object]", value):
+            try:
+                kept.append(HistoryRecord.model_validate(entry))
+            except ValidationError:
+                continue
+        return kept
+
+
+# --- Sonarr remote path mappings (`/api/v3/remotepathmapping`) --------------
+
+
+class RemotePathMapping(_ApiModel):
+    """One Sonarr `RemotePathMappingResource`: a download-client path -> Sonarr's view.
+
+    Read by the folder-scan fallback to translate a qBittorrent `content_path`
+    into a path Sonarr can see. `host` is the download-client host as
+    configured IN SONARR (routinely a different string from our qBittorrent
+    host), so it only ever tiebreaks - never excludes. Every field folds junk
+    to None independently; a mapping missing either path is skipped downstream.
+    """
+
+    host: _LenientStr = None
+    remote_path: _LenientStr = Field(default=None, validation_alias="remotePath")
+    local_path: _LenientStr = Field(default=None, validation_alias="localPath")
 
 
 # --- Sonarr quality definitions (`/api/v3/qualitydefinition`) --------------

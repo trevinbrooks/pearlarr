@@ -42,6 +42,7 @@ from pearlarr.protocols import ArrSync
 from pearlarr.radarr_client import AbstractRadarrClient
 from pearlarr.seadex_types import (
     CommandResource,
+    HistoryPage,
     HistoryRecord,
     Language,
     ManualImportCandidate,
@@ -53,6 +54,7 @@ from pearlarr.seadex_types import (
     QualityDefinition,
     QueueRecord,
     RadarrItem,
+    RemotePathMapping,
     SonarrEpisode,
     SonarrItem,
 )
@@ -270,6 +272,9 @@ class FakeSonarrClient(AbstractSonarrClient):
         command_status: CommandResource | None = None,
         refresh_count: int | None = 7,
         history_since: list[HistoryRecord] | None = None,
+        folder_candidates: list[ManualImportCandidate] | None = None,
+        history_page: HistoryPage | None = None,
+        path_mappings: list[RemotePathMapping] | None = None,
     ) -> None:
         self.all_series_return: list[SonarrItem] = all_series or []
         self.queue_return: list[QueueRecord] = queue or []
@@ -286,6 +291,12 @@ class FakeSonarrClient(AbstractSonarrClient):
         )
         self.refresh_count = refresh_count
         self.history_since_return: list[HistoryRecord] | None = [] if history_since is None else history_since
+        # The fallback trio defaults to None ("failed") - a test scripting the
+        # folder path sets what its scenario needs, healthy-path tests never
+        # reach these.
+        self.folder_candidates_return: list[ManualImportCandidate] | None = folder_candidates
+        self.history_page_return: HistoryPage | None = history_page
+        self.path_mappings_return: list[RemotePathMapping] | None = path_mappings
         # Recorded calls: the import commands keep their full args; the plain reads
         # keep a count / arg-list so a test can assert (not-)called.
         self.candidate_calls: list[PendingImport] = []
@@ -295,6 +306,9 @@ class FakeSonarrClient(AbstractSonarrClient):
         self.episodes_calls: list[int] = []
         self.refresh_calls: int = 0
         self.history_calls: list[str] = []
+        self.folder_candidate_calls: list[tuple[str, str]] = []
+        self.history_probe_calls: list[str] = []
+        self.path_mapping_calls: int = 0
 
     @override
     def all_series(self) -> list[SonarrItem]:
@@ -351,6 +365,26 @@ class FakeSonarrClient(AbstractSonarrClient):
     ) -> list[ManualImportCandidate] | None:
         self.candidate_calls.append(pending)
         return self.candidates_return
+
+    @override
+    def manual_import_candidates_by_folder(
+        self,
+        *,
+        folder: str,
+        title: str,
+    ) -> list[ManualImportCandidate] | None:
+        self.folder_candidate_calls.append((folder, title))
+        return self.folder_candidates_return
+
+    @override
+    def history_for_download(self, *, download_id: str) -> HistoryPage | None:
+        self.history_probe_calls.append(download_id)
+        return self.history_page_return
+
+    @override
+    def remote_path_mappings(self) -> list[RemotePathMapping] | None:
+        self.path_mapping_calls += 1
+        return self.path_mappings_return
 
     @override
     def manual_import_execute(
