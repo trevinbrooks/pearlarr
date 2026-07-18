@@ -6,6 +6,7 @@ riding the httpx-based `ArrHttp` bound at construction.
 
 import logging
 from abc import ABC, abstractmethod
+from dataclasses import replace
 from typing import cast, override
 
 from pydantic import BaseModel, ConfigDict, ValidationError
@@ -153,6 +154,10 @@ class SonarrClient(AbstractSonarrClient):
         """
 
         self._http = http
+        # The wait-path polls ride a no-retry clone: the import monitor loop IS
+        # the retry mechanism, so in-call backoff only stretches each poll and
+        # multiplies identical warnings. `replace` shares the streak ledger.
+        self._poll_http = replace(http, retries=0)
         self._logger = logger
 
     @override
@@ -280,7 +285,8 @@ class SonarrClient(AbstractSonarrClient):
 
         # Borrows the generous manual-import bound: it runs in the import wait over
         # the same slow mount, unlike the sweep's plain parse() (no such timeout).
-        payload = self._http.get_json_dict(
+        # Rides the no-retry poll handle: the wait loop re-asks.
+        payload = self._poll_http.get_json_dict(
             "/api/v3/parse",
             params={"title": filename},
             warn=f"Could not parse {filename} via Sonarr ({{detail}}) - will retry",
@@ -328,7 +334,8 @@ class SonarrClient(AbstractSonarrClient):
         touches the raw DTO.
         """
 
-        raw = self._http.get_json_list(
+        # Rides the no-retry poll handle: the wait loop re-asks.
+        raw = self._poll_http.get_json_list(
             "/api/v3/manualimport",
             params={
                 "downloadId": pending.infohash.upper(),
@@ -373,7 +380,8 @@ class SonarrClient(AbstractSonarrClient):
         its mount, or the path needs remote-path translation).
         """
 
-        raw = self._http.get_json_list(
+        # Rides the no-retry poll handle: the wait loop re-asks.
+        raw = self._poll_http.get_json_list(
             "/api/v3/manualimport",
             params={
                 "folder": folder,
@@ -402,7 +410,8 @@ class SonarrClient(AbstractSonarrClient):
         caller must treat that as "no verdict", never as clean history.
         """
 
-        payload = self._http.get_json_dict(
+        # Rides the no-retry poll handle: the wait loop re-asks.
+        payload = self._poll_http.get_json_dict(
             "/api/v3/history",
             params={
                 # Uppercased to match Sonarr's stored infohash form.

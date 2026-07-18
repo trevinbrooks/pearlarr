@@ -148,6 +148,8 @@ class SonarrSync(ArrSync[SonarrItem]):
                     url=sonarr_url,
                     api_key=sonarr_api_key,
                     label="Sonarr",
+                    # Streak re-warns pace with the wait view's digest cadence.
+                    heartbeat_s=self._config.imports.digest_interval,
                 ),
                 logger=self.logger,
             )
