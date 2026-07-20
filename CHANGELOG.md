@@ -7,6 +7,12 @@ Pearlarr is a fork of [bbtufty/seadexarr](https://github.com/bbtufty/seadexarr).
 
 ## [Unreleased]
 
+### Fixed
+
+- Manual imports now register against Sonarr's download tracking (the command's `downloadId` was sent lowercase; Sonarr keys tracked downloads by the uppercased hash), so Sonarr sees the queue item as handled. Previously its completed-download handling would later re-import the same torrent - deleting the just-imported file and copying an identical one over it.
+- A completed download whose Sonarr import attempt failed (queue state `importPending` with a warning - typically the file not yet visible on Sonarr's mount) is now imported by Pearlarr on the next poll instead of waited on for the full `imports.ready_timeout`. Sonarr does not reliably retry such downloads, so the wait only delayed the import by the whole timeout.
+- Wait rows, warnings, and completion notifications now name each torrent's own episodes (for example `Show · Group · S02 E06`). Per-episode grabs from one release previously all rendered the identical `Show · Group` label, so a notification could not say which episodes imported and which were left for a later run.
+
 ## [1.0.6] - 2026-07-18
 
 ### Changed

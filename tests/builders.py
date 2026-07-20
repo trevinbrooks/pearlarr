@@ -54,6 +54,7 @@ from pearlarr.seadex_types import (
     EpisodeRecord,
     ManualImportCandidate,
     ProgressSink,
+    QueueRecord,
     SeadexDict,
     SeadexReleaseGroupItem,
     SeadexUrlItem,
@@ -970,6 +971,22 @@ def manual_candidate(
 
     return ManualImportCandidate.model_validate(
         {"path": path, "quality": quality, "rejections": rejections or []},
+    )
+
+
+def queue_record(infohash: str, state: str, *, status: str | None = "ok") -> QueueRecord:
+    """One Sonarr queue record matching a download by infohash + tracked state.
+
+    Built through `QueueRecord.model_validate` from the raw API field names so the
+    record mirrors exactly what `SonarrClient.queue` parses at the boundary.
+    """
+
+    return QueueRecord.model_validate(
+        {
+            "downloadId": infohash,
+            "trackedDownloadState": state,
+            "trackedDownloadStatus": status,
+        },
     )
 
 

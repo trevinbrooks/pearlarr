@@ -18,7 +18,7 @@ from pearlarr.seadex_sonarr import SonarrSync
 from pearlarr.seadex_types import ParsedEpisode, SonarrEpisode
 from pearlarr.sonarr_import import PendingSeedContext
 
-from .builders import FakeCacheStore, make_config, make_sonarr_sync, rg_group, url_item
+from .builders import SEP, FakeCacheStore, make_config, make_sonarr_sync, rg_group, url_item
 from .fakes import FakeSonarrClient
 
 # One persisted `/parse` cache shape: `filename -> {"episodes": [{season, episode}]}`,
@@ -74,6 +74,8 @@ class TestBuildPendingSeeds:
         assert seed.title == "Show"
         assert seed.file_episode_map == {normalize_basename("Show - 01.mkv"): [101]}
         assert seed.seadex_files == ["Show - 01.mkv"]
+        # The record's own episode slice, for the wait/notification label.
+        assert seed.slice_coverage == "S01 E01"
         # episode_ids is a legacy read-only fallback. New seeds never write it.
         assert seed.episode_ids == []
 
@@ -107,9 +109,37 @@ class TestBuildPendingSeeds:
             normalize_basename("Show - 01.mkv"): [101],
             normalize_basename("Show - 02.mkv"): [102],
         }
+        assert seed.slice_coverage == "S01 E01-E02"
         # No seed ever carries the flat fallback (it's legacy read-only), so the
         # old cross-file union bug (a whole season stamped onto one file) is out.
         assert seed.episode_ids == []
+
+    def test_sibling_per_episode_torrents_get_distinct_slice_labels(self) -> None:
+        # The live shape that motivated the slice: one entry, one group, one
+        # torrent per episode. Identical title·group labels made "which episodes
+        # imported?" unanswerable from the wait report / notification.
+        ep_list = [_ep(101, 2, 6), _ep(102, 2, 7)]
+        parse_cache = {
+            "Show - S02E06.mkv": {"episodes": [{"season": 2, "episode": 6}]},
+            "Show - S02E07.mkv": {"episodes": [{"season": 2, "episode": 7}]},
+        }
+        seadex_dict = {
+            "RG": rg_group(
+                {
+                    "u1": url_item(files=["Show - S02E06.mkv"], size=[1000], infohash="h1", download=True),
+                    "u2": url_item(files=["Show - S02E07.mkv"], size=[1000], infohash="h2", download=True),
+                },
+            ),
+        }
+
+        seeds = _strat(parse_cache)._reconciler.build_pending_seeds(
+            seadex_dict=seadex_dict,
+            ep_list=ep_list,
+            entry=PendingSeedContext(al_id=1, series_id=7, title="Show"),
+        )
+
+        assert seeds["h1"].display_label == f"Show{SEP}RG{SEP}S02 E06"
+        assert seeds["h2"].display_label == f"Show{SEP}RG{SEP}S02 E07"
 
     def test_unparsed_video_still_seeded_for_import_time_repair(self) -> None:
         # No grab-time parse hit -> an empty map, but the seed is STILL persisted
@@ -132,6 +162,8 @@ class TestBuildPendingSeeds:
         assert set(seeds) == {"h1"}
         assert seeds["h1"].file_episode_map == {}
         assert seeds["h1"].seadex_files == ["Show - 01.mkv"]
+        # Nothing claimed -> no slice (the label falls back to title · group).
+        assert seeds["h1"].slice_coverage is None
 
     def test_no_video_files_is_not_seeded(self) -> None:
         # A release with only non-video files (subs) has nothing to import.
