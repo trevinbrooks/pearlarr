@@ -106,7 +106,10 @@ def _golden_body(*, quality: dict[str, object], languages: list[object]) -> dict
                 "seriesId": 7,
                 "episodeIds": [101],
                 "releaseGroup": "SubGroup",
-                "downloadId": "abc123",
+                # Uppercased on the wire: Sonarr keys tracked downloads by the
+                # uppercased hash, and only a matched import closes the queue
+                # record (unmatched = untracked = a later CDH re-import).
+                "downloadId": "ABC123",
                 "languages": languages,
                 "quality": quality,
             },
@@ -326,10 +329,12 @@ def test_queue_record_folds_junk_per_field_without_dropping_the_record() -> None
 
 
 @respx.mock
-def test_import_pending_always_classifies_pending_clean() -> None:
-    """Live invariant: EVERY `importPending` record classifies as PENDING_CLEAN (wait), never STEP_IN.
+def test_import_pending_classifies_by_tracked_status() -> None:
+    """Live invariant: a CLEAN `importPending` record waits; a warning-flagged one steps in.
 
-    This holds even with a warning status - stepping in would double-import.
+    The flag means Sonarr's own import attempt failed (e.g. the file was not
+    visible on its mount yet) and it does not reliably retry - so only the clean
+    form defers to Sonarr's imminent import.
     """
 
     respx.get(f"{_BASE}/queue").respond(
@@ -338,17 +343,21 @@ def test_import_pending_always_classifies_pending_clean() -> None:
                 {
                     "downloadId": "ABC123",
                     "trackedDownloadState": "importPending",
+                    "trackedDownloadStatus": "ok",
+                },
+                {
+                    "downloadId": "DEF456",
+                    "trackedDownloadState": "importPending",
                     "trackedDownloadStatus": "warning",
                 },
             ],
-            "totalRecords": 1,
+            "totalRecords": 2,
         },
     )
 
-    records = _make_sonarr_client().queue()
-    states = [record.state for record in records if record.state]
-    assert states == ["importPending"]
-    assert classify_queue(states) is QueueVerdict.PENDING_CLEAN
+    records = {record.download_id: record for record in _make_sonarr_client().queue()}
+    assert classify_queue([records["ABC123"]]) is QueueVerdict.PENDING_CLEAN
+    assert classify_queue([records["DEF456"]]) is QueueVerdict.STEP_IN
 
 
 # --- HistoryRecord: per-field folds, record never drops ----------------------

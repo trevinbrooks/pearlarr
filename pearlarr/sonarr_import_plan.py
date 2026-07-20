@@ -28,6 +28,7 @@ from .seadex_types import (
     QualityDefinition,
     QualityModel,
     QualitySource,
+    QueueRecord,
     RemotePathMapping,
     Revision,
     SonarrEpisode,
@@ -39,9 +40,10 @@ class QueueVerdict(Enum):
     """What Sonarr's queue says to do with a tracked download THIS poll.
 
     Derived purely from the queue records sharing a `downloadId` (a season pack
-    has one record per episode), reading only `trackedDownloadState`. "Already
-    imported" is NOT decided here (a successful import is removed from the queue).
-    The caller reads the episode files.
+    has one record per episode), reading `trackedDownloadState` plus - for
+    pending records - `trackedDownloadStatus`. "Already imported" is NOT decided
+    here (a successful import is removed from the queue). The caller reads the
+    episode files.
     """
 
     WAIT = auto()
@@ -49,11 +51,13 @@ class QueueVerdict(Enum):
     in-flight import."""
 
     PENDING_CLEAN = auto()
-    """An `importPending` record: Sonarr parsed it and is waiting to import. See `classify_queue` rule 3."""
+    """A clean (status `ok`) `importPending` record: Sonarr parsed it and is about to import it. See
+    `classify_queue` rule 3."""
 
     STEP_IN = auto()
-    """Sonarr can't / won't progress it (`importBlocked` / `failed` / `failedPending` / `ignored`), or it isn't
-    tracking the download at all (empty). Drive our authoritative manual import."""
+    """Sonarr can't / won't progress it (`importBlocked` / `failed` / `failedPending` / `ignored`, or an
+    `importPending` record flagged warning/error), or it isn't tracking the download at all (empty). Drive
+    our authoritative manual import."""
 
 
 # trackedDownloadState values (camelCase from Sonarr, compared case-folded) that
@@ -66,28 +70,34 @@ _QUEUE_IN_MOTION_STATES = frozenset(
 _QUEUE_STEP_IN_STATES = frozenset(
     {"importblocked", "failed", "failedpending", "ignored"},
 )
+# trackedDownloadStatus values marking a pending record Sonarr tried and failed
+# to import (e.g. the file wasn't visible on its mount yet). It does not
+# reliably retry those, so deferring would just burn the readiness deadline.
+_QUEUE_FLAGGED_STATUSES = frozenset({"warning", "error"})
 
 
-def classify_queue(states: list[str]) -> QueueVerdict:
-    """Reduce a download's queue-record states to a single verdict for this poll.
+def classify_queue(records: list[QueueRecord]) -> QueueVerdict:
+    """Reduce a download's queue records to a single verdict for this poll.
 
     Side-effect free so the decision can be unit-tested without any HTTP.
     Priority, highest first:
 
       1. anything in motion (downloading / importing / ...) -> `WAIT` (never race
          an in-flight Sonarr import, re-evaluate next poll).
-      2. any troubled record (`importBlocked` / `failed` / `failedPending` /
-         `ignored`) -> `STEP_IN`.
-      3. any `importPending` -> `PENDING_CLEAN`, regardless of its status or
-         status messages. Sonarr has parsed it and is waiting to import, so we let
-         it settle rather than step in - stepping in on a still-pending record
-         races Sonarr's own import and double-imports the torrent.
+      2. any troubled record -> `STEP_IN`: `importBlocked` / `failed` /
+         `failedPending` / `ignored`, or an `importPending` record whose
+         `trackedDownloadStatus` is warning/error (Sonarr's own import attempt
+         failed and it does not reliably retry, so it is Sonarr's flag for
+         "handle this yourself").
+      3. a CLEAN `importPending` (status `ok`, or none reported) ->
+         `PENDING_CLEAN`: Sonarr is about to import it, so let it settle rather
+         than step in - stepping in would race Sonarr's own import.
       4. otherwise (empty because Sonarr isn't tracking it, all `imported`, or an
          unknown state) -> `STEP_IN`.
 
     Args:
-        states: Every matching queue record's `trackedDownloadState`
-            (matched + reduced by the caller, case preserved, folded here).
+        records: Every queue record matching the download (matched by the
+            caller). A record with no tracked state contributes nothing.
 
     Returns:
         The action this poll, BEFORE the episode-file "already imported" check
@@ -97,16 +107,20 @@ def classify_queue(states: list[str]) -> QueueVerdict:
     in_motion = False
     troubled = False
     clean_pending = False
-    for raw_state in states:
-        state = raw_state.casefold()
+    for record in records:
+        state = (record.state or "").casefold()
         if state in _QUEUE_IN_MOTION_STATES:
             in_motion = True
         elif state in _QUEUE_STEP_IN_STATES:
             troubled = True
-        # Invariant: importPending always buckets as PENDING_CLEAN, never STEP_IN -
-        # stepping in races Sonarr's own import and double-imports the files.
         elif state == "importpending":
-            clean_pending = True
+            # Invariant: only a CLEAN importPending defers to Sonarr - a
+            # warning/error-flagged one is a failed Sonarr import attempt it
+            # won't reliably retry, so waiting would burn the readiness deadline.
+            if (record.status or "").casefold() in _QUEUE_FLAGGED_STATUSES:
+                troubled = True
+            else:
+                clean_pending = True
 
     if in_motion:
         return QueueVerdict.WAIT

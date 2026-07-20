@@ -63,6 +63,7 @@ from .builders import (
     make_sonarr_sync,
     manual_candidate,
     pending_import,
+    queue_record,
     rg_group,
     sonarr_ep,
     url_item,
@@ -631,22 +632,6 @@ def _make_sonarr_for_import(
     return strat, sonarr
 
 
-def _queue_record(infohash: str, state: str, *, status: str = "ok") -> QueueRecord:
-    """One Sonarr queue record matching a download by infohash + tracked state.
-
-    Built through `QueueRecord.model_validate` from the raw API field names so the
-    record mirrors exactly what `SonarrClient.queue` parses at the boundary.
-    """
-
-    return QueueRecord.model_validate(
-        {
-            "downloadId": infohash,
-            "trackedDownloadState": state,
-            "trackedDownloadStatus": status,
-        },
-    )
-
-
 class TestImportCompletedQueueState:
     """import_completed reads the queue + episode files before stepping in."""
 
@@ -655,7 +640,7 @@ class TestImportCompletedQueueState:
         pending = pending_import(infohash="abc123")
         strat, sonarr = _make_sonarr_for_import(
             candidates=[manual_candidate("/d/Show - 01 [1080p].mkv")],
-            queue=[_queue_record("ABC123", "importing")],
+            queue=[queue_record("ABC123", "importing")],
         )
 
         probe = strat.import_completed(pending, "/d")
@@ -670,7 +655,7 @@ class TestImportCompletedQueueState:
         pending = pending_import(infohash="abc123")
         strat, sonarr = _make_sonarr_for_import(
             candidates=[manual_candidate("/d/Show - 01 [1080p].mkv")],
-            queue=[_queue_record("ABC123", "importPending", status="ok")],
+            queue=[queue_record("ABC123", "importPending", status="ok")],
         )
 
         probe = strat.import_completed(pending, "/d")
@@ -689,7 +674,7 @@ class TestImportCompletedQueueState:
         )
         strat, sonarr = _make_sonarr_for_import(
             candidates=[manual_candidate("/d/Show - 01 [1080p].mkv")],
-            queue=[_queue_record("ABC123", "importPending", status="ok")],
+            queue=[queue_record("ABC123", "importPending", status="ok")],
         )
 
         probe = strat.import_completed(pending, "/d", force=True)
@@ -699,10 +684,11 @@ class TestImportCompletedQueueState:
         assert probe.files_present is False
         assert len(sonarr.execute_calls) == 1
 
-    def test_pending_with_warning_waits(self) -> None:
-        # importPending waits (PENDING_CLEAN) even with a warning: stepping in on a
-        # still-pending record races Sonarr's own import and double-imports. So we
-        # retry without issuing a command and let Sonarr settle.
+    def test_pending_with_warning_steps_in(self) -> None:
+        # A warning-flagged importPending is a failed Sonarr import attempt (e.g.
+        # the file wasn't visible on its mount yet) that Sonarr won't reliably
+        # retry - waiting would only burn the readiness deadline, so step in.
+        # (Observed live: four flagged-pending torrents sat 10+ minutes untouched.)
         pending = pending_import(
             infohash="abc123",
             file_episode_map={"Show - 01 [1080p].mkv": [101]},
@@ -710,13 +696,13 @@ class TestImportCompletedQueueState:
         )
         strat, sonarr = _make_sonarr_for_import(
             candidates=[manual_candidate("/d/Show - 01 [1080p].mkv")],
-            queue=[_queue_record("ABC123", "importPending", status="warning")],
+            queue=[queue_record("ABC123", "importPending", status="warning")],
         )
 
         probe = strat.import_completed(pending, "/d")
         assert probe.readiness is ImportReadiness.RETRY
-        assert probe.command_issued is False
-        assert sonarr.execute_calls == []
+        assert probe.command_issued is True
+        assert len(sonarr.execute_calls) == 1
 
     def test_target_already_recommended_drops_record(self) -> None:
         # Episode files are the source of truth for "already imported": the target
@@ -750,7 +736,7 @@ class TestImportCompletedQueueState:
         )
         strat, sonarr = _make_sonarr_for_import(
             candidates=[manual_candidate("/d/Show - 01 [1080p].mkv")],
-            queue=[_queue_record("ABC123", "importBlocked", status="warning")],
+            queue=[queue_record("ABC123", "importBlocked", status="warning")],
         )
 
         probe = strat.import_completed(pending, "/d")
@@ -777,7 +763,7 @@ class TestImportCompletedQueueState:
         )
         strat, sonarr = _make_sonarr_for_import(
             candidates=[manual_candidate("/d/Show - 01 [1080p].mkv")],
-            queue=[_queue_record("ABC123", "importBlocked", status="warning")],
+            queue=[queue_record("ABC123", "importBlocked", status="warning")],
         )
 
         first = strat.import_completed(pending, "/d")
@@ -1621,7 +1607,7 @@ class TestFolderScanFallback:
         assert probe.command_issued is True
         [(files, mode)] = sonarr.execute_calls
         assert mode == "auto"
-        assert files[0].downloadId == "abc123"
+        assert files[0].downloadId == "ABC123"
 
     def test_probe_failure_defaults_to_status_quo_and_is_not_memoized(self) -> None:
         strat, sonarr = self._strat(
@@ -1635,7 +1621,7 @@ class TestFolderScanFallback:
 
         # Status-quo-safe default: entries keep the downloadId (converges even
         # in the dead-tracked state, just noisily - bounded, never a loop).
-        assert all(files[0].downloadId == "abc123" for files, _ in sonarr.execute_calls)
+        assert all(files[0].downloadId == "ABC123" for files, _ in sonarr.execute_calls)
         # A FAILED probe is never memoized: the second activation re-probed.
         assert sonarr.history_probe_calls == ["abc123", "abc123"]
 
@@ -1673,7 +1659,7 @@ class TestFolderScanFallback:
         assert probe.command_issued is True
         assert len(sonarr.candidate_calls) == 2
         assert len(sonarr.folder_candidate_calls) == 1
-        assert sonarr.execute_calls[0][0][0].downloadId == "abc123"
+        assert sonarr.execute_calls[0][0][0].downloadId == "ABC123"
 
     def test_dead_tracked_empty_folder_warns_once_per_run(self) -> None:
         # The genuinely stuck shape (by-id never works, folder empty): warned

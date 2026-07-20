@@ -32,6 +32,7 @@ from pearlarr.seadex_types import (
     ParsedFileInfo,
     QualityDefinition,
     QualitySource,
+    QueueRecord,
     SonarrEpisode,
 )
 from pearlarr.sonarr_import_plan import (
@@ -1197,25 +1198,22 @@ class TestClassifyRealQueue:
     """The real queue had a paused download (wait) + two importBlocked (step in)."""
 
     @staticmethod
-    def _states_by_download() -> dict[str, list[str]]:
+    def _records_by_download() -> dict[str, list[QueueRecord]]:
         body: dict[str, list[dict[str, object]]] = load_fixture("queue.json")
-        states: dict[str, list[str]] = {}
+        records: dict[str, list[QueueRecord]] = {}
         for rec in body["records"]:
-            state = rec.get("trackedDownloadState", "")
-            download_id = rec["downloadId"]
-            states.setdefault(download_id if isinstance(download_id, str) else "", []).append(
-                state if isinstance(state, str) else "",
-            )
-        return states
+            record = QueueRecord.model_validate(rec)
+            records.setdefault(record.download_id or "", []).append(record)
+        return records
 
     def test_import_blocked_steps_in(self) -> None:
-        states = self._states_by_download()
-        yamada = states["1111111111111111111111111111111111111111"]
+        records = self._records_by_download()
+        yamada = records["1111111111111111111111111111111111111111"]
         assert classify_queue(yamada) is QueueVerdict.STEP_IN
 
     def test_paused_download_waits(self) -> None:
-        states = self._states_by_download()
-        paused = states["B7640FF13A2ADCA981B821D03CEBD1B569798459"]
+        records = self._records_by_download()
+        paused = records["B7640FF13A2ADCA981B821D03CEBD1B569798459"]
         assert classify_queue(paused) is QueueVerdict.WAIT
 
 

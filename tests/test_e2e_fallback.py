@@ -736,8 +736,9 @@ def test_transient_scan_blip_does_not_pin_folder_mode(
     assert len(outcome.world.requests_for("/api/v3/history")) == 1
     assert "won't serve it by id" not in out
 
-    # The healthy tracked shape: every entry KEEPS the downloadId, and the
-    # configured `auto` import mode reaches the wire unchanged.
+    # The healthy tracked shape: every entry KEEPS the downloadId - uppercased,
+    # matching Sonarr's tracked-download key, so the import closes the queue
+    # record - and the configured `auto` import mode reaches the wire unchanged.
     commands = outcome.world.manual_commands
     assert len(commands) == 1
     body = commands[0][1]
@@ -745,7 +746,7 @@ def test_transient_scan_blip_does_not_pin_folder_mode(
     files = _body_files(body)
     assert len(files) == len(_EPISODES)
     for entry in files:
-        assert entry.get("downloadId") == _INFOHASH
+        assert entry.get("downloadId") == _INFOHASH.upper()
 
 
 def test_absolute_batch_empty_seed_self_heals_and_sibling_is_skipped(

@@ -67,7 +67,7 @@ from pearlarr.sonarr_import_plan import (
     translate_download_path,
 )
 
-from .builders import SEP
+from .builders import SEP, queue_record
 
 
 def _ep(
@@ -801,6 +801,7 @@ class TestPendingImportRoundTrip:
             added_at="2026-06-24 12:00:00",
             coverage="S02 E01-E12",
             url="https://releases.moe/1",
+            slice_coverage="S02 E01-E02",
         )
         assert PendingImport.from_json(pending.to_json()) == pending
 
@@ -825,6 +826,20 @@ class TestPendingImportRoundTrip:
             {"infohash": "h", "series_id": 1, "title": "Show", "release_group": "Era-Raws"},
         )
         assert grouped.display_label == f"Show{SEP}Era-Raws"
+
+    def test_display_label_appends_the_record_episode_slice(self) -> None:
+        # Sibling records from ONE group (a per-episode torrent each) share the
+        # title and group - only the slice tells a wait/notification row apart.
+        sliced = PendingImport.from_json(
+            {
+                "infohash": "h",
+                "series_id": 1,
+                "title": "Show",
+                "release_group": "Era-Raws",
+                "slice_coverage": "S02 E06",
+            },
+        )
+        assert sliced.display_label == f"Show{SEP}Era-Raws{SEP}S02 E06"
 
     def test_old_record_with_unknown_keys_rehydrates(self) -> None:
         # Back-compat: a record persisted with since-removed keys still loads
@@ -978,30 +993,41 @@ def test_import_readiness_members_exist() -> None:
 
 
 class TestClassifyQueue:
-    """classify_queue buckets trackedDownloadState values into one verdict."""
+    """classify_queue buckets queue records (state + pending status) into one verdict."""
 
     def test_empty_steps_in(self) -> None:
         assert classify_queue([]) is QueueVerdict.STEP_IN
 
     def test_import_blocked_steps_in(self) -> None:
-        assert classify_queue(["importBlocked"]) is QueueVerdict.STEP_IN
+        assert classify_queue([queue_record("A", "importBlocked")]) is QueueVerdict.STEP_IN
 
     def test_failed_steps_in(self) -> None:
-        assert classify_queue(["failed"]) is QueueVerdict.STEP_IN
+        assert classify_queue([queue_record("A", "failed")]) is QueueVerdict.STEP_IN
 
-    def test_pending_is_pending_clean(self) -> None:
-        # The importPending-always-waits invariant is structural now: the input
-        # carries ONLY states, so no trackedDownloadStatus (warning/error) can
-        # ever route a pending record to STEP_IN (a double-import).
-        assert classify_queue(["importPending"]) is QueueVerdict.PENDING_CLEAN
+    def test_clean_pending_is_pending_clean(self) -> None:
+        assert classify_queue([queue_record("A", "importPending", status="ok")]) is QueueVerdict.PENDING_CLEAN
+
+    def test_statusless_pending_is_pending_clean(self) -> None:
+        # No reported status folds to clean: only an explicit warning/error flag
+        # routes a pending record away from the defer-to-Sonarr path.
+        assert classify_queue([queue_record("A", "importPending", status=None)]) is QueueVerdict.PENDING_CLEAN
+
+    def test_flagged_pending_steps_in(self) -> None:
+        # warning/error on importPending = Sonarr's own import attempt failed and
+        # it won't reliably retry (observed live: flagged-pending torrents sat
+        # 10+ minutes untouched) - so waiting only burns the readiness deadline.
+        assert classify_queue([queue_record("A", "importPending", status="warning")]) is QueueVerdict.STEP_IN
+        assert classify_queue([queue_record("A", "importPending", status="error")]) is QueueVerdict.STEP_IN
 
     def test_downloading_waits(self) -> None:
-        assert classify_queue(["downloading"]) is QueueVerdict.WAIT
+        assert classify_queue([queue_record("A", "downloading")]) is QueueVerdict.WAIT
 
     def test_in_motion_beats_blocked_to_avoid_racing(self) -> None:
         # Something is actively importing -> wait, don't race it, even if a sibling
         # record is blocked. A later poll re-evaluates once the import settles.
-        assert classify_queue(["importing", "importBlocked"]) is QueueVerdict.WAIT
+        records = [queue_record("A", "importing"), queue_record("A", "importBlocked")]
+        assert classify_queue(records) is QueueVerdict.WAIT
 
     def test_case_insensitive(self) -> None:
-        assert classify_queue(["IMPORTBLOCKED"]) is QueueVerdict.STEP_IN
+        assert classify_queue([queue_record("A", "IMPORTBLOCKED")]) is QueueVerdict.STEP_IN
+        assert classify_queue([queue_record("A", "importPending", status="WARNING")]) is QueueVerdict.STEP_IN

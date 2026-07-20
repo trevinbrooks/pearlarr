@@ -26,6 +26,7 @@ from urllib.parse import urlsplit
 
 from .cache import UPDATED_AT_STR_FORMAT
 from .config import Arr
+from .coverage import coverage_string, episodes_from_ep_list
 from .log import count_noun, pluralize
 from .manual_import import (
     ImportProbe,
@@ -44,6 +45,7 @@ from .seadex_types import (
     ManualImportFile,
     QualityDefinition,
     QualitySource,
+    QueueRecord,
     RemotePathMapping,
     SeadexDict,
     SonarrEpisode,
@@ -345,31 +347,27 @@ class ImportExecutor:
                 return
             time.sleep(_REFRESH_COMMAND_POLL_S)
 
-    def queue_states(self, infohash: str) -> list[str]:
-        """This download's queue-record states, for `classify_queue`.
+    def queue_records(self, infohash: str) -> list[QueueRecord]:
+        """This download's queue records, for `classify_queue`.
 
         Matches records to the torrent by `downloadId` (case-insensitively,
-        Sonarr stores the infohash uppercased) and keeps each record's
-        `trackedDownloadState` - the one signal the verdict depends on. Records
-        with no tracked state are dropped. An empty result means Sonarr isn't
-        tracking the download.
+        Sonarr stores the infohash uppercased). The verdict reads each record's
+        `trackedDownloadState` + `trackedDownloadStatus`. An empty result means
+        Sonarr isn't tracking the download.
         """
 
         target = infohash.casefold()
-        states: list[str] = []
-        for record in self.sonarr.queue():
-            dl_id = record.download_id
-            if dl_id is None or dl_id.casefold() != target:
-                continue
-            if record.state:
-                states.append(record.state)
-        return states
+        return [
+            record
+            for record in self.sonarr.queue()
+            if record.download_id is not None and record.download_id.casefold() == target
+        ]
 
     def list_commands(self) -> list[CommandResource]:
         """The current Sonarr command list, for the in-flight ManualImport guard.
 
         A thin pass-through to `SonarrClient.list_commands` (mirrors
-        `queue_states`' delegation to `self.sonarr`). Fetched fresh
+        `queue_records`' delegation to `self.sonarr`). Fetched fresh
         every poll - never cached - since an in-flight command's status changes as
         Sonarr finishes the import.
         """
@@ -608,7 +606,11 @@ class ImportExecutor:
             # dereferences the poisoned download's null ImportItem.
             return entry
         # model_copy(update=...) marks downloadId as set, so it reaches the wire.
-        return entry.model_copy(update={"downloadId": pending.infohash})
+        # Uppercased like the candidate scan: Sonarr keys its tracked downloads by
+        # the uppercased hash and matches case-sensitively, and only a matched
+        # import closes the queue record (an unmatched one imports untracked, so
+        # completed-download handling later re-imports the same files).
+        return entry.model_copy(update={"downloadId": pending.infohash.upper()})
 
 
 class _SeedStatuses(NamedTuple):
@@ -755,6 +757,9 @@ class ImportReconciler:
                         file_episode_map[normalize_basename(base)] = file_ids
                         claimed.update(file_ids)
 
+                # This record's own slice of the entry (the episodes its files
+                # claimed), so sibling per-episode records label distinctly.
+                claimed_eps = [ep for ep in ep_list if ep.id in claimed]
                 pending_seeds[url_item.infohash] = PendingImport(
                     infohash=url_item.infohash,
                     series_id=entry.series_id,
@@ -771,6 +776,7 @@ class ImportReconciler:
                     coverage=entry.coverage,
                     url=entry.url,
                     ordered_episode_ids=ordered_episode_ids,
+                    slice_coverage=coverage_string(episodes_from_ep_list(claimed_eps)) or None,
                 )
 
         return pending_seeds
@@ -796,8 +802,9 @@ class ImportReconciler:
             monitor poll, so a download Sonarr will never import - e.g. Completed
             Download Handling off, which parks it in `importPending` forever -
             is still imported rather than waited on indefinitely).
-          * otherwise (`importBlocked` / `failed` / not tracked / forced clean
-            pending) -> drive our authoritative series-pinned manual import.
+          * otherwise (`importBlocked` / `failed` / warning-flagged pending /
+            not tracked / forced clean pending) -> drive our authoritative
+            series-pinned manual import.
 
         Args:
             pending: The durable record for the completed torrent.
@@ -840,7 +847,7 @@ class ImportReconciler:
             self.logger.debug(f"{label}: already imported (recommended files present)")
             return probe(ImportReadiness.IMPORTED, files_present=True, command_issued=False)
 
-        verdict = classify_queue(self._executor.queue_states(pending.infohash))
+        verdict = classify_queue(self._executor.queue_records(pending.infohash))
         if verdict is QueueVerdict.WAIT:
             self.logger.debug(f"{label}: Sonarr is importing; waiting")
             return probe(ImportReadiness.RETRY, files_present=False, command_issued=False)

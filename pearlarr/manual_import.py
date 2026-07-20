@@ -491,6 +491,11 @@ class PendingImport:
     url: str | None = None
     """The SeaDex entry URL at grab time, for the carried-over record's inline `link` line. Logging only."""
 
+    slice_coverage: str | None = None
+    """THIS record's own episode slice (e.g. `"S02 E06"`), from the grab-time map. Rendered in
+    `display_label` so sibling records on one entry (one per-episode torrent each) stay tellable
+    apart in the wait rows and notifications. None when nothing was parseable at grab time."""
+
     ordered_episode_ids: list[int] = field(default_factory=list[int])
     """The resolved episode ids for this entry, in season order - the authoritative set the import assigns
     into. Lifted straight from the add-flow `ep_list` (which already applied the specials/offset mapping), so
@@ -507,15 +512,19 @@ class PendingImport:
 
     @property
     def display_label(self) -> str:
-        """The cockpit/ledger/report row label: `title · group`.
+        """The cockpit/ledger/report row label: `title · group[ · episode slice]`.
 
-        The release group disambiguates a series that grabbed several torrents
-        (their titles are identical). The infohash is the last-resort fallback.
+        The release group disambiguates a series that grabbed several torrents,
+        and the episode slice tells apart siblings from the SAME group (a
+        per-episode torrent each - without it, "which episodes imported?" is
+        unanswerable from a wait report). The infohash is the last-resort fallback.
         """
 
         base = self.title or self.infohash
         if self.release_group:
-            return f"{base} · {self.release_group}"
+            base = f"{base} · {self.release_group}"
+        if self.slice_coverage:
+            base = f"{base} · {self.slice_coverage}"
         return base
 
     def to_json(self) -> dict[str, Any]:
@@ -550,6 +559,7 @@ class PendingImport:
             coverage=raw.get("coverage"),
             url=raw.get("url"),
             ordered_episode_ids=raw.get("ordered_episode_ids", []),
+            slice_coverage=raw.get("slice_coverage"),
         )
 
 
