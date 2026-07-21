@@ -1600,12 +1600,12 @@ class TestMonitorFastTelemetry:
         )
         mp = _monitor_pass(qbit, record)
         mp.advance(record)
-        assert mp.views[rk("h")].phase is Phase.DOWNLOADING
+        assert mp.rows[rk("h")].view.phase is Phase.DOWNLOADING
 
         changed = mp.refresh_telemetry()
 
         assert changed is True
-        view = mp.views[rk("h")]
+        view = mp.rows[rk("h")].view
         # Telemetry moved (even to 100%) but the phase did NOT change - terminal
         # decisions belong to the heavy poll alone.
         assert view.phase is Phase.DOWNLOADING
@@ -1613,7 +1613,7 @@ class TestMonitorFastTelemetry:
         assert view.speed_bps == 250
         # The sparkline window is heavy-poll-sampled. The fast refresh adds nothing.
         assert view.speed_history == (100,)
-        assert rk("h") in mp.active
+        assert mp.rows[rk("h")].active
 
     def test_unchanged_telemetry_reports_no_change(self) -> None:
         record = pending_import(infohash="h", added_at=_FRESH)
@@ -1645,10 +1645,10 @@ class TestMonitorTransientPoll:
 
         mp.run_cycle()
         mp.run_cycle()  # the blip cycle
-        assert mp.views[rk("h")].fraction == 0.3  # last real reading kept, no 0% flash
+        assert mp.rows[rk("h")].view.fraction == 0.3  # last real reading kept, no 0% flash
         mp.run_cycle()
 
-        view = mp.views[rk("h")]
+        view = mp.rows[rk("h")].view
         assert view.fraction == 0.4
         # Only the two real readings are in the sparkline window - the blip never
         # injected a fake stall sample.
@@ -1674,7 +1674,7 @@ class TestMonitorSpeedHistory:
         for _ in range(3):
             mp.run_cycle()
 
-        assert mp.views[rk("h")].speed_history == (100, 0, 300)
+        assert mp.rows[rk("h")].view.speed_history == (100, 0, 300)
 
     def test_window_is_bounded_to_spark_samples(self) -> None:
         record = pending_import(infohash="h", added_at=_FRESH)
@@ -1683,7 +1683,7 @@ class TestMonitorSpeedHistory:
         for _ in range(SPARK_SAMPLES + 3):
             mp.run_cycle()
 
-        assert mp.views[rk("h")].speed_history == (100,) * SPARK_SAMPLES
+        assert mp.rows[rk("h")].view.speed_history == (100,) * SPARK_SAMPLES
 
 
 class TestImportWaitModeProperty:
