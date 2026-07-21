@@ -63,7 +63,7 @@ from pearlarr.sonarr_import_plan import (
     quality_axes_from_model,
     quality_axes_from_name,
     resolve_quality,
-    sonarr_import_pass_running,
+    sonarr_disk_command_running,
     targets_needing_import,
     translate_download_path,
 )
@@ -420,32 +420,43 @@ class TestManualImportInFlight:
         assert not manual_import_in_flight([], "abc", _paths("/d"), {9})
 
 
-class TestSonarrImportPassRunning:
-    """The pure Sonarr-import-pass guard over the same /api/v3/command list."""
+class TestSonarrDiskCommandRunning:
+    """The pure disk-command guard over the same /api/v3/command list."""
 
     def test_started_process_monitored_downloads_defers(self) -> None:
-        assert sonarr_import_pass_running([_command(name="ProcessMonitoredDownloads")])
+        assert sonarr_disk_command_running([_command(name="ProcessMonitoredDownloads")])
 
     def test_queued_pass_never_defers(self) -> None:
-        # Sonarr parks a queued pass after every rescan (including ours), so a
-        # queued one deferring would starve the step-in entirely.
-        assert not sonarr_import_pass_running([_command(name="ProcessMonitoredDownloads", status="queued")])
+        # A queued pass is near-permanently present during a wait (Sonarr pushes
+        # one after every rescan, including ours), so deferring on it would
+        # starve the step-in entirely.
+        assert not sonarr_disk_command_running([_command(name="ProcessMonitoredDownloads", status="queued")])
 
     def test_completed_pass_never_defers(self) -> None:
-        assert not sonarr_import_pass_running([_command(name="ProcessMonitoredDownloads", status="completed")])
+        assert not sonarr_disk_command_running([_command(name="ProcessMonitoredDownloads", status="completed")])
 
     def test_legacy_folder_scan_defers(self) -> None:
-        assert sonarr_import_pass_running([_command(name="DownloadedEpisodesScan")])
+        assert sonarr_disk_command_running([_command(name="DownloadedEpisodesScan")])
+
+    def test_rename_sweep_defers(self) -> None:
+        # Any started RequiresDiskAccess command queue-blocks a fresh
+        # ManualImport, opening the stale-replay window - not just the passes.
+        assert sonarr_disk_command_running([_command(name="RenameFiles")])
+
+    def test_running_manual_import_defers(self) -> None:
+        # A foreign ManualImport blocks ours the same way (our own is also
+        # caught by manual_import_in_flight; this guard needs no file match).
+        assert sonarr_disk_command_running([_command(name="ManualImport")])
 
     def test_case_folded_match(self) -> None:
-        assert sonarr_import_pass_running([_command(name="processMONITOREDdownloads", status="Started")])
+        assert sonarr_disk_command_running([_command(name="processMONITOREDdownloads", status="Started")])
 
-    def test_other_commands_ignored(self) -> None:
-        cmds = [_command(name="ManualImport"), _command(name="RefreshMonitoredDownloads")]
-        assert not sonarr_import_pass_running(cmds)
+    def test_non_disk_commands_ignored(self) -> None:
+        cmds = [_command(name="RefreshMonitoredDownloads"), _command(name="RssSync")]
+        assert not sonarr_disk_command_running(cmds)
 
     def test_empty_command_list(self) -> None:
-        assert not sonarr_import_pass_running([])
+        assert not sonarr_disk_command_running([])
 
 
 def _history(*events: tuple[str, str]) -> list[HistoryRecord]:

@@ -1066,10 +1066,10 @@ class TestRunMonitor:
         assert last.at_deadline is True
 
     def test_landing_files_re_anchor_the_ready_deadline(self) -> None:
-        # A season pack Sonarr copies file-by-file: each heavy poll shows one more
-        # file landed. Every rise re-anchors the ready deadline, so the pass out-
-        # lives ready_timeout (60s here, 3 x 30s cycles of progress) and finishes
-        # imported instead of cutting the import off mid-copy.
+        # A season pack Sonarr copies file-by-file: a baseline (t=0) then a rise
+        # each heavy poll. Every rise re-anchors the ready deadline, so the pass
+        # outlives ready_timeout (60s here) and finishes imported instead of
+        # cutting the import off mid-copy.
         strategy = _RecordingStrategy(
             completed_sequence=[
                 import_probe(
@@ -1104,6 +1104,43 @@ class TestRunMonitor:
         # Four polls (t=0/30/60/90), none forced: the deadline never fired.
         assert len(strategy.import_calls) == 4
         assert all(c.at_deadline is False for c in strategy.import_calls)
+
+    def test_deadline_attempt_rescued_by_a_same_cycle_landing(self) -> None:
+        # The forced deadline attempt itself reports a fresh rise (0/3 -> 1/3 at
+        # t=60): the row must NOT terminal that cycle - the landing re-anchors
+        # the deadline instead - and only the NEXT quiet deadline (t=120) ends it.
+        strategy = _RecordingStrategy(
+            completed_sequence=[
+                import_probe(
+                    ImportReadiness.RETRY,
+                    files_present=False,
+                    command_issued=True,
+                    imported_count=done,
+                    target_count=3,
+                )
+                for done in (0, 0, 1)
+            ],
+        )
+        pending = pending_import(infohash="h", added_at=_FRESH)
+        qbit = FakeQbit({"h": [FakeTorrent(is_complete=True, content_path="/d")]})
+        mgr = make_orchestration_manager(
+            qbit=qbit,
+            strategy=strategy,
+            store_records=[pending],
+            pending=[pending],
+            import_wait_timeout=3600,
+            import_ready_timeout=60,
+            import_poll_interval=30,
+        )
+        view = RecordingWaitView()
+        clock = FakeClock(step=30)
+
+        mgr.run_monitor(now=clock.now, sleep=clock.sleep, view=view)
+
+        assert view.final(rk("h")).outcome is Outcome.STILL_IMPORTING
+        assert set(mgr._pending_records()) == {pk("h")}
+        # t=0/30 in-bound, t=60 forced-but-rescued, t=90 in-bound, t=120 forced.
+        assert [c.at_deadline for c in strategy.import_calls] == [False, False, True, False, True]
 
     def test_static_done_count_never_extends_the_deadline(self) -> None:
         # A genuinely stalled import: the first determinate reading (1/3) is a

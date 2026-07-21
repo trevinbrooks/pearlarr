@@ -75,7 +75,7 @@ from .sonarr_import_plan import (
     quality_axes_from_name,
     resolve_language_objects,
     resolve_quality,
-    sonarr_import_pass_running,
+    sonarr_disk_command_running,
     targets_needing_import,
     translate_download_path,
 )
@@ -410,7 +410,7 @@ class ImportExecutor:
             snapshot: The same-poll episode index + normalized
                 recommended-group guard set.
             at_deadline: The final attempt - a still-missing intended file
-                is terminal, so warn loudly. Otherwise it's an expected early-poll
+                is normally terminal, so warn loudly. Otherwise it's an expected early-poll
                 gap and only logged at debug.
         """
 
@@ -460,7 +460,7 @@ class ImportExecutor:
         if missing:
             # Intended files our map covers but Sonarr can't see yet. An early poll
             # finding them absent is expected (the copy hasn't landed), so it's only
-            # noisy at the deadline, where a still-missing file is terminal: warn
+            # noisy at the deadline, where a still-missing file is normally terminal: warn
             # loudly only then, debug otherwise. Either way the record is retried,
             # never dropped silently.
             message = (
@@ -812,7 +812,7 @@ class ImportReconciler:
             content_path: The qBittorrent `content_path` to import from.
             force: Stop deferring to Sonarr on a clean `importPending`.
             at_deadline: The final attempt - a still-missing intended file
-                is terminal, so warn loudly (off the deadline it's debug).
+                is normally terminal, so warn loudly (off the deadline it's debug).
         """
 
         label = pending.display_label
@@ -856,14 +856,15 @@ class ImportReconciler:
             self.logger.debug(f"{label}: Sonarr has it pending; waiting")
             return probe(ImportReadiness.RETRY, files_present=False, command_issued=False)
 
-        # Sonarr's own import pass (ProcessMonitoredDownloads) executing right now:
-        # a ManualImport POSTed here would be QUEUED behind it and replayed stale
-        # minutes later, re-copying every file the pass placed meanwhile. Wait it
-        # out instead - the pass's landing files re-anchor the import deadline, and
-        # NOT gated on `force` for the same reason as the in-flight check below.
+        # A Sonarr disk command (its own import pass, a rename/move sweep, ...)
+        # executing right now: a ManualImport POSTed here would be QUEUED behind
+        # it and replayed stale minutes later, re-copying every file an import
+        # pass placed meanwhile. Wait it out instead - a pass's landing files
+        # re-anchor the import deadline, and NOT gated on `force` for the same
+        # reason as the in-flight check below.
         commands = self._executor.list_commands()
-        if sonarr_import_pass_running(commands):
-            self.logger.debug(f"{label}: Sonarr is running its own import pass; waiting")
+        if sonarr_disk_command_running(commands):
+            self.logger.debug(f"{label}: Sonarr is running a disk command; waiting")
             return probe(ImportReadiness.RETRY, files_present=False, command_issued=False)
 
         # A ManualImport we (or a prior run) already POSTed may still be running

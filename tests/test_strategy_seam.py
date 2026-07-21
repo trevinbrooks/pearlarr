@@ -663,6 +663,28 @@ class TestImportCompletedQueueState:
         assert probe.files_present is False
         assert sonarr.candidate_calls == []
 
+    def test_running_disk_command_defers_even_forced(self) -> None:
+        # Sonarr is executing a disk command (here its own import pass): a
+        # ManualImport POSTed now would queue behind it for a stale replay, so
+        # RETRY - force must not override - without scanning or POSTing. The
+        # probe keeps the determinate bar counts (0 of 1 target), so the wait's
+        # deadline still re-anchors off files the pass lands meanwhile.
+        pending = pending_import(infohash="abc123")
+        strat, sonarr = _make_sonarr_for_import(
+            candidates=[manual_candidate("/d/Show - 01 [1080p].mkv")],
+            commands=[
+                CommandResource.model_validate({"name": "ProcessMonitoredDownloads", "status": "started"}),
+            ],
+        )
+
+        probe = strat.import_completed(pending, "/d", force=True)
+
+        assert probe.readiness is ImportReadiness.RETRY
+        assert probe.files_present is False
+        assert (probe.imported_count, probe.target_count) == (0, 1)
+        assert sonarr.candidate_calls == []
+        assert sonarr.execute_calls == []
+
     def test_clean_pending_forced_steps_in(self) -> None:
         # force=True (snapshot / final monitor poll): stop deferring, issue the
         # import. The copy is async, so this reads RETRY + command_issued, NOT a
@@ -881,8 +903,11 @@ class TestInFlightManualImportGuard:
         assert probe.command_issued is True
         assert len(sonarr.execute_calls) == 1
 
-    def test_in_flight_for_other_download_does_not_suppress(self) -> None:
-        # An in-flight ManualImport for a DIFFERENT torrent must not block ours.
+    def test_queued_import_for_other_download_does_not_suppress(self) -> None:
+        # A QUEUED ManualImport for a DIFFERENT torrent must not block ours: the
+        # disk guard ignores queued commands and the in-flight hash match misses.
+        # (A STARTED foreign one now defers via the disk guard - it queue-blocks
+        # our POST just like Sonarr's own passes.)
         pending = pending_import(
             infohash="abc123",
             file_episode_map={"Show - 01 [1080p].mkv": [101]},
@@ -891,7 +916,7 @@ class TestInFlightManualImportGuard:
         strat, sonarr = _make_sonarr_for_import(
             candidates=[manual_candidate("/d/Show - 01 [1080p].mkv")],
             queue=[],
-            commands=[_inflight_manual_import("OTHERHASH")],
+            commands=[_inflight_manual_import("OTHERHASH", status="queued")],
         )
 
         probe = strat.import_completed(pending, "/d")
