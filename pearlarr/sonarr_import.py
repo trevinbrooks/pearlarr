@@ -384,6 +384,9 @@ class ImportExecutor:
             return
         if self.sonarr.queue_delete(queue_id):
             hub_note(f"Removed the imported download {pending.display_label} from Sonarr's queue")
+        else:
+            # The client's warning names no download (coalesced template); this does.
+            self.logger.debug(f"{pending.display_label}: queue entry {queue_id} not removed")
 
     def list_commands(self) -> list[CommandResource]:
         """The current Sonarr command list, for the in-flight ManualImport guard.

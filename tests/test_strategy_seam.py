@@ -877,6 +877,31 @@ class TestCloseTracked:
 
         assert sonarr.queue_delete_calls == []
 
+    def test_successful_close_notes_the_removal(self) -> None:
+        recording = install_recording_hub()
+        strat, _ = _make_sonarr_for_import(
+            candidates=None,
+            queue=[queue_record("ABC123", "importPending", queue_id=11)],
+        )
+
+        strat.close_tracked(pending_import(infohash="abc123", title="Show"))
+
+        assert any("from Sonarr's queue" in m for m in diagnostic_messages(recording, Severity.INFO))
+
+    def test_failed_delete_stays_quiet(self) -> None:
+        # The client's fail-open warning already fired; no success note on top.
+        recording = install_recording_hub()
+        strat, sonarr = _make_sonarr_for_import(
+            candidates=None,
+            queue=[queue_record("ABC123", "importPending", queue_id=11)],
+        )
+        sonarr.queue_delete_return = False
+
+        strat.close_tracked(pending_import(infohash="abc123"))
+
+        assert sonarr.queue_delete_calls == [11]
+        assert diagnostic_messages(recording, Severity.INFO) == []
+
 
 class TestInFlightManualImportGuard:
     """A ManualImport already running for this download must not be re-issued."""
