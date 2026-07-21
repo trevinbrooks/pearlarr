@@ -417,8 +417,9 @@ class ImportsSettings(_ConfigBase):
     ready_timeout: int = Field(default=600, ge=1)
     """Seconds to then wait for Sonarr to rescan and import the finished files.
 
-    Measured from the last imported file, not the whole import: a season pack
-    landing file-by-file only times out after this long with no new file.
+    Measured from the last file Pearlarr saw land rather than the download's
+    completion, so a season pack imported file-by-file times out only after
+    this long with no visible progress.
     """
 
     poll_interval: int = Field(default=30, ge=1)

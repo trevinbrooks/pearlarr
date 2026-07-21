@@ -47,7 +47,7 @@ from pearlarr.sonarr_import_plan import (
     parse_se_from_filename,
     quality_axes_from_model,
     resolve_quality,
-    sonarr_import_pass_running,
+    sonarr_disk_command_running,
 )
 
 from .builders import (
@@ -1289,7 +1289,7 @@ class TestCommandResourceFixture:
 
 
 class TestManualImportInFlightFixture:
-    """manual_import_in_flight reads the real command list to close the loop."""
+    """Both command-list guards read the real captured list to close the loop."""
 
     @staticmethod
     def _commands() -> list[CommandResource]:
@@ -1324,10 +1324,14 @@ class TestManualImportInFlightFixture:
             {5645},
         )
 
-    def test_queued_sonarr_pass_in_real_list_never_defers(self) -> None:
-        # The capture's ProcessMonitoredDownloads is queued (Sonarr parks one
-        # after every rescan) - the pass guard must not defer on it.
-        assert not sonarr_import_pass_running(self._commands())
+    def test_disk_guard_defers_only_on_the_started_command(self) -> None:
+        # The capture's one STARTED command (a ManualImport) defers; with it
+        # gone, the queued remainder - including the parked
+        # ProcessMonitoredDownloads - must not (queued never defers).
+        commands = self._commands()
+        assert sonarr_disk_command_running(commands)
+        queued_only = [c for c in commands if c.status != "started"]
+        assert not sonarr_disk_command_running(queued_only)
 
 
 # --------------------------------------------------------------------------- #

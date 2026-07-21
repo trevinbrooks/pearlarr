@@ -607,8 +607,8 @@ class MonitorPass:
         self.dl_start = {}
         self.import_start = {}
         self.import_anchor = {}
-        # Last determinate done-count per row: the baseline `_note_import_progress`
-        # measures rises against.
+        # Highest determinate done-count per row: the baseline `_note_import_progress`
+        # measures rises against (a max, so a stale lower reading can't fake a rise).
         self._import_seen: dict[str, int] = {}
         self.active = set()
         self.views = {}

@@ -227,27 +227,41 @@ def manual_import_in_flight(
     return False
 
 
-# Sonarr's own import passes (completed-download handling and the legacy
-# downloaded-episodes folder scan), compared case-folded like the command names
-# above.
-_SONARR_IMPORT_PASS_NAMES = frozenset({"processmonitoreddownloads", "downloadedepisodesscan"})
+# Sonarr's disk-access commands (its RequiresDiskAccess scheduling class),
+# compared case-folded like the command names above: the import passes
+# (completed-download handling, the legacy folder scan), the rename/move/delete
+# sweeps, and ManualImport itself. A started one blocks every queued one.
+_SONARR_DISK_COMMAND_NAMES = frozenset(
+    {
+        "processmonitoreddownloads",
+        "downloadedepisodesscan",
+        "manualimport",
+        "renamefiles",
+        "renameseries",
+        "moveseries",
+        "bulkmoveseries",
+        "deleteseriesfiles",
+    },
+)
 
 
-def sonarr_import_pass_running(commands: list[CommandResource]) -> bool:
-    """Whether Sonarr's own import pass is executing right now.
+def sonarr_disk_command_running(commands: list[CommandResource]) -> bool:
+    """Whether one of Sonarr's disk-access commands is executing right now.
 
     Pure, no I/O (mirrors `manual_import_in_flight`, same `/api/v3/command`
-    read). A ManualImport POSTed while such a pass is `started` is QUEUED
-    behind it and executed stale - Sonarr replays the minutes-old payload
-    verbatim, re-copying files the pass already placed (the double-copy
-    incident class). Only `started` defers: a `queued` pass is ubiquitous
-    (Sonarr parks one after every rescan, including ours), so deferring on it
-    would starve the step-in entirely. A deferral is just a RETRY,
-    re-evaluated next poll and bounded by the import deadline.
+    read). A ManualImport POSTed while one is `started` is QUEUED behind it -
+    and a completed-download pass queued meanwhile jumps ahead (High priority)
+    - so our payload replays minutes stale, re-copying files an intervening
+    pass already placed (the double-copy incident class). Only `started`
+    defers: a queued pass is near-permanently present during a wait (Sonarr
+    pushes one after every rescan, including ours, deduped while one is
+    live), so deferring on it would starve the step-in entirely. A deferral
+    is just a RETRY, re-evaluated next poll and bounded by the import
+    deadline.
     """
 
     return any(
-        (command.name or "").casefold() in _SONARR_IMPORT_PASS_NAMES and (command.status or "").casefold() == "started"
+        (command.name or "").casefold() in _SONARR_DISK_COMMAND_NAMES and (command.status or "").casefold() == "started"
         for command in commands
     )
 

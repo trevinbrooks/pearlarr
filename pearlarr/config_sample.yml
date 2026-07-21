@@ -128,8 +128,8 @@ imports:
   wait_timeout: 3600
 
   # Seconds to then wait for Sonarr to rescan and import the finished files. Measured from the last
-  # imported file, not the whole import: a season pack landing file-by-file only times out after
-  # this long with no new file.
+  # file Pearlarr saw land rather than the download's completion, so a season pack imported
+  # file-by-file times out only after this long with no visible progress.
   ready_timeout: 600
 
   # Seconds between polls of qBittorrent and the Sonarr queue while waiting.

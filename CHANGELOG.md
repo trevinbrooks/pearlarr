@@ -9,8 +9,8 @@ Pearlarr is a fork of [bbtufty/seadexarr](https://github.com/bbtufty/seadexarr).
 
 ### Fixed
 
-- `imports.ready_timeout` now counts from the last imported file instead of the moment the download finished, so a season pack Sonarr imports file-by-file is no longer abandoned mid-copy. Previously the wait could report `0 imported · 1 left` while a healthy import was minutes from done - the episodes then landed anyway, contradicting the notification.
-- Pearlarr no longer steps in while Sonarr's own import pass is executing. Sonarr queues a manual import POSTed mid-pass and replays it verbatim once the pass ends, re-copying every file the pass had already placed.
+- `imports.ready_timeout` now counts from the last file seen landing instead of the moment the download finished, so a season pack Sonarr imports file-by-file is no longer abandoned mid-copy. Previously the wait could report `0 imported · 1 left` while a healthy import was minutes from done - the episodes then landed anyway, contradicting the notification.
+- Pearlarr no longer steps in while Sonarr is executing an import pass or another disk command (a rename or move sweep). Sonarr holds a manual import POSTed meanwhile and replays it verbatim once the blocker finishes, re-copying every file its own pass had placed in between.
 
 ## [1.0.7] - 2026-07-21
 
