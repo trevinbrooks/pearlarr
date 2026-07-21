@@ -7,6 +7,8 @@ Pearlarr is a fork of [bbtufty/seadexarr](https://github.com/bbtufty/seadexarr).
 
 ## [Unreleased]
 
+## [1.0.7] - 2026-07-21
+
 ### Fixed
 
 - Manual imports now register against Sonarr's download tracking (the command's `downloadId` was sent lowercase; Sonarr keys tracked downloads by the uppercased hash), so Sonarr sees the queue item as handled. Previously its completed-download handling would later re-import the same torrent - deleting the just-imported file and copying an identical one over it.
