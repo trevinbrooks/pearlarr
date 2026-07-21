@@ -127,7 +127,9 @@ imports:
   # Seconds to wait per torrent for qBittorrent to finish downloading it.
   wait_timeout: 3600
 
-  # Seconds to then wait for Sonarr to rescan and import the finished files.
+  # Seconds to then wait for Sonarr to rescan and import the finished files. Measured from the last
+  # imported file, not the whole import: a season pack landing file-by-file only times out after
+  # this long with no new file.
   ready_timeout: 600
 
   # Seconds between polls of qBittorrent and the Sonarr queue while waiting.

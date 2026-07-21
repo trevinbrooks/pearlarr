@@ -357,8 +357,9 @@ class ImportWaitManager:
         `imported` is reported ONLY when the episode files are verified present
         (`probe.files_present`), so an in-flight remote-mount copy reads
         `importing` until it lands. Per-torrent timeouts: `imports.wait_timeout`
-        for the download, `imports.ready_timeout` for the import (from the first
-        COMPLETE). Ctrl-C pushes one final snapshot (so that cycle's terminals
+        for the download, `imports.ready_timeout` for the import - anchored at the
+        first COMPLETE and re-anchored each time another intended file lands, so
+        it bounds a stall, not a big pack's whole copy. Ctrl-C pushes one final snapshot (so that cycle's terminals
         still graduate) then breaks the loop (the `finally` restores the terminal
         and the caller still saves the cache). The terminal outcomes are returned as a
         `WaitResult` for the run report + completion notification. The clock /
@@ -581,6 +582,10 @@ class MonitorPass:
     """Per-record download-phase clock, stamped at construction."""
     import_start: dict[str, float]
     """Per-record import-phase clock, stamped on the first COMPLETE poll."""
+    import_anchor: dict[str, float]
+    """Per-record ready-deadline anchor: the first COMPLETE, re-stamped each time another
+    intended file lands - so `ready_timeout` bounds a stalled import, not a big season
+    pack Sonarr copies file-by-file."""
 
     def __init__(
         self,
@@ -601,6 +606,10 @@ class MonitorPass:
         self.start = now()
         self.dl_start = {}
         self.import_start = {}
+        self.import_anchor = {}
+        # Last determinate done-count per row: the baseline `_note_import_progress`
+        # measures rises against.
+        self._import_seen: dict[str, int] = {}
         self.active = set()
         self.views = {}
         # Each row's underlying torrent, for the telemetry batch (siblings share one).
@@ -686,7 +695,8 @@ class MonitorPass:
         `_terminal`. `import_start` is stamped on the first COMPLETE.
         `imported` is gated on verified episode files, so a freshly-issued import
         command reads `importing` until the copy lands. The final in-bound attempt
-        (`at_deadline`) both forces and warns.
+        (`at_deadline`) both forces and warns; a file landing that same cycle
+        re-anchors the deadline instead (`_note_import_progress`).
         """
 
         k = record.key.row_key
@@ -738,16 +748,18 @@ class MonitorPass:
 
         # COMPLETE: drive / verify our import, gating `imported` on verified files.
         self.import_start.setdefault(k, self.now())
-        at_deadline = self.now() - self.import_start[k] >= self.import_timeout
+        self.import_anchor.setdefault(k, self.import_start[k])
+        at_deadline = self.now() - self.import_anchor[k] >= self.import_timeout
         probe = self._mgr.try_import_completed(
             record,
             poll.content_path,
             force=at_deadline,
             at_deadline=at_deadline,
         )
+        landed = self._note_import_progress(k, probe.imported_count, probe.target_count)
         if probe.files_present:
             self._terminal(Outcome.IMPORTED, record, files=probe.target_count or None)
-        elif at_deadline:
+        elif at_deadline and not landed:
             self._terminal(
                 Outcome.STILL_IMPORTING if probe.command_issued else Outcome.NOT_READY,
                 record,
@@ -771,6 +783,25 @@ class MonitorPass:
                 phase_elapsed_s=self.now() - self.import_start[k],
                 command_issued=probe.command_issued,
             )
+
+    def _note_import_progress(self, k: str, done: int, total: int) -> bool:
+        """Re-anchor the row's ready deadline when another intended file lands.
+
+        `import_timeout` bounds a STALLED import, not a big season pack Sonarr
+        copies file-by-file: each rise in the determinate done-count re-stamps
+        `import_anchor`. The first determinate reading is a baseline (files
+        present before we started watching are not progress), and indeterminate
+        counts (`total` 0) never move the anchor.
+        """
+
+        if total <= 0:
+            return False
+        last = self._import_seen.get(k)
+        self._import_seen[k] = done if last is None else max(last, done)
+        if last is None or done <= last:
+            return False
+        self.import_anchor[k] = self.now()
+        return True
 
     def refresh_progress(self) -> bool:
         """Cheap Tier-2 pass: refresh each importing row's "files inserted" bar.
@@ -802,6 +833,7 @@ class MonitorPass:
             # row to the heavy poll's repaired done-check.
             if not progress.determinate or progress.total <= 0:
                 continue
+            self._note_import_progress(k, progress.done, progress.total)
             if progress.done >= progress.total:
                 self._terminal(Outcome.IMPORTED, record, files=progress.total)
                 changed = True
