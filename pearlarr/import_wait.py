@@ -351,10 +351,10 @@ class ImportWaitManager:
         record (`PendingKey`, so siblings sharing one torrent each get a row) - so
         a single-series run still finishes other-series carried-over
         downloads (the configured "monitor ALL" choice). Each cycle advances every
-        active record once (so a fast torrent isn't stuck behind a slow one) into a
-        `dict[row_key -> TorrentView]`, then pushes ONE `WaitSnapshot` to
-        the view (which emits a graduation per newly-terminal torrent, and the
-        renderers scroll it back).
+        active row once (so a fast torrent isn't stuck behind a slow one) into its
+        `_MonitorRow.view`, then pushes ONE `WaitSnapshot` to the view
+        (which emits a graduation per newly-terminal torrent, and the renderers
+        scroll it back).
         `imported` is reported ONLY when the episode files are verified present
         (`probe.files_present`), so an in-flight remote-mount copy reads
         `importing` until it lands. Per-torrent timeouts: `imports.wait_timeout`
@@ -530,6 +530,9 @@ class ImportWaitManager:
         Radarr record sharing the torrent must not hold the Sonarr close open.
         The last record of this arr to import makes the close; the strategy
         no-ops when the queue is already clear (Sonarr closed it itself).
+        Deliberately import-only: a last record leaving via TTL expiry or
+        MISSING closes nothing - Sonarr later importing a given-up download is
+        recovery, not a double import.
         """
 
         if not self._config.imports.remove_from_queue or self._active_strategy is None:
@@ -664,7 +667,7 @@ class MonitorPass:
         self._cycle_polls.clear()
         for row in self.rows.values():
             if row.active:
-                self.advance(row.record)
+                self.advance(row)
 
     def _poll(self, infohash: str) -> TorrentProbe:
         """The hash's heavy poll for this cycle - read once, shared by siblings."""
@@ -716,19 +719,19 @@ class MonitorPass:
             self._mgr.apply_post_import_category(record)
         row.active = False
 
-    def advance(self, record: PendingImport) -> None:
-        """Advance one torrent one monitor cycle (download or drive/verify import).
+    def advance(self, row: _MonitorRow) -> None:
+        """Advance one row one monitor cycle (download or drive/verify import).
 
-        Writes this torrent's current `TorrentView` into `views` (the frame
-        the caller snapshots) and, on a terminal outcome, retires it via
-        `_terminal`. `import_start` is stamped on the first COMPLETE.
-        `imported` is gated on verified episode files, so a freshly-issued import
-        command reads `importing` until the copy lands. The final in-bound attempt
-        (`at_deadline`) both forces and warns; a file landing that same cycle
-        re-anchors the deadline instead (`_note_import_progress`).
+        Rewrites `row.view` (the frame the caller snapshots) and, on a terminal
+        outcome, retires the row via `_terminal`. `import_start` is stamped on
+        the first COMPLETE. `imported` is gated on verified episode files, so a
+        freshly-issued import command reads `importing` until the copy lands.
+        The final in-bound attempt (`at_deadline`) both forces and warns; a file
+        landing that same cycle re-anchors the deadline instead
+        (`_note_import_progress`).
         """
 
-        row = self.rows[record.key.row_key]
+        record = row.record
         label = record.display_label
 
         poll = self._poll(record.infohash)
