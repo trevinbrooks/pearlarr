@@ -1599,7 +1599,7 @@ class TestMonitorFastTelemetry:
             telemetry={"h": [FakeTorrent(progress=1.0, dlspeed=250)]},
         )
         mp = _monitor_pass(qbit, record)
-        mp.advance(record)
+        mp.advance(mp.rows[rk("h")])
         assert mp.rows[rk("h")].view.phase is Phase.DOWNLOADING
 
         changed = mp.refresh_telemetry()
@@ -1622,7 +1622,7 @@ class TestMonitorFastTelemetry:
             telemetry={"h": [FakeTorrent(progress=0.3, dlspeed=100)]},
         )
         mp = _monitor_pass(qbit, record)
-        mp.advance(record)
+        mp.advance(mp.rows[rk("h")])
 
         assert mp.refresh_telemetry() is False
 
