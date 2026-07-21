@@ -2409,11 +2409,8 @@ def _radarr_reconcile_manager(
 class TestCloseTrackedDownload:
     """close_tracked_download: the last imported record dismisses Sonarr's leftover queue entry.
 
-    Sonarr auto-closes a tracked download only when ONE import covers the
-    grab's full episode count, so a download finished across several passes
-    stays parked in its queue where completed-download handling would
-    re-import it. The engine asks the strategy to close it once no record of
-    this arr still claims the torrent.
+    The engine asks the strategy to close once no record of this arr still
+    claims the torrent (see `ImportCompleter.close_tracked`).
     """
 
     def test_reconcile_import_closes_the_queue_entry(self) -> None:
