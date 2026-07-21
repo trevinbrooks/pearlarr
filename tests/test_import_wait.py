@@ -411,6 +411,7 @@ class _RecordingStrategy(FakeStrategy):
         self._progress_index = 0
         self.import_calls: list[_ImportCall] = []
         self.progress_calls: list[PendingImport] = []
+        self.close_calls: list[PendingImport] = []
 
     @override
     def import_completed(
@@ -431,6 +432,10 @@ class _RecordingStrategy(FakeStrategy):
         if self._completed is not None:
             return self._completed
         return ImportProbe(ImportReadiness.LEAVE, files_present=False, command_issued=False)
+
+    @override
+    def close_tracked(self, pending: PendingImport) -> None:
+        self.close_calls.append(pending)
 
     @override
     def import_progress(self, pending: PendingImport) -> ImportProgress:
@@ -2399,6 +2404,135 @@ def _radarr_reconcile_manager(
     for record in sonarr_records or []:
         store.put_pending(Arr.SONARR, record.key, record.to_json())
     return mgr, store
+
+
+class TestCloseTrackedDownload:
+    """close_tracked_download: the last imported record dismisses Sonarr's leftover queue entry.
+
+    Sonarr auto-closes a tracked download only when ONE import covers the
+    grab's full episode count, so a download finished across several passes
+    stays parked in its queue where completed-download handling would
+    re-import it. The engine asks the strategy to close it once no record of
+    this arr still claims the torrent.
+    """
+
+    def test_reconcile_import_closes_the_queue_entry(self) -> None:
+        strategy = _RecordingStrategy(
+            completed=import_probe(ImportReadiness.IMPORTED, files_present=True),
+        )
+        pending = pending_import(infohash="h", series_id=7, added_at=_FRESH)
+        mgr = make_orchestration_manager(
+            qbit=FakeQbit({"h": [FakeTorrent(is_complete=True, content_path="/d")]}),
+            strategy=strategy,
+            store_records=[pending],
+        )
+
+        mgr.snapshot_pending_for_series(7)
+
+        assert [c.key for c in strategy.close_calls] == [pending.key]
+
+    def test_monitor_import_closes_the_queue_entry(self) -> None:
+        strategy = _RecordingStrategy(
+            completed=import_probe(ImportReadiness.RETRY, files_present=True),
+        )
+        pending = pending_import(infohash="h", added_at=_FRESH)
+        mgr = make_orchestration_manager(
+            qbit=FakeQbit({"h": [FakeTorrent(is_complete=True, content_path="/d")]}),
+            strategy=strategy,
+            store_records=[pending],
+            pending=[pending],
+            import_wait_timeout=3600,
+            import_ready_timeout=600,
+            import_poll_interval=30,
+        )
+        view = RecordingWaitView()
+        clock = FakeClock(step=30)
+
+        mgr.run_monitor(now=clock.now, sleep=clock.sleep, view=view)
+
+        assert view.final(rk("h")).outcome is Outcome.IMPORTED
+        assert [c.key for c in strategy.close_calls] == [pending.key]
+
+    def test_sibling_record_defers_the_close_to_the_last_import(self) -> None:
+        # Run 1: Cour 1 imports but Cour 2 still claims the torrent -> no close
+        # (a close now would mark the download ignored while Sonarr may still
+        # need to import Cour 2's slice). Run 2: Cour 2 imports -> ONE close.
+        first = pending_import(infohash="h", al_id=11, series_id=7, title="Cour 1", added_at=_FRESH)
+        second = pending_import(infohash="h", al_id=22, series_id=7, title="Cour 2", added_at=_FRESH)
+        qbit = FakeQbit({"h": [FakeTorrent(is_complete=True, content_path="/d")]})
+        run1_strategy = _RecordingStrategy(
+            completed_sequence=[
+                import_probe(ImportReadiness.IMPORTED, files_present=True),  # Cour 1
+                import_probe(ImportReadiness.RETRY, files_present=False),  # Cour 2: not landed
+            ],
+        )
+        run1 = make_orchestration_manager(qbit=qbit, strategy=run1_strategy, store_records=[first, second])
+
+        run1.snapshot_pending_for_series(7)
+
+        assert run1_strategy.close_calls == []
+        assert set(run1._pending_records()) == {pk("h", 22)}
+
+        run2_strategy = _RecordingStrategy(
+            completed=import_probe(ImportReadiness.IMPORTED, files_present=True),
+        )
+        run2 = make_orchestration_manager(qbit=qbit, strategy=run2_strategy)
+        run2.cache_store = run1.cache_store  # the same durable store, next run
+
+        run2.snapshot_pending_for_series(7)
+
+        assert [c.key for c in run2_strategy.close_calls] == [second.key]
+
+    def test_remove_from_queue_off_never_closes(self) -> None:
+        strategy = _RecordingStrategy(
+            completed=import_probe(ImportReadiness.IMPORTED, files_present=True),
+        )
+        mgr = make_orchestration_manager(
+            qbit=FakeQbit({"h": [FakeTorrent(is_complete=True, content_path="/d")]}),
+            strategy=strategy,
+            store_records=[pending_import(infohash="h", series_id=7, added_at=_FRESH)],
+            remove_from_queue=False,
+        )
+
+        mgr.snapshot_pending_for_series(7)
+
+        assert strategy.close_calls == []
+        assert mgr._pending_records() == {}  # the import itself still drops
+
+    def test_missing_record_is_not_closed(self) -> None:
+        # MISSING also drops, but nothing was imported: the queue entry (if
+        # any) stays Sonarr's to resolve.
+        strategy = _RecordingStrategy()
+        mgr = make_orchestration_manager(
+            qbit=FakeQbit({}),  # an unscripted hash polls as MISSING
+            strategy=strategy,
+            store_records=[pending_import(infohash="h", series_id=7, added_at=_FRESH)],
+        )
+
+        mgr.snapshot_pending_for_series(7)
+
+        assert mgr._pending_records() == {}
+        assert strategy.close_calls == []
+
+    def test_radarr_sibling_does_not_hold_the_sonarr_close(self) -> None:
+        # The gate is PER-ARR (unlike the cross-arr category gate): Sonarr's
+        # queue entry only blocks Sonarr's completed-download handling, so a
+        # Radarr record sharing the torrent must not keep the close window open.
+        strategy = _RecordingStrategy(
+            completed=import_probe(ImportReadiness.IMPORTED, files_present=True),
+        )
+        sonarr_record = pending_import(infohash="h", al_id=11, series_id=7, added_at=_FRESH)
+        radarr_record = pending_import(infohash="h", al_id=22, series_id=0, added_at=_FRESH)
+        mgr = make_orchestration_manager(
+            qbit=FakeQbit({"h": [FakeTorrent(is_complete=True, content_path="/d")]}),
+            strategy=strategy,
+            store_records=[sonarr_record],
+        )
+        mgr.cache_store.put_pending(Arr.RADARR, radarr_record.key, radarr_record.to_json())
+
+        mgr.snapshot_pending_for_series(7)
+
+        assert [c.key for c in strategy.close_calls] == [sonarr_record.key]
 
 
 class TestRadarrReconcile:

@@ -190,6 +190,12 @@
           "title": "Mode",
           "type": "string"
         },
+        "remove_from_queue": {
+          "default": true,
+          "description": "Remove a torrent's leftover Sonarr queue entry once every record on it has imported. Sonarr clears an entry itself only when a single import covers the grab's full episode count, so a torrent finished across several passes (some files imported by Sonarr, the rest by Pearlarr) stays parked in its queue, where completed-download handling may import it again. Removing the entry closes that window: Sonarr records the download as manually ignored, and the torrent keeps seeding in qBittorrent. Sonarr only.",
+          "title": "Remove From Queue",
+          "type": "boolean"
+        },
         "post_import_category": {
           "anyOf": [
             {

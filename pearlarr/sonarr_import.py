@@ -364,6 +364,27 @@ class ImportExecutor:
             if record.download_id is not None and record.download_id.casefold() == target
         ]
 
+    def close_tracked(self, pending: PendingImport) -> None:
+        """Dismiss Sonarr's leftover queue entry for `pending`'s torrent, if any.
+
+        Fires once the torrent's last record has imported. A row still queued
+        then is the partial-close residue: Sonarr auto-closes only when one
+        import covers the grab's full episode count, so a download finished
+        across several passes stays `importPending`, where a later
+        completed-download pass would re-import (re-copy) it. Any one row's id
+        dismisses the whole download; the torrent keeps seeding. Best-effort:
+        the client warns on failure and the next run gets no retry (the record
+        is already dropped).
+        """
+
+        rows = self.queue_records(pending.infohash)
+        queue_id = next((row.id for row in rows if row.id), None)
+        if queue_id is None:
+            self.logger.debug(f"{pending.display_label}: no leftover Sonarr queue entry to close")
+            return
+        if self.sonarr.queue_delete(queue_id):
+            hub_note(f"Removed the imported download {pending.display_label} from Sonarr's queue")
+
     def list_commands(self) -> list[CommandResource]:
         """The current Sonarr command list, for the in-flight ManualImport guard.
 

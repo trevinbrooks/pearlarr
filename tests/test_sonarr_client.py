@@ -159,6 +159,7 @@ def test_queue_decodes_records_and_builds_request() -> None:
 
     assert len(records) == 3
     assert records[0] == QueueRecord(
+        id=1516314797,
         download_id="B7640FF13A2ADCA981B821D03CEBD1B569798459",
         state="downloading",
         status="ok",
@@ -244,6 +245,38 @@ def test_queue_request_error_returns_empty() -> None:
 
     respx.get(f"{_BASE}/queue").mock(side_effect=httpx.ConnectError("boom"))
     assert _make_client().queue() == []
+
+
+# --- queue_delete() ---------------------------------------------------------
+
+
+@respx.mock
+def test_queue_delete_builds_request() -> None:
+    """`queue_delete` removes the row queue-only: the torrent stays in the client, nothing is blocklisted."""
+
+    route = respx.delete(f"{_BASE}/queue/1516314797").respond(json={})
+    client = _make_client()
+
+    assert client.queue_delete(1516314797) is True
+    request = route.calls.last.request
+    url = str(request.url)
+    assert "removeFromClient=false" in url
+    assert "blocklist=false" in url
+    assert request.headers["X-Api-Key"] == _KEY
+
+
+@respx.mock
+def test_queue_delete_non_200_fails_open() -> None:
+    """A failed delete warns and returns False - the close is best-effort, never a crash."""
+
+    respx.delete(f"{_BASE}/queue/7").respond(status_code=500)
+    assert _make_client().queue_delete(7) is False
+
+
+@respx.mock
+def test_queue_delete_request_error_fails_open() -> None:
+    respx.delete(f"{_BASE}/queue/7").mock(side_effect=httpx.ConnectError("boom"))
+    assert _make_client().queue_delete(7) is False
 
 
 # --- episodes() -------------------------------------------------------------

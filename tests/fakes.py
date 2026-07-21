@@ -311,10 +311,12 @@ class FakeSonarrClient(AbstractSonarrClient):
         self.path_mappings_return: list[RemotePathMapping] | None = path_mappings
         # Recorded calls: the import commands keep their full args. The plain reads
         # keep a count / arg-list so a test can assert (not-)called.
+        self.queue_delete_return: bool = True
         self.candidate_calls: list[PendingImport] = []
         self.execute_calls: list[tuple[list[ManualImportFile], str]] = []
         self.all_series_calls: int = 0
         self.queue_calls: int = 0
+        self.queue_delete_calls: list[int] = []
         self.episodes_calls: list[int] = []
         self.refresh_calls: int = 0
         self.history_calls: list[str] = []
@@ -331,6 +333,11 @@ class FakeSonarrClient(AbstractSonarrClient):
     def queue(self) -> list[QueueRecord]:
         self.queue_calls += 1
         return self.queue_return
+
+    @override
+    def queue_delete(self, queue_id: int) -> bool:
+        self.queue_delete_calls.append(queue_id)
+        return self.queue_delete_return
 
     @override
     def list_commands(self) -> list[CommandResource]:

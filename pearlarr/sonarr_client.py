@@ -119,6 +119,9 @@ class AbstractSonarrClient(ABC):
     def queue(self) -> list[QueueRecord]: ...
 
     @abstractmethod
+    def queue_delete(self, queue_id: int) -> bool: ...
+
+    @abstractmethod
     def quality_definitions(self) -> list[QualityDefinition]: ...
 
     @abstractmethod
@@ -595,6 +598,25 @@ class SonarrClient(AbstractSonarrClient):
             if not page_records or len(records) >= (total if isinstance(total, int) else 0):
                 return records
             page += 1
+
+    @override
+    def queue_delete(self, queue_id: int) -> bool:
+        """Dismiss one queue item (`DELETE /api/v3/queue/{id}`) - and with it the whole tracked download.
+
+        `removeFromClient=false` + `blocklist=false`: Sonarr records the
+        download as manually ignored and stops tracking it - the torrent stays
+        in qBittorrent seeding, nothing is blocklisted or re-searched. The
+        ignored state is durable (re-read from download history on Sonarr's
+        next refresh), so completed-download handling can never import the
+        download again. Fail-open: a failure warns and returns False (the
+        close is best-effort).
+        """
+
+        return self._http.delete(
+            f"/api/v3/queue/{queue_id}",
+            params={"removeFromClient": "false", "blocklist": "false"},
+            warn="Could not remove the finished download from Sonarr's queue ({detail})",
+        )
 
     @override
     def quality_definitions(self) -> list[QualityDefinition]:

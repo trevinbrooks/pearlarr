@@ -531,6 +531,12 @@ class SonarrSync(ArrSync[SonarrItem]):
 
         return self._reconciler.import_progress(pending)
 
+    @override
+    def close_tracked(self, pending: PendingImport) -> None:
+        """Dismiss the torrent's leftover Sonarr queue entry (see `ImportExecutor.close_tracked`)."""
+
+        self._executor.close_tracked(pending)
+
     @property
     @override
     def supports_blocking_monitor(self) -> bool:

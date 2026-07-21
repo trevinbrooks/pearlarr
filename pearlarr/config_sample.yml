@@ -146,6 +146,14 @@ imports:
   # Values: auto / move / copy
   mode: auto
 
+  # Remove a torrent's leftover Sonarr queue entry once every record on it has imported. Sonarr
+  # clears an entry itself only when a single import covers the grab's full episode count, so a
+  # torrent finished across several passes (some files imported by Sonarr, the rest by Pearlarr)
+  # stays parked in its queue, where completed-download handling may import it again. Removing the
+  # entry closes that window: Sonarr records the download as manually ignored, and the torrent keeps
+  # seeding in qBittorrent. Sonarr only.
+  remove_from_queue: true
+
   # qBittorrent category applied once every import using the torrent has completed. Lets finished
   # torrents carry their own seeding rules. Covers both arrs: a torrent shared by several entries,
   # or by Sonarr and Radarr, moves only after all of them have imported. Point delete-with-data

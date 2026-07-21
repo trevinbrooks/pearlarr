@@ -240,8 +240,8 @@ class ImportWaitManager:
         outcome + the probe's verified-files flag fold through
         `classify_pending` into one state, stashed per record key for the
         pre-summary tally. A terminal IMPORTED is dropped + counted (drop FIRST,
-        so the category gate sees only genuinely-remaining records), a MISSING is
-        dropped. Returns the classified state.
+        so the queue-close and category gates see only genuinely-remaining
+        records), a MISSING is dropped. Returns the classified state.
         """
 
         poll = self.poll_torrent(pending.infohash)
@@ -258,6 +258,7 @@ class ImportWaitManager:
         self._ctx.pending_states[pending.key] = state
         if state is PendingState.IMPORTED:
             self.drop_pending(pending)
+            self.close_tracked_download(pending)
             self.apply_post_import_category(pending)
             self._ctx.stats.imported += 1
         elif state is PendingState.MISSING:
@@ -519,6 +520,28 @@ class ImportWaitManager:
         self.cache_store.drop_pending(self._ctx.arr, pending.key)
         self._ctx.pending_imports = [p for p in self._ctx.pending_imports if p.key != pending.key]
 
+    def close_tracked_download(self, pending: PendingImport) -> None:
+        """Dismiss Sonarr's leftover queue entry once `pending`'s torrent is fully imported.
+
+        Called at the two confirmed-import sites AFTER the drop, beside the
+        category move, and gated on `imports.remove_from_queue`. The sibling
+        gate is per-arr (unlike the deliberately cross-arr category gate): the
+        queue entry only blocks THIS arr's completed-download handling, so a
+        Radarr record sharing the torrent must not hold the Sonarr close open.
+        The last record of this arr to import makes the close; the strategy
+        no-ops when the queue is already clear (Sonarr closed it itself).
+        """
+
+        if not self._config.imports.remove_from_queue or self._active_strategy is None:
+            return
+        target = pending.infohash.casefold()
+        if any(p.infohash.casefold() == target for p in self._pending_records().values()):
+            self.logger.debug(
+                f"{pending.display_label}: sibling records still pending on this torrent - leaving its queue entry",
+            )
+            return
+        self._active_strategy.close_tracked(pending)
+
     def apply_post_import_category(self, pending: PendingImport) -> None:
         """Move a verified-imported torrent to `imports.post_import_category`.
 
@@ -662,10 +685,10 @@ class MonitorPass:
 
         Drops the durable record when (and only when) `outcome.dropped` - True for
         exactly IMPORTED and MISSING, so the displayed word and the store mutation
-        can't diverge. A SUCCESS-class outcome additionally gets the post-import
-        category, keyed off the same pinned enum vocabulary - the drop runs FIRST
-        so the category gate counts only genuinely-remaining sibling records. The
-        terminal row carries the pass-elapsed clock and (for an import) the
+        can't diverge. A SUCCESS-class outcome additionally gets the queue close +
+        post-import category, keyed off the same pinned enum vocabulary - the drop
+        runs FIRST so both sibling gates count only genuinely-remaining records.
+        The terminal row carries the pass-elapsed clock and (for an import) the
         verified files count, so the graduation ledger can state them.
         """
 
@@ -684,6 +707,7 @@ class MonitorPass:
         if outcome.dropped:
             self._mgr.drop_pending(record)
         if outcome.category is OutcomeCategory.SUCCESS:
+            self._mgr.close_tracked_download(record)
             self._mgr.apply_post_import_category(record)
         self.active.discard(k)
 
