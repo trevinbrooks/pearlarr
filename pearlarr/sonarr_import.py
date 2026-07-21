@@ -75,6 +75,7 @@ from .sonarr_import_plan import (
     quality_axes_from_name,
     resolve_language_objects,
     resolve_quality,
+    sonarr_import_pass_running,
     targets_needing_import,
     translate_download_path,
 )
@@ -855,6 +856,16 @@ class ImportReconciler:
             self.logger.debug(f"{label}: Sonarr has it pending; waiting")
             return probe(ImportReadiness.RETRY, files_present=False, command_issued=False)
 
+        # Sonarr's own import pass (ProcessMonitoredDownloads) executing right now:
+        # a ManualImport POSTed here would be QUEUED behind it and replayed stale
+        # minutes later, re-copying every file the pass placed meanwhile. Wait it
+        # out instead - the pass's landing files re-anchor the import deadline, and
+        # NOT gated on `force` for the same reason as the in-flight check below.
+        commands = self._executor.list_commands()
+        if sonarr_import_pass_running(commands):
+            self.logger.debug(f"{label}: Sonarr is running its own import pass; waiting")
+            return probe(ImportReadiness.RETRY, files_present=False, command_issued=False)
+
         # A ManualImport we (or a prior run) already POSTed may still be running
         # server-side after Sonarr dropped the torrent from the regular queue - so
         # the queue reads "empty -> step in" and we'd stack a duplicate every poll.
@@ -863,7 +874,7 @@ class ImportReconciler:
         # re-issue regardless (`force` overrides Sonarr's clean-pending deferral,
         # a different state). A false positive only waits (bounded by the deadline).
         if manual_import_in_flight(
-            self._executor.list_commands(),
+            commands,
             pending.infohash,
             self._executor.scanner.content_paths(content_path),
             set(seeded_targets),

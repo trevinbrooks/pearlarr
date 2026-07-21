@@ -227,6 +227,31 @@ def manual_import_in_flight(
     return False
 
 
+# Sonarr's own import passes (completed-download handling and the legacy
+# downloaded-episodes folder scan), compared case-folded like the command names
+# above.
+_SONARR_IMPORT_PASS_NAMES = frozenset({"processmonitoreddownloads", "downloadedepisodesscan"})
+
+
+def sonarr_import_pass_running(commands: list[CommandResource]) -> bool:
+    """Whether Sonarr's own import pass is executing right now.
+
+    Pure, no I/O (mirrors `manual_import_in_flight`, same `/api/v3/command`
+    read). A ManualImport POSTed while such a pass is `started` is QUEUED
+    behind it and executed stale - Sonarr replays the minutes-old payload
+    verbatim, re-copying files the pass already placed (the double-copy
+    incident class). Only `started` defers: a `queued` pass is ubiquitous
+    (Sonarr parks one after every rescan, including ours), so deferring on it
+    would starve the step-in entirely. A deferral is just a RETRY,
+    re-evaluated next poll and bounded by the import deadline.
+    """
+
+    return any(
+        (command.name or "").casefold() in _SONARR_IMPORT_PASS_NAMES and (command.status or "").casefold() == "started"
+        for command in commands
+    )
+
+
 # The episode-history events that map a re-appeared download to a queue-hidden
 # tracked state (Imported / Failed / Ignored) - states Sonarr never runs its
 # completed-download Check on, so `manualimport?downloadId=` NREs (HTTP 500)

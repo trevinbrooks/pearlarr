@@ -47,6 +47,7 @@ from pearlarr.sonarr_import_plan import (
     parse_se_from_filename,
     quality_axes_from_model,
     resolve_quality,
+    sonarr_import_pass_running,
 )
 
 from .builders import (
@@ -1322,6 +1323,11 @@ class TestManualImportInFlightFixture:
             ContentPaths(raw="/nowhere", sonarr_visible="/nowhere"),
             {5645},
         )
+
+    def test_queued_sonarr_pass_in_real_list_never_defers(self) -> None:
+        # The capture's ProcessMonitoredDownloads is queued (Sonarr parks one
+        # after every rescan) - the pass guard must not defer on it.
+        assert not sonarr_import_pass_running(self._commands())
 
 
 # --------------------------------------------------------------------------- #
