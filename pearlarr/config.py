@@ -444,6 +444,17 @@ class ImportsSettings(_ConfigBase):
     verbatim.
     """
 
+    remove_from_queue: bool = True
+    """Remove a torrent's leftover Sonarr queue entry once every record on it has imported.
+
+    Sonarr clears an entry itself only when a single import covers the grab's
+    full episode count, so a torrent finished across several passes (some
+    files imported by Sonarr, the rest by Pearlarr) stays parked in its queue,
+    where completed-download handling may import it again. Removing the entry
+    closes that window: Sonarr records the download as manually ignored, and
+    the torrent keeps seeding in qBittorrent. Sonarr only.
+    """
+
     # Applied by the wait machinery, so it only fires when the run's resolved
     # wait mode is non-off.
     post_import_category: str | None = None

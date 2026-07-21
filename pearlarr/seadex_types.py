@@ -681,6 +681,9 @@ class QueueRecord(_ApiModel):
     double-importing step-in).
     """
 
+    id: _ZeroInt = 0
+    """The queue item id, `queue_delete`'s handle (any one of a download's
+    rows dismisses the whole download). Junk folds to 0 = no usable id."""
     download_id: _LenientStr = Field(default=None, validation_alias="downloadId")
     """The infohash Sonarr stores uppercased, matched case-insensitively to
     pick a torrent's records (`string | null` in the schema)."""

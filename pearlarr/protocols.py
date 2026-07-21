@@ -74,6 +74,20 @@ class ImportCompleter(ABC):
         indeterminate zero.
         """
 
+    def close_tracked(self, pending: PendingImport) -> None:
+        """Dismiss the arr's leftover queue entry for a fully imported torrent.
+
+        Called by the engine once no record of this arr still claims the
+        torrent (after the last drop). Sonarr auto-closes a tracked download
+        only when ONE import covers the grab's full episode count, so a
+        download finished across several passes stays parked in its queue
+        where completed-download handling would re-import it - `SonarrSync`
+        removes the entry. Default: no-op (Radarr imports its own grabs and
+        closes them itself).
+        """
+
+        del pending
+
     @property
     @abstractmethod
     def supports_blocking_monitor(self) -> bool:

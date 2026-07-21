@@ -342,6 +342,33 @@ class ArrHttp:
         self._recover(warn)
         return payload
 
+    def delete(
+        self,
+        path: str,
+        *,
+        params: Mapping[str, str] | None = None,
+        warn: str | None,
+    ) -> bool:
+        """DELETE `path`, failing open to False with one warning.
+
+        ONE attempt, never retried, like `post_json` (the caller's run/poll
+        cadence is the retry mechanism). The body is ignored - the arr delete
+        endpoints return an empty object - so success is just a 200/204. Any
+        failure warns via `warn` (the same `{detail}` template) and returns
+        False.
+        """
+
+        try:
+            response = self.client.delete(f"{self.base_url}{path}", params=params, headers=self.headers)
+        except (httpx.HTTPError, httpx.InvalidURL) as e:
+            self._fail(warn, f"request failed ({type(e).__name__})")
+            return False
+        if response.status_code not in (200, 204):
+            self._fail(warn, f"status code {response.status_code}")
+            return False
+        self._recover(warn)
+        return True
+
     def get_json_list_strict(
         self,
         path: str,

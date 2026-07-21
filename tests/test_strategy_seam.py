@@ -837,6 +837,47 @@ def _inflight_manual_import(infohash: str, *, status: str = "started") -> Comman
     )
 
 
+class TestCloseTracked:
+    """close_tracked dismisses the download's leftover queue entry through any one row's id."""
+
+    def test_dismisses_by_the_first_usable_row_id(self) -> None:
+        # Sonarr closes the WHOLE tracked download off any one queue id, so the
+        # first row with a usable id (junk folds to 0) is deleted, exactly once.
+        pending = pending_import(infohash="abc123")
+        strat, sonarr = _make_sonarr_for_import(
+            candidates=None,
+            queue=[
+                queue_record("ABC123", "importPending", status="warning"),  # id 0: unusable
+                queue_record("ABC123", "importPending", status="warning", queue_id=11),
+                queue_record("ABC123", "importPending", status="warning", queue_id=12),
+            ],
+        )
+
+        strat.close_tracked(pending)
+
+        assert sonarr.queue_delete_calls == [11]
+
+    def test_other_downloads_rows_are_not_touched(self) -> None:
+        pending = pending_import(infohash="abc123")
+        strat, sonarr = _make_sonarr_for_import(
+            candidates=None,
+            queue=[queue_record("FFFF", "importPending", queue_id=9)],
+        )
+
+        strat.close_tracked(pending)
+
+        assert sonarr.queue_delete_calls == []
+
+    def test_already_clear_queue_is_a_no_op(self) -> None:
+        # Sonarr closed the download itself (one import covered the full grab).
+        pending = pending_import(infohash="abc123")
+        strat, sonarr = _make_sonarr_for_import(candidates=None)
+
+        strat.close_tracked(pending)
+
+        assert sonarr.queue_delete_calls == []
+
+
 class TestInFlightManualImportGuard:
     """A ManualImport already running for this download must not be re-issued."""
 
