@@ -614,7 +614,7 @@ class MonitorPass:
 
     Built fresh at the top of `ImportWaitManager.run_monitor` from the
     manager, the working-set records, the clock, and the two per-torrent timeouts,
-    so `advance` takes only the record and there is nothing to reset between
+    so `advance` takes only the row and there is nothing to reset between
     runs (the object IS the per-invocation scope). It calls back to the manager's
     `poll_torrent` / `try_import_completed` / `drop_pending` (those are
     shared with the reconcile passes, so they stay on the manager).
@@ -662,7 +662,7 @@ class MonitorPass:
         return sum(1 for row in self.rows.values() if row.active)
 
     def run_cycle(self) -> None:
-        """Run one heavy-poll cycle: clear the per-hash memo, then advance every active record."""
+        """Run one heavy-poll cycle: clear the per-hash memo, then advance every active row."""
 
         self._cycle_polls.clear()
         for row in self.rows.values():
