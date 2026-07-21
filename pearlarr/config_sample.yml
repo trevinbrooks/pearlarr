@@ -151,7 +151,7 @@ imports:
   # torrent finished across several passes (some files imported by Sonarr, the rest by Pearlarr)
   # stays parked in its queue, where completed-download handling may import it again. Removing the
   # entry closes that window: Sonarr records the download as manually ignored, and the torrent keeps
-  # seeding in qBittorrent. Sonarr only.
+  # seeding in qBittorrent. Sonarr only. Ignored when wait_mode is off.
   remove_from_queue: true
 
   # qBittorrent category applied once every import using the torrent has completed. Lets finished

@@ -452,7 +452,8 @@ class ImportsSettings(_ConfigBase):
     files imported by Sonarr, the rest by Pearlarr) stays parked in its queue,
     where completed-download handling may import it again. Removing the entry
     closes that window: Sonarr records the download as manually ignored, and
-    the torrent keeps seeding in qBittorrent. Sonarr only.
+    the torrent keeps seeding in qBittorrent. Sonarr only. Ignored when
+    `wait_mode` is `off`.
     """
 
     # Applied by the wait machinery, so it only fires when the run's resolved
