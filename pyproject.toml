@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "pearlarr"
-version = "1.0.6"
+version = "1.0.7"
 description = "Automatically grab the releases SeaDex recommends for the anime in your Sonarr and Radarr libraries"
 # The readme is dynamic: the fancy-pypi-readme hook below pins the media URLs
 # per version in the PyPI metadata. A static `readme` key here would make
