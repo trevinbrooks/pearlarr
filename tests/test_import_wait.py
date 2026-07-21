@@ -1065,6 +1065,115 @@ class TestRunMonitor:
         assert last.force is True
         assert last.at_deadline is True
 
+    def test_landing_files_re_anchor_the_ready_deadline(self) -> None:
+        # A season pack Sonarr copies file-by-file: each heavy poll shows one more
+        # file landed. Every rise re-anchors the ready deadline, so the pass out-
+        # lives ready_timeout (60s here, 3 x 30s cycles of progress) and finishes
+        # imported instead of cutting the import off mid-copy.
+        strategy = _RecordingStrategy(
+            completed_sequence=[
+                import_probe(
+                    ImportReadiness.RETRY,
+                    files_present=False,
+                    command_issued=True,
+                    imported_count=done,
+                    target_count=3,
+                )
+                for done in (0, 1, 2)
+            ]
+            + [import_probe(ImportReadiness.RETRY, files_present=True, command_issued=True, target_count=3)],
+        )
+        pending = pending_import(infohash="h", added_at=_FRESH)
+        qbit = FakeQbit({"h": [FakeTorrent(is_complete=True, content_path="/d")]})
+        mgr = make_orchestration_manager(
+            qbit=qbit,
+            strategy=strategy,
+            store_records=[pending],
+            pending=[pending],
+            import_wait_timeout=3600,
+            import_ready_timeout=60,
+            import_poll_interval=30,
+        )
+        view = RecordingWaitView()
+        clock = FakeClock(step=30)
+
+        mgr.run_monitor(now=clock.now, sleep=clock.sleep, view=view)
+
+        assert view.final(rk("h")).outcome is Outcome.IMPORTED
+        assert mgr._pending_records() == {}
+        # Four polls (t=0/30/60/90), none forced: the deadline never fired.
+        assert len(strategy.import_calls) == 4
+        assert all(c.at_deadline is False for c in strategy.import_calls)
+
+    def test_static_done_count_never_extends_the_deadline(self) -> None:
+        # A genuinely stalled import: the first determinate reading (1/3) is a
+        # baseline, not progress, and a count that never rises past it must not
+        # move the anchor - the deadline still fires on schedule.
+        strategy = _RecordingStrategy(
+            completed=import_probe(
+                ImportReadiness.RETRY,
+                files_present=False,
+                command_issued=True,
+                imported_count=1,
+                target_count=3,
+            ),
+        )
+        pending = pending_import(infohash="h", added_at=_FRESH)
+        qbit = FakeQbit({"h": [FakeTorrent(is_complete=True, content_path="/d")]})
+        mgr = make_orchestration_manager(
+            qbit=qbit,
+            strategy=strategy,
+            store_records=[pending],
+            pending=[pending],
+            import_wait_timeout=3600,
+            import_ready_timeout=60,
+            import_poll_interval=30,
+        )
+        view = RecordingWaitView()
+        clock = FakeClock(step=30)
+
+        mgr.run_monitor(now=clock.now, sleep=clock.sleep, view=view)
+
+        assert view.final(rk("h")).outcome is Outcome.STILL_IMPORTING
+        assert set(mgr._pending_records()) == {pk("h")}
+        # Three polls (t=0/30/60): the third is the forced deadline attempt.
+        assert len(strategy.import_calls) == 3
+        assert strategy.import_calls[-1].at_deadline is True
+
+    def test_fast_lane_landing_re_anchors_the_deadline(self) -> None:
+        # The cheap Tier-2 poll sees a file land (1/3 -> 2/3) even though the
+        # heavy poll's counts stay indeterminate. That rise alone must push the
+        # deadline out one more heavy cycle (t=90, not t=60).
+        strategy = _RecordingStrategy(
+            completed=import_probe(ImportReadiness.RETRY, files_present=False, command_issued=True),
+            progress_sequence=[
+                ImportProgress(1, 3, determinate=True),
+                ImportProgress(2, 3, determinate=True),  # the rise, at t=10
+            ],
+        )
+        pending = pending_import(infohash="h", added_at=_FRESH)
+        qbit = FakeQbit({"h": [FakeTorrent(is_complete=True, content_path="/d")]})
+        mgr = make_orchestration_manager(
+            qbit=qbit,
+            strategy=strategy,
+            store_records=[pending],
+            pending=[pending],
+            import_wait_timeout=3600,
+            import_ready_timeout=60,
+            import_poll_interval=30,
+            progress_poll_interval=5,
+        )
+        view = RecordingWaitView()
+        clock = FakeClock(step=5)
+
+        mgr.run_monitor(now=clock.now, sleep=clock.sleep, view=view)
+
+        assert view.final(rk("h")).outcome is Outcome.STILL_IMPORTING
+        # Heavy polls at t=0/30/60/90: the t=60 poll is in-bound only because the
+        # t=10 fast-lane rise re-anchored the deadline to fire at t=70.
+        assert len(strategy.import_calls) == 4
+        assert strategy.import_calls[-1].at_deadline is True
+
     def test_missing_drops_record(self) -> None:
         strategy = _RecordingStrategy()
         pending = pending_import(infohash="h", added_at=_FRESH)

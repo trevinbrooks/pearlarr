@@ -415,7 +415,11 @@ class ImportsSettings(_ConfigBase):
     """Seconds to wait per torrent for qBittorrent to finish downloading it."""
 
     ready_timeout: int = Field(default=600, ge=1)
-    """Seconds to then wait for Sonarr to rescan and import the finished files."""
+    """Seconds to then wait for Sonarr to rescan and import the finished files.
+
+    Measured from the last imported file, not the whole import: a season pack
+    landing file-by-file only times out after this long with no new file.
+    """
 
     poll_interval: int = Field(default=30, ge=1)
     """Seconds between polls of qBittorrent and the Sonarr queue while waiting."""
