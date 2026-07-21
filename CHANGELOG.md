@@ -7,6 +7,8 @@ Pearlarr is a fork of [bbtufty/seadexarr](https://github.com/bbtufty/seadexarr).
 
 ## [Unreleased]
 
+## [1.0.8] - 2026-07-21
+
 ### Fixed
 
 - `imports.ready_timeout` now counts from the last file seen landing instead of the moment the download finished, so a season pack Sonarr imports file-by-file is no longer abandoned mid-copy. Previously the wait could report `0 imported · 1 left` while a healthy import was minutes from done - the episodes then landed anyway, contradicting the notification.
