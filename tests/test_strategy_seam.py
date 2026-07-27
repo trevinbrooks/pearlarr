@@ -20,6 +20,7 @@ from typing import NamedTuple, override
 import pytest
 from seadex import EntryRecord
 
+from pearlarr import sonarr_import as sonarr_import_module
 from pearlarr.cache import CacheRecord
 from pearlarr.config import Arr
 from pearlarr.grab_pipeline import GrabRequest
@@ -597,6 +598,7 @@ def _make_sonarr_for_import(
     quality_defs: list[QualityDefinition] | None = None,
     languages: list[Language] | None = None,
     commands: list[CommandResource] | None = None,
+    commands_script: list[list[CommandResource]] | None = None,
     cmd_id: int | None = 42,
     config_overrides: dict[str, list[str] | str] | None = None,
 ) -> tuple[SonarrSync, FakeSonarrClient]:
@@ -618,6 +620,7 @@ def _make_sonarr_for_import(
         queue=queue,
         episodes=episodes,
         commands=commands,
+        commands_script=commands_script,
         candidates=candidates,
         quality_defs=quality_defs,
         languages=languages,
@@ -663,12 +666,14 @@ class TestImportCompletedQueueState:
         assert probe.files_present is False
         assert sonarr.candidate_calls == []
 
-    def test_running_disk_command_defers_even_forced(self) -> None:
-        # Sonarr is executing a disk command (here its own import pass): a
-        # ManualImport POSTed now would queue behind it for a stale replay, so
-        # RETRY - force must not override - without scanning or POSTing. The
-        # probe keeps the determinate bar counts (0 of 1 target), so the wait's
-        # deadline still re-anchors off files the pass lands meanwhile.
+    def test_running_disk_command_defers_even_forced(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        # Sonarr is executing a disk command (here its own import pass) that
+        # outlives the rescan's bounded absorb: a ManualImport POSTed now would
+        # queue behind it for a stale replay, so RETRY - force must not override
+        # - without scanning or POSTing. The probe keeps the determinate bar
+        # counts (0 of 1 target), so the wait's deadline still re-anchors off
+        # files the pass lands meanwhile.
+        monkeypatch.setattr(sonarr_import_module, "_REFRESH_COMMAND_POLL_S", 0)
         pending = pending_import(infohash="abc123")
         strat, sonarr = _make_sonarr_for_import(
             candidates=[manual_candidate("/d/Show - 01 [1080p].mkv")],
@@ -684,6 +689,32 @@ class TestImportCompletedQueueState:
         assert (probe.imported_count, probe.target_count) == (0, 1)
         assert sonarr.candidate_calls == []
         assert sonarr.execute_calls == []
+
+    def test_rescan_absorbs_own_disk_pass_then_steps_in(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        # A completed rescan immediately starts Sonarr's own import pass. The
+        # rescan must wait that pass out; checking the disk guard right away
+        # tripped it in phase on EVERY poll and starved the step-in until the
+        # ready deadline (observed live 2026-07-27: importBlocked season packs
+        # deferred 25 minutes straight, zero ManualImports issued).
+        monkeypatch.setattr(sonarr_import_module, "_REFRESH_COMMAND_POLL_S", 0)
+        running = CommandResource.model_validate({"name": "ProcessMonitoredDownloads", "status": "started"})
+        pending = pending_import(
+            infohash="abc123",
+            file_episode_map={"Show - 01 [1080p].mkv": [101]},
+            episode_ids=[101],
+        )
+        strat, sonarr = _make_sonarr_for_import(
+            candidates=[manual_candidate("/d/Show - 01 [1080p].mkv")],
+            queue=[queue_record("ABC123", "importBlocked", status="warning")],
+            commands_script=[[running], [running]],
+        )
+
+        probe = strat.import_completed(pending, "/d")
+
+        assert probe.readiness is ImportReadiness.RETRY
+        assert probe.command_issued is True
+        assert len(sonarr.execute_calls) == 1
+        assert sonarr.list_commands_calls >= 3
 
     def test_clean_pending_forced_steps_in(self) -> None:
         # force=True (snapshot / final monitor poll): stop deferring, issue the
