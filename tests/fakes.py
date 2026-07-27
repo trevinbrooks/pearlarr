@@ -284,11 +284,15 @@ class FakeSonarrClient(AbstractSonarrClient):
         folder_candidates: list[ManualImportCandidate] | None = None,
         history_page: HistoryPage | None = None,
         path_mappings: list[RemotePathMapping] | None = None,
+        commands_script: list[list[CommandResource]] | None = None,
     ) -> None:
         self.all_series_return: list[SonarrItem] = all_series or []
         self.queue_return: list[QueueRecord] = queue or []
         self.episodes_return: list[SonarrEpisode] | None = [] if episodes is None else episodes
         self.commands_return: list[CommandResource] = commands or []
+        # Successive list_commands calls consume this front-to-back, then stick
+        # on commands_return - scripts a disk pass that clears mid-poll.
+        self.commands_script: list[list[CommandResource]] = commands_script or []
         self.candidates_return: list[ManualImportCandidate] | None = candidates
         self.quality_defs_return: list[QualityDefinition] = quality_defs or []
         self.languages_return: list[Language] = languages or []
@@ -319,6 +323,7 @@ class FakeSonarrClient(AbstractSonarrClient):
         self.queue_delete_calls: list[int] = []
         self.episodes_calls: list[int] = []
         self.refresh_calls: int = 0
+        self.list_commands_calls: int = 0
         self.history_calls: list[str] = []
         self.folder_candidate_calls: list[tuple[str, str]] = []
         self.history_probe_calls: list[str] = []
@@ -341,6 +346,9 @@ class FakeSonarrClient(AbstractSonarrClient):
 
     @override
     def list_commands(self) -> list[CommandResource]:
+        self.list_commands_calls += 1
+        if self.commands_script:
+            return self.commands_script.pop(0)
         return self.commands_return
 
     @override

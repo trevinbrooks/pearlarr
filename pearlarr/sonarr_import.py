@@ -76,6 +76,7 @@ from .sonarr_import_plan import (
     resolve_language_objects,
     resolve_quality,
     sonarr_disk_command_running,
+    sonarr_process_pass_running,
     targets_needing_import,
     translate_download_path,
 )
@@ -320,14 +321,22 @@ class ImportExecutor:
         self.scanner.reset()
 
     def refresh_downloads(self) -> None:
-        """Queue RefreshMonitoredDownloads (throttled) and wait for it, best-effort.
+        """Queue RefreshMonitoredDownloads (throttled), wait for it and its follow-up pass, best-effort.
 
         RefreshMonitoredDownloads is global and the blocking pass polls often (and
         may walk several torrents back-to-back), so it's re-issued at most once per
         `imports.poll_interval`. Waiting for the command to finish means the queue
-        read that follows reflects the rescan. The poll bound means a stuck command
-        can never block the run, and a failure to queue/confirm just leaves the
-        next queue read slightly stale (a later poll corrects it).
+        read that follows reflects the rescan. Its completion immediately starts
+        Sonarr's own monitored-download pass (ProcessMonitoredDownloads), so this
+        also waits (same bound) for that pass - otherwise the disk-command guard
+        downstream trips on the pass our own rescan scheduled, in phase on every
+        poll, and the step-in starves until the ready deadline (observed live
+        2026-07-27: importBlocked season packs deferred for 25 minutes straight).
+        Only that pass is absorbed - a foreign rename/import is the guard's job -
+        and one still running at the bound is genuine disk work the guard correctly
+        defers. The poll bounds mean a stuck command can never block the run, and a
+        failure to queue/confirm just leaves the next queue read slightly stale (a
+        later poll corrects it).
         """
 
         now = time.monotonic()
@@ -345,6 +354,13 @@ class ImportExecutor:
             command = self.sonarr.command_status(cmd_id)
             state = command.status or ""
             if state.casefold() in _COMMAND_TERMINAL_STATES:
+                break
+            time.sleep(_REFRESH_COMMAND_POLL_S)
+        else:
+            return
+
+        for _ in range(_REFRESH_COMMAND_MAX_POLLS):
+            if not sonarr_process_pass_running(self.list_commands()):
                 return
             time.sleep(_REFRESH_COMMAND_POLL_S)
 
@@ -386,7 +402,7 @@ class ImportExecutor:
             self.logger.debug(f"{pending.display_label}: queue entry {queue_id} not removed")
 
     def list_commands(self) -> list[CommandResource]:
-        """The current Sonarr command list, for the in-flight ManualImport guard.
+        """The current Sonarr command list, for the disk-command guards and the rescan absorb.
 
         A thin pass-through to `SonarrClient.list_commands` (mirrors
         `queue_records`' delegation to `self.sonarr`). Fetched fresh
@@ -882,7 +898,8 @@ class ImportReconciler:
         # it and replayed stale minutes later, re-copying every file an import
         # pass placed meanwhile. Wait it out instead - a pass's landing files
         # re-anchor the import deadline, and NOT gated on `force` for the same
-        # reason as the in-flight check below.
+        # reason as the in-flight check below. (refresh_downloads above already
+        # absorbed the pass our own rescan triggers; what trips here is foreign.)
         commands = self._executor.list_commands()
         if sonarr_disk_command_running(commands):
             self.logger.debug(f"{label}: Sonarr is running a disk command; waiting")

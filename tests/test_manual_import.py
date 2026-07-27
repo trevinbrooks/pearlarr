@@ -64,6 +64,7 @@ from pearlarr.sonarr_import_plan import (
     quality_axes_from_name,
     resolve_quality,
     sonarr_disk_command_running,
+    sonarr_process_pass_running,
     targets_needing_import,
     translate_download_path,
 )
@@ -457,6 +458,22 @@ class TestSonarrDiskCommandRunning:
 
     def test_empty_command_list(self) -> None:
         assert not sonarr_disk_command_running([])
+
+
+class TestSonarrProcessPassRunning:
+    """The narrower rescan-absorb predicate: only the self-inflicted pass."""
+
+    def test_started_pass_matches(self) -> None:
+        assert sonarr_process_pass_running([_command(name="processMonitoredDownloads", status="Started")])
+
+    def test_queued_pass_ignored(self) -> None:
+        assert not sonarr_process_pass_running([_command(name="ProcessMonitoredDownloads", status="queued")])
+
+    def test_foreign_disk_commands_ignored(self) -> None:
+        # A started rename/import is the disk-command guard's job to defer on -
+        # absorbing it in the rescan would stall the whole poll for its bound.
+        cmds = [_command(name="RenameFiles"), _command(name="ManualImport")]
+        assert not sonarr_process_pass_running(cmds)
 
 
 def _history(*events: tuple[str, str]) -> list[HistoryRecord]:

@@ -7,6 +7,10 @@ Pearlarr is a fork of [bbtufty/seadexarr](https://github.com/bbtufty/seadexarr).
 
 ## [Unreleased]
 
+### Fixed
+
+- Pearlarr again steps in for a download Sonarr refuses to import (for example a recommended release whose custom-format score is below the existing files'). The disk-command deferral added in 1.0.8 was checked right after Pearlarr's own queue rescan - and completing a rescan is exactly what starts Sonarr's next monitored-download pass, so the check deferred on every poll and the download sat blocked until the wait gave up. The rescan now waits for that pass to finish before deciding.
+
 ## [1.0.8] - 2026-07-21
 
 ### Fixed

@@ -227,22 +227,23 @@ def manual_import_in_flight(
     return False
 
 
+# The monitored-download pass a completed RefreshMonitoredDownloads immediately
+# starts - the one the rescan absorbs (see `sonarr_process_pass_running`).
+_SONARR_PROCESS_PASS_NAMES = frozenset({"processmonitoreddownloads"})
+
 # Sonarr's disk-access commands (its RequiresDiskAccess scheduling class),
 # compared case-folded like the command names above: the import passes
 # (completed-download handling, the legacy folder scan), the rename/move/delete
 # sweeps, and ManualImport itself. A started one blocks every queued one.
-_SONARR_DISK_COMMAND_NAMES = frozenset(
-    {
-        "processmonitoreddownloads",
-        "downloadedepisodesscan",
-        "manualimport",
-        "renamefiles",
-        "renameseries",
-        "moveseries",
-        "bulkmoveseries",
-        "deleteseriesfiles",
-    },
-)
+_SONARR_DISK_COMMAND_NAMES = _SONARR_PROCESS_PASS_NAMES | {
+    "downloadedepisodesscan",
+    "manualimport",
+    "renamefiles",
+    "renameseries",
+    "moveseries",
+    "bulkmoveseries",
+    "deleteseriesfiles",
+}
 
 
 def sonarr_disk_command_running(commands: list[CommandResource]) -> bool:
@@ -260,8 +261,26 @@ def sonarr_disk_command_running(commands: list[CommandResource]) -> bool:
     deadline.
     """
 
+    return _any_started(commands, _SONARR_DISK_COMMAND_NAMES)
+
+
+def sonarr_process_pass_running(commands: list[CommandResource]) -> bool:
+    """Whether Sonarr's monitored-download pass is executing right now.
+
+    A completed RefreshMonitoredDownloads immediately starts one, so the rescan
+    absorbs it (see `ImportExecutor.refresh_downloads`) - checked separately from
+    the broader disk-command set because only this pass is self-inflicted every
+    poll; waiting out a foreign rename/import there would stall the whole poll.
+    """
+
+    return _any_started(commands, _SONARR_PROCESS_PASS_NAMES)
+
+
+def _any_started(commands: list[CommandResource], names: frozenset[str]) -> bool:
+    """Whether any of the named commands is `started`, casefolded on both axes."""
+
     return any(
-        (command.name or "").casefold() in _SONARR_DISK_COMMAND_NAMES and (command.status or "").casefold() == "started"
+        (command.name or "").casefold() in names and (command.status or "").casefold() == "started"
         for command in commands
     )
 
