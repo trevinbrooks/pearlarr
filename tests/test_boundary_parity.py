@@ -22,7 +22,7 @@ from pearlarr.radarr_client import RadarrClient, make_radarr_client
 from pearlarr.seadex_types import HistoryRecord, ImportRejection, QueueRecord
 from pearlarr.sonarr_client import SonarrClient
 from pearlarr.sonarr_import import ImportExecutor
-from pearlarr.sonarr_import_plan import EpisodeSnapshot, QueueVerdict, classify_queue
+from pearlarr.sonarr_import_plan import EpisodeSnapshot, QueueVerdict, classify_queue, episode_index
 from pearlarr.sonarr_mapper import FileEpisodeMapper
 
 from .builders import make_run_deps, pending_import
@@ -85,7 +85,7 @@ def _drive_manual_import(
     probe = executor.run_manual_import(
         pending_import(),
         "/d",
-        snapshot=EpisodeSnapshot(episodes_by_id={}, trusted={}),
+        snapshot=EpisodeSnapshot(episodes=episode_index([]), trusted={}),
     )
 
     assert probe.readiness is ImportReadiness.RETRY
@@ -157,7 +157,7 @@ def test_golden_body_dead_tracked_folder_import_omits_download_id() -> None:
     probe = executor.run_manual_import(
         pending_import(),
         "/d",
-        snapshot=EpisodeSnapshot(episodes_by_id={}, trusted={}),
+        snapshot=EpisodeSnapshot(episodes=episode_index([]), trusted={}),
     )
 
     assert probe.readiness is ImportReadiness.RETRY
