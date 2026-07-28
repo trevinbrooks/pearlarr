@@ -1114,13 +1114,22 @@ class TestModeSwitchResurfacesFallbackSatisfied:
 
 
 class TestFolderLayoutCoverage:
-    """Coverage compares normalized leaf multisets.
+    """Coverage compares file-size multisets.
 
-    A folder-nested listing is covered by its flat twin, while same-named
-    files in two folders stay two files.
+    A folder-nested listing is covered by its flat twin, and a listing whose
+    files SeaDex named differently is still covered, while a listing carrying
+    genuinely different bytes is not.
     """
 
-    def _built(self, priv_files: tuple[str, ...], pub_files: tuple[str, ...], al_id: int) -> SeadexDict:
+    def _built(
+        self,
+        priv_files: tuple[str, ...],
+        pub_files: tuple[str, ...],
+        al_id: int,
+        *,
+        priv_sizes: tuple[int, ...] | None = None,
+        pub_sizes: tuple[int, ...] | None = None,
+    ) -> SeadexDict:
         # One "Pick" release cross-seeded private+public with the given
         # layouts, plus a non-preferred public "Alt" the fallback could offer.
         priv = make_torrent_record(
@@ -1130,6 +1139,7 @@ class TestFolderLayoutCoverage:
             infohash=None,
             file_names=priv_files,
             file_size=999,
+            file_sizes=priv_sizes,
             is_best=True,
         )
         pub_twin = make_torrent_record(
@@ -1139,6 +1149,7 @@ class TestFolderLayoutCoverage:
             infohash=PUB_HASH,
             file_names=pub_files,
             file_size=999,
+            file_sizes=pub_sizes,
             is_best=True,
         )
         alt = make_torrent_record(
@@ -1159,27 +1170,110 @@ class TestFolderLayoutCoverage:
         return filt.build(make_entry_record(anilist_id=al_id, torrents=(priv, pub_twin, alt)))
 
     def test_covered_private_pick_offers_no_fallback_and_prunes(self) -> None:
-        # A raw-path comparison misreads the folder-nested private listing as
-        # uncovered and pulls in the Alt stand-in; leaf comparison must not,
-        # and the same comparison prunes the private url its flat twin covers.
+        # A listing-path comparison misreads the folder-nested private listing
+        # as uncovered and pulls in the Alt stand-in; a size comparison must
+        # not, and the same comparison prunes the private url its twin covers.
         sd = self._built(
             priv_files=("NC/Pick NCED01.mkv", "Pick - S01E01.mkv"),
             pub_files=("Pick NCED01.mkv", "Pick - S01E01.mkv"),
             al_id=91,
+            priv_sizes=(70, 90),
+            pub_sizes=(70, 90),
         )
 
         assert set(sd) == {"Pick"}
         assert set(sd["Pick"].urls) == {PUB_URL}
 
-    def test_leaf_collision_is_not_coverage(self) -> None:
-        # Two same-named files in different folders are two files: a flat twin
-        # carrying only one does not cover the private listing, so the
-        # fallback is still offered and the private url survives the prune.
+    def test_a_listing_carrying_fewer_copies_is_not_coverage(self) -> None:
+        # Two files of one size are two files: a twin carrying only one does
+        # not cover the private listing, so the fallback is still offered and
+        # the private url survives the prune.
         sd = self._built(
             priv_files=("S01/Pick - 01.mkv", "S02/Pick - 01.mkv"),
             pub_files=("Pick - 01.mkv",),
             al_id=92,
+            priv_sizes=(100, 100),
+            pub_sizes=(100,),
         )
 
         assert "Alt" in sd
         assert PRIV_URL in sd["Pick"].urls
+
+    def test_files_seadex_named_differently_still_cover(self) -> None:
+        # Real data: a per-special AB torrent and the public pack it belongs to
+        # disagree about WHICH special each file is, so the same bytes carry
+        # swapped episode names. The pack still holds the private listing's
+        # file, and reading it as uncovered warns about a release the library
+        # already has - and can never grab, because it is private.
+        sd = self._built(
+            priv_files=("Show S00E03.mkv",),
+            pub_files=("Show S00E03.mkv", "Show S00E02.mkv"),
+            al_id=93,
+            priv_sizes=(1464436971,),
+            pub_sizes=(938809391, 1464436971),
+        )
+
+        assert set(sd["Pick"].urls) == {PUB_URL}
+
+    def test_a_different_release_at_the_same_names_is_not_coverage(self) -> None:
+        # Same names, different bytes: a re-encode is not the release the
+        # private listing carries, so it cannot cover it.
+        sd = self._built(
+            priv_files=("Pick - 01.mkv",),
+            pub_files=("Pick - 01.mkv",),
+            al_id=94,
+            priv_sizes=(100,),
+            pub_sizes=(200,),
+        )
+
+        assert PRIV_URL in sd["Pick"].urls
+
+    def test_coverage_split_across_two_public_listings_still_covers(self) -> None:
+        # The public side genuinely carries both of the private pick's files,
+        # one listing each. The elementwise-max fold must still read that as
+        # covered - reading it as a gap grabs a stand-in nobody needed.
+        priv = make_torrent_record(
+            release_group="Pick",
+            tracker=Tracker.ANIMEBYTES,
+            url=PRIV_URL,
+            infohash=None,
+            file_names=("S01/Pick - 01.mkv", "S02/Pick - 01.mkv"),
+            file_sizes=(100, 200),
+            is_best=True,
+        )
+        first_cour = make_torrent_record(
+            release_group="PubOne",
+            tracker=Tracker.NYAA,
+            url=PUB_URL,
+            infohash=PUB_HASH,
+            file_names=("Pick - 01.mkv",),
+            file_sizes=(100,),
+            is_best=True,
+        )
+        second_cour = make_torrent_record(
+            release_group="PubTwo",
+            tracker=Tracker.NYAA,
+            url="https://nyaa.si/view/3",
+            infohash="f" * 40,
+            file_names=("Pick - 01.mkv",),
+            file_sizes=(200,),
+            is_best=True,
+        )
+        alt = make_torrent_record(
+            release_group="Alt",
+            tracker=Tracker.NYAA,
+            url="https://nyaa.si/view/2",
+            infohash="e" * 40,
+            file_names=("Pick.S01E01.alt.mkv",),
+            is_best=False,
+        )
+        filt = make_release_filter(
+            private_releases="fallback",
+            want_best=True,
+            prefer_dual_audio=False,
+            planner=make_planner(),
+        )
+
+        sd = filt.build(make_entry_record(anilist_id=94, torrents=(priv, first_cour, second_cour, alt)))
+
+        assert "Alt" not in sd

@@ -523,24 +523,27 @@ def make_torrent_record(
     infohash: str | None = "a" * 40,
     file_names: tuple[str, ...] = (),
     file_size: int = 1000,
+    file_sizes: tuple[int, ...] | None = None,
     is_dual_audio: bool = False,
     is_best: bool = True,
     size: int = 1000,
 ) -> TorrentRecord:
     """A real `seadex.TorrentRecord` (frozen msgspec) with sane release defaults.
 
-    `file_names` are wrapped into `seadex.File` entries (each `file_size` bytes)
-    so a caller seeds the on-disk file list the Sonarr matching parses, without
-    importing the library leaf types itself.
+    `file_names` are wrapped into `seadex.File` entries (each `file_size` bytes,
+    or the positionally paired `file_sizes` when files must differ) so a caller
+    seeds the on-disk file list the Sonarr matching parses, without importing
+    the library leaf types itself.
     """
 
     stamp = datetime(2026, 1, 1)
+    sizes = file_sizes if file_sizes is not None else (file_size,) * len(file_names)
     return TorrentRecord(
         collection_id="c",
         collection_name="cn",
         created_at=stamp,
         is_dual_audio=is_dual_audio,
-        files=tuple(File(name=name, size=file_size) for name in file_names),
+        files=tuple(File(name=name, size=file_bytes) for name, file_bytes in zip(file_names, sizes, strict=True)),
         id="t1",
         infohash=infohash,
         is_best=is_best,
@@ -838,6 +841,7 @@ def url_item(
     download: bool = False,
     is_fallback: bool = False,
     size_mismatch: bool = False,
+    any_size_mismatch: bool = False,
     episodes: list[EpisodeRecord] | None = None,
 ) -> SeadexUrlItem:
     """One SeaDex URL record, matching `get_seadex_dict`'s `url_item` shape."""
@@ -853,6 +857,7 @@ def url_item(
         download=download,
         is_fallback=is_fallback,
         size_mismatch=size_mismatch,
+        any_size_mismatch=any_size_mismatch,
         episodes=episodes or [],
     )
 

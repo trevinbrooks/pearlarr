@@ -9,9 +9,9 @@ Pearlarr is a fork of [bbtufty/seadexarr](https://github.com/bbtufty/seadexarr).
 
 ### Fixed
 
-- Fallback mode (`seadex.private_releases: fallback`) no longer re-grabs a batch the library already holds when a release's private and public listings lay out the same files differently (one nesting extras in a folder the other lists flat). File coverage now compares names, not listing paths, so a private pick covered by its own public twin no longer drags in a public alternative.
-- An owned file whose release-group tag a rename scheme stripped now counts as the recommended release when its size matches the listed file exactly (movies: when every listed size has an ungrouped twin). Such files previously read as foreign, so a re-check could re-download releases the library already held. Zero sizes never match, so a failed zero-byte copy is still repaired.
-- A pack import no longer replaces on-disk files that belong to another of the entry's recommended releases. The never-overwrite guard only knew the groups Pearlarr itself had grabbed, so a pack import could overwrite a recommended copy that predated Pearlarr.
+- A release listed with different folder layouts on two trackers (one nesting extras in a folder the other lists flat) is now recognized as one release. Listings are compared by file size rather than by listing path, so fallback mode (`seadex.private_releases: fallback`) no longer re-grabs a batch the library already holds, a cross-seeded copy of a release is no longer grabbed twice, and a listing SeaDex named differently from its twin no longer reports a release the library has as needing action.
+- An owned file whose release-group tag a rename scheme stripped now counts as the recommended release when its size matches the listed file exactly (movies: when every untagged file on disk belongs to the listing). Such files previously read as foreign, so a re-check could re-download releases the library already held - including from a different recommended release than the one on disk. Zero sizes never match, so a failed zero-byte copy is still repaired.
+- A pack import no longer replaces on-disk files that belong to another of the entry's recommended releases, or files a rename left untagged that the grab decision had already identified as that release. The never-overwrite guard only knew the groups Pearlarr itself had grabbed, so a pack import could overwrite a recommended copy that predated Pearlarr. A release the library holds at an outdated size on any of its episodes is still replaced.
 
 ## [1.0.9] - 2026-07-28
 

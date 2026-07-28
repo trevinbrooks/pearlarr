@@ -9,7 +9,7 @@ set via the pure `assign_episode_ids`. Owns the per-run on-disk parse cache.
 
 import os
 
-from .manual_import import PendingImport, normalize_basename, normalized_leaf
+from .manual_import import PendingImport, normalized_leaf
 from .seadex_types import ManualImportCandidate, ParsedFileInfo
 from .sonarr_client import AbstractSonarrClient
 from .sonarr_import_plan import CandidateFile, assign_episode_ids, parse_se_from_filename
@@ -136,7 +136,7 @@ class FileEpisodeMapper:
 
         # SeaDex order first (so output is stable and the absolute leg's input is
         # deterministic), then any on-disk leaf the SeaDex list didn't name.
-        ordered = [norm for norm in (normalize_basename(name) for name in pending.seadex_files) if norm in on_disk]
+        ordered = [norm for norm in (normalized_leaf(name) for name in pending.seadex_files) if norm in on_disk]
         placed = set(ordered)
         ordered += [norm_base for norm_base in on_disk if norm_base not in placed]
 
@@ -149,7 +149,7 @@ class FileEpisodeMapper:
         for name, ids in pending.file_episode_map.items():
             clean = [i for i in ids if i]
             if clean:
-                seeded[normalize_basename(name)] = clean
+                seeded[normalized_leaf(name)] = clean
         seeded_ids = {i for ids in seeded.values() for i in ids}
 
         leftover = [norm for norm in ordered if norm not in seeded]
@@ -163,7 +163,7 @@ class FileEpisodeMapper:
             for norm_base in ordered:
                 parsed_by_file[norm_base] = self._parsed_file_info(os.path.basename(on_disk[norm_base].path))
             for name in pending.file_episode_map:
-                norm_base = normalize_basename(name)
+                norm_base = normalized_leaf(name)
                 if norm_base not in parsed_by_file:
                     parsed_by_file[norm_base] = self._parsed_file_info(os.path.basename(name))
 

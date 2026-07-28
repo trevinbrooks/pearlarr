@@ -478,20 +478,22 @@ class EpisodeFileStatus(Enum):
 
     RECOMMENDED = auto()
     """Already holds a file from a recommended group (ours, another torrent we grabbed for this series, or
-    a group the entry's SeaDex picks carried at grab time). It is done - do NOT overwrite it."""
+    a group the entry's SeaDex picks carried at grab time) - or an untagged file the grab-time sizes
+    identified as one. It is done - do NOT overwrite it."""
 
     OTHER_GROUP = auto()
     """Holds a file from a non-recommended group. Import ours over it (the operator's intended replacement)."""
 
     UNKNOWN_GROUP = auto()
-    """Holds a file whose group Sonarr couldn't parse. Import ours rather than trust an unidentifiable file as
-    recommended."""
+    """Holds a file with no parseable group that no listed size identified either. Import ours rather than
+    trust an unidentifiable file as recommended."""
 
 
 class EpisodeSnapshot(NamedTuple):
-    """One poll's coherent view of a series: the fresh episode index plus the recommended-group set.
+    """One poll's coherent view of a series: the fresh episode index plus what counts as already ours.
 
-    The two fields are fetched together, so consumers never mix state from two different polls.
+    The episode index and the guard sets are gathered together, so consumers never mix state from two
+    different polls.
     """
 
     episodes_by_id: dict[int, SonarrEpisode]
@@ -499,6 +501,10 @@ class EpisodeSnapshot(NamedTuple):
 
     recommended_groups: set[str]
     """The normalized (overwrite-guard) recommended-group set: grabbed groups plus the entries' pick groups."""
+
+    owned_episode_ids: frozenset[int] = frozenset()
+    """Episodes whose untagged file the grab-time sizes identified as a pick's copy. Empty for a record
+    written before the field existed, which classifies untagged files as unidentifiable, as it always did."""
 
 
 def episode_file_statuses(
@@ -531,7 +537,13 @@ def episode_file_statuses(
             continue
         group = ep.episode_file.release_group if ep.episode_file else None
         if not group:
-            statuses[ep_id] = EpisodeFileStatus.UNKNOWN_GROUP
+            # An untagged file the grab-time sizes named is a recommended copy;
+            # anything else untagged stays unidentifiable.
+            statuses[ep_id] = (
+                EpisodeFileStatus.RECOMMENDED
+                if ep_id in snapshot.owned_episode_ids
+                else EpisodeFileStatus.UNKNOWN_GROUP
+            )
         elif normalize_group(group) in snapshot.recommended_groups:
             statuses[ep_id] = EpisodeFileStatus.RECOMMENDED
         else:

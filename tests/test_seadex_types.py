@@ -8,6 +8,8 @@ contract the AniList gateway depends on), and the frozen-model violation shape
 (pydantic `ValidationError`, not `FrozenInstanceError`).
 """
 
+from collections import Counter
+
 import pytest
 from pydantic import ValidationError
 
@@ -22,6 +24,7 @@ from pearlarr.seadex_types import (
     ParsedFileInfo,
     QueueRecord,
     SonarrSeries,
+    file_size_cover,
     validate_each,
 )
 
@@ -150,3 +153,20 @@ def test_history_record_field_name_construction_matches_alias_parse() -> None:
         {"id": 2, "date": "d", "seriesId": 5, "eventType": "grabbed", "downloadId": "A"},
     )
     assert by_name == from_wire
+
+
+def test_file_size_cover_folds_listings_with_elementwise_max() -> None:
+    """MUTATION PIN: `|` not `+`, and not a set union either.
+
+    Two listings carrying one copy of a size each cannot cover a listing that
+    genuinely carries two - only ONE listing holding both can. A `+` fold would
+    fake that coverage and prune a real pick; a set union would deflate a real
+    two-copy listing to one and offer a fallback nobody needs.
+    """
+
+    one_each = [[100], [100]]
+    assert file_size_cover(one_each)[100] == 1
+    assert not Counter([100, 100]) <= file_size_cover(one_each)
+    assert file_size_cover([[100, 100]])[100] == 2
+    # Coverage genuinely split across two listings still covers.
+    assert Counter([100, 200]) <= file_size_cover([[100], [200]])

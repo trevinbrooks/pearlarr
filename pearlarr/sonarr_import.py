@@ -39,6 +39,7 @@ from .manual_import import (
     normalized_leaf,
 )
 from .output import hub_note, hub_warn
+from .planner import index_episodes_by_key, size_identified_episodes
 from .run_services import RunDeps
 from .seadex_types import (
     CommandResource,
@@ -790,6 +791,15 @@ class ImportReconciler:
         # Sonarr's title parse.
         ordered_episode_ids = [ep.id for ep in ep_list if ep.id]
         entry_groups = non_stale_groups(seadex_dict)
+        # The episodes whose untagged on-disk file the planner identified as a
+        # pick's copy, resolved through the same function so the import can't
+        # overwrite a file the grab decision just called ours.
+        episode_index = index_episodes_by_key(ep_list)
+        owned_episode_ids = [
+            episode_index[key].id
+            for key in size_identified_episodes(seadex_dict, episode_index)
+            if episode_index[key].id
+        ]
         # Per-file parse records are read straight from the cache facade
         # (`get_sonarr_parse`): each is the persisted parse entry
         # `{"fetched_at": str, "episodes": [...]}` written by
@@ -863,6 +873,7 @@ class ImportReconciler:
                     slice_coverage=coverage_string(episodes_from_ep_list(claimed_eps)) or None,
                     excluded_files=excluded_files,
                     entry_groups=list(entry_groups),
+                    owned_episode_ids=list(owned_episode_ids),
                 )
 
         return pending_seeds
@@ -1009,6 +1020,7 @@ class ImportReconciler:
         snapshot = EpisodeSnapshot(
             episodes_by_id={ep.id: ep for ep in episodes if ep.id},
             recommended_groups=self._recommended_groups(pending),
+            owned_episode_ids=frozenset(pending.owned_episode_ids),
         )
         return _SeedStatuses(snapshot, episode_file_statuses(targets, snapshot))
 
@@ -1042,6 +1054,12 @@ class ImportReconciler:
         we never grabbed - is never overwritten by this one. Sibling records'
         entry_groups stay out: another entry's picks say nothing about THIS
         entry's episodes.
+
+        This record's own group is unconditional (unlike `entry_groups`, which
+        drops groups judged stale): it is the identity of the files we are
+        importing, so dropping it would make our own just-imported file read as
+        foreign and re-import forever. A stale copy of the group we grabbed is
+        therefore left in place - the pre-existing same-group limit.
         """
 
         groups: set[str] = set()

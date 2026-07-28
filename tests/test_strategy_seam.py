@@ -988,6 +988,28 @@ class TestImportCompletedQueueState:
         assert probe.files_present is True
         assert sonarr.candidate_calls == []
 
+    def test_target_holding_an_untagged_file_we_identified_is_protected(self) -> None:
+        # The grab-time size identification rides the record through to the
+        # import: an untagged file the planner named reads RECOMMENDED, so the
+        # pack we grabbed for the REST of the season never copies over it.
+        pending = pending_import(
+            infohash="abc123",
+            release_group="SubGroup",
+            file_episode_map={"Show - 01 [1080p].mkv": [101]},
+            episode_ids=[101],
+            owned_episode_ids=[101],
+        )
+        strat, sonarr = _make_sonarr_for_import(
+            candidates=[manual_candidate("/d/Show - 01 [1080p].mkv")],
+            episodes=[_ep_with_file(101, group=None)],
+        )
+
+        probe = strat.import_completed(pending, "/d")
+
+        assert probe.readiness is ImportReadiness.IMPORTED
+        assert probe.files_present is True
+        assert sonarr.candidate_calls == []
+
     def test_import_blocked_steps_in_with_our_mapping(self) -> None:
         # Sonarr can't auto-import (importBlocked) -> our authoritative manual
         # import takes over and ISSUES the command. The copy is async, so right

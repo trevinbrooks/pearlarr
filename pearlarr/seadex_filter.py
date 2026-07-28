@@ -1,6 +1,7 @@
 """The SeaDex release filter: builds the per-entry `seadex_dict` and applies the selection rules."""
 
 import sys
+from collections import Counter
 from typing import TYPE_CHECKING, NamedTuple
 
 from rich.console import Console
@@ -9,7 +10,6 @@ from seadex import EntryRecord, TorrentRecord
 from .config import PRIVATE_TRACKERS, PrivateReleaseAction
 from .console_caps import console_of
 from .log import indent_string
-from .manual_import import leaf_cover, normalized_leaves
 from .output import Accent, StyledValue, hub_warn
 from .reporter import RunContext
 from .seadex_types import (
@@ -18,6 +18,7 @@ from .seadex_types import (
     SeadexReleaseGroupItem,
     SeadexUrlItem,
     SonarrEpisode,
+    file_size_cover,
 )
 
 if TYPE_CHECKING:
@@ -42,6 +43,12 @@ def _is_public_torrent(torrent: TorrentRecord) -> bool:
     """Whether a torrent is on a public tracker (the run's is_public computation)."""
 
     return torrent.tracker.is_public() and torrent.tracker.casefold() not in PRIVATE_TRACKERS
+
+
+def _file_sizes(torrent: TorrentRecord) -> list[int]:
+    """A candidate's listed file sizes, the coverage-comparison input."""
+
+    return [f.size for f in torrent.files]
 
 
 class SeadexReleaseFilter:
@@ -150,10 +157,11 @@ class SeadexReleaseFilter:
             # A public candidate with an UNKNOWN fileset: treated per-group as
             # covering (the cross-seed case), mirroring the private side.
             group_has_blind_public[rg] = group_has_blind_public.get(rg, False) or (is_pub and not t.files)
-        # Leaf multisets, not raw paths: trackers list the same release with
-        # different folder layouts, and a raw-path comparison would misread a
-        # covered private pick as uncovered (pulling in spurious fallbacks).
-        public_cover = leaf_cover((f.name for f in t.files) for t in candidates if _is_public_torrent(t))
+        # File-size multisets, not listing paths: trackers lay the same release
+        # out differently (one nesting extras in a folder the other lists flat),
+        # and a path comparison would misread a covered private pick as
+        # uncovered, pulling in spurious fallbacks.
+        public_cover = file_size_cover(_file_sizes(t) for t in candidates if _is_public_torrent(t))
 
         def needs_fallback(t: TorrentRecord) -> bool:
             """A private candidate needs a public alternative unless the public candidates cover its files.
@@ -167,7 +175,7 @@ class SeadexReleaseFilter:
                 return not group_has_public[t.release_group]
             if group_has_blind_public[t.release_group]:
                 return False
-            return not normalized_leaves(f.name for f in t.files) <= public_cover
+            return not Counter(_file_sizes(t)) <= public_cover
 
         if not any(needs_fallback(t) for t in candidates):
             return candidates, set()
@@ -196,9 +204,9 @@ class SeadexReleaseFilter:
             # an empty-fileset public url covers (cross-seed) while folding nothing.
             if not any(u.is_public for u in urls.values()):
                 continue
-            group_public_cover = leaf_cover(u.files for u in urls.values() if u.is_public)
+            group_public_cover = file_size_cover(u.size for u in urls.values() if u.is_public)
             release_group_item.urls = {
-                url: u for url, u in urls.items() if u.is_public or not normalized_leaves(u.files) <= group_public_cover
+                url: u for url, u in urls.items() if u.is_public or not Counter(u.size) <= group_public_cover
             }
 
     def _narrow_candidates(self, torrents: list[TorrentRecord]) -> list[TorrentRecord]:
