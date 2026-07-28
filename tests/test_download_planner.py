@@ -575,6 +575,23 @@ class TestSameGroupDuplicateDedup:
         assert seadex["A"].urls["u1"].download is True
         assert seadex["A"].urls["u2"].download is False
 
+    def test_same_leaf_in_two_folders_never_dedups(self) -> None:
+        # Two same-named files in different folders are DIFFERENT files: the
+        # two-folder batch is not a duplicate of the single-file listing, so
+        # unflagging it would silently drop the second folder's content.
+        planner = make_planner()
+        seadex = {
+            "A": rg_group(
+                {
+                    "u1": url_item(files=["A - 01.mkv"], download=True),
+                    "u2": url_item(files=["S01/A - 01.mkv", "S02/A - 01.mkv"], download=True),
+                },
+            ),
+        }
+        planner.reduce_overlapping_downloads(seadex)
+        assert seadex["A"].urls["u1"].download is True
+        assert seadex["A"].urls["u2"].download is True
+
     def test_unknown_filesets_both_kept(self) -> None:
         planner = make_planner()
         seadex = {

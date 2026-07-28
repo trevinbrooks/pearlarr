@@ -9,6 +9,7 @@ orchestrator's run state or its log formatter.
 """
 
 import logging
+from collections import Counter
 from collections.abc import Iterable, Mapping
 from dataclasses import dataclass, field
 from itertools import compress
@@ -103,11 +104,12 @@ def _sizes_identify_ungrouped(seadex_sizes: Iterable[int], ungrouped_sizes: Iter
 
     Identifies an owned copy whose group tag a rename stripped: every listed
     size must be positive (zero/unknown proves nothing) and present among the
-    sizes the arr holds without a release group.
+    sizes the arr holds without a release group - as multisets, so two listed
+    files at one size need two on-disk twins.
     """
 
-    sizes = set(seadex_sizes)
-    return bool(sizes) and all(s > 0 for s in sizes) and sizes <= set(ungrouped_sizes)
+    sizes = Counter(seadex_sizes)
+    return bool(sizes) and all(s > 0 for s in sizes) and sizes <= Counter(ungrouped_sizes)
 
 
 def get_episode_keys(
@@ -711,19 +713,20 @@ class DownloadPlanner:
             dropped = self._reduce_same_files_set(seadex_dict, same_files, flagged, skips)
             self._rescue_dropped_coverage(seadex_dict, same_files, dropped)
 
-        # Within ONE group, flagged urls with identical non-empty file-name sets
+        # Within ONE group, flagged urls with identical non-empty file lists
         # are the same release cross-seeded (distinct infohashes = duplicate
         # downloads, the promotion branch above can flip several at once): keep
-        # the first, unflag the rest. Names compare as normalized leaves - one
-        # listing may fold files into a folder the other lists flat. An empty
+        # the first, unflag the rest. Identity compares normalized leaf
+        # multisets - one listing may fold files into a folder the other lists
+        # flat, while same-named files in two folders stay distinct. An empty
         # fileset can't prove identity, so it's never deduped. Cross-group
         # overlap is the same-files logic above.
         for rg_item in seadex_dict.values():
-            seen: set[frozenset[str]] = set()
+            seen: set[frozenset[tuple[str, int]]] = set()
             for u in rg_item.urls.values():
                 if not u.download or not u.files:
                     continue
-                file_names = normalized_leaves(u.files)
+                file_names = frozenset(normalized_leaves(u.files).items())
                 if file_names in seen:
                     u.download = False
                 else:

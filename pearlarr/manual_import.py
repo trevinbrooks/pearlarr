@@ -17,6 +17,7 @@ which imports from this module - never the other way around.
 import math
 import os
 import unicodedata
+from collections import Counter
 from collections.abc import Iterable
 from dataclasses import asdict, dataclass, field
 from enum import Enum, StrEnum, auto
@@ -46,15 +47,16 @@ def normalize_basename(name: str) -> str:
     return unicodedata.normalize("NFC", name).strip().casefold()
 
 
-def normalized_leaves(names: Iterable[str]) -> frozenset[str]:
-    """Normalize a listing's file paths to their leaves for cross-listing comparison.
+def normalized_leaves(names: Iterable[str]) -> Counter[str]:
+    """Normalize a listing's file paths to a multiset of leaves for cross-listing comparison.
 
     One release can list a file flat on one tracker and under a folder on
     another, so file-coverage and cross-seed identity checks compare normalized
-    basenames, never raw listing paths.
+    basenames, never raw listing paths. A multiset (not a set) so two distinct
+    same-named files in different folders never collapse into one.
     """
 
-    return frozenset(normalize_basename(os.path.basename(name)) for name in names)
+    return Counter(normalize_basename(os.path.basename(name)) for name in names)
 
 
 def normalize_group(group: str) -> str:
@@ -528,9 +530,10 @@ class PendingImport:
     accounting only - the IMPORTED decision never trusts them. Empty for older records (conservative)."""
 
     entry_groups: list[str] = field(default_factory=list[str])
-    """Every release group the entry's filtered SeaDex dict carried at grab time. Widens the import-time
-    never-overwrite set: an on-disk file from another recommended group stays even when that group was
-    never grabbed by us. Empty for older records (they guard on grabbed groups alone)."""
+    """The entry's filtered SeaDex pick groups at grab time, minus any the run judged stale on disk
+    (size mismatch - this grab replaces those copies). Widens the import-time never-overwrite set: an
+    on-disk file from another recommended group stays even when that group was never grabbed by us.
+    Empty for older records (they guard on grabbed groups alone)."""
 
     @property
     def key(self) -> PendingKey:
