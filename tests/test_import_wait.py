@@ -1147,6 +1147,74 @@ class TestRunMonitor:
         # t=0/30 in-bound, t=60 forced-but-rescued, t=90 in-bound, t=120 forced.
         assert [c.at_deadline for c in strategy.import_calls] == [False, False, True, False, True]
 
+    def test_deferred_polls_never_walk_away_mid_copy(self) -> None:
+        # Our own copy in flight across the ready deadline (the 2026-07-27 Fire
+        # Force timeout-mid-copy): every deferred poll credits its interval back,
+        # so the row rides the copy out to IMPORTED instead of walking away.
+        strategy = _RecordingStrategy(
+            completed_sequence=[
+                import_probe(ImportReadiness.RETRY, files_present=False, command_issued=True, deferred=True)
+                for _ in range(3)
+            ]
+            + [import_probe(ImportReadiness.RETRY, files_present=True, command_issued=True)],
+        )
+        pending = pending_import(infohash="h", added_at=_FRESH)
+        qbit = FakeQbit({"h": [FakeTorrent(is_complete=True, content_path="/d")]})
+        mgr = make_orchestration_manager(
+            qbit=qbit,
+            strategy=strategy,
+            store_records=[pending],
+            pending=[pending],
+            import_wait_timeout=3600,
+            import_ready_timeout=60,
+            import_poll_interval=30,
+        )
+        view = RecordingWaitView()
+        clock = FakeClock(step=30)
+
+        mgr.run_monitor(now=clock.now, sleep=clock.sleep, view=view)
+
+        assert view.final(rk("h")).outcome is Outcome.IMPORTED
+        assert mgr._pending_records() == {}
+        # Four polls (t=0/30/60/90), none forced: the credited clock never expired.
+        assert len(strategy.import_calls) == 4
+        assert all(c.at_deadline is False for c in strategy.import_calls)
+
+    def test_deferral_pauses_the_ready_clock_never_resets_it(self) -> None:
+        # Two stalled polls burn the clock (t=0/30), the t=60 deadline poll
+        # defers: the credit spans only the deferred interval, so the deadline
+        # fires on the next clear shot (t=90) - deferral postpones the
+        # walk-away by exactly the time we spent waiting on our own work.
+        strategy = _RecordingStrategy(
+            completed_sequence=[
+                import_probe(ImportReadiness.RETRY, files_present=False, command_issued=True),
+                import_probe(ImportReadiness.RETRY, files_present=False, command_issued=True),
+                import_probe(ImportReadiness.RETRY, files_present=False, command_issued=True, deferred=True),
+                import_probe(ImportReadiness.RETRY, files_present=False, command_issued=True),
+            ],
+        )
+        pending = pending_import(infohash="h", added_at=_FRESH)
+        qbit = FakeQbit({"h": [FakeTorrent(is_complete=True, content_path="/d")]})
+        mgr = make_orchestration_manager(
+            qbit=qbit,
+            strategy=strategy,
+            store_records=[pending],
+            pending=[pending],
+            import_wait_timeout=3600,
+            import_ready_timeout=60,
+            import_poll_interval=30,
+        )
+        view = RecordingWaitView()
+        clock = FakeClock(step=30)
+
+        mgr.run_monitor(now=clock.now, sleep=clock.sleep, view=view)
+
+        assert view.final(rk("h")).outcome is Outcome.STILL_IMPORTING
+        assert set(mgr._pending_records()) == {pk("h")}
+        # t=60 reaches the deadline but defers (no terminal); t=90 is the real
+        # forced attempt.
+        assert [c.at_deadline for c in strategy.import_calls] == [False, False, True, True]
+
     def test_static_done_count_never_extends_the_deadline(self) -> None:
         # A genuinely stalled import: the first determinate reading (1/3) is a
         # baseline, not progress, and a count that never rises past it must not

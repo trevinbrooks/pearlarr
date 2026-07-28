@@ -603,10 +603,14 @@ class _MonitorRow:
     import_anchor: float | None = None
     """Ready-deadline anchor: the first COMPLETE, re-stamped each time another
     intended file lands - so `ready_timeout` bounds a stalled import, not a big
-    season pack Sonarr copies file-by-file."""
+    season pack Sonarr copies file-by-file. Polls deferred behind our own Sonarr
+    work credit their interval back to it (waiting on ourselves is not a stall)."""
     import_seen: int | None = None
     """Highest determinate done-count: the baseline `_note_import_progress` measures
     rises against (a max, so a stale lower reading can't fake a rise)."""
+    import_poll_at: float | None = None
+    """When the last import-phase heavy poll ran, so a deferred poll knows the
+    interval to credit back to `import_anchor`."""
 
 
 class MonitorPass:
@@ -728,7 +732,9 @@ class MonitorPass:
         freshly-issued import command reads `importing` until the copy lands.
         The final in-bound attempt (`at_deadline`) both forces and warns; a file
         landing that same cycle re-anchors the deadline instead
-        (`_note_import_progress`).
+        (`_note_import_progress`), and a poll deferred behind our own Sonarr
+        work credits its interval back (never terminal, the clock effectively
+        pauses until we get a clear shot).
         """
 
         record = row.record
@@ -779,11 +785,16 @@ class MonitorPass:
             return
 
         # COMPLETE: drive / verify our import, gating `imported` on verified files.
+        now_ts = self.now()
         if row.import_start is None:
-            row.import_start = self.now()
+            row.import_start = now_ts
         if row.import_anchor is None:
             row.import_anchor = row.import_start
-        at_deadline = self.now() - row.import_anchor >= self.import_timeout
+        # The interval since the last import-phase poll, credited back to the
+        # anchor when this poll defers behind our own Sonarr work (below).
+        gap = now_ts - row.import_poll_at if row.import_poll_at is not None else 0.0
+        row.import_poll_at = now_ts
+        at_deadline = now_ts - row.import_anchor >= self.import_timeout
         probe = self._mgr.try_import_completed(
             record,
             poll.content_path,
@@ -791,9 +802,16 @@ class MonitorPass:
             at_deadline=at_deadline,
         )
         landed = self._note_import_progress(row, probe.imported_count, probe.target_count)
+        if probe.deferred and not landed:
+            # Deferred behind OUR OWN work (another record's import, or this
+            # record's copy in flight): the deadline bounds a STALLED import, and
+            # waiting on ourselves is not this record stalling - credit the
+            # interval back so the clock only counts clear-shot time. (A landing
+            # file already re-anchored harder via `_note_import_progress`.)
+            row.import_anchor = min(row.import_anchor + gap, now_ts)
         if probe.files_present:
             self._terminal(Outcome.IMPORTED, row, files=probe.target_count or None)
-        elif at_deadline and not landed:
+        elif at_deadline and not landed and not probe.deferred:
             self._terminal(
                 Outcome.STILL_IMPORTING if probe.command_issued else Outcome.NOT_READY,
                 row,

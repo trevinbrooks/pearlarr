@@ -261,7 +261,18 @@ def sonarr_disk_command_running(commands: list[CommandResource]) -> bool:
     deadline.
     """
 
-    return _any_started(commands, _SONARR_DISK_COMMAND_NAMES)
+    return bool(started_disk_commands(commands))
+
+
+def started_disk_commands(commands: list[CommandResource]) -> list[CommandResource]:
+    """The disk-access commands executing right now (see `sonarr_disk_command_running`).
+
+    The list form exists so the deferral can tell OUR OWN running command (an id
+    we issued this run - deferred time is credited back to the ready deadline)
+    from a foreign one (which keeps burning the clock).
+    """
+
+    return _started(commands, _SONARR_DISK_COMMAND_NAMES)
 
 
 def sonarr_process_pass_running(commands: list[CommandResource]) -> bool:
@@ -273,16 +284,17 @@ def sonarr_process_pass_running(commands: list[CommandResource]) -> bool:
     poll; waiting out a foreign rename/import there would stall the whole poll.
     """
 
-    return _any_started(commands, _SONARR_PROCESS_PASS_NAMES)
+    return bool(_started(commands, _SONARR_PROCESS_PASS_NAMES))
 
 
-def _any_started(commands: list[CommandResource], names: frozenset[str]) -> bool:
-    """Whether any of the named commands is `started`, casefolded on both axes."""
+def _started(commands: list[CommandResource], names: frozenset[str]) -> list[CommandResource]:
+    """The named commands currently `started`, casefolded on both axes."""
 
-    return any(
-        (command.name or "").casefold() in names and (command.status or "").casefold() == "started"
+    return [
+        command
         for command in commands
-    )
+        if (command.name or "").casefold() in names and (command.status or "").casefold() == "started"
+    ]
 
 
 # The episode-history events that map a re-appeared download to a queue-hidden
@@ -553,7 +565,7 @@ def episode_ids_for_parsed(
     # of span - a <= cap season would otherwise slip past the pair count below.
     if full_season:
         return []
-    pairs = list(dict.fromkeys((ep.season, ep.episode) for ep in parsed))
+    pairs = _matched_pairs(parsed)
     if not pairs or len(pairs) > _MATCHED_SPAN_CAP:
         return []
     ids: list[int] = []
@@ -566,6 +578,36 @@ def episode_ids_for_parsed(
         return []
     # Distinct pairs cannot share an id, but mirror the final collapse anyway.
     return list(dict.fromkeys(ids))
+
+
+def parsed_outside_set(
+    parsed: list[ParsedEpisode],
+    ep_id_map: dict[tuple[int, int], int],
+    *,
+    full_season: bool = False,
+) -> bool:
+    """Whether a parse landed cleanly and ENTIRELY outside our episode set.
+
+    The one refusal that proves a grabbed file belongs to another slice of the
+    torrent (a sibling entry's episodes), so the seed may exclude it from the
+    completeness denominator (`PendingImport.excluded_files`). Every other
+    refusal - no parse, the full-season veto, the span cap, a partially
+    resolving span - stays "possibly ours": True requires a normal within-span
+    parse none of whose pairs resolve.
+    """
+
+    if full_season:
+        return False
+    pairs = _matched_pairs(parsed)
+    if not pairs or len(pairs) > _MATCHED_SPAN_CAP:
+        return False
+    return all(not ep_id_map.get(pair) for pair in pairs)
+
+
+def _matched_pairs(parsed: list[ParsedEpisode]) -> list[tuple[int, int]]:
+    """Distinct `(season, episode)` pairs from a parse, in first-seen order."""
+
+    return list(dict.fromkeys((ep.season, ep.episode) for ep in parsed))
 
 
 _SXXEXX: re.Pattern[str] = re.compile(r"[Ss](\d{1,2})[\s._-]*[Ee](\d{1,3})")

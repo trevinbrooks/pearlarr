@@ -933,6 +933,7 @@ def import_probe(
     command_issued: bool = False,
     imported_count: int = 0,
     target_count: int = 0,
+    deferred: bool = False,
 ) -> ImportProbe:
     """An `ImportProbe` with the common "files verified imported" defaults.
 
@@ -940,7 +941,8 @@ def import_probe(
     Pass `readiness=RETRY, files_present=False, command_issued=True` for the
     "command accepted, copy in flight" case, or `files_present=False` for a not-
     yet-ready poll. `imported_count`/`target_count` seed the "files inserted"
-    bar (0/0 -> an indeterminate importing row).
+    bar (0/0 -> an indeterminate importing row). `deferred` marks a poll that
+    waited on our own Sonarr work (the monitor credits its interval back).
     """
 
     return ImportProbe(
@@ -949,6 +951,7 @@ def import_probe(
         command_issued=command_issued,
         imported_count=imported_count,
         target_count=target_count,
+        deferred=deferred,
     )
 
 

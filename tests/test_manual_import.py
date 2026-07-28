@@ -59,6 +59,7 @@ from pearlarr.sonarr_import_plan import (
     episode_ids_for_parsed,
     manual_import_in_flight,
     parse_quality_from_filename,
+    parsed_outside_set,
     plan_import_files,
     quality_axes_from_model,
     quality_axes_from_name,
@@ -476,6 +477,33 @@ class TestSonarrProcessPassRunning:
         assert not sonarr_process_pass_running(cmds)
 
 
+class TestParsedOutsideSet:
+    """The knowably-other-slice refusal: only a clean parse landing ENTIRELY outside our set."""
+
+    def test_clean_parse_fully_outside_is_another_slice(self) -> None:
+        assert parsed_outside_set([ParsedEpisode(season=3, episode=13)], {(3, 1): 101})
+
+    def test_resolving_parse_is_ours(self) -> None:
+        assert not parsed_outside_set([ParsedEpisode(season=3, episode=1)], {(3, 1): 101})
+
+    def test_partially_resolving_span_stays_possibly_ours(self) -> None:
+        # A boundary double-episode (one pair in, one out) may be partly ours.
+        parsed = [ParsedEpisode(season=3, episode=12), ParsedEpisode(season=3, episode=13)]
+        assert not parsed_outside_set(parsed, {(3, 12): 101})
+
+    def test_full_season_veto_stays_possibly_ours(self) -> None:
+        # Sonarr matches a bare "S0X" zip to the whole season: it may well BE
+        # our content, so the veto never proves it is another slice's.
+        assert not parsed_outside_set([ParsedEpisode(season=2, episode=1)], {(3, 1): 101}, full_season=True)
+
+    def test_no_parse_stays_possibly_ours(self) -> None:
+        assert not parsed_outside_set([], {(3, 1): 101})
+
+    def test_wide_span_veto_stays_possibly_ours(self) -> None:
+        parsed = [ParsedEpisode(season=9, episode=n) for n in range(1, 11)]
+        assert not parsed_outside_set(parsed, {(3, 1): 101})
+
+
 def _history(*events: tuple[str, str]) -> list[HistoryRecord]:
     """History records from `(eventType, date)` pairs, newest first (as the probe reads)."""
 
@@ -859,6 +887,7 @@ class TestPendingImportRoundTrip:
             coverage="S02 E01-E12",
             url="https://releases.moe/1",
             slice_coverage="S02 E01-E02",
+            excluded_files=["other-slice.mkv"],
         )
         assert PendingImport.from_json(pending.to_json()) == pending
 
@@ -867,6 +896,9 @@ class TestPendingImportRoundTrip:
         assert rebuilt.infohash == "h"
         assert rebuilt.file_episode_map == {}
         assert rebuilt.title is None
+        # Pre-excluded_files records rehydrate empty (completeness stays
+        # conservative for them).
+        assert rebuilt.excluded_files == []
         # A legacy record with no al_id rehydrates under the 0 sentinel and keys
         # as its hash's singleton.
         assert rebuilt.al_id == 0

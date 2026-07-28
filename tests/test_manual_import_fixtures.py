@@ -1505,6 +1505,50 @@ class TestYamadaEndToEnd:
         assert sonarr.episodes_calls == []
         assert sonarr.execute_calls == []
 
+    def test_import_progress_indeterminate_for_legacy_flat_record(self) -> None:
+        # A legacy flat record (episode_ids only, no SeaDex file list): targets
+        # exist but there is nothing to measure completeness against, so the
+        # row stays indeterminate rather than trusting a listless record.
+        strat, sonarr, _seadex_files = _yamada_strat()
+        pending = pending_import(
+            infohash="6666666666666666666666666666666666666666",
+            series_id=213,
+            release_group="Headpatter",
+            file_episode_map={},
+            episode_ids=[8030],
+            ordered_episode_ids=[],
+            seadex_files=[],
+        )
+
+        progress = strat.import_progress(pending)
+
+        assert progress == ImportProgress(0, 0, determinate=False)
+        assert sonarr.execute_calls == []
+
+    def test_import_progress_determinate_when_excluded_files_cover_the_rest(self) -> None:
+        # A pack carrying another slice's files: the seed maps OUR files and
+        # excludes the sibling's, so map + excluded account for every file and
+        # the bar/deadline stay determinate over OUR slice alone (previously
+        # such a record could never show progress or re-anchor its deadline).
+        strat, sonarr, seadex_files = _yamada_strat()
+        pending = pending_import(
+            infohash="5555555555555555555555555555555555555555",
+            series_id=213,
+            release_group="Headpatter",
+            file_episode_map={seadex_files[0]: [8030]},
+            episode_ids=[],
+            ordered_episode_ids=[8030],
+            seadex_files=seadex_files,
+            excluded_files=[normalize_basename(name) for name in seadex_files[1:]],
+        )
+
+        progress = strat.import_progress(pending)
+
+        assert progress.determinate is True
+        assert progress.total == 1
+        assert progress.done == 0
+        assert sonarr.execute_calls == []
+
     def test_specials_import_with_empty_resolved_set(self) -> None:
         # THE headline regression: the ACTUAL on-disk stuck record is pre-fix - EMPTY
         # everything (no ordered_episode_ids, no seed map). Before the fix this fell
