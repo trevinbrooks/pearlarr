@@ -214,49 +214,65 @@ def _unflag(rg_item: SeadexReleaseGroupItem, dropped: list[SeadexUrlItem]) -> No
         u.upgrade = False
 
 
-def get_all_seadex_rgs_per_episode(
-    seadex_dict: SeadexDict,
-    sonarr_by_key: dict[EpisodeKey, SonarrEpisode],
-) -> dict[str, set[str | None]]:
-    """Get a list of all SeaDex releases per-episode.
+class EpisodeCoverage(NamedTuple):
+    """Which sibling picks cover each episode - the matcher's duplicate-avoidance index.
 
-    `sonarr_by_key` indexes Sonarr episodes by (season, episode): a parsed
-    SeaDex (season, episode) is recorded only when Sonarr has it, which the
-    index makes an O(1) key lookup. Built once by the caller and shared with
-    the per-episode match loop in filter_by_release_group.
+    Consulted when an on-disk file's group mismatches the url being decided:
+    a covering group means another recommended release already accounts for
+    the episode, so no duplicate grab. Membership is by normalized name; a
+    group whose name normalizes to None is indexed NOWHERE - an unidentifiable
+    listing group must never read as covering an untagged on-disk file.
     """
 
-    all_seadex_rgs_per_episode: dict[str, set[str | None]] = {"all": set()}
+    blanket: frozenset[str]
+    """Groups with an unparsed url: coverage unprovable, so they cover every episode unconditionally."""
 
-    if len(seadex_dict) > 1:
-        for seadex_rg, seadex_rg_item in seadex_dict.items():
-            # Index by the normalized name so the membership checks in
-            # filter_by_release_group are case- and dash-insensitive
-            seadex_rg_normalized = normalize_rg(seadex_rg)
+    by_key: Mapping[EpisodeKey, frozenset[str]]
+    """The groups whose parsed urls cover each (season, episode) Sonarr actually has."""
 
-            seadex_urls = seadex_rg_item.urls
-            for url_item in seadex_urls.values():
-                seadex_episodes = url_item.episodes
 
-                # If we haven't managed to parse, then set this up as an
-                # "all" episode fallback
-                if len(seadex_episodes) == 0:
-                    all_seadex_rgs_per_episode["all"].add(seadex_rg_normalized)
+def episode_coverage(
+    seadex_dict: SeadexDict,
+    sonarr_by_key: Mapping[EpisodeKey, SonarrEpisode],
+) -> EpisodeCoverage:
+    """Index which SeaDex groups cover each episode, by normalized name.
 
-                for seadex_ep in seadex_episodes:
-                    season = seadex_ep.season
-                    episode = seadex_ep.episode
+    `sonarr_by_key` gates recording to episodes Sonarr has (an O(1) key
+    lookup). Built once by the caller and shared with the per-episode match
+    loop in filter_by_release_group. A single-group entry skips the build:
+    coverage only ever excuses a mismatch against a SIBLING pick.
+    """
 
-                    # Only record episodes Sonarr actually has, matching the
-                    # original per-episode gate against the episode list
-                    if (season, episode) in sonarr_by_key:
-                        season_key = f"S{season:02d}E{episode:02d}"
-                        all_seadex_rgs_per_episode.setdefault(
-                            season_key,
-                            set(),
-                        ).add(seadex_rg_normalized)
+    if len(seadex_dict) < 2:
+        return EpisodeCoverage(frozenset(), {})
 
-    return all_seadex_rgs_per_episode
+    blanket: set[str] = set()
+    by_key: dict[EpisodeKey, set[str]] = {}
+    for seadex_rg, seadex_rg_item in seadex_dict.items():
+        # Index by the normalized name so the membership checks in
+        # filter_by_release_group are case- and dash-insensitive.
+        seadex_rg_normalized = normalize_rg(seadex_rg)
+        if seadex_rg_normalized is None:
+            continue
+
+        for url_item in seadex_rg_item.urls.values():
+            seadex_episodes = url_item.episodes
+
+            # An unparsed url proves nothing about coverage, so its group
+            # covers everything rather than nothing.
+            if len(seadex_episodes) == 0:
+                blanket.add(seadex_rg_normalized)
+
+            for seadex_ep in seadex_episodes:
+                season = seadex_ep.season
+                episode = seadex_ep.episode
+                if season is None or episode is None:
+                    continue
+                key = EpisodeKey(season, episode)
+                if key in sonarr_by_key:
+                    by_key.setdefault(key, set()).add(seadex_rg_normalized)
+
+    return EpisodeCoverage(frozenset(blanket), {key: frozenset(groups) for key, groups in by_key.items()})
 
 
 class _EpisodeIdentity(NamedTuple):
@@ -347,7 +363,8 @@ class _MatchContext:
     """The untagged on-disk files' size multiset (Radarr's `None` key, or Sonarr's
     untagged episode files), pre-folded by `_untagged_counter` - the unparseable-url
     ownership input. None when nothing untagged can claim ownership."""
-    all_seadex_rgs_per_episode: dict[str, set[str | None]]
+    coverage: EpisodeCoverage
+    """Which sibling picks cover each episode (see `episode_coverage`)."""
     has_ep_list: bool
     debug_on: bool
 
@@ -543,11 +560,8 @@ class DownloadPlanner:
         # fresh scan of the whole list.
         sonarr_by_key = index_episodes_by_key(ep_list or [])
 
-        # If we have overlaps, get a note of them here, reusing the index above
-        all_seadex_rgs_per_episode = get_all_seadex_rgs_per_episode(
-            seadex_dict=seadex_dict,
-            sonarr_by_key=sonarr_by_key,
-        )
+        # Which sibling picks cover each episode, reusing the index above
+        coverage = episode_coverage(seadex_dict, sonarr_by_key)
 
         # Each on-disk file's effective identity - its tag, or the pick whose
         # listed size names an untagged file - decided once for the whole entry
@@ -596,7 +610,7 @@ class DownloadPlanner:
             sonarr_by_key=sonarr_by_key,
             episode_identities=identities,
             untagged_counter=untagged_counter,
-            all_seadex_rgs_per_episode=all_seadex_rgs_per_episode,
+            coverage=coverage,
             has_ep_list=ep_list is not None,
             debug_on=debug_on,
         )
@@ -791,19 +805,14 @@ class DownloadPlanner:
             size_identified = identity is not None and identity.by_size
 
             # A mismatched group flags a download unless another recommended
-            # release covers it. The normalized name indexes
-            # all_seadex_rgs_per_episode, so compare the normalized name.
-            if (
-                sonarr_rg_normalized != seadex_rg_normalized
-                and sonarr_rg_normalized not in ctx.all_seadex_rgs_per_episode["all"]
-            ):
+            # release covers it. The coverage index is keyed by normalized
+            # name, so compare the normalized name. The blanket test runs
+            # first, unconditionally; the per-episode set only inside it.
+            if sonarr_rg_normalized != seadex_rg_normalized and sonarr_rg_normalized not in ctx.coverage.blanket:
                 # Avoid duplicating when another release already covers it
-                all_seadex_rg = ctx.all_seadex_rgs_per_episode.get(
-                    season_ep_str,
-                    (),
-                )
+                covering = ctx.coverage.by_key.get(episode_key, frozenset())
 
-                if sonarr_rg_normalized not in all_seadex_rg:
+                if sonarr_rg_normalized not in covering:
                     if ctx.debug_on:
                         # The raw on-disk tag, for log fidelity (debug only).
                         sonarr_rg = sonarr_ep.episode_file.release_group if sonarr_ep.episode_file else None
