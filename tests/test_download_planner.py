@@ -34,7 +34,7 @@ import logging
 from pearlarr.config import Arr
 from pearlarr.output import Severity
 from pearlarr.planner import DownloadPlanner
-from pearlarr.seadex_types import EpisodeRecord, SeadexReleaseGroupItem
+from pearlarr.seadex_types import EpisodeRecord, SeadexReleaseGroupItem, Staleness
 
 from .builders import make_planner, rg_group, sonarr_ep, url_item
 
@@ -198,7 +198,7 @@ class TestReduceOverlappingDownloads:
         # never replaces an owned copy - warn and hold instead of promoting.
         planner = make_planner()
         seadex = {
-            "Priv": rg_group({"u1": url_item(download=True, is_public=False, size_mismatch=True)}),
+            "Priv": rg_group({"u1": url_item(download=True, is_public=False, staleness=Staleness.STALE)}),
             "Fall": rg_group({"u2": url_item(download=False, is_public=True, is_fallback=True)}),
         }
         skips = planner.reduce_overlapping_downloads(seadex)
@@ -224,7 +224,7 @@ class TestReduceOverlappingDownloads:
         # url's coverage ungrabbed: the fully-public group wins.
         planner = make_planner()
         seadex = {
-            "Priv": rg_group({"u1": url_item(download=True, is_public=False, size_mismatch=True)}),
+            "Priv": rg_group({"u1": url_item(download=True, is_public=False, staleness=Staleness.STALE)}),
             "MixedPub": rg_group(
                 {
                     "u2": url_item(download=False, is_public=False),
@@ -247,7 +247,7 @@ class TestReduceOverlappingDownloads:
         # is promoted instead of the old warn-and-hold.
         planner = make_planner()
         seadex = {
-            "Priv": rg_group({"u1": url_item(download=True, is_public=False, size_mismatch=True)}),
+            "Priv": rg_group({"u1": url_item(download=True, is_public=False, staleness=Staleness.STALE)}),
             "Pub": rg_group({"u2": url_item(download=False, is_public=True)}),
         }
         skips = planner.reduce_overlapping_downloads(seadex)
@@ -272,7 +272,7 @@ class TestReduceOverlappingDownloads:
             "M": rg_group(
                 {
                     "u1": url_item(download=False, is_public=True),
-                    "u2": url_item(download=True, is_public=False, size_mismatch=True),
+                    "u2": url_item(download=True, is_public=False, staleness=Staleness.STALE),
                 },
             ),
             "F": rg_group({"u3": url_item(download=False, is_public=True, is_fallback=True)}),
@@ -293,7 +293,7 @@ class TestReduceOverlappingDownloads:
             "M": rg_group(
                 {
                     "u1": url_item(download=False, is_public=True),
-                    "u2": url_item(download=True, is_public=False, size_mismatch=True),
+                    "u2": url_item(download=True, is_public=False, staleness=Staleness.STALE),
                 },
             ),
             "P": rg_group({"u3": url_item(download=False, is_public=True)}),
@@ -361,7 +361,7 @@ class TestReduceOverlappingDownloads:
             "M": rg_group(
                 {
                     "u_pub": url_item(download=True, is_public=True),
-                    "u_priv": url_item(download=True, is_public=False, size_mismatch=True),
+                    "u_priv": url_item(download=True, is_public=False, staleness=Staleness.STALE),
                 },
             ),
         }
@@ -378,7 +378,7 @@ class TestReduceOverlappingDownloads:
         # is MIXED must still promote it, flipping just its public url.
         planner = make_planner()
         seadex = {
-            "P": rg_group({"p": url_item(download=True, is_public=False, size_mismatch=True, infohash=None)}),
+            "P": rg_group({"p": url_item(download=True, is_public=False, staleness=Staleness.STALE, infohash=None)}),
             "M": rg_group(
                 {
                     "m_pub": url_item(download=False, is_public=True, infohash="m1"),
@@ -450,7 +450,7 @@ class TestReduceOverlappingDownloads:
                 all_episodes=e1,
             ),
             "Priv2": rg_group(
-                {"u3": url_item(download=True, is_public=False, size_mismatch=True)},
+                {"u3": url_item(download=True, is_public=False, staleness=Staleness.STALE)},
                 all_episodes=e2,
             ),
             "Fall2": rg_group(
@@ -480,14 +480,14 @@ class TestReduceOverlappingDownloads:
         e2 = [EpisodeRecord(season=2, episode=1, size=0)]
         seadex = {
             "PrivA": rg_group(
-                {"u1": url_item(download=True, is_public=False, size_mismatch=True)},
+                {"u1": url_item(download=True, is_public=False, staleness=Staleness.STALE)},
                 all_episodes=e1,
             ),
             "PubA": rg_group({"u2": url_item(download=False, is_public=True)}, all_episodes=e1),
             "MixedB": rg_group(
                 {
                     "u3": url_item(download=False, is_public=True),
-                    "u4": url_item(download=True, is_public=False, size_mismatch=True),
+                    "u4": url_item(download=True, is_public=False, staleness=Staleness.STALE),
                 },
                 all_episodes=e2,
             ),
@@ -531,7 +531,7 @@ class TestSameGroupDuplicateDedup:
         # cross-seeded copies of one release must still yield a single grab.
         planner = make_planner()
         seadex = {
-            "Priv": rg_group({"u1": url_item(download=True, is_public=False, size_mismatch=True)}),
+            "Priv": rg_group({"u1": url_item(download=True, is_public=False, staleness=Staleness.STALE)}),
             "Pub": rg_group(
                 {
                     "u2": url_item(files=["P - S01E01.mkv"], size=[100], download=False, is_public=True),
@@ -726,7 +726,7 @@ class TestFilterByReleaseGroup:
             ep_list=None,
         )
         assert result.seadex_dict["Ember"].urls["u1"].download is True
-        assert result.seadex_dict["Ember"].urls["u1"].size_mismatch is True
+        assert result.seadex_dict["Ember"].urls["u1"].staleness is Staleness.STALE
         assert result.torrent_hashes == ["h1"]
 
     def test_episode_match_same_rg_and_size_no_download(self) -> None:
@@ -862,7 +862,7 @@ class TestFilterByReleaseGroup:
             ],
         )
         assert result.seadex_dict["Era-Raws"].urls["u1"].download is True
-        assert result.seadex_dict["Era-Raws"].urls["u1"].size_mismatch is True
+        assert result.seadex_dict["Era-Raws"].urls["u1"].staleness is Staleness.STALE
 
     def test_episode_untagged_file_owns_the_episode_for_every_pick(self) -> None:
         # Ownership is a property of the FILE: the pick whose size identified it
@@ -882,11 +882,29 @@ class TestFilterByReleaseGroup:
         result = planner.filter_by_release_group(
             seadex_dict=seadex,
             arr_release_dict={},
-            ep_list=[sonarr_ep(1, 1, size=100, release_group=None)],
+            ep_list=[sonarr_ep(1, 1, size=100, release_group=None, ep_id=101)],
         )
         assert result.seadex_dict["Era-Raws"].urls["u1"].download is False
         assert result.seadex_dict["Other"].urls["u2"].download is False
         assert result.torrent_hashes == []
+        # The plan reports the identified episode so the import seeds protect it.
+        assert result.owned_episode_ids == (101,)
+
+    def test_plan_reports_no_owned_episode_for_a_tagged_file(self) -> None:
+        # A file that still carries a group tag is identified by name, never by
+        # size - reading it as owned would bypass the group guard entirely.
+        planner = make_planner()
+        seadex = {
+            "Era-Raws": rg_group(
+                {"u1": url_item(episodes=[EpisodeRecord(season=1, episode=1, size=100)], infohash="h1")},
+            ),
+        }
+        result = planner.filter_by_release_group(
+            seadex_dict=seadex,
+            arr_release_dict={"Other": [100]},
+            ep_list=[sonarr_ep(1, 1, size=100, release_group="Other", ep_id=101)],
+        )
+        assert result.owned_episode_ids == ()
 
     def test_episode_partly_stale_group_is_flagged_stale_without_a_download(self) -> None:
         # One episode at an unlisted size is not a whole-release upgrade (that
@@ -916,8 +934,7 @@ class TestFilterByReleaseGroup:
         )
         url = result.seadex_dict["Era-Raws"].urls["u1"]
         assert url.download is False
-        assert url.size_mismatch is False
-        assert url.any_size_mismatch is True
+        assert url.staleness is Staleness.PARTLY_STALE
 
     def test_movie_groupless_file_at_exact_sizes_no_download(self) -> None:
         # The no-episode twin: untagged files key their sizes under None, and

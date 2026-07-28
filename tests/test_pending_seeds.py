@@ -16,7 +16,7 @@ from collections.abc import Mapping
 from pearlarr.config import Arr
 from pearlarr.manual_import import normalize_basename
 from pearlarr.seadex_sonarr import SonarrSync
-from pearlarr.seadex_types import EpisodeRecord, ParsedEpisode, SonarrEpisode
+from pearlarr.seadex_types import EpisodeRecord, ParsedEpisode, SonarrEpisode, Staleness
 from pearlarr.sonarr_import import PendingSeedContext
 
 from .builders import SEP, FakeCacheStore, make_config, make_sonarr_sync, pending_import, rg_group, url_item
@@ -41,12 +41,11 @@ def _ep(
     episode: int,
     *,
     file_size: int | None = None,
-    group: str | None = None,
 ) -> SonarrEpisode:
     raw: dict[str, object] = {"id": ep_id, "seasonNumber": season, "episodeNumber": episode}
     if file_size is not None:
         raw["episodeFileId"] = ep_id
-        raw["episodeFile"] = {"size": file_size, "releaseGroup": group}
+        raw["episodeFile"] = {"size": file_size, "releaseGroup": None}
     return SonarrEpisode.model_validate(raw)
 
 
@@ -122,7 +121,7 @@ class TestBuildPendingSeeds:
                         size=[900],
                         infohash=None,
                         download=False,
-                        size_mismatch=True,
+                        staleness=Staleness.STALE,
                     ),
                 },
             ),
@@ -151,7 +150,7 @@ class TestBuildPendingSeeds:
                         size=[900],
                         infohash=None,
                         download=False,
-                        any_size_mismatch=True,
+                        staleness=Staleness.PARTLY_STALE,
                     ),
                 },
             ),
@@ -174,8 +173,8 @@ class TestBuildPendingSeeds:
             "RG": rg_group({"u1": url_item(files=["Show - 01.mkv"], size=[1000], infohash="h1", download=True)}),
             "Stale": rg_group(
                 {
-                    "u2": url_item(files=["Show - 01.mkv"], size=[900], infohash=None, size_mismatch=True),
-                    "u3": url_item(files=["Show - 01.mkv"], size=[900], infohash=None, size_mismatch=False),
+                    "u2": url_item(files=["Show - 01.mkv"], size=[900], infohash=None, staleness=Staleness.STALE),
+                    "u3": url_item(files=["Show - 01.mkv"], size=[900], infohash=None),
                 },
             ),
         }
@@ -188,24 +187,21 @@ class TestBuildPendingSeeds:
 
         assert seeds["h1"].entry_groups == ["RG"]
 
-    def test_seed_records_the_episodes_a_listed_size_identified(self) -> None:
-        # The planner declined to re-download an untagged file its size named.
-        # The record carries those episodes so the import doesn't then copy over
-        # the very file the grab decision just called ours.
+    def test_seed_carries_the_plan_identified_episodes(self) -> None:
+        # The plan resolved which untagged files a pick's listed size named
+        # (see the planner's owned-ids tests). The seed persists them so the
+        # import doesn't copy over the very file the grab just called ours.
         ep_list = [_ep(101, 1, 1, file_size=1000), _ep(102, 1, 2)]
         parse_cache = {"Show - 02.mkv": {"episodes": [{"season": 1, "episode": 2}]}}
         seadex_dict = {
             "RG": rg_group(
                 {
                     "u1": url_item(
-                        files=["Show - 01.mkv", "Show - 02.mkv"],
-                        size=[1000, 2000],
+                        files=["Show - 02.mkv"],
+                        size=[2000],
                         infohash="h1",
                         download=True,
-                        episodes=[
-                            EpisodeRecord(season=1, episode=1, size=1000),
-                            EpisodeRecord(season=1, episode=2, size=2000),
-                        ],
+                        episodes=[EpisodeRecord(season=1, episode=2, size=2000)],
                     ),
                 },
             ),
@@ -214,38 +210,10 @@ class TestBuildPendingSeeds:
         seeds = _strat(parse_cache)._reconciler.build_pending_seeds(
             seadex_dict=seadex_dict,
             ep_list=ep_list,
-            entry=PendingSeedContext(al_id=1, series_id=7, title="Show"),
+            entry=PendingSeedContext(al_id=1, series_id=7, title="Show", owned_episode_ids=(101,)),
         )
 
-        # Only the untagged episode at the listed size; the missing one stays out.
         assert seeds["h1"].owned_episode_ids == [101]
-
-    def test_seed_records_no_owned_episodes_for_a_tagged_file(self) -> None:
-        # A file that still carries a group tag is identified by name, never by
-        # size - reading it as owned here would bypass the group guard entirely.
-        ep_list = [_ep(101, 1, 1, file_size=1000, group="Other")]
-        parse_cache = {"Show - 01.mkv": {"episodes": [{"season": 1, "episode": 1}]}}
-        seadex_dict = {
-            "RG": rg_group(
-                {
-                    "u1": url_item(
-                        files=["Show - 01.mkv"],
-                        size=[1000],
-                        infohash="h1",
-                        download=True,
-                        episodes=[EpisodeRecord(season=1, episode=1, size=1000)],
-                    ),
-                },
-            ),
-        }
-
-        seeds = _strat(parse_cache)._reconciler.build_pending_seeds(
-            seadex_dict=seadex_dict,
-            ep_list=ep_list,
-            entry=PendingSeedContext(al_id=1, series_id=7, title="Show"),
-        )
-
-        assert seeds["h1"].owned_episode_ids == []
 
     def test_multi_file_pack_de_unions_flat_fallback(self) -> None:
         ep_list = [_ep(101, 1, 1), _ep(102, 1, 2)]

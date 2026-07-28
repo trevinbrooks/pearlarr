@@ -448,12 +448,13 @@ class SonarrSync(ArrSync[SonarrItem]):
 
         # Filter downloads by whether the episodes in each torrent match the release
         # group we have in Sonarr
-        torrent_hashes, seadex_dict = run.filter_seadex_downloads(
+        plan = run.filter_seadex_downloads(
             al_id=al_id,
             seadex_dict=seadex_dict,
             arr_release_dict=sonarr_release_dict,
             ep_list=ep_list,
         )
+        torrent_hashes, seadex_dict = plan.torrent_hashes, plan.seadex_dict
 
         # Build the authoritative per-torrent import seeds the engine will persist
         # at the add site. Only the releases marked for download (download +
@@ -475,6 +476,7 @@ class SonarrSync(ArrSync[SonarrItem]):
                     title=anilist_title,
                     coverage=coverage,
                     url=sd_url,
+                    owned_episode_ids=plan.owned_episode_ids,
                 ),
             )
 

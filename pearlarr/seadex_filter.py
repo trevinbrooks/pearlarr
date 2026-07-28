@@ -37,6 +37,9 @@ class FilterResult(NamedTuple):
     """The unique hashes to remember in the cache record. None for a hashless private torrent."""
     seadex_dict: SeadexDict
     """The same `seadex_dict` annotated in place with per-url `download` flags."""
+    owned_episode_ids: tuple[int, ...] = ()
+    """Sonarr episodes whose untagged on-disk file the plan identified as a pick's copy
+    by listed size. Empty for Radarr and the hash path."""
 
 
 def _is_public_torrent(torrent: TorrentRecord) -> bool:
@@ -46,7 +49,7 @@ def _is_public_torrent(torrent: TorrentRecord) -> bool:
 
 
 def _file_sizes(torrent: TorrentRecord) -> list[int]:
-    """A candidate's listed file sizes, the coverage-comparison input."""
+    """A torrent's listed file sizes - the coverage-comparison input and the url record's `size`."""
 
     return [f.size for f in torrent.files]
 
@@ -115,7 +118,7 @@ class SeadexReleaseFilter:
             seadex_release_groups[t.release_group].urls[t.url] = SeadexUrlItem(
                 url=t.url,
                 files=[f.name for f in t.files],
-                size=[f.size for f in t.files],
+                size=_file_sizes(t),
                 tracker=t.tracker,
                 is_public=_is_public_torrent(t),
                 is_dual_audio=t.is_dual_audio,
@@ -323,4 +326,4 @@ class SeadexReleaseFilter:
         # prologue. add_torrent may append more before grab_and_cache reads them).
         self._ctx.per_title.absorb_skips(result.skips)
 
-        return FilterResult(result.torrent_hashes, result.seadex_dict)
+        return FilterResult(result.torrent_hashes, result.seadex_dict, result.owned_episode_ids)
