@@ -8,7 +8,7 @@ from . import coverage as _coverage
 from .arr_http import ArrHttp, make_httpx_client
 from .cache import CacheRecord
 from .config import Arr, secret_value
-from .grab_pipeline import GrabRequest, clean_replaced_groups
+from .grab_pipeline import GrabRequest
 from .log import EntryState, pluralize
 from .manual_import import (
     AttemptKind,
@@ -413,11 +413,11 @@ class SonarrSync(ArrSync[SonarrItem]):
         cache_details["coverage"] = coverage
         cache_details["url"] = sd_url
 
-        sonarr_release_dict = self._episodes.get_sonarr_release_dict(ep_list=ep_list)
-        sonarr_release_groups = list(sonarr_release_dict.keys())
+        sonarr_releases = self._episodes.get_sonarr_releases(ep_list=ep_list)
+        sonarr_group_names = sonarr_releases.display_names()
 
         self.logger.debug(
-            f"Sonarr release {pluralize(len(sonarr_release_groups), 'group')}: {', '.join(rg or '(none)' for rg in sonarr_release_groups)}"
+            f"Sonarr release {pluralize(len(sonarr_group_names), 'group')}: {', '.join(sonarr_group_names)}"
         )
 
         # Produce a dictionary of info from the SeaDex request
@@ -452,7 +452,7 @@ class SonarrSync(ArrSync[SonarrItem]):
         plan = run.filter_seadex_downloads(
             al_id=al_id,
             seadex_dict=seadex_dict,
-            arr_release_dict=sonarr_release_dict,
+            arr_releases=sonarr_releases,
             ep_list=ep_list,
         )
         torrent_hashes, seadex_dict = plan.torrent_hashes, plan.seadex_dict
@@ -490,7 +490,7 @@ class SonarrSync(ArrSync[SonarrItem]):
                 seadex_dict=seadex_dict,
                 torrent_hashes=torrent_hashes,
                 cache_details=cache_details,
-                replaced_groups=clean_replaced_groups(sonarr_release_groups),
+                replaced_groups=tuple(sonarr_releases.tagged),
                 coverage=coverage,
                 pending_seeds=pending_seeds,
             ),

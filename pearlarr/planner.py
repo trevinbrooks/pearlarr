@@ -19,14 +19,13 @@ from .config import Arr
 from .manual_import import GuardFacts, OwnedEpisode, normalize_rg
 from .output import Severity
 from .seadex_types import (
-    ArrReleaseDict,
+    ArrReleases,
     EpisodeKey,
     EpisodeRecord,
     SeadexDict,
     SeadexReleaseGroupItem,
     SeadexUrlItem,
     SonarrEpisode,
-    as_size_list,
     index_episodes_by_key,
     season_episode_key,
 )
@@ -85,12 +84,6 @@ class PlanResult:
     the size-verified current groups, the positively-stale ones, and the owned
     untagged `(episode id, size)` claims. All-empty for Radarr and the hash path,
     which gather no size evidence and so protect only grabbed groups."""
-
-
-def _render_groups(groups: Iterable[str | None]) -> str:
-    """Comma-join release group names for a log line, rendering None as `(none)`."""
-
-    return ", ".join(rg or "(none)" for rg in groups)
 
 
 def _untagged_counter(untagged_sizes: Iterable[int]) -> Counter[int] | None:
@@ -388,8 +381,8 @@ class _MatchContext:
     arr_groups_label: str
     """The Arr's release-group names pre-rendered for the no-episodes matcher's
     debug lines (insertion order preserved; empty on a normal INFO run)."""
-    arr_sizes_by_norm: Mapping[str | None, list[int]]
-    """The Arr's file sizes merged under normalized group names. Built once per entry rather than per URL."""
+    arr_sizes_by_norm: Mapping[str, list[int]]
+    """The Arr's tagged file sizes merged under normalized group names. Built once per entry rather than per URL."""
     overlapping_results: bool
     """Some pick's release is already on disk: by group tag, or as the untagged
     copy a pick's listed sizes identified whole (so a sibling pick is never
@@ -447,7 +440,7 @@ def _group_verdicts(seadex_dict: SeadexDict, ctx: _MatchContext) -> _GroupVerdic
         for identity in ctx.episode_identities.values():
             attributed.setdefault(identity.group, []).append(identity.size)
     else:
-        attributed = {norm: list(sizes) for norm, sizes in ctx.arr_sizes_by_norm.items() if norm is not None}
+        attributed = {norm: list(sizes) for norm, sizes in ctx.arr_sizes_by_norm.items()}
 
     current: list[str] = []
     stale: list[str] = []
@@ -495,7 +488,7 @@ class DownloadPlanner:
         self,
         *,
         seadex_dict: SeadexDict,
-        arr_release_dict: ArrReleaseDict,
+        arr_releases: ArrReleases,
         cached_hashes: list[str | None],
         ep_list: list[SonarrEpisode] | None = None,
     ) -> PlanResult:
@@ -516,7 +509,7 @@ class DownloadPlanner:
         else:
             result = self.filter_by_release_group(
                 seadex_dict=seadex_dict,
-                arr_release_dict=arr_release_dict,
+                arr_releases=arr_releases,
                 ep_list=ep_list,
             )
 
@@ -581,7 +574,7 @@ class DownloadPlanner:
     def filter_by_release_group(
         self,
         seadex_dict: SeadexDict,
-        arr_release_dict: ArrReleaseDict,
+        arr_releases: ArrReleases,
         ep_list: list[SonarrEpisode] | None = None,
     ) -> PlanResult:
         """Filter torrents by release group.
@@ -592,15 +585,10 @@ class DownloadPlanner:
         and weirdly named TV
         """
 
-        # The release-group names, used both for display (insertion order
-        # preserved) and for membership tests below. A dict keys view already
-        # supports `in` in O(1), so there's no need to materialize a list.
-        arr_release_groups = arr_release_dict.keys()
-
         # And also just check if any release group matches any Arr release tag -
         # by normalized name, matching the per-episode path's comparison.
         seadex_keys = {normalize_rg(rg) for rg in seadex_dict}
-        overlapping_results = any(normalize_rg(rg) in seadex_keys for rg in arr_release_groups)
+        overlapping_results = any(normalize_rg(rg) in seadex_keys for rg in arr_releases.tagged)
 
         # Index the Sonarr episodes by (season, episode) once, shared by both
         # the overlap map below and the per-episode match loop: looking up a
@@ -628,20 +616,21 @@ class DownloadPlanner:
                         f"but matches {identity.group}'s listed size exactly - reading it as that release",
                     )
 
-        # The Arr's sizes merged under normalized group names (like the
-        # per-episode path's comparison). Loop-invariant - arr_release_dict is
-        # never mutated below - so build it once per entry, not per URL.
-        arr_sizes_by_norm: dict[str | None, list[int]] = {}
-        for arr_rg, sizes in arr_release_dict.items():
-            arr_sizes_by_norm.setdefault(normalize_rg(arr_rg), []).extend(as_size_list(sizes))
+        # The Arr's tagged sizes merged under normalized group names (like the
+        # per-episode path's comparison). Loop-invariant, so build it once per
+        # entry, not per URL. A name normalizing to None names nothing.
+        arr_sizes_by_norm: dict[str, list[int]] = {}
+        for arr_rg, sizes in arr_releases.tagged.items():
+            if (norm := normalize_rg(arr_rg)) is not None:
+                arr_sizes_by_norm.setdefault(norm, []).extend(sizes)
 
-        # Every untagged file on disk, folded to its ownership multiset once per
-        # entry: Radarr's None key, or the Sonarr episode files the identity
-        # pass collected. A pick whose listed sizes contain the whole multiset
-        # owns the copy, which counts as an on-disk overlap - a sibling pick
-        # must hold exactly as it would had the copy kept its tag. None (the
-        # common tagged library) skips the per-url compares entirely.
-        untagged_counter = _untagged_counter((*arr_sizes_by_norm.get(None, []), *untagged_by_key.values()))
+        # Every untagged file on disk, folded to its ownership multiset once
+        # per entry: Radarr's untagged fold, or the Sonarr episode files the
+        # identity pass collected. A pick whose listed sizes contain the whole
+        # multiset owns the copy, which counts as an on-disk overlap - a
+        # sibling pick must hold exactly as it would had the copy kept its tag.
+        # None (the common tagged library) skips the per-url compares entirely.
+        untagged_counter = _untagged_counter((*arr_releases.untagged, *untagged_by_key.values()))
         overlapping_results = overlapping_results or (
             untagged_counter is not None
             and any(
@@ -652,9 +641,9 @@ class DownloadPlanner:
         )
 
         ctx = _MatchContext(
-            # Pre-rendered so the un-normalized dict itself stays out of the
-            # matchers' decision scope (it feeds only debug lines).
-            arr_groups_label=_render_groups(arr_release_groups) if debug_on else "",
+            # Pre-rendered so the un-normalized names stay out of the
+            # matchers' decision scope (they feed only debug lines).
+            arr_groups_label=", ".join(arr_releases.display_names()) if debug_on else "",
             arr_sizes_by_norm=arr_sizes_by_norm,
             overlapping_results=overlapping_results,
             sonarr_by_key=sonarr_by_key,
@@ -728,9 +717,10 @@ class DownloadPlanner:
         url = url_item.url
 
         # Match by the normalized name (like the per-episode path). The merged
-        # size index was built once per entry (see _MatchContext).
+        # size index was built once per entry (see _MatchContext). A blank pick
+        # name is no name - it can only match by untagged-copy ownership below.
         seadex_norm = normalize_rg(seadex_rg)
-        if seadex_norm in ctx.arr_sizes_by_norm:
+        if seadex_norm is not None and seadex_norm in ctx.arr_sizes_by_norm:
             # The group matches: fall through to a size comparison. A listing
             # with no sizes carries no evidence either way, so the held copy
             # stands (a vacuous disjoint must not read as an upgrade).

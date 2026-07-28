@@ -15,7 +15,7 @@ from .output import Accent, StyledValue, hub_warn
 from .planner import PlanResult
 from .reporter import RunContext
 from .seadex_types import (
-    ArrReleaseDict,
+    ArrReleases,
     SeadexDict,
     SeadexReleaseGroupItem,
     SeadexUrlItem,
@@ -297,7 +297,7 @@ class SeadexReleaseFilter:
         self,
         al_id: int,
         seadex_dict: SeadexDict,
-        arr_release_dict: ArrReleaseDict,
+        arr_releases: ArrReleases,
         ep_list: list[SonarrEpisode] | None = None,
     ) -> PlanResult:
         """Flip the switch on whether we're downloading each torrent or not.
@@ -312,7 +312,7 @@ class SeadexReleaseFilter:
 
         result = self._planner.plan(
             seadex_dict=seadex_dict,
-            arr_release_dict=arr_release_dict,
+            arr_releases=arr_releases,
             cached_hashes=self.cache_store.torrent_hashes(self._ctx.arr, al_id),
             ep_list=ep_list,
         )

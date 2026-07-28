@@ -34,7 +34,7 @@ import logging
 from pearlarr.config import Arr
 from pearlarr.output import Severity
 from pearlarr.planner import DownloadPlanner
-from pearlarr.seadex_types import EpisodeRecord, SeadexReleaseGroupItem
+from pearlarr.seadex_types import ArrReleases, EpisodeRecord, SeadexReleaseGroupItem
 
 from .builders import make_planner, rg_group, sonarr_ep, url_item
 
@@ -671,7 +671,7 @@ class TestFilterByReleaseGroup:
         seadex = {"NewRG": rg_group({"u1": url_item(episodes=[], infohash="h1")})}
         result = planner.filter_by_release_group(
             seadex_dict=seadex,
-            arr_release_dict={"OldRG": [100]},
+            arr_releases=ArrReleases(tagged={"OldRG": (100,)}),
             ep_list=None,
         )
         assert result.seadex_dict["NewRG"].urls["u1"].download is True
@@ -682,7 +682,7 @@ class TestFilterByReleaseGroup:
         seadex = {"RG": rg_group({"u1": url_item(episodes=[], size=[100], infohash="h1")})}
         result = planner.filter_by_release_group(
             seadex_dict=seadex,
-            arr_release_dict={"RG": [100]},
+            arr_releases=ArrReleases(tagged={"RG": (100,)}),
             ep_list=None,
         )
         assert result.seadex_dict["RG"].urls["u1"].download is False
@@ -693,7 +693,7 @@ class TestFilterByReleaseGroup:
         seadex = {"RG": rg_group({"u1": url_item(episodes=[], size=[200], infohash="h1")})}
         result = planner.filter_by_release_group(
             seadex_dict=seadex,
-            arr_release_dict={"RG": [100]},
+            arr_releases=ArrReleases(tagged={"RG": (100,)}),
             ep_list=None,
         )
         assert result.seadex_dict["RG"].urls["u1"].download is True
@@ -707,7 +707,7 @@ class TestFilterByReleaseGroup:
         seadex = {"Ember": rg_group({"u1": url_item(episodes=[], size=[100], infohash="h1")})}
         result = planner.filter_by_release_group(
             seadex_dict=seadex,
-            arr_release_dict={"EMBER": [100]},
+            arr_releases=ArrReleases(tagged={"EMBER": (100,)}),
             ep_list=None,
         )
         assert result.seadex_dict["Ember"].urls["u1"].download is False
@@ -722,7 +722,7 @@ class TestFilterByReleaseGroup:
         seadex = {"Ember": rg_group({"u1": url_item(episodes=[], size=[200], infohash="h1")})}
         result = planner.filter_by_release_group(
             seadex_dict=seadex,
-            arr_release_dict={"EMBER": [100]},
+            arr_releases=ArrReleases(tagged={"EMBER": (100,)}),
             ep_list=None,
         )
         assert result.seadex_dict["Ember"].urls["u1"].download is True
@@ -740,7 +740,7 @@ class TestFilterByReleaseGroup:
         }
         result = planner.filter_by_release_group(
             seadex_dict=seadex,
-            arr_release_dict={"Era-Raws": [100]},
+            arr_releases=ArrReleases(tagged={"Era-Raws": (100,)}),
             ep_list=[sonarr_ep(1, 1, size=100, release_group="Era-Raws")],
         )
         assert result.seadex_dict["Era-Raws"].urls["u1"].download is False
@@ -757,7 +757,7 @@ class TestFilterByReleaseGroup:
         }
         result = planner.filter_by_release_group(
             seadex_dict=seadex,
-            arr_release_dict={"SubsPlease": [100]},
+            arr_releases=ArrReleases(tagged={"SubsPlease": (100,)}),
             ep_list=[sonarr_ep(1, 1, size=100, release_group="SubsPlease")],
         )
         assert result.seadex_dict["Era-Raws"].urls["u1"].download is True
@@ -774,7 +774,7 @@ class TestFilterByReleaseGroup:
         }
         result = planner.filter_by_release_group(
             seadex_dict=seadex,
-            arr_release_dict={"Era-Raws": [100]},
+            arr_releases=ArrReleases(tagged={"Era-Raws": (100,)}),
             ep_list=[sonarr_ep(1, 1, size=100, release_group="Era-Raws")],
         )
         assert result.seadex_dict["Era-Raws"].urls["u1"].download is True
@@ -793,7 +793,7 @@ class TestFilterByReleaseGroup:
         }
         result = planner.filter_by_release_group(
             seadex_dict=seadex,
-            arr_release_dict={},
+            arr_releases=ArrReleases(),
             ep_list=[sonarr_ep(1, 1, size=100, release_group=None)],
         )
         assert result.seadex_dict["Era-Raws"].urls["u1"].download is False
@@ -810,7 +810,7 @@ class TestFilterByReleaseGroup:
         }
         result = planner.filter_by_release_group(
             seadex_dict=seadex,
-            arr_release_dict={},
+            arr_releases=ArrReleases(),
             ep_list=[sonarr_ep(1, 1, size=555, release_group=None)],
         )
         assert result.seadex_dict["Era-Raws"].urls["u1"].download is True
@@ -829,7 +829,7 @@ class TestFilterByReleaseGroup:
         }
         result = planner.filter_by_release_group(
             seadex_dict=seadex,
-            arr_release_dict={},
+            arr_releases=ArrReleases(),
             ep_list=[sonarr_ep(1, 1, size=0, release_group=None)],
         )
         assert result.seadex_dict["Era-Raws"].urls["u1"].download is True
@@ -855,7 +855,7 @@ class TestFilterByReleaseGroup:
         }
         result = planner.filter_by_release_group(
             seadex_dict=seadex,
-            arr_release_dict={"Era-Raws": [999]},
+            arr_releases=ArrReleases(tagged={"Era-Raws": (999,)}),
             ep_list=[
                 sonarr_ep(1, 1, size=100, release_group=None),
                 sonarr_ep(1, 2, size=999, release_group="Era-Raws"),
@@ -881,7 +881,7 @@ class TestFilterByReleaseGroup:
         }
         result = planner.filter_by_release_group(
             seadex_dict=seadex,
-            arr_release_dict={},
+            arr_releases=ArrReleases(),
             ep_list=[sonarr_ep(1, 1, size=100, release_group=None, ep_id=101)],
         )
         assert result.seadex_dict["Era-Raws"].urls["u1"].download is False
@@ -905,7 +905,7 @@ class TestFilterByReleaseGroup:
         }
         result = planner.filter_by_release_group(
             seadex_dict=seadex,
-            arr_release_dict={},
+            arr_releases=ArrReleases(),
             ep_list=[sonarr_ep(1, 1, size=999, release_group=None, ep_id=101)],
         )
         assert result.seadex_dict["Era-Raws"].urls["u2"].download is True
@@ -922,7 +922,7 @@ class TestFilterByReleaseGroup:
         }
         result = planner.filter_by_release_group(
             seadex_dict=seadex,
-            arr_release_dict={},
+            arr_releases=ArrReleases(),
             ep_list=[sonarr_ep(1, 1, size=100, release_group=None, ep_id=0)],
         )
         assert result.guards.owned_episodes == ()
@@ -938,7 +938,7 @@ class TestFilterByReleaseGroup:
         }
         result = planner.filter_by_release_group(
             seadex_dict=seadex,
-            arr_release_dict={"Other": [100]},
+            arr_releases=ArrReleases(tagged={"Other": (100,)}),
             ep_list=[sonarr_ep(1, 1, size=100, release_group="Other", ep_id=101)],
         )
         assert result.guards.owned_episodes == ()
@@ -964,7 +964,7 @@ class TestFilterByReleaseGroup:
         }
         result = planner.filter_by_release_group(
             seadex_dict=seadex,
-            arr_release_dict={"Era-Raws": [100, 999]},
+            arr_releases=ArrReleases(tagged={"Era-Raws": (100, 999)}),
             ep_list=[
                 sonarr_ep(1, 1, size=100, release_group="Era-Raws"),
                 sonarr_ep(1, 2, size=999, release_group="Era-Raws"),
@@ -982,7 +982,7 @@ class TestFilterByReleaseGroup:
         seadex = {"Ember": rg_group({"u1": url_item(episodes=[], size=[100], infohash="h1")})}
         result = planner.filter_by_release_group(
             seadex_dict=seadex,
-            arr_release_dict={None: [100]},
+            arr_releases=ArrReleases(untagged=(100,)),
             ep_list=None,
         )
         assert result.seadex_dict["Ember"].urls["u1"].download is False
@@ -996,20 +996,20 @@ class TestFilterByReleaseGroup:
         seadex = {"Ember": rg_group({"u1": url_item(episodes=[], size=[100, 7], infohash="h1")})}
         result = planner.filter_by_release_group(
             seadex_dict=seadex,
-            arr_release_dict={None: [100]},
+            arr_releases=ArrReleases(untagged=(100,)),
             ep_list=None,
         )
         assert result.seadex_dict["Ember"].urls["u1"].download is False
         assert result.torrent_hashes == []
 
     def test_movie_with_no_files_at_all_downloads(self) -> None:
-        # Radarr's no-files placeholder ({None: [None]}) leaves no untagged size
-        # to identify anything: an empty multiset must never read as covered.
+        # A movie with no files folds to an empty record, leaving no untagged
+        # size to identify anything: an empty multiset must never read as covered.
         planner = make_planner(arr=Arr.RADARR)
         seadex = {"Ember": rg_group({"u1": url_item(episodes=[], size=[100], infohash="h1")})}
         result = planner.filter_by_release_group(
             seadex_dict=seadex,
-            arr_release_dict={None: [None]},
+            arr_releases=ArrReleases(),
             ep_list=None,
         )
         assert result.seadex_dict["Ember"].urls["u1"].download is True
@@ -1021,7 +1021,7 @@ class TestFilterByReleaseGroup:
         seadex = {"Ember": rg_group({"u1": url_item(episodes=[], size=[0, 100], infohash="h1")})}
         result = planner.filter_by_release_group(
             seadex_dict=seadex,
-            arr_release_dict={None: [0]},
+            arr_releases=ArrReleases(untagged=(0,)),
             ep_list=None,
         )
         assert result.seadex_dict["Ember"].urls["u1"].download is True
@@ -1032,10 +1032,25 @@ class TestFilterByReleaseGroup:
         seadex = {"Ember": rg_group({"u1": url_item(episodes=[], size=[100], infohash="h1")})}
         result = planner.filter_by_release_group(
             seadex_dict=seadex,
-            arr_release_dict={None: [50]},
+            arr_releases=ArrReleases(untagged=(50,)),
             ep_list=None,
         )
         assert result.seadex_dict["Ember"].urls["u1"].download is True
+        assert result.torrent_hashes == ["h1"]
+
+    def test_movie_blank_named_listing_never_name_matches_untagged_files(self) -> None:
+        # PIN: a pick whose name normalizes to None has no name to match, so it
+        # reaches the untagged-ownership check, where a sizeless listing proves
+        # nothing and the grab stands. The old null-keyed dict read a blank pick
+        # name against untagged files as a NAME match and held the copy unverified.
+        planner = make_planner(arr=Arr.RADARR)
+        seadex = {"": rg_group({"u1": url_item(episodes=[], size=[], infohash="h1")})}
+        result = planner.filter_by_release_group(
+            seadex_dict=seadex,
+            arr_releases=ArrReleases(untagged=(50,)),
+            ep_list=None,
+        )
+        assert result.seadex_dict[""].urls["u1"].download is True
         assert result.torrent_hashes == ["h1"]
 
     def test_episodes_but_no_ep_list_skips(self) -> None:
@@ -1049,21 +1064,21 @@ class TestFilterByReleaseGroup:
         }
         result = planner.filter_by_release_group(
             seadex_dict=seadex,
-            arr_release_dict={},
+            arr_releases=ArrReleases(),
             ep_list=None,
         )
         assert result.seadex_dict["Era-Raws"].urls["u1"].download is False
         assert result.torrent_hashes == []
 
     def test_matching_group_radarr_none_size_downloads(self) -> None:
-        # Radarr's release dict carries an empty size list when the movie has no
-        # file. as_size_list keeps that [], which is disjoint from the real
-        # SeaDex sizes, so the group is grabbed.
+        # A group whose only file has an unreadable size keeps its name with no
+        # sizes. That empty set is disjoint from the real SeaDex sizes, so the
+        # group is grabbed.
         planner = make_planner(arr=Arr.RADARR)
         seadex = {"RG": rg_group({"u1": url_item(episodes=[], size=[100], infohash="h1")})}
         result = planner.filter_by_release_group(
             seadex_dict=seadex,
-            arr_release_dict={"RG": []},
+            arr_releases=ArrReleases(tagged={"RG": ()}),
             ep_list=None,
         )
         assert result.seadex_dict["RG"].urls["u1"].download is True
@@ -1082,7 +1097,7 @@ class TestFilterByReleaseGroup:
         }
         result = planner.filter_by_release_group(
             seadex_dict=seadex,
-            arr_release_dict={"SubsPlease": [100]},
+            arr_releases=ArrReleases(tagged={"SubsPlease": (100,)}),
             ep_list=[sonarr_ep(1, 1, size=100, release_group="SubsPlease")],
         )
         assert result.seadex_dict["Era-Raws"].urls["u1"].download is True
@@ -1102,7 +1117,7 @@ class TestGroupVerdicts:
         seadex = {"Blunt": rg_group({"u1": url_item(episodes=[], size=[100, 200], infohash="h1")})}
         result = planner.filter_by_release_group(
             seadex_dict=seadex,
-            arr_release_dict={"Blunt": [100, 999]},
+            arr_releases=ArrReleases(tagged={"Blunt": (100, 999)}),
             ep_list=None,
         )
         assert result.seadex_dict["Blunt"].urls["u1"].download is False
@@ -1133,7 +1148,7 @@ class TestGroupVerdicts:
         }
         result = planner.filter_by_release_group(
             seadex_dict=seadex,
-            arr_release_dict={"Y": [100, 999]},
+            arr_releases=ArrReleases(tagged={"Y": (100, 999)}),
             ep_list=[
                 sonarr_ep(1, 1, size=100, release_group="Y"),
                 sonarr_ep(1, 13, size=999, release_group="Y"),
@@ -1151,7 +1166,7 @@ class TestGroupVerdicts:
         seadex = {"Ember": rg_group({"u1": url_item(episodes=[], size=[], infohash="h1")})}
         result = planner.filter_by_release_group(
             seadex_dict=seadex,
-            arr_release_dict={"Ember": [100]},
+            arr_releases=ArrReleases(tagged={"Ember": (100,)}),
             ep_list=None,
         )
         url = result.seadex_dict["Ember"].urls["u1"]
@@ -1174,7 +1189,7 @@ class TestGroupVerdicts:
         }
         result = planner.filter_by_release_group(
             seadex_dict=seadex,
-            arr_release_dict={"Ember": [100]},
+            arr_releases=ArrReleases(tagged={"Ember": (100,)}),
             ep_list=None,
         )
         assert result.seadex_dict["Ember"].urls["u2"].download is False
@@ -1195,7 +1210,7 @@ class TestGroupVerdicts:
         }
         result = planner.filter_by_release_group(
             seadex_dict=seadex,
-            arr_release_dict={},
+            arr_releases=ArrReleases(),
             ep_list=[sonarr_ep(1, 1, episode_file_id=0)],
         )
         assert set(result.guards.entry_groups) == {"RG", "Kept"}
@@ -1207,7 +1222,7 @@ class TestGroupVerdicts:
         # widening existed.
         planner = make_planner(use_torrent_hash_to_filter=True)
         seadex = {"RG": rg_group({"u1": url_item(infohash="h1")})}
-        result = planner.plan(seadex_dict=seadex, arr_release_dict={"RG": [100]}, cached_hashes=[])
+        result = planner.plan(seadex_dict=seadex, arr_releases=ArrReleases(tagged={"RG": (100,)}), cached_hashes=[])
         assert result.guards.entry_groups == ()
         assert result.guards.stale_groups == ()
         assert result.guards.owned_episodes == ()
@@ -1220,7 +1235,7 @@ class TestGroupVerdicts:
         seadex = {"Era-Raws": rg_group({"u1": url_item(episodes=[], size=[100, 200], infohash="h1")})}
         result = planner.filter_by_release_group(
             seadex_dict=seadex,
-            arr_release_dict={},
+            arr_releases=ArrReleases(),
             ep_list=[
                 sonarr_ep(1, 1, size=100, release_group=None),
                 sonarr_ep(1, 2, size=200, release_group=None),
@@ -1240,7 +1255,7 @@ class TestGroupVerdicts:
         }
         result = planner.filter_by_release_group(
             seadex_dict=seadex,
-            arr_release_dict={None: [100]},
+            arr_releases=ArrReleases(untagged=(100,)),
             ep_list=None,
         )
         assert result.seadex_dict["A"].urls["u1"].download is False
