@@ -16,10 +16,11 @@ from itertools import compress
 from typing import NamedTuple
 
 from .config import Arr
-from .manual_import import GuardFacts, normalize_rg
+from .manual_import import GuardFacts, OwnedEpisode, normalize_rg
 from .output import Severity
 from .seadex_types import (
     ArrReleaseDict,
+    EpisodeKey,
     EpisodeRecord,
     SeadexDict,
     SeadexReleaseGroupItem,
@@ -215,7 +216,7 @@ def _unflag(rg_item: SeadexReleaseGroupItem, dropped: list[SeadexUrlItem]) -> No
 
 def get_all_seadex_rgs_per_episode(
     seadex_dict: SeadexDict,
-    sonarr_by_key: dict[tuple[int, int], SonarrEpisode],
+    sonarr_by_key: dict[EpisodeKey, SonarrEpisode],
 ) -> dict[str, set[str | None]]:
     """Get a list of all SeaDex releases per-episode.
 
@@ -271,8 +272,8 @@ class _EpisodeIdentity(NamedTuple):
 
 def _episode_identities(
     seadex_dict: SeadexDict,
-    sonarr_by_key: Mapping[tuple[int, int], SonarrEpisode],
-) -> tuple[dict[tuple[int, int], _EpisodeIdentity], dict[tuple[int, int], int]]:
+    sonarr_by_key: Mapping[EpisodeKey, SonarrEpisode],
+) -> tuple[dict[EpisodeKey, _EpisodeIdentity], dict[EpisodeKey, int]]:
     """Resolve each on-disk file's effective identity: its group tag, or the pick its size names.
 
     A library rename scheme can strip the release-group tag off a file we
@@ -290,12 +291,12 @@ def _episode_identities(
     or not), the multiset the unparseable-url matcher compares whole.
     """
 
-    identities: dict[tuple[int, int], _EpisodeIdentity] = {}
+    identities: dict[EpisodeKey, _EpisodeIdentity] = {}
     # Every untagged on-disk file. A zero/unknown size folds to 0: it can never
     # size-match an identity below, and in the whole-copy multiset it vetoes
     # ownership (a failed copy proves nothing and stays grabbable). Almost
     # always empty (a tagged library), which skips the listing scan.
-    untagged: dict[tuple[int, int], int] = {}
+    untagged: dict[EpisodeKey, int] = {}
     for key, sonarr_ep in sonarr_by_key.items():
         arr_file = sonarr_ep.episode_file
         if arr_file is None:
@@ -339,8 +340,8 @@ class _MatchContext:
     """Some pick's release is already on disk: by group tag, or as the untagged
     copy a pick's listed sizes identified whole (so a sibling pick is never
     grabbed over a copy only a rename left unrecognizable)."""
-    sonarr_by_key: dict[tuple[int, int], SonarrEpisode]
-    episode_identities: Mapping[tuple[int, int], _EpisodeIdentity]
+    sonarr_by_key: dict[EpisodeKey, SonarrEpisode]
+    episode_identities: Mapping[EpisodeKey, _EpisodeIdentity]
     """Each on-disk file's effective release identity (see `_episode_identities`)."""
     untagged_counter: Counter[int] | None
     """The untagged on-disk files' size multiset (Radarr's `None` key, or Sonarr's
@@ -638,7 +639,7 @@ class DownloadPlanner:
                 # inherit the exact files the grab decision just called ours -
                 # and can re-verify them by size before honoring the claim.
                 owned_episodes=tuple(
-                    (eid, identity.size)
+                    OwnedEpisode(eid, identity.size)
                     for key, identity in identities.items()
                     if identity.by_size and identity.size and (eid := sonarr_by_key[key].id)
                 ),

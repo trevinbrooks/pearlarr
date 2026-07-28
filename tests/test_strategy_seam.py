@@ -30,6 +30,7 @@ from pearlarr.manual_import import (
     ImportProgress,
     ImportReadiness,
     ImportWaitMode,
+    OwnedEpisode,
     PendingImport,
     normalize_basename,
 )
@@ -991,7 +992,7 @@ class TestImportCompletedQueueState:
             release_group="SubGroup",
             file_episode_map={"Show - 01 [1080p].mkv": [101]},
             episode_ids=[101],
-            guards=GuardFacts(owned_episodes=((101, 700),)),
+            guards=GuardFacts(owned_episodes=(OwnedEpisode(101, 700),)),
         )
         strat, sonarr = _make_sonarr_for_import(
             candidates=[manual_candidate("/d/Show - 01 [1080p].mkv")],

@@ -21,6 +21,7 @@ from typing import NamedTuple
 from .manual_import import PendingImport, fold_path_separators, normalize_group, normalize_rg
 from .seadex_types import (
     CommandResource,
+    EpisodeKey,
     HistoryRecord,
     Language,
     ParsedEpisode,
@@ -444,7 +445,7 @@ def translate_download_path(
     return f"/{joined}" if base == "/" else f"{base}/{joined}"
 
 
-def build_episode_id_map(ep_list: list[SonarrEpisode]) -> dict[tuple[int, int], int]:
+def build_episode_id_map(ep_list: list[SonarrEpisode]) -> dict[EpisodeKey, int]:
     """Index Sonarr episodes by `(season, episode)` -> episode id.
 
     Derived from `index_episodes_by_key`, so the planner and the import key
@@ -633,7 +634,7 @@ _MATCHED_SPAN_CAP = 3
 
 def episode_ids_for_parsed(
     parsed: list[ParsedEpisode],
-    ep_id_map: dict[tuple[int, int], int],
+    ep_id_map: Mapping[EpisodeKey, int],
     *,
     full_season: bool = False,
 ) -> list[int]:
@@ -652,8 +653,8 @@ def episode_ids_for_parsed(
     if pairs is None:
         return []
     ids: list[int] = []
-    for season, episode in pairs:
-        ep_id = ep_id_map.get((season, episode))
+    for pair in pairs:
+        ep_id = ep_id_map.get(pair)
         if ep_id:
             ids.append(ep_id)
     # Every pair must resolve, mirroring the import-time all-or-nothing check.
@@ -665,7 +666,7 @@ def episode_ids_for_parsed(
 
 def parsed_outside_entry(
     parsed: list[ParsedEpisode],
-    ep_id_map: dict[tuple[int, int], int],
+    ep_id_map: Mapping[EpisodeKey, int],
     *,
     full_season: bool = False,
 ) -> bool:
@@ -681,8 +682,8 @@ def parsed_outside_entry(
     return pairs is not None and all(not ep_id_map.get(pair) for pair in pairs)
 
 
-def _seedable_pairs(parsed: list[ParsedEpisode], *, full_season: bool) -> list[tuple[int, int]] | None:
-    """The parse's distinct `(season, episode)` pairs, or None on any seed veto.
+def _seedable_pairs(parsed: list[ParsedEpisode], *, full_season: bool) -> list[EpisodeKey] | None:
+    """The parse's distinct `(season, episode)` keys, or None on any seed veto.
 
     One veto ladder for `episode_ids_for_parsed` and `parsed_outside_entry`, so
     the two can't drift: full-season parses never seed (Sonarr matches a bare
@@ -693,7 +694,7 @@ def _seedable_pairs(parsed: list[ParsedEpisode], *, full_season: bool) -> list[t
 
     if full_season:
         return None
-    pairs = list(dict.fromkeys((ep.season, ep.episode) for ep in parsed))
+    pairs = list(dict.fromkeys(EpisodeKey(ep.season, ep.episode) for ep in parsed))
     if not pairs or len(pairs) > _MATCHED_SPAN_CAP:
         return None
     return pairs
@@ -724,6 +725,16 @@ def parse_se_from_filename(name: str) -> ParsedFileInfo | None:
     )
 
 
+class _EpisodeClaim(NamedTuple):
+    """One identity claim a file's parse makes: a `(season, episode)` pair, plus Sonarr's id when borrowed."""
+
+    season: int | None
+    episode: int
+    claimed_id: int | None
+    """Sonarr's own episode id from a borrowed matched pair - it must agree
+    with our map's id. None for a name-parsed claim (no id to cross-check)."""
+
+
 @dataclass(frozen=True)
 class EpisodeAssignment:
     """The outcome of assigning a torrent's on-disk files to resolved episode ids."""
@@ -739,7 +750,7 @@ class EpisodeAssignment:
 
 def _exact_episode_ids(
     info: ParsedFileInfo | None,
-    ep_id_map: Mapping[tuple[int, int], int],
+    ep_id_map: Mapping[EpisodeKey, int],
     resolved_set: set[int],
     allow_unscoped: bool = False,
 ) -> list[int]:
@@ -777,18 +788,19 @@ def _exact_episode_ids(
 
     if info is None:
         return []
-    claims: list[tuple[int | None, int, int | None]] = [
-        (info.season_number, episode, None) for episode in info.episode_numbers
-    ]
+    claims: list[_EpisodeClaim] = [_EpisodeClaim(info.season_number, episode, None) for episode in info.episode_numbers]
     borrowed = False
     # Full-season parses (bare "S01") match the whole season and never borrow.
     if not claims and not allow_unscoped and not info.full_season:
-        claims = [(matched.season_number, matched.episode_number, matched.id) for matched in info.matched_episodes]
+        claims = [
+            _EpisodeClaim(matched.season_number, matched.episode_number, matched.id)
+            for matched in info.matched_episodes
+        ]
         borrowed = True
     claims = list(dict.fromkeys(claims))
     # The cap counts DISTINCT borrowed (season, episode) pairs (junk wire
     # duplicates collapse): a wider span is the season-pack shape sans flag.
-    span = len({(season, episode) for season, episode, _ in claims})
+    span = len({(claim.season, claim.episode) for claim in claims})
     if not claims or (borrowed and span > _MATCHED_SPAN_CAP):
         return []
     # A borrowed span must also COVER the name's own absolutes: fewer matched
@@ -797,9 +809,9 @@ def _exact_episode_ids(
     if borrowed and info.absolute_episode_numbers and span != len(set(info.absolute_episode_numbers)):
         return []
     ids: list[int] = []
-    for season, episode, claimed_id in claims:
-        ep_id = ep_id_map.get(season_episode_key(season, episode))
-        if ep_id and claimed_id in (None, ep_id) and (allow_unscoped or ep_id in resolved_set):
+    for claim in claims:
+        ep_id = ep_id_map.get(season_episode_key(claim.season, claim.episode))
+        if ep_id and claim.claimed_id in (None, ep_id) and (allow_unscoped or ep_id in resolved_set):
             ids.append(ep_id)
     if len(ids) != len(claims):
         return []
@@ -820,7 +832,7 @@ def _has_no_signal(info: ParsedFileInfo | None) -> bool:
     return info is None or (not info.episode_numbers and not info.absolute_episode_numbers)
 
 
-def _signal_is_bogus(info: ParsedFileInfo, ep_id_map: Mapping[tuple[int, int], int]) -> bool:
+def _signal_is_bogus(info: ParsedFileInfo, ep_id_map: Mapping[EpisodeKey, int]) -> bool:
     """Whether the name's numbers provably describe no episode of this series.
 
     A movie year read as SxxEyy ("Chronicle.2020" parsing S20E20) is a parse
@@ -859,7 +871,7 @@ def assign_episode_ids(
     ordered_files: Sequence[str],
     parsed_by_file: Mapping[str, ParsedFileInfo | None],
     ordered_episode_ids: Sequence[int],
-    ep_id_map: Mapping[tuple[int, int], int],
+    ep_id_map: Mapping[EpisodeKey, int],
     allow_unscoped: bool | None = None,
 ) -> EpisodeAssignment:
     """Map a torrent's on-disk files to OUR resolved episode ids - names never override.

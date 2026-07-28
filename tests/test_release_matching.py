@@ -13,6 +13,7 @@ from pearlarr.planner import (
     normalize_rg,
 )
 from pearlarr.seadex_types import (
+    EpisodeKey,
     EpisodeRecord,
     SeadexReleaseGroupItem,
     SeadexUrlItem,
@@ -116,7 +117,7 @@ class TestGetAllSeadexRgsPerEpisode:
                 urls={"u": SeadexUrlItem(episodes=[EpisodeRecord(season=1, episode=1)])},
             ),
         }
-        assert get_all_seadex_rgs_per_episode(seadex, {(1, 1): sonarr_ep(1, 1)}) == {"all": set()}
+        assert get_all_seadex_rgs_per_episode(seadex, {EpisodeKey(1, 1): sonarr_ep(1, 1)}) == {"all": set()}
 
     def test_records_episodes_sonarr_has(self) -> None:
         seadex = {
@@ -125,7 +126,7 @@ class TestGetAllSeadexRgsPerEpisode:
             ),
             "Other": SeadexReleaseGroupItem(urls={"u2": SeadexUrlItem(episodes=[])}),
         }
-        result = get_all_seadex_rgs_per_episode(seadex, {(1, 1): sonarr_ep(1, 1)})
+        result = get_all_seadex_rgs_per_episode(seadex, {EpisodeKey(1, 1): sonarr_ep(1, 1)})
         assert result["S01E01"] == {"era-raws"}
         # Empty episode list -> the group lands in the "all" fallback bucket
         assert result["all"] == {"other"}
@@ -139,6 +140,6 @@ class TestGetAllSeadexRgsPerEpisode:
                 urls={"u2": SeadexUrlItem(episodes=[EpisodeRecord(season=1, episode=1)])},
             ),
         }
-        result = get_all_seadex_rgs_per_episode(seadex, {(1, 1): sonarr_ep(1, 1)})
+        result = get_all_seadex_rgs_per_episode(seadex, {EpisodeKey(1, 1): sonarr_ep(1, 1)})
         assert "S01E99" not in result
         assert result["S01E01"] == {"b"}

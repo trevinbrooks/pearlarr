@@ -8,7 +8,7 @@ set via the pure `assign_episode_ids`. Owns the per-run on-disk parse cache.
 """
 
 from .manual_import import PendingImport, normalized_leaf, path_leaf
-from .seadex_types import ManualImportCandidate, ParsedFileInfo
+from .seadex_types import EpisodeKey, ManualImportCandidate, ParsedFileInfo
 from .sonarr_client import AbstractSonarrClient
 from .sonarr_import_plan import CandidateFile, assign_episode_ids, parse_se_from_filename
 from .sonarr_parse import is_video_candidate
@@ -96,7 +96,7 @@ class FileEpisodeMapper:
         self,
         pending: PendingImport,
         candidates_by_basename: dict[str, CandidateFile],
-        ep_id_map: dict[tuple[int, int], int],
+        ep_id_map: dict[EpisodeKey, int],
     ) -> tuple[dict[str, list[int]], list[str]]:
         """Build the final `basename -> episode ids` map from OUR resolved set.
 

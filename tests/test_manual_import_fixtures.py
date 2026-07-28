@@ -27,6 +27,7 @@ from pearlarr.manual_import import (
 from pearlarr.seadex_sonarr import SonarrSync
 from pearlarr.seadex_types import (
     CommandResource,
+    EpisodeKey,
     ManualImportCandidate,
     MatchedEpisode,
     ParsedFileInfo,
@@ -253,7 +254,7 @@ class TestAssignExactSeason:
             "s00e01.mkv": _pinfo(season=0, episodes=(1,)),
             "s00e02.mkv": _pinfo(season=0, episodes=(2,)),
         }
-        ep_id_map = {(0, 1): 8030, (0, 2): 8031, (0, 3): 8032, (1, 1): 8033}
+        ep_id_map = {EpisodeKey(0, 1): 8030, EpisodeKey(0, 2): 8031, EpisodeKey(0, 3): 8032, EpisodeKey(1, 1): 8033}
 
         result = assign_episode_ids(files, parsed, [8030, 8031, 8032], ep_id_map)
 
@@ -266,7 +267,7 @@ class TestAssignExactSeason:
         # File parses to S01E01 (id 8033) but the resolved set is only S00 -> never
         # imported (the over-grab guard: identity must land INSIDE our set).
         parsed = {"x.mkv": _pinfo(season=1, episodes=(1,))}
-        ep_id_map = {(0, 1): 8030, (1, 1): 8033}
+        ep_id_map = {EpisodeKey(0, 1): 8030, EpisodeKey(1, 1): 8033}
 
         result = assign_episode_ids(["x.mkv"], parsed, [8030], ep_id_map)
 
@@ -283,7 +284,7 @@ class TestAssignExactSeason:
             "s00e01.mkv": _pinfo(season=0, episodes=(1,)),
             "s00e02.mkv": _pinfo(season=0, episodes=(2,)),
         }
-        ep_id_map = {(0, 1): 8030, (0, 2): 8031, (0, 3): 8032}
+        ep_id_map = {EpisodeKey(0, 1): 8030, EpisodeKey(0, 2): 8031, EpisodeKey(0, 3): 8032}
 
         result = assign_episode_ids(files, parsed, [], ep_id_map)
 
@@ -376,7 +377,7 @@ class TestAssignMatchedPairs:
             # The 17.5 special: S00E01 in the NAME, so no matched fallback needed.
             "sp-17.5.mkv": _pinfo(season=0, episodes=(1,), matched=((0, 1),)),
         }
-        ep_id_map = {(1, 11): 2585, (1, 12): 2586, (1, 13): 2587, (0, 1): 2574}
+        ep_id_map = {EpisodeKey(1, 11): 2585, EpisodeKey(1, 12): 2586, EpisodeKey(1, 13): 2587, EpisodeKey(0, 1): 2574}
 
         result = assign_episode_ids(files, parsed, [2586, 2587], ep_id_map)
 
@@ -387,7 +388,7 @@ class TestAssignMatchedPairs:
         # A name that carries its own (season, episode) never defers to
         # Sonarr's matched resolution.
         parsed = {"x.mkv": _pinfo(season=2, episodes=(5,), matched=((9, 9),))}
-        ep_id_map = {(2, 5): 400, (9, 9): 999}
+        ep_id_map = {EpisodeKey(2, 5): 400, EpisodeKey(9, 9): 999}
 
         result = assign_episode_ids(["x.mkv"], parsed, [400, 999], ep_id_map)
 
@@ -398,7 +399,7 @@ class TestAssignMatchedPairs:
         # only - Sonarr's series match must not decide identity on its own.
         parsed = {"x.mkv": _pinfo(season=0, absolutes=(3,), matched=((1, 3),))}
 
-        result = assign_episode_ids(["x.mkv"], parsed, [], {(1, 3): 300})
+        result = assign_episode_ids(["x.mkv"], parsed, [], {EpisodeKey(1, 3): 300})
 
         assert result.assigned == {}
         assert result.skipped == ["x.mkv"]
@@ -407,7 +408,7 @@ class TestAssignMatchedPairs:
         # A matched span reaching outside the resolved set is refused whole -
         # same half-import posture as the name-parsed leg.
         parsed = {"span.mkv": _pinfo(season=0, matched=((1, 1), (1, 3)))}
-        ep_id_map = {(1, 1): 501, (1, 3): 503}
+        ep_id_map = {EpisodeKey(1, 1): 501, EpisodeKey(1, 3): 503}
 
         result = assign_episode_ids(["span.mkv"], parsed, [501, 502], ep_id_map)
 
@@ -419,7 +420,7 @@ class TestAssignMatchedPairs:
         # when Sonarr's title match claims an out-of-set episode.
         parsed = {"only.mkv": _pinfo(matched=((1, 5),))}
 
-        result = assign_episode_ids(["only.mkv"], parsed, [900], {(1, 5): 555})
+        result = assign_episode_ids(["only.mkv"], parsed, [900], {EpisodeKey(1, 5): 555})
 
         assert result.assigned == {"only.mkv": [900]}
         assert result.skipped == []
@@ -431,7 +432,7 @@ class TestAssignMatchedPairs:
             matched_episodes=(MatchedEpisode(season_number=1, episode_number=1, id=999),),
         )
 
-        result = assign_episode_ids(["x.mkv"], {"x.mkv": info}, [501, 502], {(1, 1): 501})
+        result = assign_episode_ids(["x.mkv"], {"x.mkv": info}, [501, 502], {EpisodeKey(1, 1): 501})
 
         assert result.assigned == {}
         assert result.skipped == ["x.mkv"]
@@ -442,7 +443,7 @@ class TestAssignMatchedPairs:
             matched_episodes=(MatchedEpisode(season_number=1, episode_number=1, id=501),),
         )
 
-        result = assign_episode_ids(["x.mkv"], {"x.mkv": info}, [501, 502], {(1, 1): 501})
+        result = assign_episode_ids(["x.mkv"], {"x.mkv": info}, [501, 502], {EpisodeKey(1, 1): 501})
 
         assert result.assigned == {"x.mkv": [501]}
 
@@ -455,7 +456,7 @@ class TestAssignMatchedPairs:
             ),
         )
 
-        result = assign_episode_ids(["x.mkv"], {"x.mkv": info}, [501, 502], {(1, 1): 501})
+        result = assign_episode_ids(["x.mkv"], {"x.mkv": info}, [501, 502], {EpisodeKey(1, 1): 501})
 
         assert result.assigned == {"x.mkv": [501]}
 
@@ -470,7 +471,7 @@ class TestAssignMatchedPairs:
             ),
         )
 
-        result = assign_episode_ids(["x.mkv"], {"x.mkv": info}, [501, 502], {(1, 1): 501})
+        result = assign_episode_ids(["x.mkv"], {"x.mkv": info}, [501, 502], {EpisodeKey(1, 1): 501})
 
         assert result.assigned == {"x.mkv": [501]}
 
@@ -482,7 +483,7 @@ class TestAssignMatchedPairs:
             matched_episodes=(MatchedEpisode(season_number=1, episode_number=1, id=999),),
         )
 
-        result = assign_episode_ids(["only.mkv"], {"only.mkv": info}, [501], {(1, 1): 501})
+        result = assign_episode_ids(["only.mkv"], {"only.mkv": info}, [501], {EpisodeKey(1, 1): 501})
 
         assert result.assigned == {"only.mkv": [501]}
 
@@ -494,7 +495,7 @@ class TestAssignMatchedPairs:
             "ep-01.mkv": _pinfo(season=0, absolutes=(1,), matched=((1, 1),)),
             "ep-02.mkv": _pinfo(season=0, absolutes=(2,), matched=((1, 2),)),
         }
-        ep_id_map = {(1, 1): 501, (1, 2): 502}
+        ep_id_map = {EpisodeKey(1, 1): 501, EpisodeKey(1, 2): 502}
 
         result = assign_episode_ids(["extras.mkv", "ep-01.mkv", "ep-02.mkv"], parsed, [501, 502], ep_id_map)
 
@@ -505,7 +506,7 @@ class TestAssignMatchedPairs:
         # A 4-episode matched span exceeds what one file plausibly holds (the
         # season-pack shape without the fullSeason flag), so it never borrows.
         parsed = {"pack.mkv": _pinfo(matched=((1, 1), (1, 2), (1, 3), (1, 4)))}
-        ep_id_map = {(1, n): 500 + n for n in range(1, 5)}
+        ep_id_map = {EpisodeKey(1, n): 500 + n for n in range(1, 5)}
 
         result = assign_episode_ids(["pack.mkv"], parsed, [501, 502, 503, 504], ep_id_map)
 
@@ -515,7 +516,7 @@ class TestAssignMatchedPairs:
     def test_triple_episode_matched_span_places(self) -> None:
         # The cap boundary: a triple-episode file's span is still a per-file claim.
         parsed = {"triple.mkv": _pinfo(matched=((1, 1), (1, 2), (1, 3)))}
-        ep_id_map = {(1, 1): 501, (1, 2): 502, (1, 3): 503}
+        ep_id_map = {EpisodeKey(1, 1): 501, EpisodeKey(1, 2): 502, EpisodeKey(1, 3): 503}
 
         result = assign_episode_ids(["triple.mkv"], parsed, [501, 502, 503], ep_id_map)
 
@@ -526,7 +527,7 @@ class TestAssignMatchedPairs:
         # one claim, not a season-pack shape.
         parsed = {"x.mkv": _pinfo(matched=((1, 1), (1, 1), (1, 1), (1, 1)))}
 
-        result = assign_episode_ids(["x.mkv"], parsed, [501], {(1, 1): 501})
+        result = assign_episode_ids(["x.mkv"], parsed, [501], {EpisodeKey(1, 1): 501})
 
         assert result.assigned == {"x.mkv": [501]}
 
@@ -541,7 +542,7 @@ class TestAssignMatchedPairs:
                 MatchedEpisode(season_number=1, episode_number=3),
             ),
         )
-        ep_id_map = {(1, 1): 501, (1, 2): 502, (1, 3): 503}
+        ep_id_map = {EpisodeKey(1, 1): 501, EpisodeKey(1, 2): 502, EpisodeKey(1, 3): 503}
 
         result = assign_episode_ids(["x.mkv"], {"x.mkv": info}, [501, 502, 503], ep_id_map)
 
@@ -553,7 +554,7 @@ class TestAssignMatchedPairs:
         # so placing the resolved half is refused.
         parsed = {"d.mkv": _pinfo(season=0, absolutes=(12, 13), matched=((1, 12),))}
 
-        result = assign_episode_ids(["d.mkv"], parsed, [2586, 2587], {(1, 12): 2586})
+        result = assign_episode_ids(["d.mkv"], parsed, [2586, 2587], {EpisodeKey(1, 12): 2586})
 
         assert result.assigned == {}
         assert result.skipped == ["d.mkv"]
@@ -561,7 +562,7 @@ class TestAssignMatchedPairs:
     def test_fully_resolved_double_absolute_places_both(self) -> None:
         # The same file with BOTH pairs resolved places as a two-episode file.
         parsed = {"d.mkv": _pinfo(season=0, absolutes=(12, 13), matched=((1, 12), (1, 13)))}
-        ep_id_map = {(1, 12): 2586, (1, 13): 2587}
+        ep_id_map = {EpisodeKey(1, 12): 2586, EpisodeKey(1, 13): 2587}
 
         result = assign_episode_ids(["d.mkv"], parsed, [2586, 2587], ep_id_map)
 
@@ -574,7 +575,7 @@ class TestAssignMatchedPairs:
         # identity evidence is not (restored 1fc1d5e pin).
         parsed = {"span.mkv": _pinfo(matched=((1, 1), (1, 2)))}
 
-        result = assign_episode_ids(["span.mkv"], parsed, [501], {(1, 1): 501, (1, 2): 502})
+        result = assign_episode_ids(["span.mkv"], parsed, [501], {EpisodeKey(1, 1): 501, EpisodeKey(1, 2): 502})
 
         assert result.assigned == {}
         assert result.skipped == ["span.mkv"]
@@ -589,7 +590,7 @@ class TestAssignMatchedPairs:
             "e03.mkv": _pinfo(season=1, episodes=(3,)),
         }
         files = ["extras-s01.mkv", "e01.mkv", "e02.mkv", "e03.mkv"]
-        ep_id_map = {(1, n): 500 + n for n in range(1, 5)}
+        ep_id_map = {EpisodeKey(1, n): 500 + n for n in range(1, 5)}
 
         result = assign_episode_ids(files, parsed, [501, 502, 503, 504], ep_id_map)
 
@@ -634,7 +635,7 @@ class TestAssignScopeGate:
         # for a fully-seeded record): a correctly-named but out-of-scope file is
         # skipped, NOT placed on the live map.
         parsed = {"x.mkv": _pinfo(season=1, episodes=(1,))}
-        ep_id_map = {(1, 1): 8033}
+        ep_id_map = {EpisodeKey(1, 1): 8033}
 
         result = assign_episode_ids(["x.mkv"], parsed, [], ep_id_map, allow_unscoped=False)
 
@@ -661,7 +662,7 @@ class TestAssignScopeGate:
             normalize_basename(seed_name): _cand(seed_name),
             normalize_basename(leftover_name): _cand(leftover_name),
         }
-        ep_id_map = {(1, 1): 101, (2, 1): 999}  # 999 is OUTSIDE the resolved {101}
+        ep_id_map = {EpisodeKey(1, 1): 101, EpisodeKey(2, 1): 999}  # 999 is OUTSIDE the resolved {101}
 
         merged, skipped = mapper.assign(pending, candidates, ep_id_map)
 
@@ -713,7 +714,7 @@ class TestAssignScopeGate:
             "s-11.mkv": _pinfo(season=0, absolutes=(11,), matched=((1, 11),)),
             "e-12.mkv": None,
         }
-        ep_id_map = {(1, 11): 2585, (1, 12): 2586}
+        ep_id_map = {EpisodeKey(1, 11): 2585, EpisodeKey(1, 12): 2586}
 
         result = assign_episode_ids(["s-11.mkv", "e-12.mkv"], parsed, [2586], ep_id_map)
 
@@ -727,7 +728,7 @@ class TestAssignScopeGate:
             "e-12.mkv": _pinfo(season=0, absolutes=(12,), matched=((1, 12),)),
             "e-12v2.mkv": _pinfo(season=0, absolutes=(12,), matched=((1, 12),)),
         }
-        ep_id_map = {(1, 12): 2586, (1, 13): 2587}
+        ep_id_map = {EpisodeKey(1, 12): 2586, EpisodeKey(1, 13): 2587}
 
         result = assign_episode_ids(["e-12.mkv", "e-12v2.mkv"], parsed, [2586, 2587], ep_id_map)
 
@@ -742,7 +743,7 @@ class TestAssignScopeGate:
             "e-12v2.mkv": _pinfo(season=0, absolutes=(12,), matched=((1, 12),)),
         }
 
-        result = assign_episode_ids(["e-12v2.mkv"], parsed, [2587], {(1, 12): 2586})
+        result = assign_episode_ids(["e-12v2.mkv"], parsed, [2587], {EpisodeKey(1, 12): 2586})
 
         assert result.assigned == {}
         assert result.skipped == ["e-12v2.mkv"]
@@ -755,7 +756,7 @@ class TestAssignScopeGate:
             "e-12v2.mkv": _pinfo(season=0, absolutes=(12,), matched=((1, 12),)),
         }
 
-        result = assign_episode_ids(["e-12v2.mkv"], parsed, [2587], {(1, 12): 2586})
+        result = assign_episode_ids(["e-12v2.mkv"], parsed, [2587], {EpisodeKey(1, 12): 2586})
 
         assert result.assigned == {}
         assert result.skipped == ["e-12v2.mkv"]
@@ -769,7 +770,7 @@ class TestAssignScopeGate:
             "e-12v2.mkv": _pinfo(season=0, absolutes=(12,), matched=((1, 12),)),
         }
 
-        result = assign_episode_ids(["e-12v2.mkv"], parsed, [2587], {(1, 12): 2586})
+        result = assign_episode_ids(["e-12v2.mkv"], parsed, [2587], {EpisodeKey(1, 12): 2586})
 
         assert result.assigned == {}
         assert result.skipped == ["e-12v2.mkv"]
@@ -795,7 +796,7 @@ class TestAssignScopeGate:
             "e-12v2.mkv": _pinfo(season=0, absolutes=(12,), matched=((1, 12),)),
         }
 
-        result = assign_episode_ids(["e-12v2.mkv"], parsed, [2588], {(1, 12): 2586})
+        result = assign_episode_ids(["e-12v2.mkv"], parsed, [2588], {EpisodeKey(1, 12): 2586})
 
         assert result.assigned == {}
         assert result.skipped == ["e-12v2.mkv"]
@@ -817,7 +818,7 @@ class TestAssignScopeGate:
             seadex_files=[v1, v2],
         )
         candidates = {normalize_basename(name): _cand(name) for name in (v1, v2)}
-        ep_id_map = {(1, 12): 2586}
+        ep_id_map = {EpisodeKey(1, 12): 2586}
 
         first, _ = mapper.assign(pending, candidates, ep_id_map)
         second, skipped = mapper.assign(pending, candidates, ep_id_map)
@@ -842,7 +843,7 @@ class TestAssignScopeGate:
         )
         candidates = {normalize_basename(name): _cand(name) for name in (v1, v2)}
 
-        merged, skipped = mapper.assign(pending, candidates, {(1, 12): 2586})
+        merged, skipped = mapper.assign(pending, candidates, {EpisodeKey(1, 12): 2586})
 
         assert normalize_basename(v2) not in merged
         assert normalize_basename(v2) in skipped
@@ -863,7 +864,7 @@ class TestAssignScopeGate:
         )
         candidates = {normalize_basename(name): _cand(name) for name in (v1, v2)}
 
-        merged, skipped = mapper.assign(pending, candidates, {(1, 12): 2586, (1, 13): 2587})
+        merged, skipped = mapper.assign(pending, candidates, {EpisodeKey(1, 12): 2586, EpisodeKey(1, 13): 2587})
 
         assert normalize_basename(v2) not in merged
         assert normalize_basename(v2) in skipped
@@ -887,7 +888,7 @@ class TestAssignScopeGate:
         )
         candidates = {normalize_basename(v2): _cand(v2)}  # v1 is gone from disk
 
-        merged, skipped = mapper.assign(pending, candidates, {(1, 12): 2586})
+        merged, skipped = mapper.assign(pending, candidates, {EpisodeKey(1, 12): 2586})
 
         assert normalize_basename(v2) not in merged
         assert normalize_basename(v2) in skipped
@@ -907,7 +908,7 @@ class TestAssignScopeGate:
         )
         candidates = {normalize_basename(name): _cand(name) for name in (v1, v2)}
 
-        merged, skipped = mapper.assign(pending, candidates, {(1, 12): 2586})
+        merged, skipped = mapper.assign(pending, candidates, {EpisodeKey(1, 12): 2586})
 
         assert normalize_basename(v2) not in merged
         assert normalize_basename(v2) in skipped
@@ -951,7 +952,7 @@ class TestAssignScopeGate:
             "s01e01.mkv": _pinfo(season=1, episodes=(1,)),
             "extra.mkv": _pinfo(absolutes=(2,)),
         }
-        ep_id_map = {(1, 1): 8033}
+        ep_id_map = {EpisodeKey(1, 1): 8033}
 
         result = assign_episode_ids(
             ["s01e01.mkv", "extra.mkv"],
@@ -986,7 +987,7 @@ class TestAssignDuplicateLeaves:
         )
         candidates = {normalize_basename(name): _cand(name)}
 
-        merged, skipped = mapper.assign(pending, candidates, {(1, 1): 101})
+        merged, skipped = mapper.assign(pending, candidates, {EpisodeKey(1, 1): 101})
 
         assert merged == {normalize_basename(name): [101]}
         assert skipped == []
@@ -1022,7 +1023,7 @@ class TestAssignBogusKeyDowngrade:
         # "Chronicle.2020" parses S20E20 - a key the series doesn't have. One
         # file, one resolved id: the parse artifact downgrades to numberless.
         parsed = {"movie.mkv": _pinfo(season=20, episodes=(20,))}
-        ep_id_map = {(1, 1): 501}
+        ep_id_map = {EpisodeKey(1, 1): 501}
 
         result = assign_episode_ids(["movie.mkv"], parsed, [900], ep_id_map)
 
@@ -1033,7 +1034,7 @@ class TestAssignBogusKeyDowngrade:
         # The same key EXISTS in the series (resolving outside our set): that
         # is real evidence, so the out-of-set refusal stands.
         parsed = {"movie.mkv": _pinfo(season=20, episodes=(20,))}
-        ep_id_map = {(20, 20): 555}
+        ep_id_map = {EpisodeKey(20, 20): 555}
 
         result = assign_episode_ids(["movie.mkv"], parsed, [900], ep_id_map)
 
@@ -1044,7 +1045,7 @@ class TestAssignBogusKeyDowngrade:
         # One of the two parsed keys resolves in the series, so the signal is
         # not provably bogus - the whole claim stays a refusal.
         parsed = {"d.mkv": _pinfo(season=1, episodes=(5, 99))}
-        ep_id_map = {(1, 5): 505}
+        ep_id_map = {EpisodeKey(1, 5): 505}
 
         result = assign_episode_ids(["d.mkv"], parsed, [900], ep_id_map)
 
@@ -1055,7 +1056,7 @@ class TestAssignBogusKeyDowngrade:
         # Absolute numbers are real signal even when the SxxEyy key is bogus,
         # and the multi-absolute span keeps leg 2 refused too.
         parsed = {"movie.mkv": _pinfo(season=20, episodes=(20,), absolutes=(20, 21))}
-        ep_id_map = {(1, 1): 501}
+        ep_id_map = {EpisodeKey(1, 1): 501}
 
         result = assign_episode_ids(["movie.mkv"], parsed, [900], ep_id_map)
 
@@ -1066,7 +1067,7 @@ class TestAssignBogusKeyDowngrade:
         # A full-season parse means the file plausibly holds MANY episodes -
         # cardinality evidence still vetoes the downgraded placement.
         parsed = {"movie.mkv": _pinfo(season=20, episodes=(20,), full_season=True)}
-        ep_id_map = {(1, 1): 501}
+        ep_id_map = {EpisodeKey(1, 1): 501}
 
         result = assign_episode_ids(["movie.mkv"], parsed, [900], ep_id_map)
 
@@ -1077,7 +1078,7 @@ class TestAssignBogusKeyDowngrade:
         # The heal-mode special shape: the name parses S02E00 (nonexistent) and
         # Sonarr matched one pair - a single pair never vetoes the fallback.
         parsed = {"sp.mkv": _pinfo(season=2, episodes=(0,), matched=((1, 5),))}
-        ep_id_map = {(1, 5): 555}
+        ep_id_map = {EpisodeKey(1, 5): 555}
 
         result = assign_episode_ids(["sp.mkv"], parsed, [900], ep_id_map)
 
@@ -1116,7 +1117,7 @@ class TestAssignNumberlessZip:
             "op.mkv": _pinfo(),
             "ed.mkv": _pinfo(),
         }
-        ep_id_map = {(1, 1): 501}
+        ep_id_map = {EpisodeKey(1, 1): 501}
 
         result = assign_episode_ids(["e01.mkv", "op.mkv", "ed.mkv"], parsed, [501, 502, 503], ep_id_map)
 

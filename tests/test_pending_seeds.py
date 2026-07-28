@@ -14,7 +14,7 @@ cached `/parse` results and the `(season, episode) -> id` index. Built bare
 from collections.abc import Mapping
 
 from pearlarr.config import Arr
-from pearlarr.manual_import import GuardFacts, normalize_basename
+from pearlarr.manual_import import GuardFacts, OwnedEpisode, normalize_basename
 from pearlarr.seadex_sonarr import SonarrSync
 from pearlarr.seadex_types import EpisodeRecord, ParsedEpisode
 from pearlarr.sonarr_import import PendingSeedContext
@@ -193,7 +193,7 @@ class TestBuildPendingSeeds:
                 al_id=1,
                 series_id=7,
                 title="Show",
-                guards=GuardFacts(owned_episodes=((101, 1000),)),
+                guards=GuardFacts(owned_episodes=(OwnedEpisode(101, 1000),)),
             ),
         )
 
