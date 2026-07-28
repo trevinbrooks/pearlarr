@@ -405,9 +405,14 @@ class RadarrSync(ArrSync[RadarrItem]):
         tagged: dict[str, list[int]] = {}
         untagged: list[int] = []
         for mf in self.radarr.movie_files(radarr_movie_id):
-            sizes = tagged.setdefault(mf.release_group, []) if mf.release_group else untagged
-            if mf.size is not None:
-                sizes.append(mf.size)
+            if mf.release_group:
+                sizes = tagged.setdefault(mf.release_group, [])
+                if mf.size is not None:
+                    sizes.append(mf.size)
+            else:
+                # An unreadable size folds to 0 so `_untagged_counter` vetoes the
+                # whole multiset: an unverifiable file never helps prove ownership.
+                untagged.append(mf.size or 0)
 
         return ArrReleases(
             tagged={rg: tuple(sizes) for rg, sizes in tagged.items()},

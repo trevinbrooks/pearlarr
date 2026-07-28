@@ -475,9 +475,10 @@ class ArrReleases:
     """The Arr's existing files for one entry, folded by release group.
 
     Built by the strategies (Sonarr per episode file, Radarr per movie file)
-    and read by the planner. Unreadable sizes are dropped at the fold; a group
-    whose only sizes are unreadable still keeps its name. `tagged` keys are
-    never blank - a file with a blank group tag is untagged.
+    and read by the planner. A tagged file's unreadable size is dropped at the
+    fold (the group keeps its name); an untagged one folds to 0, vetoing the
+    ownership multiset whole. `tagged` keys are never blank - a file with a
+    blank group tag is untagged.
     """
 
     tagged: Mapping[str, tuple[int, ...]] = field(default_factory=dict[str, tuple[int, ...]])
@@ -946,7 +947,8 @@ class MovieFile(_ApiModel):
     decision (release group -> existing-file sizes), so a movie file is
     READ into a decision, not re-emitted: a fail-open list read
     (`validate_each`). Only `release_group` (`string | null` in the schema)
-    and `size` (a non-null `int64`) are consumed.
+    and `size` are consumed; `size` is a schema `int64` but fail-opens to
+    None, which the fold treats as unreadable.
     """
 
     release_group: str | None = Field(default=None, validation_alias="releaseGroup")
