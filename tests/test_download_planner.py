@@ -889,7 +889,7 @@ class TestFilterByReleaseGroup:
         assert result.torrent_hashes == []
         # The plan reports the identified episode - with the size backing the
         # claim - so the import seeds protect exactly that file.
-        assert result.owned_episodes == ((101, 100),)
+        assert result.guards.owned_episodes == ((101, 100),)
 
     def test_plan_reports_no_owned_episode_for_a_tagged_file(self) -> None:
         # A file that still carries a group tag is identified by name, never by
@@ -905,7 +905,7 @@ class TestFilterByReleaseGroup:
             arr_release_dict={"Other": [100]},
             ep_list=[sonarr_ep(1, 1, size=100, release_group="Other", ep_id=101)],
         )
-        assert result.owned_episodes == ()
+        assert result.guards.owned_episodes == ()
 
     def test_episode_partly_stale_group_exits_the_guard_without_a_download(self) -> None:
         # One episode at an unlisted size is not a whole-release upgrade (that
@@ -936,8 +936,8 @@ class TestFilterByReleaseGroup:
         )
         url = result.seadex_dict["Era-Raws"].urls["u1"]
         assert url.download is False
-        assert result.entry_groups == ()
-        assert result.stale_groups == ("Era-Raws",)
+        assert result.guards.entry_groups == ()
+        assert result.guards.stale_groups == ("Era-Raws",)
 
     def test_movie_groupless_file_at_exact_sizes_no_download(self) -> None:
         # The no-episode twin: untagged files key their sizes under None, and
@@ -1070,8 +1070,8 @@ class TestGroupVerdicts:
             ep_list=None,
         )
         assert result.seadex_dict["Blunt"].urls["u1"].download is False
-        assert result.entry_groups == ()
-        assert result.stale_groups == ("Blunt",)
+        assert result.guards.entry_groups == ()
+        assert result.guards.stale_groups == ("Blunt",)
 
     def test_stale_leftover_at_an_unlisted_episode_condemns_the_group(self) -> None:
         # Pick Y is current on every episode it lists, but the disk also holds
@@ -1104,8 +1104,8 @@ class TestGroupVerdicts:
             ],
         )
         assert result.seadex_dict["X"].urls["u2"].download is True
-        assert "Y" not in result.entry_groups
-        assert result.stale_groups == ("Y",)
+        assert "Y" not in result.guards.entry_groups
+        assert result.guards.stale_groups == ("Y",)
 
     def test_blind_listing_never_reads_as_an_upgrade(self) -> None:
         # A listing with no sizes proves nothing: the held copy stands (no
@@ -1121,8 +1121,8 @@ class TestGroupVerdicts:
         url = result.seadex_dict["Ember"].urls["u1"]
         assert url.download is False
         assert url.upgrade is False
-        assert result.entry_groups == ()
-        assert result.stale_groups == ()
+        assert result.guards.entry_groups == ()
+        assert result.guards.stale_groups == ()
 
     def test_blind_url_beside_a_sized_current_one_keeps_the_group_protected(self) -> None:
         # One blind cross-seed must not void the protection the sized listing
@@ -1142,8 +1142,8 @@ class TestGroupVerdicts:
             ep_list=None,
         )
         assert result.seadex_dict["Ember"].urls["u2"].download is False
-        assert result.entry_groups == ("Ember",)
-        assert result.stale_groups == ()
+        assert result.guards.entry_groups == ("Ember",)
+        assert result.guards.stale_groups == ()
 
     def test_groups_with_nothing_on_disk_stay_protected(self) -> None:
         # Vacuously current: a pick with no on-disk files is protected, so a
@@ -1162,8 +1162,8 @@ class TestGroupVerdicts:
             arr_release_dict={},
             ep_list=[sonarr_ep(1, 1, episode_file_id=0)],
         )
-        assert set(result.entry_groups) == {"RG", "Kept"}
-        assert result.stale_groups == ()
+        assert set(result.guards.entry_groups) == {"RG", "Kept"}
+        assert result.guards.stale_groups == ()
 
     def test_hash_filter_grants_no_guard_protection(self) -> None:
         # Hash mode gathers no size evidence, so the plan vouches for nothing:
@@ -1172,9 +1172,9 @@ class TestGroupVerdicts:
         planner = make_planner(use_torrent_hash_to_filter=True)
         seadex = {"RG": rg_group({"u1": url_item(infohash="h1")})}
         result = planner.plan(seadex_dict=seadex, arr_release_dict={"RG": [100]}, cached_hashes=[])
-        assert result.entry_groups == ()
-        assert result.stale_groups == ()
-        assert result.owned_episodes == ()
+        assert result.guards.entry_groups == ()
+        assert result.guards.stale_groups == ()
+        assert result.guards.owned_episodes == ()
 
     def test_sonarr_untagged_copy_holds_an_unparseable_url(self) -> None:
         # A Sonarr url whose files never parsed reaches the blunt matcher. The

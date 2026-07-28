@@ -16,7 +16,7 @@ from itertools import compress
 from typing import NamedTuple
 
 from .config import Arr
-from .manual_import import normalize_group
+from .manual_import import GuardFacts, normalize_rg
 from .output import Severity
 from .seadex_types import (
     ArrReleaseDict,
@@ -26,6 +26,7 @@ from .seadex_types import (
     SeadexUrlItem,
     SonarrEpisode,
     as_size_list,
+    index_episodes_by_key,
     season_episode_key,
 )
 
@@ -78,32 +79,11 @@ class PlanResult:
     """The unique torrent infohashes to remember. None for a hashless private torrent."""
     skips: PrivateOnlySkips
     """The private-only skip outcome from `reduce_overlapping_downloads`, folded onto run state by the caller."""
-    owned_episodes: tuple[tuple[int, int], ...] = ()
-    """`(episode id, file size)` pairs for Sonarr episodes whose untagged on-disk file a
-    pick's listed size identified as ours. Rides the plan out so the import seeds protect
-    the same files - at the same sizes - the grab declined to re-download. Empty for
-    Radarr and the hash path."""
-    entry_groups: tuple[str, ...] = ()
-    """The entry's pick groups whose on-disk copies verified current by size (vacuously,
-    groups with nothing on disk): the import-time never-overwrite widening. Empty for the
-    hash path, which gathers no size evidence and so protects only grabbed groups."""
-    stale_groups: tuple[str, ...] = ()
-    """Pick groups the run positively judged stale on disk (a file at a size no sized
-    listing carries). The import subtracts these from sibling records' guard votes."""
-
-
-def normalize_rg(name: str | None) -> str | None:
-    """Normalize a release group name for comparison.
-
-    Delegates to `normalize_group` (strip whitespace and
-    wrapping dashes, casefold) so the grab-time filter and the import-time
-    never-overwrite check share ONE normalization. This wrapper only adds the
-    None-tolerance. Returns None for a missing/blank name.
-    """
-
-    if not name:
-        return None
-    return normalize_group(name)
+    guards: GuardFacts = field(default_factory=GuardFacts)
+    """The overwrite-guard evidence the import inherits whole (see `GuardFacts`):
+    the size-verified current groups, the positively-stale ones, and the owned
+    untagged `(episode id, size)` claims. All-empty for Radarr and the hash path,
+    which gather no size evidence and so protect only grabbed groups."""
 
 
 def _render_groups(groups: Iterable[str | None]) -> str:
@@ -112,19 +92,32 @@ def _render_groups(groups: Iterable[str | None]) -> str:
     return ", ".join(rg or "(none)" for rg in groups)
 
 
-def _ungrouped_sizes_are_this_release(ungrouped_sizes: Iterable[int], listed_sizes: Iterable[int]) -> bool:
+def _untagged_counter(untagged_sizes: Iterable[int]) -> Counter[int] | None:
+    """The untagged on-disk multiset, or None when it can never claim ownership.
+
+    Folded once per entry (the ownership checks run per url). None when empty,
+    or when any size is non-positive - a zero-byte failed copy proves nothing
+    and stays grabbable, so the whole multiset is disqualified with it.
+    """
+
+    counter = Counter(untagged_sizes)
+    if not counter or any(size <= 0 for size in counter):
+        return None
+    return counter
+
+
+def _owns_untagged_copy(counter: Counter[int] | None, listed_sizes: Iterable[int]) -> bool:
     """Whether every file the arr holds untagged belongs to this listing, by exact size.
 
     Identifies an owned copy whose group tag a rename stripped. Containment runs
     arr -> listing, never the reverse: a listing also carries files the arr never
     holds (subtitles, fonts, creditless extras), so requiring every LISTED size
     on disk would only ever match a single-file release. Multisets, so two
-    untagged files at one size need two listed twins, and every untagged size
-    must be positive - a zero-byte failed copy proves nothing and stays grabbable.
+    untagged files at one size need two listed twins. `counter` is the
+    `_untagged_counter` fold (None short-circuits: nothing ownable on disk).
     """
 
-    ungrouped = Counter(ungrouped_sizes)
-    return bool(ungrouped) and all(size > 0 for size in ungrouped) and ungrouped <= Counter(listed_sizes)
+    return counter is not None and counter <= Counter(listed_sizes)
 
 
 def get_episode_keys(
@@ -206,12 +199,18 @@ def _flagged_all_addable(rg_item: SeadexReleaseGroupItem) -> bool:
 
 
 def _unflag(rg_item: SeadexReleaseGroupItem, dropped: list[SeadexUrlItem]) -> None:
-    """Unflag a whole group, recording the urls this pass actually dropped."""
+    """Unflag a whole group, recording the urls this pass actually dropped.
+
+    `upgrade` clears with `download` - it describes the grab, so it must never
+    outlive it (a rendered release line would otherwise mark a dropped url as
+    an upgrade that no longer happens).
+    """
 
     for u in rg_item.urls.values():
         if u.download:
             dropped.append(u)
         u.download = False
+        u.upgrade = False
 
 
 def get_all_seadex_rgs_per_episode(
@@ -259,20 +258,6 @@ def get_all_seadex_rgs_per_episode(
     return all_seadex_rgs_per_episode
 
 
-def index_episodes_by_key(ep_list: Iterable[SonarrEpisode]) -> dict[tuple[int, int], SonarrEpisode]:
-    """Index Sonarr episodes by `(season, episode)`, the first record winning.
-
-    Sonarr episodes are unique by season+episode, so the first-wins rule only
-    ever decides a malformed duplicate. The one home of the index every
-    `(season, episode)` lookup in the match loop shares.
-    """
-
-    index: dict[tuple[int, int], SonarrEpisode] = {}
-    for ep in ep_list:
-        index.setdefault(season_episode_key(ep.season_number, ep.episode_number), ep)
-    return index
-
-
 class _EpisodeIdentity(NamedTuple):
     """The effective release identity of one on-disk episode file."""
 
@@ -280,6 +265,8 @@ class _EpisodeIdentity(NamedTuple):
     """The normalized group: the file's own tag, or the pick a listed size named."""
     by_size: bool
     """Identified by exact listed size, not a tag (see `_episode_identities`)."""
+    size: int | None
+    """The file's on-disk size (always the listed size for a `by_size` identity)."""
 
 
 def _episode_identities(
@@ -315,7 +302,7 @@ def _episode_identities(
             continue
         group = normalize_rg(arr_file.release_group)
         if group is not None:
-            identities[key] = _EpisodeIdentity(group, by_size=False)
+            identities[key] = _EpisodeIdentity(group, by_size=False, size=arr_file.size)
         else:
             untagged[key] = arr_file.size or 0
     if not untagged:
@@ -329,10 +316,10 @@ def _episode_identities(
             for seadex_ep in url_item.episodes:
                 if seadex_ep.season is None or seadex_ep.episode is None:
                     continue
-                key = (seadex_ep.season, seadex_ep.episode)
+                key = season_episode_key(seadex_ep.season, seadex_ep.episode)
                 if key in identities or seadex_ep.size <= 0 or untagged.get(key) != seadex_ep.size:
                     continue
-                identities[key] = _EpisodeIdentity(normalized, by_size=True)
+                identities[key] = _EpisodeIdentity(normalized, by_size=True, size=seadex_ep.size)
     return identities, untagged
 
 
@@ -355,9 +342,10 @@ class _MatchContext:
     sonarr_by_key: dict[tuple[int, int], SonarrEpisode]
     episode_identities: Mapping[tuple[int, int], _EpisodeIdentity]
     """Each on-disk file's effective release identity (see `_episode_identities`)."""
-    untagged_sizes: tuple[int, ...]
-    """Every untagged positive-size on-disk file's size (Radarr's `None` key, or
-    Sonarr's untagged episode files) - the unparseable-url ownership multiset."""
+    untagged_counter: Counter[int] | None
+    """The untagged on-disk files' size multiset (Radarr's `None` key, or Sonarr's
+    untagged episode files), pre-folded by `_untagged_counter` - the unparseable-url
+    ownership input. None when nothing untagged can claim ownership."""
     all_seadex_rgs_per_episode: dict[str, set[str | None]]
     has_ep_list: bool
     debug_on: bool
@@ -390,9 +378,8 @@ def _group_verdicts(seadex_dict: SeadexDict, ctx: _MatchContext) -> tuple[tuple[
     # without one, the Arr's tag-keyed size map is the whole vocabulary.
     attributed: dict[str | None, list[int | None]] = {}
     if ctx.has_ep_list:
-        for key, identity in ctx.episode_identities.items():
-            arr_file = ctx.sonarr_by_key[key].episode_file
-            attributed.setdefault(identity.group, []).append(arr_file.size if arr_file else None)
+        for identity in ctx.episode_identities.values():
+            attributed.setdefault(identity.group, []).append(identity.size)
     else:
         attributed = {norm: list(sizes) for norm, sizes in ctx.arr_sizes_by_norm.items() if norm is not None}
 
@@ -585,16 +572,20 @@ class DownloadPlanner:
         for arr_rg, sizes in arr_release_dict.items():
             arr_sizes_by_norm.setdefault(normalize_rg(arr_rg), []).extend(as_size_list(sizes))
 
-        # Every untagged positive-size file on disk: Radarr's None key, or the
-        # Sonarr episode files the identity pass collected. A pick whose listed
-        # sizes contain the whole multiset owns the copy, which counts as an
-        # on-disk overlap - a sibling pick must hold exactly as it would had
-        # the copy kept its tag.
-        untagged_sizes = (*arr_sizes_by_norm.get(None, []), *untagged_by_key.values())
-        overlapping_results = overlapping_results or any(
-            _ungrouped_sizes_are_this_release(untagged_sizes, url_item.size)
-            for rg_item in seadex_dict.values()
-            for url_item in rg_item.urls.values()
+        # Every untagged file on disk, folded to its ownership multiset once per
+        # entry: Radarr's None key, or the Sonarr episode files the identity
+        # pass collected. A pick whose listed sizes contain the whole multiset
+        # owns the copy, which counts as an on-disk overlap - a sibling pick
+        # must hold exactly as it would had the copy kept its tag. None (the
+        # common tagged library) skips the per-url compares entirely.
+        untagged_counter = _untagged_counter((*arr_sizes_by_norm.get(None, []), *untagged_by_key.values()))
+        overlapping_results = overlapping_results or (
+            untagged_counter is not None
+            and any(
+                _owns_untagged_copy(untagged_counter, url_item.size)
+                for rg_item in seadex_dict.values()
+                for url_item in rg_item.urls.values()
+            )
         )
 
         ctx = _MatchContext(
@@ -603,7 +594,7 @@ class DownloadPlanner:
             overlapping_results=overlapping_results,
             sonarr_by_key=sonarr_by_key,
             episode_identities=identities,
-            untagged_sizes=untagged_sizes,
+            untagged_counter=untagged_counter,
             all_seadex_rgs_per_episode=all_seadex_rgs_per_episode,
             has_ep_list=ep_list is not None,
             debug_on=debug_on,
@@ -640,16 +631,18 @@ class DownloadPlanner:
             seadex_dict=seadex_dict,
             torrent_hashes=torrent_hashes,
             skips=skips,
-            # Resolved to (episode id, size) pairs here so the import seeds
-            # inherit the exact files the grab decision just called ours - and
-            # can re-verify them by size before honoring the claim.
-            owned_episodes=tuple(
-                (eid, untagged_by_key[key])
-                for key, identity in identities.items()
-                if identity.by_size and (eid := sonarr_by_key[key].id)
+            guards=GuardFacts(
+                entry_groups=entry_groups,
+                stale_groups=stale_groups,
+                # Resolved to (episode id, size) pairs here so the import seeds
+                # inherit the exact files the grab decision just called ours -
+                # and can re-verify them by size before honoring the claim.
+                owned_episodes=tuple(
+                    (eid, identity.size)
+                    for key, identity in identities.items()
+                    if identity.by_size and identity.size and (eid := sonarr_by_key[key].id)
+                ),
             ),
-            entry_groups=entry_groups,
-            stale_groups=stale_groups,
         )
 
     def _match_url_no_episodes(
@@ -664,7 +657,7 @@ class DownloadPlanner:
         Radarr and weirdly named TV: if the group isn't in the Arr's releases
         (and nothing overlaps) grab it. If it is, grab it only when the file
         sizes are disjoint. A copy a rename left untagged is identified by size
-        instead (`_ungrouped_sizes_are_this_release`).
+        instead (`_owns_untagged_copy`).
         """
 
         url = url_item.url
@@ -696,7 +689,7 @@ class DownloadPlanner:
                     f"SeaDex release group {seadex_rg} in {self.arr.capitalize()} releases: "
                     f"{_render_groups(arr_release_groups)}, and no listed size contradicts the on-disk copy",
                 )
-        elif _ungrouped_sizes_are_this_release(ctx.untagged_sizes, url_item.size):
+        elif _owns_untagged_copy(ctx.untagged_counter, url_item.size):
             # A rename stripped the group tag: the untagged files on disk
             # (Radarr's None key, or Sonarr's untagged episode files) all
             # belong to this listing by size, so the copy is ours.
@@ -774,7 +767,7 @@ class DownloadPlanner:
 
             # O(1) lookup into the indexed Sonarr episodes instead of
             # re-scanning the whole list for every parsed episode
-            episode_key = (seadex_ep_season, seadex_ep_episode)
+            episode_key = season_episode_key(seadex_ep_season, seadex_ep_episode)
             sonarr_ep = ctx.sonarr_by_key.get(episode_key)
             if sonarr_ep is None:
                 continue
@@ -915,7 +908,9 @@ class DownloadPlanner:
                     continue
                 identity = tuple(sorted(u.size))
                 if identity in seen:
+                    # Upgrade clears with download, same as _unflag.
                     u.download = False
+                    u.upgrade = False
                 else:
                     seen.add(identity)
 

@@ -6,6 +6,7 @@ tracker filtering, the want_best / prefer_dual_audio narrowing, the is_public
 computation, and the per-group private-url drop.
 """
 
+from collections import Counter
 from datetime import datetime
 
 import pytest
@@ -570,3 +571,21 @@ class TestInteractivePick:
         assert result is False
         # Nothing persisted: the title must resurface (and re-prompt) next run.
         assert cache.get_entry(Arr.RADARR, al_id) is None
+
+
+def test_file_size_cover_folds_listings_with_elementwise_max() -> None:
+    """MUTATION PIN: `|` not `+`, and not a set union either.
+
+    Two listings carrying one copy of a size each cannot cover a listing that
+    genuinely carries two - only ONE listing holding both can. A `+` fold would
+    fake that coverage and prune a real pick; a set union would deflate a real
+    two-copy listing to one and offer a fallback nobody needs.
+    """
+
+    cover = seadex_filter.file_size_cover
+    one_each = [[100], [100]]
+    assert cover(one_each)[100] == 1
+    assert not Counter([100, 100]) <= cover(one_each)
+    assert cover([[100, 100]])[100] == 2
+    # Coverage genuinely split across two listings still covers.
+    assert Counter([100, 200]) <= cover([[100], [200]])

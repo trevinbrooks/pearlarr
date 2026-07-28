@@ -26,6 +26,7 @@ from pearlarr.config import Arr
 from pearlarr.grab_pipeline import GrabRequest
 from pearlarr.log import EntryState
 from pearlarr.manual_import import (
+    GuardFacts,
     ImportProgress,
     ImportReadiness,
     ImportWaitMode,
@@ -590,14 +591,6 @@ class TestProcessAlIdThreadsServices:
         assert run.check_al_id_in_cache_calls == []  # the stale run never trusts the cross-arr cache
 
 
-def _ep_with_file(ep_id: int, *, group: str | None, size: int | None = None) -> SonarrEpisode:
-    """A current Sonarr episode that already holds a file from `group`."""
-
-    return SonarrEpisode.model_validate(
-        {"id": ep_id, "episodeFileId": ep_id * 10, "episodeFile": {"releaseGroup": group, "size": size}},
-    )
-
-
 def _make_sonarr_for_import(
     *,
     candidates: list[ManualImportCandidate] | None,
@@ -820,7 +813,7 @@ class TestImportCompletedQueueState:
         )
         sonarr = FakeSonarrClient(
             episodes=[
-                _ep_with_file(101, group="SubGroup"),
+                sonarr_ep(1, 1, ep_id=101, release_group="SubGroup"),
                 SonarrEpisode.model_validate({"id": 102, "seasonNumber": 1, "episodeNumber": 2}),
             ],
             candidates=[manual_candidate(f"/d/{done_file}"), manual_candidate(f"/d/{wrong_file}")],
@@ -958,7 +951,7 @@ class TestImportCompletedQueueState:
         )
         strat, sonarr = _make_sonarr_for_import(
             candidates=[manual_candidate("/d/Show - 01 [1080p].mkv")],
-            episodes=[_ep_with_file(101, group="SubGroup")],
+            episodes=[sonarr_ep(1, 1, ep_id=101, release_group="SubGroup")],
         )
 
         probe = strat.import_completed(pending, "/d")
@@ -976,11 +969,11 @@ class TestImportCompletedQueueState:
             release_group="SubGroup",
             file_episode_map={"Show - 01 [1080p].mkv": [101]},
             episode_ids=[101],
-            entry_groups=["SubGroup", "OtherPick"],
+            guards=GuardFacts(entry_groups=("SubGroup", "OtherPick")),
         )
         strat, sonarr = _make_sonarr_for_import(
             candidates=[manual_candidate("/d/Show - 01 [1080p].mkv")],
-            episodes=[_ep_with_file(101, group="OtherPick")],
+            episodes=[sonarr_ep(1, 1, ep_id=101, release_group="OtherPick")],
         )
 
         probe = strat.import_completed(pending, "/d")
@@ -998,11 +991,11 @@ class TestImportCompletedQueueState:
             release_group="SubGroup",
             file_episode_map={"Show - 01 [1080p].mkv": [101]},
             episode_ids=[101],
-            owned_episodes=[(101, 700)],
+            guards=GuardFacts(owned_episodes=((101, 700),)),
         )
         strat, sonarr = _make_sonarr_for_import(
             candidates=[manual_candidate("/d/Show - 01 [1080p].mkv")],
-            episodes=[_ep_with_file(101, group=None, size=700)],
+            episodes=[sonarr_ep(1, 1, ep_id=101, release_group=None, size=700)],
         )
 
         probe = strat.import_completed(pending, "/d")
@@ -1058,7 +1051,7 @@ class TestImportCompletedQueueState:
         assert first.command_issued is True
 
         # The copy landed: the target episode now holds the recommended file.
-        sonarr.episodes_return = [_ep_with_file(101, group="SubGroup")]
+        sonarr.episodes_return = [sonarr_ep(1, 1, ep_id=101, release_group="SubGroup")]
 
         second = strat.import_completed(pending, "/d")
         assert second.readiness is ImportReadiness.IMPORTED
@@ -1455,7 +1448,7 @@ class TestImportCompletedPayload:
         )
         strat, sonarr = _make_sonarr_for_import(
             candidates=[candidate],
-            episodes=[_ep_with_file(101, group=None)],
+            episodes=[sonarr_ep(1, 1, ep_id=101, release_group=None)],
         )
 
         probe = strat.import_completed(pending, "/d")
@@ -1481,7 +1474,7 @@ class TestImportCompletedPayload:
         )
         strat, sonarr = _make_sonarr_for_import(
             candidates=[candidate],
-            episodes=[_ep_with_file(101, group=None)],
+            episodes=[sonarr_ep(1, 1, ep_id=101, release_group=None)],
         )
 
         first = strat.import_completed(pending, "/d")
@@ -1489,7 +1482,7 @@ class TestImportCompletedPayload:
         assert first.files_present is False
 
         # The import landed: episode 101 now holds our recommended group's file.
-        sonarr.episodes_return = [_ep_with_file(101, group="SubGroup")]
+        sonarr.episodes_return = [sonarr_ep(1, 1, ep_id=101, release_group="SubGroup")]
 
         second = strat.import_completed(pending, "/d")
         assert second.readiness is ImportReadiness.IMPORTED

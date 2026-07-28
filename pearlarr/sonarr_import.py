@@ -17,12 +17,11 @@ Three collaborators:
 """
 
 import logging
-import os
 import time
 from collections.abc import Iterable
-from dataclasses import dataclass, replace
+from dataclasses import dataclass, field, replace
 from datetime import datetime
-from typing import Any, NamedTuple
+from typing import NamedTuple
 from urllib.parse import urlsplit
 
 from .cache import UPDATED_AT_STR_FORMAT
@@ -30,12 +29,13 @@ from .config import Arr
 from .coverage import coverage_string, episodes_from_ep_list
 from .log import count_noun, pluralize
 from .manual_import import (
+    GuardFacts,
     ImportProbe,
     ImportProgress,
     ImportReadiness,
     PendingImport,
-    normalize_group,
     normalized_leaf,
+    path_leaf,
 )
 from .output import hub_note, hub_warn
 from .run_services import RunDeps
@@ -71,6 +71,7 @@ from .sonarr_import_plan import (
     derive_languages,
     episode_file_statuses,
     episode_ids_for_parsed,
+    episodes_by_id,
     parse_quality_from_filename,
     parsed_outside_entry,
     plan_import_files,
@@ -81,6 +82,7 @@ from .sonarr_import_plan import (
     sonarr_process_pass_running,
     targets_needing_import,
     translate_download_path,
+    trusted_groups,
 )
 from .sonarr_mapper import FileEpisodeMapper
 from .sonarr_parse import parsed_episodes, parsed_full_season, video_file_entries
@@ -623,7 +625,7 @@ class ImportExecutor:
         quality_defs = self._quality_definitions()
 
         path = decision.path or decision.basename
-        base = os.path.basename(path)
+        base = path_leaf(path)
         sonarr_axes = quality_axes_from_model(decision.quality)
         our_axes = parse_quality_from_filename(base)
         default_name = self._config.imports.default_quality
@@ -670,17 +672,6 @@ class ImportExecutor:
         return entry.model_copy(update={"downloadId": pending.infohash.upper()})
 
 
-class _GuardSets(NamedTuple):
-    """One record's overwrite-guard derivation (see `_guard_sets`)."""
-
-    groups: set[str]
-    """The normalized never-overwrite group set."""
-    own_group: str | None
-    """This record's own normalized group (None for a blank group)."""
-    own_group_sizes: frozenset[int]
-    """Sizes the current listings of this group carry, across the series' records."""
-
-
 class _SeedStatuses(NamedTuple):
     """The seed-gated import state both reconcile consumers read.
 
@@ -725,16 +716,9 @@ class PendingSeedContext:
     """The entry's season/episode coverage at grab time (logging only)."""
     url: str | None = None
     """The SeaDex entry URL at grab time (logging only)."""
-    owned_episodes: tuple[tuple[int, int], ...] = ()
-    """`(episode id, file size)` pairs whose untagged on-disk file the plan identified
-    as a pick's copy by listed size - carried from `PlanResult` so the import protects
-    the exact files the grab decision declined to re-download."""
-    entry_groups: tuple[str, ...] = ()
-    """The plan's verified-current pick groups, copied onto every seed (see
-    `PendingImport.entry_groups`)."""
-    stale_groups: tuple[str, ...] = ()
-    """The plan's positively-stale pick groups, copied onto every seed (see
-    `PendingImport.stale_groups`)."""
+    guards: GuardFacts = field(default_factory=GuardFacts)
+    """The plan's overwrite-guard evidence, copied onto every seed unchanged
+    (see `GuardFacts`)."""
 
 
 class ImportReconciler:
@@ -803,7 +787,14 @@ class ImportReconciler:
         """
 
         # Steady state is nothing flagged: skip the per-entry derivations below.
-        if not any(u.download and u.infohash for item in seadex_dict.values() for u in item.urls.values()):
+        # The infohash rides the triple already narrowed to str.
+        flagged = [
+            (srg, url_item, url_item.infohash)
+            for srg, srg_item in seadex_dict.items()
+            for url_item in srg_item.urls.values()
+            if url_item.download and url_item.infohash
+        ]
+        if not flagged:
             return {}
 
         ep_id_map = build_episode_id_map(ep_list)
@@ -812,9 +803,8 @@ class ImportReconciler:
         # mapping the add flow resolved) instead of re-deriving identity from
         # Sonarr's title parse.
         ordered_episode_ids = [ep.id for ep in ep_list if ep.id]
-        # Loop invariants of the per-seed preowned classification below.
-        episodes_by_id = {ep.id: ep for ep in ep_list if ep.id}
-        entry_group_set = {normalize_group(g) for g in entry.entry_groups if g}
+        # Loop invariant of the per-seed preowned classification below.
+        by_id = episodes_by_id(ep_list)
         # Per-file parse records are read straight from the cache facade
         # (`get_sonarr_parse`): each is the persisted parse entry
         # `{"fetched_at": str, "episodes": [...]}` written by
@@ -824,92 +814,83 @@ class ImportReconciler:
 
         pending_seeds: dict[str, PendingImport] = {}
 
-        for srg, srg_item in seadex_dict.items():
-            for url_item in srg_item.urls.values():
-                if not (url_item.download and url_item.infohash):
+        for srg, url_item, infohash in flagged:
+            # The video files this torrent should import (subs / fonts / NCED
+            # dropped).
+            video_files = [base for _, base in video_file_entries(url_item.files)]
+
+            # No importable video files at all -> nothing to track.
+            if not video_files:
+                continue
+
+            # Best-effort grab-time mapping, keyed by NORMALIZED basename so it
+            # matches the on-disk leaves at import time (NFC/NFD-safe).
+            file_episode_map: dict[str, list[int]] = {}
+            excluded_files: list[str] = []
+            claimed: set[int] = set()
+            for base in video_files:
+                record = self.cache_store.get_sonarr_parse(base)
+                if not record:
                     continue
-
-                # The video files this torrent should import (subs / fonts / NCED
-                # dropped).
-                video_files = [base for _, base in video_file_entries(url_item.files)]
-
-                # No importable video files at all -> nothing to track.
-                if not video_files:
-                    continue
-
-                # Best-effort grab-time mapping, keyed by NORMALIZED basename so it
-                # matches the on-disk leaves at import time (NFC/NFD-safe).
-                file_episode_map: dict[str, list[int]] = {}
-                excluded_files: list[str] = []
-                claimed: set[int] = set()
-                for base in video_files:
-                    record = self.cache_store.get_sonarr_parse(base)
-                    if not record:
-                        continue
-                    parsed = parsed_episodes(record)
-                    full_season = parsed_full_season(record)
-                    file_ids = episode_ids_for_parsed(parsed, ep_id_map, full_season=full_season)
-                    # First claim in file order wins: assignment defers a later
-                    # file whose ids collide, so the seed refuses it the same way.
-                    if file_ids and not any(i in claimed for i in file_ids):
-                        file_episode_map[normalized_leaf(base)] = file_ids
-                        claimed.update(file_ids)
-                    elif file_ids or parsed_outside_entry(parsed, ep_id_map, full_season=full_season):
-                        # A collision-refused duplicate, or a clean parse landing
-                        # entirely outside this entry's set (a sibling slice's
-                        # file): this record will never import it, so completeness
-                        # accounts for it. Any other refusal stays "possibly ours".
-                        excluded_files.append(normalized_leaf(base))
-                if excluded_files:
-                    self.logger.debug(
-                        f"{entry.title}: not counted toward completeness "
-                        f"(other slice / duplicate): {', '.join(excluded_files)}",
-                    )
-
-                # Targets that already hold a recommended file at grab time were
-                # never this torrent's to insert: classify them now (with the
-                # grab-time guard sets) so the wait's inserted counts start at 0.
-                own_group = normalize_group(srg) if srg else None
-                grab_snapshot = EpisodeSnapshot(
-                    episodes_by_id=episodes_by_id,
-                    recommended_groups=entry_group_set | ({own_group} if own_group else set()),
-                    owned_episode_sizes=dict(entry.owned_episodes),
-                    own_group=own_group,
-                    own_group_sizes=frozenset(url_item.size),
+                parsed = parsed_episodes(record)
+                full_season = parsed_full_season(record)
+                file_ids = episode_ids_for_parsed(parsed, ep_id_map, full_season=full_season)
+                # First claim in file order wins: assignment defers a later
+                # file whose ids collide, so the seed refuses it the same way.
+                if file_ids and not any(i in claimed for i in file_ids):
+                    file_episode_map[normalized_leaf(base)] = file_ids
+                    claimed.update(file_ids)
+                elif file_ids or parsed_outside_entry(parsed, ep_id_map, full_season=full_season):
+                    # A collision-refused duplicate, or a clean parse landing
+                    # entirely outside this entry's set (a sibling slice's
+                    # file): this record will never import it, so completeness
+                    # accounts for it. Any other refusal stays "possibly ours".
+                    excluded_files.append(normalized_leaf(base))
+            if excluded_files:
+                self.logger.debug(
+                    f"{entry.title}: not counted toward completeness "
+                    f"(other slice / duplicate): {', '.join(excluded_files)}",
                 )
-                preowned = [
-                    ep_id
-                    for ep_id, status in episode_file_statuses(sorted(claimed), grab_snapshot).items()
-                    if status is EpisodeFileStatus.RECOMMENDED
-                ]
 
-                # This record's own slice of the entry (the episodes its files
-                # claimed), so sibling per-episode records label distinctly.
-                claimed_eps = [ep for ep in ep_list if ep.id in claimed]
-                pending_seeds[url_item.infohash] = PendingImport(
-                    infohash=url_item.infohash,
-                    series_id=entry.series_id,
-                    al_id=entry.al_id,
-                    file_episode_map=file_episode_map,
-                    # episode_ids is a legacy read-only fallback: never seeded (any
-                    # value here would only duplicate the map, which readers dedupe).
-                    episode_ids=[],
-                    release_group=srg,
-                    is_dual_audio=url_item.is_dual_audio,
-                    seadex_files=video_files,
-                    title=entry.title,
-                    added_at=added_at,
-                    coverage=entry.coverage,
-                    url=entry.url,
-                    ordered_episode_ids=ordered_episode_ids,
-                    slice_coverage=coverage_string(episodes_from_ep_list(claimed_eps)) or None,
-                    excluded_files=excluded_files,
-                    entry_groups=list(entry.entry_groups),
-                    stale_groups=list(entry.stale_groups),
-                    owned_episodes=list(entry.owned_episodes),
-                    release_sizes=list(url_item.size),
-                    preowned_episode_ids=preowned,
-                )
+            # This record's own slice of the entry (the episodes its files
+            # claimed), so sibling per-episode records label distinctly.
+            claimed_eps = [ep for ep in ep_list if ep.id in claimed]
+            seed = PendingImport(
+                infohash=infohash,
+                series_id=entry.series_id,
+                al_id=entry.al_id,
+                file_episode_map=file_episode_map,
+                # episode_ids is a legacy read-only fallback: never seeded (any
+                # value here would only duplicate the map, which readers dedupe).
+                episode_ids=[],
+                release_group=srg,
+                is_dual_audio=url_item.is_dual_audio,
+                seadex_files=video_files,
+                title=entry.title,
+                added_at=added_at,
+                coverage=entry.coverage,
+                url=entry.url,
+                ordered_episode_ids=ordered_episode_ids,
+                slice_coverage=coverage_string(episodes_from_ep_list(claimed_eps)) or None,
+                excluded_files=excluded_files,
+                guards=entry.guards,
+                release_sizes=list(url_item.size),
+            )
+            # Targets that already hold a recommended file at grab time were
+            # never this torrent's to insert: classify them against the record's
+            # own trust slice (no sibling votes yet) so the wait's inserted
+            # counts start at 0.
+            grab_snapshot = EpisodeSnapshot(
+                episodes_by_id=by_id,
+                trusted=trusted_groups(seed),
+                owned_episode_sizes=seed.guards.owned_sizes,
+            )
+            preowned = [
+                ep_id
+                for ep_id, status in episode_file_statuses(sorted(claimed), grab_snapshot).items()
+                if status is EpisodeFileStatus.RECOMMENDED
+            ]
+            pending_seeds[infohash] = replace(seed, preowned_episode_ids=preowned)
 
         return pending_seeds
 
@@ -960,14 +941,11 @@ class ImportReconciler:
         coverage = self._seed_coverage(pending)
         accounted = bool(seeded_targets) and coverage.accounted
         seed_complete = accounted and coverage.mapped
-        seed = self._seed_statuses(pending, seeded_targets if accounted else [])
-        # Net of the targets that already held a recommended file at grab time:
-        # the bar and the report count only files THIS torrent inserted. The
-        # done-check below still reads the raw statuses (a preowned target is
-        # done, just not ours to celebrate).
-        preowned = len(set(pending.preowned_episode_ids) & set(seeded_targets)) if accounted else 0
-        done = max(0, self._recommended_count(seed.statuses) - preowned)
-        total = len(seeded_targets) - preowned if accounted else 0
+        gated_targets = seeded_targets if accounted else []
+        seed = self._seed_statuses(pending, gated_targets)
+        # The done-check below still reads the raw statuses (a preowned target
+        # is done, just not ours to celebrate).
+        done, total = self._net_counts(pending, gated_targets, seed.statuses)
 
         def probe(
             readiness: ImportReadiness,
@@ -1046,90 +1024,54 @@ class ImportReconciler:
         if not seeded_targets or not self._seed_coverage(pending).mapped:
             return ImportProgress(0, 0, determinate=False)
         seed = self._seed_statuses(pending, seeded_targets)
-        # Same preowned netting as the heavy poll, so the two bars agree.
-        preowned = len(set(pending.preowned_episode_ids) & set(seeded_targets))
-        return ImportProgress(
-            max(0, self._recommended_count(seed.statuses) - preowned),
-            len(seeded_targets) - preowned,
-            determinate=True,
-        )
+        done, total = self._net_counts(pending, seeded_targets, seed.statuses)
+        return ImportProgress(done, total, determinate=True)
 
     def _seed_statuses(self, pending: PendingImport, targets: list[int]) -> _SeedStatuses:
         """Fetch the series' episodes FRESH and classify `targets` against them.
 
         Episode files are the source of truth for "already imported". Callers gate
         the bar on seed completeness by passing `[]` (empty statuses). The episode
-        index + recommended groups are still fetched for the manual import.
+        index + trust policy are still fetched for the manual import.
         """
 
         episodes = self._episodes.episodes_for_series(pending.series_id)
-        guard = self._guard_sets(pending)
         snapshot = EpisodeSnapshot(
-            episodes_by_id={ep.id: ep for ep in episodes if ep.id},
-            recommended_groups=guard.groups,
-            owned_episode_sizes=dict(pending.owned_episodes),
-            own_group=guard.own_group,
-            own_group_sizes=guard.own_group_sizes,
+            episodes_by_id=episodes_by_id(episodes),
+            trusted=trusted_groups(pending, self._series_pending_records(pending.series_id)),
+            owned_episode_sizes=pending.guards.owned_sizes,
         )
         return _SeedStatuses(snapshot, episode_file_statuses(targets, snapshot))
 
     @staticmethod
-    def _recommended_count(statuses: dict[int, EpisodeFileStatus]) -> int:
-        """How many target episodes already hold the recommended release (bar numerator)."""
+    def _net_counts(
+        pending: PendingImport,
+        targets: list[int],
+        statuses: dict[int, EpisodeFileStatus],
+    ) -> tuple[int, int]:
+        """The bar's `(done, total)`, net of the grab-time preowned targets.
 
-        return sum(1 for status in statuses.values() if status is EpisodeFileStatus.RECOMMENDED)
-
-    def _series_pending_records(self, series_id: int) -> list[dict[str, Any]]:
-        """Raw durable pending records for one series (any release group).
-
-        Each record is the genuinely-open cache JSON form of a
-        `PendingImport` (`to_json`/`from_json`), so it is typed
-        `dict[str, Any]`.
+        The one home of the netting, so the heavy poll and the Tier-2 bar count
+        only files the torrent actually inserted - and agree. Empty `targets`
+        (an unaccounted record) nets to 0/0, the indeterminate row.
         """
 
-        # `get_pending_for_series` returns a fresh snapshot `{infohash -> record}`
-        # already filtered to this series in SQL (so a record dropped earlier this run
-        # is absent). The `record ->> 'series_id'` match only returns JSON objects,
-        # so every value is a typed record - no defensive isinstance/widen needed.
-        return list(self.cache_store.get_pending_for_series(Arr.SONARR, series_id).values())
+        preowned = len(set(pending.preowned_episode_ids) & set(targets))
+        recommended = sum(1 for status in statuses.values() if status is EpisodeFileStatus.RECOMMENDED)
+        return max(0, recommended - preowned), len(targets) - preowned
 
-    def _guard_sets(self, pending: PendingImport) -> "_GuardSets":
-        """The overwrite-guard sets for one record: recommended groups + own-group sizes.
+    def _series_pending_records(self, series_id: int) -> list[PendingImport]:
+        """The series' durable pending records (any release group), rehydrated.
 
-        The groups are the union of this record's group, its entry's
-        verified-current pick groups from grab time, and the group of every
-        other pending record we grabbed for the series. So an episode our
-        mapping assigned to another preferred torrent - or already holding one
-        of this entry's recommended releases we never grabbed - is never
-        overwritten by this one. Sibling records' entry_groups stay out, and a
-        sibling's own group is refused when THIS record's plan judged that
-        group stale on disk: the copies being replaced must not ride back into
-        protection on a sibling's vote.
-
-        This record's own group is unconditional (unlike `entry_groups`, which
-        drops groups judged stale): it is the identity of the files we are
-        importing. Its stale copies are instead told apart by size -
-        `own_group_sizes` unions the current listings of every record grabbing
-        this group, and the classifier replaces a same-group file at a size
-        none of them carries.
+        `get_pending_for_series` returns a fresh snapshot `{infohash -> record}`
+        already filtered to this series in SQL (so a record dropped earlier this
+        run is absent); `from_json` lifts each cache JSON dict back to the type.
         """
 
-        stale = {normalize_group(g) for g in pending.stale_groups if g}
-        groups = {normalize_group(g) for g in pending.entry_groups if g}
-        own_group = normalize_group(pending.release_group) if pending.release_group else None
-        own_sizes = set(pending.release_sizes)
-        for raw in self._series_pending_records(pending.series_id):
-            group = raw.get("release_group")
-            if not group:
-                continue
-            norm = normalize_group(group)
-            if norm == own_group:
-                own_sizes.update(raw.get("release_sizes", []))
-            if norm not in stale:
-                groups.add(norm)
-        if own_group:
-            groups.add(own_group)
-        return _GuardSets(groups, own_group, frozenset(own_sizes))
+        return [
+            PendingImport.from_json(raw)
+            for raw in self.cache_store.get_pending_for_series(Arr.SONARR, series_id).values()
+        ]
 
     @staticmethod
     def _pending_target_ids(pending: PendingImport) -> list[int]:

@@ -45,15 +45,25 @@ def normalize_basename(name: str) -> str:
     return unicodedata.normalize("NFC", name).strip().casefold()
 
 
+def fold_path_separators(path: str) -> str:
+    r"""Fold `\` to `/` - the one home of the Windows-separator fold.
+
+    A Windows arr hands a POSIX host its paths verbatim, where `os.path` and a
+    plain split see no separator at all. Every path compare and leaf
+    extraction folds through here.
+    """
+
+    return path.replace("\\", "/")
+
+
 def path_leaf(name: str) -> str:
     """A path's leaf with case and unicode preserved, for parser and display use.
 
-    Backslashes fold - a Windows arr hands a POSIX host its paths verbatim,
-    where `os.path` sees no separator at all - and a trailing separator never
+    Backslashes fold (`fold_path_separators`) and a trailing separator never
     yields an empty leaf. Comparison keyspaces use `normalized_leaf` instead.
     """
 
-    return os.path.basename(name.replace("\\", "/").rstrip("/"))
+    return os.path.basename(fold_path_separators(name).rstrip("/"))
 
 
 def normalized_leaf(name: str) -> str:
@@ -69,14 +79,21 @@ def normalized_leaf(name: str) -> str:
 def normalize_group(group: str) -> str:
     """Normalize a release group for comparison: strip whitespace/wrapping dashes, casefold.
 
-    The single source of truth for group comparison - `planner.normalize_rg`
-    delegates here - so the never-overwrite check and the grab-time group filter
-    agree on what counts as "the same group" (a dash-wrapped "-Aergia-" equals
-    "Aergia" in both). Blank/None is handled by the caller (only real groups are
-    ever passed here).
+    The single source of truth for group comparison, so the never-overwrite
+    check and the grab-time group filter agree on what counts as "the same
+    group" (a dash-wrapped "-Aergia-" equals "Aergia" in both). Blank/None is
+    handled by the caller (or by `normalize_rg`).
     """
 
     return group.strip().strip("-").casefold()
+
+
+def normalize_rg(name: str | None) -> str | None:
+    """`normalize_group` with None-tolerance: None for a missing/blank name."""
+
+    if not name:
+        return None
+    return normalize_group(name)
 
 
 class ImportWaitMode(StrEnum):
@@ -464,6 +481,51 @@ class PendingKey(NamedTuple):
 
 
 @dataclass(frozen=True)
+class GuardFacts:
+    """The plan's per-entry overwrite-guard evidence, carried whole.
+
+    Built once by the planner, threaded through the seed build unchanged
+    (`PlanResult.guards` -> `PendingSeedContext.guards` -> `PendingImport.guards`)
+    and persisted on every record, so a new guard fact is one field here rather
+    than one per layer. Sonarr-only enforcement - Radarr's import path reads
+    nothing but the infohash. All-empty for Radarr, older records, and the hash
+    filter (those guard on grabbed groups alone).
+    """
+
+    entry_groups: tuple[str, ...] = ()
+    """The entry's pick groups whose on-disk copies the plan verified current by size (vacuously,
+    groups with nothing on disk). Widens the import-time never-overwrite set: an on-disk file from
+    another recommended group stays even when that group was never grabbed by us."""
+
+    stale_groups: tuple[str, ...] = ()
+    """Pick groups the plan positively judged stale on disk (a file at a size no sized listing
+    carries) - the copies this grab replaces. Subtracted from sibling records' guard votes so a group
+    excluded from `entry_groups` cannot ride back in and shield the files being replaced."""
+
+    owned_episodes: tuple[tuple[int, int], ...] = ()
+    """`(episode id, file size)` pairs for episodes whose on-disk file carries no release group but
+    matched a pick's listed size exactly at grab time - the same identification the planner declined
+    to re-download for. The import honors the claim only while the file still sits at the recorded
+    size, so a different untagged file landing mid-wait is imported over rather than trusted."""
+
+    @property
+    def owned_sizes(self) -> dict[int, int]:
+        """`owned_episodes` as the id -> size mapping the classifier reads."""
+
+        return dict(self.owned_episodes)
+
+    @classmethod
+    def from_json(cls, raw: dict[str, Any]) -> "GuardFacts":
+        """Rebuild from the persisted dict (missing keys fall back empty)."""
+
+        return cls(
+            entry_groups=tuple(raw.get("entry_groups", [])),
+            stale_groups=tuple(raw.get("stale_groups", [])),
+            owned_episodes=tuple((pair[0], pair[1]) for pair in raw.get("owned_episodes", [])),
+        )
+
+
+@dataclass(frozen=True)
 class PendingImport:
     """A durable record of one added torrent awaiting a series-pinned import.
 
@@ -536,24 +598,8 @@ class PendingImport:
     slice (a clean parse entirely outside our episode set) or a collision-refused duplicate. Bar/deadline
     accounting only - the IMPORTED decision never trusts them. Empty for older records (conservative)."""
 
-    entry_groups: list[str] = field(default_factory=list[str])
-    """The entry's pick groups whose on-disk copies the plan verified current by size (vacuously, groups
-    with nothing on disk). Widens the import-time never-overwrite set: an on-disk file from another
-    recommended group stays even when that group was never grabbed by us. Sonarr-only enforcement -
-    Radarr records leave it empty (its import path reads nothing but the infohash). Empty for older
-    records and the hash filter (they guard on grabbed groups alone)."""
-
-    stale_groups: list[str] = field(default_factory=list[str])
-    """Pick groups the plan positively judged stale on disk (a file at a size no sized listing
-    carries) - the copies this grab replaces. Subtracted from sibling records' guard votes so a group
-    excluded from `entry_groups` cannot ride back in and shield the files being replaced."""
-
-    owned_episodes: list[tuple[int, int]] = field(default_factory=list[tuple[int, int]])
-    """`(episode id, file size)` pairs for episodes whose on-disk file carries no release group but
-    matched a pick's listed size exactly at grab time - the same identification the planner declined to
-    re-download for. The import honors the claim only while the file still sits at the recorded size, so
-    a different untagged file landing mid-wait is imported over rather than trusted. Empty for older
-    records (they fall back to the group-name guard alone)."""
+    guards: GuardFacts = field(default_factory=GuardFacts)
+    """The plan's overwrite-guard evidence, persisted whole (see `GuardFacts`)."""
 
     release_sizes: list[int] = field(default_factory=list[int])
     """The grabbed listing's file sizes. Lets the import tell this release's own files from a stale
@@ -590,9 +636,9 @@ class PendingImport:
     def to_json(self) -> dict[str, Any]:
         """Serialize to the plain dict persisted under `pending_imports`.
 
-        Every field is JSON-native (str / int / bool / list / dict / None), so
-        `asdict` is the whole serializer - and a field added to the dataclass
-        can't be silently dropped from the persisted form.
+        Every field is JSON-representable (`asdict` recurses the nested
+        `guards`), so `asdict` is the whole serializer - and a field added to
+        the dataclass can't be silently dropped from the persisted form.
         """
 
         return asdict(self)
@@ -621,9 +667,7 @@ class PendingImport:
             ordered_episode_ids=raw.get("ordered_episode_ids", []),
             slice_coverage=raw.get("slice_coverage"),
             excluded_files=raw.get("excluded_files", []),
-            entry_groups=raw.get("entry_groups", []),
-            stale_groups=raw.get("stale_groups", []),
-            owned_episodes=[(pair[0], pair[1]) for pair in raw.get("owned_episodes", [])],
+            guards=GuardFacts.from_json(raw.get("guards", {})),
             release_sizes=raw.get("release_sizes", []),
             preowned_episode_ids=raw.get("preowned_episode_ids", []),
         )

@@ -12,13 +12,13 @@ vocabulary and the normalizers.
 """
 
 import re
-from collections.abc import Callable, Mapping, Sequence
+from collections.abc import Callable, Iterable, Mapping, Sequence
 from dataclasses import dataclass
 from enum import Enum, StrEnum, auto
 from types import MappingProxyType
 from typing import NamedTuple
 
-from .manual_import import normalize_group
+from .manual_import import PendingImport, fold_path_separators, normalize_group, normalize_rg
 from .seadex_types import (
     CommandResource,
     HistoryRecord,
@@ -33,6 +33,7 @@ from .seadex_types import (
     RemotePathMapping,
     Revision,
     SonarrEpisode,
+    index_episodes_by_key,
     season_episode_key,
 )
 
@@ -141,9 +142,9 @@ _COMMAND_IN_FLIGHT_STATES = frozenset({"queued", "started"})
 
 
 def _norm_path(path: str) -> str:
-    r"""Normalize a path for a pure (no-disk) prefix compare: `\` -> `/`, folded."""
+    """Normalize a path for a pure (no-disk) prefix compare: separators folded, casefolded."""
 
-    return path.replace("\\", "/").casefold()
+    return fold_path_separators(path).casefold()
 
 
 class ContentPaths(NamedTuple):
@@ -381,9 +382,9 @@ def classify_download_history(records: Sequence[HistoryRecord]) -> DownloadHisto
 
 
 def _path_segments(path: str) -> list[str]:
-    r"""Split a path into non-empty segments for the boundary-aware compare (`\` -> `/`)."""
+    """Split a path into non-empty segments for the boundary-aware compare (separators folded)."""
 
-    return [segment for segment in path.replace("\\", "/").split("/") if segment]
+    return [segment for segment in fold_path_separators(path).split("/") if segment]
 
 
 def translate_download_path(
@@ -446,11 +447,11 @@ def translate_download_path(
 def build_episode_id_map(ep_list: list[SonarrEpisode]) -> dict[tuple[int, int], int]:
     """Index Sonarr episodes by `(season, episode)` -> episode id.
 
-    Mirrors the planner's keying: a missing `season_number`/`episode_number`
-    collapses to `SONARR_MISSING_KEY` (an out-of-range value that never
-    collides with a real key). On a duplicate key the first episode wins
-    (`setdefault`), and episodes with a falsy id (0) are skipped - a 0 id can
-    never be POSTed to Sonarr.
+    Derived from `index_episodes_by_key`, so the planner and the import key
+    identically (missing numbers collapse to `SONARR_MISSING_KEY`, first
+    record wins). Episodes with a falsy id (0) are dropped BEFORE indexing -
+    a 0 id can never be POSTed to Sonarr, and a real-id twin behind one must
+    still win its key.
 
     Args:
         ep_list: Episodes parsed from `/api/v3/episode`.
@@ -459,12 +460,13 @@ def build_episode_id_map(ep_list: list[SonarrEpisode]) -> dict[tuple[int, int], 
         `(season, episode) -> ep.id` for every episode carrying a real id.
     """
 
-    by_key: dict[tuple[int, int], int] = {}
-    for ep in ep_list:
-        if not ep.id:
-            continue
-        by_key.setdefault(season_episode_key(ep.season_number, ep.episode_number), ep.id)
-    return by_key
+    return {key: ep.id for key, ep in index_episodes_by_key(ep for ep in ep_list if ep.id).items()}
+
+
+def episodes_by_id(ep_list: Iterable[SonarrEpisode]) -> dict[int, SonarrEpisode]:
+    """Index episodes by real id, dropping the falsy ones (a 0 id can never be addressed)."""
+
+    return {ep.id: ep for ep in ep_list if ep.id}
 
 
 class EpisodeFileStatus(Enum):
@@ -494,26 +496,59 @@ class EpisodeFileStatus(Enum):
 class EpisodeSnapshot(NamedTuple):
     """One poll's coherent view of a series: the fresh episode index plus what counts as already ours.
 
-    The episode index and the guard sets are gathered together, so consumers never mix state from two
+    The episode index and the trust policy are gathered together, so consumers never mix state from two
     different polls.
     """
 
     episodes_by_id: dict[int, SonarrEpisode]
     """The fresh episode index."""
 
-    recommended_groups: set[str]
-    """The normalized (overwrite-guard) recommended-group set: grabbed groups plus the entries' pick groups."""
+    trusted: Mapping[str, frozenset[int] | None]
+    """The per-group trust policy (see `trusted_groups`): normalized group -> the sizes that verify
+    its files, or None to trust it by name alone. A group absent here is not recommended - its files
+    are replaced."""
 
     owned_episode_sizes: Mapping[int, int] = MappingProxyType({})
     """Episode id -> the untagged file size the grab-time identification recorded. The claim is honored
     only while the file still sits at that size; anything else untagged classifies as unidentifiable."""
 
-    own_group: str | None = None
-    """This record's own normalized group, the one whose files the size gate below re-verifies."""
 
-    own_group_sizes: frozenset[int] = frozenset()
-    """Sizes the current listings of our own group carry. Non-empty, an own-group file at a size not in
-    it is a stale copy this grab replaces. Empty (an older record) keeps the group-name-only behavior."""
+def trusted_groups(
+    pending: PendingImport,
+    series_records: Sequence[PendingImport] = (),
+) -> dict[str, frozenset[int] | None]:
+    """One record's per-group trust policy: group -> verifying sizes, or None for trust-by-name.
+
+    The one home of the overwrite-guard composition, for grab time (no
+    `series_records`) and import time (the series' pending records - this
+    record's own row may ride along; its votes are no-ops) alike. The entry's
+    verified-current pick groups and the series' other grabbed groups are
+    trusted by name; a sibling's group is refused when THIS record's plan
+    judged it stale on disk (the copies being replaced must not ride back into
+    protection on a sibling's vote). The record's OWN group joins last and
+    unconditionally - it is the identity of the files being imported - but at
+    the sizes its current listings carry (unioned across same-group records),
+    so a stale same-group copy is told apart by size and replaced. No listed
+    sizes means no size gate (the legacy trust-by-name behavior).
+    """
+
+    stale = {norm for g in pending.guards.stale_groups if (norm := normalize_rg(g))}
+    trusted: dict[str, frozenset[int] | None] = {
+        norm: None for g in pending.guards.entry_groups if (norm := normalize_rg(g))
+    }
+    own = normalize_rg(pending.release_group)
+    own_sizes = set(pending.release_sizes)
+    for record in series_records:
+        norm = normalize_rg(record.release_group)
+        if norm is None:
+            continue
+        if norm == own:
+            own_sizes.update(record.release_sizes)
+        if norm not in stale:
+            trusted.setdefault(norm, None)
+    if own:
+        trusted[own] = frozenset(own_sizes) or None
+    return trusted
 
 
 def episode_file_statuses(
@@ -522,15 +557,15 @@ def episode_file_statuses(
 ) -> dict[int, EpisodeFileStatus]:
     """Classify each intended target episode by its current on-disk file.
 
-    Pure: reads only the snapshot's episode list and (normalized) set of
-    recommended release groups for the series. "Already imported" is decided
-    HERE from the episode files - not from the queue, since Sonarr drops an
-    imported item from its queue almost immediately.
+    Pure: reads only the snapshot's episode list and per-group trust policy
+    for the series. "Already imported" is decided HERE from the episode
+    files - not from the queue, since Sonarr drops an imported item from its
+    queue almost immediately.
 
     Args:
         target_ep_ids: The episode ids our mapping intends to fill.
-        snapshot: The same-poll episode index + recommended
-            groups (via `normalize_group`).
+        snapshot: The same-poll episode index + trust policy
+            (keyed via `normalize_group`).
 
     Returns:
         One status per de-duplicated target id.
@@ -558,10 +593,12 @@ def episode_file_statuses(
             )
             continue
         norm = normalize_group(group)
-        if norm not in snapshot.recommended_groups:
+        if norm not in snapshot.trusted:
             statuses[ep_id] = EpisodeFileStatus.OTHER_GROUP
-        elif norm == snapshot.own_group and snapshot.own_group_sizes and size not in snapshot.own_group_sizes:
-            # Our own group at a size no current listing carries: the stale
+            continue
+        verify_sizes = snapshot.trusted[norm]
+        if verify_sizes is not None and size not in verify_sizes:
+            # A trusted group at a size no current listing carries: the stale
             # copy this grab replaces, not our just-imported file.
             statuses[ep_id] = EpisodeFileStatus.OTHER_GROUP
         else:

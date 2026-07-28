@@ -23,7 +23,6 @@ coercions), the `Json` alias (typing for constructed payloads and the
 """
 
 import math
-from collections import Counter
 from collections.abc import Iterable, Mapping, Sequence
 from dataclasses import dataclass, field
 from enum import StrEnum
@@ -64,23 +63,6 @@ class EpisodeRecord:
     size: int = 0
 
 
-def file_size_cover(listings: Iterable[Iterable[int]]) -> Counter[int]:
-    """Fold per-listing file-size multisets into one coverage multiset, elementwise max.
-
-    Byte size is the identity two listings of one release always agree on:
-    folder layout differs between trackers, and SeaDex's own per-file naming
-    can too, but the bytes do not. Covering n files of one size requires ONE
-    listing genuinely carrying n - never n listings carrying one each (a `+`
-    fold would fake that), and never a set union (which would deflate a real
-    n-copy listing to one).
-    """
-
-    cover: Counter[int] = Counter()
-    for listing in listings:
-        cover |= Counter(listing)
-    return cover
-
-
 @dataclass
 class SeadexUrlItem:
     """One SeaDex url record within a release group."""
@@ -100,7 +82,9 @@ class SeadexUrlItem:
     private-only (seadex.private_releases: fallback). The planner reads it."""
     upgrade: bool = False
     """This url's `download` flag replaces a copy the Arr holds at sizes the url
-    doesn't list. Drives the reducer's promotion gate and the notice's upgrade marker."""
+    doesn't list. Drives the reducer's promotion gate and the notice's upgrade
+    marker. Invariant: never set without `download` - the planner clears both
+    together wherever a flag is dropped."""
     episodes: list[EpisodeRecord] = field(default_factory=list[EpisodeRecord])
 
     def __post_init__(self) -> None:
@@ -450,6 +434,21 @@ class SonarrEpisode(_ApiModel):
         validation_alias="episodeFile",
     )
     """An empty/null `episodeFile` folds to `None`."""
+
+
+def index_episodes_by_key(ep_list: Iterable[SonarrEpisode]) -> dict[tuple[int, int], SonarrEpisode]:
+    """Index Sonarr episodes by `season_episode_key`, the first record winning.
+
+    Sonarr episodes are unique by season+episode, so the first-wins rule only
+    ever decides a malformed duplicate. The one home of the index every
+    `(season, episode)` lookup shares (the planner's match loop and the
+    import's id map both derive from it).
+    """
+
+    index: dict[tuple[int, int], SonarrEpisode] = {}
+    for ep in ep_list:
+        index.setdefault(season_episode_key(ep.season_number, ep.episode_number), ep)
+    return index
 
 
 type ArrReleaseDict = dict[str | None, list[int | None]]

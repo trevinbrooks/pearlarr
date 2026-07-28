@@ -85,7 +85,7 @@ def _drive_manual_import(
     probe = executor.run_manual_import(
         pending_import(),
         "/d",
-        snapshot=EpisodeSnapshot(episodes_by_id={}, recommended_groups=set()),
+        snapshot=EpisodeSnapshot(episodes_by_id={}, trusted={}),
     )
 
     assert probe.readiness is ImportReadiness.RETRY
@@ -157,7 +157,7 @@ def test_golden_body_dead_tracked_folder_import_omits_download_id() -> None:
     probe = executor.run_manual_import(
         pending_import(),
         "/d",
-        snapshot=EpisodeSnapshot(episodes_by_id={}, recommended_groups=set()),
+        snapshot=EpisodeSnapshot(episodes_by_id={}, trusted={}),
     )
 
     assert probe.readiness is ImportReadiness.RETRY

@@ -15,6 +15,7 @@ pure, no network or disk. `SonarrEpisode` is built directly via
 import pytest
 
 from pearlarr.manual_import import (
+    GuardFacts,
     ImportProbe,
     ImportReadiness,
     ImportWaitMode,
@@ -26,12 +27,12 @@ from pearlarr.manual_import import (
     classify_pending,
     normalize_basename,
     normalize_group,
+    normalize_rg,
     normalized_leaf,
     path_leaf,
     resolve_wait_mode,
     sanitize_torrent_telemetry,
 )
-from pearlarr.planner import normalize_rg
 from pearlarr.seadex_types import (
     SONARR_MISSING_KEY,
     CommandResource,
@@ -76,25 +77,7 @@ from pearlarr.sonarr_import_plan import (
     translate_download_path,
 )
 
-from .builders import SEP, queue_record
-
-
-def _ep(
-    *,
-    ep_id: int,
-    season: int | None = 1,
-    episode: int | None = 1,
-    file_id: int = 0,
-    group: str | None = None,
-    size: int | None = None,
-) -> SonarrEpisode:
-    """A `SonarrEpisode` from the raw fields the helpers read."""
-
-    raw: dict[str, object] = {"id": ep_id, "seasonNumber": season, "episodeNumber": episode}
-    if file_id:
-        raw["episodeFileId"] = file_id
-        raw["episodeFile"] = {"releaseGroup": group, "size": size}
-    return SonarrEpisode.model_validate(raw)
+from .builders import SEP, queue_record, sonarr_ep
 
 
 class TestBuildEpisodeIdMap:
@@ -105,27 +88,27 @@ class TestBuildEpisodeIdMap:
 
     def test_normal_seasoned_episodes(self) -> None:
         eps = [
-            _ep(ep_id=11, season=1, episode=1),
-            _ep(ep_id=12, season=1, episode=2),
-            _ep(ep_id=21, season=2, episode=1),
+            sonarr_ep(1, 1, ep_id=11, episode_file_id=0),
+            sonarr_ep(1, 2, ep_id=12, episode_file_id=0),
+            sonarr_ep(2, 1, ep_id=21, episode_file_id=0),
         ]
         assert build_episode_id_map(eps) == {(1, 1): 11, (1, 2): 12, (2, 1): 21}
 
     def test_missing_season_and_episode_use_sentinel_no_collision(self) -> None:
         eps = [
-            _ep(ep_id=5, season=None, episode=None),
-            _ep(ep_id=6, season=1, episode=1),
+            sonarr_ep(None, None, ep_id=5, episode_file_id=0),
+            sonarr_ep(1, 1, ep_id=6, episode_file_id=0),
         ]
         result = build_episode_id_map(eps)
         assert result[(SONARR_MISSING_KEY, SONARR_MISSING_KEY)] == 5
         assert result[(1, 1)] == 6
 
     def test_first_wins_on_duplicate_key(self) -> None:
-        eps = [_ep(ep_id=7, season=1, episode=1), _ep(ep_id=8, season=1, episode=1)]
+        eps = [sonarr_ep(1, 1, ep_id=7, episode_file_id=0), sonarr_ep(1, 1, ep_id=8, episode_file_id=0)]
         assert build_episode_id_map(eps) == {(1, 1): 7}
 
     def test_zero_id_skipped(self) -> None:
-        eps = [_ep(ep_id=0, season=1, episode=1), _ep(ep_id=9, season=1, episode=2)]
+        eps = [sonarr_ep(1, 1, ep_id=0, episode_file_id=0), sonarr_ep(1, 2, ep_id=9, episode_file_id=0)]
         assert build_episode_id_map(eps) == {(1, 2): 9}
 
 
@@ -250,12 +233,12 @@ class TestEpisodeFileStatuses:
 
     def test_absent_recommended_other_unknown(self) -> None:
         episodes = {
-            1: _ep(ep_id=1, file_id=0),
-            2: _ep(ep_id=2, file_id=20, group="SubGroup"),
-            3: _ep(ep_id=3, file_id=30, group="OtherGroup"),
-            4: _ep(ep_id=4, file_id=40, group=None),
+            1: sonarr_ep(1, 1, ep_id=1, episode_file_id=0),
+            2: sonarr_ep(1, 1, ep_id=2, episode_file_id=20, release_group="SubGroup"),
+            3: sonarr_ep(1, 1, ep_id=3, episode_file_id=30, release_group="OtherGroup"),
+            4: sonarr_ep(1, 1, ep_id=4, episode_file_id=40, release_group=None),
         }
-        statuses = episode_file_statuses([1, 2, 3, 4], EpisodeSnapshot(episodes, {"subgroup"}))
+        statuses = episode_file_statuses([1, 2, 3, 4], EpisodeSnapshot(episodes, {"subgroup": None}))
         assert statuses == {
             1: EpisodeFileStatus.ABSENT,
             2: EpisodeFileStatus.RECOMMENDED,
@@ -264,22 +247,25 @@ class TestEpisodeFileStatuses:
         }
 
     def test_missing_episode_is_absent(self) -> None:
-        statuses = episode_file_statuses([99], EpisodeSnapshot({}, {"subgroup"}))
+        statuses = episode_file_statuses([99], EpisodeSnapshot({}, {"subgroup": None}))
         assert statuses == {99: EpisodeFileStatus.ABSENT}
 
     def test_dash_wrapped_group_counts_as_recommended(self) -> None:
         # Sonarr can report a file's group dash-wrapped ("-Aergia-"). The overwrite
         # guard must still match it against the recommended set built from "Aergia".
-        episodes = {5: _ep(ep_id=5, file_id=50, group="-Aergia-")}
-        statuses = episode_file_statuses([5], EpisodeSnapshot(episodes, {normalize_group("Aergia")}))
+        episodes = {5: sonarr_ep(1, 1, ep_id=5, episode_file_id=50, release_group="-Aergia-")}
+        statuses = episode_file_statuses([5], EpisodeSnapshot(episodes, {normalize_group("Aergia"): None}))
         assert statuses == {5: EpisodeFileStatus.RECOMMENDED}
 
     def test_untagged_file_the_grab_identified_is_recommended(self) -> None:
         # The planner declined to re-download this file because a pick's listed
         # size named it. The import must agree, or it copies over the very file
         # the grab decision called ours - an untagged twin stays unidentifiable.
-        episodes = {6: _ep(ep_id=6, file_id=60, group=None, size=600), 7: _ep(ep_id=7, file_id=70, group=None)}
-        snapshot = EpisodeSnapshot(episodes, {"subgroup"}, owned_episode_sizes={6: 600})
+        episodes = {
+            6: sonarr_ep(1, 1, ep_id=6, episode_file_id=60, release_group=None, size=600),
+            7: sonarr_ep(1, 1, ep_id=7, episode_file_id=70, release_group=None),
+        }
+        snapshot = EpisodeSnapshot(episodes, {"subgroup": None}, owned_episode_sizes={6: 600})
         assert episode_file_statuses([6, 7], snapshot) == {
             6: EpisodeFileStatus.RECOMMENDED,
             7: EpisodeFileStatus.UNKNOWN_GROUP,
@@ -289,8 +275,8 @@ class TestEpisodeFileStatuses:
         # The identification froze at grab time; a DIFFERENT untagged file
         # landing mid-wait must not inherit the claim - honoring the id alone
         # would mark an unverified file done and never send ours.
-        episodes = {6: _ep(ep_id=6, file_id=60, group=None, size=601)}
-        snapshot = EpisodeSnapshot(episodes, {"subgroup"}, owned_episode_sizes={6: 600})
+        episodes = {6: sonarr_ep(1, 1, ep_id=6, episode_file_id=60, release_group=None, size=601)}
+        snapshot = EpisodeSnapshot(episodes, {"subgroup": None}, owned_episode_sizes={6: 600})
         assert episode_file_statuses([6], snapshot) == {6: EpisodeFileStatus.UNKNOWN_GROUP}
 
     def test_owned_claim_needs_a_readable_file_record(self) -> None:
@@ -298,39 +284,29 @@ class TestEpisodeFileStatuses:
         # no size to verify against, so the claim is refused - not promoted
         # sight-unseen onto a file record Sonarr couldn't even describe.
         ep = SonarrEpisode.model_validate({"id": 6, "seasonNumber": 1, "episodeNumber": 1, "episodeFileId": 60})
-        snapshot = EpisodeSnapshot({6: ep}, {"subgroup"}, owned_episode_sizes={6: 600})
+        snapshot = EpisodeSnapshot({6: ep}, {"subgroup": None}, owned_episode_sizes={6: 600})
         assert episode_file_statuses([6], snapshot) == {6: EpisodeFileStatus.UNKNOWN_GROUP}
 
     def test_own_group_file_at_a_listed_size_is_recommended(self) -> None:
         # Our own group's file at a size a current listing carries is our copy
         # (just imported, or an already-current episode of the pack).
-        episodes = {5: _ep(ep_id=5, file_id=50, group="SubGroup", size=1000)}
-        snapshot = EpisodeSnapshot(
-            episodes,
-            {"subgroup"},
-            own_group="subgroup",
-            own_group_sizes=frozenset({1000}),
-        )
+        episodes = {5: sonarr_ep(1, 1, ep_id=5, episode_file_id=50, release_group="SubGroup", size=1000)}
+        snapshot = EpisodeSnapshot(episodes, {"subgroup": frozenset({1000})})
         assert episode_file_statuses([5], snapshot) == {5: EpisodeFileStatus.RECOMMENDED}
 
     def test_own_group_file_at_an_unlisted_size_is_replaced(self) -> None:
         # A same-group file at a size NO current listing carries is the stale
         # copy this grab replaces. Reading it as done would close the record
         # with zero imports and strand the upgrade forever.
-        episodes = {5: _ep(ep_id=5, file_id=50, group="SubGroup", size=999)}
-        snapshot = EpisodeSnapshot(
-            episodes,
-            {"subgroup"},
-            own_group="subgroup",
-            own_group_sizes=frozenset({1000}),
-        )
+        episodes = {5: sonarr_ep(1, 1, ep_id=5, episode_file_id=50, release_group="SubGroup", size=999)}
+        snapshot = EpisodeSnapshot(episodes, {"subgroup": frozenset({1000})})
         assert episode_file_statuses([5], snapshot) == {5: EpisodeFileStatus.OTHER_GROUP}
 
-    def test_own_group_size_gate_off_without_recorded_sizes(self) -> None:
-        # A record with no listing sizes (an older record, or a blind listing)
-        # keeps the group-name-only behavior rather than replacing blindly.
-        episodes = {5: _ep(ep_id=5, file_id=50, group="SubGroup", size=999)}
-        snapshot = EpisodeSnapshot(episodes, {"subgroup"}, own_group="subgroup")
+    def test_size_gate_off_for_a_name_trusted_group(self) -> None:
+        # A None trust value (an older record, or a blind listing, recorded no
+        # sizes) keeps the group-name-only behavior rather than replacing blindly.
+        episodes = {5: sonarr_ep(1, 1, ep_id=5, episode_file_id=50, release_group="SubGroup", size=999)}
+        snapshot = EpisodeSnapshot(episodes, {"subgroup": None})
         assert episode_file_statuses([5], snapshot) == {5: EpisodeFileStatus.RECOMMENDED}
 
     def test_all_targets_done_only_when_all_recommended(self) -> None:
@@ -1003,7 +979,7 @@ class TestPendingImportRoundTrip:
             url="https://releases.moe/1",
             slice_coverage="S02 E01-E02",
             excluded_files=["other-slice.mkv"],
-            entry_groups=["Era-Raws", "OtherPick"],
+            guards=GuardFacts(entry_groups=("Era-Raws", "OtherPick"), owned_episodes=((11, 700),)),
         )
         assert PendingImport.from_json(pending.to_json()) == pending
 
@@ -1015,8 +991,8 @@ class TestPendingImportRoundTrip:
         # Pre-excluded_files records rehydrate empty (completeness stays
         # conservative for them).
         assert rebuilt.excluded_files == []
-        # Pre-entry_groups records guard on grabbed groups alone.
-        assert rebuilt.entry_groups == []
+        # Pre-guards records guard on grabbed groups alone.
+        assert rebuilt.guards == GuardFacts()
         # A legacy record with no al_id rehydrates under the 0 sentinel and keys
         # as its hash's singleton.
         assert rebuilt.al_id == 0
