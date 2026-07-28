@@ -891,6 +891,25 @@ class TestFilterByReleaseGroup:
         # claim - so the import seeds protect exactly that file.
         assert result.guards.owned_episodes == ((101, 100),)
 
+    def test_episode_blank_named_group_never_covers_an_untagged_file(self) -> None:
+        # PIN: a pick whose name normalizes to None (a blank name) is indexed
+        # nowhere in the coverage index. An untagged on-disk file's group also
+        # normalizes to None, so indexing the blank name would read the file as
+        # covered and silently suppress the real pick's grab.
+        planner = make_planner()
+        seadex = {
+            "": rg_group({"u1": url_item(episodes=[], infohash="h1")}),
+            "Era-Raws": rg_group(
+                {"u2": url_item(episodes=[EpisodeRecord(season=1, episode=1, size=100)], infohash="h2")},
+            ),
+        }
+        result = planner.filter_by_release_group(
+            seadex_dict=seadex,
+            arr_release_dict={},
+            ep_list=[sonarr_ep(1, 1, size=999, release_group=None, ep_id=101)],
+        )
+        assert result.seadex_dict["Era-Raws"].urls["u2"].download is True
+
     def test_plan_reports_no_owned_episode_for_a_tagged_file(self) -> None:
         # A file that still carries a group tag is identified by name, never by
         # size - reading it as owned would bypass the group guard entirely.

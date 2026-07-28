@@ -7,7 +7,8 @@ relocation is behavior-preserving.
 
 from pearlarr.coverage import format_episode_ranges
 from pearlarr.planner import (
-    get_all_seadex_rgs_per_episode,
+    EpisodeCoverage,
+    episode_coverage,
     get_episode_keys,
     get_same_files_groups,
     normalize_rg,
@@ -103,21 +104,21 @@ class TestGetSameFilesGroups:
         assert get_same_files_groups(seadex) == [["A"], ["B"]]
 
 
-class TestGetAllSeadexRgsPerEpisode:
-    """`get_all_seadex_rgs_per_episode` maps each Sonarr-known episode to its casefolded release-group names.
+class TestEpisodeCoverage:
+    """`episode_coverage` indexes each Sonarr-known episode's casefolded covering groups.
 
-    A dict of one group short-circuits to just the empty `all` bucket. A group
-    with no matched episodes falls into `all` instead of a per-episode key.
+    A dict of one group short-circuits to the empty index. A group with an
+    unparsed url lands in `blanket` instead of a per-episode key.
     """
 
     def test_single_group_short_circuits(self) -> None:
-        # len(seadex_dict) <= 1 returns just the empty "all" bucket
+        # A single group has no sibling coverage to consult
         seadex = {
             "A": SeadexReleaseGroupItem(
                 urls={"u": SeadexUrlItem(episodes=[EpisodeRecord(season=1, episode=1)])},
             ),
         }
-        assert get_all_seadex_rgs_per_episode(seadex, {EpisodeKey(1, 1): sonarr_ep(1, 1)}) == {"all": set()}
+        assert episode_coverage(seadex, {EpisodeKey(1, 1): sonarr_ep(1, 1)}) == EpisodeCoverage(frozenset(), {})
 
     def test_records_episodes_sonarr_has(self) -> None:
         seadex = {
@@ -126,10 +127,10 @@ class TestGetAllSeadexRgsPerEpisode:
             ),
             "Other": SeadexReleaseGroupItem(urls={"u2": SeadexUrlItem(episodes=[])}),
         }
-        result = get_all_seadex_rgs_per_episode(seadex, {EpisodeKey(1, 1): sonarr_ep(1, 1)})
-        assert result["S01E01"] == {"era-raws"}
-        # Empty episode list -> the group lands in the "all" fallback bucket
-        assert result["all"] == {"other"}
+        result = episode_coverage(seadex, {EpisodeKey(1, 1): sonarr_ep(1, 1)})
+        assert result.by_key[EpisodeKey(1, 1)] == {"era-raws"}
+        # Empty episode list -> the group blanket-covers every episode
+        assert result.blanket == {"other"}
 
     def test_ignores_episodes_sonarr_lacks(self) -> None:
         seadex = {
@@ -140,6 +141,23 @@ class TestGetAllSeadexRgsPerEpisode:
                 urls={"u2": SeadexUrlItem(episodes=[EpisodeRecord(season=1, episode=1)])},
             ),
         }
-        result = get_all_seadex_rgs_per_episode(seadex, {EpisodeKey(1, 1): sonarr_ep(1, 1)})
-        assert "S01E99" not in result
-        assert result["S01E01"] == {"b"}
+        result = episode_coverage(seadex, {EpisodeKey(1, 1): sonarr_ep(1, 1)})
+        assert EpisodeKey(1, 99) not in result.by_key
+        assert result.by_key[EpisodeKey(1, 1)] == {"b"}
+
+    def test_blank_group_name_is_indexed_nowhere(self) -> None:
+        # PIN: a group whose name normalizes to None (a blank name) must not
+        # enter the blanket or any per-episode set. An untagged on-disk file's
+        # group also normalizes to None, so indexing it would read every
+        # untagged file as covered and silently suppress its grabs.
+        seadex = {
+            "": SeadexReleaseGroupItem(
+                urls={"u": SeadexUrlItem(episodes=[]), "u2": SeadexUrlItem(episodes=[EpisodeRecord(1, 1)])},
+            ),
+            "B": SeadexReleaseGroupItem(
+                urls={"u3": SeadexUrlItem(episodes=[EpisodeRecord(season=1, episode=1)])},
+            ),
+        }
+        result = episode_coverage(seadex, {EpisodeKey(1, 1): sonarr_ep(1, 1)})
+        assert result.blanket == frozenset()
+        assert result.by_key[EpisodeKey(1, 1)] == {"b"}
