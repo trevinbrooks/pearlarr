@@ -50,7 +50,6 @@ from .seadex_types import (
     RemotePathMapping,
     SeadexDict,
     SonarrEpisode,
-    non_stale_groups,
 )
 from .sonarr_client import AbstractSonarrClient
 from .sonarr_episodes import SonarrEpisodes
@@ -671,6 +670,17 @@ class ImportExecutor:
         return entry.model_copy(update={"downloadId": pending.infohash.upper()})
 
 
+class _GuardSets(NamedTuple):
+    """One record's overwrite-guard derivation (see `_guard_sets`)."""
+
+    groups: set[str]
+    """The normalized never-overwrite group set."""
+    own_group: str | None
+    """This record's own normalized group (None for a blank group)."""
+    own_group_sizes: frozenset[int]
+    """Sizes the current listings of this group carry, across the series' records."""
+
+
 class _SeedStatuses(NamedTuple):
     """The seed-gated import state both reconcile consumers read.
 
@@ -715,10 +725,16 @@ class PendingSeedContext:
     """The entry's season/episode coverage at grab time (logging only)."""
     url: str | None = None
     """The SeaDex entry URL at grab time (logging only)."""
-    owned_episode_ids: tuple[int, ...] = ()
-    """Episodes whose untagged on-disk file the plan identified as a pick's copy by
-    listed size - carried from `PlanResult` so the import protects the exact files
-    the grab decision declined to re-download."""
+    owned_episodes: tuple[tuple[int, int], ...] = ()
+    """`(episode id, file size)` pairs whose untagged on-disk file the plan identified
+    as a pick's copy by listed size - carried from `PlanResult` so the import protects
+    the exact files the grab decision declined to re-download."""
+    entry_groups: tuple[str, ...] = ()
+    """The plan's verified-current pick groups, copied onto every seed (see
+    `PendingImport.entry_groups`)."""
+    stale_groups: tuple[str, ...] = ()
+    """The plan's positively-stale pick groups, copied onto every seed (see
+    `PendingImport.stale_groups`)."""
 
 
 class ImportReconciler:
@@ -796,7 +812,9 @@ class ImportReconciler:
         # mapping the add flow resolved) instead of re-deriving identity from
         # Sonarr's title parse.
         ordered_episode_ids = [ep.id for ep in ep_list if ep.id]
-        entry_groups = non_stale_groups(seadex_dict)
+        # Loop invariants of the per-seed preowned classification below.
+        episodes_by_id = {ep.id: ep for ep in ep_list if ep.id}
+        entry_group_set = {normalize_group(g) for g in entry.entry_groups if g}
         # Per-file parse records are read straight from the cache facade
         # (`get_sonarr_parse`): each is the persisted parse entry
         # `{"fetched_at": str, "episodes": [...]}` written by
@@ -848,6 +866,23 @@ class ImportReconciler:
                         f"(other slice / duplicate): {', '.join(excluded_files)}",
                     )
 
+                # Targets that already hold a recommended file at grab time were
+                # never this torrent's to insert: classify them now (with the
+                # grab-time guard sets) so the wait's inserted counts start at 0.
+                own_group = normalize_group(srg) if srg else None
+                grab_snapshot = EpisodeSnapshot(
+                    episodes_by_id=episodes_by_id,
+                    recommended_groups=entry_group_set | ({own_group} if own_group else set()),
+                    owned_episode_sizes=dict(entry.owned_episodes),
+                    own_group=own_group,
+                    own_group_sizes=frozenset(url_item.size),
+                )
+                preowned = [
+                    ep_id
+                    for ep_id, status in episode_file_statuses(sorted(claimed), grab_snapshot).items()
+                    if status is EpisodeFileStatus.RECOMMENDED
+                ]
+
                 # This record's own slice of the entry (the episodes its files
                 # claimed), so sibling per-episode records label distinctly.
                 claimed_eps = [ep for ep in ep_list if ep.id in claimed]
@@ -869,8 +904,11 @@ class ImportReconciler:
                     ordered_episode_ids=ordered_episode_ids,
                     slice_coverage=coverage_string(episodes_from_ep_list(claimed_eps)) or None,
                     excluded_files=excluded_files,
-                    entry_groups=list(entry_groups),
-                    owned_episode_ids=list(entry.owned_episode_ids),
+                    entry_groups=list(entry.entry_groups),
+                    stale_groups=list(entry.stale_groups),
+                    owned_episodes=list(entry.owned_episodes),
+                    release_sizes=list(url_item.size),
+                    preowned_episode_ids=preowned,
                 )
 
         return pending_seeds
@@ -923,8 +961,13 @@ class ImportReconciler:
         accounted = bool(seeded_targets) and coverage.accounted
         seed_complete = accounted and coverage.mapped
         seed = self._seed_statuses(pending, seeded_targets if accounted else [])
-        done = self._recommended_count(seed.statuses)
-        total = len(seeded_targets) if accounted else 0
+        # Net of the targets that already held a recommended file at grab time:
+        # the bar and the report count only files THIS torrent inserted. The
+        # done-check below still reads the raw statuses (a preowned target is
+        # done, just not ours to celebrate).
+        preowned = len(set(pending.preowned_episode_ids) & set(seeded_targets)) if accounted else 0
+        done = max(0, self._recommended_count(seed.statuses) - preowned)
+        total = len(seeded_targets) - preowned if accounted else 0
 
         def probe(
             readiness: ImportReadiness,
@@ -1003,7 +1046,13 @@ class ImportReconciler:
         if not seeded_targets or not self._seed_coverage(pending).mapped:
             return ImportProgress(0, 0, determinate=False)
         seed = self._seed_statuses(pending, seeded_targets)
-        return ImportProgress(self._recommended_count(seed.statuses), len(seeded_targets), determinate=True)
+        # Same preowned netting as the heavy poll, so the two bars agree.
+        preowned = len(set(pending.preowned_episode_ids) & set(seeded_targets))
+        return ImportProgress(
+            max(0, self._recommended_count(seed.statuses) - preowned),
+            len(seeded_targets) - preowned,
+            determinate=True,
+        )
 
     def _seed_statuses(self, pending: PendingImport, targets: list[int]) -> _SeedStatuses:
         """Fetch the series' episodes FRESH and classify `targets` against them.
@@ -1014,10 +1063,13 @@ class ImportReconciler:
         """
 
         episodes = self._episodes.episodes_for_series(pending.series_id)
+        guard = self._guard_sets(pending)
         snapshot = EpisodeSnapshot(
             episodes_by_id={ep.id: ep for ep in episodes if ep.id},
-            recommended_groups=self._recommended_groups(pending),
-            owned_episode_ids=frozenset(pending.owned_episode_ids),
+            recommended_groups=guard.groups,
+            owned_episode_sizes=dict(pending.owned_episodes),
+            own_group=guard.own_group,
+            own_group_sizes=guard.own_group_sizes,
         )
         return _SeedStatuses(snapshot, episode_file_statuses(targets, snapshot))
 
@@ -1041,33 +1093,43 @@ class ImportReconciler:
         # so every value is a typed record - no defensive isinstance/widen needed.
         return list(self.cache_store.get_pending_for_series(Arr.SONARR, series_id).values())
 
-    def _recommended_groups(self, pending: PendingImport) -> set[str]:
-        """Normalized recommended groups for the series (the overwrite-guard set).
+    def _guard_sets(self, pending: PendingImport) -> "_GuardSets":
+        """The overwrite-guard sets for one record: recommended groups + own-group sizes.
 
-        The union of this record's group, its entry's non-stale pick groups
-        from grab time, and the group of every other pending record we grabbed
-        for the series. So an episode our mapping assigned to another preferred
-        torrent - or already holding one of this entry's recommended releases
-        we never grabbed - is never overwritten by this one. Sibling records'
-        entry_groups stay out: another entry's picks say nothing about THIS
-        entry's episodes.
+        The groups are the union of this record's group, its entry's
+        verified-current pick groups from grab time, and the group of every
+        other pending record we grabbed for the series. So an episode our
+        mapping assigned to another preferred torrent - or already holding one
+        of this entry's recommended releases we never grabbed - is never
+        overwritten by this one. Sibling records' entry_groups stay out, and a
+        sibling's own group is refused when THIS record's plan judged that
+        group stale on disk: the copies being replaced must not ride back into
+        protection on a sibling's vote.
 
         This record's own group is unconditional (unlike `entry_groups`, which
         drops groups judged stale): it is the identity of the files we are
-        importing, so dropping it would make our own just-imported file read as
-        foreign and re-import forever. A stale copy of the group we grabbed is
-        therefore left in place - the pre-existing same-group limit.
+        importing. Its stale copies are instead told apart by size -
+        `own_group_sizes` unions the current listings of every record grabbing
+        this group, and the classifier replaces a same-group file at a size
+        none of them carries.
         """
 
-        groups: set[str] = set()
-        if pending.release_group:
-            groups.add(normalize_group(pending.release_group))
-        groups.update(normalize_group(g) for g in pending.entry_groups if g)
+        stale = {normalize_group(g) for g in pending.stale_groups if g}
+        groups = {normalize_group(g) for g in pending.entry_groups if g}
+        own_group = normalize_group(pending.release_group) if pending.release_group else None
+        own_sizes = set(pending.release_sizes)
         for raw in self._series_pending_records(pending.series_id):
             group = raw.get("release_group")
-            if group:
-                groups.add(normalize_group(group))
-        return groups
+            if not group:
+                continue
+            norm = normalize_group(group)
+            if norm == own_group:
+                own_sizes.update(raw.get("release_sizes", []))
+            if norm not in stale:
+                groups.add(norm)
+        if own_group:
+            groups.add(own_group)
+        return _GuardSets(groups, own_group, frozenset(own_sizes))
 
     @staticmethod
     def _pending_target_ids(pending: PendingImport) -> list[int]:

@@ -30,9 +30,9 @@ from .manual_import import ImportWaitMode
 from .mappings import ExternalIds, MappingEntry, MappingResolver
 from .notify import Notifier
 from .output import emit_to_hub, hub_counts
-from .planner import DownloadPlanner
+from .planner import DownloadPlanner, PlanResult
 from .reporter import PerTitleState, RunContext, RunReporter, is_preview
-from .seadex_filter import FilterResult, SeadexReleaseFilter
+from .seadex_filter import SeadexReleaseFilter
 from .seadex_gateway import SeaDexGateway, SeaDexMiss, SeaDexSource
 from .seadex_types import (
     ARR_REQUEST_TIMEOUT_S,
@@ -465,7 +465,7 @@ class RunServices:
         seadex_dict: SeadexDict,
         arr_release_dict: ArrReleaseDict,
         ep_list: list[SonarrEpisode] | None = None,
-    ) -> FilterResult:
+    ) -> PlanResult:
         """Apply the download plan, stamping private-only skips onto ctx (delegates)."""
 
         return self._filter.filter_downloads(al_id, seadex_dict, arr_release_dict, ep_list)

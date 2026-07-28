@@ -26,7 +26,7 @@ import math
 from collections import Counter
 from collections.abc import Iterable, Mapping, Sequence
 from dataclasses import dataclass, field
-from enum import Enum, StrEnum, auto
+from enum import StrEnum
 from typing import (
     Annotated,
     Any,
@@ -81,19 +81,6 @@ def file_size_cover(listings: Iterable[Iterable[int]]) -> Counter[int]:
     return cover
 
 
-class Staleness(Enum):
-    """How the Arr's on-disk copy of a release compares to a url's listed sizes.
-
-    PARTLY_STALE when some group-matched episodes are at unlisted sizes, STALE
-    when every one is (an upgrade to grab). Anything but CURRENT exits the
-    import-time never-overwrite set.
-    """
-
-    CURRENT = auto()
-    PARTLY_STALE = auto()
-    STALE = auto()
-
-
 @dataclass
 class SeadexUrlItem:
     """One SeaDex url record within a release group."""
@@ -111,8 +98,9 @@ class SeadexUrlItem:
     is_fallback: bool = False
     """True for a public alternative added because the preferred release is
     private-only (seadex.private_releases: fallback). The planner reads it."""
-    staleness: Staleness = Staleness.CURRENT
-    """Whether the Arr holds this release at sizes it doesn't list (see `Staleness`)."""
+    upgrade: bool = False
+    """This url's `download` flag replaces a copy the Arr holds at sizes the url
+    doesn't list. Drives the reducer's promotion gate and the notice's upgrade marker."""
     episodes: list[EpisodeRecord] = field(default_factory=list[EpisodeRecord])
 
     def __post_init__(self) -> None:
@@ -136,20 +124,6 @@ class SeadexReleaseGroupItem:
 
 SeadexDict = dict[str, SeadexReleaseGroupItem]
 """The central object: SeaDex release groups keyed by group name."""
-
-
-def non_stale_groups(seadex_dict: SeadexDict) -> list[str]:
-    """The entry's pick groups minus any the run judged stale on disk.
-
-    A size mismatch on ANY episode of ANY of a group's urls means the arr holds
-    that group at a size this grab replaces - it must not enter the import-time
-    never-overwrite guard, or the import reads "done" and keeps the stale copy.
-    PARTLY_STALE counts (STALE needs EVERY episode stale), which is what makes
-    a partly stale group replaceable. Whole-group exclusion is conservative in
-    the overwrite direction. The one derivation both arrs' pending seeds share.
-    """
-
-    return [rg for rg, item in seadex_dict.items() if all(u.staleness is Staleness.CURRENT for u in item.urls.values())]
 
 
 SONARR_MISSING_KEY: int = 999

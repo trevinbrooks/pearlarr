@@ -31,7 +31,7 @@ from pearlarr.discord import (
 from pearlarr.manual_import import Outcome
 from pearlarr.notify import GrabNotice, Notifier
 from pearlarr.output import Severity
-from pearlarr.seadex_types import SeadexDict, Staleness
+from pearlarr.seadex_types import SeadexDict
 from pearlarr.torrents import AddOutcome, ReleaseOutcome
 from pearlarr.wait_view import WaitOutcomeRow, WaitResult
 
@@ -394,7 +394,7 @@ class TestGrabLayout:
                         files=["e1.mkv", "e2.mkv"],
                         is_dual_audio=True,
                         is_fallback=True,
-                        staleness=Staleness.STALE,
+                        upgrade=True,
                     ),
                 },
                 tags=frozenset({Tag.VFR, Tag.HDR}),

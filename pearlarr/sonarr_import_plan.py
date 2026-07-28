@@ -15,6 +15,7 @@ import re
 from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass
 from enum import Enum, StrEnum, auto
+from types import MappingProxyType
 from typing import NamedTuple
 
 from .manual_import import normalize_group
@@ -478,15 +479,16 @@ class EpisodeFileStatus(Enum):
 
     RECOMMENDED = auto()
     """Already holds a file from a recommended group (ours, another torrent we grabbed for this series, or
-    a group the entry's SeaDex picks carried at grab time) - or an untagged file the grab-time sizes
-    identified as one. It is done - do NOT overwrite it."""
+    a group the entry's SeaDex picks carried at grab time) - or an untagged file still at the exact size
+    the grab-time identification recorded. It is done - do NOT overwrite it."""
 
     OTHER_GROUP = auto()
-    """Holds a file from a non-recommended group. Import ours over it (the operator's intended replacement)."""
+    """Holds a file from a non-recommended group - or our own group at a size no current listing carries
+    (a stale copy this grab replaces). Import ours over it (the operator's intended replacement)."""
 
     UNKNOWN_GROUP = auto()
-    """Holds a file with no parseable group that no listed size identified either. Import ours rather than
-    trust an unidentifiable file as recommended."""
+    """Holds a file with no parseable group that no recorded size identifies either. Import ours rather
+    than trust an unidentifiable file as recommended."""
 
 
 class EpisodeSnapshot(NamedTuple):
@@ -502,9 +504,16 @@ class EpisodeSnapshot(NamedTuple):
     recommended_groups: set[str]
     """The normalized (overwrite-guard) recommended-group set: grabbed groups plus the entries' pick groups."""
 
-    owned_episode_ids: frozenset[int] = frozenset()
-    """Episodes whose untagged file the grab-time sizes identified as a pick's copy. Empty for a record
-    written before the field existed, which classifies untagged files as unidentifiable, as it always did."""
+    owned_episode_sizes: Mapping[int, int] = MappingProxyType({})
+    """Episode id -> the untagged file size the grab-time identification recorded. The claim is honored
+    only while the file still sits at that size; anything else untagged classifies as unidentifiable."""
+
+    own_group: str | None = None
+    """This record's own normalized group, the one whose files the size gate below re-verifies."""
+
+    own_group_sizes: frozenset[int] = frozenset()
+    """Sizes the current listings of our own group carry. Non-empty, an own-group file at a size not in
+    it is a stale copy this grab replaces. Empty (an older record) keeps the group-name-only behavior."""
 
 
 def episode_file_statuses(
@@ -536,18 +545,27 @@ def episode_file_statuses(
             statuses[ep_id] = EpisodeFileStatus.ABSENT
             continue
         group = ep.episode_file.release_group if ep.episode_file else None
+        size = ep.episode_file.size if ep.episode_file else None
         if not group:
-            # An untagged file the grab-time sizes named is a recommended copy;
-            # anything else untagged stays unidentifiable.
+            # An untagged file still at the exact size the grab-time
+            # identification recorded is a recommended copy; anything else
+            # untagged (a different file landed meanwhile, or no readable
+            # file record at all) stays unidentifiable.
             statuses[ep_id] = (
                 EpisodeFileStatus.RECOMMENDED
-                if ep_id in snapshot.owned_episode_ids
+                if size is not None and size == snapshot.owned_episode_sizes.get(ep_id)
                 else EpisodeFileStatus.UNKNOWN_GROUP
             )
-        elif normalize_group(group) in snapshot.recommended_groups:
-            statuses[ep_id] = EpisodeFileStatus.RECOMMENDED
-        else:
+            continue
+        norm = normalize_group(group)
+        if norm not in snapshot.recommended_groups:
             statuses[ep_id] = EpisodeFileStatus.OTHER_GROUP
+        elif norm == snapshot.own_group and snapshot.own_group_sizes and size not in snapshot.own_group_sizes:
+            # Our own group at a size no current listing carries: the stale
+            # copy this grab replaces, not our just-imported file.
+            statuses[ep_id] = EpisodeFileStatus.OTHER_GROUP
+        else:
+            statuses[ep_id] = EpisodeFileStatus.RECOMMENDED
     return statuses
 
 

@@ -163,11 +163,11 @@ class TestUpgradePendingHoldsForOwnedStale:
         ep_list = [sonarr_ep(1, 1, size=100, release_group="Priv")]
 
         with _record() as recording:
-            hashes, out, _owned = filt.filter_downloads(11, sd, {"Priv": [100]}, ep_list)
+            plan = filt.filter_downloads(11, sd, {"Priv": [100]}, ep_list)
 
-        assert out["Fall"].urls[PUB_URL].download is False
-        assert out["Priv"].urls[PRIV_URL].download is False
-        assert hashes == []
+        assert plan.seadex_dict["Fall"].urls[PUB_URL].download is False
+        assert plan.seadex_dict["Priv"].urls[PRIV_URL].download is False
+        assert plan.torrent_hashes == []
         warnings = _warning_texts(recording)
         assert any(STALE_NOTICE in m for m in warnings), warnings
         assert ctx.per_title.private_only_skipped is True
@@ -176,7 +176,7 @@ class TestUpgradePendingHoldsForOwnedStale:
         # The fallback hold keeps the title uncached and surfaces the STALE row,
         # so it resurfaces every run until the copy is updated or deleted.
         pipe = make_grab_pipeline(cache_store=cache, _ctx=ctx, private_releases="fallback", sleep_time=0)
-        stopped = pipe.grab_and_cache(_grab_request(11, out, hashes, entry))
+        stopped = pipe.grab_and_cache(_grab_request(11, plan.seadex_dict, plan.torrent_hashes, entry))
 
         assert stopped is False
         assert cache.get_entry(Arr.SONARR, 11) is None
@@ -197,11 +197,11 @@ class TestUpgradePendingHoldsForOwnedStale:
         sd = filt.build(_entry_private_pick_plus_public_alt())
 
         with _record() as recording:
-            hashes, out, _owned = filt.filter_downloads(22, sd, {"Priv": [100]}, None)
+            plan = filt.filter_downloads(22, sd, {"Priv": [100]}, None)
 
-        assert out["Fall"].urls[PUB_URL].download is False
-        assert out["Priv"].urls[PRIV_URL].download is False
-        assert hashes == []
+        assert plan.seadex_dict["Fall"].urls[PUB_URL].download is False
+        assert plan.seadex_dict["Priv"].urls[PRIV_URL].download is False
+        assert plan.torrent_hashes == []
         warnings = _warning_texts(recording)
         assert any(STALE_NOTICE in m for m in warnings), warnings
         assert ctx.per_title.private_only_skipped is True
@@ -241,17 +241,17 @@ class TestOwnedPreferredPrivateAtMatchingSize:
         ep_list = [sonarr_ep(1, 1, size=999, release_group="Priv")]
 
         with _record() as recording:
-            hashes, out, _owned = filt.filter_downloads(11, sd, {"Priv": [999]}, ep_list)
+            plan = filt.filter_downloads(11, sd, {"Priv": [999]}, ep_list)
 
-        assert out["Priv"].urls[PRIV_URL].download is False
-        assert out["Fall"].urls[PUB_URL].download is False
-        assert hashes == []
+        assert plan.seadex_dict["Priv"].urls[PRIV_URL].download is False
+        assert plan.seadex_dict["Fall"].urls[PUB_URL].download is False
+        assert plan.torrent_hashes == []
         assert recording.events == []
         assert ctx.per_title.private_only_skipped is False
         assert ctx.per_title.private_only_stale_held is False
 
         pipe = make_grab_pipeline(cache_store=cache, _ctx=ctx, private_releases="fallback", sleep_time=0)
-        stopped = pipe.grab_and_cache(_grab_request(11, out, hashes, entry))
+        stopped = pipe.grab_and_cache(_grab_request(11, plan.seadex_dict, plan.torrent_hashes, entry))
 
         assert stopped is False
         assert ctx.stats.up_to_date == 1
@@ -279,17 +279,17 @@ class TestOwnedPreferredPrivateAtMatchingSize:
         sd = filt.build(entry)
 
         with _record() as recording:
-            hashes, out, _owned = filt.filter_downloads(22, sd, {"Priv": [999]}, None)
+            plan = filt.filter_downloads(22, sd, {"Priv": [999]}, None)
 
-        assert out["Priv"].urls[PRIV_URL].download is False
-        assert out["Fall"].urls[PUB_URL].download is False
-        assert hashes == []
+        assert plan.seadex_dict["Priv"].urls[PRIV_URL].download is False
+        assert plan.seadex_dict["Fall"].urls[PUB_URL].download is False
+        assert plan.torrent_hashes == []
         assert recording.events == []
         assert ctx.per_title.private_only_skipped is False
         assert ctx.per_title.private_only_stale_held is False
 
         pipe = make_grab_pipeline(cache_store=cache, _ctx=ctx, private_releases="fallback", sleep_time=0)
-        stopped = pipe.grab_and_cache(_grab_request(22, out, hashes, entry))
+        stopped = pipe.grab_and_cache(_grab_request(22, plan.seadex_dict, plan.torrent_hashes, entry))
 
         assert stopped is False
         assert ctx.stats.up_to_date == 1
@@ -320,14 +320,14 @@ class TestOwnedPreferredPrivateAtMatchingSize:
         ep_list = [sonarr_ep(1, 1, size=100, release_group="Priv")]
 
         with _record() as recording:
-            hashes, out, _owned = filt.filter_downloads(11, sd, {"Priv": [100]}, ep_list)
+            plan = filt.filter_downloads(11, sd, {"Priv": [100]}, ep_list)
 
         warnings = _warning_texts(recording)
         assert any("private-only (private releases not supported)" in m for m in warnings), warnings
         assert ctx.per_title.private_only_skipped is True
 
         pipe = make_grab_pipeline(cache_store=cache, _ctx=ctx, private_releases="warn", sleep_time=0)
-        pipe.grab_and_cache(_grab_request(11, out, hashes, entry))
+        pipe.grab_and_cache(_grab_request(11, plan.seadex_dict, plan.torrent_hashes, entry))
 
         assert cache.get_entry(Arr.SONARR, 11) is None
         assert [n.kind for n in ctx.stats.needs_action] == [NeedsActionKind.PRIVATE_ONLY]
@@ -356,11 +356,11 @@ class TestOwnedFallbackSoftSkip:
         sd = filt.build(entry)
 
         with _record() as recording:
-            hashes, out, _owned = filt.filter_downloads(11, sd, {}, None)
+            plan = filt.filter_downloads(11, sd, {}, None)
 
-        assert out["Priv"].urls[PRIV_URL].download is False
-        assert out["Fall"].urls[PUB_URL].download is False
-        assert set(hashes) == {None, PUB_HASH}
+        assert plan.seadex_dict["Priv"].urls[PRIV_URL].download is False
+        assert plan.seadex_dict["Fall"].urls[PUB_URL].download is False
+        assert set(plan.torrent_hashes) == {None, PUB_HASH}
         info = _info_texts(recording)
         assert any("a public fallback already covers these files" in m for m in info), info
         assert _warning_texts(recording) == []
@@ -368,7 +368,7 @@ class TestOwnedFallbackSoftSkip:
         assert ctx.per_title.fallback_covered is True
 
         pipe = make_grab_pipeline(cache_store=cache, _ctx=ctx, private_releases="fallback", sleep_time=0)
-        pipe.grab_and_cache(_grab_request(11, out, hashes, entry))
+        pipe.grab_and_cache(_grab_request(11, plan.seadex_dict, plan.torrent_hashes, entry))
 
         assert ctx.stats.up_to_date == 1
         assert ctx.stats.needs_action == []
@@ -441,12 +441,12 @@ class TestFilterDownloadsNoticeSeam:
         ep_list = [sonarr_ep(1, 1, size=100, release_group="PrivA"), sonarr_ep(2, 1)]
 
         with _record() as recording:
-            hashes, out, _owned = filt.filter_downloads(44, sd, {"PrivA": [100]}, ep_list)
+            plan = filt.filter_downloads(44, sd, {"PrivA": [100]}, ep_list)
 
-        assert out["PubA"].urls[self.PUBA_URL].download is True
-        assert out["PrivA"].urls[self.PRIVA_URL].download is False
-        assert out["PrivB"].urls[self.PRIVB_URL].download is False
-        assert hashes == [self.PUBA_HASH]
+        assert plan.seadex_dict["PubA"].urls[self.PUBA_URL].download is True
+        assert plan.seadex_dict["PrivA"].urls[self.PRIVA_URL].download is False
+        assert plan.seadex_dict["PrivB"].urls[self.PRIVB_URL].download is False
+        assert plan.torrent_hashes == [self.PUBA_HASH]
         # Each SkipNotice reaches the logger at ITS level: the promoted set at
         # INFO, the truly-blocked set at WARNING.
         info = _info_texts(recording)
@@ -539,12 +539,12 @@ class TestMixedGroupKeeperPreference:
 
         # Sonarr is missing both episodes: every url flags before the reducer.
         with _record() as recording:
-            hashes, out, _owned = filt.filter_downloads(55, sd, {}, [sonarr_ep(1, 1), sonarr_ep(2, 1)])
+            plan = filt.filter_downloads(55, sd, {}, [sonarr_ep(1, 1), sonarr_ep(2, 1)])
 
-        assert out["H"].urls[self.H_URL].download is True
-        assert out["G"].urls[PUB_URL].download is False
-        assert out["G"].urls[PRIV_URL].download is False
-        assert hashes == [self.H_HASH]
+        assert plan.seadex_dict["H"].urls[self.H_URL].download is True
+        assert plan.seadex_dict["G"].urls[PUB_URL].download is False
+        assert plan.seadex_dict["G"].urls[PRIV_URL].download is False
+        assert plan.torrent_hashes == [self.H_HASH]
         assert _warning_texts(recording) == []
         assert ctx.per_title.private_only_skipped is False
 
@@ -557,7 +557,7 @@ class TestMixedGroupKeeperPreference:
             sleep_time=0,
         )
         pipe._anilist.al_cache.update({55: {}})
-        stopped = pipe.grab_and_cache(_grab_request(55, out, hashes, entry))
+        stopped = pipe.grab_and_cache(_grab_request(55, plan.seadex_dict, plan.torrent_hashes, entry))
 
         assert stopped is False
         assert torrents.calls == [self.H_HASH]
@@ -593,10 +593,10 @@ class TestMixedGroupKeeperPreference:
             },
         )
 
-        hashes, out, _owned = filt.filter_downloads(56, sd, {}, [sonarr_ep(1, 1), sonarr_ep(2, 1)])
-        assert out["G"].urls[PUB_URL].download is True
-        assert out["G"].urls[PRIV_URL].download is True
-        assert hashes == [PUB_HASH]
+        plan = filt.filter_downloads(56, sd, {}, [sonarr_ep(1, 1), sonarr_ep(2, 1)])
+        assert plan.seadex_dict["G"].urls[PUB_URL].download is True
+        assert plan.seadex_dict["G"].urls[PRIV_URL].download is True
+        assert plan.torrent_hashes == [PUB_HASH]
 
         torrents = FakeTorrents({PUB_HASH: (AddOutcome.ADDED, "G S01 web")})
         pipe = make_grab_pipeline(
@@ -608,7 +608,7 @@ class TestMixedGroupKeeperPreference:
         )
         pipe._anilist.al_cache.update({56: {}})
         with _record() as recording:
-            pipe.grab_and_cache(_grab_request(56, out, hashes, entry))
+            pipe.grab_and_cache(_grab_request(56, plan.seadex_dict, plan.torrent_hashes, entry))
 
         assert [s.group for s in _private_skips(recording)] == ["G"]
         assert ctx.per_title.private_only_skipped is True
@@ -670,10 +670,10 @@ class TestSurvivingPrivateCoverage:
         )
 
         # Sonarr is missing BOTH episodes: the batch and the fallback both flag.
-        hashes, out, _owned = filt.filter_downloads(33, sd, {}, [sonarr_ep(1, 1), sonarr_ep(2, 1)])
-        assert out["A"].urls[PRIV_URL].download is True
-        assert out["A"].urls[PUB_URL].download is True
-        assert hashes == [PUB_HASH]
+        plan = filt.filter_downloads(33, sd, {}, [sonarr_ep(1, 1), sonarr_ep(2, 1)])
+        assert plan.seadex_dict["A"].urls[PRIV_URL].download is True
+        assert plan.seadex_dict["A"].urls[PUB_URL].download is True
+        assert plan.torrent_hashes == [PUB_HASH]
 
         torrents = FakeTorrents({PUB_HASH: (AddOutcome.ADDED, "A S01 web")})
         pipe = make_grab_pipeline(
@@ -685,7 +685,7 @@ class TestSurvivingPrivateCoverage:
         )
         pipe._anilist.al_cache.update({33: {}})
         with _record() as recording:
-            pipe.grab_and_cache(_grab_request(33, out, hashes, entry))
+            pipe.grab_and_cache(_grab_request(33, plan.seadex_dict, plan.torrent_hashes, entry))
 
         assert [s.group for s in _private_skips(recording)] == ["A"]
         assert ctx.per_title.private_only_skipped is True
@@ -753,11 +753,11 @@ class TestPromotionGeneralization:
         ep_list = [sonarr_ep(1, 1, size=100, release_group="Priv")]
 
         with _record() as recording:
-            hashes, out, _owned = filt.filter_downloads(66, sd, {"Priv": [100]}, ep_list)
+            plan = filt.filter_downloads(66, sd, {"Priv": [100]}, ep_list)
 
-        assert out["Pub"].urls[PUB_URL].download is True
-        assert out["Priv"].urls[PRIV_URL].download is False
-        assert hashes == [PUB_HASH]
+        assert plan.seadex_dict["Pub"].urls[PUB_URL].download is True
+        assert plan.seadex_dict["Priv"].urls[PRIV_URL].download is False
+        assert plan.torrent_hashes == [PUB_HASH]
         info = _info_texts(recording)
         assert any("grabbing public alternative Pub" in m for m in info), info
         assert _warning_texts(recording) == []
@@ -772,7 +772,7 @@ class TestPromotionGeneralization:
             sleep_time=0,
         )
         pipe._anilist.al_cache.update({66: {}})
-        stopped = pipe.grab_and_cache(_grab_request(66, out, hashes, entry))
+        stopped = pipe.grab_and_cache(_grab_request(66, plan.seadex_dict, plan.torrent_hashes, entry))
 
         assert stopped is False
         assert torrents.calls == [PUB_HASH]
@@ -798,11 +798,11 @@ class TestPromotionGeneralization:
         sd = filt.build(self._preferred_pair_entry(73))
 
         with _record() as recording:
-            hashes, out, _owned = filt.filter_downloads(73, sd, {"Priv": [100]}, None)
+            plan = filt.filter_downloads(73, sd, {"Priv": [100]}, None)
 
-        assert out["Pub"].urls[PUB_URL].download is True
-        assert out["Priv"].urls[PRIV_URL].download is False
-        assert hashes == [PUB_HASH]
+        assert plan.seadex_dict["Pub"].urls[PUB_URL].download is True
+        assert plan.seadex_dict["Priv"].urls[PRIV_URL].download is False
+        assert plan.torrent_hashes == [PUB_HASH]
         assert _warning_texts(recording) == []
         assert ctx.per_title.private_only_skipped is False
 
@@ -876,12 +876,12 @@ class TestPromotionGeneralization:
         ]
 
         with _record() as recording:
-            hashes, out, _owned = filt.filter_downloads(77, sd, {"M": [555, 100]}, ep_list)
+            plan = filt.filter_downloads(77, sd, {"M": [555, 100]}, ep_list)
 
-        assert out["F"].urls[self.F_URL].download is False
-        assert out["M"].urls[self.M_PUB_URL].download is False
-        assert out["M"].urls[PRIV_URL].download is True
-        assert hashes == []
+        assert plan.seadex_dict["F"].urls[self.F_URL].download is False
+        assert plan.seadex_dict["M"].urls[self.M_PUB_URL].download is False
+        assert plan.seadex_dict["M"].urls[PRIV_URL].download is True
+        assert plan.torrent_hashes == []
         assert recording.events == []
         assert ctx.per_title.private_only_skipped is False
         assert ctx.per_title.private_only_stale_held is True
@@ -971,10 +971,10 @@ class TestEqualUnionMixedGroups:
             )
 
             # Sonarr is missing both episodes: every url flags before the reducer.
-            hashes, out, _owned = filt.filter_downloads(al_id, sd, {}, [sonarr_ep(1, 1), sonarr_ep(2, 1)])
-            assert out["A"].urls[self.A_PUB_URL].download is True, f"order={al_id}"
-            assert out["B"].urls[self.B_PUB_URL].download is True, f"order={al_id}"
-            assert set(hashes) == {self.A_PUB_HASH, self.B_PUB_HASH}, f"order={al_id}"
+            plan = filt.filter_downloads(al_id, sd, {}, [sonarr_ep(1, 1), sonarr_ep(2, 1)])
+            assert plan.seadex_dict["A"].urls[self.A_PUB_URL].download is True, f"order={al_id}"
+            assert plan.seadex_dict["B"].urls[self.B_PUB_URL].download is True, f"order={al_id}"
+            assert set(plan.torrent_hashes) == {self.A_PUB_HASH, self.B_PUB_HASH}, f"order={al_id}"
 
             torrents = FakeTorrents(
                 {
@@ -991,7 +991,7 @@ class TestEqualUnionMixedGroups:
             )
             pipe._anilist.al_cache.update({al_id: {}})
             with _record() as recording:
-                pipe.grab_and_cache(_grab_request(al_id, out, hashes, entry))
+                pipe.grab_and_cache(_grab_request(al_id, plan.seadex_dict, plan.torrent_hashes, entry))
 
             # Both episodes obtained. The keeper's surviving private batch is
             # refused with a WARNING, and warn mode still caches the title.
@@ -1045,8 +1045,8 @@ class TestModeSwitchResurfacesFallbackSatisfied:
                 PUB_URL: [EpisodeRecord(season=1, episode=1, size=555)],
             },
         )
-        hashes, out, _owned = filt.filter_downloads(11, sd, {}, [sonarr_ep(1, 1)])
-        assert out["Fall"].urls[PUB_URL].download is True
+        plan = filt.filter_downloads(11, sd, {}, [sonarr_ep(1, 1)])
+        assert plan.seadex_dict["Fall"].urls[PUB_URL].download is True
 
         torrents = FakeTorrents({PUB_HASH: (AddOutcome.ADDED, "Fall S01")})
         pipe = make_grab_pipeline(
@@ -1057,7 +1057,7 @@ class TestModeSwitchResurfacesFallbackSatisfied:
             sleep_time=0,
         )
         pipe._anilist.al_cache.update({11: {}})
-        pipe.grab_and_cache(_grab_request(11, out, hashes, entry))
+        pipe.grab_and_cache(_grab_request(11, plan.seadex_dict, plan.torrent_hashes, entry))
         cached = cache.get_entry(Arr.SONARR, 11)
         assert cached is not None
         assert cached.fallback_satisfied is True
@@ -1091,12 +1091,12 @@ class TestModeSwitchResurfacesFallbackSatisfied:
         _fill_episodes(sd_warn, {PRIV_URL: [EpisodeRecord(season=1, episode=1, size=999)]})
         ep_list = [sonarr_ep(1, 1, size=555, release_group="Fall")]
         with _record() as recording:
-            warn_hashes, warn_out, _warn_owned = warn_filt.filter_downloads(11, sd_warn, {"Fall": [555]}, ep_list)
+            warn_plan = warn_filt.filter_downloads(11, sd_warn, {"Fall": [555]}, ep_list)
         warnings = _warning_texts(recording)
         assert any("private-only (private releases not supported)" in m for m in warnings), warnings
 
         warn_pipe = make_grab_pipeline(cache_store=cache, _ctx=warn_ctx, private_releases="warn", sleep_time=0)
-        warn_pipe.grab_and_cache(_grab_request(11, warn_out, warn_hashes, entry))
+        warn_pipe.grab_and_cache(_grab_request(11, warn_plan.seadex_dict, warn_plan.torrent_hashes, entry))
         assert [n.kind for n in warn_ctx.stats.needs_action] == [NeedsActionKind.PRIVATE_ONLY]
         persisted = cache.get_entry(Arr.SONARR, 11)
         assert persisted is not None

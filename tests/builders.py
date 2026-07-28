@@ -42,7 +42,7 @@ from pearlarr.manual_import import ImportProbe, ImportReadiness, ImportWaitMode,
 from pearlarr.mappings import MappingResolver, MappingSources
 from pearlarr.notify import Notifier
 from pearlarr.output import SeverityCounts, emit_to_hub
-from pearlarr.planner import DownloadPlanner
+from pearlarr.planner import DownloadPlanner, PlanResult, PrivateOnlySkips
 from pearlarr.radarr_client import AbstractRadarrClient
 from pearlarr.reporter import RunContext, RunReporter
 from pearlarr.run_services import RunDeps, RunServices
@@ -59,7 +59,6 @@ from pearlarr.seadex_types import (
     SeadexReleaseGroupItem,
     SeadexUrlItem,
     SonarrEpisode,
-    Staleness,
 )
 from pearlarr.sonarr_client import AbstractSonarrClient
 from pearlarr.sonarr_episodes import SonarrEpisodes
@@ -841,7 +840,7 @@ def url_item(
     infohash: str | None = "hash1",
     download: bool = False,
     is_fallback: bool = False,
-    staleness: Staleness = Staleness.CURRENT,
+    upgrade: bool = False,
     episodes: list[EpisodeRecord] | None = None,
 ) -> SeadexUrlItem:
     """One SeaDex URL record, matching `get_seadex_dict`'s `url_item` shape."""
@@ -856,9 +855,15 @@ def url_item(
         infohash=infohash,
         download=download,
         is_fallback=is_fallback,
-        staleness=staleness,
+        upgrade=upgrade,
         episodes=episodes or [],
     )
+
+
+def plan_result(torrent_hashes: list[str | None], seadex_dict: SeadexDict) -> PlanResult:
+    """A `PlanResult` carrying just hashes + the dict (no skips, no guard fields)."""
+
+    return PlanResult(seadex_dict=seadex_dict, torrent_hashes=torrent_hashes, skips=PrivateOnlySkips())
 
 
 def rg_group(

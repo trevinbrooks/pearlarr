@@ -45,16 +45,25 @@ def normalize_basename(name: str) -> str:
     return unicodedata.normalize("NFC", name).strip().casefold()
 
 
-def normalized_leaf(name: str) -> str:
-    """Fold a listing path or on-disk path to its normalized leaf (basename, then `normalize_basename`).
+def path_leaf(name: str) -> str:
+    """A path's leaf with case and unicode preserved, for parser and display use.
 
-    The one home of the leaf-identity composition, so every comparison keyspace
-    folds directories and normalizes the same way. Backslashes fold too - a
-    Windows arr hands a POSIX host its paths verbatim, where `os.path` sees no
-    separator at all - and a trailing separator never yields an empty leaf.
+    Backslashes fold - a Windows arr hands a POSIX host its paths verbatim,
+    where `os.path` sees no separator at all - and a trailing separator never
+    yields an empty leaf. Comparison keyspaces use `normalized_leaf` instead.
     """
 
-    return normalize_basename(os.path.basename(name.replace("\\", "/").rstrip("/")))
+    return os.path.basename(name.replace("\\", "/").rstrip("/"))
+
+
+def normalized_leaf(name: str) -> str:
+    """Fold a listing path or on-disk path to its normalized leaf (`path_leaf`, then `normalize_basename`).
+
+    The one home of the leaf-identity composition, so every comparison keyspace
+    folds directories and normalizes the same way.
+    """
+
+    return normalize_basename(path_leaf(name))
 
 
 def normalize_group(group: str) -> str:
@@ -528,16 +537,32 @@ class PendingImport:
     accounting only - the IMPORTED decision never trusts them. Empty for older records (conservative)."""
 
     entry_groups: list[str] = field(default_factory=list[str])
-    """The entry's filtered SeaDex pick groups at grab time, minus any the run judged stale on disk
-    (size mismatch - this grab replaces those copies). Widens the import-time never-overwrite set: an
-    on-disk file from another recommended group stays even when that group was never grabbed by us.
-    Empty for older records (they guard on grabbed groups alone)."""
+    """The entry's pick groups whose on-disk copies the plan verified current by size (vacuously, groups
+    with nothing on disk). Widens the import-time never-overwrite set: an on-disk file from another
+    recommended group stays even when that group was never grabbed by us. Sonarr-only enforcement -
+    Radarr records leave it empty (its import path reads nothing but the infohash). Empty for older
+    records and the hash filter (they guard on grabbed groups alone)."""
 
-    owned_episode_ids: list[int] = field(default_factory=list[int])
-    """Episodes whose on-disk file carries no release group but matched a pick's listed size exactly at
-    grab time - the same identification the planner declined to re-download for. Without it the import
-    reads those files as unidentifiable and copies over a file it just called ours. Empty for older
+    stale_groups: list[str] = field(default_factory=list[str])
+    """Pick groups the plan positively judged stale on disk (a file at a size no sized listing
+    carries) - the copies this grab replaces. Subtracted from sibling records' guard votes so a group
+    excluded from `entry_groups` cannot ride back in and shield the files being replaced."""
+
+    owned_episodes: list[tuple[int, int]] = field(default_factory=list[tuple[int, int]])
+    """`(episode id, file size)` pairs for episodes whose on-disk file carries no release group but
+    matched a pick's listed size exactly at grab time - the same identification the planner declined to
+    re-download for. The import honors the claim only while the file still sits at the recorded size, so
+    a different untagged file landing mid-wait is imported over rather than trusted. Empty for older
     records (they fall back to the group-name guard alone)."""
+
+    release_sizes: list[int] = field(default_factory=list[int])
+    """The grabbed listing's file sizes. Lets the import tell this release's own files from a stale
+    same-group copy (an old file at a size the listing doesn't carry is replaced, not read as done).
+    Empty for older records, which keep the group-name-only behavior."""
+
+    preowned_episode_ids: list[int] = field(default_factory=list[int])
+    """Target episodes that already held a recommended file at grab time. Subtracted from the
+    files-inserted counts so the wait reports only files this torrent actually delivered."""
 
     @property
     def key(self) -> PendingKey:
@@ -597,7 +622,10 @@ class PendingImport:
             slice_coverage=raw.get("slice_coverage"),
             excluded_files=raw.get("excluded_files", []),
             entry_groups=raw.get("entry_groups", []),
-            owned_episode_ids=raw.get("owned_episode_ids", []),
+            stale_groups=raw.get("stale_groups", []),
+            owned_episodes=[(pair[0], pair[1]) for pair in raw.get("owned_episodes", [])],
+            release_sizes=raw.get("release_sizes", []),
+            preowned_episode_ids=raw.get("preowned_episode_ids", []),
         )
 
 

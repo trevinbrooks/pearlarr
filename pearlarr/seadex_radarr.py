@@ -15,7 +15,7 @@ from .output import hub_warn
 from .protocols import ArrSync
 from .radarr_client import AbstractRadarrClient, collect_anime_movies, make_radarr_client
 from .run_services import RunDeps, RunServices
-from .seadex_types import ArrReleaseDict, HistoryRecord, ProgressSink, RadarrItem, non_stale_groups
+from .seadex_types import ArrReleaseDict, HistoryRecord, ProgressSink, RadarrItem
 
 # Clock-skew cushion subtracted from the oldest pending record's grab time before
 # querying Radarr import history. The added_at stamps are converted local-naive ->
@@ -231,8 +231,8 @@ class RadarrSync(ArrSync[RadarrItem]):
         pending_seeds: dict[str, PendingImport] | None = None
         if run.import_wait_mode is not ImportWaitMode.OFF:
             added_at = datetime.now().strftime(UPDATED_AT_STR_FORMAT)
-            # Per entry, not per seed: the derivation reads the whole dict.
-            entry_groups = non_stale_groups(seadex_dict)
+            # No guard fields here: Radarr's import path reads nothing but the
+            # infohash (Radarr itself imports; only the category move waits).
             pending_seeds = {
                 url_item.infohash: PendingImport(
                     infohash=url_item.infohash,
@@ -248,7 +248,6 @@ class RadarrSync(ArrSync[RadarrItem]):
                     seadex_files=[],
                     coverage=None,
                     ordered_episode_ids=[],
-                    entry_groups=list(entry_groups),
                 )
                 for srg, srg_item in seadex_dict.items()
                 for url_item in srg_item.urls.values()
