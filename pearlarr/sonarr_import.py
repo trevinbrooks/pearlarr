@@ -342,20 +342,15 @@ class ImportExecutor:
     def refresh_downloads(self) -> None:
         """Queue RefreshMonitoredDownloads (throttled), wait for it and its follow-up pass, best-effort.
 
-        RefreshMonitoredDownloads is global and the blocking pass polls often (and
-        may walk several torrents back-to-back), so it's re-issued at most once per
-        `imports.poll_interval`. Waiting for the command to finish means the queue
-        read that follows reflects the rescan. Its completion immediately starts
-        Sonarr's own monitored-download pass (ProcessMonitoredDownloads), so this
-        also waits (same bound) for that pass - otherwise the disk-command guard
-        downstream trips on the pass our own rescan scheduled, in phase on every
-        poll, and the step-in starves until the ready deadline (observed live
-        2026-07-27: importBlocked season packs deferred for 25 minutes straight).
-        Only that pass is absorbed - a foreign rename/import is the guard's job -
-        and one still running at the bound is genuine disk work the guard correctly
-        defers. The poll bounds mean a stuck command can never block the run, and a
-        failure to queue/confirm just leaves the next queue read slightly stale (a
-        later poll corrects it).
+        Global command, so re-issued at most once per `imports.poll_interval`;
+        waiting means the queue read that follows reflects the rescan. Its
+        completion immediately starts Sonarr's ProcessMonitoredDownloads, which
+        is absorbed under the same bound - otherwise the disk-command guard
+        trips on the pass our own rescan scheduled, in phase on every poll, and
+        the step-in starves. Only that pass is absorbed (a foreign rename/import
+        is the guard's job); the poll bounds mean a stuck command never blocks
+        the run, and a failed queue/confirm just leaves the next read stale one
+        poll.
         """
 
         now = time.monotonic()
@@ -685,14 +680,11 @@ class _SeedStatuses(NamedTuple):
 class _SeedCoverage(NamedTuple):
     """The seed's two trust levels over the grabbed video files.
 
-    `mapped` (the grab-time map ALONE covers every file) is the only level the
-    IMPORTED fast path and the Tier-2 promotion may trust: a grab-time exclusion
-    never decides a drop. `accounted` (map + knowably-excluded files) merely
-    unlocks the bar and the deadline re-anchor - fail-safe, a wrong exclusion
-    can only extend a wait. Without that level a pack carrying another slice's
-    files stayed permanently indeterminate: no bar, and a ready deadline that
-    never re-anchored on landing files (the 2026-07-27 Fire Force
-    timeout-mid-copy).
+    `mapped` (the map ALONE covers every file) is all the IMPORTED fast path
+    and Tier-2 promotion may trust - an exclusion never decides a drop.
+    `accounted` (map + knowably-excluded files) unlocks only the bar and the
+    deadline re-anchor - fail-safe, since a wrong exclusion can only extend a
+    wait - and is what keeps a slice pack's deadline re-anchoring at all.
     """
 
     mapped: bool
@@ -950,13 +942,10 @@ class ImportReconciler:
             self.logger.debug(f"{label}: Sonarr has it pending; waiting")
             return probe(ImportReadiness.RETRY, files_present=False, command_issued=False)
 
-        # An in-flight ManualImport covering this download, or a started disk
-        # command our POST would queue behind and replay stale (precedence,
-        # ownership, and probe flags per `classify_commands`). NOT gated on
-        # `force`: the carried-over reconcile path always forces, and that is
-        # exactly the path that loops - `force` overrides Sonarr's clean-pending
-        # deferral, a different state. (refresh_downloads above already absorbed
-        # the pass our own rescan triggers.)
+        # A command blocking the step-in (flags per `classify_commands`). NOT
+        # gated on `force`: the always-forcing reconcile path is exactly the
+        # one that loops - `force` overrides Sonarr's clean-pending deferral, a
+        # different state.
         verdict = classify_commands(
             self._executor.list_commands(),
             DownloadMatch(
@@ -1071,12 +1060,7 @@ class ImportReconciler:
 
     @staticmethod
     def _seed_coverage(pending: PendingImport) -> _SeedCoverage:
-        """Classify the record's grab-time coverage, one set pass per poll.
-
-        Normalized-set SUPERSET compares (never lengths), so a healed extra
-        can't fake completeness; `_SeedCoverage` states what each level may be
-        trusted for.
-        """
+        """Coverage from normalized-name SUPERSETS (never lengths): a healed extra can't fake it."""
 
         needed = _normalized_names(pending.seadex_files)
         if not needed:

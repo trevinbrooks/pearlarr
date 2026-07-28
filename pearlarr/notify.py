@@ -376,7 +376,7 @@ class Notifier:
             if not rows:
                 continue
             lines = [
-                r.label if category is OutcomeCategory.SUCCESS else f"{r.label} — {r.outcome.detail}"
+                r.label if category is OutcomeCategory.SUCCESS else f"{r.label} - {r.outcome.detail}"
                 for r in rows[:_MAX_FIELD_TITLES]
             ]
             value = "\n".join(lines)

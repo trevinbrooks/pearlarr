@@ -1148,9 +1148,9 @@ class TestRunMonitor:
         assert [c.at_deadline for c in strategy.import_calls] == [False, False, True, False, True]
 
     def test_deferred_polls_never_walk_away_mid_copy(self) -> None:
-        # Our own copy in flight across the ready deadline (the 2026-07-27 Fire
-        # Force timeout-mid-copy): every deferred poll credits its interval back,
-        # so the row rides the copy out to IMPORTED instead of walking away.
+        # Our own copy in flight across the ready deadline: every deferred poll
+        # credits its interval back, so the row rides the copy out to IMPORTED
+        # instead of walking away.
         strategy = _RecordingStrategy(
             completed_sequence=[
                 import_probe(ImportReadiness.RETRY, files_present=False, command_issued=True, deferred=True)

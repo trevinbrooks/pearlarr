@@ -377,7 +377,7 @@ class TestRunLoopActivityWiring:
 
     def test_outage_run_holds_the_checkpoint(self, logger: logging.Logger) -> None:
         # A SeaDex-outage run skips every lookup, so committing would consume
-        # drift events the run never acted on (the 2026-07-15 incident shape).
+        # drift events the run never acted on.
         cache = FakeCacheStore()
         engine = self._outage_engine(logger, cache)
         engine.run_sync(self._strategy(history=[_rec(1, item_id=3)]), item_id=None, dry_run=True, boot=BootFlow())

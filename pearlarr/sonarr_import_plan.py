@@ -164,11 +164,8 @@ class ContentPaths(NamedTuple):
 class InFlightImport(NamedTuple):
     """The in-flight ManualImport `manual_import_in_flight` matched, plus HOW.
 
-    `by_download_id` distinguishes the provable primary match (a file's
-    `download_id` equals our infohash) from the deliberately broad
-    no-download-id fallback: only a provable or own-issued match may be
-    credited back to the ready deadline - an unproven one stays a plain,
-    deadline-bounded wait.
+    Only a provable (`by_download_id`) or own-issued match may be credited back
+    to the ready deadline; an unproven one stays a plain deadline-bounded wait.
     """
 
     command: CommandResource
@@ -192,31 +189,16 @@ class DownloadMatch(NamedTuple):
 
 
 def manual_import_in_flight(commands: list[CommandResource], match: DownloadMatch) -> InFlightImport | None:
-    """The ManualImport already in flight covering THIS download, or None.
+    """The queued/started ManualImport covering THIS download, or None.
 
-    Pure, no I/O (mirrors `classify_queue`): a ManualImport command's copy is
-    async and Sonarr drops the torrent from the regular queue while importing it
-    server-side, so the queue alone reads "empty -> step in" and we'd stack a
-    duplicate every poll. Matching the durable `infohash` against the
-    still-running commands closes that loop, and because the match key lives in
-    the command (not an in-memory id) it also survives a process restart - so a
-    carried-over record re-driven on a LATER run won't re-stack a command run A
-    POSTed that is still running.
-
-    A command qualifies only when its `name` is `ManualImport` and its
-    `status` is `queued`/`started` (a terminal command is not in flight).
-    Such a command is taken to cover this download when:
-
-      * PRIMARY: any of its files' `download_id` equals the infohash
-        (case-insensitively) - the infohash a queue-driven import carries. This is
-        the common, robust case (`by_download_id=True`).
-      * FALLBACK (a folder / dead-tracked import whose files carry NO download
-        id): any file path sits under either `content_paths` prefix, OR any
-        file's episode id is one of `target_ep_ids` (our intended set). This is
-        deliberately broad: a false positive only makes us WAIT - and the caller
-        never credits an unproven match to the ready deadline, so that wait stays
-        deadline-bounded - whereas a missed match re-opens the duplicate-import
-        loop.
+    Pure (mirrors `classify_queue`). Sonarr copies asynchronously and drops the
+    torrent from the queue meanwhile, so the queue alone reads "empty -> step
+    in" and we'd stack a duplicate every poll; matching the durable infohash
+    (case-insensitive) closes that loop and survives a process restart. A
+    no-download-id folder import falls back to a `content_paths`-prefix or
+    `target_ep_ids` overlap - deliberately broad, since a false positive only
+    makes us wait (deadline-bounded, never credited) while a miss re-opens the
+    duplicate-import loop.
     """
 
     target_hash = match.infohash.casefold()
@@ -266,15 +248,11 @@ _SONARR_DISK_COMMAND_NAMES = _SONARR_PROCESS_PASS_NAMES | {
 def started_disk_commands(commands: list[CommandResource]) -> list[CommandResource]:
     """The Sonarr disk-access commands executing right now.
 
-    Pure, no I/O (mirrors `manual_import_in_flight`, same `/api/v3/command`
-    read). A ManualImport POSTed while one is `started` is QUEUED behind it -
-    and a completed-download pass queued meanwhile jumps ahead (High priority)
-    - so our payload replays minutes stale, re-copying files an intervening
-    pass already placed (the double-copy incident class). Only `started`
-    blocks: a queued pass is near-permanently present during a wait (Sonarr
-    pushes one after every rescan, including ours, deduped while one is
-    live), so blocking on it would starve the step-in entirely. The list form
-    lets `classify_commands` tell an own running command from a foreign one.
+    A ManualImport POSTed while one is `started` queues behind it and replays
+    minutes stale, re-copying files an intervening pass already placed. Only
+    `started` blocks - a queued pass is near-permanently present during a wait,
+    so blocking on it would starve the step-in entirely. The list form lets
+    `classify_commands` tell an own running command from a foreign one.
     """
 
     return _started(commands, _SONARR_DISK_COMMAND_NAMES)
@@ -288,13 +266,7 @@ class CommandBlock(Enum):
 
 
 class CommandVerdict(NamedTuple):
-    """`classify_commands`' verdict: whether to wait this poll, and the probe flags to report.
-
-    `command_issued`/`deferred` are True only for a provably OWN import covering
-    this download; `deferred` alone for our own disk command serializing other
-    work. Foreign or unproven matches leave both False, so their waits stay
-    deadline-bounded.
-    """
+    """`classify_commands`' verdict: whether to wait this poll, and the probe flags to report."""
 
     block: CommandBlock | None
     """Why to wait, or None when the snapshot is clear to step in."""
@@ -314,13 +286,11 @@ def classify_commands(
     """Reduce one `/api/v3/command` snapshot to a single pre-step-in verdict.
 
     Pure (mirrors `classify_queue`); `is_own` is the executor's this-run
-    issued-id memory. Precedence: an in-flight ManualImport covering this
-    download outranks the broad disk guard, so the download's own copy reads
-    its honest flags rather than the disk guard's anonymous ones. Ownership of
-    a covering import is the download-id match (survives restarts) or an
-    issued id; a running disk command is owned only via an issued id, so a
-    prior run's still-running copy for ANOTHER record reads foreign and burns
-    the clock.
+    issued-id memory. An in-flight import covering this download outranks the
+    broad disk guard, so its own copy reads honest flags, and it is owned by
+    the download-id match (survives restarts) or an issued id. A running disk
+    command is owned only via an issued id - a prior run's copy for ANOTHER
+    record reads foreign and burns the clock.
     """
 
     in_flight = manual_import_in_flight(commands, match)
@@ -602,22 +572,13 @@ def episode_ids_for_parsed(
 ) -> list[int]:
     """Map Sonarr `/parse` `(season, episode)` pairs to OUR episode ids.
 
-    The season/episode numbers come from Sonarr `/parse` (an internal tool of
-    our pipeline), but the assignment stays ours: the `(season, episode) -> id`
-    index is built from the episode list OUR mapping selected.
-
-    The pairs are Sonarr's series-MATCHED resolution (the persisted parse
-    record keeps nothing else), so the grab-time seed honors the same borrow
-    limits `_exact_episode_ids` enforces at import time: a `full_season` parse
-    is refused whole (PRIMARY, count-independent, ahead of the span cap -
-    mirroring the import-time gate's ordering); Sonarr matches a bare "S0X"
-    OP/ED to the WHOLE season, and a small enough season slips under the span
-    cap yet must still never seed one file as every episode. Then: duplicate
-    pairs collapse to one claim, a span of more than `_MATCHED_SPAN_CAP`
-    distinct pairs is refused whole, and a pair that does not resolve (or
-    resolves to a 0 id) refuses the file rather than seeding the resolved half
-    of a multi-episode span. A refused file is simply not seeded - import-time
-    assignment places or refuses it under the full guard set.
+    The pairs are Sonarr's series-MATCHED resolution, but the assignment stays
+    ours: the index is built from the episode list OUR mapping selected, and
+    the seed honors the same borrow limits `_exact_episode_ids` enforces at
+    import time (the `_seedable_pairs` veto ladder, plus: a pair that does not
+    resolve, or resolves to a 0 id, refuses the file whole rather than seeding
+    half a span). A refused file is simply not seeded - import-time assignment
+    places or refuses it under the full guard set.
     """
 
     pairs = _seedable_pairs(parsed, full_season=full_season)
@@ -643,12 +604,10 @@ def parsed_outside_entry(
 ) -> bool:
     """Whether a parse landed cleanly and ENTIRELY outside the entry's episode set.
 
-    The one refusal that proves a grabbed file belongs to another slice of the
-    torrent (a sibling entry's episodes), so the seed may exclude it from the
-    completeness denominator (`PendingImport.excluded_files`). Every other
-    refusal - no parse, the full-season veto, the span cap, a partially
-    resolving span - stays "possibly ours": True requires a normal within-span
-    parse none of whose pairs resolve.
+    The one refusal that proves a file belongs to another slice of the torrent,
+    so the seed may exclude it from the completeness denominator. Every other
+    refusal (no parse, a `_seedable_pairs` veto, a partially resolving span)
+    stays "possibly ours".
     """
 
     pairs = _seedable_pairs(parsed, full_season=full_season)

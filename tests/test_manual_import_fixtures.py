@@ -935,10 +935,10 @@ class TestAssignScopeGate:
         assert result.skipped == []
 
     def test_single_none_parse_single_target_is_refused(self) -> None:
-        # FLIPPED by review 2026-07-18: a None parse is no evidence at all (a
-        # blipped v2's absolute may be hiding behind it), so refuse and let
-        # the next poll decide - an unparseable name comes back as an
-        # all-empty parse, not None, and still places above.
+        # A None parse is no evidence at all (a blipped v2's absolute may be
+        # hiding behind it), so refuse and let the next poll decide - an
+        # unparseable name comes back as an all-empty parse, not None, and
+        # still places above.
         result = assign_episode_ids(["only.mkv"], {"only.mkv": None}, [900], {})
 
         assert result.assigned == {}
@@ -1526,11 +1526,9 @@ class TestYamadaEndToEnd:
 
     def test_excluded_files_make_the_heavy_counts_determinate_but_never_promote(self) -> None:
         # A pack carrying another slice's files: map + excluded account for
-        # every file, so the HEAVY poll's probe carries determinate counts over
-        # OUR slice (the bar + the deadline re-anchor - previously such a record
-        # could never show progress or re-anchor). Tier-2 stays
-        # strict-indeterminate: it can PROMOTE (a drop), and a grab-time
-        # exclusion must never decide one.
+        # every file, so the heavy poll's probe carries determinate counts over
+        # OUR slice. Tier-2 stays strict-indeterminate: it can PROMOTE (a
+        # drop), and a grab-time exclusion must never decide one.
         strat, _sonarr, seadex_files = _yamada_strat()
         pending = pending_import(
             infohash="5555555555555555555555555555555555555555",

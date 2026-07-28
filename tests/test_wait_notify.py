@@ -163,7 +163,7 @@ def test_push_wait_summary_builds_discord_embed(pushes: list[DiscordEmbed]) -> N
     assert names == ["Imported (2)", "Left for a later run (1)", "Failed (1)"]
     assert "Frieren" in embed.fields[0].value
     # Deferred/failed rows carry the outcome detail. A failure colors the embed red.
-    assert embed.fields[2].value == "Bleach TYBW — download errored; left pending"
+    assert embed.fields[2].value == "Bleach TYBW - download errored; left pending"
     assert embed.color == COLOR_FAILED
 
 
