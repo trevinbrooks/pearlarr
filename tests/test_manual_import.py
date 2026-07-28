@@ -26,7 +26,7 @@ from pearlarr.manual_import import (
     classify_pending,
     normalize_basename,
     normalize_group,
-    normalized_leaves,
+    normalized_leaf,
     resolve_wait_mode,
     sanitize_torrent_telemetry,
 )
@@ -142,15 +142,13 @@ class TestNormalize:
     def test_strips_and_casefolds(self) -> None:
         assert normalize_basename("  Show - 01.MKV  ") == "show - 01.mkv"
 
-    def test_normalized_leaves_fold_folders_away(self) -> None:
-        # Cross-listing comparison: a folder-nested path and its flat twin
-        # reduce to the same leaf - while same-named files in two folders stay
-        # two (a multiset, so distinct files never collapse into one).
-        assert normalized_leaves(["NC/Show NCED01.mkv", "Show - 01.MKV"]) == {
-            "show nced01.mkv": 1,
-            "show - 01.mkv": 1,
-        }
-        assert normalized_leaves(["S01/Show - 01.mkv", "S02/Show - 01.mkv"])["show - 01.mkv"] == 2
+    def test_windows_paths_and_trailing_separators_still_fold_to_a_leaf(self) -> None:
+        # MUTATION PIN: a Windows arr's paths reach a POSIX host verbatim, where
+        # os.path.basename sees no separator at all and would key the whole path.
+        assert normalized_leaf("C:\\downloads\\Show\\Show - 01.mkv") == "show - 01.mkv"
+        # And a directory entry never folds to the empty leaf, which every other
+        # unnamed thing would then collide with.
+        assert normalized_leaf("Show/NC/") == "nc"
 
     def test_group_casefold(self) -> None:
         assert normalize_group("SubGroup") == normalize_group("subgroup")
@@ -266,6 +264,17 @@ class TestEpisodeFileStatuses:
         episodes = {5: _ep(ep_id=5, file_id=50, group="-Aergia-")}
         statuses = episode_file_statuses([5], EpisodeSnapshot(episodes, {normalize_group("Aergia")}))
         assert statuses == {5: EpisodeFileStatus.RECOMMENDED}
+
+    def test_untagged_file_the_grab_identified_is_recommended(self) -> None:
+        # The planner declined to re-download this file because a pick's listed
+        # size named it. The import must agree, or it copies over the very file
+        # the grab decision called ours - an untagged twin stays unidentifiable.
+        episodes = {6: _ep(ep_id=6, file_id=60, group=None), 7: _ep(ep_id=7, file_id=70, group=None)}
+        snapshot = EpisodeSnapshot(episodes, {"subgroup"}, owned_episode_ids=frozenset({6}))
+        assert episode_file_statuses([6, 7], snapshot) == {
+            6: EpisodeFileStatus.RECOMMENDED,
+            7: EpisodeFileStatus.UNKNOWN_GROUP,
+        }
 
     def test_all_targets_done_only_when_all_recommended(self) -> None:
         rec = {1: EpisodeFileStatus.RECOMMENDED, 2: EpisodeFileStatus.RECOMMENDED}

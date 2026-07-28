@@ -23,7 +23,8 @@ coercions), the `Json` alias (typing for constructed payloads and the
 """
 
 import math
-from collections.abc import Mapping, Sequence
+from collections import Counter
+from collections.abc import Iterable, Mapping, Sequence
 from dataclasses import dataclass, field
 from enum import StrEnum
 from typing import (
@@ -63,6 +64,23 @@ class EpisodeRecord:
     size: int = 0
 
 
+def file_size_cover(listings: Iterable[Iterable[int]]) -> Counter[int]:
+    """Fold per-listing file-size multisets into one coverage multiset, elementwise max.
+
+    Byte size is the identity two listings of one release always agree on:
+    folder layout differs between trackers, and SeaDex's own per-file naming
+    can too, but the bytes do not. Covering n files of one size requires ONE
+    listing genuinely carrying n - never n listings carrying one each (a `+`
+    fold would fake that), and never a set union (which would deflate a real
+    n-copy listing to one).
+    """
+
+    cover: Counter[int] = Counter()
+    for listing in listings:
+        cover |= Counter(listing)
+    return cover
+
+
 @dataclass
 class SeadexUrlItem:
     """One SeaDex url record within a release group."""
@@ -83,6 +101,11 @@ class SeadexUrlItem:
     size_mismatch: bool = False
     """True when the url was flagged because the Arr holds this release at a
     different size (an upgrade), not because it lacks it."""
+    any_size_mismatch: bool = False
+    """True when ANY matched episode is on disk at a size this release doesn't
+    list. `size_mismatch` (every one of them) implies it; a partly stale copy
+    sets only this one, which is enough to keep the group out of the
+    import-time never-overwrite set."""
     episodes: list[EpisodeRecord] = field(default_factory=list[EpisodeRecord])
 
     def __post_init__(self) -> None:
@@ -111,14 +134,20 @@ SeadexDict = dict[str, SeadexReleaseGroupItem]
 def non_stale_groups(seadex_dict: SeadexDict) -> list[str]:
     """The entry's pick groups minus any the run judged stale on disk.
 
-    A size-mismatch flag on ANY of a group's urls means the arr holds that
-    group at a stale size this grab replaces - it must not enter the
-    import-time never-overwrite guard, or the import reads "done" and keeps
-    the stale copy. Whole-group exclusion is conservative in the overwrite
-    direction. The one derivation both arrs' pending seeds share.
+    A size mismatch on ANY episode of ANY of a group's urls means the arr holds
+    that group at a size this grab replaces - it must not enter the import-time
+    never-overwrite guard, or the import reads "done" and keeps the stale copy.
+    Reading the per-episode flag (not just the whole-url one, which needs EVERY
+    episode stale) is what makes a partly stale group replaceable. Whole-group
+    exclusion is conservative in the overwrite direction. The one derivation
+    both arrs' pending seeds share.
     """
 
-    return [rg for rg, item in seadex_dict.items() if not any(u.size_mismatch for u in item.urls.values())]
+    return [
+        rg
+        for rg, item in seadex_dict.items()
+        if not any(u.size_mismatch or u.any_size_mismatch for u in item.urls.values())
+    ]
 
 
 SONARR_MISSING_KEY: int = 999

@@ -423,6 +423,7 @@ class TestPrivateFallback:
                     url="a_pub",
                     infohash="c" * 40,
                     file_names=("A - S01E01.mkv",),
+                    file_size=1000,
                     is_best=True,
                 ),
                 make_torrent_record(
@@ -431,6 +432,7 @@ class TestPrivateFallback:
                     url="a_priv",
                     infohash=None,
                     file_names=("A - S02E01.mkv",),
+                    file_size=2000,
                     is_best=True,
                 ),
                 make_torrent_record(
@@ -439,6 +441,7 @@ class TestPrivateFallback:
                     url="b_pub",
                     infohash="d" * 40,
                     file_names=("B.S02E01.mkv",),
+                    file_size=3000,
                     is_best=False,
                 ),
             ),

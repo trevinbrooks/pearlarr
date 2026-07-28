@@ -17,8 +17,6 @@ which imports from this module - never the other way around.
 import math
 import os
 import unicodedata
-from collections import Counter
-from collections.abc import Iterable
 from dataclasses import asdict, dataclass, field
 from enum import Enum, StrEnum, auto
 from typing import Any, NamedTuple
@@ -51,36 +49,12 @@ def normalized_leaf(name: str) -> str:
     """Fold a listing path or on-disk path to its normalized leaf (basename, then `normalize_basename`).
 
     The one home of the leaf-identity composition, so every comparison keyspace
-    folds directories and normalizes the same way.
+    folds directories and normalizes the same way. Backslashes fold too - a
+    Windows arr hands a POSIX host its paths verbatim, where `os.path` sees no
+    separator at all - and a trailing separator never yields an empty leaf.
     """
 
-    return normalize_basename(os.path.basename(name))
-
-
-def normalized_leaves(names: Iterable[str]) -> Counter[str]:
-    """Normalize a listing's file paths to a multiset of leaves for cross-listing comparison.
-
-    One release can list a file flat on one tracker and under a folder on
-    another, so file-coverage and cross-seed identity checks compare normalized
-    basenames, never raw listing paths. A multiset (not a set) so two distinct
-    same-named files in different folders never collapse into one.
-    """
-
-    return Counter(normalized_leaf(name) for name in names)
-
-
-def leaf_cover(listings: Iterable[Iterable[str]]) -> Counter[str]:
-    """Fold per-listing leaf multisets into a coverage multiset with elementwise max.
-
-    Covering n same-named leaves requires ONE listing genuinely carrying n -
-    never n listings carrying one each (a + fold would fake that), and never a
-    set union (which would deflate a real n-copy listing to one).
-    """
-
-    cover: Counter[str] = Counter()
-    for listing in listings:
-        cover |= normalized_leaves(listing)
-    return cover
+    return normalize_basename(os.path.basename(name.replace("\\", "/").rstrip("/")))
 
 
 def normalize_group(group: str) -> str:
@@ -559,6 +533,12 @@ class PendingImport:
     on-disk file from another recommended group stays even when that group was never grabbed by us.
     Empty for older records (they guard on grabbed groups alone)."""
 
+    owned_episode_ids: list[int] = field(default_factory=list[int])
+    """Episodes whose on-disk file carries no release group but matched a pick's listed size exactly at
+    grab time - the same identification the planner declined to re-download for. Without it the import
+    reads those files as unidentifiable and copies over a file it just called ours. Empty for older
+    records (they fall back to the group-name guard alone)."""
+
     @property
     def key(self) -> PendingKey:
         """The record's composite store/tracking key (see `PendingKey`)."""
@@ -617,6 +597,7 @@ class PendingImport:
             slice_coverage=raw.get("slice_coverage"),
             excluded_files=raw.get("excluded_files", []),
             entry_groups=raw.get("entry_groups", []),
+            owned_episode_ids=raw.get("owned_episode_ids", []),
         )
 
 

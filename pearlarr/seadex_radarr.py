@@ -230,6 +230,8 @@ class RadarrSync(ArrSync[RadarrItem]):
         pending_seeds: dict[str, PendingImport] | None = None
         if run.import_wait_mode is not ImportWaitMode.OFF:
             added_at = datetime.now().strftime(UPDATED_AT_STR_FORMAT)
+            # Per entry, not per seed: the derivation reads the whole dict.
+            entry_groups = non_stale_groups(seadex_dict)
             pending_seeds = {
                 url_item.infohash: PendingImport(
                     infohash=url_item.infohash,
@@ -245,7 +247,7 @@ class RadarrSync(ArrSync[RadarrItem]):
                     seadex_files=[],
                     coverage=None,
                     ordered_episode_ids=[],
-                    entry_groups=non_stale_groups(seadex_dict),
+                    entry_groups=list(entry_groups),
                 )
                 for srg, srg_item in seadex_dict.items()
                 for url_item in srg_item.urls.values()
