@@ -17,6 +17,7 @@ from typing import Any, NamedTuple, NotRequired, TypedDict, cast
 from .cache import UPDATED_AT_STR_FORMAT, record_is_fresh
 from .json_narrow import is_json_list, is_json_obj
 from .log import count_noun
+from .manual_import import path_leaf
 from .run_services import RunDeps
 from .seadex_types import EpisodeRecord, ParsedEpisode, SeadexDict, SonarrParse
 from .sonarr_client import AbstractSonarrClient
@@ -129,7 +130,7 @@ def video_file_entries(files: Sequence[str]) -> Iterator[tuple[int, str]]:
     """
 
     for idx, name in enumerate(files):
-        base = os.path.basename(name)
+        base = path_leaf(name)
         if is_video_candidate(base):
             yield idx, base
 
