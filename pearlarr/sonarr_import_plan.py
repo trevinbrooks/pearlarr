@@ -445,29 +445,37 @@ def translate_download_path(
     return f"/{joined}" if base == "/" else f"{base}/{joined}"
 
 
-def build_episode_id_map(ep_list: list[SonarrEpisode]) -> dict[EpisodeKey, int]:
-    """Index Sonarr episodes by `(season, episode)` -> episode id.
+class EpisodeIndex(NamedTuple):
+    """The import family's one episode index, built once per episode fetch.
 
-    Derived from `index_episodes_by_key`, so the planner and the import key
-    identically (missing numbers collapse to `SONARR_MISSING_KEY`, first
-    record wins). Episodes with a falsy id (0) are dropped BEFORE indexing -
+    Episodes with a falsy id (0) are dropped from EVERY facet before keying -
     a 0 id can never be POSTed to Sonarr, and a real-id twin behind one must
-    still win its key.
-
-    Args:
-        ep_list: Episodes parsed from `/api/v3/episode`.
-
-    Returns:
-        `(season, episode) -> ep.id` for every episode carrying a real id.
+    still win its `(season, episode)` key. The planner's `index_episodes_by_key`
+    deliberately KEEPS them (a 0-id file is still identity evidence) - do not
+    unify the two.
     """
 
-    return {key: ep.id for key, ep in index_episodes_by_key(ep for ep in ep_list if ep.id).items()}
+    by_id: Mapping[int, SonarrEpisode]
+    """Episode id -> episode."""
+
+    id_by_key: Mapping[EpisodeKey, int]
+    """`(season, episode)` -> episode id (missing numbers collapse to
+    `SONARR_MISSING_KEY`, first record wins - via `index_episodes_by_key`)."""
+
+    ordered_ids: tuple[int, ...]
+    """Every real episode id in the fetch's (season) order - the resolved set
+    the add flow persists onto each seed."""
 
 
-def episodes_by_id(ep_list: Iterable[SonarrEpisode]) -> dict[int, SonarrEpisode]:
-    """Index episodes by real id, dropping the falsy ones (a 0 id can never be addressed)."""
+def episode_index(ep_list: Iterable[SonarrEpisode]) -> EpisodeIndex:
+    """Fold one `/api/v3/episode` fetch into the `EpisodeIndex` facets."""
 
-    return {ep.id: ep for ep in ep_list if ep.id}
+    with_ids = [ep for ep in ep_list if ep.id]
+    return EpisodeIndex(
+        by_id={ep.id: ep for ep in with_ids},
+        id_by_key={key: ep.id for key, ep in index_episodes_by_key(with_ids).items()},
+        ordered_ids=tuple(ep.id for ep in with_ids),
+    )
 
 
 class EpisodeFileStatus(Enum):
@@ -494,6 +502,33 @@ class EpisodeFileStatus(Enum):
     than trust an unidentifiable file as recommended."""
 
 
+@dataclass(frozen=True, slots=True)
+class TargetStatuses:
+    """Each intended target episode's file status, with the two folds every consumer reads."""
+
+    by_id: Mapping[int, EpisodeFileStatus]
+    """One status per de-duplicated target id."""
+
+    def all_done(self) -> bool:
+        """True only when EVERY intended target already holds a recommended file.
+
+        The "already imported / drop the record" signal. An UNKNOWN_GROUP or
+        OTHER_GROUP file is NOT done (we still intend to import ours), so a
+        present-but-unidentifiable file never makes us drop a record prematurely.
+        """
+
+        return bool(self.by_id) and all(s is EpisodeFileStatus.RECOMMENDED for s in self.by_id.values())
+
+    def needing_import(self) -> set[int]:
+        """The never-skip set: every intended id NOT already a recommended file.
+
+        ABSENT / OTHER_GROUP / UNKNOWN_GROUP all need our import. Only
+        RECOMMENDED is excluded (it is done and must not be overwritten).
+        """
+
+        return {ep_id for ep_id, status in self.by_id.items() if status is not EpisodeFileStatus.RECOMMENDED}
+
+
 class EpisodeSnapshot(NamedTuple):
     """One poll's coherent view of a series: the fresh episode index plus what counts as already ours.
 
@@ -501,7 +536,7 @@ class EpisodeSnapshot(NamedTuple):
     different polls.
     """
 
-    episodes_by_id: dict[int, SonarrEpisode]
+    episodes: EpisodeIndex
     """The fresh episode index."""
 
     trusted: Mapping[str, frozenset[int] | None]
@@ -512,6 +547,49 @@ class EpisodeSnapshot(NamedTuple):
     owned_episode_sizes: Mapping[int, int] = MappingProxyType({})
     """Episode id -> the untagged file size the grab-time identification recorded. The claim is honored
     only while the file still sits at that size; anything else untagged classifies as unidentifiable."""
+
+    def statuses(self, target_ep_ids: list[int]) -> TargetStatuses:
+        """Classify each intended target episode by its current on-disk file.
+
+        Pure: reads only this snapshot's episode index and per-group trust
+        policy (keyed via `normalize_group`). "Already imported" is decided
+        HERE from the episode files - not from the queue, since Sonarr drops
+        an imported item from its queue almost immediately.
+        """
+
+        statuses: dict[int, EpisodeFileStatus] = {}
+        for ep_id in target_ep_ids:
+            if ep_id in statuses:
+                continue
+            ep = self.episodes.by_id.get(ep_id)
+            if ep is None or not ep.episode_file_id:
+                statuses[ep_id] = EpisodeFileStatus.ABSENT
+                continue
+            group = ep.episode_file.release_group if ep.episode_file else None
+            size = ep.episode_file.size if ep.episode_file else None
+            if not group:
+                # An untagged file still at the exact size the grab-time
+                # identification recorded is a recommended copy; anything else
+                # untagged (a different file landed meanwhile, or no readable
+                # file record at all) stays unidentifiable.
+                statuses[ep_id] = (
+                    EpisodeFileStatus.RECOMMENDED
+                    if size is not None and size == self.owned_episode_sizes.get(ep_id)
+                    else EpisodeFileStatus.UNKNOWN_GROUP
+                )
+                continue
+            norm = normalize_group(group)
+            if norm not in self.trusted:
+                statuses[ep_id] = EpisodeFileStatus.OTHER_GROUP
+                continue
+            verify_sizes = self.trusted[norm]
+            if verify_sizes is not None and size not in verify_sizes:
+                # A trusted group at a size no current listing carries: the stale
+                # copy this grab replaces, not our just-imported file.
+                statuses[ep_id] = EpisodeFileStatus.OTHER_GROUP
+            else:
+                statuses[ep_id] = EpisodeFileStatus.RECOMMENDED
+        return TargetStatuses(statuses)
 
 
 def trusted_groups(
@@ -550,85 +628,6 @@ def trusted_groups(
     if own:
         trusted[own] = frozenset(own_sizes) or None
     return trusted
-
-
-@dataclass(frozen=True, slots=True)
-class TargetStatuses:
-    """Each intended target episode's file status, with the two folds every consumer reads."""
-
-    by_id: Mapping[int, EpisodeFileStatus]
-    """One status per de-duplicated target id."""
-
-    def all_done(self) -> bool:
-        """True only when EVERY intended target already holds a recommended file.
-
-        The "already imported / drop the record" signal. An UNKNOWN_GROUP or
-        OTHER_GROUP file is NOT done (we still intend to import ours), so a
-        present-but-unidentifiable file never makes us drop a record prematurely.
-        """
-
-        return bool(self.by_id) and all(s is EpisodeFileStatus.RECOMMENDED for s in self.by_id.values())
-
-    def needing_import(self) -> set[int]:
-        """The never-skip set: every intended id NOT already a recommended file.
-
-        ABSENT / OTHER_GROUP / UNKNOWN_GROUP all need our import. Only
-        RECOMMENDED is excluded (it is done and must not be overwritten).
-        """
-
-        return {ep_id for ep_id, status in self.by_id.items() if status is not EpisodeFileStatus.RECOMMENDED}
-
-
-def episode_file_statuses(
-    target_ep_ids: list[int],
-    snapshot: EpisodeSnapshot,
-) -> TargetStatuses:
-    """Classify each intended target episode by its current on-disk file.
-
-    Pure: reads only the snapshot's episode list and per-group trust policy
-    for the series. "Already imported" is decided HERE from the episode
-    files - not from the queue, since Sonarr drops an imported item from its
-    queue almost immediately.
-
-    Args:
-        target_ep_ids: The episode ids our mapping intends to fill.
-        snapshot: The same-poll episode index + trust policy
-            (keyed via `normalize_group`).
-    """
-
-    statuses: dict[int, EpisodeFileStatus] = {}
-    for ep_id in target_ep_ids:
-        if ep_id in statuses:
-            continue
-        ep = snapshot.episodes_by_id.get(ep_id)
-        if ep is None or not ep.episode_file_id:
-            statuses[ep_id] = EpisodeFileStatus.ABSENT
-            continue
-        group = ep.episode_file.release_group if ep.episode_file else None
-        size = ep.episode_file.size if ep.episode_file else None
-        if not group:
-            # An untagged file still at the exact size the grab-time
-            # identification recorded is a recommended copy; anything else
-            # untagged (a different file landed meanwhile, or no readable
-            # file record at all) stays unidentifiable.
-            statuses[ep_id] = (
-                EpisodeFileStatus.RECOMMENDED
-                if size is not None and size == snapshot.owned_episode_sizes.get(ep_id)
-                else EpisodeFileStatus.UNKNOWN_GROUP
-            )
-            continue
-        norm = normalize_group(group)
-        if norm not in snapshot.trusted:
-            statuses[ep_id] = EpisodeFileStatus.OTHER_GROUP
-            continue
-        verify_sizes = snapshot.trusted[norm]
-        if verify_sizes is not None and size not in verify_sizes:
-            # A trusted group at a size no current listing carries: the stale
-            # copy this grab replaces, not our just-imported file.
-            statuses[ep_id] = EpisodeFileStatus.OTHER_GROUP
-        else:
-            statuses[ep_id] = EpisodeFileStatus.RECOMMENDED
-    return TargetStatuses(statuses)
 
 
 # One file plausibly spans a double or triple episode, never more.
@@ -750,18 +749,59 @@ class EpisodeAssignment(NamedTuple):
     assignment (the chosen safe posture)."""
 
 
+class PlacementBatch(NamedTuple):
+    """A torrent's leftover on-disk files to place, with the WHOLE batch's parses.
+
+    `parsed` may cover MORE files than `to_place`: seeded and gone files feed
+    the absolute leg's shared-absolute tell, but only `to_place` is ever placed.
+    """
+
+    to_place: Sequence[str]
+    """Normalized basenames in SeaDex order (the order only fixes deterministic output)."""
+
+    parsed: Mapping[str, ParsedFileInfo | None]
+    """Series-agnostic parse per file (None when Sonarr's parse was unavailable
+    and no SxxExx fell out of the name)."""
+
+
+class TargetScope(NamedTuple):
+    """The episode set a placement batch may assign into.
+
+    `resolved` is the FULL resolved set and `used` the ids seeds already own,
+    kept separate so a fully seeded record stays scope-enforced while an EMPTY
+    `resolved` means no scope at all (`unscoped`): the exact leg then places
+    name-parsed pairs against the live series map instead of sticking forever.
+    """
+
+    resolved: Sequence[int]
+    """The entry's resolved episode ids, season order - seeded included. A stray
+    zero id still makes the scope real; it is never placed."""
+
+    id_by_key: Mapping[EpisodeKey, int]
+    """`(season, episode)` -> id over ALL the series' episodes. Membership in
+    `resolved` does the scoping, so an exact parse outside our entry is rejected."""
+
+    used: frozenset[int] = frozenset()
+    """Ids a seed already owns - never handed to a leftover file."""
+
+    @property
+    def unscoped(self) -> bool:
+        """No resolved set to scope against at all (never just fully seeded)."""
+
+        return not self.resolved
+
+
 def _exact_episode_ids(
     info: ParsedFileInfo | None,
-    ep_id_map: Mapping[EpisodeKey, int],
+    scope: TargetScope,
     resolved_set: set[int],
-    allow_unscoped: bool = False,
 ) -> list[int]:
     """The ids for a file's exact `(season, episode)` parse.
 
     Honors a file only when EVERY parsed episode resolves to a real series episode
     id (a partial hit means the file spans an episode we can't place, so it is
     treated as unplaced and skipped rather than half-imported). A missing season
-    collapses to `SONARR_MISSING_KEY`, matching `build_episode_id_map`.
+    collapses to `SONARR_MISSING_KEY`, matching `EpisodeIndex.id_by_key`.
 
     A name with no `(season, episode)` of its own falls back to Sonarr's
     series-MATCHED pairs (`matched_episodes` - how an absolute-only name gets
@@ -779,13 +819,13 @@ def _exact_episode_ids(
     otherwise half-import.
 
     Normally an id must also be inside `resolved_set` (our per-entry scope, which
-    keeps an episode another preferred torrent owns out). When `allow_unscoped` is
-    set - only when we have NO resolved set to scope against (an empty
-    `ordered_episode_ids`, e.g. a record grabbed before specials resolution
-    populated it) - the membership check is dropped so a correctly-named file still
-    lands on its real series episode instead of sticking forever. This trusts Sonarr
-    for an UNAMBIGUOUS name-parsed `(season, episode)` only. Absolute numbers and
-    matched pairs never reach the unscoped arm.
+    keeps an episode another preferred torrent owns out). When the scope is
+    `unscoped` - NO resolved set to scope against at all (e.g. a record grabbed
+    before specials resolution populated it) - the membership check is dropped so
+    a correctly-named file still lands on its real series episode instead of
+    sticking forever. This trusts Sonarr for an UNAMBIGUOUS name-parsed
+    `(season, episode)` only. Absolute numbers and matched pairs never reach the
+    unscoped arm.
     """
 
     if info is None:
@@ -793,7 +833,7 @@ def _exact_episode_ids(
     claims: list[_EpisodeClaim] = [_EpisodeClaim(info.season_number, episode, None) for episode in info.episode_numbers]
     borrowed = False
     # Full-season parses (bare "S01") match the whole season and never borrow.
-    if not claims and not allow_unscoped and not info.full_season:
+    if not claims and not scope.unscoped and not info.full_season:
         claims = [
             _EpisodeClaim(matched.season_number, matched.episode_number, matched.id)
             for matched in info.matched_episodes
@@ -812,8 +852,8 @@ def _exact_episode_ids(
         return []
     ids: list[int] = []
     for claim in claims:
-        ep_id = ep_id_map.get(season_episode_key(claim.season, claim.episode))
-        if ep_id and claim.claimed_id in (None, ep_id) and (allow_unscoped or ep_id in resolved_set):
+        ep_id = scope.id_by_key.get(season_episode_key(claim.season, claim.episode))
+        if ep_id and claim.claimed_id in (None, ep_id) and (scope.unscoped or ep_id in resolved_set):
             ids.append(ep_id)
     if len(ids) != len(claims):
         return []
@@ -870,15 +910,12 @@ def _natural_key(name: str) -> str:
 
 
 def assign_episode_ids(
-    ordered_files: Sequence[str],
-    parsed_by_file: Mapping[str, ParsedFileInfo | None],
-    ordered_episode_ids: Sequence[int],
-    ep_id_map: Mapping[EpisodeKey, int],
-    allow_unscoped: bool | None = None,
+    batch: PlacementBatch,
+    scope: TargetScope,
 ) -> EpisodeAssignment:
     """Map a torrent's on-disk files to OUR resolved episode ids - names never override.
 
-    The resolved set (`ordered_episode_ids`, season-sorted, lifted from the
+    The resolved set (`scope.resolved`, season-sorted, lifted from the
     add-flow `ep_list`) is authoritative. A release's own numbering is only ever
     used to *index into* it, never to decide identity. Two legs, then two
     narrow fallbacks, in strict precedence, then skip:
@@ -889,10 +926,9 @@ def assign_episode_ids(
        per-season multi-season packs). An absolute-only name borrows Sonarr's
        series-matched pair (`matched_episodes`) under the same in-set scoping,
        so a batch spanning entries places exactly - never positionally. With NO
-       resolved set (an empty `ordered_episode_ids`), this leg places against
-       the live series episode map directly, so a correctly-named file still
-       imports rather than sticking (name-parsed pairs only, see
-       `_exact_episode_ids`).
+       resolved set (`scope.unscoped`), this leg places against the live
+       series episode map directly, so a correctly-named file still imports
+       rather than sticking (name-parsed pairs only, see `_exact_episode_ids`).
     2. **Absolute index:** the leftover files are mapped onto the leftover resolved
        ids by absolute number - but ONLY when every leftover file carries a single
        absolute number, the counts match 1:1, every parse in the batch is known
@@ -919,50 +955,31 @@ def assign_episode_ids(
        to warn on - never guessed.
 
     Args:
-        ordered_files: On-disk video files (normalized basenames)
-            in SeaDex order - the order only fixes deterministic output.
-        parsed_by_file: Series-agnostic parse per file (None when Sonarr's
-            parse was unavailable and no SxxExx fell out of the name). May
-            cover MORE files than `ordered_files` - the shared-absolute tell
+        batch: The files to place plus the WHOLE batch's parses (the parses
+            may cover more files than are placed - the shared-absolute tell
             scans every parse supplied so an already-seeded file still exposes
-            a duplicate, but only `ordered_files` are ever placed.
-        ordered_episode_ids: The resolved episode ids, season-order.
-        ep_id_map: `(season, episode) -> id` over ALL the series' episodes.
-            Membership in the resolved set does the scoping, so an exact parse
-            outside our entry is rejected.
-        allow_unscoped: Scope-gate override. None (default) derives it
-            from an empty `ordered_episode_ids`. A caller that pre-subtracts
-            already-placed ids passes it explicitly (off its FULL resolved set) so a
-            fully-seeded record isn't mistaken for "no scope to enforce".
+            a duplicate).
+        scope: The full resolved set, the seed-claimed ids, and the series
+            map. An empty resolved set means no scope at all (the seed-claimed
+            ids keep a fully seeded record from masquerading as one).
 
     Returns:
         The placed files and the skipped ones.
     """
 
-    resolved = [i for i in ordered_episode_ids if i]
-    resolved_set = set(resolved)
-    # With NO resolved set to scope against, the exact leg falls back to the live
-    # series episode map (a correctly-named file still lands on its real episode).
-    # The absolute/positional legs stay disabled below (no leftover ids), so an
-    # ambiguous file is skipped, never guessed. A caller that pre-subtracts seeded
-    # ids passes allow_unscoped explicitly (off the FULL resolved set), so a fully-
-    # seeded record's empty remainder doesn't masquerade as "no scope".
-    if allow_unscoped is None:
-        allow_unscoped = not resolved_set
+    # A stray zero id can never be placed, but it still keeps the scope real
+    # (only an EMPTY resolved set unlocks the live-map fallback).
+    resolved_set = {i for i in scope.resolved if i}
 
     assigned: dict[str, list[int]] = {}
-    used: set[int] = set()
+    used: set[int] = set(scope.used)
     deferred: list[str] = []
 
     # Leg 1: exact (season, episode) - inside the resolved set, or against the live
-    # series map when there is no set to scope against.
-    for name in ordered_files:
-        ids = _exact_episode_ids(
-            parsed_by_file.get(name),
-            ep_id_map,
-            resolved_set,
-            allow_unscoped,
-        )
+    # series map when there is no set to scope against (an ambiguous file is then
+    # skipped, never guessed: the legs below run on an empty leftover set).
+    for name in batch.to_place:
+        ids = _exact_episode_ids(batch.parsed.get(name), scope, resolved_set)
         if ids and not any(i in used for i in ids):
             assigned[name] = ids
             used.update(ids)
@@ -970,10 +987,10 @@ def assign_episode_ids(
             deferred.append(name)
 
     # Leg 2: absolute index over the leftovers, only on a clean 1:1.
-    leftover_ids = [i for i in resolved if i not in used]
+    leftover_ids = [i for i in scope.resolved if i and i not in used]
     abs_by_file: dict[str, int] = {}
     for name in deferred:
-        info = parsed_by_file.get(name)
+        info = batch.parsed.get(name)
         if info is not None and len(info.absolute_episode_numbers) == 1:
             abs_by_file[name] = info.absolute_episode_numbers[0]
 
@@ -983,7 +1000,7 @@ def assign_episode_ids(
     # tell is two FILES sharing an absolute, not junk repeats within one.
     batch_absolutes = [
         number
-        for parsed in parsed_by_file.values()
+        for parsed in batch.parsed.values()
         if parsed is not None
         for number in dict.fromkeys(parsed.absolute_episode_numbers)
     ]
@@ -991,7 +1008,7 @@ def assign_episode_ids(
     # for one (blind to absolutes: "S01E12 - 12" would launder its lost 12),
     # may be hiding a duplicate - the tell's input is incomplete, so the leg
     # fails CLOSED, the same posture a hiccuped leftover gets from the count.
-    all_parses_known = all(parsed is not None and not parsed.offline for parsed in parsed_by_file.values())
+    all_parses_known = all(parsed is not None and not parsed.offline for parsed in batch.parsed.values())
 
     clean_absolute = (
         bool(abs_by_file)
@@ -1008,8 +1025,8 @@ def assign_episode_ids(
     elif (
         len(deferred) == 1
         and len(leftover_ids) == 1
-        and (single := parsed_by_file.get(deferred[0])) is not None
-        and (_has_no_signal(single) or _signal_is_bogus(single, ep_id_map))
+        and (single := batch.parsed.get(deferred[0])) is not None
+        and (_has_no_signal(single) or _signal_is_bogus(single, scope.id_by_key))
         and not _spans_multiple(single)
     ):
         # Degenerate positional: one leftover file, one leftover episode, and
@@ -1022,9 +1039,9 @@ def assign_episode_ids(
     elif (
         len(deferred) > 1
         and len(deferred) == len(leftover_ids)
-        and len(deferred) == len(parsed_by_file)
+        and len(deferred) == len(batch.parsed)
         and all(
-            (parsed := parsed_by_file.get(name)) is not None
+            (parsed := batch.parsed.get(name)) is not None
             and not parsed.offline
             and _has_no_signal(parsed)
             and not _spans_multiple(parsed)
@@ -1126,7 +1143,7 @@ def plan_import_files(
     needing-import episodes.
 
     `needing_import` (derived from the EPISODE FILES via
-    `episode_file_statuses`) - not Sonarr's per-candidate already-imported
+    `EpisodeSnapshot.statuses`) - not Sonarr's per-candidate already-imported
     rejection - is authoritative for whether we still want a file. Sonarr raises
     that rejection whenever the episode already holds *any* file on disk, including
     a non-recommended or unidentifiable-group one we flagged as still-needing

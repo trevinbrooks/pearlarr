@@ -8,9 +8,17 @@ set via the pure `assign_episode_ids`. Owns the per-run on-disk parse cache.
 """
 
 from .manual_import import PendingImport, normalized_leaf, path_leaf
-from .seadex_types import EpisodeKey, ManualImportCandidate, ParsedFileInfo
+from .seadex_types import ManualImportCandidate, ParsedFileInfo
 from .sonarr_client import AbstractSonarrClient
-from .sonarr_import_plan import CandidateFile, EpisodeAssignment, assign_episode_ids, parse_se_from_filename
+from .sonarr_import_plan import (
+    CandidateFile,
+    EpisodeAssignment,
+    EpisodeIndex,
+    PlacementBatch,
+    TargetScope,
+    assign_episode_ids,
+    parse_se_from_filename,
+)
 from .sonarr_parse import is_video_candidate
 
 # Rejection-reason substrings, matched case-insensitively against each
@@ -96,7 +104,7 @@ class FileEpisodeMapper:
         self,
         pending: PendingImport,
         candidates_by_basename: dict[str, CandidateFile],
-        ep_id_map: dict[EpisodeKey, int],
+        index: EpisodeIndex,
     ) -> EpisodeAssignment:
         """Build the final `basename -> episode ids` map from OUR resolved set.
 
@@ -118,7 +126,7 @@ class FileEpisodeMapper:
         record predating that field, one synthesized from its seeds). When there is
         no set to scope against (an on-disk specials record whose grab-time parse
         found nothing), `assign_episode_ids` falls back to the live series map
-        for exactly named files (see `allow_unscoped`). Fresh placements self-heal
+        for exactly named files (see `TargetScope.unscoped`). Fresh placements self-heal
         onto the record. SeaDex order keeps output and the absolute leg stable.
 
         Returns the merged map plus the unplaceable basenames. A basename
@@ -167,22 +175,16 @@ class FileEpisodeMapper:
 
         # The set the leftovers assign into: ordered_episode_ids, or - for a record
         # predating that field - one synthesized from its seeds (so the old
-        # seed/single-file scoping survives). Ids the seed already owns are removed,
-        # so a leftover file can't be handed an episode that's already placed.
+        # seed/single-file scoping survives). The seed-owned ids ride the scope as
+        # `used`, so a leftover file can't be handed an episode that's already
+        # placed - and a fully seeded record stays scope-enforced.
         resolved_ids = pending.ordered_episode_ids or sorted(
             seeded_ids | {i for i in pending.episode_ids if i},
         )
-        leftover_resolved = [i for i in resolved_ids if i not in seeded_ids]
 
         result = assign_episode_ids(
-            leftover,
-            parsed_by_file,
-            leftover_resolved,
-            ep_id_map,
-            # Gate on the FULL resolved set, not the post-seed remainder: a fully-
-            # seeded record (empty leftover_resolved) must keep scope enforced, or
-            # an out-of-scope on-disk leftover would be imported (allow_unscoped).
-            allow_unscoped=not resolved_ids,
+            PlacementBatch(leftover, parsed_by_file),
+            TargetScope(resolved_ids, index.id_by_key, used=frozenset(seeded_ids)),
         )
 
         # Self-heal: keep every fresh placement on the record for the run.

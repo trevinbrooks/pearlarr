@@ -64,14 +64,12 @@ from .sonarr_import_plan import (
     ParsedQuality,
     QueueVerdict,
     TargetStatuses,
-    build_episode_id_map,
     classify_commands,
     classify_download_history,
     classify_queue,
     derive_languages,
-    episode_file_statuses,
     episode_ids_for_parsed,
-    episodes_by_id,
+    episode_index,
     parse_quality_from_filename,
     parsed_outside_entry,
     plan_import_files,
@@ -466,8 +464,7 @@ class ImportExecutor:
             return ImportProbe(ImportReadiness.RETRY, files_present=False, command_issued=False)
 
         candidates_by_basename = self._mapper.candidate_files(scan.candidates)
-        ep_id_map = build_episode_id_map(list(snapshot.episodes_by_id.values()))
-        assignment = self._mapper.assign(pending, candidates_by_basename, ep_id_map)
+        assignment = self._mapper.assign(pending, candidates_by_basename, snapshot.episodes)
         if assignment.skipped:
             self._warn_unplaceable_files(pending, assignment.skipped)
 
@@ -478,7 +475,7 @@ class ImportExecutor:
 
         # Done-check against the COMPLETE (repaired) intended set, from the files.
         target_ids = sorted({i for ids in authoritative_map.values() for i in ids})
-        statuses = episode_file_statuses(target_ids, snapshot)
+        statuses = snapshot.statuses(target_ids)
         if statuses.all_done():
             self.logger.debug(f"{content_path}: already imported (recommended files present)")
             return ImportProbe(ImportReadiness.IMPORTED, files_present=True, command_issued=False)
@@ -768,14 +765,12 @@ class ImportReconciler:
         if not flagged:
             return {}
 
-        ep_id_map = build_episode_id_map(ep_list)
-        # The resolved episode ids for this entry, in season order - persisted onto
-        # every record so import-time assignment maps files into OUR set (the same
-        # mapping the add flow resolved) instead of re-deriving identity from
-        # Sonarr's title parse.
-        ordered_episode_ids = [ep.id for ep in ep_list if ep.id]
-        # Loop invariant of the per-seed preowned classification below.
-        by_id = episodes_by_id(ep_list)
+        # One index for the whole entry: the id map for the per-file parses, the
+        # ordered ids persisted onto every record (so import-time assignment maps
+        # files into OUR set instead of re-deriving identity from Sonarr's title
+        # parse), and the by-id facet for the preowned classification below.
+        index = episode_index(ep_list)
+        ordered_episode_ids = list(index.ordered_ids)
         # Per-file parse records are read straight from the cache facade
         # (`get_sonarr_parse`): each is the persisted parse entry
         # `{"fetched_at": str, "episodes": [...]}` written by
@@ -805,13 +800,13 @@ class ImportReconciler:
                     continue
                 parsed = parsed_episodes(record)
                 full_season = parsed_full_season(record)
-                file_ids = episode_ids_for_parsed(parsed, ep_id_map, full_season=full_season)
+                file_ids = episode_ids_for_parsed(parsed, index.id_by_key, full_season=full_season)
                 # First claim in file order wins: assignment defers a later
                 # file whose ids collide, so the seed refuses it the same way.
                 if file_ids and not any(i in claimed for i in file_ids):
                     file_episode_map[normalized_leaf(base)] = file_ids
                     claimed.update(file_ids)
-                elif file_ids or parsed_outside_entry(parsed, ep_id_map, full_season=full_season):
+                elif file_ids or parsed_outside_entry(parsed, index.id_by_key, full_season=full_season):
                     # A collision-refused duplicate, or a clean parse landing
                     # entirely outside this entry's set (a sibling slice's
                     # file): this record will never import it, so completeness
@@ -852,13 +847,13 @@ class ImportReconciler:
             # own trust slice (no sibling votes yet) so the wait's inserted
             # counts start at 0.
             grab_snapshot = EpisodeSnapshot(
-                episodes_by_id=by_id,
+                episodes=index,
                 trusted=trusted_groups(seed),
                 owned_episode_sizes=seed.guards.owned_sizes,
             )
             preowned = [
                 ep_id
-                for ep_id, status in episode_file_statuses(sorted(claimed), grab_snapshot).by_id.items()
+                for ep_id, status in grab_snapshot.statuses(sorted(claimed)).by_id.items()
                 if status is EpisodeFileStatus.RECOMMENDED
             ]
             pending_seeds[infohash] = replace(seed, preowned_episode_ids=preowned)
@@ -1006,11 +1001,11 @@ class ImportReconciler:
 
         episodes = self._episodes.episodes_for_series(pending.series_id)
         snapshot = EpisodeSnapshot(
-            episodes_by_id=episodes_by_id(episodes),
+            episodes=episode_index(episodes),
             trusted=trusted_groups(pending, self._series_pending_records(pending.series_id)),
             owned_episode_sizes=pending.guards.owned_sizes,
         )
-        return _SeedStatuses(snapshot, episode_file_statuses(targets, snapshot))
+        return _SeedStatuses(snapshot, snapshot.statuses(targets))
 
     @staticmethod
     def _net_counts(
