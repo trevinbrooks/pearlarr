@@ -71,6 +71,7 @@ from .builders import (
     make_entry_record,
     make_logger,
     make_radarr_sync,
+    make_sonarr_episodes,
     make_sonarr_sync,
     manual_candidate,
     pending_import,
@@ -2364,3 +2365,33 @@ class TestRadarrReleases:
         strat = make_bare_instance(RadarrSync, radarr=radarr)
 
         assert strat.get_radarr_releases(7) == ArrReleases()
+
+    def test_untagged_unreadable_size_folds_to_zero(self) -> None:
+        # An unreadable untagged size folds to 0, which disqualifies the whole
+        # ownership multiset (fail-closed, like Sonarr's untagged pass): the
+        # readable sizes alone must not let a pick claim the copy.
+        radarr = _FakeRadarr([MovieFile(release_group=None, size=500), MovieFile(release_group=None, size=None)])
+        strat = make_bare_instance(RadarrSync, radarr=radarr)
+
+        assert strat.get_radarr_releases(7) == ArrReleases(untagged=(500, 0))
+
+
+class TestSonarrReleases:
+    """get_sonarr_releases feeds the planner's untagged pass nothing."""
+
+    def test_untagged_episode_files_never_reach_untagged(self) -> None:
+        # PIN: an untagged episode file contributes NOTHING to the record - it
+        # travels on the ep_list into the planner's identity pass instead. The
+        # planner merges both arrs' untagged sources, so a file fed through
+        # both would count twice and could then never be owned.
+        episodes = make_sonarr_episodes()
+
+        releases = episodes.get_sonarr_releases(
+            [
+                sonarr_ep(1, 1, ep_id=101, release_group=None, size=700),
+                sonarr_ep(1, 2, ep_id=102, release_group="RG", size=800),
+            ]
+        )
+
+        assert releases == ArrReleases(tagged={"RG": (800,)})
+        assert releases.untagged == ()

@@ -1053,6 +1053,72 @@ class TestFilterByReleaseGroup:
         assert result.seadex_dict[""].urls["u1"].download is True
         assert result.torrent_hashes == ["h1"]
 
+    def test_movie_blank_named_listing_partial_size_overlap_downloads(self) -> None:
+        # PIN: untagged ownership is all-or-nothing. A blank-named pick whose
+        # listing covers only PART of the untagged multiset does not own the
+        # copy, so the grab stands. The old null-keyed dict name-matched the
+        # blank name and held the copy on any size overlap.
+        planner = make_planner(arr=Arr.RADARR)
+        seadex = {"": rg_group({"u1": url_item(episodes=[], size=[50], infohash="h1")})}
+        result = planner.filter_by_release_group(
+            seadex_dict=seadex,
+            arr_releases=ArrReleases(untagged=(50, 60)),
+            ep_list=None,
+        )
+        assert result.seadex_dict[""].urls["u1"].download is True
+        assert result.torrent_hashes == ["h1"]
+
+    def test_movie_blank_named_listing_grabs_plain_not_upgrade(self) -> None:
+        # PIN: a blank name never reaches the name-match arm, so its grab is a
+        # plain download, never an upgrade - with no name there is no evidence
+        # the on-disk copy is an older cut of the same release.
+        planner = make_planner(arr=Arr.RADARR)
+        seadex = {"": rg_group({"u1": url_item(episodes=[], size=[100], infohash="h1")})}
+        result = planner.filter_by_release_group(
+            seadex_dict=seadex,
+            arr_releases=ArrReleases(untagged=(50,)),
+            ep_list=None,
+        )
+        item = result.seadex_dict[""].urls["u1"]
+        assert item.download is True
+        assert item.upgrade is False
+
+    def test_movie_blank_named_listing_sets_no_overlap_when_not_owner(self) -> None:
+        # PIN: a blank name that does NOT own the untagged copy sets no overlap,
+        # so the entry grabs (the movie-level reducer keeps one pick). The old
+        # null-keyed dict read blank-vs-untagged as both a name match AND an
+        # overlap, holding every pick - the entry was silently skipped.
+        planner = make_planner(arr=Arr.RADARR)
+        seadex = {
+            "": rg_group({"u1": url_item(episodes=[], size=[100], infohash="h1")}),
+            "RG": rg_group({"u2": url_item(episodes=[], size=[300], infohash="h2")}),
+        }
+        result = planner.filter_by_release_group(
+            seadex_dict=seadex,
+            arr_releases=ArrReleases(untagged=(100, 60)),
+            ep_list=None,
+        )
+        assert result.seadex_dict[""].urls["u1"].download is True
+        assert result.torrent_hashes == ["h1"]
+
+    def test_movie_blank_named_owner_holds_siblings_by_overlap(self) -> None:
+        # PIN: ownership IS an overlap. When the blank-named pick owns the
+        # untagged copy by size, a sibling pick absent from the library holds
+        # exactly as it would had the copy kept its tag - nothing grabs.
+        planner = make_planner(arr=Arr.RADARR)
+        seadex = {
+            "": rg_group({"u1": url_item(episodes=[], size=[100, 7], infohash="h1")}),
+            "RG": rg_group({"u2": url_item(episodes=[], size=[300], infohash="h2")}),
+        }
+        result = planner.filter_by_release_group(
+            seadex_dict=seadex,
+            arr_releases=ArrReleases(untagged=(100,)),
+            ep_list=None,
+        )
+        assert result.seadex_dict[""].urls["u1"].download is False
+        assert result.seadex_dict["RG"].urls["u2"].download is False
+        assert result.torrent_hashes == []
+
     def test_episodes_but_no_ep_list_skips(self) -> None:
         planner = make_planner()
         seadex = {

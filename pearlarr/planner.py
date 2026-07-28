@@ -625,8 +625,10 @@ class DownloadPlanner:
                 arr_sizes_by_norm.setdefault(norm, []).extend(sizes)
 
         # Every untagged file on disk, folded to its ownership multiset once
-        # per entry: Radarr's untagged fold, or the Sonarr episode files the
-        # identity pass collected. A pick whose listed sizes contain the whole
+        # per entry. Exactly one source per arr - Radarr's untagged fold, or the
+        # Sonarr identity pass (`get_sonarr_releases` keeps `untagged` empty,
+        # pinned) - a file fed through both would count twice and could then
+        # never be owned. A pick whose listed sizes contain the whole
         # multiset owns the copy, which counts as an on-disk overlap - a
         # sibling pick must hold exactly as it would had the copy kept its tag.
         # None (the common tagged library) skips the per-url compares entirely.
