@@ -13,12 +13,13 @@ cached `/parse` results and the `(season, episode) -> id` index. Built bare
 
 from collections.abc import Mapping
 
+from pearlarr.config import Arr
 from pearlarr.manual_import import normalize_basename
 from pearlarr.seadex_sonarr import SonarrSync
 from pearlarr.seadex_types import ParsedEpisode, SonarrEpisode
 from pearlarr.sonarr_import import PendingSeedContext
 
-from .builders import SEP, FakeCacheStore, make_config, make_sonarr_sync, rg_group, url_item
+from .builders import SEP, FakeCacheStore, make_config, make_sonarr_sync, pending_import, rg_group, url_item
 from .fakes import FakeSonarrClient
 
 # One persisted `/parse` cache shape: `filename -> {"episodes": [{season, episode}]}`,
@@ -86,6 +87,35 @@ class TestBuildPendingSeeds:
         )
 
         assert seeds["h1"].entry_groups == ["RG", "Kept"]
+
+    def test_seed_excludes_stale_judged_groups(self) -> None:
+        # A size-mismatch flag means the arr holds that group at a STALE size
+        # this grab replaces - letting it into the never-overwrite guard would
+        # read the import as done and keep the stale copy.
+        ep_list = [_ep(101, 1, 1)]
+        parse_cache = {"Show - 01.mkv": {"episodes": [{"season": 1, "episode": 1}]}}
+        seadex_dict = {
+            "RG": rg_group({"u1": url_item(files=["Show - 01.mkv"], size=[1000], infohash="h1", download=True)}),
+            "Stale": rg_group(
+                {
+                    "u2": url_item(
+                        files=["Show - 01.mkv"],
+                        size=[900],
+                        infohash=None,
+                        download=False,
+                        size_mismatch=True,
+                    ),
+                },
+            ),
+        }
+
+        seeds = _strat(parse_cache)._reconciler.build_pending_seeds(
+            seadex_dict=seadex_dict,
+            ep_list=ep_list,
+            entry=PendingSeedContext(al_id=1, series_id=7, title="Show"),
+        )
+
+        assert seeds["h1"].entry_groups == ["RG"]
         seed = seeds["h1"]
         assert seed.series_id == 7
         assert seed.al_id == 1  # part of the record's PendingKey
@@ -556,3 +586,25 @@ class TestParseWriteVisibleToSeeds:
         )
 
         assert seeds["h1"].file_episode_map == {}
+
+
+class TestRecommendedGroups:
+    """The overwrite-guard set: own group + own entry picks + sibling GRABBED groups only."""
+
+    def test_sibling_entry_picks_never_contaminate(self) -> None:
+        # Another entry's record contributes its grabbed group, never its pick
+        # list: a group recommended for one season says nothing about another
+        # season's episodes.
+        sibling = pending_import(
+            infohash="s1",
+            al_id=999,
+            release_group="SibGrab",
+            entry_groups=["SibGrab", "SibPick"],
+        )
+        store = FakeCacheStore(pending={str(Arr.SONARR): {sibling.key: sibling.to_json()}})
+        strat = make_sonarr_sync(cache_store=store)
+        own = pending_import(release_group="Ours", entry_groups=["Ours", "OtherPick"])
+
+        groups = strat._reconciler._recommended_groups(own)
+
+        assert groups == {"ours", "otherpick", "sibgrab"}

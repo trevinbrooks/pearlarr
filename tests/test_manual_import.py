@@ -144,11 +144,13 @@ class TestNormalize:
 
     def test_normalized_leaves_fold_folders_away(self) -> None:
         # Cross-listing comparison: a folder-nested path and its flat twin
-        # reduce to the same leaf.
+        # reduce to the same leaf - while same-named files in two folders stay
+        # two (a multiset, so distinct files never collapse into one).
         assert normalized_leaves(["NC/Show NCED01.mkv", "Show - 01.MKV"]) == {
-            "show nced01.mkv",
-            "show - 01.mkv",
+            "show nced01.mkv": 1,
+            "show - 01.mkv": 1,
         }
+        assert normalized_leaves(["S01/Show - 01.mkv", "S02/Show - 01.mkv"])["show - 01.mkv"] == 2
 
     def test_group_casefold(self) -> None:
         assert normalize_group("SubGroup") == normalize_group("subgroup")

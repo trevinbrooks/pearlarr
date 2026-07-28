@@ -855,7 +855,13 @@ class ImportReconciler:
                     ordered_episode_ids=ordered_episode_ids,
                     slice_coverage=coverage_string(episodes_from_ep_list(claimed_eps)) or None,
                     excluded_files=excluded_files,
-                    entry_groups=list(seadex_dict),
+                    # A size-mismatch flag means the arr holds that group at a
+                    # STALE size this grab replaces - it must not enter the
+                    # never-overwrite guard, or the import reads "done" and
+                    # keeps the stale copy.
+                    entry_groups=[
+                        rg for rg, item in seadex_dict.items() if not any(u.size_mismatch for u in item.urls.values())
+                    ],
                 )
 
         return pending_seeds
@@ -1028,11 +1034,13 @@ class ImportReconciler:
     def _recommended_groups(self, pending: PendingImport) -> set[str]:
         """Normalized recommended groups for the series (the overwrite-guard set).
 
-        The union of this record's group, every group its entry's SeaDex dict
-        carried at grab time, and the same for every other pending record we
-        grabbed for the series. So an episode our mapping assigned to another
-        preferred torrent - or already holding a recommended release we never
-        grabbed - is never overwritten by this one.
+        The union of this record's group, its entry's non-stale pick groups
+        from grab time, and the group of every other pending record we grabbed
+        for the series. So an episode our mapping assigned to another preferred
+        torrent - or already holding one of this entry's recommended releases
+        we never grabbed - is never overwritten by this one. Sibling records'
+        entry_groups stay out: another entry's picks say nothing about THIS
+        entry's episodes.
         """
 
         groups: set[str] = set()
@@ -1043,7 +1051,6 @@ class ImportReconciler:
             group = raw.get("release_group")
             if group:
                 groups.add(normalize_group(group))
-            groups.update(normalize_group(g) for g in raw.get("entry_groups", []) if g)
         return groups
 
     @staticmethod
