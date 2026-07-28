@@ -45,13 +45,17 @@ from pearlarr.seadex_types import (
 )
 from pearlarr.sonarr_import_plan import (
     CandidateFile,
+    CommandBlock,
+    CommandVerdict,
     ContentPaths,
+    DownloadMatch,
     EpisodeFileStatus,
     EpisodeSnapshot,
     ParsedQuality,
     QueueVerdict,
     all_targets_done,
     build_episode_id_map,
+    classify_commands,
     classify_download_history,
     classify_queue,
     derive_languages,
@@ -348,11 +352,12 @@ def _command(
     name: str = "ManualImport",
     status: str = "started",
     files: list[dict[str, object]] | None = None,
+    command_id: int = 0,
 ) -> CommandResource:
-    """A `CommandResource` from the raw command fields the guard reads."""
+    """A `CommandResource` from the raw command fields the guards read."""
 
     return CommandResource.model_validate(
-        {"name": name, "status": status, "body": {"files": files or []}},
+        {"id": command_id, "name": name, "status": status, "body": {"files": files or []}},
     )
 
 
@@ -368,28 +373,28 @@ class TestManualImportInFlight:
     def test_matching_download_id_is_in_flight(self) -> None:
         cmds = [_command(files=[{"downloadId": "ABC", "episodeIds": [1]}])]
         # Case-insensitive match on the infohash.
-        assert manual_import_in_flight(cmds, "abc", _paths("/d"), set())
+        assert manual_import_in_flight(cmds, DownloadMatch("abc", _paths("/d"), set()))
 
     def test_completed_command_is_not_in_flight(self) -> None:
         cmds = [_command(status="completed", files=[{"downloadId": "ABC"}])]
-        assert not manual_import_in_flight(cmds, "abc", _paths("/d"), set())
+        assert not manual_import_in_flight(cmds, DownloadMatch("abc", _paths("/d"), set()))
 
     def test_non_manual_import_command_ignored(self) -> None:
         cmds = [_command(name="ProcessMonitoredDownloads", files=[{"downloadId": "ABC"}])]
-        assert not manual_import_in_flight(cmds, "abc", _paths("/d"), set())
+        assert not manual_import_in_flight(cmds, DownloadMatch("abc", _paths("/d"), set()))
 
     def test_unrelated_download_id_not_in_flight(self) -> None:
         cmds = [_command(files=[{"downloadId": "OTHER"}])]
-        assert not manual_import_in_flight(cmds, "abc", _paths("/d"), set())
+        assert not manual_import_in_flight(cmds, DownloadMatch("abc", _paths("/d"), set()))
 
     def test_queued_status_counts_as_in_flight(self) -> None:
         cmds = [_command(status="queued", files=[{"downloadId": "ABC"}])]
-        assert manual_import_in_flight(cmds, "abc", _paths("/d"), set())
+        assert manual_import_in_flight(cmds, DownloadMatch("abc", _paths("/d"), set()))
 
     def test_folder_import_matches_by_path_prefix(self) -> None:
         # No downloadId on the files -> fall back to the content_path prefix.
         cmds = [_command(files=[{"path": "/d/folder/ep.mkv", "episodeIds": [9]}])]
-        assert manual_import_in_flight(cmds, "no-hash", _paths("/d/folder"), set())
+        assert manual_import_in_flight(cmds, DownloadMatch("no-hash", _paths("/d/folder"), set()))
 
     def test_folder_import_matches_by_translated_prefix(self) -> None:
         # A dead-tracked folder import POSTs the TRANSLATED path. The raw
@@ -397,29 +402,62 @@ class TestManualImportInFlight:
         cmds = [_command(files=[{"path": "/remote/tv/folder/ep.mkv", "episodeIds": []}])]
         assert manual_import_in_flight(
             cmds,
-            "no-hash",
-            _paths("/home/u/torrents/tv/folder", "/remote/tv/folder"),
-            set(),
+            DownloadMatch("no-hash", _paths("/home/u/torrents/tv/folder", "/remote/tv/folder"), set()),
         )
 
     def test_folder_import_matches_by_episode_overlap(self) -> None:
         cmds = [_command(files=[{"path": "/elsewhere/ep.mkv", "episodeIds": [9]}])]
-        assert manual_import_in_flight(cmds, "no-hash", _paths("/other"), {9})
+        assert manual_import_in_flight(cmds, DownloadMatch("no-hash", _paths("/other"), {9}))
 
     def test_translated_command_with_empty_seed_matches_by_episode_arm(self) -> None:
         # The empty-seed edge: nothing to match by path (both views miss), the
         # episode-id arm still guards - it is translation-immune.
         cmds = [_command(files=[{"path": "/remote/tv/folder/ep.mkv", "episodeIds": [9]}])]
-        assert manual_import_in_flight(cmds, "no-hash", _paths("/nowhere"), {9})
+        assert manual_import_in_flight(cmds, DownloadMatch("no-hash", _paths("/nowhere"), {9}))
 
     def test_download_id_command_not_swept_by_path_overlap(self) -> None:
         # A command that DOES carry a (different) downloadId is never matched by
         # path/episode overlap - only the no-downloadId folder case falls back.
         cmds = [_command(files=[{"downloadId": "OTHER", "path": "/d/x.mkv", "episodeIds": [9]}])]
-        assert not manual_import_in_flight(cmds, "abc", _paths("/d"), {9})
+        assert not manual_import_in_flight(cmds, DownloadMatch("abc", _paths("/d"), {9}))
 
     def test_empty_command_list_not_in_flight(self) -> None:
-        assert not manual_import_in_flight([], "abc", _paths("/d"), {9})
+        assert not manual_import_in_flight([], DownloadMatch("abc", _paths("/d"), {9}))
+
+
+class TestClassifyCommands:
+    """The verdict layer: precedence + ownership over one command snapshot."""
+
+    def test_clear_snapshot_steps_in(self) -> None:
+        verdict = classify_commands([], DownloadMatch("abc", _paths("/d"), set()), lambda _: False)
+        assert verdict == CommandVerdict(None, command_issued=False, deferred=False)
+
+    def test_download_id_match_reads_honest_flags_without_issued_ids(self) -> None:
+        # The download-id proof alone owns the copy (survives restarts).
+        cmds = [_command(files=[{"downloadId": "ABC"}])]
+        verdict = classify_commands(cmds, DownloadMatch("abc", _paths("/d"), set()), lambda _: False)
+        assert verdict == CommandVerdict(CommandBlock.IN_FLIGHT_IMPORT, command_issued=True, deferred=True)
+
+    def test_unproven_folder_match_stays_a_plain_wait(self) -> None:
+        # Possibly foreign: it blocks, but earns neither honest flags nor credit.
+        cmds = [_command(files=[{"path": "/d/ep.mkv", "episodeIds": []}])]
+        verdict = classify_commands(cmds, DownloadMatch("abc", _paths("/d"), set()), lambda _: False)
+        assert verdict == CommandVerdict(CommandBlock.IN_FLIGHT_IMPORT, command_issued=False, deferred=False)
+
+    def test_issued_id_owns_an_unproven_folder_match(self) -> None:
+        cmds = [_command(command_id=7, files=[{"path": "/d/ep.mkv", "episodeIds": []}])]
+        verdict = classify_commands(cmds, DownloadMatch("abc", _paths("/d"), set()), lambda cid: cid == 7)
+        assert verdict == CommandVerdict(CommandBlock.IN_FLIGHT_IMPORT, command_issued=True, deferred=True)
+
+    def test_own_disk_command_defers_without_claiming_the_import(self) -> None:
+        cmds = [_command(command_id=7, name="RenameFiles")]
+        verdict = classify_commands(cmds, DownloadMatch("abc", _paths("/d"), set()), lambda cid: cid == 7)
+        assert verdict == CommandVerdict(CommandBlock.DISK_COMMAND, command_issued=False, deferred=True)
+
+    def test_foreign_disk_command_burns_the_clock(self) -> None:
+        cmds = [_command(command_id=9, name="ProcessMonitoredDownloads")]
+        verdict = classify_commands(cmds, DownloadMatch("abc", _paths("/d"), set()), lambda _: False)
+        assert verdict == CommandVerdict(CommandBlock.DISK_COMMAND, command_issued=False, deferred=False)
 
 
 class TestStartedDiskCommands:
