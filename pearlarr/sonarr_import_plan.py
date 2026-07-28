@@ -161,13 +161,30 @@ class ContentPaths(NamedTuple):
     computed or none applies)."""
 
 
+class InFlightImport(NamedTuple):
+    """The in-flight ManualImport `manual_import_in_flight` matched, plus HOW.
+
+    `by_download_id` distinguishes the provable primary match (a file's
+    `download_id` equals our infohash) from the deliberately broad
+    no-download-id fallback: only a provable or own-issued match may be
+    credited back to the ready deadline - an unproven one stays a plain,
+    deadline-bounded wait.
+    """
+
+    command: CommandResource
+    """The matched, still-running ManualImport."""
+
+    by_download_id: bool
+    """True for the primary `download_id` match; False for the path/episode fallback."""
+
+
 def manual_import_in_flight(
     commands: list[CommandResource],
     infohash: str,
     content_paths: ContentPaths,
     target_ep_ids: set[int],
-) -> bool:
-    """Whether a ManualImport already in flight covers THIS download.
+) -> InFlightImport | None:
+    """The ManualImport already in flight covering THIS download, if any.
 
     Pure, no I/O (mirrors `classify_queue`): the strategy reads the
     `/api/v3/command` list and asks this whether to re-issue our import. A
@@ -185,13 +202,14 @@ def manual_import_in_flight(
 
       * PRIMARY: any of its files' `download_id` equals `infohash`
         (case-insensitively) - the infohash a queue-driven import carries. This is
-        the common, robust case.
+        the common, robust case (`by_download_id=True`).
       * FALLBACK (a folder / dead-tracked import whose files carry NO download
         id): any file path sits under either `content_paths` prefix, OR any
         file's episode id is one of `target_ep_ids` (our intended set). This is
-        deliberately broad: a false positive only makes us WAIT (bounded by the
-        import deadline, which forces through), whereas a missed match re-opens
-        the duplicate-import loop.
+        deliberately broad: a false positive only makes us WAIT - and the caller
+        never credits an unproven match to the ready deadline, so that wait stays
+        deadline-bounded - whereas a missed match re-opens the duplicate-import
+        loop.
 
     Args:
         commands: The parsed `/api/v3/command` list.
@@ -201,7 +219,7 @@ def manual_import_in_flight(
         target_ep_ids: Our intended episode ids, for the same fallback.
 
     Returns:
-        True when a still-running ManualImport already covers this download.
+        The matched command + match arm, or None when nothing covers this download.
     """
 
     target_hash = infohash.casefold()
@@ -213,7 +231,7 @@ def manual_import_in_flight(
             continue
         file_hashes = {f.download_id.casefold() for f in command.files if f.download_id is not None}
         if target_hash in file_hashes:
-            return True
+            return InFlightImport(command, by_download_id=True)
         # Fallback only for a command whose files carry no download id at all (a
         # folder / season-pack import). A command that DOES carry download ids but
         # for a different torrent must not be swept up by a path/episode overlap.
@@ -221,10 +239,10 @@ def manual_import_in_flight(
             continue
         for file in command.files:
             if file.path is not None and any(_norm_path(file.path).startswith(p) for p in content_prefixes):
-                return True
+                return InFlightImport(command, by_download_id=False)
             if any(ep_id in target_ep_ids for ep_id in file.episode_ids):
-                return True
-    return False
+                return InFlightImport(command, by_download_id=False)
+    return None
 
 
 # The monitored-download pass a completed RefreshMonitoredDownloads immediately
@@ -246,8 +264,8 @@ _SONARR_DISK_COMMAND_NAMES = _SONARR_PROCESS_PASS_NAMES | {
 }
 
 
-def sonarr_disk_command_running(commands: list[CommandResource]) -> bool:
-    """Whether one of Sonarr's disk-access commands is executing right now.
+def started_disk_commands(commands: list[CommandResource]) -> list[CommandResource]:
+    """The Sonarr disk-access commands executing right now.
 
     Pure, no I/O (mirrors `manual_import_in_flight`, same `/api/v3/command`
     read). A ManualImport POSTed while one is `started` is QUEUED behind it -
@@ -257,19 +275,11 @@ def sonarr_disk_command_running(commands: list[CommandResource]) -> bool:
     defers: a queued pass is near-permanently present during a wait (Sonarr
     pushes one after every rescan, including ours, deduped while one is
     live), so deferring on it would starve the step-in entirely. A deferral
-    is just a RETRY, re-evaluated next poll and bounded by the import
-    deadline.
-    """
-
-    return bool(started_disk_commands(commands))
-
-
-def started_disk_commands(commands: list[CommandResource]) -> list[CommandResource]:
-    """The disk-access commands executing right now (see `sonarr_disk_command_running`).
-
-    The list form exists so the deferral can tell OUR OWN running command (an id
-    we issued this run - deferred time is credited back to the ready deadline)
-    from a foreign one (which keeps burning the clock).
+    is just a RETRY, re-evaluated next poll - bounded by the import deadline
+    for a foreign command, by the capped deferral credit for our own. The
+    list form lets the caller tell OUR OWN running command (an id we issued
+    this run - credited back to the ready deadline) from a foreign one
+    (which keeps burning the clock).
     """
 
     return _started(commands, _SONARR_DISK_COMMAND_NAMES)
@@ -561,12 +571,8 @@ def episode_ids_for_parsed(
     assignment places or refuses it under the full guard set.
     """
 
-    # Full-season parses (Sonarr's own fullSeason flag) never seed, regardless
-    # of span - a <= cap season would otherwise slip past the pair count below.
-    if full_season:
-        return []
-    pairs = _matched_pairs(parsed)
-    if not pairs or len(pairs) > _MATCHED_SPAN_CAP:
+    pairs = _seedable_pairs(parsed, full_season=full_season)
+    if pairs is None:
         return []
     ids: list[int] = []
     for season, episode in pairs:
@@ -580,13 +586,13 @@ def episode_ids_for_parsed(
     return list(dict.fromkeys(ids))
 
 
-def parsed_outside_set(
+def parsed_outside_entry(
     parsed: list[ParsedEpisode],
     ep_id_map: dict[tuple[int, int], int],
     *,
     full_season: bool = False,
 ) -> bool:
-    """Whether a parse landed cleanly and ENTIRELY outside our episode set.
+    """Whether a parse landed cleanly and ENTIRELY outside the entry's episode set.
 
     The one refusal that proves a grabbed file belongs to another slice of the
     torrent (a sibling entry's episodes), so the seed may exclude it from the
@@ -596,18 +602,26 @@ def parsed_outside_set(
     parse none of whose pairs resolve.
     """
 
+    pairs = _seedable_pairs(parsed, full_season=full_season)
+    return pairs is not None and all(not ep_id_map.get(pair) for pair in pairs)
+
+
+def _seedable_pairs(parsed: list[ParsedEpisode], *, full_season: bool) -> list[tuple[int, int]] | None:
+    """The parse's distinct `(season, episode)` pairs, or None on any seed veto.
+
+    One veto ladder for `episode_ids_for_parsed` and `parsed_outside_entry`, so
+    the two can't drift: full-season parses never seed (Sonarr matches a bare
+    "S0X" OP/ED to the WHOLE season, count-independent, ahead of the span cap),
+    an empty parse carries nothing, and a span of more than `_MATCHED_SPAN_CAP`
+    distinct pairs is refused whole.
+    """
+
     if full_season:
-        return False
-    pairs = _matched_pairs(parsed)
+        return None
+    pairs = list(dict.fromkeys((ep.season, ep.episode) for ep in parsed))
     if not pairs or len(pairs) > _MATCHED_SPAN_CAP:
-        return False
-    return all(not ep_id_map.get(pair) for pair in pairs)
-
-
-def _matched_pairs(parsed: list[ParsedEpisode]) -> list[tuple[int, int]]:
-    """Distinct `(season, episode)` pairs from a parse, in first-seen order."""
-
-    return list(dict.fromkeys((ep.season, ep.episode) for ep in parsed))
+        return None
+    return pairs
 
 
 _SXXEXX: re.Pattern[str] = re.compile(r"[Ss](\d{1,2})[\s._-]*[Ee](\d{1,3})")

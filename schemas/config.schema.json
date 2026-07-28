@@ -160,7 +160,7 @@
         },
         "ready_timeout": {
           "default": 600,
-          "description": "Seconds to then wait for Sonarr to rescan and import the finished files. Measured from the last file Pearlarr saw land rather than the download's completion, so a season pack imported file-by-file times out only after this long with no visible progress.",
+          "description": "Seconds to then wait for Sonarr to rescan and import the finished files. Measured from the last file Pearlarr saw land rather than the download's completion, so a season pack imported file-by-file times out only after this long with no visible progress. Time spent waiting on Pearlarr's own Sonarr commands (imports run one at a time) does not count.",
           "minimum": 1,
           "title": "Ready Timeout",
           "type": "integer"

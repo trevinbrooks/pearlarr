@@ -1215,6 +1215,33 @@ class TestRunMonitor:
         # forced attempt.
         assert [c.at_deadline for c in strategy.import_calls] == [False, False, True, True]
 
+    def test_deferral_credit_is_capped_so_a_wedged_command_ends_the_watch(self) -> None:
+        # A command wedged in flight forever: deferred polls stop earning
+        # credit at the cap, the ordinary deadline resumes, and the watch ends
+        # bounded ("still importing; left pending") instead of hanging until
+        # Ctrl-C. Ready 60s + cap (6x) 360s -> terminal by t=420.
+        strategy = _RecordingStrategy(
+            completed=import_probe(ImportReadiness.RETRY, files_present=False, command_issued=True, deferred=True),
+        )
+        pending = pending_import(infohash="h", added_at=_FRESH)
+        qbit = FakeQbit({"h": [FakeTorrent(is_complete=True, content_path="/d")]})
+        mgr = make_orchestration_manager(
+            qbit=qbit,
+            strategy=strategy,
+            store_records=[pending],
+            pending=[pending],
+            import_wait_timeout=3600,
+            import_ready_timeout=60,
+            import_poll_interval=30,
+        )
+        view = RecordingWaitView()
+        clock = FakeClock(step=30)
+
+        mgr.run_monitor(now=clock.now, sleep=clock.sleep, view=view)
+
+        assert view.final(rk("h")).outcome is Outcome.STILL_IMPORTING
+        assert set(mgr._pending_records()) == {pk("h")}
+
     def test_static_done_count_never_extends_the_deadline(self) -> None:
         # A genuinely stalled import: the first determinate reading (1/3) is a
         # baseline, not progress, and a count that never rises past it must not

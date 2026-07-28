@@ -19,6 +19,7 @@ Three collaborators:
 import logging
 import os
 import time
+from collections.abc import Iterable
 from dataclasses import dataclass, replace
 from datetime import datetime
 from typing import Any, NamedTuple
@@ -70,7 +71,7 @@ from .sonarr_import_plan import (
     episode_ids_for_parsed,
     manual_import_in_flight,
     parse_quality_from_filename,
-    parsed_outside_set,
+    parsed_outside_entry,
     plan_import_files,
     quality_axes_from_model,
     quality_axes_from_name,
@@ -99,6 +100,12 @@ def _hostname(url: str | None) -> str | None:
     if not url:
         return None
     return urlsplit(url).hostname or urlsplit(f"//{url}").hostname
+
+
+def _normalized_names(names: Iterable[str]) -> set[str]:
+    """Normalized-basename SET: a superset compare over these means a healed extra can't fake completeness."""
+
+    return {normalize_basename(name) for name in names}
 
 
 class _CandidateScan(NamedTuple):
@@ -327,7 +334,7 @@ class ImportExecutor:
         self._issued_command_ids = set()
         self.scanner.reset()
 
-    def issued_command(self, command_id: int) -> bool:
+    def is_own_command(self, command_id: int) -> bool:
         """Whether we POSTed this ManualImport command id this run."""
 
         return command_id in self._issued_command_ids
@@ -806,12 +813,17 @@ class ImportReconciler:
                     if file_ids and not any(i in claimed for i in file_ids):
                         file_episode_map[normalize_basename(base)] = file_ids
                         claimed.update(file_ids)
-                    elif file_ids or parsed_outside_set(parsed, ep_id_map, full_season=full_season):
+                    elif file_ids or parsed_outside_entry(parsed, ep_id_map, full_season=full_season):
                         # A collision-refused duplicate, or a clean parse landing
                         # entirely outside this entry's set (a sibling slice's
                         # file): this record will never import it, so completeness
                         # accounts for it. Any other refusal stays "possibly ours".
                         excluded_files.append(normalize_basename(base))
+                if excluded_files:
+                    self.logger.debug(
+                        f"{entry.title}: not counted toward completeness "
+                        f"(other slice / duplicate): {', '.join(excluded_files)}",
+                    )
 
                 # This record's own slice of the entry (the episodes its files
                 # claimed), so sibling per-episode records label distinctly.
@@ -877,15 +889,18 @@ class ImportReconciler:
         self._executor.refresh_downloads()
 
         # "Files inserted" bar counts, pinned to the seed set so the denominator
-        # never rescales mid-import. Determinate only when the seed map covers every
-        # intended file. An incomplete map reports 0/0 so the importing row stays
-        # indeterminate (a partial seed must never show a misleading bar) and only
-        # the manual import's repaired done-check below can finish it.
+        # never rescales mid-import. The bar/deadline counts may trust the seed's
+        # knowably-excluded files (fail-safe: a wrong exclusion only extends a
+        # wait) - the IMPORTED drop below may NOT, so the fast path additionally
+        # needs the map ALONE to cover every file. An unaccounted record reports
+        # 0/0: the importing row stays indeterminate (a partial seed must never
+        # show a misleading bar) and only the repaired done-check can finish it.
         seeded_targets = self._pending_target_ids(pending)
-        seed_complete = bool(seeded_targets) and self._seed_map_is_complete(pending)
-        seed = self._seed_statuses(pending, seeded_targets if seed_complete else [])
+        accounted = bool(seeded_targets) and self._seed_accounting_is_complete(pending)
+        seed_complete = accounted and self._seed_map_is_complete(pending)
+        seed = self._seed_statuses(pending, seeded_targets if accounted else [])
         done = self._recommended_count(seed.statuses)
-        total = len(seeded_targets) if seed_complete else 0
+        total = len(seeded_targets) if accounted else 0
 
         def probe(
             readiness: ImportReadiness,
@@ -903,10 +918,12 @@ class ImportReconciler:
                 deferred=deferred,
             )
 
-        # Fast path: when our grab-time map already covers every video file, the
-        # done-check is trustworthy without scanning the folder. An incomplete map
-        # falls through to the manual import, which repairs it from the on-disk
-        # files and re-checks against the complete set.
+        # Fast path: when our grab-time map ALONE covers every video file, the
+        # done-check is trustworthy without scanning the folder. Anything less
+        # (an incomplete map, or completeness reached only through excluded
+        # files) falls through to the manual import, which repairs the map from
+        # the on-disk files and re-checks against the complete set - a grab-time
+        # exclusion must never decide a drop.
         if seed_complete and all_targets_done(seed.statuses):
             self.logger.debug(f"{label}: already imported (recommended files present)")
             return probe(ImportReadiness.IMPORTED, files_present=True, command_issued=False)
@@ -925,21 +942,24 @@ class ImportReconciler:
         # NOT gated on `force`: the carried-over reconcile path always forces, and
         # that is exactly the path that loops. An in-flight command must suppress a
         # re-issue regardless (`force` overrides Sonarr's clean-pending deferral,
-        # a different state). A false positive only waits (bounded by the deadline).
-        # Checked BEFORE the broad disk-command guard so this record's own copy
-        # reads its honest flags rather than the guard's anonymous ones.
+        # a different state). Checked BEFORE the broad disk-command guard so this
+        # download's own copy reads its honest flags rather than anonymous ones.
         commands = self._executor.list_commands()
-        if manual_import_in_flight(
+        in_flight = manual_import_in_flight(
             commands,
             pending.infohash,
             self._executor.scanner.content_paths(content_path),
             set(seeded_targets),
-        ):
-            # Our own copy mid-flight: `command_issued` (a command for this record
-            # IS running - the at-deadline outcome must read "still importing",
-            # not "not ready") and `deferred` (its runtime never burns the clock).
+        )
+        if in_flight:
+            # Honest flags only for a PROVEN own copy (download-id match, or an id
+            # we POSTed): `command_issued` so an at-deadline outcome reads "still
+            # importing", `deferred` so its runtime is credited back to the ready
+            # deadline. The broad no-download-id fallback stays a plain RETRY -
+            # possibly foreign, so its false positives remain deadline-bounded.
+            owned = in_flight.by_download_id or self._executor.is_own_command(in_flight.command.id)
             self.logger.debug(f"{label}: a ManualImport is already in flight; waiting")
-            return probe(ImportReadiness.RETRY, files_present=False, command_issued=True, deferred=True)
+            return probe(ImportReadiness.RETRY, files_present=False, command_issued=owned, deferred=owned)
 
         # A Sonarr disk command (its own import pass, a rename/move sweep, ...)
         # executing right now: a ManualImport POSTed here would be QUEUED behind
@@ -951,9 +971,12 @@ class ImportReconciler:
         # one WE issued (another record's import serializing this one), the poll
         # reads `deferred` so the monitor credits the wait back to the ready
         # deadline; a foreign command keeps burning it (bounded walk-away).
+        # Ownership is THIS RUN's issued ids only: a prior run's still-running
+        # copy for another record reads foreign and burns the clock (the
+        # same-download case above survives restarts via its download-id match).
         running = started_disk_commands(commands)
         if running:
-            own = any(self._executor.issued_command(command.id) for command in running if command.id)
+            own = any(self._executor.is_own_command(command.id) for command in running if command.id)
             self.logger.debug(f"{label}: Sonarr is running a disk command; waiting")
             return probe(ImportReadiness.RETRY, files_present=False, command_issued=False, deferred=own)
 
@@ -1053,15 +1076,27 @@ class ImportReconciler:
 
     @staticmethod
     def _seed_map_is_complete(pending: PendingImport) -> bool:
-        """Whether the map + knowably-excluded files account for every video file we grabbed.
+        """Whether the grab-time map ALONE covers every video file we grabbed.
 
-        A pack carrying another slice's files (a sibling entry's episodes) can
-        never map them - counting them against completeness left such records
-        permanently indeterminate: no bar, and a ready deadline that never
-        re-anchored on landing files (the 2026-07-27 Fire Force timeout-mid-copy).
+        The only completeness the IMPORTED fast path and the Tier-2 promotion may
+        trust: a grab-time exclusion never decides a drop (a wrong one would
+        strand a file this record should have imported).
         """
 
-        if not pending.seadex_files:
-            return False
-        covered = set(pending.file_episode_map) | set(pending.excluded_files)
-        return len(covered) >= len(pending.seadex_files)
+        needed = _normalized_names(pending.seadex_files)
+        return bool(needed) and _normalized_names(pending.file_episode_map) >= needed
+
+    @staticmethod
+    def _seed_accounting_is_complete(pending: PendingImport) -> bool:
+        """Whether the map + knowably-excluded files account for every video file.
+
+        Enough for the bar and the deadline re-anchor - fail-safe, since a wrong
+        exclusion can only extend a wait. Without it a pack carrying another
+        slice's files stayed permanently indeterminate: no bar, and a ready
+        deadline that never re-anchored on landing files (the 2026-07-27
+        Fire Force timeout-mid-copy).
+        """
+
+        needed = _normalized_names(pending.seadex_files)
+        covered = _normalized_names(pending.file_episode_map) | _normalized_names(pending.excluded_files)
+        return bool(needed) and covered >= needed

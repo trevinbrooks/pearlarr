@@ -25,7 +25,13 @@ from pearlarr.cache import CacheRecord
 from pearlarr.config import Arr
 from pearlarr.grab_pipeline import GrabRequest
 from pearlarr.log import EntryState
-from pearlarr.manual_import import ImportProgress, ImportReadiness, ImportWaitMode, PendingImport
+from pearlarr.manual_import import (
+    ImportProgress,
+    ImportReadiness,
+    ImportWaitMode,
+    PendingImport,
+    normalize_basename,
+)
 from pearlarr.mappings import ExternalIds, MappingEntry, MappingSource
 from pearlarr.output import Severity
 from pearlarr.output.recording import RecordingHub
@@ -41,6 +47,7 @@ from pearlarr.seadex_types import (
     Language,
     ManualImportCandidate,
     MovieFile,
+    ParsedFileInfo,
     ProgressSink,
     QualityDefinition,
     QueueRecord,
@@ -751,6 +758,123 @@ class TestImportCompletedQueueState:
         assert probe.command_issued is True
         assert probe.deferred is True
         assert sonarr.execute_calls == []
+
+    def test_sibling_record_defers_on_the_torrents_running_import(self) -> None:
+        # Sibling entries share one torrent. While one slice's command runs
+        # (download-id match), the OTHER record's poll defers with credit: a
+        # same-download command is ours by definition, and the copy serializes
+        # both slices.
+        pending_sibling = pending_import(infohash="abc123", al_id=777)
+        strat, sonarr = _make_sonarr_for_import(
+            candidates=[manual_candidate("/d/Show - 01 [1080p].mkv")],
+            commands=[
+                CommandResource.model_validate(
+                    {
+                        "id": 7000,
+                        "name": "ManualImport",
+                        "status": "started",
+                        "body": {"files": [{"downloadId": "ABC123"}]},
+                    },
+                ),
+            ],
+        )
+
+        probe = strat.import_completed(pending_sibling, "/d")
+
+        assert probe.deferred is True
+        assert probe.command_issued is True
+        assert sonarr.execute_calls == []
+
+    def test_unproven_folder_import_waits_without_credit(self) -> None:
+        # A no-download-id ManualImport matching only by path overlap (possibly
+        # a foreign folder import): still RETRY - never stack a duplicate - but
+        # unproven, so no credit and no "still importing" claim: its false
+        # positives stay deadline-bounded.
+        pending = pending_import(infohash="abc123")
+        strat, sonarr = _make_sonarr_for_import(
+            candidates=[manual_candidate("/d/Show - 01 [1080p].mkv")],
+            commands=[
+                CommandResource.model_validate(
+                    {
+                        "id": 7000,
+                        "name": "ManualImport",
+                        "status": "started",
+                        "body": {"files": [{"path": "/d/Show - 01 [1080p].mkv"}]},
+                    },
+                ),
+            ],
+        )
+
+        probe = strat.import_completed(pending, "/d")
+
+        assert probe.readiness is ImportReadiness.RETRY
+        assert probe.deferred is False
+        assert probe.command_issued is False
+        assert sonarr.execute_calls == []
+
+    def test_run_start_clears_the_issued_command_ids(self) -> None:
+        # A stale id from a previous run must never claim a foreign command as
+        # ours (ownership is deliberately per-run; the same-download case
+        # survives restarts via its download-id match instead).
+        pending = pending_import(infohash="abc123")
+        strat, _sonarr = _make_sonarr_for_import(
+            candidates=[manual_candidate("/d/Show - 01 [1080p].mkv")],
+            cmd_id=42,
+        )
+
+        strat.import_completed(pending, "/d")
+        executor = strat._reconciler._executor
+
+        assert executor.is_own_command(42) is True
+        executor.reset()
+        assert executor.is_own_command(42) is False
+
+    def test_wrongly_excluded_file_is_still_imported_via_repair(self) -> None:
+        # THE under-import guard for exclusions: accounting is complete via
+        # excluded_files and every MAPPED target already holds the recommended
+        # release - yet the record must NOT fast-path to IMPORTED. The repair
+        # gets the final say (grab-time parses lie: absolute offsets, stale
+        # parse cache) and here it places the "excluded" file onto the
+        # unclaimed episode and imports it.
+        done_file = "Show - 01 [1080p].mkv"
+        wrong_file = "Show - 13 [1080p].mkv"
+        pending = pending_import(
+            file_episode_map={done_file: [101]},
+            episode_ids=[],
+            ordered_episode_ids=[101, 102],
+            seadex_files=[done_file, wrong_file],
+            excluded_files=[normalize_basename(wrong_file)],
+        )
+        sonarr = FakeSonarrClient(
+            episodes=[
+                SonarrEpisode.model_validate(
+                    {
+                        "id": 101,
+                        "seasonNumber": 1,
+                        "episodeNumber": 1,
+                        "episodeFileId": 1010,
+                        "episodeFile": {"releaseGroup": "SubGroup"},
+                    },
+                ),
+                SonarrEpisode.model_validate({"id": 102, "seasonNumber": 1, "episodeNumber": 2}),
+            ],
+            candidates=[manual_candidate(f"/d/{done_file}"), manual_candidate(f"/d/{wrong_file}")],
+            quality_defs=[],
+            languages=[],
+            execute_command_id=42,
+            parse_episode_info_fn=lambda name: (
+                ParsedFileInfo(season_number=1, episode_numbers=(2,)) if name == wrong_file else None
+            ),
+        )
+        strat = make_sonarr_sync(sonarr=sonarr, config=make_config(), cache_store=FakeCacheStore())
+
+        probe = strat.import_completed(pending, "/d")
+
+        assert probe.readiness is ImportReadiness.RETRY
+        assert probe.command_issued is True
+        assert len(sonarr.execute_calls) == 1
+        files, _mode = sonarr.execute_calls[0]
+        assert [f.path for f in files] == [f"/d/{wrong_file}"]
 
     def test_rescan_absorbs_own_disk_pass_then_steps_in(self, monkeypatch: pytest.MonkeyPatch) -> None:
         # A completed rescan immediately starts Sonarr's own import pass. The

@@ -47,7 +47,7 @@ from pearlarr.sonarr_import_plan import (
     parse_se_from_filename,
     quality_axes_from_model,
     resolve_quality,
-    sonarr_disk_command_running,
+    started_disk_commands,
 )
 
 from .builders import (
@@ -1329,9 +1329,9 @@ class TestManualImportInFlightFixture:
         # gone, the queued remainder - including the parked
         # ProcessMonitoredDownloads - must not (queued never defers).
         commands = self._commands()
-        assert sonarr_disk_command_running(commands)
+        assert started_disk_commands(commands)
         queued_only = [c for c in commands if c.status != "started"]
-        assert not sonarr_disk_command_running(queued_only)
+        assert not started_disk_commands(queued_only)
 
 
 # --------------------------------------------------------------------------- #
@@ -1525,12 +1525,14 @@ class TestYamadaEndToEnd:
         assert progress == ImportProgress(0, 0, determinate=False)
         assert sonarr.execute_calls == []
 
-    def test_import_progress_determinate_when_excluded_files_cover_the_rest(self) -> None:
-        # A pack carrying another slice's files: the seed maps OUR files and
-        # excludes the sibling's, so map + excluded account for every file and
-        # the bar/deadline stay determinate over OUR slice alone (previously
-        # such a record could never show progress or re-anchor its deadline).
-        strat, sonarr, seadex_files = _yamada_strat()
+    def test_excluded_files_make_the_heavy_counts_determinate_but_never_promote(self) -> None:
+        # A pack carrying another slice's files: map + excluded account for
+        # every file, so the HEAVY poll's probe carries determinate counts over
+        # OUR slice (the bar + the deadline re-anchor - previously such a record
+        # could never show progress or re-anchor). Tier-2 stays
+        # strict-indeterminate: it can PROMOTE (a drop), and a grab-time
+        # exclusion must never decide one.
+        strat, _sonarr, seadex_files = _yamada_strat()
         pending = pending_import(
             infohash="5555555555555555555555555555555555555555",
             series_id=213,
@@ -1543,11 +1545,10 @@ class TestYamadaEndToEnd:
         )
 
         progress = strat.import_progress(pending)
+        probe = strat.import_completed(pending, "/downloads/yamada")
 
-        assert progress.determinate is True
-        assert progress.total == 1
-        assert progress.done == 0
-        assert sonarr.execute_calls == []
+        assert progress == ImportProgress(0, 0, determinate=False)
+        assert (probe.imported_count, probe.target_count) == (0, 1)
 
     def test_specials_import_with_empty_resolved_set(self) -> None:
         # THE headline regression: the ACTUAL on-disk stuck record is pre-fix - EMPTY

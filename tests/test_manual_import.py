@@ -59,13 +59,13 @@ from pearlarr.sonarr_import_plan import (
     episode_ids_for_parsed,
     manual_import_in_flight,
     parse_quality_from_filename,
-    parsed_outside_set,
+    parsed_outside_entry,
     plan_import_files,
     quality_axes_from_model,
     quality_axes_from_name,
     resolve_quality,
-    sonarr_disk_command_running,
     sonarr_process_pass_running,
+    started_disk_commands,
     targets_needing_import,
     translate_download_path,
 )
@@ -422,43 +422,43 @@ class TestManualImportInFlight:
         assert not manual_import_in_flight([], "abc", _paths("/d"), {9})
 
 
-class TestSonarrDiskCommandRunning:
+class TestStartedDiskCommands:
     """The pure disk-command guard over the same /api/v3/command list."""
 
     def test_started_process_monitored_downloads_defers(self) -> None:
-        assert sonarr_disk_command_running([_command(name="ProcessMonitoredDownloads")])
+        assert started_disk_commands([_command(name="ProcessMonitoredDownloads")])
 
     def test_queued_pass_never_defers(self) -> None:
         # A queued pass is near-permanently present during a wait (Sonarr pushes
         # one after every rescan, including ours), so deferring on it would
         # starve the step-in entirely.
-        assert not sonarr_disk_command_running([_command(name="ProcessMonitoredDownloads", status="queued")])
+        assert not started_disk_commands([_command(name="ProcessMonitoredDownloads", status="queued")])
 
     def test_completed_pass_never_defers(self) -> None:
-        assert not sonarr_disk_command_running([_command(name="ProcessMonitoredDownloads", status="completed")])
+        assert not started_disk_commands([_command(name="ProcessMonitoredDownloads", status="completed")])
 
     def test_legacy_folder_scan_defers(self) -> None:
-        assert sonarr_disk_command_running([_command(name="DownloadedEpisodesScan")])
+        assert started_disk_commands([_command(name="DownloadedEpisodesScan")])
 
     def test_rename_sweep_defers(self) -> None:
         # Any started RequiresDiskAccess command queue-blocks a fresh
         # ManualImport, opening the stale-replay window - not just the passes.
-        assert sonarr_disk_command_running([_command(name="RenameFiles")])
+        assert started_disk_commands([_command(name="RenameFiles")])
 
     def test_running_manual_import_defers(self) -> None:
         # A foreign ManualImport blocks ours the same way (our own is also
         # caught by manual_import_in_flight; this guard needs no file match).
-        assert sonarr_disk_command_running([_command(name="ManualImport")])
+        assert started_disk_commands([_command(name="ManualImport")])
 
     def test_case_folded_match(self) -> None:
-        assert sonarr_disk_command_running([_command(name="processMONITOREDdownloads", status="Started")])
+        assert started_disk_commands([_command(name="processMONITOREDdownloads", status="Started")])
 
     def test_non_disk_commands_ignored(self) -> None:
         cmds = [_command(name="RefreshMonitoredDownloads"), _command(name="RssSync")]
-        assert not sonarr_disk_command_running(cmds)
+        assert not started_disk_commands(cmds)
 
     def test_empty_command_list(self) -> None:
-        assert not sonarr_disk_command_running([])
+        assert not started_disk_commands([])
 
 
 class TestSonarrProcessPassRunning:
@@ -477,31 +477,31 @@ class TestSonarrProcessPassRunning:
         assert not sonarr_process_pass_running(cmds)
 
 
-class TestParsedOutsideSet:
+class TestParsedOutsideEntry:
     """The knowably-other-slice refusal: only a clean parse landing ENTIRELY outside our set."""
 
     def test_clean_parse_fully_outside_is_another_slice(self) -> None:
-        assert parsed_outside_set([ParsedEpisode(season=3, episode=13)], {(3, 1): 101})
+        assert parsed_outside_entry([ParsedEpisode(season=3, episode=13)], {(3, 1): 101})
 
     def test_resolving_parse_is_ours(self) -> None:
-        assert not parsed_outside_set([ParsedEpisode(season=3, episode=1)], {(3, 1): 101})
+        assert not parsed_outside_entry([ParsedEpisode(season=3, episode=1)], {(3, 1): 101})
 
     def test_partially_resolving_span_stays_possibly_ours(self) -> None:
         # A boundary double-episode (one pair in, one out) may be partly ours.
         parsed = [ParsedEpisode(season=3, episode=12), ParsedEpisode(season=3, episode=13)]
-        assert not parsed_outside_set(parsed, {(3, 12): 101})
+        assert not parsed_outside_entry(parsed, {(3, 12): 101})
 
     def test_full_season_veto_stays_possibly_ours(self) -> None:
         # Sonarr matches a bare "S0X" zip to the whole season: it may well BE
         # our content, so the veto never proves it is another slice's.
-        assert not parsed_outside_set([ParsedEpisode(season=2, episode=1)], {(3, 1): 101}, full_season=True)
+        assert not parsed_outside_entry([ParsedEpisode(season=2, episode=1)], {(3, 1): 101}, full_season=True)
 
     def test_no_parse_stays_possibly_ours(self) -> None:
-        assert not parsed_outside_set([], {(3, 1): 101})
+        assert not parsed_outside_entry([], {(3, 1): 101})
 
     def test_wide_span_veto_stays_possibly_ours(self) -> None:
         parsed = [ParsedEpisode(season=9, episode=n) for n in range(1, 11)]
-        assert not parsed_outside_set(parsed, {(3, 1): 101})
+        assert not parsed_outside_entry(parsed, {(3, 1): 101})
 
 
 def _history(*events: tuple[str, str]) -> list[HistoryRecord]:

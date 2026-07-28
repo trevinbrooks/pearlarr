@@ -189,8 +189,8 @@ class ImportProbe:
     `imported`."""
 
     command_issued: bool
-    """Whether a manual-import command for this record was accepted - this poll, or one still running
-    server-side from an earlier poll (its copy may still be in flight - so not yet `files_present`)."""
+    """Whether a manual-import command covering this download was accepted - this poll, or one provably
+    ours still in flight from an earlier poll (its copy may still be running - so not yet `files_present`)."""
 
     imported_count: int = 0
     """How many of the intended episodes already hold the recommended file - the "files inserted" bar
@@ -201,10 +201,9 @@ class ImportProbe:
     mid-import. 0 means the seed map is incomplete, so the importing row stays indeterminate."""
 
     deferred: bool = False
-    """Whether this poll deferred behind OUR OWN Sonarr work (a ManualImport we issued for another record, or
-    this record's own copy still in flight). The monitor credits deferred time back to the ready deadline -
-    waiting on ourselves is not the record stalling. A foreign disk command defers WITHOUT this flag, so it
-    still burns the clock (a bounded walk-away, never an unbounded wait on someone else's work)."""
+    """Whether this poll waited on OUR OWN Sonarr work (a command we issued, or one provably covering this
+    download). The monitor credits deferred time back to the ready deadline - waiting on ourselves is not the
+    record stalling. Foreign or unproven work never sets this, so those waits stay deadline-bounded."""
 
 
 class ImportProgress(NamedTuple):
@@ -511,11 +510,9 @@ class PendingImport:
     `file_episode_map`)."""
 
     excluded_files: list[str] = field(default_factory=list[str])
-    """Normalized basenames of grabbed video files this record will knowably NEVER import: a sibling
-    entry's slice (a clean parse landing entirely outside our episode set) or a collision-refused
-    duplicate (first claim wins). Seed map + these accounting for every `seadex_files` entry is what
-    makes the record's progress determinate - without it a pack carrying another slice's files could
-    never show progress or re-anchor its ready deadline. Empty for older records (stays conservative)."""
+    """Normalized basenames of grabbed video files this record knowably never imports: a sibling entry's
+    slice (a clean parse entirely outside our episode set) or a collision-refused duplicate. Bar/deadline
+    accounting only - the IMPORTED decision never trusts them. Empty for older records (conservative)."""
 
     @property
     def key(self) -> PendingKey:
