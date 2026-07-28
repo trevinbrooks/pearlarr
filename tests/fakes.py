@@ -18,7 +18,7 @@ import re
 from collections.abc import Callable, Iterable
 from typing import override
 
-from pearlarr.manual_import import ImportProbe, ImportProgress, PendingImport
+from pearlarr.manual_import import AttemptKind, ImportProbe, ImportProgress, PendingImport
 from pearlarr.mappings import MappingEntry
 from pearlarr.output import (
     CapReached,
@@ -236,9 +236,7 @@ class FakeStrategy(ArrSync[FakeArrItem]):
         self,
         pending: PendingImport,
         content_path: str,
-        *,
-        force: bool = False,
-        at_deadline: bool = False,
+        attempt: AttemptKind = AttemptKind.POLL,
     ) -> ImportProbe:
         raise NotImplementedError  # override in a test that drives the import hook
 

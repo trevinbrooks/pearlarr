@@ -17,6 +17,7 @@ which imports from this module - never the other way around.
 import math
 import os
 import unicodedata
+from collections.abc import Iterable
 from dataclasses import asdict, dataclass, field
 from enum import Enum, StrEnum, auto
 from typing import Any, NamedTuple
@@ -149,6 +150,38 @@ class ImportReadiness(Enum):
     LEAVE = auto()
     """Nothing we can import right now (no candidate maps to one of our episodes, or the attempt raised). Leave
     the record pending for a later run."""
+
+
+class AttemptKind(Enum):
+    """Which kind of import attempt a reconcile poll is (see `ImportCompleter.import_completed`).
+
+    The three legal states of the old (force, at_deadline) pair - a deadline
+    attempt always forces, so deadline-without-force is unrepresentable.
+    """
+
+    POLL = auto()
+    """An ordinary monitor poll: defer to Sonarr on a clean `importPending`."""
+
+    FORCED = auto()
+    """A snapshot/reconcile pass: step in even on a clean `importPending` (a
+    download Sonarr will never import, e.g. CDH off, still imports) - but not
+    a final attempt, so a still-missing file stays quiet."""
+
+    DEADLINE = auto()
+    """The final in-bound attempt: forced, and a still-missing intended file
+    warns loudly rather than at debug."""
+
+    @property
+    def forces(self) -> bool:
+        """Stop deferring to Sonarr on a clean `importPending`."""
+
+        return self is not AttemptKind.POLL
+
+    @property
+    def at_deadline(self) -> bool:
+        """The final attempt for the record."""
+
+        return self is AttemptKind.DEADLINE
 
 
 class PendingState(StrEnum):
@@ -480,6 +513,30 @@ class PendingKey(NamedTuple):
         return f"{self.infohash}:{self.al_id}"
 
 
+def _normalized_names(names: Iterable[str]) -> set[str]:
+    """Normalized-leaf SET, deliberately not a multiset.
+
+    The map/pool keyspaces it compares against collapse duplicate leaves, so a
+    superset compare must too.
+    """
+
+    return {normalized_leaf(name) for name in names}
+
+
+class SeedCoverage(NamedTuple):
+    """A record's two seed trust levels over its grabbed video files.
+
+    `mapped` (the map ALONE covers every file) is all the IMPORTED fast path
+    and Tier-2 promotion may trust - an exclusion never decides a drop.
+    `accounted` (map + knowably-excluded files) unlocks only the bar and the
+    deadline re-anchor - fail-safe, since a wrong exclusion can only extend a
+    wait - and is what keeps a slice pack's deadline re-anchoring at all.
+    """
+
+    mapped: bool
+    accounted: bool
+
+
 class OwnedEpisode(NamedTuple):
     """One grab-time ownership claim over an untagged on-disk file.
 
@@ -644,6 +701,34 @@ class PendingImport:
         if self.slice_coverage:
             base = f"{base} · {self.slice_coverage}"
         return base
+
+    def target_ids(self) -> list[int]:
+        """Our intended episode ids: map values first-claim order, then the legacy fallback."""
+
+        ids: list[int] = []
+        seen: set[int] = set()
+        for file_ids in self.file_episode_map.values():
+            for ep_id in file_ids:
+                if ep_id and ep_id not in seen:
+                    seen.add(ep_id)
+                    ids.append(ep_id)
+        for ep_id in self.episode_ids:
+            if ep_id and ep_id not in seen:
+                seen.add(ep_id)
+                ids.append(ep_id)
+        return ids
+
+    def seed_coverage(self) -> SeedCoverage:
+        """Coverage from normalized-name SUPERSETS (never lengths): a healed extra can't fake it."""
+
+        needed = _normalized_names(self.seadex_files)
+        if not needed:
+            return SeedCoverage(mapped=False, accounted=False)
+        mapped_names = _normalized_names(self.file_episode_map)
+        if mapped_names >= needed:
+            return SeedCoverage(mapped=True, accounted=True)
+        covered = mapped_names | _normalized_names(self.excluded_files)
+        return SeedCoverage(mapped=False, accounted=covered >= needed)
 
     def to_json(self) -> dict[str, Any]:
         """Serialize to the plain dict persisted under `pending_imports`.

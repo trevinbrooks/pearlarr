@@ -11,6 +11,7 @@ from .config import Arr, secret_value
 from .grab_pipeline import GrabRequest, clean_replaced_groups
 from .log import EntryState, pluralize
 from .manual_import import (
+    AttemptKind,
     ImportProbe,
     ImportProgress,
     ImportWaitMode,
@@ -510,9 +511,7 @@ class SonarrSync(ArrSync[SonarrItem]):
         self,
         pending: PendingImport,
         content_path: str,
-        *,
-        force: bool = False,
-        at_deadline: bool = False,
+        attempt: AttemptKind = AttemptKind.POLL,
     ) -> ImportProbe:
         """One reconcile/import poll for a completed download (delegated).
 
@@ -520,12 +519,7 @@ class SonarrSync(ArrSync[SonarrItem]):
         decision lives on `ImportReconciler`.
         """
 
-        return self._reconciler.import_completed(
-            pending,
-            content_path,
-            force=force,
-            at_deadline=at_deadline,
-        )
+        return self._reconciler.import_completed(pending, content_path, attempt)
 
     @override
     def import_progress(self, pending: PendingImport) -> ImportProgress:

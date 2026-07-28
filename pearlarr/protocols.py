@@ -2,7 +2,7 @@
 
 from abc import ABC, abstractmethod
 
-from .manual_import import ImportProbe, ImportProgress, PendingImport
+from .manual_import import AttemptKind, ImportProbe, ImportProgress, PendingImport
 from .mappings import MappingEntry
 from .seadex_types import ArrItem, HistoryRecord, ProgressSink
 
@@ -22,9 +22,7 @@ class ImportCompleter(ABC):
         self,
         pending: PendingImport,
         content_path: str,
-        *,
-        force: bool = False,
-        at_deadline: bool = False,
+        attempt: AttemptKind = AttemptKind.POLL,
     ) -> ImportProbe:
         """Reconcile one completed download with Sonarr (one poll).
 
@@ -43,17 +41,12 @@ class ImportCompleter(ABC):
             pending: The durable record for the completed torrent.
             content_path: The qBittorrent `content_path` of the finished
                 download (the folder/file the manual import reads from disk).
-            force: When True, stop deferring to Sonarr on a clean
-                `importPending` and drive our manual import now. The engine sets
-                this on the snapshot/reconcile passes and on the final in-bound
-                monitor poll, so a download Sonarr will never import (e.g.
-                Completed Download Handling off) is still imported rather than
-                waited on forever.
-            at_deadline: When True, this is the final attempt for the
-                record, so an intended file still not visible is terminal -> warn
-                loudly. Off the deadline a still-missing file is expected (an
-                early poll) and only logged at debug. Distinct from `force`: the
-                snapshot/reconcile force without being at a deadline (no warning).
+            attempt: The attempt kind (see `AttemptKind`). FORCED/DEADLINE stop
+                deferring to Sonarr on a clean `importPending` (a download it
+                will never import, e.g. Completed Download Handling off, still
+                imports); DEADLINE additionally warns loudly on an intended
+                file still not visible, which is terminal there but expected on
+                an early poll.
 
         Returns:
             The `ImportProbe` readiness (drop / retry / leave) plus whether the

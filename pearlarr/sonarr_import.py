@@ -18,7 +18,6 @@ Three collaborators:
 
 import logging
 import time
-from collections.abc import Iterable
 from dataclasses import dataclass, field, replace
 from datetime import datetime
 from typing import NamedTuple
@@ -29,6 +28,7 @@ from .config import Arr
 from .coverage import coverage_string, episodes_from_ep_list
 from .log import count_noun, pluralize
 from .manual_import import (
+    AttemptKind,
     GuardFacts,
     ImportProbe,
     ImportProgress,
@@ -63,7 +63,7 @@ from .sonarr_import_plan import (
     ImportDecision,
     ParsedQuality,
     QueueVerdict,
-    all_targets_done,
+    TargetStatuses,
     build_episode_id_map,
     classify_commands,
     classify_download_history,
@@ -80,7 +80,6 @@ from .sonarr_import_plan import (
     resolve_language_objects,
     resolve_quality,
     sonarr_process_pass_running,
-    targets_needing_import,
     translate_download_path,
     trusted_groups,
 )
@@ -102,16 +101,6 @@ def _hostname(url: str | None) -> str | None:
     if not url:
         return None
     return urlsplit(url).hostname or urlsplit(f"//{url}").hostname
-
-
-def _normalized_names(names: Iterable[str]) -> set[str]:
-    """Normalized-leaf SET, deliberately not a multiset.
-
-    The map/pool keyspaces it compares against collapse duplicate leaves, so a
-    superset compare must too.
-    """
-
-    return {normalized_leaf(name) for name in names}
 
 
 class _CandidateScan(NamedTuple):
@@ -478,14 +467,11 @@ class ImportExecutor:
 
         candidates_by_basename = self._mapper.candidate_files(scan.candidates)
         ep_id_map = build_episode_id_map(list(snapshot.episodes_by_id.values()))
-        authoritative_map, unplaceable = self._mapper.assign(
-            pending,
-            candidates_by_basename,
-            ep_id_map,
-        )
-        if unplaceable:
-            self._warn_unplaceable_files(pending, unplaceable)
+        assignment = self._mapper.assign(pending, candidates_by_basename, ep_id_map)
+        if assignment.skipped:
+            self._warn_unplaceable_files(pending, assignment.skipped)
 
+        authoritative_map = assignment.assigned
         if not authoritative_map:
             self.logger.debug(f"{content_path}: no mappable files for {pending.display_label} yet")
             return ImportProbe(ImportReadiness.RETRY, files_present=False, command_issued=False)
@@ -493,12 +479,11 @@ class ImportExecutor:
         # Done-check against the COMPLETE (repaired) intended set, from the files.
         target_ids = sorted({i for ids in authoritative_map.values() for i in ids})
         statuses = episode_file_statuses(target_ids, snapshot)
-        if all_targets_done(statuses):
+        if statuses.all_done():
             self.logger.debug(f"{content_path}: already imported (recommended files present)")
             return ImportProbe(ImportReadiness.IMPORTED, files_present=True, command_issued=False)
 
-        needing = targets_needing_import(statuses)
-        decisions = plan_import_files(authoritative_map, candidates_by_basename, needing)
+        decisions = plan_import_files(authoritative_map, candidates_by_basename, statuses.needing_import())
 
         entry_context = _EntryContext(pending, content_path, scan.omit_download_id)
         files: list[ManualImportFile] = []
@@ -680,21 +665,7 @@ class _SeedStatuses(NamedTuple):
     """
 
     snapshot: EpisodeSnapshot
-    statuses: dict[int, EpisodeFileStatus]
-
-
-class _SeedCoverage(NamedTuple):
-    """The seed's two trust levels over the grabbed video files.
-
-    `mapped` (the map ALONE covers every file) is all the IMPORTED fast path
-    and Tier-2 promotion may trust - an exclusion never decides a drop.
-    `accounted` (map + knowably-excluded files) unlocks only the bar and the
-    deadline re-anchor - fail-safe, since a wrong exclusion can only extend a
-    wait - and is what keeps a slice pack's deadline re-anchoring at all.
-    """
-
-    mapped: bool
-    accounted: bool
+    statuses: TargetStatuses
 
 
 @dataclass(frozen=True, slots=True)
@@ -887,7 +858,7 @@ class ImportReconciler:
             )
             preowned = [
                 ep_id
-                for ep_id, status in episode_file_statuses(sorted(claimed), grab_snapshot).items()
+                for ep_id, status in episode_file_statuses(sorted(claimed), grab_snapshot).by_id.items()
                 if status is EpisodeFileStatus.RECOMMENDED
             ]
             pending_seeds[infohash] = replace(seed, preowned_episode_ids=preowned)
@@ -898,9 +869,7 @@ class ImportReconciler:
         self,
         pending: PendingImport,
         content_path: str,
-        *,
-        force: bool = False,
-        at_deadline: bool = False,
+        attempt: AttemptKind = AttemptKind.POLL,
     ) -> ImportProbe:
         """One reconcile/import poll for a completed download.
 
@@ -910,11 +879,11 @@ class ImportReconciler:
           * every intended episode already holds the recommended release ->
             `IMPORTED` + `files_present` (drop the record).
           * Sonarr is genuinely importing right now -> `RETRY` (don't race it).
-          * a clean `importPending` -> `RETRY` until `force` (the engine
-            forces on the snapshot/reconcile passes and on the final in-bound
-            monitor poll, so a download Sonarr will never import - e.g. Completed
-            Download Handling off, which parks it in `importPending` forever -
-            is still imported rather than waited on indefinitely).
+          * a clean `importPending` -> `RETRY` unless the attempt forces (the
+            snapshot/reconcile passes and the final in-bound monitor poll, so a
+            download Sonarr will never import - e.g. Completed Download
+            Handling off, which parks it in `importPending` forever - is still
+            imported rather than waited on indefinitely).
           * otherwise (`importBlocked` / `failed` / warning-flagged pending /
             not tracked / forced clean pending) -> drive our authoritative
             series-pinned manual import.
@@ -922,9 +891,9 @@ class ImportReconciler:
         Args:
             pending: The durable record for the completed torrent.
             content_path: The qBittorrent `content_path` to import from.
-            force: Stop deferring to Sonarr on a clean `importPending`.
-            at_deadline: The final attempt - a still-missing intended file
-                is normally terminal, so warn loudly (off the deadline it's debug).
+            attempt: The attempt kind (see `AttemptKind`): whether to force
+                past a clean `importPending`, and whether a still-missing
+                intended file warns loudly (the deadline attempt) or at debug.
         """
 
         label = pending.display_label
@@ -933,12 +902,12 @@ class ImportReconciler:
         self._executor.refresh_downloads()
 
         # "Files inserted" bar counts, pinned to the seed set so the denominator
-        # never rescales mid-import. Trust per `_SeedCoverage`: accounted unlocks
+        # never rescales mid-import. Trust per `SeedCoverage`: accounted unlocks
         # the counts, mapped the fast path below. An unaccounted record reports
         # 0/0: the importing row stays indeterminate (a partial seed must never
         # show a misleading bar) and only the repaired done-check can finish it.
-        seeded_targets = self._pending_target_ids(pending)
-        coverage = self._seed_coverage(pending)
+        seeded_targets = pending.target_ids()
+        coverage = pending.seed_coverage()
         accounted = bool(seeded_targets) and coverage.accounted
         seed_complete = accounted and coverage.mapped
         gated_targets = seeded_targets if accounted else []
@@ -967,7 +936,7 @@ class ImportReconciler:
         # without scanning the folder. Anything less (incomplete, or complete
         # only through exclusions) falls through to the manual import, which
         # repairs the map from the on-disk files and re-checks the complete set.
-        if seed_complete and all_targets_done(seed.statuses):
+        if seed_complete and seed.statuses.all_done():
             self.logger.debug(f"{label}: already imported (recommended files present)")
             return probe(ImportReadiness.IMPORTED, files_present=True, command_issued=False)
 
@@ -975,14 +944,14 @@ class ImportReconciler:
         if verdict is QueueVerdict.WAIT:
             self.logger.debug(f"{label}: Sonarr is importing; waiting")
             return probe(ImportReadiness.RETRY, files_present=False, command_issued=False)
-        if verdict is QueueVerdict.PENDING_CLEAN and not force:
+        if verdict is QueueVerdict.PENDING_CLEAN and not attempt.forces:
             self.logger.debug(f"{label}: Sonarr has it pending; waiting")
             return probe(ImportReadiness.RETRY, files_present=False, command_issued=False)
 
         # A command blocking the step-in (flags per `classify_commands`). NOT
-        # gated on `force`: the always-forcing reconcile path is exactly the
-        # one that loops - `force` overrides Sonarr's clean-pending deferral, a
-        # different state.
+        # gated on the attempt kind: the always-forcing reconcile path is
+        # exactly the one that loops - forcing overrides Sonarr's clean-pending
+        # deferral, a different state.
         verdict = classify_commands(
             self._executor.list_commands(),
             DownloadMatch(
@@ -1006,7 +975,7 @@ class ImportReconciler:
             pending,
             content_path,
             snapshot=seed.snapshot,
-            at_deadline=at_deadline,
+            at_deadline=attempt.at_deadline,
         )
         return replace(result, imported_count=done, target_count=total)
 
@@ -1016,12 +985,12 @@ class ImportReconciler:
         Reads ONLY the fresh episode files - never the throttled refresh, the queue,
         or qBittorrent - and counts the seed targets that now hold the recommended
         release. `determinate` is False (and the counts 0) unless the map ALONE is
-        whole (`_SeedCoverage.mapped` - this path can promote, so it never trusts
+        whole (`SeedCoverage.mapped` - this path can promote, so it never trusts
         exclusions). Anything less is left to the heavy poll's repaired done-check.
         """
 
-        seeded_targets = self._pending_target_ids(pending)
-        if not seeded_targets or not self._seed_coverage(pending).mapped:
+        seeded_targets = pending.target_ids()
+        if not seeded_targets or not pending.seed_coverage().mapped:
             return ImportProgress(0, 0, determinate=False)
         seed = self._seed_statuses(pending, seeded_targets)
         done, total = self._net_counts(pending, seeded_targets, seed.statuses)
@@ -1047,7 +1016,7 @@ class ImportReconciler:
     def _net_counts(
         pending: PendingImport,
         targets: list[int],
-        statuses: dict[int, EpisodeFileStatus],
+        statuses: TargetStatuses,
     ) -> tuple[int, int]:
         """The bar's `(done, total)`, net of the grab-time preowned targets.
 
@@ -1057,7 +1026,7 @@ class ImportReconciler:
         """
 
         preowned = len(set(pending.preowned_episode_ids) & set(targets))
-        recommended = sum(1 for status in statuses.values() if status is EpisodeFileStatus.RECOMMENDED)
+        recommended = sum(1 for status in statuses.by_id.values() if status is EpisodeFileStatus.RECOMMENDED)
         return max(0, recommended - preowned), len(targets) - preowned
 
     def _series_pending_records(self, series_id: int) -> list[PendingImport]:
@@ -1072,33 +1041,3 @@ class ImportReconciler:
             PendingImport.from_json(raw)
             for raw in self.cache_store.get_pending_for_series(Arr.SONARR, series_id).values()
         ]
-
-    @staticmethod
-    def _pending_target_ids(pending: PendingImport) -> list[int]:
-        """Our intended episode ids for a record (map values + single-file fallback)."""
-
-        ids: list[int] = []
-        seen: set[int] = set()
-        for file_ids in pending.file_episode_map.values():
-            for ep_id in file_ids:
-                if ep_id and ep_id not in seen:
-                    seen.add(ep_id)
-                    ids.append(ep_id)
-        for ep_id in pending.episode_ids:
-            if ep_id and ep_id not in seen:
-                seen.add(ep_id)
-                ids.append(ep_id)
-        return ids
-
-    @staticmethod
-    def _seed_coverage(pending: PendingImport) -> _SeedCoverage:
-        """Coverage from normalized-name SUPERSETS (never lengths): a healed extra can't fake it."""
-
-        needed = _normalized_names(pending.seadex_files)
-        if not needed:
-            return _SeedCoverage(mapped=False, accounted=False)
-        mapped_names = _normalized_names(pending.file_episode_map)
-        if mapped_names >= needed:
-            return _SeedCoverage(mapped=True, accounted=True)
-        covered = mapped_names | _normalized_names(pending.excluded_files)
-        return _SeedCoverage(mapped=False, accounted=covered >= needed)

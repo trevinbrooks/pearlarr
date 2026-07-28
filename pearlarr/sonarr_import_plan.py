@@ -552,10 +552,37 @@ def trusted_groups(
     return trusted
 
 
+@dataclass(frozen=True, slots=True)
+class TargetStatuses:
+    """Each intended target episode's file status, with the two folds every consumer reads."""
+
+    by_id: Mapping[int, EpisodeFileStatus]
+    """One status per de-duplicated target id."""
+
+    def all_done(self) -> bool:
+        """True only when EVERY intended target already holds a recommended file.
+
+        The "already imported / drop the record" signal. An UNKNOWN_GROUP or
+        OTHER_GROUP file is NOT done (we still intend to import ours), so a
+        present-but-unidentifiable file never makes us drop a record prematurely.
+        """
+
+        return bool(self.by_id) and all(s is EpisodeFileStatus.RECOMMENDED for s in self.by_id.values())
+
+    def needing_import(self) -> set[int]:
+        """The never-skip set: every intended id NOT already a recommended file.
+
+        ABSENT / OTHER_GROUP / UNKNOWN_GROUP all need our import. Only
+        RECOMMENDED is excluded (it is done and must not be overwritten).
+        """
+
+        return {ep_id for ep_id, status in self.by_id.items() if status is not EpisodeFileStatus.RECOMMENDED}
+
+
 def episode_file_statuses(
     target_ep_ids: list[int],
     snapshot: EpisodeSnapshot,
-) -> dict[int, EpisodeFileStatus]:
+) -> TargetStatuses:
     """Classify each intended target episode by its current on-disk file.
 
     Pure: reads only the snapshot's episode list and per-group trust policy
@@ -567,9 +594,6 @@ def episode_file_statuses(
         target_ep_ids: The episode ids our mapping intends to fill.
         snapshot: The same-poll episode index + trust policy
             (keyed via `normalize_group`).
-
-    Returns:
-        One status per de-duplicated target id.
     """
 
     statuses: dict[int, EpisodeFileStatus] = {}
@@ -604,28 +628,7 @@ def episode_file_statuses(
             statuses[ep_id] = EpisodeFileStatus.OTHER_GROUP
         else:
             statuses[ep_id] = EpisodeFileStatus.RECOMMENDED
-    return statuses
-
-
-def all_targets_done(statuses: dict[int, EpisodeFileStatus]) -> bool:
-    """True only when EVERY intended target already holds a recommended file.
-
-    The "already imported / drop the record" signal. An UNKNOWN_GROUP or
-    OTHER_GROUP file is NOT done (we still intend to import ours), so a present-
-    but-unidentifiable file never makes us drop a record prematurely.
-    """
-
-    return bool(statuses) and all(s is EpisodeFileStatus.RECOMMENDED for s in statuses.values())
-
-
-def targets_needing_import(statuses: dict[int, EpisodeFileStatus]) -> set[int]:
-    """The never-skip set: every intended id NOT already a recommended file.
-
-    ABSENT / OTHER_GROUP / UNKNOWN_GROUP all need our import. Only RECOMMENDED is
-    excluded (it is done and must not be overwritten).
-    """
-
-    return {ep_id for ep_id, status in statuses.items() if status is not EpisodeFileStatus.RECOMMENDED}
+    return TargetStatuses(statuses)
 
 
 # One file plausibly spans a double or triple episode, never more.
@@ -735,8 +738,7 @@ class _EpisodeClaim(NamedTuple):
     with our map's id. None for a name-parsed claim (no id to cross-check)."""
 
 
-@dataclass(frozen=True)
-class EpisodeAssignment:
+class EpisodeAssignment(NamedTuple):
     """The outcome of assigning a torrent's on-disk files to resolved episode ids."""
 
     assigned: dict[str, list[int]]

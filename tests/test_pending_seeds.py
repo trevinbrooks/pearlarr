@@ -754,4 +754,4 @@ class TestTrustedGroups:
 
         seed = strat._reconciler._seed_statuses(own, [101])
 
-        assert seed.statuses == {101: EpisodeFileStatus.RECOMMENDED}
+        assert seed.statuses.by_id == {101: EpisodeFileStatus.RECOMMENDED}

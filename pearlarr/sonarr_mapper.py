@@ -10,7 +10,7 @@ set via the pure `assign_episode_ids`. Owns the per-run on-disk parse cache.
 from .manual_import import PendingImport, normalized_leaf, path_leaf
 from .seadex_types import EpisodeKey, ManualImportCandidate, ParsedFileInfo
 from .sonarr_client import AbstractSonarrClient
-from .sonarr_import_plan import CandidateFile, assign_episode_ids, parse_se_from_filename
+from .sonarr_import_plan import CandidateFile, EpisodeAssignment, assign_episode_ids, parse_se_from_filename
 from .sonarr_parse import is_video_candidate
 
 # Rejection-reason substrings, matched case-insensitively against each
@@ -97,7 +97,7 @@ class FileEpisodeMapper:
         pending: PendingImport,
         candidates_by_basename: dict[str, CandidateFile],
         ep_id_map: dict[EpisodeKey, int],
-    ) -> tuple[dict[str, list[int]], list[str]]:
+    ) -> EpisodeAssignment:
         """Build the final `basename -> episode ids` map from OUR resolved set.
 
         Identity never comes from Sonarr's series-matched title parse alone: a
@@ -121,9 +121,9 @@ class FileEpisodeMapper:
         for exactly named files (see `allow_unscoped`). Fresh placements self-heal
         onto the record. SeaDex order keeps output and the absolute leg stable.
 
-        Returns `(merged_map, unplaceable_basenames)`. A basename duplicated
-        across folders collapses in the basename-keyed pool, so it is reported
-        unplaceable at most once - and never when the map placed it.
+        Returns the merged map plus the unplaceable basenames. A basename
+        duplicated across folders collapses in the basename-keyed pool, so it
+        is reported unplaceable at most once - and never when the map placed it.
         """
 
         on_disk = {
@@ -195,7 +195,7 @@ class FileEpisodeMapper:
         # and lands in skipped even though the name WAS placed. The warning
         # follows the map - placed names drop out, repeats collapse.
         skipped = [name for name in dict.fromkeys(result.skipped) if name not in merged]
-        return merged, skipped
+        return EpisodeAssignment(assigned=merged, skipped=skipped)
 
     def _parsed_file_info(self, raw_base: str) -> ParsedFileInfo | None:
         """Sonarr `/parse` of one on-disk leaf, cached per run.
