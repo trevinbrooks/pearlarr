@@ -855,6 +855,7 @@ class ImportReconciler:
                     ordered_episode_ids=ordered_episode_ids,
                     slice_coverage=coverage_string(episodes_from_ep_list(claimed_eps)) or None,
                     excluded_files=excluded_files,
+                    entry_groups=list(seadex_dict),
                 )
 
         return pending_seeds
@@ -1000,7 +1001,7 @@ class ImportReconciler:
         episodes = self._episodes.episodes_for_series(pending.series_id)
         snapshot = EpisodeSnapshot(
             episodes_by_id={ep.id: ep for ep in episodes if ep.id},
-            recommended_groups=self._recommended_groups(pending.series_id, pending.release_group),
+            recommended_groups=self._recommended_groups(pending),
         )
         return _SeedStatuses(snapshot, episode_file_statuses(targets, snapshot))
 
@@ -1024,21 +1025,25 @@ class ImportReconciler:
         # so every value is a typed record - no defensive isinstance/widen needed.
         return list(self.cache_store.get_pending_for_series(Arr.SONARR, series_id).values())
 
-    def _recommended_groups(self, series_id: int, this_group: str) -> set[str]:
+    def _recommended_groups(self, pending: PendingImport) -> set[str]:
         """Normalized recommended groups for the series (the overwrite-guard set).
 
-        The union of this torrent's group and the group of every other pending
-        record we grabbed for the same series, so an episode our mapping assigned
-        to another preferred torrent is never overwritten by this one.
+        The union of this record's group, every group its entry's SeaDex dict
+        carried at grab time, and the same for every other pending record we
+        grabbed for the series. So an episode our mapping assigned to another
+        preferred torrent - or already holding a recommended release we never
+        grabbed - is never overwritten by this one.
         """
 
         groups: set[str] = set()
-        if this_group:
-            groups.add(normalize_group(this_group))
-        for raw in self._series_pending_records(series_id):
+        if pending.release_group:
+            groups.add(normalize_group(pending.release_group))
+        groups.update(normalize_group(g) for g in pending.entry_groups if g)
+        for raw in self._series_pending_records(pending.series_id):
             group = raw.get("release_group")
             if group:
                 groups.add(normalize_group(group))
+            groups.update(normalize_group(g) for g in raw.get("entry_groups", []) if g)
         return groups
 
     @staticmethod

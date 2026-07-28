@@ -14,7 +14,7 @@ from dataclasses import dataclass, field
 from itertools import compress
 
 from .config import Arr
-from .manual_import import normalize_group
+from .manual_import import normalize_group, normalized_leaves
 from .output import Severity
 from .seadex_types import (
     ArrReleaseDict,
@@ -96,6 +96,18 @@ def _render_groups(groups: Iterable[str | None]) -> str:
     """Comma-join release group names for a log line, rendering None as `(none)`."""
 
     return ", ".join(rg or "(none)" for rg in groups)
+
+
+def _sizes_identify_ungrouped(seadex_sizes: Iterable[int], ungrouped_sizes: Iterable[int]) -> bool:
+    """Whether the arr's group-less file sizes cover this listing exactly.
+
+    Identifies an owned copy whose group tag a rename stripped: every listed
+    size must be positive (zero/unknown proves nothing) and present among the
+    sizes the arr holds without a release group.
+    """
+
+    sizes = set(seadex_sizes)
+    return bool(sizes) and all(s > 0 for s in sizes) and sizes <= set(ungrouped_sizes)
 
 
 def get_episode_keys(
@@ -498,6 +510,16 @@ class DownloadPlanner:
                     f"SeaDex release group {seadex_rg} in {self.arr.capitalize()} releases: "
                     f"{_render_groups(arr_release_groups)}, and file sizes match",
                 )
+        elif _sizes_identify_ungrouped(url_item.size, ctx.arr_sizes_by_norm.get(None, ())):
+            # A rename can strip the on-disk group tag (such files key their
+            # sizes under None): the whole listing present at exact sizes
+            # identifies the copy as ours.
+            if ctx.debug_on:
+                self.logger.debug(
+                    f"SeaDex release group {seadex_rg} not in {self.arr.capitalize()} releases: "
+                    f"{_render_groups(arr_release_groups)}, but ungrouped file sizes match exactly - "
+                    f"not flagging {url}",
+                )
         elif not ctx.overlapping_results:
             if ctx.debug_on:
                 self.logger.debug(
@@ -583,10 +605,20 @@ class DownloadPlanner:
             # Check SeaDex release group matches the episode release group in Sonarr
             sonarr_rg = sonarr_ep.episode_file.release_group if sonarr_ep.episode_file else None
             sonarr_rg_normalized = normalize_rg(sonarr_rg)
-            # If not, flag as should be downloaded if it's not
-            # already in some overlapping release.
-            # normalized name indexes all_seadex_rgs_per_episode, so compare the normalized name
-            if (
+            if sonarr_rg_normalized is None and size_match and seadex_ep_size > 0:
+                # A rename can strip the on-disk group tag; a positive exact-size
+                # match against this pick's file still identifies the copy as ours.
+                # (Zero sizes prove nothing: a failed-copy stub must stay grabbable.)
+                if ctx.debug_on:
+                    self.logger.debug(
+                        f"{self.arr.capitalize()} file for {season_ep_str} has no release group "
+                        f"but exactly matches this release's file size - treating as {seadex_rg}",
+                    )
+                rg_matches[seadex_idx] = True
+            # A mismatched group flags a download unless another recommended
+            # release covers it. The normalized name indexes
+            # all_seadex_rgs_per_episode, so compare the normalized name.
+            elif (
                 sonarr_rg_normalized != seadex_rg_normalized
                 and sonarr_rg_normalized not in ctx.all_seadex_rgs_per_episode["all"]
             ):
@@ -682,14 +714,16 @@ class DownloadPlanner:
         # Within ONE group, flagged urls with identical non-empty file-name sets
         # are the same release cross-seeded (distinct infohashes = duplicate
         # downloads, the promotion branch above can flip several at once): keep
-        # the first, unflag the rest. An empty fileset can't prove identity, so
-        # it's never deduped. Cross-group overlap is the same-files logic above.
+        # the first, unflag the rest. Names compare as normalized leaves - one
+        # listing may fold files into a folder the other lists flat. An empty
+        # fileset can't prove identity, so it's never deduped. Cross-group
+        # overlap is the same-files logic above.
         for rg_item in seadex_dict.values():
             seen: set[frozenset[str]] = set()
             for u in rg_item.urls.values():
                 if not u.download or not u.files:
                     continue
-                file_names = frozenset(u.files)
+                file_names = normalized_leaves(u.files)
                 if file_names in seen:
                     u.download = False
                 else:

@@ -1111,3 +1111,65 @@ class TestModeSwitchResurfacesFallbackSatisfied:
         )
         assert fallback_run.al_id_needs_scan(11) is False
         assert fallback_run.cached_entry_skip(11, entry, lambda: "") is True
+
+
+class TestFolderLayoutCoverage:
+    """Coverage compares normalized leaves - a folder-nested listing is still covered by its flat twin."""
+
+    def _cross_seeded_entry(self) -> EntryRecord:
+        # One release cross-seeded: the private listing folds extras under a
+        # folder, the public twin lists the same files flat.
+        priv = make_torrent_record(
+            release_group="Pick",
+            tracker=Tracker.ANIMEBYTES,
+            url=PRIV_URL,
+            infohash=None,
+            file_names=("NC/Pick NCED01.mkv", "Pick - S01E01.mkv"),
+            file_size=999,
+            is_best=True,
+        )
+        pub_twin = make_torrent_record(
+            release_group="Pick",
+            tracker=Tracker.NYAA,
+            url=PUB_URL,
+            infohash=PUB_HASH,
+            file_names=("Pick NCED01.mkv", "Pick - S01E01.mkv"),
+            file_size=999,
+            is_best=True,
+        )
+        alt = make_torrent_record(
+            release_group="Alt",
+            tracker=Tracker.NYAA,
+            url="https://nyaa.si/view/2",
+            infohash="e" * 40,
+            file_names=("Pick.S01E01.alt.mkv",),
+            file_size=555,
+            is_best=False,
+        )
+        return make_entry_record(anilist_id=91, torrents=(priv, pub_twin, alt))
+
+    def test_covered_private_pick_offers_no_fallback(self) -> None:
+        # A raw-path comparison misreads the folder-nested private listing as
+        # uncovered and pulls in the Alt stand-in; leaf comparison must not.
+        filt = make_release_filter(
+            private_releases="fallback",
+            want_best=True,
+            prefer_dual_audio=False,
+            planner=make_planner(),
+        )
+        sd = filt.build(self._cross_seeded_entry())
+
+        assert set(sd) == {"Pick"}
+
+    def test_covered_private_url_is_pruned(self) -> None:
+        # The same leaf comparison drives the per-group prune: the private url
+        # adds nothing over its flat public twin, so only the public one stays.
+        filt = make_release_filter(
+            private_releases="fallback",
+            want_best=True,
+            prefer_dual_audio=False,
+            planner=make_planner(),
+        )
+        sd = filt.build(self._cross_seeded_entry())
+
+        assert set(sd["Pick"].urls) == {PUB_URL}

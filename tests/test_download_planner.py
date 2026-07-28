@@ -559,6 +559,22 @@ class TestSameGroupDuplicateDedup:
         assert seadex["A"].urls["u1"].download is True
         assert seadex["A"].urls["u2"].download is True
 
+    def test_folder_nested_listing_still_dedups(self) -> None:
+        # One listing folds the file under a folder (and drifts in case): still
+        # the same release cross-seeded, so identity compares normalized leaves.
+        planner = make_planner()
+        seadex = {
+            "A": rg_group(
+                {
+                    "u1": url_item(files=["A - S01E01.mkv"], download=True),
+                    "u2": url_item(files=["Extras/A - s01e01.mkv"], download=True),
+                },
+            ),
+        }
+        planner.reduce_overlapping_downloads(seadex)
+        assert seadex["A"].urls["u1"].download is True
+        assert seadex["A"].urls["u2"].download is False
+
     def test_unknown_filesets_both_kept(self) -> None:
         planner = make_planner()
         seadex = {
@@ -729,6 +745,85 @@ class TestFilterByReleaseGroup:
             ep_list=[sonarr_ep(1, 1, size=100, release_group="Era-Raws")],
         )
         assert result.seadex_dict["Era-Raws"].urls["u1"].download is True
+        assert result.torrent_hashes == ["h1"]
+
+    def test_episode_groupless_file_at_exact_size_no_download(self) -> None:
+        # A rename can strip the on-disk group tag: a positive exact-size match
+        # against the pick's file still identifies the copy - no re-grab.
+        planner = make_planner()
+        seadex = {
+            "Era-Raws": rg_group(
+                {
+                    "u1": url_item(episodes=[EpisodeRecord(season=1, episode=1, size=100)], infohash="h1"),
+                }
+            ),
+        }
+        result = planner.filter_by_release_group(
+            seadex_dict=seadex,
+            arr_release_dict={},
+            ep_list=[sonarr_ep(1, 1, size=100, release_group=None)],
+        )
+        assert result.seadex_dict["Era-Raws"].urls["u1"].download is False
+        assert result.torrent_hashes == []
+
+    def test_episode_groupless_file_at_other_size_downloads(self) -> None:
+        planner = make_planner()
+        seadex = {
+            "Era-Raws": rg_group(
+                {
+                    "u1": url_item(episodes=[EpisodeRecord(season=1, episode=1, size=100)], infohash="h1"),
+                }
+            ),
+        }
+        result = planner.filter_by_release_group(
+            seadex_dict=seadex,
+            arr_release_dict={},
+            ep_list=[sonarr_ep(1, 1, size=555, release_group=None)],
+        )
+        assert result.seadex_dict["Era-Raws"].urls["u1"].download is True
+        assert result.torrent_hashes == ["h1"]
+
+    def test_episode_groupless_zero_size_still_downloads(self) -> None:
+        # 0 == 0 must not read as identity: a failed-copy stub against a
+        # zero-size listing entry stays grabbable.
+        planner = make_planner()
+        seadex = {
+            "Era-Raws": rg_group(
+                {
+                    "u1": url_item(episodes=[EpisodeRecord(season=1, episode=1, size=0)], infohash="h1"),
+                }
+            ),
+        }
+        result = planner.filter_by_release_group(
+            seadex_dict=seadex,
+            arr_release_dict={},
+            ep_list=[sonarr_ep(1, 1, size=0, release_group=None)],
+        )
+        assert result.seadex_dict["Era-Raws"].urls["u1"].download is True
+        assert result.torrent_hashes == ["h1"]
+
+    def test_movie_groupless_file_at_exact_sizes_no_download(self) -> None:
+        # The no-episode twin: group-less files key their sizes under None,
+        # and the whole listing present at exact sizes reads as owned.
+        planner = make_planner(arr=Arr.RADARR)
+        seadex = {"Ember": rg_group({"u1": url_item(episodes=[], size=[100], infohash="h1")})}
+        result = planner.filter_by_release_group(
+            seadex_dict=seadex,
+            arr_release_dict={None: [100]},
+            ep_list=None,
+        )
+        assert result.seadex_dict["Ember"].urls["u1"].download is False
+        assert result.torrent_hashes == []
+
+    def test_movie_groupless_file_at_other_size_downloads(self) -> None:
+        planner = make_planner(arr=Arr.RADARR)
+        seadex = {"Ember": rg_group({"u1": url_item(episodes=[], size=[100], infohash="h1")})}
+        result = planner.filter_by_release_group(
+            seadex_dict=seadex,
+            arr_release_dict={None: [50]},
+            ep_list=None,
+        )
+        assert result.seadex_dict["Ember"].urls["u1"].download is True
         assert result.torrent_hashes == ["h1"]
 
     def test_episodes_but_no_ep_list_skips(self) -> None:

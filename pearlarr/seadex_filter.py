@@ -9,6 +9,7 @@ from seadex import EntryRecord, TorrentRecord
 from .config import PRIVATE_TRACKERS, PrivateReleaseAction
 from .console_caps import console_of
 from .log import indent_string
+from .manual_import import normalized_leaves
 from .output import Accent, StyledValue, hub_warn
 from .reporter import RunContext
 from .seadex_types import (
@@ -149,7 +150,10 @@ class SeadexReleaseFilter:
             # A public candidate with an UNKNOWN fileset: treated per-group as
             # covering (the cross-seed case), mirroring the private side.
             group_has_blind_public[rg] = group_has_blind_public.get(rg, False) or (is_pub and not t.files)
-        public_file_names = {f.name for t in candidates if _is_public_torrent(t) for f in t.files}
+        # Normalized leaves: trackers list the same release with different folder
+        # layouts, and a raw-path comparison would misread a covered private pick
+        # as uncovered (pulling in spurious fallbacks).
+        public_file_names = normalized_leaves(f.name for t in candidates if _is_public_torrent(t) for f in t.files)
 
         def needs_fallback(t: TorrentRecord) -> bool:
             """A private candidate needs a public alternative unless the public candidates cover its files.
@@ -163,7 +167,7 @@ class SeadexReleaseFilter:
                 return not group_has_public[t.release_group]
             if group_has_blind_public[t.release_group]:
                 return False
-            return not {f.name for f in t.files} <= public_file_names
+            return not normalized_leaves(f.name for f in t.files) <= public_file_names
 
         if not any(needs_fallback(t) for t in candidates):
             return candidates, set()
@@ -188,10 +192,12 @@ class SeadexReleaseFilter:
 
         for release_group_item in seadex_release_groups.values():
             urls = release_group_item.urls
-            group_public_files = {f for u in urls.values() if u.is_public for f in u.files}
+            group_public_files = normalized_leaves(f for u in urls.values() if u.is_public for f in u.files)
             if any(u.is_public for u in urls.values()):
                 release_group_item.urls = {
-                    url: u for url, u in urls.items() if u.is_public or not set(u.files) <= group_public_files
+                    url: u
+                    for url, u in urls.items()
+                    if u.is_public or not normalized_leaves(u.files) <= group_public_files
                 }
 
     def _narrow_candidates(self, torrents: list[TorrentRecord]) -> list[TorrentRecord]:

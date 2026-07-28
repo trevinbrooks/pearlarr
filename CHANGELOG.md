@@ -7,6 +7,12 @@ Pearlarr is a fork of [bbtufty/seadexarr](https://github.com/bbtufty/seadexarr).
 
 ## [Unreleased]
 
+### Fixed
+
+- Fallback mode (`seadex.private_releases: fallback`) no longer re-grabs a batch the library already holds when a release's private and public listings lay out the same files differently (one nesting extras in a folder the other lists flat). File coverage now compares names, not listing paths, so a private pick covered by its own public twin no longer drags in a public alternative.
+- An owned file whose release-group tag a rename scheme stripped now counts as the recommended release when its size matches the listed file exactly (movies: when every listed size has an ungrouped twin). Such files previously read as foreign, so a re-check could re-download releases the library already held. Zero sizes never match, so a failed zero-byte copy is still repaired.
+- A pack import no longer replaces on-disk files that belong to another of the entry's recommended releases. The never-overwrite guard only knew the groups Pearlarr itself had grabbed, so a pack import could overwrite a recommended copy that predated Pearlarr.
+
 ## [1.0.9] - 2026-07-28
 
 ### Fixed
