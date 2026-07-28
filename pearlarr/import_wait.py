@@ -586,6 +586,13 @@ class ImportWaitManager:
             )
 
 
+# A deferred poll (waiting on our own Sonarr work) credits its interval back to
+# the ready deadline - capped at this many ready timeouts per row, so a command
+# wedged in flight forever can't hold the watch open indefinitely. Generous
+# enough to ride out a long multi-file remux copy.
+_DEFERRAL_CREDIT_CAP_MULT = 6
+
+
 @dataclass(slots=True)
 class _MonitorRow:
     """One record's per-monitor-pass state: its clocks, deadline anchor, and frame row."""
@@ -611,6 +618,10 @@ class _MonitorRow:
     import_poll_at: float | None = None
     """When the last import-phase heavy poll ran, so a deferred poll knows the
     interval to credit back to `import_anchor`."""
+    deferral_credited: float = 0.0
+    """Deferred time already credited back to `import_anchor`, against
+    `MonitorPass.deferral_cap` (a command wedged in flight forever must stop
+    earning credit, or the watch would never end)."""
 
 
 class MonitorPass:
@@ -643,6 +654,7 @@ class MonitorPass:
         self.now = now
         self.dl_timeout = dl_timeout
         self.import_timeout = import_timeout
+        self.deferral_cap = import_timeout * _DEFERRAL_CREDIT_CAP_MULT
         # Sampled once here. The download clock for every record starts now and
         # `elapsed` measures from it.
         self.start = now()
@@ -730,11 +742,11 @@ class MonitorPass:
         outcome, retires the row via `_terminal`. `import_start` is stamped on
         the first COMPLETE. `imported` is gated on verified episode files, so a
         freshly-issued import command reads `importing` until the copy lands.
-        The final in-bound attempt (`at_deadline`) both forces and warns; a file
-        landing that same cycle re-anchors the deadline instead
-        (`_note_import_progress`), and a poll deferred behind our own Sonarr
-        work credits its interval back (never terminal, the clock effectively
-        pauses until we get a clear shot).
+        Deadline polls (`at_deadline`) force and warn; a file landing that same
+        cycle re-anchors the deadline instead (`_note_import_progress`), and a
+        poll deferred behind our own Sonarr work credits its interval back - the
+        clock pauses until a clear shot (which then re-forces), bounded by
+        `deferral_cap` so a wedged command can't hold the watch forever.
         """
 
         record = row.record
@@ -802,16 +814,21 @@ class MonitorPass:
             at_deadline=at_deadline,
         )
         landed = self._note_import_progress(row, probe.imported_count, probe.target_count)
-        if probe.deferred and not landed:
+        deferred = probe.deferred and row.deferral_credited < self.deferral_cap
+        if deferred and not landed:
             # Deferred behind OUR OWN work (another record's import, or this
             # record's copy in flight): the deadline bounds a STALLED import, and
             # waiting on ourselves is not this record stalling - credit the
             # interval back so the clock only counts clear-shot time. (A landing
-            # file already re-anchored harder via `_note_import_progress`.)
-            row.import_anchor = min(row.import_anchor + gap, now_ts)
+            # file already re-anchored harder via `_note_import_progress`.) The
+            # cumulative cap keeps the watch bounded: a command wedged in flight
+            # forever stops earning credit and the ordinary deadline resumes.
+            credit = min(gap, self.deferral_cap - row.deferral_credited)
+            row.deferral_credited += credit
+            row.import_anchor = min(row.import_anchor + credit, now_ts)
         if probe.files_present:
             self._terminal(Outcome.IMPORTED, row, files=probe.target_count or None)
-        elif at_deadline and not landed and not probe.deferred:
+        elif at_deadline and not landed and not deferred:
             self._terminal(
                 Outcome.STILL_IMPORTING if probe.command_issued else Outcome.NOT_READY,
                 row,

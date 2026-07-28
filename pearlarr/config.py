@@ -419,7 +419,8 @@ class ImportsSettings(_ConfigBase):
 
     Measured from the last file Pearlarr saw land rather than the download's
     completion, so a season pack imported file-by-file times out only after
-    this long with no visible progress.
+    this long with no visible progress. Time spent waiting on Pearlarr's own
+    Sonarr commands (imports run one at a time) does not count.
     """
 
     poll_interval: int = Field(default=30, ge=1)
