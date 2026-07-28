@@ -47,6 +47,16 @@ def normalize_basename(name: str) -> str:
     return unicodedata.normalize("NFC", name).strip().casefold()
 
 
+def normalized_leaf(name: str) -> str:
+    """Fold a listing path or on-disk path to its normalized leaf (basename, then `normalize_basename`).
+
+    The one home of the leaf-identity composition, so every comparison keyspace
+    folds directories and normalizes the same way.
+    """
+
+    return normalize_basename(os.path.basename(name))
+
+
 def normalized_leaves(names: Iterable[str]) -> Counter[str]:
     """Normalize a listing's file paths to a multiset of leaves for cross-listing comparison.
 
@@ -56,7 +66,21 @@ def normalized_leaves(names: Iterable[str]) -> Counter[str]:
     same-named files in different folders never collapse into one.
     """
 
-    return Counter(normalize_basename(os.path.basename(name)) for name in names)
+    return Counter(normalized_leaf(name) for name in names)
+
+
+def leaf_cover(listings: Iterable[Iterable[str]]) -> Counter[str]:
+    """Fold per-listing leaf multisets into a coverage multiset with elementwise max.
+
+    Covering n same-named leaves requires ONE listing genuinely carrying n -
+    never n listings carrying one each (a + fold would fake that), and never a
+    set union (which would deflate a real n-copy listing to one).
+    """
+
+    cover: Counter[str] = Counter()
+    for listing in listings:
+        cover |= normalized_leaves(listing)
+    return cover
 
 
 def normalize_group(group: str) -> str:

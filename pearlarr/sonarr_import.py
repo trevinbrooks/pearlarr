@@ -36,6 +36,7 @@ from .manual_import import (
     PendingImport,
     normalize_basename,
     normalize_group,
+    normalized_leaf,
 )
 from .output import hub_note, hub_warn
 from .run_services import RunDeps
@@ -50,6 +51,7 @@ from .seadex_types import (
     RemotePathMapping,
     SeadexDict,
     SonarrEpisode,
+    non_stale_groups,
 )
 from .sonarr_client import AbstractSonarrClient
 from .sonarr_episodes import SonarrEpisodes
@@ -103,9 +105,13 @@ def _hostname(url: str | None) -> str | None:
 
 
 def _normalized_names(names: Iterable[str]) -> set[str]:
-    """Normalized-basename SET: a superset compare over these means a healed extra can't fake completeness."""
+    """Normalized-leaf SET, deliberately not a multiset.
 
-    return {normalize_basename(name) for name in names}
+    The map/pool keyspaces it compares against collapse duplicate leaves, so a
+    superset compare must too.
+    """
+
+    return {normalized_leaf(name) for name in names}
 
 
 class _CandidateScan(NamedTuple):
@@ -783,6 +789,7 @@ class ImportReconciler:
         # mapping the add flow resolved) instead of re-deriving identity from
         # Sonarr's title parse.
         ordered_episode_ids = [ep.id for ep in ep_list if ep.id]
+        entry_groups = non_stale_groups(seadex_dict)
         # Per-file parse records are read straight from the cache facade
         # (`get_sonarr_parse`): each is the persisted parse entry
         # `{"fetched_at": str, "episodes": [...]}` written by
@@ -855,13 +862,7 @@ class ImportReconciler:
                     ordered_episode_ids=ordered_episode_ids,
                     slice_coverage=coverage_string(episodes_from_ep_list(claimed_eps)) or None,
                     excluded_files=excluded_files,
-                    # A size-mismatch flag means the arr holds that group at a
-                    # STALE size this grab replaces - it must not enter the
-                    # never-overwrite guard, or the import reads "done" and
-                    # keeps the stale copy.
-                    entry_groups=[
-                        rg for rg, item in seadex_dict.items() if not any(u.size_mismatch for u in item.urls.values())
-                    ],
+                    entry_groups=list(entry_groups),
                 )
 
         return pending_seeds

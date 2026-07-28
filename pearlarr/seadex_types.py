@@ -108,6 +108,19 @@ SeadexDict = dict[str, SeadexReleaseGroupItem]
 """The central object: SeaDex release groups keyed by group name."""
 
 
+def non_stale_groups(seadex_dict: SeadexDict) -> list[str]:
+    """The entry's pick groups minus any the run judged stale on disk.
+
+    A size-mismatch flag on ANY of a group's urls means the arr holds that
+    group at a stale size this grab replaces - it must not enter the
+    import-time never-overwrite guard, or the import reads "done" and keeps
+    the stale copy. Whole-group exclusion is conservative in the overwrite
+    direction. The one derivation both arrs' pending seeds share.
+    """
+
+    return [rg for rg, item in seadex_dict.items() if not any(u.size_mismatch for u in item.urls.values())]
+
+
 SONARR_MISSING_KEY: int = 999
 """Out-of-range fallback for a missing Sonarr `seasonNumber`/`episodeNumber`.
 

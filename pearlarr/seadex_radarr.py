@@ -15,7 +15,7 @@ from .output import hub_warn
 from .protocols import ArrSync
 from .radarr_client import AbstractRadarrClient, collect_anime_movies, make_radarr_client
 from .run_services import RunDeps, RunServices
-from .seadex_types import ArrReleaseDict, HistoryRecord, ProgressSink, RadarrItem
+from .seadex_types import ArrReleaseDict, HistoryRecord, ProgressSink, RadarrItem, non_stale_groups
 
 # Clock-skew cushion subtracted from the oldest pending record's grab time before
 # querying Radarr import history. The added_at stamps are converted local-naive ->
@@ -245,7 +245,7 @@ class RadarrSync(ArrSync[RadarrItem]):
                     seadex_files=[],
                     coverage=None,
                     ordered_episode_ids=[],
-                    entry_groups=list(seadex_dict),
+                    entry_groups=non_stale_groups(seadex_dict),
                 )
                 for srg, srg_item in seadex_dict.items()
                 for url_item in srg_item.urls.values()

@@ -1114,17 +1114,21 @@ class TestModeSwitchResurfacesFallbackSatisfied:
 
 
 class TestFolderLayoutCoverage:
-    """Coverage compares normalized leaves - a folder-nested listing is still covered by its flat twin."""
+    """Coverage compares normalized leaf multisets.
 
-    def _cross_seeded_entry(self) -> EntryRecord:
-        # One release cross-seeded: the private listing folds extras under a
-        # folder, the public twin lists the same files flat.
+    A folder-nested listing is covered by its flat twin, while same-named
+    files in two folders stay two files.
+    """
+
+    def _built(self, priv_files: tuple[str, ...], pub_files: tuple[str, ...], al_id: int) -> SeadexDict:
+        # One "Pick" release cross-seeded private+public with the given
+        # layouts, plus a non-preferred public "Alt" the fallback could offer.
         priv = make_torrent_record(
             release_group="Pick",
             tracker=Tracker.ANIMEBYTES,
             url=PRIV_URL,
             infohash=None,
-            file_names=("NC/Pick NCED01.mkv", "Pick - S01E01.mkv"),
+            file_names=priv_files,
             file_size=999,
             is_best=True,
         )
@@ -1133,7 +1137,7 @@ class TestFolderLayoutCoverage:
             tracker=Tracker.NYAA,
             url=PUB_URL,
             infohash=PUB_HASH,
-            file_names=("Pick NCED01.mkv", "Pick - S01E01.mkv"),
+            file_names=pub_files,
             file_size=999,
             is_best=True,
         )
@@ -1146,72 +1150,36 @@ class TestFolderLayoutCoverage:
             file_size=555,
             is_best=False,
         )
-        return make_entry_record(anilist_id=91, torrents=(priv, pub_twin, alt))
-
-    def test_covered_private_pick_offers_no_fallback(self) -> None:
-        # A raw-path comparison misreads the folder-nested private listing as
-        # uncovered and pulls in the Alt stand-in; leaf comparison must not.
         filt = make_release_filter(
             private_releases="fallback",
             want_best=True,
             prefer_dual_audio=False,
             planner=make_planner(),
         )
-        sd = filt.build(self._cross_seeded_entry())
+        return filt.build(make_entry_record(anilist_id=al_id, torrents=(priv, pub_twin, alt)))
+
+    def test_covered_private_pick_offers_no_fallback_and_prunes(self) -> None:
+        # A raw-path comparison misreads the folder-nested private listing as
+        # uncovered and pulls in the Alt stand-in; leaf comparison must not,
+        # and the same comparison prunes the private url its flat twin covers.
+        sd = self._built(
+            priv_files=("NC/Pick NCED01.mkv", "Pick - S01E01.mkv"),
+            pub_files=("Pick NCED01.mkv", "Pick - S01E01.mkv"),
+            al_id=91,
+        )
 
         assert set(sd) == {"Pick"}
-
-    def test_covered_private_url_is_pruned(self) -> None:
-        # The same leaf comparison drives the per-group prune: the private url
-        # adds nothing over its flat public twin, so only the public one stays.
-        filt = make_release_filter(
-            private_releases="fallback",
-            want_best=True,
-            prefer_dual_audio=False,
-            planner=make_planner(),
-        )
-        sd = filt.build(self._cross_seeded_entry())
-
         assert set(sd["Pick"].urls) == {PUB_URL}
 
     def test_leaf_collision_is_not_coverage(self) -> None:
         # Two same-named files in different folders are two files: a flat twin
         # carrying only one does not cover the private listing, so the
         # fallback is still offered and the private url survives the prune.
-        priv = make_torrent_record(
-            release_group="Pick",
-            tracker=Tracker.ANIMEBYTES,
-            url=PRIV_URL,
-            infohash=None,
-            file_names=("S01/Pick - 01.mkv", "S02/Pick - 01.mkv"),
-            file_size=999,
-            is_best=True,
+        sd = self._built(
+            priv_files=("S01/Pick - 01.mkv", "S02/Pick - 01.mkv"),
+            pub_files=("Pick - 01.mkv",),
+            al_id=92,
         )
-        pub_twin = make_torrent_record(
-            release_group="Pick",
-            tracker=Tracker.NYAA,
-            url=PUB_URL,
-            infohash=PUB_HASH,
-            file_names=("Pick - 01.mkv",),
-            file_size=999,
-            is_best=True,
-        )
-        alt = make_torrent_record(
-            release_group="Alt",
-            tracker=Tracker.NYAA,
-            url="https://nyaa.si/view/2",
-            infohash="e" * 40,
-            file_names=("Pick.S01E01.alt.mkv",),
-            file_size=555,
-            is_best=False,
-        )
-        filt = make_release_filter(
-            private_releases="fallback",
-            want_best=True,
-            prefer_dual_audio=False,
-            planner=make_planner(),
-        )
-        sd = filt.build(make_entry_record(anilist_id=92, torrents=(priv, pub_twin, alt)))
 
         assert "Alt" in sd
         assert PRIV_URL in sd["Pick"].urls
