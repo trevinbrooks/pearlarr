@@ -286,10 +286,26 @@ class _EpisodeIdentity(NamedTuple):
     """The file's on-disk size (always the listed size for a `by_size` identity)."""
 
 
+class _EntryIdentities(NamedTuple):
+    """`_episode_identities`' two views of the on-disk files - deliberately OVERLAPPING.
+
+    `identities` holds every identified file (tagged or size-identified);
+    `untagged_by_key` holds every untagged file, the size-identified ones
+    included, because the unparseable-url matcher compares that multiset
+    whole. The overlap is the size-identified files - do not join the views.
+    """
+
+    identities: dict[EpisodeKey, _EpisodeIdentity]
+    """Each identified file's effective release identity."""
+
+    untagged_by_key: dict[EpisodeKey, int]
+    """Every untagged on-disk file's size (zero/unknown folded to 0)."""
+
+
 def _episode_identities(
     seadex_dict: SeadexDict,
     sonarr_by_key: Mapping[EpisodeKey, SonarrEpisode],
-) -> tuple[dict[EpisodeKey, _EpisodeIdentity], dict[EpisodeKey, int]]:
+) -> _EntryIdentities:
     """Resolve each on-disk file's effective identity: its group tag, or the pick its size names.
 
     A library rename scheme can strip the release-group tag off a file we
@@ -302,9 +318,6 @@ def _episode_identities(
     the pick that matched skip its download while a sibling pick still grabbed
     the same episodes. The first pick to claim an episode wins - a tie means two
     picks list it at the same size, where either answer reads as owned.
-
-    Also returns the untagged positive-size files (ALL of them, size-identified
-    or not), the multiset the unparseable-url matcher compares whole.
     """
 
     identities: dict[EpisodeKey, _EpisodeIdentity] = {}
@@ -323,7 +336,7 @@ def _episode_identities(
         else:
             untagged[key] = arr_file.size or 0
     if not untagged:
-        return identities, untagged
+        return _EntryIdentities(identities, untagged)
 
     for seadex_rg, rg_item in seadex_dict.items():
         normalized = normalize_rg(seadex_rg)
@@ -337,7 +350,7 @@ def _episode_identities(
                 if key in identities or seadex_ep.size <= 0 or untagged.get(key) != seadex_ep.size:
                     continue
                 identities[key] = _EpisodeIdentity(normalized, by_size=True, size=seadex_ep.size)
-    return identities, untagged
+    return _EntryIdentities(identities, untagged)
 
 
 @dataclass(frozen=True, slots=True)
@@ -369,7 +382,17 @@ class _MatchContext:
     debug_on: bool
 
 
-def _group_verdicts(seadex_dict: SeadexDict, ctx: _MatchContext) -> tuple[tuple[str, ...], tuple[str, ...]]:
+class _GroupVerdicts(NamedTuple):
+    """The plan's size-evidence verdicts per pick group, feeding `GuardFacts` by name."""
+
+    current: tuple[str, ...]
+    """Groups whose every attributed on-disk file sits at a listed size (vacuously, none on disk)."""
+
+    stale: tuple[str, ...]
+    """Groups with an attributed file at a size no sized listing carries."""
+
+
+def _group_verdicts(seadex_dict: SeadexDict, ctx: _MatchContext) -> _GroupVerdicts:
     """Judge each pick group's on-disk copy by size evidence: `(current, stale)` names.
 
     Disk-centric: a group is CURRENT only when every on-disk file attributed to
@@ -416,7 +439,7 @@ def _group_verdicts(seadex_dict: SeadexDict, ctx: _MatchContext) -> tuple[tuple[
         elif any(size is not None and size not in listed for size in files):
             stale.append(rg)
         # A group whose only disagreements are unknown sizes stays unverifiable.
-    return tuple(current), tuple(stale)
+    return _GroupVerdicts(tuple(current), tuple(stale))
 
 
 class DownloadPlanner:
@@ -641,14 +664,14 @@ class DownloadPlanner:
             if url_item.download and url_item.infohash is not None
         ]
 
-        entry_groups, stale_groups = _group_verdicts(seadex_dict, ctx)
+        verdicts = _group_verdicts(seadex_dict, ctx)
         return PlanResult(
             seadex_dict=seadex_dict,
             torrent_hashes=torrent_hashes,
             skips=skips,
             guards=GuardFacts(
-                entry_groups=entry_groups,
-                stale_groups=stale_groups,
+                entry_groups=verdicts.current,
+                stale_groups=verdicts.stale,
                 # Resolved to (episode id, size) pairs here so the import seeds
                 # inherit the exact files the grab decision just called ours -
                 # and can re-verify them by size before honoring the claim.
