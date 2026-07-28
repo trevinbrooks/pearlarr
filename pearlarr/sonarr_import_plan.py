@@ -3,9 +3,9 @@
 The deterministic planning vocabulary the import subsystem shares: the queue
 verdict (`classify_queue`) and the in-flight ManualImport guard, the
 `(season, episode) -> id` index and the episode-file status / never-overwrite
-checks, the file -> episode assignment (`assign_episode_ids`), the
-per-file import plan (`plan_import_files`), and the layered
-quality/language resolution.
+checks, the file -> episode assignment (`assign_episode_ids`), the grab-time
+seed fold (`build_pending_seed`), the per-file import plan
+(`plan_import_files`), and the layered quality/language resolution.
 
 Side-effect free like `manual_import`, from which it imports the wait/outcome
 vocabulary and the normalizers.
@@ -13,12 +13,20 @@ vocabulary and the normalizers.
 
 import re
 from collections.abc import Callable, Iterable, Mapping, Sequence
-from dataclasses import dataclass
+from dataclasses import dataclass, field, replace
 from enum import Enum, StrEnum, auto
 from types import MappingProxyType
 from typing import NamedTuple
 
-from .manual_import import PendingImport, fold_path_separators, normalize_group, normalize_rg
+from .coverage import coverage_string, episodes_from_ep_list
+from .manual_import import (
+    GuardFacts,
+    PendingImport,
+    fold_path_separators,
+    normalize_group,
+    normalize_rg,
+    normalized_leaf,
+)
 from .seadex_types import (
     CommandResource,
     EpisodeKey,
@@ -635,7 +643,7 @@ _MATCHED_SPAN_CAP = 3
 
 
 def episode_ids_for_parsed(
-    parsed: list[ParsedEpisode],
+    parsed: Sequence[ParsedEpisode],
     ep_id_map: Mapping[EpisodeKey, int],
     *,
     full_season: bool = False,
@@ -667,7 +675,7 @@ def episode_ids_for_parsed(
 
 
 def parsed_outside_entry(
-    parsed: list[ParsedEpisode],
+    parsed: Sequence[ParsedEpisode],
     ep_id_map: Mapping[EpisodeKey, int],
     *,
     full_season: bool = False,
@@ -684,7 +692,7 @@ def parsed_outside_entry(
     return pairs is not None and all(not ep_id_map.get(pair) for pair in pairs)
 
 
-def _seedable_pairs(parsed: list[ParsedEpisode], *, full_season: bool) -> list[EpisodeKey] | None:
+def _seedable_pairs(parsed: Sequence[ParsedEpisode], *, full_season: bool) -> list[EpisodeKey] | None:
     """The parse's distinct `(season, episode)` keys, or None on any seed veto.
 
     One veto ladder for `episode_ids_for_parsed` and `parsed_outside_entry`, so
@@ -700,6 +708,150 @@ def _seedable_pairs(parsed: list[ParsedEpisode], *, full_season: bool) -> list[E
     if not pairs or len(pairs) > _MATCHED_SPAN_CAP:
         return None
     return pairs
+
+
+@dataclass(frozen=True, slots=True)
+class PendingSeedContext:
+    """The per-entry values every seed built for one AniList entry carries.
+
+    One instance per `process_al_id` call, threaded whole into
+    `ImportReconciler.build_pending_seeds` (instead of loose params) and
+    copied onto each `PendingImport` the entry produces.
+    """
+
+    al_id: int
+    """The AniList entry id - part of each record's `PendingKey`."""
+    series_id: int
+    """The Sonarr series id the entry's files belong to."""
+    title: str
+    """The AniList display title (logging only)."""
+    added_at: str
+    """When the entry's seeds were written (`UPDATED_AT_STR_FORMAT`), stamped once per entry at the
+    impure edge and copied onto each record for the TTL drop."""
+    coverage: str | None = None
+    """The entry's season/episode coverage at grab time (logging only)."""
+    url: str | None = None
+    """The SeaDex entry URL at grab time (logging only)."""
+    guards: GuardFacts = field(default_factory=GuardFacts)
+    """The plan's overwrite-guard evidence, copied onto every seed unchanged
+    (see `GuardFacts`)."""
+
+
+class FileParse(NamedTuple):
+    """One video file's cached grab-time `/parse`, pre-read by the seed builder."""
+
+    episodes: tuple[ParsedEpisode, ...]
+    """Sonarr's series-matched `(season, episode)` pairs."""
+
+    full_season: bool
+    """Sonarr's `parsedEpisodeInfo.fullSeason` flag (a full-season parse never seeds)."""
+
+
+class SeedFile(NamedTuple):
+    """One grabbed video file entering the seed fold."""
+
+    basename: str
+    """The raw SeaDex basename (normalized only where the fold keys the map)."""
+
+    parse: FileParse | None
+    """The file's cached parse, or None when no record exists (the fold skips the file)."""
+
+
+class SeedRelease(NamedTuple):
+    """One flagged release's seed inputs, gathered by the builder (parses pre-read, I/O done)."""
+
+    release_group: str
+    """The SeaDex release group (authoritative)."""
+
+    infohash: str
+    """The qBittorrent tracking key."""
+
+    is_dual_audio: bool
+    """Whether the SeaDex release is dual-audio."""
+
+    release_sizes: tuple[int, ...]
+    """The grabbed listing's file sizes."""
+
+    files: tuple[SeedFile, ...]
+    """The importable video files in SeaDex order (subs / fonts / NCED already dropped)."""
+
+
+def build_pending_seed(
+    release: SeedRelease,
+    index: EpisodeIndex,
+    entry: PendingSeedContext,
+) -> PendingImport:
+    """Fold one flagged release into its durable `PendingImport` seed.
+
+    Pure: consumes the pre-read parses riding `release`, the entry's episode
+    index, and the per-entry context. Seeds honor the used-once discipline
+    assignment enforces: the first file in SeaDex order claiming an episode id
+    wins, and a later claimant (a v2, or a duplicate leaf from a second
+    folder) is left unseeded for import-time assignment, which defers the
+    colliding file the same way.
+    """
+
+    # Best-effort grab-time mapping, keyed by NORMALIZED basename so it
+    # matches the on-disk leaves at import time (NFC/NFD-safe).
+    file_episode_map: dict[str, list[int]] = {}
+    excluded_files: list[str] = []
+    claimed: set[int] = set()
+    for seed_file in release.files:
+        if seed_file.parse is None:
+            continue
+        parsed, full_season = seed_file.parse
+        file_ids = episode_ids_for_parsed(parsed, index.id_by_key, full_season=full_season)
+        # First claim in file order wins: assignment defers a later
+        # file whose ids collide, so the seed refuses it the same way.
+        if file_ids and not any(i in claimed for i in file_ids):
+            file_episode_map[normalized_leaf(seed_file.basename)] = file_ids
+            claimed.update(file_ids)
+        elif file_ids or parsed_outside_entry(parsed, index.id_by_key, full_season=full_season):
+            # A collision-refused duplicate, or a clean parse landing
+            # entirely outside this entry's set (a sibling slice's
+            # file): this record will never import it, so completeness
+            # accounts for it. Any other refusal stays "possibly ours".
+            excluded_files.append(normalized_leaf(seed_file.basename))
+
+    # This record's own slice of the entry (the episodes its files
+    # claimed), so sibling per-episode records label distinctly.
+    claimed_eps = [ep for ep in index.by_id.values() if ep.id in claimed]
+    seed = PendingImport(
+        infohash=release.infohash,
+        series_id=entry.series_id,
+        al_id=entry.al_id,
+        file_episode_map=file_episode_map,
+        # episode_ids is a legacy read-only fallback: never seeded (any
+        # value here would only duplicate the map, which readers dedupe).
+        episode_ids=[],
+        release_group=release.release_group,
+        is_dual_audio=release.is_dual_audio,
+        seadex_files=[f.basename for f in release.files],
+        title=entry.title,
+        added_at=entry.added_at,
+        coverage=entry.coverage,
+        url=entry.url,
+        ordered_episode_ids=list(index.ordered_ids),
+        slice_coverage=coverage_string(episodes_from_ep_list(claimed_eps)) or None,
+        excluded_files=excluded_files,
+        guards=entry.guards,
+        release_sizes=list(release.release_sizes),
+    )
+    # Targets that already hold a recommended file at grab time were
+    # never this torrent's to insert: classify them against the record's
+    # own trust slice (no sibling votes yet) so the wait's inserted
+    # counts start at 0.
+    grab_snapshot = EpisodeSnapshot(
+        episodes=index,
+        trusted=trusted_groups(seed),
+        owned_episode_sizes=seed.guards.owned_sizes,
+    )
+    preowned = [
+        ep_id
+        for ep_id, status in grab_snapshot.statuses(sorted(claimed)).by_id.items()
+        if status is EpisodeFileStatus.RECOMMENDED
+    ]
+    return replace(seed, preowned_episode_ids=preowned)
 
 
 _SXXEXX: re.Pattern[str] = re.compile(r"[Ss](\d{1,2})[\s._-]*[Ee](\d{1,3})")

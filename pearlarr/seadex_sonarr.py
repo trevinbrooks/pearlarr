@@ -2,11 +2,12 @@
 
 import time
 from collections.abc import Sequence
+from datetime import datetime
 from typing import override
 
 from . import coverage as _coverage
 from .arr_http import ArrHttp, make_httpx_client
-from .cache import CacheRecord
+from .cache import UPDATED_AT_STR_FORMAT, CacheRecord
 from .config import Arr, secret_value
 from .grab_pipeline import GrabRequest
 from .log import EntryState, pluralize
@@ -36,7 +37,8 @@ from .seadex_types import (
 )
 from .sonarr_client import AbstractSonarrClient, SonarrClient
 from .sonarr_episodes import SonarrEpisodes
-from .sonarr_import import ImportExecutor, ImportReconciler, PendingSeedContext
+from .sonarr_import import ImportExecutor, ImportReconciler
+from .sonarr_import_plan import PendingSeedContext
 from .sonarr_mapper import FileEpisodeMapper
 from .sonarr_parse import SonarrParseCache
 
@@ -475,6 +477,7 @@ class SonarrSync(ArrSync[SonarrItem]):
                     al_id=al_id,
                     series_id=sonarr_series_id,
                     title=anilist_title,
+                    added_at=datetime.now().strftime(UPDATED_AT_STR_FORMAT),
                     coverage=coverage,
                     url=sd_url,
                     guards=plan.guards,
