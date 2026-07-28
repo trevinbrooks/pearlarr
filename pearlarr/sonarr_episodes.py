@@ -18,7 +18,7 @@ from .mappings import ExternalIds, MappingEntry, MappingMode, MappingSource
 from .output import Accent, StyledValue
 from .run_services import RunDeps, RunServices
 from .seadex_types import (
-    ArrReleaseDict,
+    ArrReleases,
     ProgressSink,
     SonarrEpisode,
     SonarrItem,
@@ -360,7 +360,7 @@ class SonarrEpisodes:
                     anidb_final_ep_list.append(ep)
 
             # These episodes are read-only from here on (coverage,
-            # get_sonarr_release_dict, and the planner only read them), so we
+            # get_sonarr_releases, and the planner only read them), so we
             # return references into the shared cache rather than cloning.
             final_ep_list = anidb_final_ep_list
 
@@ -405,15 +405,15 @@ class SonarrEpisodes:
 
         return final_ep_list[ep_offset : n_eps + ep_offset]
 
-    def get_sonarr_release_dict(
+    def get_sonarr_releases(
         self,
         ep_list: list[SonarrEpisode],
-    ) -> ArrReleaseDict:
-        """Fold the episodes' existing files into an `ArrReleaseDict`, reporting missing episodes."""
+    ) -> ArrReleases:
+        """Fold the episodes' existing files into an `ArrReleases`, reporting missing episodes."""
 
         # Look through, get release groups from the existing Sonarr files
         # and note any potential missing files
-        sonarr_release_dict: ArrReleaseDict = {}
+        tagged: dict[str, list[int]] = {}
         missing_eps = 0
         n_eps = len(ep_list)
         for ep in ep_list:
@@ -421,12 +421,13 @@ class SonarrEpisodes:
                 missing_eps += 1
                 continue
 
-            release_group = ep.episode_file.release_group if ep.episode_file else None
-            if release_group is None or release_group == "":
+            arr_file = ep.episode_file
+            if arr_file is None or not arr_file.release_group:
                 continue
 
-            size = ep.episode_file.size if ep.episode_file else None
-            sonarr_release_dict.setdefault(release_group, []).append(size)
+            sizes = tagged.setdefault(arr_file.release_group, [])
+            if arr_file.size is not None:
+                sizes.append(arr_file.size)
 
         if missing_eps > 0:
             # Show which episodes are missing as ranges (e.g. "S04 E12"), not just
@@ -440,4 +441,4 @@ class SonarrEpisodes:
                 StyledValue(missing_coverage or f"{missing_eps}/{n_eps}", Accent.CAUTION),
             )
 
-        return sonarr_release_dict
+        return ArrReleases(tagged={rg: tuple(sizes) for rg, sizes in tagged.items()})

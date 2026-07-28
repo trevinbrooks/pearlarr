@@ -162,16 +162,6 @@ def season_episode_key(season: int | None, episode: int | None) -> EpisodeKey:
     )
 
 
-def as_size_list(size: list[int | None]) -> list[int]:
-    """Normalize a size list to concrete sizes.
-
-    A list is copied with any `None` entries dropped (a `None` size carries no
-    size to compare). The single home for the size-as-list coercion.
-    """
-
-    return [s for s in size if s is not None]
-
-
 # --- shared plumbing ----------------------------------------------------------
 
 # (connect, read) timeout shared by the arr httpx client factory and the
@@ -480,13 +470,27 @@ def index_episodes_by_key(ep_list: Iterable[SonarrEpisode]) -> dict[EpisodeKey, 
     return index
 
 
-type ArrReleaseDict = dict[str | None, list[int | None]]
-"""Release group (`None` when unknown) -> its existing-file sizes.
+@dataclass(frozen=True, slots=True)
+class ArrReleases:
+    """The Arr's existing files for one entry, folded by release group.
 
-Built by the strategies (Sonarr accumulates a per-episode size list, Radarr
-wraps its single movie size in a one-element list) and read in the planner via
-`as_size_list`, which drops the `None` placeholders.
-"""
+    Built by the strategies (Sonarr per episode file, Radarr per movie file)
+    and read by the planner. Unreadable sizes are dropped at the fold; a group
+    whose only sizes are unreadable still keeps its name. `tagged` keys are
+    never blank - a file with a blank group tag is untagged.
+    """
+
+    tagged: Mapping[str, tuple[int, ...]] = field(default_factory=dict[str, tuple[int, ...]])
+    """Each tagged release group's existing-file sizes, insertion-ordered."""
+
+    untagged: tuple[int, ...] = ()
+    """Sizes of files with no release group (Radarr only - Sonarr's untagged
+    files travel on the episode list instead)."""
+
+    def display_names(self) -> list[str]:
+        """The tagged group names for a log line, `(none)` marking untagged files."""
+
+        return [*self.tagged, *(["(none)"] if self.untagged else [])]
 
 
 type TvdbMappings = dict[int, list[tuple[int, int | None]]]
@@ -938,9 +942,9 @@ class CommandResource(_ApiModel):
 class MovieFile(_ApiModel):
     """A Radarr `MovieFileResource`, reduced to the fields the syncer reads.
 
-    `get_radarr_release_dict` reads each movie file into the shared
-    `ArrReleaseDict` decision (release group -> existing-file sizes), so a
-    movie file is READ into a decision, not re-emitted: a fail-open list read
+    `get_radarr_releases` folds each movie file into the shared `ArrReleases`
+    decision (release group -> existing-file sizes), so a movie file is
+    READ into a decision, not re-emitted: a fail-open list read
     (`validate_each`). Only `release_group` (`string | null` in the schema)
     and `size` (a non-null `int64`) are consumed.
     """

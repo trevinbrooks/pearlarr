@@ -12,7 +12,6 @@ run loop holds), so the grab bookkeeping the run summary reads stays in sync.
 """
 
 import time
-from collections.abc import Iterable
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, NamedTuple
 
@@ -66,16 +65,6 @@ class GrabRequest:
     coverage: str = ""
     """Sonarr's episode coverage string ("" for Radarr - movies have none)."""
     pending_seeds: dict[str, PendingImport] | None = None
-
-
-def clean_replaced_groups(groups: Iterable[str | None]) -> tuple[str, ...]:
-    """Drop falsy keys so `replaced_groups` stays a clean `tuple[str, ...]`.
-
-    The one spot both strategies funnel their (possibly null-keyed) release groups
-    through, so the "Replacing" field never renders a blank entry.
-    """
-
-    return tuple(group for group in groups if group)
 
 
 class GrabPipeline:

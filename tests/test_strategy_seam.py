@@ -43,7 +43,7 @@ from pearlarr.run_services import RunServices
 from pearlarr.seadex_radarr import RadarrSync
 from pearlarr.seadex_sonarr import SonarrSync
 from pearlarr.seadex_types import (
-    ArrReleaseDict,
+    ArrReleases,
     CommandResource,
     HistoryPage,
     HistoryRecord,
@@ -179,7 +179,7 @@ class _FakeRunServices(RunServices):
         self.cached_skip_coverages: list[Callable[[], str]] = []
         self.get_seadex_dict_calls: list[EntryRecord] = []
         self.interactive_calls: list[SeadexDict] = []
-        self.filter_downloads_calls: list[tuple[int, SeadexDict, ArrReleaseDict]] = []
+        self.filter_downloads_calls: list[tuple[int, SeadexDict, ArrReleases]] = []
         self.grab_requests: list[GrabRequest] = []
         self.no_releases_calls: list[tuple[int, CacheRecord]] = []
         self.invalid_selection_skips = 0
@@ -251,11 +251,11 @@ class _FakeRunServices(RunServices):
         self,
         al_id: int,
         seadex_dict: SeadexDict,
-        arr_release_dict: ArrReleaseDict,
+        arr_releases: ArrReleases,
         ep_list: list[SonarrEpisode] | None = None,
     ) -> PlanResult:
         del ep_list
-        self.filter_downloads_calls.append((al_id, seadex_dict, arr_release_dict))
+        self.filter_downloads_calls.append((al_id, seadex_dict, arr_releases))
         if self._filter_downloads_result is not None:
             return self._filter_downloads_result
         return plan_result([], seadex_dict)
@@ -335,9 +335,9 @@ class _FakeEpisodes:
         del sonarr_series_id, al_id, mapping
         return self._ep_list
 
-    def get_sonarr_release_dict(self, ep_list: list[SonarrEpisode]) -> ArrReleaseDict:
+    def get_sonarr_releases(self, ep_list: list[SonarrEpisode]) -> ArrReleases:
         del ep_list
-        return {}
+        return ArrReleases()
 
 
 class _PassThroughParse:
@@ -2258,7 +2258,7 @@ class TestRadarrProcessAlIdSeam:
         assert run.no_releases_calls == [(5, expected)]
         assert run.grab_requests == []
 
-    def test_happy_path_threads_release_dict_into_grab_request(self) -> None:
+    def test_happy_path_threads_releases_into_grab_request(self) -> None:
         entry = make_entry_record(anilist_id=5, url="https://releases.moe/5")
         seadex_dict = _one_group_dict("SubGroup")
         filtered = _one_group_dict("SubGroup")
@@ -2275,8 +2275,8 @@ class TestRadarrProcessAlIdSeam:
 
         # grab_and_cache's scripted bool passes straight through.
         assert result is True
-        # The download filter received the movie's accumulated release dict.
-        assert run.filter_downloads_calls == [(5, seadex_dict, {"OldGroup": [100]})]
+        # The download filter received the movie's accumulated releases.
+        assert run.filter_downloads_calls == [(5, seadex_dict, ArrReleases(tagged={"OldGroup": (100,)}))]
         [req] = run.grab_requests
         assert req.al_id == 5
         assert req.item_title == "Item Title"
@@ -2287,7 +2287,7 @@ class TestRadarrProcessAlIdSeam:
         # The grab consumes the FILTERED dict + hashes, not the pre-filter dict.
         assert req.seadex_dict is filtered
         assert req.torrent_hashes == ["feedface"]
-        # replaced_groups carries the movie's release-dict keys (all of them).
+        # replaced_groups carries the movie's tagged groups (all of them).
         assert req.replaced_groups == ("OldGroup",)
 
     def test_multi_edition_movie_forwards_every_release_group(self) -> None:
@@ -2332,16 +2332,16 @@ class TestRadarrProcessAlIdSeam:
         assert self._interactive_call_count(interactive=False, n_groups=2) == 0
 
 
-class TestRadarrReleaseDict:
-    """get_radarr_release_dict accumulates sizes per group and never hard-errors."""
+class TestRadarrReleases:
+    """get_radarr_releases accumulates sizes per group and never hard-errors."""
 
     def test_multiple_distinct_groups_kept_not_errored(self) -> None:
         # VU3: 2 distinct groups no longer raise (which skipped the movie every run).
-        # The dict carries both so the planner dedups against each.
+        # The fold carries both so the planner dedups against each.
         radarr = _FakeRadarr([MovieFile(release_group="A", size=100), MovieFile(release_group="B", size=200)])
         strat = make_bare_instance(RadarrSync, radarr=radarr)
 
-        assert strat.get_radarr_release_dict(7) == {"A": [100], "B": [200]}
+        assert strat.get_radarr_releases(7) == ArrReleases(tagged={"A": (100,), "B": (200,)})
 
     def test_same_group_sizes_accumulate(self) -> None:
         # CB6: two files of one group keep BOTH sizes (the old comprehension collapsed
@@ -2349,10 +2349,18 @@ class TestRadarrReleaseDict:
         radarr = _FakeRadarr([MovieFile(release_group="A", size=100), MovieFile(release_group="A", size=200)])
         strat = make_bare_instance(RadarrSync, radarr=radarr)
 
-        assert strat.get_radarr_release_dict(7) == {"A": [100, 200]}
+        assert strat.get_radarr_releases(7) == ArrReleases(tagged={"A": (100, 200)})
 
-    def test_no_files_returns_none_marker(self) -> None:
+    def test_untagged_files_fold_to_untagged_sizes(self) -> None:
+        # No {None: [None]} placeholder and no null key: untagged files carry
+        # their sizes on `untagged`, and a no-files movie folds to the empty record.
+        radarr = _FakeRadarr([MovieFile(release_group=None, size=100), MovieFile(release_group="A", size=200)])
+        strat = make_bare_instance(RadarrSync, radarr=radarr)
+
+        assert strat.get_radarr_releases(7) == ArrReleases(tagged={"A": (200,)}, untagged=(100,))
+
+    def test_no_files_returns_empty_record(self) -> None:
         radarr = _FakeRadarr([])
         strat = make_bare_instance(RadarrSync, radarr=radarr)
 
-        assert strat.get_radarr_release_dict(7) == {None: [None]}
+        assert strat.get_radarr_releases(7) == ArrReleases()

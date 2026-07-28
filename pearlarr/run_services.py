@@ -36,7 +36,7 @@ from .seadex_filter import SeadexReleaseFilter
 from .seadex_gateway import SeaDexGateway, SeaDexMiss, SeaDexSource
 from .seadex_types import (
     ARR_REQUEST_TIMEOUT_S,
-    ArrReleaseDict,
+    ArrReleases,
     SeadexDict,
     SonarrEpisode,
 )
@@ -463,12 +463,12 @@ class RunServices:
         self,
         al_id: int,
         seadex_dict: SeadexDict,
-        arr_release_dict: ArrReleaseDict,
+        arr_releases: ArrReleases,
         ep_list: list[SonarrEpisode] | None = None,
     ) -> PlanResult:
         """Apply the download plan, stamping private-only skips onto ctx (delegates)."""
 
-        return self._filter.filter_downloads(al_id, seadex_dict, arr_release_dict, ep_list)
+        return self._filter.filter_downloads(al_id, seadex_dict, arr_releases, ep_list)
 
     def is_preview(self) -> bool:
         """A run is a no-op preview (nothing can be grabbed): explicit dry run, or qBittorrent not configured."""

@@ -7,7 +7,7 @@ from typing import override
 from .arr_activity import IMPORT_EVENTS, format_history_date
 from .cache import UPDATED_AT_STR_FORMAT, CacheRecord
 from .config import Arr
-from .grab_pipeline import GrabRequest, clean_replaced_groups
+from .grab_pipeline import GrabRequest
 from .log import pluralize
 from .manual_import import AttemptKind, ImportProbe, ImportProgress, ImportReadiness, ImportWaitMode, PendingImport
 from .mappings import ExternalIds, MappingEntry
@@ -15,7 +15,7 @@ from .output import hub_warn
 from .protocols import ArrSync
 from .radarr_client import AbstractRadarrClient, collect_anime_movies, make_radarr_client
 from .run_services import RunDeps, RunServices
-from .seadex_types import ArrReleaseDict, HistoryRecord, ProgressSink, RadarrItem
+from .seadex_types import ArrReleases, HistoryRecord, ProgressSink, RadarrItem
 
 # Clock-skew cushion subtracted from the oldest pending record's grab time before
 # querying Radarr import history. The added_at stamps are converted local-naive ->
@@ -185,13 +185,13 @@ class RadarrSync(ArrSync[RadarrItem]):
             "coverage": "",
         }
 
-        radarr_release_dict = self.get_radarr_release_dict(
+        radarr_releases = self.get_radarr_releases(
             radarr_movie_id=item.id,
         )
-        radarr_release_groups = list(radarr_release_dict)
+        radarr_group_names = radarr_releases.display_names()
 
         self.logger.debug(
-            f"Radarr release {pluralize(len(radarr_release_groups), 'group')}: {', '.join(rg or '(none)' for rg in radarr_release_groups)}"
+            f"Radarr release {pluralize(len(radarr_group_names), 'group')}: {', '.join(radarr_group_names)}"
         )
 
         # Produce a dictionary of info from the SeaDex request
@@ -217,7 +217,7 @@ class RadarrSync(ArrSync[RadarrItem]):
         plan = run.filter_seadex_downloads(
             al_id=al_id,
             seadex_dict=seadex_dict,
-            arr_release_dict=radarr_release_dict,
+            arr_releases=radarr_releases,
         )
         torrent_hashes, seadex_dict = plan.torrent_hashes, plan.seadex_dict
 
@@ -263,9 +263,8 @@ class RadarrSync(ArrSync[RadarrItem]):
                 seadex_dict=seadex_dict,
                 torrent_hashes=torrent_hashes,
                 cache_details=cache_details,
-                # Every edition's group (not just the first file's). The helper drops
-                # the {None:[None]} placeholder and any real-file null key.
-                replaced_groups=clean_replaced_groups(radarr_release_dict),
+                # Every edition's tagged group (not just the first file's).
+                replaced_groups=tuple(radarr_releases.tagged),
                 pending_seeds=pending_seeds,
             ),
         )
@@ -393,22 +392,24 @@ class RadarrSync(ArrSync[RadarrItem]):
             self.anibridge,
         )
 
-    def get_radarr_release_dict(
+    def get_radarr_releases(
         self,
         radarr_movie_id: int,
-    ) -> ArrReleaseDict:
-        """Get a dictionary of useful info for a Radarr movie."""
+    ) -> ArrReleases:
+        """Fold the movie's existing files into an `ArrReleases`."""
 
         # Accumulate sizes per release group (a movie can carry several files - an
         # upgrade or a multi-edition). All of them are already present, so the planner dedups
         # against each. Mirrors Sonarr's per-episode accumulation rather than
         # collapsing to one file or hard-erroring on >1 group.
-        radarr_release_dict: ArrReleaseDict = {}
+        tagged: dict[str, list[int]] = {}
+        untagged: list[int] = []
         for mf in self.radarr.movie_files(radarr_movie_id):
-            radarr_release_dict.setdefault(mf.release_group, []).append(mf.size)
+            sizes = tagged.setdefault(mf.release_group, []) if mf.release_group else untagged
+            if mf.size is not None:
+                sizes.append(mf.size)
 
-        # No files: a single unknown-group placeholder keeps the shape uniform
-        if not radarr_release_dict:
-            radarr_release_dict = {None: [None]}
-
-        return radarr_release_dict
+        return ArrReleases(
+            tagged={rg: tuple(sizes) for rg, sizes in tagged.items()},
+            untagged=tuple(untagged),
+        )
