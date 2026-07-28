@@ -279,6 +279,7 @@ class FakeSonarrClient(AbstractSonarrClient):
         parse_episode_info_fn: Callable[[str], ParsedFileInfo | None] | None = None,
         execute_command_id: int | None = None,
         command_status: CommandResource | None = None,
+        command_status_script: list[CommandResource] | None = None,
         refresh_count: int | None = 7,
         history_since: list[HistoryRecord] | None = None,
         folder_candidates: list[ManualImportCandidate] | None = None,
@@ -305,6 +306,9 @@ class FakeSonarrClient(AbstractSonarrClient):
         self.command_status_return = (
             command_status if command_status is not None else CommandResource(status="completed")
         )
+        # Successive command_status calls consume this front-to-back, then stick
+        # on command_status_return - scripts a refresh that completes mid-poll.
+        self.command_status_script: list[CommandResource] = command_status_script or []
         self.refresh_count = refresh_count
         self.history_since_return: list[HistoryRecord] | None = [] if history_since is None else history_since
         # The fallback trio defaults to None ("failed") - a test scripting the
@@ -376,6 +380,8 @@ class FakeSonarrClient(AbstractSonarrClient):
     @override
     def command_status(self, command_id: int) -> CommandResource:
         del command_id
+        if self.command_status_script:
+            return self.command_status_script.pop(0)
         return self.command_status_return
 
     @override
