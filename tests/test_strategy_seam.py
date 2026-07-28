@@ -35,8 +35,8 @@ from pearlarr.manual_import import (
 from pearlarr.mappings import ExternalIds, MappingEntry, MappingSource
 from pearlarr.output import Severity
 from pearlarr.output.recording import RecordingHub
+from pearlarr.planner import PlanResult
 from pearlarr.run_services import RunServices
-from pearlarr.seadex_filter import FilterResult
 from pearlarr.seadex_radarr import RadarrSync
 from pearlarr.seadex_sonarr import SonarrSync
 from pearlarr.seadex_types import (
@@ -71,6 +71,7 @@ from .builders import (
     make_sonarr_sync,
     manual_candidate,
     pending_import,
+    plan_result,
     queue_record,
     rg_group,
     sonarr_ep,
@@ -147,7 +148,7 @@ class _FakeRunServices(RunServices):
         needs_scan: bool = True,
         seadex_dict: SeadexDict | None = None,
         interactive_result: SeadexDict | None = None,
-        filter_downloads_result: FilterResult | None = None,
+        filter_downloads_result: PlanResult | None = None,
         grab_result: bool = False,
         no_releases_result: bool = False,
         import_wait_mode: ImportWaitMode = ImportWaitMode.OFF,
@@ -249,12 +250,12 @@ class _FakeRunServices(RunServices):
         seadex_dict: SeadexDict,
         arr_release_dict: ArrReleaseDict,
         ep_list: list[SonarrEpisode] | None = None,
-    ) -> FilterResult:
+    ) -> PlanResult:
         del ep_list
         self.filter_downloads_calls.append((al_id, seadex_dict, arr_release_dict))
         if self._filter_downloads_result is not None:
             return self._filter_downloads_result
-        return FilterResult([], seadex_dict)
+        return plan_result([], seadex_dict)
 
     @property
     @override
@@ -589,11 +590,11 @@ class TestProcessAlIdThreadsServices:
         assert run.check_al_id_in_cache_calls == []  # the stale run never trusts the cross-arr cache
 
 
-def _ep_with_file(ep_id: int, *, group: str | None) -> SonarrEpisode:
+def _ep_with_file(ep_id: int, *, group: str | None, size: int | None = None) -> SonarrEpisode:
     """A current Sonarr episode that already holds a file from `group`."""
 
     return SonarrEpisode.model_validate(
-        {"id": ep_id, "episodeFileId": ep_id * 10, "episodeFile": {"releaseGroup": group}},
+        {"id": ep_id, "episodeFileId": ep_id * 10, "episodeFile": {"releaseGroup": group, "size": size}},
     )
 
 
@@ -997,11 +998,11 @@ class TestImportCompletedQueueState:
             release_group="SubGroup",
             file_episode_map={"Show - 01 [1080p].mkv": [101]},
             episode_ids=[101],
-            owned_episode_ids=[101],
+            owned_episodes=[(101, 700)],
         )
         strat, sonarr = _make_sonarr_for_import(
             candidates=[manual_candidate("/d/Show - 01 [1080p].mkv")],
-            episodes=[_ep_with_file(101, group=None)],
+            episodes=[_ep_with_file(101, group=None, size=700)],
         )
 
         probe = strat.import_completed(pending, "/d")
@@ -1709,7 +1710,7 @@ class TestRadarrProcessAlIdSeeds:
             prologue_entry=make_entry_record(url="https://releases.moe/9"),
             anilist_title="A Movie",
             seadex_dict=seadex,
-            filter_downloads_result=FilterResult(["h1"], seadex),
+            filter_downloads_result=plan_result(["h1"], seadex),
             import_wait_mode=mode,
         )
         strat = make_bare_instance(
@@ -2237,7 +2238,7 @@ class TestRadarrProcessAlIdSeam:
             prologue_entry=entry,
             anilist_title="Movie Title",
             seadex_dict=seadex_dict,
-            filter_downloads_result=FilterResult(["feedface"], filtered),
+            filter_downloads_result=plan_result(["feedface"], filtered),
             grab_result=True,
         )
         strat, _ = self._make_strat(run, files=[MovieFile(release_group="OldGroup", size=100)])
@@ -2269,7 +2270,7 @@ class TestRadarrProcessAlIdSeam:
             prologue_entry=make_entry_record(),
             anilist_title="Movie Title",
             seadex_dict=_one_group_dict("SubGroup"),
-            filter_downloads_result=FilterResult([], _one_group_dict("SubGroup")),
+            filter_downloads_result=plan_result([], _one_group_dict("SubGroup")),
             grab_result=True,
         )
         strat, _ = self._make_strat(

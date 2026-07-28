@@ -16,7 +16,7 @@ from collections.abc import Mapping
 from pearlarr.config import Arr
 from pearlarr.manual_import import normalize_basename
 from pearlarr.seadex_sonarr import SonarrSync
-from pearlarr.seadex_types import EpisodeRecord, ParsedEpisode, SonarrEpisode, Staleness
+from pearlarr.seadex_types import EpisodeRecord, ParsedEpisode, SonarrEpisode
 from pearlarr.sonarr_import import PendingSeedContext
 
 from .builders import SEP, FakeCacheStore, make_config, make_sonarr_sync, pending_import, rg_group, url_item
@@ -41,11 +41,12 @@ def _ep(
     episode: int,
     *,
     file_size: int | None = None,
+    group: str | None = None,
 ) -> SonarrEpisode:
     raw: dict[str, object] = {"id": ep_id, "seasonNumber": season, "episodeNumber": episode}
     if file_size is not None:
         raw["episodeFileId"] = ep_id
-        raw["episodeFile"] = {"size": file_size, "releaseGroup": None}
+        raw["episodeFile"] = {"size": file_size, "releaseGroup": group}
     return SonarrEpisode.model_validate(raw)
 
 
@@ -88,40 +89,67 @@ class TestBuildPendingSeeds:
         # episode_ids is a legacy read-only fallback. New seeds never write it.
         assert seed.episode_ids == []
 
-    def test_seed_snapshots_every_entry_group(self) -> None:
-        # entry_groups carries the whole filtered dict - grabbed or not - so
-        # the import-time overwrite guard protects groups we never grabbed.
+    def test_seed_copies_the_plan_guard_groups(self) -> None:
+        # entry_groups/stale_groups are the PLAN's verdicts, copied through
+        # verbatim (see the planner's group-verdict tests for the derivation)
+        # so the import guard reads exactly what the grab decision judged.
         ep_list = [_ep(101, 1, 1)]
         parse_cache = {"Show - 01.mkv": {"episodes": [{"season": 1, "episode": 1}]}}
         seadex_dict = {
             "RG": rg_group({"u1": url_item(files=["Show - 01.mkv"], size=[1000], infohash="h1", download=True)}),
-            "Kept": rg_group({"u2": url_item(files=["Show - 01.mkv"], size=[1000], infohash=None, download=False)}),
         }
 
         seeds = _strat(parse_cache)._reconciler.build_pending_seeds(
             seadex_dict=seadex_dict,
             ep_list=ep_list,
-            entry=PendingSeedContext(al_id=1, series_id=7, title="Show"),
+            entry=PendingSeedContext(
+                al_id=1,
+                series_id=7,
+                title="Show",
+                entry_groups=("RG", "Kept"),
+                stale_groups=("Stale",),
+            ),
         )
 
         assert seeds["h1"].entry_groups == ["RG", "Kept"]
+        assert seeds["h1"].stale_groups == ["Stale"]
 
-    def test_seed_excludes_stale_judged_groups(self) -> None:
-        # A size-mismatch flag means the arr holds that group at a STALE size
-        # this grab replaces - letting it into the never-overwrite guard would
-        # read the import as done and keep the stale copy.
+    def test_seed_records_the_listing_sizes(self) -> None:
+        # The grabbed url's file sizes ride the record so the import can tell
+        # this release's own files from a stale same-group copy.
         ep_list = [_ep(101, 1, 1)]
         parse_cache = {"Show - 01.mkv": {"episodes": [{"season": 1, "episode": 1}]}}
         seadex_dict = {
-            "RG": rg_group({"u1": url_item(files=["Show - 01.mkv"], size=[1000], infohash="h1", download=True)}),
-            "Stale": rg_group(
+            "RG": rg_group(
+                {"u1": url_item(files=["Show - 01.mkv"], size=[1000, 50], infohash="h1", download=True)},
+            ),
+        }
+
+        seeds = _strat(parse_cache)._reconciler.build_pending_seeds(
+            seadex_dict=seadex_dict,
+            ep_list=ep_list,
+            entry=PendingSeedContext(al_id=1, series_id=7, title="Show"),
+        )
+
+        assert seeds["h1"].release_sizes == [1000, 50]
+
+    def test_seed_marks_targets_already_holding_a_pick(self) -> None:
+        # A target already holding another pick's file at grab time was never
+        # this torrent's to insert: it lands in preowned_episode_ids so the
+        # wait's inserted counts start at zero, not at the pre-existing files.
+        ep_list = [_ep(101, 1, 1, file_size=500, group="Kept"), _ep(102, 1, 2)]
+        parse_cache = {
+            "Show - 01.mkv": {"episodes": [{"season": 1, "episode": 1}]},
+            "Show - 02.mkv": {"episodes": [{"season": 1, "episode": 2}]},
+        }
+        seadex_dict = {
+            "RG": rg_group(
                 {
-                    "u2": url_item(
-                        files=["Show - 01.mkv"],
-                        size=[900],
-                        infohash=None,
-                        download=False,
-                        staleness=Staleness.STALE,
+                    "u1": url_item(
+                        files=["Show - 01.mkv", "Show - 02.mkv"],
+                        size=[1000, 2000],
+                        infohash="h1",
+                        download=True,
                     ),
                 },
             ),
@@ -130,67 +158,16 @@ class TestBuildPendingSeeds:
         seeds = _strat(parse_cache)._reconciler.build_pending_seeds(
             seadex_dict=seadex_dict,
             ep_list=ep_list,
-            entry=PendingSeedContext(al_id=1, series_id=7, title="Show"),
+            entry=PendingSeedContext(al_id=1, series_id=7, title="Show", entry_groups=("RG", "Kept")),
         )
 
-        assert seeds["h1"].entry_groups == ["RG"]
-
-    def test_seed_excludes_a_group_stale_on_only_some_episodes(self) -> None:
-        # Staleness on ONE episode is enough: the whole-url flag needs every
-        # episode stale, so guarding on it alone would protect - and so keep
-        # forever - a copy this grab is meant to repair.
-        ep_list = [_ep(101, 1, 1)]
-        parse_cache = {"Show - 01.mkv": {"episodes": [{"season": 1, "episode": 1}]}}
-        seadex_dict = {
-            "RG": rg_group({"u1": url_item(files=["Show - 01.mkv"], size=[1000], infohash="h1", download=True)}),
-            "PartlyStale": rg_group(
-                {
-                    "u2": url_item(
-                        files=["Show - 01.mkv"],
-                        size=[900],
-                        infohash=None,
-                        download=False,
-                        staleness=Staleness.PARTLY_STALE,
-                    ),
-                },
-            ),
-        }
-
-        seeds = _strat(parse_cache)._reconciler.build_pending_seeds(
-            seadex_dict=seadex_dict,
-            ep_list=ep_list,
-            entry=PendingSeedContext(al_id=1, series_id=7, title="Show"),
-        )
-
-        assert seeds["h1"].entry_groups == ["RG"]
-
-    def test_seed_excludes_a_group_stale_on_only_one_of_its_urls(self) -> None:
-        # MUTATION PIN: ANY stale url, not ALL of them. A group cross-seeded
-        # over two urls is one release on disk - one stale verdict condemns it.
-        ep_list = [_ep(101, 1, 1)]
-        parse_cache = {"Show - 01.mkv": {"episodes": [{"season": 1, "episode": 1}]}}
-        seadex_dict = {
-            "RG": rg_group({"u1": url_item(files=["Show - 01.mkv"], size=[1000], infohash="h1", download=True)}),
-            "Stale": rg_group(
-                {
-                    "u2": url_item(files=["Show - 01.mkv"], size=[900], infohash=None, staleness=Staleness.STALE),
-                    "u3": url_item(files=["Show - 01.mkv"], size=[900], infohash=None),
-                },
-            ),
-        }
-
-        seeds = _strat(parse_cache)._reconciler.build_pending_seeds(
-            seadex_dict=seadex_dict,
-            ep_list=ep_list,
-            entry=PendingSeedContext(al_id=1, series_id=7, title="Show"),
-        )
-
-        assert seeds["h1"].entry_groups == ["RG"]
+        assert seeds["h1"].preowned_episode_ids == [101]
 
     def test_seed_carries_the_plan_identified_episodes(self) -> None:
         # The plan resolved which untagged files a pick's listed size named
-        # (see the planner's owned-ids tests). The seed persists them so the
-        # import doesn't copy over the very file the grab just called ours.
+        # (see the planner's owned-episodes tests). The seed persists the
+        # (id, size) pairs so the import doesn't copy over the very file the
+        # grab just called ours - and can re-verify the claim by size.
         ep_list = [_ep(101, 1, 1, file_size=1000), _ep(102, 1, 2)]
         parse_cache = {"Show - 02.mkv": {"episodes": [{"season": 1, "episode": 2}]}}
         seadex_dict = {
@@ -210,10 +187,10 @@ class TestBuildPendingSeeds:
         seeds = _strat(parse_cache)._reconciler.build_pending_seeds(
             seadex_dict=seadex_dict,
             ep_list=ep_list,
-            entry=PendingSeedContext(al_id=1, series_id=7, title="Show", owned_episode_ids=(101,)),
+            entry=PendingSeedContext(al_id=1, series_id=7, title="Show", owned_episodes=((101, 1000),)),
         )
 
-        assert seeds["h1"].owned_episode_ids == [101]
+        assert seeds["h1"].owned_episodes == [(101, 1000)]
 
     def test_multi_file_pack_de_unions_flat_fallback(self) -> None:
         ep_list = [_ep(101, 1, 1), _ep(102, 1, 2)]
@@ -676,7 +653,31 @@ class TestParseWriteVisibleToSeeds:
         assert seeds["h1"].file_episode_map == {}
 
 
-class TestRecommendedGroups:
+class TestNetInsertedCounts:
+    """Preowned targets never count as files this torrent inserted."""
+
+    def test_progress_counts_exclude_preowned_targets(self) -> None:
+        # 101 already held another pick's file at grab time (preowned); only
+        # 102 is this torrent's to insert. The bar must read 0 of 1, not 1 of 2
+        # - a pre-existing file shown as inserted overstates the import.
+        sonarr = FakeSonarrClient(episodes=[_ep(101, 1, 1, file_size=500, group="Kept"), _ep(102, 1, 2)])
+        strat = make_sonarr_sync(sonarr=sonarr, cache_store=FakeCacheStore())
+        pending = pending_import(
+            series_id=7,
+            file_episode_map={"Show - 01.mkv": [101], "Show - 02.mkv": [102]},
+            episode_ids=[],
+            seadex_files=["Show - 01.mkv", "Show - 02.mkv"],
+            entry_groups=["Kept"],
+            preowned_episode_ids=[101],
+        )
+
+        progress = strat._reconciler.import_progress(pending)
+
+        assert progress.determinate is True
+        assert (progress.done, progress.total) == (0, 1)
+
+
+class TestGuardSets:
     """The overwrite-guard set: own group + own entry picks + sibling GRABBED groups only."""
 
     def test_sibling_entry_picks_never_contaminate(self) -> None:
@@ -693,6 +694,46 @@ class TestRecommendedGroups:
         strat = make_sonarr_sync(cache_store=store)
         own = pending_import(release_group="Ours", entry_groups=["Ours", "OtherPick"])
 
-        groups = strat._reconciler._recommended_groups(own)
+        guard = strat._reconciler._guard_sets(own)
 
-        assert groups == {"ours", "otherpick", "sibgrab"}
+        assert guard.groups == {"ours", "otherpick", "sibgrab"}
+
+    def test_sibling_vote_refused_for_a_group_this_plan_judged_stale(self) -> None:
+        # A sibling record grabbed group B earlier; THIS entry's plan judged its
+        # on-disk B copy stale and excluded it from entry_groups. The sibling's
+        # vote must not re-admit B, or the stale files it shields read done and
+        # the replacement import never happens.
+        sibling = pending_import(infohash="s1", al_id=999, release_group="B")
+        store = FakeCacheStore(pending={str(Arr.SONARR): {sibling.key: sibling.to_json()}})
+        strat = make_sonarr_sync(cache_store=store)
+        own = pending_import(release_group="Ours", entry_groups=["Ours"], stale_groups=["B"])
+
+        guard = strat._reconciler._guard_sets(own)
+
+        assert guard.groups == {"ours"}
+
+    def test_own_group_survives_its_own_stale_verdict(self) -> None:
+        # A same-group size upgrade lists its own group stale. The group must
+        # stay recommended (it is the identity of the files being imported) -
+        # the stale copies are told apart by size instead.
+        strat = make_sonarr_sync(cache_store=FakeCacheStore())
+        own = pending_import(release_group="Ours", stale_groups=["Ours"], release_sizes=[1000])
+
+        guard = strat._reconciler._guard_sets(own)
+
+        assert guard.groups == {"ours"}
+        assert guard.own_group == "ours"
+        assert guard.own_group_sizes == frozenset({1000})
+
+    def test_own_group_sizes_union_same_group_siblings(self) -> None:
+        # Two records grabbing the same group (a per-cour torrent each) each
+        # list their own sizes; a file either record's listing carries is a
+        # current copy, so the size gate reads their union.
+        sibling = pending_import(infohash="s1", al_id=999, release_group="Ours", release_sizes=[2000])
+        store = FakeCacheStore(pending={str(Arr.SONARR): {sibling.key: sibling.to_json()}})
+        strat = make_sonarr_sync(cache_store=store)
+        own = pending_import(release_group="Ours", release_sizes=[1000])
+
+        guard = strat._reconciler._guard_sets(own)
+
+        assert guard.own_group_sizes == frozenset({1000, 2000})

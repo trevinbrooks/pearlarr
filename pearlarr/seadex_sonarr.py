@@ -476,7 +476,9 @@ class SonarrSync(ArrSync[SonarrItem]):
                     title=anilist_title,
                     coverage=coverage,
                     url=sd_url,
-                    owned_episode_ids=plan.owned_episode_ids,
+                    owned_episodes=plan.owned_episodes,
+                    entry_groups=plan.entry_groups,
+                    stale_groups=plan.stale_groups,
                 ),
             )
 

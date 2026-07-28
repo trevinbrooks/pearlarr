@@ -27,6 +27,7 @@ from pearlarr.manual_import import (
     normalize_basename,
     normalize_group,
     normalized_leaf,
+    path_leaf,
     resolve_wait_mode,
     sanitize_torrent_telemetry,
 )
@@ -85,13 +86,14 @@ def _ep(
     episode: int | None = 1,
     file_id: int = 0,
     group: str | None = None,
+    size: int | None = None,
 ) -> SonarrEpisode:
     """A `SonarrEpisode` from the raw fields the helpers read."""
 
     raw: dict[str, object] = {"id": ep_id, "seasonNumber": season, "episodeNumber": episode}
     if file_id:
         raw["episodeFileId"] = file_id
-        raw["episodeFile"] = {"releaseGroup": group}
+        raw["episodeFile"] = {"releaseGroup": group, "size": size}
     return SonarrEpisode.model_validate(raw)
 
 
@@ -149,6 +151,13 @@ class TestNormalize:
         # And a directory entry never folds to the empty leaf, which every other
         # unnamed thing would then collide with.
         assert normalized_leaf("Show/NC/") == "nc"
+
+    def test_path_leaf_folds_separators_but_preserves_the_name(self) -> None:
+        # The parser-input twin of normalized_leaf: same separator folding, but
+        # case/unicode intact - Sonarr's /parse and the video gate must see the
+        # real filename, never a whole Windows path or a folded one.
+        assert path_leaf("C:\\downloads\\Show\\Show - 01 [1080p].MKV") == "Show - 01 [1080p].MKV"
+        assert path_leaf("Show/NC/") == "NC"
 
     def test_group_casefold(self) -> None:
         assert normalize_group("SubGroup") == normalize_group("subgroup")
@@ -269,12 +278,60 @@ class TestEpisodeFileStatuses:
         # The planner declined to re-download this file because a pick's listed
         # size named it. The import must agree, or it copies over the very file
         # the grab decision called ours - an untagged twin stays unidentifiable.
-        episodes = {6: _ep(ep_id=6, file_id=60, group=None), 7: _ep(ep_id=7, file_id=70, group=None)}
-        snapshot = EpisodeSnapshot(episodes, {"subgroup"}, owned_episode_ids=frozenset({6}))
+        episodes = {6: _ep(ep_id=6, file_id=60, group=None, size=600), 7: _ep(ep_id=7, file_id=70, group=None)}
+        snapshot = EpisodeSnapshot(episodes, {"subgroup"}, owned_episode_sizes={6: 600})
         assert episode_file_statuses([6, 7], snapshot) == {
             6: EpisodeFileStatus.RECOMMENDED,
             7: EpisodeFileStatus.UNKNOWN_GROUP,
         }
+
+    def test_owned_claim_lapses_when_the_file_changed_size(self) -> None:
+        # The identification froze at grab time; a DIFFERENT untagged file
+        # landing mid-wait must not inherit the claim - honoring the id alone
+        # would mark an unverified file done and never send ours.
+        episodes = {6: _ep(ep_id=6, file_id=60, group=None, size=601)}
+        snapshot = EpisodeSnapshot(episodes, {"subgroup"}, owned_episode_sizes={6: 600})
+        assert episode_file_statuses([6], snapshot) == {6: EpisodeFileStatus.UNKNOWN_GROUP}
+
+    def test_owned_claim_needs_a_readable_file_record(self) -> None:
+        # A truthy episodeFileId with a null/empty episodeFile payload carries
+        # no size to verify against, so the claim is refused - not promoted
+        # sight-unseen onto a file record Sonarr couldn't even describe.
+        ep = SonarrEpisode.model_validate({"id": 6, "seasonNumber": 1, "episodeNumber": 1, "episodeFileId": 60})
+        snapshot = EpisodeSnapshot({6: ep}, {"subgroup"}, owned_episode_sizes={6: 600})
+        assert episode_file_statuses([6], snapshot) == {6: EpisodeFileStatus.UNKNOWN_GROUP}
+
+    def test_own_group_file_at_a_listed_size_is_recommended(self) -> None:
+        # Our own group's file at a size a current listing carries is our copy
+        # (just imported, or an already-current episode of the pack).
+        episodes = {5: _ep(ep_id=5, file_id=50, group="SubGroup", size=1000)}
+        snapshot = EpisodeSnapshot(
+            episodes,
+            {"subgroup"},
+            own_group="subgroup",
+            own_group_sizes=frozenset({1000}),
+        )
+        assert episode_file_statuses([5], snapshot) == {5: EpisodeFileStatus.RECOMMENDED}
+
+    def test_own_group_file_at_an_unlisted_size_is_replaced(self) -> None:
+        # A same-group file at a size NO current listing carries is the stale
+        # copy this grab replaces. Reading it as done would close the record
+        # with zero imports and strand the upgrade forever.
+        episodes = {5: _ep(ep_id=5, file_id=50, group="SubGroup", size=999)}
+        snapshot = EpisodeSnapshot(
+            episodes,
+            {"subgroup"},
+            own_group="subgroup",
+            own_group_sizes=frozenset({1000}),
+        )
+        assert episode_file_statuses([5], snapshot) == {5: EpisodeFileStatus.OTHER_GROUP}
+
+    def test_own_group_size_gate_off_without_recorded_sizes(self) -> None:
+        # A record with no listing sizes (an older record, or a blind listing)
+        # keeps the group-name-only behavior rather than replacing blindly.
+        episodes = {5: _ep(ep_id=5, file_id=50, group="SubGroup", size=999)}
+        snapshot = EpisodeSnapshot(episodes, {"subgroup"}, own_group="subgroup")
+        assert episode_file_statuses([5], snapshot) == {5: EpisodeFileStatus.RECOMMENDED}
 
     def test_all_targets_done_only_when_all_recommended(self) -> None:
         rec = {1: EpisodeFileStatus.RECOMMENDED, 2: EpisodeFileStatus.RECOMMENDED}

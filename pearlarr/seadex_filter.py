@@ -2,7 +2,7 @@
 
 import sys
 from collections import Counter
-from typing import TYPE_CHECKING, NamedTuple
+from typing import TYPE_CHECKING
 
 from rich.console import Console
 from seadex import EntryRecord, TorrentRecord
@@ -11,6 +11,7 @@ from .config import PRIVATE_TRACKERS, PrivateReleaseAction
 from .console_caps import console_of
 from .log import indent_string
 from .output import Accent, StyledValue, hub_warn
+from .planner import PlanResult
 from .reporter import RunContext
 from .seadex_types import (
     ArrReleaseDict,
@@ -24,22 +25,6 @@ from .seadex_types import (
 if TYPE_CHECKING:
     # Annotation-only: run_services imports this module at runtime (cycle).
     from .run_services import RunDeps
-
-
-class FilterResult(NamedTuple):
-    """The applied download plan, as the strategies consume it.
-
-    The strategy-facing slice of `PlanResult` (its hashes + dict). The `skips`
-    outcome is folded onto the run context in `filter_downloads`.
-    """
-
-    torrent_hashes: list[str | None]
-    """The unique hashes to remember in the cache record. None for a hashless private torrent."""
-    seadex_dict: SeadexDict
-    """The same `seadex_dict` annotated in place with per-url `download` flags."""
-    owned_episode_ids: tuple[int, ...] = ()
-    """Sonarr episodes whose untagged on-disk file the plan identified as a pick's copy
-    by listed size. Empty for Radarr and the hash path."""
 
 
 def _is_public_torrent(torrent: TorrentRecord) -> bool:
@@ -297,13 +282,15 @@ class SeadexReleaseFilter:
         seadex_dict: SeadexDict,
         arr_release_dict: ArrReleaseDict,
         ep_list: list[SonarrEpisode] | None = None,
-    ) -> FilterResult:
+    ) -> PlanResult:
         """Flip the switch on whether we're downloading each torrent or not.
 
         Thin orchestrator seam over the `DownloadPlanner`: pass it the
         entry's cached hashes, then apply the plan's private-only skip outcome back
         onto the run context the grab/cache tail still reads (the SkipNotice log
-        lines, the private_only_skipped flag, and the skipped group names).
+        lines, the private_only_skipped flag, and the skipped group names). The
+        plan itself is returned whole, so a field added to `PlanResult` reaches
+        the strategies without a hand-synced mirror type.
         """
 
         result = self._planner.plan(
@@ -326,4 +313,4 @@ class SeadexReleaseFilter:
         # prologue. add_torrent may append more before grab_and_cache reads them).
         self._ctx.per_title.absorb_skips(result.skips)
 
-        return FilterResult(result.torrent_hashes, result.seadex_dict, result.owned_episode_ids)
+        return result
