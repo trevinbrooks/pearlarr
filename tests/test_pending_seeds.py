@@ -17,8 +17,7 @@ from pearlarr.config import Arr
 from pearlarr.manual_import import GuardFacts, OwnedEpisode, normalize_basename
 from pearlarr.seadex_sonarr import SonarrSync
 from pearlarr.seadex_types import EpisodeRecord, ParsedEpisode
-from pearlarr.sonarr_import import PendingSeedContext
-from pearlarr.sonarr_import_plan import EpisodeFileStatus, trusted_groups
+from pearlarr.sonarr_import_plan import EpisodeFileStatus, PendingSeedContext, trusted_groups
 
 from .builders import (
     SEP,
@@ -37,6 +36,9 @@ from .fakes import FakeSonarrClient
 # builder reads both straight off this (no freshness stamp). A covariant Mapping
 # so a records-only literal and a full-season one both pass without annotation.
 type ParseCache = Mapping[str, Mapping[str, object]]
+
+# The per-entry grab stamp, threaded through the context onto every seed.
+_ADDED_AT = "2026-06-24 00:00:00"
 
 
 def _strat(parse_cache: ParseCache) -> SonarrSync:
@@ -68,7 +70,7 @@ class TestBuildPendingSeeds:
         seeds = _strat(parse_cache)._reconciler.build_pending_seeds(
             seadex_dict=seadex_dict,
             ep_list=ep_list,
-            entry=PendingSeedContext(al_id=1, series_id=7, title="Show"),
+            entry=PendingSeedContext(al_id=1, series_id=7, title="Show", added_at=_ADDED_AT),
         )
 
         # Only the download+hash url is seeded (no download / no hash are skipped).
@@ -77,6 +79,7 @@ class TestBuildPendingSeeds:
         assert seed.series_id == 7
         assert seed.al_id == 1  # part of the record's PendingKey
         assert seed.title == "Show"
+        assert seed.added_at == _ADDED_AT  # the context stamp, not a fold-side clock read
         assert seed.file_episode_map == {normalize_basename("Show - 01.mkv"): [101]}
         assert seed.seadex_files == ["Show - 01.mkv"]
         # The record's own episode slice, for the wait/notification label.
@@ -101,6 +104,7 @@ class TestBuildPendingSeeds:
                 al_id=1,
                 series_id=7,
                 title="Show",
+                added_at=_ADDED_AT,
                 guards=GuardFacts(entry_groups=("RG", "Kept"), stale_groups=("Stale",)),
             ),
         )
@@ -122,7 +126,7 @@ class TestBuildPendingSeeds:
         seeds = _strat(parse_cache)._reconciler.build_pending_seeds(
             seadex_dict=seadex_dict,
             ep_list=ep_list,
-            entry=PendingSeedContext(al_id=1, series_id=7, title="Show"),
+            entry=PendingSeedContext(al_id=1, series_id=7, title="Show", added_at=_ADDED_AT),
         )
 
         assert seeds["h1"].release_sizes == [1000, 50]
@@ -159,6 +163,7 @@ class TestBuildPendingSeeds:
                 al_id=1,
                 series_id=7,
                 title="Show",
+                added_at=_ADDED_AT,
                 guards=GuardFacts(entry_groups=("RG", "Kept")),
             ),
         )
@@ -193,6 +198,7 @@ class TestBuildPendingSeeds:
                 al_id=1,
                 series_id=7,
                 title="Show",
+                added_at=_ADDED_AT,
                 guards=GuardFacts(owned_episodes=(OwnedEpisode(101, 1000),)),
             ),
         )
@@ -221,7 +227,7 @@ class TestBuildPendingSeeds:
         seeds = _strat(parse_cache)._reconciler.build_pending_seeds(
             seadex_dict=seadex_dict,
             ep_list=ep_list,
-            entry=PendingSeedContext(al_id=1, series_id=7, title="Show"),
+            entry=PendingSeedContext(al_id=1, series_id=7, title="Show", added_at=_ADDED_AT),
         )
 
         seed = seeds["h1"]
@@ -261,7 +267,7 @@ class TestBuildPendingSeeds:
         seeds = _strat(parse_cache)._reconciler.build_pending_seeds(
             seadex_dict=seadex_dict,
             ep_list=ep_list,
-            entry=PendingSeedContext(al_id=1, series_id=7, title="Show"),
+            entry=PendingSeedContext(al_id=1, series_id=7, title="Show", added_at=_ADDED_AT),
         )
 
         seed = seeds["h1"]
@@ -296,7 +302,7 @@ class TestBuildPendingSeeds:
         seeds = _strat(parse_cache)._reconciler.build_pending_seeds(
             seadex_dict=seadex_dict,
             ep_list=ep_list,
-            entry=PendingSeedContext(al_id=1, series_id=7, title="Show"),
+            entry=PendingSeedContext(al_id=1, series_id=7, title="Show", added_at=_ADDED_AT),
         )
 
         seed = seeds["h1"]
@@ -329,7 +335,7 @@ class TestBuildPendingSeeds:
         seeds = _strat(parse_cache)._reconciler.build_pending_seeds(
             seadex_dict=seadex_dict,
             ep_list=ep_list,
-            entry=PendingSeedContext(al_id=1, series_id=7, title="Show"),
+            entry=PendingSeedContext(al_id=1, series_id=7, title="Show", added_at=_ADDED_AT),
         )
 
         seed = seeds["h1"]
@@ -357,7 +363,7 @@ class TestBuildPendingSeeds:
         seeds = _strat(parse_cache)._reconciler.build_pending_seeds(
             seadex_dict=seadex_dict,
             ep_list=ep_list,
-            entry=PendingSeedContext(al_id=1, series_id=7, title="Show"),
+            entry=PendingSeedContext(al_id=1, series_id=7, title="Show", added_at=_ADDED_AT),
         )
 
         assert seeds["h1"].display_label == f"Show{SEP}RG{SEP}S02 E06"
@@ -378,7 +384,7 @@ class TestBuildPendingSeeds:
         seeds = _strat({})._reconciler.build_pending_seeds(
             seadex_dict=seadex_dict,
             ep_list=ep_list,
-            entry=PendingSeedContext(al_id=1, series_id=7, title="Show"),
+            entry=PendingSeedContext(al_id=1, series_id=7, title="Show", added_at=_ADDED_AT),
         )
 
         assert set(seeds) == {"h1"}
@@ -401,7 +407,7 @@ class TestBuildPendingSeeds:
         seeds = _strat({})._reconciler.build_pending_seeds(
             seadex_dict=seadex_dict,
             ep_list=ep_list,
-            entry=PendingSeedContext(al_id=1, series_id=7, title="Show"),
+            entry=PendingSeedContext(al_id=1, series_id=7, title="Show", added_at=_ADDED_AT),
         )
 
         assert seeds == {}
@@ -433,7 +439,7 @@ class TestSeedGuards:
         seeds = _strat(parse_cache)._reconciler.build_pending_seeds(
             seadex_dict=seadex_dict,
             ep_list=ep_list,
-            entry=PendingSeedContext(al_id=1, series_id=7, title="Show"),
+            entry=PendingSeedContext(al_id=1, series_id=7, title="Show", added_at=_ADDED_AT),
         )
 
         # Still tracked (it carries a video file), just never pre-assigned.
@@ -461,7 +467,7 @@ class TestSeedGuards:
         seeds = _strat(parse_cache)._reconciler.build_pending_seeds(
             seadex_dict=seadex_dict,
             ep_list=ep_list,
-            entry=PendingSeedContext(al_id=1, series_id=7, title="Show"),
+            entry=PendingSeedContext(al_id=1, series_id=7, title="Show", added_at=_ADDED_AT),
         )
 
         # Still tracked (it carries a video file), just never pre-assigned.
@@ -482,7 +488,7 @@ class TestSeedGuards:
         seeds = _strat(parse_cache)._reconciler.build_pending_seeds(
             seadex_dict=seadex_dict,
             ep_list=ep_list,
-            entry=PendingSeedContext(al_id=1, series_id=7, title="Show"),
+            entry=PendingSeedContext(al_id=1, series_id=7, title="Show", added_at=_ADDED_AT),
         )
 
         assert seeds["h1"].file_episode_map == {normalize_basename("Show - 01-02.mkv"): [101, 102]}
@@ -503,7 +509,7 @@ class TestSeedGuards:
         seeds = _strat(parse_cache)._reconciler.build_pending_seeds(
             seadex_dict=seadex_dict,
             ep_list=ep_list,
-            entry=PendingSeedContext(al_id=1, series_id=7, title="Show"),
+            entry=PendingSeedContext(al_id=1, series_id=7, title="Show", added_at=_ADDED_AT),
         )
 
         assert seeds["h1"].file_episode_map == {}
@@ -533,7 +539,7 @@ class TestSeedGuards:
         seeds = _strat(parse_cache)._reconciler.build_pending_seeds(
             seadex_dict=seadex_dict,
             ep_list=ep_list,
-            entry=PendingSeedContext(al_id=1, series_id=7, title="Show"),
+            entry=PendingSeedContext(al_id=1, series_id=7, title="Show", added_at=_ADDED_AT),
         )
 
         assert seeds["h1"].file_episode_map == {normalize_basename("Show - 13.mkv"): [213]}
@@ -563,7 +569,7 @@ class TestSeedGuards:
         seeds = _strat(parse_cache)._reconciler.build_pending_seeds(
             seadex_dict=seadex_dict,
             ep_list=ep_list,
-            entry=PendingSeedContext(al_id=1, series_id=7, title="Show"),
+            entry=PendingSeedContext(al_id=1, series_id=7, title="Show", added_at=_ADDED_AT),
         )
 
         assert seeds["h1"].file_episode_map == {normalize_basename("Show - 01.mkv"): [101]}
@@ -590,7 +596,7 @@ class TestSeedGuards:
         seeds = _strat(parse_cache)._reconciler.build_pending_seeds(
             seadex_dict=seadex_dict,
             ep_list=ep_list,
-            entry=PendingSeedContext(al_id=1, series_id=7, title="Show"),
+            entry=PendingSeedContext(al_id=1, series_id=7, title="Show", added_at=_ADDED_AT),
         )
 
         assert seeds["h1"].file_episode_map == {normalize_basename("Show - 01.mkv"): [101]}
@@ -626,7 +632,7 @@ class TestParseWriteVisibleToSeeds:
         seeds = strat._reconciler.build_pending_seeds(
             seadex_dict=seadex_dict,
             ep_list=ep_list,
-            entry=PendingSeedContext(al_id=1, series_id=7, title="Show"),
+            entry=PendingSeedContext(al_id=1, series_id=7, title="Show", added_at=_ADDED_AT),
         )
 
         assert seeds["h1"].file_episode_map == {normalize_basename("Show - 01.mkv"): [101]}
@@ -654,7 +660,7 @@ class TestParseWriteVisibleToSeeds:
         seeds = strat._reconciler.build_pending_seeds(
             seadex_dict=seadex_dict,
             ep_list=ep_list,
-            entry=PendingSeedContext(al_id=1, series_id=7, title="Show"),
+            entry=PendingSeedContext(al_id=1, series_id=7, title="Show", added_at=_ADDED_AT),
         )
 
         assert seeds["h1"].file_episode_map == {}

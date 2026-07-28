@@ -18,23 +18,18 @@ Three collaborators:
 
 import logging
 import time
-from dataclasses import dataclass, field, replace
-from datetime import datetime
+from dataclasses import replace
 from typing import NamedTuple
 from urllib.parse import urlsplit
 
-from .cache import UPDATED_AT_STR_FORMAT
 from .config import Arr
-from .coverage import coverage_string, episodes_from_ep_list
 from .log import count_noun, pluralize
 from .manual_import import (
     AttemptKind,
-    GuardFacts,
     ImportProbe,
     ImportProgress,
     ImportReadiness,
     PendingImport,
-    normalized_leaf,
     path_leaf,
 )
 from .output import hub_note, hub_warn
@@ -59,19 +54,22 @@ from .sonarr_import_plan import (
     DownloadMatch,
     EpisodeFileStatus,
     EpisodeSnapshot,
+    FileParse,
     ImportAction,
     ImportDecision,
     ParsedQuality,
+    PendingSeedContext,
     QueueVerdict,
+    SeedFile,
+    SeedRelease,
     TargetStatuses,
+    build_pending_seed,
     classify_commands,
     classify_download_history,
     classify_queue,
     derive_languages,
-    episode_ids_for_parsed,
     episode_index,
     parse_quality_from_filename,
-    parsed_outside_entry,
     plan_import_files,
     quality_axes_from_model,
     quality_axes_from_name,
@@ -665,30 +663,6 @@ class _SeedStatuses(NamedTuple):
     statuses: TargetStatuses
 
 
-@dataclass(frozen=True, slots=True)
-class PendingSeedContext:
-    """The per-entry values every seed built for one AniList entry carries.
-
-    One instance per `process_al_id` call, threaded whole into
-    `ImportReconciler.build_pending_seeds` (instead of loose params) and
-    copied onto each `PendingImport` the entry produces.
-    """
-
-    al_id: int
-    """The AniList entry id - part of each record's `PendingKey`."""
-    series_id: int
-    """The Sonarr series id the entry's files belong to."""
-    title: str
-    """The AniList display title (logging only)."""
-    coverage: str | None = None
-    """The entry's season/episode coverage at grab time (logging only)."""
-    url: str | None = None
-    """The SeaDex entry URL at grab time (logging only)."""
-    guards: GuardFacts = field(default_factory=GuardFacts)
-    """The plan's overwrite-guard evidence, copied onto every seed unchanged
-    (see `GuardFacts`)."""
-
-
 class ImportReconciler:
     """Decides a completed download's state and builds the grab-time seeds.
 
@@ -726,18 +700,14 @@ class ImportReconciler:
     ) -> dict[str, PendingImport]:
         """Build `infohash -> PendingImport` for every release marked to grab.
 
-        For each downloadable url with a hash, seed our authoritative
-        `normalized basename -> episode ids` map from the cached `/parse`
-        results and the `(season, episode) -> id` index. The map is best-effort
-        at grab time (the series may not be fully in Sonarr yet). It self-heals at
-        import time, when the files are on disk and the series exists, so a record
-        is seeded for every grabbed torrent that carries at least one video file -
-        not only the ones already fully mapped.
-
-        Seeds honor the used-once discipline assignment enforces: the first
-        file in SeaDex order claiming an episode id wins, and a later claimant
-        (a v2, or a duplicate leaf from a second folder) is left unseeded for
-        import-time assignment, which defers the colliding file the same way.
+        The I/O half of the seed build: flags the downloadable urls with a
+        hash, builds the entry's episode index, and pre-reads each video
+        file's cached `/parse` into a `SeedRelease` bundle for the pure
+        `build_pending_seed` fold. The map each seed carries is best-effort at
+        grab time (the series may not be fully in Sonarr yet) and self-heals
+        at import time, when the files are on disk and the series exists - so
+        a record is seeded for every grabbed torrent that carries at least one
+        video file, not only the ones already fully mapped.
 
         Args:
             seadex_dict: The filtered releases. `url_item.download`
@@ -765,100 +735,50 @@ class ImportReconciler:
         if not flagged:
             return {}
 
-        # One index for the whole entry: the id map for the per-file parses, the
-        # ordered ids persisted onto every record (so import-time assignment maps
-        # files into OUR set instead of re-deriving identity from Sonarr's title
-        # parse), and the by-id facet for the preowned classification below.
+        # One index for the whole entry: the fold reads its id map for the
+        # per-file parses, persists its ordered ids onto every record (so
+        # import-time assignment maps files into OUR set instead of re-deriving
+        # identity from Sonarr's title parse), and classifies preowned targets
+        # off its by-id facet.
         index = episode_index(ep_list)
-        ordered_episode_ids = list(index.ordered_ids)
-        # Per-file parse records are read straight from the cache facade
-        # (`get_sonarr_parse`): each is the persisted parse entry
-        # `{"fetched_at": str, "episodes": [...]}` written by
-        # `parse_episodes_from_seadex` in the same run (staged writes are visible
-        # to reads on the same connection).
-        added_at = datetime.now().strftime(UPDATED_AT_STR_FORMAT)
 
         pending_seeds: dict[str, PendingImport] = {}
-
         for srg, url_item, infohash in flagged:
             # The video files this torrent should import (subs / fonts / NCED
-            # dropped).
+            # dropped). None at all -> nothing to track.
             video_files = [base for _, base in video_file_entries(url_item.files)]
-
-            # No importable video files at all -> nothing to track.
             if not video_files:
                 continue
-
-            # Best-effort grab-time mapping, keyed by NORMALIZED basename so it
-            # matches the on-disk leaves at import time (NFC/NFD-safe).
-            file_episode_map: dict[str, list[int]] = {}
-            excluded_files: list[str] = []
-            claimed: set[int] = set()
-            for base in video_files:
-                record = self.cache_store.get_sonarr_parse(base)
-                if not record:
-                    continue
-                parsed = parsed_episodes(record)
-                full_season = parsed_full_season(record)
-                file_ids = episode_ids_for_parsed(parsed, index.id_by_key, full_season=full_season)
-                # First claim in file order wins: assignment defers a later
-                # file whose ids collide, so the seed refuses it the same way.
-                if file_ids and not any(i in claimed for i in file_ids):
-                    file_episode_map[normalized_leaf(base)] = file_ids
-                    claimed.update(file_ids)
-                elif file_ids or parsed_outside_entry(parsed, index.id_by_key, full_season=full_season):
-                    # A collision-refused duplicate, or a clean parse landing
-                    # entirely outside this entry's set (a sibling slice's
-                    # file): this record will never import it, so completeness
-                    # accounts for it. Any other refusal stays "possibly ours".
-                    excluded_files.append(normalized_leaf(base))
-            if excluded_files:
+            release = SeedRelease(
+                release_group=srg,
+                infohash=infohash,
+                is_dual_audio=url_item.is_dual_audio,
+                release_sizes=tuple(url_item.size),
+                files=tuple(SeedFile(base, self._file_parse(base)) for base in video_files),
+            )
+            seed = build_pending_seed(release, index, entry)
+            if seed.excluded_files:
                 self.logger.debug(
                     f"{entry.title}: not counted toward completeness "
-                    f"(other slice / duplicate): {', '.join(excluded_files)}",
+                    f"(other slice / duplicate): {', '.join(seed.excluded_files)}",
                 )
-
-            # This record's own slice of the entry (the episodes its files
-            # claimed), so sibling per-episode records label distinctly.
-            claimed_eps = [ep for ep in ep_list if ep.id in claimed]
-            seed = PendingImport(
-                infohash=infohash,
-                series_id=entry.series_id,
-                al_id=entry.al_id,
-                file_episode_map=file_episode_map,
-                # episode_ids is a legacy read-only fallback: never seeded (any
-                # value here would only duplicate the map, which readers dedupe).
-                episode_ids=[],
-                release_group=srg,
-                is_dual_audio=url_item.is_dual_audio,
-                seadex_files=video_files,
-                title=entry.title,
-                added_at=added_at,
-                coverage=entry.coverage,
-                url=entry.url,
-                ordered_episode_ids=ordered_episode_ids,
-                slice_coverage=coverage_string(episodes_from_ep_list(claimed_eps)) or None,
-                excluded_files=excluded_files,
-                guards=entry.guards,
-                release_sizes=list(url_item.size),
-            )
-            # Targets that already hold a recommended file at grab time were
-            # never this torrent's to insert: classify them against the record's
-            # own trust slice (no sibling votes yet) so the wait's inserted
-            # counts start at 0.
-            grab_snapshot = EpisodeSnapshot(
-                episodes=index,
-                trusted=trusted_groups(seed),
-                owned_episode_sizes=seed.guards.owned_sizes,
-            )
-            preowned = [
-                ep_id
-                for ep_id, status in grab_snapshot.statuses(sorted(claimed)).by_id.items()
-                if status is EpisodeFileStatus.RECOMMENDED
-            ]
-            pending_seeds[infohash] = replace(seed, preowned_episode_ids=preowned)
+            pending_seeds[infohash] = seed
 
         return pending_seeds
+
+    def _file_parse(self, base: str) -> FileParse | None:
+        """One video file's grab-time parse, read off the cache facade.
+
+        Each `get_sonarr_parse` record is the persisted parse entry written by
+        `parse_episodes_from_seadex` in the same run (staged writes are visible
+        to reads on the same connection). None when no record exists - the
+        fold skips the file.
+        """
+
+        record = self.cache_store.get_sonarr_parse(base)
+        if not record:
+            return None
+        return FileParse(tuple(parsed_episodes(record)), parsed_full_season(record))
 
     def import_completed(
         self,
