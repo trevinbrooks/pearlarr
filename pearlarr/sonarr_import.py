@@ -70,13 +70,14 @@ from .sonarr_import_plan import (
     episode_ids_for_parsed,
     manual_import_in_flight,
     parse_quality_from_filename,
+    parsed_outside_set,
     plan_import_files,
     quality_axes_from_model,
     quality_axes_from_name,
     resolve_language_objects,
     resolve_quality,
-    sonarr_disk_command_running,
     sonarr_process_pass_running,
+    started_disk_commands,
     targets_needing_import,
     translate_download_path,
 )
@@ -310,6 +311,11 @@ class ImportExecutor:
         # every call. None means "not refreshed yet this run" (reset in reset).
         self._last_refresh_monotonic: float | None = None
 
+        # ManualImport command ids we POSTed this run, so the disk-command
+        # deferral can tell our own running import (another record's copy -
+        # deferred time is credited back to the ready deadline) from foreign work.
+        self._issued_command_ids: set[int] = set()
+
     def reset(self) -> None:
         """Drop the per-run import scratch (run-start, via get_items)."""
 
@@ -318,7 +324,13 @@ class ImportExecutor:
         self._warned_unplaceable = set()
         self._warned_default_quality = False
         self._last_refresh_monotonic = None
+        self._issued_command_ids = set()
         self.scanner.reset()
+
+    def issued_command(self, command_id: int) -> bool:
+        """Whether we POSTed this ManualImport command id this run."""
+
+        return command_id in self._issued_command_ids
 
     def refresh_downloads(self) -> None:
         """Queue RefreshMonitoredDownloads (throttled), wait for it and its follow-up pass, best-effort.
@@ -535,6 +547,7 @@ class ImportExecutor:
         # not have landed yet (a remote-mount copy isn't instant). Do NOT declare
         # the files imported on command acceptance: report RETRY + command_issued,
         # so the next monitor cycle flips to files_present once they appear.
+        self._issued_command_ids.add(cmd_id)
         self.logger.debug(f"{content_path}: queued {count_noun(len(files), 'file')} for import (command {cmd_id})")
         return ImportProbe(ImportReadiness.RETRY, files_present=False, command_issued=True)
 
@@ -779,21 +792,26 @@ class ImportReconciler:
                 # Best-effort grab-time mapping, keyed by NORMALIZED basename so it
                 # matches the on-disk leaves at import time (NFC/NFD-safe).
                 file_episode_map: dict[str, list[int]] = {}
+                excluded_files: list[str] = []
                 claimed: set[int] = set()
                 for base in video_files:
                     record = self.cache_store.get_sonarr_parse(base)
                     if not record:
                         continue
-                    file_ids = episode_ids_for_parsed(
-                        parsed_episodes(record),
-                        ep_id_map,
-                        full_season=parsed_full_season(record),
-                    )
+                    parsed = parsed_episodes(record)
+                    full_season = parsed_full_season(record)
+                    file_ids = episode_ids_for_parsed(parsed, ep_id_map, full_season=full_season)
                     # First claim in file order wins: assignment defers a later
                     # file whose ids collide, so the seed refuses it the same way.
                     if file_ids and not any(i in claimed for i in file_ids):
                         file_episode_map[normalize_basename(base)] = file_ids
                         claimed.update(file_ids)
+                    elif file_ids or parsed_outside_set(parsed, ep_id_map, full_season=full_season):
+                        # A collision-refused duplicate, or a clean parse landing
+                        # entirely outside this entry's set (a sibling slice's
+                        # file): this record will never import it, so completeness
+                        # accounts for it. Any other refusal stays "possibly ours".
+                        excluded_files.append(normalize_basename(base))
 
                 # This record's own slice of the entry (the episodes its files
                 # claimed), so sibling per-episode records label distinctly.
@@ -815,6 +833,7 @@ class ImportReconciler:
                     url=entry.url,
                     ordered_episode_ids=ordered_episode_ids,
                     slice_coverage=coverage_string(episodes_from_ep_list(claimed_eps)) or None,
+                    excluded_files=excluded_files,
                 )
 
         return pending_seeds
@@ -868,13 +887,20 @@ class ImportReconciler:
         done = self._recommended_count(seed.statuses)
         total = len(seeded_targets) if seed_complete else 0
 
-        def probe(readiness: ImportReadiness, *, files_present: bool, command_issued: bool) -> ImportProbe:
+        def probe(
+            readiness: ImportReadiness,
+            *,
+            files_present: bool,
+            command_issued: bool,
+            deferred: bool = False,
+        ) -> ImportProbe:
             return ImportProbe(
                 readiness,
                 files_present=files_present,
                 command_issued=command_issued,
                 imported_count=done,
                 target_count=total,
+                deferred=deferred,
             )
 
         # Fast path: when our grab-time map already covers every video file, the
@@ -893,18 +919,6 @@ class ImportReconciler:
             self.logger.debug(f"{label}: Sonarr has it pending; waiting")
             return probe(ImportReadiness.RETRY, files_present=False, command_issued=False)
 
-        # A Sonarr disk command (its own import pass, a rename/move sweep, ...)
-        # executing right now: a ManualImport POSTed here would be QUEUED behind
-        # it and replayed stale minutes later, re-copying every file an import
-        # pass placed meanwhile. Wait it out instead - a pass's landing files
-        # re-anchor the import deadline, and NOT gated on `force` for the same
-        # reason as the in-flight check below. (refresh_downloads above already
-        # absorbed the pass our own rescan triggers; what trips here is foreign.)
-        commands = self._executor.list_commands()
-        if sonarr_disk_command_running(commands):
-            self.logger.debug(f"{label}: Sonarr is running a disk command; waiting")
-            return probe(ImportReadiness.RETRY, files_present=False, command_issued=False)
-
         # A ManualImport we (or a prior run) already POSTed may still be running
         # server-side after Sonarr dropped the torrent from the regular queue - so
         # the queue reads "empty -> step in" and we'd stack a duplicate every poll.
@@ -912,14 +926,36 @@ class ImportReconciler:
         # that is exactly the path that loops. An in-flight command must suppress a
         # re-issue regardless (`force` overrides Sonarr's clean-pending deferral,
         # a different state). A false positive only waits (bounded by the deadline).
+        # Checked BEFORE the broad disk-command guard so this record's own copy
+        # reads its honest flags rather than the guard's anonymous ones.
+        commands = self._executor.list_commands()
         if manual_import_in_flight(
             commands,
             pending.infohash,
             self._executor.scanner.content_paths(content_path),
             set(seeded_targets),
         ):
+            # Our own copy mid-flight: `command_issued` (a command for this record
+            # IS running - the at-deadline outcome must read "still importing",
+            # not "not ready") and `deferred` (its runtime never burns the clock).
             self.logger.debug(f"{label}: a ManualImport is already in flight; waiting")
-            return probe(ImportReadiness.RETRY, files_present=False, command_issued=False)
+            return probe(ImportReadiness.RETRY, files_present=False, command_issued=True, deferred=True)
+
+        # A Sonarr disk command (its own import pass, a rename/move sweep, ...)
+        # executing right now: a ManualImport POSTed here would be QUEUED behind
+        # it and replayed stale minutes later, re-copying every file an import
+        # pass placed meanwhile. Wait it out instead - a pass's landing files
+        # re-anchor the import deadline, and NOT gated on `force` for the same
+        # reason as the in-flight check above. (refresh_downloads above already
+        # absorbed the pass our own rescan triggers.) When the running command is
+        # one WE issued (another record's import serializing this one), the poll
+        # reads `deferred` so the monitor credits the wait back to the ready
+        # deadline; a foreign command keeps burning it (bounded walk-away).
+        running = started_disk_commands(commands)
+        if running:
+            own = any(self._executor.issued_command(command.id) for command in running if command.id)
+            self.logger.debug(f"{label}: Sonarr is running a disk command; waiting")
+            return probe(ImportReadiness.RETRY, files_present=False, command_issued=False, deferred=own)
 
         # STEP_IN, an empty queue, or a forced clean-pending: drive our import.
         result = self._executor.run_manual_import(
@@ -1017,8 +1053,15 @@ class ImportReconciler:
 
     @staticmethod
     def _seed_map_is_complete(pending: PendingImport) -> bool:
-        """Whether the grab-time map already covers every video file we grabbed."""
+        """Whether the map + knowably-excluded files account for every video file we grabbed.
 
-        return bool(pending.seadex_files) and len(pending.file_episode_map) >= len(
-            pending.seadex_files,
-        )
+        A pack carrying another slice's files (a sibling entry's episodes) can
+        never map them - counting them against completeness left such records
+        permanently indeterminate: no bar, and a ready deadline that never
+        re-anchored on landing files (the 2026-07-27 Fire Force timeout-mid-copy).
+        """
+
+        if not pending.seadex_files:
+            return False
+        covered = set(pending.file_episode_map) | set(pending.excluded_files)
+        return len(covered) >= len(pending.seadex_files)

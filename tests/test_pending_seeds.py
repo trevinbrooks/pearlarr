@@ -114,6 +114,109 @@ class TestBuildPendingSeeds:
         # old cross-file union bug (a whole season stamped onto one file) is out.
         assert seed.episode_ids == []
 
+    def test_sibling_slice_files_are_excluded_not_intended(self) -> None:
+        # A pack carrying another slice's episodes (the 2026-07-27 Fire Force
+        # shape: a Part 1 entry over a Part 1+2 pack): files parsing cleanly
+        # OUTSIDE this entry's set land in excluded_files, so map + excluded
+        # account for every file and the record stays determinate (a real
+        # progress bar, a deadline that re-anchors per landing file).
+        ep_list = [_ep(101, 3, 1), _ep(102, 3, 2)]
+        parse_cache = {
+            "Show - S03E01.mkv": {"episodes": [{"season": 3, "episode": 1}]},
+            "Show - S03E02.mkv": {"episodes": [{"season": 3, "episode": 2}]},
+            "Show - S03E13.mkv": {"episodes": [{"season": 3, "episode": 13}]},
+        }
+        seadex_dict = {
+            "RG": rg_group(
+                {
+                    "u1": url_item(
+                        files=["Show - S03E01.mkv", "Show - S03E02.mkv", "Show - S03E13.mkv"],
+                        size=[1000, 1000, 1000],
+                        infohash="h1",
+                        download=True,
+                    ),
+                },
+            ),
+        }
+
+        seeds = _strat(parse_cache)._reconciler.build_pending_seeds(
+            seadex_dict=seadex_dict,
+            ep_list=ep_list,
+            entry=PendingSeedContext(al_id=1, series_id=7, title="Show"),
+        )
+
+        seed = seeds["h1"]
+        assert set(seed.file_episode_map) == {
+            normalize_basename("Show - S03E01.mkv"),
+            normalize_basename("Show - S03E02.mkv"),
+        }
+        assert seed.excluded_files == [normalize_basename("Show - S03E13.mkv")]
+
+    def test_collision_refused_duplicate_is_excluded(self) -> None:
+        # A second claimant on an already-claimed episode (a v2 duplicate): the
+        # seed refuses it (first claim wins) AND excludes it - this record will
+        # never import it, so completeness may account for it.
+        ep_list = [_ep(101, 1, 1)]
+        parse_cache = {
+            "Show - 01.mkv": {"episodes": [{"season": 1, "episode": 1}]},
+            "Show - 01v2.mkv": {"episodes": [{"season": 1, "episode": 1}]},
+        }
+        seadex_dict = {
+            "RG": rg_group(
+                {
+                    "u1": url_item(
+                        files=["Show - 01.mkv", "Show - 01v2.mkv"],
+                        size=[1000, 1000],
+                        infohash="h1",
+                        download=True,
+                    ),
+                },
+            ),
+        }
+
+        seeds = _strat(parse_cache)._reconciler.build_pending_seeds(
+            seadex_dict=seadex_dict,
+            ep_list=ep_list,
+            entry=PendingSeedContext(al_id=1, series_id=7, title="Show"),
+        )
+
+        seed = seeds["h1"]
+        assert seed.file_episode_map == {normalize_basename("Show - 01.mkv"): [101]}
+        assert seed.excluded_files == [normalize_basename("Show - 01v2.mkv")]
+
+    def test_unparsed_and_vetoed_files_stay_possibly_ours(self) -> None:
+        # A file with no parse record and a full-season-vetoed zip: neither is
+        # KNOWABLY another slice's, so neither is excluded - the record stays
+        # indeterminate (conservative) rather than trusting an incomplete map.
+        ep_list = [_ep(101, 1, 1)]
+        parse_cache = {
+            "Show - 01.mkv": {"episodes": [{"season": 1, "episode": 1}]},
+            # "Show - Extra.mkv" has no cached parse at all.
+            "Show - Zip.mkv": {"episodes": [{"season": 2, "episode": 1}], "full_season": True},
+        }
+        seadex_dict = {
+            "RG": rg_group(
+                {
+                    "u1": url_item(
+                        files=["Show - 01.mkv", "Show - Extra.mkv", "Show - Zip.mkv"],
+                        size=[1000, 1000, 1000],
+                        infohash="h1",
+                        download=True,
+                    ),
+                },
+            ),
+        }
+
+        seeds = _strat(parse_cache)._reconciler.build_pending_seeds(
+            seadex_dict=seadex_dict,
+            ep_list=ep_list,
+            entry=PendingSeedContext(al_id=1, series_id=7, title="Show"),
+        )
+
+        seed = seeds["h1"]
+        assert set(seed.file_episode_map) == {normalize_basename("Show - 01.mkv")}
+        assert seed.excluded_files == []
+
     def test_sibling_per_episode_torrents_get_distinct_slice_labels(self) -> None:
         # The live shape that motivated the slice: one entry, one group, one
         # torrent per episode. Identical title·group labels made "which episodes

@@ -57,8 +57,10 @@ class ImportCompleter(ABC):
 
         Returns:
             The `ImportProbe` readiness (drop / retry / leave) plus whether the
-            intended episode files are verified present (`files_present`) and
-            whether an import command was just accepted (`command_issued`).
+            intended episode files are verified present (`files_present`),
+            whether an import command for this record was accepted or is still
+            running (`command_issued`), and whether the poll deferred behind our
+            own Sonarr work (`deferred` - the monitor credits that time back).
         """
 
     @abstractmethod

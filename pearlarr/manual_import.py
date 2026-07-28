@@ -189,8 +189,8 @@ class ImportProbe:
     `imported`."""
 
     command_issued: bool
-    """Whether a manual-import command was accepted this poll (its copy may still be in flight - so not yet
-    `files_present`)."""
+    """Whether a manual-import command for this record was accepted - this poll, or one still running
+    server-side from an earlier poll (its copy may still be in flight - so not yet `files_present`)."""
 
     imported_count: int = 0
     """How many of the intended episodes already hold the recommended file - the "files inserted" bar
@@ -199,6 +199,12 @@ class ImportProbe:
     target_count: int = 0
     """The intended-episode denominator for the bar, fixed to the persisted seed set so the bar can't rescale
     mid-import. 0 means the seed map is incomplete, so the importing row stays indeterminate."""
+
+    deferred: bool = False
+    """Whether this poll deferred behind OUR OWN Sonarr work (a ManualImport we issued for another record, or
+    this record's own copy still in flight). The monitor credits deferred time back to the ready deadline -
+    waiting on ourselves is not the record stalling. A foreign disk command defers WITHOUT this flag, so it
+    still burns the clock (a bounded walk-away, never an unbounded wait on someone else's work)."""
 
 
 class ImportProgress(NamedTuple):
@@ -504,6 +510,13 @@ class PendingImport:
     for records written before this field existed (such a record falls back to the seeded
     `file_episode_map`)."""
 
+    excluded_files: list[str] = field(default_factory=list[str])
+    """Normalized basenames of grabbed video files this record will knowably NEVER import: a sibling
+    entry's slice (a clean parse landing entirely outside our episode set) or a collision-refused
+    duplicate (first claim wins). Seed map + these accounting for every `seadex_files` entry is what
+    makes the record's progress determinate - without it a pack carrying another slice's files could
+    never show progress or re-anchor its ready deadline. Empty for older records (stays conservative)."""
+
     @property
     def key(self) -> PendingKey:
         """The record's composite store/tracking key (see `PendingKey`)."""
@@ -560,6 +573,7 @@ class PendingImport:
             url=raw.get("url"),
             ordered_episode_ids=raw.get("ordered_episode_ids", []),
             slice_coverage=raw.get("slice_coverage"),
+            excluded_files=raw.get("excluded_files", []),
         )
 
 

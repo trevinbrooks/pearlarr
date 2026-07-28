@@ -690,8 +690,66 @@ class TestImportCompletedQueueState:
 
         assert probe.readiness is ImportReadiness.RETRY
         assert probe.files_present is False
+        # A foreign command: no credit - its runtime keeps burning the ready
+        # clock, so the walk-away stays bounded.
+        assert probe.deferred is False
         assert (probe.imported_count, probe.target_count) == (0, 1)
         assert sonarr.candidate_calls == []
+        assert sonarr.execute_calls == []
+
+    def test_own_running_import_defers_other_records_with_credit(self) -> None:
+        # Record A's issued copy is still running while record B polls: B defers
+        # (RETRY), and because the running command is OURS (an id we POSTed this
+        # run) the probe reads `deferred` - the monitor credits B's wait back to
+        # its ready deadline instead of burning it (the JJK-blocks-Fire-Force
+        # shape from 2026-07-27).
+        pending_a = pending_import(infohash="abc123")
+        pending_b = pending_import(infohash="def456")
+        strat, sonarr = _make_sonarr_for_import(
+            candidates=[manual_candidate("/d/Show - 01 [1080p].mkv")],
+            cmd_id=42,
+        )
+
+        first = strat.import_completed(pending_a, "/d")
+        sonarr.commands_return = [
+            CommandResource.model_validate(
+                {"id": 42, "name": "ManualImport", "status": "started", "body": {"files": [{"downloadId": "ABC123"}]}},
+            ),
+        ]
+        probe = strat.import_completed(pending_b, "/e")
+
+        assert first.command_issued is True
+        assert probe.readiness is ImportReadiness.RETRY
+        assert probe.deferred is True
+        assert probe.command_issued is False  # not B's command
+        assert len(sonarr.execute_calls) == 1  # only A's import was POSTed
+
+    def test_in_flight_import_for_this_record_reads_honest_flags(self) -> None:
+        # A still-running ManualImport covering THIS record (e.g. POSTed by a
+        # prior run): checked ahead of the anonymous disk guard, so the probe
+        # reads `command_issued` (an at-deadline outcome must say "still
+        # importing", never "not ready") and `deferred` (our own copy's runtime
+        # never burns the clock).
+        pending = pending_import(infohash="abc123")
+        strat, sonarr = _make_sonarr_for_import(
+            candidates=[manual_candidate("/d/Show - 01 [1080p].mkv")],
+            commands=[
+                CommandResource.model_validate(
+                    {
+                        "id": 7000,
+                        "name": "ManualImport",
+                        "status": "started",
+                        "body": {"files": [{"downloadId": "ABC123"}]},
+                    },
+                ),
+            ],
+        )
+
+        probe = strat.import_completed(pending, "/d", force=True)
+
+        assert probe.readiness is ImportReadiness.RETRY
+        assert probe.command_issued is True
+        assert probe.deferred is True
         assert sonarr.execute_calls == []
 
     def test_rescan_absorbs_own_disk_pass_then_steps_in(self, monkeypatch: pytest.MonkeyPatch) -> None:
@@ -999,7 +1057,11 @@ class TestInFlightManualImportGuard:
         probe = strat.import_completed(pending, "/d")
 
         assert probe.readiness is ImportReadiness.RETRY
-        assert probe.command_issued is False
+        # Honest flags: a command for this record IS running (so an at-deadline
+        # outcome reads "still importing", never "not ready") and its runtime is
+        # credited back to the ready deadline.
+        assert probe.command_issued is True
+        assert probe.deferred is True
         assert sonarr.execute_calls == []
         assert sonarr.candidate_calls == []
 
@@ -1021,7 +1083,8 @@ class TestInFlightManualImportGuard:
         probe = strat.import_completed(pending, "/d", force=True)
 
         assert probe.readiness is ImportReadiness.RETRY
-        assert probe.command_issued is False
+        assert probe.command_issued is True
+        assert probe.deferred is True
         assert sonarr.execute_calls == []
 
     def test_completed_command_does_not_suppress(self) -> None:
