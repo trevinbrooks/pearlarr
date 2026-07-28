@@ -7,9 +7,7 @@ taken as-is, every other on-disk leaf is parsed and placed into our resolved
 set via the pure `assign_episode_ids`. Owns the per-run on-disk parse cache.
 """
 
-import os
-
-from .manual_import import PendingImport, normalized_leaf
+from .manual_import import PendingImport, normalized_leaf, path_leaf
 from .seadex_types import ManualImportCandidate, ParsedFileInfo
 from .sonarr_client import AbstractSonarrClient
 from .sonarr_import_plan import CandidateFile, assign_episode_ids, parse_se_from_filename
@@ -131,7 +129,7 @@ class FileEpisodeMapper:
         on_disk = {
             norm_base: candidate
             for norm_base, candidate in candidates_by_basename.items()
-            if is_video_candidate(os.path.basename(candidate.path))
+            if is_video_candidate(path_leaf(candidate.path))
         }
 
         # SeaDex order first (so output is stable and the absolute leg's input is
@@ -161,11 +159,11 @@ class FileEpisodeMapper:
         parsed_by_file: dict[str, ParsedFileInfo | None] = {}
         if leftover:
             for norm_base in ordered:
-                parsed_by_file[norm_base] = self._parsed_file_info(os.path.basename(on_disk[norm_base].path))
+                parsed_by_file[norm_base] = self._parsed_file_info(path_leaf(on_disk[norm_base].path))
             for name in pending.file_episode_map:
                 norm_base = normalized_leaf(name)
                 if norm_base not in parsed_by_file:
-                    parsed_by_file[norm_base] = self._parsed_file_info(os.path.basename(name))
+                    parsed_by_file[norm_base] = self._parsed_file_info(path_leaf(name))
 
         # The set the leftovers assign into: ordered_episode_ids, or - for a record
         # predating that field - one synthesized from its seeds (so the old
