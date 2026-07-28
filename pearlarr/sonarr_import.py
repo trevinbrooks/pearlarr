@@ -34,12 +34,10 @@ from .manual_import import (
     ImportProgress,
     ImportReadiness,
     PendingImport,
-    normalize_basename,
     normalize_group,
     normalized_leaf,
 )
 from .output import hub_note, hub_warn
-from .planner import index_episodes_by_key, size_identified_episodes
 from .run_services import RunDeps
 from .seadex_types import (
     CommandResource,
@@ -703,7 +701,7 @@ class PendingSeedContext:
     """The per-entry values every seed built for one AniList entry carries.
 
     One instance per `process_al_id` call, threaded whole into
-    `ImportReconciler.build_pending_seeds` (instead of five loose params) and
+    `ImportReconciler.build_pending_seeds` (instead of loose params) and
     copied onto each `PendingImport` the entry produces.
     """
 
@@ -717,6 +715,10 @@ class PendingSeedContext:
     """The entry's season/episode coverage at grab time (logging only)."""
     url: str | None = None
     """The SeaDex entry URL at grab time (logging only)."""
+    owned_episode_ids: tuple[int, ...] = ()
+    """Episodes whose untagged on-disk file the plan identified as a pick's copy by
+    listed size - carried from `PlanResult` so the import protects the exact files
+    the grab decision declined to re-download."""
 
 
 class ImportReconciler:
@@ -784,6 +786,10 @@ class ImportReconciler:
             own seed with its own `al_id`, so the records coexist in the store.
         """
 
+        # Steady state is nothing flagged: skip the per-entry derivations below.
+        if not any(u.download and u.infohash for item in seadex_dict.values() for u in item.urls.values()):
+            return {}
+
         ep_id_map = build_episode_id_map(ep_list)
         # The resolved episode ids for this entry, in season order - persisted onto
         # every record so import-time assignment maps files into OUR set (the same
@@ -791,15 +797,6 @@ class ImportReconciler:
         # Sonarr's title parse.
         ordered_episode_ids = [ep.id for ep in ep_list if ep.id]
         entry_groups = non_stale_groups(seadex_dict)
-        # The episodes whose untagged on-disk file the planner identified as a
-        # pick's copy, resolved through the same function so the import can't
-        # overwrite a file the grab decision just called ours.
-        episode_index = index_episodes_by_key(ep_list)
-        owned_episode_ids = [
-            episode_index[key].id
-            for key in size_identified_episodes(seadex_dict, episode_index)
-            if episode_index[key].id
-        ]
         # Per-file parse records are read straight from the cache facade
         # (`get_sonarr_parse`): each is the persisted parse entry
         # `{"fetched_at": str, "episodes": [...]}` written by
@@ -837,14 +834,14 @@ class ImportReconciler:
                     # First claim in file order wins: assignment defers a later
                     # file whose ids collide, so the seed refuses it the same way.
                     if file_ids and not any(i in claimed for i in file_ids):
-                        file_episode_map[normalize_basename(base)] = file_ids
+                        file_episode_map[normalized_leaf(base)] = file_ids
                         claimed.update(file_ids)
                     elif file_ids or parsed_outside_entry(parsed, ep_id_map, full_season=full_season):
                         # A collision-refused duplicate, or a clean parse landing
                         # entirely outside this entry's set (a sibling slice's
                         # file): this record will never import it, so completeness
                         # accounts for it. Any other refusal stays "possibly ours".
-                        excluded_files.append(normalize_basename(base))
+                        excluded_files.append(normalized_leaf(base))
                 if excluded_files:
                     self.logger.debug(
                         f"{entry.title}: not counted toward completeness "
@@ -873,7 +870,7 @@ class ImportReconciler:
                     slice_coverage=coverage_string(episodes_from_ep_list(claimed_eps)) or None,
                     excluded_files=excluded_files,
                     entry_groups=list(entry_groups),
-                    owned_episode_ids=list(owned_episode_ids),
+                    owned_episode_ids=list(entry.owned_episode_ids),
                 )
 
         return pending_seeds

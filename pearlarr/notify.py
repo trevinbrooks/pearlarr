@@ -27,7 +27,7 @@ from .discord import (
 from .log import count_noun, format_elapsed, human_bytes
 from .manual_import import OutcomeCategory
 from .output import hub_warn
-from .seadex_types import SeadexDict, SeadexUrlItem
+from .seadex_types import SeadexDict, SeadexUrlItem, Staleness
 from .torrents import AddOutcome, ReleaseOutcome
 from .wait_view import WaitResult
 
@@ -198,7 +198,7 @@ def _release_line(item: SeadexUrlItem) -> str:
         parts.append("dual audio")
     if item.is_fallback:
         parts.append("fallback")
-    if item.size_mismatch:
+    if item.staleness is Staleness.STALE:
         parts.append("upgrade")
     return " · ".join(parts)
 

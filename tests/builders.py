@@ -59,6 +59,7 @@ from pearlarr.seadex_types import (
     SeadexReleaseGroupItem,
     SeadexUrlItem,
     SonarrEpisode,
+    Staleness,
 )
 from pearlarr.sonarr_client import AbstractSonarrClient
 from pearlarr.sonarr_episodes import SonarrEpisodes
@@ -840,8 +841,7 @@ def url_item(
     infohash: str | None = "hash1",
     download: bool = False,
     is_fallback: bool = False,
-    size_mismatch: bool = False,
-    any_size_mismatch: bool = False,
+    staleness: Staleness = Staleness.CURRENT,
     episodes: list[EpisodeRecord] | None = None,
 ) -> SeadexUrlItem:
     """One SeaDex URL record, matching `get_seadex_dict`'s `url_item` shape."""
@@ -856,8 +856,7 @@ def url_item(
         infohash=infohash,
         download=download,
         is_fallback=is_fallback,
-        size_mismatch=size_mismatch,
-        any_size_mismatch=any_size_mismatch,
+        staleness=staleness,
         episodes=episodes or [],
     )
 
@@ -889,11 +888,13 @@ def sonarr_ep(
     size: int | None = None,
     release_group: str | None = None,
     episode_file_id: int = 1,
+    ep_id: int = 0,
 ) -> SonarrEpisode:
     """One `SonarrEpisode`, parsed from the raw fields the engine reads."""
 
     return SonarrEpisode.model_validate(
         {
+            "id": ep_id,
             "seasonNumber": season,
             "episodeNumber": episode,
             "episodeFileId": episode_file_id,

@@ -163,7 +163,7 @@ class TestUpgradePendingHoldsForOwnedStale:
         ep_list = [sonarr_ep(1, 1, size=100, release_group="Priv")]
 
         with _record() as recording:
-            hashes, out = filt.filter_downloads(11, sd, {"Priv": [100]}, ep_list)
+            hashes, out, _owned = filt.filter_downloads(11, sd, {"Priv": [100]}, ep_list)
 
         assert out["Fall"].urls[PUB_URL].download is False
         assert out["Priv"].urls[PRIV_URL].download is False
@@ -197,7 +197,7 @@ class TestUpgradePendingHoldsForOwnedStale:
         sd = filt.build(_entry_private_pick_plus_public_alt())
 
         with _record() as recording:
-            hashes, out = filt.filter_downloads(22, sd, {"Priv": [100]}, None)
+            hashes, out, _owned = filt.filter_downloads(22, sd, {"Priv": [100]}, None)
 
         assert out["Fall"].urls[PUB_URL].download is False
         assert out["Priv"].urls[PRIV_URL].download is False
@@ -241,7 +241,7 @@ class TestOwnedPreferredPrivateAtMatchingSize:
         ep_list = [sonarr_ep(1, 1, size=999, release_group="Priv")]
 
         with _record() as recording:
-            hashes, out = filt.filter_downloads(11, sd, {"Priv": [999]}, ep_list)
+            hashes, out, _owned = filt.filter_downloads(11, sd, {"Priv": [999]}, ep_list)
 
         assert out["Priv"].urls[PRIV_URL].download is False
         assert out["Fall"].urls[PUB_URL].download is False
@@ -279,7 +279,7 @@ class TestOwnedPreferredPrivateAtMatchingSize:
         sd = filt.build(entry)
 
         with _record() as recording:
-            hashes, out = filt.filter_downloads(22, sd, {"Priv": [999]}, None)
+            hashes, out, _owned = filt.filter_downloads(22, sd, {"Priv": [999]}, None)
 
         assert out["Priv"].urls[PRIV_URL].download is False
         assert out["Fall"].urls[PUB_URL].download is False
@@ -320,7 +320,7 @@ class TestOwnedPreferredPrivateAtMatchingSize:
         ep_list = [sonarr_ep(1, 1, size=100, release_group="Priv")]
 
         with _record() as recording:
-            hashes, out = filt.filter_downloads(11, sd, {"Priv": [100]}, ep_list)
+            hashes, out, _owned = filt.filter_downloads(11, sd, {"Priv": [100]}, ep_list)
 
         warnings = _warning_texts(recording)
         assert any("private-only (private releases not supported)" in m for m in warnings), warnings
@@ -356,7 +356,7 @@ class TestOwnedFallbackSoftSkip:
         sd = filt.build(entry)
 
         with _record() as recording:
-            hashes, out = filt.filter_downloads(11, sd, {}, None)
+            hashes, out, _owned = filt.filter_downloads(11, sd, {}, None)
 
         assert out["Priv"].urls[PRIV_URL].download is False
         assert out["Fall"].urls[PUB_URL].download is False
@@ -441,7 +441,7 @@ class TestFilterDownloadsNoticeSeam:
         ep_list = [sonarr_ep(1, 1, size=100, release_group="PrivA"), sonarr_ep(2, 1)]
 
         with _record() as recording:
-            hashes, out = filt.filter_downloads(44, sd, {"PrivA": [100]}, ep_list)
+            hashes, out, _owned = filt.filter_downloads(44, sd, {"PrivA": [100]}, ep_list)
 
         assert out["PubA"].urls[self.PUBA_URL].download is True
         assert out["PrivA"].urls[self.PRIVA_URL].download is False
@@ -539,7 +539,7 @@ class TestMixedGroupKeeperPreference:
 
         # Sonarr is missing both episodes: every url flags before the reducer.
         with _record() as recording:
-            hashes, out = filt.filter_downloads(55, sd, {}, [sonarr_ep(1, 1), sonarr_ep(2, 1)])
+            hashes, out, _owned = filt.filter_downloads(55, sd, {}, [sonarr_ep(1, 1), sonarr_ep(2, 1)])
 
         assert out["H"].urls[self.H_URL].download is True
         assert out["G"].urls[PUB_URL].download is False
@@ -593,7 +593,7 @@ class TestMixedGroupKeeperPreference:
             },
         )
 
-        hashes, out = filt.filter_downloads(56, sd, {}, [sonarr_ep(1, 1), sonarr_ep(2, 1)])
+        hashes, out, _owned = filt.filter_downloads(56, sd, {}, [sonarr_ep(1, 1), sonarr_ep(2, 1)])
         assert out["G"].urls[PUB_URL].download is True
         assert out["G"].urls[PRIV_URL].download is True
         assert hashes == [PUB_HASH]
@@ -670,7 +670,7 @@ class TestSurvivingPrivateCoverage:
         )
 
         # Sonarr is missing BOTH episodes: the batch and the fallback both flag.
-        hashes, out = filt.filter_downloads(33, sd, {}, [sonarr_ep(1, 1), sonarr_ep(2, 1)])
+        hashes, out, _owned = filt.filter_downloads(33, sd, {}, [sonarr_ep(1, 1), sonarr_ep(2, 1)])
         assert out["A"].urls[PRIV_URL].download is True
         assert out["A"].urls[PUB_URL].download is True
         assert hashes == [PUB_HASH]
@@ -753,7 +753,7 @@ class TestPromotionGeneralization:
         ep_list = [sonarr_ep(1, 1, size=100, release_group="Priv")]
 
         with _record() as recording:
-            hashes, out = filt.filter_downloads(66, sd, {"Priv": [100]}, ep_list)
+            hashes, out, _owned = filt.filter_downloads(66, sd, {"Priv": [100]}, ep_list)
 
         assert out["Pub"].urls[PUB_URL].download is True
         assert out["Priv"].urls[PRIV_URL].download is False
@@ -798,7 +798,7 @@ class TestPromotionGeneralization:
         sd = filt.build(self._preferred_pair_entry(73))
 
         with _record() as recording:
-            hashes, out = filt.filter_downloads(73, sd, {"Priv": [100]}, None)
+            hashes, out, _owned = filt.filter_downloads(73, sd, {"Priv": [100]}, None)
 
         assert out["Pub"].urls[PUB_URL].download is True
         assert out["Priv"].urls[PRIV_URL].download is False
@@ -876,7 +876,7 @@ class TestPromotionGeneralization:
         ]
 
         with _record() as recording:
-            hashes, out = filt.filter_downloads(77, sd, {"M": [555, 100]}, ep_list)
+            hashes, out, _owned = filt.filter_downloads(77, sd, {"M": [555, 100]}, ep_list)
 
         assert out["F"].urls[self.F_URL].download is False
         assert out["M"].urls[self.M_PUB_URL].download is False
@@ -971,7 +971,7 @@ class TestEqualUnionMixedGroups:
             )
 
             # Sonarr is missing both episodes: every url flags before the reducer.
-            hashes, out = filt.filter_downloads(al_id, sd, {}, [sonarr_ep(1, 1), sonarr_ep(2, 1)])
+            hashes, out, _owned = filt.filter_downloads(al_id, sd, {}, [sonarr_ep(1, 1), sonarr_ep(2, 1)])
             assert out["A"].urls[self.A_PUB_URL].download is True, f"order={al_id}"
             assert out["B"].urls[self.B_PUB_URL].download is True, f"order={al_id}"
             assert set(hashes) == {self.A_PUB_HASH, self.B_PUB_HASH}, f"order={al_id}"
@@ -1045,7 +1045,7 @@ class TestModeSwitchResurfacesFallbackSatisfied:
                 PUB_URL: [EpisodeRecord(season=1, episode=1, size=555)],
             },
         )
-        hashes, out = filt.filter_downloads(11, sd, {}, [sonarr_ep(1, 1)])
+        hashes, out, _owned = filt.filter_downloads(11, sd, {}, [sonarr_ep(1, 1)])
         assert out["Fall"].urls[PUB_URL].download is True
 
         torrents = FakeTorrents({PUB_HASH: (AddOutcome.ADDED, "Fall S01")})
@@ -1091,7 +1091,7 @@ class TestModeSwitchResurfacesFallbackSatisfied:
         _fill_episodes(sd_warn, {PRIV_URL: [EpisodeRecord(season=1, episode=1, size=999)]})
         ep_list = [sonarr_ep(1, 1, size=555, release_group="Fall")]
         with _record() as recording:
-            warn_hashes, warn_out = warn_filt.filter_downloads(11, sd_warn, {"Fall": [555]}, ep_list)
+            warn_hashes, warn_out, _warn_owned = warn_filt.filter_downloads(11, sd_warn, {"Fall": [555]}, ep_list)
         warnings = _warning_texts(recording)
         assert any("private-only (private releases not supported)" in m for m in warnings), warnings
 

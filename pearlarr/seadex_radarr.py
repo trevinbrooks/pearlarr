@@ -214,11 +214,12 @@ class RadarrSync(ArrSync[RadarrItem]):
             if len(seadex_dict) == 0:
                 return run.invalid_selection_skip()
 
-        torrent_hashes, seadex_dict = run.filter_seadex_downloads(
+        plan = run.filter_seadex_downloads(
             al_id=al_id,
             seadex_dict=seadex_dict,
             arr_release_dict=radarr_release_dict,
         )
+        torrent_hashes, seadex_dict = plan.torrent_hashes, plan.seadex_dict
 
         # Seed a pending-import record per grabbed torrent so the engine's
         # data-driven gate persists it. The post-import category move then defers
