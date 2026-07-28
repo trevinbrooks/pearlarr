@@ -26,6 +26,7 @@ from pearlarr.config import Arr
 from pearlarr.grab_pipeline import GrabRequest
 from pearlarr.log import EntryState
 from pearlarr.manual_import import (
+    AttemptKind,
     GuardFacts,
     ImportProgress,
     ImportReadiness,
@@ -685,7 +686,7 @@ class TestImportCompletedQueueState:
             ],
         )
 
-        probe = strat.import_completed(pending, "/d", force=True)
+        probe = strat.import_completed(pending, "/d", AttemptKind.FORCED)
 
         assert probe.readiness is ImportReadiness.RETRY
         assert probe.files_present is False
@@ -730,7 +731,7 @@ class TestImportCompletedQueueState:
             commands=[_inflight_manual_import("ABC123")],
         )
 
-        probe = strat.import_completed(pending, "/d", force=True)
+        probe = strat.import_completed(pending, "/d", AttemptKind.FORCED)
 
         assert probe.readiness is ImportReadiness.RETRY
         assert probe.command_issued is True
@@ -914,7 +915,7 @@ class TestImportCompletedQueueState:
             queue=[queue_record("ABC123", "importPending", status="ok")],
         )
 
-        probe = strat.import_completed(pending, "/d", force=True)
+        probe = strat.import_completed(pending, "/d", AttemptKind.FORCED)
 
         assert probe.readiness is ImportReadiness.RETRY
         assert probe.command_issued is True
@@ -1207,7 +1208,7 @@ class TestInFlightManualImportGuard:
             commands=[_inflight_manual_import("abc123")],
         )
 
-        probe = strat.import_completed(pending, "/d", force=True)
+        probe = strat.import_completed(pending, "/d", AttemptKind.FORCED)
 
         assert probe.readiness is ImportReadiness.RETRY
         assert probe.command_issued is True
@@ -1783,7 +1784,7 @@ class TestManualImportWarningGating:
         recording = install_recording_hub()
 
         with caplog.at_level("DEBUG"):
-            probe = strat.import_completed(pending, "/d", at_deadline=False)
+            probe = strat.import_completed(pending, "/d", AttemptKind.POLL)
 
         assert probe.readiness is ImportReadiness.RETRY
         assert not any(
@@ -1795,7 +1796,7 @@ class TestManualImportWarningGating:
         strat, pending = self._strat_with_missing_file()
         recording = install_recording_hub()
 
-        probe = strat.import_completed(pending, "/d", at_deadline=True)
+        probe = strat.import_completed(pending, "/d", AttemptKind.DEADLINE)
 
         assert probe.readiness is ImportReadiness.RETRY
         assert any("not visible to Sonarr" in message for message in diagnostic_messages(recording, Severity.WARNING))

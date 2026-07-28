@@ -33,6 +33,7 @@ from pearlarr.grab_pipeline import GrabPipeline
 from pearlarr.import_wait import ImportWaitManager, MonitorPass
 from pearlarr.log import LOG_NAME
 from pearlarr.manual_import import (
+    AttemptKind,
     ImportProbe,
     ImportProgress,
     ImportReadiness,
@@ -369,18 +370,17 @@ _EXPIRED = "2000-01-01 00:00:00"
 
 @dataclass(frozen=True)
 class _ImportCall:
-    """One recorded `import_completed` call: its record/path + force/deadline flags."""
+    """One recorded `import_completed` call: its record/path + attempt kind."""
 
     pending: PendingImport
     content_path: str
-    force: bool
-    at_deadline: bool
+    attempt: AttemptKind
 
 
 class _RecordingStrategy(FakeStrategy):
     """A `FakeStrategy` that records + scripts the two import hooks the manager drives.
 
-    `import_completed` records each call's force/at_deadline flags (asserted on
+    `import_completed` records each call's attempt kind (asserted on
     `import_calls`) and dispenses a scripted `ImportProbe` - a single
     `completed` repeated, a `completed_sequence` advanced per call (clamped to its
     last), or a `completed_error` raised (the swallowed-import path).
@@ -418,11 +418,9 @@ class _RecordingStrategy(FakeStrategy):
         self,
         pending: PendingImport,
         content_path: str,
-        *,
-        force: bool = False,
-        at_deadline: bool = False,
+        attempt: AttemptKind = AttemptKind.POLL,
     ) -> ImportProbe:
-        self.import_calls.append(_ImportCall(pending, content_path, force, at_deadline))
+        self.import_calls.append(_ImportCall(pending, content_path, attempt))
         if self._completed_error is not None:
             raise self._completed_error
         if self._completed_sequence is not None:
@@ -623,8 +621,7 @@ class TestSnapshotPendingForSeries:
         # series that grabbed several torrents).
         assert reporter.snapshot_calls[0].title == f"Show{SEP}SubGroup"
         # Forced (CDH-off safe) but NOT at the deadline (no loud warning).
-        assert strategy.import_calls[-1].force is True
-        assert strategy.import_calls[-1].at_deadline is False
+        assert strategy.import_calls[-1].attempt is AttemptKind.FORCED
 
     def test_carried_over_downloading_is_queued_and_kept(self) -> None:
         # Still downloading -> queued, record kept, no import attempt.
@@ -730,8 +727,7 @@ class TestReconcileRemaining:
 
         assert mgr._pending_records() == {}
         assert mgr._ctx.stats.imported == 1
-        assert strategy.import_calls[-1].force is True
-        assert strategy.import_calls[-1].at_deadline is False
+        assert strategy.import_calls[-1].attempt is AttemptKind.FORCED
 
     def test_skips_already_snapshotted(self) -> None:
         # A record the inline snapshot already touched must not be re-polled.
@@ -1067,8 +1063,7 @@ class TestRunMonitor:
         # The final in-bound poll forces AND flags the deadline, for THIS torrent's path.
         last = strategy.import_calls[-1]
         assert last.content_path == "/d"
-        assert last.force is True
-        assert last.at_deadline is True
+        assert last.attempt is AttemptKind.DEADLINE
 
     def test_landing_files_re_anchor_the_ready_deadline(self) -> None:
         # A season pack Sonarr copies file-by-file: a baseline (t=0) then a rise
@@ -1108,7 +1103,7 @@ class TestRunMonitor:
         assert mgr._pending_records() == {}
         # Four polls (t=0/30/60/90), none forced: the deadline never fired.
         assert len(strategy.import_calls) == 4
-        assert all(c.at_deadline is False for c in strategy.import_calls)
+        assert all(not c.attempt.at_deadline for c in strategy.import_calls)
 
     def test_deadline_attempt_rescued_by_a_same_cycle_landing(self) -> None:
         # The forced deadline attempt itself reports a fresh rise (0/3 -> 1/3 at
@@ -1145,7 +1140,7 @@ class TestRunMonitor:
         assert view.final(rk("h")).outcome is Outcome.STILL_IMPORTING
         assert set(mgr._pending_records()) == {pk("h")}
         # t=0/30 in-bound, t=60 forced-but-rescued, t=90 in-bound, t=120 forced.
-        assert [c.at_deadline for c in strategy.import_calls] == [False, False, True, False, True]
+        assert [c.attempt.at_deadline for c in strategy.import_calls] == [False, False, True, False, True]
 
     def test_deferred_polls_never_walk_away_mid_copy(self) -> None:
         # Our own copy in flight across the ready deadline: every deferred poll
@@ -1178,7 +1173,7 @@ class TestRunMonitor:
         assert mgr._pending_records() == {}
         # Four polls (t=0/30/60/90), none forced: the credited clock never expired.
         assert len(strategy.import_calls) == 4
-        assert all(c.at_deadline is False for c in strategy.import_calls)
+        assert all(not c.attempt.at_deadline for c in strategy.import_calls)
 
     def test_deferral_pauses_the_ready_clock_never_resets_it(self) -> None:
         # Two stalled polls burn the clock (t=0/30), the t=60 deadline poll
@@ -1213,7 +1208,7 @@ class TestRunMonitor:
         assert set(mgr._pending_records()) == {pk("h")}
         # t=60 reaches the deadline but defers (no terminal); t=90 is the real
         # forced attempt.
-        assert [c.at_deadline for c in strategy.import_calls] == [False, False, True, True]
+        assert [c.attempt.at_deadline for c in strategy.import_calls] == [False, False, True, True]
 
     def test_deferral_credit_is_capped_so_a_wedged_command_ends_the_watch(self) -> None:
         # A command wedged in flight forever: deferred polls stop earning
@@ -1275,7 +1270,7 @@ class TestRunMonitor:
         assert set(mgr._pending_records()) == {pk("h")}
         # Three polls (t=0/30/60): the third is the forced deadline attempt.
         assert len(strategy.import_calls) == 3
-        assert strategy.import_calls[-1].at_deadline is True
+        assert strategy.import_calls[-1].attempt is AttemptKind.DEADLINE
 
     def test_fast_lane_landing_re_anchors_the_deadline(self) -> None:
         # The cheap Tier-2 poll sees a file land (1/3 -> 2/3) even though the
@@ -1309,7 +1304,7 @@ class TestRunMonitor:
         # Heavy polls at t=0/30/60/90: the t=60 poll is in-bound only because the
         # t=10 fast-lane rise re-anchored the deadline to fire at t=70.
         assert len(strategy.import_calls) == 4
-        assert strategy.import_calls[-1].at_deadline is True
+        assert strategy.import_calls[-1].attempt is AttemptKind.DEADLINE
 
     def test_missing_drops_record(self) -> None:
         strategy = _RecordingStrategy()

@@ -23,6 +23,7 @@ import qbittorrentapi
 from .cache import UPDATED_AT_STR_FORMAT
 from .log import count_noun
 from .manual_import import (
+    AttemptKind,
     ImportProbe,
     ImportProgress,
     ImportReadiness,
@@ -177,9 +178,7 @@ class ImportWaitManager:
         self,
         pending: PendingImport,
         path: str,
-        *,
-        force: bool = False,
-        at_deadline: bool = False,
+        attempt: AttemptKind = AttemptKind.POLL,
     ) -> ImportProbe:
         """Drive the strategy's `import_completed`, swallowing any error.
 
@@ -189,21 +188,15 @@ class ImportWaitManager:
         On any exception the record is left pending (returns a `LEAVE` probe) and
         the run continues. A real terminal failure is just retried next run / TTL'd.
 
-        `force` is threaded through so the engine can tell the strategy to stop
-        deferring to Sonarr on a clean `importPending` (the snapshot/reconcile
-        passes and the final in-bound monitor poll). `at_deadline` flags the final
-        attempt so a still-missing file warns loudly rather than at debug.
+        `attempt` is threaded through whole (see `AttemptKind`): the
+        snapshot/reconcile passes force past a clean `importPending`, and the
+        deadline attempt additionally warns loudly on a still-missing file.
         """
 
         if self._active_strategy is None:
             return ImportProbe(ImportReadiness.LEAVE, files_present=False, command_issued=False)
         try:
-            return self._active_strategy.import_completed(
-                pending,
-                path,
-                force=force,
-                at_deadline=at_deadline,
-            )
+            return self._active_strategy.import_completed(pending, path, attempt)
         except Exception as e:
             hub_error(f"Manual import failed for {pending.display_label} - leaving it for a later run", exc=e)
             return ImportProbe(ImportReadiness.LEAVE, files_present=False, command_issued=False)
@@ -247,12 +240,7 @@ class ImportWaitManager:
         poll = self.poll_torrent(pending.infohash)
         probe = ImportProbe(ImportReadiness.LEAVE, files_present=False, command_issued=False)
         if poll.outcome is WaitOutcome.COMPLETE and poll.content_path:
-            probe = self.try_import_completed(
-                pending,
-                poll.content_path,
-                force=True,
-                at_deadline=False,
-            )
+            probe = self.try_import_completed(pending, poll.content_path, AttemptKind.FORCED)
 
         state = classify_pending(poll.outcome, probe.files_present)
         self._ctx.pending_states[pending.key] = state
@@ -846,8 +834,7 @@ class MonitorPass:
         probe = self._mgr.try_import_completed(
             record,
             poll.content_path,
-            force=at_deadline,
-            at_deadline=at_deadline,
+            AttemptKind.DEADLINE if at_deadline else AttemptKind.POLL,
         )
         landed = clock.note_progress(probe.imported_count, probe.target_count, now_ts)
         # Waiting on our own work is not this record stalling (a landed poll

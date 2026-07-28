@@ -9,7 +9,7 @@ from .cache import UPDATED_AT_STR_FORMAT, CacheRecord
 from .config import Arr
 from .grab_pipeline import GrabRequest, clean_replaced_groups
 from .log import pluralize
-from .manual_import import ImportProbe, ImportProgress, ImportReadiness, ImportWaitMode, PendingImport
+from .manual_import import AttemptKind, ImportProbe, ImportProgress, ImportReadiness, ImportWaitMode, PendingImport
 from .mappings import ExternalIds, MappingEntry
 from .output import hub_warn
 from .protocols import ArrSync
@@ -287,9 +287,7 @@ class RadarrSync(ArrSync[RadarrItem]):
         self,
         pending: PendingImport,
         content_path: str,
-        *,
-        force: bool = False,
-        at_deadline: bool = False,
+        attempt: AttemptKind = AttemptKind.POLL,
     ) -> ImportProbe:
         """Reconcile one completed Radarr download against Radarr's import history.
 
@@ -303,11 +301,11 @@ class RadarrSync(ArrSync[RadarrItem]):
           * no event yet -> leave the record pending (the category stays deferred),
           * a history outage (`history_since` -> None) -> leave pending, never move.
 
-        `content_path` / `force` / `at_deadline` are unused - there is no local
-        import to drive or defer, only the yes/no history check.
+        `content_path` / `attempt` are unused - there is no local import to
+        drive or defer, only the yes/no history check.
         """
 
-        del content_path, force, at_deadline
+        del content_path, attempt
         evidence = self._import_evidence()
         if not evidence.readable:
             # Outage: no evidence, so wait - never move a torrent on a missing read.

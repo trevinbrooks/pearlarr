@@ -58,7 +58,7 @@ from pearlarr.sonarr_import_plan import (
     EpisodeSnapshot,
     ParsedQuality,
     QueueVerdict,
-    all_targets_done,
+    TargetStatuses,
     build_episode_id_map,
     classify_commands,
     classify_download_history,
@@ -75,7 +75,6 @@ from pearlarr.sonarr_import_plan import (
     resolve_quality,
     sonarr_process_pass_running,
     started_disk_commands,
-    targets_needing_import,
     translate_download_path,
 )
 
@@ -227,10 +226,10 @@ class TestEpisodeIdsForParsed:
 
 
 class TestEpisodeFileStatuses:
-    """`episode_file_statuses` classifies each episode's file, and the two summary helpers derive from that.
+    """`episode_file_statuses` classifies each episode's file; the `TargetStatuses` folds derive from that.
 
-    `all_targets_done` is true only when every status is recommended. `targets_needing_import` excludes only
-    the recommended ones.
+    `all_done` is true only when every status is recommended. `needing_import`
+    excludes only the recommended ones.
     """
 
     def test_absent_recommended_other_unknown(self) -> None:
@@ -241,7 +240,7 @@ class TestEpisodeFileStatuses:
             4: sonarr_ep(1, 1, ep_id=4, episode_file_id=40, release_group=None),
         }
         statuses = episode_file_statuses([1, 2, 3, 4], EpisodeSnapshot(episodes, {"subgroup": None}))
-        assert statuses == {
+        assert statuses.by_id == {
             1: EpisodeFileStatus.ABSENT,
             2: EpisodeFileStatus.RECOMMENDED,
             3: EpisodeFileStatus.OTHER_GROUP,
@@ -250,14 +249,14 @@ class TestEpisodeFileStatuses:
 
     def test_missing_episode_is_absent(self) -> None:
         statuses = episode_file_statuses([99], EpisodeSnapshot({}, {"subgroup": None}))
-        assert statuses == {99: EpisodeFileStatus.ABSENT}
+        assert statuses.by_id == {99: EpisodeFileStatus.ABSENT}
 
     def test_dash_wrapped_group_counts_as_recommended(self) -> None:
         # Sonarr can report a file's group dash-wrapped ("-Aergia-"). The overwrite
         # guard must still match it against the recommended set built from "Aergia".
         episodes = {5: sonarr_ep(1, 1, ep_id=5, episode_file_id=50, release_group="-Aergia-")}
         statuses = episode_file_statuses([5], EpisodeSnapshot(episodes, {normalize_group("Aergia"): None}))
-        assert statuses == {5: EpisodeFileStatus.RECOMMENDED}
+        assert statuses.by_id == {5: EpisodeFileStatus.RECOMMENDED}
 
     def test_untagged_file_the_grab_identified_is_recommended(self) -> None:
         # The planner declined to re-download this file because a pick's listed
@@ -268,7 +267,7 @@ class TestEpisodeFileStatuses:
             7: sonarr_ep(1, 1, ep_id=7, episode_file_id=70, release_group=None),
         }
         snapshot = EpisodeSnapshot(episodes, {"subgroup": None}, owned_episode_sizes={6: 600})
-        assert episode_file_statuses([6, 7], snapshot) == {
+        assert episode_file_statuses([6, 7], snapshot).by_id == {
             6: EpisodeFileStatus.RECOMMENDED,
             7: EpisodeFileStatus.UNKNOWN_GROUP,
         }
@@ -279,7 +278,7 @@ class TestEpisodeFileStatuses:
         # would mark an unverified file done and never send ours.
         episodes = {6: sonarr_ep(1, 1, ep_id=6, episode_file_id=60, release_group=None, size=601)}
         snapshot = EpisodeSnapshot(episodes, {"subgroup": None}, owned_episode_sizes={6: 600})
-        assert episode_file_statuses([6], snapshot) == {6: EpisodeFileStatus.UNKNOWN_GROUP}
+        assert episode_file_statuses([6], snapshot).by_id == {6: EpisodeFileStatus.UNKNOWN_GROUP}
 
     def test_owned_claim_needs_a_readable_file_record(self) -> None:
         # A truthy episodeFileId with a null/empty episodeFile payload carries
@@ -287,14 +286,14 @@ class TestEpisodeFileStatuses:
         # sight-unseen onto a file record Sonarr couldn't even describe.
         ep = SonarrEpisode.model_validate({"id": 6, "seasonNumber": 1, "episodeNumber": 1, "episodeFileId": 60})
         snapshot = EpisodeSnapshot({6: ep}, {"subgroup": None}, owned_episode_sizes={6: 600})
-        assert episode_file_statuses([6], snapshot) == {6: EpisodeFileStatus.UNKNOWN_GROUP}
+        assert episode_file_statuses([6], snapshot).by_id == {6: EpisodeFileStatus.UNKNOWN_GROUP}
 
     def test_own_group_file_at_a_listed_size_is_recommended(self) -> None:
         # Our own group's file at a size a current listing carries is our copy
         # (just imported, or an already-current episode of the pack).
         episodes = {5: sonarr_ep(1, 1, ep_id=5, episode_file_id=50, release_group="SubGroup", size=1000)}
         snapshot = EpisodeSnapshot(episodes, {"subgroup": frozenset({1000})})
-        assert episode_file_statuses([5], snapshot) == {5: EpisodeFileStatus.RECOMMENDED}
+        assert episode_file_statuses([5], snapshot).by_id == {5: EpisodeFileStatus.RECOMMENDED}
 
     def test_own_group_file_at_an_unlisted_size_is_replaced(self) -> None:
         # A same-group file at a size NO current listing carries is the stale
@@ -302,30 +301,32 @@ class TestEpisodeFileStatuses:
         # with zero imports and strand the upgrade forever.
         episodes = {5: sonarr_ep(1, 1, ep_id=5, episode_file_id=50, release_group="SubGroup", size=999)}
         snapshot = EpisodeSnapshot(episodes, {"subgroup": frozenset({1000})})
-        assert episode_file_statuses([5], snapshot) == {5: EpisodeFileStatus.OTHER_GROUP}
+        assert episode_file_statuses([5], snapshot).by_id == {5: EpisodeFileStatus.OTHER_GROUP}
 
     def test_size_gate_off_for_a_name_trusted_group(self) -> None:
         # A None trust value (an older record, or a blind listing, recorded no
         # sizes) keeps the group-name-only behavior rather than replacing blindly.
         episodes = {5: sonarr_ep(1, 1, ep_id=5, episode_file_id=50, release_group="SubGroup", size=999)}
         snapshot = EpisodeSnapshot(episodes, {"subgroup": None})
-        assert episode_file_statuses([5], snapshot) == {5: EpisodeFileStatus.RECOMMENDED}
+        assert episode_file_statuses([5], snapshot).by_id == {5: EpisodeFileStatus.RECOMMENDED}
 
-    def test_all_targets_done_only_when_all_recommended(self) -> None:
-        rec = {1: EpisodeFileStatus.RECOMMENDED, 2: EpisodeFileStatus.RECOMMENDED}
-        mixed = {1: EpisodeFileStatus.RECOMMENDED, 2: EpisodeFileStatus.OTHER_GROUP}
-        assert all_targets_done(rec) is True
-        assert all_targets_done(mixed) is False
-        assert all_targets_done({}) is False
+    def test_all_done_only_when_all_recommended(self) -> None:
+        rec = TargetStatuses({1: EpisodeFileStatus.RECOMMENDED, 2: EpisodeFileStatus.RECOMMENDED})
+        mixed = TargetStatuses({1: EpisodeFileStatus.RECOMMENDED, 2: EpisodeFileStatus.OTHER_GROUP})
+        assert rec.all_done() is True
+        assert mixed.all_done() is False
+        assert TargetStatuses({}).all_done() is False
 
-    def test_targets_needing_import_excludes_only_recommended(self) -> None:
-        statuses = {
-            1: EpisodeFileStatus.ABSENT,
-            2: EpisodeFileStatus.RECOMMENDED,
-            3: EpisodeFileStatus.OTHER_GROUP,
-            4: EpisodeFileStatus.UNKNOWN_GROUP,
-        }
-        assert targets_needing_import(statuses) == {1, 3, 4}
+    def test_needing_import_excludes_only_recommended(self) -> None:
+        statuses = TargetStatuses(
+            {
+                1: EpisodeFileStatus.ABSENT,
+                2: EpisodeFileStatus.RECOMMENDED,
+                3: EpisodeFileStatus.OTHER_GROUP,
+                4: EpisodeFileStatus.UNKNOWN_GROUP,
+            }
+        )
+        assert statuses.needing_import() == {1, 3, 4}
 
 
 def _candidate(basename: str, *, sample: bool = False, already: bool = False) -> CandidateFile:
