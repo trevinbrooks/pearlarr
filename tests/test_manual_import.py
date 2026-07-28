@@ -26,6 +26,7 @@ from pearlarr.manual_import import (
     classify_pending,
     normalize_basename,
     normalize_group,
+    normalized_leaves,
     resolve_wait_mode,
     sanitize_torrent_telemetry,
 )
@@ -140,6 +141,14 @@ class TestNormalize:
 
     def test_strips_and_casefolds(self) -> None:
         assert normalize_basename("  Show - 01.MKV  ") == "show - 01.mkv"
+
+    def test_normalized_leaves_fold_folders_away(self) -> None:
+        # Cross-listing comparison: a folder-nested path and its flat twin
+        # reduce to the same leaf.
+        assert normalized_leaves(["NC/Show NCED01.mkv", "Show - 01.MKV"]) == {
+            "show nced01.mkv",
+            "show - 01.mkv",
+        }
 
     def test_group_casefold(self) -> None:
         assert normalize_group("SubGroup") == normalize_group("subgroup")
@@ -926,6 +935,7 @@ class TestPendingImportRoundTrip:
             url="https://releases.moe/1",
             slice_coverage="S02 E01-E02",
             excluded_files=["other-slice.mkv"],
+            entry_groups=["Era-Raws", "OtherPick"],
         )
         assert PendingImport.from_json(pending.to_json()) == pending
 
@@ -937,6 +947,8 @@ class TestPendingImportRoundTrip:
         # Pre-excluded_files records rehydrate empty (completeness stays
         # conservative for them).
         assert rebuilt.excluded_files == []
+        # Pre-entry_groups records guard on grabbed groups alone.
+        assert rebuilt.entry_groups == []
         # A legacy record with no al_id rehydrates under the 0 sentinel and keys
         # as its hash's singleton.
         assert rebuilt.al_id == 0

@@ -245,6 +245,7 @@ class RadarrSync(ArrSync[RadarrItem]):
                     seadex_files=[],
                     coverage=None,
                     ordered_episode_ids=[],
+                    entry_groups=list(seadex_dict),
                 )
                 for srg, srg_item in seadex_dict.items()
                 for url_item in srg_item.urls.values()

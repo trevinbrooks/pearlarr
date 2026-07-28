@@ -477,8 +477,8 @@ class EpisodeFileStatus(Enum):
     """No file yet. Import ours."""
 
     RECOMMENDED = auto()
-    """Already holds a file from a recommended group (ours, or another preferred torrent we grabbed for this
-    series). It is done - do NOT overwrite it."""
+    """Already holds a file from a recommended group (ours, another torrent we grabbed for this series, or
+    a group the entry's SeaDex picks carried at grab time). It is done - do NOT overwrite it."""
 
     OTHER_GROUP = auto()
     """Holds a file from a non-recommended group. Import ours over it (the operator's intended replacement)."""
@@ -498,7 +498,7 @@ class EpisodeSnapshot(NamedTuple):
     """The fresh episode index."""
 
     recommended_groups: set[str]
-    """The normalized (overwrite-guard) recommended-group set."""
+    """The normalized (overwrite-guard) recommended-group set: grabbed groups plus the entries' pick groups."""
 
 
 def episode_file_statuses(
@@ -508,9 +508,9 @@ def episode_file_statuses(
     """Classify each intended target episode by its current on-disk file.
 
     Pure: reads only the snapshot's episode list and (normalized) set of
-    recommended release groups for the series (every group we grabbed). "Already
-    imported" is decided HERE from the episode files - not from the queue, since
-    Sonarr drops an imported item from its queue almost immediately.
+    recommended release groups for the series. "Already imported" is decided
+    HERE from the episode files - not from the queue, since Sonarr drops an
+    imported item from its queue almost immediately.
 
     Args:
         target_ep_ids: The episode ids our mapping intends to fill.

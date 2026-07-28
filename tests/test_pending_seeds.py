@@ -68,6 +68,24 @@ class TestBuildPendingSeeds:
 
         # Only the download+hash url is seeded (no download / no hash are skipped).
         assert set(seeds) == {"h1"}
+
+    def test_seed_snapshots_every_entry_group(self) -> None:
+        # entry_groups carries the whole filtered dict - grabbed or not - so
+        # the import-time overwrite guard protects groups we never grabbed.
+        ep_list = [_ep(101, 1, 1)]
+        parse_cache = {"Show - 01.mkv": {"episodes": [{"season": 1, "episode": 1}]}}
+        seadex_dict = {
+            "RG": rg_group({"u1": url_item(files=["Show - 01.mkv"], size=[1000], infohash="h1", download=True)}),
+            "Kept": rg_group({"u2": url_item(files=["Show - 01.mkv"], size=[1000], infohash=None, download=False)}),
+        }
+
+        seeds = _strat(parse_cache)._reconciler.build_pending_seeds(
+            seadex_dict=seadex_dict,
+            ep_list=ep_list,
+            entry=PendingSeedContext(al_id=1, series_id=7, title="Show"),
+        )
+
+        assert seeds["h1"].entry_groups == ["RG", "Kept"]
         seed = seeds["h1"]
         assert seed.series_id == 7
         assert seed.al_id == 1  # part of the record's PendingKey

@@ -966,6 +966,28 @@ class TestImportCompletedQueueState:
         assert probe.files_present is True
         assert sonarr.candidate_calls == []
 
+    def test_target_holding_another_entry_group_is_protected(self) -> None:
+        # The overwrite guard spans every group the entry's picks carried at
+        # grab time, not just grabbed ones: a file from a pick we never grabbed
+        # reads RECOMMENDED -> done, never imported over.
+        pending = pending_import(
+            infohash="abc123",
+            release_group="SubGroup",
+            file_episode_map={"Show - 01 [1080p].mkv": [101]},
+            episode_ids=[101],
+            entry_groups=["SubGroup", "OtherPick"],
+        )
+        strat, sonarr = _make_sonarr_for_import(
+            candidates=[manual_candidate("/d/Show - 01 [1080p].mkv")],
+            episodes=[_ep_with_file(101, group="OtherPick")],
+        )
+
+        probe = strat.import_completed(pending, "/d")
+
+        assert probe.readiness is ImportReadiness.IMPORTED
+        assert probe.files_present is True
+        assert sonarr.candidate_calls == []
+
     def test_import_blocked_steps_in_with_our_mapping(self) -> None:
         # Sonarr can't auto-import (importBlocked) -> our authoritative manual
         # import takes over and ISSUES the command. The copy is async, so right
