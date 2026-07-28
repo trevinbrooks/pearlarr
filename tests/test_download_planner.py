@@ -910,6 +910,23 @@ class TestFilterByReleaseGroup:
         )
         assert result.seadex_dict["Era-Raws"].urls["u2"].download is True
 
+    def test_plan_drops_an_ownership_claim_with_no_real_episode_id(self) -> None:
+        # PIN (intent, not a bug): the owned-episodes fold keeps only episodes
+        # with a real id - an id-0 claim could never be re-verified or POSTed
+        # at import time, so it must not ride the guards.
+        planner = make_planner()
+        seadex = {
+            "Era-Raws": rg_group(
+                {"u1": url_item(episodes=[EpisodeRecord(season=1, episode=1, size=100)], infohash="h1")},
+            ),
+        }
+        result = planner.filter_by_release_group(
+            seadex_dict=seadex,
+            arr_release_dict={},
+            ep_list=[sonarr_ep(1, 1, size=100, release_group=None, ep_id=0)],
+        )
+        assert result.guards.owned_episodes == ()
+
     def test_plan_reports_no_owned_episode_for_a_tagged_file(self) -> None:
         # A file that still carries a group tag is identified by name, never by
         # size - reading it as owned would bypass the group guard entirely.

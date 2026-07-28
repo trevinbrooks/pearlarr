@@ -1063,6 +1063,39 @@ class TestImportCompletedQueueState:
         assert len(sonarr.episodes_calls) == 2
         assert len(sonarr.execute_calls) == 1
 
+    def test_self_heal_on_one_poll_unlocks_the_fast_path_on_the_next(self) -> None:
+        # PIN: assignment self-heals THROUGH the frozen record's mutable map
+        # field, and the cross-poll effect exists only because the caller holds
+        # the same object. Poll 1 places the unseeded file (healing the map in
+        # place); poll 2 must take the map-complete IMPORTED fast path - no new
+        # candidate scan - off the healed map. Anyone purifying the heal must
+        # keep this behavior (rehydrated reconcile passes never see the heal).
+        pending = pending_import(
+            file_episode_map={},
+            episode_ids=[],
+            seadex_files=["Show - S01E01.mkv"],
+            ordered_episode_ids=[101],
+        )
+        strat, sonarr = _make_sonarr_for_import(
+            candidates=[manual_candidate("/d/Show - S01E01.mkv")],
+            episodes=[sonarr_ep(1, 1, ep_id=101, episode_file_id=0)],
+        )
+
+        first = strat.import_completed(pending, "/d")
+        assert first.readiness is ImportReadiness.RETRY
+        assert first.command_issued is True
+        # The heal: the placement landed on the record itself.
+        assert pending.file_episode_map == {"show - s01e01.mkv": [101]}
+
+        # The copy landed; the next poll trusts the healed map alone.
+        sonarr.episodes_return = [sonarr_ep(1, 1, ep_id=101, release_group="SubGroup")]
+
+        second = strat.import_completed(pending, "/d")
+        assert second.readiness is ImportReadiness.IMPORTED
+        assert second.files_present is True
+        assert len(sonarr.candidate_calls) == 1
+        assert len(sonarr.execute_calls) == 1
+
     def test_not_in_queue_steps_in(self) -> None:
         # Sonarr isn't tracking the download (our holding category) -> step in,
         # issuing the import command (RETRY + command_issued until the copy lands).
