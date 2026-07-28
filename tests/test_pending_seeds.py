@@ -69,6 +69,16 @@ class TestBuildPendingSeeds:
 
         # Only the download+hash url is seeded (no download / no hash are skipped).
         assert set(seeds) == {"h1"}
+        seed = seeds["h1"]
+        assert seed.series_id == 7
+        assert seed.al_id == 1  # part of the record's PendingKey
+        assert seed.title == "Show"
+        assert seed.file_episode_map == {normalize_basename("Show - 01.mkv"): [101]}
+        assert seed.seadex_files == ["Show - 01.mkv"]
+        # The record's own episode slice, for the wait/notification label.
+        assert seed.slice_coverage == "S01 E01"
+        # episode_ids is a legacy read-only fallback. New seeds never write it.
+        assert seed.episode_ids == []
 
     def test_seed_snapshots_every_entry_group(self) -> None:
         # entry_groups carries the whole filtered dict - grabbed or not - so
@@ -116,16 +126,6 @@ class TestBuildPendingSeeds:
         )
 
         assert seeds["h1"].entry_groups == ["RG"]
-        seed = seeds["h1"]
-        assert seed.series_id == 7
-        assert seed.al_id == 1  # part of the record's PendingKey
-        assert seed.title == "Show"
-        assert seed.file_episode_map == {normalize_basename("Show - 01.mkv"): [101]}
-        assert seed.seadex_files == ["Show - 01.mkv"]
-        # The record's own episode slice, for the wait/notification label.
-        assert seed.slice_coverage == "S01 E01"
-        # episode_ids is a legacy read-only fallback. New seeds never write it.
-        assert seed.episode_ids == []
 
     def test_multi_file_pack_de_unions_flat_fallback(self) -> None:
         ep_list = [_ep(101, 1, 1), _ep(102, 1, 2)]

@@ -1,7 +1,6 @@
 """The SeaDex release filter: builds the per-entry `seadex_dict` and applies the selection rules."""
 
 import sys
-from collections import Counter
 from typing import TYPE_CHECKING, NamedTuple
 
 from rich.console import Console
@@ -10,7 +9,7 @@ from seadex import EntryRecord, TorrentRecord
 from .config import PRIVATE_TRACKERS, PrivateReleaseAction
 from .console_caps import console_of
 from .log import indent_string
-from .manual_import import normalized_leaves
+from .manual_import import leaf_cover, normalized_leaves
 from .output import Accent, StyledValue, hub_warn
 from .reporter import RunContext
 from .seadex_types import (
@@ -151,15 +150,10 @@ class SeadexReleaseFilter:
             # A public candidate with an UNKNOWN fileset: treated per-group as
             # covering (the cross-seed case), mirroring the private side.
             group_has_blind_public[rg] = group_has_blind_public.get(rg, False) or (is_pub and not t.files)
-        # Normalized leaf multisets: trackers list the same release with
+        # Leaf multisets, not raw paths: trackers list the same release with
         # different folder layouts, and a raw-path comparison would misread a
         # covered private pick as uncovered (pulling in spurious fallbacks).
-        # Per-listing counts fold with | (elementwise max), so coverage of a
-        # duplicated leaf needs one listing genuinely carrying that many.
-        public_cover: Counter[str] = Counter()
-        for t in candidates:
-            if _is_public_torrent(t):
-                public_cover |= normalized_leaves(f.name for f in t.files)
+        public_cover = leaf_cover((f.name for f in t.files) for t in candidates if _is_public_torrent(t))
 
         def needs_fallback(t: TorrentRecord) -> bool:
             """A private candidate needs a public alternative unless the public candidates cover its files.
@@ -198,16 +192,14 @@ class SeadexReleaseFilter:
 
         for release_group_item in seadex_release_groups.values():
             urls = release_group_item.urls
-            group_public_cover: Counter[str] = Counter()
-            for u in urls.values():
-                if u.is_public:
-                    group_public_cover |= normalized_leaves(u.files)
-            if any(u.is_public for u in urls.values()):
-                release_group_item.urls = {
-                    url: u
-                    for url, u in urls.items()
-                    if u.is_public or not normalized_leaves(u.files) <= group_public_cover
-                }
+            # The gate is a public URL's existence, not the cover's truthiness:
+            # an empty-fileset public url covers (cross-seed) while folding nothing.
+            if not any(u.is_public for u in urls.values()):
+                continue
+            group_public_cover = leaf_cover(u.files for u in urls.values() if u.is_public)
+            release_group_item.urls = {
+                url: u for url, u in urls.items() if u.is_public or not normalized_leaves(u.files) <= group_public_cover
+            }
 
     def _narrow_candidates(self, torrents: list[TorrentRecord]) -> list[TorrentRecord]:
         """Narrow one candidate pool via the want_best -> audio-preference cascade.

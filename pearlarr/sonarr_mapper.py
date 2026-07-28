@@ -9,7 +9,7 @@ set via the pure `assign_episode_ids`. Owns the per-run on-disk parse cache.
 
 import os
 
-from .manual_import import PendingImport, normalize_basename
+from .manual_import import PendingImport, normalize_basename, normalized_leaf
 from .seadex_types import ManualImportCandidate, ParsedFileInfo
 from .sonarr_client import AbstractSonarrClient
 from .sonarr_import_plan import CandidateFile, assign_episode_ids, parse_se_from_filename
@@ -84,7 +84,7 @@ class FileEpisodeMapper:
             path = candidate.path
             if not path:
                 continue
-            base = normalize_basename(os.path.basename(path))
+            base = normalized_leaf(path)
             by_basename[base] = CandidateFile(
                 basename=base,
                 path=path,

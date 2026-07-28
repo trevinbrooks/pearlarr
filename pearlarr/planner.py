@@ -99,7 +99,7 @@ def _render_groups(groups: Iterable[str | None]) -> str:
     return ", ".join(rg or "(none)" for rg in groups)
 
 
-def _sizes_identify_ungrouped(seadex_sizes: Iterable[int], ungrouped_sizes: Iterable[int]) -> bool:
+def _sizes_identify_ungrouped(seadex_sizes: Iterable[int], ungrouped_sizes: Counter[int]) -> bool:
     """Whether the arr's group-less file sizes cover this listing exactly.
 
     Identifies an owned copy whose group tag a rename stripped: every listed
@@ -109,7 +109,7 @@ def _sizes_identify_ungrouped(seadex_sizes: Iterable[int], ungrouped_sizes: Iter
     """
 
     sizes = Counter(seadex_sizes)
-    return bool(sizes) and all(s > 0 for s in sizes) and sizes <= Counter(ungrouped_sizes)
+    return bool(sizes) and all(s > 0 for s in sizes) and sizes <= ungrouped_sizes
 
 
 def get_episode_keys(
@@ -256,6 +256,8 @@ class _MatchContext:
     arr_release_dict: ArrReleaseDict
     arr_sizes_by_norm: Mapping[str | None, list[int]]
     """The Arr's file sizes merged under normalized group names. Built once per entry rather than per URL."""
+    ungrouped_size_counts: Counter[int]
+    """The None-keyed (group-less) sizes of `arr_sizes_by_norm` as a multiset, prebuilt once per entry."""
     overlapping_results: bool
     sonarr_by_key: dict[tuple[int, int], SonarrEpisode]
     all_seadex_rgs_per_episode: dict[str, set[str | None]]
@@ -431,6 +433,7 @@ class DownloadPlanner:
         ctx = _MatchContext(
             arr_release_dict=arr_release_dict,
             arr_sizes_by_norm=arr_sizes_by_norm,
+            ungrouped_size_counts=Counter(arr_sizes_by_norm.get(None, ())),
             overlapping_results=overlapping_results,
             sonarr_by_key=sonarr_by_key,
             all_seadex_rgs_per_episode=all_seadex_rgs_per_episode,
@@ -512,10 +515,8 @@ class DownloadPlanner:
                     f"SeaDex release group {seadex_rg} in {self.arr.capitalize()} releases: "
                     f"{_render_groups(arr_release_groups)}, and file sizes match",
                 )
-        elif _sizes_identify_ungrouped(url_item.size, ctx.arr_sizes_by_norm.get(None, ())):
-            # A rename can strip the on-disk group tag (such files key their
-            # sizes under None): the whole listing present at exact sizes
-            # identifies the copy as ours.
+        elif _sizes_identify_ungrouped(url_item.size, ctx.ungrouped_size_counts):
+            # Rename-stripped group tag: group-less files key their sizes under None.
             if ctx.debug_on:
                 self.logger.debug(
                     f"SeaDex release group {seadex_rg} not in {self.arr.capitalize()} releases: "
