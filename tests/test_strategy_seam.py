@@ -599,6 +599,8 @@ def _make_sonarr_for_import(
     languages: list[Language] | None = None,
     commands: list[CommandResource] | None = None,
     commands_script: list[list[CommandResource]] | None = None,
+    command_status: CommandResource | None = None,
+    command_status_script: list[CommandResource] | None = None,
     cmd_id: int | None = 42,
     config_overrides: dict[str, list[str] | str] | None = None,
 ) -> tuple[SonarrSync, FakeSonarrClient]:
@@ -621,6 +623,8 @@ def _make_sonarr_for_import(
         episodes=episodes,
         commands=commands,
         commands_script=commands_script,
+        command_status=command_status,
+        command_status_script=command_status_script,
         candidates=candidates,
         quality_defs=quality_defs,
         languages=languages,
@@ -715,6 +719,46 @@ class TestImportCompletedQueueState:
         assert probe.command_issued is True
         assert len(sonarr.execute_calls) == 1
         assert sonarr.list_commands_calls >= 3
+
+    def test_rescan_waits_for_slow_refresh_then_proceeds(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        # The refresh command reads `started` on the first poll and terminal on
+        # the next: the rescan keeps polling instead of giving up on one reading.
+        monkeypatch.setattr(sonarr_import_module, "_REFRESH_COMMAND_POLL_S", 0)
+        pending = pending_import(
+            infohash="abc123",
+            file_episode_map={"Show - 01 [1080p].mkv": [101]},
+            episode_ids=[101],
+        )
+        strat, sonarr = _make_sonarr_for_import(
+            candidates=[manual_candidate("/d/Show - 01 [1080p].mkv")],
+            command_status_script=[CommandResource(status="started")],
+        )
+
+        probe = strat.import_completed(pending, "/d")
+
+        assert probe.command_issued is True
+        assert len(sonarr.execute_calls) == 1
+
+    def test_rescan_skips_absorb_when_refresh_never_confirms(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        # The refresh never reads terminal within the bound: give up on it AND
+        # skip the absorb (an unconfirmed rescan has no follow-up pass to wait
+        # for). The disk guard's read is then the only list_commands call.
+        monkeypatch.setattr(sonarr_import_module, "_REFRESH_COMMAND_POLL_S", 0)
+        pending = pending_import(
+            infohash="abc123",
+            file_episode_map={"Show - 01 [1080p].mkv": [101]},
+            episode_ids=[101],
+        )
+        strat, sonarr = _make_sonarr_for_import(
+            candidates=[manual_candidate("/d/Show - 01 [1080p].mkv")],
+            command_status=CommandResource(status="started"),
+        )
+
+        probe = strat.import_completed(pending, "/d")
+
+        assert probe.command_issued is True
+        assert len(sonarr.execute_calls) == 1
+        assert sonarr.list_commands_calls == 1
 
     def test_clean_pending_forced_steps_in(self) -> None:
         # force=True (snapshot / final monitor poll): stop deferring, issue the
