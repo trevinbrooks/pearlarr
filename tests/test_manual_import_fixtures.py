@@ -38,6 +38,7 @@ from pearlarr.seadex_types import (
 from pearlarr.sonarr_import_plan import (
     CandidateFile,
     ContentPaths,
+    DownloadMatch,
     EpisodeAssignment,
     ParsedQuality,
     QueueVerdict,
@@ -1301,27 +1302,25 @@ class TestManualImportInFlightFixture:
         # downloadId -> a fresh import for it would stack a duplicate.
         assert manual_import_in_flight(
             self._commands(),
-            _SAO_DOWNLOAD_ID,
-            ContentPaths(raw="/downloads", sonarr_visible="/downloads"),
-            set(),
+            DownloadMatch(_SAO_DOWNLOAD_ID, ContentPaths(raw="/downloads", sonarr_visible="/downloads"), set()),
         )
 
     def test_unrelated_download_id_is_not_in_flight(self) -> None:
         # A different infohash with no path/episode overlap -> proceed.
         assert not manual_import_in_flight(
             self._commands(),
-            "ffffffffffffffffffffffffffffffffffffffff",
-            ContentPaths(raw="/nowhere", sonarr_visible="/nowhere"),
-            set(),
+            DownloadMatch(
+                "ffffffffffffffffffffffffffffffffffffffff",
+                ContentPaths(raw="/nowhere", sonarr_visible="/nowhere"),
+                set(),
+            ),
         )
 
     def test_folder_import_matches_by_episode_id(self) -> None:
         # The Vodes folder import carries no downloadId. Episode 5645 is ours.
         assert manual_import_in_flight(
             self._commands(),
-            "no-such-hash",
-            ContentPaths(raw="/nowhere", sonarr_visible="/nowhere"),
-            {5645},
+            DownloadMatch("no-such-hash", ContentPaths(raw="/nowhere", sonarr_visible="/nowhere"), {5645}),
         )
 
     def test_disk_guard_defers_only_on_the_started_command(self) -> None:

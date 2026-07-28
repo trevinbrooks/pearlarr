@@ -594,6 +594,67 @@ _DEFERRAL_CREDIT_CAP_MULT = 6
 
 
 @dataclass(slots=True)
+class _ReadyClock:
+    """One row's ready-deadline state machine, sole owner of the anchor/credit invariants.
+
+    `timeout` bounds a STALLED import, not the whole copy: `note_progress`
+    re-stamps the anchor on each rise of the determinate done-count, and a poll
+    deferred behind our own Sonarr work pauses the clock (`credit_deferral`).
+    Total credit is capped (`_DEFERRAL_CREDIT_CAP_MULT`), so a wedged command
+    still ends in the ordinary deadline.
+    """
+
+    timeout: float
+    anchor: float
+    """The first COMPLETE, then moved only by `note_progress` and `credit_deferral`."""
+    _seen: int | None = None
+    _poll_gap: float = 0.0
+    _poll_at: float | None = None
+    _credited: float = 0.0
+
+    def mark_poll(self, now: float) -> None:
+        """Stamp a heavy poll, remembering the interval a deferral may credit back."""
+
+        self._poll_gap = now - self._poll_at if self._poll_at is not None else 0.0
+        self._poll_at = now
+
+    def at_deadline(self, now: float) -> bool:
+        """Whether the stall bound has elapsed since the anchor."""
+
+        return now - self.anchor >= self.timeout
+
+    def can_defer(self) -> bool:
+        """Whether deferral credit remains (exhaustion resumes the ordinary deadline)."""
+
+        return self._credited < self.timeout * _DEFERRAL_CREDIT_CAP_MULT
+
+    def credit_deferral(self, now: float) -> None:
+        """Pause the clock by the last poll interval - never past `now`, never past the cap."""
+
+        credit = min(self._poll_gap, self.timeout * _DEFERRAL_CREDIT_CAP_MULT - self._credited)
+        self._credited += credit
+        self.anchor = min(self.anchor + credit, now)
+
+    def note_progress(self, done: int, total: int, now: float) -> bool:
+        """Re-anchor on a rising determinate done-count; True when another file landed.
+
+        The first determinate reading is a baseline (files present before we
+        started watching are not progress), indeterminate counts (`total` 0)
+        never move the anchor, and the memo is a max so a stale lower reading
+        can't fake a rise.
+        """
+
+        if total <= 0:
+            return False
+        last = self._seen
+        self._seen = done if last is None else max(last, done)
+        if last is None or done <= last:
+            return False
+        self.anchor = now
+        return True
+
+
+@dataclass(slots=True)
 class _MonitorRow:
     """One record's per-monitor-pass state: its clocks, deadline anchor, and frame row."""
 
@@ -607,21 +668,8 @@ class _MonitorRow:
     """Still running (not yet terminal)."""
     import_start: float | None = None
     """Import-phase clock, stamped on the first COMPLETE poll."""
-    import_anchor: float | None = None
-    """Ready-deadline anchor: the first COMPLETE, re-stamped each time another
-    intended file lands - so `ready_timeout` bounds a stalled import, not a big
-    season pack Sonarr copies file-by-file. Polls deferred behind our own Sonarr
-    work credit their interval back to it (waiting on ourselves is not a stall)."""
-    import_seen: int | None = None
-    """Highest determinate done-count: the baseline `_note_import_progress` measures
-    rises against (a max, so a stale lower reading can't fake a rise)."""
-    import_poll_at: float | None = None
-    """When the last import-phase heavy poll ran, so a deferred poll knows the
-    interval to credit back to `import_anchor`."""
-    deferral_credited: float = 0.0
-    """Deferred time already credited back to `import_anchor`, against
-    `MonitorPass.deferral_cap` (a command wedged in flight forever must stop
-    earning credit, or the watch would never end)."""
+    clock: _ReadyClock | None = None
+    """The ready-deadline clock, created on the first COMPLETE poll."""
 
 
 class MonitorPass:
@@ -654,7 +702,6 @@ class MonitorPass:
         self.now = now
         self.dl_timeout = dl_timeout
         self.import_timeout = import_timeout
-        self.deferral_cap = import_timeout * _DEFERRAL_CREDIT_CAP_MULT
         # Sampled once here. The download clock for every record starts now and
         # `elapsed` measures from it.
         self.start = now()
@@ -743,10 +790,9 @@ class MonitorPass:
         the first COMPLETE. `imported` is gated on verified episode files, so a
         freshly-issued import command reads `importing` until the copy lands.
         Deadline polls (`at_deadline`) force and warn; a file landing that same
-        cycle re-anchors the deadline instead (`_note_import_progress`), and a
-        poll deferred behind our own Sonarr work credits its interval back - the
-        clock pauses until a clear shot (which then re-forces), bounded by
-        `deferral_cap` so a wedged command can't hold the watch forever.
+        cycle re-anchors the deadline instead, and a poll deferred behind our
+        own Sonarr work pauses the clock until a clear shot, which then
+        re-forces (both per `_ReadyClock`).
         """
 
         record = row.record
@@ -800,32 +846,23 @@ class MonitorPass:
         now_ts = self.now()
         if row.import_start is None:
             row.import_start = now_ts
-        if row.import_anchor is None:
-            row.import_anchor = row.import_start
-        # The interval since the last import-phase poll, credited back to the
-        # anchor when this poll defers behind our own Sonarr work (below).
-        gap = now_ts - row.import_poll_at if row.import_poll_at is not None else 0.0
-        row.import_poll_at = now_ts
-        at_deadline = now_ts - row.import_anchor >= self.import_timeout
+        clock = row.clock
+        if clock is None:
+            clock = row.clock = _ReadyClock(timeout=self.import_timeout, anchor=now_ts)
+        clock.mark_poll(now_ts)
+        at_deadline = clock.at_deadline(now_ts)
         probe = self._mgr.try_import_completed(
             record,
             poll.content_path,
             force=at_deadline,
             at_deadline=at_deadline,
         )
-        landed = self._note_import_progress(row, probe.imported_count, probe.target_count)
-        deferred = probe.deferred and row.deferral_credited < self.deferral_cap
+        landed = clock.note_progress(probe.imported_count, probe.target_count, now_ts)
+        # Waiting on our own work is not this record stalling (a landed poll
+        # already re-anchored harder than a pause would).
+        deferred = probe.deferred and clock.can_defer()
         if deferred and not landed:
-            # Deferred behind OUR OWN work (another record's import, or this
-            # record's copy in flight): the deadline bounds a STALLED import, and
-            # waiting on ourselves is not this record stalling - credit the
-            # interval back so the clock only counts clear-shot time. (A landing
-            # file already re-anchored harder via `_note_import_progress`.) The
-            # cumulative cap keeps the watch bounded: a command wedged in flight
-            # forever stops earning credit and the ordinary deadline resumes.
-            credit = min(gap, self.deferral_cap - row.deferral_credited)
-            row.deferral_credited += credit
-            row.import_anchor = min(row.import_anchor + credit, now_ts)
+            clock.credit_deferral(now_ts)
         if probe.files_present:
             self._terminal(Outcome.IMPORTED, row, files=probe.target_count or None)
         elif at_deadline and not landed and not deferred:
@@ -853,25 +890,6 @@ class MonitorPass:
                 command_issued=probe.command_issued,
             )
 
-    def _note_import_progress(self, row: _MonitorRow, done: int, total: int) -> bool:
-        """Re-anchor the row's ready deadline when another intended file lands.
-
-        `import_timeout` bounds a STALLED import, not a big season pack Sonarr
-        copies file-by-file: each rise in the determinate done-count re-stamps
-        `import_anchor`. The first determinate reading is a baseline (files
-        present before we started watching are not progress), and indeterminate
-        counts (`total` 0) never move the anchor.
-        """
-
-        if total <= 0:
-            return False
-        last = row.import_seen
-        row.import_seen = done if last is None else max(last, done)
-        if last is None or done <= last:
-            return False
-        row.import_anchor = self.now()
-        return True
-
     def refresh_progress(self) -> bool:
         """Cheap Tier-2 pass: refresh each importing row's "files inserted" bar.
 
@@ -898,7 +916,8 @@ class MonitorPass:
             # row to the heavy poll's repaired done-check.
             if not progress.determinate or progress.total <= 0:
                 continue
-            self._note_import_progress(row, progress.done, progress.total)
+            if row.clock is not None:
+                row.clock.note_progress(progress.done, progress.total, self.now())
             if progress.done >= progress.total:
                 self._terminal(Outcome.IMPORTED, row, files=progress.total)
                 changed = True

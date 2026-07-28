@@ -718,11 +718,7 @@ class TestImportCompletedQueueState:
         )
 
         first = strat.import_completed(pending_a, "/d")
-        sonarr.commands_return = [
-            CommandResource.model_validate(
-                {"id": 42, "name": "ManualImport", "status": "started", "body": {"files": [{"downloadId": "ABC123"}]}},
-            ),
-        ]
+        sonarr.commands_return = [_inflight_manual_import("ABC123", command_id=42)]
         probe = strat.import_completed(pending_b, "/e")
 
         assert first.command_issued is True
@@ -740,16 +736,7 @@ class TestImportCompletedQueueState:
         pending = pending_import(infohash="abc123")
         strat, sonarr = _make_sonarr_for_import(
             candidates=[manual_candidate("/d/Show - 01 [1080p].mkv")],
-            commands=[
-                CommandResource.model_validate(
-                    {
-                        "id": 7000,
-                        "name": "ManualImport",
-                        "status": "started",
-                        "body": {"files": [{"downloadId": "ABC123"}]},
-                    },
-                ),
-            ],
+            commands=[_inflight_manual_import("ABC123")],
         )
 
         probe = strat.import_completed(pending, "/d", force=True)
@@ -767,16 +754,7 @@ class TestImportCompletedQueueState:
         pending_sibling = pending_import(infohash="abc123", al_id=777)
         strat, sonarr = _make_sonarr_for_import(
             candidates=[manual_candidate("/d/Show - 01 [1080p].mkv")],
-            commands=[
-                CommandResource.model_validate(
-                    {
-                        "id": 7000,
-                        "name": "ManualImport",
-                        "status": "started",
-                        "body": {"files": [{"downloadId": "ABC123"}]},
-                    },
-                ),
-            ],
+            commands=[_inflight_manual_import("ABC123")],
         )
 
         probe = strat.import_completed(pending_sibling, "/d")
@@ -847,15 +825,7 @@ class TestImportCompletedQueueState:
         )
         sonarr = FakeSonarrClient(
             episodes=[
-                SonarrEpisode.model_validate(
-                    {
-                        "id": 101,
-                        "seasonNumber": 1,
-                        "episodeNumber": 1,
-                        "episodeFileId": 1010,
-                        "episodeFile": {"releaseGroup": "SubGroup"},
-                    },
-                ),
+                _ep_with_file(101, group="SubGroup"),
                 SonarrEpisode.model_validate({"id": 102, "seasonNumber": 1, "episodeNumber": 2}),
             ],
             candidates=[manual_candidate(f"/d/{done_file}"), manual_candidate(f"/d/{wrong_file}")],
@@ -1082,11 +1052,12 @@ class TestImportCompletedQueueState:
         assert len(sonarr.execute_calls) == 1
 
 
-def _inflight_manual_import(infohash: str, *, status: str = "started") -> CommandResource:
+def _inflight_manual_import(infohash: str, *, status: str = "started", command_id: int = 0) -> CommandResource:
     """A ManualImport command whose one file carries `infohash` as downloadId."""
 
     return CommandResource.model_validate(
         {
+            "id": command_id,
             "name": "ManualImport",
             "status": status,
             "body": {"files": [{"downloadId": infohash, "episodeIds": [101]}]},

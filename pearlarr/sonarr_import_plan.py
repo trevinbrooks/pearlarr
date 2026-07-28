@@ -12,7 +12,7 @@ vocabulary and the normalizers.
 """
 
 import re
-from collections.abc import Mapping, Sequence
+from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass
 from enum import Enum, StrEnum, auto
 from typing import NamedTuple
@@ -178,29 +178,36 @@ class InFlightImport(NamedTuple):
     """True for the primary `download_id` match; False for the path/episode fallback."""
 
 
-def manual_import_in_flight(
-    commands: list[CommandResource],
-    infohash: str,
-    content_paths: ContentPaths,
-    target_ep_ids: set[int],
-) -> InFlightImport | None:
-    """The ManualImport already in flight covering THIS download, if any.
+class DownloadMatch(NamedTuple):
+    """The identity facets a running command is matched against for one download."""
 
-    Pure, no I/O (mirrors `classify_queue`): the strategy reads the
-    `/api/v3/command` list and asks this whether to re-issue our import. A
-    ManualImport command's copy is async and Sonarr drops the torrent from the
-    regular queue while importing it server-side, so the queue alone reads
-    "empty -> step in" and we'd stack a duplicate every poll. Matching the durable
-    `infohash` against the still-running commands closes that loop, and because
-    the match key lives in the command (not an in-memory id) it also survives a
-    process restart - so a carried-over record re-driven on a LATER run won't
-    re-stack a command run A POSTed that is still running.
+    infohash: str
+    """The durable download id (survives restarts)."""
+
+    content_paths: ContentPaths
+    """The import folder in both filesystem views, for the no-download-id fallback."""
+
+    target_ep_ids: set[int]
+    """Our intended episode ids, for the same fallback."""
+
+
+def manual_import_in_flight(commands: list[CommandResource], match: DownloadMatch) -> InFlightImport | None:
+    """The ManualImport already in flight covering THIS download, or None.
+
+    Pure, no I/O (mirrors `classify_queue`): a ManualImport command's copy is
+    async and Sonarr drops the torrent from the regular queue while importing it
+    server-side, so the queue alone reads "empty -> step in" and we'd stack a
+    duplicate every poll. Matching the durable `infohash` against the
+    still-running commands closes that loop, and because the match key lives in
+    the command (not an in-memory id) it also survives a process restart - so a
+    carried-over record re-driven on a LATER run won't re-stack a command run A
+    POSTed that is still running.
 
     A command qualifies only when its `name` is `ManualImport` and its
     `status` is `queued`/`started` (a terminal command is not in flight).
     Such a command is taken to cover this download when:
 
-      * PRIMARY: any of its files' `download_id` equals `infohash`
+      * PRIMARY: any of its files' `download_id` equals the infohash
         (case-insensitively) - the infohash a queue-driven import carries. This is
         the common, robust case (`by_download_id=True`).
       * FALLBACK (a folder / dead-tracked import whose files carry NO download
@@ -210,20 +217,12 @@ def manual_import_in_flight(
         never credits an unproven match to the ready deadline, so that wait stays
         deadline-bounded - whereas a missed match re-opens the duplicate-import
         loop.
-
-    Args:
-        commands: The parsed `/api/v3/command` list.
-        infohash: This download's infohash (the Sonarr download id).
-        content_paths: The import folder's raw + Sonarr-visible views, for
-            the no-download-id fallback arm.
-        target_ep_ids: Our intended episode ids, for the same fallback.
-
-    Returns:
-        The matched command + match arm, or None when nothing covers this download.
     """
 
-    target_hash = infohash.casefold()
-    content_prefixes = {_norm_path(content_paths.raw), _norm_path(content_paths.sonarr_visible)}
+    target_hash = match.infohash.casefold()
+    paths = match.content_paths
+    target_ep_ids = match.target_ep_ids
+    content_prefixes = {_norm_path(paths.raw), _norm_path(paths.sonarr_visible)}
     for command in commands:
         name = (command.name or "").casefold()
         status = (command.status or "").casefold()
@@ -272,17 +271,67 @@ def started_disk_commands(commands: list[CommandResource]) -> list[CommandResour
     and a completed-download pass queued meanwhile jumps ahead (High priority)
     - so our payload replays minutes stale, re-copying files an intervening
     pass already placed (the double-copy incident class). Only `started`
-    defers: a queued pass is near-permanently present during a wait (Sonarr
+    blocks: a queued pass is near-permanently present during a wait (Sonarr
     pushes one after every rescan, including ours, deduped while one is
-    live), so deferring on it would starve the step-in entirely. A deferral
-    is just a RETRY, re-evaluated next poll - bounded by the import deadline
-    for a foreign command, by the capped deferral credit for our own. The
-    list form lets the caller tell OUR OWN running command (an id we issued
-    this run - credited back to the ready deadline) from a foreign one
-    (which keeps burning the clock).
+    live), so blocking on it would starve the step-in entirely. The list form
+    lets `classify_commands` tell an own running command from a foreign one.
     """
 
     return _started(commands, _SONARR_DISK_COMMAND_NAMES)
+
+
+class CommandBlock(Enum):
+    """Why the running-command snapshot blocks a step-in this poll (values = log phrases)."""
+
+    IN_FLIGHT_IMPORT = "a ManualImport is already in flight"
+    DISK_COMMAND = "Sonarr is running a disk command"
+
+
+class CommandVerdict(NamedTuple):
+    """`classify_commands`' verdict: whether to wait this poll, and the probe flags to report.
+
+    `command_issued`/`deferred` are True only for a provably OWN import covering
+    this download; `deferred` alone for our own disk command serializing other
+    work. Foreign or unproven matches leave both False, so their waits stay
+    deadline-bounded.
+    """
+
+    block: CommandBlock | None
+    """Why to wait, or None when the snapshot is clear to step in."""
+
+    command_issued: bool
+    """A command covering this download is provably ours (at-deadline reads "still importing")."""
+
+    deferred: bool
+    """The wait is on our own work (the monitor credits it back to the ready deadline)."""
+
+
+def classify_commands(
+    commands: list[CommandResource],
+    match: DownloadMatch,
+    is_own: Callable[[int], bool],
+) -> CommandVerdict:
+    """Reduce one `/api/v3/command` snapshot to a single pre-step-in verdict.
+
+    Pure (mirrors `classify_queue`); `is_own` is the executor's this-run
+    issued-id memory. Precedence: an in-flight ManualImport covering this
+    download outranks the broad disk guard, so the download's own copy reads
+    its honest flags rather than the disk guard's anonymous ones. Ownership of
+    a covering import is the download-id match (survives restarts) or an
+    issued id; a running disk command is owned only via an issued id, so a
+    prior run's still-running copy for ANOTHER record reads foreign and burns
+    the clock.
+    """
+
+    in_flight = manual_import_in_flight(commands, match)
+    if in_flight:
+        owned = in_flight.by_download_id or is_own(in_flight.command.id)
+        return CommandVerdict(CommandBlock.IN_FLIGHT_IMPORT, command_issued=owned, deferred=owned)
+    running = started_disk_commands(commands)
+    if running:
+        own = any(is_own(command.id) for command in running if command.id)
+        return CommandVerdict(CommandBlock.DISK_COMMAND, command_issued=False, deferred=own)
+    return CommandVerdict(None, command_issued=False, deferred=False)
 
 
 def sonarr_process_pass_running(commands: list[CommandResource]) -> bool:
