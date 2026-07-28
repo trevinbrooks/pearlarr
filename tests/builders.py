@@ -887,25 +887,30 @@ def rg_group(
 
 
 def sonarr_ep(
-    season: int,
-    episode: int,
+    season: int | None,
+    episode: int | None,
     *,
     size: int | None = None,
     release_group: str | None = None,
     episode_file_id: int = 1,
     ep_id: int = 0,
 ) -> SonarrEpisode:
-    """One `SonarrEpisode`, parsed from the raw fields the engine reads."""
+    """One `SonarrEpisode`, parsed from the raw fields the engine reads.
 
-    return SonarrEpisode.model_validate(
-        {
-            "id": ep_id,
-            "seasonNumber": season,
-            "episodeNumber": episode,
-            "episodeFileId": episode_file_id,
-            "episodeFile": {"size": size, "releaseGroup": release_group},
-        },
-    )
+    The one home of the raw episode shape. `episode_file_id=0` builds the
+    no-file-on-disk record: the `episodeFile` block is omitted entirely, like
+    Sonarr's own record for a missing episode.
+    """
+
+    raw: dict[str, Any] = {
+        "id": ep_id,
+        "seasonNumber": season,
+        "episodeNumber": episode,
+        "episodeFileId": episode_file_id,
+    }
+    if episode_file_id:
+        raw["episodeFile"] = {"size": size, "releaseGroup": release_group}
+    return SonarrEpisode.model_validate(raw)
 
 
 # The `al_id` every `pending_import`-built record carries unless overridden.

@@ -2,6 +2,7 @@
 
 import sys
 from collections import Counter
+from collections.abc import Iterable
 from typing import TYPE_CHECKING
 
 from rich.console import Console
@@ -19,7 +20,6 @@ from .seadex_types import (
     SeadexReleaseGroupItem,
     SeadexUrlItem,
     SonarrEpisode,
-    file_size_cover,
 )
 
 if TYPE_CHECKING:
@@ -37,6 +37,23 @@ def _file_sizes(torrent: TorrentRecord) -> list[int]:
     """A torrent's listed file sizes - the coverage-comparison input and the url record's `size`."""
 
     return [f.size for f in torrent.files]
+
+
+def file_size_cover(listings: Iterable[Iterable[int]]) -> Counter[int]:
+    """Fold per-listing file-size multisets into one coverage multiset, elementwise max.
+
+    Byte size is the identity two listings of one release always agree on:
+    folder layout differs between trackers, and SeaDex's own per-file naming
+    can too, but the bytes do not. Covering n files of one size requires ONE
+    listing genuinely carrying n - never n listings carrying one each (a `+`
+    fold would fake that), and never a set union (which would deflate a real
+    n-copy listing to one).
+    """
+
+    cover: Counter[int] = Counter()
+    for listing in listings:
+        cover |= Counter(listing)
+    return cover
 
 
 class SeadexReleaseFilter:
