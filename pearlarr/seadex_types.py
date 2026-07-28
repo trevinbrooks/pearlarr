@@ -83,8 +83,8 @@ class SeadexUrlItem:
     upgrade: bool = False
     """This url's `download` flag replaces a copy the Arr holds at sizes the url
     doesn't list. Drives the reducer's promotion gate and the notice's upgrade
-    marker. Invariant: never set without `download` - the planner clears both
-    together wherever a flag is dropped."""
+    marker. Invariant: never set without `download` - `flag`/`unflag` are the
+    only writers, and `unflag` clears both together."""
     episodes: list[EpisodeRecord] = field(default_factory=list[EpisodeRecord])
 
     def __post_init__(self) -> None:
@@ -92,6 +92,22 @@ class SeadexUrlItem:
         # torrent in the qbit dedup, and "" collides with the cache's _NO_HASH.
         if self.infohash is not None:
             self.infohash = self.infohash.strip() or None
+
+    def flag(self, *, upgrade: bool = False) -> None:
+        """Mark the url to grab; `upgrade` additionally marks a size-upgrade grab.
+
+        Monotone: never clears an upgrade marker already set.
+        """
+
+        self.download = True
+        if upgrade:
+            self.upgrade = True
+
+    def unflag(self) -> None:
+        """Clear the grab. `upgrade` clears with `download` - it describes the grab, so it must never outlive it."""
+
+        self.download = False
+        self.upgrade = False
 
 
 @dataclass

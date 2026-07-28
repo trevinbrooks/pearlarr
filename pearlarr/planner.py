@@ -200,18 +200,41 @@ def _flagged_all_addable(rg_item: SeadexReleaseGroupItem) -> bool:
 
 
 def _unflag(rg_item: SeadexReleaseGroupItem, dropped: list[SeadexUrlItem]) -> None:
-    """Unflag a whole group, recording the urls this pass actually dropped.
-
-    `upgrade` clears with `download` - it describes the grab, so it must never
-    outlive it (a rendered release line would otherwise mark a dropped url as
-    an upgrade that no longer happens).
-    """
+    """Unflag a whole group, recording the urls this pass actually dropped."""
 
     for u in rg_item.urls.values():
         if u.download:
             dropped.append(u)
-        u.download = False
-        u.upgrade = False
+        u.unflag()
+
+
+@dataclass(slots=True)
+class _SameFilesSet:
+    """One same-files coverage set mid-reduction: the groups, the flagged subset, and this pass's drops."""
+
+    names: list[str]
+    """Every group in the set, in first-seen order (`get_same_files_groups`)."""
+
+    flagged: list[str]
+    """The subset still flagged to grab when the reduction began."""
+
+    dropped: list[SeadexUrlItem] = field(default_factory=list[SeadexUrlItem])
+    """The urls the reduction unflagged, scoped to THIS set - the coverage rescue's input."""
+
+
+def _promotion_notice(groups: list[str], prefix: str, promoted: str) -> SkipNotice:
+    """The INFO notice for flagged groups a promoted group now stands in for.
+
+    The caller unflags them. Promotion never picks a fallback group, so the
+    verb is always "grabbing public alternative". The keeper flow owns
+    "falling back to".
+    """
+
+    return SkipNotice(
+        groups=list(groups),
+        reason=f"{prefix}; grabbing public alternative {promoted}",
+        severity=Severity.INFO,
+    )
 
 
 class EpisodeCoverage(NamedTuple):
@@ -362,7 +385,9 @@ class _MatchContext:
     `url_item`'s `download`/`upgrade` fields flip).
     """
 
-    arr_release_dict: ArrReleaseDict
+    arr_groups_label: str
+    """The Arr's release-group names pre-rendered for the no-episodes matcher's
+    debug lines (insertion order preserved; empty on a normal INFO run)."""
     arr_sizes_by_norm: Mapping[str | None, list[int]]
     """The Arr's file sizes merged under normalized group names. Built once per entry rather than per URL."""
     overlapping_results: bool
@@ -532,7 +557,7 @@ class DownloadPlanner:
                 if infohash not in cached_hashes:
                     self.logger.debug(f"Torrent hash {infohash} not found in cache. Will add to downloads")
 
-                    url_item.download = True
+                    url_item.flag()
 
                 elif infohash is None:
                     self.logger.debug(
@@ -627,7 +652,9 @@ class DownloadPlanner:
         )
 
         ctx = _MatchContext(
-            arr_release_dict=arr_release_dict,
+            # Pre-rendered so the un-normalized dict itself stays out of the
+            # matchers' decision scope (it feeds only debug lines).
+            arr_groups_label=_render_groups(arr_release_groups) if debug_on else "",
             arr_sizes_by_norm=arr_sizes_by_norm,
             overlapping_results=overlapping_results,
             sonarr_by_key=sonarr_by_key,
@@ -699,8 +726,6 @@ class DownloadPlanner:
         """
 
         url = url_item.url
-        # The release-group names, for the debug lines (insertion order preserved).
-        arr_release_groups = ctx.arr_release_dict.keys()
 
         # Match by the normalized name (like the per-episode path). The merged
         # size index was built once per entry (see _MatchContext).
@@ -716,16 +741,15 @@ class DownloadPlanner:
                 if ctx.debug_on:
                     self.logger.debug(
                         f"SeaDex release group {seadex_rg} in {self.arr.capitalize()} releases: "
-                        f"{_render_groups(arr_release_groups)}, but file sizes do not match - will download {url}",
+                        f"{ctx.arr_groups_label}, but file sizes do not match - will download {url}",
                     )
 
-                url_item.download = True
-                url_item.upgrade = True
+                url_item.flag(upgrade=True)
 
             elif ctx.debug_on:
                 self.logger.debug(
                     f"SeaDex release group {seadex_rg} in {self.arr.capitalize()} releases: "
-                    f"{_render_groups(arr_release_groups)}, and no listed size contradicts the on-disk copy",
+                    f"{ctx.arr_groups_label}, and no listed size contradicts the on-disk copy",
                 )
         elif _owns_untagged_copy(ctx.untagged_counter, url_item.size):
             # A rename stripped the group tag: the untagged files on disk
@@ -734,17 +758,17 @@ class DownloadPlanner:
             if ctx.debug_on:
                 self.logger.debug(
                     f"SeaDex release group {seadex_rg} not in {self.arr.capitalize()} releases: "
-                    f"{_render_groups(arr_release_groups)}, but the untagged files on disk are all "
+                    f"{ctx.arr_groups_label}, but the untagged files on disk are all "
                     f"this release's - not flagging {url}",
                 )
         elif not ctx.overlapping_results:
             if ctx.debug_on:
                 self.logger.debug(
                     f"SeaDex release group {seadex_rg} not in {self.arr.capitalize()} releases: "
-                    f"{_render_groups(arr_release_groups)} - will download {url}",
+                    f"{ctx.arr_groups_label} - will download {url}",
                 )
 
-            url_item.download = True
+            url_item.flag()
         elif ctx.debug_on:
             # Group absent, but the Arr already holds another SeaDex-preferred
             # group's release covering these files - nothing to flag.
@@ -846,7 +870,7 @@ class DownloadPlanner:
                             f"recommended release covers it - will download {url}",
                         )
 
-                    url_item.download = True
+                    url_item.flag()
 
             else:
                 if ctx.debug_on:
@@ -875,8 +899,7 @@ class DownloadPlanner:
         matched_sizes = list(compress(size_matches, rg_matches))
         if matched_sizes and not any(matched_sizes):
             self.logger.debug(f"File sizes all differ for release group {seadex_rg} - will download {url}")
-            url_item.download = True
-            url_item.upgrade = True
+            url_item.flag(upgrade=True)
 
     def reduce_overlapping_downloads(
         self,
@@ -917,14 +940,15 @@ class DownloadPlanner:
         if self.interactive:
             return skips
 
-        for same_files in get_same_files_groups(seadex_dict):
+        for names in get_same_files_groups(seadex_dict):
             # Only the release groups the Arr doesn't already have are flagged
-            flagged = [rg for rg in same_files if _is_flagged(seadex_dict[rg])]
+            flagged = [rg for rg in names if _is_flagged(seadex_dict[rg])]
             if len(flagged) == 0:
                 continue
 
-            dropped = self._reduce_same_files_set(seadex_dict, same_files, flagged, skips)
-            self._rescue_dropped_coverage(seadex_dict, same_files, dropped)
+            same_files = _SameFilesSet(names=names, flagged=flagged)
+            self._reduce_same_files_set(seadex_dict, same_files, skips)
+            self._rescue_dropped_coverage(seadex_dict, same_files)
 
         # Within ONE group, flagged urls carrying the same files are the same
         # release cross-seeded (distinct infohashes = duplicate downloads, the
@@ -941,9 +965,7 @@ class DownloadPlanner:
                     continue
                 identity = tuple(sorted(u.size))
                 if identity in seen:
-                    # Upgrade clears with download, same as _unflag.
-                    u.download = False
-                    u.upgrade = False
+                    u.unflag()
                 else:
                     seen.add(identity)
 
@@ -952,18 +974,16 @@ class DownloadPlanner:
     def _reduce_same_files_set(
         self,
         seadex_dict: SeadexDict,
-        same_files: list[str],
-        flagged: list[str],
+        same_files: _SameFilesSet,
         skips: PrivateOnlySkips,
-    ) -> list[SeadexUrlItem]:
+    ) -> None:
         """Resolve ONE same-files set down to a single keeper (or a skip).
 
-        Appends any notices/skip state to `skips` and returns the urls this
-        pass unflagged, for the coverage rescue.
+        Appends any notices/skip state to `skips` and records the urls this
+        pass unflagged on `same_files.dropped`, for the coverage rescue.
         """
 
-        dropped: list[SeadexUrlItem] = []
-
+        flagged = same_files.flagged
         public_flagged = [rg for rg in flagged if _is_public_group(seadex_dict[rg])]
         # The held-stale-not-owned marker: a size-mismatch flag means the Arr
         # holds the release at a STALE size (upgrade pending), so an unflagged
@@ -976,14 +996,13 @@ class DownloadPlanner:
             # (fallback or preferred, a flagged one would have taken the keeper
             # branch below). A public group covering OTHER files doesn't excuse
             # dropping this set, so the gate is per-set, never per-entry.
-            fallback_rides = any(_is_fallback_group(seadex_dict[rg]) for rg in same_files)
+            fallback_rides = any(_is_fallback_group(seadex_dict[rg]) for rg in same_files.names)
             if upgrade_pending:
                 promoted = self._promote_public_alternative(seadex_dict, same_files)
                 if promoted is not None:
-                    self._drop_promoted_over(flagged, "private-only", promoted, skips)
-                    for rg in flagged:
-                        _unflag(seadex_dict[rg], dropped)
-                    return dropped
+                    skips.notices.append(_promotion_notice(flagged, "private-only", promoted))
+                    self._unflag_all(seadex_dict, same_files)
+                    return
             elif fallback_rides:
                 # Unflagged with no size mismatch: the Arr genuinely already
                 # owns the fallback's files.
@@ -995,9 +1014,8 @@ class DownloadPlanner:
                         severity=Severity.INFO,
                     ),
                 )
-                for rg in flagged:
-                    _unflag(seadex_dict[rg], dropped)
-                return dropped
+                self._unflag_all(seadex_dict, same_files)
+                return
 
             # The Arr has none of these release groups, private grabs are off,
             # and no promotable public url covers the same files. Don't grab a
@@ -1025,9 +1043,8 @@ class DownloadPlanner:
             )
             skips.skipped = True
             skips.groups.extend(flagged)
-            for rg in flagged:
-                _unflag(seadex_dict[rg], dropped)
-            return dropped
+            self._unflag_all(seadex_dict, same_files)
+            return
 
         # Keep the first public release group whose flagged urls are all
         # addable: a mixed group's flagged private url is refused at add time,
@@ -1041,14 +1058,15 @@ class DownloadPlanner:
             if upgrade_pending:
                 promoted = self._promote_public_alternative(seadex_dict, same_files)
                 if promoted is not None:
-                    self._drop_promoted_over(flagged, "remaining files private-only", promoted, skips)
-                    for rg in flagged:
-                        _unflag(seadex_dict[rg], dropped)
-                    return dropped
+                    skips.notices.append(_promotion_notice(flagged, "remaining files private-only", promoted))
+                    self._unflag_all(seadex_dict, same_files)
+                    return
                 # Promotion refused with an unflagged fallback riding: an
                 # owned-at-stale-size pick a fallback must not replace. Mark the
                 # stale hold (no notice, the add-time private gate warns).
-                if any(not _is_flagged(seadex_dict[rg]) and _is_fallback_group(seadex_dict[rg]) for rg in same_files):
+                if any(
+                    not _is_flagged(seadex_dict[rg]) and _is_fallback_group(seadex_dict[rg]) for rg in same_files.names
+                ):
                     skips.stale_held = True
             # Degrade to the first public group (the add-time gate then warns).
             keeper = public_flagged[0]
@@ -1066,29 +1084,34 @@ class DownloadPlanner:
                 ),
             )
 
-        self._drop_losers(seadex_dict, flagged, keeper, dropped)
-        return dropped
+        self._drop_losers(seadex_dict, same_files, keeper)
+
+    @staticmethod
+    def _unflag_all(seadex_dict: SeadexDict, same_files: _SameFilesSet) -> None:
+        """Unflag every flagged group of the set, recording the drops."""
+
+        for rg in same_files.flagged:
+            _unflag(seadex_dict[rg], same_files.dropped)
 
     def _drop_losers(
         self,
         seadex_dict: SeadexDict,
-        flagged: list[str],
+        same_files: _SameFilesSet,
         keeper: str,
-        dropped: list[SeadexUrlItem],
     ) -> None:
         """Unflag every flagged group but the keeper, recording the drops."""
 
-        for rg in flagged:
+        for rg in same_files.flagged:
             if rg == keeper:
                 continue
 
             self.logger.debug(
                 f"Not downloading release group {rg}: release group {keeper} already covers the same files",
             )
-            _unflag(seadex_dict[rg], dropped)
+            _unflag(seadex_dict[rg], same_files.dropped)
 
     @staticmethod
-    def _promote_public_alternative(seadex_dict: SeadexDict, same_files: list[str]) -> str | None:
+    def _promote_public_alternative(seadex_dict: SeadexDict, same_files: _SameFilesSet) -> str | None:
         """Flip on an unflagged public group covering this set. None if there is none.
 
         Never a fallback group - a substitute must not replace an owned stale
@@ -1099,7 +1122,7 @@ class DownloadPlanner:
 
         candidates = [
             rg
-            for rg in same_files
+            for rg in same_files.names
             if not _is_flagged(seadex_dict[rg])
             and _is_public_group(seadex_dict[rg])
             and not _is_fallback_group(seadex_dict[rg])
@@ -1110,36 +1133,13 @@ class DownloadPlanner:
         promoted = next((rg for rg in candidates if _all_public(seadex_dict[rg])), candidates[0])
         for u in seadex_dict[promoted].urls.values():
             if u.is_public:
-                u.download = True
+                u.flag()
         return promoted
-
-    @staticmethod
-    def _drop_promoted_over(
-        flagged: list[str],
-        prefix: str,
-        promoted: str,
-        skips: PrivateOnlySkips,
-    ) -> None:
-        """The INFO notice for flagged groups a promoted group now stands in for.
-
-        The caller unflags them. Promotion never picks a fallback group, so the
-        verb is always "grabbing public alternative". The keeper flow owns
-        "falling back to".
-        """
-
-        skips.notices.append(
-            SkipNotice(
-                groups=list(flagged),
-                reason=f"{prefix}; grabbing public alternative {promoted}",
-                severity=Severity.INFO,
-            ),
-        )
 
     def _rescue_dropped_coverage(
         self,
         seadex_dict: SeadexDict,
-        same_files: list[str],
-        dropped: list[SeadexUrlItem],
+        same_files: _SameFilesSet,
     ) -> None:
         """Re-flag just-dropped public urls whose coverage no survivor carries.
 
@@ -1153,7 +1153,7 @@ class DownloadPlanner:
         vocabulary, so it is never rescued.
         """
 
-        rescuable = [u for u in dropped if u.is_public and u.episodes]
+        rescuable = [u for u in same_files.dropped if u.is_public and u.episodes]
         if not rescuable:
             return
 
@@ -1161,7 +1161,7 @@ class DownloadPlanner:
         # gate accepts (private urls are refused there, so they never count).
         survivor_keys = {
             key
-            for rg in same_files
+            for rg in same_files.names
             for u in seadex_dict[rg].urls.values()
             if u.download and u.is_public
             for key in get_episode_keys(u.episodes)
@@ -1171,7 +1171,7 @@ class DownloadPlanner:
             if url_keys <= survivor_keys:
                 continue
             self.logger.debug(f"Re-flagging {u.url}: no surviving release covers its episodes")
-            u.download = True
+            u.flag()
             survivor_keys |= url_keys
 
     @staticmethod
