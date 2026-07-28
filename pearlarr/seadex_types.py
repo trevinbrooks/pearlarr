@@ -118,8 +118,21 @@ a real key, so an episode with a missing key simply fails to match.
 """
 
 
-def season_episode_key(season: int | None, episode: int | None) -> tuple[int, int]:
-    """The `(season, episode)` index key, collapsing a missing number to the sentinel.
+class EpisodeKey(NamedTuple):
+    """The folded `(season, episode)` index key every episode index shares.
+
+    Always concrete ints (`season_episode_key` folds a missing number to
+    `SONARR_MISSING_KEY`), and tuple-compatible, so a key equals and hashes
+    like the plain pair it replaces. Distinct from `get_episode_keys`'
+    None-preserving coverage pairs, which never index anything.
+    """
+
+    season: int
+    episode: int
+
+
+def season_episode_key(season: int | None, episode: int | None) -> EpisodeKey:
+    """The `EpisodeKey` for a possibly-missing pair, collapsing to the sentinel.
 
     A missing `season`/`episode` collapses to `SONARR_MISSING_KEY`, so our
     SeaDex `(season, episode)` and Sonarr's episode list key the same way.
@@ -127,7 +140,7 @@ def season_episode_key(season: int | None, episode: int | None) -> tuple[int, in
     sentinel convention lives in exactly one place.
     """
 
-    return (
+    return EpisodeKey(
         season if season is not None else SONARR_MISSING_KEY,
         episode if episode is not None else SONARR_MISSING_KEY,
     )
@@ -436,7 +449,7 @@ class SonarrEpisode(_ApiModel):
     """An empty/null `episodeFile` folds to `None`."""
 
 
-def index_episodes_by_key(ep_list: Iterable[SonarrEpisode]) -> dict[tuple[int, int], SonarrEpisode]:
+def index_episodes_by_key(ep_list: Iterable[SonarrEpisode]) -> dict[EpisodeKey, SonarrEpisode]:
     """Index Sonarr episodes by `season_episode_key`, the first record winning.
 
     Sonarr episodes are unique by season+episode, so the first-wins rule only
@@ -445,7 +458,7 @@ def index_episodes_by_key(ep_list: Iterable[SonarrEpisode]) -> dict[tuple[int, i
     import's id map both derive from it).
     """
 
-    index: dict[tuple[int, int], SonarrEpisode] = {}
+    index: dict[EpisodeKey, SonarrEpisode] = {}
     for ep in ep_list:
         index.setdefault(season_episode_key(ep.season_number, ep.episode_number), ep)
     return index

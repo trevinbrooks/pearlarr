@@ -19,6 +19,7 @@ from pearlarr.manual_import import (
     ImportProbe,
     ImportReadiness,
     ImportWaitMode,
+    OwnedEpisode,
     PendingImport,
     PendingKey,
     PendingState,
@@ -36,6 +37,7 @@ from pearlarr.manual_import import (
 from pearlarr.seadex_types import (
     SONARR_MISSING_KEY,
     CommandResource,
+    EpisodeKey,
     HistoryRecord,
     ParsedEpisode,
     Quality,
@@ -100,8 +102,8 @@ class TestBuildEpisodeIdMap:
             sonarr_ep(1, 1, ep_id=6, episode_file_id=0),
         ]
         result = build_episode_id_map(eps)
-        assert result[(SONARR_MISSING_KEY, SONARR_MISSING_KEY)] == 5
-        assert result[(1, 1)] == 6
+        assert result[EpisodeKey(SONARR_MISSING_KEY, SONARR_MISSING_KEY)] == 5
+        assert result[EpisodeKey(1, 1)] == 6
 
     def test_first_wins_on_duplicate_key(self) -> None:
         eps = [sonarr_ep(1, 1, ep_id=7, episode_file_id=0), sonarr_ep(1, 1, ep_id=8, episode_file_id=0)]
@@ -170,17 +172,17 @@ class TestEpisodeIdsForParsed:
     """
 
     def test_maps_via_index(self) -> None:
-        idx = {(1, 1): 11, (1, 2): 12}
+        idx = {EpisodeKey(1, 1): 11, EpisodeKey(1, 2): 12}
         parsed = [ParsedEpisode(season=1, episode=1), ParsedEpisode(season=1, episode=2)]
         assert episode_ids_for_parsed(parsed, idx) == [11, 12]
 
     def test_unknown_single_pair_is_not_seeded(self) -> None:
-        assert episode_ids_for_parsed([ParsedEpisode(season=9, episode=9)], {(1, 1): 11}) == []
+        assert episode_ids_for_parsed([ParsedEpisode(season=9, episode=9)], {EpisodeKey(1, 1): 11}) == []
 
     def test_partially_resolving_span_refuses_the_whole_file(self) -> None:
         # One pair in the map, one out: seeding the resolved half would
         # half-import a multi-episode file, so nothing is seeded.
-        idx = {(1, 1): 11}
+        idx = {EpisodeKey(1, 1): 11}
         parsed = [
             ParsedEpisode(season=1, episode=1),
             ParsedEpisode(season=9, episode=9),
@@ -190,36 +192,36 @@ class TestEpisodeIdsForParsed:
     def test_full_season_span_never_seeds(self) -> None:
         # A bare-"S05" extra matches the WHOLE season: the record carries every
         # episode pair, and none of them may seed.
-        idx = {(5, e): 500 + e for e in range(1, 13)}
+        idx = {EpisodeKey(5, e): 500 + e for e in range(1, 13)}
         parsed = [ParsedEpisode(season=5, episode=e) for e in range(1, 13)]
         assert episode_ids_for_parsed(parsed, idx) == []
 
     def test_span_just_over_the_cap_is_refused(self) -> None:
-        idx = {(1, e): 10 + e for e in range(1, 5)}
+        idx = {EpisodeKey(1, e): 10 + e for e in range(1, 5)}
         parsed = [ParsedEpisode(season=1, episode=e) for e in range(1, 5)]
         assert episode_ids_for_parsed(parsed, idx) == []
 
     def test_triple_span_still_seeds(self) -> None:
-        idx = {(1, 1): 11, (1, 2): 12, (1, 3): 13}
+        idx = {EpisodeKey(1, 1): 11, EpisodeKey(1, 2): 12, EpisodeKey(1, 3): 13}
         parsed = [ParsedEpisode(season=1, episode=e) for e in (1, 2, 3)]
         assert episode_ids_for_parsed(parsed, idx) == [11, 12, 13]
 
     def test_duplicate_pairs_collapse_to_one_claim(self) -> None:
-        idx = {(1, 1): 11}
+        idx = {EpisodeKey(1, 1): 11}
         parsed = [ParsedEpisode(season=1, episode=1), ParsedEpisode(season=1, episode=1)]
         assert episode_ids_for_parsed(parsed, idx) == [11]
 
     def test_small_full_season_refused_by_the_flag(self) -> None:
         # A whole season of <= _MATCHED_SPAN_CAP episodes slips under the span
         # cap, so Sonarr's own fullSeason flag is the only thing that refuses it.
-        idx = {(1, 1): 11, (1, 2): 12}
+        idx = {EpisodeKey(1, 1): 11, EpisodeKey(1, 2): 12}
         parsed = [ParsedEpisode(season=1, episode=1), ParsedEpisode(season=1, episode=2)]
         assert episode_ids_for_parsed(parsed, idx, full_season=True) == []
 
     def test_same_small_span_without_the_flag_still_seeds(self) -> None:
         # The pins for legit small multi-episode files: absent the flag, the same
         # pairs seed exactly as before (mirrors test_triple_span_still_seeds).
-        idx = {(1, 1): 11, (1, 2): 12}
+        idx = {EpisodeKey(1, 1): 11, EpisodeKey(1, 2): 12}
         parsed = [ParsedEpisode(season=1, episode=1), ParsedEpisode(season=1, episode=2)]
         assert episode_ids_for_parsed(parsed, idx) == [11, 12]
 
@@ -572,27 +574,27 @@ class TestParsedOutsideEntry:
     """The knowably-other-slice refusal: only a clean parse landing ENTIRELY outside our set."""
 
     def test_clean_parse_fully_outside_is_another_slice(self) -> None:
-        assert parsed_outside_entry([ParsedEpisode(season=3, episode=13)], {(3, 1): 101})
+        assert parsed_outside_entry([ParsedEpisode(season=3, episode=13)], {EpisodeKey(3, 1): 101})
 
     def test_resolving_parse_is_ours(self) -> None:
-        assert not parsed_outside_entry([ParsedEpisode(season=3, episode=1)], {(3, 1): 101})
+        assert not parsed_outside_entry([ParsedEpisode(season=3, episode=1)], {EpisodeKey(3, 1): 101})
 
     def test_partially_resolving_span_stays_possibly_ours(self) -> None:
         # A boundary double-episode (one pair in, one out) may be partly ours.
         parsed = [ParsedEpisode(season=3, episode=12), ParsedEpisode(season=3, episode=13)]
-        assert not parsed_outside_entry(parsed, {(3, 12): 101})
+        assert not parsed_outside_entry(parsed, {EpisodeKey(3, 12): 101})
 
     def test_full_season_veto_stays_possibly_ours(self) -> None:
         # Sonarr matches a bare "S0X" zip to the whole season: it may well BE
         # our content, so the veto never proves it is another slice's.
-        assert not parsed_outside_entry([ParsedEpisode(season=2, episode=1)], {(3, 1): 101}, full_season=True)
+        assert not parsed_outside_entry([ParsedEpisode(season=2, episode=1)], {EpisodeKey(3, 1): 101}, full_season=True)
 
     def test_no_parse_stays_possibly_ours(self) -> None:
-        assert not parsed_outside_entry([], {(3, 1): 101})
+        assert not parsed_outside_entry([], {EpisodeKey(3, 1): 101})
 
     def test_wide_span_veto_stays_possibly_ours(self) -> None:
         parsed = [ParsedEpisode(season=9, episode=n) for n in range(1, 11)]
-        assert not parsed_outside_entry(parsed, {(3, 1): 101})
+        assert not parsed_outside_entry(parsed, {EpisodeKey(3, 1): 101})
 
 
 def _history(*events: tuple[str, str]) -> list[HistoryRecord]:
@@ -979,7 +981,7 @@ class TestPendingImportRoundTrip:
             url="https://releases.moe/1",
             slice_coverage="S02 E01-E02",
             excluded_files=["other-slice.mkv"],
-            guards=GuardFacts(entry_groups=("Era-Raws", "OtherPick"), owned_episodes=((11, 700),)),
+            guards=GuardFacts(entry_groups=("Era-Raws", "OtherPick"), owned_episodes=(OwnedEpisode(11, 700),)),
         )
         assert PendingImport.from_json(pending.to_json()) == pending
 

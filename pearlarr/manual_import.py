@@ -480,6 +480,18 @@ class PendingKey(NamedTuple):
         return f"{self.infohash}:{self.al_id}"
 
 
+class OwnedEpisode(NamedTuple):
+    """One grab-time ownership claim over an untagged on-disk file.
+
+    Tuple-compatible with the persisted `[episode id, size]` pair, so `asdict`
+    + JSON round-trips unchanged. Named so the pair can't be misread as the
+    `(season, episode)` key one module over.
+    """
+
+    ep_id: int
+    size: int
+
+
 @dataclass(frozen=True)
 class GuardFacts:
     """The plan's per-entry overwrite-guard evidence, carried whole.
@@ -502,11 +514,11 @@ class GuardFacts:
     carries) - the copies this grab replaces. Subtracted from sibling records' guard votes so a group
     excluded from `entry_groups` cannot ride back in and shield the files being replaced."""
 
-    owned_episodes: tuple[tuple[int, int], ...] = ()
-    """`(episode id, file size)` pairs for episodes whose on-disk file carries no release group but
-    matched a pick's listed size exactly at grab time - the same identification the planner declined
-    to re-download for. The import honors the claim only while the file still sits at the recorded
-    size, so a different untagged file landing mid-wait is imported over rather than trusted."""
+    owned_episodes: tuple[OwnedEpisode, ...] = ()
+    """Episodes whose on-disk file carries no release group but matched a pick's listed size exactly
+    at grab time - the same identification the planner declined to re-download for. The import honors
+    the claim only while the file still sits at the recorded size, so a different untagged file
+    landing mid-wait is imported over rather than trusted."""
 
     @property
     def owned_sizes(self) -> dict[int, int]:
@@ -521,7 +533,7 @@ class GuardFacts:
         return cls(
             entry_groups=tuple(raw.get("entry_groups", [])),
             stale_groups=tuple(raw.get("stale_groups", [])),
-            owned_episodes=tuple((pair[0], pair[1]) for pair in raw.get("owned_episodes", [])),
+            owned_episodes=tuple(OwnedEpisode(pair[0], pair[1]) for pair in raw.get("owned_episodes", [])),
         )
 
 
