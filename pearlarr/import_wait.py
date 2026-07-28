@@ -586,10 +586,8 @@ class ImportWaitManager:
             )
 
 
-# A deferred poll (waiting on our own Sonarr work) credits its interval back to
-# the ready deadline - capped at this many ready timeouts per row, so a command
-# wedged in flight forever can't hold the watch open indefinitely. Generous
-# enough to ride out a long multi-file remux copy.
+# Cap on deferral credit, in ready timeouts per row: a command wedged in flight
+# forever can't hold the watch open, yet a long multi-file copy rides through.
 _DEFERRAL_CREDIT_CAP_MULT = 6
 
 
@@ -597,11 +595,10 @@ _DEFERRAL_CREDIT_CAP_MULT = 6
 class _ReadyClock:
     """One row's ready-deadline state machine, sole owner of the anchor/credit invariants.
 
-    `timeout` bounds a STALLED import, not the whole copy: `note_progress`
-    re-stamps the anchor on each rise of the determinate done-count, and a poll
-    deferred behind our own Sonarr work pauses the clock (`credit_deferral`).
-    Total credit is capped (`_DEFERRAL_CREDIT_CAP_MULT`), so a wedged command
-    still ends in the ordinary deadline.
+    `timeout` bounds a STALL, not the whole copy: `note_progress` re-stamps the
+    anchor on each determinate done-count rise, `credit_deferral` pauses the
+    clock while waiting on our own Sonarr work, and the credit cap keeps a
+    wedged command ending in the ordinary deadline.
     """
 
     timeout: float
@@ -638,10 +635,9 @@ class _ReadyClock:
     def note_progress(self, done: int, total: int, now: float) -> bool:
         """Re-anchor on a rising determinate done-count; True when another file landed.
 
-        The first determinate reading is a baseline (files present before we
-        started watching are not progress), indeterminate counts (`total` 0)
-        never move the anchor, and the memo is a max so a stale lower reading
-        can't fake a rise.
+        The first determinate reading is a baseline, indeterminate counts never
+        move the anchor, and the memo is a max so a stale lower reading can't
+        fake a rise.
         """
 
         if total <= 0:
@@ -785,14 +781,10 @@ class MonitorPass:
     def advance(self, row: _MonitorRow) -> None:
         """Advance one row one monitor cycle (download or drive/verify import).
 
-        Rewrites `row.view` (the frame the caller snapshots) and, on a terminal
-        outcome, retires the row via `_terminal`. `import_start` is stamped on
-        the first COMPLETE. `imported` is gated on verified episode files, so a
-        freshly-issued import command reads `importing` until the copy lands.
-        Deadline polls (`at_deadline`) force and warn; a file landing that same
-        cycle re-anchors the deadline instead, and a poll deferred behind our
-        own Sonarr work pauses the clock until a clear shot, which then
-        re-forces (both per `_ReadyClock`).
+        Rewrites `row.view` and, on a terminal outcome, retires the row via
+        `_terminal`. `imported` is gated on verified episode files. Deadline
+        polls force and warn; a same-cycle landing re-anchors instead, and a
+        poll deferred behind our own work pauses the clock (per `_ReadyClock`).
         """
 
         record = row.record

@@ -115,11 +115,10 @@ class TestBuildPendingSeeds:
         assert seed.episode_ids == []
 
     def test_sibling_slice_files_are_excluded_not_intended(self) -> None:
-        # A pack carrying another slice's episodes (the 2026-07-27 Fire Force
-        # shape: a Part 1 entry over a Part 1+2 pack): files parsing cleanly
-        # OUTSIDE this entry's set land in excluded_files, so map + excluded
-        # account for every file and the record stays determinate (a real
-        # progress bar, a deadline that re-anchors per landing file).
+        # A Part 1 entry over a Part 1+2 pack: files parsing cleanly OUTSIDE
+        # this entry's set land in excluded_files, so map + excluded account
+        # for every file and the record stays determinate (a real progress
+        # bar, a deadline that re-anchors per landing file).
         ep_list = [_ep(101, 3, 1), _ep(102, 3, 2)]
         parse_cache = {
             "Show - S03E01.mkv": {"episodes": [{"season": 3, "episode": 1}]},

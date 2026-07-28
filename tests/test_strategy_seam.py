@@ -678,12 +678,9 @@ class TestImportCompletedQueueState:
         assert sonarr.candidate_calls == []
 
     def test_running_disk_command_defers_even_forced(self, monkeypatch: pytest.MonkeyPatch) -> None:
-        # Sonarr is executing a disk command (here its own import pass) that
-        # outlives the rescan's bounded absorb: a ManualImport POSTed now would
-        # queue behind it for a stale replay, so RETRY - force must not override
-        # - without scanning or POSTing. The probe keeps the determinate bar
-        # counts (0 of 1 target), so the wait's deadline still re-anchors off
-        # files the pass lands meanwhile.
+        # A disk command outliving the rescan's bounded absorb: a ManualImport
+        # POSTed now would queue behind it for a stale replay, so RETRY (force
+        # must not override) with the determinate bar counts kept.
         monkeypatch.setattr(sonarr_import_module, "_REFRESH_COMMAND_POLL_S", 0)
         pending = pending_import(infohash="abc123")
         strat, sonarr = _make_sonarr_for_import(
@@ -708,8 +705,7 @@ class TestImportCompletedQueueState:
         # Record A's issued copy is still running while record B polls: B defers
         # (RETRY), and because the running command is OURS (an id we POSTed this
         # run) the probe reads `deferred` - the monitor credits B's wait back to
-        # its ready deadline instead of burning it (the JJK-blocks-Fire-Force
-        # shape from 2026-07-27).
+        # its ready deadline instead of burning it.
         pending_a = pending_import(infohash="abc123")
         pending_b = pending_import(infohash="def456")
         strat, sonarr = _make_sonarr_for_import(
@@ -808,12 +804,10 @@ class TestImportCompletedQueueState:
         assert executor.is_own_command(42) is False
 
     def test_wrongly_excluded_file_is_still_imported_via_repair(self) -> None:
-        # THE under-import guard for exclusions: accounting is complete via
-        # excluded_files and every MAPPED target already holds the recommended
-        # release - yet the record must NOT fast-path to IMPORTED. The repair
-        # gets the final say (grab-time parses lie: absolute offsets, stale
-        # parse cache) and here it places the "excluded" file onto the
-        # unclaimed episode and imports it.
+        # THE under-import guard: accounting is complete via excluded_files and
+        # every MAPPED target is done - yet no IMPORTED fast path. The repair
+        # gets the final say (grab-time parses lie) and here it places the
+        # "excluded" file onto the unclaimed episode and imports it.
         done_file = "Show - 01 [1080p].mkv"
         wrong_file = "Show - 13 [1080p].mkv"
         pending = pending_import(
@@ -850,8 +844,7 @@ class TestImportCompletedQueueState:
         # A completed rescan immediately starts Sonarr's own import pass. The
         # rescan must wait that pass out; checking the disk guard right away
         # tripped it in phase on EVERY poll and starved the step-in until the
-        # ready deadline (observed live 2026-07-27: importBlocked season packs
-        # deferred 25 minutes straight, zero ManualImports issued).
+        # ready deadline.
         monkeypatch.setattr(sonarr_import_module, "_REFRESH_COMMAND_POLL_S", 0)
         running = CommandResource.model_validate({"name": "ProcessMonitoredDownloads", "status": "started"})
         pending = pending_import(
