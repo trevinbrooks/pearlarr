@@ -16,8 +16,11 @@ from pathlib import Path
 
 import httpx
 import pytest
+import qbittorrentapi
+import respx
 
 from pearlarr import run_services
+from pearlarr.arr_categories import ArrCategories
 from pearlarr.boot_flow import BootFlow
 from pearlarr.config import Arr
 from pearlarr.mappings import MappingResolver
@@ -144,6 +147,78 @@ def test_rundeps_build_pins_verify_ssl_to_the_arrs_knob(monkeypatch: pytest.Monk
     deps.close()
 
     assert seen == [False]
+
+
+class _PassingQbit:
+    """A `qbittorrentapi.Client` stand-in whose login succeeds (build's seam)."""
+
+    def __init__(self, **kwargs: object) -> None:
+        del kwargs
+
+    def auth_log_in(self) -> None:
+        pass
+
+
+@respx.mock
+def test_rundeps_build_resolves_categories_from_the_arr_once(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    """With qbit configured and blank categories, `build` fetches the arr's download clients once and wires both consumers."""
+
+    monkeypatch.setattr(qbittorrentapi, "Client", _PassingQbit)
+    route = respx.get("http://sonarr/api/v3/downloadclient").respond(
+        json=[
+            {
+                "enable": True,
+                "implementation": "QBittorrent",
+                "fields": [
+                    {"name": "tvCategory", "value": "tv-sonarr"},
+                    {"name": "tvImportedCategory", "value": "sonarr-done"},
+                ],
+            },
+        ],
+    )
+    config = make_config(url="http://sonarr", api_key="key", host="http://qbit:8080", username="u", password="p")
+
+    deps = RunDeps.build(
+        Arr.SONARR,
+        cache=str(tmp_path / "cache.db"),
+        logger=logging.getLogger("pearlarr.test"),
+        mappings=make_bare_instance(MappingResolver),
+        app_config=config,
+        web=httpx.Client(),
+        boot=BootFlow(),
+    )
+    deps.close()
+
+    assert route.call_count == 1
+    assert deps.categories == ArrCategories(grab="tv-sonarr", post_import="sonarr-done")
+    # Both consumers see the resolved values: the add-time category on the
+    # torrent adapter, the post-import one on the deps the wait manager reads.
+    assert deps.torrents.category == "tv-sonarr"
+
+
+@respx.mock
+def test_rundeps_build_skips_the_category_fetch_without_qbit(tmp_path: Path) -> None:
+    """No qBittorrent client (perpetual preview): no category is ever applied, so `build` never contacts the arr."""
+
+    route = respx.get("http://sonarr/api/v3/downloadclient").respond(json=[])
+    config = make_config(url="http://sonarr", api_key="key")
+
+    deps = RunDeps.build(
+        Arr.SONARR,
+        cache=str(tmp_path / "cache.db"),
+        logger=logging.getLogger("pearlarr.test"),
+        mappings=make_bare_instance(MappingResolver),
+        app_config=config,
+        web=httpx.Client(),
+        boot=BootFlow(),
+    )
+    deps.close()
+
+    assert route.call_count == 0
+    assert deps.categories == ArrCategories(grab=None, post_import=None)
 
 
 def test_sonarr_cross_check_builds_without_network_via_radarr_seam() -> None:

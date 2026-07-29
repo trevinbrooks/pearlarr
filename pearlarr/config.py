@@ -268,7 +268,11 @@ class ArrSettings(_ConfigBase):
     """
 
     torrent_category: str | None = None
-    """qBittorrent category applied to torrents grabbed for this arr. Blank applies no category."""
+    """qBittorrent category applied to torrents grabbed for this arr.
+
+    Blank adopts the category set on this arr's own qBittorrent download
+    client; with neither set, no category is applied.
+    """
 
     # Applied by the wait machinery, so it only fires when the run's resolved
     # wait mode is non-off.
@@ -279,8 +283,9 @@ class ArrSettings(_ConfigBase):
     several entries, or by Sonarr and Radarr, moves only after all of them have
     imported. Point delete-with-data cleanup scripts at this category alone - a
     SeaDex update can attach a new entry to an already-moved torrent, and
-    deleted data is re-downloaded. Blank keeps the add-time category. Ignored
-    when `imports.wait_mode` is `off`.
+    deleted data is re-downloaded. Blank adopts the post-import category set
+    on this arr's own qBittorrent download client; with neither set, the
+    add-time category is kept. Ignored when `imports.wait_mode` is `off`.
     """
 
 

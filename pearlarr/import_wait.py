@@ -82,7 +82,9 @@ class ImportWaitManager:
         strategy: ImportCompleter | None = None,
     ) -> None:
         self._config = deps.config
-        self._arr_config = deps.arr_config
+        # The run-resolved value: config's post_import_category, else the
+        # category the arr's own qBittorrent download client sets.
+        self._post_import_category = deps.categories.post_import
         self.cache_store = deps.cache_store
         self._reporter = deps.reporter
         self.logger = deps.logger
@@ -535,11 +537,13 @@ class ImportWaitManager:
         self._active_strategy.close_tracked(pending)
 
     def apply_post_import_category(self, pending: PendingImport) -> None:
-        """Move a verified-imported torrent to this arr's `post_import_category`.
+        """Move a verified-imported torrent to this arr's resolved post-import category.
 
-        Called at the two confirmed-import sites (the reconcile passes and the
-        monitor's IMPORTED terminal), AFTER the finished record is dropped -
-        never for MISSING or a TTL drop. Gated on the whole torrent being done:
+        The category is the run-resolved `ArrCategories.post_import`
+        (config's `post_import_category`, else the arr's own download-client
+        value). Called at the two confirmed-import sites (the reconcile passes
+        and the monitor's IMPORTED terminal), AFTER the finished record is
+        dropped - never for MISSING or a TTL drop. Gated on the whole torrent being done:
         SeaDex can list one torrent on several AniList entries, each with its own
         record for its own episode slice, and users key delete-with-data cleanup
         off this category - so the move happens only once NO pending record (in
@@ -551,7 +555,7 @@ class ImportWaitManager:
         its display label, not the bare infohash.
         """
 
-        category = self._arr_config.post_import_category
+        category = self._post_import_category
         if not category or self.qbit is None:
             return
         remaining = self.cache_store.count_pending_for_infohash(pending.infohash)

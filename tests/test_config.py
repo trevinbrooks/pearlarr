@@ -173,9 +173,13 @@ class TestSchemaMigration:
 
     def test_v0_file_without_deltas_is_stamped_silently(self, tmp_path: Path) -> None:
         # Nothing to fold: the pass stamps the version and carries no notes.
-        # wait_mode is pinned because a file relying on its old default gets
-        # the v2 default-flip notice.
-        cfg = self._load(tmp_path, "sonarr:\n  url: http://x\nimports:\n  wait_mode: deferred\n")
+        # wait_mode and the connected arr's categories are pinned because a
+        # file relying on their old defaults gets the v2/v3 flip notices.
+        cfg = self._load(
+            tmp_path,
+            "sonarr:\n  url: http://x\n  torrent_category: anime\n  post_import_category: done\n"
+            "imports:\n  wait_mode: deferred\n",
+        )
         assert cfg.sonarr.url == "http://x"
         outcome = cfg.migration()
         assert outcome is not None

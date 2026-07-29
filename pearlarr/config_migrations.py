@@ -20,7 +20,7 @@ import yaml
 from .json_narrow import is_json_obj
 from .seadex_types import Json
 
-CONFIG_VERSION = 2
+CONFIG_VERSION = 3
 
 # The one remediation sentence, shared by every surface that reports an
 # old-schema file (and quoted by docs/troubleshooting.md's anchor grep).
@@ -123,6 +123,28 @@ def _to_v2(config: dict[str, Json]) -> list[str]:
     return notes
 
 
+def _to_v3(config: dict[str, Json]) -> list[str]:
+    """v2 -> v3: a blank per-arr category now adopts the arr's own download-client category.
+
+    Note-only, like the v2 `wait_mode` notice: nothing is rewritten. The note
+    fires only for the files the flip can bite - a connected arr (the group
+    carries a url) leaving `torrent_category` or `post_import_category` blank.
+    """
+
+    affected = any(
+        (group := _group(config, arr)) is not None
+        and group.get("url")
+        and any(group.get(key) is None for key in ("torrent_category", "post_import_category"))
+        for arr in ("sonarr", "radarr")
+    )
+    if not affected:
+        return []
+    return [
+        "a blank torrent_category / post_import_category now adopts the matching category of that "
+        "arr's own qBittorrent download client - an explicit value overrides it",
+    ]
+
+
 @dataclass(frozen=True)
 class _Migration:
     """One schema step: brings a mapping from `to_version - 1` to `to_version`."""
@@ -134,6 +156,7 @@ class _Migration:
 _MIGRATIONS: tuple[_Migration, ...] = (
     _Migration(to_version=1, apply=_to_v1),
     _Migration(to_version=2, apply=_to_v2),
+    _Migration(to_version=3, apply=_to_v3),
 )
 
 

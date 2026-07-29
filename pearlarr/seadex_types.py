@@ -879,6 +879,45 @@ class HistoryPage(_ApiModel):
         return _validate_skipping_junk(HistoryRecord, value)
 
 
+# --- Arr download clients (`/api/v3/downloadclient`) ------------------------
+
+
+class DownloadClientField(_ApiModel):
+    """One `{name, value}` settings field of a download-client definition.
+
+    Only the category fields are consumed, so `value` keeps a string and folds
+    every other shape (ports, flags, nested objects) to None.
+    """
+
+    name: _LenientStr = None
+    value: _LenientStr = None
+
+
+class DownloadClientRecord(_ApiModel):
+    """One arr `DownloadClientResource`, reduced to the category-fallback read.
+
+    `implementation` names the client type (`QBittorrent` for qBittorrent).
+    Every field folds junk independently, and a junk `fields[]` entry is
+    skipped WITHOUT dropping the definition.
+    """
+
+    enable: Annotated[bool, BeforeValidator(bool)] = False
+    implementation: _LenientStr = None
+    fields: tuple[DownloadClientField, ...] = ()
+
+    @field_validator("fields", mode="before")
+    @classmethod
+    def _lenient_fields(cls, value: object) -> object:
+        """Skip junk `fields[]` entries, never failing the definition over one."""
+
+        return _validate_skipping_junk(DownloadClientField, value)
+
+    def field_value(self, name: str) -> str | None:
+        """The named settings field's value, or None when absent or blank."""
+
+        return next((field.value or None for field in self.fields if field.name == name), None)
+
+
 # --- Sonarr remote path mappings (`/api/v3/remotepathmapping`) --------------
 
 

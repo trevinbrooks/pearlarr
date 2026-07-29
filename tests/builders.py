@@ -25,6 +25,7 @@ from seadex import EntryRecord, File, Tag, TorrentRecord, Tracker
 
 from pearlarr.anilist_client import AniListClient
 from pearlarr.anilist_gateway import AniListGateway
+from pearlarr.arr_categories import resolve_arr_categories
 from pearlarr.cache import (
     _ENTRY_SCALAR_COLUMNS,
     UPDATED_AT_STR_FORMAT,
@@ -652,6 +653,8 @@ def make_run_deps(
     return RunDeps(
         config=config,
         arr_config=config.for_arr(Arr.SONARR),
+        # http=None: the config passthrough (no download-client fetch under test).
+        categories=resolve_arr_categories(Arr.SONARR, config.for_arr(Arr.SONARR), None),
         web=http,
         http=http,
         qbit=None,
@@ -796,7 +799,9 @@ def make_import_wait_manager(**overrides: Any) -> ImportWaitManager:
     cache_store = overrides.pop("cache_store", None) or FakeCacheStore()
     defaults: dict[str, Any] = {
         "_config": config,
-        "_arr_config": config.for_arr(Arr.SONARR),
+        # The run-resolved value (`RunDeps.categories`): the config category,
+        # the arr-client fallback being a `resolve_arr_categories` concern.
+        "_post_import_category": config.for_arr(Arr.SONARR).post_import_category,
         "cache_store": cache_store,
         "_reporter": _real_reporter(logger, cache_store, httpx.Client()),
         "logger": logger,

@@ -10,6 +10,7 @@ Pearlarr is a fork of [bbtufty/seadexarr](https://github.com/bbtufty/seadexarr).
 ### Changed
 
 - An old-schema config file is now migrated in place at the start of a run, keeping the previous file as `config.yml.bak`, instead of warning on every run. `pearlarr config migrate` remains for migrating without a run.
+- A blank `torrent_category` or `post_import_category` now adopts the matching category of that arr's qBittorrent download client (its grab and imported categories respectively); an explicit value still wins. To keep a category unset, leave it blank on the arr as well.
 
 ## [1.1.0] - 2026-07-29
 

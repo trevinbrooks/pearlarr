@@ -88,16 +88,18 @@ class TestMigrateMapping:
     def test_v1_moves_post_import_category_onto_both_arrs(self) -> None:
         # The old single key covered both arrs, so its value lands on both: an
         # existing group keeps its keys, an absent one is created to carry it.
+        # torrent_category is pinned so the v3 blank-category notice stays out
+        # of the count (like the wait_mode pin above).
         mapping: dict[str, Json] = {
             "config_version": 1,
-            "sonarr": {"url": "http://s"},
+            "sonarr": {"url": "http://s", "torrent_category": "anime"},
             "imports": {"post_import_category": "seadex-done", "wait_mode": "hybrid"},
         }
         outcome = migrate_mapping(mapping)
         assert outcome is not None
         assert mapping == {
             "config_version": CONFIG_VERSION,
-            "sonarr": {"url": "http://s", "post_import_category": "seadex-done"},
+            "sonarr": {"url": "http://s", "torrent_category": "anime", "post_import_category": "seadex-done"},
             "radarr": {"post_import_category": "seadex-done"},
             "imports": {"wait_mode": "hybrid"},
         }
@@ -133,6 +135,29 @@ class TestMigrateMapping:
 
         pinned: dict[str, Json] = {"config_version": 1, "imports": {"wait_mode": False}}
         outcome = migrate_mapping(pinned)
+        assert outcome is not None
+        assert outcome.notes == ()
+
+    def test_v2_blank_category_on_a_connected_arr_gets_the_fallback_notice(self) -> None:
+        # The v3 flip (blank categories adopt the arr's download-client
+        # categories) can only bite a connected arr leaving one blank: note it,
+        # rewrite nothing.
+        mapping: dict[str, Json] = {"config_version": 2, "radarr": {"url": "http://r"}}
+        outcome = migrate_mapping(mapping)
+        assert outcome is not None
+        assert mapping == {"config_version": CONFIG_VERSION, "radarr": {"url": "http://r"}}
+        assert len(outcome.notes) == 1
+        assert "torrent_category" in outcome.notes[0]
+
+    def test_v2_pinned_or_unconnected_categories_get_no_notice(self) -> None:
+        # Both categories pinned on the one connected arr, the other group
+        # url-less (that arr never runs): the flip bites neither, so no note.
+        mapping: dict[str, Json] = {
+            "config_version": 2,
+            "sonarr": {"url": "http://s", "torrent_category": "anime", "post_import_category": "done"},
+            "radarr": {"post_import_category": "done"},
+        }
+        outcome = migrate_mapping(mapping)
         assert outcome is not None
         assert outcome.notes == ()
 
