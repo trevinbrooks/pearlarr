@@ -496,11 +496,13 @@ def make_orchestration_manager(
     passes in its own `reporter` to read it back).
     """
 
+    config = make_config(**config_overrides)
     mgr = make_bare_instance(
         ImportWaitManager,
         qbit=qbit,
         logger=make_logger(),
-        _config=make_config(**config_overrides),
+        _config=config,
+        _arr_config=config.for_arr(Arr.SONARR),
         _active_strategy=strategy,
         _reporter=reporter or _RecordingReporter(),
         cache_store=FakeCacheStore(),
@@ -2100,7 +2102,7 @@ class CategoryQbit(FakeQbit):
 
 
 class TestPostImportCategory:
-    """apply_post_import_category: verified imports move to imports.post_import_category."""
+    """apply_post_import_category: verified imports move to the run arr's post_import_category."""
 
     @staticmethod
     def _imported_manager(
@@ -2475,7 +2477,7 @@ def _radarr_reconcile_manager(
     """
 
     store = store if store is not None else FakeCacheStore()
-    config = make_config(post_import_category=post_import_category)
+    config = make_config(radarr_post_import_category=post_import_category)
     radarr = FakeRadarrClient()
     radarr.history_since_return = history
     strat = make_radarr_sync(radarr=radarr, config=config, cache_store=store)
@@ -2484,6 +2486,7 @@ def _radarr_reconcile_manager(
         qbit=qbit,
         logger=make_logger(),
         _config=config,
+        _arr_config=config.for_arr(Arr.RADARR),
         _active_strategy=strat,
         _reporter=_RecordingReporter(),
         cache_store=store,

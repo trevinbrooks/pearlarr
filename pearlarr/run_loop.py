@@ -180,7 +180,7 @@ class RunLoop:
         """
 
         # Hold the active strategy (so _finalize_run / _grab can call its import
-        # hook) and resolve the effective wait mode (cli > config > default) for
+        # hook) and resolve the effective wait mode (cli > config) for
         # the whole run. The loop only ever calls import_completed off it, so it
         # is held under the narrow, non-generic ImportCompleter ABC - which a
         # concrete ArrSync subclasses, so no invariant-ItemT cast.

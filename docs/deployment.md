@@ -69,7 +69,7 @@ environment:
 ### Stopping, and `stop_grace_period`
 
 `docker stop` sends SIGTERM to supercronic, which stops scheduling and waits for an in-flight run to finish. Docker escalates to SIGKILL after `stop_grace_period`, default ten seconds.
-Ten seconds is fine for the default configuration, but a blocking `imports.wait_mode` can legitimately hold a run for up to `imports.wait_timeout`. Raise the grace period past it so a routine `docker stop` does not SIGKILL a mid-import run:
+Ten seconds is not enough once a wait pass is in flight: the default `hybrid` `imports.wait_mode` can legitimately hold a run for up to `imports.wait_timeout`. Raise the grace period past it so a routine `docker stop` does not SIGKILL a mid-import run:
 
 ```yaml
 stop_grace_period: 1h

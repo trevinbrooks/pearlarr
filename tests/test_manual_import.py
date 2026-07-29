@@ -969,16 +969,13 @@ class TestDeriveLanguages:
 
 
 class TestResolveWaitMode:
-    """`resolve_wait_mode` prefers the CLI override over the config value, defaulting to OFF when neither is set."""
+    """`resolve_wait_mode` prefers the CLI override over the config value."""
 
     def test_cli_wins_over_config(self) -> None:
         assert resolve_wait_mode(ImportWaitMode.OFF, ImportWaitMode.HYBRID) is ImportWaitMode.OFF
 
     def test_config_used_when_no_cli(self) -> None:
         assert resolve_wait_mode(None, ImportWaitMode.BLOCKING) is ImportWaitMode.BLOCKING
-
-    def test_default_off_when_neither(self) -> None:
-        assert resolve_wait_mode(None, None) is ImportWaitMode.OFF
 
 
 class TestPendingImportRoundTrip:

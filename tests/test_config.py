@@ -101,7 +101,7 @@ class TestFileLifecycle:
             AppConfig.load(str(cfg_path))  # copies the template
         cfg = AppConfig.load(str(cfg_path))
         assert cfg.seadex.private_releases is PrivateReleaseAction.WARN
-        assert cfg.imports.wait_mode is ImportWaitMode.OFF
+        assert cfg.imports.wait_mode is ImportWaitMode.HYBRID
         assert cfg.advanced.log_level == "INFO"
 
     def test_checksum_matches_file_bytes(self, tmp_path: Path) -> None:
@@ -150,8 +150,10 @@ class TestSchemaMigration:
         outcome = cfg.migration()
         assert outcome is not None
         assert outcome.from_version == 0
-        assert len(outcome.notes) == 2
+        # The two v0 folds plus the v2 wait_mode default-flip notice.
+        assert len(outcome.notes) == 3
         assert any("public_only" in note for note in outcome.notes)
+        assert any("wait_mode" in note for note in outcome.notes)
 
     def test_typos_stay_loud_in_a_version_less_file(self, tmp_path: Path) -> None:
         # Only removed schema folds. A never-valid value is a typo and must
@@ -171,7 +173,9 @@ class TestSchemaMigration:
 
     def test_v0_file_without_deltas_is_stamped_silently(self, tmp_path: Path) -> None:
         # Nothing to fold: the pass stamps the version and carries no notes.
-        cfg = self._load(tmp_path, "sonarr:\n  url: http://x\n")
+        # wait_mode is pinned because a file relying on its old default gets
+        # the v2 default-flip notice.
+        cfg = self._load(tmp_path, "sonarr:\n  url: http://x\nimports:\n  wait_mode: deferred\n")
         assert cfg.sonarr.url == "http://x"
         outcome = cfg.migration()
         assert outcome is not None
@@ -308,7 +312,7 @@ class TestDefaults:
 
     def test_import_defaults_when_absent(self) -> None:
         imp = ImportsSettings()
-        assert imp.wait_mode is ImportWaitMode.OFF
+        assert imp.wait_mode is ImportWaitMode.HYBRID
         assert imp.wait_timeout == 3600
         assert imp.ready_timeout == 600
         assert imp.poll_interval == 30

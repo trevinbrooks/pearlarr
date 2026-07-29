@@ -3,7 +3,7 @@
 
 # Schema version of the config file's keys and values. Stamped by the starter template and pearlarr
 # config migrate. A file from an older Pearlarr is migrated automatically in memory at every load.
-config_version: 1
+config_version: 2
 
 # Sonarr connection and behavior. url and api_key are required only when a Sonarr run actually
 # executes. A Radarr-only config still loads.
@@ -26,6 +26,14 @@ sonarr:
 
   # qBittorrent category applied to torrents grabbed for this arr. Blank applies no category.
   torrent_category:
+
+  # qBittorrent category applied once every import using a torrent grabbed for this arr has
+  # completed. Lets finished torrents carry their own seeding rules. A torrent shared by several
+  # entries, or by Sonarr and Radarr, moves only after all of them have imported. Point
+  # delete-with-data cleanup scripts at this category alone - a SeaDex update can attach a new entry
+  # to an already-moved torrent, and deleted data is re-downloaded. Blank keeps the add-time
+  # category. Ignored when imports.wait_mode is off.
+  post_import_category:
 
   # Skip movies that already exist in Radarr instead of also grabbing them on the Sonarr side.
   ignore_movies_in_radarr: false
@@ -51,6 +59,14 @@ radarr:
 
   # qBittorrent category applied to torrents grabbed for this arr. Blank applies no category.
   torrent_category:
+
+  # qBittorrent category applied once every import using a torrent grabbed for this arr has
+  # completed. Lets finished torrents carry their own seeding rules. A torrent shared by several
+  # entries, or by Sonarr and Radarr, moves only after all of them have imported. Point
+  # delete-with-data cleanup scripts at this category alone - a SeaDex update can attach a new entry
+  # to an already-moved torrent, and deleted data is re-downloaded. Blank keeps the add-time
+  # category. Ignored when imports.wait_mode is off.
+  post_import_category:
 
 # qBittorrent connection. All of host, username, and password are needed to grab. Leave any blank to
 # run in preview mode (everything is reported, nothing is added).
@@ -110,8 +126,8 @@ seadex:
   # Match what is already downloaded by torrent hash instead of by release group name.
   use_torrent_hash_to_filter: false
 
-# Waiting for grabbed torrents and Sonarr manual import. Sonarr only: a Radarr run ignores this
-# group.
+# Waiting for grabbed torrents and Sonarr manual import. Sonarr only, except the pending-import
+# bookkeeping.
 imports:
   # When, if ever, to wait for grabbed torrents to finish downloading and then drive Sonarr's
   # import.
@@ -122,7 +138,7 @@ imports:
   #              import.
   #   hybrid   - Reconcile deferred imports at run start, then a blocking pass at the end
   #              (recommended).
-  wait_mode: 'off'
+  wait_mode: hybrid
 
   # Seconds to wait per torrent for qBittorrent to finish downloading it.
   wait_timeout: 3600
@@ -154,14 +170,6 @@ imports:
   # entry closes that window: Sonarr records the download as manually ignored, and the torrent keeps
   # seeding in qBittorrent. Sonarr only. Ignored when wait_mode is off.
   remove_from_queue: true
-
-  # qBittorrent category applied once every import using the torrent has completed. Lets finished
-  # torrents carry their own seeding rules. Covers both arrs: a torrent shared by several entries,
-  # or by Sonarr and Radarr, moves only after all of them have imported. Point delete-with-data
-  # cleanup scripts at this category alone - a SeaDex update can attach a new entry to an
-  # already-moved torrent, and deleted data is re-downloaded. Blank keeps the add-time category.
-  # Ignored when wait_mode is off.
-  post_import_category:
 
   # Sonarr quality name, e.g. Bluray-2160p, filling the gaps when a file's quality cannot be
   # detected. Useful on a 4K instance. Blank adds no default. A name matching no Sonarr quality

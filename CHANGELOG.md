@@ -7,6 +7,11 @@ Pearlarr is a fork of [bbtufty/seadexarr](https://github.com/bbtufty/seadexarr).
 
 ## [Unreleased]
 
+### Changed
+
+- The wait-and-import subsystem is now on by default: `imports.wait_mode` defaults to `hybrid` instead of `off`. Set `imports.wait_mode: off` to keep it disabled; a config that already sets a mode is unaffected. `pearlarr config migrate` calls out the flip for configs that relied on the old default.
+- `imports.post_import_category` is now set per arr, as `sonarr.post_import_category` and `radarr.post_import_category`, next to each arr's grab-time `torrent_category`. `pearlarr config migrate` moves an existing value onto both arrs, keeping the old behavior; until then it is applied in memory at every load.
+
 ### Fixed
 
 - Discord grab notifications no longer repeat the series title above the notes when the entry title merely extends it with a season suffix (for example a grab titled `Show Season 2` no longer carries a `Show` byline). A genuinely different series title still shows.

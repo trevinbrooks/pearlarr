@@ -1,4 +1,4 @@
-config_version: 1
+config_version: 2
 
 sonarr:
   url: http://127.0.0.1:8989

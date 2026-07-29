@@ -124,5 +124,5 @@ One run every few hours is all Pearlarr needs:
 From here:
 
 - Every setting, with defaults and allowed values: [configuration.md](configuration.md)
-- Sonarr users: the `imports` group can wait for downloads and shepherd stuck imports into Sonarr automatically ([configuration.md](configuration.md#imports))
+- Sonarr users: the `imports` group waits for downloads and shepherds stuck imports into Sonarr automatically - on by default, `imports.wait_mode: off` disables it ([configuration.md](configuration.md#imports))
 - Something looks off: [troubleshooting.md](troubleshooting.md)

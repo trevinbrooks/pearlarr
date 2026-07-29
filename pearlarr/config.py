@@ -270,6 +270,19 @@ class ArrSettings(_ConfigBase):
     torrent_category: str | None = None
     """qBittorrent category applied to torrents grabbed for this arr. Blank applies no category."""
 
+    # Applied by the wait machinery, so it only fires when the run's resolved
+    # wait mode is non-off.
+    post_import_category: str | None = None
+    """qBittorrent category applied once every import using a torrent grabbed for this arr has completed.
+
+    Lets finished torrents carry their own seeding rules. A torrent shared by
+    several entries, or by Sonarr and Radarr, moves only after all of them have
+    imported. Point delete-with-data cleanup scripts at this category alone - a
+    SeaDex update can attach a new entry to an already-moved torrent, and
+    deleted data is re-downloaded. Blank keeps the add-time category. Ignored
+    when `imports.wait_mode` is `off`.
+    """
+
 
 class SonarrSettings(ArrSettings):
     """Sonarr adds one cross-arr flag the Radarr group must not accept.
@@ -402,11 +415,11 @@ class ImportsSettings(_ConfigBase):
     """Wait-for-completion + manual import.
 
     The wait modes, the blocking monitor, and the manual import itself are Sonarr
-    only. Pending-import tracking and `post_import_category` also cover Radarr
-    grabs (which Radarr's own completed-download handling imports).
+    only. Pending-import tracking and the per-arr `post_import_category` also
+    cover Radarr grabs (which Radarr's own completed-download handling imports).
     """
 
-    wait_mode: ImportWaitMode = ImportWaitMode.OFF
+    wait_mode: ImportWaitMode = ImportWaitMode.HYBRID
     """When, if ever, to wait for grabbed torrents to finish downloading and then drive Sonarr's import."""
 
     # ge=1: a zero timeout/poll cadence is a degenerate busy-loop, never a
@@ -455,19 +468,6 @@ class ImportsSettings(_ConfigBase):
     closes that window: Sonarr records the download as manually ignored, and
     the torrent keeps seeding in qBittorrent. Sonarr only. Ignored when
     `wait_mode` is `off`.
-    """
-
-    # Applied by the wait machinery, so it only fires when the run's resolved
-    # wait mode is non-off.
-    post_import_category: str | None = None
-    """qBittorrent category applied once every import using the torrent has completed.
-
-    Lets finished torrents carry their own seeding rules. Covers both arrs: a
-    torrent shared by several entries, or by Sonarr and Radarr, moves only after
-    all of them have imported. Point delete-with-data cleanup scripts at this
-    category alone - a SeaDex update can attach a new entry to an already-moved
-    torrent, and deleted data is re-downloaded. Blank keeps the add-time
-    category. Ignored when `wait_mode` is `off`.
     """
 
     default_quality: str | None = None
@@ -737,7 +737,7 @@ class AppConfig(_ConfigBase):
     """SeaDex release-selection filters."""
 
     imports: ImportsSettings = Field(default_factory=ImportsSettings)
-    """Waiting for grabbed torrents and Sonarr manual import. Sonarr only: a Radarr run ignores this group."""
+    """Waiting for grabbed torrents and Sonarr manual import. Sonarr only, except the pending-import bookkeeping."""
 
     notifications: NotificationsSettings = Field(default_factory=NotificationsSettings)
     """Notification webhooks. Either, both, or neither may be set."""

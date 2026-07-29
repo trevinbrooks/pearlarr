@@ -898,7 +898,7 @@ class CacheStore(AbstractCacheStore):
 
         The post-import category gate: the mover may only flag a torrent once no
         record still claims a slice of it. Deliberately cross-arr-wide (no arr
-        param): the category is a property of the torrent, not of one arr's run,
+        param): the move waits on the whole torrent, not one arr's slice of it,
         so the gate stays correct if the other arr ever grows pending records.
         The per-arr dedup helpers (`check_al_id_in_cache` and friends) keep their
         explicit arr params - they answer per-arr questions - so do not fold this
