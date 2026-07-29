@@ -419,7 +419,7 @@ class SonarrSync(ArrSync[SonarrItem]):
         sonarr_group_names = sonarr_releases.display_names()
 
         self.logger.debug(
-            f"Sonarr release {pluralize(len(sonarr_group_names), 'group')}: {', '.join(sonarr_group_names)}"
+            f"Sonarr release {pluralize(len(sonarr_group_names), 'group')}: {sonarr_releases.groups_label()}"
         )
 
         # Produce a dictionary of info from the SeaDex request
@@ -493,7 +493,7 @@ class SonarrSync(ArrSync[SonarrItem]):
                 seadex_dict=seadex_dict,
                 torrent_hashes=torrent_hashes,
                 cache_details=cache_details,
-                replaced_groups=tuple(sonarr_releases.tagged),
+                replaced_groups=sonarr_releases.replaced_groups(),
                 coverage=coverage,
                 pending_seeds=pending_seeds,
             ),

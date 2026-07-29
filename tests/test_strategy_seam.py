@@ -14,8 +14,8 @@ is a real `RunServices` subclass. The strategies are built bare
 """
 
 import logging
-from collections.abc import Callable
-from typing import NamedTuple, override
+from collections.abc import Callable, MutableMapping
+from typing import NamedTuple, cast, override
 
 import pytest
 from seadex import EntryRecord
@@ -2395,3 +2395,44 @@ class TestSonarrReleases:
 
         assert releases == ArrReleases(tagged={"RG": (800,)})
         assert releases.untagged == ()
+
+
+class TestArrReleasesRecord:
+    """The record's own contract: deep-frozen, hashable, one shared fold."""
+
+    def test_tagged_detaches_and_rejects_mutation(self) -> None:
+        source = {"RG": (100,)}
+        releases = ArrReleases(tagged=source)
+
+        source["Other"] = (5,)
+
+        assert dict(releases.tagged) == {"RG": (100,)}
+        with pytest.raises(TypeError):
+            cast("MutableMapping[str, tuple[int, ...]]", releases.tagged)["X"] = (1,)
+
+    def test_equal_records_hash_equal_across_key_order(self) -> None:
+        # dict eq ignores insertion order, so the hash must too.
+        first = ArrReleases(tagged={"A": (1,), "B": (2,)}, untagged=(3,))
+        second = ArrReleases(tagged={"B": (2,), "A": (1,)}, untagged=(3,))
+
+        assert first == second
+        assert hash(first) == hash(second)
+
+    def test_from_files_keeps_or_drops_untagged_by_arr(self) -> None:
+        # One fold for both arrs: only the untagged destination differs. The
+        # unreadable tagged size is dropped; the group keeps its name.
+        files = [
+            MovieFile(release_group=None, size=700),
+            MovieFile(release_group="RG", size=800),
+            MovieFile(release_group="RG", size=None),
+        ]
+
+        assert ArrReleases.from_files(files, keep_untagged=True) == ArrReleases(tagged={"RG": (800,)}, untagged=(700,))
+        assert ArrReleases.from_files(files, keep_untagged=False) == ArrReleases(tagged={"RG": (800,)})
+
+    def test_groups_label_renders_untagged_and_empty(self) -> None:
+        assert ArrReleases(tagged={"A": (1,)}, untagged=(2,)).groups_label() == "A, (none)"
+        assert ArrReleases().groups_label() == "(no files)"
+
+    def test_replaced_groups_lists_every_tagged_name(self) -> None:
+        assert ArrReleases(tagged={"A": (1,), "B": ()}).replaced_groups() == ("A", "B")

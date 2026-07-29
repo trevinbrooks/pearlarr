@@ -191,7 +191,7 @@ class RadarrSync(ArrSync[RadarrItem]):
         radarr_group_names = radarr_releases.display_names()
 
         self.logger.debug(
-            f"Radarr release {pluralize(len(radarr_group_names), 'group')}: {', '.join(radarr_group_names)}"
+            f"Radarr release {pluralize(len(radarr_group_names), 'group')}: {radarr_releases.groups_label()}"
         )
 
         # Produce a dictionary of info from the SeaDex request
@@ -264,7 +264,7 @@ class RadarrSync(ArrSync[RadarrItem]):
                 torrent_hashes=torrent_hashes,
                 cache_details=cache_details,
                 # Every edition's tagged group (not just the first file's).
-                replaced_groups=tuple(radarr_releases.tagged),
+                replaced_groups=radarr_releases.replaced_groups(),
                 pending_seeds=pending_seeds,
             ),
         )
@@ -398,23 +398,10 @@ class RadarrSync(ArrSync[RadarrItem]):
     ) -> ArrReleases:
         """Fold the movie's existing files into an `ArrReleases`."""
 
-        # Accumulate sizes per release group (a movie can carry several files - an
-        # upgrade or a multi-edition). All of them are already present, so the planner dedups
-        # against each. Mirrors Sonarr's per-episode accumulation rather than
-        # collapsing to one file or hard-erroring on >1 group.
-        tagged: dict[str, list[int]] = {}
-        untagged: list[int] = []
-        for mf in self.radarr.movie_files(radarr_movie_id):
-            if mf.release_group:
-                sizes = tagged.setdefault(mf.release_group, [])
-                if mf.size is not None:
-                    sizes.append(mf.size)
-            else:
-                # An unreadable size folds to 0 so `_untagged_counter` vetoes the
-                # whole multiset: an unverifiable file never helps prove ownership.
-                untagged.append(mf.size or 0)
-
-        return ArrReleases(
-            tagged={rg: tuple(sizes) for rg, sizes in tagged.items()},
-            untagged=tuple(untagged),
+        # A movie can carry several files (an upgrade or a multi-edition), all
+        # already present, so the fold keeps every size for the planner to
+        # dedup against rather than collapsing to one file or erroring.
+        return ArrReleases.from_files(
+            self.radarr.movie_files(radarr_movie_id),
+            keep_untagged=True,
         )
