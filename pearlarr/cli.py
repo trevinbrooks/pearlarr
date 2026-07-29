@@ -719,28 +719,36 @@ def config_validate(json_output: Annotated[bool, typer.Option("--json", help=_JS
 def config_migrate(json_output: Annotated[bool, typer.Option("--json", help=_JSON_HELP)] = False) -> bool:
     """Rewrite config.yml at the current config schema version, keeping a backup.
 
-    Runs never require this - an older file is migrated in memory at every load -
-    but the file itself keeps the old spelling until rewritten. The rewrite is
-    the current annotated template with this file's values (and any schema fixes)
-    filled in. The previous file is saved beside it as config.yml.bak first. A
-    file already at the current version is left untouched.
+    Runs normally do this on their own - an older file is migrated in memory and
+    rewritten in place at the next run - so this command is for updating the file
+    without a run, or after a run could not write it. The rewrite is the current
+    annotated template with this file's values (and any schema fixes) filled in.
+    The previous file is saved beside it as config.yml.bak first. A file already
+    at the current version is left untouched.
     """
 
     with cli_surface(json_output):
         paths = resolve_paths()
-        upgrade = _run_config_action(paths.config, upgrade_config_file)
-        if upgrade is None:
-            return False
-        if upgrade.migration is None:
-            emit_to_hub(ConfigUpToDate(path=paths.config))
-            return True
 
-        # backup_path is set in lockstep with a non-None migration (ConfigUpgrade).
-        assert upgrade.backup_path is not None
-        emit_to_hub(
-            ConfigMigrated(path=paths.config, backup_path=upgrade.backup_path, notes=upgrade.migration.notes),
-        )
-        return True
+        # The boot rewrite runs under this same lock, so the two writers can
+        # never interleave on the config's backup/temp siblings.
+        with single_instance_lock(paths.data_dir) as acquired:
+            if _refused_by_active_run(acquired, paths.data_dir):
+                return False
+
+            upgrade = _run_config_action(paths.config, upgrade_config_file)
+            if upgrade is None:
+                return False
+            if upgrade.migration is None:
+                emit_to_hub(ConfigUpToDate(path=paths.config))
+                return True
+
+            # backup_path is set in lockstep with a non-None migration (ConfigUpgrade).
+            assert upgrade.backup_path is not None
+            emit_to_hub(
+                ConfigMigrated(path=paths.config, backup_path=upgrade.backup_path, notes=upgrade.migration.notes),
+            )
+            return True
 
 
 # Values under these keys hold credentials (the webhook URLs embed tokens), so

@@ -20,7 +20,7 @@ import httpx
 from .config import strip_userinfo
 from .log import LOG_NAME, compact_duration
 from .output import hub_note, hub_warn
-from .seadex_types import ARR_REQUEST_TIMEOUT_S, HistoryRecord, Json, validate_each
+from .seadex_types import ARR_REQUEST_TIMEOUT_S, DownloadClientRecord, HistoryRecord, Json, validate_each
 
 # Transient statuses worth another try on an idempotent GET - shared with the
 # web client's `get_with_retries` so the two stacks retry the same set.
@@ -430,6 +430,24 @@ class ArrHttp:
 
         # Every field folds junk independently, so only a non-object stray skips.
         return validate_each(HistoryRecord, raw)
+
+    def download_clients(self) -> list[DownloadClientRecord] | None:
+        """This arr's download-client definitions (`/api/v3/downloadclient`), or None.
+
+        Read lazily, at most once per run, by the omitted-category fallback
+        (`arr_categories.ArrCategoryResolver`), shared by both arr clients
+        like `history_since`. Fails open to None through `get_json_list`'s
+        matrix with a warning stating the consequence: the fallback is a
+        nicety, so a miss just leaves blank categories blank.
+        """
+
+        raw = self.get_json_list(
+            "/api/v3/downloadclient",
+            warn=f"Could not fetch the {self.label} download clients ({{detail}}) - blank categories stay blank",
+        )
+        if raw is None:
+            return None
+        return validate_each(DownloadClientRecord, raw)
 
     def _strict_error(self, detail: str) -> ArrConnectionError:
         """The strict path's uniform could-not-reach error, naming url + cause."""

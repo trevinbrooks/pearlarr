@@ -166,7 +166,7 @@ class CliTextRenderer(Renderer):
     def _config_validated(event: ConfigValidated) -> None:
         typer.echo(f"OK: {event.path} is valid")
         if event.migration_notes is not None:
-            typer.echo(f"  {'schema:':<13}older config schema, migrated in memory at load - {MIGRATE_HINT}")
+            typer.echo(f"  {'schema:':<13}older config schema - a run migrates the file in place, or {MIGRATE_HINT}")
             for note in event.migration_notes:
                 typer.echo(f"  {'':<13}- {note}")
         for arr, keys in ((Arr.SONARR, event.sonarr_missing_keys), (Arr.RADARR, event.radarr_missing_keys)):

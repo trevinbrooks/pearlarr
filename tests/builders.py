@@ -25,6 +25,7 @@ from seadex import EntryRecord, File, Tag, TorrentRecord, Tracker
 
 from pearlarr.anilist_client import AniListClient
 from pearlarr.anilist_gateway import AniListGateway
+from pearlarr.arr_categories import ArrCategoryResolver
 from pearlarr.cache import (
     _ENTRY_SCALAR_COLUMNS,
     UPDATED_AT_STR_FORMAT,
@@ -583,10 +584,17 @@ def _real_reporter(
     )
 
 
+def make_categories(config: AppConfig | None = None, arr: Arr = Arr.SONARR) -> ArrCategoryResolver:
+    """A fetchless category resolver (no transport): config values pass through, omitted stays blank."""
+
+    config = config or AppConfig()
+    return ArrCategoryResolver(arr, config.for_arr(arr), None)
+
+
 def _real_torrents(logger: logging.Logger, web: httpx.Client) -> TorrentService:
     """A real, client-less `TorrentService` (`qbit=None` -> preview no-op add)."""
 
-    return TorrentService(qbit=None, web=web, category="", tags=[], logger=logger)
+    return TorrentService(qbit=None, web=web, categories=make_categories(), tags=[], logger=logger)
 
 
 def make_services(**overrides: Any) -> RunServices:
@@ -652,6 +660,8 @@ def make_run_deps(
     return RunDeps(
         config=config,
         arr_config=config.for_arr(Arr.SONARR),
+        # No transport: the config passthrough (no download-client fetch under test).
+        categories=make_categories(config),
         web=http,
         http=http,
         qbit=None,
@@ -796,7 +806,10 @@ def make_import_wait_manager(**overrides: Any) -> ImportWaitManager:
     cache_store = overrides.pop("cache_store", None) or FakeCacheStore()
     defaults: dict[str, Any] = {
         "_config": config,
-        "_arr_config": config.for_arr(Arr.SONARR),
+        # A fetchless resolver (`RunDeps.categories`): the config category
+        # passes through, the arr-client fallback being an
+        # `ArrCategoryResolver` concern.
+        "_categories": make_categories(config),
         "cache_store": cache_store,
         "_reporter": _real_reporter(logger, cache_store, httpx.Client()),
         "logger": logger,

@@ -55,6 +55,12 @@ def hub_error(message: str, *, exc: BaseException | None = None) -> None:
     hub_note(message, severity=Severity.ERROR, exc=exc)
 
 
+def hub_file_only(message: str, *, severity: Severity = Severity.INFO) -> None:
+    """A first-party diagnostic routed past the console surfaces to the file log alone."""
+
+    emit_to_hub(Diagnostic(severity=severity, message=message, origin=LOG_NAME, file_only=True))
+
+
 def hub_counts() -> SeverityCounts:
     """The process hub's severity counts, resolved at call time (emit_to_hub's twin)."""
 

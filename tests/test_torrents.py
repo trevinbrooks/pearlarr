@@ -24,8 +24,9 @@ import qbittorrentapi
 from seadex import Tracker
 
 import pearlarr.torrents as torrents
+from pearlarr.arr_categories import ArrCategoryResolver
 from pearlarr.boot_flow import BootFlow
-from pearlarr.config import Arr
+from pearlarr.config import Arr, ArrSettings
 from pearlarr.mappings import MappingResolver
 from pearlarr.run_services import QbitConnectionError, RunDeps
 from pearlarr.seadex_types import SeadexUrlItem
@@ -101,12 +102,16 @@ class _FakeQbit:
 
 
 def _service(qbit: _FakeQbit, *, category: str | None = "anime", tags: list[str] | None = None) -> TorrentService:
-    """A `TorrentService` over the fake qbit (cast at the leaf-client boundary)."""
+    """A `TorrentService` over the fake qbit (cast at the leaf-client boundary).
+
+    `category` rides a fetchless resolver (no transport), so the explicit
+    value passes through to the add exactly as configured.
+    """
 
     return TorrentService(
         qbit=cast("qbittorrentapi.Client", qbit),
         web=httpx.Client(),
-        category=category,
+        categories=ArrCategoryResolver(Arr.SONARR, ArrSettings(torrent_category=category), None),
         tags=tags if tags is not None else ["seadex"],
         logger=logging.getLogger("pearlarr.test"),
     )

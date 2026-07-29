@@ -3,8 +3,8 @@
 `CONFIG_VERSION` names the current schema. `AppConfig.load` runs
 `migrate_mapping` over the raw parsed YAML before validation, so a config
 written for an older Pearlarr keeps loading (in memory - the file on disk is
-never touched by a load). `pearlarr config migrate` rewrites the file itself,
-via `render_migrated_config`.
+never touched by a load). The run path and `pearlarr config migrate` then
+rewrite the file itself, via `render_migrated_config`.
 
 Migration steps are frozen history: they spell old keys and values as string
 literals - never live enums or constants, which move on with the schema - and
@@ -20,7 +20,7 @@ import yaml
 from .json_narrow import is_json_obj
 from .seadex_types import Json
 
-CONFIG_VERSION = 2
+CONFIG_VERSION = 3
 
 # The one remediation sentence, shared by every surface that reports an
 # old-schema file (and quoted by docs/troubleshooting.md's anchor grep).
@@ -123,6 +123,22 @@ def _to_v2(config: dict[str, Json]) -> list[str]:
     return notes
 
 
+def _to_v3(config: dict[str, Json]) -> list[str]:
+    """v2 -> v3: an omitted per-arr category now adopts the arr's own download-client category.
+
+    Note-only, like the v2 `wait_mode` notice: nothing is rewritten. The note
+    fires unconditionally - whether the flip bites depends on connection
+    state a file mapping cannot see (env overlays, qBittorrent credentials
+    added after the stamp).
+    """
+
+    return [
+        "an omitted torrent_category / post_import_category now adopts the matching category of that "
+        "arr's own qBittorrent download client - an explicit value overrides it, and an explicit "
+        'blank ("") keeps no category at all',
+    ]
+
+
 @dataclass(frozen=True)
 class _Migration:
     """One schema step: brings a mapping from `to_version - 1` to `to_version`."""
@@ -134,6 +150,7 @@ class _Migration:
 _MIGRATIONS: tuple[_Migration, ...] = (
     _Migration(to_version=1, apply=_to_v1),
     _Migration(to_version=2, apply=_to_v2),
+    _Migration(to_version=3, apply=_to_v3),
 )
 
 

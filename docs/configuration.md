@@ -17,8 +17,9 @@ The file holds credentials in plain text: it is created owner-only (`0600`), and
 ## The config schema version
 
 The file opens with `config_version`, the version of the key/value schema it is written against.
-A file from an older Pearlarr keeps working: every load migrates it in memory, and each run warns once, naming exactly what was folded.
-`pearlarr config migrate` rewrites the file itself when you want the warning gone: the result is the current annotated starter template with your values filled in (the key docs refresh, but comments of your own are not carried over), and the previous file is kept beside it as `config.yml.bak`.
+A file from an older Pearlarr keeps working: every load migrates it in memory, and the next run rewrites the file itself at the current schema, noting where the previous file was kept (`config.yml.bak`) and recording what was folded in the log file.
+The rewritten file is the current annotated starter template with your values filled in: the key docs refresh, but comments of your own are not carried over.
+When the file cannot be rewritten (a read-only config, say), the run continues on the in-memory migration behind a short warning, and `pearlarr config migrate` does the same rewrite on demand.
 A file written by a newer Pearlarr (a downgraded install) refuses to load, naming both versions.
 
 ## Environment variables
@@ -74,8 +75,8 @@ A group left blank means Sonarr runs are skipped. A half-filled connection (URL 
 | `api_key` | *(blank)* |  | API key of the instance, from Settings > General in its web UI. Blank leaves this arr unconfigured and its runs are skipped. |
 | `verify_ssl` | `true` |  | Verify the instance's HTTPS certificate. Turn off only for a self-signed instance whose CA cannot be trusted via the OS store or `SSL_CERT_FILE`. |
 | `ignore_unmonitored` | `false` |  | Skip items the arr does not monitor. For Radarr this means unmonitored movies. For Sonarr, unmonitored series or entries whose episodes are all unmonitored. |
-| `torrent_category` | *(blank)* |  | qBittorrent category applied to torrents grabbed for this arr. Blank applies no category. |
-| `post_import_category` | *(blank)* |  | qBittorrent category applied once every import using a torrent grabbed for this arr has completed. Lets finished torrents carry their own seeding rules. A torrent shared by several entries, or by Sonarr and Radarr, moves only after all of them have imported. Point delete-with-data cleanup scripts at this category alone - a SeaDex update can attach a new entry to an already-moved torrent, and deleted data is re-downloaded. Blank keeps the add-time category. Ignored when `imports.wait_mode` is `off`. |
+| `torrent_category` | *(blank)* |  | qBittorrent category applied to torrents grabbed for this arr. Omitted adopts the category set on this arr's own qBittorrent download client; an explicit blank (`""`) keeps no category at all. The adopted client should be the qBittorrent instance Pearlarr itself talks to; with several enabled, the lowest priority number wins (the arr's own per-download pick is not predictable from outside). |
+| `post_import_category` | *(blank)* |  | qBittorrent category applied once every import using a torrent grabbed for this arr has completed. Lets finished torrents carry their own seeding rules. A torrent shared by several entries, or by Sonarr and Radarr, moves only after all of them have imported. Point delete-with-data cleanup scripts at this category alone - a SeaDex update can attach a new entry to an already-moved torrent, and deleted data is re-downloaded. Omitted adopts the post-import category set on this arr's own qBittorrent download client (the same client pick as `torrent_category`); an explicit blank (`""`) keeps the add-time category. Ignored when `imports.wait_mode` is `off`. |
 | `ignore_movies_in_radarr` | `false` |  | Skip movies that already exist in Radarr instead of also grabbing them on the Sonarr side. |
 <!-- /gen:group-sonarr -->
 
@@ -90,8 +91,8 @@ Radarr connection and per-run behavior. The keys mean the same as their Sonarr c
 | `api_key` | *(blank)* |  | API key of the instance, from Settings > General in its web UI. Blank leaves this arr unconfigured and its runs are skipped. |
 | `verify_ssl` | `true` |  | Verify the instance's HTTPS certificate. Turn off only for a self-signed instance whose CA cannot be trusted via the OS store or `SSL_CERT_FILE`. |
 | `ignore_unmonitored` | `false` |  | Skip items the arr does not monitor. For Radarr this means unmonitored movies. For Sonarr, unmonitored series or entries whose episodes are all unmonitored. |
-| `torrent_category` | *(blank)* |  | qBittorrent category applied to torrents grabbed for this arr. Blank applies no category. |
-| `post_import_category` | *(blank)* |  | qBittorrent category applied once every import using a torrent grabbed for this arr has completed. Lets finished torrents carry their own seeding rules. A torrent shared by several entries, or by Sonarr and Radarr, moves only after all of them have imported. Point delete-with-data cleanup scripts at this category alone - a SeaDex update can attach a new entry to an already-moved torrent, and deleted data is re-downloaded. Blank keeps the add-time category. Ignored when `imports.wait_mode` is `off`. |
+| `torrent_category` | *(blank)* |  | qBittorrent category applied to torrents grabbed for this arr. Omitted adopts the category set on this arr's own qBittorrent download client; an explicit blank (`""`) keeps no category at all. The adopted client should be the qBittorrent instance Pearlarr itself talks to; with several enabled, the lowest priority number wins (the arr's own per-download pick is not predictable from outside). |
+| `post_import_category` | *(blank)* |  | qBittorrent category applied once every import using a torrent grabbed for this arr has completed. Lets finished torrents carry their own seeding rules. A torrent shared by several entries, or by Sonarr and Radarr, moves only after all of them have imported. Point delete-with-data cleanup scripts at this category alone - a SeaDex update can attach a new entry to an already-moved torrent, and deleted data is re-downloaded. Omitted adopts the post-import category set on this arr's own qBittorrent download client (the same client pick as `torrent_category`); an explicit blank (`""`) keeps the add-time category. Ignored when `imports.wait_mode` is `off`. |
 <!-- /gen:group-radarr -->
 
 ## qbittorrent

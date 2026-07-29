@@ -7,6 +7,16 @@ Pearlarr is a fork of [bbtufty/seadexarr](https://github.com/bbtufty/seadexarr).
 
 ## [Unreleased]
 
+### Upgrade notes
+
+- **Config files are now migrated on disk automatically.** The first run rewrites an old-schema `config.yml` at the current layout, keeping the previous file as `config.yml.bak`. The rewrite regenerates the file from the annotated template with your values filled in: hand-written comments are not carried over and survive only in `config.yml.bak` - until a later schema migration overwrites that backup in turn. A dry run never rewrites.
+- **Downgrading needs the backup.** The rewrite stamps the file with a schema version older Pearlarr releases refuse to load; to go back, restore `config.yml.bak` over `config.yml` first.
+
+### Changed
+
+- An old-schema config file is now migrated in place at the start of a run, keeping the previous file as `config.yml.bak`, instead of warning on every run. `pearlarr config migrate` remains for migrating without a run.
+- An omitted `torrent_category` or `post_import_category` now adopts the matching category of that arr's qBittorrent download client (its grab and imported categories respectively); an explicit value still wins, and an explicit blank (`""`) keeps no category at all.
+
 ## [1.1.0] - 2026-07-29
 
 ### Changed

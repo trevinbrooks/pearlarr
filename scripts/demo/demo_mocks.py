@@ -415,6 +415,25 @@ class SonarrHandler(QuietHandler):
             # No mappings: the folder-scan fallback's once-per-run fetch must
             # never warn in an offline run.
             self._send_json([])
+        elif route == "/api/v3/downloadclient":
+            # The omitted-category fallback's lazy fetch (fires at the demo's
+            # post-import move) must never warn in an offline run. A blank
+            # imported category keeps the demo's behavior: no move.
+            self._send_json(
+                [
+                    {
+                        "id": 1,
+                        "name": "qBittorrent",
+                        "enable": True,
+                        "priority": 1,
+                        "implementation": "QBittorrent",
+                        "fields": [
+                            {"name": "tvCategory", "value": "anime"},
+                            {"name": "tvImportedCategory", "value": ""},
+                        ],
+                    },
+                ],
+            )
         elif route == "/api/v3/parse":
             title = query.get("title", [""])[0]
             self._send_json({"title": title, "episodes": parse_title(title)})

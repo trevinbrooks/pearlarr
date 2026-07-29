@@ -11,7 +11,7 @@ this module only and never see the loop type.
 import logging
 import time
 from collections.abc import Callable, Iterable
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from typing import Literal
 
 import httpx
@@ -20,7 +20,8 @@ from seadex import EntryRecord, SeaDexEntry
 
 from .anilist_client import AniListClient
 from .anilist_gateway import AniListGateway
-from .arr_http import make_httpx_client
+from .arr_categories import ArrCategoryResolver
+from .arr_http import ArrHttp, make_httpx_client
 from .boot_flow import BootFlow
 from .cache import UPDATED_AT_STR_FORMAT, AbstractCacheStore, CachedEntry, CacheRecord, CacheStore
 from .config import AppConfig, Arr, ArrSettings, PrivateReleaseAction, secret_value
@@ -70,6 +71,11 @@ class RunDeps:
 
     arr_config: ArrSettings
     """This arr's connection/behavior submodel, `config.for_arr(arr)`."""
+
+    categories: ArrCategoryResolver
+    """The run's effective qBittorrent categories: explicit config first, then
+    the arr's own download client - fetched lazily at first use (grab /
+    post-import move), where the arr is provably up."""
 
     web: httpx.Client
     http: httpx.Client
@@ -179,12 +185,27 @@ class RunDeps:
             client=AniListClient(client=web),
         )
 
+        # The run's effective qBittorrent categories: an explicit config value
+        # wins, a blank string opts out, an omitted key adopts the matching
+        # category of this arr's own qBittorrent download client - fetched
+        # lazily at first use, where the arr is provably up. Bound only when a
+        # real qbit exists to apply a category (a preview run applies none).
+        category_http: ArrHttp | None = None
+        url = arr_config.url
+        api_key = secret_value(arr_config.api_key)
+        if qbit is not None and url and api_key:
+            # A single attempt per use (retries=0): a nicety read whose miss
+            # fails open and is retried at the next use.
+            bound = ArrHttp.bind(client=http, url=url, api_key=api_key, label=arr.capitalize())
+            category_http = replace(bound, retries=0)
+        categories = ArrCategoryResolver(arr, arr_config, category_http)
+
         # qBittorrent adapter: parses a release URL by tracker and adds it. A None
         # qbit is treated as a perpetual preview.
         torrents = TorrentService(
             qbit=qbit,
             web=web,
-            category=arr_config.torrent_category,
+            categories=categories,
             tags=app_config.qbittorrent.tags,
             logger=logger,
         )
@@ -192,6 +213,7 @@ class RunDeps:
         return cls(
             config=app_config,
             arr_config=arr_config,
+            categories=categories,
             web=web,
             http=http,
             qbit=qbit,

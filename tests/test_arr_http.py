@@ -35,28 +35,18 @@ from pearlarr.arr_http import (
     make_httpx_client,
 )
 from pearlarr.log import LOG_NAME
-from pearlarr.output import Diagnostic, Severity, install_hub
+from pearlarr.output import Diagnostic, Severity
 from pearlarr.output.recording import RecordingHub
+
+from .fakes import bind_arr_http
 
 _URL = "http://arr.test"
 
 
 def _bind() -> tuple[ArrHttp, RecordingHub]:
-    """A bound helper over a plain httpx client, backoff sleeps stubbed out.
+    """The shared bound helper, fed the trailing slash that must normalize away ("//api" redirects to login)."""
 
-    The fail-open warnings ride the hub, so each test gets a fresh RecordingHub.
-    """
-
-    recording = RecordingHub()
-    install_hub(recording.hub)  # conftest teardown restores the default
-    http = ArrHttp.bind(
-        client=httpx.Client(),
-        url=f"{_URL}/",  # trailing slash must normalize away ("//api" redirects to login)
-        api_key="testkey",
-        label="Sonarr",
-        sleep=lambda _s: None,
-    )
-    return http, recording
+    return bind_arr_http(f"{_URL}/")
 
 
 def _one_warning(recording: RecordingHub) -> Diagnostic:

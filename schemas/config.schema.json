@@ -124,7 +124,7 @@
             }
           ],
           "default": null,
-          "description": "qBittorrent category applied to torrents grabbed for this arr. Blank applies no category.",
+          "description": "qBittorrent category applied to torrents grabbed for this arr. Omitted adopts the category set on this arr's own qBittorrent download client; an explicit blank (`\"\"`) keeps no category at all. The adopted client should be the qBittorrent instance Pearlarr itself talks to; with several enabled, the lowest priority number wins (the arr's own per-download pick is not predictable from outside).",
           "title": "Torrent Category"
         },
         "post_import_category": {
@@ -137,7 +137,7 @@
             }
           ],
           "default": null,
-          "description": "qBittorrent category applied once every import using a torrent grabbed for this arr has completed. Lets finished torrents carry their own seeding rules. A torrent shared by several entries, or by Sonarr and Radarr, moves only after all of them have imported. Point delete-with-data cleanup scripts at this category alone - a SeaDex update can attach a new entry to an already-moved torrent, and deleted data is re-downloaded. Blank keeps the add-time category. Ignored when `imports.wait_mode` is `off`.",
+          "description": "qBittorrent category applied once every import using a torrent grabbed for this arr has completed. Lets finished torrents carry their own seeding rules. A torrent shared by several entries, or by Sonarr and Radarr, moves only after all of them have imported. Point delete-with-data cleanup scripts at this category alone - a SeaDex update can attach a new entry to an already-moved torrent, and deleted data is re-downloaded. Omitted adopts the post-import category set on this arr's own qBittorrent download client (the same client pick as `torrent_category`); an explicit blank (`\"\"`) keeps the add-time category. Ignored when `imports.wait_mode` is `off`.",
           "title": "Post Import Category"
         }
       },
@@ -579,7 +579,7 @@
             }
           ],
           "default": null,
-          "description": "qBittorrent category applied to torrents grabbed for this arr. Blank applies no category.",
+          "description": "qBittorrent category applied to torrents grabbed for this arr. Omitted adopts the category set on this arr's own qBittorrent download client; an explicit blank (`\"\"`) keeps no category at all. The adopted client should be the qBittorrent instance Pearlarr itself talks to; with several enabled, the lowest priority number wins (the arr's own per-download pick is not predictable from outside).",
           "title": "Torrent Category"
         },
         "post_import_category": {
@@ -592,7 +592,7 @@
             }
           ],
           "default": null,
-          "description": "qBittorrent category applied once every import using a torrent grabbed for this arr has completed. Lets finished torrents carry their own seeding rules. A torrent shared by several entries, or by Sonarr and Radarr, moves only after all of them have imported. Point delete-with-data cleanup scripts at this category alone - a SeaDex update can attach a new entry to an already-moved torrent, and deleted data is re-downloaded. Blank keeps the add-time category. Ignored when `imports.wait_mode` is `off`.",
+          "description": "qBittorrent category applied once every import using a torrent grabbed for this arr has completed. Lets finished torrents carry their own seeding rules. A torrent shared by several entries, or by Sonarr and Radarr, moves only after all of them have imported. Point delete-with-data cleanup scripts at this category alone - a SeaDex update can attach a new entry to an already-moved torrent, and deleted data is re-downloaded. Omitted adopts the post-import category set on this arr's own qBittorrent download client (the same client pick as `torrent_category`); an explicit blank (`\"\"`) keeps the add-time category. Ignored when `imports.wait_mode` is `off`.",
           "title": "Post Import Category"
         },
         "ignore_movies_in_radarr": {
@@ -610,8 +610,8 @@
   "description": "The full validated config: one submodel per settings group.",
   "properties": {
     "config_version": {
-      "default": 2,
-      "description": "Schema version of the config file's keys and values. Stamped by the starter template and `pearlarr config migrate`. A file from an older Pearlarr is migrated automatically in memory at every load.",
+      "default": 3,
+      "description": "Schema version of the config file's keys and values. A file from an older Pearlarr is migrated automatically: every load brings it forward in memory, and a run rewrites the file itself (keeping a backup).",
       "minimum": 1,
       "title": "Config Version",
       "type": "integer"

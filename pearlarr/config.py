@@ -14,8 +14,10 @@ one arr still validates and runs.
 """
 
 import contextlib
+import copy
 import json
 import os
+import tempfile
 from collections.abc import Mapping
 from dataclasses import dataclass
 from enum import StrEnum
@@ -268,7 +270,14 @@ class ArrSettings(_ConfigBase):
     """
 
     torrent_category: str | None = None
-    """qBittorrent category applied to torrents grabbed for this arr. Blank applies no category."""
+    """qBittorrent category applied to torrents grabbed for this arr.
+
+    Omitted adopts the category set on this arr's own qBittorrent download
+    client; an explicit blank (`""`) keeps no category at all. The adopted
+    client should be the qBittorrent instance Pearlarr itself talks to; with
+    several enabled, the lowest priority number wins (the arr's own
+    per-download pick is not predictable from outside).
+    """
 
     # Applied by the wait machinery, so it only fires when the run's resolved
     # wait mode is non-off.
@@ -279,8 +288,10 @@ class ArrSettings(_ConfigBase):
     several entries, or by Sonarr and Radarr, moves only after all of them have
     imported. Point delete-with-data cleanup scripts at this category alone - a
     SeaDex update can attach a new entry to an already-moved torrent, and
-    deleted data is re-downloaded. Blank keeps the add-time category. Ignored
-    when `imports.wait_mode` is `off`.
+    deleted data is re-downloaded. Omitted adopts the post-import category set
+    on this arr's own qBittorrent download client (the same client pick as
+    `torrent_category`); an explicit blank (`""`) keeps the add-time category.
+    Ignored when `imports.wait_mode` is `off`.
     """
 
 
@@ -708,8 +719,8 @@ class AppConfig(_ConfigBase):
     config_version: int = Field(default=CONFIG_VERSION, ge=1)
     """Schema version of the config file's keys and values.
 
-    Stamped by the starter template and `pearlarr config migrate`. A file from
-    an older Pearlarr is migrated automatically in memory at every load.
+    A file from an older Pearlarr is migrated automatically: every load brings
+    it forward in memory, and a run rewrites the file itself (keeping a backup).
     """
 
     sonarr: SonarrSettings = Field(default_factory=SonarrSettings)
@@ -835,8 +846,8 @@ class AppConfig(_ConfigBase):
     def migration(self) -> MigrationOutcome | None:
         """The in-memory schema migration `load` applied, or None for a current file.
 
-        Non-None means the file on disk still spells the old schema. The callers
-        that report suggest `pearlarr config migrate` to rewrite it.
+        Non-None means the file on disk still spelled the old schema at load.
+        The run path rewrites the file off it; `config validate` reports it.
         """
 
         return self._migration
@@ -1025,7 +1036,7 @@ def _parse_and_migrate(raw: bytes) -> tuple[object, MigrationOutcome | None]:
 
 
 class ConfigRewriteError(Exception):
-    """`upgrade_config_file`'s render did not round-trip. Nothing was written."""
+    """`upgrade_config_file` refused the write (render drift or a concurrent edit). Nothing was written."""
 
 
 @dataclass(frozen=True)
@@ -1050,27 +1061,56 @@ def _write_owner_only(path: str, data: bytes) -> None:
     restrict_config_permissions(path)
 
 
-def upgrade_config_file(path: str) -> ConfigUpgrade:
+def _validate_with_env(parsed: object) -> AppConfig:
+    """Validate a parsed config mapping the way a load would: env overlay applied.
+
+    Deep-copies before merging so the caller's mapping keeps the file's own
+    values - the rewrite renders from it, and env secrets must never land on
+    disk.
+    """
+
+    overlay = _env_overlay(os.environ)
+    if overlay and is_json_obj(parsed):
+        merged = copy.deepcopy(cast("dict[str, object]", parsed))
+        _deep_merge(merged, overlay)
+        return AppConfig.model_validate(merged)
+    return AppConfig.model_validate(parsed)
+
+
+def upgrade_config_file(path: str, expected_checksum: str | None = None) -> ConfigUpgrade:
     """Rewrite an older config file at the current schema, keeping a backup.
 
     The rewrite is the current annotated template with this file's values (and
     the schema fixes a load applies in memory) spliced in. The previous bytes
     land beside it first, as `<path>.bak`. Both new files are created
     owner-only (they carry API keys) and the swap goes through a temp file +
-    `os.replace`, so a failed write can never leave a truncated config. A file
-    already at the current version is not touched at all.
+    `os.replace`, so a failed write can never leave a truncated config; a
+    failed swap removes both new files again (nothing changed, so this cycle's
+    backup records nothing). A symlinked config resolves to its target first:
+    the rewrite and its backup land beside the target and the link survives. A
+    file already at the current version is not touched at all.
 
     Nothing is written unless the rendered text parses back to the exact
     settings that were validated - a splice defect refuses cleanly
-    (`ConfigRewriteError`) instead of corrupting the file. Raises like
+    (`ConfigRewriteError`) instead of corrupting the file. `expected_checksum`
+    (the loaded `AppConfig.checksum()`) extends that refusal to a concurrent
+    edit: bytes that differ from what the run validated are never rewritten
+    and never land in the backup. Validation applies the `PEARLARR_*` env
+    overlay exactly like a load (an env-rescued file must stay rewritable),
+    while the render always spells the file's own values. Raises like
     `AppConfig.load` (`OSError` / `yaml.YAMLError` / `ValidationError`): a
     file this version cannot fully read is never rewritten.
     """
 
+    path = os.path.realpath(path)
     with open(path, "rb") as f:
         raw = f.read()
+    if expected_checksum is not None and _config_checksum(raw, os.environ) != expected_checksum:
+        raise ConfigRewriteError(
+            f"{path} changed while the run was starting - left untouched (the next run reads the new file)",
+        )
     parsed, migration = _parse_and_migrate(raw)
-    validated = AppConfig.model_validate(parsed)
+    validated = _validate_with_env(parsed)
     # The narrowing re-check is for the types: a non-mapping document cannot
     # have validated above.
     if migration is None or not is_json_obj(parsed):
@@ -1079,7 +1119,7 @@ def upgrade_config_file(path: str) -> ConfigUpgrade:
     rendered = render_migrated_config(starter_template_text(), parsed)
     try:
         reparsed: object = yaml.safe_load(rendered)
-        drifted = AppConfig.model_validate(reparsed).model_dump() != validated.model_dump()
+        drifted = _validate_with_env(reparsed).model_dump() != validated.model_dump()
     except (yaml.YAMLError, ValidationError):
         drifted = True
     if drifted:
@@ -1089,15 +1129,20 @@ def upgrade_config_file(path: str) -> ConfigUpgrade:
         )
 
     backup = path + ".bak"
-    _write_owner_only(backup, raw)
-    tmp = path + ".tmp"
+    # A per-process temp name (0600 from mkstemp): the boot rewrite and a
+    # concurrent `config migrate` must never interleave on one fixed sibling.
+    fd, tmp = tempfile.mkstemp(prefix=os.path.basename(path) + ".", suffix=".tmp", dir=os.path.dirname(path))
     try:
-        _write_owner_only(tmp, rendered.encode("utf-8"))
+        with os.fdopen(fd, "wb") as f:
+            f.write(rendered.encode("utf-8"))
+        _write_owner_only(backup, raw)
         os.replace(tmp, path)
     except OSError:
-        # Never leave a torn, secret-bearing temp file behind. The config
-        # itself is untouched and the backup is a faithful copy of it.
+        # A failed swap leaves no trace: no torn, secret-bearing temp file and
+        # no fresh backup of a config that was never replaced.
         with contextlib.suppress(OSError):
             os.remove(tmp)
+        with contextlib.suppress(OSError):
+            os.remove(backup)
         raise
     return ConfigUpgrade(migration=migration, backup_path=backup)
