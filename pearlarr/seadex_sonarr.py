@@ -2,12 +2,11 @@
 
 import time
 from collections.abc import Sequence
-from datetime import datetime
 from typing import override
 
 from . import coverage as _coverage
 from .arr_http import ArrHttp, make_httpx_client
-from .cache import UPDATED_AT_STR_FORMAT, CacheRecord
+from .cache import CacheRecord, now_stamp
 from .config import Arr, secret_value
 from .grab_pipeline import GrabRequest
 from .log import EntryState, pluralize
@@ -477,7 +476,7 @@ class SonarrSync(ArrSync[SonarrItem]):
                     al_id=al_id,
                     series_id=sonarr_series_id,
                     title=anilist_title,
-                    added_at=datetime.now().strftime(UPDATED_AT_STR_FORMAT),
+                    added_at=now_stamp(),
                     coverage=coverage,
                     url=sd_url,
                     guards=plan.guards,

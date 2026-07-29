@@ -5,7 +5,7 @@ from datetime import UTC, datetime, timedelta
 from typing import override
 
 from .arr_activity import IMPORT_EVENTS, format_history_date
-from .cache import UPDATED_AT_STR_FORMAT, CacheRecord
+from .cache import UPDATED_AT_STR_FORMAT, CacheRecord, now_stamp
 from .config import Arr
 from .grab_pipeline import GrabRequest
 from .log import pluralize
@@ -15,7 +15,7 @@ from .output import hub_warn
 from .protocols import ArrSync
 from .radarr_client import AbstractRadarrClient, collect_anime_movies, make_radarr_client
 from .run_services import RunDeps, RunServices
-from .seadex_types import ArrReleases, HistoryRecord, ProgressSink, RadarrItem
+from .seadex_types import ArrReleases, HistoryRecord, ProgressSink, RadarrItem, flagged_urls
 
 # Clock-skew cushion subtracted from the oldest pending record's grab time before
 # querying Radarr import history. The added_at stamps are converted local-naive ->
@@ -230,12 +230,12 @@ class RadarrSync(ArrSync[RadarrItem]):
         # nothing (the pipeline's own gate would skip them regardless).
         pending_seeds: dict[str, PendingImport] | None = None
         if run.import_wait_mode is not ImportWaitMode.OFF:
-            added_at = datetime.now().strftime(UPDATED_AT_STR_FORMAT)
+            added_at = now_stamp()
             # No guard fields here: Radarr's import path reads nothing but the
             # infohash (Radarr itself imports; only the category move waits).
             pending_seeds = {
-                url_item.infohash: PendingImport(
-                    infohash=url_item.infohash,
+                infohash: PendingImport(
+                    infohash=infohash,
                     al_id=al_id,
                     title=anilist_title,
                     release_group=srg,
@@ -249,9 +249,7 @@ class RadarrSync(ArrSync[RadarrItem]):
                     coverage=None,
                     ordered_episode_ids=[],
                 )
-                for srg, srg_item in seadex_dict.items()
-                for url_item in srg_item.urls.values()
-                if url_item.download and url_item.infohash
+                for srg, _url_item, infohash in flagged_urls(seadex_dict)
             }
 
         return run.grab_and_cache(
