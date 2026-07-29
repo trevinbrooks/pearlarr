@@ -411,24 +411,7 @@ class SonarrEpisodes:
     ) -> ArrReleases:
         """Fold the episodes' existing files into an `ArrReleases`, reporting missing episodes."""
 
-        # Look through, get release groups from the existing Sonarr files
-        # and note any potential missing files
-        tagged: dict[str, list[int]] = {}
-        missing_eps = 0
-        n_eps = len(ep_list)
-        for ep in ep_list:
-            if ep.episode_file_id == 0:
-                missing_eps += 1
-                continue
-
-            arr_file = ep.episode_file
-            if arr_file is None or not arr_file.release_group:
-                continue
-
-            sizes = tagged.setdefault(arr_file.release_group, [])
-            if arr_file.size is not None:
-                sizes.append(arr_file.size)
-
+        missing_eps = sum(ep.episode_file_id == 0 for ep in ep_list)
         if missing_eps > 0:
             # Show which episodes are missing as ranges (e.g. "S04 E12"), not just
             # a count, so it's clear what's absent. Fall back to the count if the
@@ -438,7 +421,12 @@ class SonarrEpisodes:
             )
             self._reporter.detail(
                 "missing",
-                StyledValue(missing_coverage or f"{missing_eps}/{n_eps}", Accent.CAUTION),
+                StyledValue(missing_coverage or f"{missing_eps}/{len(ep_list)}", Accent.CAUTION),
             )
 
-        return ArrReleases(tagged={rg: tuple(sizes) for rg, sizes in tagged.items()})
+        # keep_untagged=False: untagged episode files ride the episode list
+        # into the planner's identity pass instead (pinned).
+        return ArrReleases.from_files(
+            [f for ep in ep_list if ep.episode_file_id != 0 and (f := ep.episode_file) is not None],
+            keep_untagged=False,
+        )

@@ -585,10 +585,19 @@ class DownloadPlanner:
         and weirdly named TV
         """
 
-        # And also just check if any release group matches any Arr release tag -
-        # by normalized name, matching the per-episode path's comparison.
+        # The Arr's tagged sizes merged under normalized group names, built
+        # once per entry and shared by the name-overlap check here and the
+        # per-URL matchers. A tagged key is truthy, so the None guard only
+        # narrows the type (`normalize_rg` returns a str for truthy input).
+        arr_sizes_by_norm: dict[str, list[int]] = {}
+        for arr_rg, sizes in arr_releases.tagged.items():
+            if (norm := normalize_rg(arr_rg)) is not None:
+                arr_sizes_by_norm.setdefault(norm, []).extend(sizes)
+
+        # Whether any SeaDex release group matches any Arr release tag - by
+        # normalized name, matching the per-episode path's comparison.
         seadex_keys = {normalize_rg(rg) for rg in seadex_dict}
-        overlapping_results = any(normalize_rg(rg) in seadex_keys for rg in arr_releases.tagged)
+        overlapping_results = not seadex_keys.isdisjoint(arr_sizes_by_norm)
 
         # Index the Sonarr episodes by (season, episode) once, shared by both
         # the overlap map below and the per-episode match loop: looking up a
@@ -616,14 +625,6 @@ class DownloadPlanner:
                         f"but matches {identity.group}'s listed size exactly - reading it as that release",
                     )
 
-        # The Arr's tagged sizes merged under normalized group names (like the
-        # per-episode path's comparison). Loop-invariant, so build it once per
-        # entry, not per URL. A name normalizing to None names nothing.
-        arr_sizes_by_norm: dict[str, list[int]] = {}
-        for arr_rg, sizes in arr_releases.tagged.items():
-            if (norm := normalize_rg(arr_rg)) is not None:
-                arr_sizes_by_norm.setdefault(norm, []).extend(sizes)
-
         # Every untagged file on disk, folded to its ownership multiset once
         # per entry. Exactly one source per arr - Radarr's untagged fold, or the
         # Sonarr identity pass (`get_sonarr_releases` keeps `untagged` empty,
@@ -645,7 +646,7 @@ class DownloadPlanner:
         ctx = _MatchContext(
             # Pre-rendered so the un-normalized names stay out of the
             # matchers' decision scope (they feed only debug lines).
-            arr_groups_label=", ".join(arr_releases.display_names()) if debug_on else "",
+            arr_groups_label=arr_releases.groups_label() if debug_on else "",
             arr_sizes_by_norm=arr_sizes_by_norm,
             overlapping_results=overlapping_results,
             sonarr_by_key=sonarr_by_key,

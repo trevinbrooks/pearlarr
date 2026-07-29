@@ -26,11 +26,13 @@ import math
 from collections.abc import Iterable, Mapping, Sequence
 from dataclasses import dataclass, field
 from enum import StrEnum
+from types import MappingProxyType
 from typing import (
     Annotated,
     Any,
     NamedTuple,
     Protocol,
+    Self,
     cast,
     runtime_checkable,
 )
@@ -474,11 +476,11 @@ def index_episodes_by_key(ep_list: Iterable[SonarrEpisode]) -> dict[EpisodeKey, 
 class ArrReleases:
     """The Arr's existing files for one entry, folded by release group.
 
-    Built by the strategies (Sonarr per episode file, Radarr per movie file)
-    and read by the planner. A tagged file's unreadable size is dropped at the
-    fold (the group keeps its name); an untagged one folds to 0, vetoing the
-    ownership multiset whole. `tagged` keys are never blank - a file with a
-    blank group tag is untagged.
+    Built by the strategies via `from_files` and read by the planner. `tagged`
+    is detached and wrapped read-only at construction, so the record is frozen
+    all the way down. Keys hold the tag as the arr wrote it - only an empty
+    tag makes a file untagged, so a whitespace/dash-only tag stays tagged (and
+    then names nothing under `normalize_rg`).
     """
 
     tagged: Mapping[str, tuple[int, ...]] = field(default_factory=dict[str, tuple[int, ...]])
@@ -488,10 +490,59 @@ class ArrReleases:
     """Sizes of files with no release group (Radarr only - Sonarr's untagged
     files travel on the episode list instead)."""
 
+    def __post_init__(self) -> None:
+        # Detach from the caller's dict, then wrap read-only.
+        object.__setattr__(self, "tagged", MappingProxyType(dict(self.tagged)))
+
+    def __hash__(self) -> int:
+        # The generated hash would reject the Mapping field. Eq ignores key
+        # order, so hash the item set, not the insertion order.
+        return hash((frozenset(self.tagged.items()), self.untagged))
+
+    @classmethod
+    def from_files(
+        cls,
+        files: "Iterable[MovieFile | SonarrEpisodeFile]",
+        *,
+        keep_untagged: bool,
+    ) -> Self:
+        """Fold arr file records into one per-entry record.
+
+        A tagged file's unreadable size is dropped (the group keeps its name);
+        an untagged one folds to 0, vetoing the ownership multiset whole.
+        Sonarr passes `keep_untagged=False`: its untagged files travel on the
+        episode list into the planner's identity pass instead, and feeding
+        both would double-count them.
+        """
+
+        tagged: dict[str, list[int]] = {}
+        untagged: list[int] = []
+        for arr_file in files:
+            if arr_file.release_group:
+                sizes = tagged.setdefault(arr_file.release_group, [])
+                if arr_file.size is not None:
+                    sizes.append(arr_file.size)
+            elif keep_untagged:
+                untagged.append(arr_file.size or 0)
+        return cls(
+            tagged={rg: tuple(sizes) for rg, sizes in tagged.items()},
+            untagged=tuple(untagged),
+        )
+
     def display_names(self) -> list[str]:
         """The tagged group names for a log line, `(none)` marking untagged files."""
 
         return [*self.tagged, *(["(none)"] if self.untagged else [])]
+
+    def groups_label(self) -> str:
+        """`display_names` comma-joined for a log line, `(no files)` when there are none."""
+
+        return ", ".join(self.display_names()) or "(no files)"
+
+    def replaced_groups(self) -> tuple[str, ...]:
+        """Every tagged name a grab would replace (the notify `Replacing` field)."""
+
+        return tuple(self.tagged)
 
 
 type TvdbMappings = dict[int, list[tuple[int, int | None]]]
