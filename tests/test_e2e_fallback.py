@@ -86,6 +86,24 @@ _DEAD_TRACKED_NOTE = (
 
 _JP_EN: Json = [{"id": 8, "name": "Japanese"}, {"id": 1, "name": "English"}]
 
+# The arr's own download-client definition. The config omits both categories,
+# so the fallback adopts these - fetched lazily at the post-import move (no
+# grabs happen in these runs, so the move is the fetch's only trigger).
+_IMPORTED_CATEGORY = "anime-imported"
+_DOWNLOAD_CLIENTS: Json = [
+    {
+        "id": 1,
+        "name": "qBittorrent",
+        "enable": True,
+        "priority": 1,
+        "implementation": "QBittorrent",
+        "fields": [
+            {"name": "tvCategory", "value": "anime"},
+            {"name": "tvImportedCategory", "value": _IMPORTED_CATEGORY},
+        ],
+    },
+]
+
 
 @dataclass(frozen=True)
 class _Scenario:
@@ -145,6 +163,8 @@ class _World:
     scenario: _Scenario
     lock: threading.Lock = field(default_factory=threading.Lock)
     requests: list[_Request] = field(default_factory=list["_Request"])
+    category_moves: list[tuple[str, str]] = field(default_factory=list[tuple[str, str]])
+    """Recorded qBittorrent `setCategory` calls, as `(hashes, category)`."""
     download_scan_statuses: list[int] = field(default_factory=list[int])
     folder_scans: int = 0
     files_landed: bool = False
@@ -417,6 +437,8 @@ class _SonarrHandler(_JsonHandler):
             self._send_json(_JP_EN)
         elif route == "/api/v3/remotepathmapping":
             self._send_json([])
+        elif route == "/api/v3/downloadclient":
+            self._send_json(_DOWNLOAD_CLIENTS)
         elif route == "/api/v3/queue":
             self._send_json({"page": 1, "pageSize": 1000, "totalRecords": 0, "records": []})
         elif route == "/api/v3/history":
@@ -508,13 +530,20 @@ class _QbitHandler(_JsonHandler):
 
     def do_POST(self) -> None:
         route = self._record().path
-        _ = self._read_body_bytes()
+        body = self._read_body_bytes()
         if route == "/api/v2/auth/login":
             self._send_text("Ok.", cookie="SID=e2edemodemo; path=/")
         elif route == "/api/v2/auth/logout":
             self._send_text("")
         elif route == "/api/v2/torrents/info":
             self._send_json(self._info_rows())
+        elif route == "/api/v2/torrents/setCategory":
+            form = parse_qs(body.decode())
+            with self.world.lock:
+                self.world.category_moves.append(
+                    (form.get("hashes", [""])[0], form.get("category", [""])[0]),
+                )
+            self._send_text("")
         else:
             self._send_text("")
 
@@ -656,6 +685,10 @@ def _assert_converged_imported(outcome: _RunOutcome, out: str) -> None:
     assert 'imported title="Demo Batch · Thighs" files=2' in out
     assert "complete imported=1 deferred=0 failed=0" in out
     assert current_hub().counts.mark().errors == 0
+    # The unified done-bucket: whichever path imported (Sonarr-tracked or the
+    # folder-scan rescue), the confirmed site moves the torrent to the arr's
+    # own imported category, adopted by the omitted-category fallback.
+    assert outcome.world.category_moves == [(_INFOHASH, _IMPORTED_CATEGORY)]
 
 
 def test_dead_tracked_download_imports_via_folder_scan(
@@ -794,6 +827,7 @@ def test_unscannable_download_defers_with_folder_warn(
     assert f"Could not fetch folder-scan import candidates for {_TITLE}" in out
 
     # The dead-tracked note still fired exactly once (probe succeeded, verdict
-    # memoized), and nothing was ever POSTed.
+    # memoized), nothing was ever POSTed, and no category move happened.
     assert out.count(_DEAD_TRACKED_NOTE) == 1
     assert outcome.world.manual_commands == []
+    assert outcome.world.category_moves == []

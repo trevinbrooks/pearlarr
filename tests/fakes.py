@@ -18,6 +18,9 @@ import re
 from collections.abc import Callable, Iterable
 from typing import override
 
+import httpx
+
+from pearlarr.arr_http import ArrHttp
 from pearlarr.manual_import import AttemptKind, ImportProbe, ImportProgress, PendingImport
 from pearlarr.mappings import MappingEntry
 from pearlarr.output import (
@@ -113,6 +116,19 @@ def install_recording_hub() -> RecordingHub:
     recording = RecordingHub()
     install_hub(recording.hub)
     return recording
+
+
+def bind_arr_http(url: str = "http://arr.test") -> tuple[ArrHttp, RecordingHub]:
+    """A bound arr transport (backoff sleeps stubbed out) + a fresh recording hub installed.
+
+    The transport's fail-open warnings ride the hub, so each caller gets its
+    own RecordingHub. The leaked httpx client is closed by conftest's
+    `close_leaked_handles`.
+    """
+
+    recording = install_recording_hub()
+    http = ArrHttp.bind(client=httpx.Client(), url=url, api_key="testkey", label="Sonarr", sleep=lambda _s: None)
+    return http, recording
 
 
 def diagnostic_messages(recording: RecordingHub, severity: Severity | None = None) -> list[str]:

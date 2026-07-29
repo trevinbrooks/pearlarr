@@ -25,13 +25,22 @@ from .config import (
     AppConfig,
     Arr,
     ArrTarget,
-    ConfigRewriteError,
     config_permissions_loose,
     upgrade_config_file,
 )
-from .config_migrations import CONFIG_VERSION, MIGRATE_HINT, MigrationOutcome
-from .log import LOG_NAME, apply_log_level
-from .output import Diagnostic, FileLogSink, RunFinished, Severity, emit_to_hub, hub_error, hub_note, hub_warn
+from .config_migrations import CONFIG_VERSION, MIGRATE_HINT
+from .log import apply_log_level
+from .output import (
+    FileLogSink,
+    RunFinished,
+    Severity,
+    current_hub,
+    emit_to_hub,
+    hub_error,
+    hub_file_only,
+    hub_note,
+    hub_warn,
+)
 from .runlock import single_instance_lock
 
 if TYPE_CHECKING:
@@ -46,10 +55,16 @@ if TYPE_CHECKING:
     from .paths import AppPaths
 
 
+def validation_error_lines(e: ValidationError) -> list[str]:
+    """Each bad key of a config ValidationError as one `path: message` line (input values never included)."""
+
+    return [f"{'.'.join(str(part) for part in err['loc'])}: {err['msg']}" for err in e.errors()]
+
+
 def format_validation_errors(e: ValidationError) -> str:
     """The bad keys of a config ValidationError, one indented `path: message` line each."""
 
-    return "\n".join(f"  - {'.'.join(str(part) for part in err['loc'])}: {err['msg']}" for err in e.errors())
+    return "\n".join(f"  - {line}" for line in validation_error_lines(e))
 
 
 def format_yaml_error(e: yaml.YAMLError) -> str:
@@ -71,35 +86,58 @@ def format_yaml_error(e: yaml.YAMLError) -> str:
     return type(e).__name__
 
 
-def _file_only(severity: Severity, message: str) -> None:
-    """A diagnostic routed past the console surfaces to the file log alone."""
+def _one_line_reason(e: Exception) -> str:
+    """A one-line, secret-free failure reason for the file log's line grammar.
 
-    emit_to_hub(Diagnostic(severity=severity, message=message, origin=LOG_NAME, file_only=True))
-
-
-def _rewrite_old_config(config: str, outcome: MigrationOutcome) -> None:
-    """Bring an old-schema config file forward on disk (the load already migrated it in memory).
-
-    Reuses the `config migrate` machinery: backup first, then an atomic rewrite.
-    A file that cannot be rewritten - a read-only mount, a permissions problem,
-    a splice defect - is left alone behind a short warning, and the run continues
-    on the in-memory migration. The functional detail goes to the file log.
+    `str(e)` on a YAMLError quotes the offending source line - which IS the
+    secret when the error sits on a credential line - and on a ValidationError
+    spans multiple lines.
     """
 
+    if isinstance(e, yaml.YAMLError):
+        return format_yaml_error(e)
+    if isinstance(e, ValidationError):
+        return "; ".join(validation_error_lines(e))
+    return str(e)
+
+
+def _rewrite_old_config(config: str, loaded: AppConfig, *, dry_run: bool) -> None:
+    """Bring an old-schema config file forward on disk (the load already migrated it in memory).
+
+    A no-op for a current file. A dry run leaves the file alone behind a short
+    note (no state mutations). Otherwise reuses the `config migrate` machinery:
+    an atomic rewrite with a backup, refused if the file no longer matches the
+    loaded bytes. The rewrite is best-effort by contract - NOTHING it throws
+    may cost a run whose config already loaded fine. A file that cannot be
+    rewritten - a read-only mount, a permissions problem, a splice defect - is
+    left alone behind a short warning, and the run continues on the in-memory
+    migration. The functional detail goes to the file log.
+    """
+
+    outcome = loaded.migration()
+    if outcome is None:
+        return
+    if dry_run:
+        hub_note("Config uses an older schema - left unchanged on a dry run")
+        return
     detail = "; ".join(outcome.notes) if outcome.notes else "no functional changes"
-    _file_only(Severity.INFO, f"Config schema v{outcome.from_version} -> v{CONFIG_VERSION}: {detail}")
+    hub_file_only(f"Config schema v{outcome.from_version} -> v{CONFIG_VERSION}: {detail}")
     try:
-        upgraded = upgrade_config_file(config)
-    except (OSError, yaml.YAMLError, ValidationError, ConfigRewriteError) as e:
-        _file_only(
-            Severity.WARNING, f"Could not rewrite {config} in place ({e}) - continuing on the in-memory migration"
+        upgraded = upgrade_config_file(config, expected_checksum=loaded.checksum())
+    except Exception as e:
+        hub_file_only(
+            f"Could not rewrite {config} in place ({_one_line_reason(e)}) - continuing on the in-memory migration",
+            severity=Severity.WARNING,
         )
-        hub_warn(f"Config uses an older config schema - {MIGRATE_HINT}")
+        hub_warn(f"Config {config} uses an older schema and could not be rewritten in place - {MIGRATE_HINT}")
         return
     # backup_path is None only when the file turned current between the load and
     # this rewrite (nothing was written) - then there is nothing to announce.
     if upgraded.backup_path is not None:
-        hint = " (details in the log)" if outcome.notes else ""
+        # The detail line above rides at INFO: only promise it when the file
+        # log's level admits INFO (the log-level flag applies to the file too).
+        in_log = outcome.notes and current_hub().level <= int(Severity.INFO)
+        hint = " (details in the log)" if in_log else ""
         hub_note(f"Config migrated to the current schema - previous file saved as {upgraded.backup_path}{hint}")
 
 
@@ -139,11 +177,6 @@ def load_shared_config(
                 f"{', '.join(unknown_trackers)} (known, case-insensitive: "
                 f"{', '.join(sorted(KNOWN_TRACKERS))})"
             )
-        # An old-schema file loads via the in-memory migration; the file itself
-        # is then rewritten in place (backup kept) so the disk catches up.
-        outcome = loaded.migration()
-        if outcome is not None:
-            _rewrite_old_config(config, outcome)
         return loaded
     except FileNotFoundError:
         hub_error(f"No config file at {config} - a starter template was written - fill it in and re-run")
@@ -494,6 +527,10 @@ def run_arrs(
                 return False
             apply_log_level(logger, log_level or app_config.advanced.log_level)
             file_sink.apply_retention_days(app_config.advanced.log_retention_days)
+
+            # An old-schema file loads via the in-memory migration; the file on
+            # disk catches up here - never on a dry run.
+            _rewrite_old_config(paths.config, app_config, dry_run=dry_run)
 
             # Selection is settled before the mapping fetch, so a refused or
             # empty selection fails fast instead of downloading sources first.

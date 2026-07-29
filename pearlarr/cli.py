@@ -729,19 +729,26 @@ def config_migrate(json_output: Annotated[bool, typer.Option("--json", help=_JSO
 
     with cli_surface(json_output):
         paths = resolve_paths()
-        upgrade = _run_config_action(paths.config, upgrade_config_file)
-        if upgrade is None:
-            return False
-        if upgrade.migration is None:
-            emit_to_hub(ConfigUpToDate(path=paths.config))
-            return True
 
-        # backup_path is set in lockstep with a non-None migration (ConfigUpgrade).
-        assert upgrade.backup_path is not None
-        emit_to_hub(
-            ConfigMigrated(path=paths.config, backup_path=upgrade.backup_path, notes=upgrade.migration.notes),
-        )
-        return True
+        # The boot rewrite runs under this same lock, so the two writers can
+        # never interleave on the config's backup/temp siblings.
+        with single_instance_lock(paths.data_dir) as acquired:
+            if _refused_by_active_run(acquired, paths.data_dir):
+                return False
+
+            upgrade = _run_config_action(paths.config, upgrade_config_file)
+            if upgrade is None:
+                return False
+            if upgrade.migration is None:
+                emit_to_hub(ConfigUpToDate(path=paths.config))
+                return True
+
+            # backup_path is set in lockstep with a non-None migration (ConfigUpgrade).
+            assert upgrade.backup_path is not None
+            emit_to_hub(
+                ConfigMigrated(path=paths.config, backup_path=upgrade.backup_path, notes=upgrade.migration.notes),
+            )
+            return True
 
 
 # Values under these keys hold credentials (the webhook URLs embed tokens), so

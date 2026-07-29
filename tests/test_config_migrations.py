@@ -63,7 +63,8 @@ class TestMigrateMapping:
     def test_v0_folds_removed_schema_and_nothing_else(self) -> None:
         # Only removed keys/values fold. A never-valid value (the typo'd mode)
         # passes through untouched for validation to reject by name. wait_mode
-        # is pinned so the v2 default-flip notice stays out of the count.
+        # is pinned so the v2 default-flip notice stays out of the count; the
+        # unconditional v3 category notice always rides.
         mapping: dict[str, Json] = {
             "seadex": {"public_only": False, "want_best": False},
             "imports": {"mode": "hardlink", "wait_mode": "off"},
@@ -75,7 +76,9 @@ class TestMigrateMapping:
             "seadex": {"want_best": False},
             "imports": {"mode": "hardlink", "wait_mode": "off"},
         }
-        assert len(outcome.notes) == 1
+        assert len(outcome.notes) == 2
+        assert "public_only" in outcome.notes[0]
+        assert "torrent_category" in outcome.notes[1]
 
     def test_v0_tolerates_absent_and_malformed_groups(self) -> None:
         # A group that is not a mapping is validation's complaint, not a crash here.
@@ -88,8 +91,6 @@ class TestMigrateMapping:
     def test_v1_moves_post_import_category_onto_both_arrs(self) -> None:
         # The old single key covered both arrs, so its value lands on both: an
         # existing group keeps its keys, an absent one is created to carry it.
-        # torrent_category is pinned so the v3 blank-category notice stays out
-        # of the count (like the wait_mode pin above).
         mapping: dict[str, Json] = {
             "config_version": 1,
             "sonarr": {"url": "http://s", "torrent_category": "anime"},
@@ -103,8 +104,7 @@ class TestMigrateMapping:
             "radarr": {"post_import_category": "seadex-done"},
             "imports": {"wait_mode": "hybrid"},
         }
-        assert len(outcome.notes) == 1
-        assert "post_import_category" in outcome.notes[0]
+        assert "post_import_category is now per-arr" in outcome.notes[0]
 
     def test_v1_category_move_tolerates_blank_and_malformed_arr_groups(self) -> None:
         # A blank group means "all defaults" and is created to carry the value;
@@ -130,36 +130,33 @@ class TestMigrateMapping:
         outcome = migrate_mapping(defaulted)
         assert outcome is not None
         assert defaulted["imports"] == {"poll_interval": 10}
-        assert len(outcome.notes) == 1
-        assert "wait_mode" in outcome.notes[0]
+        assert any("wait_mode" in note for note in outcome.notes)
 
         pinned: dict[str, Json] = {"config_version": 1, "imports": {"wait_mode": False}}
         outcome = migrate_mapping(pinned)
         assert outcome is not None
-        assert outcome.notes == ()
+        assert all("wait_mode" not in note for note in outcome.notes)
 
-    def test_v2_blank_category_on_a_connected_arr_gets_the_fallback_notice(self) -> None:
-        # The v3 flip (blank categories adopt the arr's download-client
-        # categories) can only bite a connected arr leaving one blank: note it,
-        # rewrite nothing.
+    def test_v2_to_v3_always_notes_the_category_flip(self) -> None:
+        # Note-only AND unconditional: whether the flip bites depends on
+        # connection state the mapping cannot see (env overlays, qBittorrent
+        # credentials added after the stamp), and a v3 stamp forecloses any
+        # later notice. The `""` opt-out spelling rides in the note text.
         mapping: dict[str, Json] = {"config_version": 2, "radarr": {"url": "http://r"}}
         outcome = migrate_mapping(mapping)
         assert outcome is not None
         assert mapping == {"config_version": CONFIG_VERSION, "radarr": {"url": "http://r"}}
         assert len(outcome.notes) == 1
         assert "torrent_category" in outcome.notes[0]
+        assert '("")' in outcome.notes[0]
 
-    def test_v2_pinned_or_unconnected_categories_get_no_notice(self) -> None:
-        # Both categories pinned on the one connected arr, the other group
-        # url-less (that arr never runs): the flip bites neither, so no note.
-        mapping: dict[str, Json] = {
+        pinned: dict[str, Json] = {
             "config_version": 2,
             "sonarr": {"url": "http://s", "torrent_category": "anime", "post_import_category": "done"},
-            "radarr": {"post_import_category": "done"},
         }
-        outcome = migrate_mapping(mapping)
+        outcome = migrate_mapping(pinned)
         assert outcome is not None
-        assert outcome.notes == ()
+        assert len(outcome.notes) == 1
 
     def test_the_chain_is_contiguous_and_ends_at_the_current_version(self) -> None:
         # Declaration order IS application order: pin that the steps run 1..N
@@ -249,7 +246,8 @@ class TestUpgradeConfigFile:
         path = self._write(tmp_path, text)
         before = AppConfig.load(path)
 
-        upgrade = upgrade_config_file(path)
+        # The run path passes the loaded checksum; matching bytes must not refuse.
+        upgrade = upgrade_config_file(path, expected_checksum=before.checksum())
 
         assert upgrade.migration is not None
         assert upgrade.migration.from_version == 0
@@ -324,14 +322,15 @@ class TestUpgradeConfigFile:
         assert not os.path.exists(path + ".bak")
         assert not os.path.exists(path + ".tmp")
 
-    def test_a_failed_swap_leaves_no_secret_bearing_temp_file(
+    def test_a_failed_swap_leaves_no_sibling_files_behind(
         self,
         tmp_path: Path,
         monkeypatch: pytest.MonkeyPatch,
     ) -> None:
-        # ENOSPC/permission failure mid-swap: the config survives untouched and
-        # the torn .tmp (it carries API keys) is removed. The backup - a
-        # faithful copy of the still-intact config - may remain.
+        # ENOSPC/EBUSY failure mid-swap (a single-file bind mount fails here
+        # every cycle): the config survives untouched and both this cycle's
+        # siblings go - the torn temp file (it carries API keys) and the
+        # backup of a config that was never replaced.
         text = "seadex:\n  private_releases: allow\n"
         path = self._write(tmp_path, text)
 
@@ -342,4 +341,64 @@ class TestUpgradeConfigFile:
         with pytest.raises(OSError, match="disk full"):
             upgrade_config_file(path)
         assert Path(path).read_text(encoding="utf-8") == text
-        assert not os.path.exists(path + ".tmp")
+        assert sorted(p.name for p in tmp_path.iterdir()) == ["config.yml"]
+
+    def test_a_file_changed_since_the_load_is_refused(self, tmp_path: Path) -> None:
+        # The rewrite re-reads the file, so a write landing after the load
+        # would otherwise be validated against itself - even a torn one. The
+        # loaded checksum refuses anything but the exact bytes the run uses.
+        path = self._write(tmp_path, "seadex:\n  public_only: true\n")
+        loaded = AppConfig.load(path)
+        torn = "seadex:\n  public_"
+        Path(path).write_bytes(torn.encode())
+
+        with pytest.raises(ConfigRewriteError, match="changed while"):
+            upgrade_config_file(path, expected_checksum=loaded.checksum())
+        assert Path(path).read_text(encoding="utf-8") == torn
+        assert sorted(p.name for p in tmp_path.iterdir()) == ["config.yml"]
+
+    def test_an_env_rescued_file_is_rewritten_without_the_env_values(
+        self,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        # A file leaf the env overlay rescues loads and runs fine, so the
+        # rewrite must accept it too (it validates with the same overlay) -
+        # while the written file keeps the file's own values: env secrets
+        # never land on disk.
+        monkeypatch.setenv("PEARLARR_SEADEX__PRIVATE_RELEASES", "warn")
+        monkeypatch.setenv("PEARLARR_SONARR__API_KEY", "env-secret")
+        text = "config_version: 2\nseadex:\n  private_releases: junk\nsonarr:\n  url: http://s\n"
+        path = self._write(tmp_path, text)
+
+        upgrade = upgrade_config_file(path)
+
+        assert upgrade.migration is not None
+        assert upgrade.migration.from_version == 2
+        rewritten = Path(path).read_text(encoding="utf-8")
+        assert "private_releases: junk" in rewritten
+        assert "env-secret" not in rewritten
+        assert upgrade.backup_path is not None
+        assert "env-secret" not in Path(upgrade.backup_path).read_text(encoding="utf-8")
+
+    @pytest.mark.skipif(os.name != "posix", reason="symlink creation needs privileges on Windows")
+    def test_a_symlinked_config_rewrites_the_target_and_keeps_the_link(self, tmp_path: Path) -> None:
+        # Nix/Ansible/compose configs arrive as symlinks. os.replace on the
+        # link path would swap the LINK for a regular file, silently detaching
+        # the managed target - resolve first, rewrite the target in place.
+        store = tmp_path / "store"
+        store.mkdir()
+        target = store / "real.yml"
+        target.write_bytes(b"seadex:\n  public_only: true\n")
+        link = tmp_path / "config.yml"
+        link.symlink_to(target)
+
+        upgrade = upgrade_config_file(str(link))
+
+        assert upgrade.migration is not None
+        assert link.is_symlink()
+        assert f"config_version: {CONFIG_VERSION}" in target.read_text(encoding="utf-8")
+        # The backup lands beside the target, not beside the link.
+        assert upgrade.backup_path == os.path.realpath(target) + ".bak"
+        assert (store / "real.yml.bak").exists()
+        assert not (tmp_path / "config.yml.bak").exists()

@@ -434,8 +434,8 @@ class ArrHttp:
     def download_clients(self) -> list[DownloadClientRecord] | None:
         """This arr's download-client definitions (`/api/v3/downloadclient`), or None.
 
-        Read once per run by the blank-category fallback
-        (`arr_categories.resolve_arr_categories`), shared by both arr clients
+        Read lazily, at most once per run, by the omitted-category fallback
+        (`arr_categories.ArrCategoryResolver`), shared by both arr clients
         like `history_since`. Fails open to None through `get_json_list`'s
         matrix with a warning stating the consequence: the fallback is a
         nicety, so a miss just leaves blank categories blank.

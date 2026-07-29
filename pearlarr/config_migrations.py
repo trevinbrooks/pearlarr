@@ -124,24 +124,18 @@ def _to_v2(config: dict[str, Json]) -> list[str]:
 
 
 def _to_v3(config: dict[str, Json]) -> list[str]:
-    """v2 -> v3: a blank per-arr category now adopts the arr's own download-client category.
+    """v2 -> v3: an omitted per-arr category now adopts the arr's own download-client category.
 
     Note-only, like the v2 `wait_mode` notice: nothing is rewritten. The note
-    fires only for the files the flip can bite - a connected arr (the group
-    carries a url) leaving `torrent_category` or `post_import_category` blank.
+    fires unconditionally - whether the flip bites depends on connection
+    state a file mapping cannot see (env overlays, qBittorrent credentials
+    added after the stamp).
     """
 
-    affected = any(
-        (group := _group(config, arr)) is not None
-        and group.get("url")
-        and any(group.get(key) is None for key in ("torrent_category", "post_import_category"))
-        for arr in ("sonarr", "radarr")
-    )
-    if not affected:
-        return []
     return [
-        "a blank torrent_category / post_import_category now adopts the matching category of that "
-        "arr's own qBittorrent download client - an explicit value overrides it",
+        "an omitted torrent_category / post_import_category now adopts the matching category of that "
+        "arr's own qBittorrent download client - an explicit value overrides it, and an explicit "
+        'blank ("") keeps no category at all',
     ]
 
 

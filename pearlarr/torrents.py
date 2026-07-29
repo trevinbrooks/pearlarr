@@ -11,6 +11,7 @@ import pynyaa
 import qbittorrentapi
 from seadex import Tracker
 
+from .arr_categories import ArrCategoryResolver
 from .seadex_types import SeadexUrlItem
 from .torrent import (
     ParsedTorrent,
@@ -109,7 +110,7 @@ class TorrentService:
         *,
         qbit: qbittorrentapi.Client | None,
         web: httpx.Client,
-        category: str | None,
+        categories: ArrCategoryResolver,
         tags: list[str] | None,
         logger: logging.Logger,
     ) -> None:
@@ -119,14 +120,16 @@ class TorrentService:
             qbit: The logged-in client, or None
                 when no client is configured (every add is then a preview).
             web: Shared keep-alive client for the tracker page scrapes.
-            category: qBittorrent category for added torrents.
+            categories: The run's category resolver; its `grab()` is read
+                per add, so the lazy download-client fetch fires at the
+                first real add - never at boot or on a preview.
             tags: qBittorrent tags for added torrents.
             logger: For the "already in qBittorrent" debug line.
         """
 
         self.qbit = qbit
         self.web = web
-        self.category = category
+        self.categories = categories
         self.tags = tags
         self.logger = logger
 
@@ -213,7 +216,7 @@ class TorrentService:
         # Add the torrent
         result = self.qbit.torrents_add(
             urls=torrent_url,
-            category=self.category,
+            category=self.categories.grab(),
             tags=self.tags,
         )
         if result != "Ok.":

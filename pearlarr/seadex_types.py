@@ -332,10 +332,27 @@ def _none_if_falsy(value: object) -> object:
     return value or None
 
 
+def _lax_bool(value: object) -> bool:
+    """Per-field lenient fold: real bools and recognized spellings parse, junk folds to False.
+
+    `bool(value)` would read "false" - any non-empty string - and junk like
+    `[0]` as True; False is the inert, safe fold for these flags.
+    """
+
+    if isinstance(value, bool):
+        return value
+    if isinstance(value, int):
+        return value == 1
+    if isinstance(value, str):
+        return value.strip().casefold() in ("true", "1")
+    return False
+
+
 # Reusable lenient field shapes (the per-field folding regime).
 type _LenientStr = Annotated[str | None, BeforeValidator(_str_or_none)]
 type _BlankStr = Annotated[str, BeforeValidator(_str_or_blank)]
 type _ZeroInt = Annotated[int, BeforeValidator(_int_or_zero)]
+type _LaxBool = Annotated[bool, BeforeValidator(_lax_bool)]
 
 
 def _validate_skipping_junk[ModelT: _ApiModel](model: type[ModelT], value: object) -> object:
@@ -882,6 +899,12 @@ class HistoryPage(_ApiModel):
 # --- Arr download clients (`/api/v3/downloadclient`) ------------------------
 
 
+def _priority_or_lowest(value: object) -> int:
+    """Per-field lenient fold: keep an int priority, fold junk to 50 (the arrs' lowest)."""
+
+    return value if isinstance(value, int) and not isinstance(value, bool) else 50
+
+
 class DownloadClientField(_ApiModel):
     """One `{name, value}` settings field of a download-client definition.
 
@@ -898,11 +921,14 @@ class DownloadClientRecord(_ApiModel):
 
     `implementation` names the client type (`QBittorrent` for qBittorrent).
     Every field folds junk independently, and a junk `fields[]` entry is
-    skipped WITHOUT dropping the definition.
+    skipped WITHOUT dropping the definition. `priority` (1 highest, the arrs'
+    default; 50 lowest) picks among several enabled clients; junk folds to 50
+    so a malformed record never outranks a clean one.
     """
 
-    enable: Annotated[bool, BeforeValidator(bool)] = False
+    enable: _LaxBool = False
     implementation: _LenientStr = None
+    priority: Annotated[int, BeforeValidator(_priority_or_lowest)] = 50
     fields: tuple[DownloadClientField, ...] = ()
 
     @field_validator("fields", mode="before")
@@ -1141,11 +1167,11 @@ class ParsedFileInfo(_ApiModel):
         validation_alias=AliasPath("parsedEpisodeInfo", "absoluteEpisodeNumbers"),
     )
     """Drives the absolute-index fallback."""
-    special: Annotated[bool, BeforeValidator(bool)] = Field(
+    special: _LaxBool = Field(
         default=False,
         validation_alias=AliasPath("parsedEpisodeInfo", "special"),
     )
-    full_season: Annotated[bool, BeforeValidator(bool)] = Field(
+    full_season: _LaxBool = Field(
         default=False,
         validation_alias=AliasPath("parsedEpisodeInfo", "fullSeason"),
     )

@@ -73,11 +73,11 @@ A validation failure lists each offending key with what is wrong: unknown or mis
 
 ```text
 Config migrated to the current schema - previous file saved as ...
-Config uses an older config schema - ... run pearlarr config migrate to update the file (a backup is kept)
+Config ... uses an older schema and could not be rewritten in place - ... run pearlarr config migrate to update the file (a backup is kept)
 ```
 
 The file was written for an older Pearlarr. Every load brings it forward in memory, and a run then rewrites the file itself at the current schema: the first line, with the previous file kept beside it as `config.yml.bak` and what was folded recorded in the log file.
-The warning appears instead only when the file could not be rewritten, typically a read-only config file or directory. The run still behaves as if the file were current; fix write access, or run `pearlarr config migrate` to see exactly why the rewrite fails.
+The warning appears instead only when the file could not be rewritten - typically a read-only config file or directory, or a config bind-mounted into the container as a single file, which cannot be replaced atomically (mount its directory instead). The run still behaves as if the file were current; fix write access, or run `pearlarr config migrate` to see exactly why the rewrite fails.
 See [configuration.md](configuration.md#the-config-schema-version) for what the rewrite does and does not preserve.
 
 ## Config from a newer Pearlarr

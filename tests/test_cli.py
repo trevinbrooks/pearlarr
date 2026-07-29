@@ -54,10 +54,12 @@ from typing import ClassVar, NoReturn, cast, override
 
 import pytest
 import truststore
+import yaml
+from pydantic import ValidationError
 from typer.testing import CliRunner
 
 from pearlarr.boot_flow import BootFlow
-from pearlarr.bootstrap import configured_arrs, load_shared_config, run_arrs
+from pearlarr.bootstrap import _rewrite_old_config, configured_arrs, load_shared_config, run_arrs
 from pearlarr.cache import CacheStore
 from pearlarr.cli import (
     _console_format,
@@ -104,6 +106,7 @@ from pearlarr.output import (
     ScanStarted,
     Severity,
     TorrentGraduated,
+    current_hub,
     install_hub,
 )
 from pearlarr.output.recording import RecordingHub
@@ -1418,11 +1421,12 @@ _needs_posix_permissions = pytest.mark.skipif(
 
 
 class TestConfigAutoMigrate:
-    """An old-schema config is rewritten in place at load, backup first.
+    """An old-schema config is rewritten in place after the load, backup first.
 
     The console gets one terse line either way; the functional detail (what was
     folded) rides a file_only diagnostic to the log. A file that cannot be
-    rewritten falls back to the in-memory migration behind a short warning.
+    rewritten falls back to the in-memory migration behind a short warning, and
+    a dry run never writes at all.
     """
 
     _OLD = "seadex:\n  private_releases: allow\nsonarr:\n  url: http://s\n  api_key: k\n"
@@ -1434,11 +1438,17 @@ class TestConfigAutoMigrate:
         config.chmod(0o600)  # keep the loose-permissions warn out of the stream
         return config
 
+    @staticmethod
+    def _load(config: Path) -> AppConfig:
+        loaded = load_shared_config(str(config), BootFlow(), "")
+        assert loaded is not None
+        return loaded
+
     def test_an_old_schema_file_is_rewritten_with_a_backup(self, tmp_path: Path) -> None:
         recording = install_recording_hub()
         config = self._write(tmp_path, self._OLD)
 
-        assert load_shared_config(str(config), BootFlow(), "") is not None
+        _rewrite_old_config(str(config), self._load(config), dry_run=False)
 
         rewritten = config.read_text(encoding="utf-8")
         assert f"config_version: {CONFIG_VERSION}" in rewritten
@@ -1454,7 +1464,7 @@ class TestConfigAutoMigrate:
         recording = install_recording_hub()
         config = self._write(tmp_path, self._OLD)
 
-        assert load_shared_config(str(config), BootFlow(), "") is not None
+        _rewrite_old_config(str(config), self._load(config), dry_run=False)
 
         (detail,) = [d for d in recording.of_type(Diagnostic) if d.file_only]
         assert detail.severity is Severity.INFO
@@ -1462,22 +1472,99 @@ class TestConfigAutoMigrate:
         assert "'allow'" in detail.message  # the private_releases fold
         assert "wait_mode" in detail.message  # the note-only default flip rides along
 
+    def test_a_raised_log_level_drops_the_details_promise(self, tmp_path: Path) -> None:
+        # At --log-level warning the INFO detail line never reaches the file
+        # log, so the console note must not point at it.
+        recording = install_recording_hub()
+        current_hub().set_level(int(Severity.WARNING))
+        config = self._write(tmp_path, self._OLD)
+
+        _rewrite_old_config(str(config), self._load(config), dry_run=False)
+
+        (notice,) = [d for d in recording.of_type(Diagnostic) if not d.file_only and d.severity is Severity.INFO]
+        assert notice.message.endswith(".bak")
+        assert "details in the log" not in notice.message
+
+    def test_a_dry_run_leaves_the_file_alone_behind_a_note(self, tmp_path: Path) -> None:
+        recording = install_recording_hub()
+        config = self._write(tmp_path, self._OLD)
+
+        _rewrite_old_config(str(config), self._load(config), dry_run=True)
+
+        assert config.read_text(encoding="utf-8") == self._OLD
+        assert sorted(p.name for p in tmp_path.iterdir()) == ["config.yml"]
+        (note,) = [d for d in recording.of_type(Diagnostic) if not d.file_only]
+        assert note.severity is Severity.INFO
+        assert note.message == "Config uses an older schema - left unchanged on a dry run"
+
+    def test_a_yaml_failure_reason_is_redacted_and_one_line(
+        self,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        # str(YAMLError) quotes the offending source line - the secret itself
+        # when the error sits on a credential line - and the log file is more
+        # readable than the 0600 config. The file-log line carries the
+        # formatted description instead, on one line.
+        recording = install_recording_hub()
+        config = self._write(tmp_path, self._OLD)
+        loaded = self._load(config)
+        mark = yaml.Mark(str(config), 9, 1, 4, "  api_key: hunter2-secret\n", 9)
+        boom = yaml.MarkedYAMLError(problem="found character that cannot start any token", problem_mark=mark)
+
+        def refuse(path: str, expected_checksum: str | None = None) -> NoReturn:
+            raise boom
+
+        monkeypatch.setattr("pearlarr.bootstrap.upgrade_config_file", refuse)
+        _rewrite_old_config(str(config), loaded, dry_run=False)
+
+        reason = next(d for d in recording.of_type(Diagnostic) if d.file_only and d.severity is Severity.WARNING)
+        assert "hunter2-secret" not in reason.message
+        assert "\n" not in reason.message
+        assert "found character that cannot start any token at line 2, column 5" in reason.message
+
+    def test_a_validation_failure_reason_stays_one_line(
+        self,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        # str(ValidationError) spans multiple lines; the file log's line
+        # grammar folds the bad keys onto one.
+        recording = install_recording_hub()
+        config = self._write(tmp_path, self._OLD)
+        loaded = self._load(config)
+        with pytest.raises(ValidationError) as excinfo:
+            AppConfig.model_validate({"typo_key": 1, "other_typo": 2})
+        boom = excinfo.value
+
+        def refuse(path: str, expected_checksum: str | None = None) -> NoReturn:
+            raise boom
+
+        monkeypatch.setattr("pearlarr.bootstrap.upgrade_config_file", refuse)
+        _rewrite_old_config(str(config), loaded, dry_run=False)
+
+        reason = next(d for d in recording.of_type(Diagnostic) if d.file_only and d.severity is Severity.WARNING)
+        assert "\n" not in reason.message
+        assert "typo_key" in reason.message
+        assert "other_typo" in reason.message
+
     @_needs_posix_permissions
     def test_an_unwritable_file_falls_back_in_memory_with_a_short_warning(self, tmp_path: Path) -> None:
         recording = install_recording_hub()
         config = self._write(tmp_path, self._OLD)
-        tmp_path.chmod(0o500)  # the backup write fails before anything is touched
+        loaded = self._load(config)
+        tmp_path.chmod(0o500)  # the temp-file create fails before anything is touched
         try:
-            loaded = load_shared_config(str(config), BootFlow(), "")
+            _rewrite_old_config(str(config), loaded, dry_run=False)
         finally:
             tmp_path.chmod(0o755)
 
-        assert loaded is not None  # the in-memory migration still carries the run
         assert config.read_text(encoding="utf-8") == self._OLD
         assert not (tmp_path / "config.yml.bak").exists()
         (warning,) = [d for d in recording.of_type(Diagnostic) if d.severity is Severity.WARNING and not d.file_only]
         assert warning.message == (
-            "Config uses an older config schema - run pearlarr config migrate to update the file (a backup is kept)"
+            f"Config {config} uses an older schema and could not be rewritten in place - "
+            f"run pearlarr config migrate to update the file (a backup is kept)"
         )
         reason = next(d for d in recording.of_type(Diagnostic) if d.file_only and d.severity is Severity.WARNING)
         assert str(config) in reason.message
@@ -1487,7 +1574,7 @@ class TestConfigAutoMigrate:
         body = f"config_version: {CONFIG_VERSION}\nsonarr:\n  url: http://s\n  api_key: k\n"
         config = self._write(tmp_path, body)
 
-        assert load_shared_config(str(config), BootFlow(), "") is not None
+        _rewrite_old_config(str(config), self._load(config), dry_run=False)
 
         assert config.read_text(encoding="utf-8") == body
         assert not (tmp_path / "config.yml.bak").exists()
@@ -1656,7 +1743,37 @@ class TestScheduledLifecycle:
         notice = next(d for d in recording.of_type(Diagnostic) if "Config migrated" in d.message)
         assert notice.severity is Severity.INFO
         assert f"{paths.config}.bak" in notice.message
-        assert not any("older config schema" in d.message for d in recording.of_type(Diagnostic))
+        assert not any("older schema" in d.message for d in recording.of_type(Diagnostic))
+
+    def test_a_dry_run_never_rewrites_the_config_file(
+        self,
+        logger: logging.Logger,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        # Live repro of the original bug: --dry-run rewrote an 81 B old-schema
+        # file to the full 12 kB template. The file must stay byte-identical.
+        recording = install_recording_hub()
+        paths = resolve_paths()
+        os.makedirs(paths.data_dir)
+        old = "seadex:\n  private_releases: allow\nsonarr:\n  url: http://s\n  api_key: k\n"
+        Path(paths.config).write_text(old, encoding="utf-8")
+
+        def refuse_resolver(*args: object, **kwargs: object) -> None:
+            return None
+
+        monkeypatch.setattr("pearlarr.bootstrap.build_resolver", refuse_resolver)
+
+        run_arrs(
+            [ArrTarget(Arr.SONARR)],
+            paths=paths,
+            logger=logger,
+            file_sink=FileLogSink(paths.log_dir),
+            dry_run=True,
+        )
+
+        assert Path(paths.config).read_text(encoding="utf-8") == old
+        assert not os.path.exists(paths.config + ".bak")
+        assert any("left unchanged on a dry run" in d.message for d in recording.of_type(Diagnostic))
 
     def test_run_arrs_applies_the_configured_log_retention(
         self,

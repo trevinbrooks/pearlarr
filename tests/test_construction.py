@@ -20,7 +20,6 @@ import qbittorrentapi
 import respx
 
 from pearlarr import run_services
-from pearlarr.arr_categories import ArrCategories
 from pearlarr.boot_flow import BootFlow
 from pearlarr.config import Arr
 from pearlarr.mappings import MappingResolver
@@ -160,11 +159,11 @@ class _PassingQbit:
 
 
 @respx.mock
-def test_rundeps_build_resolves_categories_from_the_arr_once(
+def test_rundeps_build_wires_lazy_categories_fetched_at_first_use(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
 ) -> None:
-    """With qbit configured and blank categories, `build` fetches the arr's download clients once and wires both consumers."""
+    """With qbit configured and omitted categories, `build` fetches NOTHING - the first use does, once."""
 
     monkeypatch.setattr(qbittorrentapi, "Client", _PassingQbit)
     route = respx.get("http://sonarr/api/v3/downloadclient").respond(
@@ -190,13 +189,17 @@ def test_rundeps_build_resolves_categories_from_the_arr_once(
         web=httpx.Client(),
         boot=BootFlow(),
     )
-    deps.close()
-
-    assert route.call_count == 1
-    assert deps.categories == ArrCategories(grab="tv-sonarr", post_import="sonarr-done")
-    # Both consumers see the resolved values: the add-time category on the
-    # torrent adapter, the post-import one on the deps the wait manager reads.
-    assert deps.torrents.category == "tv-sonarr"
+    try:
+        # Boot did no category I/O: an arr restarting under the boot must not
+        # cost the run its post-import moves (the use-time fetch retries).
+        assert route.call_count == 0
+        assert deps.categories.grab() == "tv-sonarr"
+        assert deps.categories.post_import() == "sonarr-done"
+        assert route.call_count == 1  # memoized after the one success
+        # The torrent adapter asks the same resolver at add time.
+        assert deps.torrents.categories is deps.categories
+    finally:
+        deps.close()
 
 
 @respx.mock
@@ -217,8 +220,10 @@ def test_rundeps_build_skips_the_category_fetch_without_qbit(tmp_path: Path) -> 
     )
     deps.close()
 
+    # No transport was bound, so even USING the resolver stays fetchless.
+    assert deps.categories.grab() is None
+    assert deps.categories.post_import() is None
     assert route.call_count == 0
-    assert deps.categories == ArrCategories(grab=None, post_import=None)
 
 
 def test_sonarr_cross_check_builds_without_network_via_radarr_seam() -> None:

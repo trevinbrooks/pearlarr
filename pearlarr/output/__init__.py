@@ -79,7 +79,17 @@ from .events import (
 )
 from .hub import STRIKE_LIMIT, CountsMark, NullRenderer, OutputHub, Renderer, SeverityCounts, SeverityTally
 from .rich_renderer import RichRenderer, diagnostic_text, diagnostic_threshold
-from .runtime import current_hub, emit_to_hub, hub_counts, hub_error, hub_note, hub_warn, install_hub, uninstall_hub
+from .runtime import (
+    current_hub,
+    emit_to_hub,
+    hub_counts,
+    hub_error,
+    hub_file_only,
+    hub_note,
+    hub_warn,
+    install_hub,
+    uninstall_hub,
+)
 from .scopes import (
     PROCESS_SCOPE_IDS,
     CountsSource,
@@ -191,6 +201,7 @@ __all__ = [
     "emit_to_hub",
     "hub_counts",
     "hub_error",
+    "hub_file_only",
     "hub_note",
     "hub_warn",
     "install_bridge",

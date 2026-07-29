@@ -1,18 +1,19 @@
 """The run's effective qBittorrent categories: config first, then the arr's own client.
 
-A category left blank in config adopts the matching category of the arr's own
-qBittorrent download client (`/api/v3/downloadclient`), so grabs and
-post-import moves line up with what the arr does for downloads it starts
-itself. Resolved once per arr run by the composition root (`RunDeps.build`);
-every miss fails open to the blank.
+A category OMITTED in config adopts the matching category of the arr's own
+qBittorrent download client (`/api/v3/downloadclient`); an explicit blank
+string keeps no category at all. Resolution is lazy - the client fetch happens
+at the first grab or post-import move, where the arr is provably up - and
+every miss fails open to blank.
 """
 
 import logging
-from dataclasses import dataclass
+from typing import final
 
 from .arr_http import ArrHttp
 from .config import Arr, ArrSettings
 from .log import LOG_NAME
+from .seadex_types import DownloadClientRecord
 
 # Debug breadcrumbs ride the stdlib channel (first-party child of the app
 # logger), matching `arr_http`'s coalesced-repeat idiom.
@@ -26,53 +27,82 @@ _CATEGORY_FIELDS: dict[Arr, tuple[str, str]] = {
 }
 
 
-@dataclass(frozen=True)
-class ArrCategories:
-    """One arr run's resolved categories (None where nothing applies)."""
+def _configured(value: str | None) -> tuple[bool, str | None]:
+    """One config category as `(settled, category)`.
 
-    grab: str | None
-    """Applied to torrents added for this arr (`TorrentService`)."""
-
-    post_import: str | None
-    """Applied once a torrent's imports all complete (`ImportWaitManager`)."""
-
-
-def resolve_arr_categories(arr: Arr, config: ArrSettings, http: ArrHttp | None) -> ArrCategories:
-    """Resolve the effective categories, fetching the arr's download clients at most once.
-
-    Per category: an explicit config value wins, a blank one adopts the arr's
-    own qBittorrent download-client value. With `http` None (no qBittorrent
-    client to apply a category, or missing connection keys), or on any fetch
-    miss, blanks stay blank - the pre-fallback behavior.
+    An explicit value pins it, a blank/whitespace-only string is the opt-out
+    (no category, no fallback), and an absent key (None) defers to the arr's
+    own download client.
     """
 
-    grab = config.torrent_category or None
-    post_import = config.post_import_category or None
-    if http is None or (grab and post_import):
-        return ArrCategories(grab=grab, post_import=post_import)
-    client_grab, client_post = _client_categories(arr, http)
-    return ArrCategories(grab=grab or client_grab, post_import=post_import or client_post)
+    if value is None:
+        return False, None
+    return True, (value if value.strip() else None)
 
 
-def _client_categories(arr: Arr, http: ArrHttp) -> tuple[str | None, str | None]:
-    """The (grab, post-import) categories of the arr's first enabled qBittorrent client.
+@final
+class ArrCategoryResolver:
+    """Resolves the two effective categories lazily, one client fetch per run at most.
 
-    `(None, None)` when the fetch failed (the transport already warned), no
-    enabled qBittorrent client is defined, or the fields are blank - each
-    fail-open, logged once at DEBUG below.
+    Lazy on purpose: at first use the arr is provably up (a grab or a verified
+    import just went through its API), where an eager boot-time fetch would
+    turn an arr restart into a run-long miss. A successful fetch is memoized;
+    a failed one is NOT - the next use retries, so a blip costs only the work
+    racing it. Every miss fails open to blank (the transport warns, coalesced).
     """
 
-    clients = http.download_clients()
-    if clients is None:
+    def __init__(self, arr: Arr, config: ArrSettings, http: ArrHttp | None) -> None:
+        """`http` None (no qBittorrent to apply a category, or missing connection keys) stays blank fetchless."""
+
+        self._arr = arr
+        self._grab = _configured(config.torrent_category)
+        self._post_import = _configured(config.post_import_category)
+        self._http = http
+        self._fetched: tuple[str | None, str | None] | None = None
+
+    def grab(self) -> str | None:
+        """The category for torrents added for this arr (`TorrentService`)."""
+
+        settled, category = self._grab
+        return category if settled else self._client_pair()[0]
+
+    def post_import(self) -> str | None:
+        """The category applied once a torrent's imports all complete (`ImportWaitManager`)."""
+
+        settled, category = self._post_import
+        return category if settled else self._client_pair()[1]
+
+    def _client_pair(self) -> tuple[str | None, str | None]:
+        if self._fetched is None:
+            if self._http is None:
+                return None, None
+            clients = self._http.download_clients()
+            if clients is None:
+                # The transport already warned. Not memoized: the next use retries.
+                return None, None
+            self._fetched = _pick_categories(self._arr, clients)
+        return self._fetched
+
+
+def _pick_categories(arr: Arr, clients: list[DownloadClientRecord]) -> tuple[str | None, str | None]:
+    """The (grab, post-import) categories of the arr's preferred qBittorrent client.
+
+    Preferred = enabled, lowest `priority` number (1 is the arrs' highest and
+    default), list order breaking ties. Which client the arr itself would pick
+    is not decidable from outside (round-robin within a priority group,
+    indexer pins, tag restrictions) - the config docs say so. `(None, None)`
+    when no enabled qBittorrent client is defined or the fields are blank,
+    logged once at DEBUG.
+    """
+
+    candidates = [
+        record for record in clients if record.enable and (record.implementation or "").casefold() == "qbittorrent"
+    ]
+    if not candidates:
+        _LOG.debug(f"{arr.capitalize()} defines no enabled qBittorrent download client - blank categories stay blank")
         return None, None
-    client = next(
-        (record for record in clients if record.enable and (record.implementation or "").casefold() == "qbittorrent"),
-        None,
-    )
-    if client is None:
-        _LOG.debug(f"{http.label} defines no enabled qBittorrent download client - blank categories stay blank")
-        return None, None
+    client = min(candidates, key=lambda record: record.priority)
     grab_field, post_field = _CATEGORY_FIELDS[arr]
     grab, post_import = client.field_value(grab_field), client.field_value(post_field)
-    _LOG.debug(f"{http.label} download-client categories: {grab_field}={grab!r}, {post_field}={post_import!r}")
+    _LOG.debug(f"{arr.capitalize()} download-client categories: {grab_field}={grab!r}, {post_field}={post_import!r}")
     return grab, post_import

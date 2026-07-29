@@ -20,7 +20,7 @@ from seadex import EntryRecord, SeaDexEntry
 
 from .anilist_client import AniListClient
 from .anilist_gateway import AniListGateway
-from .arr_categories import ArrCategories, resolve_arr_categories
+from .arr_categories import ArrCategoryResolver
 from .arr_http import ArrHttp, make_httpx_client
 from .boot_flow import BootFlow
 from .cache import UPDATED_AT_STR_FORMAT, AbstractCacheStore, CachedEntry, CacheRecord, CacheStore
@@ -72,10 +72,10 @@ class RunDeps:
     arr_config: ArrSettings
     """This arr's connection/behavior submodel, `config.for_arr(arr)`."""
 
-    categories: ArrCategories
-    """The run's resolved qBittorrent categories: explicit config first, then
-    the arr's own download client (`resolve_arr_categories`, fetched at most
-    once in `build`)."""
+    categories: ArrCategoryResolver
+    """The run's effective qBittorrent categories: explicit config first, then
+    the arr's own download client - fetched lazily at first use (grab /
+    post-import move), where the arr is provably up."""
 
     web: httpx.Client
     http: httpx.Client
@@ -186,32 +186,26 @@ class RunDeps:
         )
 
         # The run's effective qBittorrent categories: an explicit config value
-        # wins, a blank one adopts the matching category of this arr's own
-        # qBittorrent download client. Bound only when a real qbit exists to
-        # apply a category (a preview run applies none); with both set
-        # explicitly the resolver never fetches.
+        # wins, a blank string opts out, an omitted key adopts the matching
+        # category of this arr's own qBittorrent download client - fetched
+        # lazily at first use, where the arr is provably up. Bound only when a
+        # real qbit exists to apply a category (a preview run applies none).
         category_http: ArrHttp | None = None
         url = arr_config.url
         api_key = secret_value(arr_config.api_key)
         if qbit is not None and url and api_key:
-            # A single attempt (retries=0): a nicety read at boot. The library
-            # fetch is where an unreachable arr gets its retries and report.
-            bound = ArrHttp.bind(
-                client=http,
-                url=url,
-                api_key=api_key,
-                label=arr.capitalize(),
-                heartbeat_s=app_config.imports.digest_interval,
-            )
+            # A single attempt per use (retries=0): a nicety read whose miss
+            # fails open and is retried at the next use.
+            bound = ArrHttp.bind(client=http, url=url, api_key=api_key, label=arr.capitalize())
             category_http = replace(bound, retries=0)
-        categories = resolve_arr_categories(arr, arr_config, category_http)
+        categories = ArrCategoryResolver(arr, arr_config, category_http)
 
         # qBittorrent adapter: parses a release URL by tracker and adds it. A None
         # qbit is treated as a perpetual preview.
         torrents = TorrentService(
             qbit=qbit,
             web=web,
-            category=categories.grab,
+            categories=categories,
             tags=app_config.qbittorrent.tags,
             logger=logger,
         )

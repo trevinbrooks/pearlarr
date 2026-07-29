@@ -82,9 +82,9 @@ class ImportWaitManager:
         strategy: ImportCompleter | None = None,
     ) -> None:
         self._config = deps.config
-        # The run-resolved value: config's post_import_category, else the
+        # Resolved lazily at the move: config's post_import_category, else the
         # category the arr's own qBittorrent download client sets.
-        self._post_import_category = deps.categories.post_import
+        self._categories = deps.categories
         self.cache_store = deps.cache_store
         self._reporter = deps.reporter
         self.logger = deps.logger
@@ -539,24 +539,24 @@ class ImportWaitManager:
     def apply_post_import_category(self, pending: PendingImport) -> None:
         """Move a verified-imported torrent to this arr's resolved post-import category.
 
-        The category is the run-resolved `ArrCategories.post_import`
-        (config's `post_import_category`, else the arr's own download-client
-        value). Called at the two confirmed-import sites (the reconcile passes
-        and the monitor's IMPORTED terminal), AFTER the finished record is
-        dropped - never for MISSING or a TTL drop. Gated on the whole torrent being done:
-        SeaDex can list one torrent on several AniList entries, each with its own
-        record for its own episode slice, and users key delete-with-data cleanup
-        off this category - so the move happens only once NO pending record (in
-        either arr - see `CacheStore.count_pending_for_infohash`) still claims
-        the hash. The last record to verify makes the move, under its own
-        arr's category. Creates the category
-        on first use (qBittorrent 409s an unknown one). Best-effort: the import
-        already succeeded, so a client error only warns - naming the record by
-        its display label, not the bare infohash.
+        The category resolves lazily HERE (config's `post_import_category`,
+        else the arr's own download-client value - `ArrCategoryResolver`),
+        after the siblings gate, so the fetch only ever runs when a move is
+        actually due. Called at the two confirmed-import sites (the reconcile
+        passes and the monitor's IMPORTED terminal), AFTER the finished record
+        is dropped - never for MISSING or a TTL drop. Gated on the whole
+        torrent being done: SeaDex can list one torrent on several AniList
+        entries, each with its own record for its own episode slice, and users
+        key delete-with-data cleanup off this category - so the move happens
+        only once NO pending record (in either arr - see
+        `CacheStore.count_pending_for_infohash`) still claims the hash. The
+        last record to verify makes the move, under its own arr's category.
+        Creates the category on first use (qBittorrent 409s an unknown one).
+        Best-effort: the import already succeeded, so a client error only
+        warns - naming the record by its display label, not the bare infohash.
         """
 
-        category = self._post_import_category
-        if not category or self.qbit is None:
+        if self.qbit is None:
             return
         remaining = self.cache_store.count_pending_for_infohash(pending.infohash)
         if remaining:
@@ -564,6 +564,9 @@ class ImportWaitManager:
                 f"{pending.display_label}: {count_noun(remaining, 'sibling record')} still pending on "
                 "this torrent - deferring the category move",
             )
+            return
+        category = self._categories.post_import()
+        if not category:
             return
         label = pending.display_label
         infohash = pending.infohash

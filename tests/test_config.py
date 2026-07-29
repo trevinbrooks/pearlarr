@@ -35,7 +35,7 @@ from pearlarr.config import (
     config_permissions_loose,
     secret_value,
 )
-from pearlarr.config_migrations import CONFIG_VERSION, MigrationOutcome
+from pearlarr.config_migrations import CONFIG_VERSION
 from pearlarr.manual_import import ImportWaitMode
 
 from .builders import make_config
@@ -150,10 +150,12 @@ class TestSchemaMigration:
         outcome = cfg.migration()
         assert outcome is not None
         assert outcome.from_version == 0
-        # The two v0 folds plus the v2 wait_mode default-flip notice.
-        assert len(outcome.notes) == 3
+        # The two v0 folds, the v2 wait_mode default-flip notice, and the
+        # unconditional v3 category notice.
+        assert len(outcome.notes) == 4
         assert any("public_only" in note for note in outcome.notes)
         assert any("wait_mode" in note for note in outcome.notes)
+        assert any("torrent_category" in note for note in outcome.notes)
 
     def test_typos_stay_loud_in_a_version_less_file(self, tmp_path: Path) -> None:
         # Only removed schema folds. A never-valid value is a typo and must
@@ -171,10 +173,10 @@ class TestSchemaMigration:
         assert outcome is not None
         assert any("'allow'" in note for note in outcome.notes)
 
-    def test_v0_file_without_deltas_is_stamped_silently(self, tmp_path: Path) -> None:
-        # Nothing to fold: the pass stamps the version and carries no notes.
-        # wait_mode and the connected arr's categories are pinned because a
-        # file relying on their old defaults gets the v2/v3 flip notices.
+    def test_v0_file_without_deltas_gets_only_the_standing_v3_notice(self, tmp_path: Path) -> None:
+        # Nothing to fold and wait_mode pinned: only the unconditional v3
+        # category notice rides (it fires for every pre-v3 file - whether the
+        # flip bites depends on state the mapping cannot see).
         cfg = self._load(
             tmp_path,
             "sonarr:\n  url: http://x\n  torrent_category: anime\n  post_import_category: done\n"
@@ -183,7 +185,9 @@ class TestSchemaMigration:
         assert cfg.sonarr.url == "http://x"
         outcome = cfg.migration()
         assert outcome is not None
-        assert outcome == MigrationOutcome(from_version=0, notes=())
+        assert outcome.from_version == 0
+        assert len(outcome.notes) == 1
+        assert "torrent_category" in outcome.notes[0]
 
     def test_current_file_migrates_nothing(self, tmp_path: Path) -> None:
         cfg = self._load(tmp_path, f"config_version: {CONFIG_VERSION}\nsonarr:\n  url: http://x\n")
