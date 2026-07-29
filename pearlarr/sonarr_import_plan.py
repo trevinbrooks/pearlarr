@@ -453,26 +453,30 @@ def translate_download_path(
     return f"/{joined}" if base == "/" else f"{base}/{joined}"
 
 
-class EpisodeIndex(NamedTuple):
+@dataclass(frozen=True, slots=True)
+class EpisodeIndex:
     """The import family's one episode index, built once per episode fetch.
 
-    Episodes with a falsy id (0) are dropped from EVERY facet before keying -
-    a 0 id can never be POSTed to Sonarr, and a real-id twin behind one must
-    still win its `(season, episode)` key. The planner's `index_episodes_by_key`
-    deliberately KEEPS them (a 0-id file is still identity evidence) - do not
-    unify the two.
+    Both facets detach and wrap read-only at construction; `episode_index` is
+    the one builder. Episodes with a falsy id (0) are dropped from EVERY facet
+    before keying - a 0 id can never be POSTed to Sonarr, and a real-id twin
+    behind one must still win its `(season, episode)` key. The planner's
+    `index_episodes_by_key` deliberately KEEPS them (a 0-id file is still
+    identity evidence) - do not unify the two.
     """
 
     by_id: Mapping[int, SonarrEpisode]
-    """Episode id -> episode."""
+    """Episode id -> episode, in the fetch's (season) order - `list(by_id)` is
+    the resolved set the add flow persists onto each seed."""
 
     id_by_key: Mapping[EpisodeKey, int]
     """`(season, episode)` -> episode id (missing numbers collapse to
     `SONARR_MISSING_KEY`, first record wins - via `index_episodes_by_key`)."""
 
-    ordered_ids: tuple[int, ...]
-    """Every real episode id in the fetch's (season) order - the resolved set
-    the add flow persists onto each seed."""
+    def __post_init__(self) -> None:
+        # Detach from the caller's dicts, then wrap read-only.
+        object.__setattr__(self, "by_id", MappingProxyType(dict(self.by_id)))
+        object.__setattr__(self, "id_by_key", MappingProxyType(dict(self.id_by_key)))
 
 
 def episode_index(ep_list: Iterable[SonarrEpisode]) -> EpisodeIndex:
@@ -482,7 +486,6 @@ def episode_index(ep_list: Iterable[SonarrEpisode]) -> EpisodeIndex:
     return EpisodeIndex(
         by_id={ep.id: ep for ep in with_ids},
         id_by_key={key: ep.id for key, ep in index_episodes_by_key(with_ids).items()},
-        ordered_ids=tuple(ep.id for ep in with_ids),
     )
 
 
@@ -831,7 +834,7 @@ def build_pending_seed(
         added_at=entry.added_at,
         coverage=entry.coverage,
         url=entry.url,
-        ordered_episode_ids=list(index.ordered_ids),
+        ordered_episode_ids=list(index.by_id),
         slice_coverage=coverage_string(episodes_from_ep_list(claimed_eps)) or None,
         excluded_files=excluded_files,
         guards=entry.guards,

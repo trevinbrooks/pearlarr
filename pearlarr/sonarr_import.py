@@ -463,7 +463,7 @@ class ImportExecutor:
             return ImportProbe(ImportReadiness.RETRY, files_present=False, command_issued=False)
 
         candidates_by_basename = self._mapper.candidate_files(scan.candidates)
-        assignment = self._mapper.assign(pending, candidates_by_basename, snapshot.episodes)
+        assignment = self._mapper.assign(pending, candidates_by_basename, snapshot.episodes.id_by_key)
         if assignment.skipped:
             self._warn_unplaceable_files(pending, assignment.skipped)
 

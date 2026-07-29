@@ -41,7 +41,6 @@ from pearlarr.sonarr_import_plan import (
     ContentPaths,
     DownloadMatch,
     EpisodeAssignment,
-    EpisodeIndex,
     ParsedQuality,
     PlacementBatch,
     QueueVerdict,
@@ -636,12 +635,6 @@ class TestAssignGuards:
         assert sorted(result.skipped) == sorted(files)
 
 
-def _index(id_by_key: dict[EpisodeKey, int]) -> EpisodeIndex:
-    """A bare index for mapper tests - `assign` consults only `id_by_key`."""
-
-    return EpisodeIndex(by_id={}, id_by_key=id_by_key, ordered_ids=())
-
-
 def _cand(basename: str) -> CandidateFile:
     return CandidateFile(
         basename=basename,
@@ -692,7 +685,7 @@ class TestAssignScopeGate:
         }
         ep_id_map = {EpisodeKey(1, 1): 101, EpisodeKey(2, 1): 999}  # 999 is OUTSIDE the resolved {101}
 
-        merged, skipped = mapper.assign(pending, candidates, _index(ep_id_map))
+        merged, skipped = mapper.assign(pending, candidates, ep_id_map)
 
         placed_ids = {i for ids in merged.values() for i in ids}
         assert 999 not in placed_ids
@@ -858,8 +851,8 @@ class TestAssignScopeGate:
         candidates = {normalize_basename(name): _cand(name) for name in (v1, v2)}
         ep_id_map = {EpisodeKey(1, 12): 2586}
 
-        first, _ = mapper.assign(pending, candidates, _index(ep_id_map))
-        second, skipped = mapper.assign(pending, candidates, _index(ep_id_map))
+        first, _ = mapper.assign(pending, candidates, ep_id_map)
+        second, skipped = mapper.assign(pending, candidates, ep_id_map)
 
         assert first[normalize_basename(v1)] == [2586]
         assert normalize_basename(v2) not in second
@@ -881,7 +874,7 @@ class TestAssignScopeGate:
         )
         candidates = {normalize_basename(name): _cand(name) for name in (v1, v2)}
 
-        merged, skipped = mapper.assign(pending, candidates, _index({EpisodeKey(1, 12): 2586}))
+        merged, skipped = mapper.assign(pending, candidates, {EpisodeKey(1, 12): 2586})
 
         assert normalize_basename(v2) not in merged
         assert normalize_basename(v2) in skipped
@@ -902,7 +895,7 @@ class TestAssignScopeGate:
         )
         candidates = {normalize_basename(name): _cand(name) for name in (v1, v2)}
 
-        merged, skipped = mapper.assign(pending, candidates, _index({EpisodeKey(1, 12): 2586, EpisodeKey(1, 13): 2587}))
+        merged, skipped = mapper.assign(pending, candidates, {EpisodeKey(1, 12): 2586, EpisodeKey(1, 13): 2587})
 
         assert normalize_basename(v2) not in merged
         assert normalize_basename(v2) in skipped
@@ -926,7 +919,7 @@ class TestAssignScopeGate:
         )
         candidates = {normalize_basename(v2): _cand(v2)}  # v1 is gone from disk
 
-        merged, skipped = mapper.assign(pending, candidates, _index({EpisodeKey(1, 12): 2586}))
+        merged, skipped = mapper.assign(pending, candidates, {EpisodeKey(1, 12): 2586})
 
         assert normalize_basename(v2) not in merged
         assert normalize_basename(v2) in skipped
@@ -946,7 +939,7 @@ class TestAssignScopeGate:
         )
         candidates = {normalize_basename(name): _cand(name) for name in (v1, v2)}
 
-        merged, skipped = mapper.assign(pending, candidates, _index({EpisodeKey(1, 12): 2586}))
+        merged, skipped = mapper.assign(pending, candidates, {EpisodeKey(1, 12): 2586})
 
         assert normalize_basename(v2) not in merged
         assert normalize_basename(v2) in skipped
@@ -1025,7 +1018,7 @@ class TestAssignDuplicateLeaves:
         )
         candidates = {normalize_basename(name): _cand(name)}
 
-        merged, skipped = mapper.assign(pending, candidates, _index({EpisodeKey(1, 1): 101}))
+        merged, skipped = mapper.assign(pending, candidates, {EpisodeKey(1, 1): 101})
 
         assert merged == {normalize_basename(name): [101]}
         assert skipped == []
@@ -1044,7 +1037,7 @@ class TestAssignDuplicateLeaves:
         )
         candidates = {normalize_basename(name): _cand(name)}
 
-        merged, skipped = mapper.assign(pending, candidates, _index({}))
+        merged, skipped = mapper.assign(pending, candidates, {})
 
         assert merged == {}
         assert skipped == [normalize_basename(name)]
