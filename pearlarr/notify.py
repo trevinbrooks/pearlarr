@@ -127,17 +127,21 @@ def _md_escape(text: str) -> str:
     return text
 
 
-def _titles_match(a: str, b: str) -> bool:
-    """True when two titles differ only by case or apostrophe style.
+def _arr_title_redundant(arr_title: str, al_title: str) -> bool:
+    """True when the Arr title repeats what the AniList title already says.
 
-    The Arr and AniList titles are near-duplicates for most entries. The embed
-    shows the Arr's own title only when it adds information.
+    The two are near-duplicates for most entries: identical up to case or
+    apostrophe style, or the AniList title extends the Arr's with a season
+    suffix ("Show Season 2" vs "Show"). The embed shows the Arr's own title
+    only when it adds information. The prefix must end on a word boundary so a
+    merely shared beginning ("Showtime") still counts as informative.
     """
 
     def norm(title: str) -> str:
         return title.replace("’", "'").replace("‘", "'").casefold().strip()
 
-    return norm(a) == norm(b)
+    arr, al = norm(arr_title), norm(al_title)
+    return al.startswith(arr) and (len(al) == len(arr) or not al[len(arr)].isalnum())
 
 
 def _notes_block(notes: str) -> str:
@@ -165,12 +169,12 @@ def _grab_notes(notice: GrabNotice) -> str:
     """The trailing notes stack: subtitle, entry notes, comparison links, caveats.
 
     The Arr's own title appears as a muted `-#` subtext byline only when it
-    differs from the AniList one. Each piece is omitted when it has nothing to
-    say.
+    adds information over the AniList one. Each piece is omitted when it has
+    nothing to say.
     """
 
     parts: list[str] = []
-    if not _titles_match(notice.arr_title, notice.al_title):
+    if not _arr_title_redundant(notice.arr_title, notice.al_title):
         parts.append(f"-# {_md_escape(notice.arr_title)}")
     if notes := _notes_block(notice.entry.notes):
         parts.append(notes)

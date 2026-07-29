@@ -185,7 +185,9 @@ class TestGrabPushesNotice:
         pipeline._grab(
             GrabRequest(
                 al_id=7,
-                item_title="Show",
+                # The arr title must not prefix the AniList one, or the byline
+                # this class asserts on would (correctly) dedupe away.
+                item_title="The Show",
                 anilist_title="Show Title",
                 entry=make_entry_record(url="https://releases.moe/7", notes="the why"),
                 seadex_dict=one_release_dict(srg="PMR", infohash="h1"),
@@ -209,7 +211,7 @@ class TestGrabPushesNotice:
         # subtitle/notes stack trails as the nameless (header-free) field.
         assert embed.description == "**Grabbed · `PMR`**\n[Nyaa](https://nyaa.si/view/1)"
         assert [f.name for f in embed.fields] == ["Episodes", "Replacing", ""]
-        assert embed.fields[-1].value == "-# Show\n> the why"
+        assert embed.fields[-1].value == "-# The Show\n> the why"
 
     def test_nothing_added_pushes_nothing(self, monkeypatch: pytest.MonkeyPatch) -> None:
         assert self._grab(monkeypatch, outcome=AddOutcome.ALREADY_ADDED) == []
