@@ -17,6 +17,10 @@ Pearlarr is a fork of [bbtufty/seadexarr](https://github.com/bbtufty/seadexarr).
 - An old-schema config file is now migrated in place at the start of a run, keeping the previous file as `config.yml.bak`, instead of warning on every run. `pearlarr config migrate` remains for migrating without a run.
 - An omitted `torrent_category` or `post_import_category` now adopts the matching category of that arr's qBittorrent download client (its grab and imported categories respectively); an explicit value still wins, and an explicit blank (`""`) keeps no category at all.
 
+### Fixed
+
+- A successful import no longer warns `Could not remove the finished download from Sonarr's queue (status code 500)` when Sonarr never matched the download's title to a series. Dismissing such a queue entry always fails inside Sonarr and records nothing, so Pearlarr now leaves it alone; the entry clears on its own once the imported torrent leaves Sonarr's watched category.
+
 ## [1.1.0] - 2026-07-29
 
 ### Changed

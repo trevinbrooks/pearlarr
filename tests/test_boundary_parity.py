@@ -307,12 +307,14 @@ def test_queue_record_folds_junk_per_field_without_dropping_the_record() -> None
         json={
             "records": [
                 {
+                    "seriesId": {"x": 1},
                     "downloadId": 123,
                     "trackedDownloadState": ["importing"],
                     "trackedDownloadStatus": "warning",
                     "extraKey": "x",
                 },
                 {
+                    "seriesId": 7,
                     "downloadId": "ABC123",
                     "trackedDownloadState": "downloading",
                     "trackedDownloadStatus": "ok",
@@ -324,7 +326,7 @@ def test_queue_record_folds_junk_per_field_without_dropping_the_record() -> None
 
     assert _make_sonarr_client().queue() == [
         QueueRecord(download_id=None, state=None, status="warning"),
-        QueueRecord(download_id="ABC123", state="downloading", status="ok"),
+        QueueRecord(series_id=7, download_id="ABC123", state="downloading", status="ok"),
     ]
 
 

@@ -1011,17 +1011,21 @@ def manual_candidate(
     )
 
 
-def queue_record(infohash: str, state: str, *, status: str | None = "ok", queue_id: int = 0) -> QueueRecord:
+def queue_record(
+    infohash: str, state: str, *, status: str | None = "ok", queue_id: int = 0, series_id: int = 1
+) -> QueueRecord:
     """One Sonarr queue record matching a download by infohash + tracked state.
 
     Built through `QueueRecord.model_validate` from the raw API field names so the
     record mirrors exactly what `SonarrClient.queue` parses at the boundary.
     `queue_id` defaults to 0 ("no usable id") - the queue-close tests set it.
+    `series_id` defaults to a matched series; the unknown-series close test passes 0.
     """
 
     return QueueRecord.model_validate(
         {
             "id": queue_id,
+            "seriesId": series_id,
             "downloadId": infohash,
             "trackedDownloadState": state,
             "trackedDownloadStatus": status,

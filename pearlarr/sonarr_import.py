@@ -390,15 +390,21 @@ class ImportExecutor:
 
         Fires once the torrent's last record has imported; a row still queued
         then is the partial-close residue (see `ImportCompleter.close_tracked`).
-        Any one row's id dismisses the whole download; the torrent keeps
-        seeding. Best-effort: the client warns on failure and the next run gets
-        no retry (the record is already dropped).
+        Any one series-bearing row's id dismisses the whole download; the
+        torrent keeps seeding. An unknown-series entry (Sonarr never matched
+        the title) is left alone: dismissing it 500s in Sonarr without
+        recording the ignore, and the entry drops once the torrent leaves the
+        watched category. Best-effort: the client warns on failure and the
+        next run gets no retry (the record is already dropped).
         """
 
         rows = self.queue_records(pending.infohash)
-        queue_id = next((row.id for row in rows if row.id), None)
+        queue_id = next((row.id for row in rows if row.id and row.series_id), None)
         if queue_id is None:
-            self.logger.debug(f"{pending.display_label}: no leftover Sonarr queue entry to close")
+            if any(row.id for row in rows):
+                self.logger.debug(f"{pending.display_label}: unknown-series queue entry - left for Sonarr to drop")
+            else:
+                self.logger.debug(f"{pending.display_label}: no leftover Sonarr queue entry to close")
             return
         if self.sonarr.queue_delete(queue_id):
             hub_note(f"Removed the imported download {pending.display_label} from Sonarr's queue")
