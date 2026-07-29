@@ -34,7 +34,7 @@ import logging
 from pearlarr.config import Arr
 from pearlarr.output import Severity
 from pearlarr.planner import DownloadPlanner
-from pearlarr.seadex_types import ArrReleases, EpisodeRecord, SeadexReleaseGroupItem
+from pearlarr.seadex_types import ArrReleases, EpisodeRecord, SeadexReleaseGroupItem, flagged_urls
 
 from .builders import make_planner, rg_group, sonarr_ep, url_item
 
@@ -49,6 +49,19 @@ class TestGetAnyToDownload:
     def test_true_when_one_flagged(self) -> None:
         seadex = {"A": rg_group({"u": url_item(download=True)})}
         assert DownloadPlanner.get_any_to_download(seadex) is True
+
+
+class TestFlaggedUrls:
+    """`flagged_urls` is the one grab-set filter both arrs' seed builders share."""
+
+    def test_only_hash_carrying_grabs_ride_the_triples(self) -> None:
+        grabbed = url_item(url="u1", download=True, infohash="h1")
+        seadex = {
+            "A": rg_group({"u1": grabbed, "u2": url_item(url="u2", download=True, infohash=None)}),
+            "B": rg_group({"u3": url_item(url="u3", download=False, infohash="h3")}),
+        }
+
+        assert flagged_urls(seadex) == [("A", grabbed, "h1")]
 
 
 class TestReduceOverlappingDownloads:

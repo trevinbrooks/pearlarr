@@ -59,6 +59,13 @@ from .sqlite_util import open_or_quarantine, rollback_and_close
 # record schema. Consumers (the orchestrator and the Sonarr adapter) import it.
 UPDATED_AT_STR_FORMAT = "%Y-%m-%d %H:%M:%S"
 
+
+def now_stamp() -> str:
+    """The current local time in `UPDATED_AT_STR_FORMAT` (record `added_at` stamps)."""
+
+    return datetime.now().strftime(UPDATED_AT_STR_FORMAT)
+
+
 # One statement per block. `IF NOT EXISTS` so it's a no-op on an existing db.
 # NOTE: `CREATE TABLE IF NOT EXISTS` creates a missing table but silently does NOT
 # alter an existing one. Changing a shipped table's shape therefore requires bumping

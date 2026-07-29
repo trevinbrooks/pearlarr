@@ -128,6 +128,21 @@ SeadexDict = dict[str, SeadexReleaseGroupItem]
 """The central object: SeaDex release groups keyed by group name."""
 
 
+def flagged_urls(seadex_dict: SeadexDict) -> list[tuple[str, SeadexUrlItem, str]]:
+    """The urls flagged to grab that carry an infohash, as `(group, url item, infohash)` triples.
+
+    The one filter both arrs' seed builders share; the infohash rides the
+    triple already narrowed to `str`.
+    """
+
+    return [
+        (srg, url_item, url_item.infohash)
+        for srg, srg_item in seadex_dict.items()
+        for url_item in srg_item.urls.values()
+        if url_item.download and url_item.infohash
+    ]
+
+
 SONARR_MISSING_KEY: int = 999
 """Out-of-range fallback for a missing Sonarr `seasonNumber`/`episodeNumber`.
 

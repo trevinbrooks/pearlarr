@@ -45,6 +45,7 @@ from .seadex_types import (
     RemotePathMapping,
     SeadexDict,
     SonarrEpisode,
+    flagged_urls,
 )
 from .sonarr_client import AbstractSonarrClient
 from .sonarr_episodes import SonarrEpisodes
@@ -725,13 +726,7 @@ class ImportReconciler:
         """
 
         # Steady state is nothing flagged: skip the per-entry derivations below.
-        # The infohash rides the triple already narrowed to str.
-        flagged = [
-            (srg, url_item, url_item.infohash)
-            for srg, srg_item in seadex_dict.items()
-            for url_item in srg_item.urls.values()
-            if url_item.download and url_item.infohash
-        ]
+        flagged = flagged_urls(seadex_dict)
         if not flagged:
             return {}
 
