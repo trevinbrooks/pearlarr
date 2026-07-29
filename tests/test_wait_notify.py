@@ -308,6 +308,23 @@ class TestGrabNotes:
 
         assert notes == ""
 
+    def test_season_suffix_title_renders_no_subtitle(self, pushes: list[DiscordEmbed]) -> None:
+        # The usual per-season AniList entry merely extends the series title,
+        # so a byline would repeat the embed title directly above the notes.
+        notes = self._notes(
+            pushes,
+            _notice(arr_title="Frieren: Beyond Journey's End", al_title="Frieren: Beyond Journey's End Season 2"),
+        )
+
+        assert notes == ""
+
+    def test_shared_prefix_short_of_a_word_keeps_the_subtitle(self, pushes: list[DiscordEmbed]) -> None:
+        # A prefix that splits a word is not a season suffix: the Arr title
+        # names a different show and stays informative.
+        notes = self._notes(pushes, _notice(arr_title="Show", al_title="Showtime Season 1"))
+
+        assert notes == "-# Show"
+
     def test_subtitle_escapes_markdown(self, pushes: list[DiscordEmbed]) -> None:
         notes = self._notes(pushes, _notice(arr_title="K-ON! *Special*", al_title="K-ON!"))
 
