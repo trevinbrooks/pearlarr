@@ -7,6 +7,8 @@ Pearlarr is a fork of [bbtufty/seadexarr](https://github.com/bbtufty/seadexarr).
 
 ## [Unreleased]
 
+## [1.1.0] - 2026-07-29
+
 ### Changed
 
 - The wait-and-import subsystem is now on by default: `imports.wait_mode` defaults to `hybrid` instead of `off`. Set `imports.wait_mode: off` to keep it disabled; a config that already sets a mode is unaffected. `pearlarr config migrate` calls out the flip for configs that relied on the old default.
