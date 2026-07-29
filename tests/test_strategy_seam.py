@@ -1163,6 +1163,19 @@ class TestCloseTracked:
 
         assert sonarr.queue_delete_calls == []
 
+    def test_unknown_series_rows_are_left_for_sonarr(self) -> None:
+        # Dismissing an unknown-series entry 500s in Sonarr without recording
+        # the ignore; the row drops once the torrent leaves the watched category.
+        pending = pending_import(infohash="abc123")
+        strat, sonarr = _make_sonarr_for_import(
+            candidates=None,
+            queue=[queue_record("ABC123", "importPending", status="warning", queue_id=11, series_id=0)],
+        )
+
+        strat.close_tracked(pending)
+
+        assert sonarr.queue_delete_calls == []
+
     def test_already_clear_queue_is_a_no_op(self) -> None:
         # Sonarr closed the download itself (one import covered the full grab).
         pending = pending_import(infohash="abc123")

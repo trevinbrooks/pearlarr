@@ -818,6 +818,10 @@ class QueueRecord(_ApiModel):
     id: _ZeroInt = 0
     """The queue item id, `queue_delete`'s handle (any one of a download's
     rows dismisses the whole download). Junk folds to 0 = no usable id."""
+    series_id: _ZeroInt = Field(default=0, validation_alias="seriesId")
+    """`seriesId`, null/0 when Sonarr never matched the title to a series.
+    The queue close skips those rows: Sonarr's dismissal 500s on them and
+    records no durable ignore either way."""
     download_id: _LenientStr = Field(default=None, validation_alias="downloadId")
     """The infohash Sonarr stores uppercased, matched case-insensitively to
     pick a torrent's records (`string | null` in the schema)."""
