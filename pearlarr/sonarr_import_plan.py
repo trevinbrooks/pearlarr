@@ -41,6 +41,7 @@ from .seadex_types import (
     QueueRecord,
     RemotePathMapping,
     Revision,
+    SeadexUrlItem,
     SonarrEpisode,
     index_episodes_by_key,
     season_episode_key,
@@ -740,24 +741,18 @@ class PendingSeedContext:
     (see `GuardFacts`)."""
 
 
-class FileParse(NamedTuple):
-    """One video file's cached grab-time `/parse`, pre-read by the seed builder."""
-
-    episodes: tuple[ParsedEpisode, ...]
-    """Sonarr's series-matched `(season, episode)` pairs."""
-
-    full_season: bool
-    """Sonarr's `parsedEpisodeInfo.fullSeason` flag (a full-season parse never seeds)."""
-
-
 class SeedFile(NamedTuple):
-    """One grabbed video file entering the seed fold."""
+    """One grabbed video file entering the seed fold, its cached grab-time `/parse` pre-read."""
 
     basename: str
     """The raw SeaDex basename (normalized only where the fold keys the map)."""
 
-    parse: FileParse | None
-    """The file's cached parse, or None when no record exists (the fold skips the file)."""
+    episodes: tuple[ParsedEpisode, ...] | None
+    """Sonarr's series-matched `(season, episode)` pairs, or None when no
+    parse record exists (the fold skips the file)."""
+
+    full_season: bool = False
+    """Sonarr's `parsedEpisodeInfo.fullSeason` flag (a full-season parse never seeds)."""
 
 
 class SeedRelease(NamedTuple):
@@ -766,14 +761,11 @@ class SeedRelease(NamedTuple):
     release_group: str
     """The SeaDex release group (authoritative)."""
 
+    url_item: SeadexUrlItem
+    """The flagged url record whole - the fold reads its sizes and dual-audio flag."""
+
     infohash: str
-    """The qBittorrent tracking key."""
-
-    is_dual_audio: bool
-    """Whether the SeaDex release is dual-audio."""
-
-    release_sizes: tuple[int, ...]
-    """The grabbed listing's file sizes."""
+    """The qBittorrent tracking key (the url item's hash, already narrowed to `str`)."""
 
     files: tuple[SeedFile, ...]
     """The importable video files in SeaDex order (subs / fonts / NCED already dropped)."""
@@ -800,9 +792,9 @@ def build_pending_seed(
     excluded_files: list[str] = []
     claimed: set[int] = set()
     for seed_file in release.files:
-        if seed_file.parse is None:
+        if seed_file.episodes is None:
             continue
-        parsed, full_season = seed_file.parse
+        parsed, full_season = seed_file.episodes, seed_file.full_season
         file_ids = episode_ids_for_parsed(parsed, index.id_by_key, full_season=full_season)
         # First claim in file order wins: assignment defers a later
         # file whose ids collide, so the seed refuses it the same way.
@@ -828,7 +820,7 @@ def build_pending_seed(
         # value here would only duplicate the map, which readers dedupe).
         episode_ids=[],
         release_group=release.release_group,
-        is_dual_audio=release.is_dual_audio,
+        is_dual_audio=release.url_item.is_dual_audio,
         seadex_files=[f.basename for f in release.files],
         title=entry.title,
         added_at=entry.added_at,
@@ -838,7 +830,7 @@ def build_pending_seed(
         slice_coverage=coverage_string(episodes_from_ep_list(claimed_eps)) or None,
         excluded_files=excluded_files,
         guards=entry.guards,
-        release_sizes=list(release.release_sizes),
+        release_sizes=list(release.url_item.size),
     )
     # Targets that already hold a recommended file at grab time were
     # never this torrent's to insert: classify them against the record's

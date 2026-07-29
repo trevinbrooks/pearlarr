@@ -55,7 +55,6 @@ from .sonarr_import_plan import (
     DownloadMatch,
     EpisodeFileStatus,
     EpisodeSnapshot,
-    FileParse,
     ImportAction,
     ImportDecision,
     ParsedQuality,
@@ -746,10 +745,9 @@ class ImportReconciler:
                 continue
             release = SeedRelease(
                 release_group=srg,
+                url_item=url_item,
                 infohash=infohash,
-                is_dual_audio=url_item.is_dual_audio,
-                release_sizes=tuple(url_item.size),
-                files=tuple(SeedFile(base, self._file_parse(base)) for base in video_files),
+                files=tuple(self._seed_file(base) for base in video_files),
             )
             seed = build_pending_seed(release, index, entry)
             if seed.excluded_files:
@@ -761,19 +759,19 @@ class ImportReconciler:
 
         return pending_seeds
 
-    def _file_parse(self, base: str) -> FileParse | None:
-        """One video file's grab-time parse, read off the cache facade.
+    def _seed_file(self, base: str) -> SeedFile:
+        """One video file with its grab-time parse read off the cache facade.
 
         Each `get_sonarr_parse` record is the persisted parse entry written by
         `parse_episodes_from_seadex` in the same run (staged writes are visible
-        to reads on the same connection). None when no record exists - the
-        fold skips the file.
+        to reads on the same connection). `episodes=None` when no record
+        exists - the fold skips the file.
         """
 
         record = self.cache_store.get_sonarr_parse(base)
         if not record:
-            return None
-        return FileParse(tuple(parsed_episodes(record)), parsed_full_season(record))
+            return SeedFile(base, episodes=None)
+        return SeedFile(base, tuple(parsed_episodes(record)), parsed_full_season(record))
 
     def import_completed(
         self,

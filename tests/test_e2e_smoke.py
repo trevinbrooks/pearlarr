@@ -259,8 +259,7 @@ def test_radarr_run_drives_real_composition_root(
 
     # The Radarr + AniList HTTP boundary. respx covers every endpoint: the
     # Radarr reads ride the httpx-based ArrHttp (the empty moviefile read ->
-    # the {None: [None]} no-existing-file release dict), the AniList POST the
-    # shared web client.
+    # a fileless ArrReleases record), the AniList POST the shared web client.
     with respx.mock:
         movie_route = respx.get(f"{_RADARR_BASE}/movie").respond(json=[_MOVIE_BODY])
         moviefile_route = respx.get(f"{_RADARR_BASE}/moviefile").respond(json=[])
