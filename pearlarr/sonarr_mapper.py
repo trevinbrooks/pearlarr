@@ -7,13 +7,14 @@ taken as-is, every other on-disk leaf is parsed and placed into our resolved
 set via the pure `assign_episode_ids`. Owns the per-run on-disk parse cache.
 """
 
+from collections.abc import Mapping
+
 from .manual_import import PendingImport, normalized_leaf, path_leaf
-from .seadex_types import ManualImportCandidate, ParsedFileInfo
+from .seadex_types import EpisodeKey, ManualImportCandidate, ParsedFileInfo
 from .sonarr_client import AbstractSonarrClient
 from .sonarr_import_plan import (
     CandidateFile,
     EpisodeAssignment,
-    EpisodeIndex,
     PlacementBatch,
     TargetScope,
     assign_episode_ids,
@@ -104,7 +105,7 @@ class FileEpisodeMapper:
         self,
         pending: PendingImport,
         candidates_by_basename: dict[str, CandidateFile],
-        index: EpisodeIndex,
+        id_by_key: Mapping[EpisodeKey, int],
     ) -> EpisodeAssignment:
         """Build the final `basename -> episode ids` map from OUR resolved set.
 
@@ -184,7 +185,7 @@ class FileEpisodeMapper:
 
         result = assign_episode_ids(
             PlacementBatch(leftover, parsed_by_file),
-            TargetScope(resolved_ids, index.id_by_key, used=frozenset(seeded_ids)),
+            TargetScope(resolved_ids, id_by_key, used=frozenset(seeded_ids)),
         )
 
         # Self-heal: keep every fresh placement on the record for the run.

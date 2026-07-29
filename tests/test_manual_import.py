@@ -12,6 +12,9 @@ pure, no network or disk. `SonarrEpisode` is built directly via
 `SonarrEpisode.model_validate`.
 """
 
+from collections.abc import MutableMapping
+from typing import cast
+
 import pytest
 
 from pearlarr.manual_import import (
@@ -55,6 +58,7 @@ from pearlarr.sonarr_import_plan import (
     ContentPaths,
     DownloadMatch,
     EpisodeFileStatus,
+    EpisodeIndex,
     EpisodeSnapshot,
     ParsedQuality,
     QueueVerdict,
@@ -81,11 +85,12 @@ from .builders import SEP, queue_record, sonarr_ep
 
 
 class TestEpisodeIndex:
-    """`episode_index` folds an episode fetch into the import family's three facets.
+    """`episode_index` folds an episode fetch into the import family's two facets.
 
     `id_by_key` maps `(season, episode)` to the first episode id, missing numbers
     folding to a sentinel key (no collision with real pairs). Zero-id episodes are
-    dropped from every facet before keying.
+    dropped from every facet before keying. `by_id` keeps the fetch order - the
+    resolved set the add flow persists rides `list(by_id)`.
     """
 
     def test_normal_seasoned_episodes(self) -> None:
@@ -96,8 +101,7 @@ class TestEpisodeIndex:
         ]
         index = episode_index(eps)
         assert index.id_by_key == {(1, 1): 11, (1, 2): 12, (2, 1): 21}
-        assert index.ordered_ids == (11, 12, 21)
-        assert set(index.by_id) == {11, 12, 21}
+        assert tuple(index.by_id) == (11, 12, 21)
 
     def test_missing_season_and_episode_use_sentinel_no_collision(self) -> None:
         eps = [
@@ -117,8 +121,17 @@ class TestEpisodeIndex:
         eps = [sonarr_ep(1, 2, ep_id=0, episode_file_id=0), sonarr_ep(1, 2, ep_id=9, episode_file_id=0)]
         index = episode_index(eps)
         assert index.id_by_key == {(1, 2): 9}
-        assert index.ordered_ids == (9,)
-        assert 0 not in index.by_id
+        assert tuple(index.by_id) == (9,)
+
+    def test_facets_detach_and_reject_mutation(self) -> None:
+        source = {EpisodeKey(1, 1): 11}
+        index = EpisodeIndex(by_id={}, id_by_key=source)
+
+        source[EpisodeKey(1, 2)] = 12
+
+        assert EpisodeKey(1, 2) not in index.id_by_key
+        with pytest.raises(TypeError):
+            cast("MutableMapping[EpisodeKey, int]", index.id_by_key)[EpisodeKey(1, 3)] = 13
 
 
 class TestNormalize:
