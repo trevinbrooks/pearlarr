@@ -575,7 +575,7 @@ def run_single(
             the cache, or sending notifications.
         import_wait_mode: Override the configured wait-for-completion + Sonarr
             manual-import mode (off/deferred/blocking/hybrid) for this run. When
-            unset the config's `imports.wait_mode` wins (cli > config > default).
+            unset the config's `imports.wait_mode` wins.
         log_level: Override the configured `advanced.log_level` for this run
             (cli > config > INFO).
     """

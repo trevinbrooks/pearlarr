@@ -20,7 +20,7 @@ import yaml
 from .json_narrow import is_json_obj
 from .seadex_types import Json
 
-CONFIG_VERSION = 1
+CONFIG_VERSION = 2
 
 # The one remediation sentence, shared by every surface that reports an
 # old-schema file (and quoted by docs/troubleshooting.md's anchor grep).
@@ -90,6 +90,39 @@ def _to_v1(config: dict[str, Json]) -> list[str]:
     return notes
 
 
+def _to_v2(config: dict[str, Json]) -> list[str]:
+    """v1 -> v2: `imports.post_import_category` became per-arr; `wait_mode` defaults on.
+
+    The old single category key covered both arrs, so its value lands on both
+    groups (inert on an unconfigured arr). A group that is absent or blank is
+    created to carry it; a malformed group is left for validation to reject by
+    name. The `wait_mode` note is informational: a file that relied on the old
+    `off` default now gets `hybrid`, and only an explicit `off` disables.
+    """
+
+    notes: list[str] = []
+    imports = _group(config, "imports")
+    if imports is not None and "post_import_category" in imports:
+        category = imports.pop("post_import_category")
+        for arr in ("sonarr", "radarr"):
+            group = _group(config, arr)
+            if group is None and config.get(arr) is None:
+                group = {}
+                config[arr] = group
+            if group is not None:
+                group["post_import_category"] = category
+        notes.append(
+            "imports.post_import_category is now per-arr - moved to sonarr.post_import_category "
+            "and radarr.post_import_category (same value, same behavior)",
+        )
+    if imports is None or imports.get("wait_mode") is None:
+        notes.append(
+            "imports.wait_mode now defaults to hybrid (wait for downloads + manual import) - "
+            "set it to off to keep the previous disabled behavior",
+        )
+    return notes
+
+
 @dataclass(frozen=True)
 class _Migration:
     """One schema step: brings a mapping from `to_version - 1` to `to_version`."""
@@ -98,7 +131,10 @@ class _Migration:
     apply: Callable[[dict[str, Json]], list[str]]
 
 
-_MIGRATIONS: tuple[_Migration, ...] = (_Migration(to_version=1, apply=_to_v1),)
+_MIGRATIONS: tuple[_Migration, ...] = (
+    _Migration(to_version=1, apply=_to_v1),
+    _Migration(to_version=2, apply=_to_v2),
+)
 
 
 def migrate_mapping(config: dict[str, Json]) -> MigrationOutcome | None:

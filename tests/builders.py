@@ -113,6 +113,8 @@ _FLAT_ALIASES: dict[str, tuple[str, str]] = {
     "radarr_ignore_unmonitored": ("radarr", "ignore_unmonitored"),
     "sonarr_torrent_category": ("sonarr", "torrent_category"),
     "radarr_torrent_category": ("radarr", "torrent_category"),
+    "sonarr_post_import_category": ("sonarr", "post_import_category"),
+    "radarr_post_import_category": ("radarr", "post_import_category"),
     # The bare url/api_key flat names resolve to sonarr (first-wins). These reach
     # the radarr connection keys for the Radarr-run builders/tests.
     "radarr_url": ("radarr", "url"),
@@ -794,6 +796,7 @@ def make_import_wait_manager(**overrides: Any) -> ImportWaitManager:
     cache_store = overrides.pop("cache_store", None) or FakeCacheStore()
     defaults: dict[str, Any] = {
         "_config": config,
+        "_arr_config": config.for_arr(Arr.SONARR),
         "cache_store": cache_store,
         "_reporter": _real_reporter(logger, cache_store, httpx.Client()),
         "logger": logger,

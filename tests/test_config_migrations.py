@@ -1,6 +1,7 @@
 # pyright: strict, reportPrivateUsage=false
 # reportPrivateUsage: the chain-shape and template-grammar pins are white-box
-# by design - they guard private wiring no behavior can observe until v2 exists.
+# by design - they guard private wiring (chain order, template grammar) that a
+# mis-migration would only reveal in the field.
 """The config schema-migration chain, the template splice, and the file rewrite.
 
 `tests/test_config.py::TestSchemaMigration` pins the load-path integration
@@ -61,17 +62,18 @@ class TestMigrateMapping:
 
     def test_v0_folds_removed_schema_and_nothing_else(self) -> None:
         # Only removed keys/values fold. A never-valid value (the typo'd mode)
-        # passes through untouched for validation to reject by name.
+        # passes through untouched for validation to reject by name. wait_mode
+        # is pinned so the v2 default-flip notice stays out of the count.
         mapping: dict[str, Json] = {
             "seadex": {"public_only": False, "want_best": False},
-            "imports": {"mode": "hardlink"},
+            "imports": {"mode": "hardlink", "wait_mode": "off"},
         }
         outcome = migrate_mapping(mapping)
         assert outcome is not None
         assert mapping == {
             "config_version": CONFIG_VERSION,
             "seadex": {"want_best": False},
-            "imports": {"mode": "hardlink"},
+            "imports": {"mode": "hardlink", "wait_mode": "off"},
         }
         assert len(outcome.notes) == 1
 
@@ -82,6 +84,57 @@ class TestMigrateMapping:
         assert outcome is not None
         assert mapping["seadex"] == 5
         assert mapping["config_version"] == CONFIG_VERSION
+
+    def test_v1_moves_post_import_category_onto_both_arrs(self) -> None:
+        # The old single key covered both arrs, so its value lands on both: an
+        # existing group keeps its keys, an absent one is created to carry it.
+        mapping: dict[str, Json] = {
+            "config_version": 1,
+            "sonarr": {"url": "http://s"},
+            "imports": {"post_import_category": "seadex-done", "wait_mode": "hybrid"},
+        }
+        outcome = migrate_mapping(mapping)
+        assert outcome is not None
+        assert mapping == {
+            "config_version": CONFIG_VERSION,
+            "sonarr": {"url": "http://s", "post_import_category": "seadex-done"},
+            "radarr": {"post_import_category": "seadex-done"},
+            "imports": {"wait_mode": "hybrid"},
+        }
+        assert len(outcome.notes) == 1
+        assert "post_import_category" in outcome.notes[0]
+
+    def test_v1_category_move_tolerates_blank_and_malformed_arr_groups(self) -> None:
+        # A blank group means "all defaults" and is created to carry the value;
+        # a malformed one is left for validation to reject by name.
+        mapping: dict[str, Json] = {
+            "config_version": 1,
+            "sonarr": None,
+            "radarr": 5,
+            "imports": {"post_import_category": "done", "wait_mode": "off"},
+        }
+        migrate_mapping(mapping)
+        assert mapping["sonarr"] == {"post_import_category": "done"}
+        assert mapping["radarr"] == 5
+        imports = mapping["imports"]
+        assert is_json_obj(imports)
+        assert "post_import_category" not in imports
+
+    def test_v1_defaulted_wait_mode_gets_the_flip_notice(self) -> None:
+        # A file relying on the old off default now gets hybrid: note it, but
+        # rewrite nothing. An explicit mode (even blank-invalid False from a
+        # bare YAML `off`) is the user's own and silences the notice.
+        defaulted: dict[str, Json] = {"config_version": 1, "imports": {"poll_interval": 10}}
+        outcome = migrate_mapping(defaulted)
+        assert outcome is not None
+        assert defaulted["imports"] == {"poll_interval": 10}
+        assert len(outcome.notes) == 1
+        assert "wait_mode" in outcome.notes[0]
+
+        pinned: dict[str, Json] = {"config_version": 1, "imports": {"wait_mode": False}}
+        outcome = migrate_mapping(pinned)
+        assert outcome is not None
+        assert outcome.notes == ()
 
     def test_the_chain_is_contiguous_and_ends_at_the_current_version(self) -> None:
         # Declaration order IS application order: pin that the steps run 1..N

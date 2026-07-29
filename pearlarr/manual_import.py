@@ -772,17 +772,13 @@ class PendingImport:
 
 def resolve_wait_mode(
     cli_mode: ImportWaitMode | None,
-    config_mode: ImportWaitMode | None,
+    config_mode: ImportWaitMode,
 ) -> ImportWaitMode:
-    """Resolve the effective wait mode with precedence cli > config > default.
+    """Resolve the effective wait mode: the CLI override, else the configured one.
 
     Args:
         cli_mode: The `--import-wait-mode` CLI value.
-        config_mode: The configured `imports.wait_mode`.
+        config_mode: The configured `imports.wait_mode` (carries the default).
     """
 
-    if cli_mode is not None:
-        return cli_mode
-    if config_mode is not None:
-        return config_mode
-    return ImportWaitMode.OFF
+    return config_mode if cli_mode is None else cli_mode

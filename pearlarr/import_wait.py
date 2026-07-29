@@ -82,6 +82,7 @@ class ImportWaitManager:
         strategy: ImportCompleter | None = None,
     ) -> None:
         self._config = deps.config
+        self._arr_config = deps.arr_config
         self.cache_store = deps.cache_store
         self._reporter = deps.reporter
         self.logger = deps.logger
@@ -534,7 +535,7 @@ class ImportWaitManager:
         self._active_strategy.close_tracked(pending)
 
     def apply_post_import_category(self, pending: PendingImport) -> None:
-        """Move a verified-imported torrent to `imports.post_import_category`.
+        """Move a verified-imported torrent to this arr's `post_import_category`.
 
         Called at the two confirmed-import sites (the reconcile passes and the
         monitor's IMPORTED terminal), AFTER the finished record is dropped -
@@ -543,13 +544,14 @@ class ImportWaitManager:
         record for its own episode slice, and users key delete-with-data cleanup
         off this category - so the move happens only once NO pending record (in
         either arr - see `CacheStore.count_pending_for_infohash`) still claims
-        the hash. The last record to verify makes the move. Creates the category
+        the hash. The last record to verify makes the move, under its own
+        arr's category. Creates the category
         on first use (qBittorrent 409s an unknown one). Best-effort: the import
         already succeeded, so a client error only warns - naming the record by
         its display label, not the bare infohash.
         """
 
-        category = self._config.imports.post_import_category
+        category = self._arr_config.post_import_category
         if not category or self.qbit is None:
             return
         remaining = self.cache_store.count_pending_for_infohash(pending.infohash)
