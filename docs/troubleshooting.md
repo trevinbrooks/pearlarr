@@ -10,7 +10,7 @@ In the section headings, `...` stands for the parts of a message that change bet
 | A run or cache command refuses to start | [Another run is active](#another-run-is-active) |
 | Pearlarr exits immediately with a permissions error | [The data directory is not writable](#the-data-directory-is-not-writable) |
 | The config file fails to load | [The config is missing or invalid](#the-config-is-missing-or-invalid) |
-| Every run warns about an older config schema | [Old config schema](#old-config-schema) |
+| A run reports an older config schema | [Old config schema](#old-config-schema) |
 | The config refuses to load after a downgrade | [Config from a newer Pearlarr](#config-from-a-newer-pearlarr) |
 | The cache refuses to load after a downgrade | [Cache from a newer Pearlarr](#cache-from-a-newer-pearlarr) |
 | Every run skips both arrs | [No arr is configured](#no-arr-is-configured) |
@@ -72,12 +72,12 @@ A validation failure lists each offending key with what is wrong: unknown or mis
 ## Old config schema
 
 ```text
-Config file ... uses an older config schema - migrated in memory ... run pearlarr config migrate to update the file (a backup is kept)
+Config migrated to the current schema - previous file saved as ...
+Config uses an older config schema - ... run pearlarr config migrate to update the file (a backup is kept)
 ```
 
-Harmless: the file was written for an older Pearlarr, and every load brings it forward in memory, so runs behave as if the file were current.
-The parenthesized part of the warning names each key or value that was folded, if any.
-`pearlarr config migrate` rewrites the file at the current schema and the warning stops. The previous file is kept beside it as `config.yml.bak`.
+The file was written for an older Pearlarr. Every load brings it forward in memory, and a run then rewrites the file itself at the current schema: the first line, with the previous file kept beside it as `config.yml.bak` and what was folded recorded in the log file.
+The warning appears instead only when the file could not be rewritten, typically a read-only config file or directory. The run still behaves as if the file were current; fix write access, or run `pearlarr config migrate` to see exactly why the rewrite fails.
 See [configuration.md](configuration.md#the-config-schema-version) for what the rewrite does and does not preserve.
 
 ## Config from a newer Pearlarr

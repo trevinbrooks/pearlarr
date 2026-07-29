@@ -20,10 +20,18 @@ import yaml
 from pydantic import ValidationError
 
 from .boot_flow import BootFlow
-from .config import KNOWN_TRACKERS, AppConfig, Arr, ArrTarget, config_permissions_loose
-from .config_migrations import MIGRATE_HINT
-from .log import apply_log_level
-from .output import FileLogSink, RunFinished, emit_to_hub, hub_error, hub_note, hub_warn
+from .config import (
+    KNOWN_TRACKERS,
+    AppConfig,
+    Arr,
+    ArrTarget,
+    ConfigRewriteError,
+    config_permissions_loose,
+    upgrade_config_file,
+)
+from .config_migrations import CONFIG_VERSION, MIGRATE_HINT, MigrationOutcome
+from .log import LOG_NAME, apply_log_level
+from .output import Diagnostic, FileLogSink, RunFinished, Severity, emit_to_hub, hub_error, hub_note, hub_warn
 from .runlock import single_instance_lock
 
 if TYPE_CHECKING:
@@ -63,6 +71,38 @@ def format_yaml_error(e: yaml.YAMLError) -> str:
     return type(e).__name__
 
 
+def _file_only(severity: Severity, message: str) -> None:
+    """A diagnostic routed past the console surfaces to the file log alone."""
+
+    emit_to_hub(Diagnostic(severity=severity, message=message, origin=LOG_NAME, file_only=True))
+
+
+def _rewrite_old_config(config: str, outcome: MigrationOutcome) -> None:
+    """Bring an old-schema config file forward on disk (the load already migrated it in memory).
+
+    Reuses the `config migrate` machinery: backup first, then an atomic rewrite.
+    A file that cannot be rewritten - a read-only mount, a permissions problem,
+    a splice defect - is left alone behind a short warning, and the run continues
+    on the in-memory migration. The functional detail goes to the file log.
+    """
+
+    detail = "; ".join(outcome.notes) if outcome.notes else "no functional changes"
+    _file_only(Severity.INFO, f"Config schema v{outcome.from_version} -> v{CONFIG_VERSION}: {detail}")
+    try:
+        upgraded = upgrade_config_file(config)
+    except (OSError, yaml.YAMLError, ValidationError, ConfigRewriteError) as e:
+        _file_only(
+            Severity.WARNING, f"Could not rewrite {config} in place ({e}) - continuing on the in-memory migration"
+        )
+        hub_warn(f"Config uses an older config schema - {MIGRATE_HINT}")
+        return
+    # backup_path is None only when the file turned current between the load and
+    # this rewrite (nothing was written) - then there is nothing to announce.
+    if upgraded.backup_path is not None:
+        hint = " (details in the log)" if outcome.notes else ""
+        hub_note(f"Config migrated to the current schema - previous file saved as {upgraded.backup_path}{hint}")
+
+
 def load_shared_config(
     config: str,
     boot: BootFlow,
@@ -99,12 +139,11 @@ def load_shared_config(
                 f"{', '.join(unknown_trackers)} (known, case-insensitive: "
                 f"{', '.join(sorted(KNOWN_TRACKERS))})"
             )
-        # An old-schema file loads via the in-memory migration. The warn names
-        # what was folded and the command that updates the file itself.
+        # An old-schema file loads via the in-memory migration; the file itself
+        # is then rewritten in place (backup kept) so the disk catches up.
         outcome = loaded.migration()
         if outcome is not None:
-            applied = f" ({'; '.join(outcome.notes)})" if outcome.notes else ""
-            hub_warn(f"Config file {config} uses an older config schema - migrated in memory{applied} - {MIGRATE_HINT}")
+            _rewrite_old_config(config, outcome)
         return loaded
     except FileNotFoundError:
         hub_error(f"No config file at {config} - a starter template was written - fill it in and re-run")

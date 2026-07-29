@@ -1417,6 +1417,83 @@ _needs_posix_permissions = pytest.mark.skipif(
 )
 
 
+class TestConfigAutoMigrate:
+    """An old-schema config is rewritten in place at load, backup first.
+
+    The console gets one terse line either way; the functional detail (what was
+    folded) rides a file_only diagnostic to the log. A file that cannot be
+    rewritten falls back to the in-memory migration behind a short warning.
+    """
+
+    _OLD = "seadex:\n  private_releases: allow\nsonarr:\n  url: http://s\n  api_key: k\n"
+
+    @staticmethod
+    def _write(tmp_path: Path, body: str) -> Path:
+        config = tmp_path / "config.yml"
+        config.write_text(body, encoding="utf-8")
+        config.chmod(0o600)  # keep the loose-permissions warn out of the stream
+        return config
+
+    def test_an_old_schema_file_is_rewritten_with_a_backup(self, tmp_path: Path) -> None:
+        recording = install_recording_hub()
+        config = self._write(tmp_path, self._OLD)
+
+        assert load_shared_config(str(config), BootFlow(), "") is not None
+
+        rewritten = config.read_text(encoding="utf-8")
+        assert f"config_version: {CONFIG_VERSION}" in rewritten
+        assert "private_releases: warn" in rewritten
+        assert (tmp_path / "config.yml.bak").read_text(encoding="utf-8") == self._OLD
+        (notice,) = [d for d in recording.of_type(Diagnostic) if not d.file_only]
+        assert notice.severity is Severity.INFO
+        assert notice.message == (
+            f"Config migrated to the current schema - previous file saved as {config}.bak (details in the log)"
+        )
+
+    def test_the_fold_detail_goes_to_the_file_log(self, tmp_path: Path) -> None:
+        recording = install_recording_hub()
+        config = self._write(tmp_path, self._OLD)
+
+        assert load_shared_config(str(config), BootFlow(), "") is not None
+
+        (detail,) = [d for d in recording.of_type(Diagnostic) if d.file_only]
+        assert detail.severity is Severity.INFO
+        assert detail.message.startswith(f"Config schema v0 -> v{CONFIG_VERSION}: ")
+        assert "'allow'" in detail.message  # the private_releases fold
+        assert "wait_mode" in detail.message  # the note-only default flip rides along
+
+    @_needs_posix_permissions
+    def test_an_unwritable_file_falls_back_in_memory_with_a_short_warning(self, tmp_path: Path) -> None:
+        recording = install_recording_hub()
+        config = self._write(tmp_path, self._OLD)
+        tmp_path.chmod(0o500)  # the backup write fails before anything is touched
+        try:
+            loaded = load_shared_config(str(config), BootFlow(), "")
+        finally:
+            tmp_path.chmod(0o755)
+
+        assert loaded is not None  # the in-memory migration still carries the run
+        assert config.read_text(encoding="utf-8") == self._OLD
+        assert not (tmp_path / "config.yml.bak").exists()
+        (warning,) = [d for d in recording.of_type(Diagnostic) if d.severity is Severity.WARNING and not d.file_only]
+        assert warning.message == (
+            "Config uses an older config schema - run pearlarr config migrate to update the file (a backup is kept)"
+        )
+        reason = next(d for d in recording.of_type(Diagnostic) if d.file_only and d.severity is Severity.WARNING)
+        assert str(config) in reason.message
+
+    def test_a_current_schema_file_is_left_alone(self, tmp_path: Path) -> None:
+        recording = install_recording_hub()
+        body = f"config_version: {CONFIG_VERSION}\nsonarr:\n  url: http://s\n  api_key: k\n"
+        config = self._write(tmp_path, body)
+
+        assert load_shared_config(str(config), BootFlow(), "") is not None
+
+        assert config.read_text(encoding="utf-8") == body
+        assert not (tmp_path / "config.yml.bak").exists()
+        assert recording.of_type(Diagnostic) == []
+
+
 class TestUnwritableDataDir:
     """An unwritable data directory: one actionable stderr line + exit 1, no traceback.
 
@@ -1550,14 +1627,14 @@ class TestScheduledLifecycle:
         error = next(d for d in recording.of_type(Diagnostic) if d.severity is Severity.ERROR)
         assert "will retry in 6h" in error.message
 
-    def test_an_old_schema_config_warns_and_still_loads(
+    def test_an_old_schema_config_is_rewritten_and_still_loads(
         self,
         logger: logging.Logger,
         monkeypatch: pytest.MonkeyPatch,
     ) -> None:
-        # The in-memory migration keeps an old file running. The warn names what
-        # was folded and the command that updates the file. The resolver stub
-        # stops the run right after the config load (no network).
+        # The run brings an old file forward on disk, not just in memory: one
+        # terse notice names the backup, and no old-schema warning fires. The
+        # resolver stub stops the run right after the config load (no network).
         recording = install_recording_hub()
         paths = resolve_paths()
         os.makedirs(paths.data_dir)
@@ -1575,11 +1652,11 @@ class TestScheduledLifecycle:
             run_arrs([ArrTarget(Arr.SONARR)], paths=paths, logger=logger, file_sink=FileLogSink(paths.log_dir)) is False
         )
 
-        # Selected by content: the 0644 write also draws the loose-permissions warn.
-        warning = next(d for d in recording.of_type(Diagnostic) if "older config schema" in d.message)
-        assert warning.severity is Severity.WARNING
-        assert "'allow'" in warning.message
-        assert "pearlarr config migrate" in warning.message
+        assert f"config_version: {CONFIG_VERSION}" in Path(paths.config).read_text(encoding="utf-8")
+        notice = next(d for d in recording.of_type(Diagnostic) if "Config migrated" in d.message)
+        assert notice.severity is Severity.INFO
+        assert f"{paths.config}.bak" in notice.message
+        assert not any("older config schema" in d.message for d in recording.of_type(Diagnostic))
 
     def test_run_arrs_applies_the_configured_log_retention(
         self,

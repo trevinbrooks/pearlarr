@@ -708,8 +708,8 @@ class AppConfig(_ConfigBase):
     config_version: int = Field(default=CONFIG_VERSION, ge=1)
     """Schema version of the config file's keys and values.
 
-    Stamped by the starter template and `pearlarr config migrate`. A file from
-    an older Pearlarr is migrated automatically in memory at every load.
+    A file from an older Pearlarr is migrated automatically: every load brings
+    it forward in memory, and a run rewrites the file itself (keeping a backup).
     """
 
     sonarr: SonarrSettings = Field(default_factory=SonarrSettings)
@@ -835,8 +835,8 @@ class AppConfig(_ConfigBase):
     def migration(self) -> MigrationOutcome | None:
         """The in-memory schema migration `load` applied, or None for a current file.
 
-        Non-None means the file on disk still spells the old schema. The callers
-        that report suggest `pearlarr config migrate` to rewrite it.
+        Non-None means the file on disk still spelled the old schema at load.
+        The run path rewrites the file off it; `config validate` reports it.
         """
 
         return self._migration

@@ -611,7 +611,7 @@
   "properties": {
     "config_version": {
       "default": 2,
-      "description": "Schema version of the config file's keys and values. Stamped by the starter template and `pearlarr config migrate`. A file from an older Pearlarr is migrated automatically in memory at every load.",
+      "description": "Schema version of the config file's keys and values. A file from an older Pearlarr is migrated automatically: every load brings it forward in memory, and a run rewrites the file itself (keeping a backup).",
       "minimum": 1,
       "title": "Config Version",
       "type": "integer"

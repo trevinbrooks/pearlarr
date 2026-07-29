@@ -3,8 +3,8 @@
 `CONFIG_VERSION` names the current schema. `AppConfig.load` runs
 `migrate_mapping` over the raw parsed YAML before validation, so a config
 written for an older Pearlarr keeps loading (in memory - the file on disk is
-never touched by a load). `pearlarr config migrate` rewrites the file itself,
-via `render_migrated_config`.
+never touched by a load). The run path and `pearlarr config migrate` then
+rewrite the file itself, via `render_migrated_config`.
 
 Migration steps are frozen history: they spell old keys and values as string
 literals - never live enums or constants, which move on with the schema - and

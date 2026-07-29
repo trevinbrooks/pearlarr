@@ -17,8 +17,9 @@ The file holds credentials in plain text: it is created owner-only (`0600`), and
 ## The config schema version
 
 The file opens with `config_version`, the version of the key/value schema it is written against.
-A file from an older Pearlarr keeps working: every load migrates it in memory, and each run warns once, naming exactly what was folded.
-`pearlarr config migrate` rewrites the file itself when you want the warning gone: the result is the current annotated starter template with your values filled in (the key docs refresh, but comments of your own are not carried over), and the previous file is kept beside it as `config.yml.bak`.
+A file from an older Pearlarr keeps working: every load migrates it in memory, and the next run rewrites the file itself at the current schema, noting where the previous file was kept (`config.yml.bak`) and recording what was folded in the log file.
+The rewritten file is the current annotated starter template with your values filled in: the key docs refresh, but comments of your own are not carried over.
+When the file cannot be rewritten (a read-only config, say), the run continues on the in-memory migration behind a short warning, and `pearlarr config migrate` does the same rewrite on demand.
 A file written by a newer Pearlarr (a downgraded install) refuses to load, naming both versions.
 
 ## Environment variables

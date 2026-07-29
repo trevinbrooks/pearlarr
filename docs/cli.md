@@ -118,7 +118,7 @@ The status lines call out the settings that silently change a run's shape: an un
 
 Rewrite config.yml at the current config schema version, keeping a backup.
 
-Runs never require this - an older file is migrated in memory at every load - but the file itself keeps the old spelling until rewritten. The rewrite is the current annotated template with this file's values (and any schema fixes) filled in. The previous file is saved beside it as config.yml.bak first. A file already at the current version is left untouched.
+Runs normally do this on their own - an older file is migrated in memory and rewritten in place at the next run - so this command is for updating the file without a run, or after a run could not write it. The rewrite is the current annotated template with this file's values (and any schema fixes) filled in. The previous file is saved beside it as config.yml.bak first. A file already at the current version is left untouched.
 
 | Option | Value | Description |
 | --- | --- | --- |
