@@ -78,10 +78,13 @@ def _apply_ops(store: AbstractCacheStore) -> None:
     # composite key must keep BOTH, in the fake exactly as in SQLite.
     store.put_pending(Arr.SONARR, PendingKey("hashA", 9), {"series_id": 7, "title": "A2"})
 
-    # Guard rows: a same-id re-put (latest wins) + a radarr row (the facade is
-    # arr-generic; the Sonarr-only gate lives at the registration call site).
+    # Guard rows: a same-id re-put (latest wins, al 7 has a live pending record)
+    # + an orphan sonarr row and a radarr row with no pending record - both are
+    # stored but filtered out of every read (get_guards joins live pending). The
+    # parity test's later drop of hashA/7 re-orphans al 7's row too.
     store.put_guards(Arr.SONARR, 7, GuardFacts(entry_groups=("Old",)))
     store.put_guards(Arr.SONARR, 7, GuardFacts(entry_groups=("New",), stale_groups=("Old",)))
+    store.put_guards(Arr.SONARR, 4242, GuardFacts(entry_groups=("Orphan",)))
     store.put_guards(Arr.RADARR, 99, GuardFacts(entry_groups=("MovieGrp",)))
 
     # History checkpoint: an initial write then an upsert (only the last survives).

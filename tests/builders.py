@@ -386,7 +386,10 @@ class FakeCacheStore(AbstractCacheStore):
 
     @override
     def get_guards(self, arr: Arr) -> dict[int, GuardFacts]:
-        return dict(self._guards.get(str(arr), {}))
+        """Only entries with a live pending record (mirrors the real store's join)."""
+
+        live = {key.al_id for key in self._pending.get(str(arr), {})}
+        return {al_id: g for al_id, g in self._guards.get(str(arr), {}).items() if al_id in live}
 
     # -- history checkpoints --
     @override

@@ -137,7 +137,8 @@ CREATE TABLE IF NOT EXISTS guard_facts (
     al_id  INTEGER NOT NULL,
     -- One guard-evidence row per entry, refreshed whole at each seed - kept out of the
     -- per-torrent pending_imports blobs so records can't carry divergent copies.
-    -- No FK: an orphan row is inert, overwritten at the entry's next seed.
+    -- No FK: an orphan row is inert (reads join live pending records), overwritten
+    -- at the entry's next seed.
     record BLOB    NOT NULL,
     PRIMARY KEY (arr, al_id)
 );
@@ -961,13 +962,19 @@ class CacheStore(AbstractCacheStore):
 
     @override
     def get_guards(self, arr: Arr) -> dict[int, GuardFacts]:
-        """All guard rows for an arr as `{al_id: GuardFacts}` (a fresh snapshot)."""
+        """The arr's guard rows for entries with LIVE pending records, as `{al_id: GuardFacts}`.
+
+        Rows are immortal (siblings share them, so nothing may delete one), but
+        only a live pending record ever consumes guards - the join keeps the
+        read bounded by in-flight work instead of all-time grab history.
+        """
 
         return {
             al_id: GuardFacts.from_json(json.loads(rec_json))
             for al_id, rec_json in self._conn.execute(
-                "SELECT al_id, json(record) FROM guard_facts WHERE arr = ?",
-                (_arr_key(arr),),
+                "SELECT al_id, json(record) FROM guard_facts "
+                "WHERE arr = ? AND al_id IN (SELECT al_id FROM pending_imports WHERE arr = ?)",
+                (_arr_key(arr), _arr_key(arr)),
             )
         }
 
