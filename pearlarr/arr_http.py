@@ -394,8 +394,8 @@ class ArrHttp:
             raise self._strict_error(detail)
         try:
             payload = cast("object", response.json())
-        except ValueError:
-            raise self._strict_error("non-JSON body")
+        except ValueError as err:
+            raise self._strict_error("non-JSON body") from err
         if not isinstance(payload, list):
             raise self._strict_error("unexpected payload")
         return cast("list[object]", payload)

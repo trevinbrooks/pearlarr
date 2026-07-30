@@ -81,12 +81,11 @@ query ($id: Int) {
 
 # Batched query: many Media in one request via id_in
 BATCH_QUERY = (
-    """
-query ($ids: [Int]) {
-  Page (perPage: %d) {
-    media (id_in: $ids, type: ANIME) {
+    f"""
+query ($ids: [Int]) {{
+  Page (perPage: {ANILIST_BATCH_SIZE}) {{
+    media (id_in: $ids, type: ANIME) {{
 """
-    % ANILIST_BATCH_SIZE
     + _MEDIA_FIELDS
     + """
     }

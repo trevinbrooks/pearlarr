@@ -425,9 +425,7 @@ class _SonarrHandler(_JsonHandler):
     def do_GET(self) -> None:
         request = self._record()
         route = request.path
-        if route == "/api/v3/series":
-            self._send_json([])
-        elif route == "/api/v3/history/since":
+        if route == "/api/v3/series" or route == "/api/v3/history/since":
             self._send_json([])
         elif route == "/api/v3/episode":
             self._send_json(self.world.episodes_payload())

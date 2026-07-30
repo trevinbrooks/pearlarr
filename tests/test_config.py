@@ -13,6 +13,7 @@ requirement, and the file lifecycle (template copy + checksum).
 import hashlib
 import os
 from pathlib import Path
+from typing import ClassVar
 
 import pytest
 import yaml
@@ -509,7 +510,7 @@ class TestNormalization:
         # KNOWN_TRACKERS is spelled as literals (config.py must not import seadex -
         # boot depends on it staying light). Pin them to the real enum so a seadex
         # upgrade that adds/renames a tracker can't drift silently.
-        assert KNOWN_TRACKERS == {tracker.value.casefold() for tracker in Tracker}
+        assert {tracker.value.casefold() for tracker in Tracker} == KNOWN_TRACKERS
 
     def test_trackers_non_iterable_raises_validation_error(self) -> None:
         # A non-iterable must surface as a clean ValidationError (which the cli catches
@@ -621,7 +622,7 @@ class TestConnection:
 class TestSecrets:
     """The credential fields are `SecretStr`: masked everywhere but their point of use."""
 
-    _RAW = {
+    _RAW: ClassVar[dict[str, dict[str, str]]] = {
         "sonarr": {"url": "http://s", "api_key": "sonarr-key"},
         "radarr": {"api_key": "radarr-key"},
         "qbittorrent": {"host": "h", "username": "u", "password": "hunter2"},

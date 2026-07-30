@@ -123,10 +123,9 @@ def test_step_graduates_with_detail_and_timing() -> None:
 def test_step_failure_graduates_failed_and_reraises() -> None:
     flow, recording, clock = _flow()
 
-    with pytest.raises(ValueError, match="bad config"):
-        with flow.step("Reading config"):
-            clock.tick(0.01)
-            raise ValueError("bad config")
+    with pytest.raises(ValueError, match="bad config"), flow.step("Reading config"):
+        clock.tick(0.01)
+        raise ValueError("bad config")
     flow.close()
 
     (finished,) = recording.of_type(BootStepFinished)
@@ -305,9 +304,8 @@ def test_without_an_installed_hub_the_flow_is_a_silent_no_op() -> None:
 
 def test_no_hub_step_still_propagates_caller_errors() -> None:
     flow = BootFlow()
-    with pytest.raises(RuntimeError, match="boom"):
-        with flow.step("anything"):
-            raise RuntimeError("boom")
+    with pytest.raises(RuntimeError, match="boom"), flow.step("anything"):
+        raise RuntimeError("boom")
 
 
 # --- production wiring: the unconfigured-qBittorrent boot warning ------------------

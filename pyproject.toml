@@ -219,35 +219,7 @@ line-length = 120
 preview = true
 explicit-preview-rules = true
 ignore = [
-    "E402",    # module-import-not-at-top-of-file
-    "E501",    # line-too-long
-    "E731",    # lambda-assignment
-    "E741",    # ambiguous-variable-name
-    "UP031",   # printf-string-formatting
-    "UP036",   # outdated-version-block
-    "B006",    # mutable-argument-default
-    "B008",    # function-call-in-default-argument
-    "B011",    # assert-false
-    "B017",    # assert-raises-exception
-    "B023",    # function-uses-loop-variable (false positives)
-    "B028",    # no-explicit-stacklevel
-    "B904",    # raise-without-from-inside-except
-    "A005",    # stdlib-module-shadowing
-    "C401",    # unnecessary-generator-set
-    "C402",    # unnecessary-generator-dict
-    "PIE790",  # unnecessary-placeholder
-    "SIM102",  # collapsible-if
-    "SIM108",  # if-else-block-instead-of-if-exp
-    "SIM112",  # uncapitalized-environment-variables
-    "SIM113",  # enumerate-for-loop
-    "SIM114",  # if-with-same-arms
-    "SIM115",  # open-file-with-context-handler
-    "SIM117",  # multiple-with-statements
-    "SIM223",  # expr-and-false
-    "SIM300",  # yoda-conditions
-    "TD001",   # invalid-todo-tag
-    "TD002",   # missing-todo-author
-    "TD003",   # missing-todo-link
+    "E501",    # line-too-long: the formatter owns code width; overlong strings/comments stay
     # Docstring presence floor is modules/packages/classes only: leaf-function
     # gates under zero-suppressions manufacture ceremony. The rubric owns leaves.
     "D202",   # blank-line-after-function: the house style separates docstring from body
@@ -256,15 +228,14 @@ ignore = [
     "D105",    # undocumented-magic-method
     "D106",    # undocumented-public-nested-class
     "D107",    # undocumented-public-init
-    "PLC0415", # import-outside-top-level
-    "PLE0604", # invalid-all-object (false positives)
-    "PLE0643", # potential-index-error (false positives)
-    "PLW0603", # global-statement
-    "PLW1510", # subprocess-run-without-check
-    "PLW1641", # eq-without-hash
-    "PLW2901", # redefined-loop-name
+    "PLC0415", # import-outside-top-level: boot-cockpit lazy imports are load-bearing
+    # Every hit is deliberate text: the breadcrumb separator, the unicode wait
+    # glyph (which carries its own ASCII fallback), and typographic quotes in
+    # real-world titles plus the notify normalizer that strips them.
     "RUF001",  # ambiguous-unicode-character-string
-    "RUF012",  # mutable-class-default
+    # The file-log sink opens lazily and holds the handle across writes until
+    # rotate/close; no context manager can own that lifetime.
+    "SIM115",  # open-file-with-context-handler
     # Owned by `ruff format` (it adds trailing commas and normalises implicit string
     # concatenation), so enforcing them as lint rules fights the formatter. ruff's own
     # `format` conflict warning names exactly these two. The rest of COM/ISC stays on.
@@ -305,6 +276,13 @@ select = [
     "PLW1514", # unspecified-encoding (preview): text I/O must pin utf-8, not the platform locale
     "RUF",    # Ruff-specific rules
 ]
+
+# The sanctioned module singletons: the output hub install/reset seam, log.py's
+# console-ownership latch, and the demo mock world. A global elsewhere stays loud.
+[tool.ruff.lint.per-file-ignores]
+"pearlarr/log.py" = ["PLW0603"]
+"pearlarr/output/runtime.py" = ["PLW0603"]
+"scripts/demo/demo_mocks.py" = ["PLW0603"]
 
 # Owned HTTP rides the two shared httpx clients (arr_http / web_client). A
 # fresh requests or urllib.request import would silently fork the stack again.
