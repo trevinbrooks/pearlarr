@@ -1,12 +1,12 @@
 """Persistent run cache: SQLite-backed store, schema ownership, freshness, writes.
 
 `CacheStore` owns the on-disk cache - one SQLite database (`cache.db`) - and
-every read/write against its five logical blocks: the descriptor `kv` (package
+every read/write against its six logical blocks: the descriptor `kv` (package
 version + config checksum), the per-arr `entries` plus their `torrent_hashes`
-child rows, the `anilist_meta` and `sonarr_parse` JSONB caches, and
-`pending_imports`. It also owns the freshness check that decides whether a
-title needs re-processing. Folding all five blocks here gives the cache file a
-single owner.
+child rows, the `anilist_meta` and `sonarr_parse` JSONB caches,
+`pending_imports`, and the per-entry `guard_facts`. It also owns the freshness
+check that decides whether a title needs re-processing. Folding all six blocks
+here gives the cache file a single owner.
 
 Write model:
 
@@ -41,7 +41,7 @@ import os
 import sqlite3
 from abc import ABC, abstractmethod
 from collections.abc import Callable, Iterator
-from dataclasses import dataclass
+from dataclasses import asdict, dataclass
 from datetime import datetime
 from typing import Any, NamedTuple, TypedDict, cast, override
 
@@ -49,7 +49,7 @@ from seadex import EntryRecord
 
 from . import __version__
 from .config import Arr
-from .manual_import import PendingKey
+from .manual_import import GuardFacts, PendingKey
 from .output import hub_note
 from .sqlite_util import connect as _sqlite_connect
 from .sqlite_util import open_or_quarantine, rollback_and_close
@@ -130,6 +130,16 @@ CREATE TABLE IF NOT EXISTS pending_imports (
     al_id    INTEGER NOT NULL DEFAULT 0,
     record   BLOB NOT NULL,
     PRIMARY KEY (arr, infohash, al_id)
+);
+
+CREATE TABLE IF NOT EXISTS guard_facts (
+    arr    TEXT    NOT NULL,
+    al_id  INTEGER NOT NULL,
+    -- One guard-evidence row per entry, refreshed whole at each seed - kept out of the
+    -- per-torrent pending_imports blobs so records can't carry divergent copies.
+    -- No FK: an orphan row is inert, overwritten at the entry's next seed.
+    record BLOB    NOT NULL,
+    PRIMARY KEY (arr, al_id)
 );
 
 CREATE TABLE IF NOT EXISTS history_checkpoints (
@@ -353,6 +363,7 @@ class _JsonBlock(NamedTuple):
 _ANILIST_META = _JsonBlock("anilist_meta", ("al_id",))
 _SONARR_PARSE = _JsonBlock("sonarr_parse", ("filename",))
 _PENDING_IMPORTS = _JsonBlock("pending_imports", ("arr", "infohash", "al_id"))
+_GUARD_FACTS = _JsonBlock("guard_facts", ("arr", "al_id"))
 
 
 class CacheStats(NamedTuple):
@@ -451,6 +462,10 @@ class AbstractCacheStore(ABC):
     def drop_pending(self, arr: Arr, key: PendingKey) -> None: ...
     @abstractmethod
     def count_pending_for_infohash(self, infohash: str) -> int: ...
+    @abstractmethod
+    def put_guards(self, arr: Arr, al_id: int, guards: GuardFacts) -> None: ...
+    @abstractmethod
+    def get_guards(self, arr: Arr) -> dict[int, GuardFacts]: ...
     @abstractmethod
     def get_history_checkpoint(self, arr: Arr) -> HistoryCheckpoint | None: ...
     @abstractmethod
@@ -910,6 +925,24 @@ class CacheStore(AbstractCacheStore):
             (infohash,),
         ).fetchone()
         return int(row[0]) if row else 0
+
+    @override
+    def put_guards(self, arr: Arr, al_id: int, guards: GuardFacts) -> None:
+        """Upsert the entry's guard-evidence row (staged, persisted at a save point)."""
+
+        self._json_put(_GUARD_FACTS, (_arr_key(arr), al_id), asdict(guards))
+
+    @override
+    def get_guards(self, arr: Arr) -> dict[int, GuardFacts]:
+        """All guard rows for an arr as `{al_id: GuardFacts}` (a fresh snapshot)."""
+
+        return {
+            al_id: GuardFacts.from_json(json.loads(rec_json))
+            for al_id, rec_json in self._conn.execute(
+                "SELECT al_id, json(record) FROM guard_facts WHERE arr = ?",
+                (_arr_key(arr),),
+            )
+        }
 
     # -- history checkpoints --------------------------------------------------
 

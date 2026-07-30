@@ -39,7 +39,14 @@ from pearlarr.cache import (
 from pearlarr.config import AppConfig, Arr
 from pearlarr.grab_pipeline import GrabPipeline
 from pearlarr.import_wait import ImportWaitManager
-from pearlarr.manual_import import ImportProbe, ImportReadiness, ImportWaitMode, PendingImport, PendingKey
+from pearlarr.manual_import import (
+    GuardFacts,
+    ImportProbe,
+    ImportReadiness,
+    ImportWaitMode,
+    PendingImport,
+    PendingKey,
+)
 from pearlarr.mappings import MappingResolver, MappingSources
 from pearlarr.notify import Notifier
 from pearlarr.output import SeverityCounts, emit_to_hub
@@ -191,7 +198,8 @@ class FakeCacheStore(AbstractCacheStore):
 
     Backs every facade block - the per-entry `entries` scalars plus their
     `torrent_hashes` child set, the `anilist_meta` and `sonarr_parse` JSONB
-    caches, and `pending_imports` - with plain dicts, so a driven path that
+    caches, `pending_imports`, and `guard_facts` - with plain dicts, so a driven
+    path that
     reaches ANY facade method gets the real store's behavior instead of an
     `AttributeError` or a silent no-op. Semantics are matched, not just the
     names. `update_cache` partial-merges the supplied scalars and (when given)
@@ -224,6 +232,7 @@ class FakeCacheStore(AbstractCacheStore):
         self._entries: dict[tuple[str, int], dict[str, Any]] = {}
         self._entry_hashes: dict[tuple[str, int], list[str | None]] = {}
         self._anilist_meta: dict[int, dict[str, Any]] = {}
+        self._guards: dict[str, dict[int, GuardFacts]] = {}
         self._history_checkpoints: dict[str, HistoryCheckpoint] = {}
         self._kv: dict[str, str] = {}
 
@@ -369,6 +378,15 @@ class FakeCacheStore(AbstractCacheStore):
         """Cross-arr remaining-record count (mirrors the real store's arr-less SQL count)."""
 
         return sum(1 for recs in self._pending.values() for key in recs if key.infohash == infohash)
+
+    # No deepcopy: GuardFacts is deeply immutable (frozen dataclass -> tuples of str/int/NamedTuple).
+    @override
+    def put_guards(self, arr: Arr, al_id: int, guards: GuardFacts) -> None:
+        self._guards.setdefault(str(arr), {})[al_id] = guards
+
+    @override
+    def get_guards(self, arr: Arr) -> dict[int, GuardFacts]:
+        return dict(self._guards.get(str(arr), {}))
 
     # -- history checkpoints --
     @override
