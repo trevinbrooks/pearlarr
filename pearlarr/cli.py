@@ -154,17 +154,17 @@ def _echo_missing_cache(path: str) -> bool:
     return _echo_missing(path, what="cache database", hint="it is created by the first run")
 
 
-def _refused_by_active_run(acquired: bool, data_dir: str) -> bool:
+def _refused_by_active_run(acquired: bool, data_dir: str, *, what: str = "the cache") -> bool:
     """True (after echoing why) when another run holds the single-instance lock.
 
-    Touching the cache files while a run is live would clobber the in-flight
-    database or snapshot half-committed cycle state, so the cache commands take
-    the same lock the runner uses and refuse instead.
+    Writing while a run is live would clobber the in-flight database or the
+    config rewrite's backup/temp siblings, so the cache commands and
+    `config migrate` take the same lock the runner uses and refuse instead.
     """
 
     if acquired:
         return False
-    hub_error(f"Another Pearlarr run is active in {data_dir} - refusing to modify the cache")
+    hub_error(f"Another Pearlarr run is active in {data_dir} - refusing to modify {what}")
     return True
 
 
@@ -733,7 +733,7 @@ def config_migrate(json_output: Annotated[bool, typer.Option("--json", help=_JSO
         # The boot rewrite runs under this same lock, so the two writers can
         # never interleave on the config's backup/temp siblings.
         with single_instance_lock(paths.data_dir) as acquired:
-            if _refused_by_active_run(acquired, paths.data_dir):
+            if _refused_by_active_run(acquired, paths.data_dir, what="the config"):
                 return False
 
             upgrade = _run_config_action(paths.config, upgrade_config_file)

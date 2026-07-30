@@ -40,10 +40,10 @@ This is a feature while you tune the config (see [getting-started.md](getting-st
 
 ```text
 Another Pearlarr run is active in ... - skipping this run
-Another Pearlarr run is active in ... - refusing to modify the cache
+Another Pearlarr run is active in ... - refusing to modify ...
 ```
 
-Pearlarr takes a lock in the data directory so overlapping runs cannot corrupt the cache. The cache commands take the same lock.
+Pearlarr takes a lock in the data directory so overlapping runs cannot corrupt the cache. The cache commands and `pearlarr config migrate` take the same lock, refusing to modify the cache or the config while a run is live.
 Wait for the running pass to finish (a wait-for-completion pass can hold it for a while), or find the other `pearlarr` process if you did not expect one.
 A skipped scheduled cycle retries on the next one. A skipped `run single` exits 1 so your own scheduler can tell.
 
