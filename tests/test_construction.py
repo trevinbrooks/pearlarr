@@ -20,6 +20,7 @@ import qbittorrentapi
 import respx
 
 from pearlarr import run_services
+from pearlarr.arr_http import HEARTBEAT_INTERVAL_S
 from pearlarr.boot_flow import BootFlow
 from pearlarr.config import AppConfig, Arr
 from pearlarr.mappings import MappingResolver
@@ -214,6 +215,49 @@ def test_rundeps_build_skips_the_category_fetch_without_qbit(tmp_path: Path) -> 
     assert deps.categories.grab() is None
     assert deps.categories.post_import() is None
     assert route.call_count == 0
+
+
+def test_rundeps_build_binds_arr_http_when_configured(tmp_path: Path) -> None:
+    """`build` binds this arr's transport once: label from the arr, default heartbeat."""
+
+    deps = _build_deps(make_config(url="http://sonarr", api_key="key"), tmp_path)
+    deps.close()
+
+    assert deps.arr_http is not None
+    assert deps.arr_http.label == "Sonarr"
+    assert deps.arr_http.base_url == "http://sonarr"
+    # digest_interval is the Sonarr client's own replace, never build's bind.
+    assert deps.arr_http.heartbeat_s == HEARTBEAT_INTERVAL_S
+
+
+def test_rundeps_build_leaves_arr_http_none_without_connection_keys(tmp_path: Path) -> None:
+    """Missing keys: `build` stays raise-free - require_connection fires at strategy construction instead."""
+
+    deps = _build_deps(make_config(), tmp_path)
+    deps.close()
+
+    assert deps.arr_http is None
+    # The resolver's None-http contract: no transport, so reads stay fetchless blanks.
+    assert deps.categories.grab() is None
+
+
+def test_rundeps_build_category_handle_derives_from_arr_http(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    """The category handle is the arr transport's no-retry derivation - one shared streak ledger."""
+
+    monkeypatch.setattr(qbittorrentapi, "Client", _PassingQbit)
+    config = make_config(url="http://sonarr", api_key="key", host="http://qbit:8080", username="u", password="p")
+
+    deps = _build_deps(config, tmp_path)
+    deps.close()
+
+    assert deps.arr_http is not None
+    category_http = deps.categories._http
+    assert category_http is not None
+    assert category_http.retries == 0
+    assert category_http.streaks is deps.arr_http.streaks
 
 
 def test_sonarr_cross_check_builds_without_network_via_radarr_seam() -> None:
