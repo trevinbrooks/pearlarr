@@ -52,6 +52,18 @@ class QbitConnectionError(Exception):
     """
 
 
+def bind_arr_http(arr: Arr, config: AppConfig, client: httpx.Client) -> ArrHttp:
+    """Bind the shared client to `arr`'s configured url + key - the one production spelling.
+
+    Raises `require_connection`'s ValueError when either key is missing - callers
+    needing tolerance gate on `config.is_configured(arr)` first. Consumers derive
+    tuned handles (retries, heartbeat) via `dataclasses.replace`.
+    """
+
+    url, api_key = config.require_connection(arr)
+    return ArrHttp.bind(client=client, url=url, api_key=api_key, label=arr.capitalize())
+
+
 @dataclass(frozen=True)
 class RunDeps:
     """The shared leaf collaborators for one Arr run, built once at the root.
@@ -71,6 +83,10 @@ class RunDeps:
 
     arr_config: ArrSettings
     """This arr's connection/behavior submodel, `config.for_arr(arr)`."""
+
+    arr_http: ArrHttp | None
+    """This arr's bound transport - None when the connection keys are missing
+    (the strategy's `require_connection` error then fires at its construction)."""
 
     categories: ArrCategoryResolver
     """The run's effective qBittorrent categories: explicit config first, then
@@ -185,16 +201,16 @@ class RunDeps:
             client=AniListClient(client=web),
         )
 
-        # `category_http` is bound only when a real qbit and this arr's
-        # connection keys both exist (a preview run applies no category).
-        category_http: ArrHttp | None = None
-        url = arr_config.url
-        api_key = secret_value(arr_config.api_key)
-        if qbit is not None and url and api_key:
-            # A single attempt per use (retries=0): a nicety read whose miss
-            # fails open and is retried at the next use.
-            bound = ArrHttp.bind(client=http, url=url, api_key=api_key, label=arr.capitalize())
-            category_http = replace(bound, retries=0)
+        # This arr's bound transport. None when the connection keys are missing:
+        # build stays raise-free (the strategy's require_connection names the
+        # missing key at construction). Bound even without qbit - preview runs
+        # still talk to the arr.
+        arr_http = bind_arr_http(arr, app_config, http) if app_config.is_configured(arr) else None
+
+        # The category handle exists only when a real qbit does too (a preview
+        # run applies no category). A single attempt per use (retries=0): a
+        # nicety read whose miss fails open and is retried at the next use.
+        category_http = replace(arr_http, retries=0) if qbit is not None and arr_http is not None else None
         categories = ArrCategoryResolver(arr, arr_config, category_http)
 
         # qBittorrent adapter: parses a release URL by tracker and adds it. A None
@@ -210,6 +226,7 @@ class RunDeps:
         return cls(
             config=app_config,
             arr_config=arr_config,
+            arr_http=arr_http,
             categories=categories,
             web=web,
             http=http,

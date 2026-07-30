@@ -663,6 +663,9 @@ def make_run_deps(
     return RunDeps(
         config=config,
         arr_config=config.for_arr(Arr.SONARR),
+        # None: the strategies' require_connection fallback binds lazily, so the
+        # keys-missing construction seams behave exactly as production's.
+        arr_http=None,
         categories=categories,
         web=http,
         http=http,
