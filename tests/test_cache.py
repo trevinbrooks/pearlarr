@@ -18,7 +18,7 @@ import pearlarr
 from pearlarr.cache import SCHEMA_VERSION, CacheSchemaError, CacheStore, HistoryCheckpoint
 from pearlarr.config import Arr
 from pearlarr.log import LOG_NAME
-from pearlarr.manual_import import PendingImport, PendingKey
+from pearlarr.manual_import import GuardFacts, OwnedEpisode, PendingImport, PendingKey
 from pearlarr.output import Diagnostic, Severity, install_hub
 from pearlarr.output.recording import RecordingHub
 from pearlarr.sonarr_parse import parsed_full_season
@@ -609,6 +609,40 @@ class TestPendingImports:
         # Fresh per call: a drop is reflected immediately (no stale snapshot).
         store.drop_pending(Arr.SONARR, PendingKey("a", 1))
         assert store.get_pending_for_series(Arr.SONARR, 5) == {PendingKey("b", 2): b}
+        store.close()
+
+
+class TestGuardFacts:
+    """One guard-evidence row per (arr, al_id): typed round-trip, arr isolation, latest-wins upsert."""
+
+    def test_roundtrip_and_arr_isolation(self, tmp_path: Path) -> None:
+        store = _open(tmp_path)
+        facts = GuardFacts(
+            entry_groups=("SubsPlease", "Erai-raws"),
+            stale_groups=("HorribleSubs",),
+            owned_episodes=(OwnedEpisode(101, 700_000_000), OwnedEpisode(102, 650_000_000)),
+        )
+        store.put_guards(Arr.SONARR, 7, facts)
+        store.put_guards(Arr.RADARR, 7, GuardFacts(entry_groups=("Beatrice-Raws",)))
+
+        # Typed on both ends: owned_episodes come back as OwnedEpisode tuples.
+        assert store.get_guards(Arr.SONARR) == {7: facts}
+        assert store.get_guards(Arr.RADARR) == {7: GuardFacts(entry_groups=("Beatrice-Raws",))}
+        store.close()
+
+    def test_latest_put_wins(self, tmp_path: Path) -> None:
+        # The fix's write semantic: a re-seed overwrites the entry's single row
+        # whole, so no two reads can ever see divergent evidence for one entry.
+        store = _open(tmp_path)
+        store.put_guards(Arr.SONARR, 7, GuardFacts(entry_groups=("Old",)))
+        newest = GuardFacts(entry_groups=("New",), stale_groups=("Old",))
+        store.put_guards(Arr.SONARR, 7, newest)
+        assert store.get_guards(Arr.SONARR) == {7: newest}
+        store.close()
+
+    def test_empty_store_reads_empty(self, tmp_path: Path) -> None:
+        store = _open(tmp_path)
+        assert store.get_guards(Arr.SONARR) == {}
         store.close()
 
 

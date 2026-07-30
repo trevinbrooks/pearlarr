@@ -18,7 +18,7 @@ from typing import Any
 
 from pearlarr.cache import AbstractCacheStore, CacheRecord, CacheStore, HistoryCheckpoint
 from pearlarr.config import Arr
-from pearlarr.manual_import import PendingKey
+from pearlarr.manual_import import GuardFacts, PendingKey
 
 from .builders import FakeCacheStore, make_entry_record
 
@@ -78,6 +78,12 @@ def _apply_ops(store: AbstractCacheStore) -> None:
     # composite key must keep BOTH, in the fake exactly as in SQLite.
     store.put_pending(Arr.SONARR, PendingKey("hashA", 9), {"series_id": 7, "title": "A2"})
 
+    # Guard rows: a same-id re-put (latest wins) + a radarr row (the facade is
+    # arr-generic; the Sonarr-only gate lives at the registration call site).
+    store.put_guards(Arr.SONARR, 7, GuardFacts(entry_groups=("Old",)))
+    store.put_guards(Arr.SONARR, 7, GuardFacts(entry_groups=("New",), stale_groups=("Old",)))
+    store.put_guards(Arr.RADARR, 99, GuardFacts(entry_groups=("MovieGrp",)))
+
     # History checkpoint: an initial write then an upsert (only the last survives).
     store.put_history_checkpoint(Arr.SONARR, HistoryCheckpoint("2026-07-01T00:00:00Z", 5))
     store.put_history_checkpoint(Arr.SONARR, HistoryCheckpoint("2026-07-02T00:00:00Z", 9))
@@ -109,6 +115,8 @@ def _observe(store: AbstractCacheStore) -> dict[str, object]:
         "pending_count_shared": store.count_pending_for_infohash("hashA"),
         "pending_count_single": store.count_pending_for_infohash("hashB"),
         "pending_count_missing": store.count_pending_for_infohash("nope"),
+        "guards_sonarr": store.get_guards(Arr.SONARR),
+        "guards_radarr": store.get_guards(Arr.RADARR),
         "checkpoint_sonarr": store.get_history_checkpoint(Arr.SONARR),
         "checkpoint_radarr": store.get_history_checkpoint(Arr.RADARR),
         "selection_current": store.selection_stale(Arr.SONARR, "digest-new"),
@@ -151,6 +159,8 @@ def _sonarr_parse_records(store: AbstractCacheStore) -> list[dict[str, Any]]:
 
 # The three blocks the real store round-trips through JSON on both ends. Each carries
 # series_id so the pending block's get_pending_for_series filter matches the record.
+# guard_facts is deliberately absent: the scribble check needs raw mutable dicts and
+# `GuardFacts` is frozen (isolation by construction), so `_apply_ops` covers it instead.
 _JSONB_BLOCKS: tuple[_JsonbBlock, ...] = (
     _JsonbBlock(
         "pending",
