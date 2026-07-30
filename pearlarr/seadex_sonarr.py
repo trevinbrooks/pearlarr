@@ -415,10 +415,9 @@ class SonarrSync(ArrSync[SonarrItem]):
         cache_details["url"] = sd_url
 
         sonarr_releases = self._episodes.get_sonarr_releases(ep_list=ep_list)
-        sonarr_group_names = sonarr_releases.display_names()
 
         self.logger.debug(
-            f"Sonarr release {pluralize(len(sonarr_group_names), 'group')}: {sonarr_releases.groups_label()}"
+            f"Sonarr release {pluralize(sonarr_releases.group_count(), 'group')}: {sonarr_releases.groups_label()}"
         )
 
         # Produce a dictionary of info from the SeaDex request

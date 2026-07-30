@@ -131,8 +131,10 @@ SeadexDict = dict[str, SeadexReleaseGroupItem]
 def flagged_urls(seadex_dict: SeadexDict) -> list[tuple[str, SeadexUrlItem, str]]:
     """The urls flagged to grab that carry an infohash, as `(group, url item, infohash)` triples.
 
-    The one filter both arrs' seed builders share; the infohash rides the
-    triple already narrowed to `str`.
+    The shared enumeration under both arrs' seed builders (each narrows
+    further at its call site) and the planner's cached hash list, which must
+    match the torrents the run adds - narrow at the riders, never here. The
+    infohash rides the triple already narrowed to `str`.
     """
 
     return [
@@ -561,15 +563,15 @@ class ArrReleases:
             untagged=tuple(untagged),
         )
 
-    def display_names(self) -> list[str]:
-        """The tagged group names for a log line, `(none)` marking untagged files."""
+    def group_count(self) -> int:
+        """How many entries `groups_label` renders: tagged names, plus one for untagged files."""
 
-        return [*self.tagged, *(["(none)"] if self.untagged else [])]
+        return len(self.tagged) + (1 if self.untagged else 0)
 
     def groups_label(self) -> str:
-        """`display_names` comma-joined for a log line, `(no files)` when there are none."""
+        """The group names comma-joined for a log line: `(none)` marks untagged files, `(no files)` an empty record."""
 
-        return ", ".join(self.display_names()) or "(no files)"
+        return ", ".join([*self.tagged, *(["(none)"] if self.untagged else [])]) or "(no files)"
 
     def replaced_groups(self) -> tuple[str, ...]:
         """Every tagged name a grab would replace (the notify `Replacing` field)."""

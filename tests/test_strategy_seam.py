@@ -2447,5 +2447,10 @@ class TestArrReleasesRecord:
         assert ArrReleases(tagged={"A": (1,)}, untagged=(2,)).groups_label() == "A, (none)"
         assert ArrReleases().groups_label() == "(no files)"
 
+    def test_group_count_matches_the_rendered_entries(self) -> None:
+        # Untagged files fold to the single `(none)` entry, so they count once.
+        assert ArrReleases(tagged={"A": (1,), "B": (2,)}, untagged=(3,)).group_count() == 3
+        assert ArrReleases().group_count() == 0
+
     def test_replaced_groups_lists_every_tagged_name(self) -> None:
         assert ArrReleases(tagged={"A": (1,), "B": ()}).replaced_groups() == ("A", "B")
