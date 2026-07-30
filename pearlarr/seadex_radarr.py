@@ -188,10 +188,9 @@ class RadarrSync(ArrSync[RadarrItem]):
         radarr_releases = self.get_radarr_releases(
             radarr_movie_id=item.id,
         )
-        radarr_group_names = radarr_releases.display_names()
 
         self.logger.debug(
-            f"Radarr release {pluralize(len(radarr_group_names), 'group')}: {radarr_releases.groups_label()}"
+            f"Radarr release {pluralize(radarr_releases.group_count(), 'group')}: {radarr_releases.groups_label()}"
         )
 
         # Produce a dictionary of info from the SeaDex request
