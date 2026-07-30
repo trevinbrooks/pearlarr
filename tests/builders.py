@@ -591,10 +591,10 @@ def make_categories(config: AppConfig | None = None, arr: Arr = Arr.SONARR) -> A
     return ArrCategoryResolver(arr, config.for_arr(arr), None)
 
 
-def _real_torrents(logger: logging.Logger, web: httpx.Client) -> TorrentService:
+def _real_torrents(logger: logging.Logger, web: httpx.Client, categories: ArrCategoryResolver) -> TorrentService:
     """A real, client-less `TorrentService` (`qbit=None` -> preview no-op add)."""
 
-    return TorrentService(qbit=None, web=web, categories=make_categories(), tags=[], logger=logger)
+    return TorrentService(qbit=None, web=web, categories=categories, tags=[], logger=logger)
 
 
 def make_services(**overrides: Any) -> RunServices:
@@ -657,11 +657,13 @@ def make_run_deps(
     # One shared client backs BOTH deps.http and deps.web (never used for real
     # traffic here). conftest's close_leaked_handles closes it at teardown.
     http = httpx.Client()
+    # No transport: the config passthrough (no download-client fetch under test).
+    # Shared with torrents below, matching production's single resolver instance.
+    categories = make_categories(config)
     return RunDeps(
         config=config,
         arr_config=config.for_arr(Arr.SONARR),
-        # No transport: the config passthrough (no download-client fetch under test).
-        categories=make_categories(config),
+        categories=categories,
         web=http,
         http=http,
         qbit=None,
@@ -678,7 +680,7 @@ def make_run_deps(
         seadex=seadex or FakeSeaDexSource(),
         cache_store=cache_store,
         anilist=AniListGateway(cache_store=cache_store, logger=logger, client=AniListClient(client=http)),
-        torrents=_real_torrents(logger, http),
+        torrents=_real_torrents(logger, http, categories),
         notifier=Notifier(discord_url=None, webhook_url=None, web=http),
         planner=make_planner(),
         reporter=_real_reporter(logger, cache_store, http),
@@ -777,7 +779,7 @@ def make_grab_pipeline(**overrides: Any) -> GrabPipeline:
         "_config": config,
         "_planner": make_planner(),
         "cache_store": cache_store,
-        "_torrents": _real_torrents(logger, web),
+        "_torrents": _real_torrents(logger, web, make_categories(config)),
         "_anilist": AniListGateway(cache_store=cache_store, logger=logger, client=AniListClient(client=web)),
         # No discord/webhook url -> a disabled, best-effort no-op notifier.
         "_notifier": Notifier(discord_url=None, webhook_url=None, web=web),

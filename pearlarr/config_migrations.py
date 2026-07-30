@@ -106,11 +106,10 @@ def _to_v2(config: dict[str, Json]) -> list[str]:
         category = imports.pop("post_import_category")
         for arr in ("sonarr", "radarr"):
             group = _group(config, arr)
-            if group is None and config.get(arr) is None:
-                group = {}
-                config[arr] = group
             if group is not None:
                 group["post_import_category"] = category
+            elif config.get(arr) is None:
+                config[arr] = {"post_import_category": category}
         notes.append(
             "imports.post_import_category is now per-arr - moved to sonarr.post_import_category "
             "and radarr.post_import_category (same value, same behavior)",

@@ -1419,6 +1419,10 @@ _needs_posix_permissions = pytest.mark.skipif(
     reason="chmod-based access denial does not bind on Windows",
 )
 
+# The canonical v0-schema config body: old enough to trigger auto-migrate,
+# used across TestConfigAutoMigrate and TestScheduledLifecycle.
+_OLD_SCHEMA_CONFIG = "seadex:\n  private_releases: allow\nsonarr:\n  url: http://s\n  api_key: k\n"
+
 
 class TestConfigAutoMigrate:
     """An old-schema config is rewritten in place after the load, backup first.
@@ -1428,8 +1432,6 @@ class TestConfigAutoMigrate:
     rewritten falls back to the in-memory migration behind a short warning, and
     a dry run never writes at all.
     """
-
-    _OLD = "seadex:\n  private_releases: allow\nsonarr:\n  url: http://s\n  api_key: k\n"
 
     @staticmethod
     def _write(tmp_path: Path, body: str) -> Path:
@@ -1446,14 +1448,14 @@ class TestConfigAutoMigrate:
 
     def test_an_old_schema_file_is_rewritten_with_a_backup(self, tmp_path: Path) -> None:
         recording = install_recording_hub()
-        config = self._write(tmp_path, self._OLD)
+        config = self._write(tmp_path, _OLD_SCHEMA_CONFIG)
 
         _rewrite_old_config(str(config), self._load(config), dry_run=False)
 
         rewritten = config.read_text(encoding="utf-8")
         assert f"config_version: {CONFIG_VERSION}" in rewritten
         assert "private_releases: warn" in rewritten
-        assert (tmp_path / "config.yml.bak").read_text(encoding="utf-8") == self._OLD
+        assert (tmp_path / "config.yml.bak").read_text(encoding="utf-8") == _OLD_SCHEMA_CONFIG
         (notice,) = [d for d in recording.of_type(Diagnostic) if not d.file_only]
         assert notice.severity is Severity.INFO
         assert notice.message == (
@@ -1462,7 +1464,7 @@ class TestConfigAutoMigrate:
 
     def test_the_fold_detail_goes_to_the_file_log(self, tmp_path: Path) -> None:
         recording = install_recording_hub()
-        config = self._write(tmp_path, self._OLD)
+        config = self._write(tmp_path, _OLD_SCHEMA_CONFIG)
 
         _rewrite_old_config(str(config), self._load(config), dry_run=False)
 
@@ -1477,7 +1479,7 @@ class TestConfigAutoMigrate:
         # log, so the console note must not point at it.
         recording = install_recording_hub()
         current_hub().set_level(int(Severity.WARNING))
-        config = self._write(tmp_path, self._OLD)
+        config = self._write(tmp_path, _OLD_SCHEMA_CONFIG)
 
         _rewrite_old_config(str(config), self._load(config), dry_run=False)
 
@@ -1487,11 +1489,11 @@ class TestConfigAutoMigrate:
 
     def test_a_dry_run_leaves_the_file_alone_behind_a_note(self, tmp_path: Path) -> None:
         recording = install_recording_hub()
-        config = self._write(tmp_path, self._OLD)
+        config = self._write(tmp_path, _OLD_SCHEMA_CONFIG)
 
         _rewrite_old_config(str(config), self._load(config), dry_run=True)
 
-        assert config.read_text(encoding="utf-8") == self._OLD
+        assert config.read_text(encoding="utf-8") == _OLD_SCHEMA_CONFIG
         assert sorted(p.name for p in tmp_path.iterdir()) == ["config.yml"]
         (note,) = [d for d in recording.of_type(Diagnostic) if not d.file_only]
         assert note.severity is Severity.INFO
@@ -1507,7 +1509,7 @@ class TestConfigAutoMigrate:
         # readable than the 0600 config. The file-log line carries the
         # formatted description instead, on one line.
         recording = install_recording_hub()
-        config = self._write(tmp_path, self._OLD)
+        config = self._write(tmp_path, _OLD_SCHEMA_CONFIG)
         loaded = self._load(config)
         mark = yaml.Mark(str(config), 9, 1, 4, "  api_key: hunter2-secret\n", 9)
         boom = yaml.MarkedYAMLError(problem="found character that cannot start any token", problem_mark=mark)
@@ -1531,7 +1533,7 @@ class TestConfigAutoMigrate:
         # str(ValidationError) spans multiple lines; the file log's line
         # grammar folds the bad keys onto one.
         recording = install_recording_hub()
-        config = self._write(tmp_path, self._OLD)
+        config = self._write(tmp_path, _OLD_SCHEMA_CONFIG)
         loaded = self._load(config)
         with pytest.raises(ValidationError) as excinfo:
             AppConfig.model_validate({"typo_key": 1, "other_typo": 2})
@@ -1551,7 +1553,7 @@ class TestConfigAutoMigrate:
     @_needs_posix_permissions
     def test_an_unwritable_file_falls_back_in_memory_with_a_short_warning(self, tmp_path: Path) -> None:
         recording = install_recording_hub()
-        config = self._write(tmp_path, self._OLD)
+        config = self._write(tmp_path, _OLD_SCHEMA_CONFIG)
         loaded = self._load(config)
         tmp_path.chmod(0o500)  # the temp-file create fails before anything is touched
         try:
@@ -1559,7 +1561,7 @@ class TestConfigAutoMigrate:
         finally:
             tmp_path.chmod(0o755)
 
-        assert config.read_text(encoding="utf-8") == self._OLD
+        assert config.read_text(encoding="utf-8") == _OLD_SCHEMA_CONFIG
         assert not (tmp_path / "config.yml.bak").exists()
         (warning,) = [d for d in recording.of_type(Diagnostic) if d.severity is Severity.WARNING and not d.file_only]
         assert warning.message == (
@@ -1694,6 +1696,15 @@ class TestDataDirLine:
 class TestScheduledLifecycle:
     """Scheduled mode: invalid configs retry, SIGTERM exits 0, help names the fallback."""
 
+    @staticmethod
+    def _stub_resolver(monkeypatch: pytest.MonkeyPatch) -> None:
+        """Stop the run right after the config load (no network)."""
+
+        def refuse_resolver(*args: object, **kwargs: object) -> None:
+            return None
+
+        monkeypatch.setattr("pearlarr.bootstrap.build_resolver", refuse_resolver)
+
     def test_invalid_config_still_skips_and_retries(self, logger: logging.Logger) -> None:
         # Only the MISSING file exits: an invalid config is likely mid-edit, so
         # scheduled mode must keep skipping + retrying, never raise out of the loop.
@@ -1720,20 +1731,12 @@ class TestScheduledLifecycle:
         monkeypatch: pytest.MonkeyPatch,
     ) -> None:
         # The run brings an old file forward on disk, not just in memory: one
-        # terse notice names the backup, and no old-schema warning fires. The
-        # resolver stub stops the run right after the config load (no network).
+        # terse notice names the backup, and no old-schema warning fires.
         recording = install_recording_hub()
         paths = resolve_paths()
         os.makedirs(paths.data_dir)
-        Path(paths.config).write_text(
-            "seadex:\n  private_releases: allow\nsonarr:\n  url: http://s\n  api_key: k\n",
-            encoding="utf-8",
-        )
-
-        def refuse_resolver(*args: object, **kwargs: object) -> None:
-            return None
-
-        monkeypatch.setattr("pearlarr.bootstrap.build_resolver", refuse_resolver)
+        Path(paths.config).write_text(_OLD_SCHEMA_CONFIG, encoding="utf-8")
+        self._stub_resolver(monkeypatch)
 
         assert (
             run_arrs([ArrTarget(Arr.SONARR)], paths=paths, logger=logger, file_sink=FileLogSink(paths.log_dir)) is False
@@ -1755,13 +1758,9 @@ class TestScheduledLifecycle:
         recording = install_recording_hub()
         paths = resolve_paths()
         os.makedirs(paths.data_dir)
-        old = "seadex:\n  private_releases: allow\nsonarr:\n  url: http://s\n  api_key: k\n"
+        old = _OLD_SCHEMA_CONFIG
         Path(paths.config).write_text(old, encoding="utf-8")
-
-        def refuse_resolver(*args: object, **kwargs: object) -> None:
-            return None
-
-        monkeypatch.setattr("pearlarr.bootstrap.build_resolver", refuse_resolver)
+        self._stub_resolver(monkeypatch)
 
         run_arrs(
             [ArrTarget(Arr.SONARR)],
@@ -1781,7 +1780,6 @@ class TestScheduledLifecycle:
         monkeypatch: pytest.MonkeyPatch,
     ) -> None:
         # The knob must reach the sink with the CONFIGURED value, not a default.
-        # the resolver stub stops the run right after (no network).
         install_recording_hub()
         paths = resolve_paths()
         os.makedirs(paths.data_dir)
@@ -1796,11 +1794,8 @@ class TestScheduledLifecycle:
             applied.append(days)
             original(self, days)
 
-        def refuse_resolver(*args: object, **kwargs: object) -> None:
-            return None
-
         monkeypatch.setattr(FileLogSink, "apply_retention_days", record)
-        monkeypatch.setattr("pearlarr.bootstrap.build_resolver", refuse_resolver)
+        self._stub_resolver(monkeypatch)
 
         run_arrs([ArrTarget(Arr.SONARR)], paths=paths, logger=logger, file_sink=FileLogSink(paths.log_dir))
 

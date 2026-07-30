@@ -21,7 +21,6 @@ from pearlarr.manual_import import (
     GuardFacts,
     ImportProbe,
     ImportReadiness,
-    ImportWaitMode,
     OwnedEpisode,
     PendingImport,
     PendingKey,
@@ -34,7 +33,6 @@ from pearlarr.manual_import import (
     normalize_rg,
     normalized_leaf,
     path_leaf,
-    resolve_wait_mode,
     sanitize_torrent_telemetry,
 )
 from pearlarr.seadex_types import (
@@ -966,16 +964,6 @@ class TestDeriveLanguages:
 
     def test_single_audio_returns_single(self) -> None:
         assert derive_languages(False, ["Japanese", "English"], ["Japanese"]) == ["Japanese"]
-
-
-class TestResolveWaitMode:
-    """`resolve_wait_mode` prefers the CLI override over the config value."""
-
-    def test_cli_wins_over_config(self) -> None:
-        assert resolve_wait_mode(ImportWaitMode.OFF, ImportWaitMode.HYBRID) is ImportWaitMode.OFF
-
-    def test_config_used_when_no_cli(self) -> None:
-        assert resolve_wait_mode(None, ImportWaitMode.BLOCKING) is ImportWaitMode.BLOCKING
 
 
 class TestPendingImportRoundTrip:

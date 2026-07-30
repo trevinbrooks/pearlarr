@@ -411,17 +411,15 @@ class SonarrEpisodes:
     ) -> ArrReleases:
         """Fold the episodes' existing files into an `ArrReleases`, reporting missing episodes."""
 
-        missing_eps = sum(ep.episode_file_id == 0 for ep in ep_list)
-        if missing_eps > 0:
+        missing = _coverage.episodes_from_ep_list(ep_list, missing_only=True)
+        if missing:
             # Show which episodes are missing as ranges (e.g. "S04 E12"), not just
             # a count, so it's clear what's absent. Fall back to the count if the
             # episodes can't be condensed.
-            missing_coverage = _coverage.coverage_string(
-                _coverage.episodes_from_ep_list(ep_list, missing_only=True),
-            )
+            missing_coverage = _coverage.coverage_string(missing)
             self._reporter.detail(
                 "missing",
-                StyledValue(missing_coverage or f"{missing_eps}/{len(ep_list)}", Accent.CAUTION),
+                StyledValue(missing_coverage or f"{len(missing)}/{len(ep_list)}", Accent.CAUTION),
             )
 
         # keep_untagged=False: untagged episode files ride the episode list

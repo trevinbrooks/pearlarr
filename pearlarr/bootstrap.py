@@ -34,10 +34,10 @@ from .output import (
     FileLogSink,
     RunFinished,
     Severity,
-    current_hub,
     emit_to_hub,
     hub_error,
     hub_file_only,
+    hub_file_records,
     hub_note,
     hub_warn,
 )
@@ -120,8 +120,8 @@ def _rewrite_old_config(config: str, loaded: AppConfig, *, dry_run: bool) -> Non
     if dry_run:
         hub_note("Config uses an older schema - left unchanged on a dry run")
         return
-    detail = "; ".join(outcome.notes) if outcome.notes else "no functional changes"
-    hub_file_only(f"Config schema v{outcome.from_version} -> v{CONFIG_VERSION}: {detail}")
+    notes = "; ".join(outcome.notes)
+    hub_file_only(f"Config schema v{outcome.from_version} -> v{CONFIG_VERSION}: {notes or 'no functional changes'}")
     try:
         upgraded = upgrade_config_file(config, expected_checksum=loaded.checksum())
     except Exception as e:
@@ -134,10 +134,8 @@ def _rewrite_old_config(config: str, loaded: AppConfig, *, dry_run: bool) -> Non
     # backup_path is None only when the file turned current between the load and
     # this rewrite (nothing was written) - then there is nothing to announce.
     if upgraded.backup_path is not None:
-        # The detail line above rides at INFO: only promise it when the file
-        # log's level admits INFO (the log-level flag applies to the file too).
-        in_log = outcome.notes and current_hub().level <= int(Severity.INFO)
-        hint = " (details in the log)" if in_log else ""
+        # The detail line above rides at INFO: only promise it when the file log admits it.
+        hint = " (details in the log)" if notes and hub_file_records(Severity.INFO) else ""
         hub_note(f"Config migrated to the current schema - previous file saved as {upgraded.backup_path}{hint}")
 
 

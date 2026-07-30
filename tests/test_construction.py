@@ -21,7 +21,7 @@ import respx
 
 from pearlarr import run_services
 from pearlarr.boot_flow import BootFlow
-from pearlarr.config import Arr
+from pearlarr.config import AppConfig, Arr
 from pearlarr.mappings import MappingResolver
 from pearlarr.run_loop import RunLoop
 from pearlarr.run_services import RunDeps, RunServices
@@ -120,6 +120,20 @@ def test_radarr_sync_init_builds_without_network_via_client_seam() -> None:
     assert strat.anibridge is deps.mappings.anibridge
 
 
+def _build_deps(app_config: AppConfig, tmp_path: Path) -> RunDeps:
+    """`RunDeps.build` over the throwaway wiring every construction test shares."""
+
+    return RunDeps.build(
+        Arr.SONARR,
+        cache=str(tmp_path / "cache.db"),
+        logger=logging.getLogger("pearlarr.test"),
+        mappings=make_bare_instance(MappingResolver),
+        app_config=app_config,
+        web=httpx.Client(),
+        boot=BootFlow(),
+    )
+
+
 def test_rundeps_build_pins_verify_ssl_to_the_arrs_knob(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
     """`RunDeps.build` constructs the run's httpx client with THIS arr's `verify_ssl`.
 
@@ -134,15 +148,7 @@ def test_rundeps_build_pins_verify_ssl_to_the_arrs_knob(monkeypatch: pytest.Monk
         return real_factory(verify=verify)
 
     monkeypatch.setattr(run_services, "make_httpx_client", _record)
-    deps = RunDeps.build(
-        Arr.SONARR,
-        cache=str(tmp_path / "cache.db"),
-        logger=logging.getLogger("pearlarr.test"),
-        mappings=make_bare_instance(MappingResolver),
-        app_config=make_config(verify_ssl=False),
-        web=httpx.Client(),
-        boot=BootFlow(),
-    )
+    deps = _build_deps(make_config(verify_ssl=False), tmp_path)
     deps.close()
 
     assert seen == [False]
@@ -180,15 +186,7 @@ def test_rundeps_build_wires_lazy_categories_fetched_at_first_use(
     )
     config = make_config(url="http://sonarr", api_key="key", host="http://qbit:8080", username="u", password="p")
 
-    deps = RunDeps.build(
-        Arr.SONARR,
-        cache=str(tmp_path / "cache.db"),
-        logger=logging.getLogger("pearlarr.test"),
-        mappings=make_bare_instance(MappingResolver),
-        app_config=config,
-        web=httpx.Client(),
-        boot=BootFlow(),
-    )
+    deps = _build_deps(config, tmp_path)
     try:
         # Boot did no category I/O: an arr restarting under the boot must not
         # cost the run its post-import moves (the use-time fetch retries).
@@ -209,15 +207,7 @@ def test_rundeps_build_skips_the_category_fetch_without_qbit(tmp_path: Path) -> 
     route = respx.get("http://sonarr/api/v3/downloadclient").respond(json=[])
     config = make_config(url="http://sonarr", api_key="key")
 
-    deps = RunDeps.build(
-        Arr.SONARR,
-        cache=str(tmp_path / "cache.db"),
-        logger=logging.getLogger("pearlarr.test"),
-        mappings=make_bare_instance(MappingResolver),
-        app_config=config,
-        web=httpx.Client(),
-        boot=BootFlow(),
-    )
+    deps = _build_deps(config, tmp_path)
     deps.close()
 
     # No transport was bound, so even USING the resolver stays fetchless.

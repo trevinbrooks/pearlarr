@@ -22,7 +22,7 @@ from pearlarr.config import Arr, ArrSettings
 from pearlarr.output import Diagnostic, Severity
 from pearlarr.output.recording import RecordingHub
 
-from .fakes import bind_arr_http
+from .fakes import bind_arr_http, diagnostic_messages
 
 _URL = "http://arr.test"
 
@@ -206,8 +206,7 @@ def test_fetch_failure_fails_open_with_one_warning_and_retries_at_next_use() -> 
     resolver, recording = _resolver()
 
     assert resolver.grab() is None
-    warnings = [d for d in recording.of_type(Diagnostic) if d.severity is Severity.WARNING]
-    assert [w.message for w in warnings] == [
+    assert diagnostic_messages(recording, Severity.WARNING) == [
         "Could not fetch the Sonarr download clients (status code 500) - blank categories stay blank",
     ]
 
