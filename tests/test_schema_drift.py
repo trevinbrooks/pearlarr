@@ -25,12 +25,16 @@ from pydantic.fields import FieldInfo
 from pearlarr.json_narrow import is_json_list, is_json_obj
 from pearlarr.seadex_types import (
     CommandResource,
+    DownloadClientField,
+    DownloadClientRecord,
+    HistoryPage,
     HistoryRecord,
     ImportRejection,
     Json,
     Language,
     ManualImportCandidate,
     ManualImportFile,
+    MatchedEpisode,
     MovieFile,
     ParsedFileInfo,
     Quality,
@@ -39,6 +43,7 @@ from pearlarr.seadex_types import (
     QualitySource,
     QueueRecord,
     RadarrMovie,
+    RemotePathMapping,
     Revision,
     SonarrEpisode,
     SonarrEpisodeFile,
@@ -149,10 +154,13 @@ ROSTER: Final = (
     # `offline` is set only by the local SxxExx regex fallback (never from
     # the wire). It marks a parse the positional leg must treat as unknown.
     Spec(ParsedFileInfo, "ParseResource", _SONARR, exempt=frozenset({"offline"})),
+    Spec(MatchedEpisode, "EpisodeResource", _SONARR),
     Spec(ManualImportCandidate, "ManualImportResource", _SONARR),
     Spec(ManualImportFile, "ManualImportReprocessResource", _SONARR),
     Spec(QualityDefinition, "QualityDefinitionResource", _SONARR),
     Spec(QueueRecord, "QueueResource", _SONARR),
+    Spec(HistoryPage, "HistoryResourcePagingResource", _SONARR),
+    Spec(RemotePathMapping, "RemotePathMappingResource", _SONARR),
     # `files` reads AliasPath(body -> files): a runtime echo of the polymorphic
     # command body, which the generic Command component doesn't model.
     Spec(CommandResource, "CommandResource", _SONARR, exempt=frozenset({"files"})),
@@ -166,6 +174,8 @@ ROSTER: Final = (
     Spec(QualityModel, "QualityModel", _BOTH),
     Spec(Language, "Language", _BOTH),
     Spec(ImportRejection, "ImportRejectionResource", _BOTH),
+    Spec(DownloadClientRecord, "DownloadClientResource", _BOTH),
+    Spec(DownloadClientField, "Field", _BOTH),
 )
 
 
