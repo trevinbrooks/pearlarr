@@ -18,7 +18,7 @@ import respx
 
 from pearlarr.arr_http import ArrHttp
 from pearlarr.manual_import import ImportReadiness
-from pearlarr.radarr_client import RadarrClient, make_radarr_client
+from pearlarr.radarr_client import RadarrClient
 from pearlarr.seadex_types import HistoryRecord, ImportRejection, QueueRecord
 from pearlarr.sonarr_client import SonarrClient
 from pearlarr.sonarr_import import ImportExecutor
@@ -48,12 +48,16 @@ def _make_sonarr_client() -> SonarrClient:
 
 
 def _make_radarr() -> RadarrClient:
-    """A real `RadarrClient` over respx."""
+    """A real `RadarrClient` over respx (backoffs stubbed out)."""
 
-    return make_radarr_client(
-        url="http://radarr.test",
-        api_key=_KEY,
-        http=httpx.Client(),
+    return RadarrClient(
+        http=ArrHttp.bind(
+            client=httpx.Client(),
+            url="http://radarr.test",
+            api_key=_KEY,
+            label="Radarr",
+            sleep=lambda _s: None,
+        ),
     )
 
 

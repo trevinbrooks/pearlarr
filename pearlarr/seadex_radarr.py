@@ -13,8 +13,8 @@ from .manual_import import AttemptKind, ImportProbe, ImportProgress, ImportReadi
 from .mappings import ExternalIds, MappingEntry
 from .output import hub_warn
 from .protocols import ArrSync
-from .radarr_client import AbstractRadarrClient, collect_anime_movies, make_radarr_client
-from .run_services import RunDeps, RunServices
+from .radarr_client import AbstractRadarrClient, RadarrClient, collect_anime_movies
+from .run_services import RunDeps, RunServices, bind_arr_http
 from .seadex_types import ArrReleases, HistoryRecord, ProgressSink, RadarrItem, flagged_urls
 
 # Clock-skew cushion subtracted from the oldest pending record's grab time before
@@ -79,12 +79,9 @@ class RadarrSync(ArrSync[RadarrItem]):
         if radarr_client is not None:
             self.radarr: AbstractRadarrClient = radarr_client
         else:
-            radarr_url, radarr_api_key = self._config.require_connection(Arr.RADARR)
-            self.radarr = make_radarr_client(
-                url=radarr_url,
-                api_key=radarr_api_key,
-                http=deps.http,
-            )
+            # A None deps.arr_http means the keys are missing - the fallback
+            # bind raises require_connection's error here, the same point as before.
+            self.radarr = RadarrClient(http=deps.arr_http or bind_arr_http(Arr.RADARR, self._config, deps.http))
 
     # --- ArrSync hooks ------------------------------------------------------
 

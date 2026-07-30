@@ -2,12 +2,13 @@
 
 import time
 from collections.abc import Sequence
+from dataclasses import replace
 from typing import override
 
 from . import coverage as _coverage
-from .arr_http import ArrHttp, make_httpx_client
+from .arr_http import make_httpx_client
 from .cache import CacheRecord, now_stamp
-from .config import Arr, secret_value
+from .config import Arr
 from .grab_pipeline import GrabRequest
 from .log import EntryState, pluralize
 from .manual_import import (
@@ -21,12 +22,8 @@ from .mappings import ExternalIds, MappingEntry, MappingSource
 from .output import hub_warn
 from .planner import get_episode_keys
 from .protocols import ArrSync
-from .radarr_client import (
-    AbstractRadarrClient,
-    collect_anime_movies,
-    make_radarr_client,
-)
-from .run_services import RunDeps, RunServices
+from .radarr_client import AbstractRadarrClient, RadarrClient, collect_anime_movies
+from .run_services import RunDeps, RunServices, bind_arr_http
 from .seadex_types import (
     HistoryRecord,
     ProgressSink,
@@ -143,16 +140,12 @@ class SonarrSync(ArrSync[SonarrItem]):
         if sonarr_client is not None:
             self.sonarr: AbstractSonarrClient = sonarr_client
         else:
-            sonarr_url, sonarr_api_key = self._config.require_connection(Arr.SONARR)
+            # A None deps.arr_http means the keys are missing - the fallback
+            # bind raises require_connection's error here, the same point as before.
+            base = deps.arr_http or bind_arr_http(Arr.SONARR, self._config, deps.http)
             self.sonarr = SonarrClient(
-                http=ArrHttp.bind(
-                    client=deps.http,
-                    url=sonarr_url,
-                    api_key=sonarr_api_key,
-                    label="Sonarr",
-                    # Streak re-warns pace with the wait view's digest cadence.
-                    heartbeat_s=self._config.imports.digest_interval,
-                ),
+                # Streak re-warns pace with the wait view's digest cadence.
+                http=replace(base, heartbeat_s=self._config.imports.digest_interval),
                 logger=self.logger,
             )
 
@@ -195,27 +188,21 @@ class SonarrSync(ArrSync[SonarrItem]):
         # load, and a qBittorrent login, all unused here).
         self.all_radarr_movies: list[RadarrItem] | None = None
         if self.ignore_movies_in_radarr:
-            # None-tolerant cross-check read: the Radarr keys are optional here
-            # (this is a Sonarr run), so read them directly, not require_connection.
-            radarr_url = self._config.radarr.url
-            radarr_api_key = secret_value(self._config.radarr.api_key)
             if radarr_client is not None:
                 self.all_radarr_movies = collect_anime_movies(
                     radarr_client,
                     self._mappings,
                     self.anibridge,
                 )
-            elif radarr_url is not None and radarr_api_key is not None:
+            elif self._config.is_configured(Arr.RADARR):
+                # The Radarr keys are optional here (a Sonarr run) - the gate
+                # tolerates their absence instead of require_connection raising.
                 # The run's shared client is pinned to SONARR's verify_ssl. This
                 # one eager fetch talks to Radarr, so honor Radarr's own knob
                 # with a scoped client (closed as soon as the list is read).
                 with make_httpx_client(verify=self._config.radarr.verify_ssl) as radarr_http:
                     self.all_radarr_movies = collect_anime_movies(
-                        make_radarr_client(
-                            url=radarr_url,
-                            api_key=radarr_api_key,
-                            http=radarr_http,
-                        ),
+                        RadarrClient(http=bind_arr_http(Arr.RADARR, self._config, radarr_http)),
                         self._mappings,
                         self.anibridge,
                     )

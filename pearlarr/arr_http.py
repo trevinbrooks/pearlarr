@@ -27,8 +27,8 @@ from .seadex_types import ARR_REQUEST_TIMEOUT_S, DownloadClientRecord, HistoryRe
 RETRYABLE_STATUS = frozenset({429, 500, 502, 503, 504})
 GET_RETRIES = 3
 BACKOFF_BASE_S = 0.5
-# Streak re-warn cadence default. The composition root binds the configured
-# `imports.digest_interval` (same default) at `bind`.
+# Streak re-warn cadence default. The Sonarr client swaps in the configured
+# `imports.digest_interval` (same default) via `replace`; everything else keeps this.
 HEARTBEAT_INTERVAL_S = 300.0
 
 # Coalesced-repeat breadcrumbs ride the stdlib channel (first-party child of
@@ -135,8 +135,8 @@ class ArrHttp:
     retries=0)` - its monitor loop IS the retry mechanism, so in-call backoff
     would only stretch each poll."""
     heartbeat_s: float = HEARTBEAT_INTERVAL_S
-    """Seconds between "still failing" re-warns while a streak runs (bound from
-    `imports.digest_interval` at the composition root - ArrHttp knows no config)."""
+    """Seconds between "still failing" re-warns while a streak runs (the Sonarr
+    client swaps in `imports.digest_interval` via `replace` - ArrHttp knows no config)."""
     clock: Callable[[], float] = time.monotonic  # injectable streak clock (faked in tests)
     streaks: FailureStreaks = field(default_factory=FailureStreaks, compare=False)
     """The failure-streak ledger. MUST stay `init=True`: `dataclasses.replace`
@@ -165,13 +165,12 @@ class ArrHttp:
         api_key: str,
         label: str,
         sleep: Callable[[float], None] = time.sleep,
-        heartbeat_s: float = HEARTBEAT_INTERVAL_S,
     ) -> "ArrHttp":
         """Bind the shared client to one arr's url + key.
 
         The key becomes the `X-Api-Key` header (never a query param, so it
-        can't leak through URLs in logs/exceptions). `heartbeat_s` is the
-        streak re-warn cadence, wired from config by the composition root.
+        can't leak through URLs in logs/exceptions). A consumer wanting a
+        non-default cadence or retry budget derives it via `replace`.
         """
 
         return cls(
@@ -180,7 +179,6 @@ class ArrHttp:
             label=label,
             headers={"X-Api-Key": api_key},
             sleep=sleep,
-            heartbeat_s=heartbeat_s,
         )
 
     def _get_with_retries(

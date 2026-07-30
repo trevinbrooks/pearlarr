@@ -3,33 +3,11 @@
 from abc import ABC, abstractmethod
 from typing import override
 
-import httpx
-
 from .anibridge import AniBridge
 from .anime_filter import IdField, build_id_filters, collect_anime_items
 from .arr_http import ArrHttp
 from .mappings import AnimeIdSets
 from .seadex_types import HistoryRecord, MovieFile, RadarrItem, RadarrMovie, validate_each
-
-
-def make_radarr_client(
-    *,
-    url: str,
-    api_key: str,
-    http: httpx.Client,
-) -> "RadarrClient":
-    """Build a `RadarrClient` from the shared client and a url/key.
-
-    Hoisted so the two Arr strategies share one construction site (and the one
-    `label="Radarr"` bind). The url/key lookup policy stays with each caller
-    (Radarr requires them, Sonarr reads them optionally for its cross-check), so
-    they're passed in already resolved rather than re-derived here. `http` is
-    the run's shared client for the raw endpoints.
-    """
-
-    return RadarrClient(
-        http=ArrHttp.bind(client=http, url=url, api_key=api_key, label="Radarr"),
-    )
 
 
 class AbstractRadarrClient(ABC):
@@ -69,7 +47,7 @@ class RadarrClient(AbstractRadarrClient):
 
         Args:
             http: The transport already bound to Radarr's url + key
-                (`make_radarr_client` does the `label="Radarr"` bind).
+                (`run_services.bind_arr_http` does the `label="Radarr"` bind).
         """
 
         self._http = http
