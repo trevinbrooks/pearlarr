@@ -8,6 +8,7 @@ the in-memory -> file promotion for a missing cache.
 """
 
 import contextlib
+import json
 import sqlite3
 from datetime import datetime
 from pathlib import Path
@@ -112,6 +113,34 @@ CREATE TABLE pending_imports (
 """
 
 
+# The v2 shape (composite PK, guards still inline in each blob), as shipped in
+# 1.1.0. Only the table the v2 -> v3 step reads/strips is declared - `_ensure_schema`
+# creates the rest fresh, including the `guard_facts` table the step backfills.
+_V2_PENDING_SCHEMA = """
+CREATE TABLE kv (key TEXT PRIMARY KEY, value TEXT);
+CREATE TABLE pending_imports (
+    arr      TEXT NOT NULL,
+    infohash TEXT NOT NULL,
+    al_id    INTEGER NOT NULL DEFAULT 0,
+    record   BLOB NOT NULL,
+    PRIMARY KEY (arr, infohash, al_id));
+"""
+
+
+def _seed_v2_db(db: Path, rows: list[tuple[str, str, int, str]]) -> None:
+    """A v2-stamped db whose `pending_imports` holds the given (arr, infohash, al_id, json) rows."""
+
+    raw = sqlite3.connect(str(db))
+    raw.executescript(_V2_PENDING_SCHEMA)
+    raw.executemany(
+        "INSERT INTO pending_imports (arr, infohash, al_id, record) VALUES (?, ?, ?, jsonb(?))",
+        rows,
+    )
+    raw.execute("PRAGMA user_version=2")
+    raw.commit()
+    raw.close()
+
+
 def _user_version(db: Path) -> int:
     raw = sqlite3.connect(str(db))
     try:
@@ -156,8 +185,7 @@ class TestSchemaVersionGate:
         # Each step announces itself as an INFO hub Diagnostic, one per step walked.
         steps = recording.of_type(Diagnostic)
         assert [s.message for s in steps] == [
-            "Upgraded cache database schema v0 -> v1",
-            "Upgraded cache database schema v1 -> v2",
+            f"Upgraded cache database schema v{n} -> v{n + 1}" for n in range(SCHEMA_VERSION)
         ]
         assert all(s.severity is Severity.INFO and s.origin == LOG_NAME for s in steps)
 
@@ -211,6 +239,87 @@ class TestSchemaVersionGate:
         assert set(store.get_pending(Arr.SONARR)) == {PendingKey("legacy", 44), PendingKey("tagged", 9)}
         store.close()
         assert _user_version(db) == SCHEMA_VERSION
+
+    def test_v2_guard_backfill_latest_added_at_wins(self, tmp_path: Path) -> None:
+        # The v2 -> v3 step: two records of one entry carry divergent frozen guard
+        # copies - the exact divergence the guard_facts row kills. The newest
+        # blob's copy (by added_at) becomes the entry's row, and every blob is
+        # stripped of its guards key. (A guard-less record NEWER than a
+        # guard-carrying sibling is chronologically unreachable in released dbs.)
+        db = tmp_path / "cache.db"
+        old = {
+            "infohash": "h1",
+            "al_id": 9,
+            "added_at": "2026-07-01 00:00:00",
+            "guards": {"entry_groups": ["Old"]},
+        }
+        new = {
+            "infohash": "h2",
+            "al_id": 9,
+            "added_at": "2026-07-02 00:00:00",
+            "guards": {"entry_groups": ["New"], "stale_groups": ["Old"], "owned_episodes": [[101, 700]]},
+        }
+        _seed_v2_db(db, [("sonarr", "h1", 9, json.dumps(old)), ("sonarr", "h2", 9, json.dumps(new))])
+
+        store = CacheStore.load(str(db), config_checksum=CHECKSUM)
+        assert store.get_guards(Arr.SONARR) == {
+            9: GuardFacts(entry_groups=("New",), stale_groups=("Old",), owned_episodes=(OwnedEpisode(101, 700),)),
+        }
+        # The divergent per-record copies are gone for good.
+        assert all("guards" not in rec for rec in store.get_pending(Arr.SONARR).values())
+        store.close()
+        assert _user_version(db) == SCHEMA_VERSION
+
+    def test_v2_guard_backfill_skips_ineligible_records(self, tmp_path: Path) -> None:
+        # No row may come from: the legacy al_id=0 sentinel, a radarr record, a
+        # guards-less blob, or a JSON-null guards value (a null row would poison
+        # from_json at every read). The stray keys are still stripped everywhere.
+        db = tmp_path / "cache.db"
+        guards = {"entry_groups": ["G"]}
+        stamp = "2026-07-01 00:00:00"
+        _seed_v2_db(
+            db,
+            [
+                ("sonarr", "s0", 0, json.dumps({"al_id": 0, "added_at": stamp, "guards": guards})),
+                ("radarr", "r1", 3, json.dumps({"al_id": 3, "added_at": stamp, "guards": guards})),
+                ("sonarr", "g1", 4, json.dumps({"al_id": 4, "added_at": stamp})),
+                ("sonarr", "n1", 5, json.dumps({"al_id": 5, "added_at": stamp, "guards": None})),
+            ],
+        )
+
+        store = CacheStore.load(str(db), config_checksum=CHECKSUM)
+        assert store.get_guards(Arr.SONARR) == {}
+        assert store.get_guards(Arr.RADARR) == {}
+        stripped = [*store.get_pending(Arr.SONARR).values(), *store.get_pending(Arr.RADARR).values()]
+        assert len(stripped) == 4
+        assert all("guards" not in rec for rec in stripped)
+        store.close()
+
+    def test_v2_migration_leaves_existing_guard_rows_alone(self, tmp_path: Path) -> None:
+        # The step's idempotence guard: a v2-stamped db already carrying guard
+        # rows is left exactly as found (no backfill overwrites them).
+        db = tmp_path / "cache.db"
+        raw = sqlite3.connect(str(db))
+        raw.executescript(_V2_PENDING_SCHEMA)
+        raw.execute(
+            "CREATE TABLE guard_facts (arr TEXT NOT NULL, al_id INTEGER NOT NULL, "
+            "record BLOB NOT NULL, PRIMARY KEY (arr, al_id))",
+        )
+        raw.execute(
+            "INSERT INTO guard_facts (arr, al_id, record) VALUES ('sonarr', 9, jsonb(?))",
+            (json.dumps({"entry_groups": ["Kept"]}),),
+        )
+        raw.execute(
+            "INSERT INTO pending_imports (arr, infohash, al_id, record) VALUES ('sonarr', 'h', 9, jsonb(?))",
+            (json.dumps({"al_id": 9, "added_at": "2026-07-05 00:00:00", "guards": {"entry_groups": ["Newer"]}}),),
+        )
+        raw.execute("PRAGMA user_version=2")
+        raw.commit()
+        raw.close()
+
+        store = CacheStore.load(str(db), config_checksum=CHECKSUM)
+        assert store.get_guards(Arr.SONARR) == {9: GuardFacts(entry_groups=("Kept",))}
+        store.close()
 
     def test_newer_schema_is_refused_not_quarantined(self, tmp_path: Path) -> None:
         db = tmp_path / "cache.db"

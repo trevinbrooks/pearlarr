@@ -13,6 +13,7 @@ pure, no network or disk. `SonarrEpisode` is built directly via
 """
 
 from collections.abc import MutableMapping
+from dataclasses import replace
 from typing import cast
 
 import pytest
@@ -990,7 +991,19 @@ class TestPendingImportRoundTrip:
             excluded_files=["other-slice.mkv"],
             guards=GuardFacts(entry_groups=("Era-Raws", "OtherPick"), owned_episodes=(OwnedEpisode(11, 700),)),
         )
-        assert PendingImport.from_json(pending.to_json()) == pending
+        raw = pending.to_json()
+        # Guard evidence is entry-level (its own guard_facts row): the per-torrent
+        # blob never carries a copy, so a bare rehydrate comes back guard-empty.
+        assert "guards" not in raw
+        assert PendingImport.from_json(raw) == replace(pending, guards=GuardFacts())
+        # The caller-supplied row (the read seams' join) hydrates it back whole.
+        assert PendingImport.from_json(raw, guards=pending.guards) == pending
+
+    def test_from_json_ignores_a_legacy_blob_guards_key(self) -> None:
+        # A pre-v3 blob carries a frozen grab-time copy - the divergence the
+        # guard_facts row exists to kill - so it must never resurrect.
+        raw = {"infohash": "h", "series_id": 1, "guards": {"entry_groups": ["Stale"]}}
+        assert PendingImport.from_json(raw).guards == GuardFacts()
 
     def test_from_json_tolerates_missing_keys(self) -> None:
         rebuilt = PendingImport.from_json({"infohash": "h", "series_id": 1})

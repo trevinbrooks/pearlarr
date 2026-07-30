@@ -69,6 +69,7 @@ from .builders import (
     make_bare_instance,
     make_config,
     make_entry_record,
+    make_import_wait_manager,
     make_logger,
     make_radarr_sync,
     make_sonarr_episodes,
@@ -594,6 +595,32 @@ class TestProcessAlIdThreadsServices:
         assert run.check_al_id_in_cache_calls == []  # the stale run never trusts the cross-arr cache
 
 
+class _QbitState(NamedTuple):
+    """The two `state_enum` booleans `poll_torrent` reads."""
+
+    is_complete: bool = True
+    is_errored: bool = False
+
+
+class _CompletedRow(NamedTuple):
+    """One complete qBittorrent info row (the fields `poll_torrent` reads)."""
+
+    content_path: str
+    state_enum: _QbitState = _QbitState()
+    progress: float = 1.0
+
+
+class _CompletedQbit:
+    """A qBittorrent stub whose heavy poll always reads one complete torrent."""
+
+    def __init__(self, content_path: str) -> None:
+        self._row = _CompletedRow(content_path)
+
+    def torrents_info(self, *, torrent_hashes: str | list[str]) -> list[_CompletedRow]:
+        del torrent_hashes
+        return [self._row]
+
+
 def _make_sonarr_for_import(
     *,
     candidates: list[ManualImportCandidate] | None,
@@ -607,6 +634,7 @@ def _make_sonarr_for_import(
     command_status_script: list[CommandResource] | None = None,
     cmd_id: int | None = 42,
     config_overrides: dict[str, list[str] | str] | None = None,
+    cache_store: FakeCacheStore | None = None,
 ) -> tuple[SonarrSync, FakeSonarrClient]:
     """A bare `SonarrSync` plus its scripted `self.sonarr` `FakeSonarrClient`.
 
@@ -638,7 +666,7 @@ def _make_sonarr_for_import(
     strat = make_sonarr_sync(
         sonarr=sonarr,
         config=make_config(**overrides),
-        cache_store=FakeCacheStore(),
+        cache_store=cache_store or FakeCacheStore(),
     )
     return strat, sonarr
 
@@ -1006,6 +1034,41 @@ class TestImportCompletedQueueState:
         assert probe.readiness is ImportReadiness.IMPORTED
         assert probe.files_present is True
         assert sonarr.candidate_calls == []
+
+    def test_store_persisted_guard_row_protects_through_the_snapshot_seam(self) -> None:
+        # THE fix path end to end: the persisted blob carries NO guards - the
+        # entry's guard_facts row alone must feed the rehydrated record's
+        # protection decision when the carried-over snapshot drives the import.
+        pending = pending_import(
+            infohash="abc123",
+            release_group="SubGroup",
+            file_episode_map={"Show - 01 [1080p].mkv": [101]},
+            episode_ids=[101],
+            guards=GuardFacts(entry_groups=("SubGroup", "OtherPick")),
+        )
+        store = FakeCacheStore()
+        strat, sonarr = _make_sonarr_for_import(
+            candidates=[manual_candidate("/d/Show - 01 [1080p].mkv")],
+            episodes=[sonarr_ep(1, 1, ep_id=101, release_group="OtherPick")],
+            cache_store=store,
+        )
+        store.put_pending(Arr.SONARR, pending.key, pending.to_json())
+        store.put_guards(Arr.SONARR, pending.al_id, pending.guards)
+        mgr = make_import_wait_manager(
+            qbit=_CompletedQbit("/d"),
+            cache_store=store,
+            _active_strategy=strat,
+        )
+
+        mgr.snapshot_pending_for_series(pending.series_id)
+
+        # The row's facts reached the decision: the on-disk OtherPick file reads
+        # RECOMMENDED - verified done, never manually imported over - and the
+        # finished record leaves the store. The imported tally pins the IMPORTED
+        # arm (a MISSING drop would also empty the store).
+        assert sonarr.candidate_calls == []
+        assert store.get_pending(Arr.SONARR) == {}
+        assert mgr._ctx.stats.imported == 1
 
     def test_import_blocked_steps_in_with_our_mapping(self) -> None:
         # Sonarr can't auto-import (importBlocked) -> our authoritative manual

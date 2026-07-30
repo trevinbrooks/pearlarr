@@ -19,6 +19,7 @@ Pearlarr is a fork of [bbtufty/seadexarr](https://github.com/bbtufty/seadexarr).
 
 ### Fixed
 
+- Overwrite-protection evidence is now kept once per entry instead of copied into each grabbed torrent's record, so torrents of one entry seeded across different runs can no longer disagree at import time about which on-disk files to protect.
 - A successful import no longer warns `Could not remove the finished download from Sonarr's queue (status code 500)` when Sonarr never matched the download's title to a series. Dismissing such a queue entry always fails inside Sonarr and records nothing, so Pearlarr now leaves it alone; the entry clears on its own once the imported torrent leaves Sonarr's watched category.
 
 ## [1.1.0] - 2026-07-29

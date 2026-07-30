@@ -22,7 +22,7 @@ from pearlarr import notify
 from pearlarr.config import Arr
 from pearlarr.discord import DiscordEmbed
 from pearlarr.grab_pipeline import GrabPipeline, GrabRequest
-from pearlarr.manual_import import ImportWaitMode, PendingImport, PendingKey
+from pearlarr.manual_import import GuardFacts, ImportWaitMode, PendingImport, PendingKey
 from pearlarr.notify import Notifier
 from pearlarr.output import GrabFailed, Severity, install_hub, severity_of
 from pearlarr.output.recording import RecordingHub
@@ -81,6 +81,12 @@ def _pending(pipeline: GrabPipeline) -> Mapping[PendingKey, object]:
     """The pipeline's durable per-arr pending store (what the engine reads back)."""
 
     return pipeline.cache_store.get_pending(Arr.SONARR)
+
+
+def _guards(pipeline: GrabPipeline) -> Mapping[int, GuardFacts]:
+    """The pipeline's durable per-entry guard rows (what the read seams hydrate from)."""
+
+    return pipeline.cache_store.get_guards(Arr.SONARR)
 
 
 class TestGrabReturnsPureBool:
@@ -234,7 +240,8 @@ class TestAddOneUrlRegistersPending:
         # as a this-run grab.
         torrents = FakeTorrents({"h1": (AddOutcome.ALREADY_ADDED, "Show-NAN0")})
         pipeline = _pipeline(torrents=torrents)
-        seeds = {"h1": pending_import(infohash="h1", series_id=7)}
+        facts = GuardFacts(entry_groups=("NAN0",))
+        seeds = {"h1": pending_import(infohash="h1", series_id=7, guards=facts)}
 
         n_added, results = pipeline.add_torrent(
             one_release_dict(srg="NAN0", infohash="h1"),
@@ -242,6 +249,9 @@ class TestAddOneUrlRegistersPending:
         )
 
         assert {k.infohash for k in _pending(pipeline)} == {"h1"}
+        # A re-registration refreshes the entry's guard row too - that IS the fix
+        # (evidence follows the newest plan, never a frozen per-record copy).
+        assert _guards(pipeline) == {seeds["h1"].al_id: facts}
         assert [p.infohash for p in pipeline._ctx.pending_imports] == ["h1"]
         assert n_added == 0
         assert pipeline._ctx.torrents_added == 0
@@ -251,7 +261,8 @@ class TestAddOneUrlRegistersPending:
     def test_added_registers_and_counts(self) -> None:
         torrents = FakeTorrents({"h1": (AddOutcome.ADDED, "Show-NAN0")})
         pipeline = _pipeline(torrents=torrents)
-        seeds = {"h1": pending_import(infohash="h1")}
+        facts = GuardFacts(entry_groups=("NAN0",), stale_groups=("OldPick",))
+        seeds = {"h1": pending_import(infohash="h1", guards=facts)}
 
         n_added, _ = pipeline.add_torrent(
             one_release_dict(srg="NAN0", infohash="h1"),
@@ -259,6 +270,7 @@ class TestAddOneUrlRegistersPending:
         )
 
         assert {k.infohash for k in _pending(pipeline)} == {"h1"}
+        assert _guards(pipeline) == {seeds["h1"].al_id: facts}
         assert [p.infohash for p in pipeline._ctx.pending_imports] == ["h1"]
         assert n_added == 1
         assert pipeline._ctx.torrents_added == 1
@@ -326,6 +338,7 @@ class TestAddOneUrlRegistersPending:
         )
 
         assert _pending(pipeline) == {}
+        assert _guards(pipeline) == {}
         assert pipeline._ctx.pending_imports == []
 
     def test_preview_does_not_register_but_returns_outcome(self) -> None:
@@ -340,8 +353,25 @@ class TestAddOneUrlRegistersPending:
         )
 
         assert _pending(pipeline) == {}
+        assert _guards(pipeline) == {}
         assert pipeline._ctx.pending_imports == []
         assert [r.outcome for r in results] == [AddOutcome.ALREADY_ADDED]
+
+    def test_radarr_registration_writes_no_guard_row(self) -> None:
+        # Guard evidence is Sonarr-only enforcement: a Radarr ctx driven through
+        # the same seam persists its pending record but never a guard row.
+        torrents = FakeTorrents({"h1": (AddOutcome.ADDED, "Movie")})
+        pipeline = make_grab_pipeline(
+            _torrents=torrents,
+            _ctx=RunContext(arr=Arr.RADARR, import_wait_mode=ImportWaitMode.BLOCKING),
+        )
+        seeds = {"h1": pending_import(infohash="h1")}
+
+        pipeline.add_torrent(one_release_dict(srg="NAN0", infohash="h1"), pending_seeds=seeds)
+
+        assert {k.infohash for k in pipeline.cache_store.get_pending(Arr.RADARR)} == {"h1"}
+        assert pipeline.cache_store.get_guards(Arr.RADARR) == {}
+        assert pipeline.cache_store.get_guards(Arr.SONARR) == {}
 
 
 def _nyaa_release(*, url: str, infohash: str) -> SeadexUrlItem:
