@@ -185,11 +185,8 @@ class RunDeps:
             client=AniListClient(client=web),
         )
 
-        # The run's effective qBittorrent categories: an explicit config value
-        # wins, a blank string opts out, an omitted key adopts the matching
-        # category of this arr's own qBittorrent download client - fetched
-        # lazily at first use, where the arr is provably up. Bound only when a
-        # real qbit exists to apply a category (a preview run applies none).
+        # `category_http` is bound only when a real qbit and this arr's
+        # connection keys both exist (a preview run applies no category).
         category_http: ArrHttp | None = None
         url = arr_config.url
         api_key = secret_value(arr_config.api_key)

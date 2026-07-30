@@ -24,9 +24,8 @@ import qbittorrentapi
 from seadex import Tracker
 
 import pearlarr.torrents as torrents
-from pearlarr.arr_categories import ArrCategoryResolver
 from pearlarr.boot_flow import BootFlow
-from pearlarr.config import Arr, ArrSettings
+from pearlarr.config import Arr
 from pearlarr.mappings import MappingResolver
 from pearlarr.run_services import QbitConnectionError, RunDeps
 from pearlarr.seadex_types import SeadexUrlItem
@@ -39,7 +38,7 @@ from pearlarr.torrents import (
     TorrentService,
 )
 
-from .builders import make_bare_instance, make_config
+from .builders import make_bare_instance, make_categories, make_config
 
 _HASH = "a" * 40
 _PARSED_URL = "magnet:?xt=urn:btih:DEAD"
@@ -111,7 +110,7 @@ def _service(qbit: _FakeQbit, *, category: str | None = "anime", tags: list[str]
     return TorrentService(
         qbit=cast("qbittorrentapi.Client", qbit),
         web=httpx.Client(),
-        categories=ArrCategoryResolver(Arr.SONARR, ArrSettings(torrent_category=category), None),
+        categories=make_categories(make_config(sonarr_torrent_category=category)),
         tags=tags if tags is not None else ["seadex"],
         logger=logging.getLogger("pearlarr.test"),
     )

@@ -768,17 +768,3 @@ class PendingImport:
             release_sizes=raw.get("release_sizes", []),
             preowned_episode_ids=raw.get("preowned_episode_ids", []),
         )
-
-
-def resolve_wait_mode(
-    cli_mode: ImportWaitMode | None,
-    config_mode: ImportWaitMode,
-) -> ImportWaitMode:
-    """Resolve the effective wait mode: the CLI override, else the configured one.
-
-    Args:
-        cli_mode: The `--import-wait-mode` CLI value.
-        config_mode: The configured `imports.wait_mode` (carries the default).
-    """
-
-    return config_mode if cli_mode is None else cli_mode

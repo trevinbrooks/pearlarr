@@ -802,12 +802,7 @@ class AppConfig(_ConfigBase):
             raw = f.read()
         parsed, migration = _parse_and_migrate(raw)
         environ = os.environ
-        overlay = _env_overlay(environ)
-        # Env wins per leaf. A non-mapping file (junk) skips the merge so its own
-        # validation error stands unchanged.
-        if overlay and is_json_obj(parsed):
-            _deep_merge(cast("dict[str, object]", parsed), overlay)
-        config = cls.model_validate(parsed)
+        config = _validate_with_env(parsed, environ)
         # PrivateAttr writes on a frozen model: go through object.__setattr__ so the
         # type checkers don't read it as a frozen-field mutation (it isn't - these are
         # private attrs, set once here at load and never again).
@@ -1061,15 +1056,16 @@ def _write_owner_only(path: str, data: bytes) -> None:
     restrict_config_permissions(path)
 
 
-def _validate_with_env(parsed: object) -> AppConfig:
+def _validate_with_env(parsed: object, environ: Mapping[str, str]) -> AppConfig:
     """Validate a parsed config mapping the way a load would: env overlay applied.
 
-    Deep-copies before merging so the caller's mapping keeps the file's own
-    values - the rewrite renders from it, and env secrets must never land on
-    disk.
+    Env wins per leaf. A non-mapping file (junk) skips the merge so its own
+    validation error stands unchanged. Deep-copies before merging so the
+    caller's mapping keeps the file's own values - the rewrite renders from
+    it, and env secrets must never land on disk.
     """
 
-    overlay = _env_overlay(os.environ)
+    overlay = _env_overlay(environ)
     if overlay and is_json_obj(parsed):
         merged = copy.deepcopy(cast("dict[str, object]", parsed))
         _deep_merge(merged, overlay)
@@ -1110,7 +1106,7 @@ def upgrade_config_file(path: str, expected_checksum: str | None = None) -> Conf
             f"{path} changed while the run was starting - left untouched (the next run reads the new file)",
         )
     parsed, migration = _parse_and_migrate(raw)
-    validated = _validate_with_env(parsed)
+    validated = _validate_with_env(parsed, os.environ)
     # The narrowing re-check is for the types: a non-mapping document cannot
     # have validated above.
     if migration is None or not is_json_obj(parsed):
@@ -1119,7 +1115,7 @@ def upgrade_config_file(path: str, expected_checksum: str | None = None) -> Conf
     rendered = render_migrated_config(starter_template_text(), parsed)
     try:
         reparsed: object = yaml.safe_load(rendered)
-        drifted = _validate_with_env(reparsed).model_dump() != validated.model_dump()
+        drifted = _validate_with_env(reparsed, os.environ).model_dump() != validated.model_dump()
     except (yaml.YAMLError, ValidationError):
         drifted = True
     if drifted:

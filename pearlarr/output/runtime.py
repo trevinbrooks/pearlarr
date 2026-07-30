@@ -61,6 +61,12 @@ def hub_file_only(message: str, *, severity: Severity = Severity.INFO) -> None:
     emit_to_hub(Diagnostic(severity=severity, message=message, origin=LOG_NAME, file_only=True))
 
 
+def hub_file_records(severity: Severity) -> bool:
+    """Whether the file log admits `severity` - the text surfaces take the raw configured level; the rich console has its own floor."""
+
+    return current_hub().level <= int(severity)
+
+
 def hub_counts() -> SeverityCounts:
     """The process hub's severity counts, resolved at call time (emit_to_hub's twin)."""
 

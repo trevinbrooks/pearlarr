@@ -7,10 +7,7 @@ from .arr_activity import ArrActivityMonitor
 from .boot_flow import BootFlow
 from .import_wait import ImportWaitManager
 from .log import arr_item_noun, count_noun
-from .manual_import import (
-    ImportWaitMode,
-    resolve_wait_mode,
-)
+from .manual_import import ImportWaitMode
 from .output import hub_error, hub_note, hub_warn
 from .protocols import ArrSync, ImportCompleter
 from .reporter import RunContext
@@ -170,9 +167,8 @@ class RunLoop:
                 id (TMDB for Radarr, TVDB for Sonarr)
             dry_run: Simulate the run without grabbing torrents, writing
                 the cache, or sending notifications
-            import_wait_mode: The CLI `--import-wait-mode`
-                override, resolved cli > config > default. None falls back to the
-                configured `imports.wait_mode`.
+            import_wait_mode: The CLI `--import-wait-mode` override; None falls
+                back to the configured `imports.wait_mode`.
             boot: The startup cockpit's producer facade. The
                 library fetch and the metadata prefetch graduate into it as steps,
                 and its section is capped right before the per-item scan begins
@@ -185,10 +181,7 @@ class RunLoop:
         # is held under the narrow, non-generic ImportCompleter ABC - which a
         # concrete ArrSync subclasses, so no invariant-ItemT cast.
         self._active_strategy = strategy
-        resolved_wait_mode = resolve_wait_mode(
-            import_wait_mode,
-            self._config.imports.wait_mode,
-        )
+        resolved_wait_mode = import_wait_mode if import_wait_mode is not None else self._config.imports.wait_mode
 
         # The run's arr comes off the services hub (the authority - each fresh
         # ctx.arr is a per-run copy of it).

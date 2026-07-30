@@ -26,6 +26,7 @@ from .seadex_types import (
     SeadexReleaseGroupItem,
     SeadexUrlItem,
     SonarrEpisode,
+    flagged_urls,
     index_episodes_by_key,
     season_episode_key,
 )
@@ -673,15 +674,9 @@ class DownloadPlanner:
         # Arr has none of them, only grab one (preferring a public group)
         skips = self.reduce_overlapping_downloads(seadex_dict=seadex_dict)
 
-        # Build the hash list from whatever is still flagged for download, so it
-        # always matches the exact set of torrents we'll add. Private torrents
-        # have no infohash, so skip those
-        torrent_hashes: list[str | None] = [
-            url_item.infohash
-            for rg_item in seadex_dict.values()
-            for url_item in rg_item.urls.values()
-            if url_item.download and url_item.infohash is not None
-        ]
+        # The hash list is whatever is still flagged, so it matches the set
+        # we'll add - `flagged_urls` is the shared filter. Private torrents carry no infohash.
+        torrent_hashes: list[str | None] = [infohash for _srg, _url_item, infohash in flagged_urls(seadex_dict)]
 
         verdicts = _group_verdicts(seadex_dict, ctx)
         return PlanResult(
