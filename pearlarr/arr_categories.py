@@ -8,7 +8,7 @@ every miss fails open to blank.
 """
 
 import logging
-from typing import final
+from typing import NamedTuple, final
 
 from .arr_http import ArrHttp
 from .config import Arr, ArrSettings
@@ -19,25 +19,26 @@ from .seadex_types import DownloadClientRecord
 # logger), matching `arr_http`'s coalesced-repeat idiom.
 _LOG = logging.getLogger(f"{LOG_NAME}.arr_categories")
 
-# The arr-side settings field names, per arr: (add-time category, post-import
-# category). CamelCased off the arrs' QBittorrentSettings properties.
-_CATEGORY_FIELDS: dict[Arr, tuple[str, str]] = {
-    Arr.SONARR: ("tvCategory", "tvImportedCategory"),
-    Arr.RADARR: ("movieCategory", "movieImportedCategory"),
+
+class _CategoryPair[T](NamedTuple):
+    """An (add-time grab, post-import) pair: the arr-side field names or their values."""
+
+    grab: T
+    post_import: T
+
+
+# The arr-side settings field names, per arr. CamelCased off the arrs'
+# QBittorrentSettings properties.
+_CATEGORY_FIELDS: dict[Arr, _CategoryPair[str]] = {
+    Arr.SONARR: _CategoryPair("tvCategory", "tvImportedCategory"),
+    Arr.RADARR: _CategoryPair("movieCategory", "movieImportedCategory"),
 }
 
 
-def _configured(value: str | None) -> tuple[bool, str | None]:
-    """One config category as `(settled, category)`.
+def _explicit(value: str) -> str | None:
+    """An explicit config category: blank/whitespace-only is the opt-out (no category, no fallback)."""
 
-    An explicit value pins it, a blank/whitespace-only string is the opt-out
-    (no category, no fallback), and an absent key (None) defers to the arr's
-    own download client.
-    """
-
-    if value is None:
-        return False, None
-    return True, (value if value.strip() else None)
+    return value if value.strip() else None
 
 
 @final
@@ -55,36 +56,36 @@ class ArrCategoryResolver:
         """`http` None (no qBittorrent to apply a category, or missing connection keys) stays blank fetchless."""
 
         self._arr = arr
-        self._grab = _configured(config.torrent_category)
-        self._post_import = _configured(config.post_import_category)
+        # None = the key is absent from config, deferring to the arr's client.
+        self._configured = _CategoryPair(config.torrent_category, config.post_import_category)
         self._http = http
-        self._fetched: tuple[str | None, str | None] | None = None
+        self._fetched: _CategoryPair[str | None] | None = None
 
     def grab(self) -> str | None:
         """The category for torrents added for this arr (`TorrentService`)."""
 
-        settled, category = self._grab
-        return category if settled else self._client_pair()[0]
+        value = self._configured.grab
+        return self._client_pair().grab if value is None else _explicit(value)
 
     def post_import(self) -> str | None:
         """The category applied once a torrent's imports all complete (`ImportWaitManager`)."""
 
-        settled, category = self._post_import
-        return category if settled else self._client_pair()[1]
+        value = self._configured.post_import
+        return self._client_pair().post_import if value is None else _explicit(value)
 
-    def _client_pair(self) -> tuple[str | None, str | None]:
+    def _client_pair(self) -> _CategoryPair[str | None]:
         if self._fetched is None:
             if self._http is None:
-                return None, None
+                return _CategoryPair(None, None)
             clients = self._http.download_clients()
             if clients is None:
                 # The transport already warned. Not memoized: the next use retries.
-                return None, None
+                return _CategoryPair(None, None)
             self._fetched = _pick_categories(self._arr, clients)
         return self._fetched
 
 
-def _pick_categories(arr: Arr, clients: list[DownloadClientRecord]) -> tuple[str | None, str | None]:
+def _pick_categories(arr: Arr, clients: list[DownloadClientRecord]) -> _CategoryPair[str | None]:
     """The (grab, post-import) categories of the arr's preferred qBittorrent client.
 
     Preferred = enabled, lowest `priority` number (1 is the arrs' highest and
@@ -100,9 +101,12 @@ def _pick_categories(arr: Arr, clients: list[DownloadClientRecord]) -> tuple[str
     ]
     if not candidates:
         _LOG.debug(f"{arr.capitalize()} defines no enabled qBittorrent download client - blank categories stay blank")
-        return None, None
+        return _CategoryPair(None, None)
     client = min(candidates, key=lambda record: record.priority)
-    grab_field, post_field = _CATEGORY_FIELDS[arr]
-    grab, post_import = client.field_value(grab_field), client.field_value(post_field)
-    _LOG.debug(f"{arr.capitalize()} download-client categories: {grab_field}={grab!r}, {post_field}={post_import!r}")
-    return grab, post_import
+    fields = _CATEGORY_FIELDS[arr]
+    pair = _CategoryPair(client.field_value(fields.grab), client.field_value(fields.post_import))
+    _LOG.debug(
+        f"{arr.capitalize()} download-client categories: "
+        f"{fields.grab}={pair.grab!r}, {fields.post_import}={pair.post_import!r}"
+    )
+    return pair
