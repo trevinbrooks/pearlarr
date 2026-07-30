@@ -52,7 +52,7 @@ def test_make_web_client_pins_the_transport_policy() -> None:
     try:
         assert client.follow_redirects is True
         assert client.headers["User-Agent"] == USER_AGENT
-        assert USER_AGENT == f"pearlarr/{__version__}"
+        assert f"pearlarr/{__version__}" == USER_AGENT
         assert client.timeout.connect == 5
         assert client.timeout.read == 30
         assert client.timeout.write == 30

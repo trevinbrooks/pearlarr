@@ -13,7 +13,7 @@ change between).
 """
 
 from abc import ABC, abstractmethod
-from collections.abc import Iterable
+from collections.abc import Iterable, Sequence
 from enum import Enum, auto
 from itertools import batched
 from typing import Protocol, override
@@ -142,7 +142,6 @@ class SeaDexGateway(SeaDexSource):
 
         done = 0
         for chunk in batched(missing, SEADEX_BATCH_SIZE, strict=False):
-            chunk = list(chunk)
             # A failed chunk's ids are NOT marked prefetched (never "absent"), so a
             # transient miss stays a skip, not a remembered no-entry.
             if not self._outage:
@@ -156,7 +155,7 @@ class SeaDexGateway(SeaDexSource):
 
         return total
 
-    def _fetch_chunk(self, chunk: list[int]) -> dict[int, EntryRecord] | None:
+    def _fetch_chunk(self, chunk: Sequence[int]) -> dict[int, EntryRecord] | None:
         """One prefetch batch with a single immediate retry.
 
         A lone transient blip (one 502 among many batches) is absorbed silently.
@@ -173,7 +172,7 @@ class SeaDexGateway(SeaDexSource):
             self._note_outage(e)
             return None
 
-    def _fetch_batch(self, al_ids: list[int]) -> dict[int, EntryRecord]:
+    def _fetch_batch(self, al_ids: Sequence[int]) -> dict[int, EntryRecord]:
         """Fetch one batch via an OR-ed `alID` filter, keyed by AniList id."""
 
         filter_str = " || ".join(f"alID={al_id}" for al_id in al_ids)

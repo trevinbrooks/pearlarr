@@ -20,7 +20,7 @@ import itertools
 import logging
 import time
 from dataclasses import dataclass
-from typing import Any, get_args, override
+from typing import Any, ClassVar, get_args, override
 
 import httpx
 import pytest
@@ -77,6 +77,7 @@ from pearlarr.reporter import (
     RunReporter,
     RunStats,
 )
+from pearlarr.seadex_types import SeadexDict
 from pearlarr.torrents import AddOutcome, ReleaseOutcome
 
 from .builders import FakeCacheStore, make_entry_record, pending_import, rg_group, url_item
@@ -1123,11 +1124,11 @@ class TestActionBlockParity:
     Covers fresh, dry-run, already-downloading, and mixed-outcome renders.
     """
 
-    _SEADEX_DICT = {
+    _SEADEX_DICT: ClassVar[SeadexDict] = {
         "GroupA": rg_group({"https://nyaa.si/view/1": url_item(download=True)}, tags=frozenset({_HDR_TAG})),
         "GroupB": rg_group({"https://nyaa.si/view/2": url_item(download=True)}),
     }
-    _FRESH_RESULTS = [
+    _FRESH_RESULTS: ClassVar[list[ReleaseOutcome]] = [
         ReleaseOutcome(outcome=AddOutcome.ADDED, name="[GroupA] Frieren S01 1080p.mkv", group="GroupA"),
         ReleaseOutcome(outcome=AddOutcome.ADDED, name=None, group="GroupB"),
     ]

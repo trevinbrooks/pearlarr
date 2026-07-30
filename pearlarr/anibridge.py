@@ -110,8 +110,8 @@ def _parse_ranges(target: str) -> list[tuple[int, int | None]]:
     ranges: list[tuple[int, int | None]] = []
     target = str(target).split("|")[0]
 
-    for piece in target.split(","):
-        piece = piece.strip()
+    for raw_piece in target.split(","):
+        piece = raw_piece.strip()
         if not piece:
             continue
 
@@ -355,10 +355,9 @@ class AniBridge:
                 record.tmdb_movie_ids.append(movie_id)
                 self.tmdb_movie_index[movie_id].add(anilist_id)
 
-        elif provider in ("imdb_movie", "imdb_show"):
-            if pid:
-                record.imdb_ids.append(pid)
-                self.imdb_index[pid].add(anilist_id)
+        elif provider in ("imdb_movie", "imdb_show") and pid:
+            record.imdb_ids.append(pid)
+            self.imdb_index[pid].add(anilist_id)
 
     @staticmethod
     def _entry_dict(

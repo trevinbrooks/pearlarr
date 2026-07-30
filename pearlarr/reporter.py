@@ -3,7 +3,7 @@
 import time
 from dataclasses import dataclass, field
 from enum import Enum, auto
-from typing import TYPE_CHECKING, Literal
+from typing import TYPE_CHECKING, ClassVar, Literal
 
 import qbittorrentapi
 from seadex import EntryRecord
@@ -553,7 +553,7 @@ class RunReporter:
     # The carried-over pending states that get an inline entry header + a
     # scoreboard counter. MISSING / ERRORED are handled (drop / leave) by the
     # engine but have no ledger vocabulary, so they render nothing inline.
-    _PENDING_ENTRY_STATES: dict[PendingState, EntryState] = {
+    _PENDING_ENTRY_STATES: ClassVar[dict[PendingState, EntryState]] = {
         PendingState.QUEUED: EntryState.QUEUED,
         PendingState.IMPORTING: EntryState.IMPORTING,
         PendingState.IMPORTED: EntryState.IMPORTED,

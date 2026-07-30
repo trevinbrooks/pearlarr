@@ -1206,10 +1206,10 @@ def test_skip_sets_are_event_members_pinned_to_their_current_membership() -> Non
     """
 
     union_members: set[object] = set(get_args(Event.__value__))
-    assert _TEXT_SKIP <= union_members
-    assert _JSON_SKIP <= union_members
-    assert _TEXT_SKIP == {ScopeOpened, ScopeClosed, ScanFinished, RunFinished, EffectiveConfigShown}
-    assert _JSON_SKIP == {BootStepSlow}
+    assert union_members >= _TEXT_SKIP
+    assert union_members >= _JSON_SKIP
+    assert {ScopeOpened, ScopeClosed, ScanFinished, RunFinished, EffectiveConfigShown} == _TEXT_SKIP
+    assert {BootStepSlow} == _JSON_SKIP
 
 
 def test_json_set_level_applies_the_raw_configured_level() -> None:

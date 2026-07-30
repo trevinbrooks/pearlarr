@@ -123,9 +123,8 @@ def test_step_warn_graduates_deferred() -> None:
 def test_step_failure_graduates_failed_and_reraises() -> None:
     factory, recorder, _ = _factory()
 
-    with pytest.raises(ValueError, match="boom"):
-        with factory.step("Opening cache"):
-            raise ValueError("boom")
+    with pytest.raises(ValueError, match="boom"), factory.step("Opening cache"):
+        raise ValueError("boom")
 
     (finished,) = recorder.of_type(BootStepFinished)
     assert finished.outcome is OutcomeCategory.FAILED
@@ -167,7 +166,7 @@ def test_late_step_calls_demote_to_attributed_diagnostics() -> None:
     late = recorder.of_type(Diagnostic)
     assert [d.origin for d in late] == ["output.late.step"] * 3
     assert all(d.placed_by is PlacedBy.HANDLE for d in late)
-    assert "note: too late [after step 'Reading config' closed]" == late[0].message
+    assert late[0].message == "note: too late [after step 'Reading config' closed]"
     assert late[1].severity is Severity.WARNING
 
 
