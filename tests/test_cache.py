@@ -722,10 +722,12 @@ class TestPendingImports:
 
 
 class TestGuardFacts:
-    """One guard-evidence row per (arr, al_id): typed round-trip, arr isolation, latest-wins upsert."""
+    """One guard-evidence row per (arr, al_id), read-filtered to entries with live pending records."""
 
     def test_roundtrip_and_arr_isolation(self, tmp_path: Path) -> None:
         store = _open(tmp_path)
+        store.put_pending(Arr.SONARR, PendingKey("hs", 7), {"al_id": 7})
+        store.put_pending(Arr.RADARR, PendingKey("hr", 7), {"al_id": 7})
         facts = GuardFacts(
             entry_groups=("SubsPlease", "Erai-raws"),
             stale_groups=("HorribleSubs",),
@@ -743,10 +745,30 @@ class TestGuardFacts:
         # The fix's write semantic: a re-seed overwrites the entry's single row
         # whole, so no two reads can ever see divergent evidence for one entry.
         store = _open(tmp_path)
+        store.put_pending(Arr.SONARR, PendingKey("h", 7), {"al_id": 7})
         store.put_guards(Arr.SONARR, 7, GuardFacts(entry_groups=("Old",)))
         newest = GuardFacts(entry_groups=("New",), stale_groups=("Old",))
         store.put_guards(Arr.SONARR, 7, newest)
         assert store.get_guards(Arr.SONARR) == {7: newest}
+        store.close()
+
+    def test_orphan_rows_are_stored_but_never_read(self, tmp_path: Path) -> None:
+        # There is deliberately no delete path (siblings share the row), so reads
+        # join live pending records: the read stays bounded by in-flight work,
+        # not all-time grab history, and an orphan row is invisible until the
+        # entry seeds again.
+        store = _open(tmp_path)
+        facts = GuardFacts(entry_groups=("SubGroup",))
+        store.put_guards(Arr.SONARR, 7, facts)
+        assert store.get_guards(Arr.SONARR) == {}
+
+        store.put_pending(Arr.SONARR, PendingKey("h", 7), {"al_id": 7})
+        assert store.get_guards(Arr.SONARR) == {7: facts}
+
+        # The last record dropping re-orphans the row - stored, no longer read.
+        store.drop_pending(Arr.SONARR, PendingKey("h", 7))
+        assert store.get_guards(Arr.SONARR) == {}
+        assert store.stats().guard_facts == 1
         store.close()
 
     def test_empty_store_reads_empty(self, tmp_path: Path) -> None:
