@@ -555,10 +555,11 @@ class GuardFacts:
 
     Built once by the planner, threaded through the seed build unchanged
     (`PlanResult.guards` -> `PendingSeedContext.guards` -> `PendingImport.guards`)
-    and persisted on every record, so a new guard fact is one field here rather
-    than one per layer. Sonarr-only enforcement - Radarr's import path reads
-    nothing but the infohash. All-empty for Radarr, older records, and the hash
-    filter (those guard on grabbed groups alone).
+    and persisted once per entry in the `guard_facts` row (records rehydrate it
+    from there at read), so a new guard fact is one field here rather than one
+    per layer. Sonarr-only enforcement - Radarr's import path reads nothing but
+    the infohash. All-empty for Radarr, older records, and the hash filter
+    (those guard on grabbed groups alone).
     """
 
     entry_groups: tuple[str, ...] = ()
@@ -668,7 +669,8 @@ class PendingImport:
     accounting only - the IMPORTED decision never trusts them. Empty for older records (conservative)."""
 
     guards: GuardFacts = field(default_factory=GuardFacts)
-    """The plan's overwrite-guard evidence, persisted whole (see `GuardFacts`)."""
+    """The plan's overwrite-guard evidence, entry-level and persisted in the entry's
+    `guard_facts` row - never in this record's blob (see `GuardFacts`)."""
 
     release_sizes: list[int] = field(default_factory=list[int])
     """The grabbed listing's file sizes. Lets the import tell this release's own files from a stale
@@ -733,19 +735,24 @@ class PendingImport:
     def to_json(self) -> dict[str, Any]:
         """Serialize to the plain dict persisted under `pending_imports`.
 
-        Every field is JSON-representable (`asdict` recurses the nested
-        `guards`), so `asdict` is the whole serializer - and a field added to
-        the dataclass can't be silently dropped from the persisted form.
+        `asdict` minus `guards`: guard evidence is entry-level and lives in its
+        own `guard_facts` row, so the per-torrent blob never carries a copy. A
+        field added to the dataclass still can't be silently dropped from the
+        persisted form.
         """
 
-        return asdict(self)
+        raw = asdict(self)
+        del raw["guards"]
+        return raw
 
     @classmethod
-    def from_json(cls, raw: dict[str, Any]) -> "PendingImport":
+    def from_json(cls, raw: dict[str, Any], *, guards: GuardFacts | None = None) -> "PendingImport":
         """Rebuild a record from its persisted cache-store dict.
 
         Missing keys fall back to safe empties so a partially written or older
-        record still rehydrates rather than raising.
+        record still rehydrates rather than raising. `guards` comes only from
+        the caller (the entry's `guard_facts` row) - a legacy `guards` key in
+        the blob is ignored.
         """
 
         return cls(
@@ -764,7 +771,7 @@ class PendingImport:
             ordered_episode_ids=raw.get("ordered_episode_ids", []),
             slice_coverage=raw.get("slice_coverage"),
             excluded_files=raw.get("excluded_files", []),
-            guards=GuardFacts.from_json(raw.get("guards", {})),
+            guards=guards or GuardFacts(),
             release_sizes=raw.get("release_sizes", []),
             preowned_episode_ids=raw.get("preowned_episode_ids", []),
         )

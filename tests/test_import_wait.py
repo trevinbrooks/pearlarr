@@ -34,6 +34,7 @@ from pearlarr.import_wait import ImportWaitManager, MonitorPass
 from pearlarr.log import LOG_NAME
 from pearlarr.manual_import import (
     AttemptKind,
+    GuardFacts,
     ImportProbe,
     ImportProgress,
     ImportReadiness,
@@ -560,6 +561,33 @@ class TestPruneExpiredPending:
         mgr.prune_expired_pending()
 
         assert set(mgr._pending_records()) == {pk("recent")}
+
+
+class TestPendingRecordsGuardHydration:
+    """The bug-fix pin: every record of one entry hydrates the SAME guard row.
+
+    Records of one entry seeded across different runs used to carry divergent
+    frozen copies; the entry's single `guard_facts` row now feeds them all.
+    """
+
+    def test_siblings_share_the_entry_row_and_others_stay_empty(self) -> None:
+        mgr = make_orchestration_manager(
+            qbit=None,
+            strategy=_RecordingStrategy(),
+            store_records=[
+                pending_import(infohash="run1", al_id=5),
+                pending_import(infohash="run2", al_id=5),
+                pending_import(infohash="other", al_id=6),
+            ],
+        )
+        facts = GuardFacts(entry_groups=("NewPick",), stale_groups=("OldPick",))
+        mgr.cache_store.put_guards(Arr.SONARR, 5, facts)
+
+        records = mgr._pending_records()
+        assert records[PendingKey("run1", 5)].guards == facts
+        assert records[PendingKey("run2", 5)].guards == facts
+        # No row = empty facts, the designed state (Radarr, hash mode, degradation).
+        assert records[PendingKey("other", 6)].guards == GuardFacts()
 
 
 class RecordingWaitView(WaitView):

@@ -153,7 +153,7 @@ CREATE TABLE IF NOT EXISTS history_checkpoints (
 # stamped at this version on create (the :memory: db carries the stamp through the
 # promote backup). An older db is walked up through `_MIGRATIONS` one step at a
 # time. Bump it (and append a step) whenever a shipped table changes shape.
-SCHEMA_VERSION = 2
+SCHEMA_VERSION = 3
 
 
 class CacheSchemaError(RuntimeError):
@@ -208,11 +208,37 @@ def _migrate_1_to_2(conn: sqlite3.Connection) -> None:
     conn.execute("ALTER TABLE pending_imports_v2 RENAME TO pending_imports")
 
 
+def _migrate_2_to_3(conn: sqlite3.Connection) -> None:
+    """Backfill one `guard_facts` row per Sonarr entry, then strip `guards` from every blob.
+
+    The backfill takes each entry's newest pending blob (latest `added_at` wins).
+    Guarded on a non-empty table: a db already carrying guard rows is left alone.
+    """
+
+    if conn.execute("SELECT EXISTS (SELECT 1 FROM guard_facts)").fetchone()[0]:
+        return
+    # The inner aggregate keeps `record` a BARE column so SQLite's documented
+    # min/max guarantee picks it from the MAX(added_at) row; the outer query
+    # extracts the guards from that chosen blob. The json_type filter also drops
+    # a JSON-null guards value (`->` would pass an IS NOT NULL check as 'null').
+    conn.execute(
+        "INSERT INTO guard_facts (arr, al_id, record) "
+        "SELECT arr, al_id, jsonb(record -> 'guards') FROM ("
+        "SELECT arr, al_id, record, MAX(record ->> 'added_at') "
+        "FROM pending_imports "
+        "WHERE arr = 'sonarr' AND al_id != 0 "
+        "AND json_type(record, '$.guards') = 'object' "
+        "GROUP BY arr, al_id)",
+    )
+    conn.execute("UPDATE pending_imports SET record = jsonb_remove(record, '$.guards')")
+
+
 # Step `n` brings a version-n db to version n+1. `_ensure_schema` applies the
 # steps in order, one transaction per step, until SCHEMA_VERSION is reached.
 _MIGRATIONS: dict[int, Callable[[sqlite3.Connection], None]] = {
     0: _migrate_0_to_1,
     1: _migrate_1_to_2,
+    2: _migrate_2_to_3,
 }
 
 

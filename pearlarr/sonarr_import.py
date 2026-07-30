@@ -946,12 +946,15 @@ class ImportReconciler:
     def _series_pending_records(self, series_id: int) -> list[PendingImport]:
         """The series' durable pending records (any release group), rehydrated.
 
-        `get_pending_for_series` returns a fresh snapshot `{infohash -> record}`
+        `get_pending_for_series` returns a fresh snapshot `{PendingKey -> record}`
         already filtered to this series in SQL (so a record dropped earlier this
-        run is absent); `from_json` lifts each cache JSON dict back to the type.
+        run is absent); `from_json` lifts each cache JSON dict back to the type,
+        joined against the entry's `guard_facts` row so store-loaded siblings
+        hydrate uniformly with every other read seam.
         """
 
+        guard_rows = self.cache_store.get_guards(Arr.SONARR)
         return [
-            PendingImport.from_json(raw)
-            for raw in self.cache_store.get_pending_for_series(Arr.SONARR, series_id).values()
+            PendingImport.from_json(raw, guards=guard_rows.get(key.al_id))
+            for key, raw in self.cache_store.get_pending_for_series(Arr.SONARR, series_id).items()
         ]

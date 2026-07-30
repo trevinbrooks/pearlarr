@@ -19,7 +19,7 @@ from seadex import EntryRecord
 
 from . import coverage as _coverage
 from .cache import CacheRecord
-from .config import PrivateReleaseAction
+from .config import Arr, PrivateReleaseAction
 from .manual_import import ImportWaitMode, PendingImport
 from .notify import GrabNotice
 from .output import Accent, GrabFailed, ReleaseSkipped, SkipReason, StyledValue
@@ -292,6 +292,10 @@ class GrabPipeline:
                 pending.key,
                 pending.to_json(),
             )
+            # Entry-level evidence, one row per entry (Sonarr-only enforcement): each
+            # per-release firing re-puts the same row - the upsert makes that a no-op.
+            if self._ctx.arr is Arr.SONARR:
+                self.cache_store.put_guards(self._ctx.arr, pending.al_id, pending.guards)
             self._ctx.pending_imports.append(pending)
 
     def _needs_action(self, groups: list[str], reason: str, kind: NeedsActionKind) -> NeedsActionRecord:

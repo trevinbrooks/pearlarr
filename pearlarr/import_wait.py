@@ -106,14 +106,19 @@ class ImportWaitManager:
 
         Thin read wrapper over `CacheStore.get_pending` (the raw-JSON SQLite
         boundary): a fresh copy each call, with every value rehydrated ONCE via
-        `PendingImport.from_json` so the wait passes only ever handle typed
+        `PendingImport.from_json`, joined against the entry's `guard_facts` row
+        (missing row = empty facts), so the wait passes only ever handle typed
         records. Keyed per record, so siblings sharing one torrent all surface.
         Read-only - the two mutators go straight through the facade
         (`CacheStore.put_pending` in `_register_pending_import` and
         `CacheStore.drop_pending` in `drop_pending`).
         """
 
-        return {key: PendingImport.from_json(raw) for key, raw in self.cache_store.get_pending(self._ctx.arr).items()}
+        guard_rows = self.cache_store.get_guards(self._ctx.arr)
+        return {
+            key: PendingImport.from_json(raw, guards=guard_rows.get(key.al_id))
+            for key, raw in self.cache_store.get_pending(self._ctx.arr).items()
+        }
 
     def poll_torrent(self, infohash: str) -> TorrentProbe:
         """Poll qBittorrent once for a torrent's terminal/in-progress state.
@@ -269,6 +274,7 @@ class ImportWaitManager:
             return
 
         run_grabs = self._this_run_keys()
+        guard_rows = self.cache_store.get_guards(self._ctx.arr)
         # Fresh per call and SQL-filtered to this series (so a record dropped earlier
         # this run is already absent) - replaces a full get_pending scan + Python
         # series filter once per series. The `record ->> 'series_id'` match only
@@ -278,7 +284,7 @@ class ImportWaitManager:
             # `queued`/`importing`/`imported` row here would be a double report.
             if key in run_grabs:
                 continue
-            pending = PendingImport.from_json(raw)
+            pending = PendingImport.from_json(raw, guards=guard_rows.get(key.al_id))
             state = self._reconcile_one(pending)
             self._reporter.log_pending_snapshot(state, pending)
 
