@@ -913,6 +913,7 @@ def _specimen_stream() -> tuple[ev.Event, ...]:
             anilist_meta=96,
             sonarr_parse=412,
             pending_imports=0,
+            guard_facts=0,
             size_bytes=1179648,
         ),
         ev.CacheIntegrityReported(result="ok"),

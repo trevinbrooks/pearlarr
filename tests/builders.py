@@ -415,6 +415,7 @@ class FakeCacheStore(AbstractCacheStore):
             anilist_meta=len(self._anilist_meta),
             sonarr_parse=len(self._sonarr_parse),
             pending_imports=sum(len(recs) for recs in self._pending.values()),
+            guard_facts=sum(len(g) for g in self._guards.values()),
             size_bytes=0,
         )
 

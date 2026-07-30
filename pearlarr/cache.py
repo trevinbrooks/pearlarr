@@ -400,6 +400,7 @@ class CacheStats(NamedTuple):
     anilist_meta: int
     sonarr_parse: int
     pending_imports: int
+    guard_facts: int
     size_bytes: int
 
 
@@ -1060,6 +1061,7 @@ class CacheStore(AbstractCacheStore):
             anilist_meta=self._count("anilist_meta"),
             sonarr_parse=self._count("sonarr_parse"),
             pending_imports=self._count("pending_imports"),
+            guard_facts=self._count("guard_facts"),
             size_bytes=size,
         )
 

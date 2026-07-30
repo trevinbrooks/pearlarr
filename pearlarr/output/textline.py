@@ -423,6 +423,7 @@ def _fields_cache_stats(event: CacheStatsReported) -> tuple[Field, ...]:
         Field("anilist_meta", event.anilist_meta),
         Field("sonarr_parse", event.sonarr_parse),
         Field("pending_imports", event.pending_imports),
+        Field("guard_facts", event.guard_facts),
         Field("size_bytes", event.size_bytes),
     )
 
