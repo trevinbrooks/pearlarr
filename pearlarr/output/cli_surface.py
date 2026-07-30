@@ -194,6 +194,7 @@ class CliTextRenderer(Renderer):
             ("anilist_meta", str(event.anilist_meta)),
             ("sonarr_parse", str(event.sonarr_parse)),
             ("pending_imports", str(event.pending_imports)),
+            ("guard_facts", str(event.guard_facts)),
             ("size", f"{event.size_bytes / (1024 * 1024):.2f} MiB"),
         ]
         for key, value in rows:

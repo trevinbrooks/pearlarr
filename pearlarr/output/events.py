@@ -750,6 +750,7 @@ class CacheStatsReported:
     anilist_meta: int
     sonarr_parse: int
     pending_imports: int
+    guard_facts: int
     size_bytes: int
 
 

@@ -1083,6 +1083,7 @@ def _exemplars() -> list[Event]:
             anilist_meta=1,
             sonarr_parse=1,
             pending_imports=0,
+            guard_facts=0,
             size_bytes=4096,
         ),
         CacheIntegrityReported(result="ok"),

@@ -97,7 +97,13 @@ def test_golden_round_trip_reproduces_the_text_grammar(
         ScopeOpened(scope=_ENTRY, label="Frieren"),
         EntryHeader(state=EntryState.CHECKING, title="Frieren", scope=_ENTRY),
         CacheStatsReported(
-            entries=1, torrent_hashes=1, anilist_meta=1, sonarr_parse=1, pending_imports=0, size_bytes=4096
+            entries=1,
+            torrent_hashes=1,
+            anilist_meta=1,
+            sonarr_parse=1,
+            pending_imports=0,
+            guard_facts=0,
+            size_bytes=4096,
         ),
     ]
 
@@ -109,7 +115,7 @@ def test_golden_round_trip_reproduces_the_text_grammar(
     assert f"{_TS} INFO [run] Pearlarr started version=v1.0.0 data_dir=/data" in out
     assert (
         f"{_TS} INFO [cli] cache stats entries=1 torrent_hashes=1 anilist_meta=1 "
-        f"sonarr_parse=1 pending_imports=0 size_bytes=4096"
+        f"sonarr_parse=1 pending_imports=0 guard_facts=0 size_bytes=4096"
     ) in out
     # path wins over component for a scoped event.
     assert f"{_TS} INFO [sonarr › [3/182] Frieren › entry] checking title=Frieren" in out
