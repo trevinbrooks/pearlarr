@@ -19,6 +19,7 @@ a transport error, and a response's Retry-After window beats the backoff
 
 import ssl
 
+import httpcore
 import httpx
 import pytest
 import respx
@@ -35,7 +36,11 @@ def _pool_ssl_context(client: httpx.Client) -> ssl.SSLContext:
 
     transport = client._transport
     assert isinstance(transport, httpx.HTTPTransport)
-    context = transport._pool._ssl_context
+    # httpx types the pool as the union of its three httpcore pools, one of which is
+    # the stand-in httpcore defines when socksio is absent (no pool base, no context).
+    pool = transport._pool
+    assert isinstance(pool, httpcore.ConnectionPool)
+    context = pool._ssl_context
     assert isinstance(context, ssl.SSLContext)
     return context
 
