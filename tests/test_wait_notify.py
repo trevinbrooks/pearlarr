@@ -537,8 +537,10 @@ def test_push_grab_4xx_disables_discord_for_the_run(monkeypatch: pytest.MonkeyPa
     assert notifier.enabled is False
     warnings = diagnostic_messages(recording, Severity.WARNING)
     assert warnings == [
-        "Discord notification failed (HTTP 404) - disabling Discord notifications "
-        "for this run - check notifications.discord_url",
+        (
+            "Discord notification failed (HTTP 404) - disabling Discord notifications "
+            "for this run - check notifications.discord_url"
+        ),
     ]
     assert all("secret-token" not in message for message in warnings)
 

@@ -395,8 +395,10 @@ class GrabPipeline:
             )
         if self._ctx.per_title.private_only_stale_held:
             return (
-                "private-only release; your copy is outdated (its file size no longer matches) "
-                "and only a fallback covers it",
+                (
+                    "private-only release; your copy is outdated (its file size no longer matches) "
+                    "and only a fallback covers it"
+                ),
                 NeedsActionKind.PRIVATE_ONLY_STALE,
             )
         return (

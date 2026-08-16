@@ -696,8 +696,10 @@ class TestUnsupportedTrackerSkip:
 
         assert pipeline._ctx.per_title.private_only_skipped is True
         assert [r.reason for r in pipeline._ctx.stats.needs_action] == [
-            "private-only release; your copy is outdated (its file size no longer matches) "
-            "and only a fallback covers it"
+            (
+                "private-only release; your copy is outdated (its file size no longer matches) "
+                "and only a fallback covers it"
+            )
         ]
         assert [r.kind for r in pipeline._ctx.stats.needs_action] == [NeedsActionKind.PRIVATE_ONLY_STALE]
         assert pipeline.cache_store.get_entry(Arr.SONARR, 7) is None
