@@ -132,9 +132,11 @@ def _to_v3(config: dict[str, Json]) -> list[str]:
     """
 
     return [
-        "an omitted torrent_category / post_import_category now adopts the matching category of that "
-        "arr's own qBittorrent download client - an explicit value overrides it, and an explicit "
-        'blank ("") keeps no category at all',
+        (
+            "an omitted torrent_category / post_import_category now adopts the matching category of that "
+            "arr's own qBittorrent download client - an explicit value overrides it, and an explicit "
+            'blank ("") keeps no category at all'
+        ),
     ]
 
 

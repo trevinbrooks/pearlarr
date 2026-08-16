@@ -653,7 +653,7 @@ class Diagnostic:
 
 # --- json value model (the wire types the json surface and cli facts share) --------
 
-type JsonValue = None | bool | int | float | str | list[JsonValue] | dict[str, JsonValue]
+type JsonValue = bool | int | float | str | list[JsonValue] | dict[str, JsonValue] | None
 type JsonObj = dict[str, JsonValue]
 
 

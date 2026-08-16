@@ -388,12 +388,18 @@ def test_summary_renders_one_head_line_plus_one_line_per_record() -> None:
     text = _format(_summary_ready())
     assert text == "\n".join(
         [
-            f"{_TS} INFO [summary] run complete arr=sonarr checked=182 needs_action=1 added=1 "
-            f"queued=1 up_to_date=161 cached=14 warnings=2 errors=0 elapsed_s=401.00 tip=private_only",
-            f"{_TS} WARNING [summary] needs action title=Monogatari group=Okay-Subs "
-            f'reason="private tracker" kind=private_only link=https://releases.moe/98765',
-            f'{_TS} INFO [summary] added title="Frieren: Beyond Journey\'s End" files="S01 E01-E28" '
-            f'group=SubsPlease torrent="[SubsPlease] Sousou no Frieren" link=https://releases.moe/154587',
+            (
+                f"{_TS} INFO [summary] run complete arr=sonarr checked=182 needs_action=1 added=1 "
+                f"queued=1 up_to_date=161 cached=14 warnings=2 errors=0 elapsed_s=401.00 tip=private_only"
+            ),
+            (
+                f"{_TS} WARNING [summary] needs action title=Monogatari group=Okay-Subs "
+                f'reason="private tracker" kind=private_only link=https://releases.moe/98765'
+            ),
+            (
+                f'{_TS} INFO [summary] added title="Frieren: Beyond Journey\'s End" files="S01 E01-E28" '
+                f'group=SubsPlease torrent="[SubsPlease] Sousou no Frieren" link=https://releases.moe/154587'
+            ),
         ],
     )
 
@@ -447,8 +453,10 @@ def test_a_warning_file_level_admits_per_line_within_the_summary(tmp_path: Path)
     # head line and the INFO added row drop.
     lines = (tmp_path / "Pearlarr.log").read_text(encoding="utf-8").splitlines()
     assert lines == [
-        f"{_TS} WARNING [summary] needs action title=Monogatari group=Okay-Subs "
-        f'reason="private tracker" kind=private_only link=https://releases.moe/98765',
+        (
+            f"{_TS} WARNING [summary] needs action title=Monogatari group=Okay-Subs "
+            f'reason="private tracker" kind=private_only link=https://releases.moe/98765'
+        ),
     ]
 
 

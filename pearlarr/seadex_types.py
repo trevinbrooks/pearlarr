@@ -190,7 +190,7 @@ ARR_REQUEST_TIMEOUT_S = (5, 30)
 
 # The recursive JSON value shape. Constructed JSON payloads are typed against
 # this at the wire boundary (`ArrHttp.post_json`, the redact/narrow walks).
-type Json = None | bool | int | float | str | Sequence["Json"] | Mapping[str, "Json"]
+type Json = bool | int | float | str | Sequence["Json"] | Mapping[str, "Json"] | None
 
 
 def coerce_int(value: object) -> int | None:
