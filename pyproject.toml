@@ -89,7 +89,9 @@ build = [
 static-analysis = [
     "basedpyright>=1.39.8",
     "pyrefly>=1.1.1",
-    "ruff~=0.15.0",
+    "ruff~=0.16.0",
+    # PyYAML ships no inline types, so the checkers read `yaml` as untyped without these.
+    "types-PyYAML>=6.0.12",
 ]
 test = [
     "diff-cover>=10.3.0",
@@ -155,16 +157,24 @@ include = [
 [tool.hatch.build.targets.wheel]
 packages = ["pearlarr"]
 
-# Point the type checkers at the project virtualenv so third-party imports
-# resolve (pyrefly reads these pyright-compatible settings too). Both the package
-# AND the tests are gated at strict (0 findings) - each test module carries a
-# ``# pyright: strict`` header, and the few that legitimately read a collaborator's
-# private members for a white-box assertion carry a local
+# Point the pyright arms at the project virtualenv so third-party imports resolve.
+# Both the package AND the tests are gated at strict (0 findings) - each test module
+# carries a ``# pyright: strict`` header, and the few that legitimately read a
+# collaborator's private members for a white-box assertion carry a local
 # ``# pyright: reportPrivateUsage=false`` with a justification.
 [tool.pyright]
 typeCheckingMode = "strict"
 venvPath = "."
 venv = ".venv"
+
+# Pyrefly reads this section instead of [tool.pyright] once it exists, so its strict
+# gate is the workflow's ``--preset strict`` plus one rule off here.
+# `implicit-any-lambda` fires on every unannotated lambda parameter, but Python has no
+# syntax to annotate one, and the `key=` / `re.sub` lambdas it flags are contextually
+# typed by both pyright arms (they catch a bad attribute on the parameter; pyrefly
+# does not infer it). Its own venv discovery resolves imports.
+[tool.pyrefly.errors]
+implicit-any-lambda = false
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
