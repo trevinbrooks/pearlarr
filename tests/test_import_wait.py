@@ -23,6 +23,7 @@ import logging
 from collections.abc import Callable
 from dataclasses import dataclass
 from datetime import datetime, timedelta
+from itertools import count
 from typing import override
 
 import pytest
@@ -49,7 +50,7 @@ from pearlarr.manual_import import (
     TorrentTelemetry,
     WaitOutcome,
 )
-from pearlarr.output import SPARK_SAMPLES, Diagnostic, Phase, Severity, TorrentView, WaitSnapshot
+from pearlarr.output import SPARK_SAMPLES, Diagnostic, Phase, Severity, TorrentView, WaitKind, WaitSnapshot
 from pearlarr.reporter import RunContext
 from pearlarr.run_loop import RunLoop
 from pearlarr.seadex_types import HistoryRecord
@@ -494,7 +495,7 @@ def make_orchestration_manager(
 
     Seeds the durable per-arr store (via the manager's own `cache_store`) and the
     in-memory `_ctx.pending_imports` list so `prune_expired_pending`,
-    `snapshot_pending_for_series`, `reconcile_once` and `run_monitor` can
+    `snapshot_pending_for_series`, `check_once` and `run_monitor` can
     be driven without a live Sonarr/qBittorrent. The strategy is a recording
     `_RecordingStrategy` (its import hooks scripted per test) and the reporter a
     recording `_RecordingReporter` (a test that asserts on the snapshot reporter
@@ -764,8 +765,8 @@ class TestSnapshotPendingForSeries:
         assert [c.state for c in reporter.snapshot_calls] == [PendingState.DOWNLOADED]
 
 
-class TestReconcileOnce:
-    """reconcile_once runs ONE non-blocking check cycle over every carried-over record."""
+class TestCheckOnce:
+    """check_once runs ONE non-blocking check cycle over every carried-over record."""
 
     def test_imports_ready_carried_over_record(self) -> None:
         strategy = _RecordingStrategy(
@@ -778,7 +779,7 @@ class TestReconcileOnce:
             store_records=[pending_import(infohash="h", added_at=_FRESH)],
         )
 
-        result = mgr.reconcile_once(view=RecordingWaitView())
+        result = mgr.check_once(view=RecordingWaitView())
 
         assert result is not None
         assert result.carried_over_imported == 1
@@ -796,7 +797,7 @@ class TestReconcileOnce:
             pending=[this_run],
         )
 
-        assert mgr.reconcile_once(view=RecordingWaitView()) is None
+        assert mgr.check_once(view=RecordingWaitView()) is None
         assert strategy.import_calls == []
 
     def test_two_imports_both_reported(self) -> None:
@@ -820,7 +821,7 @@ class TestReconcileOnce:
             ],
         )
 
-        result = mgr.reconcile_once(view=RecordingWaitView())
+        result = mgr.check_once(view=RecordingWaitView())
 
         assert result is not None
         assert result.carried_over_imported == 2
@@ -875,12 +876,53 @@ class TestReconcileOnce:
         )
         mgr._ctx.pending_states[pk("h")] = PendingState.QUEUED
 
-        result = mgr.reconcile_once(view=RecordingWaitView())
+        result = mgr.check_once(view=RecordingWaitView())
 
         assert result is not None
         assert [(row.outcome, row.carried_over) for row in result.rows] == [(outcome, True)]
         assert mgr._ctx.pending_states[pk("h")] is state
         assert set(mgr._pending_records()) == {pk("h")}
+
+    def test_check_never_applies_the_download_timeout(self) -> None:
+        # The download clock starts at pass construction, so its elapsed says
+        # nothing about the torrent: even with time passing between reads and a
+        # tiny imports.wait_timeout, a still-downloading record graduates
+        # STILL_DOWNLOADING, never DOWNLOAD_TIMED_OUT.
+        mgr = make_orchestration_manager(
+            qbit=FakeQbit({"h": [FakeTorrent(progress=0.5)]}),
+            strategy=_RecordingStrategy(),
+            store_records=[pending_import(infohash="h", added_at=_FRESH)],
+            import_wait_timeout=1,
+        )
+        ticks = count(0.0, 30.0)
+
+        result = mgr.check_once(now=lambda: next(ticks), view=RecordingWaitView())
+
+        assert result is not None
+        assert [(row.outcome, row.carried_over) for row in result.rows] == [(Outcome.STILL_DOWNLOADING, True)]
+        assert mgr._ctx.pending_states[pk("h")] is PendingState.QUEUED
+        assert set(mgr._pending_records()) == {pk("h")}
+
+    def test_check_fast_progress_verifies_within_the_single_cycle(self) -> None:
+        # The one check cycle owns the cheap bar refresh too: the heavy poll
+        # issues the command, the progress read verifies every file, and the
+        # record retires IMPORTED instead of graduating "import in progress".
+        strategy = _RecordingStrategy(
+            completed=import_probe(ImportReadiness.RETRY, files_present=False, command_issued=True),
+            progress=ImportProgress(2, 2, determinate=True),
+        )
+        mgr = make_orchestration_manager(
+            qbit=FakeQbit({"h": [FakeTorrent(is_complete=True, content_path="/d")]}),
+            strategy=strategy,
+            store_records=[pending_import(infohash="h", added_at=_FRESH)],
+        )
+
+        result = mgr.check_once(view=RecordingWaitView())
+
+        assert result is not None
+        assert result.carried_over_imported == 1
+        assert len(strategy.progress_calls) == 1
+        assert mgr._pending_records() == {}
 
 
 class TestPendingStateFold:
@@ -1076,6 +1118,49 @@ class TestMonitorWorkingSet:
         }
 
 
+def _run_single_monitor(
+    strategy: _RecordingStrategy,
+    qbit: FakeQbit,
+    *,
+    step: float = 30,
+    wait_timeout: int = 3600,
+    ready_timeout: int = 600,
+    progress_poll_interval: int = 5,
+    post_import_category: str | None = None,
+) -> tuple[ImportWaitManager, RecordingWaitView]:
+    """Drive `run_monitor` to completion over one fresh-grab record on hash "h".
+
+    The record is both a this-run grab and store-resident (the common monitor
+    shape). The heavy poll interval is fixed at 30; the knob defaults mirror
+    the plain-config shape the class's tests share.
+    """
+
+    pending = pending_import(infohash="h", added_at=_FRESH)
+    mgr = make_orchestration_manager(
+        qbit=qbit,
+        strategy=strategy,
+        store_records=[pending],
+        pending=[pending],
+        import_wait_timeout=wait_timeout,
+        import_ready_timeout=ready_timeout,
+        import_poll_interval=30,
+        progress_poll_interval=progress_poll_interval,
+        post_import_category=post_import_category,
+    )
+    view = RecordingWaitView()
+    clock = FakeClock(step=step)
+    mgr.run_monitor(now=clock.now, sleep=clock.sleep, view=view)
+    return mgr, view
+
+
+class _ExplodingDropStore(FakeCacheStore):
+    """A store whose record drop always fails, for the terminal-ordering pin."""
+
+    @override
+    def drop_pending(self, arr: Arr, key: PendingKey) -> None:
+        raise RuntimeError("drop boom")
+
+
 class TestRunMonitor:
     """run_monitor: interleaved, copy-aware wait+import over ALL pending."""
 
@@ -1129,29 +1214,22 @@ class TestRunMonitor:
         # The copy is async: cycle 1 issues the command (RETRY + command_issued,
         # files NOT present) -> reads `importing`. Cycle 2 verifies files present
         # -> `imported`. imported is gated on verified files, never command accept.
+        # progress_poll_interval=0 also pins the fast lane off: the heavy poll
+        # alone drives completion.
         strategy = _RecordingStrategy(
             completed_sequence=[
                 import_probe(ImportReadiness.RETRY, files_present=False, command_issued=True),
                 import_probe(ImportReadiness.RETRY, files_present=True, command_issued=True),
             ],
         )
-        pending = pending_import(infohash="h", added_at=_FRESH)
-        qbit = FakeQbit({"h": [FakeTorrent(is_complete=True, content_path="/d")]})
-        mgr = make_orchestration_manager(
-            qbit=qbit,
-            strategy=strategy,
-            store_records=[pending],
-            pending=[pending],
-            import_wait_timeout=3600,
-            import_ready_timeout=600,
-            import_poll_interval=30,
+        mgr, view = _run_single_monitor(
+            strategy,
+            FakeQbit({"h": [FakeTorrent(is_complete=True, content_path="/d")]}),
+            progress_poll_interval=0,
         )
-        view = RecordingWaitView()
-        clock = FakeClock(step=30)
-
-        mgr.run_monitor(now=clock.now, sleep=clock.sleep, view=view)
 
         assert len(strategy.import_calls) == 2
+        assert strategy.progress_calls == []  # interval 0 disables the fast poll
         assert view.saw(rk("h"), Phase.IMPORTING)  # cycle 1, copy in flight
         assert view.final(rk("h")).outcome is Outcome.IMPORTED  # cycle 2, files landed
         assert mgr._pending_records() == {}
@@ -1168,22 +1246,12 @@ class TestRunMonitor:
                 ImportProgress(3, 3, determinate=True),  # all present -> promote
             ],
         )
-        pending = pending_import(infohash="h", added_at=_FRESH)
-        qbit = FakeQbit({"h": [FakeTorrent(is_complete=True, content_path="/d")]})
-        mgr = make_orchestration_manager(
-            qbit=qbit,
-            strategy=strategy,
-            store_records=[pending],
-            pending=[pending],
-            import_wait_timeout=3600,
-            import_ready_timeout=600,
-            import_poll_interval=30,
+        mgr, view = _run_single_monitor(
+            strategy,
+            FakeQbit({"h": [FakeTorrent(is_complete=True, content_path="/d")]}),
+            step=5,
             progress_poll_interval=5,
         )
-        view = RecordingWaitView()
-        clock = FakeClock(step=5)
-
-        mgr.run_monitor(now=clock.now, sleep=clock.sleep, view=view)
 
         # Only ONE heavy poll. The fast poll did the rest.
         assert len(strategy.import_calls) == 1
@@ -1197,57 +1265,17 @@ class TestRunMonitor:
         assert view.final(rk("h")).outcome is Outcome.IMPORTED
         assert mgr._pending_records() == {}
 
-    def test_tier2_disabled_skips_the_fast_poll(self) -> None:
-        # progress_poll_interval=0 -> no cheap poll at all. The heavy poll alone
-        # drives completion (the bar simply steps once per poll).
-        strategy = _RecordingStrategy(
-            completed_sequence=[
-                import_probe(ImportReadiness.RETRY, files_present=False, command_issued=True),
-                import_probe(ImportReadiness.RETRY, files_present=True, command_issued=True),
-            ],
-        )
-        pending = pending_import(infohash="h", added_at=_FRESH)
-        qbit = FakeQbit({"h": [FakeTorrent(is_complete=True, content_path="/d")]})
-        mgr = make_orchestration_manager(
-            qbit=qbit,
-            strategy=strategy,
-            store_records=[pending],
-            pending=[pending],
-            import_wait_timeout=3600,
-            import_ready_timeout=600,
-            import_poll_interval=30,
-            progress_poll_interval=0,
-        )
-        view = RecordingWaitView()
-        clock = FakeClock(step=30)
-
-        mgr.run_monitor(now=clock.now, sleep=clock.sleep, view=view)
-
-        assert strategy.progress_calls == []
-        assert len(strategy.import_calls) == 2
-        assert view.final(rk("h")).outcome is Outcome.IMPORTED
-
     def test_importing_at_deadline_left_without_warning(self) -> None:
         # The copy never lands within imports.ready_timeout: the final attempt
         # (at_deadline) leaves it pending with "still importing; left" - no drop.
         strategy = _RecordingStrategy(
             completed=import_probe(ImportReadiness.RETRY, files_present=False, command_issued=True),
         )
-        pending = pending_import(infohash="h", added_at=_FRESH)
-        qbit = FakeQbit({"h": [FakeTorrent(is_complete=True, content_path="/d")]})
-        mgr = make_orchestration_manager(
-            qbit=qbit,
-            strategy=strategy,
-            store_records=[pending],
-            pending=[pending],
-            import_wait_timeout=3600,
-            import_ready_timeout=60,
-            import_poll_interval=30,
+        mgr, view = _run_single_monitor(
+            strategy,
+            FakeQbit({"h": [FakeTorrent(is_complete=True, content_path="/d")]}),
+            ready_timeout=60,
         )
-        view = RecordingWaitView()
-        clock = FakeClock(step=30)
-
-        mgr.run_monitor(now=clock.now, sleep=clock.sleep, view=view)
 
         assert view.final(rk("h")).outcome is Outcome.STILL_IMPORTING
         assert set(mgr._pending_records()) == {pk("h")}  # left, not dropped
@@ -1274,21 +1302,11 @@ class TestRunMonitor:
             ]
             + [import_probe(ImportReadiness.RETRY, files_present=True, command_issued=True, target_count=3)],
         )
-        pending = pending_import(infohash="h", added_at=_FRESH)
-        qbit = FakeQbit({"h": [FakeTorrent(is_complete=True, content_path="/d")]})
-        mgr = make_orchestration_manager(
-            qbit=qbit,
-            strategy=strategy,
-            store_records=[pending],
-            pending=[pending],
-            import_wait_timeout=3600,
-            import_ready_timeout=60,
-            import_poll_interval=30,
+        mgr, view = _run_single_monitor(
+            strategy,
+            FakeQbit({"h": [FakeTorrent(is_complete=True, content_path="/d")]}),
+            ready_timeout=60,
         )
-        view = RecordingWaitView()
-        clock = FakeClock(step=30)
-
-        mgr.run_monitor(now=clock.now, sleep=clock.sleep, view=view)
 
         assert view.final(rk("h")).outcome is Outcome.IMPORTED
         assert mgr._pending_records() == {}
@@ -1312,21 +1330,11 @@ class TestRunMonitor:
                 for done in (0, 0, 1)
             ],
         )
-        pending = pending_import(infohash="h", added_at=_FRESH)
-        qbit = FakeQbit({"h": [FakeTorrent(is_complete=True, content_path="/d")]})
-        mgr = make_orchestration_manager(
-            qbit=qbit,
-            strategy=strategy,
-            store_records=[pending],
-            pending=[pending],
-            import_wait_timeout=3600,
-            import_ready_timeout=60,
-            import_poll_interval=30,
+        mgr, view = _run_single_monitor(
+            strategy,
+            FakeQbit({"h": [FakeTorrent(is_complete=True, content_path="/d")]}),
+            ready_timeout=60,
         )
-        view = RecordingWaitView()
-        clock = FakeClock(step=30)
-
-        mgr.run_monitor(now=clock.now, sleep=clock.sleep, view=view)
 
         assert view.final(rk("h")).outcome is Outcome.STILL_IMPORTING
         assert set(mgr._pending_records()) == {pk("h")}
@@ -1344,21 +1352,11 @@ class TestRunMonitor:
             ]
             + [import_probe(ImportReadiness.RETRY, files_present=True, command_issued=True)],
         )
-        pending = pending_import(infohash="h", added_at=_FRESH)
-        qbit = FakeQbit({"h": [FakeTorrent(is_complete=True, content_path="/d")]})
-        mgr = make_orchestration_manager(
-            qbit=qbit,
-            strategy=strategy,
-            store_records=[pending],
-            pending=[pending],
-            import_wait_timeout=3600,
-            import_ready_timeout=60,
-            import_poll_interval=30,
+        mgr, view = _run_single_monitor(
+            strategy,
+            FakeQbit({"h": [FakeTorrent(is_complete=True, content_path="/d")]}),
+            ready_timeout=60,
         )
-        view = RecordingWaitView()
-        clock = FakeClock(step=30)
-
-        mgr.run_monitor(now=clock.now, sleep=clock.sleep, view=view)
 
         assert view.final(rk("h")).outcome is Outcome.IMPORTED
         assert mgr._pending_records() == {}
@@ -1379,21 +1377,11 @@ class TestRunMonitor:
                 import_probe(ImportReadiness.RETRY, files_present=False, command_issued=True),
             ],
         )
-        pending = pending_import(infohash="h", added_at=_FRESH)
-        qbit = FakeQbit({"h": [FakeTorrent(is_complete=True, content_path="/d")]})
-        mgr = make_orchestration_manager(
-            qbit=qbit,
-            strategy=strategy,
-            store_records=[pending],
-            pending=[pending],
-            import_wait_timeout=3600,
-            import_ready_timeout=60,
-            import_poll_interval=30,
+        mgr, view = _run_single_monitor(
+            strategy,
+            FakeQbit({"h": [FakeTorrent(is_complete=True, content_path="/d")]}),
+            ready_timeout=60,
         )
-        view = RecordingWaitView()
-        clock = FakeClock(step=30)
-
-        mgr.run_monitor(now=clock.now, sleep=clock.sleep, view=view)
 
         assert view.final(rk("h")).outcome is Outcome.STILL_IMPORTING
         assert set(mgr._pending_records()) == {pk("h")}
@@ -1409,21 +1397,11 @@ class TestRunMonitor:
         strategy = _RecordingStrategy(
             completed=import_probe(ImportReadiness.RETRY, files_present=False, command_issued=True, deferred=True),
         )
-        pending = pending_import(infohash="h", added_at=_FRESH)
-        qbit = FakeQbit({"h": [FakeTorrent(is_complete=True, content_path="/d")]})
-        mgr = make_orchestration_manager(
-            qbit=qbit,
-            strategy=strategy,
-            store_records=[pending],
-            pending=[pending],
-            import_wait_timeout=3600,
-            import_ready_timeout=60,
-            import_poll_interval=30,
+        mgr, view = _run_single_monitor(
+            strategy,
+            FakeQbit({"h": [FakeTorrent(is_complete=True, content_path="/d")]}),
+            ready_timeout=60,
         )
-        view = RecordingWaitView()
-        clock = FakeClock(step=30)
-
-        mgr.run_monitor(now=clock.now, sleep=clock.sleep, view=view)
 
         assert view.final(rk("h")).outcome is Outcome.STILL_IMPORTING
         assert set(mgr._pending_records()) == {pk("h")}
@@ -1441,21 +1419,11 @@ class TestRunMonitor:
                 target_count=3,
             ),
         )
-        pending = pending_import(infohash="h", added_at=_FRESH)
-        qbit = FakeQbit({"h": [FakeTorrent(is_complete=True, content_path="/d")]})
-        mgr = make_orchestration_manager(
-            qbit=qbit,
-            strategy=strategy,
-            store_records=[pending],
-            pending=[pending],
-            import_wait_timeout=3600,
-            import_ready_timeout=60,
-            import_poll_interval=30,
+        mgr, view = _run_single_monitor(
+            strategy,
+            FakeQbit({"h": [FakeTorrent(is_complete=True, content_path="/d")]}),
+            ready_timeout=60,
         )
-        view = RecordingWaitView()
-        clock = FakeClock(step=30)
-
-        mgr.run_monitor(now=clock.now, sleep=clock.sleep, view=view)
 
         assert view.final(rk("h")).outcome is Outcome.STILL_IMPORTING
         assert set(mgr._pending_records()) == {pk("h")}
@@ -1474,22 +1442,13 @@ class TestRunMonitor:
                 ImportProgress(2, 3, determinate=True),  # the rise, at t=10
             ],
         )
-        pending = pending_import(infohash="h", added_at=_FRESH)
-        qbit = FakeQbit({"h": [FakeTorrent(is_complete=True, content_path="/d")]})
-        mgr = make_orchestration_manager(
-            qbit=qbit,
-            strategy=strategy,
-            store_records=[pending],
-            pending=[pending],
-            import_wait_timeout=3600,
-            import_ready_timeout=60,
-            import_poll_interval=30,
+        _, view = _run_single_monitor(
+            strategy,
+            FakeQbit({"h": [FakeTorrent(is_complete=True, content_path="/d")]}),
+            step=5,
+            ready_timeout=60,
             progress_poll_interval=5,
         )
-        view = RecordingWaitView()
-        clock = FakeClock(step=5)
-
-        mgr.run_monitor(now=clock.now, sleep=clock.sleep, view=view)
 
         assert view.final(rk("h")).outcome is Outcome.STILL_IMPORTING
         # Heavy polls at t=0/30/60/90: the t=60 poll is in-bound only because the
@@ -1497,98 +1456,40 @@ class TestRunMonitor:
         assert len(strategy.import_calls) == 4
         assert strategy.import_calls[-1].attempt is AttemptKind.DEADLINE
 
-    def test_missing_drops_record(self) -> None:
+    @pytest.mark.parametrize(
+        ("torrents", "outcome", "kept"),
+        [
+            pytest.param({}, Outcome.MISSING, False, id="missing-drops"),
+            pytest.param({"h": [FakeTorrent(is_errored=True)]}, Outcome.DOWNLOAD_ERRORED, True, id="errored-leaves"),
+            # Never finishes: past imports.wait_timeout the row terminates
+            # DOWNLOAD_TIMED_OUT (deferred), the record stays for a later run.
+            pytest.param({"h": [FakeTorrent(progress=0.5)]}, Outcome.DOWNLOAD_TIMED_OUT, True, id="timeout-leaves"),
+            # COMPLETE but no content_path to import from: its own outcome (not
+            # a misleading "timed out" - the download finished fine).
+            pytest.param({"h": [FakeTorrent(is_complete=True)]}, Outcome.NO_CONTENT_PATH, True, id="no-path-leaves"),
+        ],
+    )
+    def test_terminal_without_import_keeps_or_drops_the_record(
+        self,
+        torrents: dict[str, list[QbitStep]],
+        outcome: Outcome,
+        kept: bool,
+    ) -> None:
+        # None of these reach an import attempt, and none may touch the
+        # post-import category hook (SUCCESS-only).
         strategy = _RecordingStrategy()
-        pending = pending_import(infohash="h", added_at=_FRESH)
-        mgr = make_orchestration_manager(
-            qbit=FakeQbit({}),
-            strategy=strategy,
-            store_records=[pending],
-            pending=[pending],
-            import_wait_timeout=3600,
-            import_ready_timeout=600,
-            import_poll_interval=30,
-        )
-        view = RecordingWaitView()
-        clock = FakeClock(step=30)
-
-        mgr.run_monitor(now=clock.now, sleep=clock.sleep, view=view)
-
-        assert strategy.import_calls == []
-        assert view.final(rk("h")).outcome is Outcome.MISSING
-        assert mgr._pending_records() == {}
-
-    def test_errored_leaves_record(self) -> None:
-        strategy = _RecordingStrategy()
-        pending = pending_import(infohash="h", added_at=_FRESH)
-        mgr = make_orchestration_manager(
-            qbit=FakeQbit({"h": [FakeTorrent(is_errored=True)]}),
-            strategy=strategy,
-            store_records=[pending],
-            pending=[pending],
-            import_wait_timeout=3600,
-            import_ready_timeout=600,
-            import_poll_interval=30,
-        )
-        view = RecordingWaitView()
-        clock = FakeClock(step=30)
-
-        mgr.run_monitor(now=clock.now, sleep=clock.sleep, view=view)
-
-        assert strategy.import_calls == []
-        assert view.final(rk("h")).outcome is Outcome.DOWNLOAD_ERRORED
-        assert set(mgr._pending_records()) == {pk("h")}
-
-    def test_download_timeout_is_terminal_and_leaves_record(self) -> None:
-        # The torrent never finishes: past imports.wait_timeout the row terminates
-        # DOWNLOAD_TIMED_OUT (deferred), the record stays for a later run, and the
-        # post-import category hook is never touched (SUCCESS-only).
-        strategy = _RecordingStrategy()
-        pending = pending_import(infohash="h", added_at=_FRESH)
-        qbit = CategoryQbit({"h": [FakeTorrent(progress=0.5)]})
-        mgr = make_orchestration_manager(
-            qbit=qbit,
-            strategy=strategy,
-            store_records=[pending],
-            pending=[pending],
+        qbit = CategoryQbit(torrents)
+        mgr, view = _run_single_monitor(
+            strategy,
+            qbit,
             post_import_category="pearlarr-done",
-            import_wait_timeout=60,
-            import_ready_timeout=600,
-            import_poll_interval=30,
+            wait_timeout=60,
         )
-        view = RecordingWaitView()
-        clock = FakeClock(step=30)
-
-        mgr.run_monitor(now=clock.now, sleep=clock.sleep, view=view)
 
         assert strategy.import_calls == []
-        assert view.final(rk("h")).outcome is Outcome.DOWNLOAD_TIMED_OUT
-        assert set(mgr._pending_records()) == {pk("h")}  # left pending, not dropped
-        assert qbit.set_category_calls == []  # only a verified import moves category
-
-    def test_complete_without_content_path_gets_its_own_outcome(self) -> None:
-        # qBittorrent reports COMPLETE but hands back no content_path to import
-        # from: terminal NO_CONTENT_PATH (not a misleading "timed out" - the
-        # download finished fine), never an import attempt, record kept.
-        strategy = _RecordingStrategy()
-        pending = pending_import(infohash="h", added_at=_FRESH)
-        mgr = make_orchestration_manager(
-            qbit=FakeQbit({"h": [FakeTorrent(is_complete=True)]}),
-            strategy=strategy,
-            store_records=[pending],
-            pending=[pending],
-            import_wait_timeout=3600,
-            import_ready_timeout=600,
-            import_poll_interval=30,
-        )
-        view = RecordingWaitView()
-        clock = FakeClock(step=30)
-
-        mgr.run_monitor(now=clock.now, sleep=clock.sleep, view=view)
-
-        assert strategy.import_calls == []
-        assert view.final(rk("h")).outcome is Outcome.NO_CONTENT_PATH
-        assert set(mgr._pending_records()) == {pk("h")}
+        assert view.final(rk("h")).outcome is outcome
+        assert set(mgr._pending_records()) == ({pk("h")} if kept else set())
+        assert qbit.set_category_calls == []
 
     def test_tier2_progress_poll_error_is_contained(self) -> None:
         # A raising import_progress during the fast lane is debug-logged and
@@ -1685,10 +1586,10 @@ class TestRunMonitor:
         assert set(mgr._pending_records()) == {pk("h")}  # left pending for next run
         assert view.saw(rk("h"), Phase.DOWNLOADING)
         assert view.closed is False  # injected views are the caller's to close (own_view seam)
-        # The break is announced as an INFO hub Diagnostic.
+        # The break is announced as an INFO hub Diagnostic with the left count.
         (note,) = recording.of_type(Diagnostic)
         assert note.severity is Severity.INFO
-        assert note.message == "Wait interrupted - 1 left pending"
+        assert "1 left pending" in note.message
         assert note.origin == LOG_NAME
 
     def test_interrupt_mid_cycle_still_graduates_that_cycles_terminals(self) -> None:
@@ -1716,42 +1617,23 @@ class TestRunMonitor:
         assert result is not None and result.waited == 1
         assert view.final(rk("h1")).outcome is Outcome.MISSING  # the interrupt-time push carried it
 
-    def test_import_exception_is_swallowed_and_record_left(self) -> None:
-        # A failing import (e.g. malformed Sonarr response) must NOT propagate and
-        # abort _finalize_run's cache save. The record is left pending instead.
+    def test_import_exception_is_swallowed_announced_and_record_left(self) -> None:
+        # A failing import (e.g. malformed Sonarr response) must NOT propagate
+        # and abort _finalize_run's cache save: the failure lands as an ERROR
+        # Diagnostic carrying its traceback and the record is left pending.
         strategy = _RecordingStrategy(completed_error=RuntimeError("boom"))
-        pending = pending_import(infohash="h", added_at=_FRESH)
-        qbit = FakeQbit({"h": [FakeTorrent(is_complete=True, content_path="/d")]})
-        mgr = make_orchestration_manager(
-            qbit=qbit,
-            strategy=strategy,
-            store_records=[pending],
-            pending=[pending],
-            import_wait_timeout=3600,
-            import_ready_timeout=60,
-            import_poll_interval=30,
+        recording = install_recording_hub()
+        mgr, view = _run_single_monitor(
+            strategy,
+            FakeQbit({"h": [FakeTorrent(is_complete=True, content_path="/d")]}),
+            ready_timeout=60,
         )
-        view = RecordingWaitView()
-        clock = FakeClock(step=30)
-
-        mgr.run_monitor(now=clock.now, sleep=clock.sleep, view=view)  # must not raise
 
         assert view.final(rk("h")).outcome is Outcome.ATTEMPT_FAILED
         assert set(mgr._pending_records()) == {pk("h")}
-
-    def test_swallowed_import_announces_an_error_and_leaves(self) -> None:
-        # The observable half of the swallow above: the failure is announced as
-        # an ERROR Diagnostic carrying its traceback, and the probe says LEAVE.
-        strategy = _RecordingStrategy(completed_error=RuntimeError("boom"))
-        mgr = make_orchestration_manager(qbit=None, strategy=strategy)
-        recording = install_recording_hub()
-
-        probe = mgr.try_import_completed(pending_import(infohash="h", added_at=_FRESH), "/downloads/x")
-
-        assert probe == ImportProbe(ImportReadiness.LEAVE, files_present=False, command_issued=False)
         (error,) = recording.of_type(Diagnostic)
         assert error.severity is Severity.ERROR
-        assert error.message == "Manual import failed for Show · SubGroup - leaving it for a later run"
+        assert "Manual import failed" in error.message
         assert error.trace is not None
 
     def test_imported_terminal_row_carries_files_count(self) -> None:
@@ -1765,25 +1647,41 @@ class TestRunMonitor:
                 target_count=3,
             ),
         )
-        pending = pending_import(infohash="h", added_at=_FRESH)
-        qbit = FakeQbit({"h": [FakeTorrent(is_complete=True, content_path="/d")]})
-        mgr = make_orchestration_manager(
-            qbit=qbit,
-            strategy=strategy,
-            store_records=[pending],
-            pending=[pending],
-            import_wait_timeout=3600,
-            import_ready_timeout=600,
-            import_poll_interval=30,
+        _, view = _run_single_monitor(
+            strategy,
+            FakeQbit({"h": [FakeTorrent(is_complete=True, content_path="/d")]}),
         )
-        view = RecordingWaitView()
-        clock = FakeClock(step=30)
-
-        mgr.run_monitor(now=clock.now, sleep=clock.sleep, view=view)
 
         final = view.final(rk("h"))
         assert final.outcome is Outcome.IMPORTED
         assert final.import_total == 3
+
+    def test_failed_store_drop_leaves_no_result_row(self) -> None:
+        # The store drop precedes the result-row append: a drop that raises
+        # must not record a phantom IMPORTED row for _finalize_run to count.
+        strategy = _RecordingStrategy(
+            completed=import_probe(ImportReadiness.IMPORTED, files_present=True),
+        )
+        mgr = make_orchestration_manager(
+            qbit=FakeQbit({"h": [FakeTorrent(is_complete=True, content_path="/d")]}),
+            strategy=strategy,
+        )
+        mgr.cache_store = _ExplodingDropStore()
+        clock = FakeClock(step=5)
+        mp = MonitorPass(
+            mgr,
+            [pending_import(infohash="h", added_at=_FRESH)],
+            kind=WaitKind.MONITOR,
+            now=clock.now,
+            dl_timeout=3600,
+            import_timeout=600,
+        )
+
+        with pytest.raises(RuntimeError, match="drop boom"):
+            mp.run_cycle()
+
+        assert mp.results == []
+        assert mp.rows[rk("h")].active
 
 
 def _monitor_pass(
@@ -1794,7 +1692,7 @@ def _monitor_pass(
 
     mgr = make_orchestration_manager(qbit=qbit, strategy=_RecordingStrategy())
     clock = FakeClock(step=5)
-    return MonitorPass(mgr, [record], now=clock.now, dl_timeout=3600, import_timeout=600)
+    return MonitorPass(mgr, [record], kind=WaitKind.MONITOR, now=clock.now, dl_timeout=3600, import_timeout=600)
 
 
 class TestMonitorFastTelemetry:
@@ -1880,7 +1778,7 @@ class TestMonitorFastTelemetry:
             telemetry={"h": [FakeTorrent(progress=1.0, dlspeed=250)]},
         )
         mp = _monitor_pass(qbit, record)
-        mp.advance(mp.rows[rk("h")])
+        mp._advance(mp.rows[rk("h")])
         assert mp.rows[rk("h")].view.phase is Phase.DOWNLOADING
 
         changed = mp.refresh_telemetry()
@@ -1903,7 +1801,7 @@ class TestMonitorFastTelemetry:
             telemetry={"h": [FakeTorrent(progress=0.3, dlspeed=100)]},
         )
         mp = _monitor_pass(qbit, record)
-        mp.advance(mp.rows[rk("h")])
+        mp._advance(mp.rows[rk("h")])
 
         assert mp.refresh_telemetry() is False
 
@@ -2067,8 +1965,8 @@ class _FinalizeWaitManager:
         if name == self._raise_on:
             raise RuntimeError(f"{name} exploded")
 
-    def reconcile_once(self) -> WaitResult | None:
-        self._mark("reconcile")
+    def check_once(self) -> WaitResult | None:
+        self._mark("check")
         return self._check_result
 
     def tally_carried_over_into_stats(self) -> None:
@@ -2159,7 +2057,7 @@ class TestFinalizeRunOrdering:
         engine._finalize_run()
 
         assert "monitor" not in calls
-        assert calls == ["scan_finished", "reconcile", "tally", "summary", "save", "run_finished"]
+        assert calls == ["scan_finished", "check", "tally", "summary", "save", "run_finished"]
 
     def test_preview_skips_monitor_and_tally(self) -> None:
         # A preview (no client) short-circuits reconcile/tally/monitor.
@@ -2187,7 +2085,7 @@ class TestFinalizeRunOrdering:
         engine._finalize_run()
 
         assert "monitor" not in calls
-        assert calls == ["scan_finished", "reconcile", "tally", "summary", "save", "run_finished"]
+        assert calls == ["scan_finished", "check", "tally", "summary", "save", "run_finished"]
 
     def test_non_monitor_strategy_reconciles_in_hybrid_without_monitoring(self) -> None:
         # HYBRID gets the same treatment for a non-monitor strategy: reconcile, no monitor.
@@ -2202,7 +2100,7 @@ class TestFinalizeRunOrdering:
         engine._finalize_run()
 
         assert "monitor" not in calls
-        assert calls == ["scan_finished", "reconcile", "tally", "summary", "save", "run_finished"]
+        assert calls == ["scan_finished", "check", "tally", "summary", "save", "run_finished"]
 
 
 class TestFinalizeRunUnwind:
@@ -2220,15 +2118,15 @@ class TestFinalizeRunUnwind:
             calls,
             qbit=CLIENT_SENTINEL,
             mode=ImportWaitMode.DEFERRED,
-            raise_on="reconcile",
+            raise_on="check",
         )
 
-        with pytest.raises(RuntimeError, match="reconcile exploded"):
+        with pytest.raises(RuntimeError, match="check exploded"):
             engine._finalize_run()
 
         # The raise still escapes (bootstrap closes the run), but the finally now
         # saves so the run's staged writes persist rather than rolling back.
-        assert calls == ["scan_finished", "reconcile", "save"]
+        assert calls == ["scan_finished", "check", "save"]
 
     def test_monitor_raise_still_saves_but_leaves_the_run_open(self) -> None:
         # run_finished sits OUTSIDE the save's finally on purpose: emitting it there
@@ -2260,7 +2158,7 @@ class TestFinalizeRunUnwind:
         with pytest.raises(RuntimeError, match="tally exploded"):
             engine._finalize_run()
 
-        assert calls == ["scan_finished", "reconcile", "tally", "save"]
+        assert calls == ["scan_finished", "check", "tally", "save"]
 
 
 class TestFinalizeRunImportedBump:
@@ -2886,7 +2784,7 @@ class TestRadarrReconcile:
             post_import_category="pearlarr-done",
         )
 
-        result = mgr.reconcile_once(view=RecordingWaitView())
+        result = mgr.check_once(view=RecordingWaitView())
 
         assert result is not None
         assert result.carried_over_imported == 1
@@ -2904,7 +2802,7 @@ class TestRadarrReconcile:
             post_import_category="pearlarr-done",
         )
 
-        result = mgr.reconcile_once(view=RecordingWaitView())
+        result = mgr.check_once(view=RecordingWaitView())
 
         assert result is not None
         assert result.carried_over_imported == 0
@@ -2921,7 +2819,7 @@ class TestRadarrReconcile:
             post_import_category="pearlarr-done",
         )
 
-        mgr.reconcile_once(view=RecordingWaitView())
+        mgr.check_once(view=RecordingWaitView())
 
         assert set(mgr._pending_records()) == {pk("h")}
         assert qbit.set_category_calls == []
@@ -2940,7 +2838,7 @@ class TestRadarrReconcile:
         )
 
         mgr.prune_expired_pending()
-        mgr.reconcile_once(view=RecordingWaitView())
+        mgr.check_once(view=RecordingWaitView())
 
         assert mgr._pending_records() == {}
         assert qbit.set_category_calls == [("pearlarr-done", "h")]
@@ -2955,7 +2853,7 @@ class TestRadarrReconcile:
             radarr_records=[pending_import(infohash="h", series_id=0, added_at=_FRESH)],
         )
 
-        mgr.reconcile_once(view=RecordingWaitView())
+        mgr.check_once(view=RecordingWaitView())
         mgr.tally_carried_over_into_stats()
 
         assert mgr._ctx.stats.downloaded == 1
@@ -2998,7 +2896,7 @@ class TestCrossArrCategoryGate:
             post_import_category="pearlarr-done",
         )
 
-        radarr_mgr.reconcile_once(view=RecordingWaitView())
+        radarr_mgr.check_once(view=RecordingWaitView())
 
         assert qbit.set_category_calls == [("pearlarr-done", "h")]
         assert store.get_pending(Arr.RADARR) == {}
