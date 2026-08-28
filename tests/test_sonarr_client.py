@@ -157,6 +157,7 @@ def test_queue_decodes_records_and_builds_request() -> None:
     client = _make_client()
     records = client.queue()
 
+    assert records is not None
     assert len(records) == 3
     assert records[0] == QueueRecord(
         id=1516314797,
@@ -205,6 +206,7 @@ def test_queue_paginates_until_total_records_covered() -> None:
     client = _make_client()
     records = client.queue()
 
+    assert records is not None
     assert [r.download_id for r in records] == ["HASH0", "HASH1", "HASH2"]
     assert len(seen_urls) == 2
     assert "page=1" in seen_urls[0]
@@ -212,39 +214,33 @@ def test_queue_paginates_until_total_records_covered() -> None:
 
 
 @respx.mock
-def test_queue_later_page_failure_keeps_fetched_records() -> None:
-    """A failed LATER page returns what was already fetched.
+def test_queue_later_page_failure_fails_the_whole_read() -> None:
+    """A failed LATER page returns None, never the partial pages.
 
-    Partial beats empty for the caller's "not tracked -> fall back to own
-    scan" logic.
+    A partial queue misreads a tracked download as untracked, so the caller
+    must see the outage and retry instead.
     """
 
     route = respx.get(f"{_BASE}/queue")
     # Page 1 succeeds. Page 2 stays 500 through the transport retries.
     route.side_effect = [httpx.Response(200, json=_queue_page(3, ["HASH0", "HASH1"]))] + [httpx.Response(500)] * 10
-    client = _make_client()
-    records = client.queue()
 
-    assert [r.download_id for r in records] == ["HASH0", "HASH1"]
+    assert _make_client().queue() is None
 
 
 @respx.mock
-def test_queue_non_200_returns_empty() -> None:
-    """A non-200 queue read falls back to an empty list (caller treats as untracked)."""
+@pytest.mark.parametrize(
+    "outage",
+    [pytest.param(httpx.Response(500), id="non-200"), pytest.param(httpx.ConnectError("boom"), id="request-error")],
+)
+def test_queue_outage_returns_none(outage: httpx.Response | Exception) -> None:
+    """A failed queue read reports None (fail closed): it never reads as an empty, untracked queue.
 
-    respx.get(f"{_BASE}/queue").respond(status_code=404)
-    assert _make_client().queue() == []
-
-
-@respx.mock
-def test_queue_request_error_returns_empty() -> None:
-    """A transient request error (a timeout raises an httpx error) also falls back to [].
-
-    It never unwinds the poll loop.
+    It also never unwinds the poll loop.
     """
 
-    respx.get(f"{_BASE}/queue").mock(side_effect=httpx.ConnectError("boom"))
-    assert _make_client().queue() == []
+    respx.get(f"{_BASE}/queue").mock(side_effect=[outage] * 10)
+    assert _make_client().queue() is None
 
 
 # --- queue_delete() ---------------------------------------------------------

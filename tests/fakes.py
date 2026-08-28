@@ -256,7 +256,8 @@ class FakeSonarrClient(AbstractSonarrClient):
         completed_download_handling: bool = True,
     ) -> None:
         self.all_series_return: list[SonarrItem] = all_series or []
-        self.queue_return: list[QueueRecord] = queue or []
+        # Reassign to None after construction to script a failed queue read.
+        self.queue_return: list[QueueRecord] | None = queue or []
         self.episodes_return: list[SonarrEpisode] | None = [] if episodes is None else episodes
         self.commands_return: list[CommandResource] = commands or []
         self.commands_script: list[list[CommandResource]] = commands_script or []
@@ -301,7 +302,7 @@ class FakeSonarrClient(AbstractSonarrClient):
         return self.all_series_return
 
     @override
-    def queue(self) -> list[QueueRecord]:
+    def queue(self) -> list[QueueRecord] | None:
         self.queue_calls += 1
         return self.queue_return
 

@@ -95,7 +95,7 @@ class AbstractSonarrClient(ABC):
     def refresh_monitored_downloads(self) -> int | None: ...
 
     @abstractmethod
-    def queue(self) -> list[QueueRecord]: ...
+    def queue(self) -> list[QueueRecord] | None: ...
 
     @abstractmethod
     def queue_delete(self, queue_id: int) -> bool: ...
@@ -385,8 +385,8 @@ class SonarrClient(AbstractSonarrClient):
         return command.id or None
 
     @override
-    def queue(self) -> list[QueueRecord]:
-        """All Sonarr queue records (`/api/v3/queue`), paged until `totalRecords` is covered.
+    def queue(self) -> list[QueueRecord] | None:
+        """All Sonarr queue records (`/api/v3/queue`, paged until `totalRecords` is covered), or None on failure.
 
         A season pack holds one record per episode sharing the `downloadId` (an infohash, case-insensitive).
         `includeUnknownSeriesItems` is on so an `importBlocked` item whose title matched no series still surfaces.
@@ -401,12 +401,12 @@ class SonarrClient(AbstractSonarrClient):
                     "pageSize": "1000",
                     "includeUnknownSeriesItems": "true",
                 },
-                warn="Could not fetch the Sonarr queue ({detail}) - continuing without queue state",
+                warn="Could not fetch the Sonarr queue ({detail}) - will retry",
             )
             if paged is None:
-                # A failed LATER page keeps what was fetched: partial beats empty for the caller's
-                # "not tracked -> fall back to own scan" logic.
-                return records
+                # ANY failed page fails the whole read: a partial queue misreads a tracked download
+                # as untracked, so the caller must retry rather than step in.
+                return None
 
             raw = paged.get("records")
             page_records = validate_each(QueueRecord, cast("list[object]", raw)) if isinstance(raw, list) else []

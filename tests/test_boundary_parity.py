@@ -361,7 +361,9 @@ def test_import_pending_classifies_by_tracked_status() -> None:
         },
     )
 
-    records = {record.download_id: record for record in _make_sonarr_client().queue()}
+    queue = _make_sonarr_client().queue()
+    assert queue is not None
+    records = {record.download_id: record for record in queue}
     assert classify_queue([records["ABC123"]]) is QueueVerdict.PENDING_CLEAN
     assert classify_queue([records["DEF456"]]) is QueueVerdict.STEP_IN
 

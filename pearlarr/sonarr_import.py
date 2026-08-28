@@ -2,7 +2,7 @@
 
 import logging
 import time
-from dataclasses import replace
+from dataclasses import dataclass, field, replace
 from typing import NamedTuple
 from urllib.parse import urlsplit
 
@@ -97,6 +97,21 @@ class _EntryContext(NamedTuple):
     omit_download_id: bool
 
 
+@dataclass
+class _ScanScratch:
+    """The scanner's per-run fallback scratch, reassigned wholesale by `reset`.
+
+    `path_mappings` None = unfetched, and `history_verdicts` memoizes VERDICTS
+    only, so a probe failure re-probes on the next activation.
+    """
+
+    folder_pinned: set[str] = field(default_factory=set[str])
+    history_verdicts: dict[str, DownloadHistoryVerdict] = field(default_factory=dict[str, DownloadHistoryVerdict])
+    path_mappings: list[RemotePathMapping] | None = None
+    translated_paths: dict[str, str] = field(default_factory=dict[str, str])
+    warned_empty_folder: set[str] = field(default_factory=set[str])
+
+
 class CandidateScanner:
     """Per-run candidate scans: the downloadId scan with the folder fallback."""
 
@@ -104,23 +119,12 @@ class CandidateScanner:
         self.sonarr = sonarr
         self._qbit_host = qbit_host
         self.logger = logger
-
-        # Per-run fallback scratch. `_path_mappings` None = unfetched, and `_history_verdicts` memoizes
-        # VERDICTS only, so a probe failure re-probes on the next activation.
-        self._folder_pinned: set[str] = set()
-        self._history_verdicts: dict[str, DownloadHistoryVerdict] = {}
-        self._path_mappings: list[RemotePathMapping] | None = None
-        self._translated_paths: dict[str, str] = {}
-        self._warned_empty_folder: set[str] = set()
+        self._scratch = _ScanScratch()
 
     def reset(self) -> None:
         """Drop the per-run fallback scratch (run-start, via the executor)."""
 
-        self._folder_pinned = set()
-        self._history_verdicts = {}
-        self._path_mappings = None
-        self._translated_paths = {}
-        self._warned_empty_folder = set()
+        self._scratch = _ScanScratch()
 
     def content_paths(self, content_path: str) -> ContentPaths:
         """The raw + Sonarr-visible path pair the in-flight guard matches against.
@@ -130,7 +134,7 @@ class CandidateScanner:
 
         return ContentPaths(
             raw=content_path,
-            sonarr_visible=self._translated_paths.get(content_path, content_path),
+            sonarr_visible=self._scratch.translated_paths.get(content_path, content_path),
         )
 
     def _remote_path_mappings(self) -> list[RemotePathMapping]:
@@ -139,34 +143,34 @@ class CandidateScanner:
         A failed fetch caches [] for the run: translation degrades to a no-op, so nothing pins and the scan is retried.
         """
 
-        if self._path_mappings is None:
-            self._path_mappings = self.sonarr.remote_path_mappings() or []
-        return self._path_mappings
+        if self._scratch.path_mappings is None:
+            self._scratch.path_mappings = self.sonarr.remote_path_mappings() or []
+        return self._scratch.path_mappings
 
     def _sonarr_visible_path(self, content_path: str) -> str:
         """Translate (and memoize) a download path into Sonarr's filesystem view."""
 
-        translated = self._translated_paths.get(content_path)
+        translated = self._scratch.translated_paths.get(content_path)
         if translated is None:
             translated = translate_download_path(
                 content_path,
                 self._remote_path_mappings(),
                 self._qbit_host,
             )
-            self._translated_paths[content_path] = translated
+            self._scratch.translated_paths[content_path] = translated
         return translated
 
     def _probe_history(self, pending: PendingImport) -> DownloadHistoryVerdict | None:
         """Classify a download's Sonarr history (memoized), or None on probe failure."""
 
-        verdict = self._history_verdicts.get(pending.infohash)
+        verdict = self._scratch.history_verdicts.get(pending.infohash)
         if verdict is not None:
             return verdict
         page = self.sonarr.history_for_download(download_id=pending.infohash)
         if page is None:
             return None
         verdict = classify_download_history(page.records)
-        self._history_verdicts[pending.infohash] = verdict
+        self._scratch.history_verdicts[pending.infohash] = verdict
         if verdict.dead_tracked:
             when = f" on {verdict.date.split('T')[0]}" if verdict.date else ""
             self.logger.debug(
@@ -178,7 +182,7 @@ class CandidateScanner:
     def scan(self, pending: PendingImport, content_path: str) -> _CandidateScan | None:
         """The candidates for one poll: the downloadId scan, with the folder fallback. None when the scan failed."""
 
-        if pending.infohash not in self._folder_pinned:
+        if pending.infohash not in self._scratch.folder_pinned:
             candidates = self.sonarr.manual_import_candidates(pending=pending)
             if candidates is not None:
                 return _CandidateScan(candidates, omit_download_id=False)
@@ -197,10 +201,10 @@ class CandidateScanner:
         if folder_candidates:
             # INVARIANT: pin folder mode on NONEMPTY success only. A 200 `[]` is exactly what an invisible or
             # untranslated folder returns, and pinning on it wedges the record blind to files, downloadId unretried.
-            self._folder_pinned.add(pending.infohash)
-        elif verdict is not None and verdict.dead_tracked and pending.infohash not in self._warned_empty_folder:
+            self._scratch.folder_pinned.add(pending.infohash)
+        elif verdict is not None and verdict.dead_tracked and pending.infohash not in self._scratch.warned_empty_folder:
             # Dead-tracked plus an empty folder means silent retries until the record expires. Say so once.
-            self._warned_empty_folder.add(pending.infohash)
+            self._scratch.warned_empty_folder.add(pending.infohash)
             hub_warn(
                 f"{pending.display_label}: Sonarr won't serve this download by id and "
                 f"a scan of its folder found no files ({folder}) - will retry"
@@ -209,6 +213,19 @@ class CandidateScanner:
             folder_candidates,
             omit_download_id=verdict is not None and verdict.dead_tracked,
         )
+
+
+@dataclass
+class _ImportScratch:
+    """The executor's per-run import scratch, reassigned wholesale by `reset`. A None cache = not yet fetched."""
+
+    quality_defs: list[QualityDefinition] | None = None
+    languages: list[Language] | None = None
+    warned_unplaceable: set[str] = field(default_factory=set[str])
+    warned_default_quality: bool = False
+    last_refresh_monotonic: float | None = None
+    issued_command_ids: set[int] = field(default_factory=set[int])
+    completed_download_handling: bool | None = None
 
 
 class ImportExecutor:
@@ -222,39 +239,27 @@ class ImportExecutor:
         self.logger = deps.logger
         self._mapper = mapper
         self.scanner = CandidateScanner(sonarr, _hostname(deps.config.qbittorrent.host), deps.logger)
-
-        # Per-run scratch, all cleared in reset. A `None` cache = not yet fetched.
-        self._quality_defs_cache: list[QualityDefinition] | None = None
-        self._languages_cache: list[Language] | None = None
-        self._warned_unplaceable: set[str] = set()
-        self._warned_default_quality = False
-        self._last_refresh_monotonic: float | None = None
-        self._issued_command_ids: set[int] = set()
-        self._completed_download_handling: bool | None = None
+        self._scratch = _ImportScratch()
 
     def reset(self) -> None:
         """Drop the per-run import scratch (run-start, via get_items)."""
 
-        self._quality_defs_cache = None
-        self._languages_cache = None
-        self._warned_unplaceable = set()
-        self._warned_default_quality = False
-        self._last_refresh_monotonic = None
-        self._issued_command_ids = set()
-        self._completed_download_handling = None
+        self._scratch = _ImportScratch()
         self.scanner.reset()
 
     def completed_download_handling_enabled(self) -> bool:
         """Whether Sonarr imports its own completed downloads: with it off, it parks them forever."""
 
-        if self._completed_download_handling is None:
-            self._completed_download_handling = self.sonarr.download_client_config().enable_completed_download_handling
-        return self._completed_download_handling
+        if self._scratch.completed_download_handling is None:
+            self._scratch.completed_download_handling = (
+                self.sonarr.download_client_config().enable_completed_download_handling
+            )
+        return self._scratch.completed_download_handling
 
     def is_own_command(self, command_id: int) -> bool:
         """Whether we POSTed this ManualImport command id this run."""
 
-        return command_id in self._issued_command_ids
+        return command_id in self._scratch.issued_command_ids
 
     def refresh_downloads(self) -> None:
         """Queue RefreshMonitoredDownloads (throttled), waiting for it and the follow-up ProcessMonitoredDownloads."""
@@ -263,9 +268,9 @@ class ImportExecutor:
         # at most once per poll interval.
         now = time.monotonic()
         interval = self._config.imports.poll_interval
-        if self._last_refresh_monotonic is not None and now - self._last_refresh_monotonic < interval:
+        if self._scratch.last_refresh_monotonic is not None and now - self._scratch.last_refresh_monotonic < interval:
             return
-        self._last_refresh_monotonic = now
+        self._scratch.last_refresh_monotonic = now
 
         cmd_id = self.sonarr.refresh_monitored_downloads()
         if cmd_id is None:
@@ -286,20 +291,27 @@ class ImportExecutor:
                 return
             time.sleep(_REFRESH_COMMAND_POLL_S)
 
-    def queue_records(self, infohash: str) -> list[QueueRecord]:
-        """This download's queue records, matched case-insensitively (Sonarr stores the hash uppercased)."""
+    def queue_records(self, infohash: str) -> list[QueueRecord] | None:
+        """This download's queue records, matched case-insensitively (Sonarr stores the hash uppercased).
 
+        None when the queue read failed.
+        """
+
+        queue = self.sonarr.queue()
+        if queue is None:
+            return None
         target = infohash.casefold()
         return [
-            record
-            for record in self.sonarr.queue()
-            if record.download_id is not None and record.download_id.casefold() == target
+            record for record in queue if record.download_id is not None and record.download_id.casefold() == target
         ]
 
     def close_tracked(self, pending: PendingImport) -> None:
         """Dismiss Sonarr's leftover queue entry, leaving an unknown-series one alone (dismissing it 500s)."""
 
         rows = self.queue_records(pending.infohash)
+        if rows is None:
+            self.logger.debug(f"{pending.display_label}: queue read failed - leaving any leftover entry")
+            return
         queue_id = next((row.id for row in rows if row.id and row.series_id), None)
         if queue_id is None:
             if any(row.id for row in rows):
@@ -394,7 +406,7 @@ class ImportExecutor:
             return ImportProbe(ImportReadiness.RETRY, files_present=False, command_issued=False)
 
         # Sonarr's copy is async, so acceptance is not `files_present`.
-        self._issued_command_ids.add(cmd_id)
+        self._scratch.issued_command_ids.add(cmd_id)
         self.logger.debug(f"{content_path}: queued {count_noun(len(files), 'file')} for import (command {cmd_id})")
         return ImportProbe(ImportReadiness.RETRY, files_present=False, command_issued=True)
 
@@ -408,9 +420,9 @@ class ImportExecutor:
         We import what we can and leave the rest, surfaced loudly so nothing is silently dropped.
         """
 
-        if pending.infohash in self._warned_unplaceable:
+        if pending.infohash in self._scratch.warned_unplaceable:
             return
-        self._warned_unplaceable.add(pending.infohash)
+        self._scratch.warned_unplaceable.add(pending.infohash)
         label = pending.display_label
         coverage = f" ({pending.coverage})" if pending.coverage else ""
         hub_warn(
@@ -421,21 +433,21 @@ class ImportExecutor:
     def _import_language_objects(self, pending: PendingImport) -> list[Language]:
         """Resolve the import language objects for a record (lazily cached)."""
 
-        if self._languages_cache is None:
-            self._languages_cache = self.sonarr.languages()
+        if self._scratch.languages is None:
+            self._scratch.languages = self.sonarr.languages()
         lang_names = derive_languages(
             pending.is_dual_audio,
             self._config.imports.languages_dual,
             self._config.imports.languages_single,
         )
-        return resolve_language_objects(lang_names, self._languages_cache)
+        return resolve_language_objects(lang_names, self._scratch.languages)
 
     def _quality_definitions(self) -> list[QualityDefinition]:
         """The Sonarr quality definitions (lazily fetched + cached for the run)."""
 
-        if self._quality_defs_cache is None:
-            self._quality_defs_cache = self.sonarr.quality_definitions()
-        return self._quality_defs_cache
+        if self._scratch.quality_defs is None:
+            self._scratch.quality_defs = self.sonarr.quality_definitions()
+        return self._scratch.quality_defs
 
     def _build_file_entry(
         self,
@@ -456,8 +468,8 @@ class ImportExecutor:
         default_name = self._config.imports.default_quality
         default_axes = quality_axes_from_name(default_name, quality_defs)
         # The quality seam runs once per FILE, so the flag keeps a config typo to one warning per run.
-        if default_name and default_axes == ParsedQuality() and not self._warned_default_quality:
-            self._warned_default_quality = True
+        if default_name and default_axes == ParsedQuality() and not self._scratch.warned_default_quality:
+            self._scratch.warned_default_quality = True
             hub_warn(f"imports.default_quality '{default_name}' matches no Sonarr quality definition - ignoring it")
         quality = resolve_quality(
             sonarr_axes,
@@ -600,7 +612,13 @@ class ImportReconciler:
             self.logger.debug(f"{label}: already imported (recommended files present)")
             return probe(ImportReadiness.IMPORTED, files_present=True, command_issued=False)
 
-        verdict = classify_queue(self._executor.queue_records(pending.infohash))
+        queue_rows = self._executor.queue_records(pending.infohash)
+        if queue_rows is None:
+            # Fail closed: an unreadable queue must never read as untracked (stepping in races Sonarr's
+            # import). RETRY defers via the poll loop until the ready deadline graduates the record.
+            self.logger.debug(f"{label}: queue read failed; retrying")
+            return probe(ImportReadiness.RETRY, files_present=False, command_issued=False)
+        verdict = classify_queue(queue_rows)
         if verdict is QueueVerdict.WAIT:
             self.logger.debug(f"{label}: Sonarr is importing; waiting")
             return probe(ImportReadiness.RETRY, files_present=False, command_issued=False)
