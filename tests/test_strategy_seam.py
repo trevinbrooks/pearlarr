@@ -62,7 +62,7 @@ from pearlarr.seadex_types import (
     SonarrItem,
 )
 from pearlarr.sonarr_episodes import sonarr_series_fingerprint
-from pearlarr.sonarr_import_plan import resolve_language_objects
+from pearlarr.sonarr_import_plan import DownloadHistoryVerdict, resolve_language_objects
 
 from .builders import (
     SEP,
@@ -703,6 +703,48 @@ class TestImportCompletedQueueState:
         assert probe.files_present is False
         assert sonarr.candidate_calls == []
 
+    @pytest.mark.parametrize("attempt", [AttemptKind.POLL, AttemptKind.DEADLINE])
+    def test_queue_outage_retries_instead_of_stepping_in(self, attempt: AttemptKind) -> None:
+        # A failed queue read must never read as "not tracked" (stepping in would
+        # race an import Sonarr may be running). RETRY with no deferral credit
+        # fails closed on BOTH passes: the poll loop retries, and a persistent
+        # outage burns the ready deadline so the record graduates still pending.
+        pending = pending_import(infohash="abc123")
+        strat, sonarr = _make_sonarr_for_import(
+            candidates=[manual_candidate("/d/Show - 01 [1080p].mkv")],
+        )
+        sonarr.queue_return = None
+
+        probe = strat.import_completed(pending, "/d", attempt)
+
+        assert probe.readiness is ImportReadiness.RETRY
+        assert probe.files_present is False
+        assert probe.deferred is False
+        assert sonarr.candidate_calls == []
+        assert sonarr.execute_calls == []
+
+    def test_queue_read_recovers_on_a_later_poll(self) -> None:
+        # The outage is retried via the poll loop: once the queue answers again
+        # the same record proceeds to the normal step-in.
+        pending = pending_import(
+            infohash="abc123",
+            file_episode_map={"Show - 01 [1080p].mkv": [101]},
+            episode_ids=[101],
+        )
+        strat, sonarr = _make_sonarr_for_import(
+            candidates=[manual_candidate("/d/Show - 01 [1080p].mkv")],
+        )
+        sonarr.queue_return = None
+
+        first = strat.import_completed(pending, "/d")
+        sonarr.queue_return = []
+        second = strat.import_completed(pending, "/d")
+
+        assert first.readiness is ImportReadiness.RETRY
+        assert first.command_issued is False
+        assert second.command_issued is True
+        assert len(sonarr.execute_calls) == 1
+
     def test_running_disk_command_defers_even_forced(self, monkeypatch: pytest.MonkeyPatch) -> None:
         # A disk command outliving the rescan's bounded absorb: a ManualImport
         # POSTed now would queue behind it for a stale replay, so RETRY (force
@@ -1249,6 +1291,17 @@ class TestCloseTracked:
 
         assert sonarr.queue_delete_calls == []
 
+    def test_queue_outage_leaves_the_queue_alone(self) -> None:
+        # A failed read is "nothing to close", never a guessed delete.
+        pending = pending_import(infohash="abc123")
+        strat, sonarr = _make_sonarr_for_import(candidates=None)
+        sonarr.queue_return = None
+
+        strat.close_tracked(pending)
+
+        assert sonarr.queue_calls == 1
+        assert sonarr.queue_delete_calls == []
+
     def test_successful_close_notes_the_removal(self) -> None:
         recording = install_recording_hub()
         strat, _ = _make_sonarr_for_import(
@@ -1273,6 +1326,33 @@ class TestCloseTracked:
 
         assert sonarr.queue_delete_calls == [11]
         assert diagnostic_messages(recording, Severity.INFO) == []
+
+
+class TestScratchResetParity:
+    """`reset()` reassigns the per-run scratch wholesale: post-reset state == freshly built state."""
+
+    def test_executor_and_scanner_reset_to_the_init_state(self) -> None:
+        strat, _ = _make_sonarr_for_import(candidates=None)
+        executor = strat._executor
+        scratch = executor._scratch
+        scratch.quality_defs = []
+        scratch.languages = []
+        scratch.warned_unplaceable.add("h")
+        scratch.warned_default_quality = True
+        scratch.last_refresh_monotonic = 1.0
+        scratch.issued_command_ids.add(42)
+        scratch.completed_download_handling = False
+        scan = executor.scanner._scratch
+        scan.folder_pinned.add("h")
+        scan.history_verdicts["h"] = DownloadHistoryVerdict(dead_tracked=True)
+        scan.path_mappings = []
+        scan.translated_paths["/a"] = "/b"
+        scan.warned_empty_folder.add("h")
+
+        executor.reset()
+
+        assert executor._scratch == sonarr_import_module._ImportScratch()
+        assert executor.scanner._scratch == sonarr_import_module._ScanScratch()
 
 
 class TestInFlightManualImportGuard:
@@ -1699,8 +1779,8 @@ class TestImportCompletedPayload:
         sonarr.languages_return = langs_b
         strat.import_completed(pending, "/d")
 
-        assert strat._executor._quality_defs_cache == defs_a
-        assert strat._executor._languages_cache == langs_a
+        assert strat._executor._scratch.quality_defs == defs_a
+        assert strat._executor._scratch.languages == langs_a
 
 
 def _import_history(download_id: str, *, event: str = "movieFolderImported") -> HistoryRecord:
@@ -1724,33 +1804,25 @@ class TestRadarrImportCompletedHistory:
         assert probe.files_present is True
         assert probe.readiness is ImportReadiness.IMPORTED
 
-    def test_no_import_event_leaves_record_pending(self) -> None:
-        # History readable but no event for this hash yet: wait, category deferred.
-        strat = make_radarr_sync(radarr=FakeRadarrClient(history_since=[]))
-
-        probe = strat.import_completed(pending_import(infohash="h"), "/d")
-
-        assert probe.files_present is False
-        assert probe.readiness is ImportReadiness.LEAVE
-
-    def test_non_import_event_is_not_proof(self) -> None:
-        # A grabbed/other event for the hash is not evidence the movie imported.
-        strat = make_radarr_sync(radarr=FakeRadarrClient(history_since=[_import_history("h", event="grabbed")]))
-
-        probe = strat.import_completed(pending_import(infohash="h"), "/d")
-
-        assert probe.files_present is False
-
-    def test_history_outage_leaves_record_and_never_verifies(self) -> None:
-        # history_since -> None (Radarr down): fail-open, never move on missing evidence.
+    @pytest.mark.parametrize(
+        "history",
+        [
+            pytest.param([], id="no-event-yet"),
+            pytest.param([_import_history("h", event="grabbed")], id="non-import-event"),
+            pytest.param(None, id="history-outage"),
+        ],
+    )
+    def test_missing_evidence_keeps_the_record_retrying(self, history: list[HistoryRecord] | None) -> None:
+        # No import proof (none yet, a non-import event, or Radarr down): fail
+        # closed - RETRY keeps the record pending, never verified on a missing read.
         radarr = FakeRadarrClient()
-        radarr.history_since_return = None
+        radarr.history_since_return = history
         strat = make_radarr_sync(radarr=radarr)
 
         probe = strat.import_completed(pending_import(infohash="h"), "/d")
 
         assert probe.files_present is False
-        assert probe.readiness is ImportReadiness.LEAVE
+        assert probe.readiness is ImportReadiness.RETRY
 
     def test_matches_download_id_case_insensitively(self) -> None:
         # Radarr uppercases the stored downloadId; our infohash is lowercase.
@@ -2024,7 +2096,6 @@ class TestFolderScanFallback:
         return strat, sonarr
 
     def test_dead_tracked_imports_from_translated_folder_without_download_id(self) -> None:
-        recording = install_recording_hub()
         strat, sonarr = self._strat(
             history=_dead_history(),
             folder_candidates=[manual_candidate("/remote/tv/Show/Show - 01 [1080p].mkv")],
@@ -2046,8 +2117,6 @@ class TestFolderScanFallback:
         # The wire dump must OMIT the key (unset), never send null.
         assert "downloadId" not in entry.model_dump(exclude_unset=True)
         assert entry.episodeIds == [101]
-        notes = diagnostic_messages(recording, Severity.INFO)
-        assert any("recorded this download as imported on 2026-06-20" in note for note in notes)
 
     def test_dead_tracked_explicit_mode_is_honored(self) -> None:
         strat, sonarr = self._strat(
@@ -2093,20 +2162,27 @@ class TestFolderScanFallback:
         # A FAILED probe is never memoized: the second activation re-probed.
         assert sonarr.history_probe_calls == ["abc123", "abc123"]
 
-    def test_dead_verdict_memoized_and_noted_once_per_run(self) -> None:
-        recording = install_recording_hub()
+    def test_dead_verdict_memoized_and_noted_once_per_run(self, caplog: pytest.LogCaptureFixture) -> None:
         strat, sonarr = self._strat(
             history=_dead_history(),
             folder_candidates=[manual_candidate("/d/Show/Show - 01 [1080p].mkv")],
         )
+        # The dead-tracked note is debug-level; caplog needs a propagating logger.
+        logger = logging.getLogger("pearlarr-dead-verdict")
+        logger.handlers.clear()
+        logger.propagate = True
+        logger.setLevel(logging.DEBUG)
+        strat._executor.scanner.logger = logger
         pending = pending_import()
 
-        strat.import_completed(pending, "/d/Show")
-        strat.import_completed(pending, "/d/Show")
+        with caplog.at_level("DEBUG"):
+            strat.import_completed(pending, "/d/Show")
+            strat.import_completed(pending, "/d/Show")
 
         assert sonarr.history_probe_calls == ["abc123"]
-        notes = [n for n in diagnostic_messages(recording, Severity.INFO) if "recorded this download" in n]
+        notes = [r for r in caplog.records if "recorded this download as imported" in r.message]
         assert len(notes) == 1
+        assert notes[0].levelname == "DEBUG"
 
     def test_empty_folder_scan_does_not_pin_and_download_id_scan_recovers(self) -> None:
         # 200 [] = the folder isn't visible to Sonarr (or the translation is

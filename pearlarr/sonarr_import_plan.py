@@ -361,10 +361,10 @@ class DownloadHistoryVerdict:
 
     event: str | None = None
     """The dead-tracked event label (`imported`/`failed`/`ignored`), for the
-    hub note. None when clean."""
+    fallback's debug note. None when clean."""
 
     date: str | None = None
-    """The dead-tracked event's raw ISO date, for the hub note."""
+    """The dead-tracked event's raw ISO date, for the fallback's debug note."""
 
 
 def classify_download_history(records: Sequence[HistoryRecord]) -> DownloadHistoryVerdict:
