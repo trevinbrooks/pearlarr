@@ -136,7 +136,7 @@ def test_add_new_torrent_with_hash_prefers_qbit_name(monkeypatch: pytest.MonkeyP
     qbit = _FakeQbit(register_on_add=(_HASH, "Qbit Reported Name"))
     service = _service(qbit, category="anime", tags=["seadex"])
 
-    outcome, name = service.add(
+    outcome, name, _ = service.add(
         item=SeadexUrlItem(url="https://nyaa.si/view/1", tracker=Tracker.NYAA, infohash=_HASH), preview=False
     )
 
@@ -154,7 +154,7 @@ def test_add_already_present_dedups_by_hash(monkeypatch: pytest.MonkeyPatch) -> 
     qbit = _FakeQbit(present={_HASH: "Existing Name"})
     service = _service(qbit)
 
-    outcome, name = service.add(
+    outcome, name, _ = service.add(
         item=SeadexUrlItem(url="https://nyaa.si/view/1", tracker=Tracker.NYAA, infohash=_HASH), preview=False
     )
 
@@ -170,7 +170,7 @@ def test_add_hashless_falls_back_to_source_title(monkeypatch: pytest.MonkeyPatch
     qbit = _FakeQbit()
     service = _service(qbit)
 
-    outcome, name = service.add(
+    outcome, name, _ = service.add(
         item=SeadexUrlItem(url="https://nyaa.si/view/1", tracker=Tracker.NYAA, infohash=None), preview=False
     )
 
@@ -200,7 +200,7 @@ def test_add_empty_infohash_is_treated_as_hashless(monkeypatch: pytest.MonkeyPat
     qbit = _FakeQbit(present={_HASH: "Unrelated Torrent"})
     service = _service(qbit)
 
-    outcome, name = service.add(
+    outcome, name, _ = service.add(
         item=SeadexUrlItem(url="https://nyaa.si/view/1", tracker=Tracker.NYAA, infohash=""), preview=False
     )
 
@@ -276,7 +276,7 @@ def test_add_raises_iff_tracker_unparseable(tracker: Tracker, monkeypatch: pytes
     service = _service(_FakeQbit())
 
     if tracker in PARSEABLE_TRACKERS:
-        outcome, _ = service.add(
+        outcome, _, _ = service.add(
             item=SeadexUrlItem(url="https://example/1", tracker=tracker, infohash=None), preview=True
         )
         assert outcome is AddOutcome.ADDED

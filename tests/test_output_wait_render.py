@@ -329,7 +329,7 @@ def test_graduation_tail_says_left_pending_outcomes_retry() -> None:
         Outcome.DOWNLOAD_ERRORED,
         Outcome.STILL_IMPORTING,
         Outcome.NOT_READY,
-        Outcome.NOTHING_TO_IMPORT,
+        Outcome.ATTEMPT_FAILED,
     ):
         assert graduation_tail(outcome, None, 0.0) == "retries next run"
 
