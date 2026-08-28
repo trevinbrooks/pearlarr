@@ -2,7 +2,6 @@
 
 import time
 from dataclasses import dataclass, replace
-from datetime import datetime
 from typing import TYPE_CHECKING, NamedTuple
 
 from seadex import EntryRecord
@@ -22,7 +21,7 @@ from .reporter import (
     is_preview,
 )
 from .seadex_types import SeadexDict, SeadexUrlItem
-from .torrents import GRAB_FAILURES, PARSEABLE_TRACKERS, AddOutcome, ReleaseOutcome
+from .torrents import GRAB_FAILURES, PARSEABLE_TRACKERS, AddOutcome, AddResult, ReleaseOutcome
 
 if TYPE_CHECKING:
     # Annotation-only: run_services imports this module at runtime (cycle).
@@ -76,8 +75,6 @@ class GrabPipeline:
         self.qbit = deps.qbit
         # Rebound each run by begin_run to the same ctx the engine holds, so the grab bookkeeping stays in sync.
         self._ctx = ctx
-        # Groups that hit a contained grab failure (tracker or client down), reset per title in grab_and_cache.
-        self._grab_failed_groups: list[str] = []
 
     def begin_run(self, ctx: RunContext) -> None:
         """Bind the run context the grab bookkeeping reads/writes."""
@@ -95,12 +92,8 @@ class GrabPipeline:
         cap = self._config.advanced.max_torrents_to_add
         return None if cap == 0 or self._is_preview() else cap
 
-    def add_torrent(
-        self,
-        torrent_dict: SeadexDict,
-        pending_seeds: dict[str, PendingImport] | None = None,
-    ) -> tuple[int, list[ReleaseOutcome]]:
-        """Add torrent(s) to qBittorrent.
+    def add_torrent(self, req: GrabRequest) -> tuple[int, list[ReleaseOutcome]]:
+        """Add the request's torrent(s) to qBittorrent.
 
         Returns the added / already-downloading outcome lines rather than logging them (the caller emits the block).
         """
@@ -109,13 +102,9 @@ class GrabPipeline:
         results: list[ReleaseOutcome] = []
         cap = self._effective_cap
 
-        for srg, srg_item in torrent_dict.items():
+        for srg, srg_item in req.seadex_dict.items():
             for url_item in srg_item.urls.values():
-                add_result = self._add_one_url(
-                    srg,
-                    url_item,
-                    pending_seeds=pending_seeds,
-                )
+                add_result = self._add_one_url(srg, url_item, req)
                 if add_result is None:
                     continue
 
@@ -134,7 +123,7 @@ class GrabPipeline:
         self,
         srg: str,
         url_item: SeadexUrlItem,
-        pending_seeds: dict[str, PendingImport] | None = None,
+        req: GrabRequest,
     ) -> ReleaseOutcome | None:
         """Resolve a single SeaDex url to an add outcome (or `None` to skip).
 
@@ -177,7 +166,7 @@ class GrabPipeline:
             result = self._torrents.add(item=url_item, preview=self._is_preview())
         except GRAB_FAILURES as e:
             self._reporter.post(GrabFailed(group=srg, url=url, error=str(e)))
-            self._grab_failed_groups.append(srg)
+            self._ctx.per_title.grab_failed_groups.append(srg)
             return None
 
         if result.outcome is AddOutcome.ADDED:
@@ -197,47 +186,47 @@ class GrabPipeline:
         # ALREADY_ADDED is an earlier run's grab still awaiting import. The genuine "already own it" case is the
         # any_to_download=False branch, which never reaches add_torrent.
         if result.outcome in (AddOutcome.ADDED, AddOutcome.ALREADY_ADDED):
-            self._register_pending_import(url_item, pending_seeds, added_on=result.added_on)
+            self._register_pending_import(url_item, req, result)
             return ReleaseOutcome(outcome=result.outcome, name=result.name, group=srg)
 
         return None
 
-    def _register_pending_import(
-        self,
-        url_item: SeadexUrlItem,
-        pending_seeds: dict[str, PendingImport] | None,
-        *,
-        added_on: datetime | None,
-    ) -> None:
+    def _register_pending_import(self, url_item: SeadexUrlItem, req: GrabRequest, result: AddResult) -> None:
         """Finalize the durable `PendingImport` for a grabbed or already-present release.
 
-        `added_on` None is a fresh add. Otherwise it is qBittorrent's add time, and a release past
-        `imports.pending_max_age_days` is dropped, not re-stamped (re-stamping defeats the prune).
+        A fresh `ADDED` inserts the seed as a this-run grab. An `ALREADY_ADDED` reacquire keeps a
+        store-resident record as is, whatever its age (`prune_expired_pending` is the sole TTL
+        authority for tracked records). A non-resident reacquire joins at qBittorrent's add time,
+        stamped now when that time is unknown, and dropped when it is already past
+        `imports.pending_max_age_days`.
         """
 
+        seeds = req.pending_seeds
         if (
             self._ctx.import_wait_mode is ImportWaitMode.OFF
             or self._is_preview()
             or not url_item.infohash
-            or not pending_seeds
-            or url_item.infohash not in pending_seeds
+            or not seeds
+            or url_item.infohash not in seeds
         ):
             return
-        pending = pending_seeds[url_item.infohash]
-        if added_on is None:
+        pending = seeds[url_item.infohash]
+        if result.outcome is AddOutcome.ADDED:
             self.cache_store.put_pending(self._ctx.arr, pending.key, pending.to_json())
             self._ctx.pending_imports.append(pending)
+        elif self.cache_store.has_pending(self._ctx.arr, pending.key):
+            self._ctx.reacquired_keys.add(pending.key)
         else:
-            max_age_days = self._config.imports.pending_max_age_days
-            if added_on < pending_cutoff(max_age_days):
-                self.logger.debug(
-                    f"{pending.display_label} has been in qBittorrent longer than "
-                    f"{count_noun(max_age_days, 'day')} - not tracking it",
-                )
-                return
-            if not self.cache_store.has_pending(self._ctx.arr, pending.key):
-                stamped = replace(pending, added_at=stamp_of(added_on))
-                self.cache_store.put_pending(self._ctx.arr, pending.key, stamped.to_json())
+            if result.added_on is not None:
+                max_age_days = self._config.imports.pending_max_age_days
+                if result.added_on < pending_cutoff(max_age_days):
+                    self.logger.debug(
+                        f"{pending.display_label} has been in qBittorrent longer than "
+                        f"{count_noun(max_age_days, 'day')}, not tracking it",
+                    )
+                    return
+                pending = replace(pending, added_at=stamp_of(result.added_on))
+            self.cache_store.put_pending(self._ctx.arr, pending.key, pending.to_json())
             self._ctx.reacquired_keys.add(pending.key)
         # One guard row per entry (Sonarr only): each per-release firing re-puts the same row, a no-op upsert.
         if self._ctx.arr is Arr.SONARR:
@@ -299,7 +288,7 @@ class GrabPipeline:
             # No user action needed (the warning named it, the uncached title retries), but the summary must say why
             # the title is neither added nor up to date.
             return self._needs_action(
-                self._grab_failed_groups,
+                self._ctx.per_title.grab_failed_groups,
                 "grab failed; will retry next run",
                 NeedsActionKind.GRAB_FAILED,
             )
@@ -335,8 +324,6 @@ class GrabPipeline:
     def grab_and_cache(self, req: GrabRequest) -> bool:
         """Shared per-id tail: add torrents, notify, cache the outcome. True when the run-wide cap was hit."""
 
-        self._grab_failed_groups = []
-
         any_to_download = self._planner.get_any_to_download(req.seadex_dict)
 
         # The cap can stop the url loop mid-title, so a capped title is never cached as done, only classified below.
@@ -355,7 +342,7 @@ class GrabPipeline:
 
         # A contained grab failure means a release this title should have is missing: never cache, even on a partial
         # grab, so the next run retries (the completed add dedups).
-        grab_failed = bool(self._grab_failed_groups)
+        grab_failed = bool(self._ctx.per_title.grab_failed_groups)
 
         if self._should_cache_as_done(
             cap_reached=cap_reached,
@@ -402,10 +389,7 @@ class GrabPipeline:
 
         # add_torrent runs even in a preview: the service simulates the add, while the download-flag, private-release
         # and tracker filters still apply, so only releases that would really be grabbed are counted.
-        n_torrents_added, results = self.add_torrent(
-            torrent_dict=req.seadex_dict,
-            pending_seeds=req.pending_seeds,
-        )
+        n_torrents_added, results = self.add_torrent(req)
 
         # Logged only now the outcome is known, so the status reads "adding" only when something was actually grabbed.
         self._reporter.log_seadex_action(
@@ -429,7 +413,7 @@ class GrabPipeline:
                     replaced_groups=req.replaced_groups,
                     seadex_dict=req.seadex_dict,
                     results=results,
-                    failed_groups=frozenset(self._grab_failed_groups),
+                    failed_groups=frozenset(self._ctx.per_title.grab_failed_groups),
                     coverage=req.coverage,
                 ),
             )

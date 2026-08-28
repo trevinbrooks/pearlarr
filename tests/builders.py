@@ -28,7 +28,7 @@ from pearlarr.cache import (
     selection_digest_key,
 )
 from pearlarr.config import AppConfig, Arr
-from pearlarr.grab_pipeline import GrabPipeline
+from pearlarr.grab_pipeline import GrabPipeline, GrabRequest
 from pearlarr.import_wait import ImportWaitManager
 from pearlarr.manual_import import (
     GuardFacts,
@@ -616,11 +616,11 @@ CLIENT_SENTINEL = object()
 
 
 class FakeTorrents:
-    """Mimics `TorrentService.add`: a per-hash scripted `(outcome, name)`."""
+    """Mimics `TorrentService.add`: a per-hash scripted `(outcome, name)` or full `AddResult`."""
 
     def __init__(
         self,
-        by_hash: dict[str | None, tuple[AddOutcome, str | None]],
+        by_hash: dict[str | None, tuple[AddOutcome, str | None] | AddResult],
         *,
         raises: dict[str | None, Exception] | None = None,
     ) -> None:
@@ -641,7 +641,8 @@ class FakeTorrents:
         self.calls.append(infohash)
         if infohash in self._raises:
             raise self._raises[infohash]
-        return AddResult(*self._by_hash[infohash])
+        scripted = self._by_hash[infohash]
+        return scripted if isinstance(scripted, AddResult) else AddResult(*scripted)
 
 
 def one_release_dict(*, srg: str, infohash: str, url: str = "https://nyaa.si/view/1") -> SeadexDict:
@@ -650,6 +651,23 @@ def one_release_dict(*, srg: str, infohash: str, url: str = "https://nyaa.si/vie
     item = url_item(url=url, infohash=infohash, download=True)
     item.tracker = Tracker.NYAA
     return {srg: rg_group({url: item})}
+
+
+def grab_request(**overrides: Any) -> GrabRequest:
+    """A minimal `GrabRequest` for driving the add path directly (an empty `seadex_dict`, no seeds)."""
+
+    defaults: dict[str, Any] = {
+        "al_id": 1,
+        "item_title": "Show",
+        "anilist_title": "Show",
+        "entry": make_entry_record(url="https://releases.moe/1"),
+        "seadex_dict": {},
+        "torrent_hashes": [],
+        "cache_details": {},
+        "replaced_groups": (),
+    }
+    defaults.update(overrides)
+    return GrabRequest(**defaults)
 
 
 def make_grab_pipeline(**overrides: Any) -> GrabPipeline:
@@ -668,10 +686,9 @@ def make_grab_pipeline(**overrides: Any) -> GrabPipeline:
         # No discord/webhook url: a disabled, best-effort no-op notifier.
         "_notifier": Notifier(discord_url=None, webhook_url=None, web=web),
         "_reporter": _real_reporter(logger, cache_store, web),
+        "logger": logger,
         "qbit": CLIENT_SENTINEL,
         "_ctx": RunContext(arr=Arr.SONARR, import_wait_mode=ImportWaitMode.BLOCKING),
-        # __init__-seeded per-title state the bare instance must also carry.
-        "_grab_failed_groups": [],
     }
     defaults.update(overrides)
     return make_bare_instance(GrabPipeline, **defaults)
