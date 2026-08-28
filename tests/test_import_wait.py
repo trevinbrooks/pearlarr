@@ -20,6 +20,7 @@ the contracts are pinned by recorded state.
 """
 
 import logging
+from collections.abc import Callable
 from dataclasses import dataclass
 from datetime import datetime, timedelta
 from typing import override
@@ -33,6 +34,7 @@ from pearlarr.grab_pipeline import GrabPipeline
 from pearlarr.import_wait import ImportWaitManager, MonitorPass
 from pearlarr.log import LOG_NAME
 from pearlarr.manual_import import (
+    PENDING_STATE_FOR_OUTCOME,
     AttemptKind,
     GuardFacts,
     ImportProbe,
@@ -52,7 +54,7 @@ from pearlarr.reporter import RunContext
 from pearlarr.run_loop import RunLoop
 from pearlarr.seadex_types import HistoryRecord
 from pearlarr.torrents import AddOutcome
-from pearlarr.wait_view import WaitResult, WaitView
+from pearlarr.wait_view import WaitOutcomeRow, WaitResult, WaitView
 
 from .builders import (
     CLIENT_SENTINEL,
@@ -491,7 +493,7 @@ def make_orchestration_manager(
 
     Seeds the durable per-arr store (via the manager's own `cache_store`) and the
     in-memory `_ctx.pending_imports` list so `prune_expired_pending`,
-    `snapshot_pending_for_series`, `reconcile_remaining` and `run_monitor` can
+    `snapshot_pending_for_series`, `reconcile_once` and `run_monitor` can
     be driven without a live Sonarr/qBittorrent. The strategy is a recording
     `_RecordingStrategy` (its import hooks scripted per test) and the reporter a
     recording `_RecordingReporter` (a test that asserts on the snapshot reporter
@@ -624,12 +626,11 @@ class RecordingWaitView(WaitView):
 class TestSnapshotPendingForSeries:
     """snapshot_pending_for_series reports CARRIED-OVER records inline, no double-report."""
 
-    def test_carried_over_imported_drops_and_counts(self) -> None:
-        # A prior run's download finished: COMPLETE + verified files -> the record
-        # is reported imported, dropped, and stats.imported bumped.
-        strategy = _RecordingStrategy(
-            completed=import_probe(ImportReadiness.IMPORTED, files_present=True),
-        )
+    def test_carried_over_imported_drops_and_classifies(self) -> None:
+        # A prior run's download finished with every file verified present: the
+        # record is reported imported, dropped, and classified IMPORTED for the
+        # finalize tally.
+        strategy = _RecordingStrategy(progress=ImportProgress(1, 1, determinate=True))
         reporter = _RecordingReporter()
         qbit = FakeQbit({"h": [FakeTorrent(is_complete=True, content_path="/d")]})
         mgr = make_orchestration_manager(
@@ -642,8 +643,11 @@ class TestSnapshotPendingForSeries:
         mgr.snapshot_pending_for_series(7)
 
         assert mgr._pending_records() == {}
-        assert mgr._ctx.stats.imported == 1
         assert mgr._ctx.pending_states[pk("h")] is PendingState.IMPORTED
+        # Read-only pass: no import attempt, and the `imported` bump belongs to
+        # _finalize_run (it counts the IMPORTED entry).
+        assert strategy.import_calls == []
+        assert mgr._ctx.stats.imported == 0
         # The record is reported inline with its reconciled state + title (the gap a
         # bare `snapshot_calls != []` check left open: wrong state/title slid through).
         assert len(reporter.snapshot_calls) == 1
@@ -651,8 +655,6 @@ class TestSnapshotPendingForSeries:
         # The inline row is labeled title · group (the group disambiguates a
         # series that grabbed several torrents).
         assert reporter.snapshot_calls[0].title == f"Show{SEP}SubGroup"
-        # Forced (CDH-off safe) but NOT at the deadline (no loud warning).
-        assert strategy.import_calls[-1].attempt is AttemptKind.DEADLINE
 
     def test_carried_over_downloading_is_queued_and_kept(self) -> None:
         # Still downloading -> queued, record kept, no import attempt.
@@ -701,6 +703,27 @@ class TestSnapshotPendingForSeries:
         assert mgr._ctx.stats.imported == 0
         assert set(mgr._pending_records()) == {pk("h")}
 
+    def test_reacquired_record_is_skipped(self) -> None:
+        # A store record re-seen in qBittorrent this run was already reported by
+        # its entry block: no poll, no row, no state. Only the tally counts it.
+        strategy = _RecordingStrategy()
+        reporter = _RecordingReporter()
+        qbit = FakeQbit({"h": [FakeTorrent(is_complete=True, content_path="/d")]})
+        mgr = make_orchestration_manager(
+            qbit=qbit,
+            strategy=strategy,
+            reporter=reporter,
+            store_records=[pending_import(infohash="h", series_id=7, added_at=_FRESH)],
+        )
+        mgr._ctx.reacquired_keys = {pk("h")}
+
+        mgr.snapshot_pending_for_series(7)
+
+        assert qbit.calls == 0
+        assert reporter.snapshot_calls == []
+        assert mgr._ctx.pending_states == {}
+        assert set(mgr._pending_records()) == {pk("h")}
+
     def test_other_series_record_is_not_touched(self) -> None:
         # The snapshot is series-scoped: a record for a different series is left
         # alone (the deferred reconcile / monitor handles it later).
@@ -740,10 +763,10 @@ class TestSnapshotPendingForSeries:
         assert [c.state for c in reporter.snapshot_calls] == [PendingState.DOWNLOADED]
 
 
-class TestReconcileRemaining:
-    """reconcile_remaining force-polls carried-over records not snapshotted this run."""
+class TestReconcileOnce:
+    """reconcile_once runs ONE non-blocking check cycle over every carried-over record."""
 
-    def test_imports_ready_record_not_yet_snapshotted(self) -> None:
+    def test_imports_ready_carried_over_record(self) -> None:
         strategy = _RecordingStrategy(
             completed=import_probe(ImportReadiness.IMPORTED, files_present=True),
         )
@@ -754,25 +777,13 @@ class TestReconcileRemaining:
             store_records=[pending_import(infohash="h", added_at=_FRESH)],
         )
 
-        mgr.reconcile_remaining()
+        result = mgr.reconcile_once(view=RecordingWaitView())
 
+        assert result is not None
+        assert result.carried_over_imported == 1
         assert mgr._pending_records() == {}
-        assert mgr._ctx.stats.imported == 1
-        assert strategy.import_calls[-1].attempt is AttemptKind.DEADLINE
-
-    def test_skips_already_snapshotted(self) -> None:
-        # A record the inline snapshot already touched must not be re-polled.
-        strategy = _RecordingStrategy()
-        mgr = make_orchestration_manager(
-            qbit=FakeQbit({"h": [FakeTorrent(is_complete=True, content_path="/d")]}),
-            strategy=strategy,
-            store_records=[pending_import(infohash="h", added_at=_FRESH)],
-        )
-        mgr._ctx.pending_states[pk("h")] = PendingState.QUEUED
-
-        mgr.reconcile_remaining()
-
-        assert strategy.import_calls == []
+        # The `imported` bump belongs to _finalize_run, off the result rows.
+        assert mgr._ctx.stats.imported == 0
 
     def test_skips_this_run_grabs(self) -> None:
         strategy = _RecordingStrategy()
@@ -784,13 +795,12 @@ class TestReconcileRemaining:
             pending=[this_run],
         )
 
-        mgr.reconcile_remaining()
-
+        assert mgr.reconcile_once(view=RecordingWaitView()) is None
         assert strategy.import_calls == []
 
-    def test_two_imports_both_counted(self) -> None:
-        # MUTATION PIN: `stats.imported += 1` degraded to `= 1` clamps at one.
-        # Two carried-over imports in one pass must tally 2.
+    def test_two_imports_both_reported(self) -> None:
+        # MUTATION PIN: BOTH carried-over imports must land on the result rows
+        # (_finalize_run's `imported` bump reads them).
         strategy = _RecordingStrategy(
             completed=import_probe(ImportReadiness.IMPORTED, files_present=True),
         )
@@ -809,34 +819,185 @@ class TestReconcileRemaining:
             ],
         )
 
-        mgr.reconcile_remaining()
+        result = mgr.reconcile_once(view=RecordingWaitView())
 
-        assert mgr._ctx.stats.imported == 2
+        assert result is not None
+        assert result.carried_over_imported == 2
         assert mgr._pending_records() == {}
+
+    @pytest.mark.parametrize(
+        ("torrent", "make_strategy", "outcome", "state"),
+        [
+            pytest.param(
+                FakeTorrent(progress=0.5),
+                _RecordingStrategy,
+                Outcome.STILL_DOWNLOADING,
+                PendingState.QUEUED,
+                id="still-downloading",
+            ),
+            pytest.param(
+                FakeTorrent(is_complete=True, content_path="/d"),
+                lambda: _RecordingStrategy(completed=import_probe(ImportReadiness.RETRY, files_present=False)),
+                Outcome.AWAITING_IMPORT,
+                PendingState.DOWNLOADED,
+                id="awaiting-import",
+            ),
+            pytest.param(
+                FakeTorrent(is_complete=True, content_path="/d"),
+                lambda: _RecordingStrategy(completed_error=RuntimeError("boom")),
+                Outcome.ATTEMPT_FAILED,
+                PendingState.DOWNLOADED,
+                id="attempt-failed",
+            ),
+            pytest.param(
+                FakeTorrent(is_errored=True),
+                _RecordingStrategy,
+                Outcome.DOWNLOAD_ERRORED,
+                PendingState.ERRORED,
+                id="download-errored",
+            ),
+        ],
+    )
+    def test_check_outcome_refreshes_pending_state(
+        self,
+        torrent: FakeTorrent,
+        make_strategy: Callable[[], _RecordingStrategy],
+        outcome: Outcome,
+        state: PendingState,
+    ) -> None:
+        # The check re-observes even a snapshotted record: its outcome overwrites
+        # the stale state, so the tally buckets what the check saw last.
+        mgr = make_orchestration_manager(
+            qbit=FakeQbit({"h": [torrent]}),
+            strategy=make_strategy(),
+            store_records=[pending_import(infohash="h", added_at=_FRESH)],
+        )
+        mgr._ctx.pending_states[pk("h")] = PendingState.QUEUED
+
+        result = mgr.reconcile_once(view=RecordingWaitView())
+
+        assert result is not None
+        assert [(row.outcome, row.carried_over) for row in result.rows] == [(outcome, True)]
+        assert mgr._ctx.pending_states[pk("h")] is state
+        assert set(mgr._pending_records()) == {pk("h")}
+
+
+class TestPendingStateFold:
+    """The pinned Outcome -> PendingState fold a pass classifies store-resident records through."""
+
+    @pytest.mark.parametrize(
+        ("outcome", "state"),
+        [
+            (Outcome.STILL_DOWNLOADING, PendingState.QUEUED),
+            (Outcome.DOWNLOAD_TIMED_OUT, PendingState.QUEUED),
+            (Outcome.NOT_CHECKED, PendingState.QUEUED),
+            (Outcome.AWAITING_IMPORT, PendingState.DOWNLOADED),
+            (Outcome.IMPORT_IN_PROGRESS, PendingState.DOWNLOADED),
+            (Outcome.STILL_IMPORTING, PendingState.DOWNLOADED),
+            (Outcome.NOT_READY, PendingState.DOWNLOADED),
+            (Outcome.ATTEMPT_FAILED, PendingState.DOWNLOADED),
+            (Outcome.NO_CONTENT_PATH, PendingState.DOWNLOADED),
+            (Outcome.DOWNLOAD_ERRORED, PendingState.ERRORED),
+        ],
+    )
+    def test_each_non_dropped_outcome_lands_in_its_bucket(self, outcome: Outcome, state: PendingState) -> None:
+        mgr = make_orchestration_manager(qbit=None, strategy=_RecordingStrategy())
+
+        mgr.note_pending_state(pk("h"), outcome)
+
+        assert mgr._ctx.pending_states[pk("h")] is state
+
+    def test_fold_covers_exactly_the_non_dropped_outcomes(self) -> None:
+        # IMPORTED and MISSING leave the store, so the fold never sees them.
+        assert set(PENDING_STATE_FOR_OUTCOME) == {o for o in Outcome if not o.dropped}
+
+
+class TestMonitorRowDiscriminator:
+    """Monitor rows carry `carried_over`, so _finalize_run can tell them from fresh grabs."""
+
+    def test_monitor_rows_tell_fresh_from_carried_over(self) -> None:
+        # One fresh grab + one carried-over record, both import: only the
+        # carried-over row is flagged, even though the fresh import leaves
+        # `pending_imports` mid-pass.
+        strategy = _RecordingStrategy(
+            completed=import_probe(ImportReadiness.IMPORTED, files_present=True),
+        )
+        fresh = pending_import(infohash="f", title="Fresh", added_at=_FRESH)
+        carried = pending_import(infohash="c", title="Carried", added_at=_FRESH)
+        qbit = FakeQbit(
+            {
+                "f": [FakeTorrent(is_complete=True, content_path="/f")],
+                "c": [FakeTorrent(is_complete=True, content_path="/c")],
+            },
+        )
+        mgr = make_orchestration_manager(
+            qbit=qbit,
+            strategy=strategy,
+            store_records=[fresh, carried],
+            pending=[fresh],
+        )
+        clock = FakeClock(step=30)
+
+        result = mgr.run_monitor(now=clock.now, sleep=clock.sleep, view=RecordingWaitView())
+
+        assert result is not None
+        assert {row.label: row.carried_over for row in result.rows} == {
+            f"Fresh{SEP}SubGroup": False,
+            f"Carried{SEP}SubGroup": True,
+        }
+        # Imported rows leave the store, so neither folds a pending state, and
+        # the `imported` bump stays _finalize_run's.
+        assert mgr._ctx.pending_states == {}
+        assert mgr._ctx.stats.imported == 0
+
+    def test_fresh_timeout_row_is_not_folded(self) -> None:
+        # A fresh grab's terminal state never enters the carried-over ledger.
+        fresh = pending_import(infohash="f", added_at=_FRESH)
+        mgr = make_orchestration_manager(
+            qbit=FakeQbit({"f": [FakeTorrent(progress=0.1)]}),
+            strategy=_RecordingStrategy(),
+            store_records=[fresh],
+            pending=[fresh],
+            import_wait_timeout=1,
+        )
+        clock = FakeClock(step=30)
+
+        result = mgr.run_monitor(now=clock.now, sleep=clock.sleep, view=RecordingWaitView())
+
+        assert result is not None
+        assert [(row.outcome, row.carried_over) for row in result.rows] == [(Outcome.DOWNLOAD_TIMED_OUT, False)]
+        assert mgr._ctx.pending_states == {}
 
 
 class TestTallyCarriedOverIntoStats:
     """tally_carried_over_into_stats counts each still-pending record once."""
 
-    def test_counts_known_states_and_defaults_to_queued(self) -> None:
+    def test_counts_states_defaults_queued_and_skips_errored(self) -> None:
+        # MUTATION PIN: both counters accumulate (a `+=` degraded to `=` clamps
+        # at one), the unobserved record defaults to queued, and ERRORED is
+        # deliberately uncounted.
         mgr = make_orchestration_manager(
             qbit=None,
             strategy=_RecordingStrategy(),
             store_records=[
                 pending_import(infohash="q", added_at=_FRESH),
-                pending_import(infohash="i", added_at=_FRESH),
+                pending_import(infohash="d1", added_at=_FRESH),
+                pending_import(infohash="d2", added_at=_FRESH),
+                pending_import(infohash="e", added_at=_FRESH),
                 pending_import(infohash="untouched", added_at=_FRESH),
             ],
         )
         mgr._ctx.pending_states = {
             pk("q"): PendingState.QUEUED,
-            pk("i"): PendingState.DOWNLOADED,
+            pk("d1"): PendingState.DOWNLOADED,
+            pk("d2"): PendingState.DOWNLOADED,
+            pk("e"): PendingState.ERRORED,
         }
 
         mgr.tally_carried_over_into_stats()
 
         assert mgr._ctx.stats.queued == 2  # explicit q + defaulted untouched
-        assert mgr._ctx.stats.downloaded == 1
+        assert mgr._ctx.stats.downloaded == 2
 
     def test_excludes_this_run_grabs(self) -> None:
         this_run = pending_import(infohash="h", added_at=_FRESH)
@@ -852,26 +1013,24 @@ class TestTallyCarriedOverIntoStats:
         assert mgr._ctx.stats.queued == 0
         assert mgr._ctx.stats.downloaded == 0
 
-    def test_two_importing_records_both_tallied(self) -> None:
-        # MUTATION PIN: `stats.downloaded += 1` degraded to `= 1` clamps at one.
-        # Two known-IMPORTING records must tally 2.
+    def test_counts_reacquired_records(self) -> None:
+        # A reacquired record is skipped by the inline snapshot but still folds
+        # into the tally under queued/downloaded like any carried-over one.
         mgr = make_orchestration_manager(
             qbit=None,
             strategy=_RecordingStrategy(),
             store_records=[
-                pending_import(infohash="i1", added_at=_FRESH),
-                pending_import(infohash="i2", added_at=_FRESH),
+                pending_import(infohash="rq", added_at=_FRESH),
+                pending_import(infohash="rd", added_at=_FRESH),
             ],
         )
-        mgr._ctx.pending_states = {
-            pk("i1"): PendingState.DOWNLOADED,
-            pk("i2"): PendingState.DOWNLOADED,
-        }
+        mgr._ctx.reacquired_keys = {pk("rq"), pk("rd")}
+        mgr._ctx.pending_states = {pk("rd"): PendingState.DOWNLOADED}
 
         mgr.tally_carried_over_into_stats()
 
-        assert mgr._ctx.stats.downloaded == 2
-        assert mgr._ctx.stats.queued == 0
+        assert mgr._ctx.stats.queued == 1
+        assert mgr._ctx.stats.downloaded == 1
 
 
 class TestMonitorWorkingSet:
@@ -1885,26 +2044,38 @@ class _FinalizeWaitManager:
     stand-in is what makes each step observable. `raise_on` scripts one pass to
     fail, for the unwind pins (the raise escapes `_finalize_run`, exactly as a
     real failure would, and bootstrap's finally is what closes the run).
+    `check_result` / `monitor_result` script what the passes return, so the
+    finalize's `imported` bump off the result rows is observable too.
     """
 
-    def __init__(self, calls: list[str], *, raise_on: str | None = None) -> None:
+    def __init__(
+        self,
+        calls: list[str],
+        *,
+        raise_on: str | None = None,
+        check_result: WaitResult | None = None,
+        monitor_result: WaitResult | None = None,
+    ) -> None:
         self._calls = calls
         self._raise_on = raise_on
+        self._check_result = check_result
+        self._monitor_result = monitor_result
 
     def _mark(self, name: str) -> None:
         self._calls.append(name)
         if name == self._raise_on:
             raise RuntimeError(f"{name} exploded")
 
-    def reconcile_remaining(self) -> None:
+    def reconcile_once(self) -> WaitResult | None:
         self._mark("reconcile")
+        return self._check_result
 
     def tally_carried_over_into_stats(self) -> None:
         self._mark("tally")
 
     def run_monitor(self) -> WaitResult | None:
         self._mark("monitor")
-        return None
+        return self._monitor_result
 
 
 def _finalize_engine(
@@ -1914,6 +2085,8 @@ def _finalize_engine(
     mode: ImportWaitMode,
     raise_on: str | None = None,
     supports_monitor: bool = True,
+    check_result: WaitResult | None = None,
+    monitor_result: WaitResult | None = None,
 ) -> RunLoop:
     """A bare engine whose every run-tail step appends a marker to `calls`.
 
@@ -1939,7 +2112,12 @@ def _finalize_engine(
         ),
         _reporter=_FinalizeReporter(calls),
         cache_store=_RecordingCacheStore(calls),
-        _wait_manager=_FinalizeWaitManager(calls, raise_on=raise_on),
+        _wait_manager=_FinalizeWaitManager(
+            calls,
+            raise_on=raise_on,
+            check_result=check_result,
+            monitor_result=monitor_result,
+        ),
         _services=make_services(qbit=qbit, _ctx=ctx),
         _active_strategy=FakeStrategy(items=[], anilist_ids={}, supports_blocking_monitor=supports_monitor),
         _ctx=ctx,
@@ -2082,6 +2260,45 @@ class TestFinalizeRunUnwind:
             engine._finalize_run()
 
         assert calls == ["scan_finished", "reconcile", "tally", "save"]
+
+
+class TestFinalizeRunImportedBump:
+    """_finalize_run owns the tally's `imported` bump, filtered to carried-over rows."""
+
+    def test_deferred_counts_snapshot_and_check_imports(self) -> None:
+        calls: list[str] = []
+        check = WaitResult(
+            (
+                WaitOutcomeRow("carried", Outcome.IMPORTED, carried_over=True),
+                WaitOutcomeRow("fresh", Outcome.IMPORTED),
+                WaitOutcomeRow("left", Outcome.STILL_DOWNLOADING, carried_over=True),
+            ),
+            elapsed_s=1.0,
+        )
+        engine = _finalize_engine(calls, qbit=CLIENT_SENTINEL, mode=ImportWaitMode.DEFERRED, check_result=check)
+        engine._ctx.pending_states[PendingKey("snap", 1)] = PendingState.IMPORTED
+        engine._ctx.pending_states[PendingKey("kept", 2)] = PendingState.DOWNLOADED
+
+        engine._finalize_run()
+
+        # One snapshot-verified import plus one carried-over check import. The
+        # fresh row stays `added` and the non-imported entries stay out.
+        assert engine._ctx.stats.imported == 2
+
+    def test_blocking_counts_carried_over_monitor_imports(self) -> None:
+        calls: list[str] = []
+        monitor = WaitResult(
+            (
+                WaitOutcomeRow("carried", Outcome.IMPORTED, carried_over=True),
+                WaitOutcomeRow("fresh", Outcome.IMPORTED),
+            ),
+            elapsed_s=1.0,
+        )
+        engine = _finalize_engine(calls, qbit=CLIENT_SENTINEL, mode=ImportWaitMode.BLOCKING, monitor_result=monitor)
+
+        engine._finalize_run()
+
+        assert engine._ctx.stats.imported == 1
 
 
 class TestDropPending:
@@ -2668,10 +2885,11 @@ class TestRadarrReconcile:
             post_import_category="pearlarr-done",
         )
 
-        mgr.reconcile_remaining()
+        result = mgr.reconcile_once(view=RecordingWaitView())
 
+        assert result is not None
+        assert result.carried_over_imported == 1
         assert mgr._pending_records() == {}
-        assert mgr._ctx.stats.imported == 1
         assert qbit.set_category_calls == [("pearlarr-done", "h")]
 
     def test_no_event_keeps_record_and_defers_category(self) -> None:
@@ -2685,11 +2903,12 @@ class TestRadarrReconcile:
             post_import_category="pearlarr-done",
         )
 
-        mgr.reconcile_remaining()
+        result = mgr.reconcile_once(view=RecordingWaitView())
 
+        assert result is not None
+        assert result.carried_over_imported == 0
         assert set(mgr._pending_records()) == {pk("h")}
         assert qbit.set_category_calls == []
-        assert mgr._ctx.stats.imported == 0
 
     def test_history_outage_keeps_record_and_never_moves(self) -> None:
         # history_since -> None (Radarr down): fail-open, never move on no evidence.
@@ -2701,7 +2920,7 @@ class TestRadarrReconcile:
             post_import_category="pearlarr-done",
         )
 
-        mgr.reconcile_remaining()
+        mgr.reconcile_once(view=RecordingWaitView())
 
         assert set(mgr._pending_records()) == {pk("h")}
         assert qbit.set_category_calls == []
@@ -2720,14 +2939,14 @@ class TestRadarrReconcile:
         )
 
         mgr.prune_expired_pending()
-        mgr.reconcile_remaining()
+        mgr.reconcile_once(view=RecordingWaitView())
 
         assert mgr._pending_records() == {}
         assert qbit.set_category_calls == [("pearlarr-done", "h")]
 
     def test_tally_counts_a_carried_over_radarr_record(self) -> None:
-        # A complete-but-not-yet-imported Radarr record reconciles to IMPORTING and
-        # the pre-summary tally folds it into the importing counter (no double poll).
+        # A complete-but-not-yet-imported Radarr record checks out AWAITING_IMPORT
+        # and the pre-summary tally folds it into the downloaded counter.
         qbit = CategoryQbit({"h": [FakeTorrent(is_complete=True, content_path="/d")]})
         mgr, _ = _radarr_reconcile_manager(
             qbit=qbit,
@@ -2735,10 +2954,10 @@ class TestRadarrReconcile:
             radarr_records=[pending_import(infohash="h", series_id=0, added_at=_FRESH)],
         )
 
-        mgr.reconcile_remaining()
+        mgr.reconcile_once(view=RecordingWaitView())
         mgr.tally_carried_over_into_stats()
 
-        assert mgr._ctx.stats.importing == 1
+        assert mgr._ctx.stats.downloaded == 1
         assert mgr._ctx.stats.queued == 0
 
 
@@ -2754,11 +2973,11 @@ class TestCrossArrCategoryGate:
         radarr_record = pending_import(infohash="h", al_id=22, series_id=0, title="Movie", added_at=_FRESH)
         qbit = CategoryQbit({"h": [FakeTorrent(is_complete=True, content_path="/d")]})
 
-        # Sonarr run: its slice verifies and drops, but the Radarr record still
-        # claims the hash cross-arr -> the move is deferred.
+        # Sonarr run: its slice verifies (files present) and drops, but the Radarr
+        # record still claims the hash cross-arr -> the move is deferred.
         sonarr_mgr = make_orchestration_manager(
             qbit=qbit,
-            strategy=_RecordingStrategy(completed=import_probe(ImportReadiness.IMPORTED, files_present=True)),
+            strategy=_RecordingStrategy(progress=ImportProgress(1, 1, determinate=True)),
             post_import_category="pearlarr-done",
         )
         sonarr_mgr.cache_store = store
@@ -2778,7 +2997,7 @@ class TestCrossArrCategoryGate:
             post_import_category="pearlarr-done",
         )
 
-        radarr_mgr.reconcile_remaining()
+        radarr_mgr.reconcile_once(view=RecordingWaitView())
 
         assert qbit.set_category_calls == [("pearlarr-done", "h")]
         assert store.get_pending(Arr.RADARR) == {}

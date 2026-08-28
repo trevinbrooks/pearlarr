@@ -323,6 +323,22 @@ class Outcome(Enum):
         return self.category.glyph_for(use_unicode=use_unicode)
 
 
+# Each non-dropped Outcome's tally bucket. Dropped outcomes (IMPORTED, MISSING) leave the store,
+# so a wait pass folds every record it leaves resident through exactly this table.
+PENDING_STATE_FOR_OUTCOME: dict[Outcome, PendingState] = {
+    Outcome.STILL_DOWNLOADING: PendingState.QUEUED,
+    Outcome.DOWNLOAD_TIMED_OUT: PendingState.QUEUED,
+    Outcome.NOT_CHECKED: PendingState.QUEUED,
+    Outcome.AWAITING_IMPORT: PendingState.DOWNLOADED,
+    Outcome.IMPORT_IN_PROGRESS: PendingState.DOWNLOADED,
+    Outcome.STILL_IMPORTING: PendingState.DOWNLOADED,
+    Outcome.NOT_READY: PendingState.DOWNLOADED,
+    Outcome.ATTEMPT_FAILED: PendingState.DOWNLOADED,
+    Outcome.NO_CONTENT_PATH: PendingState.DOWNLOADED,
+    Outcome.DOWNLOAD_ERRORED: PendingState.ERRORED,
+}
+
+
 # qBittorrent reports a torrent with no meaningful ETA as 8_640_000 seconds
 # (100 days), its "infinite" sentinel. Treat it (and anything at/above it) as
 # "unknown" rather than rendering a nonsense countdown.

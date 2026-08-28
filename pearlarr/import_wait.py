@@ -10,6 +10,7 @@ import qbittorrentapi
 from .cache import UPDATED_AT_STR_FORMAT, pending_cutoff
 from .log import count_noun
 from .manual_import import (
+    PENDING_STATE_FOR_OUTCOME,
     AttemptKind,
     ImportProbe,
     ImportProgress,
@@ -154,10 +155,15 @@ class ImportWaitManager:
             self.logger.debug(f"import progress poll for {pending.key.row_key} failed", exc_info=True)
             return ImportProgress(0, 0, determinate=False)
 
-    def _entry_reported_keys(self) -> set[PendingKey]:
-        """Keys an entry block already reported this run, which the snapshot and tally skip."""
+    def fresh_grab_keys(self) -> set[PendingKey]:
+        """Keys of the records written THIS run, tallied as `added` and never carried-over."""
 
-        return {p.key for p in self._ctx.pending_imports} | self._ctx.reacquired_keys
+        return {p.key for p in self._ctx.pending_imports}
+
+    def _entry_reported_keys(self) -> set[PendingKey]:
+        """Keys an entry block already reported this run, which the snapshot skips."""
+
+        return self.fresh_grab_keys() | self._ctx.reacquired_keys
 
     def retire_imported(self, pending: PendingImport) -> None:
         """Retire a verified-imported record: drop it, then the queue close and category move."""
@@ -175,8 +181,8 @@ class ImportWaitManager:
         state = classify_pending(poll.outcome, files_present)
         self._ctx.pending_states[pending.key] = state
         if state is PendingState.IMPORTED:
+            # _finalize_run counts the IMPORTED entry into stats. No local bump.
             self.retire_imported(pending)
-            self._ctx.stats.imported += 1
         elif state is PendingState.MISSING:
             self.drop_pending(pending)
             hub_warn(f"Pending import {pending.display_label} is gone from qBittorrent - dropping its record")
@@ -200,13 +206,16 @@ class ImportWaitManager:
             self._reporter.log_pending_snapshot(state, pending)
 
     def tally_carried_over_into_stats(self) -> None:
-        """Fold each still-pending carried-over record into `queued` / `downloaded`."""
+        """Fold each still-pending carried-over record into `queued` / `downloaded`.
 
-        reported = self._entry_reported_keys()
+        Reacquired records count here too. Only a this-run grab is skipped (it stays `added`).
+        """
+
+        fresh = self.fresh_grab_keys()
         # Iterate the raw stored keys, not `_pending_records()`: this loop reads only the key and
         # `pending_states`, so rehydrating every record would build a full map only to discard it.
         for key in self.cache_store.get_pending(self._ctx.arr):
-            if key in reported:
+            if key in fresh:
                 continue
             state = self._ctx.pending_states.get(key, PendingState.QUEUED)
             if state is PendingState.DOWNLOADED:
@@ -247,15 +256,15 @@ class ImportWaitManager:
         *,
         now: Callable[[], float] | None = None,
         view: WaitView | None = None,
-    ) -> None:
+    ) -> WaitResult | None:
         """The deferred end-of-run pass: one non-blocking cycle over the carried-over records."""
 
         if self._active_strategy is None:
-            return
+            return None
 
         records = self._carried_over_records()
         if not records:
-            return
+            return None
 
         mp = self._monitor_pass(records, now)
 
@@ -265,8 +274,12 @@ class ImportWaitManager:
             mp.retire_active()
             view.update(mp.snapshot())
 
-        result = self._run_pass(mp, kind=WaitKind.CHECK, view=view, body=body)
-        self._ctx.stats.imported += result.imported
+        return self._run_pass(mp, kind=WaitKind.CHECK, view=view, body=body)
+
+    def note_pending_state(self, key: PendingKey, outcome: Outcome) -> None:
+        """Fold a pass's non-dropped outcome for a carried-over record into `pending_states`."""
+
+        self._ctx.pending_states[key] = PENDING_STATE_FOR_OUTCOME[outcome]
 
     def _monitor_pass(self, records: list[PendingImport], now: Callable[[], float] | None) -> "MonitorPass":
         """A fresh `MonitorPass` over `records` under the run's two per-torrent timeouts."""
@@ -343,7 +356,7 @@ class ImportWaitManager:
     def _carried_over_records(self) -> list[PendingImport]:
         """Every store record that is not a this-run fresh grab."""
 
-        fresh = {p.key for p in self._ctx.pending_imports}
+        fresh = self.fresh_grab_keys()
         return [pending for key, pending in self._pending_records().items() if key not in fresh]
 
     def _monitor_working_set(self) -> list[PendingImport]:
@@ -500,6 +513,8 @@ class _MonitorRow:
     """The row's current frame entry, snapshotted by the manager each push."""
     dl_start: float
     """Download-phase clock, stamped at construction."""
+    carried_over: bool
+    """Whether the record predates this run (a fresh grab tallies as `added`)."""
     active: bool = True
     """Still running (not yet terminal)."""
     import_start: float | None = None
@@ -530,11 +545,15 @@ class MonitorPass:
         self.dl_timeout = dl_timeout
         self.import_timeout = import_timeout
         self.start = now()
+        # Stamped at construction: an imported fresh grab leaves `pending_imports` mid-pass,
+        # so a later membership check would misread it as carried-over.
+        fresh = manager.fresh_grab_keys()
         self.rows = {
             r.key.row_key: _MonitorRow(
                 record=r,
                 view=TorrentView(key=r.key.row_key, label=r.display_label, phase=Phase.QUEUED),
                 dl_start=self.start,
+                carried_over=r.key not in fresh,
             )
             for r in records
         }
@@ -589,11 +608,14 @@ class MonitorPass:
             import_total=files,
             phase_elapsed_s=self.now() - row.dl_start,
         )
-        self.results.append(WaitOutcomeRow(label=label, outcome=outcome))
+        self.results.append(WaitOutcomeRow(label=label, outcome=outcome, carried_over=row.carried_over))
         if outcome is Outcome.IMPORTED:
             self._mgr.retire_imported(record)
         elif outcome.dropped:
             self._mgr.drop_pending(record)
+        elif row.carried_over:
+            # Still store-resident: fold the outcome so the run tally buckets it truthfully.
+            self._mgr.note_pending_state(record.key, outcome)
         row.active = False
 
     def retire_active(self) -> None:

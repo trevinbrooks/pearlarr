@@ -33,6 +33,7 @@ from pearlarr.manual_import import (
     ImportWaitMode,
     OwnedEpisode,
     PendingImport,
+    PendingState,
     normalize_basename,
 )
 from pearlarr.mappings import ExternalIds, MappingEntry, MappingSource
@@ -1064,11 +1065,11 @@ class TestImportCompletedQueueState:
 
         # The row's facts reached the decision: the on-disk OtherPick file reads
         # RECOMMENDED - verified done, never manually imported over - and the
-        # finished record leaves the store. The imported tally pins the IMPORTED
+        # finished record leaves the store. The IMPORTED classification pins that
         # arm (a MISSING drop would also empty the store).
         assert sonarr.candidate_calls == []
         assert store.get_pending(Arr.SONARR) == {}
-        assert mgr._ctx.stats.imported == 1
+        assert mgr._ctx.pending_states[pending.key] is PendingState.IMPORTED
 
     def test_import_blocked_steps_in_with_our_mapping(self) -> None:
         # Sonarr can't auto-import (importBlocked) -> our authoritative manual
