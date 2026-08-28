@@ -135,6 +135,8 @@ class PerTitleState:
     """Group names of the unsupported-tracker skip, riding along for the summary."""
     unsupported_tracker_hashes: list[str] = field(default_factory=list[str])
     """Hashes held out of the cached hash set, so the release is re-considered once a parser lands."""
+    grab_failed_groups: list[str] = field(default_factory=list[str])
+    """Groups whose release hit a contained grab failure (tracker or client down), so the title stays uncached."""
     current_title: str | None = None
     """Title of the entry currently being processed, so grabs and the summary can attribute what they grab."""
     current_url: str | None = None

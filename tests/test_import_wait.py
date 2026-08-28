@@ -62,6 +62,7 @@ from .builders import (
     SEP,
     FakeCacheStore,
     FakeTorrents,
+    grab_request,
     import_probe,
     make_bare_instance,
     make_categories,
@@ -3059,8 +3060,7 @@ class TestRegisteredGrabSurvivesSnapshot:
         seeds = {"h1": pending_import(infohash="h1", series_id=7, added_at=_FRESH)}
 
         pipeline.add_torrent(
-            one_release_dict(srg="NAN0", infohash="h1"),
-            pending_seeds=seeds,
+            grab_request(seadex_dict=one_release_dict(srg="NAN0", infohash="h1"), pending_seeds=seeds),
         )
         engine._wait_manager.snapshot_pending_for_series(7)
 
