@@ -839,7 +839,7 @@ def _specimen_stream() -> tuple[ev.Event, ...]:
         ev.ScanFinished(arr=Arr.SONARR),
         ev.RunSummaryReady(summary=summary),
         ev.ScopeOpened(scope=_WAIT_SCOPE, label="wait"),
-        ev.WaitStarted(total=1, pulse_s=300.0, scope=_WAIT_SCOPE),
+        ev.WaitStarted(total=1, pulse_s=300.0, kind=ev.WaitKind.MONITOR, scope=_WAIT_SCOPE),
         ev.WaitProgress(snapshot=ev.WaitSnapshot(torrents=(), elapsed_s=30.0), scope=_WAIT_SCOPE),
         ev.TorrentGraduated(
             label="[SubsPlease] Sousou no Frieren",
@@ -848,7 +848,9 @@ def _specimen_stream() -> tuple[ev.Event, ...]:
             waited_s=412.0,
             scope=_WAIT_SCOPE,
         ),
-        ev.WaitFinished(imported=1, deferred=0, failed=0, elapsed_s=430.0, scope=_WAIT_SCOPE),
+        ev.WaitFinished(
+            imported=1, deferred=0, failed=0, elapsed_s=430.0, pending=0, kind=ev.WaitKind.MONITOR, scope=_WAIT_SCOPE
+        ),
         ev.ScopeClosed(scope=_WAIT_SCOPE),
         ev.RunFinished(arr=Arr.SONARR),
         ev.NextRunScheduled(at=datetime(2026, 1, 2, 0, 0, tzinfo=UTC)),

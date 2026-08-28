@@ -61,7 +61,6 @@ from .events import (
     StarterConfigWritten,
     TorrentGraduated,
     WaitFinished,
-    WaitKind,
     WaitProgress,
     WaitStarted,
     severity_of,
@@ -262,12 +261,12 @@ def _fields_graduated(event: TorrentGraduated) -> tuple[Field, ...]:
 
 
 def _fields_wait_started(event: WaitStarted) -> tuple[Field, ...]:
-    return (Field("kind", str(event.kind)), Field("total", event.total))
+    return (Field("kind", event.kind.name.lower()), Field("total", event.total))
 
 
 def _fields_wait_finished(event: WaitFinished) -> tuple[Field, ...]:
     return (
-        Field("kind", str(event.kind)),
+        Field("kind", event.kind.name.lower()),
         Field("imported", event.imported),
         Field("pending", event.pending),
         Field("deferred", event.deferred),
@@ -456,8 +455,7 @@ def _fact_of(event: Event, crumbs: BreadcrumbFold, severity: Severity) -> _Fact 
         case RunSummaryReady(summary=summary):
             return _Fact("run_summary", severity, "run complete", _fields_summary_head(summary), None, "summary")
         case WaitStarted(scope=scope, kind=kind):
-            word = "checking" if kind is WaitKind.CHECK else "waiting"
-            return _Fact("wait_started", severity, word, _fields_wait_started(event), scope, "wait")
+            return _Fact("wait_started", severity, kind.live_verb, _fields_wait_started(event), scope, "wait")
         case TorrentGraduated(scope=scope, outcome=outcome):
             return _Fact("torrent_graduated", severity, outcome.word, _fields_graduated(event), scope, "wait")
         case WaitFinished(scope=scope):

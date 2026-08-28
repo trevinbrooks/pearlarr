@@ -13,6 +13,8 @@ category-based graduation level), and the pure cockpit reducers
 
 import logging
 
+import pytest
+
 from pearlarr.console_caps import Capabilities, detect_capabilities
 from pearlarr.log import StyledLine
 from pearlarr.manual_import import Outcome
@@ -21,6 +23,7 @@ from pearlarr.output import (
     TorrentGraduated,
     TorrentView,
     WaitFinished,
+    WaitKind,
     WaitSnapshot,
     WaitStarted,
 )
@@ -112,15 +115,40 @@ class TestPulseThrottle:
 
 
 class TestWaitBuilders:
-    """Builder edge cases the goldens miss: zero tallies, pluralized start lines, graduation style/level by outcome."""
+    """Builder edge cases the goldens miss: zero tallies, per-kind wording, graduation style/level by outcome."""
 
     def test_zero_graduation_tally_is_empty(self) -> None:
-        assert wait_tally_lines(WaitFinished(imported=0, deferred=0, failed=0, elapsed_s=42.0)) == []
+        finished = WaitFinished(imported=0, deferred=0, failed=0, elapsed_s=42.0, pending=0, kind=WaitKind.MONITOR)
+        assert wait_tally_lines(finished) == []
 
-    def test_start_line_pluralizes_and_carries_no_payload(self) -> None:
-        line = wait_start_line(WaitStarted(total=1, pulse_s=300.0))
-        assert line.message == "Waiting on 1 download to complete and import..."
+    @pytest.mark.parametrize(
+        ("kind", "one", "two"),
+        [
+            (
+                WaitKind.MONITOR,
+                "Waiting on 1 download to complete and import...",
+                "Waiting on 2 downloads to complete and import...",
+            ),
+            (WaitKind.CHECK, "Checking 1 carried-over download...", "Checking 2 carried-over downloads..."),
+        ],
+    )
+    def test_start_line_words_and_pluralizes_by_kind(self, kind: WaitKind, one: str, two: str) -> None:
+        line = wait_start_line(WaitStarted(total=1, pulse_s=300.0, kind=kind))
+        assert line.message == one
         assert line.payload is None
+        assert wait_start_line(WaitStarted(total=2, pulse_s=300.0, kind=kind)).message == two
+
+    @pytest.mark.parametrize(
+        ("kind", "expected"),
+        [
+            (WaitKind.MONITOR, "  wait complete · 1 imported · 1m 00s"),
+            (WaitKind.CHECK, "  check complete · 1 imported · 2 pending · 1m 00s"),
+        ],
+    )
+    def test_tally_head_and_pending_bucket_by_kind(self, kind: WaitKind, expected: str) -> None:
+        pending = 2 if kind is WaitKind.CHECK else 0
+        finished = WaitFinished(imported=1, deferred=0, failed=0, elapsed_s=60.0, pending=pending, kind=kind)
+        assert wait_tally_lines(finished)[1].message == expected
 
     def test_graduation_style_is_dropped_without_color(self) -> None:
         # The colorless case is style="", not None (an unstyled console line).
@@ -175,7 +203,7 @@ def test_live_model_orders_and_bounds_the_box() -> None:
     torrents.append(TorrentView("imp", "Importer", Phase.IMPORTING))
     snap = WaitSnapshot(tuple(torrents), elapsed_s=120)
 
-    model = live_model(snap, caps)
+    model = live_model(snap, caps, WaitKind.MONITOR)
 
     # height budget caps visible rows. The rest collapse to an overflow tally.
     assert len(model.rows) == 4
@@ -184,7 +212,8 @@ def test_live_model_orders_and_bounds_the_box() -> None:
     assert "17" in model.overflow  # 20 downloads + 1 importing, 4 shown -> 17 hidden
 
 
-def test_live_model_header_reports_aggregate() -> None:
+@pytest.mark.parametrize(("kind", "left"), [(WaitKind.MONITOR, "waiting 1/2"), (WaitKind.CHECK, "checking 1/2")])
+def test_live_model_header_reports_aggregate_under_the_kinds_verb(kind: WaitKind, left: str) -> None:
     snap = WaitSnapshot(
         (
             _term("A", Outcome.IMPORTED),
@@ -193,9 +222,9 @@ def test_live_model_header_reports_aggregate() -> None:
         elapsed_s=125,
     )
 
-    model = live_model(snap, _WIDE)
+    model = live_model(snap, _WIDE, kind)
 
-    assert model.left_text == "waiting 1/2"
+    assert model.left_text == left
     assert "MB/s" in model.right_text  # aggregate download speed
     assert 0.0 < model.overall_fraction < 1.0
 
@@ -205,7 +234,7 @@ def test_live_model_importing_determinate_bar() -> None:
     # and the elapsed clock in the shared time column.
     snap = WaitSnapshot((_importing_row("h", "Show", done=8, total=12, elapsed=64),), elapsed_s=64)
 
-    row = live_model(snap, _WIDE).rows[0]
+    row = live_model(snap, _WIDE, WaitKind.MONITOR).rows[0]
 
     assert row.show_bar is True
     assert row.count == "8/12"
@@ -222,7 +251,7 @@ def test_live_model_importing_is_indeterminate_without_a_total() -> None:
         elapsed_s=10,
     )
 
-    row = live_model(snap, _WIDE).rows[0]
+    row = live_model(snap, _WIDE, WaitKind.MONITOR).rows[0]
 
     assert row.show_bar is False
     assert row.count == ""
@@ -236,7 +265,7 @@ def test_live_model_importing_before_command_reads_importing() -> None:
         elapsed_s=4,
     )
 
-    row = live_model(snap, _WIDE).rows[0]
+    row = live_model(snap, _WIDE, WaitKind.MONITOR).rows[0]
 
     assert row.status == "importing"
 
@@ -246,7 +275,7 @@ def test_live_model_download_row_layout() -> None:
     # only (the done side is already the bar + %, so "done/total" was redundant).
     snap = WaitSnapshot((_downloading_row("h", "Show", 0.5),), elapsed_s=10)
 
-    row = live_model(snap, _WIDE).rows[0]
+    row = live_model(snap, _WIDE, WaitKind.MONITOR).rows[0]
 
     assert row.show_bar is True
     assert row.count == "50%"
@@ -254,7 +283,7 @@ def test_live_model_download_row_layout() -> None:
     assert row.size == "2.7 GB"
     assert "/" not in row.size
 
-    queued = live_model(WaitSnapshot((TorrentView("q", "Other"),)), _WIDE).rows[0]
+    queued = live_model(WaitSnapshot((TorrentView("q", "Other"),)), _WIDE, WaitKind.MONITOR).rows[0]
     assert queued.status == "queued"
 
 
@@ -268,7 +297,7 @@ def test_sparkline_scales_to_the_window_peak() -> None:
 def test_download_row_speed_carries_the_sparkline() -> None:
     snap = WaitSnapshot((_downloading_row("h", "Show", 0.5, history=(0, 3_200_000)),))
 
-    row = live_model(snap, _WIDE).rows[0]
+    row = live_model(snap, _WIDE, WaitKind.MONITOR).rows[0]
 
     assert row.speed == "▁█ 3.1 MB/s"
 
@@ -279,15 +308,15 @@ def test_sparkline_is_dropped_when_narrow_or_ascii() -> None:
     narrow = Capabilities(live=True, color=True, unicode=True, width=72, height=40)
     ascii_caps = Capabilities(live=True, color=True, unicode=False, width=100, height=40)
 
-    assert live_model(snap, narrow).rows[0].speed == "3.1 MB/s"
-    assert live_model(snap, ascii_caps).rows[0].speed == "3.1 MB/s"
+    assert live_model(snap, narrow, WaitKind.MONITOR).rows[0].speed == "3.1 MB/s"
+    assert live_model(snap, ascii_caps, WaitKind.MONITOR).rows[0].speed == "3.1 MB/s"
 
 
 def test_sparkline_needs_two_samples() -> None:
     # A single sample says nothing about the trend. The cell stays plain.
     snap = WaitSnapshot((_downloading_row("h", "Show", 0.5, history=(3_200_000,)),))
 
-    assert live_model(snap, _WIDE).rows[0].speed == "3.1 MB/s"
+    assert live_model(snap, _WIDE, WaitKind.MONITOR).rows[0].speed == "3.1 MB/s"
 
 
 def test_compact_eta_covers_every_magnitude() -> None:

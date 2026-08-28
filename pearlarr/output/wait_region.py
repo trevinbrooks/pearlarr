@@ -195,6 +195,8 @@ class WaitRegion(LiveRegion):
         self._anchor = None
         self._caps = detect_capabilities(None)
         self._layout = _TableLayout.for_width(self._caps.width)
+        # A deliberate seed, never rendered: frames only anchor on WaitProgress, and the scope
+        # emits WaitStarted (which overwrites this) before it can emit any progress.
         self._kind = WaitKind.MONITOR
 
     def _current_group(self) -> Group:
