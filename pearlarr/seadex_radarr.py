@@ -5,11 +5,19 @@ from datetime import UTC, datetime, timedelta
 from typing import override
 
 from .arr_activity import IMPORT_EVENTS, format_history_date
-from .cache import UPDATED_AT_STR_FORMAT, CacheRecord, now_stamp
+from .cache import CacheRecord, now_stamp, parse_stamp
 from .config import Arr
 from .grab_pipeline import GrabRequest
 from .log import pluralize
-from .manual_import import AttemptKind, ImportProbe, ImportProgress, ImportReadiness, ImportWaitMode, PendingImport
+from .manual_import import (
+    NO_PROGRESS,
+    AttemptKind,
+    ImportProbe,
+    ImportProgress,
+    ImportReadiness,
+    ImportWaitMode,
+    PendingImport,
+)
 from .mappings import ExternalIds, MappingEntry
 from .output import hub_warn
 from .protocols import ArrSync
@@ -230,7 +238,7 @@ class RadarrSync(ArrSync[RadarrItem]):
         self,
         pending: PendingImport,
         content_path: str,
-        attempt: AttemptKind = AttemptKind.POLL,
+        attempt: AttemptKind,
     ) -> ImportProbe:
         """Reconcile one completed Radarr download against Radarr's import history.
 
@@ -252,7 +260,7 @@ class RadarrSync(ArrSync[RadarrItem]):
         """Indeterminate zero: a Radarr record reaches no bar."""
 
         del pending
-        return ImportProgress(0, 0, determinate=False)
+        return NO_PROGRESS
 
     @property
     @override
@@ -291,9 +299,7 @@ class RadarrSync(ArrSync[RadarrItem]):
         stamps: list[datetime] = []
         for raw in self.cache_store.get_pending(Arr.RADARR).values():
             try:
-                stamps.append(
-                    datetime.strptime(PendingImport.from_json(raw).added_at, UPDATED_AT_STR_FORMAT).astimezone(UTC)
-                )
+                stamps.append(parse_stamp(PendingImport.from_json(raw).added_at).astimezone(UTC))
             except (TypeError, ValueError):
                 continue
         oldest = min(stamps) if stamps else floor

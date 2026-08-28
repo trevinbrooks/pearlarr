@@ -8,6 +8,7 @@ from urllib.parse import urlsplit
 from .config import Arr
 from .log import count_noun, pluralize
 from .manual_import import (
+    NO_PROGRESS,
     AttemptKind,
     ImportProbe,
     ImportProgress,
@@ -571,7 +572,7 @@ class ImportReconciler:
         self,
         pending: PendingImport,
         content_path: str,
-        attempt: AttemptKind = AttemptKind.POLL,
+        attempt: AttemptKind,
     ) -> ImportProbe:
         """One import poll. Episode files and Sonarr's refreshed queue are the truth, never the cache."""
 
@@ -662,7 +663,7 @@ class ImportReconciler:
 
         seeded_targets = pending.target_ids()
         if not seeded_targets or not pending.seed_coverage().mapped:
-            return ImportProgress(0, 0, determinate=False)
+            return NO_PROGRESS
         seed = self._seed_statuses(pending, seeded_targets)
         done, total = self._net_counts(pending, seeded_targets, seed.statuses)
         return ImportProgress(done, total, determinate=True)

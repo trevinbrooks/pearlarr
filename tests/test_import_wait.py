@@ -417,7 +417,7 @@ class _RecordingStrategy(FakeStrategy):
         self,
         pending: PendingImport,
         content_path: str,
-        attempt: AttemptKind = AttemptKind.POLL,
+        attempt: AttemptKind,
     ) -> ImportProbe:
         self.import_calls.append(_ImportCall(pending, content_path, attempt))
         if self._completed_error is not None:

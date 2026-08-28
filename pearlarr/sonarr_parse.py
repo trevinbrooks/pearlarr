@@ -14,7 +14,7 @@ from collections.abc import Iterator, Mapping, Sequence
 from datetime import datetime, timedelta
 from typing import Any, NamedTuple, NotRequired, TypedDict, cast
 
-from .cache import UPDATED_AT_STR_FORMAT, record_is_fresh
+from .cache import UPDATED_AT_STR_FORMAT, parse_stamp, record_is_fresh
 from .json_narrow import is_json_list, is_json_obj
 from .log import count_noun
 from .manual_import import path_leaf
@@ -264,7 +264,7 @@ class SonarrParseCache:
         if record.get("series_fp") != window.series_fp:
             return False
         try:
-            return datetime.strptime(record.get("fetched_at", ""), UPDATED_AT_STR_FORMAT) >= window.neg_cutoff
+            return parse_stamp(record.get("fetched_at", "")) >= window.neg_cutoff
         except (TypeError, ValueError):
             return False
 

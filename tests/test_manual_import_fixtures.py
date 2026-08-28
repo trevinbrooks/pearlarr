@@ -20,6 +20,7 @@ from pathlib import Path
 
 from pearlarr.config import AppConfig
 from pearlarr.manual_import import (
+    AttemptKind,
     ImportProgress,
     ImportReadiness,
     normalize_basename,
@@ -1441,7 +1442,7 @@ class TestYamadaEndToEnd:
             seadex_files=seadex_files,
         )
 
-        probe = strat.import_completed(pending, "/downloads/yamada")
+        probe = strat.import_completed(pending, "/downloads/yamada", AttemptKind.POLL)
 
         # The command was issued (copy is async -> RETRY + command_issued).
         assert probe.readiness is ImportReadiness.RETRY
@@ -1474,7 +1475,7 @@ class TestYamadaEndToEnd:
             seadex_files=seadex_files,
         )
 
-        strat.import_completed(pending, "/downloads/yamada")
+        strat.import_completed(pending, "/downloads/yamada", AttemptKind.POLL)
 
         assert len(sonarr.execute_calls) == 1
         assert sonarr.execute_calls[0][1] == "move"
@@ -1494,7 +1495,7 @@ class TestYamadaEndToEnd:
             seadex_files=seadex_files,
         )
 
-        probe = strat.import_completed(pending, "/downloads/yamada")
+        probe = strat.import_completed(pending, "/downloads/yamada", AttemptKind.POLL)
 
         assert probe.target_count == len(seadex_files)
         assert probe.imported_count == 0
@@ -1582,7 +1583,7 @@ class TestYamadaEndToEnd:
         )
 
         progress = strat.import_progress(pending)
-        probe = strat.import_completed(pending, "/downloads/yamada")
+        probe = strat.import_completed(pending, "/downloads/yamada", AttemptKind.POLL)
 
         assert progress == ImportProgress(0, 0, determinate=False)
         assert (probe.imported_count, probe.target_count) == (0, 1)
@@ -1606,7 +1607,7 @@ class TestYamadaEndToEnd:
             seadex_files=seadex_files,
         )
 
-        probe = strat.import_completed(pending, "/downloads/yamada")
+        probe = strat.import_completed(pending, "/downloads/yamada", AttemptKind.POLL)
 
         assert probe.readiness is ImportReadiness.RETRY
         assert probe.command_issued is True

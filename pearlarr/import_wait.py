@@ -2,14 +2,15 @@
 
 from collections.abc import Callable
 from dataclasses import dataclass, field, replace
-from datetime import datetime
 
 import qbittorrentapi
 
-from .cache import UPDATED_AT_STR_FORMAT, pending_cutoff
+from .cache import parse_stamp, pending_cutoff
 from .clock import Clock
 from .log import count_noun
 from .manual_import import (
+    LEAVE_PROBE,
+    NO_PROGRESS,
     PENDING_STATE_FOR_OUTCOME,
     AttemptKind,
     ImportProbe,
@@ -112,7 +113,7 @@ class ImportWaitManager:
         self,
         pending: PendingImport,
         path: str,
-        attempt: AttemptKind = AttemptKind.POLL,
+        attempt: AttemptKind,
     ) -> ImportProbe:
         """Drive the strategy's `import_completed`, swallowing any error.
 
@@ -120,23 +121,23 @@ class ImportWaitManager:
         """
 
         if self._active_strategy is None:
-            return ImportProbe(ImportReadiness.LEAVE, files_present=False, command_issued=False)
+            return LEAVE_PROBE
         try:
             return self._active_strategy.import_completed(pending, path, attempt)
         except Exception as e:
             hub_error(f"Manual import failed for {pending.display_label} - leaving it for a later run", exc=e)
-            return ImportProbe(ImportReadiness.LEAVE, files_present=False, command_issued=False)
+            return LEAVE_PROBE
 
     def import_progress(self, pending: PendingImport) -> ImportProgress:
         """Cheap, read-only files-landed count (the Tier-2 poll), never raising."""
 
         if self._active_strategy is None:
-            return ImportProgress(0, 0, determinate=False)
+            return NO_PROGRESS
         try:
             return self._active_strategy.import_progress(pending)
         except Exception:
             self.logger.debug(f"import progress poll for {pending.key.row_key} failed", exc_info=True)
-            return ImportProgress(0, 0, determinate=False)
+            return NO_PROGRESS
 
     def fresh_grab_keys(self) -> set[PendingKey]:
         """Keys of the records written THIS run, tallied as `added` and never carried-over."""
@@ -343,7 +344,7 @@ class ImportWaitManager:
         # (guard-less) solely on its drop.
         for key, raw in self.cache_store.get_pending(self._ctx.arr).items():
             try:
-                added_at = datetime.strptime(raw.get("added_at", ""), UPDATED_AT_STR_FORMAT)
+                added_at = parse_stamp(raw.get("added_at", ""))
             except (TypeError, ValueError):
                 self.logger.debug(
                     f"Pending import {key.infohash} has an unparseable timestamp; dropping as expired",
@@ -482,8 +483,6 @@ class _MonitorRow:
     """Download-phase clock, stamped at construction."""
     carried_over: bool
     """Whether the record predates this run (a fresh grab tallies as `added`)."""
-    active: bool = True
-    """Still running (not yet terminal)."""
     clock: _ReadyClock | None = None
     """Created on the first COMPLETE poll, carrying the import phase's start."""
     view: TorrentView = field(init=False)
@@ -491,6 +490,12 @@ class _MonitorRow:
 
     def __post_init__(self) -> None:
         self.view = TorrentView(key=self.record.key.row_key, label=self.record.display_label, phase=Phase.QUEUED)
+
+    @property
+    def active(self) -> bool:
+        """Still running: the terminal frame is frozen exactly once, by `view_terminal`."""
+
+        return self.view.phase is not Phase.TERMINAL
 
     def _import_started(self) -> float:
         """The import phase's start. Every importing frame carries its clock (`dl_start` is a dead fallback)."""
@@ -659,12 +664,11 @@ class MonitorPass:
         return WaitSnapshot(tuple(row.view for row in self.rows.values()), elapsed_s=self.elapsed())
 
     def _terminal(self, outcome: Outcome, row: _MonitorRow, *, files: int | None = None) -> None:
-        """Record a terminal outcome: snapshot row, the drop or retire it implies, then the result row."""
+        """Record a terminal outcome: the drop or retire it implies, the frozen frame, then the result row."""
 
         record = row.record
-        row.view_terminal(outcome, self._clock.now(), files=files)
-        # Store effects precede the result row: a failed drop must not leave a
-        # phantom row for _finalize_run's imported bump to count.
+        # Store effects precede the frozen frame and the result row: a failed drop
+        # must leave the row active and add no phantom row for _finalize_run to count.
         if outcome is Outcome.IMPORTED:
             self._mgr.retire_imported(record)
         elif outcome.dropped:
@@ -672,8 +676,8 @@ class MonitorPass:
         elif row.carried_over:
             # Still store-resident: fold the outcome so the run tally buckets it truthfully.
             self._mgr.note_pending_state(record.key, outcome)
+        row.view_terminal(outcome, self._clock.now(), files=files)
         self.results.append(WaitOutcomeRow(label=record.display_label, outcome=outcome, carried_over=row.carried_over))
-        row.active = False
 
     def _retire_active(self) -> None:
         """Graduate every still-active row with a truthful pending outcome."""

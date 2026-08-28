@@ -40,6 +40,12 @@ def now_stamp() -> str:
     return stamp_of(datetime.now())
 
 
+def parse_stamp(stamp: str) -> datetime:
+    """`stamp` parsed back from `UPDATED_AT_STR_FORMAT`, raising like `strptime` on junk."""
+
+    return datetime.strptime(stamp, UPDATED_AT_STR_FORMAT)
+
+
 def pending_cutoff(max_age_days: int) -> datetime:
     """The oldest add time a pending record may carry: now minus `imports.pending_max_age_days`."""
 
@@ -224,7 +230,7 @@ def record_is_fresh(
     if not record.get(payload_key):
         return False
     try:
-        stamp = datetime.strptime(record.get("fetched_at", ""), UPDATED_AT_STR_FORMAT)
+        stamp = parse_stamp(record.get("fetched_at", ""))
     except (TypeError, ValueError):
         return False
     return stamp >= cutoff
