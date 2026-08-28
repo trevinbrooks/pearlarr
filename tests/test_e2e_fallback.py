@@ -681,7 +681,7 @@ def _assert_converged_imported(outcome: _RunOutcome, out: str) -> None:
     assert outcome.ok is True
     assert outcome.pending_after == frozenset()
     assert 'imported title="Demo Batch · Thighs" files=2' in out
-    assert "complete imported=1 deferred=0 failed=0" in out
+    assert "complete kind=monitor imported=1 pending=0 deferred=0 failed=0" in out
     assert current_hub().counts.mark().errors == 0
     # The unified done-bucket: whichever path imported (Sonarr-tracked or the
     # folder-scan rescue), the confirmed site moves the torrent to the arr's
@@ -701,8 +701,8 @@ def test_dead_tracked_download_imports_via_folder_scan(
     # ManualImport command reported `failed`: the episode FILES decided.
     _assert_converged_imported(outcome, out)
 
-    # The dated hub note, exactly once (memoized verdict, once per record per run).
-    assert out.count(_DEAD_TRACKED_NOTE) == 1
+    # The dated note is debug-only now and stays out of user-facing output.
+    assert _DEAD_TRACKED_NOTE not in out
 
     # CONTRACT: the folder request carries folder + filterExistingFiles and
     # NEITHER downloadId (tracked-branch re-entry) NOR seriesId (library scan).
@@ -818,14 +818,14 @@ def test_unscannable_download_defers_with_folder_warn(
     assert outcome.ok is True
     assert outcome.pending_after == frozenset({_INFOHASH})
     assert 'not ready title="Demo Batch · Thighs"' in out
-    assert "complete imported=0 deferred=1 failed=0" in out
+    assert "complete kind=monitor imported=0 pending=0 deferred=1 failed=0" in out
     assert current_hub().counts.mark().errors == 0
 
     # The folder-mode warn template fired, naming the record.
     assert f"Could not fetch folder-scan import candidates for {_TITLE}" in out
 
-    # The dead-tracked note still fired exactly once (probe succeeded, verdict
-    # memoized), nothing was ever POSTed, and no category move happened.
-    assert out.count(_DEAD_TRACKED_NOTE) == 1
+    # The dead-tracked note stays debug-only, nothing was ever POSTed, and no
+    # category move happened.
+    assert _DEAD_TRACKED_NOTE not in out
     assert outcome.world.manual_commands == []
     assert outcome.world.category_moves == []
