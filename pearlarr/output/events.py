@@ -7,7 +7,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from datetime import datetime
-from enum import Enum, IntEnum, StrEnum, auto
+from enum import Enum, IntEnum, auto
 from typing import TYPE_CHECKING, assert_never
 
 from .trace import CapturedTrace
@@ -521,14 +521,32 @@ class WaitSnapshot:
         return total / len(self.torrents)
 
 
-class WaitKind(StrEnum):
-    """Which end-of-run pass a wait region narrates."""
+class WaitKind(Enum):
+    """Which end-of-run pass a wait region narrates, with its rendering vocab."""
 
-    MONITOR = "monitor"
+    MONITOR = ("Waiting on {n} download{s} to complete and import...", "wait complete", "waiting", "Wait")
     """The blocking/hybrid monitor: waits for downloads to finish, then imports."""
 
-    CHECK = "check"
+    CHECK = ("Checking {n} carried-over download{s}...", "check complete", "checking", "Check")
     """The one-cycle check: polls once, imports the finished ones, never waits."""
+
+    start_template: str
+    """The digest's opening sentence, with `{n}` count and `{s}` plural-suffix slots."""
+
+    tally_head: str
+    """The closing summary's lead phrase."""
+
+    live_verb: str
+    """The cockpit header's progress verb, also the structured log's start word."""
+
+    interrupt_noun: str
+    """The Ctrl-C notice's pass name."""
+
+    def __init__(self, start_template: str, tally_head: str, live_verb: str, interrupt_noun: str) -> None:
+        self.start_template = start_template
+        self.tally_head = tally_head
+        self.live_verb = live_verb
+        self.interrupt_noun = interrupt_noun
 
 
 @dataclass(frozen=True, slots=True)
@@ -538,7 +556,7 @@ class WaitStarted:
     total: int
     pulse_s: float
     """The renderer's pulse throttle interval (`max(poll_s, digest_interval)`)."""
-    kind: WaitKind = WaitKind.MONITOR
+    kind: WaitKind
     scope: ScopeId | None = None
 
 
@@ -569,9 +587,9 @@ class WaitFinished:
     deferred: int
     failed: int
     elapsed_s: float
-    pending: int = 0
+    pending: int
     """Rows the one-cycle check left for the next run on purpose."""
-    kind: WaitKind = WaitKind.MONITOR
+    kind: WaitKind
     scope: ScopeId | None = None
 
 

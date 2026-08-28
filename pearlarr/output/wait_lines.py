@@ -72,11 +72,8 @@ def graduation_tail(outcome: Outcome, files: int | None, waited_s: float) -> str
 def wait_start_line(event: WaitStarted) -> LegacyLine:
     """The non-TTY digest's opening line, worded by the pass kind."""
 
-    if event.kind is WaitKind.CHECK:
-        message = f"Checking {count_noun(event.total, 'carried-over download')}..."
-    else:
-        message = f"Waiting on {count_noun(event.total, 'download')} to complete and import..."
-    return LegacyLine(logging.INFO, message)
+    plural = "" if event.total == 1 else "s"
+    return LegacyLine(logging.INFO, event.kind.start_template.format(n=event.total, s=plural))
 
 
 def wait_pulse_line(snapshot: WaitSnapshot) -> LegacyLine:
@@ -119,7 +116,7 @@ def wait_tally_lines(event: WaitFinished) -> list[LegacyLine]:
     if event.failed:
         parts.append(f"{event.failed} failed")
     parts.append(format_elapsed(event.elapsed_s))
-    head = "check complete" if event.kind is WaitKind.CHECK else "wait complete"
+    head = event.kind.tally_head
     return [
         LegacyLine(logging.INFO, rule_string("-"), SectionRule(char="-")),
         LegacyLine(logging.INFO, indent_string(f"{head} · " + " · ".join(parts))),
@@ -193,7 +190,7 @@ class LiveModel:
     overflow: str = ""
 
 
-def live_model(snapshot: WaitSnapshot, caps: Capabilities, kind: WaitKind = WaitKind.MONITOR) -> LiveModel:
+def live_model(snapshot: WaitSnapshot, caps: Capabilities, kind: WaitKind) -> LiveModel:
     """Reduce a snapshot to a bounded, ordered cockpit frame."""
 
     in_flight = [t for t in snapshot.torrents if t.phase is not Phase.TERMINAL]
@@ -208,8 +205,7 @@ def live_model(snapshot: WaitSnapshot, caps: Capabilities, kind: WaitKind = Wait
     overflow = _overflow_text(hidden)
 
     counts = snapshot.counts()
-    verb = "checking" if kind is WaitKind.CHECK else "waiting"
-    left = f"{verb} {snapshot.done()}/{snapshot.total()}"
+    left = f"{kind.live_verb} {snapshot.done()}/{snapshot.total()}"
     arrow = "↓" if caps.unicode else "dl"
     meta: list[str] = [format_elapsed(snapshot.elapsed_s)]
     agg_speed = _aggregate_speed(snapshot)

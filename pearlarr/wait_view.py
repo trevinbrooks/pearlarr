@@ -116,7 +116,7 @@ class HubWaitView(WaitView):
         *,
         pulse_s: float,
         wants_telemetry: bool,
-        kind: WaitKind = WaitKind.MONITOR,
+        kind: WaitKind,
     ) -> None:
         self._logger = logger
         self._pulse_s = pulse_s
@@ -193,7 +193,7 @@ def make_wait_view(
     *,
     poll_s: int,
     digest_interval: int = 300,
-    kind: WaitKind = WaitKind.MONITOR,
+    kind: WaitKind,
 ) -> WaitView:
     """The production narrator, probed off the logger's console."""
 

@@ -300,5 +300,5 @@ class ScopeFactory:
     def entry(self, header: EntryHeader) -> EntryScope:
         return EntryScope(self._emit, self._ids.mint(ScopeKind.ENTRY), header)
 
-    def wait(self, total: int, *, pulse_s: float, kind: WaitKind = WaitKind.MONITOR) -> WaitScope:
+    def wait(self, total: int, *, pulse_s: float, kind: WaitKind) -> WaitScope:
         return WaitScope(self._emit, self._ids.mint(ScopeKind.WAIT_REGION), total, pulse_s=pulse_s, kind=kind)
