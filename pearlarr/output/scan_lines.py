@@ -1,17 +1,4 @@
-"""The scan surface's rich-console line grammar, event-driven.
-
-Every scan line is a `LegacyLine`: a level, a plain message, and a typed
-`ConsoleRender` payload (how the rich console draws it). The pure builders
-here map each scan event to its console lines, pinned by the goldens in
-`tests/test_scan_parity.py`.
-
-Two consumers: the `rich_renderer.RichRenderer`'s scan arm renders the
-payloads via `render_legacy_lines` (through the shared payload renderers
-`render_kv` / `render_rule` / `print_titled_rule`), and the WaitRegion's
-durable prints ride the same route. The file/plain/json surfaces take the same
-events through the `textline` grammar instead. Renderer-side module:
-importing rich is fine here, unlike `events.py`.
-"""
+"""The scan surface's rich-console line grammar: one pure builder per scan event."""
 
 from __future__ import annotations
 
@@ -77,12 +64,11 @@ type ScanEvent = (
     | CapReached
     | RunSummaryReady
 )
-"""The event subset rendered through the legacy-line builders (both seats)."""
 
 
 @dataclass(frozen=True, slots=True)
 class LegacyLine:
-    """One rich-console line: level (gates rendering) + plain message + payload."""
+    """One rich-console line: level, plain message, console payload."""
 
     level: int
     message: str
@@ -91,16 +77,13 @@ class LegacyLine:
 
 _BLANK = LegacyLine(logging.INFO, "")
 
-# The summary scoreboard's key column (narrower than the entry-detail column)
-# and its per-entry block column.
 _SUMMARY_KEY_WIDTH: Final = 12
 _BLOCK_KEY_WIDTH: Final = 7
 
 _CAP_MESSAGE: Final = "Reached the maximum number of torrents for this run (advanced.max_torrents_to_add); stopping"
 
-# The summary guidance tips by cause. Causes without a tip render no line. The
-# PRIVATE_ONLY > NO_FALLBACK > STALE precedence is settled by whoever populates
-# `RunSummary.tip` (the producer), never re-derived here.
+# Causes without a tip render no line. The PRIVATE_ONLY > NO_FALLBACK > STALE precedence is settled by
+# whoever populates `RunSummary.tip`, never re-derived here.
 _TIP_TEXTS: Final[dict[NeedsActionCause, str]] = {
     NeedsActionCause.PRIVATE_ONLY: (
         "Tip: manually grab private releases or set private_releases: fallback to "
@@ -197,12 +180,7 @@ def item_started_lines(event: ItemStarted) -> tuple[LegacyLine, ...]:
 
 
 def entry_header_lines(event: EntryHeader) -> tuple[LegacyLine, ...]:
-    """An entry block's head: the ledger row plus its files/link continuation.
-
-    The focal "checking" row stays unstyled. "imported" reads green. Every other
-    state dims. Absent coverage/url rows drop, and the incomplete note rides the
-    LAST rendered detail line, console-side only.
-    """
+    """An entry block's head (ledger row plus files/link rows), the incomplete note riding the last row."""
 
     if event.state is EntryState.CHECKING:
         style = ""
@@ -278,11 +256,7 @@ def grab_failed_lines(event: GrabFailed) -> tuple[LegacyLine, ...]:
 
 
 def grab_action_lines(event: GrabAction) -> tuple[LegacyLine, ...]:
-    """The per-title action block: status, recommended groups, per-release rows.
-
-    The should-anything-render gate stays producer-side. This renders whatever
-    the event carries.
-    """
+    """The per-title action block: status, recommended groups, per-release rows."""
 
     lines: list[LegacyLine] = []
     match event.status:
@@ -291,7 +265,7 @@ def grab_action_lines(event: GrabAction) -> tuple[LegacyLine, ...]:
         case GrabStatus.WOULD_ADD:
             lines.append(_detail_kv("status", "would add SeaDex's recommended release (dry run)", value_style=None))
         case GrabStatus.ALREADY_DOWNLOADING:
-            message = "SeaDex's pick is already downloading in qBittorrent"
+            message = "SeaDex's pick is already in qBittorrent"
             if event.waiting_to_import:
                 message += " - waiting to import"
             lines.append(_detail_kv("status", message, value_style="yellow"))
@@ -317,7 +291,7 @@ def _summary_kv(key: str, value: str, *, value_style: str | None = None) -> Lega
 
 
 class SummaryRow(NamedTuple):
-    """One labeled row of a summary per-entry block. A falsy `value` is skipped."""
+    """One labeled row of a summary block. A falsy `value` is skipped."""
 
     label: str
     value: str | Text | None
@@ -353,9 +327,7 @@ def _needs_block(item: NeedsActionFact) -> Iterator[LegacyLine]:
 
 
 def _added_block(item: GrabFact, *, dry_run: bool) -> Iterator[LegacyLine]:
-    # A dry run dims the whole block (group accent included) so the would-be
-    # grabs don't read as real. kv_string interpolates the Text to plain text
-    # for the message.
+    # A dry run dims the whole block (group accent included) so the would-be grabs don't read as real.
     torrent_value = group_highlight(
         item.name,
         item.group,
@@ -383,8 +355,8 @@ def run_summary_lines(event: RunSummaryReady) -> tuple[LegacyLine, ...]:
 
     lines: list[LegacyLine] = [
         _BLANK,
-        # The DRY RUN note rides the rule title only. The message stays plain (the
-        # text surfaces carry dry_run/note as structured fields via _fact_of).
+        # The DRY RUN note rides the rule title only. The message stays plain (the text surfaces carry
+        # dry_run/note as structured fields via _fact_of).
         _info(title, TitledRule(title=rule_title, heavy=True)),
         _BLANK,
         _summary_kv("checked", str(tally.checked)),
@@ -400,12 +372,11 @@ def run_summary_lines(event: RunSummaryReady) -> tuple[LegacyLine, ...]:
     for grab in tally.added:
         lines.extend(_added_block(grab, dry_run=summary.dry_run))
 
-    # Carried-over pending statuses render only when the feature is on AND non-zero.
     if summary.wait_mode_on:
         if tally.queued:
             lines.append(_summary_kv("queued", str(tally.queued), value_style="grey50"))
-        if tally.importing:
-            lines.append(_summary_kv("importing", str(tally.importing), value_style="yellow"))
+        if tally.downloaded:
+            lines.append(_summary_kv("downloaded", str(tally.downloaded), value_style="yellow"))
         if tally.imported:
             lines.append(_summary_kv("imported", str(tally.imported), value_style="green"))
 
@@ -470,13 +441,7 @@ def scan_event_lines(event: ScanEvent) -> tuple[LegacyLine, ...]:
 
 
 def render_legacy_lines(console: Console, lines: Iterable[LegacyLine], level: int) -> None:
-    """Render legacy lines on the shared console, LOGGER-parity gated.
-
-    A line prints through the legacy payload renderers iff its level clears
-    `level`, so a configured WARNING hides INFO scan lines from the console
-    exactly as it hides them from the file (NOT the diagnostics' console
-    floor).
-    """
+    """Render legacy lines on the shared console: a line prints iff its level clears `level`."""
 
     for line in lines:
         if line.level < level:

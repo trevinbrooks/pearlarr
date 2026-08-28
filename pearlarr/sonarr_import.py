@@ -1,20 +1,4 @@
-"""Import-time subsystem: decide a download's state, then build/POST the import.
-
-Three collaborators:
-
-* `CandidateScanner` owns the per-run candidate scans: downloadId first, with
-  the folder fallback that stops a history-poisoned download from looping.
-* `ImportExecutor` owns the mechanical "consume" side: throttled download
-  rescan, queue/command reads, and - the heart of it - turning OUR resolved
-  `basename -> episode ids` map (built by
-  `FileEpisodeMapper`) into a Sonarr ManualImport payload
-  and POSTing it, with per-run quality/language caches.
-* `ImportReconciler` owns the *decision*: one `import_completed` poll (what
-  state the download is in, when to step in vs. defer to Sonarr) and the
-  grab-time `PendingImport` seed build. It composes the episode collaborator +
-  the executor. The strategy's `import_completed` / `process_al_id` hooks are
-  thin delegators onto it.
-"""
+"""Import-time subsystem: decide a download's state, then build/POST the import."""
 
 import logging
 import time
@@ -82,10 +66,8 @@ from .sonarr_import_plan import (
 from .sonarr_mapper import FileEpisodeMapper
 from .sonarr_parse import parsed_episodes, parsed_full_season, video_file_entries
 
-# RefreshMonitoredDownloads is quick (Sonarr re-scans its clients). Poll its
-# command status up to this many times, sleeping this long between, before
-# proceeding regardless. Waiting means the queue we read next reflects the
-# rescan. The bound means a stuck command never blocks the run.
+# RefreshMonitoredDownloads is quick. Poll its status this many times (sleeping between) so the queue we read
+# next reflects the rescan, then proceed regardless so a stuck command never blocks the run.
 _REFRESH_COMMAND_MAX_POLLS = 30
 _REFRESH_COMMAND_POLL_S = 1
 _COMMAND_TERMINAL_STATES = frozenset({"completed", "failed", "aborted", "cancelled"})
@@ -100,21 +82,15 @@ def _hostname(url: str | None) -> str | None:
 
 
 class _CandidateScan(NamedTuple):
-    """One poll's candidate fetch plus the entry shape it implies.
-
-    The shape is uniform across every file of the resulting command - which is
-    also what keeps the in-flight guard's no-downloadId arm applicable (its
-    `file_hashes` gate requires ALL entries of a command to omit the id).
-    """
+    """One poll's candidate fetch plus the entry shape it implies."""
 
     candidates: list[ManualImportCandidate]
     omit_download_id: bool
-    """True only for a dead-tracked folder scan: the entries must not carry a
-    downloadId (Sonarr's Execute tail NREs on the poisoned tracked download)."""
+    """ALL entries must omit the downloadId: Sonarr's Execute tail NREs on the poisoned download."""
 
 
 class _EntryContext(NamedTuple):
-    """Per-command context for building file entries (uniform across the command)."""
+    """Per-command context for building file entries."""
 
     pending: PendingImport
     content_path: str
@@ -122,23 +98,15 @@ class _EntryContext(NamedTuple):
 
 
 class CandidateScanner:
-    """Per-run candidate scans: the downloadId scan with the folder fallback.
-
-    Owns the fallback scratch - folder-mode pins, the history verdict memo, the
-    remote-path translations - all per-run and dropped in `reset`. The fallback
-    is what stops a history-poisoned download from looping forever.
-    """
+    """Per-run candidate scans: the downloadId scan with the folder fallback."""
 
     def __init__(self, sonarr: AbstractSonarrClient, qbit_host: str | None, logger: logging.Logger) -> None:
         self.sonarr = sonarr
         self._qbit_host = qbit_host
         self.logger = logger
 
-        # Fallback scratch, all per-run (cleared in reset): infohashes pinned to
-        # folder mode after a NONEMPTY scan, the memoized history verdicts
-        # (VERDICTS only - a probe failure re-probes next activation), the lazy
-        # remote-path mappings (None = unfetched), the memoized translations, and
-        # the dead-tracked infohashes already warned about an empty folder.
+        # Per-run fallback scratch. `_path_mappings` None = unfetched, and `_history_verdicts` memoizes
+        # VERDICTS only, so a probe failure re-probes on the next activation.
         self._folder_pinned: set[str] = set()
         self._history_verdicts: dict[str, DownloadHistoryVerdict] = {}
         self._path_mappings: list[RemotePathMapping] | None = None
@@ -157,9 +125,7 @@ class CandidateScanner:
     def content_paths(self, content_path: str) -> ContentPaths:
         """The raw + Sonarr-visible path pair the in-flight guard matches against.
 
-        Read-only over the memoized translations - never fetches. Before the
-        first fallback activation both views are the raw path (the pre-fallback
-        status quo the episode-id guard arm already covers).
+        Read-only over the memoized translations, never fetches. Both views are the raw path until a fallback activates.
         """
 
         return ContentPaths(
@@ -170,9 +136,7 @@ class CandidateScanner:
     def _remote_path_mappings(self) -> list[RemotePathMapping]:
         """Sonarr's remote path mappings, fetched once per run on first fallback use.
 
-        A failed fetch caches [] for the run: translation degrades to a no-op,
-        an untranslatable folder scans empty, so nothing pins and the downloadId
-        scan is retried next poll (the next run re-fetches).
+        A failed fetch caches [] for the run: translation degrades to a no-op, so nothing pins and the scan is retried.
         """
 
         if self._path_mappings is None:
@@ -193,12 +157,7 @@ class CandidateScanner:
         return translated
 
     def _probe_history(self, pending: PendingImport) -> DownloadHistoryVerdict | None:
-        """Classify a download's Sonarr history (memoized), or None on probe failure.
-
-        Verdicts are memoized for the run; a FAILED probe is never stored, so the
-        next fallback activation re-probes. The first dead-tracked classification
-        notes the state on the hub, once per record per run (the memo gates it).
-        """
+        """Classify a download's Sonarr history (memoized), or None on probe failure."""
 
         verdict = self._history_verdicts.get(pending.infohash)
         if verdict is not None:
@@ -210,24 +169,14 @@ class CandidateScanner:
         self._history_verdicts[pending.infohash] = verdict
         if verdict.dead_tracked:
             when = f" on {verdict.date.split('T')[0]}" if verdict.date else ""
-            hub_note(
+            self.logger.debug(
                 f"{pending.display_label}: Sonarr recorded this download as {verdict.event}{when} "
                 "and won't serve it by id - importing from its folder instead"
             )
         return verdict
 
     def scan(self, pending: PendingImport, content_path: str) -> _CandidateScan | None:
-        """The candidates for one poll: the downloadId scan, with the folder fallback.
-
-        The folder fallback kills the dead loop (a history-poisoned download
-        whose downloadId scan 500s forever). The history probe only decides how
-        much noise the import allocates: a misclassification degrades to bounded
-        one-command noise, never a loop. The trigger is loose - ANY
-        downloadId-scan failure falls back (`[]` is an answer, not a failure, so
-        the normal retry semantics apply). The id scan fails silently and this
-        method owns the one line each outcome deserves. Returns None only when
-        the active scan(s) failed outright.
-        """
+        """The candidates for one poll: the downloadId scan, with the folder fallback. None when the scan failed."""
 
         if pending.infohash not in self._folder_pinned:
             candidates = self.sonarr.manual_import_candidates(pending=pending)
@@ -246,14 +195,11 @@ class CandidateScanner:
         if folder_candidates is None:
             return None
         if folder_candidates:
-            # INVARIANT: pin folder mode on NONEMPTY success only - 200 `[]` is
-            # exactly what an invisible/untranslated folder returns, and pinning
-            # on it would wedge the record in a mode that can never see files
-            # while the recoverable downloadId scan goes unretried.
+            # INVARIANT: pin folder mode on NONEMPTY success only. A 200 `[]` is exactly what an invisible or
+            # untranslated folder returns, and pinning on it wedges the record blind to files, downloadId unretried.
             self._folder_pinned.add(pending.infohash)
         elif verdict is not None and verdict.dead_tracked and pending.infohash not in self._warned_empty_folder:
-            # Dead-tracked + empty folder = silent retries until the record
-            # expires. Say so once. A clean/unknown verdict self-heals by id.
+            # Dead-tracked plus an empty folder means silent retries until the record expires. Say so once.
             self._warned_empty_folder.add(pending.infohash)
             hub_warn(
                 f"{pending.display_label}: Sonarr won't serve this download by id and "
@@ -266,13 +212,7 @@ class CandidateScanner:
 
 
 class ImportExecutor:
-    """Builds/POSTs the manual-import payload + owns the per-run import caches.
-
-    Constructed once per run in `SonarrSync`. `run_manual_import` turns OUR
-    resolved map into a Sonarr ManualImport payload and POSTs it, delegating the
-    candidate scan (downloadId with the folder fallback) to its `scanner`. Also
-    exposes the throttled rescan and the queue/command reads the decision reads.
-    """
+    """Builds/POSTs the manual-import payload + owns the per-run import caches."""
 
     def __init__(self, deps: RunDeps, sonarr: AbstractSonarrClient, mapper: FileEpisodeMapper) -> None:
         """Bind the Sonarr client, config/logger, mapper, and the candidate scanner."""
@@ -281,38 +221,16 @@ class ImportExecutor:
         self._config = deps.config
         self.logger = deps.logger
         self._mapper = mapper
-        # `_hostname` is static per run, so resolve it once and hand the scanner
-        # the bare host rather than the whole config.
         self.scanner = CandidateScanner(sonarr, _hostname(deps.config.qbittorrent.host), deps.logger)
 
-        # Per-run caches of the Sonarr quality-definition / language lists, used
-        # to resolve a quality name / language names into the manual-import
-        # payload objects. Fetched lazily on the first import and then reused for
-        # the rest of the run so repeated imports don't re-hit the endpoints.
-        # None means "not yet fetched" (cleared in reset, the run-start hook).
+        # Per-run scratch, all cleared in reset. A `None` cache = not yet fetched.
         self._quality_defs_cache: list[QualityDefinition] | None = None
         self._languages_cache: list[Language] | None = None
-
-        # Infohashes for which we've already warned that some on-disk files could
-        # not be placed in the resolved set, so the loud "left these for you" line
-        # is logged once a run rather than every poll until the record clears.
         self._warned_unplaceable: set[str] = set()
-
-        # Whether the unmatched-default_quality warning fired this run. The seam
-        # runs once per FILE, so without this the typo would warn on every import.
         self._warned_default_quality = False
-
-        # Monotonic time of the last RefreshMonitoredDownloads we asked Sonarr for,
-        # used to throttle the rescan: the blocking pass calls import_completed
-        # every poll and may walk several torrents back-to-back, so we re-issue the
-        # (global) refresh at most once per imports.poll_interval rather than on
-        # every call. None means "not refreshed yet this run" (reset in reset).
         self._last_refresh_monotonic: float | None = None
-
-        # ManualImport command ids we POSTed this run, so the disk-command
-        # deferral can tell our own running import (another record's copy -
-        # deferred time is credited back to the ready deadline) from foreign work.
         self._issued_command_ids: set[int] = set()
+        self._completed_download_handling: bool | None = None
 
     def reset(self) -> None:
         """Drop the per-run import scratch (run-start, via get_items)."""
@@ -323,7 +241,15 @@ class ImportExecutor:
         self._warned_default_quality = False
         self._last_refresh_monotonic = None
         self._issued_command_ids = set()
+        self._completed_download_handling = None
         self.scanner.reset()
+
+    def completed_download_handling_enabled(self) -> bool:
+        """Whether Sonarr imports its own completed downloads: with it off, it parks them forever."""
+
+        if self._completed_download_handling is None:
+            self._completed_download_handling = self.sonarr.download_client_config().enable_completed_download_handling
+        return self._completed_download_handling
 
     def is_own_command(self, command_id: int) -> bool:
         """Whether we POSTed this ManualImport command id this run."""
@@ -331,19 +257,10 @@ class ImportExecutor:
         return command_id in self._issued_command_ids
 
     def refresh_downloads(self) -> None:
-        """Queue RefreshMonitoredDownloads (throttled), wait for it and its follow-up pass, best-effort.
+        """Queue RefreshMonitoredDownloads (throttled), waiting for it and the follow-up ProcessMonitoredDownloads."""
 
-        Global command, so re-issued at most once per `imports.poll_interval`;
-        waiting means the queue read that follows reflects the rescan. Its
-        completion immediately starts Sonarr's ProcessMonitoredDownloads, which
-        is absorbed under the same bound - otherwise the disk-command guard
-        trips on the pass our own rescan scheduled, in phase on every poll, and
-        the step-in starves. Only that pass is absorbed (a foreign rename/import
-        is the guard's job); the poll bounds mean a stuck command never blocks
-        the run, and a failed queue/confirm just leaves the next read stale one
-        poll.
-        """
-
+        # The rescan is GLOBAL and the blocking pass walks several torrents back-to-back, so it is re-issued
+        # at most once per poll interval.
         now = time.monotonic()
         interval = self._config.imports.poll_interval
         if self._last_refresh_monotonic is not None and now - self._last_refresh_monotonic < interval:
@@ -370,13 +287,7 @@ class ImportExecutor:
             time.sleep(_REFRESH_COMMAND_POLL_S)
 
     def queue_records(self, infohash: str) -> list[QueueRecord]:
-        """This download's queue records, for `classify_queue`.
-
-        Matches records to the torrent by `downloadId` (case-insensitively,
-        Sonarr stores the infohash uppercased). The verdict reads each record's
-        `trackedDownloadState` + `trackedDownloadStatus`. An empty result means
-        Sonarr isn't tracking the download.
-        """
+        """This download's queue records, matched case-insensitively (Sonarr stores the hash uppercased)."""
 
         target = infohash.casefold()
         return [
@@ -386,17 +297,7 @@ class ImportExecutor:
         ]
 
     def close_tracked(self, pending: PendingImport) -> None:
-        """Dismiss Sonarr's leftover queue entry for `pending`'s torrent, if any.
-
-        Fires once the torrent's last record has imported; a row still queued
-        then is the partial-close residue (see `ImportCompleter.close_tracked`).
-        Any one series-bearing row's id dismisses the whole download; the
-        torrent keeps seeding. An unknown-series entry (Sonarr never matched
-        the title) is left alone: dismissing it 500s in Sonarr without
-        recording the ignore, and the entry drops once the torrent leaves the
-        watched category. Best-effort: the client warns on failure and the
-        next run gets no retry (the record is already dropped).
-        """
+        """Dismiss Sonarr's leftover queue entry, leaving an unknown-series one alone (dismissing it 500s)."""
 
         rows = self.queue_records(pending.infohash)
         queue_id = next((row.id for row in rows if row.id and row.series_id), None)
@@ -409,17 +310,11 @@ class ImportExecutor:
         if self.sonarr.queue_delete(queue_id):
             hub_note(f"Removed the imported download {pending.display_label} from Sonarr's queue")
         else:
-            # The client's warning names no download (coalesced template); this does.
+            # The client's warning names no download (coalesced template). This one does.
             self.logger.debug(f"{pending.display_label}: queue entry {queue_id} not removed")
 
     def list_commands(self) -> list[CommandResource]:
-        """The current Sonarr command list, for the disk-command guards and the rescan absorb.
-
-        A thin pass-through to `SonarrClient.list_commands` (mirrors
-        `queue_records`' delegation to `self.sonarr`). Fetched fresh
-        every poll - never cached - since an in-flight command's status changes as
-        Sonarr finishes the import.
-        """
+        """The current Sonarr command list, never cached (an in-flight command's status changes)."""
 
         return self.sonarr.list_commands()
 
@@ -431,40 +326,11 @@ class ImportExecutor:
         snapshot: EpisodeSnapshot,
         at_deadline: bool = False,
     ) -> ImportProbe:
-        """Drive our authoritative series-pinned manual import for one download.
-
-        Scans for candidates by downloadId - falling back to a folder scan of
-        the (remote-path-translated) `content_path` when Sonarr won't serve the
-        download by id (see `CandidateScanner.scan`) - then repairs our
-        file->episode map from the actual on-disk files (re-parsing
-        whatever the seed didn't cover, mapped through OUR `(season, episode) ->
-        id` index - never Sonarr's candidate episode assignment), then imports
-        EXACTLY the files our map intends: each file's episodes that don't already
-        hold a recommended release (so a recommended file is never overwritten) and
-        no file outside our map (so an episode our mapping gave to another preferred
-        torrent is never imported here). An intended file Sonarr can't see yet is
-        retried, never silently skipped.
-
-        Returns an `ImportProbe`. A manual-import command's copy is async, so
-        accepting the command is NOT `files_present` - the probe reads
-        `RETRY` + `command_issued` until a later poll verifies the episode files
-        actually landed. `files_present` is set only when every intended episode
-        already holds a recommended file (nothing left to copy).
-
-        Args:
-            pending: The durable record for the completed torrent.
-            content_path: The qBittorrent `content_path` to import from,
-                also the label for this download's log lines.
-            snapshot: The same-poll episode index + normalized
-                recommended-group guard set.
-            at_deadline: The final attempt - a still-missing intended file
-                is normally terminal, so warn loudly. Otherwise it's an expected early-poll
-                gap and only logged at debug.
-        """
+        """Import EXACTLY the files our map intends, never over an episode already holding a recommended file."""
 
         scan = self.scanner.scan(pending, content_path)
         if scan is None:
-            # Transient (timeout / non-200). The folder-scan client warned. Ask again.
+            # Transient (timeout or non-200). The folder-scan client already warned. Ask again.
             return ImportProbe(ImportReadiness.RETRY, files_present=False, command_issued=False)
 
         candidates_by_basename = self._mapper.candidate_files(scan.candidates)
@@ -477,7 +343,7 @@ class ImportExecutor:
             self.logger.debug(f"{content_path}: no mappable files for {pending.display_label} yet")
             return ImportProbe(ImportReadiness.RETRY, files_present=False, command_issued=False)
 
-        # Done-check against the COMPLETE (repaired) intended set, from the files.
+        # Done-check against the COMPLETE (repaired) intended set, derived from the on-disk files.
         target_ids = sorted({i for ids in authoritative_map.values() for i in ids})
         statuses = snapshot.statuses(target_ids)
         if statuses.all_done():
@@ -496,16 +362,10 @@ class ImportExecutor:
                 case ImportAction.IMPORT:
                     files.append(self._build_file_entry(decision, entry_context))
                 case _:
-                    # SAMPLE / ALREADY / SKIP_DONE -> nothing to import for this
-                    # file. Surface the distinct vocabulary at debug.
                     self.logger.debug(f"{decision.action.name}: {decision.basename}")
 
         if missing:
-            # Intended files our map covers but Sonarr can't see yet. An early poll
-            # finding them absent is expected (the copy hasn't landed), so it's only
-            # noisy at the deadline, where a still-missing file is normally terminal: warn
-            # loudly only then, debug otherwise. Either way the record is retried,
-            # never dropped silently.
+            # Absent files are expected on an early poll, so only the deadline attempt warns.
             message = (
                 f"{content_path}: {count_noun(len(missing), 'intended file')} "
                 f"not visible to Sonarr for {pending.display_label} - will retry"
@@ -516,18 +376,14 @@ class ImportExecutor:
                 self.logger.debug(message)
 
         if not files:
-            # Nothing to queue this poll: retry if files are merely missing, else
-            # everything intended is already satisfied (already/sample/skip_done).
             if missing:
                 return ImportProbe(ImportReadiness.RETRY, files_present=False, command_issued=False)
             return ImportProbe(ImportReadiness.IMPORTED, files_present=True, command_issued=False)
 
         import_mode = self._config.imports.mode
         if scan.omit_download_id and import_mode == "auto":
-            # The untracked Execute branch with Auto resolves to MOVE (no
-            # DownloadClientItem to report CanMoveFiles), which would rip the
-            # files out from under the seeding torrent. An explicitly configured
-            # move/copy is honored as set.
+            # Untracked Execute with Auto resolves to MOVE (no DownloadClientItem to report CanMoveFiles),
+            # ripping files from the seeding torrent. An explicitly configured move/copy is honored as set.
             import_mode = "copy"
         cmd_id = self.sonarr.manual_import_execute(
             files=files,
@@ -537,10 +393,7 @@ class ImportExecutor:
             self.logger.debug(f"{content_path}: Sonarr rejected the import command; will retry")
             return ImportProbe(ImportReadiness.RETRY, files_present=False, command_issued=False)
 
-        # The command was accepted, but its copy is async - the episode files may
-        # not have landed yet (a remote-mount copy isn't instant). Do NOT declare
-        # the files imported on command acceptance: report RETRY + command_issued,
-        # so the next monitor cycle flips to files_present once they appear.
+        # Sonarr's copy is async, so acceptance is not `files_present`.
         self._issued_command_ids.add(cmd_id)
         self.logger.debug(f"{content_path}: queued {count_noun(len(files), 'file')} for import (command {cmd_id})")
         return ImportProbe(ImportReadiness.RETRY, files_present=False, command_issued=True)
@@ -552,10 +405,7 @@ class ImportExecutor:
     ) -> None:
         """Warn (once a run per download) about on-disk files we couldn't place.
 
-        These are files Sonarr sees but our resolved mapping can't confidently
-        assign (ambiguous numbering, an extra that slipped the skip list, a pack
-        that doesn't line up 1:1). We import what we can and leave these - surfacing
-        them loudly so they're never silently dropped.
+        We import what we can and leave the rest, surfaced loudly so nothing is silently dropped.
         """
 
         if pending.infohash in self._warned_unplaceable:
@@ -592,18 +442,7 @@ class ImportExecutor:
         decision: ImportDecision,
         context: _EntryContext,
     ) -> ManualImportFile:
-        """Build one ManualImport file payload from a planned `import` decision.
-
-        The episode ids come straight from our authoritative map (never Sonarr's
-        parse). The quality is decided per axis with precedence Sonarr's parse ->
-        our filename parse -> the configured default, and always emits a real
-        quality (never an omitted key), warning only when it resolves to Unknown.
-        The language objects + quality definitions are read from this run's caches.
-
-        Only `import` decisions reach here, so `decision.path` is the on-disk
-        candidate path (always set). The `or decision.basename` keeps the
-        payload `path` a non-null `str` for the type.
-        """
+        """Build one ManualImport file payload, always with a real quality (an omitted key NREs in Sonarr)."""
 
         pending = context.pending
         content_path = context.content_path
@@ -616,8 +455,7 @@ class ImportExecutor:
         our_axes = parse_quality_from_filename(base)
         default_name = self._config.imports.default_quality
         default_axes = quality_axes_from_name(default_name, quality_defs)
-        # A configured default that matches no definition contributes nothing.
-        # surface the (likely) typo once per run instead of staying silent.
+        # The quality seam runs once per FILE, so the flag keeps a config typo to one warning per run.
         if default_name and default_axes == ParsedQuality() and not self._warned_default_quality:
             self._warned_default_quality = True
             hub_warn(f"imports.default_quality '{default_name}' matches no Sonarr quality definition - ignoring it")
@@ -628,8 +466,8 @@ class ImportExecutor:
             quality_defs,
             decision.quality,
         )
-        # A resolved-but-source-less quality is the synthesized Unknown (an empty
-        # nested quality already folded to None at the parse boundary).
+        # A resolved-but-source-less quality is the synthesized Unknown (an empty nested quality already folded
+        # to None at the parse boundary).
         resolved = quality.quality
         if resolved is None or QualitySource.parse(resolved.source) is None:
             hub_warn(
@@ -645,52 +483,26 @@ class ImportExecutor:
             quality=quality,
         )
         if context.omit_download_id:
-            # Dead-tracked shape: the downloadId stays UNSET so the
-            # exclude_unset wire dump omits the key entirely (never null) and
-            # Sonarr's Execute takes the untracked branch - the tracked tail
-            # dereferences the poisoned download's null ImportItem.
+            # Left UNSET so the exclude_unset dump omits the key entirely (never null) and Execute takes the
+            # untracked branch. The tracked tail dereferences the poisoned download's null ImportItem.
             return entry
-        # model_copy(update=...) marks downloadId as set, so it reaches the wire.
-        # Uppercased like the candidate scan: Sonarr keys its tracked downloads by
-        # the uppercased hash and matches case-sensitively, and only a matched
-        # import closes the queue record (an unmatched one imports untracked, so
-        # completed-download handling later re-imports the same files).
+        # model_copy marks the key set so it reaches the wire. Uppercased because Sonarr matches its tracked
+        # downloads case-sensitively, and an unmatched import leaves the queue record open to a re-import.
         return entry.model_copy(update={"downloadId": pending.infohash.upper()})
 
 
 class _SeedStatuses(NamedTuple):
-    """The seed-gated import state both reconcile consumers read.
-
-    A same-poll episode snapshot (fresh index + recommended overwrite-guard
-    groups) and the per-target file statuses pinned to the seed set.
-    """
+    """A same-poll episode snapshot plus the per-target file statuses pinned to the seed set."""
 
     snapshot: EpisodeSnapshot
     statuses: TargetStatuses
 
 
 class ImportReconciler:
-    """Decides a completed download's state and builds the grab-time seeds.
-
-    Constructed once per run in `SonarrSync` from the shared
-    deps, the episode collaborator, and the `ImportExecutor`. The strategy's
-    `import_completed` / `process_al_id` hooks delegate here: `import_completed`
-    drives one reconcile poll (deferring the payload mechanics to the executor), and
-    `build_pending_seeds` produces the authoritative `PendingImport` records the
-    engine persists at the add site.
-    """
+    """Decides a completed download's state and builds the grab-time seeds."""
 
     def __init__(self, deps: RunDeps, episodes: SonarrEpisodes, executor: ImportExecutor) -> None:
-        """Bind the cache/logger off the deps + the composed collaborators.
-
-        Args:
-            deps: The shared collaborators. The cache store + logger are
-                read off it.
-            episodes: The strategy's episode collaborator (its
-                `episodes_for_series` is the source of truth for "imported").
-            executor: The strategy's import executor (rescan,
-                queue/command reads, and the manual-import POST).
-        """
+        """Bind the cache/logger off the deps + the composed collaborators."""
 
         self._episodes = episodes
         self._executor = executor
@@ -704,48 +516,18 @@ class ImportReconciler:
         ep_list: list[SonarrEpisode],
         entry: PendingSeedContext,
     ) -> dict[str, PendingImport]:
-        """Build `infohash -> PendingImport` for every release marked to grab.
+        """Build `infohash -> PendingImport` per grabbed torrent: a best-effort map that self-heals at import."""
 
-        The I/O half of the seed build: flags the downloadable urls with a
-        hash, builds the entry's episode index, and pre-reads each video
-        file's cached `/parse` into a `SeedRelease` bundle for the pure
-        `build_pending_seed` fold. The map each seed carries is best-effort at
-        grab time (the series may not be fully in Sonarr yet) and self-heals
-        at import time, when the files are on disk and the series exists - so
-        a record is seeded for every grabbed torrent that carries at least one
-        video file, not only the ones already fully mapped.
-
-        Args:
-            seadex_dict: The filtered releases. `url_item.download`
-                marks the ones the engine will add.
-            ep_list: The relevant Sonarr episodes (carry ids).
-            entry: The per-entry context (al_id, series id, title,
-                coverage, url) copied onto every seed. The coverage/url ride the
-                record so a carried-over record can render its inline
-                `files`/`link` lines next run without re-deriving them.
-
-        Returns:
-            Seeds keyed by infohash (empty when nothing downloadable carries a
-            video file). Per-entry: a sibling entry sharing a torrent builds its
-            own seed with its own `al_id`, so the records coexist in the store.
-        """
-
-        # Steady state is nothing flagged: skip the per-entry derivations below.
         flagged = flagged_urls(seadex_dict)
         if not flagged:
             return {}
 
-        # One index for the whole entry: the fold reads its id map for the
-        # per-file parses, persists its ordered ids onto every record (so
-        # import-time assignment maps files into OUR set instead of re-deriving
-        # identity from Sonarr's title parse), and classifies preowned targets
-        # off its by-id facet.
+        # One index for the whole entry: its ordered ids ride every record, so import-time assignment maps files
+        # into OUR set instead of re-deriving identity from Sonarr's title parse.
         index = episode_index(ep_list)
 
         pending_seeds: dict[str, PendingImport] = {}
         for srg, url_item, infohash in flagged:
-            # The video files this torrent should import (subs / fonts / NCED
-            # dropped). None at all -> nothing to track.
             video_files = [base for _, base in video_file_entries(url_item.files)]
             if not video_files:
                 continue
@@ -766,13 +548,7 @@ class ImportReconciler:
         return pending_seeds
 
     def _seed_file(self, base: str) -> SeedFile:
-        """One video file with its grab-time parse read off the cache facade.
-
-        Each `get_sonarr_parse` record is the persisted parse entry written by
-        `parse_episodes_from_seadex` in the same run (staged writes are visible
-        to reads on the same connection). `episodes=None` when no record
-        exists - the fold skips the file.
-        """
+        """One video file with its grab-time parse (staged SQLite writes are visible on the same connection)."""
 
         record = self.cache_store.get_sonarr_parse(base)
         if not record:
@@ -785,49 +561,22 @@ class ImportReconciler:
         content_path: str,
         attempt: AttemptKind = AttemptKind.POLL,
     ) -> ImportProbe:
-        """One reconcile/import poll for a completed download.
-
-        Reads the current episode files and Sonarr's (refreshed) queue as the
-        source of truth - never the cache:
-
-          * every intended episode already holds the recommended release ->
-            `IMPORTED` + `files_present` (drop the record).
-          * Sonarr is genuinely importing right now -> `RETRY` (don't race it).
-          * a clean `importPending` -> `RETRY` unless the attempt forces (the
-            snapshot/reconcile passes and the final in-bound monitor poll, so a
-            download Sonarr will never import - e.g. Completed Download
-            Handling off, which parks it in `importPending` forever - is still
-            imported rather than waited on indefinitely).
-          * otherwise (`importBlocked` / `failed` / warning-flagged pending /
-            not tracked / forced clean pending) -> drive our authoritative
-            series-pinned manual import.
-
-        Args:
-            pending: The durable record for the completed torrent.
-            content_path: The qBittorrent `content_path` to import from.
-            attempt: The attempt kind (see `AttemptKind`): whether to force
-                past a clean `importPending`, and whether a still-missing
-                intended file warns loudly (the deadline attempt) or at debug.
-        """
+        """One import poll. Episode files and Sonarr's refreshed queue are the truth, never the cache."""
 
         label = pending.display_label
 
-        # Rescan (throttled) so the queue we read reflects the finished torrent.
+        # Rescan first so the queue read below reflects the finished torrent.
         self._executor.refresh_downloads()
 
-        # "Files inserted" bar counts, pinned to the seed set so the denominator
-        # never rescales mid-import. Trust per `SeedCoverage`: accounted unlocks
-        # the counts, mapped the fast path below. An unaccounted record reports
-        # 0/0: the importing row stays indeterminate (a partial seed must never
-        # show a misleading bar) and only the repaired done-check can finish it.
+        # Bar counts, pinned to the seed set so the denominator never rescales mid-import. An unaccounted
+        # record reports 0/0 (indeterminate): a partial seed must never show a misleading bar.
         seeded_targets = pending.target_ids()
         coverage = pending.seed_coverage()
         accounted = bool(seeded_targets) and coverage.accounted
         seed_complete = accounted and coverage.mapped
         gated_targets = seeded_targets if accounted else []
         seed = self._seed_statuses(pending, gated_targets)
-        # The done-check below still reads the raw statuses (a preowned target
-        # is done, just not ours to celebrate).
+        # The done-check below still reads the raw statuses (a preowned target is done, just not ours to claim).
         done, total = self._net_counts(pending, gated_targets, seed.statuses)
 
         def probe(
@@ -846,10 +595,7 @@ class ImportReconciler:
                 deferred=deferred,
             )
 
-        # Fast path: with the map ALONE complete, the done-check is trustworthy
-        # without scanning the folder. Anything less (incomplete, or complete
-        # only through exclusions) falls through to the manual import, which
-        # repairs the map from the on-disk files and re-checks the complete set.
+        # Only a complete map makes the done-check trustworthy without a folder scan.
         if seed_complete and seed.statuses.all_done():
             self.logger.debug(f"{label}: already imported (recommended files present)")
             return probe(ImportReadiness.IMPORTED, files_present=True, command_issued=False)
@@ -858,14 +604,15 @@ class ImportReconciler:
         if verdict is QueueVerdict.WAIT:
             self.logger.debug(f"{label}: Sonarr is importing; waiting")
             return probe(ImportReadiness.RETRY, files_present=False, command_issued=False)
-        if verdict is QueueVerdict.PENDING_CLEAN and not attempt.forces:
-            self.logger.debug(f"{label}: Sonarr has it pending; waiting")
+        if (
+            verdict is QueueVerdict.PENDING_CLEAN
+            and not attempt.at_deadline
+            and self._executor.completed_download_handling_enabled()
+        ):
+            self.logger.debug(f"{label}: Sonarr has it pending and will import it; waiting")
             return probe(ImportReadiness.RETRY, files_present=False, command_issued=False)
 
-        # A command blocking the step-in (flags per `classify_commands`). NOT
-        # gated on the attempt kind: the always-forcing reconcile path is
-        # exactly the one that loops - forcing overrides Sonarr's clean-pending
-        # deferral, a different state.
+        # Never gated on the attempt kind: our own import in flight is never raced.
         verdict = classify_commands(
             self._executor.list_commands(),
             DownloadMatch(
@@ -884,7 +631,6 @@ class ImportReconciler:
                 deferred=verdict.deferred,
             )
 
-        # STEP_IN, an empty queue, or a forced clean-pending: drive our import.
         result = self._executor.run_manual_import(
             pending,
             content_path,
@@ -894,14 +640,7 @@ class ImportReconciler:
         return replace(result, imported_count=done, target_count=total)
 
     def import_progress(self, pending: PendingImport) -> ImportProgress:
-        """Cheap, read-only "files inserted" count for one record (the Tier-2 bar).
-
-        Reads ONLY the fresh episode files - never the throttled refresh, the queue,
-        or qBittorrent - and counts the seed targets that now hold the recommended
-        release. `determinate` is False (and the counts 0) unless the map ALONE is
-        whole (`SeedCoverage.mapped` - this path can promote, so it never trusts
-        exclusions). Anything less is left to the heavy poll's repaired done-check.
-        """
+        """Read-only "files inserted" count: this path can promote, so it never trusts exclusions."""
 
         seeded_targets = pending.target_ids()
         if not seeded_targets or not pending.seed_coverage().mapped:
@@ -911,12 +650,7 @@ class ImportReconciler:
         return ImportProgress(done, total, determinate=True)
 
     def _seed_statuses(self, pending: PendingImport, targets: list[int]) -> _SeedStatuses:
-        """Fetch the series' episodes FRESH and classify `targets` against them.
-
-        Episode files are the source of truth for "already imported". Callers gate
-        the bar on seed completeness by passing `[]` (empty statuses). The episode
-        index + trust policy are still fetched for the manual import.
-        """
+        """Fetch the series' episodes FRESH and classify `targets` against them (`[]` still builds the snapshot)."""
 
         episodes = self._episodes.episodes_for_series(pending.series_id)
         snapshot = EpisodeSnapshot(
@@ -932,12 +666,7 @@ class ImportReconciler:
         targets: list[int],
         statuses: TargetStatuses,
     ) -> tuple[int, int]:
-        """The bar's `(done, total)`, net of the grab-time preowned targets.
-
-        The one home of the netting, so the heavy poll and the Tier-2 bar count
-        only files the torrent actually inserted - and agree. Empty `targets`
-        (an unaccounted record) nets to 0/0, the indeterminate row.
-        """
+        """The bar's `(done, total)`, net of the grab-time preowned targets (empty `targets` nets to 0/0)."""
 
         preowned = len(set(pending.preowned_episode_ids) & set(targets))
         recommended = sum(1 for status in statuses.by_id.values() if status is EpisodeFileStatus.RECOMMENDED)
@@ -946,11 +675,7 @@ class ImportReconciler:
     def _series_pending_records(self, series_id: int) -> list[PendingImport]:
         """The series' durable pending records (any release group), rehydrated.
 
-        `get_pending_for_series` returns a fresh snapshot `{PendingKey -> record}`
-        already filtered to this series in SQL (so a record dropped earlier this
-        run is absent); `from_json` lifts each cache JSON dict back to the type,
-        joined against the entry's `guard_facts` row so store-loaded siblings
-        hydrate uniformly with every other read seam.
+        A fresh snapshot already filtered in SQL, so a record dropped earlier this run is absent.
         """
 
         guard_rows = self.cache_store.get_guards(Arr.SONARR)

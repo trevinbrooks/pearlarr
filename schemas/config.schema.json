@@ -145,7 +145,7 @@
       "type": "object"
     },
     "ImportWaitMode": {
-      "description": "When (if ever) the manual-import wait/import runs, resolved cli > config.",
+      "description": "Controls if and when the manual-import wait/import runs.",
       "enum": [
         "off",
         "deferred",

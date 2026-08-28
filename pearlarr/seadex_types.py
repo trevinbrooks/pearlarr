@@ -1,26 +1,4 @@
-"""Domain vocabulary + the typed API boundary: the shapes a run reads and writes.
-
-Two halves live here. The first is the `seadex_dict` domain vocabulary:
-`SeadexDict` is a four-level mapping built once per AniList entry by
-`SeadexReleaseFilter.build` and threaded through the decision engine
-(`planner`) and the Discord notifier (`notify`). The two keyed levels stay
-plain `dict`s (release groups keyed by name, urls keyed by url string). The
-value records at each level are dataclasses whose fields all default, because
-a record is filled in across construction stages (`episodes`/`all_episodes`
-arrive with the episode parser, `download` is flipped per call).
-
-The second half (from "pydantic boundary plumbing" down) is the typed API
-boundary: pydantic models that arr/AniList JSON is validated into at the
-client edge. The read regime - fail-open list reads, strict library fetches,
-per-field lenient folds for decision-bearing records - lives on
-`validate_each` / `BoundaryContractError` and each model's docstring. The
-write regime (unknown-key round-trips, `exclude_unset` dumps) on
-`_WireModel`.
-
-Deliberately outside the pydantic regime: `coerce_int` (non-boundary
-coercions), the `Json` alias (typing for constructed payloads and the
-`json_narrow` guards), and the structural protocols (`ArrItem` and friends).
-"""
+"""Domain vocabulary (the `seadex_dict` records) plus the pydantic models arr/AniList JSON validates into."""
 
 import math
 from collections.abc import Iterable, Mapping, Sequence
@@ -53,12 +31,7 @@ from seadex import Tag, Tracker
 
 @dataclass
 class EpisodeRecord:
-    """One parsed `{season, episode, size}` record for a SeaDex file.
-
-    `season`/`episode` default to `None`: a record missing them reduces to a
-    never-matching `(None, None)` key, which can never collide with a real
-    Arr episode.
-    """
+    """One parsed `{season, episode, size}` record for a SeaDex file."""
 
     season: int | None = None
     episode: int | None = None
@@ -73,40 +46,32 @@ class SeadexUrlItem:
     files: list[str] = field(default_factory=list[str])
     size: list[int] = field(default_factory=list[int])
     tracker: Tracker = Tracker.OTHER
-    """A SeaDex `Tracker` object (not a str). The notifier renders it as the
-    link text of a grab embed."""
+    """A SeaDex `Tracker` object (not a str). The notifier renders it as the link text of a grab embed."""
     is_public: bool = True
     is_dual_audio: bool = False
     infohash: str | None = None
     download: bool = False
     is_fallback: bool = False
-    """True for a public alternative added because the preferred release is
-    private-only (seadex.private_releases: fallback). The planner reads it."""
+    """A public alternative added because the preferred release is private-only."""
     upgrade: bool = False
-    """This url's `download` flag replaces a copy the Arr holds at sizes the url
-    doesn't list. Drives the reducer's promotion gate and the notice's upgrade
-    marker. Invariant: never set without `download` - `flag`/`unflag` are the
-    only writers, and `unflag` clears both together."""
+    """A size upgrade over a copy the Arr already holds. Never set without `download`."""
     episodes: list[EpisodeRecord] = field(default_factory=list[EpisodeRecord])
 
     def __post_init__(self) -> None:
-        # Normalize "" / blank to None: an empty `hashes` filter matches every
-        # torrent in the qbit dedup, and "" collides with the cache's _NO_HASH.
+        # Blank -> None: an empty `hashes` filter matches every torrent in the qbit dedup, and "" collides
+        # with the cache's _NO_HASH.
         if self.infohash is not None:
             self.infohash = self.infohash.strip() or None
 
     def flag(self, *, upgrade: bool = False) -> None:
-        """Mark the url to grab; `upgrade` additionally marks a size-upgrade grab.
-
-        Monotone: never clears an upgrade marker already set.
-        """
+        """Mark the url to grab, `upgrade` also marking a size upgrade. Never clears an upgrade already set."""
 
         self.download = True
         if upgrade:
             self.upgrade = True
 
     def unflag(self) -> None:
-        """Clear the grab. `upgrade` clears with `download` - it describes the grab, so it must never outlive it."""
+        """Clear the grab. `upgrade` clears with `download`: it describes the grab, so it must never outlive it."""
 
         self.download = False
         self.upgrade = False
@@ -119,22 +84,17 @@ class SeadexReleaseGroupItem:
     urls: dict[str, SeadexUrlItem] = field(default_factory=dict[str, SeadexUrlItem])
     tags: frozenset[Tag] = field(default_factory=frozenset[Tag])
     all_episodes: list[EpisodeRecord] | None = None
-    """`None` until the episode parser has run: `get_same_files_groups`
-    deliberately distinguishes `None` (no episode parsing, e.g. Radarr) from
-    an empty list (parsing ran but found nothing)."""
+    """`None` until the episode parser has run, distinct from an empty list (it ran and found nothing)."""
 
 
 SeadexDict = dict[str, SeadexReleaseGroupItem]
-"""The central object: SeaDex release groups keyed by group name."""
+"""SeaDex release groups keyed by group name."""
 
 
 def flagged_urls(seadex_dict: SeadexDict) -> list[tuple[str, SeadexUrlItem, str]]:
     """The urls flagged to grab that carry an infohash, as `(group, url item, infohash)` triples.
 
-    The shared enumeration under both arrs' seed builders (each narrows
-    further at its call site) and the planner's cached hash list, which must
-    match the torrents the run adds - narrow at the riders, never here. The
-    infohash rides the triple already narrowed to `str`.
+    Narrow at the riders, never here.
     """
 
     return [
@@ -146,34 +106,18 @@ def flagged_urls(seadex_dict: SeadexDict) -> list[tuple[str, SeadexUrlItem, str]
 
 
 SONARR_MISSING_KEY: int = 999
-"""Out-of-range fallback for a missing Sonarr `seasonNumber`/`episodeNumber`.
-
-Used when indexing Sonarr episodes by (season, episode). It never collides with
-a real key, so an episode with a missing key simply fails to match.
-"""
+"""Out-of-range stand-in for a missing Sonarr `seasonNumber`/`episodeNumber`, never colliding with a real one."""
 
 
 class EpisodeKey(NamedTuple):
-    """The folded `(season, episode)` index key every episode index shares.
-
-    Always concrete ints (`season_episode_key` folds a missing number to
-    `SONARR_MISSING_KEY`), and tuple-compatible, so a key equals and hashes
-    like the plain pair it replaces. Distinct from `get_episode_keys`'
-    None-preserving coverage pairs, which never index anything.
-    """
+    """The folded `(season, episode)` index key, always concrete ints."""
 
     season: int
     episode: int
 
 
 def season_episode_key(season: int | None, episode: int | None) -> EpisodeKey:
-    """The `EpisodeKey` for a possibly-missing pair, collapsing to the sentinel.
-
-    A missing `season`/`episode` collapses to `SONARR_MISSING_KEY`, so our
-    SeaDex `(season, episode)` and Sonarr's episode list key the same way.
-    Shared by every `(season, episode) -> ...` index and lookup so the
-    sentinel convention lives in exactly one place.
-    """
+    """The `EpisodeKey` for a possibly-missing pair, collapsing to the sentinel."""
 
     return EpisodeKey(
         season if season is not None else SONARR_MISSING_KEY,
@@ -183,25 +127,19 @@ def season_episode_key(season: int | None, episode: int | None) -> EpisodeKey:
 
 # --- shared plumbing ----------------------------------------------------------
 
-# (connect, read) timeout shared by the arr httpx client factory and the
-# qBittorrent adapter, so a hung service surfaces as a transient miss instead
-# of blocking the run.
+# (connect, read) seconds, shared by the arr http client and the qBittorrent adapter.
+# A hung service then surfaces as a transient miss instead of blocking the run.
 ARR_REQUEST_TIMEOUT_S = (5, 30)
 
-# The recursive JSON value shape. Constructed JSON payloads are typed against
-# this at the wire boundary (`ArrHttp.post_json`, the redact/narrow walks).
+# The recursive JSON value shape.
 type Json = bool | int | float | str | Sequence["Json"] | Mapping[str, "Json"] | None
 
 
 def coerce_int(value: object) -> int | None:
-    """Best-effort int, or None for a non-numeric / NaN value.
-
-    Ints pass through, floats convert unless NaN, strings via `int()`.
-    Anything else (including None) is None.
-    """
+    """Best-effort int, or None for a non-numeric / NaN value."""
 
     if isinstance(value, bool):
-        return int(value)  # normalize True/False to 1/0
+        return int(value)
     if isinstance(value, int):
         return value
     if isinstance(value, float):
@@ -215,21 +153,12 @@ def coerce_int(value: object) -> int | None:
 
 
 # --- pydantic boundary plumbing ----------------------------------------------
-#
-# READ models subclass `_ApiModel` and are validated at the client boundary:
-# list reads via `validate_each` (which owns the fail-open/strict regime),
-# single-object reads via `model_validate` in the owning client's fail-open
-# try/except. Warnings NEVER embed payload values (see `validation_summary`).
 
 
 class _ApiModel(BaseModel):
     """Frozen boundary read model: unknown keys ignored, field-name kwargs allowed.
 
-    `validate_by_name` is required: aliased fields are also constructed by
-    field name across the tests/fakes, which would otherwise silently no-op to
-    defaults. Bool policy: pydantic's lax coercion already preserves True -> 1
-    on int fields, so no model rejects bools. `coerce_int` is used at this
-    boundary only inside the `_int_or_zero` lenient fold.
+    `validate_by_name` is required, or constructing an aliased field by field name no-ops to the default.
     """
 
     model_config = ConfigDict(frozen=True, extra="ignore", validate_by_name=True)
@@ -238,31 +167,21 @@ class _ApiModel(BaseModel):
 class _WireModel(BaseModel):
     """Frozen wire re-emit shape: unknown keys VALIDATE and RE-EMIT (extra="allow").
 
-    For the read->resolve->re-emit round-trips (a candidate's quality model, a
-    definition's nested quality) and our constructed write bodies. The standard
-    write dump is `model_dump(exclude_unset=True)` - NEVER `exclude_none`
-    (an explicitly-set None, e.g. a language's null id, must reach the wire) -
-    so construction discipline applies: set every key the wire body needs.
+    Write dumps are `model_dump(exclude_unset=True)`, NEVER `exclude_none`: an explicitly-set None must reach
+    the wire, so set every key the body needs.
     """
 
     model_config = ConfigDict(frozen=True, extra="allow")
 
 
 class BoundaryContractError(RuntimeError):
-    """A strict library read got a non-empty payload with zero valid records.
-
-    Raised only by `validate_each(..., strict=True)` (the fail-CLOSED library
-    fetches): an all-invalid library payload must abort the leg rather than
-    read as an empty library. The CLI renders it via the same one-line
-    containment arm as the typed `arr_http` connection errors.
-    """
+    """A strict library read got a non-empty payload with zero valid records."""
 
 
 def validation_summary(e: ValidationError) -> str:
     """A log-safe summary of a validation failure: field locs + error types only.
 
-    Deliberately built from `errors(include_input=False)` - never `str(e)`,
-    which embeds the raw input values (payload data must not reach the logs).
+    Never `str(e)`, which embeds the raw input values.
     """
 
     return "; ".join(
@@ -277,14 +196,9 @@ def validate_each[ModelT: _ApiModel](
     *,
     strict: bool = False,
 ) -> list[ModelT]:
-    """Validate each raw record into `model`, skipping the ones that fail.
+    """Validate each raw record into `model`, warning on and skipping the ones that fail.
 
-    The fail-open list read: every skipped record warns once, scrubbed
-    (index + field locs + error types - never the payload). With `strict=True`
-    a non-empty `raw` that validates to NOTHING raises
-    `BoundaryContractError` instead of degrading to an empty list - the
-    posture for the load-bearing library fetches, where "all records malformed"
-    means the endpoint contract is broken, not that the library is empty.
+    With `strict=True` a non-empty `raw` that validates to NOTHING raises `BoundaryContractError`.
     """
 
     validated: list[ModelT] = []
@@ -292,9 +206,8 @@ def validate_each[ModelT: _ApiModel](
         try:
             validated.append(model.model_validate(record))
         except ValidationError as e:
-            # Deferred: a top-level .output import would cycle back here via
-            # output.events -> manual_import -> seadex_types. Skip-arm only,
-            # so the all-valid hot path never touches the import machinery.
+            # Deferred: a top-level .output import cycles back here through manual_import.
+            # Skip-arm only, so the all-valid hot path never touches the import machinery.
             from .output import hub_warn
 
             hub_warn(f"Skipping malformed {model.__name__} record [{index}] ({validation_summary(e)})")
@@ -335,11 +248,7 @@ def _none_if_falsy(value: object) -> object:
 
 
 def _lax_bool(value: object) -> bool:
-    """Per-field lenient fold: real bools and recognized spellings parse, junk folds to False.
-
-    `bool(value)` would read "false" - any non-empty string - and junk like
-    `[0]` as True; False is the inert, safe fold for these flags.
-    """
+    """Per-field lenient fold: real bools and recognized spellings parse, junk folds to False."""
 
     if isinstance(value, bool):
         return value
@@ -350,7 +259,7 @@ def _lax_bool(value: object) -> bool:
     return False
 
 
-# Reusable lenient field shapes (the per-field folding regime).
+# Reusable lenient field shapes.
 type _LenientStr = Annotated[str | None, BeforeValidator(_str_or_none)]
 type _BlankStr = Annotated[str, BeforeValidator(_str_or_blank)]
 type _ZeroInt = Annotated[int, BeforeValidator(_int_or_zero)]
@@ -375,12 +284,9 @@ def _validate_skipping_junk[ModelT: _ApiModel](model: type[ModelT], value: objec
 
 
 class ProgressSink(Protocol):
-    """Sink for step progress - drives the boot cockpit's live bar.
+    """Sink for step progress (`fraction` is 0-1), driving the boot cockpit's live bar.
 
-    Sanctioned Protocol exception to the ABC house rule: structural, so the boot
-    flow's step scope satisfies it without the data / gateway modules importing
-    the output layer (a local ABC would force that import). `fraction` is 0-1
-    completion. `detail` is a short human note.
+    Protocol, not an ABC (house rule), so the data and gateway modules need not import the output layer.
     """
 
     def progress(self, fraction: float, detail: str | None = None) -> None: ...
@@ -393,11 +299,8 @@ class ProgressSink(Protocol):
 class ArrItem(Protocol):
     """The attribute surface shared by a Sonarr series and a Radarr movie.
 
-    Sanctioned (`runtime_checkable`) Protocol exception to the ABC house rule:
-    read-only properties (nothing writes to an item), so the pydantic views
-    (`SonarrSeries` / `RadarrMovie`) and mutable test stand-ins both satisfy it
-    structurally without inheriting a local ABC - and the client tests
-    `isinstance`-check against it, which a nominal ABC would silently flip.
+    Protocol, not an ABC (house-rule exception): callers `isinstance`-check it, and an ABC would silently
+    flip those checks to False.
     """
 
     @property
@@ -415,7 +318,7 @@ class ArrItem(Protocol):
 
 @runtime_checkable
 class SonarrItem(ArrItem, Protocol):
-    """A Sonarr series item: an `ArrItem` keyed on `tvdbId`."""
+    """An `ArrItem` keyed on `tvdbId`."""
 
     @property
     def tvdbId(self) -> int: ...
@@ -423,7 +326,7 @@ class SonarrItem(ArrItem, Protocol):
 
 @runtime_checkable
 class RadarrItem(ArrItem, Protocol):
-    """A Radarr movie item: an `ArrItem` keyed on `tmdbId`."""
+    """An `ArrItem` keyed on `tmdbId`."""
 
     @property
     def tmdbId(self) -> int: ...
@@ -432,11 +335,7 @@ class RadarrItem(ArrItem, Protocol):
 class SonarrSeries(_ApiModel):
     """One Sonarr `/api/v3/series` record, narrowed to the `SonarrItem` surface.
 
-    The concrete item `SonarrClient.all_series` returns. camelCase field
-    names on purpose: they satisfy the protocol directly, and the
-    `IdField.item_attr` strings (`"tvdbId"`/`"imdbId"`) read them by that
-    exact name. A STRICT library read - `validate_each(..., strict=True)` -
-    so a broken endpoint never reads as an empty library.
+    camelCase on purpose: the fields satisfy the protocol directly and `IdField.item_attr` reads them by name.
     """
 
     id: int = 0
@@ -447,12 +346,7 @@ class SonarrSeries(_ApiModel):
 
 
 class RadarrMovie(_ApiModel):
-    """One Radarr `/api/v3/movie` record, narrowed to the `RadarrItem` surface.
-
-    The concrete item `RadarrClient.all_movies` returns, mirroring
-    `SonarrSeries` (camelCase fields and the same strict library-read
-    posture, for the same reasons).
-    """
+    """One Radarr `/api/v3/movie` record, narrowed to the `RadarrItem` surface (camelCase as in `SonarrSeries`)."""
 
     id: int = 0
     title: str = ""
@@ -472,12 +366,7 @@ class SonarrEpisodeFile(_ApiModel):
 
 
 class SonarrEpisode(_ApiModel):
-    """One Sonarr `/api/v3/episode` record, validated at the client boundary.
-
-    Fail-open list read: a record with junk in a typed field (its own or the
-    nested `episodeFile`'s) is skipped with a warning by `validate_each`
-    rather than flowing as a type lie.
-    """
+    """One Sonarr `/api/v3/episode` record."""
 
     id: int = 0
     season_number: int | None = Field(default=None, validation_alias="seasonNumber")
@@ -492,13 +381,7 @@ class SonarrEpisode(_ApiModel):
 
 
 def index_episodes_by_key(ep_list: Iterable[SonarrEpisode]) -> dict[EpisodeKey, SonarrEpisode]:
-    """Index Sonarr episodes by `season_episode_key`, the first record winning.
-
-    Sonarr episodes are unique by season+episode, so the first-wins rule only
-    ever decides a malformed duplicate. The one home of the index every
-    `(season, episode)` lookup shares (the planner's match loop and the
-    import's id map both derive from it).
-    """
+    """Index Sonarr episodes by `season_episode_key`, the first record winning."""
 
     index: dict[EpisodeKey, SonarrEpisode] = {}
     for ep in ep_list:
@@ -510,27 +393,21 @@ def index_episodes_by_key(ep_list: Iterable[SonarrEpisode]) -> dict[EpisodeKey, 
 class ArrReleases:
     """The Arr's existing files for one entry, folded by release group.
 
-    Built by the strategies via `from_files` and read by the planner. `tagged`
-    is detached and wrapped read-only at construction, so the record is frozen
-    all the way down. Keys hold the tag as the arr wrote it - only an empty
-    tag makes a file untagged, so a whitespace/dash-only tag stays tagged (and
-    then names nothing under `normalize_rg`).
+    Keys hold the tag as the arr wrote it, and only an EMPTY tag makes a file untagged.
     """
 
     tagged: Mapping[str, tuple[int, ...]] = field(default_factory=dict[str, tuple[int, ...]])
     """Each tagged release group's existing-file sizes, insertion-ordered."""
 
     untagged: tuple[int, ...] = ()
-    """Sizes of files with no release group (Radarr only - Sonarr's untagged
-    files travel on the episode list instead)."""
+    """Sizes of files with no release group (Radarr only)."""
 
     def __post_init__(self) -> None:
         # Detach from the caller's dict, then wrap read-only.
         object.__setattr__(self, "tagged", MappingProxyType(dict(self.tagged)))
 
     def __hash__(self) -> int:
-        # The generated hash would reject the Mapping field. Eq ignores key
-        # order, so hash the item set, not the insertion order.
+        # The generated hash would reject the Mapping field. Eq ignores key order.
         return hash((frozenset(self.tagged.items()), self.untagged))
 
     @classmethod
@@ -542,11 +419,7 @@ class ArrReleases:
     ) -> Self:
         """Fold arr file records into one per-entry record.
 
-        A tagged file's unreadable size is dropped (the group keeps its name);
-        an untagged one folds to 0, vetoing the ownership multiset whole.
-        Sonarr passes `keep_untagged=False`: its untagged files travel on the
-        episode list into the planner's identity pass instead, and feeding
-        both would double-count them.
+        Sonarr passes `keep_untagged=False`: its untagged files ride the episode list and would double-count.
         """
 
         tagged: dict[str, list[int]] = {}
@@ -587,13 +460,9 @@ type TvdbMappings = dict[int, list[tuple[int, int | None]]]
 
 
 class AniListError(_ApiModel):
-    """One entry of an AniList GraphQL `errors` array, validated at the boundary.
+    """One entry of an AniList GraphQL `errors` array.
 
-    AniList follows the GraphQL error shape and adds a numeric `status` (an
-    HTTP-style code, e.g. `429` when soft-throttling). Only `status` and
-    `message` drive the retry decision, so those are the fields modeled here.
-    An entry with junk in either field fails validation and is dropped by
-    `_parse_errors` (worst case a soft-throttle reads as non-retryable).
+    `status` is an HTTP-style code (`429` when soft-throttling).
     """
 
     message: str = ""
@@ -604,12 +473,9 @@ class AniListError(_ApiModel):
 
 
 class AniListMediaNode(_ApiModel):
-    """One AniList `Media` node, validated once at the cache read boundary.
+    """One AniList `Media` node, validated at the cache read boundary.
 
-    Every field defaults to None and an EMPTY DICT must validate to the
-    all-None miss node (the `{"data": {"Media": null}}` miss shape reduces to
-    `{}` before parsing). The nested `title`/`coverImage` reads are
-    `AliasPath`s, which yield the default through a null/absent intermediate.
+    An EMPTY DICT must validate to the all-None miss node (`{"data": {"Media": null}}` reduces to `{}` first).
     """
 
     id: int | None = None
@@ -623,34 +489,17 @@ class AniListMediaNode(_ApiModel):
 
 # --- Sonarr manual-import (candidate read views + outgoing file payload) -----
 #
-# Derived from the Sonarr v3 OpenAPI `ManualImportResource` (and its nested
-# `QualityModel` / `Quality` / `Revision` / `Language` /
-# `ImportRejectionResource`), captured in `schemas/sonarr.schema`.
-# Nullability mirrors the schema exactly (a schema
-# `string | null` field -> `str | None`).
-#
-# Two kinds of model live here:
-#   * `Quality` / `Revision` / `QualityModel` are `_WireModel`s
-#     (extra="allow"): a candidate's in-context `QualityModel` is read for its
-#     axes AND re-emitted verbatim into the outgoing payload, so unknown keys at
-#     BOTH nesting levels must survive the round-trip. Every field defaults so
-#     the helpers can build/read *partial* objects (a model carrying only
-#     `quality`, a quality with just `id`/`name`).
-#   * `ManualImportCandidate` / `ImportRejection` / `Language` /
-#     `QualityDefinition` are `_ApiModel` reads into the import decision
-#     (unknown keys ignored). A resolved `Language` is also re-built fresh
-#     with both fields set and POSTed in the file payload.
+# Derived from the Sonarr v3 OpenAPI `ManualImportResource` (`schemas/sonarr.schema`), nullability mirroring
+# the schema exactly. `Quality`, `Revision` and `QualityModel` are `_WireModel`s: a candidate's in-context
+# `QualityModel` is read for its axes AND re-emitted verbatim, so unknown keys at BOTH nesting levels must
+# survive the round-trip.
 
 
 class QualitySource(StrEnum):
-    """Sonarr's `QualitySource` enum (schema `QualitySource`).
+    """Sonarr's `QualitySource` enum, the structured `source` axis of a `Quality`.
 
-    The structured `source` axis of a `Quality`, modeled verbatim from the
-    Sonarr OpenAPI schema (`schemas/sonarr.schema`) - the values are camelCase
-    strings as Sonarr serializes them. Quality is matched on the
-    `(source, resolution)` pair (never on the display name), so this enum is
-    the authoritative source vocabulary the manual-import quality decision
-    works in. `BLURAY_RAW` is a BD remux, `TELEVISION_RAW` is Raw-HD.
+    Quality is matched on the `(source, resolution)` pair, NEVER on the display name.
+    `BLURAY_RAW` is a BD remux, `TELEVISION_RAW` is Raw-HD.
     """
 
     UNKNOWN = "unknown"
@@ -664,33 +513,19 @@ class QualitySource(StrEnum):
 
     @classmethod
     def parse(cls, value: str | None) -> "QualitySource | None":
-        """A real source from a raw enum string, or None when undetermined.
-
-        Case-insensitive. Returns None for a missing value, an unrecognized
-        string, or `"unknown"` - i.e. None means "no authoritative source", so
-        the caller's next precedence layer (our parse, then the configured
-        default) gets a chance to fill the axis.
-        """
+        """A real source from a raw enum string (case-insensitive), or None when undetermined."""
 
         return _SOURCE_BY_FOLDED.get(value.casefold()) if value else None
 
 
-# Case-folded value -> member, so `QualitySource.parse` is one dict lookup
-# rather than a per-call scan. UNKNOWN is excluded so it folds to None.
+# Case-folded value to member. UNKNOWN is excluded so it folds to None.
 _SOURCE_BY_FOLDED: dict[str, QualitySource] = {
     m.value.casefold(): m for m in QualitySource if m is not QualitySource.UNKNOWN
 }
 
 
 class Quality(_WireModel):
-    """The nested `quality` object of a Sonarr `QualityModel`.
-
-    Schema `Quality`: `id`/`resolution` are non-null ints, `name` is
-    `string | null`, `source` is the `QualitySource` enum (a string).
-    Every field defaults because the helpers build and read partial qualities
-    (the resolver re-emits only what a definition carries). Unknown keys
-    survive to the wire (extra="allow").
-    """
+    """The nested `quality` object of a Sonarr `QualityModel` (schema `Quality`)."""
 
     id: int | None = None
     name: str | None = None
@@ -707,15 +542,7 @@ class Revision(_WireModel):
 
 
 class QualityModel(_WireModel):
-    """A Sonarr `QualityModel` (schema): `{quality, revision}`.
-
-    Used two ways on the manual-import path: a candidate's in-context model is
-    read for its structured `quality.source`/`quality.resolution` axes and,
-    when no definition matches the resolved quality, re-emitted verbatim into
-    the outgoing file payload (unknown keys included). An empty/null incoming
-    `quality` folds to None, so "the candidate carries no real quality"
-    remains ONE explicit None test everywhere.
-    """
+    """A Sonarr `QualityModel` (schema): `{quality, revision}`."""
 
     quality: Annotated[Quality | None, BeforeValidator(_none_if_falsy)] = None
     revision: Revision | None = None
@@ -724,10 +551,7 @@ class QualityModel(_WireModel):
 class Language(_ApiModel):
     """A Sonarr `Language` (schema): `{id, name}`.
 
-    Read+rebuild: `resolve_language_objects` matches these from the
-    `/api/v3/language` list and re-builds `{id, name}` fresh - BOTH fields
-    explicitly set, so the write dump (`exclude_unset`) always carries them,
-    a null `id` included.
+    Rebuilt with BOTH fields explicitly set, so the `exclude_unset` write dump carries them, null `id` included.
     """
 
     id: int | None = None
@@ -735,15 +559,10 @@ class Language(_ApiModel):
 
 
 class ImportRejection(_ApiModel):
-    """One entry of a candidate's `rejections` array (schema `ImportRejectionResource`).
-
-    A junk (non-str, non-null) reason fails validation and the entry is
-    skipped, so the classifier's `.casefold()` can never crash on a type lie.
-    """
+    """One entry of a candidate's `rejections` array (schema `ImportRejectionResource`)."""
 
     reason: str | None = None
-    """The human text the sample / already-imported classifier matches
-    against (`string | null` in the schema). The only field read."""
+    """The human text the sample / already-imported classifier matches against (`string | null` in the schema)."""
 
 
 class ManualImportCandidate(_ApiModel):
@@ -752,13 +571,9 @@ class ManualImportCandidate(_ApiModel):
     path: str | None = None
     """The on-disk file to import (`string | null` in the schema)."""
     quality: Annotated[QualityModel | None, BeforeValidator(_none_if_falsy)] = None
-    """The in-context `QualityModel`, re-emitted verbatim - unknown keys
-    included - when it wins the resolution. An empty/null one folds to None."""
+    """The in-context `QualityModel`, re-emitted verbatim (unknown keys included). An empty/null one folds to None."""
     rejections: tuple[ImportRejection, ...] = ()
-    """The per-file sample/already-imported flags. May be null (schema) and,
-    on older Sonarr versions, a bare string per entry rather than an
-    `ImportRejectionResource` object. Both fold to an `ImportRejection`, and
-    non-str/non-dict junk entries are skipped."""
+    """May be null and, on older Sonarr versions, a bare string per entry rather than an object."""
 
     @field_validator("rejections", mode="before")
     @classmethod
@@ -782,88 +597,61 @@ class ManualImportCandidate(_ApiModel):
 
 
 class ManualImportFile(_WireModel):
-    """One outgoing `ManualImport` command file entry (the POST payload).
-
-    Built by the Sonarr strategy from a planned `import` decision and POSTed
-    via `model_dump(exclude_unset=True)`.
-    """
+    """One outgoing `ManualImport` command file entry, POSTed via `model_dump(exclude_unset=True)`."""
 
     path: str
     seriesId: int
     episodeIds: list[int]
     releaseGroup: str
     downloadId: str | None = None
-    """Left UNSET (omitted from the wire, never sent as null) for a
-    dead-tracked folder-mode entry - a downloadId there re-enters Sonarr's
-    poisoned tracked-download branch. Every other entry carries the infohash."""
+    """UNSET for a dead-tracked folder-mode entry: a downloadId re-enters Sonarr's poisoned tracked branch."""
     languages: list[Language]
     quality: QualityModel | None = None
-    """Omitted from the wire, never sent as `None`, when unset - Sonarr then
-    falls back to Unknown. The builder always sets it."""
+    """Unset stays off the wire, never sent as `None`, and Sonarr falls back to Unknown."""
 
 
 # --- Sonarr queue (`/api/v3/queue` records) -------------------------------
 #
-# Derived from the Sonarr v3 OpenAPI `QueueResource`, captured in
-# `schemas/sonarr.schema`. The endpoint pages its
+# Derived from the Sonarr v3 OpenAPI `QueueResource`. The endpoint pages its
 # records under a wrapper object's `records` array.
 
 
 class QueueRecord(_ApiModel):
-    """One Sonarr `QueueResource` record, reduced to the fields the wait reads.
-
-    Every field folds junk to None INDEPENDENTLY, so a queue record is never
-    dropped over one bad field (a dropped record could route a wait to a
-    double-importing step-in).
-    """
+    """One Sonarr `QueueResource` record, reduced to the fields the wait reads."""
 
     id: _ZeroInt = 0
-    """The queue item id, `queue_delete`'s handle (any one of a download's
-    rows dismisses the whole download). Junk folds to 0 = no usable id."""
+    """`queue_delete`'s handle: any one of a download's rows dismisses the whole download. 0 means unusable."""
     series_id: _ZeroInt = Field(default=0, validation_alias="seriesId")
-    """`seriesId`, null/0 when Sonarr never matched the title to a series.
-    The queue close skips those rows: Sonarr's dismissal 500s on them and
-    records no durable ignore either way."""
+    """0 when Sonarr never matched a series. The queue close skips those rows: Sonarr's dismissal 500s on them."""
     download_id: _LenientStr = Field(default=None, validation_alias="downloadId")
-    """The infohash Sonarr stores uppercased, matched case-insensitively to
-    pick a torrent's records (`string | null` in the schema)."""
+    """The infohash. Sonarr stores it uppercased, so match case-insensitively."""
     state: _LenientStr = Field(default=None, validation_alias="trackedDownloadState")
-    """`trackedDownloadState` (`downloading` / `importPending` / ...): the
-    `string | null` rendering of its schema enum."""
+    """`downloading`, `importPending`, and so on."""
     status: _LenientStr = Field(default=None, validation_alias="trackedDownloadStatus")
-    """`trackedDownloadStatus` (`ok` / `warning` / `error`): the
-    `string | null` rendering of its schema enum."""
+    """`ok`, `warning`, or `error`."""
 
 
 # --- Arr history (`/api/v3/history/since` records) -------------------------
 #
 # Derived from the Sonarr/Radarr v3 OpenAPI `HistoryResource`. The endpoint
-# returns a bare, date-ascending array. `id` is the per-arr autoincrement, so
-# it doubles as a monotone cursor.
+# returns a bare, date-ascending array.
 
 
 class HistoryRecord(_ApiModel):
-    """One arr `HistoryResource` record, reduced to what the activity scan reads.
-
-    Every field folds junk INDEPENDENTLY, so a record is never dropped: a
-    dropped record would be a missed dirty-mark and a lagging checkpoint.
-    """
+    """One arr `HistoryResource` record, reduced to what the activity scan reads."""
 
     id: _ZeroInt = 0
-    """The monotone cursor."""
+    """The per-arr autoincrement, doubling as the monotone cursor."""
     date: Annotated[str, BeforeValidator(_stringified)] = ""
     """The raw ISO8601 arr-clock stamp."""
     item_id: _ZeroInt = Field(default=0, validation_alias=AliasChoices("seriesId", "movieId"))
-    """The `seriesId`/`movieId` (0 when absent - no record carries both, so
-    one `AliasChoices` serves both arrs). A junk id folds to 0 and the record
-    is KEPT (arr_activity's `item_id <= 0` drop applies downstream)."""
+    """The `seriesId` or `movieId`. No record carries both, so one `AliasChoices` serves both arrs."""
     event_type: _BlankStr = Field(default="", validation_alias="eventType")
     """The camelCase event name."""
     download_id: _LenientStr = Field(default=None, validation_alias="downloadId")
-    """The infohash (`string | null`, Sonarr uppercases so compare casefolded)."""
+    """The infohash, uppercased by Sonarr, so compare casefolded."""
     reason: _LenientStr = None
-    """The `data` map's reason value (key read case-insensitively by the
-    before-validator - an alias cannot do case-insensitivity)."""
+    """The `data` map's reason value, its key read case-insensitively (an alias cannot)."""
 
     @model_validator(mode="before")
     @classmethod
@@ -883,14 +671,7 @@ class HistoryRecord(_ApiModel):
 
 
 class HistoryPage(_ApiModel):
-    """One `/api/v3/history` page envelope, reduced to its `records` array.
-
-    Unlike `/history/since` (a bare list), the base history endpoint pages its
-    records under a wrapper object. Only `records` is read: the probe pins the
-    paging/sort params explicitly on the request instead of reading them back.
-    A junk `records[]` entry is skipped WITHOUT dropping the page (a dropped
-    page would read as "no history" and misroute the probe).
-    """
+    """One `/api/v3/history` page envelope, reduced to its `records` array."""
 
     records: tuple[HistoryRecord, ...] = ()
 
@@ -906,17 +687,13 @@ class HistoryPage(_ApiModel):
 
 
 def _priority_or_lowest(value: object) -> int:
-    """Per-field lenient fold: keep an int priority, fold junk to 50 (the arrs' lowest)."""
+    """Keep an int priority, folding junk to 50 (the arrs' lowest)."""
 
     return value if isinstance(value, int) and not isinstance(value, bool) else 50
 
 
 class DownloadClientField(_ApiModel):
-    """One `{name, value}` settings field of a download-client definition.
-
-    Only the category fields are consumed, so `value` keeps a string and folds
-    every other shape (ports, flags, nested objects) to None.
-    """
+    """One `{name, value}` settings field of a download-client definition."""
 
     name: _LenientStr = None
     value: _LenientStr = None
@@ -925,11 +702,7 @@ class DownloadClientField(_ApiModel):
 class DownloadClientRecord(_ApiModel):
     """One arr `DownloadClientResource`, reduced to the category-fallback read.
 
-    `implementation` names the client type (`QBittorrent` for qBittorrent).
-    Every field folds junk independently, and a junk `fields[]` entry is
-    skipped WITHOUT dropping the definition. `priority` (1 highest, the arrs'
-    default; 50 lowest) picks among several enabled clients; junk folds to 50
-    so a malformed record never outranks a clean one.
+    `implementation` names the client type (`QBittorrent`). `priority` runs 1 (highest, the arr default) to 50.
     """
 
     enable: _LaxBool = False
@@ -954,13 +727,9 @@ class DownloadClientRecord(_ApiModel):
 
 
 class RemotePathMapping(_ApiModel):
-    """One Sonarr `RemotePathMappingResource`: a download-client path -> Sonarr's view.
+    """One Sonarr `RemotePathMappingResource`: a download-client path mapped to Sonarr's view.
 
-    Read by the folder-scan fallback to translate a qBittorrent `content_path`
-    into a path Sonarr can see. `host` is the download-client host as
-    configured IN SONARR (routinely a different string from our qBittorrent
-    host), so it only ever tiebreaks - never excludes. Every field folds junk
-    to None independently. A mapping missing either path is skipped downstream.
+    `host` is the client host as configured IN SONARR, so it only ever tiebreaks, never excludes.
     """
 
     host: _LenientStr = None
@@ -968,19 +737,24 @@ class RemotePathMapping(_ApiModel):
     local_path: _LenientStr = Field(default=None, validation_alias="localPath")
 
 
+# --- Sonarr download client config (`/api/v3/config/downloadclient`) ----------
+
+
+class DownloadClientConfig(_ApiModel):
+    """Sonarr's `DownloadClientConfigResource`, reduced to the completed-download-handling switch.
+
+    Off, Sonarr parks a clean `importPending` download forever and Pearlarr imports it. Defaults to on, so a
+    fail-open read defers rather than racing Sonarr.
+    """
+
+    enable_completed_download_handling: bool = Field(default=True, validation_alias="enableCompletedDownloadHandling")
+
+
 # --- Sonarr quality definitions (`/api/v3/qualitydefinition`) --------------
 
 
 class QualityDefinition(_ApiModel):
-    """One Sonarr `QualityDefinitionResource` (schema), reduced to `quality`.
-
-    Read-and-re-emit: `resolve_quality` matches a definition by its nested
-    `quality.source`/`quality.resolution` pair and re-emits the matched
-    `Quality` verbatim (a `_WireModel`, so its unknown keys survive)
-    into the outgoing `QualityModel`. Only the nested `quality` is
-    consumed. An empty/null one folds to None so the resolver's skip stays one
-    explicit None test.
-    """
+    """One Sonarr `QualityDefinitionResource` (schema), reduced to `quality`."""
 
     quality: Annotated[Quality | None, BeforeValidator(_none_if_falsy)] = None
 
@@ -989,13 +763,9 @@ class QualityDefinition(_ApiModel):
 
 
 class CommandBody(_WireModel):
-    """One outgoing `/api/v3/command` POST body (a Sonarr command request).
+    """One outgoing `/api/v3/command` POST body, dumped with `exclude_unset=True`.
 
-    Constructed by the strategy and POSTed via `model_dump(exclude_unset=True)`.
-    `name` is the command name (always sent). `importMode` / `files` are
-    the extra fields the `ManualImport` command carries - unset (and so
-    omitted from the wire) for `RefreshMonitoredDownloads`, which sends only
-    `{"name"}`.
+    `importMode` and `files` stay unset (off the wire) for `RefreshMonitoredDownloads`, which sends `{"name"}`.
     """
 
     name: str
@@ -1012,19 +782,12 @@ def _int_entries(value: object) -> object:
 
 
 class CommandFile(_ApiModel):
-    """One file of a `ManualImport` command's `body.files[]` (read back).
-
-    Surfaced from the `/api/v3/command` list so the in-flight guard can tell
-    whether an accepted-but-still-running ManualImport already covers a
-    download. Every field folds junk independently, so a dict entry never
-    fails validation.
-    """
+    """One file of a `ManualImport` command's `body.files[]` (read back)."""
 
     path: _LenientStr = None
     """Fallback match signal, with `episode_ids`."""
     download_id: _LenientStr = Field(default=None, validation_alias="downloadId")
-    """The primary match key: the infohash a queue-driven import carries
-    (`string | null` in the schema - absent for a folder/season-pack import)."""
+    """The primary match key, absent for a folder or season-pack import."""
     series_id: _ZeroInt = Field(default=0, validation_alias="seriesId")
     episode_ids: Annotated[tuple[int, ...], BeforeValidator(_int_entries)] = Field(
         default=(),
@@ -1034,23 +797,12 @@ class CommandFile(_ApiModel):
 
 
 class CommandResource(_ApiModel):
-    """A Sonarr `CommandResource` (schema), reduced to the fields read back.
-
-    A command POST returns this with the queued command `id`. The
-    `/api/v3/command` LIST poll also reads `name`/`message`/`files` for the
-    in-flight ManualImport guard (those default to empty, so the POST/status
-    callers can read only `id`/`status`/`result`). Every field folds junk
-    independently and a junk `files[]` entry is skipped WITHOUT dropping the
-    command - a dropped CommandResource would blind the in-flight guard (the
-    double-import direction).
-    """
+    """A Sonarr `CommandResource` (schema), reduced to the fields read back."""
 
     id: _ZeroInt = 0
-    """A non-null schema int, `0` when absent so the caller drops it."""
+    """`0` when absent, so the caller drops it."""
     status: _LenientStr = None
-    """The `CommandStatus` enum (`queued` / `started` / `completed` / ...) as
-    its `string | null` rendering. The status poll reads it to know when a
-    rescan has settled."""
+    """The `CommandStatus` enum (`queued`, `started`, `completed`, and so on)."""
     result: _LenientStr = None
     """The `string | null` rendering of its schema enum."""
     name: _LenientStr = None
@@ -1058,9 +810,7 @@ class CommandResource(_ApiModel):
     message: _LenientStr = None
     """The progress text, e.g. `"Processing file 4 of 8"`."""
     files: tuple[CommandFile, ...] = Field(default=(), validation_alias=AliasPath("body", "files"))
-    """The per-file rows from the nested `body` object (the original command
-    request Sonarr echoes back - the POST/status responses omit it), each a
-    `CommandFile` saying which download a still-running import covers."""
+    """The rows of the nested `body` Sonarr echoes back. The POST and status responses omit it."""
 
     @field_validator("files", mode="before")
     @classmethod
@@ -1071,22 +821,10 @@ class CommandResource(_ApiModel):
 
 
 # --- Radarr movie files (`/api/v3/moviefile` records) ----------------------
-#
-# Derived from the Radarr v3 OpenAPI `MovieFileResource`, captured in
-# `schemas/radarr.schema`. Nullability mirrors the schema exactly (a schema
-# `string | null` field -> `str | None`).
 
 
 class MovieFile(_ApiModel):
-    """A Radarr `MovieFileResource`, reduced to the fields the syncer reads.
-
-    `get_radarr_releases` folds each movie file into the shared `ArrReleases`
-    decision (release group -> existing-file sizes), so a movie file is
-    READ into a decision, not re-emitted: a fail-open list read
-    (`validate_each`). Only `release_group` (`string | null` in the schema)
-    and `size` are consumed; `size` is a schema `int64` but fail-opens to
-    None, which the fold treats as unreadable.
-    """
+    """A Radarr `MovieFileResource`, reduced to the fields the syncer reads."""
 
     release_group: str | None = Field(default=None, validation_alias="releaseGroup")
     size: int | None = None
@@ -1098,10 +836,7 @@ class MovieFile(_ApiModel):
 class ParsedEpisode(NamedTuple):
     """One Sonarr `/parse` series-MATCHED `(season, episode)` pair.
 
-    The element type `SonarrParse.episodes` carries, produced from the validated
-    boundary model. Distinct from `EpisodeRecord` (which also carries a size)
-    and `ParsedFileInfo` (the per-file parse assignment reads). Persisted as a
-    `{"season", "episode"}` JSON object at the parse-cache seam.
+    Persisted as a `{"season", "episode"}` JSON object at the parse-cache seam.
     """
 
     season: int
@@ -1111,11 +846,7 @@ class ParsedEpisode(NamedTuple):
 class SonarrParse(NamedTuple):
     """One Sonarr `/parse` result: the matched pairs plus the parse-level flag.
 
-    What `SonarrClient.parse` yields on a clean 200. `episodes` are the
-    series-MATCHED `(season, episode)` pairs; `full_season` is Sonarr's
-    `parsedEpisodeInfo.fullSeason` (a bare "S0X" name matching a whole season),
-    which the grab-time seed refuses whole - `full_season` belongs to the parse,
-    not to any one pair. None (not this) stays the parse-failure signal.
+    `full_season` (a bare "S0X" name) is parse-level, not per pair. A failed parse stays `None`, never this.
     """
 
     episodes: list[ParsedEpisode]
@@ -1129,40 +860,26 @@ def _tuple_or_empty(value: object) -> object:
 
 
 class MatchedEpisode(_ApiModel):
-    """One series-matched episode from a `/parse` response's `episodes` array.
-
-    Both numbers are required: an entry Sonarr couldn't fully resolve is junk
-    and `ParsedFileInfo`'s lenient validator skips it.
-    """
+    """One series-matched episode from a `/parse` response's `episodes` array."""
 
     season_number: int = Field(validation_alias="seasonNumber")
     episode_number: int = Field(validation_alias="episodeNumber")
     id: int | None = None
-    """Sonarr's episode id, when present - cross-checked against OUR map so a
-    wrong-series title match whose numbers coincide with ours is refused."""
+    """Sonarr's episode id, cross-checked against OUR map so a wrong-series title match is refused."""
 
 
 class ParsedFileInfo(_ApiModel):
     """Sonarr's parse of one filename, narrowed to what assignment reads.
 
-    Validated from a raw `/api/v3/parse` response body. The
-    season/episode/absolute numbers read through an `AliasPath` into the
-    nested `parsedEpisodeInfo` object - the series-AGNOSTIC numbers lifted
-    straight from the release name, populated even when Sonarr can't match
-    the title to a library series (specials, alias titles).
-    `matched_episodes` carries the response's `episodes` array - Sonarr's
-    series-MATCHED resolution, the only place an absolute-only name gets a
-    concrete `(season, episode)`. Assignment prefers the agnostic numbers and
-    consults the matched pairs strictly inside OUR resolved set, so Sonarr's
-    series match never decides identity on its own.
+    The `parsedEpisodeInfo` numbers are series-AGNOSTIC (present even with no series match), `matched_episodes`
+    is Sonarr's MATCHED resolution. Assignment prefers the agnostic numbers, matched pairs only inside OUR set.
     """
 
     season_number: int | None = Field(
         default=None,
         validation_alias=AliasPath("parsedEpisodeInfo", "seasonNumber"),
     )
-    """Whatever Sonarr reported. Meaningful only when `episode_numbers` is
-    non-empty (an absolute-numbered name reports season 0)."""
+    """Meaningful only when `episode_numbers` is non-empty (an absolute-numbered name reports season 0)."""
     episode_numbers: Annotated[tuple[int, ...], BeforeValidator(_tuple_or_empty)] = Field(
         default=(),
         validation_alias=AliasPath("parsedEpisodeInfo", "episodeNumbers"),
@@ -1181,23 +898,18 @@ class ParsedFileInfo(_ApiModel):
         default=False,
         validation_alias=AliasPath("parsedEpisodeInfo", "fullSeason"),
     )
-    """A season-pack-shaped name (bare "S01"): its matched pairs span the whole
-    season and must never be borrowed as one file's claims."""
+    """A season-pack-shaped name (bare "S01"). Its matched pairs span the season, never one file's claims."""
     offline: bool = False
-    """Built by the offline SxxExx regex fallback rather than Sonarr's parser
-    (ParseResource has no such property - test_schema_drift pins the
-    exemption). Such a parse carries no absolute-number knowledge, so the
-    positional leg's duplicate tell treats it as unknown."""
+    """Built by the offline SxxExx fallback, not Sonarr's parser (`ParseResource` has no such property)."""
     matched_episodes: tuple[MatchedEpisode, ...] = Field(default=(), validation_alias="episodes")
     """Sonarr's series-matched pairs. The exact leg's fallback when the name carries no `(season, episode)`."""
 
     @field_validator("matched_episodes", mode="before")
     @classmethod
     def _lenient_matched(cls, value: object) -> object:
-        """Fold a junk `episodes[]` - or ANY junk entry in it - to ().
+        """Fold a junk `episodes[]`, or ANY junk entry in it, to ().
 
-        All-or-nothing on purpose: dropping just the bad entry would shorten a
-        span and slip the exact leg's every-pair check as a partial placement.
+        All-or-nothing on purpose: dropping one entry would shorten a span and slip the every-pair check.
         """
 
         # tuple included: direct construction passes the field's own type.

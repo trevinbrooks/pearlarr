@@ -1,27 +1,4 @@
-"""The shared traditional text grammar + the text-surface renderers.
-
-One grammar - `ts LEVEL [path] message k=v` - feeds both `LineRenderer`
-(plain stdout) and `FileLogSink` (the log file), byte-identical by
-construction (the sole carve-out: `file_only` diagnostics reach the file alone.
-The rule lives once, on the shared chassis). `[path]` is a label-only breadcrumb
-from a per-sink `BreadcrumbFold` (never position, never layout).
-Diagnostics instead carry their origin in the bracket plus an advisory
-`during="..." placed=frontier` tail. Values quote iff they contain whitespace,
-`"` or `=`. Newlines are escaped in messages and quoted values - a rendered
-traceback is the sole multi-line form. `JsonRenderer` rides the same
-chassis and writes one JSON object per event (stable key order, local time with
-its UTC offset).
-
-Every event's facts - (name, severity, message, fields) - are stated exactly once
-(`_fact_of`). The text and json surfaces only decorate. Sinks render each
-event BEFORE folding it (so a closing event still renders with the path it is
-closing), and the fold advances even when rendering raises. Admission is
-line-granular on the text surfaces: a WARNING summary row reaches a WARNING-level
-file while its INFO siblings drop. WaitProgress is the one stateful carve-out:
-the grammar sinks throttle it into a "still waiting" pulse whose cadence is pure
-event content (WaitStarted.pulse_s, snapshot.elapsed_s - never wall clock), so
-the independently ticking file and plain sinks stay byte-identical.
-"""
+"""The shared traditional text grammar `ts LEVEL [path] message k=v` and its sinks."""
 
 from __future__ import annotations
 
@@ -84,6 +61,7 @@ from .events import (
     StarterConfigWritten,
     TorrentGraduated,
     WaitFinished,
+    WaitKind,
     WaitProgress,
     WaitStarted,
     severity_of,
@@ -95,20 +73,16 @@ from ..manual_import import OutcomeCategory
 
 TS_FORMAT: Final = "%Y-%m-%d %H:%M:%S"
 
-# A rotated backup is named after the run that wrote it (the file's own mtime).
 _BACKUP_STAMP_FORMAT: Final = "%Y-%m-%d_%H%M%S"
 
-# The rotation backstop (module attribute so tests can monkeypatch it): caps
-# backups before config - and its retention days - has ever been read.
+# The rotation backstop, a module attribute so tests can monkeypatch it.
 _BACKSTOP_MAX_BACKUPS = 500
 
-# The JSON stream's envelope version. Changes within it are additive-only. A
-# removal, rename, or semantic change bumps it alongside a new major release
-# (docs/output.md states the policy. The event catalog there is generated).
+# The JSON stream's envelope version: changes within it are additive-only.
+# A removal, rename, or semantic change bumps it alongside a new major release (docs/output.md states the policy).
 JSON_SCHEMA_VERSION: Final = 1
 
-# A field value is any JSON value: scalars for run events, plus lists/objects on
-# the json-only cli command facts (which never reach a grammar-sink text line).
+# Scalars for run events, plus lists and objects on the json-only cli facts (which never reach a text line).
 type FieldValue = JsonValue
 
 
@@ -121,7 +95,7 @@ class Field(NamedTuple):
 
 @dataclass(frozen=True, slots=True)
 class _Line:
-    """One rendered text line: level word, bracket, message, logfmt fields, trace."""
+    """One rendered text line."""
 
     severity: Severity
     bracket: str | None
@@ -130,9 +104,7 @@ class _Line:
     trace: str | None = None
 
 
-# Control characters (C0 except tab, DEL, C1) escape to \xNN so external text -
-# torrent titles, or a hostile capture replayed to a TTY - can neither break the
-# one-line grammar nor drive the terminal (cursor movement rewrites prior lines).
+# C0 (except tab), DEL and C1 escape to \xNN: external text must not break the grammar or drive the terminal.
 _CTRL_TABLE: Final = str.maketrans(
     {0x0A: "\\n", 0x0D: "\\r"}
     | {code: f"\\x{code:02x}" for code in (*range(0x09), 0x0B, 0x0C, *range(0x0E, 0x20), 0x7F, *range(0x80, 0xA0))}
@@ -157,8 +129,7 @@ def _field_text(value: FieldValue) -> str:
         return str(value)
     if isinstance(value, float):
         return f"{value:.2f}"
-    # Containers/None ride only the json-only cli facts (which never reach a
-    # grammar-sink line). Compact-encode them so the formatter stays total.
+    # Containers and None ride only the json-only cli facts. Compact-encode them so the formatter stays total.
     text = value if isinstance(value, str) else json.dumps(value, ensure_ascii=False)
     if _needs_quote(text):
         escaped = text.replace("\\", "\\\\").replace('"', '\\"').translate(_CTRL_TABLE)
@@ -173,8 +144,7 @@ def _logfmt(fields: tuple[Field, ...]) -> str:
 def _render_line(line: _Line, ts: str) -> str:
     parts = [ts, line.severity.name]
     if line.bracket:
-        # Escaped like the message: breadcrumb labels carry external titles
-        # (Arr/AniList), and a newline there would break the one-line grammar.
+        # Escaped like the message: breadcrumb labels carry external titles (Arr/AniList).
         parts.append(f"[{_flat(line.bracket)}]")
     parts.append(_flat(line.message))
     if line.fields:
@@ -186,12 +156,12 @@ def _render_line(line: _Line, ts: str) -> str:
     return text
 
 
-# --- per-event facts: name/severity/message/fields, stated exactly once -------------
+# --- per-event facts ------------------------------------------------------------------
 
 
 @dataclass(frozen=True, slots=True)
 class _Fact:
-    """One event's shared surface facts. Text/json only decorate around these."""
+    """One event's shared surface facts."""
 
     name: str
     severity: Severity
@@ -214,7 +184,7 @@ def _grab_message(status: GrabStatus) -> str:
         return "adding recommended release"
     if status is GrabStatus.WOULD_ADD:
         return "would add recommended release (dry run)"
-    return "recommended release already downloading"
+    return "recommended release already in qBittorrent"
 
 
 def _names_text(releases: tuple[ReleaseName, ...]) -> str:
@@ -291,9 +261,15 @@ def _fields_graduated(event: TorrentGraduated) -> tuple[Field, ...]:
     return tuple(fields)
 
 
+def _fields_wait_started(event: WaitStarted) -> tuple[Field, ...]:
+    return (Field("kind", str(event.kind)), Field("total", event.total))
+
+
 def _fields_wait_finished(event: WaitFinished) -> tuple[Field, ...]:
     return (
+        Field("kind", str(event.kind)),
         Field("imported", event.imported),
+        Field("pending", event.pending),
         Field("deferred", event.deferred),
         Field("failed", event.failed),
         Field("elapsed_s", event.elapsed_s),
@@ -301,7 +277,7 @@ def _fields_wait_finished(event: WaitFinished) -> tuple[Field, ...]:
 
 
 def _pulse_fact(event: WaitProgress) -> _Fact:
-    """The "still waiting" heartbeat's facts - pure. The grammar sinks decide WHEN."""
+    """The "still waiting" heartbeat's pure facts. The grammar sinks decide WHEN."""
 
     counts = event.snapshot.counts()
     fields = (
@@ -325,7 +301,7 @@ def _fields_summary_head(summary: RunSummary) -> tuple[Field, ...]:
     if summary.wait_mode_on:
         for key, value in (
             ("queued", tally.queued),
-            ("importing", tally.importing),
+            ("downloaded", tally.downloaded),
             ("imported", tally.imported),
         ):
             if value:
@@ -429,7 +405,7 @@ def _fields_cache_stats(event: CacheStatsReported) -> tuple[Field, ...]:
 
 
 def _fact_of(event: Event, crumbs: BreadcrumbFold, severity: Severity) -> _Fact | None:
-    """THE exhaustive per-event table: None = the event has no rendered form."""
+    """The exhaustive per-event table. None means the event has no rendered form."""
 
     match event:
         case RunStarted():
@@ -437,8 +413,7 @@ def _fact_of(event: Event, crumbs: BreadcrumbFold, severity: Severity) -> _Fact 
         case CycleStarted(number=number):
             return _Fact("cycle_started", severity, "cycle started", (Field("number", number),), None, "run")
         case NextRunScheduled(at=at):
-            # Seconds precision keeps the offset and drops microseconds. The
-            # json surface shares this Field, matching its "time" key's shape.
+            # Seconds precision drops microseconds and keeps the offset, matching the json "time" key's shape.
             fields = (Field("at", at.isoformat(timespec="seconds")),)
             return _Fact("next_run_scheduled", severity, "next run scheduled", fields, None, "run")
         case ScopeOpened(scope=scope, label=label):
@@ -480,8 +455,9 @@ def _fact_of(event: Event, crumbs: BreadcrumbFold, severity: Severity) -> _Fact 
             return _Fact("scan_finished", severity, "scan finished", (Field("arr", str(arr)),), None, "scan")
         case RunSummaryReady(summary=summary):
             return _Fact("run_summary", severity, "run complete", _fields_summary_head(summary), None, "summary")
-        case WaitStarted(scope=scope, total=total):
-            return _Fact("wait_started", severity, "waiting", (Field("total", total),), scope, "wait")
+        case WaitStarted(scope=scope, kind=kind):
+            word = "checking" if kind is WaitKind.CHECK else "waiting"
+            return _Fact("wait_started", severity, word, _fields_wait_started(event), scope, "wait")
         case TorrentGraduated(scope=scope, outcome=outcome):
             return _Fact("torrent_graduated", severity, outcome.word, _fields_graduated(event), scope, "wait")
         case WaitFinished(scope=scope):
@@ -493,7 +469,6 @@ def _fact_of(event: Event, crumbs: BreadcrumbFold, severity: Severity) -> _Fact 
         case PathsShown():
             return _Fact("paths_shown", severity, "resolved paths", _fields_paths_shown(event), None, "cli")
         case StarterConfigWritten(path=path):
-            # "config_path" not "path": the json envelope reserves "path" for the breadcrumb.
             return _Fact(
                 "starter_config_written", severity, "starter config written", (Field("config_path", path),), None, "cli"
             )
@@ -525,8 +500,8 @@ def _fact_of(event: Event, crumbs: BreadcrumbFold, severity: Severity) -> _Fact 
     assert_never(event)
 
 
-# Facts with no TEXT-line form: pure boundaries (the summary is the run-end
-# marker), plus the effective-config document (its config object has no logfmt line).
+# Facts with no TEXT-line form: pure boundaries (the summary is the run-end marker), plus the effective-config
+# document (its config object has no logfmt line).
 _TEXT_SKIP: Final = frozenset({ScopeOpened, ScopeClosed, ScanFinished, RunFinished, EffectiveConfigShown})
 # Facts the JSON stream drops: the slow heads-up is a text-sink affordance only.
 _JSON_SKIP: Final = frozenset({BootStepSlow})
@@ -554,8 +529,8 @@ def _record_lines(summary: RunSummary) -> tuple[_Line, ...]:
 def _lines_of(event: Event, crumbs: BreadcrumbFold, severity: Severity) -> tuple[_Line, ...]:
     """The text grammar: the shared fact plus text-only decoration."""
 
-    # Skip first: scope boundaries fire per entry on BOTH grammar sinks, so
-    # building their facts just to drop them is pure hot-path waste.
+    # Skip first: scope boundaries fire per entry on both grammar sinks, so building their facts just to drop
+    # them is pure hot-path waste.
     if type(event) in _TEXT_SKIP:
         return ()
     fact = _fact_of(event, crumbs, severity)
@@ -582,9 +557,7 @@ def _json_of(event: Event, crumbs: BreadcrumbFold, iso: str, severity: Severity)
         "level": fact.severity.name,
         "message": fact.message,
     }
-    # The text grammar's bracket seed (subsystem/origin word). Always present, so
-    # a `replay` of the stream can reconstruct the [bracket] without per-event
-    # knowledge. For a Diagnostic it equals `origin`, which stays its own key.
+    # The bracket seed: always present, so `replay` can reconstruct the [bracket] without per-event knowledge.
     payload["component"] = fact.component
     if isinstance(event, Diagnostic):
         payload["origin"] = event.origin
@@ -605,20 +578,14 @@ def _json_of(event: Event, crumbs: BreadcrumbFold, iso: str, severity: Severity)
     return payload
 
 
-# The envelope + decoration keys a JSON line carries: `render_envelope_line`
-# turns them into the ts/level/[bracket]/message/trace shape, and everything
-# else in the object becomes the k=v tail.
+# Envelope keys. Everything else in the object becomes the k=v tail.
 _ENVELOPE_KEYS: Final = frozenset(
     {"schema_version", "time", "event", "level", "message", "component", "origin", "path", "exc"},
 )
 
 
 def _reformat_iso(iso: str) -> str | None:
-    """The grammar's `ts` for an ISO-8601 `time` value, or None when it can't be parsed.
-
-    The stored value is local wall time with its offset. strftime prints exactly
-    the components the grammar sinks printed, so no timezone conversion is needed.
-    """
+    """The grammar's `ts` for an ISO-8601 `time` value, or None when it can't be parsed."""
 
     try:
         parsed = datetime.fromisoformat(iso)
@@ -640,15 +607,7 @@ def _envelope_bracket(payload: dict[str, JsonValue], event: str) -> str:
 def render_envelope_line(payload: dict[str, JsonValue]) -> str | None:
     """Render one JSON envelope back to a `ts LEVEL [bracket] message k=v` text line.
 
-    The inverse of `_json_of` for post-mortem reading (`pearlarr replay`): a
-    generic envelope formatter carrying NO per-event knowledge, so an unknown
-    future event still renders. `time`, `level`, `message`, and `event` are
-    required - a missing or non-string one (or an unparseable `time`) returns
-    None, a malformed line the caller counts. The bracket is `path`, else
-    `component`, else `origin`, else the event name (captures predating
-    `component` fall through to origin/event). Every remaining key becomes the
-    k=v tail in insertion order, and an `exc` string appends the traceback
-    exactly as the file sink does.
+    None when `time`, `level`, `message`, or `event` is missing, non-string, or unparseable.
     """
 
     time_value = payload.get("time")
@@ -674,7 +633,7 @@ def render_envelope_line(payload: dict[str, JsonValue]) -> str | None:
     text = " ".join(parts)
     exc = payload.get("exc")
     if isinstance(exc, str):
-        # The traceback is the sole multi-line form, appended like `_render_line`.
+        # The traceback is the sole multi-line form, appended exactly as `_render_line` does.
         text += "\n" + exc.rstrip("\n")
     return text
 
@@ -684,7 +643,7 @@ def render_envelope_line(payload: dict[str, JsonValue]) -> str | None:
 
 @final
 class _PerSecondMemo:
-    """Caches one formatted timestamp per whole second (hub stamps per emit)."""
+    """Caches one formatted timestamp per whole second."""
 
     __slots__ = ("_fmt", "_memo")
 
@@ -700,11 +659,7 @@ class _PerSecondMemo:
 
 
 class _TextLineSink(Renderer):
-    """The shared sink chassis: admission, fold ordering, per-second timestamps.
-
-    Subclasses provide only the render step. `handle` folds the event AFTER
-    rendering - in a `finally`, so a render/write bug can never desync the path.
-    """
+    """The shared sink chassis: admission, breadcrumb folding, per-second timestamps."""
 
     def __init__(self) -> None:
         self._crumbs = BreadcrumbFold()
@@ -726,8 +681,7 @@ class _TextLineSink(Renderer):
 
     @override
     def set_level(self, level: int) -> None:
-        # Text surfaces share the file's semantics: the raw configured level.
-        # The INFO floor is rich-console-only (log.py's console_level).
+        # The raw configured level: the INFO floor is rich-console-only.
         self._threshold = level
 
     @override
@@ -745,12 +699,7 @@ class _TextLineSink(Renderer):
 
 
 class _GrammarSink(_TextLineSink):
-    """Chassis + the text grammar with line-granular admission.
-
-    Owns the per-sink wait-pulse throttle. Cadence is a pure function of event
-    content (WaitStarted.pulse_s, snapshot.elapsed_s - never wall clock), so the
-    independently ticking file and plain sinks stay byte-identical.
-    """
+    """Chassis plus the text grammar, with line-granular admission."""
 
     def __init__(self) -> None:
         super().__init__()
@@ -765,7 +714,6 @@ class _GrammarSink(_TextLineSink):
     @override
     def _render(self, event: Event, when: float, severity: Severity) -> None:
         if isinstance(event, WaitStarted):
-            # A new pass (possibly several per run) restarts the cadence.
             self._pulse.arm(event.pulse_s)
         if isinstance(event, WaitProgress):
             lines = self._pulse_lines(event)
@@ -793,11 +741,7 @@ class _GrammarSink(_TextLineSink):
 
 @final
 class LineRenderer(_GrammarSink):
-    """Plain stdout: the file grammar on the console (pipes, Docker logs).
-
-    Flushes per line. stdout blocking happens under the drain baton (never the
-    hub lock), which is parity with stdlib logging's handler lock.
-    """
+    """Plain stdout: the file grammar on the console."""
 
     def __init__(self, stream: TextIO) -> None:
         super().__init__()
@@ -819,19 +763,9 @@ def _mtime_or_epoch(path: str) -> float:
 
 @final
 class FileLogSink(_GrammarSink):
-    """The traditional structured log file: dated per-run backups + age-based retention.
+    """The structured log file: dated per-run backups plus age-based retention.
 
-    Rotation is armed ONLY by begin_cycle and runs on the first write after it, so
-    an idle cycle never churns a backup and a pre-cycle record appends to the
-    PREVIOUS cycle's file (never a second rotation burning a backup slot). A
-    rotation renames the current file to a `.log.<run's mtime stamp>` backup
-    (collisions get a `.1`, `.2`, ... suffix). A config-free count backstop then
-    caps the backup count, so a crash-looping scheduler can't grow the log dir
-    unboundedly before config has ever loaded. Age-based retention is a separate
-    step (`apply_retention_days`), applied once per cycle as soon as the run's
-    `advanced.log_retention_days` is known. Every line flushes as written (crash
-    fidelity: the tail is on disk when the process dies). A reopen after close
-    appends (never a silent truncate without a pending rotation).
+    A reopen after close appends. Only a pending rotation truncates.
     """
 
     writes_file_only: ClassVar[bool] = True
@@ -847,13 +781,7 @@ class FileLogSink(_GrammarSink):
         return os.path.join(self._dir, f"{LOG_NAME}.log")
 
     def probe(self) -> None:
-        """Fail fast (OSError) if the log file can't be appended.
-
-        cli pre-flights this at install so a root-owned/read-only file aborts
-        with the clean data-dir message, instead of striking the sink mid-run.
-        A file the probe itself created is removed, so the first real write
-        still sees the pre-probe rotation state.
-        """
+        """Fail fast (OSError) if the log file can't be appended, leaving no file behind."""
 
         os.makedirs(self._dir, exist_ok=True)
         existed = os.path.isfile(self.path)
@@ -896,8 +824,8 @@ class FileLogSink(_GrammarSink):
             self._file = None
 
     def _rotate(self) -> None:
-        # Named after the run that wrote it (the file's own mtime), not a cascade
-        # slot. A same-second collision falls through to a numeric suffix.
+        # Named after the run that wrote it (the file's own mtime), not a cascade slot.
+        # A same-second collision falls through to a numeric suffix.
         if not os.path.isfile(self.path):
             return
         stamp = datetime.fromtimestamp(os.path.getmtime(self.path)).strftime(_BACKUP_STAMP_FORMAT)
@@ -914,8 +842,7 @@ class FileLogSink(_GrammarSink):
         return glob.glob(os.path.join(glob.escape(self._dir), f"{LOG_NAME}.log.*"))
 
     def _enforce_backstop(self) -> None:
-        # A crash-looping scheduler must not grow the log dir unboundedly before
-        # config - and its configured retention - has ever loaded.
+        # Retention days may never be applied, so cap the backup count independently.
         backups = sorted(self._backup_paths(), key=_mtime_or_epoch)
         excess = len(backups) - _BACKSTOP_MAX_BACKUPS
         for path in backups[: max(excess, 0)]:
@@ -923,15 +850,7 @@ class FileLogSink(_GrammarSink):
                 os.remove(path)
 
     def apply_retention_days(self, days: int) -> None:
-        """Delete dated backups older than `days` days, best-effort per file.
-
-        Retention rides the config-application moment, never `_rotate`: the
-        sink is built before config exists, and a one-shot `run single`
-        rotates before config loads, so a rotation-time prune would either
-        never fire or run with a default that could delete backups a longer
-        configured retention wanted kept. This runs outside hub dispatch, so
-        one un-deletable backup must not take down the run.
-        """
+        """Delete dated backups older than `days` days, best-effort per file."""
 
         cutoff = time.time() - days * 86400
         for path in self._backup_paths():
@@ -960,7 +879,6 @@ class JsonRenderer(_TextLineSink):
 
     @staticmethod
     def _effective(event: Event, severity: Severity) -> Severity:
-        # A summary carrying user-actionable / error content admits at WARNING.
         if isinstance(event, RunSummaryReady):
             summary = event.summary
             if summary.tally.needs_action or summary.errors:

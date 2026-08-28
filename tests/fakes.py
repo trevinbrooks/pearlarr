@@ -1,16 +1,5 @@
 # pyright: strict
-"""Shared, strict-typed test doubles.
-
-The home for fakes used across more than one test module, written to type-check
-at strict (no `MagicMock`, no `Any`). The guiding pattern: where a collaborator
-is injected behind a typed seam (`ArrSync`, `AbstractCacheStore`), a small
-concrete fake implements it and records what a test needs to assert - so contracts
-are pinned by recorded state.
-
-Collaborators that the run machinery only reads as bare attributes (absorbed as
-`Any` by `make_bare_instance`) don't need a shared fake. Keep those local to
-the test that drives them.
-"""
+"""Shared, strict-typed test doubles. A fake driven by a single test stays in that test."""
 
 import io
 import logging
@@ -45,6 +34,7 @@ from pearlarr.protocols import ArrSync
 from pearlarr.radarr_client import AbstractRadarrClient
 from pearlarr.seadex_types import (
     CommandResource,
+    DownloadClientConfig,
     HistoryPage,
     HistoryRecord,
     Language,
@@ -68,14 +58,12 @@ _ANSI = re.compile(r"\x1b\[[0-9;?]*[a-zA-Z]")
 
 
 def strip_ansi(text: str) -> str:
-    """Drop ANSI escape sequences so assertions see the plain characters."""
+    """Drop ANSI escape sequences."""
 
     return _ANSI.sub("", text)
 
 
-# `ScanEvent` is a `type` alias (TypeAliasType) - `isinstance` raises on it -
-# so re-derivation filters the raw stream with this explicit class tuple. Left
-# unannotated so the inferred heterogeneous tuple narrows to exactly ScanEvent.
+# `isinstance` raises on the `ScanEvent` alias. Keep the tuple unannotated so it narrows to exactly `ScanEvent`.
 SCAN_EVENT_TYPES = (
     ScanStarted,
     ItemStarted,
@@ -91,13 +79,7 @@ SCAN_EVENT_TYPES = (
 
 
 def scan_lines_from_events(events: Iterable[Event]) -> list[LegacyLine]:
-    """Re-derive the legacy scan lines a recorded event stream produces.
-
-    The reporter EMITS events. Both output seats render them through
-    `scan_event_lines`. Tests that assert reporter output record the events and
-    replay them here (scope-boundary / diagnostic events carry no lines and drop),
-    so the assertions ride the SAME builders production uses.
-    """
+    """Re-derive the legacy scan lines a recorded event stream produces."""
 
     lines: list[LegacyLine] = []
     for event in events:
@@ -107,11 +89,7 @@ def scan_lines_from_events(events: Iterable[Event]) -> list[LegacyLine]:
 
 
 def install_recording_hub() -> RecordingHub:
-    """Construct + install a fresh `RecordingHub` as the process hub.
-
-    The conftest autouse teardown restores the renderer-less default after every
-    test, so callers never uninstall.
-    """
+    """Install a fresh `RecordingHub` as the process hub. Conftest's autouse teardown restores the default."""
 
     recording = RecordingHub()
     install_hub(recording.hub)
@@ -119,12 +97,7 @@ def install_recording_hub() -> RecordingHub:
 
 
 def bind_arr_http(url: str = "http://arr.test") -> tuple[ArrHttp, RecordingHub]:
-    """A bound arr transport (backoff sleeps stubbed out) + a fresh recording hub installed.
-
-    The transport's fail-open warnings ride the hub, so each caller gets its
-    own RecordingHub. The leaked httpx client is closed by conftest's
-    `close_leaked_handles`.
-    """
+    """A bound arr transport (backoff sleeps stubbed) and a fresh recording hub. Conftest closes the client."""
 
     recording = install_recording_hub()
     http = ArrHttp.bind(client=httpx.Client(), url=url, api_key="testkey", label="Sonarr", sleep=lambda _s: None)
@@ -138,7 +111,7 @@ def diagnostic_messages(recording: RecordingHub, severity: Severity | None = Non
 
 
 class TtyStringIO(io.StringIO):
-    """An in-memory stream that claims to be a terminal (drives the rich/TTY arms)."""
+    """An in-memory stream that claims to be a terminal."""
 
     @override
     def isatty(self) -> bool:
@@ -146,13 +119,13 @@ class TtyStringIO(io.StringIO):
 
 
 class AsciiStringIO(io.StringIO):
-    """An in-memory stream whose claimed encoding can't hold glyphs (drives the ASCII-fallback arms)."""
+    """An in-memory stream whose claimed encoding can't hold glyphs."""
 
     encoding = "ascii"
 
 
 class FakeClock:
-    """A monotonic-ish clock the tests advance by hand, for stable durations."""
+    """A clock the tests advance by hand."""
 
     def __init__(self) -> None:
         self.now = 0.0
@@ -167,12 +140,7 @@ class FakeClock:
 
 
 class FakeArrItem:
-    """A minimal item satisfying the `ArrItem` protocol surface.
-
-    Sets the four attributes the run loop reads (`id` / `title` / `imdbId` /
-    `monitored`). A single class stands in for both a Sonarr series and a Radarr
-    movie since the shared loop only touches `ArrItem`.
-    """
+    """A minimal stand-in for the `ArrItem` surface: a series or a movie."""
 
     def __init__(self, *, item_id: int = 1, title: str = "Show", monitored: bool = True) -> None:
         self.id = item_id
@@ -182,13 +150,7 @@ class FakeArrItem:
 
 
 class FakeStrategy(ArrSync[FakeArrItem]):
-    """A typed, recording `ArrSync` for engine-orchestration tests.
-
-    Records each `process_al_id` call (the al_id) and lets a test script the
-    items, the resolved AniList ids, and whether `process_al_id` returns the
-    cap-reached sentinel or raises. The import hooks raise unless a test that
-    drives them overrides this fake.
-    """
+    """A typed `ArrSync` with scripted returns, for engine-orchestration tests."""
 
     def __init__(
         self,
@@ -206,7 +168,7 @@ class FakeStrategy(ArrSync[FakeArrItem]):
         self._process_raises_on = process_raises_on
         self._supports_blocking_monitor = supports_blocking_monitor
         self.process_calls: list[int] = []
-        # Scripted history. Reassign to None mid-test to script the failure path.
+        # Reassign to None mid-test to script the failure path.
         self.history: list[HistoryRecord] | None = [] if history is None else history
         self.history_calls: list[str] = []
 
@@ -267,16 +229,7 @@ class FakeStrategy(ArrSync[FakeArrItem]):
 
 
 class FakeSonarrClient(AbstractSonarrClient):
-    """A typed, scriptable stand-in for the `AbstractSonarrClient` surface.
-
-    Each read returns a per-instance field a test presets or reassigns mid-test
-    (e.g. `fake.episodes_return = [...]`). The two import commands RECORD their
-    typed call args, so a test asserts on recorded state (`execute_calls` /
-    `candidate_calls`). Subclasses the `AbstractSonarrClient` ABC, so it's
-    nominally checked against the real client's full method surface - a
-    missing method is a static `reportAbstractUsage` error and an
-    un-instantiable `TypeError`, not a silently-absorbed `Any`.
-    """
+    """A typed, scriptable stand-in for `AbstractSonarrClient`."""
 
     def __init__(
         self,
@@ -300,39 +253,33 @@ class FakeSonarrClient(AbstractSonarrClient):
         history_page: HistoryPage | None = None,
         path_mappings: list[RemotePathMapping] | None = None,
         commands_script: list[list[CommandResource]] | None = None,
+        completed_download_handling: bool = True,
     ) -> None:
         self.all_series_return: list[SonarrItem] = all_series or []
         self.queue_return: list[QueueRecord] = queue or []
         self.episodes_return: list[SonarrEpisode] | None = [] if episodes is None else episodes
         self.commands_return: list[CommandResource] = commands or []
-        # Successive list_commands calls consume this front-to-back, then stick
-        # on commands_return - scripts a disk pass that clears mid-poll.
         self.commands_script: list[list[CommandResource]] = commands_script or []
         self.candidates_return: list[ManualImportCandidate] | None = candidates
         self.quality_defs_return: list[QualityDefinition] = quality_defs or []
         self.languages_return: list[Language] = languages or []
         self.parse_return: list[ParsedEpisode] | None = parse
-        # The parse-level fullSeason flag the boundary now carries, folded into
-        # the SonarrParse the scripted episodes wrap into.
         self.parse_full_season_return: bool = parse_full_season
         self.parse_episode_info_fn: Callable[[str], ParsedFileInfo | None] = parse_episode_info_fn or (lambda _f: None)
         self.execute_command_id = execute_command_id
         self.command_status_return = (
             command_status if command_status is not None else CommandResource(status="completed")
         )
-        # Successive command_status calls consume this front-to-back, then stick
-        # on command_status_return - scripts a refresh that completes mid-poll.
         self.command_status_script: list[CommandResource] = command_status_script or []
         self.refresh_count = refresh_count
         self.history_since_return: list[HistoryRecord] | None = [] if history_since is None else history_since
-        # The fallback trio defaults to None ("failed") - a test scripting the
-        # folder path sets what its scenario needs, healthy-path tests never
-        # reach these.
+        # The fallback trio defaults to None (the "failed" reads).
         self.folder_candidates_return: list[ManualImportCandidate] | None = folder_candidates
         self.history_page_return: HistoryPage | None = history_page
         self.path_mappings_return: list[RemotePathMapping] | None = path_mappings
-        # Recorded calls: the import commands keep their full args. The plain reads
-        # keep a count / arg-list so a test can assert (not-)called.
+        self.download_client_config_return = DownloadClientConfig(
+            enable_completed_download_handling=completed_download_handling,
+        )
         self.queue_delete_return: bool = True
         self.candidate_calls: list[PendingImport] = []
         self.execute_calls: list[tuple[list[ManualImportFile], str]] = []
@@ -346,6 +293,7 @@ class FakeSonarrClient(AbstractSonarrClient):
         self.folder_candidate_calls: list[tuple[str, str]] = []
         self.history_probe_calls: list[str] = []
         self.path_mapping_calls: int = 0
+        self.download_client_config_calls: int = 0
 
     @override
     def all_series(self) -> list[SonarrItem]:
@@ -450,15 +398,14 @@ class FakeSonarrClient(AbstractSonarrClient):
         self.history_calls.append(date)
         return self.history_since_return
 
+    @override
+    def download_client_config(self) -> DownloadClientConfig:
+        self.download_client_config_calls += 1
+        return self.download_client_config_return
+
 
 class FakeRadarrClient(AbstractRadarrClient):
-    """A typed, scriptable stand-in for the `AbstractRadarrClient` surface.
-
-    Mirrors `FakeSonarrClient`: reads return per-instance fields a test
-    presets, and `movie_files` RECORDS the ids it was asked for. Subclasses the
-    ABC, so a missing method is a static `reportAbstractUsage` error and an
-    un-instantiable `TypeError`.
-    """
+    """A typed, scriptable stand-in for `AbstractRadarrClient`."""
 
     def __init__(
         self,
@@ -489,12 +436,7 @@ class FakeRadarrClient(AbstractRadarrClient):
 
 
 class CaptureHandler(logging.Handler):
-    """A logging handler that collects records, so a logged line/level can be asserted.
-
-    Attach to a test's logger, run the code, then assert over `records` (e.g. a
-    contained per-id failure logged at `ERROR`) - the no-throw, structured way to
-    pin logging behavior without coupling to exact message strings.
-    """
+    """A logging handler that collects records into `records`."""
 
     def __init__(self) -> None:
         super().__init__()

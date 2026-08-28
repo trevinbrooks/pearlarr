@@ -1,8 +1,4 @@
-"""Sonarr REST client: the HTTP surface the Sonarr syncer talks to.
-
-`SonarrClient` speaks to the raw `/api/v3` endpoints directly, every one
-riding the httpx-based `ArrHttp` bound at construction.
-"""
+"""Sonarr REST client over the raw `/api/v3` endpoints."""
 
 import logging
 from abc import ABC, abstractmethod
@@ -18,6 +14,7 @@ from .output import hub_warn
 from .seadex_types import (
     CommandBody,
     CommandResource,
+    DownloadClientConfig,
     HistoryPage,
     HistoryRecord,
     Language,
@@ -36,22 +33,13 @@ from .seadex_types import (
     validation_summary,
 )
 
-# Per-request timeout (seconds) bounding the manual-import flow's slow-remote-mount
-# reads: BOTH the folder scan (manual_import_candidates, where Sonarr walks and
-# parses every file) and the single-file parse during the import wait
-# (parse_episode_info). Bounding them lets a hung read surface as a transient miss
-# (retry) instead of blocking the run. Generous so a legitimately slow first read
-# (uncached remote files) still completes.
+# Per-request timeout (seconds) for the manual-import reads over a slow remote mount: the folder scan and the
+# single-file parse. Bounded so a hung read surfaces as a transient miss (retry) instead of blocking the run.
 MANUAL_IMPORT_TIMEOUT_S = 120
 
 
 class _ParsedEpisode(BaseModel):
-    """One `ParseResource.episodes[]` entry, reduced to the two numbers read.
-
-    Private to `SonarrClient.parse`, the sweep-side reader of the
-    series-matched array. The import side reads the same array through
-    `ParsedFileInfo.matched_episodes` (which also keeps Sonarr's id).
-    """
+    """One `ParseResource.episodes[]` entry, reduced to the two numbers read."""
 
     model_config = ConfigDict(frozen=True, extra="ignore")
 
@@ -60,16 +48,7 @@ class _ParsedEpisode(BaseModel):
 
 
 class AbstractSonarrClient(ABC):
-    """The Sonarr read/command surface the four Sonarr collaborators consume.
-
-    A nominal seam (`cosmicpython`'s `AbstractRepository` pattern) over the
-    public methods the episode / parse / mapper / import collaborators call
-    on their injected `sonarr`. Both the real `SonarrClient` and the test
-    `FakeSonarrClient` subclass it, so an incomplete fake is a static
-    `reportAbstractUsage` error *and* an un-instantiable `TypeError` - the
-    collaborators take this type, never the concrete client, so a fake is checked
-    against the real surface at the injection seam.
-    """
+    """The Sonarr read/command surface."""
 
     @abstractmethod
     def all_series(self) -> list[SonarrItem]: ...
@@ -134,6 +113,9 @@ class AbstractSonarrClient(ABC):
     def list_commands(self) -> list[CommandResource]: ...
 
     @abstractmethod
+    def download_client_config(self) -> DownloadClientConfig: ...
+
+    @abstractmethod
     def history_since(self, date: str) -> list[HistoryRecord] | None: ...
 
 
@@ -146,23 +128,11 @@ class SonarrClient(AbstractSonarrClient):
         http: ArrHttp,
         logger: logging.Logger,
     ) -> None:
-        """Instantiate the Sonarr API client.
-
-        Construction is network-free (no connection probe): the first request
-        happens on the first method call, so an unreachable Sonarr surfaces as
-        that call's typed error / fail-open path, never a constructor hang.
-
-        Args:
-            http: The transport already bound to Sonarr's url + key
-                (`ArrHttp.bind` with `label="Sonarr"`).
-            logger: For the client's DEBUG breadcrumbs (the
-                parse skip notes). Warnings ride the hub.
-        """
+        """Instantiate the Sonarr API client, network-free: the first request happens on the first method call."""
 
         self._http = http
-        # The wait-path polls ride a no-retry clone: the import monitor loop IS
-        # the retry mechanism, so in-call backoff only stretches each poll and
-        # multiplies identical warnings. `replace` shares the streak ledger.
+        # No-retry clone for the wait-path polls: the import monitor loop IS the retry mechanism, so in-call
+        # backoff only stretches each poll and multiplies identical warnings. `replace` shares the streak ledger.
         self._poll_http = replace(http, retries=0)
         self._logger = logger
 
@@ -170,29 +140,16 @@ class SonarrClient(AbstractSonarrClient):
     def all_series(self) -> list[SonarrItem]:
         """Every series in Sonarr (`/api/v3/series`, unfiltered).
 
-        The one fail-CLOSED read: the library list is the run's ground truth
-        (an outage reading as an empty library would silently no-op the leg),
-        so a failure raises the typed `arr_http` errors for the CLI
-        containment arms instead of degrading to an empty list.
+        Fail-CLOSED: a failure raises rather than degrading to an empty library.
         """
 
         raw = self._http.get_json_list_strict("/api/v3/series")
-        # Strict validation to match: a non-empty payload with zero valid
-        # records raises BoundaryContractError instead of reading as empty.
+        # Strict to match: a non-empty payload with zero valid records raises instead of reading as empty.
         return list[SonarrItem](validate_each(SonarrSeries, raw, strict=True))
 
     @override
     def episodes(self, series_id: int, *, quiet: bool = False) -> list[SonarrEpisode] | None:
-        """All episodes for a series, season/episode-sorted (`/api/v3/episode`).
-
-        Returns None (with a warning) if Sonarr is unreachable, so the caller can
-        skip the id gracefully. Stateless over the shared httpx client, so the
-        concurrent prefetch can call it from worker threads. `quiet` suppresses
-        the unreachable-warning: the concurrent episode prefetch passes it so a
-        transient miss isn't logged from a worker thread - it is retried, and
-        logged if it still fails, on the main thread when `get_ep_list`
-        re-fetches.
-        """
+        """All episodes for a series, season/episode-sorted (`/api/v3/episode`), or None when unreachable."""
 
         warn = f"Could not fetch episodes for series {series_id} from Sonarr ({{detail}}) - skipping"
         raw = self._http.get_json_list(
@@ -203,10 +160,8 @@ class SonarrClient(AbstractSonarrClient):
         if raw is None:
             return None
 
-        # Validate each record at this client boundary (junk records skip with a
-        # warning), then sort by season/episode for slicing later. A record
-        # missing either number sorts first (-1), never a None<int TypeError.
         episodes = validate_each(SonarrEpisode, raw)
+        # A record missing either number sorts first (-1), never a None<int TypeError.
         episodes.sort(
             key=lambda ep: (
                 ep.season_number if ep.season_number is not None else -1,
@@ -217,28 +172,9 @@ class SonarrClient(AbstractSonarrClient):
 
     @override
     def parse(self, filename: str) -> SonarrParse | None:
-        """Ask Sonarr to parse a single filename into season/episode numbers.
+        """Ask Sonarr to parse a filename (a basename, not a full path) into season/episode numbers.
 
-        Only the season/episode mapping and the parse-level `fullSeason` flag are
-        returned - the file size is filled in by the caller, since it comes from
-        the SeaDex file list rather than from Sonarr.
-
-        Distinguishes a clean response from a transient failure so the caller can
-        safely negative-cache the former without poisoning the latter: an empty
-        episode list is a *confirmed* "Sonarr matched no episode" (200,
-        cacheable), whereas None is a request failure (non-200 / connection
-        error after ArrHttp's retries) that must NOT be cached.
-
-        `parsedEpisodeInfo.fullSeason` rides along so the grab-time seed can
-        refuse a bare "S0X" name Sonarr matched to a whole season - even a season
-        of few enough episodes to slip under the seed's span cap.
-
-        Args:
-            filename: Filename to parse (basename, not full path).
-
-        Returns:
-            A `SonarrParse` on a clean 200 (empty episodes when Sonarr genuinely
-            matched nothing), or None when the request failed.
+        An empty episode list is a confirmed no-match (200, cacheable). None is a failure that must NOT be cached.
         """
 
         payload = self._http.get_json_dict(
@@ -249,10 +185,7 @@ class SonarrClient(AbstractSonarrClient):
         if payload is None:
             return None
 
-        # The ParseResource's "episodes" is an array of EpisodeResource objects,
-        # validated per entry at this boundary. A present-but-non-list
-        # "episodes" is a mangled response, not a confirmed no-match: fail open
-        # to the uncacheable None.
+        # A present-but-non-list "episodes" is mangled, not a no-match: fail open to the uncacheable None.
         raw_eps = payload.get("episodes", [])
         if not isinstance(raw_eps, list):
             return None
@@ -262,7 +195,6 @@ class SonarrClient(AbstractSonarrClient):
             try:
                 record = _ParsedEpisode.model_validate(ep)
             except ValidationError:
-                # A junk-typed entry skips like a missing-number one below.
                 self._logger.debug(f"Sonarr's parse returned a malformed episode entry for {filename}; skipping it")
                 continue
 
@@ -272,9 +204,7 @@ class SonarrClient(AbstractSonarrClient):
 
             parsed.append(ParsedEpisode(season=record.seasonNumber, episode=record.episodeNumber))
 
-        # The parse-level fullSeason flag lives on parsedEpisodeInfo. Narrow that
-        # nested object the same way as "episodes" and coerce truthy (matching
-        # ParsedFileInfo's BeforeValidator(bool)); absent/malformed reads False.
+        # Coerced truthy to match ParsedFileInfo's BeforeValidator(bool). Absent or malformed reads False.
         info = payload.get("parsedEpisodeInfo")
         full_season = bool(info.get("fullSeason")) if is_json_obj(info) else False
         return SonarrParse(episodes=parsed, full_season=full_season)
@@ -283,24 +213,12 @@ class SonarrClient(AbstractSonarrClient):
     def parse_episode_info(self, filename: str) -> ParsedFileInfo | None:
         """Parse a filename into season / episode / absolute numbers via `/api/v3/parse`.
 
-        The response's `parsedEpisodeInfo` carries the SERIES-AGNOSTIC numbers
-        Sonarr lifts straight from the release NAME - populated even for a
-        specials / alias-titled release Sonarr can't match to a library
-        series. Its `episodes` array (the series-MATCHED resolution, the only
-        place an absolute-only name gets a concrete `(season, episode)`) rides
-        along as `matched_episodes`. Assignment consults it strictly inside
-        OUR resolved set (`_exact_episode_ids`).
-
-        Returns the parsed info, or None (with a warning) on a non-200 or a
-        transient request error, so the caller can retry.
-
-        Args:
-            filename: Filename to parse (basename, not full path).
+        `parsedEpisodeInfo` carries series-agnostic numbers lifted from the release name, populated even when
+        Sonarr matches no library series.
         """
 
-        # Borrows the generous manual-import bound: it runs in the import wait over
-        # the same slow mount, unlike the sweep's plain parse() (no such timeout).
-        # Rides the no-retry poll handle: the wait loop re-asks.
+        # Borrows the generous manual-import bound: this runs in the import wait over the same slow mount,
+        # unlike the sweep's plain parse(). Rides the no-retry poll handle, the wait loop re-asks.
         payload = self._poll_http.get_json_dict(
             "/api/v3/parse",
             params={"title": filename},
@@ -310,8 +228,6 @@ class SonarrClient(AbstractSonarrClient):
         if payload is None:
             return None
 
-        # The ParseResource's parsedEpisodeInfo carries the series-agnostic
-        # numbers. A malformed body fails open to the same retryable None.
         try:
             return ParsedFileInfo.model_validate(payload)
         except ValidationError as e:
@@ -328,37 +244,15 @@ class SonarrClient(AbstractSonarrClient):
     ) -> list[ManualImportCandidate] | None:
         """List Sonarr's manual-import candidates for a completed download folder.
 
-        Scans by `downloadId` only (no `seriesId`): we consume the candidates'
-        on-disk `path` + `quality` and assign episode identity ourselves from
-        OUR resolved mapping, so Sonarr's own title parse is irrelevant here - a
-        candidate Sonarr rejects as "Unknown Series" still gives us its path, which
-        is all this call is for. (`seriesId` is deliberately NOT sent: pinning it
-        makes Sonarr scan the *library* folder rather than the download, returning
-        the wrong files.)
-
-        Returns `None` SILENTLY on a non-200 *or* a transient request error
-        (timeout / connection drop) - both mean "ask again", e.g. Sonarr is
-        still building the parse over a slow remote mount. Quiet by design:
-        the executor immediately falls back to the folder scan, which owns the
-        poll's messaging (a warning here would brand every dead-tracked
-        download's 500 with a misleading "will retry" right before the
-        fallback handles it - a real outage still warns through the folder
-        scan's own template). Returns an empty list only when Sonarr genuinely
-        reports no candidates (the files aren't visible on its mount yet).
-
-        Each raw ManualImportResource is validated into a
-        `ManualImportCandidate` (`path` / `quality` /
-        `rejections`) at this client boundary, so the decision path never
-        touches the raw DTO.
+        Never send `seriesId`: Sonarr then scans the library folder rather than the download.
         """
 
-        # Rides the no-retry poll handle: the wait loop re-asks.
         raw = self._poll_http.get_json_list(
             "/api/v3/manualimport",
             params={
+                # Uppercased to match Sonarr's stored infohash form.
                 "downloadId": pending.infohash.upper(),
-                # Never filter existing files: our import may replace an episode's
-                # non-recommended file, whose candidate a filtered scan would drop.
+                # Never filter existing files: a filtered scan drops the candidate for a file we mean to replace.
                 "filterExistingFiles": "false",
             },
             warn=None,
@@ -366,9 +260,6 @@ class SonarrClient(AbstractSonarrClient):
         )
         if raw is None:
             return None
-
-        # Validate each ManualImportResource at this boundary (junk candidates
-        # skip with a warning), narrowing to the fields planning reads.
         return validate_each(ManualImportCandidate, raw)
 
     @override
@@ -378,33 +269,17 @@ class SonarrClient(AbstractSonarrClient):
         folder: str,
         title: str,
     ) -> list[ManualImportCandidate] | None:
-        """List manual-import candidates by scanning `folder` directly (no tracking).
+        """List manual-import candidates by scanning `folder` directly, which may be a single file path.
 
-        The dead-loop fallback for `manual_import_candidates`: a download
-        Sonarr's history maps to Imported/Failed/Ignored is queue-hidden and its
-        `downloadId=` scan NREs (HTTP 500) forever, but the UI's browse path -
-        `folder=` alone - skips the tracked-download branch entirely. `folder`
-        may also be a single FILE path (Sonarr's `FileExists` arm handles it).
-
-        CONTRACT: this request must never carry `downloadId` (it re-enters the
-        poisoned tracked branch - the same NRE) and never `seriesId` (the
-        controller routes `seriesId.HasValue` to the LIBRARY folder scan before
-        it ever consults `folder`, returning the wrong files). Candidates still
-        carry `path`/`quality`/`rejections`. Episode identity stays ours, so
-        the missing series pin costs nothing here.
-
-        Returns None (with a warning) on a non-200 / transient error. An empty
-        list means Sonarr genuinely sees no files at that path (not visible on
-        its mount, or the path needs remote-path translation).
+        Never send `downloadId` (the tracked scan 500s forever once history marks the download
+        Imported/Failed/Ignored) or `seriesId` (it routes to a library-folder scan instead).
         """
 
-        # Rides the no-retry poll handle: the wait loop re-asks.
         raw = self._poll_http.get_json_list(
             "/api/v3/manualimport",
             params={
                 "folder": folder,
-                # Same stance as the downloadId scan: never drop the candidate
-                # for a file that would replace an episode's existing file.
+                # Same stance as the downloadId scan: never drop a candidate that would replace an existing file.
                 "filterExistingFiles": "false",
             },
             warn=f"Could not fetch folder-scan import candidates for {title} ({{detail}}) - will retry",
@@ -418,17 +293,9 @@ class SonarrClient(AbstractSonarrClient):
     def history_for_download(self, *, download_id: str) -> HistoryPage | None:
         """Sonarr's history for one download, newest first (`/api/v3/history`).
 
-        The dead-tracked probe read: one page-1, date-descending query whose
-        records the classifier walks for the newest relevant event. Paging is
-        pinned explicitly (a 23-file batch has ~46+ events - an unlucky default
-        page size would yield a false verdict). The endpoint is a paged
-        envelope, unlike `/history/since`.
-
-        Returns None (with a warning) on a non-200 / transient error - the
-        caller must treat that as "no verdict", never as clean history.
+        A paged envelope, unlike `/history/since`. None means no verdict, never clean history.
         """
 
-        # Rides the no-retry poll handle: the wait loop re-asks.
         payload = self._poll_http.get_json_dict(
             "/api/v3/history",
             params={
@@ -444,7 +311,6 @@ class SonarrClient(AbstractSonarrClient):
         if payload is None:
             return None
 
-        # A malformed envelope fails open to the same no-verdict None.
         try:
             return HistoryPage.model_validate(payload)
         except ValidationError as e:
@@ -456,13 +322,7 @@ class SonarrClient(AbstractSonarrClient):
 
     @override
     def remote_path_mappings(self) -> list[RemotePathMapping] | None:
-        """All Sonarr remote path mappings (`/api/v3/remotepathmapping`).
-
-        Read by the folder-scan fallback to translate a download-client path
-        into Sonarr's filesystem view. Returns None (with a warning) on a
-        non-200 / transient error, so the caller can distinguish "no mappings
-        configured" (an empty list) from "couldn't ask".
-        """
+        """All Sonarr remote path mappings (`/api/v3/remotepathmapping`), or None on failure."""
 
         raw = self._http.get_json_list(
             "/api/v3/remotepathmapping",
@@ -479,51 +339,27 @@ class SonarrClient(AbstractSonarrClient):
         files: list[ManualImportFile],
         import_mode: str = "auto",
     ) -> int | None:
-        """Queue a `ManualImport` command for the given files (no title parse).
+        """Queue a `ManualImport` command for the given files and return its command id.
 
-        Each entry in `files` carries the authoritative mapping we computed
-        (`seriesId`, `episodeIds`, `releaseGroup`, `quality` ...), so
-        Sonarr imports without re-deriving anything from the release title.
-        `import_mode` is Sonarr's `importMode`: `auto` (the default, respects
-        the copy/hardlink setting and preserves seeding), `move` or `copy`.
-
-        Returns:
-            The queued command's id (for optional completion verification), or
-            None (with a warning) on failure, so the caller can leave the
-            import pending and retry later.
+        `import_mode` is Sonarr's `importMode`: `auto` (honors the copy/hardlink setting), `move`, or `copy`.
         """
 
         return self._post_command(CommandBody(name="ManualImport", importMode=import_mode, files=files))
 
     @override
     def refresh_monitored_downloads(self) -> int | None:
-        """Queue Sonarr's `RefreshMonitoredDownloads` command.
-
-        Makes Sonarr re-scan its download clients (picking up our completed
-        torrent and refreshing the remote mount path) and re-evaluate its queue,
-        so the queue's `trackedDownloadState` reflects reality before we read it.
-
-        Returns the command `id` (poll `command_status` to wait for it) or
-        None on failure.
-        """
+        """Queue Sonarr's `RefreshMonitoredDownloads` command and return its command id."""
 
         return self._post_command(CommandBody(name="RefreshMonitoredDownloads"))
 
     def _post_command(self, body: CommandBody) -> int | None:
-        """POST a command to `/api/v3/command` and return its queued id.
+        """POST a command to `/api/v3/command` and return its queued id, or None on failure.
 
-        Shared by `manual_import_execute` and
-        `refresh_monitored_downloads`. Returns the command `id` or None
-        (with a warning) on a non-2xx. The POST rides `ArrHttp.post_json`,
-        so it is never retried (a retry could double-queue the command).
-
-        Args:
-            body: The outgoing command body (must carry `name`).
+        Never retried: a retry could double-queue the command.
         """
 
-        # The standard write dump: exclude_unset keeps exactly what the builder
-        # set (RefreshMonitoredDownloads stays a bare {"name"}), never
-        # exclude_none (an explicitly-set None must reach the wire).
+        # exclude_unset keeps exactly what the builder set (RefreshMonitoredDownloads stays a bare {"name"}),
+        # never exclude_none: an explicitly set None must reach the wire.
         payload = self._http.post_json(
             "/api/v3/command",
             json=body.model_dump(exclude_unset=True),
@@ -532,13 +368,12 @@ class SonarrClient(AbstractSonarrClient):
         if payload is None:
             return None
         if not isinstance(payload, dict):
-            # A 2xx whose body carries no readable id: Sonarr may still have
-            # queued the command, so leave a breadcrumb before reporting None.
+            # A 2xx whose body carries no readable id: Sonarr may still have queued the command, so leave
+            # a breadcrumb before reporting None.
             hub_warn(f"Could not confirm the {body.name} command was queued (unexpected payload) - will retry")
             return None
 
-        # The returned CommandResource's "id" is the queued command id (0 when
-        # absent, so the caller drops it). A malformed body fails open to None.
+        # "id" defaults to 0 when absent, so it drops to None.
         try:
             command = CommandResource.model_validate(payload)
         except ValidationError as e:
@@ -551,24 +386,10 @@ class SonarrClient(AbstractSonarrClient):
 
     @override
     def queue(self) -> list[QueueRecord]:
-        """All Sonarr queue records (`/api/v3/queue`).
+        """All Sonarr queue records (`/api/v3/queue`), paged until `totalRecords` is covered.
 
-        Used to see what Sonarr is doing with a download we added directly to
-        qBittorrent: each record carries `downloadId` (the infohash, matched
-        case-insensitively) and `trackedDownloadState`. A season pack has one
-        record per episode sharing the `downloadId`. `includeUnknownSeriesItems`
-        is on because an `importBlocked` item whose title didn't match a series
-        can surface as an unknown-series record. Pages of 1000 are fetched until
-        `totalRecords` is covered, so a very large queue is never silently
-        truncated.
-
-        Each raw `QueueResource` is validated into a
-        `QueueRecord` (`download_id` / `state` /
-        `status`) at this client boundary, so the wait decision never
-        touches the raw DTO.
-
-        Returns an empty list (with a warning) on a non-200, so the caller treats
-        "couldn't read the queue" as "not tracked" and falls back to its own scan.
+        A season pack holds one record per episode sharing the `downloadId` (an infohash, case-insensitive).
+        `includeUnknownSeriesItems` is on so an `importBlocked` item whose title matched no series still surfaces.
         """
         records: list[QueueRecord] = []
         page = 1
@@ -583,13 +404,10 @@ class SonarrClient(AbstractSonarrClient):
                 warn="Could not fetch the Sonarr queue ({detail}) - continuing without queue state",
             )
             if paged is None:
-                # A failed LATER page keeps what was fetched: partial beats empty
-                # for the caller's "not tracked -> fall back to own scan" logic.
+                # A failed LATER page keeps what was fetched: partial beats empty for the caller's
+                # "not tracked -> fall back to own scan" logic.
                 return records
 
-            # The paged object's "records" is the array of QueueResource objects.
-            # Validate each at this boundary (a stray non-object entry is skipped
-            # with a warning, never crashed on).
             raw = paged.get("records")
             page_records = validate_each(QueueRecord, cast("list[object]", raw)) if isinstance(raw, list) else []
             records.extend(page_records)
@@ -601,15 +419,10 @@ class SonarrClient(AbstractSonarrClient):
 
     @override
     def queue_delete(self, queue_id: int) -> bool:
-        """Dismiss one queue item (`DELETE /api/v3/queue/{id}`) - and with it the whole tracked download.
+        """Dismiss one queue item (`DELETE /api/v3/queue/{id}`), and with it the whole tracked download.
 
-        `removeFromClient=false` + `blocklist=false`: Sonarr records the
-        download as manually ignored and stops tracking it - the torrent stays
-        in qBittorrent seeding, nothing is blocklisted or re-searched. The
-        ignored state is durable (re-read from download history on Sonarr's
-        next refresh), so completed-download handling can never import the
-        download again. Fail-open: a failure warns and returns False (the
-        close is best-effort).
+        `removeFromClient=false` + `blocklist=false`: Sonarr durably marks the download manually ignored (never
+        importing it again) while the torrent keeps seeding in qBittorrent, unblocklisted and not re-searched.
         """
 
         return self._http.delete(
@@ -620,16 +433,7 @@ class SonarrClient(AbstractSonarrClient):
 
     @override
     def quality_definitions(self) -> list[QualityDefinition]:
-        """All Sonarr quality definitions (`/api/v3/qualitydefinition`).
-
-        Used to resolve a quality NAME (e.g. `Bluray-2160p`) to a Sonarr
-        QualityModel for the manual-import payload. Each parsed
-        `QualityDefinitionResource` wraps a nested `quality` object the resolver
-        re-emits verbatim.
-
-        Returns an empty list (with a warning) on a non-200, so the caller can
-        fall back to other quality sources.
-        """
+        """All Sonarr quality definitions (`/api/v3/qualitydefinition`), or an empty list on failure."""
 
         raw = self._http.get_json_list(
             "/api/v3/qualitydefinition",
@@ -637,22 +441,12 @@ class SonarrClient(AbstractSonarrClient):
         )
         if raw is None:
             return []
-
-        # Validate each definition at this boundary (junk records skip with a
-        # warning). The nested quality keeps its unknown keys for the re-emit.
+        # The nested quality keeps its unknown keys, so the manual-import payload can re-emit it whole.
         return validate_each(QualityDefinition, raw)
 
     @override
     def languages(self) -> list[Language]:
-        """All Sonarr languages (`/api/v3/language`).
-
-        Used to resolve language names to `{id, name}` objects for the
-        manual-import payload. Each parsed `LanguageResource`'s `{id, name}` is
-        what the resolver matches by name and re-emits verbatim.
-
-        Returns an empty list (with a warning) on a non-200, so the caller can
-        fall back to the candidate's languages.
-        """
+        """All Sonarr languages (`/api/v3/language`), or an empty list on failure."""
 
         raw = self._http.get_json_list(
             "/api/v3/language",
@@ -660,23 +454,11 @@ class SonarrClient(AbstractSonarrClient):
         )
         if raw is None:
             return []
-
-        # Validate each language at this boundary (junk records skip with a
-        # warning). The resolver matches by name and re-builds {id, name}.
         return validate_each(Language, raw)
 
     @override
     def command_status(self, command_id: int) -> CommandResource:
-        """Current state of a Sonarr command (`/api/v3/command/{id}`).
-
-        Used by `ImportExecutor.refresh_downloads` to poll a
-        queued `RefreshMonitoredDownloads` command until it finishes, reading its
-        parsed `status` / `result` fields.
-
-        Returns a default `CommandResource` (`status` None) with a warning on a
-        non-200, so the caller can treat the import as unverified and leave it
-        pending.
-        """
+        """Current state of a Sonarr command (`/api/v3/command/{id}`), or a blank `CommandResource` on failure."""
 
         payload = self._http.get_json_dict(
             f"/api/v3/command/{command_id}",
@@ -685,8 +467,8 @@ class SonarrClient(AbstractSonarrClient):
         if payload is None:
             return CommandResource()
 
-        # A malformed body fails open to the same default (status None) the
-        # transport miss takes - the refresh poll loop depends on it.
+        # A malformed body fails open to the same default (status None) as a transport miss. The refresh
+        # poll loop depends on it.
         try:
             return CommandResource.model_validate(payload)
         except ValidationError as e:
@@ -698,21 +480,7 @@ class SonarrClient(AbstractSonarrClient):
 
     @override
     def list_commands(self) -> list[CommandResource]:
-        """All Sonarr commands (`/api/v3/command`).
-
-        Used by the in-flight ManualImport guard to see whether a ManualImport we
-        (or a prior run) POSTed for a download is still `queued`/`started` -
-        so we don't stack a duplicate while Sonarr is already importing it. Each
-        raw command is validated into a
-        `CommandResource` (`name` / `status` /
-        `message` / `body.files`) at this client boundary, mirroring
-        `queue`.
-
-        Returns an empty list (with a warning) on a non-200, so the caller treats
-        "couldn't read the commands" as "nothing in flight" and proceeds (a false
-        step-in is bounded by the import deadline, a missed read just re-checks
-        next poll).
-        """
+        """All Sonarr commands (`/api/v3/command`), or an empty list on failure."""
 
         raw = self._http.get_json_list(
             "/api/v3/command",
@@ -720,13 +488,25 @@ class SonarrClient(AbstractSonarrClient):
         )
         if raw is None:
             return []
-
-        # Validate each command at this boundary (strays skip with a warning).
         return validate_each(CommandResource, raw)
 
     @override
+    def download_client_config(self) -> DownloadClientConfig:
+        """Sonarr's download client config (`/api/v3/config/downloadclient`), or the defaults on failure."""
+
+        warn = "Could not read Sonarr's download client config ({detail}) - assuming completed download handling is on"
+        payload = self._http.get_json_dict("/api/v3/config/downloadclient", warn=warn)
+        if payload is None:
+            return DownloadClientConfig()
+        try:
+            return DownloadClientConfig.model_validate(payload)
+        except ValidationError as e:
+            hub_warn(warn.format(detail=f"malformed response: {validation_summary(e)}"))
+            return DownloadClientConfig()
+
+    @override
     def history_since(self, date: str) -> list[HistoryRecord] | None:
-        """History since `date`, or None on failure (fail-open, shared helper)."""
+        """History since `date`, or None on failure."""
 
         return self._http.history_since(
             date,

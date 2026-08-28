@@ -1,4 +1,4 @@
-"""The per-arr run loop: the `run_sync` scaffolding shared by both Arr strategies."""
+"""The per-arr run loop shared by both Arr strategies."""
 
 import time
 from typing import final
@@ -20,29 +20,11 @@ from .wait_view import (
 
 @final
 class RunLoop:
-    """The Arr-agnostic run loop driving an injected strategy.
-
-    Receives its shared collaborators as a `RunDeps` bundle plus the
-    `RunServices` hub (both built and injected by the composition root
-    in `bootstrap.py`) and owns the run loop, the per-run `RunContext`
-    lifecycle, and the wait-pass machinery. It drives an injected
-    `ArrSync` strategy (passed to `run_sync`) for the
-    Arr-specific pieces. The strategy holds the `RunServices` hub as its
-    `services` and calls the shared per-id pipeline through it, so it never
-    sees this loop type. The loop never holds the strategy and never constructs
-    its own dependencies.
-    """
+    """The Arr-agnostic run loop driving an injected strategy."""
 
     def __init__(self, deps: RunDeps, services: RunServices) -> None:
-        """Receive the shared collaborators + services hub and set up per-run state.
+        """Receive the shared collaborators + services hub and set up per-run state."""
 
-        The loop adopts the services hub's placeholder context and pushes each
-        run's fresh context back into it. The hub is also injected into the
-        strategy.
-        """
-
-        # Unpack the injected collaborators into the attribute names the run loop
-        # methods read directly (the loop-side subset of the deps).
         self._config = deps.config
         self._arr_config = deps.arr_config
         self.qbit = deps.qbit
@@ -55,19 +37,14 @@ class RunLoop:
 
         self._services = services
 
-        # The active strategy for the current run, (re)set at the top of run_sync.
-        # The placeholder None here is replaced before any import hook is invoked.
+        # (Re)set at the top of run_sync. The None placeholder is replaced before any import hook runs.
+        # Held under the narrow, non-generic ImportCompleter ABC (a concrete ArrSync subclasses it), so no ItemT cast.
         self._active_strategy: ImportCompleter | None = None
 
-        # Per-run state lives on this context (see RunServices.__init__ for the
-        # full enumeration). ADOPT the services hub's placeholder (one placeholder,
-        # never a second mint) - its dry_run=False + OFF wait mode keep every
-        # preview / pending-import path a safe no-op - so the object is usable
-        # before run_sync.
+        # Adopt the hub's placeholder ctx, never mint a second one.
+        # Its dry_run=False and OFF wait mode keep every preview and pending-import path a safe no-op before run_sync.
         self._ctx = services.ctx
 
-        # Loop-side per-run collaborator, built from the deps hub + the adopted
-        # placeholder ctx. begin_run rebinds its ctx at the top of each run.
         self._wait_manager = ImportWaitManager(
             deps=deps,
             ctx=self._ctx,
@@ -76,14 +53,7 @@ class RunLoop:
         self.begin_run(self._ctx)
 
     def begin_run(self, ctx: RunContext) -> None:
-        """Bind the fresh run context to every per-run collaborator.
-
-        Two-phase bind: called once with the adopted placeholder ctx in
-        `__init__` (so pre-run paths are safe) and again from `run_sync`
-        right after `reset_run_stats` swaps in the run's real ctx, so every
-        collaborator - the services hub (and through it the filter + grab
-        pipeline) and the loop's wait manager - rebinds to the fresh ctx.
-        """
+        """Bind the fresh run context to every per-run collaborator."""
 
         self._services.begin_run(ctx)
         self._wait_manager.begin_run(ctx, self._active_strategy)
@@ -93,21 +63,7 @@ class RunLoop:
         dry_run: bool,
         import_wait_mode: ImportWaitMode = ImportWaitMode.OFF,
     ) -> None:
-        """Start a fresh run context and the run clock, and rebind collaborators.
-
-        Replaces the run-scoped state wholesale with a new RunContext - this is
-        the ONLY fresh-mint site. Its `arr` is read off the services hub (the
-        authority) - and stamps the hub-counts mark (warning/error counts are
-        diffed against it when the summary is logged). The
-        `begin_run` rebind is folded in here so the ctx swap and the
-        collaborator rebind can never drift apart - a missed rebind would
-        silently route a collaborator's writes to the orphaned prior context.
-
-        Args:
-            dry_run: Whether this run simulates without grabbing/writing.
-            import_wait_mode: The run's resolved wait mode
-                (cli > config > default), stamped onto the fresh context.
-        """
+        """Start a fresh run context and the run clock, and rebind collaborators."""
 
         self._ctx = RunContext(
             arr=self._services.arr,
@@ -121,24 +77,11 @@ class RunLoop:
 
     @property
     def _wait_active(self) -> bool:
-        """Whether the wait machinery runs this pass (an active mode, not preview).
-
-        Run-invariant (dry_run, qbit, and the resolved wait mode are all fixed
-        for the whole run). Named once so the run-start prune, the per-item
-        pending snapshot, and _finalize_run share one gate.
-        """
+        """Whether the wait machinery runs this pass (an active mode, not preview)."""
 
         return self._ctx.import_wait_mode is not ImportWaitMode.OFF and not self._services.is_preview()
 
-    # --- Run orchestration (shared machinery) -------------------------------
-    #
-    # run_sync is the shared scaffolding both Arrs use (reset stats, fetch items,
-    # optional single-id filter, AniList prefetch, the per-item loop, and the
-    # end-of-run save + summary). The Arr-specific pieces are the injected
-    # strategy's hooks (get_items, filter_to_single, item_anilist_ids,
-    # process_al_id). The strategy holds the RunServices hub as its services and
-    # calls the shared per-id head/tail (al_id_prologue / cached_entry_skip /
-    # grab_and_cache) through it.
+    # --- Run orchestration --------------------------------------------------
 
     def run_sync[ItemT: ArrItem](
         self,
@@ -151,74 +94,36 @@ class RunLoop:
     ) -> None:
         """Shared run scaffolding for both Arr syncers.
 
-        Generic in `ItemT` (the strategy's item protocol), so the body sees a
-        precise `list[ItemT]` / `item: ItemT` - the same concrete type the
-        strategy's hooks consume and produce. `ArrSync` is invariant in its
-        item type, so a concrete (non-union) strategy must reach this call:
-        the composition root (`bootstrap.py`) branches per Arr so each call
-        binds one `ItemT` cleanly.
-
         Args:
-            strategy: The Arr-specific strategy to drive (injected
-                by the composition root, which picks Sonarr/Radarr at runtime). It
-                already holds the shared `RunServices` hub as its services,
-                so its hooks are called without passing anything back.
-            item_id: If set, only run for the single item with this
-                id (TMDB for Radarr, TVDB for Sonarr)
-            dry_run: Simulate the run without grabbing torrents, writing
-                the cache, or sending notifications
-            import_wait_mode: The CLI `--import-wait-mode` override; None falls
-                back to the configured `imports.wait_mode`.
-            boot: The startup cockpit's producer facade. The
-                library fetch and the metadata prefetch graduate into it as steps,
-                and its section is capped right before the per-item scan begins
-                (a no-op unless a hub renders).
+            strategy: The Arr-specific strategy to drive.
+            item_id: If set, only run for the single item with this id (TMDB for Radarr, TVDB for Sonarr).
+            dry_run: Simulate the run without grabbing torrents, writing the cache, or sending notifications.
+            import_wait_mode: The CLI `--import-wait-mode` override. None falls back to `imports.wait_mode`.
+            boot: The startup cockpit's producer facade.
         """
 
-        # Hold the active strategy (so _finalize_run / _grab can call its import
-        # hook) and resolve the effective wait mode (cli > config) for
-        # the whole run. The loop only ever calls import_completed off it, so it
-        # is held under the narrow, non-generic ImportCompleter ABC - which a
-        # concrete ArrSync subclasses, so no invariant-ItemT cast.
         self._active_strategy = strategy
         resolved_wait_mode = import_wait_mode if import_wait_mode is not None else self._config.imports.wait_mode
 
-        # The run's arr comes off the services hub (the authority - each fresh
-        # ctx.arr is a per-run copy of it).
         arr = self._services.arr
 
-        # Start a fresh run context (stats + clock + counter snapshot + the run's
-        # dry_run / wait-mode flags). reset_run_stats rebinds the collaborators to it.
         self.reset_run_stats(dry_run=dry_run, import_wait_mode=resolved_wait_mode)
 
-        # Tend the durable pending-import store at run start (never on a preview,
-        # since waiting/importing needs a real qBittorrent client). The TTL prune
-        # runs for EVERY active mode - including pure blocking - so aged-out records
-        # can't accumulate forever. The reconcile/snapshot/monitor that actually
-        # report and import carried-over records run AFTER the per-item loop (the
-        # inline per-series snapshot) and in _finalize_run (deferred reconcile +
-        # the post-summary blocking monitor), never before the banner.
+        # The TTL prune runs at run start for EVERY active mode, so aged-out records can't accumulate forever.
+        # Reporting carried-over records is per item, importing them is _finalize_run's, never before the banner.
         if self._wait_active:
             self._wait_manager.prune_expired_pending()
 
-        # Fetch the library (the long pre-scan network wait) inside the cockpit so
-        # the spinner animates through it. The count graduates as the step's detail.
         with boot.step(f"Fetching {arr.capitalize()} library") as fetching:
             all_items: list[ItemT] = strategy.get_items()
 
-            # If we're targeting a single item, filter down to it
             if item_id is not None:
                 all_items = strategy.filter_to_single(all_items, item_id)
 
             n_items = len(all_items)
             fetching.note(arr_item_noun(arr, n_items))
 
-        # Arr-side activity scan: one /history/since poll marks items whose files
-        # the arr changed since the last pass dirty, so the cached-entry skip
-        # re-evaluates just those (everything, on a coverage gap). Runs BEFORE
-        # the prefetches so al_id_needs_scan warms exactly the dirty subset (the
-        # sweep-perf invariant). Skipped when ignore_seadex_update_times already
-        # re-processes everything.
+        # The activity scan must run before the prefetches, which warm exactly the dirty subset it marks.
         monitor: ArrActivityMonitor | None = None
         if self._config.advanced.detect_arr_activity and not self._config.seadex.ignore_seadex_update_times:
             with boot.step(f"Checking {arr.capitalize()} activity") as step:
@@ -234,12 +139,7 @@ class RunLoop:
                 else:
                     step.note("none" if not dirty else count_noun(len(dirty), "changed entry", "changed entries"))
 
-        # Warm the AniList cache before the per-item loop: reuse what past runs
-        # fetched, then batch-fetch (id_in pages) everything still missing, so the
-        # loop rarely hits AniList one id at a time and trips its rate limit.
-        # Seed the AniList cache + collect the run's candidate ids - instant local
-        # work, so no ledger line. Then surface each network/concurrent warm as its
-        # own timed step instead of one opaque "Prefetching metadata".
+        # Warm in bulk: fetching one id at a time in the loop trips AniList's rate limit.
         self._anilist.load_cache()
         prefetch_ids: set[int] = set()
         for item in all_items:
@@ -253,23 +153,17 @@ class RunLoop:
             fetched = self._anilist.prefetch(prefetch_ids, preview=self._services.is_preview(), progress=step)
             step.note("cached" if fetched == 0 else count_noun(fetched, "entry", "entries"))
 
-        # Bulk-fetch SeaDex entries for the same ids in batched OR-filter queries,
-        # collapsing the per-id from_id round-trips (one per library id, just to read
-        # updated_at) into a handful. entry() then serves from this warmed cache.
-        # An outage mid-prefetch must not claim "N entries" it never fetched.
+        # Batched OR-filter queries collapse the per-id from_id round-trips. An outage mid-prefetch
+        # must not claim "N entries" it never fetched.
         with boot.step("Fetching SeaDex entries") as step:
             fetched = self._seadex.prefetch(prefetch_ids, progress=step)
             if self._seadex.outage:
-                # Terse ledger annotation only. The gateway already warned once with
-                # the failure detail, so don't repeat the whole sentence here.
+                # Terse: the gateway already warned once with the failure detail.
                 step.warn("unreachable")
             else:
                 step.note("cached" if fetched == 0 else count_noun(fetched, "entry", "entries"))
 
-        # Warm the per-item episode lists concurrently (Sonarr only - Radarr no-ops,
-        # so it gets no step). Kept FRESH - not cached across runs - so the grab/skip
-        # decision still reads current Sonarr file state. This only collapses the
-        # sequential per-series fetch latency.
+        # Episode lists are warmed fresh every run, never cached: a stale list under-grabs.
         if strategy.warms_episodes:
             with boot.step("Fetching Sonarr episodes") as step:
                 warmed = strategy.prefetch_episodes(all_items, progress=step)
@@ -277,22 +171,16 @@ class RunLoop:
         else:
             strategy.prefetch_episodes(all_items)
 
-        # Tear the cockpit down BEFORE the per-item scan logs anything, so the scan
-        # never reflows above a stale spinner. The "ready in Xs" capstone lands here.
+        # Tear the cockpit down before the scan logs anything, or it reflows above a stale spinner.
         boot.end_section()
 
         self._reporter.log_arr_start(arr, n_items)
 
-        # Matching preferences changed since the last vouched pass: the skip gate
-        # re-checks every cached verdict this run - say so once (the ignore flag
-        # already re-checks everything, so it needs no announcement). Only on a
-        # full run, mirroring the vouch: a single-item run re-checks just its id,
-        # so the whole-library note would overstate it and recur every time.
+        # Only on a full run, mirroring the vouch: a single-item run re-checks just its id, so the
+        # whole-library note would overstate it and recur every time.
         if item_id is None and self._services.selection_stale and not self._config.seadex.ignore_seadex_update_times:
             hub_note("Matching settings changed - rechecking cached entries")
 
-        # Set when a per-id grab hits max_torrents_to_add: breaks the scan and falls
-        # through to the single _finalize_run site below.
         cap_reached = False
         for item_idx, item in enumerate(all_items):
             try:
@@ -304,30 +192,21 @@ class RunLoop:
                 hub_error(f"{title}: unexpected error ({e}) - skipping this title", exc=e)
                 continue
 
-        # ONE full-coverage predicate for both gates below - they drifted apart
-        # once (an outage run committed the checkpoint, consuming drift events it
-        # never acted on): a single-item or capped run leaves later activity
-        # unseen, and an outage run skipped whatever SeaDex never served.
+        # ONE full-coverage predicate for both gates below. They drifted apart once: an outage run committed the
+        # checkpoint, consuming drift events it never acted on.
         full_pass = item_id is None and not cap_reached and not self._seadex.outage
 
-        # Advance the history checkpoint only on a full pass. Held on outage so
-        # the next healthy run re-derives the same dirty ids (the query overlap +
-        # id dedup absorb the replay). The staged write persists only at
-        # _finalize_run's non-preview save.
+        # Held on outage so the next healthy run re-derives the same dirty ids (the query overlap and id
+        # dedup absorb the replay). The staged write persists only at _finalize_run's non-preview save.
         if monitor is not None and full_pass:
             monitor.commit_checkpoint()
 
-        # Same full-pass rule for the selection digest (also seeds it on a first
-        # run). A per-id error contained mid-scan leaves that one title on its
-        # prior verdict AND consumes its dirty mark. We vouch/commit anyway -
-        # blocking on any flaky title would re-scan the whole library every run,
-        # and dropping its entry to force a re-check could re-grab.
+        # A contained per-id error still vouches: otherwise one flaky title re-scans the library every run.
+        # Dropping its entry to force a re-check is not the answer either, that could re-grab.
         if full_pass:
             self.cache_store.vouch_selection(arr, self._config.selection_digest())
 
-        # Run the end-of-run blocking pass (blocking/hybrid only), then persist
-        # the run and log the summary. Per-title update_cache calls only mutate
-        # memory, so this finalize is what actually saves (and sorts by id).
+        # Per-title update_cache calls only mutate memory, so this finalize is what actually saves.
         self._finalize_run()
 
     def _scan_item[ItemT: ArrItem](
@@ -337,16 +216,7 @@ class RunLoop:
         item_idx: int,
         n_items: int,
     ) -> bool:
-        """Scan one library item, returning True iff a grab hit the add cap.
-
-        Guard-claused: the unmonitored skip and the no-mappings skip return
-        False early. The al_id sub-loop returns True the instant process_al_id
-        signals the cap - its inner per-id try/except still contains a transient
-        error to that one AniList id and continues. The carried-over pending
-        snapshot is the tail before the final False. `arr` is read off the
-        services hub (the local authority), so the caller passes only the
-        strategy + the item and its scan position.
-        """
+        """Scan one library item, returning True iff a grab hit the add cap."""
 
         arr = self._services.arr
         item_title = item.title
@@ -358,12 +228,10 @@ class RunLoop:
             n_items,
         )
 
-        # If we're not monitored, then skip if ignore_unmonitored is switched on
         if not item.monitored and self._arr_config.ignore_unmonitored:
             self._reporter.log_arr_item_unmonitored(self._ctx, item_title)
             return False
 
-        # Get the mappings from the Arr item to AniList
         al_mappings = strategy.item_anilist_ids(item)
 
         if len(al_mappings) == 0:
@@ -371,13 +239,8 @@ class RunLoop:
             return False
 
         for al_id, mapping in al_mappings.items():
-            # process_al_id returns True only when max_torrents_to_add was
-            # reached - stop the whole run. The post-loop _finalize_run (the
-            # single finalize site) still runs, so the blocking/hybrid pass
-            # imports this run's records before the save + summary. A separate
-            # post-loop max check would be redundant with this: the in-block
-            # check fires after every add, so torrents_added can't reach the
-            # cap without process_al_id stopping first.
+            # process_al_id returns True only when max_torrents_to_add was reached, which stops the whole run. A
+            # post-loop max check would be redundant: the in-block check fires after every add.
             try:
                 if strategy.process_al_id(
                     item=item,
@@ -386,75 +249,42 @@ class RunLoop:
                 ):
                     return True
             except Exception as e:
-                # Contain a per-id failure to THIS AniList id: a transient error
-                # on one season must not skip the item's other seasons.
+                # Contain the failure to THIS AniList id: one bad season must not skip the item's others.
                 hub_error(
                     f"{item_title} (AniList #{al_id}): unexpected error ({e}) - skipping this AniList id",
                     exc=e,
                 )
                 continue
 
-        # Non-blocking per-item snapshot of this series' CARRIED-OVER
-        # pending records (grabbed in a prior run). Runs after all of an
-        # item's AniList ids so it covers the cached/grabbed/no-entry paths
-        # uniformly, and reports each carried-over record inline inside the
-        # series block. Sonarr returns its series id. Radarr returns None
-        # (no pending records), short-circuiting the snapshot.
+        # A read-only snapshot, never an import: the end pass owns that. Radarr returns None here.
+        # Placed after all of the item's AniList ids so it covers the cached, grabbed and no-entry paths alike.
         if self._wait_active and (sid := strategy.pending_import_series_id(item)) is not None:
             self._wait_manager.snapshot_pending_for_series(sid)
 
         return False
 
     # --- Wait-for-completion orchestration ----------------------------------
-    #
-    # The completion wait/poll machinery lives on `self._wait_manager`
-    # (`ImportWaitManager`). The loop keeps the run tail
-    # (`_finalize_run`) that drives its passes in order plus the walk-away
-    # completion notification. Every path is a no-op under preview (no client).
 
     def _finalize_run(self) -> None:
-        """Shared run tail: reconcile + tally, print the summary, THEN block.
+        """Shared run tail: the one-cycle check + tally, print the summary, THEN the waiting monitor."""
 
-        Bracketed by the two run-lifecycle close boundaries (the scan closes at
-        the top, the run at the very end). In order:
-
-          1. deferred-mode pre-summary reconcile of any carried-over records not
-             already snapshotted inline (non-blocking, feeds the counters).
-          2. fold every still-pending carried-over record into the
-             `queued`/`importing`/`imported` counters (this-run grabs stay
-             `added`).
-          3. print the scoreboard - so the summary reflects the pre-monitor state
-             and never reports completion for this-run grabs.
-          4. ONLY for blocking/hybrid, run the interleaved monitor + live region
-             dead last, after the summary, so the wait/import is the live report.
-          5. save the cache last in a finally spanning steps 1-4, so a raise
-             anywhere still persists the run's staged writes and the store
-             reflects both the inline-snapshot and the monitor drops.
-
-        Every wait/import path is skipped on a preview (no client / dry run).
-        """
-
-        # Close the scan (and any open entry) before anything below can raise or
-        # log: the reconcile/tally diagnostics are run-level facts, not details of
-        # the last entry. Always ScanStarted-paired - run_sync (this method's only
-        # caller) has no early return between log_arr_start and here.
+        # Close the scan before anything below logs: these diagnostics are run-level facts.
+        # Always ScanStarted-paired: run_sync, the only caller, has no early return between log_arr_start and here.
         self._reporter.scan_finished(self._ctx.arr)
 
         preview = self._services.is_preview()
 
-        # Whether this strategy runs the interleaved end-of-run blocking monitor
-        # (Sonarr) or reconciles its records off evidence instead (Radarr). A
-        # non-monitor strategy reconciles pre-summary in EVERY active mode - the
-        # monitor is what would otherwise reconcile its BLOCKING/HYBRID records
-        # inline - so its records never strand until TTL.
         supports_monitor = self._active_strategy is not None and self._active_strategy.supports_blocking_monitor
+        end_pass_waits = supports_monitor and self._ctx.import_wait_mode in (
+            ImportWaitMode.BLOCKING,
+            ImportWaitMode.HYBRID,
+        )
 
-        # The finally guards the whole tail: a raise in reconcile/tally/summary/
-        # monitor must not let bootstrap's close roll back the run's staged
-        # writes. The save trails the monitor to also capture its drops.
+        # The finally guards the whole tail: a raise in check, tally, summary or monitor must not let bootstrap's
+        # close roll back the run's staged writes. The save trails the monitor to also capture its drops.
         try:
-            if self._wait_active and (self._ctx.import_wait_mode is ImportWaitMode.DEFERRED or not supports_monitor):
-                self._wait_manager.reconcile_remaining()
+            if self._wait_active and not end_pass_waits:
+                self._wait_manager.reconcile_once()
             if self._wait_active:
                 self._wait_manager.tally_carried_over_into_stats()
 
@@ -464,22 +294,15 @@ class RunLoop:
                 has_client=self.qbit is not None,
             )
 
-            if (
-                self._wait_active
-                and supports_monitor
-                and self._ctx.import_wait_mode in (ImportWaitMode.BLOCKING, ImportWaitMode.HYBRID)
-            ):
+            if self._wait_active and end_pass_waits:
                 result = self._wait_manager.run_monitor()
-                # Best-effort walk-away graft, run only when something actually
-                # waited. It swallows its own errors so a bad webhook can never
-                # skip the cache save in the finally below.
+                # _notify_wait_complete swallows its own errors, so a bad webhook can never skip the save below.
                 if result is not None and result.waited:
                     self._notify_wait_complete(result)
         finally:
             self.cache_store.save(preview=preview)
 
-        # The leg's last event. Deliberately OUTSIDE the finally: a monitor/save
-        # raise leaves it to bootstrap's unwind emit, so it lands exactly once.
+        # Deliberately outside the finally: on a raise, bootstrap's unwind emits it, so it lands once.
         self._reporter.run_finished(self._ctx.arr)
 
     def _notify_wait_complete(self, result: WaitResult) -> None:

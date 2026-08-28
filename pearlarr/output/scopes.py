@@ -1,11 +1,6 @@
 """Typed capability scope handles: position rides the handle, never the call site.
 
-The handle set is exactly Step / Entry / Wait (no SummaryScope - the
-summary is one atomic event. Run/Item boundaries are plain events with no
-handle ceremony. Position-free one-liners are the `hub_note` family in
-`runtime`). Handles are runtime-total: emitting on a closed handle demotes to
-an attributed `events.Diagnostic` (`placed_by=HANDLE`) instead of raising or
-corrupting layout. Tests pin that no production path ever demotes.
+Emitting on a closed handle demotes to a `Diagnostic` instead of raising.
 """
 
 from __future__ import annotations
@@ -39,6 +34,7 @@ from .events import (
     Severity,
     TorrentGraduated,
     WaitFinished,
+    WaitKind,
     WaitProgress,
     WaitSnapshot,
     WaitStarted,
@@ -50,22 +46,15 @@ from .runtime import emit_to_hub
 from ..manual_import import OutcomeCategory
 
 type Emit = Callable[[Event], None]
-"""The one producer-side seam: the hub satisfies it. Tests pass a recorder."""
 
 type CountsSource = Callable[[], SeverityCounts]
-"""Emit's counts twin: `hub_counts` satisfies it. Tests bind their own counter."""
 
 type EntryFact = EntryDetail | LedgerRow | ReleaseSkipped | GrabFailed | GrabAction
-"""The entry-block facts an EntryScope can post (stamped with its ScopeId)."""
 
 
 @final
 class ScopeIds:
-    """Thread-safe ScopeId minter. Serials are monotonic per minter.
-
-    Factories default to the process-wide minter so serials never collide
-    across factories.
-    """
+    """Thread-safe ScopeId minter."""
 
     def __init__(self) -> None:
         self._lock = threading.Lock()
@@ -76,18 +65,13 @@ class ScopeIds:
             return ScopeId(kind, next(self._serials))
 
 
-# The process-wide default minter (see ScopeIds docstring).
+# The process-wide default minter: factories share it so serials never collide across factories.
 PROCESS_SCOPE_IDS: Final = ScopeIds()
 
 
 @final
 class ScopeMark:
-    """The boot flow's ambient-scope mark ceremony: idempotent open/close.
-
-    Mints from `PROCESS_SCOPE_IDS` and emits through `runtime.emit_to_hub`
-    at call time (the hub may be installed after the flow is built). Only the mark
-    pair - no handle semantics, no demotion.
-    """
+    """The boot flow's ambient-scope mark ceremony: idempotent open/close."""
 
     def __init__(self, kind: ScopeKind, label: str) -> None:
         self._kind = kind
@@ -125,11 +109,7 @@ def _describe_fact(fact: EntryFact) -> str:
 
 
 class _ScopeBase:
-    """Shared handle spine: emitter, label, open flag, and late-demotion.
-
-    `_late` binds the emitter/kind word/label once, so call sites state only
-    WHAT was attempted and at which severity - runtime-total.
-    """
+    """Shared handle spine, including the closed-handle demotion."""
 
     _KIND_WORD: ClassVar[str] = "scope"
 
@@ -157,11 +137,7 @@ class _ScopeBase:
 
 @final
 class StepScope(_ScopeBase):
-    """One boot step: progress/note/warn producer-side, timing here, events out.
-
-    Usable as a context manager: the step finishes on exit (FAILED when the body
-    raised. The exception still propagates - only presentation is owned here).
-    """
+    """One boot step: progress/note/warn producer-side, timing here, events out."""
 
     _KIND_WORD: ClassVar[str] = "step"
 
@@ -206,7 +182,7 @@ class StepScope(_ScopeBase):
             self._detail = text
 
     def finish(self, *, failed: bool = False) -> None:
-        """Emit the terminal BootStepFinished exactly once (idempotent)."""
+        """Idempotent."""
 
         if not self._open:
             return
@@ -236,7 +212,7 @@ class StepScope(_ScopeBase):
 
 @final
 class EntryScope(_ScopeBase):
-    """One entry block: opened WITH its header (header-at-open). Details stream."""
+    """One entry block, opened with its header."""
 
     _KIND_WORD: ClassVar[str] = "entry"
 
@@ -254,7 +230,7 @@ class EntryScope(_ScopeBase):
         self._emit(replace(fact, scope=self._scope))
 
     def close(self) -> None:
-        """Idempotent. The reporter closes the previous entry before opening a sibling."""
+        """Idempotent."""
 
         if not self._open:
             return
@@ -264,14 +240,14 @@ class EntryScope(_ScopeBase):
 
 @final
 class WaitScope(_ScopeBase):
-    """The wait region: snapshot progress + graduations, opened/closed explicitly."""
+    """The wait region: snapshot progress and graduations."""
 
     _KIND_WORD: ClassVar[str] = "wait"
 
-    def __init__(self, emit: Emit, scope: ScopeId, total: int, *, pulse_s: float) -> None:
+    def __init__(self, emit: Emit, scope: ScopeId, total: int, *, pulse_s: float, kind: WaitKind) -> None:
         super().__init__(emit, "wait", scope)
         emit(ScopeOpened(scope=scope, label="wait"))
-        emit(WaitStarted(total=total, pulse_s=pulse_s, scope=scope))
+        emit(WaitStarted(total=total, pulse_s=pulse_s, kind=kind, scope=scope))
 
     def progress(self, snapshot: WaitSnapshot) -> None:
         if not self._open:
@@ -295,7 +271,7 @@ class WaitScope(_ScopeBase):
         self.close()
 
     def close(self) -> None:
-        """Idempotent. finish() closes the region, or callers close it explicitly."""
+        """Idempotent."""
 
         if not self._open:
             return
@@ -305,11 +281,7 @@ class WaitScope(_ScopeBase):
 
 @final
 class ScopeFactory:
-    """Bind-once producer bundle: one emitter, one id minter, one clock.
-
-    Defaults to `PROCESS_SCOPE_IDS` so two factories can never mint
-    colliding serials.
-    """
+    """Bind-once producer bundle: emitter, id minter, clock."""
 
     def __init__(
         self,
@@ -328,5 +300,5 @@ class ScopeFactory:
     def entry(self, header: EntryHeader) -> EntryScope:
         return EntryScope(self._emit, self._ids.mint(ScopeKind.ENTRY), header)
 
-    def wait(self, total: int, *, pulse_s: float) -> WaitScope:
-        return WaitScope(self._emit, self._ids.mint(ScopeKind.WAIT_REGION), total, pulse_s=pulse_s)
+    def wait(self, total: int, *, pulse_s: float, kind: WaitKind = WaitKind.MONITOR) -> WaitScope:
+        return WaitScope(self._emit, self._ids.mint(ScopeKind.WAIT_REGION), total, pulse_s=pulse_s, kind=kind)

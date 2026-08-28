@@ -146,11 +146,11 @@ imports:
   # import.
   # Values:
   #   off      - Disabled: no waiting, no pending-import records, no manual import.
-  #   deferred - Never block: record grabs and import the already-finished ones on a later run.
-  #   blocking - Block at the end of the run (and on an early break) until downloads finish, then
-  #              import.
-  #   hybrid   - Reconcile deferred imports at run start, then a blocking pass at the end
-  #              (recommended).
+  #   deferred - Never wait on a download: record this run's grabs and import earlier runs' finished
+  #              downloads in one pass at the end of the run.
+  #   blocking - Same as hybrid.
+  #   hybrid   - The default: wait at the end of the run for downloads to finish, then import - this
+  #              run's grabs and any download still pending from an earlier run.
   wait_mode: hybrid
 
   # Seconds to wait per torrent for qBittorrent to finish downloading it.

@@ -1,21 +1,14 @@
 """Generate the documentation artifacts whose source of truth is code.
 
-One authored home per fact: config facts live as attribute docstrings on the
-pydantic models in `pearlarr/config.py` (plus enum member docstrings
-and the env-var registry), and this script renders every other surface from
-them:
+- `pearlarr/config_sample.yml`: the starter config template
+- `schemas/config.schema.json`: JSON Schema for editor validation
+- `docs/configuration.md`: the config tables and the env-var island
+- `CONTRIBUTING.md`: the env-var island
+- `docs/architecture.md`: the invariant index
+- `docs/cli.md`: the command reference
+- `docs/output.md`: the JSON event catalog
 
-- `pearlarr/config_sample.yml` - the starter config template
-- `schemas/config.schema.json` - JSON Schema for editor validation
-- `docs/configuration.md` - the generated islands between `gen:` markers
-- `docs/cli.md` - the command reference, from the typer app
-- `docs/output.md` - the JSON event catalog island, from the event
-  vocabulary run through the real JSON serializer
-
-Write mode (default) rewrites the artifacts in place. `--check` exits
-non-zero when any artifact is not byte-identical to what would be generated
-(the doc test suite and pre-commit run this). Missing field or enum-member
-docstrings are a hard error in both modes.
+Write mode (default) rewrites them in place. `--check` exits non-zero on drift.
 """
 
 from __future__ import annotations
@@ -77,17 +70,14 @@ EVENTS_SOURCE = "pearlarr/output/events.py + textline.py"
 # Comments in the sample wrap so the whole line stays inside this width.
 SAMPLE_WIDTH = 100
 
-# The schema URL is tag-pinned (G8): a user's copied config validates against
-# the schema of the version they installed, not whatever main looks like today.
+# Tag-pinned: a copied config validates against the schema of the installed version, not main.
 RAW_BASE = PROJECT_URL.replace("https://github.com/", "https://raw.githubusercontent.com/")
 SCHEMA_URL = f"{RAW_BASE}/v{version('pearlarr')}/schemas/config.schema.json"
 
 KNOWN_TRACKER_DISPLAY = PUBLIC_TRACKER_NAMES + PRIVATE_TRACKER_NAMES + OTHER_TRACKER_NAMES
 
-# Fields whose effective default is computed at load time (a validator), not the
-# static field default: the sample must ship them blank - writing the static
-# default out would pin the derived behavior off - and the table says "derived"
-# because the docstring already explains the derivation.
+# Fields whose effective default a validator computes at load time. The sample must ship them blank
+# because writing the static default out would pin the derived behavior off.
 DERIVED_FIELDS = frozenset({"notifications.wait_notify"})
 
 
@@ -131,7 +121,7 @@ def strip_ticks(text: str) -> str:
 
 
 def reject_double_ticks(text: str) -> str:
-    """Refuse reST-style double backticks - the compiled dialect is single-backtick only."""
+    """Refuse reST-style double backticks: the compiled dialect is single-backtick only."""
 
     if "``" in text:
         raise GenerationError(f"double backticks in a config docstring: {text[:60]!r}")
@@ -175,12 +165,7 @@ def _unwrap_annotation(annotation: object) -> object:
 
 
 def field_values(annotation: object) -> tuple[tuple[str, str], ...]:
-    """The enumerable values of a field, paired with member docs where they exist.
-
-    Enums contribute their member docstrings. A pure string `Literal`
-    contributes bare values. Anything else (unions of shapes, free-form types)
-    enumerates nothing.
-    """
+    """The enumerable values of a field, paired with member docs where they exist."""
 
     ann = _unwrap_annotation(annotation)
     if isinstance(ann, type) and issubclass(ann, Enum):
@@ -201,8 +186,7 @@ def yaml_scalar(value: object) -> str:
 
     if isinstance(value, Enum):
         value = value.value
-    # A bare-scalar document gets a `...` end marker on its own line. The
-    # scalar itself is the first line.
+    # A bare-scalar document puts the scalar on line one and a `...` end marker on line two.
     return yaml.safe_dump(value, default_flow_style=True).partition("\n")[0]
 
 
@@ -229,9 +213,8 @@ def build_leaf(group_key: str, key: str, field: FieldInfo) -> LeafDoc:
     if f"{group_key}.{key}" in DERIVED_FIELDS:
         table_default = "*(derived)*"
     elif f"{group_key}.{key}" == "seadex.trackers":
-        # The one field whose allowed values live outside the type system: the
-        # display-cased tracker tuples are the source (KNOWN_TRACKERS is their
-        # casefolded shadow).
+        # The one field whose allowed values live outside the type system. The display-cased tracker
+        # tuples are the source (KNOWN_TRACKERS is their casefolded shadow).
         known = KNOWN_TRACKER_DISPLAY
         table_default = "all but Other/OtherPrivate"
     elif isinstance(default, (list, tuple)):
@@ -240,8 +223,7 @@ def build_leaf(group_key: str, key: str, field: FieldInfo) -> LeafDoc:
             default_note = yaml_flow(listed)
             table_default = f"`{default_note}`"
     elif isinstance(default, set):
-        # Sets iterate in str-hash order, randomized per process: sort for
-        # byte-identical output.
+        # Sets iterate in per-process-randomized order: sort for byte-identical output.
         listed = sorted(str(item) for item in cast("set[object]", default))
         if listed:
             default_note = yaml_flow(listed)
@@ -366,8 +348,7 @@ def render_schema(groups: tuple[GroupDoc, ...]) -> str:
     generated = AppConfig.model_json_schema()
     defs = cast("dict[str, dict[str, Any]]", generated.get("$defs", {}))
     for group in groups:
-        # The submodel class docstrings are contributor-facing contracts. The
-        # group attribute docstrings are what a config editor should surface.
+        # Class docstrings are contributor-facing. The group attribute docstrings are what a config editor surfaces.
         defs[group.class_name]["description"] = group.description
     for def_schema in defs.values():
         # Enum class docstrings: only the summary paragraph is for users. The
@@ -375,8 +356,7 @@ def render_schema(groups: tuple[GroupDoc, ...]) -> str:
         description = def_schema.get("description")
         if "enum" in def_schema and isinstance(description, str):
             def_schema["description"] = description.split("\n\n")[0]
-    # The root description gets the same summary-only treatment: the rationale
-    # paragraphs of the AppConfig docstring are contributor-facing.
+    # Same summary-only treatment for the root: AppConfig's rationale paragraphs are contributor-facing.
     root_description = generated.get("description")
     if isinstance(root_description, str):
         generated["description"] = root_description.split("\n\n")[0]
@@ -461,11 +441,7 @@ def render_contributing() -> str:
 
 
 def collect_invariants() -> tuple[tuple[str, str], ...]:
-    """Every `# Invariant:` comment block in the package, as (module, text) pairs.
-
-    A block runs from its `# Invariant:` line through the directly following
-    comment lines. Blocks appear in path order, then file order.
-    """
+    """Every `# Invariant:` comment block in the package, as (module, text) pairs."""
 
     found: list[tuple[str, str]] = []
     for path in sorted((REPO_ROOT / "pearlarr").rglob("*.py")):
@@ -530,9 +506,8 @@ class CommandDoc:
     subcommands: tuple[tuple[str, str], ...]
 
 
-# Exit codes are wire facts of the click/typer stack plus our own exits
-# (verified empirically). No runtime surface enumerates them, so they are
-# authored here, next to the reference they render into.
+# Exit codes are wire facts of the click/typer stack plus our own exits, verified empirically.
+# No runtime surface enumerates them, so they are authored here.
 EXIT_CODE_ROWS = (
     ("0", "Success. A scheduled loop stopped with SIGTERM also exits 0 (a clean stop)."),
     ("1", "Failure: invalid or missing configuration, a refused selection, a failed run, or a failed command."),
@@ -553,8 +528,7 @@ def _first_paragraph(raw: str) -> str:
     return _help_paragraphs(raw).split("\n\n")[0]
 
 
-# typer builds every node as one of these two (its vendored click is private,
-# so the walker narrows to typer's public classes instead).
+# typer builds every node as one of these two. Its vendored click is private, so the walker narrows to these.
 type TyperNode = typer.core.TyperCommand | typer.core.TyperGroup
 
 
@@ -679,8 +653,7 @@ def render_cli() -> str:
 # --- docs/output.md: the JSON event catalog, from the real serializer ----------------
 
 
-# Specimens are rendered at a fixed instant, then the local-time `time` value is
-# replaced with this canonical stamp so output is byte-identical on any machine.
+# The rendered `time` is overwritten with this stamp, for byte-identical output anywhere.
 _SPECIMEN_TIME = "2026-01-01T18:00:00+00:00"
 _SPECIMEN_EPOCH = 1_767_290_400.0
 
@@ -689,9 +662,8 @@ _ENTRY_SCOPE = ev.ScopeId(kind=ev.ScopeKind.ENTRY, serial=2)
 _WAIT_SCOPE = ev.ScopeId(kind=ev.ScopeKind.WAIT_REGION, serial=3)
 
 
-# What each wire event means, keyed by its serialized name. The catalog build
-# fails when an on-wire event has no entry here (or an entry goes stale), so a
-# new event type cannot ship undocumented.
+# What each wire event means, keyed by its serialized name. The catalog build fails when an on-wire
+# event has no entry here or an entry goes stale, so a new event type cannot ship undocumented.
 EVENT_DESCRIPTIONS: dict[str, str] = {
     "run_started": "The process banner: the installed version and the resolved data directory. "
     "The first event of every invocation.",
@@ -714,15 +686,17 @@ EVENT_DESCRIPTIONS: dict[str, str] = {
     "`unsupported_tracker`, or `tracker_not_selected`.",
     "grab_failed": "Adding a release to qBittorrent failed. The title is retried next run.",
     "grab_action": "The grab decision for a title. `message` distinguishes a real add, a dry-run "
-    "would-add, and already-downloading.",
+    "would-add, and already in qBittorrent.",
     "scope_closed": "The matching close of a `scope_opened` (anything nested deeper closes with it).",
     "cap_reached": "The `advanced.max_torrents_to_add` cap was reached. The run adds nothing further.",
     "scan_finished": "The per-arr scan closed (a boundary event, the summary carries the facts).",
     "run_summary": "The end-of-run scoreboard: the tally counters, plus `needs_action_records` and "
     "`added_records` arrays mirroring the summary's per-title lines.",
-    "wait_started": "The wait-for-completion pass opened, watching `total` torrents.",
+    "wait_started": "The end-of-run pass opened, watching `total` torrents. `kind` is `monitor` (waits for "
+    "downloads to finish, then imports) or `check` (one non-blocking poll of earlier runs' downloads).",
     "torrent_graduated": "One watched torrent reached a terminal outcome. `message` is the outcome word.",
-    "wait_finished": "The wait pass closed, with its imported/deferred/failed tally.",
+    "wait_finished": "The pass closed, with its imported/pending/deferred/failed tally (`pending` counts the "
+    "check's rows left for the next run on purpose).",
     "run_finished": "The per-arr run closed (a boundary event).",
     "next_run_scheduled": "Scheduled mode only: when the next cycle fires.",
     "paths_shown": "The `paths` command: the resolved data directory and the files within it.",
@@ -753,11 +727,7 @@ JSON_SILENT: dict[str, str] = {
 
 
 def _specimen_stream() -> tuple[ev.Event, ...]:
-    """A realistic single-run event sequence containing every union member once.
-
-    Ordered like a real run so breadcrumb `path` values are authentic. Values
-    are fixtures (fixed version, dir, titles), never environment-derived.
-    """
+    """A realistic single-run event sequence containing every union member once."""
 
     tally = ev.RunTally(
         checked=42,
@@ -788,7 +758,7 @@ def _specimen_stream() -> tuple[ev.Event, ...]:
         ),
         unmonitored=0,
         queued=0,
-        importing=0,
+        downloaded=0,
         imported=1,
     )
     summary = ev.RunSummary(
@@ -802,8 +772,8 @@ def _specimen_stream() -> tuple[ev.Event, ...]:
         elapsed_s=63.4,
         tip=ev.NeedsActionCause.PRIVATE_ONLY_NO_FALLBACK,
     )
-    # The cli command facts ride a subcommand's --json stream, never a run's. They
-    # appear at the tail of the catalog for completeness (one specimen per member).
+    # The cli command facts ride a subcommand's --json stream, never a run's. They sit at the tail
+    # of the catalog for completeness, one specimen per member.
     data_dir = "/home/user/.local/share/pearlarr"
     redacted_config: ev.JsonObj = {"sonarr": {"url": "http://sonarr:8989", "api_key": "REDACTED"}}
     return (
@@ -922,7 +892,7 @@ def _specimen_stream() -> tuple[ev.Event, ...]:
 
 @dataclass(frozen=True)
 class EventSpecimen:
-    """One wire event: its serialized name, meaning, and pretty-printed payload."""
+    """One wire event as a catalog entry."""
 
     name: str
     description: str
@@ -930,12 +900,7 @@ class EventSpecimen:
 
 
 def build_event_catalog() -> tuple[EventSpecimen, ...]:
-    """Run the specimen stream through the real JSON sink, one specimen per event name.
-
-    Hard-fails when the stream misses a union member, an on-wire event lacks a
-    description, a description goes stale, or the serializer's silent set
-    drifts from `JSON_SILENT` - so the catalog cannot quietly lose coverage.
-    """
+    """Run the specimen stream through the real JSON sink, one specimen per event name."""
 
     stream = _specimen_stream()
     members = {member.__name__ for member in cast("tuple[type[object], ...]", get_args(ev.Event.__value__))}

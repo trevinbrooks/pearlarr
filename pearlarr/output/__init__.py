@@ -1,17 +1,4 @@
-"""Pearlarr's output architecture: the hub's sinks own every surface.
-
-An event-stream chassis: producers emit the closed union of frozen event
-dataclasses (`events`) through typed scope handles (`scopes`) into one
-synchronous `hub.OutputHub`. Surfaces subscribe as renderers. The shared
-`breadcrumbs.BreadcrumbFold` folds scope boundaries into the open path
-(labels for the text sinks in `textline`. The placement authority is the
-`rich_renderer.RichRenderer`'s instance). The logging bridge
-(`bridge`) adopts stdlib records into Diagnostic events. The RichRenderer
-owns the rich console (boot/scan/wait cockpits + diagnostic placement). The
-`textline` sinks own the structured log file (`FileLogSink`), plain
-stdout (`LineRenderer`) and json stdout (`JsonRenderer`) - one
-grammar, plain == file by construction.
-"""
+"""Pearlarr's output architecture: producers emit frozen events, the hub's sinks own every surface."""
 
 from .breadcrumbs import KIND_DEPTH, PATH_SEP, SEGMENT_WORD, BreadcrumbFold, OpenNode
 from .bridge import HubBridgeHandler, attributed_message, install_bridge, is_first_party, uninstall_bridge
@@ -72,6 +59,7 @@ from .events import (
     TorrentGraduated,
     TorrentView,
     WaitFinished,
+    WaitKind,
     WaitProgress,
     WaitSnapshot,
     WaitStarted,
@@ -191,6 +179,7 @@ __all__ = [
     "TorrentGraduated",
     "TorrentView",
     "WaitFinished",
+    "WaitKind",
     "WaitProgress",
     "WaitScope",
     "WaitSnapshot",
