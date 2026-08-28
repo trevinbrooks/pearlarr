@@ -26,6 +26,7 @@ from pearlarr.output import Severity
 from pearlarr.seadex_types import (
     BoundaryContractError,
     CommandResource,
+    DownloadClientConfig,
     HistoryRecord,
     Language,
     ManualImportFile,
@@ -1123,3 +1124,37 @@ def test_languages_non_200_returns_empty() -> None:
 
     respx.get(f"{_BASE}/language").respond(status_code=500)
     assert _make_client().languages() == []
+
+
+# --- download_client_config() --------------------------------------------------
+
+
+@respx.mock
+def test_download_client_config_decodes_the_switch() -> None:
+    """A healthy read carries Sonarr's completed-download-handling switch through."""
+
+    respx.get(f"{_BASE}/config/downloadclient").respond(json={"enableCompletedDownloadHandling": False})
+    config = _make_client().download_client_config()
+
+    assert config.enable_completed_download_handling is False
+
+
+@respx.mock
+def test_download_client_config_non_200_assumes_cdh_on() -> None:
+    """A failed read falls back to the defaults (CDH on), deferring rather than racing Sonarr."""
+
+    respx.get(f"{_BASE}/config/downloadclient").respond(status_code=500)
+    assert _make_client().download_client_config() == DownloadClientConfig()
+
+
+@respx.mock
+def test_download_client_config_malformed_body_warns_and_defaults() -> None:
+    """A 200 with a junk payload warns once and falls back to the defaults."""
+
+    respx.get(f"{_BASE}/config/downloadclient").respond(json={"enableCompletedDownloadHandling": "junk"})
+    recording = install_recording_hub()
+    config = _make_client().download_client_config()
+
+    assert config == DownloadClientConfig()
+    [warning] = diagnostic_messages(recording, Severity.WARNING)
+    assert "download client config" in warning
