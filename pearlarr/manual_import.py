@@ -345,6 +345,20 @@ PENDING_STATE_FOR_OUTCOME: dict[Outcome, PendingState] = {
 _QBIT_ETA_INFINITE = 8_640_000
 
 
+class TorrentTelemetry(NamedTuple):
+    """One info row's sanitized live telemetry: download fraction, speed, ETA, and byte counts."""
+
+    progress: float
+    speed_bps: int | None
+    eta_s: int | None
+    bytes_done: int | None
+    bytes_total: int | None
+
+
+_ZERO_TELEMETRY = TorrentTelemetry(0.0, None, None, None, None)
+"""The unread placeholder (no client, or a transient qBittorrent error)."""
+
+
 @dataclass(frozen=True)
 class TorrentProbe:
     """One qBittorrent completion poll, with live download telemetry."""
@@ -355,56 +369,28 @@ class TorrentProbe:
     content_path: str | None
     """The completed download's path (COMPLETE only)."""
 
-    progress: float
-    """0.0-1.0 download fraction (0.0 when unknown)."""
-
-    speed_bps: int | None = None
-    """Download speed in bytes/s, None when idle/unknown."""
-
-    eta_s: int | None = None
-    """qBittorrent's ETA in seconds, None when unknown/∞."""
-
-    bytes_done: int | None = None
-    """Bytes downloaded so far, None when unknown."""
-
-    bytes_total: int | None = None
-    """Total size in bytes, None when unknown."""
+    telemetry: TorrentTelemetry = _ZERO_TELEMETRY
+    """The poll's sanitized live reading (zeroed when nothing was read)."""
 
     observed: bool = True
     """False when qBittorrent could not actually be read (no client / a transient error)."""
 
 
-class TorrentTelemetry(NamedTuple):
-    """One info row's sanitized telemetry, field-for-field what `TorrentProbe` carries."""
+def sanitize_torrent_telemetry(row: object) -> TorrentTelemetry:
+    """Fold one qBittorrent info row into sanitized telemetry (fields read best-effort off the row)."""
 
-    progress: float
-    speed_bps: int | None
-    eta_s: int | None
-    bytes_done: int | None
-    bytes_total: int | None
-
-
-def sanitize_torrent_telemetry(
-    progress: object,
-    dlspeed: object,
-    eta: object,
-    completed: object,
-    size: object,
-) -> TorrentTelemetry:
-    """Fold one qBittorrent info row's raw telemetry into sanitized fields."""
-
-    frac = _as_float(progress)
+    frac = _as_float(getattr(row, "progress", None))
     frac = 0.0 if frac is None else max(0.0, min(1.0, frac))
 
-    raw_speed = coerce_int(dlspeed)
+    raw_speed = coerce_int(getattr(row, "dlspeed", None))
     speed_bps = raw_speed if raw_speed is not None and raw_speed > 0 else None
 
-    raw_eta = coerce_int(eta)
+    raw_eta = coerce_int(getattr(row, "eta", None))
     eta_s = raw_eta if raw_eta is not None and 0 < raw_eta < _QBIT_ETA_INFINITE else None
 
-    raw_total = coerce_int(size)
+    raw_total = coerce_int(getattr(row, "size", None))
     bytes_total = raw_total if raw_total is not None and raw_total > 0 else None
-    raw_done = coerce_int(completed)
+    raw_done = coerce_int(getattr(row, "completed", None))
     bytes_done = raw_done if raw_done is not None and raw_done > 0 else None
     if bytes_done is not None and bytes_total is not None:
         bytes_done = min(bytes_done, bytes_total)

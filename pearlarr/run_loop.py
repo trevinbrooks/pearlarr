@@ -45,11 +45,7 @@ class RunLoop:
         # Its dry_run=False and OFF wait mode keep every preview and pending-import path a safe no-op before run_sync.
         self._ctx = services.ctx
 
-        self._wait_manager = ImportWaitManager(
-            deps=deps,
-            ctx=self._ctx,
-            strategy=self._active_strategy,
-        )
+        self._wait_manager = ImportWaitManager(deps=deps, ctx=self._ctx)
         self.begin_run(self._ctx)
 
     def begin_run(self, ctx: RunContext) -> None:

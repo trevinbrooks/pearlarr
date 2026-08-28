@@ -227,22 +227,18 @@ class TestPollTorrent:
     def test_missing_on_empty_list(self) -> None:
         mgr = make_wait_manager(FakeQbit({}))
 
-        assert mgr.poll_torrent("h") == TorrentProbe(WaitOutcome.MISSING, None, 0.0)
+        assert mgr.poll_torrent("h") == TorrentProbe(WaitOutcome.MISSING, None)
 
     def test_errored(self) -> None:
         mgr = make_wait_manager(FakeQbit({"h": [FakeTorrent(is_errored=True)]}))
 
-        assert mgr.poll_torrent("h") == TorrentProbe(WaitOutcome.ERRORED, None, 0.0)
+        assert mgr.poll_torrent("h") == TorrentProbe(WaitOutcome.ERRORED, None)
 
     def test_complete_carries_content_path(self) -> None:
         torrent = FakeTorrent(is_complete=True, content_path="/data/show")
         mgr = make_wait_manager(FakeQbit({"h": [torrent]}))
 
-        assert mgr.poll_torrent("h") == TorrentProbe(
-            WaitOutcome.COMPLETE,
-            "/data/show",
-            0.0,
-        )
+        assert mgr.poll_torrent("h") == TorrentProbe(WaitOutcome.COMPLETE, "/data/show")
 
     def test_complete_on_full_progress_without_flag(self) -> None:
         # progress == 1.0 counts as complete even if the state flag is unset.
@@ -252,13 +248,13 @@ class TestPollTorrent:
         assert mgr.poll_torrent("h") == TorrentProbe(
             WaitOutcome.COMPLETE,
             "/data/movie",
-            1.0,
+            TorrentTelemetry(1.0, None, None, None, None),
         )
 
     def test_none_while_downloading_carries_progress(self) -> None:
         mgr = make_wait_manager(FakeQbit({"h": [FakeTorrent(progress=0.5)]}))
 
-        assert mgr.poll_torrent("h") == TorrentProbe(None, None, 0.5)
+        assert mgr.poll_torrent("h") == TorrentProbe(None, None, TorrentTelemetry(0.5, None, None, None, None))
 
     def test_none_on_transient_api_error(self) -> None:
         # A dropped connection / re-auth in flight is "still waiting", not terminal.
@@ -266,12 +262,12 @@ class TestPollTorrent:
         # placeholder (keep the last real bar), not a reading.
         mgr = make_wait_manager(FakeQbit({"h": [qbittorrentapi.APIConnectionError("boom")]}))
 
-        assert mgr.poll_torrent("h") == TorrentProbe(None, None, 0.0, observed=False)
+        assert mgr.poll_torrent("h") == TorrentProbe(None, None, observed=False)
 
     def test_none_when_no_client(self) -> None:
         mgr = make_bare_instance(ImportWaitManager, qbit=None)
 
-        assert mgr.poll_torrent("h") == TorrentProbe(None, None, 0.0, observed=False)
+        assert mgr.poll_torrent("h") == TorrentProbe(None, None, observed=False)
 
     def test_carries_live_download_telemetry(self) -> None:
         torrent = FakeTorrent(
@@ -286,11 +282,7 @@ class TestPollTorrent:
         assert mgr.poll_torrent("h") == TorrentProbe(
             None,
             None,
-            0.64,
-            3_200_000,
-            130,
-            1_800_000_000,
-            2_900_000_000,
+            TorrentTelemetry(0.64, 3_200_000, 130, 1_800_000_000, 2_900_000_000),
         )
 
     def test_sanitizes_junk_telemetry(self) -> None:
@@ -299,7 +291,7 @@ class TestPollTorrent:
         torrent = FakeTorrent(progress=0.5, dlspeed=0, eta=8_640_000, completed=0, size=0)
         mgr = make_wait_manager(FakeQbit({"h": [torrent]}))
 
-        assert mgr.poll_torrent("h") == TorrentProbe(None, None, 0.5)
+        assert mgr.poll_torrent("h") == TorrentProbe(None, None, TorrentTelemetry(0.5, None, None, None, None))
 
 
 class TestPollTelemetry:
@@ -2254,7 +2246,7 @@ class TestPostImportCategory:
         qbit: CategoryQbit,
         post_import_category: str | None = None,
     ) -> ImportWaitManager:
-        """A manager whose one carried-over record reconciles straight to IMPORTED.
+        """A manager whose one carried-over record's files are verified present (snapshot -> IMPORTED).
 
         A `None` category routes through `make_config` to the blank-drop, so it
         exercises the same "left unset" default a real config file yields.
@@ -2262,24 +2254,54 @@ class TestPostImportCategory:
 
         return make_orchestration_manager(
             qbit=qbit,
-            strategy=_RecordingStrategy(
-                completed=import_probe(ImportReadiness.IMPORTED, files_present=True),
-            ),
+            strategy=_RecordingStrategy(progress=ImportProgress(1, 1, determinate=True)),
             store_records=[pending_import(infohash="h", series_id=7, added_at=_FRESH)],
             post_import_category=post_import_category,
         )
 
-    def test_reconcile_moves_imported_torrent(self) -> None:
-        # The inline snapshot confirms the import -> the torrent moves category
-        # BEFORE the record is dropped.
-        qbit = CategoryQbit({"h": [FakeTorrent(is_complete=True, content_path="/d")]})
-        mgr = self._imported_manager(qbit, "pearlarr-done")
+    @pytest.mark.parametrize(
+        ("category", "set_errors", "expected_sets", "expected_created"),
+        [
+            # No 409 -> no create, the move fires before the record drops.
+            pytest.param("pearlarr-done", [], [("pearlarr-done", "h")], [], id="clean-move"),
+            # qBittorrent 409s an unknown category: create it, then re-apply.
+            pytest.param(
+                "pearlarr-done",
+                [qbittorrentapi.Conflict409Error("unknown category")],
+                [("pearlarr-done", "h")],
+                ["pearlarr-done"],
+                id="409-creates-then-retries",
+            ),
+            # Best-effort: a client error leaves the category as-is, never undoing the import.
+            pytest.param(
+                "pearlarr-done",
+                [qbittorrentapi.APIConnectionError("down")],
+                [],
+                [],
+                id="client-error-leaves-category",
+            ),
+            # Category left unset (the real config-file default): no call at all.
+            pytest.param(None, [], [], [], id="unconfigured-no-call"),
+        ],
+    )
+    def test_reconcile_move_outcomes(
+        self,
+        category: str | None,
+        set_errors: list[Exception],
+        expected_sets: list[tuple[str, str]],
+        expected_created: list[str],
+    ) -> None:
+        qbit = CategoryQbit({"h": [FakeTorrent(is_complete=True, content_path="/d")]}, set_errors=set_errors)
+        mgr = self._imported_manager(qbit, category)
 
-        mgr.snapshot_pending_for_series(7)
+        mgr.snapshot_pending_for_series(7)  # must not raise
 
-        assert qbit.set_category_calls == [("pearlarr-done", "h")]
-        assert qbit.created_categories == []  # no 409 -> no create
+        assert qbit.set_category_calls == expected_sets
+        assert qbit.created_categories == expected_created
+        # The import itself always lands: the record drops and classifies IMPORTED
+        # (the `imported` bump is _finalize_run's, off that state).
         assert mgr._pending_records() == {}
+        assert mgr._ctx.pending_states[pk("h")] is PendingState.IMPORTED
 
     def test_monitor_moves_imported_torrent(self) -> None:
         strategy = _RecordingStrategy(
@@ -2327,44 +2349,6 @@ class TestPostImportCategory:
         assert view.final(rk("h")).outcome is Outcome.MISSING
         assert mgr._pending_records() == {}  # still dropped
         assert qbit.set_category_calls == []
-
-    def test_creates_category_on_409_and_retries(self) -> None:
-        # qBittorrent 409s an unknown category: create it, then re-apply.
-        qbit = CategoryQbit(
-            {"h": [FakeTorrent(is_complete=True, content_path="/d")]},
-            set_errors=[qbittorrentapi.Conflict409Error("unknown category")],
-        )
-        mgr = self._imported_manager(qbit, "pearlarr-done")
-
-        mgr.snapshot_pending_for_series(7)
-
-        assert qbit.created_categories == ["pearlarr-done"]
-        assert qbit.set_category_calls == [("pearlarr-done", "h")]
-
-    def test_client_error_warns_and_import_still_lands(self) -> None:
-        # Best-effort: a client error must not undo the import - the record is
-        # still dropped and counted, the category is just left as-is.
-        qbit = CategoryQbit(
-            {"h": [FakeTorrent(is_complete=True, content_path="/d")]},
-            set_errors=[qbittorrentapi.APIConnectionError("down")],
-        )
-        mgr = self._imported_manager(qbit, "pearlarr-done")
-
-        mgr.snapshot_pending_for_series(7)  # must not raise
-
-        assert qbit.set_category_calls == []
-        assert mgr._pending_records() == {}
-        assert mgr._ctx.stats.imported == 1
-
-    def test_unconfigured_category_makes_no_call(self) -> None:
-        qbit = CategoryQbit({"h": [FakeTorrent(is_complete=True, content_path="/d")]})
-        mgr = self._imported_manager(qbit)  # post_import_category left blank
-
-        mgr.snapshot_pending_for_series(7)
-
-        assert qbit.set_category_calls == []
-        assert qbit.created_categories == []
-        assert mgr._pending_records() == {}
 
     def test_configured_category_without_client_is_a_silent_noop(self) -> None:
         # Category configured but no qBittorrent client (preview): nothing to
@@ -2452,16 +2436,16 @@ class TestPostImportCategorySiblingGate:
         assert view.final(rk("h", 22)).label == f"Cour 2{SEP}SubGroup"
 
     def test_reconcile_gate_holds_across_runs_until_the_sibling_imports(self) -> None:
-        # Run 1's inline snapshot imports Cour 1 only (Cour 2's slice not landed):
-        # no move. Run 2 reconciles the carried-over Cour 2 -> the move fires once.
+        # Run 1's inline snapshot verifies Cour 1's files only (Cour 2's slice not
+        # landed): no move. Run 2 reconciles the carried-over Cour 2 -> the move fires once.
         first, second = self._siblings()
         qbit = CategoryQbit({"h": [FakeTorrent(is_complete=True, content_path="/d")]})
         run1 = make_orchestration_manager(
             qbit=qbit,
             strategy=_RecordingStrategy(
-                completed_sequence=[
-                    import_probe(ImportReadiness.IMPORTED, files_present=True),  # Cour 1
-                    import_probe(ImportReadiness.RETRY, files_present=False),  # Cour 2: not landed
+                progress_sequence=[
+                    ImportProgress(1, 1, determinate=True),  # Cour 1: verified present
+                    ImportProgress(0, 1, determinate=True),  # Cour 2: not landed
                 ],
             ),
             store_records=[first, second],
@@ -2475,9 +2459,7 @@ class TestPostImportCategorySiblingGate:
 
         run2 = make_orchestration_manager(
             qbit=qbit,
-            strategy=_RecordingStrategy(
-                completed=import_probe(ImportReadiness.IMPORTED, files_present=True),
-            ),
+            strategy=_RecordingStrategy(progress=ImportProgress(1, 1, determinate=True)),
             post_import_category="pearlarr-done",
         )
         run2.cache_store = run1.cache_store  # the same durable store, next run
@@ -2495,9 +2477,7 @@ class TestPostImportCategorySiblingGate:
         qbit = CategoryQbit({"h": [FakeTorrent(is_complete=True, content_path="/d")]})
         mgr = make_orchestration_manager(
             qbit=qbit,
-            strategy=_RecordingStrategy(
-                completed=import_probe(ImportReadiness.IMPORTED, files_present=True),
-            ),
+            strategy=_RecordingStrategy(progress=ImportProgress(1, 1, determinate=True)),
             store_records=[survivor, expired],
             post_import_category="pearlarr-done",
         )
@@ -2550,9 +2530,7 @@ class TestPostImportCategorySiblingGate:
         qbit = CategoryQbit({"h": [FakeTorrent(is_complete=True, content_path="/d")]})
         run2 = make_orchestration_manager(
             qbit=qbit,
-            strategy=_RecordingStrategy(
-                completed=import_probe(ImportReadiness.IMPORTED, files_present=True),
-            ),
+            strategy=_RecordingStrategy(progress=ImportProgress(1, 1, determinate=True)),
             post_import_category="pearlarr-done",
         )
         run2.cache_store = run1.cache_store
@@ -2568,12 +2546,9 @@ class TestPostImportCategorySiblingGate:
         # qBittorrent, so a second move is harmless and correct.
         record = pending_import(infohash="h", series_id=7, added_at=_FRESH)
         qbit = CategoryQbit({"h": [FakeTorrent(is_complete=True, content_path="/d")]})
-        imported = _RecordingStrategy(
-            completed=import_probe(ImportReadiness.IMPORTED, files_present=True),
-        )
         run1 = make_orchestration_manager(
             qbit=qbit,
-            strategy=imported,
+            strategy=_RecordingStrategy(progress=ImportProgress(1, 1, determinate=True)),
             store_records=[record],
             post_import_category="pearlarr-done",
         )
@@ -2584,9 +2559,7 @@ class TestPostImportCategorySiblingGate:
 
         run2 = make_orchestration_manager(
             qbit=qbit,
-            strategy=_RecordingStrategy(
-                completed=import_probe(ImportReadiness.IMPORTED, files_present=True),
-            ),
+            strategy=_RecordingStrategy(progress=ImportProgress(1, 1, determinate=True)),
             post_import_category="pearlarr-done",
         )
         run2.cache_store = run1.cache_store
@@ -2652,9 +2625,7 @@ class TestCloseTrackedDownload:
     """
 
     def test_reconcile_import_closes_the_queue_entry(self) -> None:
-        strategy = _RecordingStrategy(
-            completed=import_probe(ImportReadiness.IMPORTED, files_present=True),
-        )
+        strategy = _RecordingStrategy(progress=ImportProgress(1, 1, determinate=True))
         pending = pending_import(infohash="h", series_id=7, added_at=_FRESH)
         mgr = make_orchestration_manager(
             qbit=FakeQbit({"h": [FakeTorrent(is_complete=True, content_path="/d")]}),
@@ -2696,9 +2667,9 @@ class TestCloseTrackedDownload:
         second = pending_import(infohash="h", al_id=22, series_id=7, title="Cour 2", added_at=_FRESH)
         qbit = FakeQbit({"h": [FakeTorrent(is_complete=True, content_path="/d")]})
         run1_strategy = _RecordingStrategy(
-            completed_sequence=[
-                import_probe(ImportReadiness.IMPORTED, files_present=True),  # Cour 1
-                import_probe(ImportReadiness.RETRY, files_present=False),  # Cour 2: not landed
+            progress_sequence=[
+                ImportProgress(1, 1, determinate=True),  # Cour 1: verified present
+                ImportProgress(0, 1, determinate=True),  # Cour 2: not landed
             ],
         )
         run1 = make_orchestration_manager(qbit=qbit, strategy=run1_strategy, store_records=[first, second])
@@ -2708,9 +2679,7 @@ class TestCloseTrackedDownload:
         assert run1_strategy.close_calls == []
         assert set(run1._pending_records()) == {pk("h", 22)}
 
-        run2_strategy = _RecordingStrategy(
-            completed=import_probe(ImportReadiness.IMPORTED, files_present=True),
-        )
+        run2_strategy = _RecordingStrategy(progress=ImportProgress(1, 1, determinate=True))
         run2 = make_orchestration_manager(qbit=qbit, strategy=run2_strategy)
         run2.cache_store = run1.cache_store  # the same durable store, next run
 
@@ -2719,9 +2688,7 @@ class TestCloseTrackedDownload:
         assert [c.key for c in run2_strategy.close_calls] == [second.key]
 
     def test_remove_from_queue_off_never_closes(self) -> None:
-        strategy = _RecordingStrategy(
-            completed=import_probe(ImportReadiness.IMPORTED, files_present=True),
-        )
+        strategy = _RecordingStrategy(progress=ImportProgress(1, 1, determinate=True))
         mgr = make_orchestration_manager(
             qbit=FakeQbit({"h": [FakeTorrent(is_complete=True, content_path="/d")]}),
             strategy=strategy,
@@ -2753,9 +2720,7 @@ class TestCloseTrackedDownload:
         # The gate is PER-ARR (unlike the cross-arr category gate): Sonarr's
         # queue entry only blocks Sonarr's completed-download handling, so a
         # Radarr record sharing the torrent must not keep the close window open.
-        strategy = _RecordingStrategy(
-            completed=import_probe(ImportReadiness.IMPORTED, files_present=True),
-        )
+        strategy = _RecordingStrategy(progress=ImportProgress(1, 1, determinate=True))
         sonarr_record = pending_import(infohash="h", al_id=11, series_id=7, added_at=_FRESH)
         radarr_record = pending_import(infohash="h", al_id=22, series_id=0, added_at=_FRESH)
         mgr = make_orchestration_manager(
