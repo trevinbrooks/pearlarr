@@ -59,7 +59,7 @@ def graduation_tail(outcome: Outcome, files: int | None, waited_s: float) -> str
             parts.append(format_elapsed(waited_s))
         return " · ".join(parts)
     if outcome.category is OutcomeCategory.PENDING:
-        return "checked next run"
+        return "checked again next run"
     if not outcome.dropped:
         return "retries next run"
     # The only other dropped outcome is MISSING: the torrent is gone from qBittorrent.

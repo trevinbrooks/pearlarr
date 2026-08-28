@@ -163,7 +163,8 @@ class ImportWaitManager:
         poll = self.poll_torrent(pending.infohash)
         files_present = poll.outcome is WaitOutcome.COMPLETE and self.import_progress(pending).files_present
         state = classify_pending(poll.outcome, files_present)
-        self._ctx.pending_states[pending.key] = state
+        # Store effects precede the state write: a failed retire/drop must not leave
+        # a resident record that _finalize_run counts as IMPORTED anyway.
         if state is PendingState.IMPORTED:
             # _finalize_run counts the IMPORTED entry into stats. No local bump.
             self.retire_imported(pending)
@@ -172,6 +173,7 @@ class ImportWaitManager:
             hub_warn(f"Pending import {pending.display_label} is gone from qBittorrent - dropping its record")
         elif state is PendingState.ERRORED:
             self.logger.debug(f"Pending import {pending.display_label} errored in qBittorrent - left for a later run")
+        self._ctx.pending_states[pending.key] = state
         return state
 
     def snapshot_pending_for_series(self, series_id: int) -> None:
@@ -295,7 +297,8 @@ class ImportWaitManager:
     def _progress_wait(self, mp: "MonitorPass", view: WaitView) -> None:
         """Sleep one heavy-poll interval, refreshing the live rows between slices.
 
-        The slices run only the cheap fast-lane reads, never a rescan, queue, command, or phase transition.
+        The slices run only the cheap fast-lane reads (progress and telemetry). A ready
+        row can still promote to IMPORTED here, with the store effects that implies.
         """
 
         poll_s = self._config.imports.poll_interval
@@ -674,7 +677,8 @@ class MonitorPass:
         elif outcome.dropped:
             self._mgr.drop_pending(record)
         elif row.carried_over:
-            # Still store-resident: fold the outcome so the run tally buckets it truthfully.
+            # Still store-resident: fold the outcome so the check pass's tally buckets
+            # it truthfully (the monitor runs post-tally, where the fold is unread).
             self._mgr.note_pending_state(record.key, outcome)
         row.view_terminal(outcome, self._clock.now(), files=files)
         self.results.append(WaitOutcomeRow(label=record.display_label, outcome=outcome, carried_over=row.carried_over))
