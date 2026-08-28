@@ -15,6 +15,7 @@ login happens), so that one path is exercised through `build` with the qbit
 
 import logging
 from dataclasses import dataclass
+from datetime import datetime
 from typing import cast
 
 import httpx
@@ -47,10 +48,11 @@ _SOURCE_TITLE = "Scraped Source Title"
 
 @dataclass(frozen=True)
 class _TorrInfo:
-    """The `torrents_info` row the add path reads (`.hash` / `.name`)."""
+    """The `torrents_info` row the add path reads (`.hash` / `.name` / `.added_on`)."""
 
     hash: str
     name: str
+    added_on: object = None
 
 
 @dataclass(frozen=True)
@@ -76,8 +78,10 @@ class _FakeQbit:
         present: dict[str, str] | None = None,
         register_on_add: tuple[str, str] | None = None,
         add_result: str = "Ok.",
+        added_on: object = None,
     ) -> None:
         self._present: dict[str, str] = dict(present or {})
+        self._added_on = added_on
         self._register_on_add = register_on_add
         self._add_result = add_result
         self.add_calls: list[_AddCall] = []
@@ -88,9 +92,9 @@ class _FakeQbit:
         # qBittorrent treats an empty `hashes` filter as "no filter" and returns
         # every torrent - the footgun the empty-infohash normalization guards against.
         if not torrent_hashes:
-            return [_TorrInfo(hash=h, name=n) for h, n in self._present.items()]
+            return [_TorrInfo(hash=h, name=n, added_on=self._added_on) for h, n in self._present.items()]
         name = self._present.get(torrent_hashes)
-        return [_TorrInfo(hash=torrent_hashes, name=name)] if name is not None else []
+        return [_TorrInfo(hash=torrent_hashes, name=name, added_on=self._added_on)] if name is not None else []
 
     def torrents_add(self, *, urls: str, category: str | None, tags: list[str] | None) -> str:
         self.add_calls.append(_AddCall(urls=urls, category=category, tags=tags))
@@ -334,3 +338,30 @@ def test_qbit_login_failure_maps_to_qbit_connection_error(monkeypatch: pytest.Mo
             web=httpx.Client(),
             boot=BootFlow(),
         )
+
+
+@pytest.mark.parametrize(
+    ("added_on", "expected"),
+    [
+        pytest.param(1_726_000_000, datetime.fromtimestamp(1_726_000_000), id="valid-epoch"),
+        pytest.param(1e30, None, id="overflow"),
+        pytest.param(True, None, id="bool"),
+        pytest.param(0, None, id="zero"),
+        pytest.param("2026-01-01", None, id="string"),
+    ],
+)
+def test_add_already_present_reads_the_add_time(
+    monkeypatch: pytest.MonkeyPatch, added_on: object, expected: datetime | None
+) -> None:
+    """A reacquire carries qBittorrent's add time through, folding junk readings to None."""
+
+    _patch_nyaa_parser(monkeypatch)
+    qbit = _FakeQbit(present={_HASH: "Existing Name"}, added_on=added_on)
+    service = _service(qbit)
+
+    outcome, _, when = service.add(
+        item=SeadexUrlItem(url="https://nyaa.si/view/1", tracker=Tracker.NYAA, infohash=_HASH), preview=False
+    )
+
+    assert outcome is AddOutcome.ALREADY_ADDED
+    assert when == expected
