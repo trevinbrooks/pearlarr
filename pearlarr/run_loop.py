@@ -284,7 +284,7 @@ class RunLoop:
         # close roll back the run's staged writes. The save trails the monitor to also capture its drops.
         try:
             if self._wait_active and not end_pass_waits:
-                check = self._wait_manager.reconcile_once()
+                check = self._wait_manager.check_once()
                 if check is not None:
                     self._ctx.stats.imported += check.carried_over_imported
             if self._wait_active:
