@@ -7,9 +7,9 @@
 
 These pin `ImportWaitManager.poll_torrent` (the single-shot state read)
 and `ImportWaitManager.run_monitor` (the poll loop) against a scripted
-`FakeQbit`. The clock and sleep are injected into the monitor loop so it never
-actually waits - real foreground `sleep` is blocked in this env, so the fakes
-are mandatory, not just a speed-up. The manager is built bare (`object.__new__`
+`FakeQbit`. A `FakeClock` is injected at manager construction so the monitor
+loop never actually waits. Real foreground `sleep` is blocked in this env, so
+the fakes are mandatory, not just a speed-up. The manager is built bare (`object.__new__`
 via `make_bare_instance`) so no live qBittorrent login or disk I/O happens. The
 engine's `_finalize_run` orchestration (which drives the manager's passes) is
 pinned via a real engine with an attached manager at the bottom of the file.
@@ -23,7 +23,6 @@ import logging
 from collections.abc import Callable
 from dataclasses import dataclass
 from datetime import datetime, timedelta
-from itertools import count
 from typing import override
 
 import pytest
@@ -76,7 +75,7 @@ from .builders import (
     one_release_dict,
     pending_import,
 )
-from .fakes import CaptureHandler, FakeRadarrClient, FakeStrategy, install_recording_hub
+from .fakes import CaptureHandler, FakeClock, FakeRadarrClient, FakeStrategy, install_recording_hub
 
 
 def pk(infohash: str, al_id: int = PENDING_AL_ID) -> PendingKey:
@@ -344,20 +343,22 @@ class TestPollTelemetry:
         assert mgr.poll_telemetry(["h"]) == {}
 
 
-class FakeClock:
-    """A monotonic clock the wait loop reads. Advances by a fixed step per sleep."""
+class _AutoTickClock(FakeClock):
+    """Time passing between reads: every `now` reading advances by `step`."""
 
-    def __init__(self, step: float) -> None:
-        self.t = 0.0
-        self._step = step
-
+    @override
     def now(self) -> float:
-        return self.t
-
-    def sleep(self, _seconds: float) -> None:
-        # Ignore the requested duration. Advance our own clock so the loop's
-        # deadline arithmetic is exercised without ever really sleeping.
+        t = self.t
         self.t += self._step
+        return t
+
+
+class _InterruptSleepClock(FakeClock):
+    """A clock whose sleep raises KeyboardInterrupt (Ctrl-C mid-wait)."""
+
+    @override
+    def sleep(self, seconds: float) -> None:
+        raise KeyboardInterrupt
 
 
 # A timestamp far enough in the past/future that the TTL verdict is fixed no
@@ -481,6 +482,7 @@ def make_orchestration_manager(
     store_records: list[PendingImport] | None = None,
     pending: list[PendingImport] | None = None,
     reporter: _RecordingReporter | None = None,
+    clock: FakeClock | None = None,
     **config_overrides: object,
 ) -> ImportWaitManager:
     """A bare `ImportWaitManager` wired for the pending-import orchestration paths.
@@ -503,6 +505,7 @@ def make_orchestration_manager(
         _categories=make_categories(config),
         _active_strategy=strategy,
         _reporter=reporter or _RecordingReporter(),
+        _clock=clock if clock is not None else FakeClock(),
         cache_store=FakeCacheStore(),
     )
     mgr._ctx = RunContext(arr=Arr.SONARR, pending_imports=list(pending or []))
@@ -885,10 +888,9 @@ class TestCheckOnce:
             strategy=_RecordingStrategy(),
             store_records=[pending_import(infohash="h", added_at=_FRESH)],
             import_wait_timeout=1,
+            clock=_AutoTickClock(step=30),
         )
-        ticks = count(0.0, 30.0)
-
-        result = mgr.check_once(now=lambda: next(ticks), view=RecordingWaitView())
+        result = mgr.check_once(view=RecordingWaitView())
 
         assert result is not None
         assert [(row.outcome, row.carried_over) for row in result.rows] == [(Outcome.STILL_DOWNLOADING, True)]
@@ -970,10 +972,10 @@ class TestMonitorRowDiscriminator:
             strategy=strategy,
             store_records=[fresh, carried],
             pending=[fresh],
+            clock=FakeClock(step=30),
         )
-        clock = FakeClock(step=30)
 
-        result = mgr.run_monitor(now=clock.now, sleep=clock.sleep, view=RecordingWaitView())
+        result = mgr.run_monitor(view=RecordingWaitView())
 
         assert result is not None
         assert {row.label: row.carried_over for row in result.rows} == {
@@ -994,10 +996,10 @@ class TestMonitorRowDiscriminator:
             store_records=[fresh],
             pending=[fresh],
             import_wait_timeout=1,
+            clock=FakeClock(step=30),
         )
-        clock = FakeClock(step=30)
 
-        result = mgr.run_monitor(now=clock.now, sleep=clock.sleep, view=RecordingWaitView())
+        result = mgr.run_monitor(view=RecordingWaitView())
 
         assert result is not None
         assert [(row.outcome, row.carried_over) for row in result.rows] == [(Outcome.DOWNLOAD_TIMED_OUT, False)]
@@ -1138,10 +1140,10 @@ def _run_single_monitor(
         import_poll_interval=30,
         progress_poll_interval=progress_poll_interval,
         post_import_category=post_import_category,
+        clock=FakeClock(step=step),
     )
     view = RecordingWaitView()
-    clock = FakeClock(step=step)
-    mgr.run_monitor(now=clock.now, sleep=clock.sleep, view=view)
+    mgr.run_monitor(view=view)
     return mgr, view
 
 
@@ -1180,11 +1182,11 @@ class TestRunMonitor:
             import_wait_timeout=3600,
             import_ready_timeout=600,
             import_poll_interval=30,
+            clock=FakeClock(step=30),
         )
         view = RecordingWaitView()
-        clock = FakeClock(step=30)
 
-        mgr.run_monitor(now=clock.now, sleep=clock.sleep, view=view)
+        mgr.run_monitor(view=view)
 
         # Both ultimately imported and dropped.
         assert mgr._pending_records() == {}
@@ -1504,14 +1506,14 @@ class TestRunMonitor:
             import_ready_timeout=600,
             import_poll_interval=30,
             progress_poll_interval=5,
+            clock=FakeClock(step=5),
         )
         handler = CaptureHandler()
         mgr.logger.addHandler(handler)
         mgr.logger.setLevel(logging.DEBUG)
         view = RecordingWaitView()
-        clock = FakeClock(step=5)
         try:
-            mgr.run_monitor(now=clock.now, sleep=clock.sleep, view=view)  # must not raise
+            mgr.run_monitor(view=view)  # must not raise
         finally:
             mgr.logger.removeHandler(handler)
             mgr.logger.setLevel(logging.WARNING)
@@ -1537,11 +1539,11 @@ class TestRunMonitor:
             import_wait_timeout=3600,
             import_ready_timeout=600,
             import_poll_interval=30,
+            clock=FakeClock(step=30),
         )
         view = RecordingWaitView()
-        clock = FakeClock(step=30)
 
-        mgr.run_monitor(now=clock.now, sleep=clock.sleep, view=view)
+        mgr.run_monitor(view=view)
 
         assert strategy.import_calls  # the store-only record was driven
         assert view.final(rk("carried")).outcome is Outcome.IMPORTED
@@ -1561,18 +1563,12 @@ class TestRunMonitor:
             import_wait_timeout=3600,
             import_ready_timeout=600,
             import_poll_interval=30,
+            clock=_InterruptSleepClock(),
         )
         view = RecordingWaitView()
         recording = install_recording_hub()
 
-        def interrupt(_seconds: float) -> None:
-            raise KeyboardInterrupt
-
-        result = mgr.run_monitor(  # must not raise
-            now=lambda: 0.0,
-            sleep=interrupt,
-            view=view,
-        )
+        result = mgr.run_monitor(view=view)  # must not raise
 
         assert result is not None and result.waited == 0
         assert set(mgr._pending_records()) == {pk("h")}  # left pending for next run
@@ -1604,7 +1600,7 @@ class TestRunMonitor:
         )
         view = RecordingWaitView()
 
-        result = mgr.run_monitor(now=lambda: 0.0, sleep=lambda _s: None, view=view)  # must not raise
+        result = mgr.run_monitor(view=view)  # must not raise
 
         assert result is not None and result.waited == 1
         assert view.final(rk("h1")).outcome is Outcome.MISSING  # the interrupt-time push carried it
@@ -1664,7 +1660,7 @@ class TestRunMonitor:
             mgr,
             [pending_import(infohash="h", added_at=_FRESH)],
             kind=WaitKind.MONITOR,
-            now=clock.now,
+            clock=clock,
             dl_timeout=3600,
             import_timeout=600,
         )
@@ -1684,7 +1680,7 @@ def _monitor_pass(
 
     mgr = make_orchestration_manager(qbit=qbit, strategy=_RecordingStrategy())
     clock = FakeClock(step=5)
-    return MonitorPass(mgr, [record], kind=WaitKind.MONITOR, now=clock.now, dl_timeout=3600, import_timeout=600)
+    return MonitorPass(mgr, [record], kind=WaitKind.MONITOR, clock=clock, dl_timeout=3600, import_timeout=600)
 
 
 class TestMonitorFastTelemetry:
@@ -1716,11 +1712,11 @@ class TestMonitorFastTelemetry:
             import_ready_timeout=600,
             import_poll_interval=30,
             progress_poll_interval=5,
+            clock=FakeClock(step=5),
         )
         view = RecordingWaitView()
-        clock = FakeClock(step=5)
 
-        mgr.run_monitor(now=clock.now, sleep=clock.sleep, view=view)
+        mgr.run_monitor(view=view)
 
         assert any(
             t.key == rk("h") and t.phase is Phase.DOWNLOADING and t.fraction == 0.6 and t.speed_bps == 999
@@ -1756,10 +1752,10 @@ class TestMonitorFastTelemetry:
             import_ready_timeout=600,
             import_poll_interval=30,
             progress_poll_interval=5,
+            clock=FakeClock(step=5),
         )
-        clock = FakeClock(step=5)
 
-        mgr.run_monitor(now=clock.now, sleep=clock.sleep, view=NoTelemetryView())
+        mgr.run_monitor(view=NoTelemetryView())
 
         assert qbit.calls == 2
 
@@ -2318,11 +2314,11 @@ class TestPostImportCategory:
             import_wait_timeout=3600,
             import_ready_timeout=600,
             import_poll_interval=30,
+            clock=FakeClock(step=30),
         )
         view = RecordingWaitView()
-        clock = FakeClock(step=30)
 
-        mgr.run_monitor(now=clock.now, sleep=clock.sleep, view=view)
+        mgr.run_monitor(view=view)
 
         assert view.final(rk("h")).outcome is Outcome.IMPORTED
         assert qbit.set_category_calls == [("pearlarr-done", "h")]
@@ -2340,11 +2336,11 @@ class TestPostImportCategory:
             import_wait_timeout=3600,
             import_ready_timeout=600,
             import_poll_interval=30,
+            clock=FakeClock(step=30),
         )
         view = RecordingWaitView()
-        clock = FakeClock(step=30)
 
-        mgr.run_monitor(now=clock.now, sleep=clock.sleep, view=view)
+        mgr.run_monitor(view=view)
 
         assert view.final(rk("h")).outcome is Outcome.MISSING
         assert mgr._pending_records() == {}  # still dropped
@@ -2421,11 +2417,11 @@ class TestPostImportCategorySiblingGate:
             import_wait_timeout=3600,
             import_ready_timeout=600,
             import_poll_interval=30,
+            clock=FakeClock(step=30),
         )
         view = RecordingWaitView()
-        clock = FakeClock(step=30)
 
-        mgr.run_monitor(now=clock.now, sleep=clock.sleep, view=view)
+        mgr.run_monitor(view=view)
 
         assert qbit.set_category_calls == [("pearlarr-done", "h")]
         assert mgr._pending_records() == {}
@@ -2607,6 +2603,7 @@ def _radarr_reconcile_manager(
         _categories=make_categories(config, Arr.RADARR),
         _active_strategy=strat,
         _reporter=_RecordingReporter(),
+        _clock=FakeClock(),
         cache_store=store,
     )
     mgr._ctx = RunContext(arr=Arr.RADARR)
@@ -2650,11 +2647,11 @@ class TestCloseTrackedDownload:
             import_wait_timeout=3600,
             import_ready_timeout=600,
             import_poll_interval=30,
+            clock=FakeClock(step=30),
         )
         view = RecordingWaitView()
-        clock = FakeClock(step=30)
 
-        mgr.run_monitor(now=clock.now, sleep=clock.sleep, view=view)
+        mgr.run_monitor(view=view)
 
         assert view.final(rk("h")).outcome is Outcome.IMPORTED
         assert [c.key for c in strategy.close_calls] == [pending.key]

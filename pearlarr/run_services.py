@@ -24,6 +24,7 @@ from .arr_categories import ArrCategoryResolver
 from .arr_http import ArrHttp, make_httpx_client
 from .boot_flow import BootFlow
 from .cache import UPDATED_AT_STR_FORMAT, AbstractCacheStore, CachedEntry, CacheRecord, CacheStore
+from .clock import Clock, SystemClock
 from .config import AppConfig, Arr, ArrSettings, PrivateReleaseAction, secret_value
 from .grab_pipeline import GrabPipeline, GrabRequest
 from .log import EntryState
@@ -92,6 +93,9 @@ class RunDeps:
     """The run's effective qBittorrent categories: explicit config first, then
     the arr's own download client - fetched lazily at first use (grab /
     post-import move), where the arr is provably up."""
+
+    clock: Clock
+    """The run's time seam, read wherever a wait or throttle needs now/sleep."""
 
     web: httpx.Client
     http: httpx.Client
@@ -228,6 +232,7 @@ class RunDeps:
             arr_config=arr_config,
             arr_http=arr_http,
             categories=categories,
+            clock=SystemClock(),
             web=web,
             http=http,
             qbit=qbit,

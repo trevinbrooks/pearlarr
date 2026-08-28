@@ -745,11 +745,10 @@ class TestImportCompletedQueueState:
         assert second.command_issued is True
         assert len(sonarr.execute_calls) == 1
 
-    def test_running_disk_command_defers_even_forced(self, monkeypatch: pytest.MonkeyPatch) -> None:
+    def test_running_disk_command_defers_even_forced(self) -> None:
         # A disk command outliving the rescan's bounded absorb: a ManualImport
         # POSTed now would queue behind it for a stale replay, so RETRY (force
         # must not override) with the determinate bar counts kept.
-        monkeypatch.setattr(sonarr_import_module, "_REFRESH_COMMAND_POLL_S", 0)
         pending = pending_import(infohash="abc123")
         strat, sonarr = _make_sonarr_for_import(
             candidates=[manual_candidate("/d/Show - 01 [1080p].mkv")],
@@ -908,12 +907,11 @@ class TestImportCompletedQueueState:
         files, _mode = sonarr.execute_calls[0]
         assert [f.path for f in files] == [f"/d/{wrong_file}"]
 
-    def test_rescan_absorbs_own_disk_pass_then_steps_in(self, monkeypatch: pytest.MonkeyPatch) -> None:
+    def test_rescan_absorbs_own_disk_pass_then_steps_in(self) -> None:
         # A completed rescan immediately starts Sonarr's own import pass. The
         # rescan must wait that pass out; checking the disk guard right away
         # tripped it in phase on EVERY poll and starved the step-in until the
         # ready deadline.
-        monkeypatch.setattr(sonarr_import_module, "_REFRESH_COMMAND_POLL_S", 0)
         running = CommandResource.model_validate({"name": "ProcessMonitoredDownloads", "status": "started"})
         pending = pending_import(
             infohash="abc123",
@@ -933,10 +931,9 @@ class TestImportCompletedQueueState:
         assert len(sonarr.execute_calls) == 1
         assert sonarr.list_commands_calls >= 3
 
-    def test_rescan_waits_for_slow_refresh_then_proceeds(self, monkeypatch: pytest.MonkeyPatch) -> None:
+    def test_rescan_waits_for_slow_refresh_then_proceeds(self) -> None:
         # The refresh command reads `started` on the first poll and terminal on
         # the next: the rescan keeps polling instead of giving up on one reading.
-        monkeypatch.setattr(sonarr_import_module, "_REFRESH_COMMAND_POLL_S", 0)
         pending = pending_import(
             infohash="abc123",
             file_episode_map={"Show - 01 [1080p].mkv": [101]},
@@ -952,11 +949,10 @@ class TestImportCompletedQueueState:
         assert probe.command_issued is True
         assert len(sonarr.execute_calls) == 1
 
-    def test_rescan_skips_absorb_when_refresh_never_confirms(self, monkeypatch: pytest.MonkeyPatch) -> None:
+    def test_rescan_skips_absorb_when_refresh_never_confirms(self) -> None:
         # The refresh never reads terminal within the bound: give up on it AND
         # skip the absorb (an unconfirmed rescan has no follow-up pass to wait
         # for). The disk guard's read is then the only list_commands call.
-        monkeypatch.setattr(sonarr_import_module, "_REFRESH_COMMAND_POLL_S", 0)
         pending = pending_import(
             infohash="abc123",
             file_episode_map={"Show - 01 [1080p].mkv": [101]},

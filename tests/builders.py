@@ -65,7 +65,7 @@ from pearlarr.sonarr_mapper import FileEpisodeMapper
 from pearlarr.sonarr_parse import SonarrParseCache
 from pearlarr.torrents import AddOutcome, AddResult, TorrentService
 
-from .fakes import FakeRadarrClient, FakeSonarrClient
+from .fakes import FakeClock, FakeRadarrClient, FakeSonarrClient
 
 # The display separator the cockpit/ledger/report rows join parts with. Assertions build expected
 # strings from this so a separator change is one edit.
@@ -575,6 +575,7 @@ def make_run_deps(
         # construction seams behave exactly as production's.
         arr_http=None,
         categories=categories,
+        clock=FakeClock(),
         web=http,
         http=http,
         qbit=None,
@@ -709,6 +710,7 @@ def make_import_wait_manager(**overrides: Any) -> ImportWaitManager:
         "_reporter": _real_reporter(logger, cache_store, httpx.Client()),
         "logger": logger,
         "qbit": None,
+        "_clock": FakeClock(),
         "_ctx": RunContext(arr=Arr.SONARR),
         # The production placeholder before a run binds one. Tests driving the import hook pass their own.
         "_active_strategy": None,
