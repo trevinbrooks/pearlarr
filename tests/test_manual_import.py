@@ -14,6 +14,7 @@ pure, no network or disk. `SonarrEpisode` is built directly via
 
 from collections.abc import MutableMapping
 from dataclasses import replace
+from types import SimpleNamespace
 from typing import cast
 
 import pytest
@@ -1186,7 +1187,13 @@ class TestSanitizeTorrentTelemetry:
         size: object,
         expected: TorrentTelemetry,
     ) -> None:
-        assert sanitize_torrent_telemetry(progress, dlspeed, eta, completed, size) == expected
+        row = SimpleNamespace(progress=progress, dlspeed=dlspeed, eta=eta, completed=completed, size=size)
+
+        assert sanitize_torrent_telemetry(row) == expected
+
+    def test_attrless_row_folds_to_the_zero_reading(self) -> None:
+        # The fields are read best-effort off the row: a row missing them all is the empty telemetry.
+        assert sanitize_torrent_telemetry(object()) == TorrentTelemetry(0.0, None, None, None, None)
 
 
 def test_wait_outcome_members_exist() -> None:
