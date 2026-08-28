@@ -8,14 +8,7 @@ from .seadex_types import ArrItem, HistoryRecord, ProgressSink
 
 
 class ImportCompleter(ABC):
-    """The strategy hooks the engine drives after a download completes.
-
-    Narrow and NON-generic, so the engine can hold the active strategy as
-    `ImportCompleter | None` and call exactly these methods without the
-    invariant-`ArrSync[ItemT]` cast (the engine never touches `ItemT`).
-    `ArrSync` subclasses it, so a concrete strategy assigns to an
-    `ImportCompleter` slot nominally.
-    """
+    """The strategy hooks the engine drives after a download completes, deliberately non-generic."""
 
     @abstractmethod
     def import_completed(
@@ -24,61 +17,22 @@ class ImportCompleter(ABC):
         content_path: str,
         attempt: AttemptKind = AttemptKind.POLL,
     ) -> ImportProbe:
-        """Reconcile one completed download with Sonarr (one poll).
+        """Reconcile one completed download with the arr (one poll).
 
-        Called repeatedly by the engine's monitor/snapshot once qBittorrent
-        reports the torrent complete. Reads Sonarr's (refreshed) queue and the
-        current episode files as the source of truth: lets Sonarr finish when it
-        is actively importing, treats target episodes that already hold the
-        recommended release as imported, and otherwise drives a series-pinned
-        manual import using *our* authoritative file->episode mapping (never
-        Sonarr's blind parse, so it can't import an episode our mapping assigned
-        to another preferred torrent). Radarr instead reads its own import
-        history as evidence and never drives the import itself (Radarr's completed
-        -download handling does that) - see `RadarrSync.import_completed`.
-
-        Args:
-            pending: The durable record for the completed torrent.
-            content_path: The qBittorrent `content_path` of the finished
-                download (the folder/file the manual import reads from disk).
-            attempt: The attempt kind (see `AttemptKind`). FORCED/DEADLINE stop
-                deferring to Sonarr on a clean `importPending` (a download it
-                will never import, e.g. Completed Download Handling off, still
-                imports); DEADLINE additionally warns loudly on an intended
-                file still not visible, which is terminal there but expected on
-                an early poll.
-
-        Returns:
-            The `ImportProbe` readiness (drop / retry / leave) plus whether the
-            intended episode files are verified present (`files_present`),
-            whether an import command for this record was accepted or is still
-            running (`command_issued`), and whether the poll deferred behind our
-            own Sonarr work (`deferred` - the monitor credits that time back).
+        A manual import assigns with *our* file->episode mapping, never the arr's title parse.
         """
 
     @abstractmethod
     def import_progress(self, pending: PendingImport) -> ImportProgress:
         """Cheap, read-only "files inserted" count for the wait cockpit's bar.
 
-        Called between the heavy `import_completed` polls (the Tier-2 fast poll)
-        to fill the importing row's bar as files land and to promote the row once
-        every intended file is present. MUST NOT refresh downloads, read the queue,
-        or issue commands - only the fresh episode files. `SonarrSync` counts the
-        seed targets that now hold the recommended release. `RadarrSync` never
-        enters the blocking monitor (the only caller), so it returns an
-        indeterminate zero.
+        MUST NOT refresh downloads, read the queue, or issue commands.
         """
 
     def close_tracked(self, pending: PendingImport) -> None:
         """Dismiss the arr's leftover queue entry for a fully imported torrent.
 
-        Called by the engine once no record of this arr still claims the
-        torrent (after the last drop). Sonarr auto-closes a tracked download
-        only when ONE import covers the grab's full episode count, so a
-        download finished across several passes stays parked in its queue
-        where completed-download handling would re-import it - `SonarrSync`
-        removes the entry. Default: no-op (Radarr imports its own grabs and
-        closes them itself).
+        Sonarr auto-closes a tracked download only when ONE import covers the grab's full episode count.
         """
 
         del pending
@@ -86,36 +40,11 @@ class ImportCompleter(ABC):
     @property
     @abstractmethod
     def supports_blocking_monitor(self) -> bool:
-        """Whether the engine may run the end-of-run blocking monitor for this strategy.
-
-        `SonarrSync` returns True: the interleaved wait/import cockpit is its
-        domain. `RadarrSync` returns False - Radarr records carry no episode
-        mapping and Radarr imports them itself, so they reconcile off import
-        history in every active mode (never the monitor). The run tail reads this
-        to decide whether BLOCKING/HYBRID monitors or just reconciles pre-summary.
-        """
+        """Whether the engine may run the end-of-run waiting monitor."""
 
 
 class ArrSync[ItemT: ArrItem](ImportCompleter):
-    """An Arr-specific sync strategy the run machinery drives.
-
-    Owns the Arr REST client and the Arr's domain logic (episode mapping,
-    release-group resolution). Provides the items to process and the per-id
-    body. The composition root injects the shared `RunDeps` (used to stand
-    up the client) and the `RunServices` hub (held as `self._services`).
-    The per-id hooks call the shared pipeline through it, so the run loop
-    calls these hooks without passing the services (and the strategy never
-    sees the loop type). Subclasses (`SonarrSync` / `RadarrSync`) must
-    implement every hook. The ABC enforces that at instantiation.
-
-    Generic in `ItemT` (the Arr's item protocol - `seadex_types.SonarrItem`
-    or `seadex_types.RadarrItem`) so each subclass binds its own item type
-    rather than a loose `list`/`Any`. `ArrSync` is invariant in `ItemT` (it
-    appears in both inputs and outputs), so a concrete
-    strategy must reach the generic `run_sync[ItemT]`: the composition root
-    branches per Arr to bind one item type per call, and the run loop only ever
-    touches the shared `ArrItem` surface (`.monitored`/`.title`) off items.
-    """
+    """An Arr-specific sync strategy the run machinery drives: the Arr REST client plus its domain logic."""
 
     @abstractmethod
     def get_items(self) -> list[ItemT]:
@@ -136,40 +65,15 @@ class ArrSync[ItemT: ArrItem](ImportCompleter):
     @property
     @abstractmethod
     def warms_episodes(self) -> bool:
-        """Whether `prefetch_episodes` does real work (gets a boot step).
-
-        `SonarrSync` warms per-series episode lists. `RadarrSync` has none, so
-        the run machinery skips the "Warming episode lists" step entirely rather
-        than graduate an empty one.
-        """
+        """Whether `prefetch_episodes` does real work."""
 
     @abstractmethod
     def prefetch_episodes(self, items: list[ItemT], *, progress: ProgressSink | None = None) -> int:
-        """Warm per-item network caches concurrently before the scan loop.
-
-        Called once in the pre-scan prefetch step, beside the AniList/SeaDex bulk
-        prefetches. `SonarrSync` fans the per-series `/api/v3/episode` fetches
-        out over a bounded pool. `RadarrSync` is a no-op (no episodes).
-
-        Args:
-            items: The run's item list (already narrowed for a
-                single-item run).
-            progress: Boot cockpit step fed per-item
-                fraction + "done/total" detail. None outside the cockpit.
-
-        Returns:
-            How many items were warmed (attempted), for the caller's ledger
-            detail. `RadarrSync` returns 0.
-        """
+        """Warm per-item network caches concurrently before the scan loop, returning how many were attempted."""
 
     @abstractmethod
     def history_since(self, date: str) -> list[HistoryRecord] | None:
-        """Arr history records since `date`, or None on failure.
-
-        A one-line delegation to the arr client's `history_since`. The run
-        machinery's activity scan reads it to spot arr-side file changes
-        (imports / non-upgrade deletes) between SeaDex passes.
-        """
+        """Arr history records since `date`, or None on failure."""
 
     @abstractmethod
     def process_al_id(
@@ -184,12 +88,5 @@ class ArrSync[ItemT: ArrItem](ImportCompleter):
     def pending_import_series_id(self, item: ItemT) -> int | None:
         """The Arr series id whose carried-over pending records this item owns.
 
-        The key for the engine's per-item non-blocking snapshot hook: after all
-        of an item's AniList ids are processed, the engine reconciles+reports any
-        carried-over pending records for this series id inline. Sonarr returns
-        `item.id`. Radarr returns `None` (movies record no pending imports),
-        which short-circuits the snapshot entirely.
+        None skips the engine's per-item pending snapshot.
         """
-
-    # import_completed / import_progress are inherited (abstract) from
-    # ImportCompleter - the narrow non-generic seam the engine drives.

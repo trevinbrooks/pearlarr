@@ -28,14 +28,6 @@ from .seadex_types import coerce_int
 def normalize_basename(name: str) -> str:
     """Normalize a filename leaf for cross-source matching.
 
-    SeaDex/PocketBase JSON is NFC, but a macOS (APFS/HFS) disk scan can hand
-    Sonarr the same name in NFD, so `"é"` (NFC) != `"é"` (NFD) under a plain
-    `dict` lookup. Trailing whitespace and case can drift too. Normalizing
-    BOTH keyspaces (our SeaDex-recorded names and the on-disk leaves) through
-    this one function is what lets our authoritative map match the files Sonarr
-    actually found - so a grabbed file is never skipped over a unicode/whitespace
-    mismatch.
-
     Args:
         name: A filename (basename or full path - only the text is folded).
 
@@ -47,44 +39,25 @@ def normalize_basename(name: str) -> str:
 
 
 def fold_path_separators(path: str) -> str:
-    r"""Fold `\` to `/` - the one home of the Windows-separator fold.
-
-    A Windows arr hands a POSIX host its paths verbatim, where `os.path` and a
-    plain split see no separator at all. Every path compare and leaf
-    extraction folds through here.
-    """
+    r"""Fold `\` to `/` for cross-platform comparison."""
 
     return path.replace("\\", "/")
 
 
 def path_leaf(name: str) -> str:
-    """A path's leaf with case and unicode preserved, for parser and display use.
-
-    Backslashes fold (`fold_path_separators`) and a trailing separator never
-    yields an empty leaf. Comparison keyspaces use `normalized_leaf` instead.
-    """
+    """A path's leaf with case and unicode preserved, for parser and display use."""
 
     return os.path.basename(fold_path_separators(name).rstrip("/"))
 
 
 def normalized_leaf(name: str) -> str:
-    """Fold a listing path or on-disk path to its normalized leaf (`path_leaf`, then `normalize_basename`).
-
-    The one home of the leaf-identity composition, so every comparison keyspace
-    folds directories and normalizes the same way.
-    """
+    """Fold a listing path or on-disk path to its normalized leaf (`path_leaf`, then `normalize_basename`)."""
 
     return normalize_basename(path_leaf(name))
 
 
 def normalize_group(group: str) -> str:
-    """Normalize a release group for comparison: strip whitespace/wrapping dashes, casefold.
-
-    The single source of truth for group comparison, so the never-overwrite
-    check and the grab-time group filter agree on what counts as "the same
-    group" (a dash-wrapped "-Aergia-" equals "Aergia" in both). Blank/None is
-    handled by the caller (or by `normalize_rg`).
-    """
+    """Normalize a release group for comparison: strip whitespace/wrapping dashes, casefold."""
 
     return group.strip().strip("-").casefold()
 
@@ -98,25 +71,21 @@ def normalize_rg(name: str | None) -> str | None:
 
 
 class ImportWaitMode(StrEnum):
-    """When (if ever) the manual-import wait/import runs, resolved cli > config.
-
-    A `StrEnum` so each member IS its config/CLI string (`ImportWaitMode.OFF`
-    is and serializes as `"off"`). The mode only controls *when* the import
-    runs. All non-off modes share the same durable `PendingImport`
-    substrate.
-    """
+    """Controls if and when the manual-import wait/import runs."""
 
     OFF = "off"
     """Disabled: no waiting, no pending-import records, no manual import."""
 
     DEFERRED = "deferred"
-    """Never block: record grabs and import the already-finished ones on a later run."""
+    """Never wait on a download: record this run's grabs and import earlier runs' finished downloads in one
+    pass at the end of the run."""
 
     BLOCKING = "blocking"
-    """Block at the end of the run (and on an early break) until downloads finish, then import."""
+    """Same as `hybrid`."""
 
     HYBRID = "hybrid"
-    """Reconcile deferred imports at run start, then a blocking pass at the end (recommended)."""
+    """The default: wait at the end of the run for downloads to finish, then import - this run's grabs and
+    any download still pending from an earlier run."""
 
 
 class WaitOutcome(Enum):
@@ -148,34 +117,18 @@ class ImportReadiness(Enum):
     again until the readiness deadline."""
 
     LEAVE = auto()
-    """Nothing we can import right now (no candidate maps to one of our episodes, or the attempt raised). Leave
-    the record pending for a later run."""
+    """The attempt raised (contained by the manager) or no strategy is bound - leave the record pending for a
+    later run."""
 
 
 class AttemptKind(Enum):
-    """Which kind of import attempt a reconcile poll is (see `ImportCompleter.import_completed`).
-
-    The three legal states of the old (force, at_deadline) pair - a deadline
-    attempt always forces, so deadline-without-force is unrepresentable.
-    """
+    """Which kind of import attempt a poll is (see `ImportCompleter.import_completed`)."""
 
     POLL = auto()
-    """An ordinary monitor poll: defer to Sonarr on a clean `importPending`."""
-
-    FORCED = auto()
-    """A snapshot/reconcile pass: step in even on a clean `importPending` (a
-    download Sonarr will never import, e.g. CDH off, still imports) - but not
-    a final attempt, so a still-missing file stays quiet."""
+    """An ordinary poll: a clean `importPending` is Sonarr's while its completed download handling is on."""
 
     DEADLINE = auto()
-    """The final in-bound attempt: forced, and a still-missing intended file
-    warns loudly rather than at debug."""
-
-    @property
-    def forces(self) -> bool:
-        """Stop deferring to Sonarr on a clean `importPending`."""
-
-        return self is not AttemptKind.POLL
+    """The final in-bound attempt: steps in past a clean `importPending`."""
 
     @property
     def at_deadline(self) -> bool:
@@ -193,11 +146,10 @@ class PendingState(StrEnum):
     """
 
     QUEUED = "queued"
-    """Still downloading (or never reached completion this poll). It waits."""
+    """Still downloading."""
 
-    IMPORTING = "importing"
-    """The download finished and an import command was accepted, but the episode files haven't landed yet (a
-    remote-mount copy is in flight)."""
+    DOWNLOADED = "downloaded"
+    """The download finished and will be imported by the end-of-run pass."""
 
     IMPORTED = "imported"
     """The episode files are verified present. The record is dropped."""
@@ -215,22 +167,11 @@ def classify_pending(
 ) -> PendingState:
     """Map a poll's outcome to a single carried-over `PendingState`.
 
-    Pure, no I/O (mirrors `classify_queue`): the engine reads the torrent's
-    completion outcome and the strategy's import probe, and this folds them into
-    one status word. The verified-files check dominates the completed case, so a
-    finished-but-not-yet-copied import always reads `IMPORTING` until the files
-    actually land.
-
     Args:
         wait_outcome: The torrent's terminal outcome this
             poll, or `None` while it is still downloading.
         files_present: Whether every intended episode file is verified
             present in Sonarr (the only signal that promotes to `IMPORTED`).
-
-    Returns:
-        `MISSING` / `ERRORED` for those terminal outcomes, `None` (still
-        downloading) -> `QUEUED`, COMPLETE with files present -> `IMPORTED`,
-        COMPLETE without files present -> `IMPORTING`.
     """
 
     if wait_outcome is WaitOutcome.MISSING:
@@ -241,7 +182,7 @@ def classify_pending(
         return PendingState.QUEUED
     if files_present:
         return PendingState.IMPORTED
-    return PendingState.IMPORTING
+    return PendingState.DOWNLOADED
 
 
 @dataclass(frozen=True)
@@ -257,34 +198,23 @@ class ImportProbe:
     """What the engine should do (drop / retry / leave)."""
 
     files_present: bool
-    """Whether every intended episode file is verified present in Sonarr. Only this promotes a record to
-    `imported`."""
+    """Whether every intended episode file is verified present in Sonarr."""
 
     command_issued: bool
-    """Whether a manual-import command covering this download was accepted - this poll, or one provably
-    ours still in flight from an earlier poll (its copy may still be running - so not yet `files_present`)."""
+    """Whether a manual-import command covering this download was accepted."""
 
     imported_count: int = 0
-    """How many of the intended episodes already hold the recommended file - the "files inserted" bar
-    numerator. Meaningful only with `target_count` > 0 (a complete seed map) - 0 otherwise."""
+    """How many of the intended episodes already hold the recommended file"""
 
     target_count: int = 0
-    """The intended-episode denominator for the bar, fixed to the persisted seed set so the bar can't rescale
-    mid-import. 0 means the seed map is incomplete, so the importing row stays indeterminate."""
+    """The intended episodes we mapped, 0 means the seed map is incomplete (indeterminate)."""
 
     deferred: bool = False
-    """Whether this poll waited on OUR OWN Sonarr work (a command we issued, or one provably covering this
-    download). The monitor credits deferred time back to the ready deadline - waiting on ourselves is not the
-    record stalling. Foreign or unproven work never sets this, so those waits stay deadline-bounded."""
+    """Whether this poll waited on OUR OWN Sonarr work."""
 
 
 class ImportProgress(NamedTuple):
-    """A cheap, read-only files-landed count for the wait cockpit's import bar.
-
-    Returned by the strategy's `import_progress` (the Tier-2 poll): no refresh,
-    no queue, no command - just the fresh episode files counted against the seed
-    set.
-    """
+    """A cheap, read-only files-landed count for the wait cockpit's import bar."""
 
     done: int
     total: int
@@ -292,12 +222,15 @@ class ImportProgress(NamedTuple):
     """True only when the persisted seed map covers every intended file, so `done`/`total` are the true full
     set. When False the importing row stays indeterminate (spinner only) and must NOT promote."""
 
+    @property
+    def files_present(self) -> bool:
+        """Every intended file verified present."""
+
+        return self.determinate and 0 < self.total <= self.done
+
 
 class OutcomeCategory(Enum):
-    """The visual class of a terminal wait outcome - how it reads at a glance.
-
-    Drives the wait view's ledger glyph + color and the end-of-wait tally.
-    """
+    """The wait view's ledger glyph + color."""
 
     SUCCESS = ("✔", "ok", "green")
     """The torrent imported."""
@@ -309,8 +242,11 @@ class OutcomeCategory(Enum):
     FAILED = ("✖", "x", "bold red")
     """The download errored or vanished from qBittorrent."""
 
+    PENDING = ("·", "-", "grey50")
+    """Left for the next run on purpose - the one-cycle check saw it and nothing is wrong."""
+
     glyph: str
-    """The unicode glyph (`✔`/`⚠`/`✖`)."""
+    """The unicode glyph (`✔`/`⚠`/`✖`/`·`)."""
 
     ascii_glyph: str
     """The ASCII fallback, for dumb terminals / legacy Windows, where `✔` can't be encoded."""
@@ -324,17 +260,13 @@ class OutcomeCategory(Enum):
         self.style = style
 
     def glyph_for(self, *, use_unicode: bool) -> str:
-        """The ledger glyph: unicode `✔/⚠/✖` or its ASCII fallback."""
+        """The ledger glyph: unicode `✔/⚠/✖/·` or its ASCII fallback."""
 
         return self.glyph if use_unicode else self.ascii_glyph
 
 
 class Outcome(Enum):
-    """A torrent's terminal result in the wait pass, with its rendering vocab.
-
-    Gives each terminal wait result a distinct word and rendering vocab, so the
-    displayed word can't drift from the durable-store decision.
-    """
+    """A torrent's terminal result in the wait pass, with its rendering vocab."""
 
     IMPORTED = ("imported", "imported", OutcomeCategory.SUCCESS, True)
     MISSING = ("gone", "gone from qBittorrent", OutcomeCategory.FAILED, True)
@@ -348,7 +280,11 @@ class Outcome(Enum):
     )
     STILL_IMPORTING = ("unfinished", "still importing; left pending", OutcomeCategory.DEFERRED, False)
     NOT_READY = ("not ready", "import not ready; left pending", OutcomeCategory.DEFERRED, False)
-    NOTHING_TO_IMPORT = ("no files", "nothing to import; left pending", OutcomeCategory.DEFERRED, False)
+    ATTEMPT_FAILED = ("failed", "import attempt failed; left pending", OutcomeCategory.DEFERRED, False)
+    NOT_CHECKED = ("not checked", "qBittorrent unreachable; checked again next run", OutcomeCategory.DEFERRED, False)
+    IMPORT_IN_PROGRESS = ("in progress", "import in progress; checked again next run", OutcomeCategory.PENDING, False)
+    AWAITING_IMPORT = ("awaiting", "awaiting import; checked again next run", OutcomeCategory.PENDING, False)
+    STILL_DOWNLOADING = ("downloading", "still downloading; checked again next run", OutcomeCategory.PENDING, False)
 
     word: str
     """The short ledger token (every one fits `STATE_WIDTH` = 11)."""
@@ -360,9 +296,8 @@ class Outcome(Enum):
     """The `OutcomeCategory` driving glyph + color + tally."""
 
     dropped: bool
-    """Whether the engine removes the record from the durable store on this outcome. True for EXACTLY
-    `IMPORTED` (files verified present) and `MISSING` (gone from qBittorrent) - the two records that must never
-    be retried. A test pins this set so the word and the drop can't diverge."""
+    """Whether the engine removes the record from the durable store on this outcome.
+    True for `IMPORTED` (files verified present) and `MISSING` (gone from qBittorrent)."""
 
     def __init__(
         self,
@@ -383,7 +318,7 @@ class Outcome(Enum):
         return self.category.style
 
     def glyph(self, *, use_unicode: bool) -> str:
-        """The leading ledger glyph: unicode `✔/⚠/✖` or its ASCII fallback."""
+        """The leading ledger glyph: unicode `✔/⚠/✖/·` or its ASCII fallback."""
 
         return self.category.glyph_for(use_unicode=use_unicode)
 
@@ -396,19 +331,10 @@ _QBIT_ETA_INFINITE = 8_640_000
 
 @dataclass(frozen=True)
 class TorrentProbe:
-    """One qBittorrent completion poll, with live download telemetry.
-
-    Carries live speed / ETA / bytes telemetry alongside the terminal outcome.
-    `ImportWaitManager.poll_torrent` is the one place that builds this and the
-    one place that SANITIZES qBittorrent's junk (via `sanitize_torrent_telemetry`),
-    so nothing downstream ever sees a sentinel: `eta_s` drops the 8_640_000 "∞"
-    value to None, `speed_bps` drops a 0/idle speed to None (the view renders
-    that as "stalled"), bytes are clamped, and a NaN/blank progress folds to 0.0.
-    """
+    """One qBittorrent completion poll, with live download telemetry."""
 
     outcome: "WaitOutcome | None"
-    """The terminal outcome this poll, or None while still downloading (or on a transient qB error - keep
-    waiting)."""
+    """The terminal outcome this poll, or None while still downloading (or on a transient qB error)."""
 
     content_path: str | None
     """The completed download's path (COMPLETE only)."""
@@ -429,9 +355,7 @@ class TorrentProbe:
     """Total size in bytes, None when unknown."""
 
     observed: bool = True
-    """False when qBittorrent could not actually be read (no client / a transient error), so the zeroed
-    telemetry is a placeholder - the monitor keeps the row's last real bar/speed instead of painting a fake 0%
-    + stall sample."""
+    """False when qBittorrent could not actually be read (no client / a transient error)."""
 
 
 class TorrentTelemetry(NamedTuple):
@@ -451,15 +375,7 @@ def sanitize_torrent_telemetry(
     completed: object,
     size: object,
 ) -> TorrentTelemetry:
-    """Fold one qBittorrent info row's raw telemetry into sanitized fields.
-
-    Pure (no I/O), so the sentinel handling is unit-testable without a client.
-    A NaN/blank `progress` folds to 0.0 and is clamped to `[0, 1]`. A 0/idle
-    or negative `dlspeed` and the 8_640_000 "∞" `eta` become None. Bytes are
-    coerced to non-negative ints (None when unknown) and `completed` is clamped
-    to `size`. Inputs are typed `object` because the values come off an
-    untyped qBittorrent attribute read (`getattr`), which can hand back None.
-    """
+    """Fold one qBittorrent info row's raw telemetry into sanitized fields."""
 
     frac = _as_float(progress)
     frac = 0.0 if frac is None else max(0.0, min(1.0, frac))
@@ -494,14 +410,7 @@ def _as_float(value: object) -> float | None:
 
 
 class PendingKey(NamedTuple):
-    """One pending record's composite identity: the torrent plus the entry claiming it.
-
-    SeaDex can list one torrent on several AniList entries (a multi-cour batch),
-    each with its own `PendingImport` for its own episode slice, so the
-    bare infohash cannot identify a record. This pair is the durable store's key
-    (`pending_imports` PK tail) and the in-memory dedup/tracking key everywhere
-    a record - not a torrent - is meant.
-    """
+    """One pending record's composite identity: the torrent plus the entry claiming it."""
 
     infohash: str
     al_id: int
@@ -514,36 +423,22 @@ class PendingKey(NamedTuple):
 
 
 def _normalized_names(names: Iterable[str]) -> set[str]:
-    """Normalized-leaf SET, deliberately not a multiset.
-
-    The map/pool keyspaces it compares against collapse duplicate leaves, so a
-    superset compare must too.
-    """
+    """Normalized-leaf SET, deliberately not a multiset."""
 
     return {normalized_leaf(name) for name in names}
 
 
 class SeedCoverage(NamedTuple):
-    """A record's two seed trust levels over its grabbed video files.
-
-    `mapped` (the map ALONE covers every file) is all the IMPORTED fast path
-    and Tier-2 promotion may trust - an exclusion never decides a drop.
-    `accounted` (map + knowably-excluded files) unlocks only the bar and the
-    deadline re-anchor - fail-safe, since a wrong exclusion can only extend a
-    wait - and is what keeps a slice pack's deadline re-anchoring at all.
-    """
+    """A record's two seed trust levels over its grabbed video files."""
 
     mapped: bool
+    """the map ALONE covers every file"""
     accounted: bool
+    """map + knowably-excluded files"""
 
 
 class OwnedEpisode(NamedTuple):
-    """One grab-time ownership claim over an untagged on-disk file.
-
-    Tuple-compatible with the persisted `[episode id, size]` pair, so `asdict`
-    + JSON round-trips unchanged. Named so the pair can't be misread as the
-    `(season, episode)` key one module over.
-    """
+    """One grab-time ownership claim over an untagged on-disk file."""
 
     ep_id: int
     size: int
@@ -551,32 +446,16 @@ class OwnedEpisode(NamedTuple):
 
 @dataclass(frozen=True)
 class GuardFacts:
-    """The plan's per-entry overwrite-guard evidence, carried whole.
-
-    Built once by the planner, threaded through the seed build unchanged
-    (`PlanResult.guards` -> `PendingSeedContext.guards` -> `PendingImport.guards`)
-    and persisted once per entry in the `guard_facts` row (records rehydrate it
-    from there at read), so a new guard fact is one field here rather than one
-    per layer. Sonarr-only enforcement - Radarr's import path reads nothing but
-    the infohash. All-empty for Radarr, older records, and the hash filter
-    (those guard on grabbed groups alone).
-    """
+    """The plan's per-entry overwrite-guard evidence, carried whole."""
 
     entry_groups: tuple[str, ...] = ()
-    """The entry's pick groups whose on-disk copies the plan verified current by size (vacuously,
-    groups with nothing on disk). Widens the import-time never-overwrite set: an on-disk file from
-    another recommended group stays even when that group was never grabbed by us."""
+    """Pick groups the plan verified current by size."""
 
     stale_groups: tuple[str, ...] = ()
-    """Pick groups the plan positively judged stale on disk (a file at a size no sized listing
-    carries) - the copies this grab replaces. Subtracted from sibling records' guard votes so a group
-    excluded from `entry_groups` cannot ride back in and shield the files being replaced."""
+    """Pick groups the plan judged stale on disk."""
 
     owned_episodes: tuple[OwnedEpisode, ...] = ()
-    """Episodes whose on-disk file carries no release group but matched a pick's listed size exactly
-    at grab time - the same identification the planner declined to re-download for. The import honors
-    the claim only while the file still sits at the recorded size, so a different untagged file
-    landing mid-wait is imported over rather than trusted."""
+    """Episodes where the on-disk file has no release group, but matched a pick's listed size exactly."""
 
     @property
     def owned_sizes(self) -> dict[int, int]:
@@ -597,16 +476,7 @@ class GuardFacts:
 
 @dataclass(frozen=True)
 class PendingImport:
-    """A durable record of one added torrent awaiting a series-pinned import.
-
-    Written at the add site through the cache facade (keyed per record by
-    `PendingKey` via `cache_store.put_pending`/`get_pending`/`drop_pending`)
-    and read back to drive the manual import. It carries every field we have
-    *authoritative* data for - the
-    Sonarr `series_id`, our own `(basename -> episode ids)` mapping, the
-    SeaDex release group, dual-audio flag and coverage - so the import never has
-    to trust Sonarr's blind title parse.
-    """
+    """A durable record of one added torrent awaiting a series-pinned import."""
 
     infohash: str
     """The qBittorrent tracking key (never None). Also the dedup `downloadId` sent to Sonarr."""
@@ -615,18 +485,13 @@ class PendingImport:
     """The Sonarr series id the files belong to."""
 
     al_id: int
-    """The AniList entry this record's episode slice belongs to. Together with `infohash` it identifies
-    the record, so two entries sharing one torrent keep separate records. `0` is the sentinel for a
-    legacy record persisted before the field existed (the cache migration backfills it) - such a
-    record acts as its hash's singleton."""
+    """The AniList entry this record's episode slice belongs to."""
 
     file_episode_map: dict[str, list[int]]
-    """Basename -> authoritative Sonarr episode ids. The primary file->episode mapping. Repaired and extended
-    in place at import time when a grabbed file wasn't parseable at grab time, so the map self-heals."""
+    """The primary file (Basename) to episode (Sonarr episode ids) mapping."""
 
     episode_ids: list[int]
-    """Legacy read-only fallback: new seeds always write `[]` (a value could only duplicate
-    `file_episode_map`). Readers still fold it in so an old persisted record rehydrates."""
+    """Legacy read-only fallback: new seeds always write `[]`"""
 
     release_group: str
     """The SeaDex release group (authoritative)."""
@@ -644,42 +509,30 @@ class PendingImport:
     """When the record was written, in `UPDATED_AT_STR_FORMAT`, used for the TTL drop."""
 
     coverage: str | None = None
-    """The entry's season/episode coverage at grab time (e.g. `"S01 E01-E13"`), so a carried-over record can
-    render its `files` line inline next run without re-deriving it. Logging only."""
+    """The entry's season/episode coverage at grab time (e.g. `"S01 E01-E13"`)."""
 
     url: str | None = None
-    """The SeaDex entry URL at grab time, for the carried-over record's inline `link` line. Logging only."""
+    """The SeaDex entry URL at grab time, for the carried-over record's inline `link` line."""
 
     slice_coverage: str | None = None
-    """THIS record's own episode slice (e.g. `"S02 E06"`), from the grab-time map. Rendered in
-    `display_label` so sibling records on one entry (one per-episode torrent each) stay tellable
-    apart in the wait rows and notifications. None when nothing was parseable at grab time."""
+    """THIS record's own episode slice (e.g. `"S02 E06"`), from the grab-time map."""
 
     ordered_episode_ids: list[int] = field(default_factory=list[int])
-    """The resolved episode ids for this entry, in season order - the authoritative set the import assigns
-    into. Lifted straight from the add-flow `ep_list` (which already applied the specials/offset mapping), so
-    import-time assignment never has to trust Sonarr's title parse: a file's parsed `(season, episode)` is
-    honored only when it lands in this set, and an absolute-numbered pack is mapped positionally onto it. Empty
-    for records written before this field existed (such a record falls back to the seeded
-    `file_episode_map`)."""
+    """The resolved episode ids for this entry, in season order"""
 
     excluded_files: list[str] = field(default_factory=list[str])
     """Normalized basenames of grabbed video files this record knowably never imports: a sibling entry's
-    slice (a clean parse entirely outside our episode set) or a collision-refused duplicate. Bar/deadline
-    accounting only - the IMPORTED decision never trusts them. Empty for older records (conservative)."""
+    slice or a collision-refused duplicate."""
 
     guards: GuardFacts = field(default_factory=GuardFacts)
-    """The plan's overwrite-guard evidence, entry-level and persisted in the entry's
-    `guard_facts` row - never in this record's blob (see `GuardFacts`)."""
+    """The plan's overwrite-guard evidence"""
 
     release_sizes: list[int] = field(default_factory=list[int])
     """The grabbed listing's file sizes. Lets the import tell this release's own files from a stale
-    same-group copy (an old file at a size the listing doesn't carry is replaced, not read as done).
-    Empty for older records, which keep the group-name-only behavior."""
+    same-group copy."""
 
     preowned_episode_ids: list[int] = field(default_factory=list[int])
-    """Target episodes that already held a recommended file at grab time. Subtracted from the
-    files-inserted counts so the wait reports only files this torrent actually delivered."""
+    """Target episodes that already held a recommended file at grab time."""
 
     @property
     def key(self) -> PendingKey:
@@ -689,13 +542,7 @@ class PendingImport:
 
     @property
     def display_label(self) -> str:
-        """The cockpit/ledger/report row label: `title · group[ · episode slice]`.
-
-        The release group disambiguates a series that grabbed several torrents,
-        and the episode slice tells apart siblings from the SAME group (a
-        per-episode torrent each - without it, "which episodes imported?" is
-        unanswerable from a wait report). The infohash is the last-resort fallback.
-        """
+        """The cockpit/ledger/report row label: `title · group[ · episode slice]`."""
 
         base = self.title or self.infohash
         if self.release_group:
@@ -733,13 +580,7 @@ class PendingImport:
         return SeedCoverage(mapped=False, accounted=covered >= needed)
 
     def to_json(self) -> dict[str, Any]:
-        """Serialize to the plain dict persisted under `pending_imports`.
-
-        `asdict` minus `guards`: guard evidence is entry-level and lives in its
-        own `guard_facts` row, so the per-torrent blob never carries a copy. A
-        field added to the dataclass still can't be silently dropped from the
-        persisted form.
-        """
+        """Serialize to the plain dict persisted under `pending_imports`."""
 
         raw = asdict(self)
         del raw["guards"]
@@ -747,13 +588,7 @@ class PendingImport:
 
     @classmethod
     def from_json(cls, raw: dict[str, Any], *, guards: GuardFacts | None = None) -> "PendingImport":
-        """Rebuild a record from its persisted cache-store dict.
-
-        Missing keys fall back to safe empties so a partially written or older
-        record still rehydrates rather than raising. `guards` comes only from
-        the caller (the entry's `guard_facts` row) - a legacy `guards` key in
-        the blob is ignored.
-        """
+        """Rebuild a record from its persisted cache-store dict."""
 
         return cls(
             infohash=raw.get("infohash", ""),

@@ -1,25 +1,16 @@
-"""The grab "produce" side: add torrents, register pending records, write cache.
-
-`GrabPipeline` owns the per-id grab tail both strategies funnel into - add the
-recommended release(s) to qBittorrent, persist the durable `PendingImport`
-records the end-of-run monitor waits on, notify, and write the cache outcome.
-It returns a pure bool (cap-reached) and never calls back into the run loop.
-`RunServices` keeps a thin `grab_and_cache` delegator so
-the strategy<->services contract is unchanged.
-
-Binds the run `RunContext` via `begin_run` (the same object the
-run loop holds), so the grab bookkeeping the run summary reads stays in sync.
-"""
+"""The grab "produce" side: add torrents, register pending records, write cache."""
 
 import time
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
+from datetime import datetime
 from typing import TYPE_CHECKING, NamedTuple
 
 from seadex import EntryRecord
 
 from . import coverage as _coverage
-from .cache import CacheRecord
+from .cache import CacheRecord, pending_cutoff, stamp_of
 from .config import Arr, PrivateReleaseAction
+from .log import count_noun
 from .manual_import import ImportWaitMode, PendingImport
 from .notify import GrabNotice
 from .output import Accent, GrabFailed, ReleaseSkipped, SkipReason, StyledValue
@@ -39,7 +30,7 @@ if TYPE_CHECKING:
 
 
 class GrabResult(NamedTuple):
-    """`_grab`'s outcome: whether the run-wide cap was hit, and how many torrents this title added."""
+    """`_grab`'s outcome."""
 
     cap_reached: bool
     added: int
@@ -53,29 +44,20 @@ class GrabRequest:
     item_title: str
     anilist_title: str
     entry: EntryRecord
-    """The SeaDex entry whole: the notification renders its url / notes / comparison links / incomplete
-    flag."""
+    """The SeaDex entry whole: the notification renders its url, notes, comparison links, and incomplete flag."""
     seadex_dict: SeadexDict
     torrent_hashes: list[str | None]
     cache_details: CacheRecord
-    """The run's mutable `CacheRecord` accumulator: the frozen field pins the reference, not the dict's
-    contents (`grab_and_cache` still writes `torrent_hashes` into it before saving)."""
+    """The run's mutable `CacheRecord` accumulator: the frozen field pins the reference, not the dict's contents."""
     replaced_groups: tuple[str, ...]
     """The existing arr release groups this grab is replacing (the notifier's "Replacing" field)."""
     coverage: str = ""
-    """Sonarr's episode coverage string ("" for Radarr - movies have none)."""
+    """Sonarr's episode coverage string ("" for Radarr)."""
     pending_seeds: dict[str, PendingImport] | None = None
 
 
 class GrabPipeline:
-    """Adds the recommended release(s), registers pending records, writes the cache.
-
-    Constructed once per run in `RunServices` from the
-    deps hub + the placeholder ctx (unpacked to private attrs here).
-    `begin_run` rebinds the ctx each run. The hub's `grab_and_cache`
-    delegates here. `_grab` returns a `GrabResult` (cap-reached + added count) that
-    `grab_and_cache` collapses to the cap-reached bool the run loop finalizes on.
-    """
+    """Adds the recommended release(s), registers pending records, writes the cache."""
 
     def __init__(
         self,
@@ -90,12 +72,11 @@ class GrabPipeline:
         self._anilist = deps.anilist
         self._notifier = deps.notifier
         self._reporter = deps.reporter
+        self.logger = deps.logger
         self.qbit = deps.qbit
-        # Seeded with the engine's placeholder ctx. Rebound each run via begin_run
-        # (the same object the engine holds, so the grab bookkeeping stays in sync).
+        # Rebound each run by begin_run to the same ctx the engine holds, so the grab bookkeeping stays in sync.
         self._ctx = ctx
-        # Groups whose release hit a contained grab failure (tracker/client down)
-        # this title. Set in _add_one_url, read + reset in grab_and_cache.
+        # Groups that hit a contained grab failure (tracker or client down), reset per title in grab_and_cache.
         self._grab_failed_groups: list[str] = []
 
     def begin_run(self, ctx: RunContext) -> None:
@@ -105,11 +86,12 @@ class GrabPipeline:
 
     def _is_preview(self) -> bool:
         """A run is a no-op preview (nothing can be grabbed): explicit dry run, or qBittorrent not configured."""
+
         return is_preview(self._ctx, self.qbit)
 
     @property
     def _effective_cap(self) -> int | None:
-        """The run-wide add cap, or None when uncapped: `0` disables it, and a preview is exempt so its report covers the whole library."""
+        """The run-wide add cap, or None when uncapped (`0` disables it)."""
         cap = self._config.advanced.max_torrents_to_add
         return None if cap == 0 or self._is_preview() else cap
 
@@ -120,20 +102,7 @@ class GrabPipeline:
     ) -> tuple[int, list[ReleaseOutcome]]:
         """Add torrent(s) to qBittorrent.
 
-        The per-release outcome lines (added / already-downloading) are NOT
-        logged here. This returns them so the caller (log_seadex_action) can emit
-        the whole block - added releases first, then already-downloading ones -
-        with a status that reflects what actually happened: "adding" if anything
-        was grabbed, "already downloading" if every recommended release was
-        already in the client from a prior run. The "skipped" warnings
-        (private-only, unselected tracker) are still logged inline, as they're
-        independent of that status. `pending_seeds` are the Sonarr strategy's
-        `infohash -> PendingImport` seeds, finalized into a durable record on a
-        successful add. Radarr passes None.
-
-        Returns:
-            The `(n_torrents_added, results)` pair, where `results` holds one
-                `ReleaseOutcome` per release acted on, in order
+        Returns the added / already-downloading outcome lines rather than logging them (the caller emits the block).
         """
 
         n_torrents_added = 0
@@ -154,7 +123,6 @@ class GrabPipeline:
                 if add_result.outcome is not AddOutcome.ADDED:
                     continue
 
-                # Stop once max_torrents_to_add is reached
                 self._ctx.torrents_added += 1
                 n_torrents_added += 1
                 if cap is not None and self._ctx.torrents_added >= cap:
@@ -170,18 +138,9 @@ class GrabPipeline:
     ) -> ReleaseOutcome | None:
         """Resolve a single SeaDex url to an add outcome (or `None` to skip).
 
-        Returns `None` for a release that's filtered out (not flagged for
-        download, private-only, or an unselected tracker)
-        and for a service `add` that neither added nor was already present. On
-        an `AddOutcome.ADDED` the run-summary grab record is appended here. The
-        caller owns the torrents_added/cap bookkeeping. On EITHER `ADDED` or
-        `ALREADY_ADDED` (an already-present torrent is a prior-run grab still
-        downloading / not yet imported) the durable `PendingImport` record
-        is persisted via `_register_pending_import` so the end-of-run monitor
-        waits on it - when the feature is on, off-preview, and we hold its seed.
+        Both ADDED and ALREADY_ADDED persist the durable `PendingImport` (already-present means a prior-run grab).
         """
 
-        # If not flagged for download, then skip
         if not url_item.download:
             return None
 
@@ -194,18 +153,14 @@ class GrabPipeline:
             self._ctx.per_title.private_only_groups.append(srg)
             return None
 
-        # Skip trackers not in the configured tracker list
         if tracker.casefold() not in self._config.seadex.trackers:
             self._reporter.post(
                 ReleaseSkipped(group=srg, tracker=tracker, reason=SkipReason.TRACKER_NOT_SELECTED, url=url),
             )
             return None
 
-        # Invariant: a tracker without a registered parser never reaches
-        # TorrentService.add - this skip+warn is the enforcement. The service's
-        # raise is a defensive contract. Handing one through would unwind the id's
-        # whole url loop (dropping later grabbable releases too). The title is
-        # flagged so it's not cached as done (re-checked once a parser lands).
+        # Invariant: an unparseable tracker never reaches TorrentService.add, whose raise is a defensive contract. This
+        # skip and warn enforces it: handing one through unwinds the id's url loop, dropping later grabbable releases.
         if tracker not in PARSEABLE_TRACKERS:
             self._reporter.post(
                 ReleaseSkipped(group=srg, tracker=tracker, reason=SkipReason.UNSUPPORTED_TRACKER, url=url),
@@ -216,13 +171,8 @@ class GrabPipeline:
                 self._ctx.per_title.unsupported_tracker_hashes.append(url_item.infohash)
             return None
 
-        # The service parses the release URL by tracker and adds it to
-        # qBittorrent, returning the add status and a display name (the
-        # client's name, or the release title scraped from the source
-        # page as a fallback). A preview run simulates the add. An expected
-        # external failure (tracker or qBittorrent down/erroring) is contained
-        # here to ONE warning - no traceback - so the loop moves on and
-        # grab_and_cache leaves the title uncached for a retry next run.
+        # An expected external failure (tracker or qBittorrent down) is contained to one warning here, so the loop
+        # moves on and grab_and_cache leaves the title uncached for a retry next run.
         try:
             result = self._torrents.add(item=url_item, preview=self._is_preview())
         except GRAB_FAILURES as e:
@@ -231,11 +181,8 @@ class GrabPipeline:
             return None
 
         if result.outcome is AddOutcome.ADDED:
-            # Record the grab for the end-of-run summary. Prefer the
-            # release's own parsed file list (precise for multi-cour /
-            # per-torrent grabs). Fall back to the entry-level coverage we
-            # mapped from the Arr so the summary's "files" is never blank
-            # when a release's filenames couldn't be parsed (e.g. an OVA).
+            # Prefer the release's own parsed file list, falling back to the entry-level coverage so the summary's
+            # files are never blank when a release's filenames couldn't be parsed.
             coverage_str = _coverage.coverage_string(url_item.episodes) or self._ctx.per_title.current_coverage
             self._ctx.stats.added.append(
                 GrabRecord(
@@ -247,16 +194,10 @@ class GrabPipeline:
                 ),
             )
 
-        # Persist the durable pending-import record on BOTH a fresh add and an
-        # already-present torrent. ALREADY_ADDED here means "in the client from a
-        # prior run, still downloading / not yet imported": we only reach this add
-        # when the planner flagged a download, and the genuine "you already own it"
-        # case is the any_to_download=False branch, which never calls add_torrent.
-        # So the end-of-run monitor must wait on it too. Appending to
-        # _ctx.pending_imports marks the record a this-run grab, so the per-series
-        # snapshot / reconcile / tally skip it (no double-report, no early drop).
+        # ALREADY_ADDED is an earlier run's grab still awaiting import. The genuine "already own it" case is the
+        # any_to_download=False branch, which never reaches add_torrent.
         if result.outcome in (AddOutcome.ADDED, AddOutcome.ALREADY_ADDED):
-            self._register_pending_import(url_item, pending_seeds)
+            self._register_pending_import(url_item, pending_seeds, added_on=result.added_on)
             return ReleaseOutcome(outcome=result.outcome, name=result.name, group=srg)
 
         return None
@@ -265,46 +206,45 @@ class GrabPipeline:
         self,
         url_item: SeadexUrlItem,
         pending_seeds: dict[str, PendingImport] | None,
+        *,
+        added_on: datetime | None,
     ) -> None:
-        """Finalize the durable `PendingImport` for a grabbed/present release.
+        """Finalize the durable `PendingImport` for a grabbed or already-present release.
 
-        Only on a real (non-preview) add of a release we hold a seed for, keyed by
-        `(arr, infohash, al_id)` so a re-registration of the SAME record (this
-        entry re-adding its own grab) overwrites idempotently, a SIBLING AniList
-        entry's record for the same torrent lands beside it, and a verified
-        import deletes only its own record. `pending_seeds`
-        is the Sonarr strategy's `infohash -> PendingImport` seeds for this id (None
-        for Radarr). The in-memory copy rides the run context for the fast
-        end-of-run blocking pass and marks the record a this-run grab (excluded
-        from the carried-over snapshot / reconcile / tally).
+        `added_on` None is a fresh add. Otherwise it is qBittorrent's add time, and a release past
+        `imports.pending_max_age_days` is dropped, not re-stamped (re-stamping defeats the prune).
         """
 
         if (
-            self._ctx.import_wait_mode is not ImportWaitMode.OFF
-            and not self._is_preview()
-            and url_item.infohash
-            and pending_seeds
-            and url_item.infohash in pending_seeds
+            self._ctx.import_wait_mode is ImportWaitMode.OFF
+            or self._is_preview()
+            or not url_item.infohash
+            or not pending_seeds
+            or url_item.infohash not in pending_seeds
         ):
-            pending = pending_seeds[url_item.infohash]
-            self.cache_store.put_pending(
-                self._ctx.arr,
-                pending.key,
-                pending.to_json(),
-            )
-            # Entry-level evidence, one row per entry (Sonarr-only enforcement): each
-            # per-release firing re-puts the same row - the upsert makes that a no-op.
-            if self._ctx.arr is Arr.SONARR:
-                self.cache_store.put_guards(self._ctx.arr, pending.al_id, pending.guards)
+            return
+        pending = pending_seeds[url_item.infohash]
+        if added_on is None:
+            self.cache_store.put_pending(self._ctx.arr, pending.key, pending.to_json())
             self._ctx.pending_imports.append(pending)
+        else:
+            max_age_days = self._config.imports.pending_max_age_days
+            if added_on < pending_cutoff(max_age_days):
+                self.logger.debug(
+                    f"{pending.display_label} has been in qBittorrent longer than "
+                    f"{count_noun(max_age_days, 'day')} - not tracking it",
+                )
+                return
+            if not self.cache_store.has_pending(self._ctx.arr, pending.key):
+                stamped = replace(pending, added_at=stamp_of(added_on))
+                self.cache_store.put_pending(self._ctx.arr, pending.key, stamped.to_json())
+            self._ctx.reacquired_keys.add(pending.key)
+        # One guard row per entry (Sonarr only): each per-release firing re-puts the same row, a no-op upsert.
+        if self._ctx.arr is Arr.SONARR:
+            self.cache_store.put_guards(self._ctx.arr, pending.al_id, pending.guards)
 
     def _needs_action(self, groups: list[str], reason: str, kind: NeedsActionKind) -> NeedsActionRecord:
-        """A needs-action record for the current title.
-
-        Title/coverage/url come from the per-title context. The caller supplies
-        the skipped groups, the display reason, and the machine-readable kind
-        the summary's guidance gates on.
-        """
+        """A needs-action record for the current title."""
 
         return NeedsActionRecord(
             title=self._ctx.per_title.current_title,
@@ -318,18 +258,11 @@ class GrabPipeline:
     def _should_cache_as_done(self, *, cap_reached: bool, added_this_title: int, grab_failed: bool) -> bool:
         """Whether this title's outcome may be cached as done.
 
-        Cache only when something was grabbed, or nothing was skipped: a
-        private-only OR unsupported-tracker skip that left nothing grabbed keeps
-        the title uncached, so it's re-checked once a public release / parser /
-        config change lands. Three vetoes block the cache even on a partial
-        grab: the run-wide cap (it can leave this title's later urls
-        unattempted), a fallback hold, and a contained grab failure (so the
-        next run retries).
+        Only if something was grabbed or nothing was skipped. The run cap, a fallback hold, or a failed grab vetoes it.
         """
 
-        # A non-interactive fallback-mode private hold means the fallback COULDN'T
-        # cover these files: never cache the title so every run re-checks and
-        # resurfaces it. Warn mode and interactive picks keep the plain gate.
+        # A non-interactive fallback-mode private hold means the fallback COULDN'T cover these files: never cache, so
+        # every run re-checks and resurfaces it. Warn mode and interactive picks keep the plain gate.
         fallback_hold = (
             self._ctx.per_title.private_only_skipped
             and self._config.seadex.private_releases is PrivateReleaseAction.FALLBACK
@@ -348,8 +281,7 @@ class GrabPipeline:
     def _classify_needs_action(self, *, grab_failed: bool) -> NeedsActionRecord | None:
         """The single needs-action row for a title NOT cached as done, or None.
 
-        Flat guard-returns preserve the precedence private-only > unsupported-tracker
-        > grab-failed. Each reason / kind feeds the run summary's guidance.
+        Flat guard-returns preserve the precedence private-only > unsupported-tracker > grab-failed.
         """
 
         if self._ctx.per_title.private_only_skipped:
@@ -364,9 +296,8 @@ class GrabPipeline:
             )
 
         if grab_failed:
-            # No user action needed - the warning named the failure and the
-            # uncached title retries next run - but the summary must say why the
-            # title is neither added nor up to date.
+            # No user action needed (the warning named it, the uncached title retries), but the summary must say why
+            # the title is neither added nor up to date.
             return self._needs_action(
                 self._grab_failed_groups,
                 "grab failed; will retry next run",
@@ -378,12 +309,7 @@ class GrabPipeline:
     def _private_only_reason(self) -> tuple[str, NeedsActionKind]:
         """The (reason, kind) for a private-only hold, resolving the fallback-mode arms.
 
-        Warn mode is the plain PRIVATE_ONLY skip. In fallback mode the hold is a
-        fallback that couldn't (no public alternative covered the missing files) or
-        wouldn't (a hand-picked interactive private release, or an owned-at-stale-size
-        pick a fallback must not replace) fall back - either way the tip must not
-        suggest the fallback already on. The stale bit wins over a coexisting plain
-        hold (one row per title, self-correcting across runs, never cached).
+        The stale bit wins over a coexisting plain hold, keeping one row per title.
         """
 
         if self._config.seadex.private_releases is not PrivateReleaseAction.FALLBACK:
@@ -407,30 +333,14 @@ class GrabPipeline:
         )
 
     def grab_and_cache(self, req: GrabRequest) -> bool:
-        """Shared per-id tail: add torrents, notify, then cache the outcome.
+        """Shared per-id tail: add torrents, notify, cache the outcome. True when the run-wide cap was hit."""
 
-        Identical across both Arrs once the (Arr-specific) `seadex_dict` and
-        release-group info have been resolved (bundled into `req`). Returns True
-        only when max_torrents_to_add has been reached (after the needs-action
-        tail has recorded this title's summary row, the engine's single finalize
-        site does the save + summary), so the caller stops the whole run.
-        Otherwise False (move to the next id).
-        """
-
-        # Reset the per-title grab-failure note (set in _add_one_url, read below).
         self._grab_failed_groups = []
 
-        # Check the release groups are matching, and get a bespoke list of torrents
         any_to_download = self._planner.get_any_to_download(req.seadex_dict)
 
-        # Set when _grab hits max_torrents_to_add: the needs-action tail below
-        # still runs (a contained grab failure on this title must land its summary
-        # row even at the cap), but the per-title cache update is skipped - the cap
-        # can stop the url loop mid-title - and True stops the run (the engine's
-        # single finalize site does the actual cache save).
+        # The cap can stop the url loop mid-title, so a capped title is never cached as done, only classified below.
         cap_reached = False
-        # How many torrents THIS title grabbed (0 when there was nothing to add):
-        # _grab returns it directly, so no before/after snapshot of the run total.
         added_this_title = 0
 
         if not any_to_download:
@@ -443,29 +353,20 @@ class GrabPipeline:
         else:
             cap_reached, added_this_title = self._grab(req)
 
-        # A contained grab failure (tracker/client down) means a release this
-        # title should have is missing: never cache - even on a partial grab - so
-        # the next run retries (the completed add dedups). Also read by the
-        # needs-action chain below.
+        # A contained grab failure means a release this title should have is missing: never cache, even on a partial
+        # grab, so the next run retries (the completed add dedups).
         grab_failed = bool(self._grab_failed_groups)
 
-        # A cap-reached or veto-held title is never cached, but still falls
-        # through to the needs-action classification below.
         if self._should_cache_as_done(
             cap_reached=cap_reached,
             added_this_title=added_this_title,
             grab_failed=grab_failed,
         ):
-            # A mixed title (grabbed + unsupported-tracker skip) is cached, but the
-            # skipped hashes are excluded so the release is re-considered on the
-            # entry's next update once a parser lands. Private-only hashes are
-            # deliberately NOT excluded: private releases are never grabbed, so
-            # their quiet suppression is the intended behavior.
+            # Unsupported-tracker hashes are excluded so the release is re-considered once a parser lands. Private-only
+            # ones deliberately are not: private releases are never grabbed, so their quiet suppression is intended.
             skipped = set(self._ctx.per_title.unsupported_tracker_hashes)
             cacheable = [h for h in req.torrent_hashes if h is None or h not in skipped]
-            # The fallback-satisfied marker: a fallback grab or the owned-fallback
-            # soft-skip. Always written - the partial-merge upsert would otherwise
-            # preserve a stale True after a later genuine grab.
+            # Always written: the partial-merge upsert would otherwise preserve a stale True.
             fallback_satisfied = self._ctx.per_title.fallback_covered or any(
                 u.is_fallback and u.download for rg_item in req.seadex_dict.values() for u in rg_item.urls.values()
             )
@@ -477,20 +378,14 @@ class GrabPipeline:
                 req.cache_details,
             )
         else:
-            # Cache-write and needs-action are mutually exclusive: only a title NOT
-            # cached as done is classified into at most one needs-action summary row
-            # (a release skipped outside anyone's control, or a fallback hold /
-            # grab failure that blocks the cache).
             rec = self._classify_needs_action(grab_failed=grab_failed)
             if rec is not None:
                 self._ctx.stats.needs_action.append(rec)
 
-        # Cap reached: stop the run now that the summary rows are recorded (no
-        # point throttling a run that's over).
+        # Stop only now the summary rows are recorded, skipping the throttle: no point pacing a run that's over.
         if cap_reached:
             return True
 
-        # Add in a wait, if required
         time.sleep(self._config.advanced.sleep_time)
 
         return False
@@ -498,32 +393,21 @@ class GrabPipeline:
     def _grab(self, req: GrabRequest) -> GrabResult:
         """Add this title's torrents, notify, and honor the run-wide cap.
 
-        Runs only when there's something to download. Returns a `GrabResult`
-        carrying whether max_torrents_to_add was reached (the cap notice is logged
-        here, the engine's finalize site does the cache save) so the caller stops
-        the whole run, and how many torrents this title added.
+        The cap notice is logged here, but the cache save belongs to the engine's finalize site.
         """
 
-        # Resolve the AniList art (cover thumbnail + wide banner, the same
-        # media node once cached) up front so the network call keeps its
-        # position in the run's request ordering, even though it's only used
-        # in the push below.
+        # Fetched up front to keep the network calls in the run's request ordering.
         anilist_thumb = self._anilist.thumb(req.al_id)
         anilist_banner = self._anilist.banner(req.al_id)
 
-        # Add torrents to qBittorrent. add_torrent runs even in a preview
-        # (no client / dry run): the service simulates the add, while the
-        # download-flag, private-release and tracker filters still apply, so
-        # only releases that would actually be grabbed are counted.
+        # add_torrent runs even in a preview: the service simulates the add, while the download-flag, private-release
+        # and tracker filters still apply, so only releases that would really be grabbed are counted.
         n_torrents_added, results = self.add_torrent(
             torrent_dict=req.seadex_dict,
             pending_seeds=req.pending_seeds,
         )
 
-        # Log the action block now the outcome is known, so the status reads
-        # "adding" only when something was actually grabbed, "would add" on a
-        # preview, else "already downloading" - the pick is in the client from a
-        # prior run, still downloading.
+        # Logged only now the outcome is known, so the status reads "adding" only when something was actually grabbed.
         self._reporter.log_seadex_action(
             req.seadex_dict,
             results,
@@ -531,9 +415,8 @@ class GrabPipeline:
             monitor_active=(self._ctx.import_wait_mode is not ImportWaitMode.OFF and not self._is_preview()),
         )
 
-        # Push a message to Discord if we've added anything (never on a
-        # preview - it's an outward notification). Built after the add so the
-        # embed can label each group with what actually happened.
+        # Never on a preview: this is an outward notification. Built after the add so each group is labeled with what
+        # actually happened.
         if self._notifier.enabled and n_torrents_added > 0 and not self._is_preview():
             self._notifier.push_grab(
                 GrabNotice(
@@ -554,9 +437,6 @@ class GrabPipeline:
         cap = self._effective_cap
         if cap is not None and self._ctx.torrents_added >= cap:
             self._reporter.log_max_torrents_added(cap)
-            # Cap reached: signal the run to stop. run_sync breaks the scan and runs
-            # the single _finalize_run site (so the blocking/hybrid pass still
-            # imports this run's records before the save + summary).
             return GrabResult(cap_reached=True, added=n_torrents_added)
 
         return GrabResult(cap_reached=False, added=n_torrents_added)

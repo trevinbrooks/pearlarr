@@ -1,17 +1,4 @@
-"""The wait-pass producer: engine snapshots in, hub events out.
-
-The engine drives a `WaitView` while it waits on each grabbed torrent to
-download and then import, pushing one immutable `WaitSnapshot` per poll
-cycle. Nothing renders here: `HubWaitView` - the narrator - turns each
-push into hub events (`WaitStarted` on the first snapshot via a
-`WaitScope`, one `TorrentGraduated` per newly-terminal
-torrent, `WaitProgress` per poll, the `WaitFinished` tally on close), and
-the renderers own every look decision: the RichRenderer's
-`WaitRegion` draws the live cockpit / non-TTY
-digest, and the hub's text sinks write the structured file/plain/json lines.
-Every method is total: a presentation bug degrades to a no-op, never aborting
-the wait loop or the end-of-run cache save.
-"""
+"""The wait-pass producer: engine snapshots in, hub events out. Nothing renders here."""
 
 import contextlib
 import logging
@@ -29,6 +16,7 @@ from .output import (
     TorrentGraduated,
     TorrentView,
     WaitFinished,
+    WaitKind,
     WaitScope,
     WaitSnapshot,
     emit_to_hub,
@@ -37,7 +25,7 @@ from .output import (
 
 @dataclass(frozen=True, slots=True)
 class WaitOutcomeRow:
-    """One torrent's terminal result, captured by the monitor for the run report."""
+    """One torrent's terminal result."""
 
     label: str
     outcome: Outcome
@@ -45,12 +33,7 @@ class WaitOutcomeRow:
 
 @dataclass(frozen=True, slots=True)
 class WaitResult:
-    """The outcome of a whole wait pass - the completion notification's payload.
-
-    Returned by `ImportWaitManager.run_monitor` so the run loop can push
-    the Discord/webhook completion notification (`Notifier.push_wait_summary`)
-    without re-deriving state.
-    """
+    """The outcome of a whole wait pass."""
 
     rows: tuple[WaitOutcomeRow, ...]
     elapsed_s: float
@@ -84,18 +67,14 @@ class WaitResult:
 
 
 class Graduation(NamedTuple):
-    """A newly-terminal torrent paired with its (guaranteed non-None) outcome."""
+    """A newly-terminal torrent paired with its outcome."""
 
     view: TorrentView
     outcome: Outcome
 
 
 def graduations(seen: AbstractSet[str], snapshot: WaitSnapshot) -> list[Graduation]:
-    """The terminal torrents not yet emitted - pure, deterministic.
-
-    A torrent graduates exactly once: the narrator tracks the keys it has already
-    emitted and this returns the newly-terminal ones in snapshot order.
-    """
+    """The terminal torrents not yet emitted, in snapshot order."""
 
     return [
         Graduation(torrent, torrent.outcome)
@@ -105,17 +84,10 @@ def graduations(seen: AbstractSet[str], snapshot: WaitSnapshot) -> list[Graduati
 
 
 class WaitView(ABC):
-    """The small interface the engine drives while waiting on downloads/imports.
-
-    The engine pushes a full `WaitSnapshot` each poll cycle. Both methods
-    MUST be total (never raise) so a presentation bug can't abort the wait loop
-    or the end-of-run cache save.
-    """
+    """The interface the engine drives while waiting. Every method MUST be total (never raise)."""
 
     wants_telemetry: bool = True
-    """Whether this pass's render surfaces show per-row download telemetry between heavy polls.
-    The engine skips the fast-lane qBittorrent read when it can't be seen. Per-instance (one
-    narrator class serves both seats)."""
+    """Whether the render surfaces show per-row download telemetry."""
 
     @abstractmethod
     def update(self, snapshot: WaitSnapshot) -> None:
@@ -128,16 +100,19 @@ class WaitView(ABC):
 
 @final
 class HubWaitView(WaitView):
-    """The wait-pass narrator: turns engine snapshots into hub events.
+    """The wait-pass narrator: turns engine snapshots into hub events."""
 
-    Holds producer state only (seen keys, the outcome tally, the last elapsed
-    clock). The renderers decide every look. The wait scope opens lazily on the
-    first snapshot, so a pass that never polls emits nothing.
-    """
-
-    def __init__(self, logger: logging.Logger, *, pulse_s: float, wants_telemetry: bool) -> None:
+    def __init__(
+        self,
+        logger: logging.Logger,
+        *,
+        pulse_s: float,
+        wants_telemetry: bool,
+        kind: WaitKind = WaitKind.MONITOR,
+    ) -> None:
         self._logger = logger
         self._pulse_s = pulse_s
+        self._kind = kind
         self.wants_telemetry = wants_telemetry
         # Process-global ids through the late-resolving hub seam.
         self._factory = ScopeFactory(emit_to_hub)
@@ -150,13 +125,13 @@ class HubWaitView(WaitView):
     @override
     def update(self, snapshot: WaitSnapshot) -> None:
         try:
-            if self._closed:  # defensive - the engine never updates after close
+            if self._closed:  # Defensive: the engine never updates after close.
                 return
             # Stamped first, so an interrupted narration still reports fresh elapsed.
             self._last_elapsed = snapshot.elapsed_s
             if self._scope is None:
                 # WaitStarted precedes any first-snapshot graduations.
-                self._scope = self._factory.wait(total=snapshot.total(), pulse_s=self._pulse_s)
+                self._scope = self._factory.wait(total=snapshot.total(), pulse_s=self._pulse_s, kind=self._kind)
             scope = self._scope
             for view, outcome in graduations(self._seen, snapshot):
                 self._seen.add(view.key)
@@ -171,8 +146,8 @@ class HubWaitView(WaitView):
                 )
             scope.progress(snapshot)
         except Exception:
-            # Total by contract: a narration bug degrades to a no-op, it never
-            # aborts the engine's wait loop or the end-of-run cache save.
+            # Total by contract: a narration bug degrades to a no-op, never aborting the engine's
+            # wait loop or the end-of-run cache save.
             self._logger.debug("wait view update failed", exc_info=True)
 
     @override
@@ -181,40 +156,38 @@ class HubWaitView(WaitView):
             return
         self._closed = True
         scope = self._scope
+        # Never updated, so the region never opened and there is nothing to emit.
         if scope is None:
-            # Never updated: the region never opened, so there is nothing to emit.
             return
         try:
-            # A zero-tally pass still finishes: the builders render [] for the
-            # empty tally, so the file stays silent.
+            # A zero-tally pass still finishes: the builders render [] for the empty tally, so the file stays silent.
             scope.finish(
                 WaitFinished(
                     imported=self._tally[OutcomeCategory.SUCCESS],
                     deferred=self._tally[OutcomeCategory.DEFERRED],
                     failed=self._tally[OutcomeCategory.FAILED],
                     elapsed_s=self._last_elapsed,
+                    pending=self._tally[OutcomeCategory.PENDING],
+                    kind=self._kind,
                 ),
             )
         except Exception:
             self._logger.debug("wait view close failed", exc_info=True)
         finally:
-            # The placement scope must still close even when an interrupt aborts
-            # finish mid-dispatch - a no-op after a clean finish, and suppress
-            # keeps a propagating interrupt intact.
+            # Contains a failing close, and still closes when an interrupt aborts finish mid-dispatch.
+            # An interrupt already propagating is unaffected.
             with contextlib.suppress(BaseException):
                 scope.close()
 
 
-def make_wait_view(logger: logging.Logger, *, poll_s: int, digest_interval: int = 300) -> WaitView:
-    """The production narrator, probed off the logger's console.
-
-    Args:
-        logger: The app logger. Its rich console handler is
-            probed so `wants_telemetry` matches what the console will draw
-            (per-row telemetry exists only on the live-TTY cockpit).
-        poll_s: The poll cadence - the floor for the non-TTY digest interval.
-        digest_interval: Target seconds between non-TTY aggregate pulses.
-    """
+def make_wait_view(
+    logger: logging.Logger,
+    *,
+    poll_s: int,
+    digest_interval: int = 300,
+    kind: WaitKind = WaitKind.MONITOR,
+) -> WaitView:
+    """The production narrator, probed off the logger's console."""
 
     console = console_of(logger)
     caps = detect_capabilities(console)
@@ -222,4 +195,5 @@ def make_wait_view(logger: logging.Logger, *, poll_s: int, digest_interval: int 
         logger,
         pulse_s=float(max(poll_s, digest_interval)),
         wants_telemetry=console is not None and caps.live,
+        kind=kind,
     )

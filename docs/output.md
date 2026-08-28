@@ -321,7 +321,7 @@ Adding a release to qBittorrent failed. The title is retried next run.
 
 ### `grab_action`
 
-The grab decision for a title. `message` distinguishes a real add, a dry-run would-add, and already-downloading.
+The grab decision for a title. `message` distinguishes a real add, a dry-run would-add, and already in qBittorrent.
 
 ```json
 {
@@ -437,7 +437,7 @@ The end-of-run scoreboard: the tally counters, plus `needs_action_records` and `
 
 ### `wait_started`
 
-The wait-for-completion pass opened, watching `total` torrents.
+The end-of-run pass opened, watching `total` torrents. `kind` is `monitor` (waits for downloads to finish, then imports) or `check` (one non-blocking poll of earlier runs' downloads).
 
 ```json
 {
@@ -448,6 +448,7 @@ The wait-for-completion pass opened, watching `total` torrents.
   "message": "waiting",
   "component": "wait",
   "path": "sonarr › wait",
+  "kind": "monitor",
   "total": 1
 }
 ```
@@ -473,7 +474,7 @@ One watched torrent reached a terminal outcome. `message` is the outcome word.
 
 ### `wait_finished`
 
-The wait pass closed, with its imported/deferred/failed tally.
+The pass closed, with its imported/pending/deferred/failed tally (`pending` counts the check's rows left for the next run on purpose).
 
 ```json
 {
@@ -484,7 +485,9 @@ The wait pass closed, with its imported/deferred/failed tally.
   "message": "complete",
   "component": "wait",
   "path": "sonarr › wait",
+  "kind": "monitor",
   "imported": 1,
+  "pending": 0,
   "deferred": 0,
   "failed": 0,
   "elapsed_s": 430.0

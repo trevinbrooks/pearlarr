@@ -1,16 +1,7 @@
 # pyright: strict
 # pyright: reportPrivateUsage=false
-# The factories assemble objects under construction by their private collaborator
-# fields (strat._episodes/_parse/...), which strict re-flags. The repo disables
-# reportPrivateUsage for tests.
-"""Builders and a bare-instance factory for the characterization tests.
-
-These tests pin the *current* behavior of the run machinery. The planner tests
-build its inputs (typed episode records, flat release dicts) via the helpers
-here, and `make_services` builds a `RunServices` without running its heavy
-`__init__` (network downloads, qBittorrent login, disk I/O), assigning only
-the attributes the methods under test actually read.
-"""
+# The factories assemble objects by their private collaborator fields (strat._episodes), which strict re-flags.
+"""Builders and a bare-instance factory for the characterization tests."""
 
 import dataclasses
 import logging
@@ -76,28 +67,22 @@ from pearlarr.torrents import AddOutcome, AddResult, TorrentService
 
 from .fakes import FakeRadarrClient, FakeSonarrClient
 
-# The " · " display separator the cockpit/ledger/report rows join parts with.
-# Assertions build expected strings from this so a separator change is one edit.
+# The display separator the cockpit/ledger/report rows join parts with. Assertions build expected
+# strings from this so a separator change is one edit.
 SEP = " · "
 
-# Map each flat (group-local) setting name to its config group, derived straight from
-# AppConfig's own field tree so it can't drift into a stale subset: adding a 9th
-# settings group to AppConfig wires it in here for free. AppConfig declares `sonarr`
-# before `radarr`, so a name shared across the two arr groups (the ArrSettings keys
-# url/api_key/ignore_unmonitored/torrent_category) resolves to `sonarr` - the arr
-# make_config/make_services default to - via the first-wins `setdefault` below.
+# Flat (group-local) setting name -> config group, derived from AppConfig's own field tree so it can't
+# drift into a stale subset. AppConfig declares `sonarr` before `radarr`, so a name shared by both arr
+# groups (url/api_key/ignore_unmonitored/torrent_category) resolves to `sonarr`.
 _FIELD_GROUP: dict[str, str] = {}
 for _group, _group_field in AppConfig.model_fields.items():
-    # `annotation` is the group's submodel class (typed Optional on FieldInfo).
-    # The isinstance guard skips the one top-level scalar (config_version).
+    # `annotation` is the group's submodel class. The isinstance guard skips the top-level scalar (config_version).
     _submodel: Any = _group_field.annotation
     if not (isinstance(_submodel, type) and issubclass(_submodel, BaseModel)):
         continue
     for _field in _submodel.model_fields:
         _FIELD_GROUP.setdefault(_field, _group)
 
-# Flat (group-local) override names (`import_*`, `{arr}_*`, etc.) map to their nested
-# (group, field) so call sites can pass flat kwargs without each one being rewritten.
 _FLAT_ALIASES: dict[str, tuple[str, str]] = {
     "import_wait_mode": ("imports", "wait_mode"),
     "import_wait_timeout": ("imports", "wait_timeout"),
@@ -123,8 +108,8 @@ _FLAT_ALIASES: dict[str, tuple[str, str]] = {
     "radarr_torrent_category": ("radarr", "torrent_category"),
     "sonarr_post_import_category": ("sonarr", "post_import_category"),
     "radarr_post_import_category": ("radarr", "post_import_category"),
-    # The bare url/api_key flat names resolve to sonarr (first-wins). These reach
-    # the radarr connection keys for the Radarr-run builders/tests.
+    # Bare url/api_key resolve to sonarr (first-wins), so these are how the Radarr-run builders
+    # and tests reach the radarr connection keys.
     "radarr_url": ("radarr", "url"),
     "radarr_api_key": ("radarr", "api_key"),
 }
@@ -138,31 +123,19 @@ def _resolve_setting(key: str) -> tuple[str, str]:
     return _FIELD_GROUP.get(key, "seadex"), key
 
 
-# The override keys make_services routes into self._config (rather than onto the
-# bare instance as a direct attribute/collaborator).
+# The override keys make_services routes into self._config rather than onto the bare instance as an attribute.
 _CONFIG_SETTING_NAMES = frozenset(_FIELD_GROUP) | frozenset(_FLAT_ALIASES)
 
 
 def _split_config(overrides: dict[str, Any]) -> AppConfig:
-    """Pop the config-routed keys out of `overrides` (IN PLACE) and build the config.
-
-    Mutates `overrides`: the builders' later `defaults.update(overrides)` relies on
-    the config keys having been removed - else e.g. `private_releases` would be set as
-    a bare engine attribute the code never reads instead of routing to `self._config`.
-    """
+    """Pop the config-routed keys out of `overrides` (IN PLACE) and build the config."""
 
     config_overrides = {key: overrides.pop(key) for key in list(overrides) if key in _CONFIG_SETTING_NAMES}
     return make_config(**config_overrides)
 
 
 def make_bare_instance[T](cls: type[T], **attrs: Any) -> T:
-    """An instance with `__init__` bypassed and only the given attrs set.
-
-    `object.__new__` skips the real, heavy `__init__` (network downloads,
-    qBittorrent login, disk I/O). The tests assign just the attributes the
-    methods under test read. Shared by `make_services` here and the
-    strategy-seam tests so the bypass idiom lives in one place.
-    """
+    """An instance with `__init__` bypassed and only the given attrs set."""
 
     obj = object.__new__(cls)
     for name, value in attrs.items():
@@ -170,17 +143,13 @@ def make_bare_instance[T](cls: type[T], **attrs: Any) -> T:
     return obj
 
 
-# The scalar entry columns `update_cache` merges: the real store's own tuple, so
-# the fake can't drift from `CacheStore`.
+# The scalar entry columns `update_cache` merges, aliased from the real store's tuple so the fake
+# can't drift from `CacheStore`.
 _FAKE_SCALAR_FIELDS: tuple[str, ...] = _ENTRY_SCALAR_COLUMNS
 
 
 def _evict_stale[K](store: dict[K, dict[str, Any]], cutoff: datetime) -> int:
-    """Drop records whose `fetched_at` is stamp-less or older than `cutoff`.
-
-    Mirrors the real `DELETE ... WHERE fetched_at < ? OR fetched_at IS NULL`: a
-    missing/None (or otherwise non-string) stamp is unreadable and so swept too.
-    """
+    """Drop records whose `fetched_at` is stamp-less or older than `cutoff`."""
 
     cutoff_str = cutoff.strftime(UPDATED_AT_STR_FORMAT)
     stale: list[K] = []
@@ -194,26 +163,7 @@ def _evict_stale[K](store: dict[K, dict[str, Any]], cutoff: datetime) -> int:
 
 
 class FakeCacheStore(AbstractCacheStore):
-    """In-memory stand-in mirroring the SQLite `CacheStore` public facade.
-
-    Backs every facade block - the per-entry `entries` scalars plus their
-    `torrent_hashes` child set, the `anilist_meta` and `sonarr_parse` JSONB
-    caches, `pending_imports`, and `guard_facts` - with plain dicts, so a driven
-    path that
-    reaches ANY facade method gets the real store's behavior instead of an
-    `AttributeError` or a silent no-op. Semantics are matched, not just the
-    names. `update_cache` partial-merges the supplied scalars and (when given)
-    REPLACES the whole hash set while keeping a single `None` marker.
-    `check_al_id_in_cache` compares the strftime'd `updated_at` strings. The
-    `evict_*` sweeps drop stamp-less / aged-out records like the real SQL DELETE.
-
-    Every JSONB record block (`pending` / `anilist_meta` / `sonarr_parse`)
-    deep-copies on BOTH ends - stored on `put_*` and returned on `get_*` /
-    `iter_*` - so a caller mutating a record before or after the call cannot reach
-    the store, mirroring the real store's `json.dumps` / `json.loads` round-trip.
-    `save` / `close` are no-ops. `stats` / `integrity_check` report a plausible
-    health snapshot. Arr keys use `str(arr)` to mirror production's `_arr_key`.
-    """
+    """In-memory stand-in mirroring the SQLite `CacheStore` public facade."""
 
     def __init__(
         self,
@@ -225,10 +175,8 @@ class FakeCacheStore(AbstractCacheStore):
         self._pending: dict[str, dict[PendingKey, dict[str, Any]]] = {
             arr: dict(recs) for arr, recs in (pending or {}).items()
         }
-        # Per-entry records: the scalar columns keyed by (arr, al_id), and the
-        # entry's torrent-hash set kept separately (the entries / torrent_hashes
-        # split). An entry present with an empty scalar dict still "exists" - the
-        # existence checks key on membership, never the dict's truthiness.
+        # The entries / torrent_hashes split, keyed by (arr, al_id). An entry with an empty scalar dict
+        # still "exists": the existence checks key on membership, never the dict's truthiness.
         self._entries: dict[tuple[str, int], dict[str, Any]] = {}
         self._entry_hashes: dict[tuple[str, int], list[str | None]] = {}
         self._anilist_meta: dict[int, dict[str, Any]] = {}
@@ -278,9 +226,8 @@ class FakeCacheStore(AbstractCacheStore):
 
         if "torrent_hashes" in details:
             hashes: list[str | None] = list(details["torrent_hashes"] or [])
-            # dict.fromkeys de-dupes while keeping the single None marker the
-            # planner dedups on (the real PK leaves NULLs distinct. update_cache
-            # collapses the input to one None just like this).
+            # de-dupe while keeping the single None marker the planner dedups on. The real PK leaves
+            # NULLs distinct, and update_cache collapses the input to one None just like this.
             self._entry_hashes[key] = list(dict.fromkeys(hashes))
 
     @override
@@ -290,7 +237,7 @@ class FakeCacheStore(AbstractCacheStore):
         al_id: int,
         seadex_entry: EntryRecord,
     ) -> bool:
-        """True iff the entry exists and its stored timestamp matches the SeaDex one."""
+        """True if the entry exists and its stored timestamp matches the SeaDex one."""
 
         sd_time_str = seadex_entry.updated_at.strftime(UPDATED_AT_STR_FORMAT)
         entry = self._entries.get((str(arr), al_id))
@@ -370,6 +317,10 @@ class FakeCacheStore(AbstractCacheStore):
         self._pending.setdefault(str(arr), {})[key] = deepcopy(record)
 
     @override
+    def has_pending(self, arr: Arr, key: PendingKey) -> bool:
+        return key in self._pending.get(str(arr), {})
+
+    @override
     def drop_pending(self, arr: Arr, key: PendingKey) -> None:
         self._pending.get(str(arr), {}).pop(key, None)
 
@@ -428,13 +379,7 @@ class FakeCacheStore(AbstractCacheStore):
 
 
 class FakeSeaDexSource(SeaDexSource):
-    """In-memory `SeaDexSource` stand-in: serves preset entries, no network.
-
-    Backed by a plain `{al_id: EntryRecord}` map: `entry` serves from it (a miss is
-    NO_ENTRY, or OUTAGE when constructed with `outage=True`, mirroring the real
-    gateway's short-circuit). `prefetch` is a no-op that records the ids and reports
-    their count (mirroring the real "how many needed fetching" return).
-    """
+    """In-memory `SeaDexSource` stand-in: serves preset entries, no network."""
 
     def __init__(self, entries: dict[int, EntryRecord] | None = None, *, outage: bool = False) -> None:
         self._entries: dict[int, EntryRecord] = dict(entries or {})
@@ -462,13 +407,7 @@ class FakeSeaDexSource(SeaDexSource):
 
 
 def make_logger(name: str = "pearlarr-test") -> logging.Logger:
-    """A quiet logger for the characterization tests.
-
-    Attaches a NullHandler, disables propagation, and resets the level to
-    WARNING on every call so the hot-path debug f-strings aren't formatted and a
-    test that bumps the level can't leak into the next. (Severity tallies live
-    on the hub - `SeverityCounts` - not on the logger.)
-    """
+    """A quiet logger (null handler, no propagation), reset to WARNING on every call."""
 
     logger = logging.getLogger(name)
     if not logger.handlers:
@@ -479,14 +418,7 @@ def make_logger(name: str = "pearlarr-test") -> logging.Logger:
 
 
 def make_config(**overrides: Any) -> AppConfig:
-    """An in-memory `AppConfig` carrying the decision-test defaults.
-
-    The config flags are read through `self._config` (the single source of truth),
-    so a bare instance needs a real `AppConfig`. These defaults leave `trackers` unset
-    so it defaults to PUBLIC | PRIVATE. Each flat override is routed to its config
-    group (`_FIELD_GROUP`) and the nested mapping is validated through the models, so
-    the before-validators run exactly as on a real load.
-    """
+    """An in-memory `AppConfig` carrying the decision-test defaults, `trackers` left unset (PUBLIC | PRIVATE)."""
 
     nested: dict[str, dict[str, Any]] = {
         "seadex": {
@@ -514,13 +446,7 @@ def make_entry_record(
     notes: str = "",
     comparisons: tuple[str, ...] = (),
 ) -> EntryRecord:
-    """A real `seadex.EntryRecord` with the 13 required fields defaulted.
-
-    The library type is a frozen `msgspec.Struct`, so it can't be duck-typed
-    under strict. This builds the real value with sane defaults and exposes the
-    handful of fields tests vary (`url`/`is_incomplete`/`updated_at`/
-    `torrents`).
-    """
+    """A real `seadex.EntryRecord` (frozen msgspec) with all 13 fields defaulted."""
 
     stamp = updated_at if updated_at is not None else datetime(2026, 1, 1)
     return EntryRecord(
@@ -553,13 +479,7 @@ def make_torrent_record(
     is_best: bool = True,
     size: int = 1000,
 ) -> TorrentRecord:
-    """A real `seadex.TorrentRecord` (frozen msgspec) with sane release defaults.
-
-    `file_names` are wrapped into `seadex.File` entries (each `file_size` bytes,
-    or the positionally paired `file_sizes` when files must differ) so a caller
-    seeds the on-disk file list the Sonarr matching parses, without importing
-    the library leaf types itself.
-    """
+    """A real `seadex.TorrentRecord` (frozen msgspec) whose `file_names` become sized `File` entries."""
 
     stamp = datetime(2026, 1, 1)
     sizes = file_sizes if file_sizes is not None else (file_size,) * len(file_names)
@@ -587,15 +507,7 @@ def _real_reporter(
     cache_store: AbstractCacheStore,
     web: httpx.Client,
 ) -> RunReporter:
-    """A real `RunReporter` over the given cache store (composite-with-faked-leaf).
-
-    The reporter is a presentation collaborator with a large surface. Rather than
-    fake it, the factories build the real one with a faked cache store + a real
-    (cache-backed) AniList gateway - so a driven path emits through the real code.
-    It emits through the production hub resolver (`emit_to_hub`). With no hub
-    installed (conftest uninstalls per test), the events drop silently. The
-    summary's issues row diffs a per-reporter counter (fresh, so always zeros).
-    """
+    """A real `RunReporter` over the given cache store (composite-with-faked-leaf)."""
 
     counts = SeverityCounts()
     return RunReporter(
@@ -620,32 +532,18 @@ def _real_torrents(logger: logging.Logger, web: httpx.Client, categories: ArrCat
 
 
 def make_services(**overrides: Any) -> RunServices:
-    """Build a bare `RunServices` with only the attributes the methods read.
-
-    Bypasses `__init__` via `object.__new__` and assigns sane defaults for
-    the collaborators the per-id decision methods consult. The config flags live
-    on an in-memory `AppConfig` (`self._config`). Pass keyword overrides to
-    vary a single config flag (e.g. `make_services(private_releases="warn")`)
-    or another attribute.
-    """
+    """A bare `RunServices` carrying only the attributes its methods read."""
 
     logger = make_logger()
 
-    # Config-backed flags are read via self._config. Route any passed as
-    # overrides through an in-memory AppConfig (popped from overrides in place),
-    # leaving the rest as direct attributes/collaborators.
     config = _split_config(overrides)
     defaults: dict[str, Any] = {
         "logger": logger,
         "_config": config,
-        # The real __init__ always sets the authoritative arr + a RunContext.
-        # These are faithful defaults so methods that read self._ctx.arr (the run-arr
-        # methods) work without each test wiring one. Override with _ctx=... for
-        # a specific run state.
+        # The real __init__ always sets the authoritative arr and a RunContext. Override _ctx=... for a run state.
         "arr": Arr.SONARR,
         "_ctx": RunContext(arr=Arr.SONARR),
-        # The real __init__ always mints these. Bare instances need them too or
-        # the dirty-aware / selection-aware skip predicates fail at runtime.
+        # The real __init__ mints these too. Without them the dirty-aware / selection-aware skip predicates fail.
         "_dirty_al_ids": set[int](),
         "_selection_stale": False,
     }
@@ -660,40 +558,28 @@ def make_run_deps(
     seadex: SeaDexSource | None = None,
     logger: logging.Logger | None = None,
 ) -> RunDeps:
-    """A real `RunDeps` (typed fakes) that drives the real `RunServices`/`RunLoop`/`SonarrSync` construction seam.
-
-    Unlike `make_bare_instance`, this drives the actual `__init__` + `begin_run`
-    rebind. Every field is passed to `RunDeps` by explicit keyword (no `**dict[str, Any]`
-    launder), so each is type-checked against the dataclass field at this seam - a
-    wrong-typed fake (`cache_store=object()`, a non-`SeaDexSource` seadex) is a
-    pyright error here, not a silent `Any`. The config carries a Sonarr
-    url/api_key so `SonarrSync`'s `require_connection` passes, `qbit` is
-    `None` (preview, no auth), `cache_store` defaults to the in-memory
-    `FakeCacheStore` so the staged-write sharing can be asserted by identity,
-    `seadex` to a network-free `FakeSeaDexSource`.
-    """
+    """A real `RunDeps` over typed fakes, with a Sonarr url and api_key set and `qbit` None (preview)."""
 
     config = config or make_config(url="http://sonarr", api_key="key")
     cache_store = cache_store or FakeCacheStore()
     logger = logger or make_logger()
-    # One shared client backs BOTH deps.http and deps.web (never used for real
-    # traffic here). conftest's close_leaked_handles closes it at teardown.
+    # One shared client backs both deps.http and deps.web. conftest's close_leaked_handles closes it at teardown.
     http = httpx.Client()
-    # No transport: the config passthrough (no download-client fetch under test).
-    # Shared with torrents below, matching production's single resolver instance.
+    # No transport: the config passthrough (no download-client fetch under test). Shared with
+    # torrents below, matching production's single resolver instance.
     categories = make_categories(config)
     return RunDeps(
         config=config,
         arr_config=config.for_arr(Arr.SONARR),
-        # None: the strategies' require_connection fallback binds lazily, so the
-        # keys-missing construction seams behave exactly as production's.
+        # None: the strategies' require_connection fallback binds lazily, so the keys-missing
+        # construction seams behave exactly as production's.
         arr_http=None,
         categories=categories,
         web=http,
         http=http,
         qbit=None,
-        # A real resolver over empty in-memory mappings (no network) - it carries a
-        # real (empty) `anibridge` the strategy reads at construction.
+        # A real resolver over empty in-memory mappings (no network). It carries a real (empty)
+        # `anibridge` the strategy reads at construction.
         mappings=MappingResolver(
             cache_time=1,
             ignore_anilist_ids=set(),
@@ -701,7 +587,6 @@ def make_run_deps(
             sources=MappingSources(anime={}, anidb=False, anibridge=False),
         ),
         logger=logger,
-        # A typed, network-free SeaDex stand-in (the wiring tests never look one up).
         seadex=seadex or FakeSeaDexSource(),
         cache_store=cache_store,
         anilist=AniListGateway(cache_store=cache_store, logger=logger, client=AniListClient(client=http)),
@@ -713,14 +598,7 @@ def make_run_deps(
 
 
 def make_release_filter(**overrides: Any) -> SeadexReleaseFilter:
-    """Build a `SeadexReleaseFilter` over an assembled `RunDeps`.
-
-    Config-backed flags (e.g. `want_best`, `private_releases`) route through
-    an in-memory `AppConfig`. `cache_store`/`planner` override the deps
-    fields the real ctor unpacks and `ctx` the run context. Mirrors
-    `make_services`'s override routing so the `build` characterization tests
-    read consistently.
-    """
+    """A `SeadexReleaseFilter` over an assembled `RunDeps`, with `ctx`, `cache_store`, and `planner` overridable."""
 
     config = _split_config(overrides)
     ctx = overrides.pop("ctx", None) or RunContext(arr=Arr.SONARR)
@@ -728,25 +606,17 @@ def make_release_filter(**overrides: Any) -> SeadexReleaseFilter:
     if "planner" in overrides:
         deps = dataclasses.replace(deps, planner=overrides.pop("planner"))
     if overrides:
-        # Fail loud on unknown override keys.
         msg = f"unknown make_release_filter overrides: {sorted(overrides)}"
         raise TypeError(msg)
     return SeadexReleaseFilter(deps=deps, ctx=ctx)
 
 
-# A truthy stand-in for a logged-in qBittorrent client, so is_preview() is
-# False without a real login (the actual add is faked by FakeTorrents).
+# A truthy stand-in for a logged-in qBittorrent client, so is_preview() is False.
 CLIENT_SENTINEL = object()
 
 
 class FakeTorrents:
-    """Mimics `TorrentService.add`: a per-hash scripted `(outcome, name)`.
-
-    Keyed by infohash (not call order) so a multi-release add can return a
-    different outcome per release regardless of dict iteration order. A hash
-    scripted in `raises` raises its exception instead (a tracker/client
-    failure the pipeline's containment must absorb).
-    """
+    """Mimics `TorrentService.add`: a per-hash scripted `(outcome, name)`."""
 
     def __init__(
         self,
@@ -764,7 +634,7 @@ class FakeTorrents:
         item: SeadexUrlItem,
         preview: bool,
     ) -> AddResult:
-        """Return the scripted `AddResult` for the url item's infohash (or raise its scripted error)."""
+        """Return the scripted `AddResult` for the url item's infohash, or raise its scripted error."""
 
         del preview
         infohash = item.infohash
@@ -775,11 +645,7 @@ class FakeTorrents:
 
 
 def one_release_dict(*, srg: str, infohash: str, url: str = "https://nyaa.si/view/1") -> SeadexDict:
-    """A one-release `SeadexDict` flagged for download on a public tracker.
-
-    The builder defaults the tracker to `OTHER` (not in the selected set), so
-    pin it to `NYAA` to clear `_add_one_url`'s tracker filter.
-    """
+    """A one-release `SeadexDict` flagged for download, its tracker pinned to `NYAA`."""
 
     item = url_item(url=url, infohash=infohash, download=True)
     item.tracker = Tracker.NYAA
@@ -787,14 +653,7 @@ def one_release_dict(*, srg: str, infohash: str, url: str = "https://nyaa.si/vie
 
 
 def make_grab_pipeline(**overrides: Any) -> GrabPipeline:
-    """Build a bare `GrabPipeline` with only what its methods read.
-
-    Mirrors `make_release_filter`: config-backed flags route through an
-    in-memory `AppConfig`. The rest pass straight to the bare instance. The
-    `_ctx` defaults to a non-preview blocking run (so the pending-import
-    registration is reachable). Pass `qbit=CLIENT_SENTINEL` (the default) for a
-    non-preview run or `qbit=None` to exercise the preview short-circuit.
-    """
+    """A bare `GrabPipeline` carrying only what its methods read, `_ctx` a non-preview blocking run."""
 
     config = _split_config(overrides)
     logger = make_logger()
@@ -806,7 +665,7 @@ def make_grab_pipeline(**overrides: Any) -> GrabPipeline:
         "cache_store": cache_store,
         "_torrents": _real_torrents(logger, web, make_categories(config)),
         "_anilist": AniListGateway(cache_store=cache_store, logger=logger, client=AniListClient(client=web)),
-        # No discord/webhook url -> a disabled, best-effort no-op notifier.
+        # No discord/webhook url: a disabled, best-effort no-op notifier.
         "_notifier": Notifier(discord_url=None, webhook_url=None, web=web),
         "_reporter": _real_reporter(logger, cache_store, web),
         "qbit": CLIENT_SENTINEL,
@@ -819,31 +678,22 @@ def make_grab_pipeline(**overrides: Any) -> GrabPipeline:
 
 
 def make_import_wait_manager(**overrides: Any) -> ImportWaitManager:
-    """Build a bare `ImportWaitManager` with only what its methods read.
-
-    Config-backed flags (the import timeouts / poll interval) route through an
-    in-memory `AppConfig`. The rest pass straight to the bare instance. The
-    `_ctx` defaults to a fresh Sonarr run context and `_active_strategy` /
-    `_reporter` / `cache_store` to mocks/fakes, so a test sets just the
-    qbit + strategy + store it exercises.
-    """
+    """A bare `ImportWaitManager` carrying only what its methods read, config keys routed through `AppConfig`."""
 
     config = _split_config(overrides)
     logger = make_logger()
     cache_store = overrides.pop("cache_store", None) or FakeCacheStore()
     defaults: dict[str, Any] = {
         "_config": config,
-        # A fetchless resolver (`RunDeps.categories`): the config category
-        # passes through, the arr-client fallback being an
-        # `ArrCategoryResolver` concern.
+        # A fetchless resolver (`RunDeps.categories`): the config category passes through, the
+        # arr-client fallback being an `ArrCategoryResolver` concern.
         "_categories": make_categories(config),
         "cache_store": cache_store,
         "_reporter": _real_reporter(logger, cache_store, httpx.Client()),
         "logger": logger,
         "qbit": None,
         "_ctx": RunContext(arr=Arr.SONARR),
-        # The production placeholder before a run binds one. Tests that drive the
-        # import hook pass their own strategy.
+        # The production placeholder before a run binds one. Tests driving the import hook pass their own.
         "_active_strategy": None,
     }
     defaults.update(overrides)
@@ -851,14 +701,7 @@ def make_import_wait_manager(**overrides: Any) -> ImportWaitManager:
 
 
 def make_planner(**overrides: Any) -> DownloadPlanner:
-    """Build a `DownloadPlanner` with test-friendly defaults.
-
-    The planner reads its bound arr (default `SONARR`, override with
-    `arr=Arr.RADARR`) and two config flags plus a logger. Pass keyword
-    overrides to vary a single flag (e.g. `make_planner(interactive=True)`).
-    The logger defaults to WARNING so the hot-path debug f-strings aren't
-    formatted, mirroring `make_services`.
-    """
+    """A `DownloadPlanner` with test-friendly defaults (arr `SONARR`, both flags off)."""
 
     logger = make_logger()
 
@@ -904,7 +747,7 @@ def url_item(
 
 
 def plan_result(torrent_hashes: list[str | None], seadex_dict: SeadexDict) -> PlanResult:
-    """A `PlanResult` carrying just hashes + the dict (no skips, no guard fields)."""
+    """A `PlanResult` carrying just the hashes and the dict, with empty `PrivateOnlySkips`."""
 
     return PlanResult(seadex_dict=seadex_dict, torrent_hashes=torrent_hashes, skips=PrivateOnlySkips())
 
@@ -915,12 +758,7 @@ def rg_group(
     tags: frozenset[Tag] | None = None,
     all_episodes: list[EpisodeRecord] | None = None,
 ) -> SeadexReleaseGroupItem:
-    """One SeaDex release-group record keyed by url.
-
-    `all_episodes` defaults to `None` so the three branches of
-    `get_same_files_groups` (`None` -> no-parsing, `[]` -> unparsed,
-    populated -> coverage frozenset) can each be reached.
-    """
+    """`all_episodes` is tri-state: `None` skips parsing, `[]` is unparsed, populated is the coverage frozenset."""
 
     return SeadexReleaseGroupItem(
         urls=urls,
@@ -938,12 +776,7 @@ def sonarr_ep(
     episode_file_id: int = 1,
     ep_id: int = 0,
 ) -> SonarrEpisode:
-    """One `SonarrEpisode`, parsed from the raw fields the engine reads.
-
-    The one home of the raw episode shape. `episode_file_id=0` builds the
-    no-file-on-disk record: the `episodeFile` block is omitted entirely, like
-    Sonarr's own record for a missing episode.
-    """
+    """`episode_file_id=0` omits the `episodeFile` block, as in Sonarr's record for a missing episode."""
 
     raw: dict[str, Any] = {
         "id": ep_id,
@@ -956,18 +789,13 @@ def sonarr_ep(
     return SonarrEpisode.model_validate(raw)
 
 
-# The `al_id` every `pending_import`-built record carries unless overridden.
-# Exported so tests can spell a builder record's composite key without magic ints.
+# The `al_id` every `pending_import` record carries unless overridden, exported so tests can spell
+# a builder record's composite key without magic ints.
 PENDING_AL_ID = 1
 
 
 def pending_import(**overrides: Any) -> PendingImport:
-    """A `PendingImport` carrying sane manual-import defaults.
-
-    Defaults wire one mapped file to a single episode id with a matching flat
-    fallback, dual-audio off, a single season, and `al_id=PENDING_AL_ID`. Pass
-    keyword overrides to vary any field (e.g. `pending_import(is_dual_audio=True)`).
-    """
+    """A `PendingImport` wiring one mapped file to one episode id, with a matching flat fallback."""
 
     defaults: dict[str, Any] = {
         "infohash": "abc123",
@@ -994,15 +822,7 @@ def import_probe(
     target_count: int = 0,
     deferred: bool = False,
 ) -> ImportProbe:
-    """An `ImportProbe` with the common "files verified imported" defaults.
-
-    The default is the verified-import outcome (`IMPORTED` + `files_present`).
-    Pass `readiness=RETRY, files_present=False, command_issued=True` for the
-    "command accepted, copy in flight" case, or `files_present=False` for a not-
-    yet-ready poll. `imported_count`/`target_count` seed the "files inserted"
-    bar (0/0 -> an indeterminate importing row). `deferred` marks a poll that
-    waited on our own Sonarr work (the monitor credits its interval back).
-    """
+    """An `ImportProbe` defaulting to the verified-import outcome (`IMPORTED` plus `files_present`)."""
 
     return ImportProbe(
         readiness=readiness,
@@ -1020,16 +840,7 @@ def manual_candidate(
     quality: dict[str, Any] | None = None,
     rejections: list[Any] | None = None,
 ) -> ManualImportCandidate:
-    """One parsed Sonarr manual-import candidate, as `import_completed` reads it.
-
-    Mirrors the typed value `SonarrClient.manual_import_candidates` returns:
-    only the fields the import decision consults are populated - `path`
-    (basename drives the episode-id lookup), the in-context `quality` fallback
-    (the RAW wire dict, validated exactly as at the client boundary), and
-    `rejections` (sample / already-imported skips). Built through
-    `ManualImportCandidate.model_validate` so the raw rejection shapes (a bare string
-    or an `{"reason": ...}` dict) are folded exactly as in production.
-    """
+    """`quality` is the raw wire dict. A rejection is a bare string or a `{"reason": ...}` dict."""
 
     return ManualImportCandidate.model_validate(
         {"path": path, "quality": quality, "rejections": rejections or []},
@@ -1039,13 +850,7 @@ def manual_candidate(
 def queue_record(
     infohash: str, state: str, *, status: str | None = "ok", queue_id: int = 0, series_id: int = 1
 ) -> QueueRecord:
-    """One Sonarr queue record matching a download by infohash + tracked state.
-
-    Built through `QueueRecord.model_validate` from the raw API field names so the
-    record mirrors exactly what `SonarrClient.queue` parses at the boundary.
-    `queue_id` defaults to 0 ("no usable id") - the queue-close tests set it.
-    `series_id` defaults to a matched series; the unknown-series close test passes 0.
-    """
+    """`queue_id=0` means no usable id, `series_id=0` the unknown series."""
 
     return QueueRecord.model_validate(
         {
@@ -1059,12 +864,7 @@ def queue_record(
 
 
 def make_sonarr_episodes(**attrs: Any) -> SonarrEpisodes:
-    """A bare `SonarrEpisodes` with `__init__` bypassed and only `attrs` set.
-
-    Mirrors `make_sonarr_sync`: the per-run episode cache + series fingerprint
-    default empty, so a test only sets the collaborators the method under test
-    reads (`sonarr`, `_services`, `_config`, `_mappings`, `_anilist`, ...).
-    """
+    """A bare `SonarrEpisodes` with `__init__` bypassed, its per-run caches defaulted empty."""
 
     defaults: dict[str, Any] = {"_ep_list_cache": {}, "_series_fp": ""}
     defaults.update(attrs)
@@ -1078,17 +878,7 @@ def make_sonarr_sync(
     cache_store: AbstractCacheStore | None = None,
     ep_list_cache: dict[int, list[SonarrEpisode]] | None = None,
 ) -> SonarrSync:
-    """Build a `SonarrSync` through its REAL `__init__`, injecting a typed client.
-
-    Builds a real `RunDeps` + services hub and calls the real constructor, passing
-    the scripted client through the typed `sonarr_client` seam (default a blank
-    `FakeSonarrClient`). So the real two-phase wiring runs -
-    the collaborators all share the injected client + the strat's `cache_store` by
-    identity, exactly as production builds them - and a wrong/incomplete fake is a
-    pyright error AND un-instantiable, not a silently-set dead attribute.
-    `ep_list_cache` seeds the episode collaborator's per-run cache after
-    construction (`__init__` builds it empty), for the run-start-reset tests.
-    """
+    """A `SonarrSync` built through its real `__init__`, injecting a typed client and seeding `ep_list_cache`."""
 
     deps = make_run_deps(config=config, cache_store=cache_store)
     services = RunServices(deps, Arr.SONARR)
@@ -1108,14 +898,7 @@ def make_radarr_sync(
     config: AppConfig | None = None,
     cache_store: AbstractCacheStore | None = None,
 ) -> RadarrSync:
-    """Build a `RadarrSync` through its REAL `__init__`, injecting a typed client.
-
-    Mirrors `make_sonarr_sync`: a real `RunDeps` + services hub drives the real
-    constructor, so `cache_store` / `_evidence` / `_mappings` are wired exactly as
-    production builds them (the memo-reset via `get_items` works, the reconcile's
-    oldest-pending lookup shares the injected store). The scripted client feeds
-    the import-history evidence fetch.
-    """
+    """A `RadarrSync` built through its real `__init__`, injecting a typed client."""
 
     deps = make_run_deps(config=config, cache_store=cache_store)
     services = RunServices(deps, Arr.RADARR)
@@ -1123,11 +906,7 @@ def make_radarr_sync(
 
 
 def make_sonarr_mapper(**attrs: Any) -> FileEpisodeMapper:
-    """A bare `FileEpisodeMapper` with `__init__` bypassed and only `attrs` set.
-
-    The tests assign just what the method under test reads (`sonarr` for the
-    on-disk `/parse`). The per-run on-disk parse cache defaults empty.
-    """
+    """A bare `FileEpisodeMapper` with `__init__` bypassed, its parse-info cache defaulted empty."""
 
     defaults: dict[str, Any] = {"_parse_info_cache": {}}
     defaults.update(attrs)
@@ -1135,11 +914,6 @@ def make_sonarr_mapper(**attrs: Any) -> FileEpisodeMapper:
 
 
 def make_sonarr_parse(**attrs: Any) -> SonarrParseCache:
-    """A bare `SonarrParseCache` with `__init__` bypassed and only `attrs` set.
-
-    The tests assign just what the method under test reads (`sonarr`, `_config`,
-    `cache_store`, `logger`). `parse_episodes_from_seadex` takes the run's
-    `series_fp` as a call argument, so there is no per-run field to default here.
-    """
+    """A bare `SonarrParseCache` with `__init__` bypassed and only `attrs` set."""
 
     return make_bare_instance(SonarrParseCache, **attrs)

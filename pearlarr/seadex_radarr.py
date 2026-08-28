@@ -17,32 +17,23 @@ from .radarr_client import AbstractRadarrClient, RadarrClient, collect_anime_mov
 from .run_services import RunDeps, RunServices, bind_arr_http
 from .seadex_types import ArrReleases, HistoryRecord, ProgressSink, RadarrItem, flagged_urls
 
-# Clock-skew cushion subtracted from the oldest pending record's grab time before
-# querying Radarr import history. The added_at stamps are converted local-naive ->
-# UTC first, so this only has to absorb genuine NTP drift between us and Radarr,
-# never a timezone gap - a query window that started after a real import event
-# would miss its evidence and strand the record until TTL.
+# Clock-skew cushion subtracted from the oldest pending record's grab time before the history query.
+# The added_at stamps are converted to UTC first, so this absorbs only genuine NTP drift, never a timezone
+# gap. A window starting after a real import event would miss its evidence and strand the record until TTL.
 _HISTORY_SKEW_HOURS = 2
 
 
 @dataclass(frozen=True, slots=True)
 class _ImportEvidence:
-    """One reconcile pass's Radarr import-history evidence, fetched once and memoized.
-
-    `imported_hashes` are the casefolded `downloadId`s of the import events in the
-    query window. `readable` is False when `history_since` failed (a Radarr
-    outage), so the reconcile waits and NEVER moves a torrent on missing evidence.
-    """
+    """One end-of-run check's Radarr import-history evidence, fetched once and memoized."""
 
     imported_hashes: frozenset[str]
     readable: bool
+    """False when the history read failed: the check then never moves a torrent."""
 
 
 class RadarrSync(ArrSync[RadarrItem]):
-    """Radarr sync strategy: owns the Radarr REST client + movie domain logic.
-
-    See `ArrSync` for the shared DI/hook-wiring regime.
-    """
+    """Radarr sync strategy: owns the Radarr REST client and the movie domain logic."""
 
     def __init__(
         self,
@@ -50,48 +41,32 @@ class RadarrSync(ArrSync[RadarrItem]):
         services: RunServices,
         radarr_client: AbstractRadarrClient | None = None,
     ) -> None:
-        """Stand up the Radarr client from the injected shared collaborators.
-
-        Args:
-            deps: The shared collaborators. The config/mappings
-                this strategy needs are read off it.
-            services: The services hub the per-id hooks call into.
-            radarr_client: A pre-built client to use instead of constructing
-                the real `RadarrClient` (which needs the connection keys).
-                None builds the real one.
-        """
+        """Stand up the Radarr client from the injected shared collaborators."""
 
         self._services = services
         self._config = deps.config
         self.logger = deps.logger
-        # Read directly for the reconcile's oldest-pending lookup + import-history match.
         self.cache_store = deps.cache_store
-        # The reconcile pass's Radarr import history, fetched once then memoized.
-        # None = not yet fetched; reset at run start (get_items) so it can't stale.
+        # The check's Radarr import history, memoized. Reset at run start (get_items) so it can't stale.
         self._evidence: _ImportEvidence | None = None
-        # The resolver supplies the Anime-IDs candidate id-sets (from SQL) that
-        # `collect_anime_movies` filters with. The AniBridge view supplies its own.
+        # Two id sources for collect_anime_movies: the resolver's Anime-IDs candidate sets
+        # (from SQL), and the AniBridge view's own.
         self._mappings = deps.mappings
         self.anibridge = deps.mappings.anibridge
 
-        # An injected client (tests) is used as-is. Otherwise the connection keys
-        # are required only now, when a Radarr run actually runs.
+        # An injected client (tests) is used as-is. Otherwise the connection keys are required
+        # only now, when a Radarr run actually runs.
         if radarr_client is not None:
             self.radarr: AbstractRadarrClient = radarr_client
         else:
-            # A None deps.arr_http means the keys are missing - the fallback
-            # bind raises require_connection's error here, the same point as before.
+            # A None deps.arr_http means the keys are missing, so the fallback bind raises here.
             self.radarr = RadarrClient(http=deps.arr_http or bind_arr_http(Arr.RADARR, self._config, deps.http))
 
     # --- ArrSync hooks ------------------------------------------------------
 
     @override
     def get_items(self) -> list[RadarrItem]:
-        """Every Radarr movie that has an associated AniList ID.
-
-        Also the run-start hook: clears the per-run import-history memo so a stale
-        window never carries into this run's reconcile.
-        """
+        """Every Radarr movie that has an associated AniList ID."""
 
         self._evidence = None
         return self.get_all_radarr_movies()
@@ -147,13 +122,7 @@ class RadarrSync(ArrSync[RadarrItem]):
         al_id: int,
         mapping: MappingEntry,
     ) -> bool:
-        """Process one AniList id for a Radarr movie.
-
-        A movie is a single file, so the middle is simply: resolve the Radarr
-        release group, pull the SeaDex releases, filter them, then hand off to
-        the shared grab/cache tail. `mapping` is unused (movies need no episode
-        mapping) but is accepted to match the shared hook signature.
-        """
+        """Process one AniList id for a Radarr movie."""
 
         run = self._services
 
@@ -162,18 +131,13 @@ class RadarrSync(ArrSync[RadarrItem]):
             return False
         sd_url = sd_entry.url
 
-        # Skip if already cached. Movies have no episode coverage, so the
-        # one-time backfill on a legacy record is just the URL.
+        # Movies have no episode coverage, so the backfill is just the URL.
         if run.cached_entry_skip(al_id, sd_entry, lambda: ""):
             return False
 
-        # Resolve the AniList title, then log the active entry (a movie has no
-        # episode coverage, so the line carries just the URL)
         anilist_title = run.get_anilist_title(al_id=al_id)
         run.log_al_title(anilist_title=anilist_title, sd_entry=sd_entry)
 
-        # Setup info for cache (URL so cached runs can link to SeaDex - movies have
-        # no episode coverage)
         cache_details: CacheRecord = {
             "name": anilist_title,
             "updated_at": sd_entry.updated_at,
@@ -190,7 +154,6 @@ class RadarrSync(ArrSync[RadarrItem]):
             f"Radarr release {pluralize(radarr_releases.group_count(), 'group')}: {radarr_releases.groups_label()}"
         )
 
-        # Produce a dictionary of info from the SeaDex request
         seadex_dict = run.get_seadex_dict(sd_entry=sd_entry)
 
         if len(seadex_dict) == 0:
@@ -198,15 +161,13 @@ class RadarrSync(ArrSync[RadarrItem]):
 
         self.logger.debug(f"SeaDex: {', '.join(seadex_dict)}")
 
-        # If we're in interactive mode and there are multiple options here, then select
         if self._config.advanced.interactive and len(seadex_dict) > 1:
             seadex_dict = run.filter_seadex_interactive(
                 seadex_dict=seadex_dict,
                 sd_entry=sd_entry,
             )
-            # Every token was invalid: skip WITHOUT caching (grab_and_cache would
-            # cache the title as done and suppress it forever) so it re-prompts
-            # next run.
+            # Every token was invalid: skip WITHOUT caching, since grab_and_cache would cache the
+            # title as done and suppress it forever. It re-prompts next run.
             if len(seadex_dict) == 0:
                 return run.invalid_selection_skip()
 
@@ -217,18 +178,12 @@ class RadarrSync(ArrSync[RadarrItem]):
         )
         torrent_hashes, seadex_dict = plan.torrent_hashes, plan.seadex_dict
 
-        # Seed a pending-import record per grabbed torrent so the engine's
-        # data-driven gate persists it. The post-import category move then defers
-        # until Radarr's own completed-download handling imports the movie - and,
-        # for a torrent shared with a Sonarr grab, until both arrs' records clear.
-        # Only the Sonarr-domain fields stay empty (a Radarr record tracks no
-        # episode mapping). Gated on the resolved wait mode so an off run seeds
-        # nothing (the pipeline's own gate would skip them regardless).
+        # Seed a pending record per grabbed torrent so the engine's gate persists it: the category move then
+        # defers until Radarr imports the movie, and for a torrent shared with a Sonarr grab until both arrs clear.
         pending_seeds: dict[str, PendingImport] | None = None
         if run.import_wait_mode is not ImportWaitMode.OFF:
             added_at = now_stamp()
-            # No guard fields here: Radarr's import path reads nothing but the
-            # infohash (Radarr itself imports; only the category move waits).
+            # No guard fields: Radarr's import path reads nothing but the infohash.
             pending_seeds = {
                 infohash: PendingImport(
                     infohash=infohash,
@@ -257,7 +212,7 @@ class RadarrSync(ArrSync[RadarrItem]):
                 seadex_dict=seadex_dict,
                 torrent_hashes=torrent_hashes,
                 cache_details=cache_details,
-                # Every edition's tagged group (not just the first file's).
+                # Every edition's tagged group, not just the first file's.
                 replaced_groups=radarr_releases.replaced_groups(),
                 pending_seeds=pending_seeds,
             ),
@@ -265,12 +220,7 @@ class RadarrSync(ArrSync[RadarrItem]):
 
     @override
     def pending_import_series_id(self, item: RadarrItem) -> int | None:
-        """No series id: a Radarr record is not keyed by series, so no inline snapshot.
-
-        Radarr DOES record pending imports now, but they carry `series_id=0` and
-        reconcile in `_finalize_run` (never the per-item snapshot). Returning
-        `None` short-circuits the engine's per-item snapshot hook for every movie.
-        """
+        """None: a Radarr record is not keyed by series."""
 
         del item
         return None
@@ -284,40 +234,22 @@ class RadarrSync(ArrSync[RadarrItem]):
     ) -> ImportProbe:
         """Reconcile one completed Radarr download against Radarr's import history.
 
-        Radarr imports its own completed downloads (completed-download handling),
-        so this never drives an import - it only reads evidence. The history
-        window is fetched ONCE per reconcile pass (memoized, reset at run start)
-        and matched by casefolded `downloadId`:
-
-          * a matching import event -> `files_present` (the reconcile drops the
-            record and runs the gated category move),
-          * no event yet -> leave the record pending (the category stays deferred),
-          * a history outage (`history_since` -> None) -> leave pending, never move.
-
-        `content_path` / `attempt` are unused - there is no local import to
-        drive or defer, only the yes/no history check.
+        Radarr imports its own completed downloads, so this only reads evidence and never drives an import.
         """
 
         del content_path, attempt
         evidence = self._import_evidence()
-        if not evidence.readable:
-            # Outage: no evidence, so wait - never move a torrent on a missing read.
-            return ImportProbe(ImportReadiness.LEAVE, files_present=False, command_issued=False)
-        imported = pending.infohash.casefold() in evidence.imported_hashes
+        # An outage is no evidence, so wait. Never move a torrent on a missing read.
+        imported = evidence.readable and pending.infohash.casefold() in evidence.imported_hashes
         return ImportProbe(
-            ImportReadiness.IMPORTED if imported else ImportReadiness.LEAVE,
+            ImportReadiness.IMPORTED if imported else ImportReadiness.RETRY,
             files_present=imported,
             command_issued=False,
         )
 
     @override
     def import_progress(self, pending: PendingImport) -> ImportProgress:
-        """Indeterminate zero: Radarr never enters the blocking monitor (the only caller).
-
-        Radarr records reconcile off import history, never through the wait
-        cockpit's fast-lane bar, so this returns the safe "no bar, promote
-        nothing" value to satisfy the `ArrSync` contract.
-        """
+        """Indeterminate zero: a Radarr record reaches no bar."""
 
         del pending
         return ImportProgress(0, 0, determinate=False)
@@ -325,17 +257,12 @@ class RadarrSync(ArrSync[RadarrItem]):
     @property
     @override
     def supports_blocking_monitor(self) -> bool:
-        """No blocking monitor: Radarr records reconcile off import history in every mode."""
+        """No waiting monitor: Radarr records run the one-cycle check off import history."""
 
         return False
 
     def _import_evidence(self) -> _ImportEvidence:
-        """The reconcile pass's Radarr import history, fetched once then memoized.
-
-        Reset to None at run start (`get_items`), so a stale window never carries
-        into the next run. Radarr runs exactly one reconcile pass per run, so this
-        one memo IS the per-pass fetch the reconcile needs.
-        """
+        """The check's Radarr import history, fetched once then memoized (reset at run start)."""
 
         if self._evidence is None:
             self._evidence = self._fetch_import_evidence()
@@ -357,10 +284,7 @@ class RadarrSync(ArrSync[RadarrItem]):
     def _history_query_start(self) -> datetime:
         """Aware-UTC lower bound for the import-history query: oldest pending grab, minus skew.
 
-        The `added_at` stamps are local-naive grab times; `.astimezone(UTC)` reads
-        them as local and converts, so the skew cushion only covers real clock
-        drift. No pending record outlives its TTL, so that age is the floor when
-        no stamp parses.
+        The `added_at` stamps are local-naive, so `.astimezone(UTC)` reads them as local and converts.
         """
 
         floor = datetime.now(UTC) - timedelta(days=self._config.imports.pending_max_age_days)
@@ -392,9 +316,7 @@ class RadarrSync(ArrSync[RadarrItem]):
     ) -> ArrReleases:
         """Fold the movie's existing files into an `ArrReleases`."""
 
-        # A movie can carry several files (an upgrade or a multi-edition), all
-        # already present, so the fold keeps every size for the planner to
-        # dedup against rather than collapsing to one file or erroring.
+        # A movie can carry several files (an upgrade or a multi-edition), so every size is kept.
         return ArrReleases.from_files(
             self.radarr.movie_files(radarr_movie_id),
             keep_untagged=True,
