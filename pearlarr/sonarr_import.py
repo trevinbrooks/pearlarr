@@ -1,7 +1,6 @@
 """Import-time subsystem: decide a download's state, then build/POST the import."""
 
 import logging
-import time
 from dataclasses import dataclass, field, replace
 from typing import NamedTuple
 from urllib.parse import urlsplit
@@ -237,6 +236,7 @@ class ImportExecutor:
         self.sonarr = sonarr
         self._config = deps.config
         self.logger = deps.logger
+        self._clock = deps.clock
         self._mapper = mapper
         self.scanner = CandidateScanner(sonarr, _hostname(deps.config.qbittorrent.host), deps.logger)
         self._scratch = _ImportScratch()
@@ -266,7 +266,7 @@ class ImportExecutor:
 
         # The rescan is GLOBAL and the blocking pass walks several torrents back-to-back, so it is re-issued
         # at most once per poll interval.
-        now = time.monotonic()
+        now = self._clock.now()
         interval = self._config.imports.poll_interval
         if self._scratch.last_refresh_monotonic is not None and now - self._scratch.last_refresh_monotonic < interval:
             return
@@ -282,14 +282,14 @@ class ImportExecutor:
             state = command.status or ""
             if state.casefold() in _COMMAND_TERMINAL_STATES:
                 break
-            time.sleep(_REFRESH_COMMAND_POLL_S)
+            self._clock.sleep(_REFRESH_COMMAND_POLL_S)
         else:
             return
 
         for _ in range(_REFRESH_COMMAND_MAX_POLLS):
             if not sonarr_process_pass_running(self.list_commands()):
                 return
-            time.sleep(_REFRESH_COMMAND_POLL_S)
+            self._clock.sleep(_REFRESH_COMMAND_POLL_S)
 
     def queue_records(self, infohash: str) -> list[QueueRecord] | None:
         """This download's queue records, matched case-insensitively (Sonarr stores the hash uppercased).

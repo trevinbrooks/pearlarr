@@ -1,6 +1,5 @@
 """The completion-wait "consume" side: poll, observe, and the end-of-run import pass."""
 
-import time
 from collections.abc import Callable
 from dataclasses import dataclass, field, replace
 from datetime import datetime
@@ -8,6 +7,7 @@ from datetime import datetime
 import qbittorrentapi
 
 from .cache import UPDATED_AT_STR_FORMAT, pending_cutoff
+from .clock import Clock
 from .log import count_noun
 from .manual_import import (
     PENDING_STATE_FOR_OUTCOME,
@@ -42,6 +42,7 @@ class ImportWaitManager:
         self._reporter = deps.reporter
         self.logger = deps.logger
         self.qbit = deps.qbit
+        self._clock = deps.clock
         self._ctx = ctx
         # The None placeholder before begin_run binds the run's strategy.
         self._active_strategy: ImportCompleter | None = None
@@ -205,13 +206,7 @@ class ImportWaitManager:
             elif state is PendingState.QUEUED:
                 self._ctx.stats.queued += 1
 
-    def run_monitor(
-        self,
-        *,
-        now: Callable[[], float] | None = None,
-        sleep: Callable[[float], None] | None = None,
-        view: WaitView | None = None,
-    ) -> WaitResult | None:
+    def run_monitor(self, *, view: WaitView | None = None) -> WaitResult | None:
         """The blocking/hybrid end-of-run pass: interleaved wait+import over every pending record."""
 
         if self._active_strategy is None:
@@ -221,24 +216,18 @@ class ImportWaitManager:
         if not records:
             return None
 
-        nap = sleep if sleep is not None else time.sleep
-        mp = self._monitor_pass(records, now, WaitKind.MONITOR)
+        mp = self._monitor_pass(records, WaitKind.MONITOR)
 
         def body(view: WaitView) -> None:
             while mp.active_count:
                 mp.run_cycle()
                 view.update(mp.snapshot())
                 if mp.active_count:
-                    self._progress_wait(mp, view, nap)
+                    self._progress_wait(mp, view)
 
         return self._run_pass(mp, view=view, body=body)
 
-    def check_once(
-        self,
-        *,
-        now: Callable[[], float] | None = None,
-        view: WaitView | None = None,
-    ) -> WaitResult | None:
+    def check_once(self, *, view: WaitView | None = None) -> WaitResult | None:
         """The deferred end-of-run pass: one non-blocking check cycle over the carried-over records."""
 
         if self._active_strategy is None:
@@ -248,7 +237,7 @@ class ImportWaitManager:
         if not records:
             return None
 
-        mp = self._monitor_pass(records, now, WaitKind.CHECK)
+        mp = self._monitor_pass(records, WaitKind.CHECK)
 
         def body(view: WaitView) -> None:
             mp.run_check()
@@ -261,19 +250,14 @@ class ImportWaitManager:
 
         self._ctx.pending_states[key] = PENDING_STATE_FOR_OUTCOME[outcome]
 
-    def _monitor_pass(
-        self,
-        records: list[PendingImport],
-        now: Callable[[], float] | None,
-        kind: WaitKind,
-    ) -> "MonitorPass":
+    def _monitor_pass(self, records: list[PendingImport], kind: WaitKind) -> "MonitorPass":
         """A fresh `MonitorPass` of `kind` over `records` under the run's two per-torrent timeouts."""
 
         return MonitorPass(
             self,
             records,
             kind=kind,
-            now=now if now is not None else time.monotonic,
+            clock=self._clock,
             dl_timeout=self._config.imports.wait_timeout,
             import_timeout=self._config.imports.ready_timeout,
         )
@@ -307,12 +291,7 @@ class ImportWaitManager:
                 view.close()
         return WaitResult(tuple(mp.results), elapsed_s=mp.elapsed())
 
-    def _progress_wait(
-        self,
-        mp: "MonitorPass",
-        view: WaitView,
-        nap: Callable[[float], None],
-    ) -> None:
+    def _progress_wait(self, mp: "MonitorPass", view: WaitView) -> None:
         """Sleep one heavy-poll interval, refreshing the live rows between slices.
 
         The slices run only the cheap fast-lane reads, never a rescan, queue, command, or phase transition.
@@ -321,14 +300,14 @@ class ImportWaitManager:
         poll_s = self._config.imports.poll_interval
         progress_s = self._config.imports.progress_poll_interval
         if progress_s <= 0 or progress_s >= poll_s:
-            nap(poll_s)
+            self._clock.sleep(poll_s)
             return
-        deadline = mp.now() + poll_s
+        deadline = self._clock.now() + poll_s
         while mp.active_count:
-            remaining = deadline - mp.now()
+            remaining = deadline - self._clock.now()
             if remaining <= 0:
                 return
-            nap(min(progress_s, remaining))
+            self._clock.sleep(min(progress_s, remaining))
             if not mp.active_count:
                 return
             # The import bar first: it can promote or retire rows.
@@ -619,16 +598,16 @@ class MonitorPass:
         records: list[PendingImport],
         *,
         kind: WaitKind,
-        now: Callable[[], float],
+        clock: Clock,
         dl_timeout: int,
         import_timeout: int,
     ) -> None:
         self._mgr = manager
         self.kind = kind
-        self.now = now
+        self._clock = clock
         self.dl_timeout = dl_timeout
         self.import_timeout = import_timeout
-        self.start = now()
+        self.start = clock.now()
         # Stamped at construction: an imported fresh grab leaves `pending_imports` mid-pass,
         # so a later membership check would misread it as carried-over.
         fresh = manager.fresh_grab_keys()
@@ -672,7 +651,7 @@ class MonitorPass:
     def elapsed(self) -> float:
         """Seconds since the pass started (off the injected clock)."""
 
-        return self.now() - self.start
+        return self._clock.now() - self.start
 
     def snapshot(self) -> WaitSnapshot:
         """The current frame: every torrent's `TorrentView`, plus elapsed."""
@@ -683,7 +662,7 @@ class MonitorPass:
         """Record a terminal outcome: snapshot row, the drop or retire it implies, then the result row."""
 
         record = row.record
-        row.view_terminal(outcome, self.now(), files=files)
+        row.view_terminal(outcome, self._clock.now(), files=files)
         # Store effects precede the result row: a failed drop must not leave a
         # phantom row for _finalize_run's imported bump to count.
         if outcome is Outcome.IMPORTED:
@@ -721,15 +700,15 @@ class MonitorPass:
         if poll.outcome is None:
             # Monitor-only: `dl_start` is this pass's construction, so a check-pass timeout would
             # mislabel a still-downloading record. `_retire_active` words it truthfully there.
-            if self.kind is WaitKind.MONITOR and self.now() - row.dl_start >= self.dl_timeout:
+            if self.kind is WaitKind.MONITOR and self._clock.now() - row.dl_start >= self.dl_timeout:
                 self._terminal(Outcome.DOWNLOAD_TIMED_OUT, row)
                 return
             if not poll.observed:
                 # Transient qBittorrent error: the zeroed probe is a placeholder, not a reading. Keep the row's
                 # last real state (no 0% bar flash, no fake stall sample) and let its clock tick.
-                row.view_tick(self.now())
+                row.view_tick(self._clock.now())
                 return
-            row.view_downloading(poll.telemetry, self.now())
+            row.view_downloading(poll.telemetry, self._clock.now())
             return
         if poll.outcome is WaitOutcome.MISSING:
             self._terminal(Outcome.MISSING, row)
@@ -743,7 +722,7 @@ class MonitorPass:
             return
 
         # COMPLETE: drive and verify our import.
-        now_ts = self.now()
+        now_ts = self._clock.now()
         clock = row.clock
         if clock is None:
             clock = row.clock = _ReadyClock(timeout=self.import_timeout, anchor=now_ts, started=now_ts)
@@ -792,12 +771,12 @@ class MonitorPass:
             # done-check finishes the row.
             if not progress.determinate or progress.total <= 0:
                 continue
-            clock.note_progress(progress.done, progress.total, self.now())
+            clock.note_progress(progress.done, progress.total, self._clock.now())
             if progress.files_present:
                 self._terminal(Outcome.IMPORTED, row, files=progress.total)
                 changed = True
             elif (progress.done, progress.total) != (row.view.import_done, row.view.import_total):
-                row.view_import_progress(progress, self.now())
+                row.view_import_progress(progress, self._clock.now())
                 changed = True
         return changed
 
@@ -814,6 +793,6 @@ class MonitorPass:
         changed = False
         for row in downloading:
             telemetry = by_hash.get(row.record.infohash)
-            if telemetry is not None and row.view_telemetry(telemetry, self.now()):
+            if telemetry is not None and row.view_telemetry(telemetry, self._clock.now()):
                 changed = True
         return changed

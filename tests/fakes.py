@@ -10,6 +10,7 @@ from typing import override
 import httpx
 
 from pearlarr.arr_http import ArrHttp
+from pearlarr.clock import Clock
 from pearlarr.manual_import import AttemptKind, ImportProbe, ImportProgress, PendingImport
 from pearlarr.mappings import MappingEntry
 from pearlarr.output import (
@@ -124,19 +125,30 @@ class AsciiStringIO(io.StringIO):
     encoding = "ascii"
 
 
-class FakeClock:
-    """A clock the tests advance by hand."""
+class FakeClock(Clock):
+    """A hand-driven `Clock`: `sleep` advances by `step`, `tick` by hand, callable as `now`."""
 
-    def __init__(self) -> None:
-        self.now = 0.0
+    def __init__(self, step: float = 0.0) -> None:
+        self.t = 0.0
+        self._step = step
+
+    @override
+    def now(self) -> float:
+        return self.t
+
+    @override
+    def sleep(self, seconds: float) -> None:
+        # Ignore the requested duration: advancing by the fixed step exercises the
+        # deadline arithmetic without ever really sleeping.
+        self.t += self._step
 
     def __call__(self) -> float:
-        return self.now
+        return self.now()
 
     def tick(self, seconds: float) -> None:
         """Advance the fake time by `seconds`."""
 
-        self.now += seconds
+        self.t += seconds
 
 
 class FakeArrItem:
