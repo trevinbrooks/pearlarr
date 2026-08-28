@@ -29,6 +29,8 @@ class WaitOutcomeRow:
 
     label: str
     outcome: Outcome
+    carried_over: bool = False
+    """Whether the record predates this run. A fresh grab tallies as `added`, never `imported`."""
 
 
 @dataclass(frozen=True, slots=True)
@@ -49,6 +51,12 @@ class WaitResult:
         """Count of imported (SUCCESS) torrents."""
 
         return self._count(OutcomeCategory.SUCCESS)
+
+    @property
+    def carried_over_imported(self) -> int:
+        """Count of carried-over imported torrents, the run tally's `imported` bucket."""
+
+        return sum(1 for row in self.rows if row.carried_over and row.outcome.category is OutcomeCategory.SUCCESS)
 
     @property
     def left(self) -> int:

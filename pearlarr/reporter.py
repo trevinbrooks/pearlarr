@@ -172,8 +172,8 @@ class RunContext:
     )
     """Records written THIS run. The durable copies live in `cache_store`."""
     reacquired_keys: set[PendingKey] = field(default_factory=set[PendingKey])
-    """Store-resident records re-seen in qBittorrent this run (`ALREADY_ADDED`), skipped by the snapshot and
-    the tally. Never also a `pending_imports` record."""
+    """Store-resident records re-seen in qBittorrent this run (`ALREADY_ADDED`), skipped by the snapshot but
+    counted by the tally. Never also a `pending_imports` record."""
     pending_states: dict[PendingKey, PendingState] = field(
         default_factory=dict[PendingKey, PendingState],
     )

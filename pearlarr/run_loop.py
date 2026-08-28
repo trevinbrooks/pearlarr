@@ -7,7 +7,7 @@ from .arr_activity import ArrActivityMonitor
 from .boot_flow import BootFlow
 from .import_wait import ImportWaitManager
 from .log import arr_item_noun, count_noun
-from .manual_import import ImportWaitMode
+from .manual_import import ImportWaitMode, PendingState
 from .output import hub_error, hub_note, hub_warn
 from .protocols import ArrSync, ImportCompleter
 from .reporter import RunContext
@@ -284,8 +284,15 @@ class RunLoop:
         # close roll back the run's staged writes. The save trails the monitor to also capture its drops.
         try:
             if self._wait_active and not end_pass_waits:
-                self._wait_manager.reconcile_once()
+                check = self._wait_manager.reconcile_once()
+                if check is not None:
+                    self._ctx.stats.imported += check.carried_over_imported
             if self._wait_active:
+                # This owns the tally's `imported` bump: the snapshot's verified imports land in
+                # `pending_states`, the passes report theirs on their carried-over result rows.
+                self._ctx.stats.imported += sum(
+                    1 for state in self._ctx.pending_states.values() if state is PendingState.IMPORTED
+                )
                 self._wait_manager.tally_carried_over_into_stats()
 
             self._reporter.log_run_summary(
@@ -296,9 +303,11 @@ class RunLoop:
 
             if self._wait_active and end_pass_waits:
                 result = self._wait_manager.run_monitor()
-                # _notify_wait_complete swallows its own errors, so a bad webhook can never skip the save below.
-                if result is not None and result.waited:
-                    self._notify_wait_complete(result)
+                if result is not None:
+                    self._ctx.stats.imported += result.carried_over_imported
+                    # _notify_wait_complete swallows its own errors, so a bad webhook can never skip the save below.
+                    if result.waited:
+                        self._notify_wait_complete(result)
         finally:
             self.cache_store.save(preview=preview)
 
