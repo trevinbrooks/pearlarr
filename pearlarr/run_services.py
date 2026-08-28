@@ -95,7 +95,7 @@ class RunDeps:
     post-import move), where the arr is provably up."""
 
     clock: Clock
-    """The run's time seam, read wherever a wait or throttle needs now/sleep."""
+    """The wait passes' time seam (the grab throttle and run clock read time directly)."""
 
     web: httpx.Client
     http: httpx.Client
