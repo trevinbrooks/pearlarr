@@ -14,7 +14,7 @@ For one arr:
 2. scans the arr's library and resolves each series/movie to an AniList ID through the mapping graph.
 3. for each ID with a SeaDex entry that changed since it was last handled: selects the releases to grab (the planner), skips what the arr already owns, and adds the survivors to qBittorrent (the grab pipeline).
 4. notifies (Discord embed per grab), records the decisions in the cache, and prints the run summary.
-5. on Sonarr, optionally runs the wait pass (`imports.wait_mode`): wait for downloads to finish, let Sonarr import them, and step in with a manual import where Sonarr cannot.
+5. optionally waits on downloads (`imports.wait_mode`): a blocking wait on Sonarr that lets Sonarr import first and steps in with a manual import where it cannot, or a single end-of-run check that imports whatever already finished and classifies the rest for the summary.
 
 Scheduled mode wraps that in a loop: one cycle runs every configured arr, then sleeps `schedule.interval_hours`. The config is re-read each cycle.
 
