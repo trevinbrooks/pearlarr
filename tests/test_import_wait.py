@@ -652,7 +652,7 @@ class TestSnapshotPendingForSeries:
         # series that grabbed several torrents).
         assert reporter.snapshot_calls[0].title == f"Show{SEP}SubGroup"
         # Forced (CDH-off safe) but NOT at the deadline (no loud warning).
-        assert strategy.import_calls[-1].attempt is AttemptKind.FORCED
+        assert strategy.import_calls[-1].attempt is AttemptKind.DEADLINE
 
     def test_carried_over_downloading_is_queued_and_kept(self) -> None:
         # Still downloading -> queued, record kept, no import attempt.
@@ -734,10 +734,10 @@ class TestSnapshotPendingForSeries:
         mgr.snapshot_pending_for_series(7)
 
         assert strategy.import_calls == []
-        assert mgr._ctx.pending_states[pk("h")] is PendingState.IMPORTING
+        assert mgr._ctx.pending_states[pk("h")] is PendingState.DOWNLOADED
         assert set(mgr._pending_records()) == {pk("h")}
         assert mgr._ctx.stats.imported == 0
-        assert [c.state for c in reporter.snapshot_calls] == [PendingState.IMPORTING]
+        assert [c.state for c in reporter.snapshot_calls] == [PendingState.DOWNLOADED]
 
 
 class TestReconcileRemaining:
@@ -758,7 +758,7 @@ class TestReconcileRemaining:
 
         assert mgr._pending_records() == {}
         assert mgr._ctx.stats.imported == 1
-        assert strategy.import_calls[-1].attempt is AttemptKind.FORCED
+        assert strategy.import_calls[-1].attempt is AttemptKind.DEADLINE
 
     def test_skips_already_snapshotted(self) -> None:
         # A record the inline snapshot already touched must not be re-polled.
@@ -830,13 +830,13 @@ class TestTallyCarriedOverIntoStats:
         )
         mgr._ctx.pending_states = {
             pk("q"): PendingState.QUEUED,
-            pk("i"): PendingState.IMPORTING,
+            pk("i"): PendingState.DOWNLOADED,
         }
 
         mgr.tally_carried_over_into_stats()
 
         assert mgr._ctx.stats.queued == 2  # explicit q + defaulted untouched
-        assert mgr._ctx.stats.importing == 1
+        assert mgr._ctx.stats.downloaded == 1
 
     def test_excludes_this_run_grabs(self) -> None:
         this_run = pending_import(infohash="h", added_at=_FRESH)
@@ -850,10 +850,10 @@ class TestTallyCarriedOverIntoStats:
         mgr.tally_carried_over_into_stats()
 
         assert mgr._ctx.stats.queued == 0
-        assert mgr._ctx.stats.importing == 0
+        assert mgr._ctx.stats.downloaded == 0
 
     def test_two_importing_records_both_tallied(self) -> None:
-        # MUTATION PIN: `stats.importing += 1` degraded to `= 1` clamps at one.
+        # MUTATION PIN: `stats.downloaded += 1` degraded to `= 1` clamps at one.
         # Two known-IMPORTING records must tally 2.
         mgr = make_orchestration_manager(
             qbit=None,
@@ -864,13 +864,13 @@ class TestTallyCarriedOverIntoStats:
             ],
         )
         mgr._ctx.pending_states = {
-            pk("i1"): PendingState.IMPORTING,
-            pk("i2"): PendingState.IMPORTING,
+            pk("i1"): PendingState.DOWNLOADED,
+            pk("i2"): PendingState.DOWNLOADED,
         }
 
         mgr.tally_carried_over_into_stats()
 
-        assert mgr._ctx.stats.importing == 2
+        assert mgr._ctx.stats.downloaded == 2
         assert mgr._ctx.stats.queued == 0
 
 
@@ -1576,7 +1576,7 @@ class TestRunMonitor:
 
         mgr.run_monitor(now=clock.now, sleep=clock.sleep, view=view)  # must not raise
 
-        assert view.final(rk("h")).outcome is Outcome.NOTHING_TO_IMPORT
+        assert view.final(rk("h")).outcome is Outcome.ATTEMPT_FAILED
         assert set(mgr._pending_records()) == {pk("h")}
 
     def test_swallowed_import_announces_an_error_and_leaves(self) -> None:

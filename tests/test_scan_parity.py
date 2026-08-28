@@ -289,8 +289,8 @@ def _pending_lines(row: Line) -> tuple[Line, ...]:
 PENDING_QUEUED = _pending_header(EntryState.QUEUED)
 PENDING_QUEUED_LINES = _pending_lines(_styled("  queued      My Show · SubGroup", "grey50"))
 
-PENDING_IMPORTING = _pending_header(EntryState.IMPORTING)
-PENDING_IMPORTING_LINES = _pending_lines(_styled("  importing   My Show · SubGroup", "grey50"))
+PENDING_DOWNLOADED = _pending_header(EntryState.DOWNLOADED)
+PENDING_DOWNLOADED_LINES = _pending_lines(_styled("  downloaded  My Show · SubGroup", "grey50"))
 
 PENDING_IMPORTED = _pending_header(EntryState.IMPORTED)
 PENDING_IMPORTED_LINES = _pending_lines(_styled("  imported    My Show · SubGroup", "green"))
@@ -488,7 +488,7 @@ def _rich_stats() -> RunStats:
         ],
         unmonitored=1,
         queued=1,
-        importing=1,
+        downloaded=1,
         imported=2,
     )
 
@@ -540,7 +540,7 @@ SUMMARY_RICH_LINES: tuple[Line, ...] = (
     # Quirk: a name-less grab renders "[group] " with a trailing space.
     _brow("      torrent [PrivGrp] ", "torrent", _torrent_text(None, "PrivGrp", dry=False), "green"),
     _srow("  queued       : 1", "queued", "1", style="grey50"),
-    _srow("  importing    : 1", "importing", "1", style="yellow"),
+    _srow("  downloaded   : 1", "downloaded", "1", style="yellow"),
     _srow("  imported     : 2", "imported", "2", style="green"),
     _srow("  up to date   : 1", "up to date", "1"),
     _srow("  unchanged    : 3  (since last run)", "unchanged", "3  (since last run)", style="grey50"),
@@ -730,7 +730,7 @@ def _wait_off_stats() -> RunStats:
         ],
         # Non-zero pending counters that must stay hidden with the wait mode off.
         queued=2,
-        importing=1,
+        downloaded=1,
         imported=3,
     )
 
@@ -920,7 +920,7 @@ class TestEntryHeaderParity:
         pending = pending_import(**_PENDING_KWARGS)
         for state, expected in (
             (PendingState.QUEUED, PENDING_QUEUED_LINES),
-            (PendingState.IMPORTING, PENDING_IMPORTING_LINES),
+            (PendingState.DOWNLOADED, PENDING_DOWNLOADED_LINES),
             (PendingState.IMPORTED, PENDING_IMPORTED_LINES),
         ):
             harness.events.clear()

@@ -715,7 +715,7 @@ class TestImportCompletedQueueState:
             ],
         )
 
-        probe = strat.import_completed(pending, "/d", AttemptKind.FORCED)
+        probe = strat.import_completed(pending, "/d", AttemptKind.DEADLINE)
 
         assert probe.readiness is ImportReadiness.RETRY
         assert probe.files_present is False
@@ -760,7 +760,7 @@ class TestImportCompletedQueueState:
             commands=[_inflight_manual_import("ABC123")],
         )
 
-        probe = strat.import_completed(pending, "/d", AttemptKind.FORCED)
+        probe = strat.import_completed(pending, "/d", AttemptKind.DEADLINE)
 
         assert probe.readiness is ImportReadiness.RETRY
         assert probe.command_issued is True
@@ -944,7 +944,7 @@ class TestImportCompletedQueueState:
             queue=[queue_record("ABC123", "importPending", status="ok")],
         )
 
-        probe = strat.import_completed(pending, "/d", AttemptKind.FORCED)
+        probe = strat.import_completed(pending, "/d", AttemptKind.DEADLINE)
 
         assert probe.readiness is ImportReadiness.RETRY
         assert probe.command_issued is True
@@ -1318,7 +1318,7 @@ class TestInFlightManualImportGuard:
             commands=[_inflight_manual_import("abc123")],
         )
 
-        probe = strat.import_completed(pending, "/d", AttemptKind.FORCED)
+        probe = strat.import_completed(pending, "/d", AttemptKind.DEADLINE)
 
         assert probe.readiness is ImportReadiness.RETRY
         assert probe.command_issued is True

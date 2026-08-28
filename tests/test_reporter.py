@@ -424,7 +424,7 @@ class TestPendingSnapshot:
         # The reporter never touches the counters - the engine owns drop/count.
         assert ctx.stats.imported == 0
         assert ctx.stats.queued == 0
-        assert ctx.stats.importing == 0
+        assert ctx.stats.downloaded == 0
 
     def test_missing_state_renders_nothing(self) -> None:
         reporter = _make_reporter()
@@ -444,7 +444,7 @@ class TestSummaryPendingCounters:
     def test_counters_render_when_feature_on_and_non_zero(self) -> None:
         ctx = RunContext(arr=Arr.SONARR)
         ctx.stats.queued = 2
-        ctx.stats.importing = 1
+        ctx.stats.downloaded = 1
         ctx.stats.imported = 3
 
         messages = _summary_messages(
@@ -454,13 +454,13 @@ class TestSummaryPendingCounters:
         joined = "\n".join(messages)
 
         assert any("queued" in m for m in messages)
-        assert any("importing" in m for m in messages)
+        assert any("downloaded" in m for m in messages)
         assert "imported" in joined
 
     def test_counters_hidden_when_feature_off(self) -> None:
         ctx = RunContext(arr=Arr.SONARR)
         ctx.stats.queued = 2
-        ctx.stats.importing = 1
+        ctx.stats.downloaded = 1
         ctx.stats.imported = 3
 
         messages = _summary_messages(
@@ -469,7 +469,7 @@ class TestSummaryPendingCounters:
         )
 
         assert not any("queued" in m for m in messages)
-        assert not any("importing" in m for m in messages)
+        assert not any("downloaded" in m for m in messages)
 
     def test_zero_counters_not_rendered_even_when_on(self) -> None:
         ctx = RunContext(arr=Arr.SONARR)  # all counters zero
@@ -480,7 +480,7 @@ class TestSummaryPendingCounters:
         )
 
         assert not any("queued" in m for m in messages)
-        assert not any("importing" in m for m in messages)
+        assert not any("downloaded" in m for m in messages)
 
     def test_this_run_grab_shows_added_only_no_queued(self) -> None:
         # REGRESSION (double-report): a this-run grab is `added`. With the counters

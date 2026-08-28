@@ -1096,14 +1096,14 @@ class TestPendingStateAndProbe:
     def test_pending_state_members(self) -> None:
         assert {s.name for s in PendingState} == {
             "QUEUED",
-            "IMPORTING",
+            "DOWNLOADED",
             "IMPORTED",
             "ERRORED",
             "MISSING",
         }
 
     def test_pending_state_is_its_string(self) -> None:
-        assert PendingState.IMPORTING == "importing"
+        assert PendingState.DOWNLOADED == "downloaded"
         assert PendingState.QUEUED == "queued"
 
     def test_import_probe_holds_readiness_and_flags(self) -> None:
@@ -1133,9 +1133,9 @@ class TestClassifyPending:
         assert classify_pending(WaitOutcome.COMPLETE, True) is PendingState.IMPORTED
 
     def test_complete_without_files_is_importing(self) -> None:
-        # The copy is still in flight -> importing, never imported, until the
+        # The copy is still in flight -> downloaded, never imported, until the
         # files are verified present.
-        assert classify_pending(WaitOutcome.COMPLETE, False) is PendingState.IMPORTING
+        assert classify_pending(WaitOutcome.COMPLETE, False) is PendingState.DOWNLOADED
 
 
 class TestSanitizeTorrentTelemetry:

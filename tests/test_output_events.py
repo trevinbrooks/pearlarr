@@ -168,7 +168,7 @@ def test_run_tally_freezes_run_stats_whole() -> None:
     stats.no_releases = 5
     stats.unmonitored = 6
     stats.queued = 1
-    stats.importing = 2
+    stats.downloaded = 2
     stats.imported = 3
     grab = GrabRecord(title="T", coverage="S01", url="u", name="n", group="G")
     needs = NeedsActionRecord(
@@ -205,7 +205,7 @@ def test_run_tally_freezes_run_stats_whole() -> None:
         needs_action=(needs_fact,),
         unmonitored=6,
         queued=1,
-        importing=2,
+        downloaded=2,
         imported=3,
     )
     # Frozen tuples of owned facts: later stats mutation can't reach into the tally.
