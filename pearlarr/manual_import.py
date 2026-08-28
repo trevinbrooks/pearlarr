@@ -213,6 +213,10 @@ class ImportProbe:
     """Whether this poll waited on OUR OWN Sonarr work."""
 
 
+LEAVE_PROBE = ImportProbe(ImportReadiness.LEAVE, files_present=False, command_issued=False)
+"""The fail-open probe: leave the record pending for a later run."""
+
+
 class ImportProgress(NamedTuple):
     """A cheap, read-only files-landed count for the wait cockpit's import bar."""
 
@@ -227,6 +231,10 @@ class ImportProgress(NamedTuple):
         """Every intended file verified present."""
 
         return self.determinate and 0 < self.total <= self.done
+
+
+NO_PROGRESS = ImportProgress(0, 0, determinate=False)
+"""The indeterminate zero reading a failed or strategy-less poll reports."""
 
 
 class OutcomeCategory(Enum):

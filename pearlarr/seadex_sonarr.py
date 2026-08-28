@@ -499,7 +499,7 @@ class SonarrSync(ArrSync[SonarrItem]):
         self,
         pending: PendingImport,
         content_path: str,
-        attempt: AttemptKind = AttemptKind.POLL,
+        attempt: AttemptKind,
     ) -> ImportProbe:
         """One reconcile/import poll for a completed download (delegated).
 
