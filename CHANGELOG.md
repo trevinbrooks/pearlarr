@@ -12,6 +12,10 @@ Pearlarr is a fork of [bbtufty/seadexarr](https://github.com/bbtufty/seadexarr).
 - **Config files are now migrated on disk automatically.** The first run rewrites an old-schema `config.yml` at the current layout, keeping the previous file as `config.yml.bak`. The rewrite regenerates the file from the annotated template with your values filled in: hand-written comments are not carried over and survive only in `config.yml.bak` - until a later schema migration overwrites that backup in turn. A dry run never rewrites.
 - **Downgrading needs the backup.** The rewrite stamps the file with a schema version older Pearlarr releases refuse to load; to go back, restore `config.yml.bak` over `config.yml` first.
 
+### Added
+
+- Runs that do not hold the blocking wait (deferred wait mode, and every Radarr run with waiting on) now end with a visible check pass over carried-over downloads. It imports what is ready under the same rules as the blocking wait, and the run summary counts each remaining download by its actual state (queued, downloaded, or imported) instead of assuming queued.
+
 ### Changed
 
 - An old-schema config file is now migrated in place at the start of a run, keeping the previous file as `config.yml.bak`, instead of warning on every run. `pearlarr config migrate` remains for migrating without a run.
@@ -21,6 +25,8 @@ Pearlarr is a fork of [bbtufty/seadexarr](https://github.com/bbtufty/seadexarr).
 
 - Overwrite-protection evidence is now kept once per entry instead of copied into each grabbed torrent's record, so torrents of one entry seeded across different runs can no longer disagree at import time about which on-disk files to protect.
 - A successful import no longer warns `Could not remove the finished download from Sonarr's queue (status code 500)` when Sonarr never matched the download's title to a series. Dismissing such a queue entry always fails inside Sonarr and records nothing, so Pearlarr now leaves it alone; the entry clears on its own once the imported torrent leaves Sonarr's watched category.
+- A Sonarr queue outage during the wait no longer risks a mistimed manual import. A failed queue read now retries on later polls and defers the download at the deadline.
+- A torrent re-added to qBittorrent no longer resets its pending-import age on every run, so stale pending records expire on schedule (`imports.pending_max_age_days`).
 
 ## [1.1.0] - 2026-07-29
 
