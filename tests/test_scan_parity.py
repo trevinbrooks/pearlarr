@@ -356,9 +356,9 @@ ACTION_DOWNLOADING_WAITING = GrabAction(
 )
 ACTION_DOWNLOADING_WAITING_LINES: tuple[Line, ...] = (
     _detail(
-        "    status    SeaDex's pick is already downloading in qBittorrent - waiting to import",
+        "    status    SeaDex's pick is already in qBittorrent - waiting to import",
         "status",
-        "SeaDex's pick is already downloading in qBittorrent - waiting to import",
+        "SeaDex's pick is already in qBittorrent - waiting to import",
         style="yellow",
     ),
     _detail("    group     GroupA [HDR]", "group", "GroupA [HDR]", style="cyan"),
@@ -380,9 +380,9 @@ ACTION_DOWNLOADING_NO_WAIT = GrabAction(
 )
 ACTION_DOWNLOADING_NO_WAIT_LINES: tuple[Line, ...] = (
     _detail(
-        "    status    SeaDex's pick is already downloading in qBittorrent",
+        "    status    SeaDex's pick is already in qBittorrent",
         "status",
-        "SeaDex's pick is already downloading in qBittorrent",
+        "SeaDex's pick is already in qBittorrent",
         style="yellow",
     ),
     _detail("    group     GroupA [HDR]", "group", "GroupA [HDR]", style="cyan"),

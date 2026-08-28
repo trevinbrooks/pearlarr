@@ -639,7 +639,7 @@ class TestLogSeadexAction:
         joined = "\n".join(messages)
 
         assert logged is True
-        assert "already downloading" in joined
+        assert "already in qBittorrent" in joined
         assert "waiting to import" in joined
         assert "downloading" in joined and "Show-NAN0" in joined
         # The misleading "keeping it" / "kept" wording is gone for this case.
@@ -654,7 +654,7 @@ class TestLogSeadexAction:
         )
         joined = "\n".join(messages)
 
-        assert "already downloading" in joined
+        assert "already in qBittorrent" in joined
         assert "waiting to import" not in joined
 
     def test_mixed_added_and_already_added_reads_adding(self) -> None:
@@ -670,7 +670,7 @@ class TestLogSeadexAction:
         joined = "\n".join(messages)
 
         assert "adding SeaDex's recommended release" in joined
-        assert "already downloading" not in joined
+        assert "already in qBittorrent" not in joined
         assert "new" in joined and "old" in joined
 
     def test_dry_run_reads_would_add(self) -> None:
