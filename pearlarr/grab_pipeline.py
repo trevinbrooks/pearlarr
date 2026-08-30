@@ -13,6 +13,7 @@ from .log import count_noun
 from .manual_import import ImportWaitMode, PendingImport
 from .notify import GrabNotice
 from .output import Accent, GrabFailed, ReleaseSkipped, SkipReason, StyledValue
+from .pending_records import PendingRecords
 from .reporter import (
     GrabRecord,
     NeedsActionKind,
@@ -73,13 +74,16 @@ class GrabPipeline:
         self._reporter = deps.reporter
         self.logger = deps.logger
         self.qbit = deps.qbit
+        self._records = PendingRecords(deps.cache_store)
         # Rebound each run by begin_run to the same ctx the engine holds, so the grab bookkeeping stays in sync.
         self._ctx = ctx
+        self._records.begin_run(ctx)
 
     def begin_run(self, ctx: RunContext) -> None:
         """Bind the run context the grab bookkeeping reads/writes."""
 
         self._ctx = ctx
+        self._records.begin_run(ctx)
 
     def _is_preview(self) -> bool:
         """A run is a no-op preview (nothing can be grabbed): explicit dry run, or qBittorrent not configured."""
@@ -212,8 +216,7 @@ class GrabPipeline:
             return
         pending = seeds[url_item.infohash]
         if result.outcome is AddOutcome.ADDED:
-            self.cache_store.put_pending(self._ctx.arr, pending.key, pending.to_json())
-            self._ctx.pending_imports.append(pending)
+            self._records.insert_fresh(pending)
         elif self.cache_store.has_pending(self._ctx.arr, pending.key):
             self._ctx.reacquired_keys.add(pending.key)
         else:
@@ -226,7 +229,8 @@ class GrabPipeline:
                     )
                     return
                 pending = replace(pending, added_at=stamp_of(result.added_on))
-            self.cache_store.put_pending(self._ctx.arr, pending.key, pending.to_json())
+            # A reacquire, not a fresh grab: `save` refreshes without a run-list insert.
+            self._records.save(pending)
             self._ctx.reacquired_keys.add(pending.key)
         # One guard row per entry (Sonarr only): each per-release firing re-puts the same row, a no-op upsert.
         if self._ctx.arr is Arr.SONARR:

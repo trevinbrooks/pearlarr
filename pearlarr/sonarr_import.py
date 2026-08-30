@@ -15,6 +15,7 @@ from .manual_import import (
     ImportProbe,
     ImportProgress,
     PendingImport,
+    hydrate_pending,
     path_leaf,
 )
 from .output import hub_note, hub_warn
@@ -684,13 +685,16 @@ class ImportReconciler:
         return max(0, recommended - preowned), len(targets) - preowned
 
     def _series_pending_records(self, series_id: int) -> list[PendingImport]:
-        """The series' durable pending records (any release group), rehydrated.
+        """The series' durable pending records (any release group), rehydrated UNFILTERED.
 
+        Deliberately not `PendingRecords.for_series`: this feeds `trusted_groups` (the overwrite
+        guard), and a cleanup-flagged record's files are on disk, so dropping it loosens the guard.
         A fresh snapshot already filtered in SQL, so a record dropped earlier this run is absent.
         """
 
-        guard_rows = self.cache_store.get_guards(Arr.SONARR)
-        return [
-            PendingImport.from_json(raw, guards=guard_rows.get(key.al_id))
-            for key, raw in self.cache_store.get_pending_for_series(Arr.SONARR, series_id).items()
-        ]
+        return list(
+            hydrate_pending(
+                self.cache_store.get_pending_for_series(Arr.SONARR, series_id),
+                self.cache_store.get_guards(Arr.SONARR),
+            ).values(),
+        )

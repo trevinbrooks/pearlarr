@@ -169,10 +169,10 @@ class RunContext:
     """Run clock (monotonic, so an NTP or DST step cannot move it)."""
     counts_mark: CountsMark = field(default_factory=lambda: SeverityCounts().bound_mark())
     """Stamped at run start and diffed for the summary's issues row (an unstamped ctx diffs to zero)."""
-    pending_imports: list[PendingImport] = field(
-        default_factory=list[PendingImport],
+    pending_imports: dict[PendingKey, PendingImport] = field(
+        default_factory=dict[PendingKey, PendingImport],
     )
-    """Records written THIS run. The durable copies live in `cache_store`."""
+    """Records written THIS run, keyed for the run-list writes. The durable copies live in `cache_store`."""
     reacquired_keys: set[PendingKey] = field(default_factory=set[PendingKey])
     """Store-resident records re-seen in qBittorrent this run (`ALREADY_ADDED`), skipped by the snapshot but
     counted by the tally. Never also a `pending_imports` record."""
@@ -181,8 +181,6 @@ class RunContext:
     )
     """Observed status of each carried-over record, keyed per record. Never a this-run grab, which stays
     `added`."""
-    cleanup_kept_keys: set[PendingKey] = field(default_factory=set[PendingKey])
-    """Records kept for cleanup THIS run. The finalize heal pass skips them (no same-run double retry)."""
 
 
 def is_preview(ctx: RunContext, qbit: qbittorrentapi.Client | None) -> bool:
@@ -432,7 +430,7 @@ class RunReporter:
         PendingState.IMPORTED: EntryState.IMPORTED,
     }
 
-    def log_pending_snapshot(self, state: PendingState, pending: PendingImport) -> bool:
+    def log_pending_snapshot(self, state: PendingState, pending: PendingImport) -> None:
         """Emit a carried-over pending record's self-contained block inline in the series block.
 
         Bumps no counter: the engine owns the drop and count bookkeeping.
@@ -440,7 +438,7 @@ class RunReporter:
 
         entry_state = self._PENDING_ENTRY_STATES.get(state)
         if entry_state is None:
-            return False
+            return
         # Row style is renderer policy keyed on state, so the producer passes no style.
         self._block(
             EntryHeader(
@@ -450,7 +448,6 @@ class RunReporter:
                 url=pending.url,
             ),
         )
-        return True
 
     # --- entry-block details -------------------------------------------------
 
