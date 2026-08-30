@@ -690,6 +690,20 @@ class TestPendingImports:
         assert store.count_pending_for_infohash("h") == 1
         store.close()
 
+    def test_count_pending_matches_case_insensitively_excludes_exactly(self, tmp_path: Path) -> None:
+        # The gate must agree with the close gate's casefold on what "same
+        # torrent" means. The exclusion stays byte-exact: it names the retiring
+        # record's own row, so a distinct row differing only in hash case counts.
+        store = _open(tmp_path)
+        store.put_pending(Arr.SONARR, PendingKey("ABCD", 11), {"infohash": "ABCD", "al_id": 11})
+        store.put_pending(Arr.SONARR, PendingKey("abcd", 11), {"infohash": "abcd", "al_id": 11})
+
+        assert store.count_pending_for_infohash("abcd") == 2
+        assert store.count_pending_for_infohash("ABCD") == 2
+        assert store.count_pending_for_infohash("abcd", excluding=(Arr.SONARR, PendingKey("ABCD", 11))) == 1
+        assert store.count_pending_for_infohash("abcd", excluding=(Arr.SONARR, PendingKey("abcd", 11))) == 1
+        store.close()
+
     def test_count_pending_for_infohash_is_cross_arr(self, tmp_path: Path) -> None:
         # The category gate counts BOTH arrs' claims on a hash (the flag is a
         # property of the torrent, not of one arr's run).
