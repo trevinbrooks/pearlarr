@@ -5,7 +5,7 @@ from dataclasses import dataclass, field, replace
 
 import qbittorrentapi
 
-from .cache import PendingRef, parse_stamp, pending_cutoff
+from .cache import parse_stamp, pending_cutoff
 from .clock import Clock
 from .log import count_noun
 from .manual_import import (
@@ -453,11 +453,7 @@ class ImportWaitManager:
                 "skipping the explicit removal",
             )
             return EffectStatus.SKIPPED
-        if self.cache_store.count_pending_for_infohash(
-            pending.infohash,
-            arr=self._ctx.arr,
-            excluding=PendingRef(self._ctx.arr, pending.key),
-        ):
+        if self.cache_store.count_arr_siblings(self._ctx.arr, pending.key):
             self.logger.debug(
                 f"{pending.display_label}: sibling records still pending on this torrent - leaving its queue entry",
             )
@@ -475,10 +471,7 @@ class ImportWaitManager:
         qbit = self.qbit
         if qbit is None or category is None:
             return EffectStatus.SKIPPED
-        remaining = self.cache_store.count_pending_for_infohash(
-            pending.infohash,
-            excluding=PendingRef(self._ctx.arr, pending.key),
-        )
+        remaining = self.cache_store.count_siblings_any_arr(self._ctx.arr, pending.key)
         if remaining:
             self.logger.debug(
                 f"{pending.display_label}: {count_noun(remaining, 'sibling record')} still pending on "

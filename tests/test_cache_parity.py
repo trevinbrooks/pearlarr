@@ -16,7 +16,7 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any
 
-from pearlarr.cache import AbstractCacheStore, CacheRecord, CacheStore, HistoryCheckpoint, PendingRef
+from pearlarr.cache import AbstractCacheStore, CacheRecord, CacheStore, HistoryCheckpoint
 from pearlarr.config import Arr
 from pearlarr.manual_import import GuardFacts, PendingKey
 
@@ -77,6 +77,9 @@ def _apply_ops(store: AbstractCacheStore) -> None:
     # A sibling record on hashA (another entry claiming the same torrent): the
     # composite key must keep BOTH, in the fake exactly as in SQLite.
     store.put_pending(Arr.SONARR, PendingKey("hashA", 9), {"series_id": 7, "title": "A2"})
+    # A Radarr claim on that same torrent, so the two sibling counts diverge: a
+    # fake ignoring the arr narrowing cannot answer both.
+    store.put_pending(Arr.RADARR, PendingKey("hashA", 7), {"title": "AR"})
 
     # Guard rows: a same-id re-put (latest wins, al 7 has a live pending record)
     # + an orphan sonarr row and a radarr row with no pending record - both are
@@ -115,20 +118,15 @@ def _observe(store: AbstractCacheStore) -> dict[str, object]:
         "sonarr_parse_stale": store.get_sonarr_parse("stale.mkv"),
         "pending_sonarr": store.get_pending(Arr.SONARR),
         "pending_series7": store.get_pending_for_series(Arr.SONARR, 7),
-        "pending_count_shared": store.count_pending_for_infohash("hashA"),
-        "pending_count_case": store.count_pending_for_infohash("HASHA"),
-        "pending_count_single": store.count_pending_for_infohash("hashB"),
-        "pending_count_missing": store.count_pending_for_infohash("nope"),
-        "pending_count_excluding": store.count_pending_for_infohash(
-            "hashA",
-            excluding=PendingRef(Arr.SONARR, PendingKey("hashA", 7)),
-        ),
-        "pending_count_arr_scoped": store.count_pending_for_infohash("hashA", arr=Arr.SONARR),
-        "pending_count_arr_scoped_excluding": store.count_pending_for_infohash(
-            "hashA",
-            arr=Arr.SONARR,
-            excluding=PendingRef(Arr.SONARR, PendingKey("hashA", 7)),
-        ),
+        # Hashes stay ASCII: SQLite's LOWER() folds ASCII only, the fake casefolds Unicode.
+        "siblings_arr_shared": store.count_arr_siblings(Arr.SONARR, PendingKey("hashA", 7)),
+        "siblings_arr_radarr": store.count_arr_siblings(Arr.RADARR, PendingKey("hashA", 7)),
+        "siblings_arr_single": store.count_arr_siblings(Arr.SONARR, PendingKey("hashB", 8)),
+        "siblings_arr_case": store.count_arr_siblings(Arr.SONARR, PendingKey("HASHA", 7)),
+        "siblings_arr_absent_key": store.count_arr_siblings(Arr.SONARR, PendingKey("hashA", 4242)),
+        "siblings_arr_missing_hash": store.count_arr_siblings(Arr.SONARR, PendingKey("nope", 0)),
+        "siblings_any_arr_shared": store.count_siblings_any_arr(Arr.SONARR, PendingKey("hashA", 7)),
+        "siblings_any_arr_single": store.count_siblings_any_arr(Arr.SONARR, PendingKey("hashB", 8)),
         "guards_sonarr": store.get_guards(Arr.SONARR),
         "guards_radarr": store.get_guards(Arr.RADARR),
         "checkpoint_sonarr": store.get_history_checkpoint(Arr.SONARR),
