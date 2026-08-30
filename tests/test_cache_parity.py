@@ -16,7 +16,7 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any
 
-from pearlarr.cache import AbstractCacheStore, CacheRecord, CacheStore, HistoryCheckpoint
+from pearlarr.cache import AbstractCacheStore, CacheRecord, CacheStore, HistoryCheckpoint, PendingRef
 from pearlarr.config import Arr
 from pearlarr.manual_import import GuardFacts, PendingKey
 
@@ -121,7 +121,13 @@ def _observe(store: AbstractCacheStore) -> dict[str, object]:
         "pending_count_missing": store.count_pending_for_infohash("nope"),
         "pending_count_excluding": store.count_pending_for_infohash(
             "hashA",
-            excluding=(Arr.SONARR, PendingKey("hashA", 7)),
+            excluding=PendingRef(Arr.SONARR, PendingKey("hashA", 7)),
+        ),
+        "pending_count_arr_scoped": store.count_pending_for_infohash("hashA", arr=Arr.SONARR),
+        "pending_count_arr_scoped_excluding": store.count_pending_for_infohash(
+            "hashA",
+            arr=Arr.SONARR,
+            excluding=PendingRef(Arr.SONARR, PendingKey("hashA", 7)),
         ),
         "guards_sonarr": store.get_guards(Arr.SONARR),
         "guards_radarr": store.get_guards(Arr.RADARR),

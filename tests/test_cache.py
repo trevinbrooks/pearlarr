@@ -16,7 +16,7 @@ from pathlib import Path
 import pytest
 
 import pearlarr
-from pearlarr.cache import SCHEMA_VERSION, CacheSchemaError, CacheStore, HistoryCheckpoint
+from pearlarr.cache import SCHEMA_VERSION, CacheSchemaError, CacheStore, HistoryCheckpoint, PendingRef
 from pearlarr.config import Arr
 from pearlarr.log import LOG_NAME
 from pearlarr.manual_import import GuardFacts, OwnedEpisode, PendingImport, PendingKey
@@ -700,19 +700,23 @@ class TestPendingImports:
 
         assert store.count_pending_for_infohash("abcd") == 2
         assert store.count_pending_for_infohash("ABCD") == 2
-        assert store.count_pending_for_infohash("abcd", excluding=(Arr.SONARR, PendingKey("ABCD", 11))) == 1
-        assert store.count_pending_for_infohash("abcd", excluding=(Arr.SONARR, PendingKey("abcd", 11))) == 1
+        assert store.count_pending_for_infohash("abcd", excluding=PendingRef(Arr.SONARR, PendingKey("ABCD", 11))) == 1
+        assert store.count_pending_for_infohash("abcd", excluding=PendingRef(Arr.SONARR, PendingKey("abcd", 11))) == 1
         store.close()
 
     def test_count_pending_for_infohash_is_cross_arr(self, tmp_path: Path) -> None:
         # The category gate counts BOTH arrs' claims on a hash (the flag is a
-        # property of the torrent, not of one arr's run).
+        # property of the torrent, not of one arr's run); `arr` narrows to the
+        # close gate's one-arr slice.
         store = _open(tmp_path)
         store.put_pending(Arr.SONARR, PendingKey("h", 11), {"infohash": "h", "al_id": 11})
         store.put_pending(Arr.RADARR, PendingKey("h", 0), {"infohash": "h"})
 
         assert store.count_pending_for_infohash("h") == 2
         assert store.count_pending_for_infohash("other") == 0
+        assert store.count_pending_for_infohash("h", arr=Arr.SONARR) == 1
+        own_row = PendingRef(Arr.SONARR, PendingKey("h", 11))
+        assert store.count_pending_for_infohash("h", arr=Arr.SONARR, excluding=own_row) == 0
         store.close()
 
     def test_count_pending_excluding_leaves_out_one_arr_qualified_record(self, tmp_path: Path) -> None:
@@ -722,15 +726,15 @@ class TestPendingImports:
         store = _open(tmp_path)
         store.put_pending(Arr.SONARR, PendingKey("h", 11), {"infohash": "h", "al_id": 11})
 
-        assert store.count_pending_for_infohash("h", excluding=(Arr.SONARR, PendingKey("h", 11))) == 0
+        assert store.count_pending_for_infohash("h", excluding=PendingRef(Arr.SONARR, PendingKey("h", 11))) == 0
 
         store.put_pending(Arr.SONARR, PendingKey("h", 22), {"infohash": "h", "al_id": 22})
-        assert store.count_pending_for_infohash("h", excluding=(Arr.SONARR, PendingKey("h", 11))) == 1
+        assert store.count_pending_for_infohash("h", excluding=PendingRef(Arr.SONARR, PendingKey("h", 11))) == 1
 
         # The pathological same-(infohash, al_id)-in-both-arrs case: each retire
         # excludes only its own row, so the cross-arr claim still defers.
         store.put_pending(Arr.RADARR, PendingKey("h", 11), {"infohash": "h", "al_id": 11})
-        assert store.count_pending_for_infohash("h", excluding=(Arr.SONARR, PendingKey("h", 11))) == 2
+        assert store.count_pending_for_infohash("h", excluding=PendingRef(Arr.SONARR, PendingKey("h", 11))) == 2
         store.close()
 
     def test_get_pending_for_series_filters_in_sql(self, tmp_path: Path) -> None:

@@ -16,7 +16,8 @@ from seadex import EntryRecord, File, Tag, TorrentRecord, Tracker
 
 from pearlarr.anilist_client import AniListClient
 from pearlarr.anilist_gateway import AniListGateway
-from pearlarr.arr_categories import ArrCategoryResolver
+from pearlarr.arr_categories import ArrCategoryResolver, _CategoryPair
+from pearlarr.arr_http import ArrHttp
 from pearlarr.cache import (
     _ENTRY_SCALAR_COLUMNS,
     UPDATED_AT_STR_FORMAT,
@@ -25,6 +26,7 @@ from pearlarr.cache import (
     CacheRecord,
     CacheStats,
     HistoryCheckpoint,
+    PendingRef,
     selection_digest_key,
 )
 from pearlarr.config import AppConfig, Arr
@@ -325,16 +327,22 @@ class FakeCacheStore(AbstractCacheStore):
         self._pending.get(str(arr), {}).pop(key, None)
 
     @override
-    def count_pending_for_infohash(self, infohash: str, *, excluding: tuple[Arr, PendingKey] | None = None) -> int:
-        """Cross-arr count, case-insensitive match with a byte-exact exclusion (mirrors the SQL)."""
+    def count_pending_for_infohash(
+        self,
+        infohash: str,
+        *,
+        arr: Arr | None = None,
+        excluding: PendingRef | None = None,
+    ) -> int:
+        """Case-insensitive match, byte-exact exclusion, cross-arr unless `arr` narrows (mirrors the SQL)."""
 
         target = infohash.casefold()
-        excluded = (str(excluding[0]), excluding[1]) if excluding is not None else None
+        excluded = (str(excluding.arr), excluding.key) if excluding is not None else None
         return sum(
             1
-            for arr, recs in self._pending.items()
+            for arr_key, recs in self._pending.items()
             for key in recs
-            if key.infohash.casefold() == target and (arr, key) != excluded
+            if (arr is None or arr_key == str(arr)) and key.infohash.casefold() == target and (arr_key, key) != excluded
         )
 
     # No deepcopy: GuardFacts is deeply immutable (frozen dataclass -> tuples of str/int/NamedTuple).
@@ -525,11 +533,52 @@ def _real_reporter(
     )
 
 
-def make_categories(config: AppConfig | None = None, arr: Arr = Arr.SONARR) -> ArrCategoryResolver:
-    """A fetchless category resolver (no transport): config values pass through, omitted stays blank."""
+def make_categories(
+    config: AppConfig | None = None,
+    arr: Arr = Arr.SONARR,
+    *,
+    http: ArrHttp | None = None,
+    fetched: tuple[str | None, str | None] | None = None,
+) -> ArrCategoryResolver:
+    """A category resolver, fetchless by default (no transport: config values pass through, omitted stays blank).
+
+    `http` binds a real transport. `fetched` seeds the memoized (grab, post-import)
+    client pair, as if the run's one fetch already succeeded.
+    """
 
     config = config or AppConfig()
-    return ArrCategoryResolver(arr, config.for_arr(arr), None)
+    resolver = ArrCategoryResolver(arr, config.for_arr(arr), http)
+    if fetched is not None:
+        resolver._fetched = _CategoryPair(*fetched)
+    return resolver
+
+
+def download_client_json(fields: Iterable[object], **overrides: object) -> dict[str, object]:
+    """One realistic enabled-qBittorrent `DownloadClientResource` body carrying `fields` (junk allowed)."""
+
+    return {
+        "enable": True,
+        "protocol": "torrent",
+        "priority": 1,
+        "name": "qBittorrent",
+        "fields": list(fields),
+        "implementationName": "qBittorrent",
+        "implementation": "QBittorrent",
+        "configContract": "QBittorrentSettings",
+        "id": 1,
+        **overrides,
+    }
+
+
+def sonarr_client_fields(grab: str = "tv-sonarr", post_import: str = "sonarr-done") -> list[dict[str, object]]:
+    """The Sonarr client's category fields (plus the connection noise a real body carries)."""
+
+    return [
+        {"name": "host", "value": "localhost"},
+        {"name": "port", "value": 8080},
+        {"name": "tvCategory", "value": grab},
+        {"name": "tvImportedCategory", "value": post_import},
+    ]
 
 
 def _real_torrents(logger: logging.Logger, web: httpx.Client, categories: ArrCategoryResolver) -> TorrentService:
