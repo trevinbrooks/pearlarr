@@ -363,7 +363,7 @@ class AbstractCacheStore(ABC):
     @abstractmethod
     def drop_pending(self, arr: Arr, key: PendingKey) -> None: ...
     @abstractmethod
-    def count_pending_for_infohash(self, infohash: str) -> int: ...
+    def count_pending_for_infohash(self, infohash: str, *, excluding: tuple[Arr, PendingKey] | None = None) -> int: ...
     @abstractmethod
     def put_guards(self, arr: Arr, al_id: int, guards: GuardFacts) -> None: ...
     @abstractmethod
@@ -718,13 +718,24 @@ class CacheStore(AbstractCacheStore):
         )
 
     @override
-    def count_pending_for_infohash(self, infohash: str) -> int:
-        """How many pending records reference `infohash`, deliberately across BOTH arrs (not one arr's slice)."""
+    def count_pending_for_infohash(self, infohash: str, *, excluding: tuple[Arr, PendingKey] | None = None) -> int:
+        """How many pending records reference `infohash`, deliberately across BOTH arrs (not one arr's slice).
 
-        row = self._conn.execute(
-            "SELECT count(*) FROM pending_imports WHERE infohash = ?",
-            (infohash,),
-        ).fetchone()
+        `excluding` leaves one arr-qualified record out: the retiring record, still resident under drop-last.
+        """
+
+        if excluding is None:
+            row = self._conn.execute(
+                "SELECT count(*) FROM pending_imports WHERE infohash = ?",
+                (infohash,),
+            ).fetchone()
+        else:
+            arr, key = excluding
+            row = self._conn.execute(
+                "SELECT count(*) FROM pending_imports WHERE infohash = ? "
+                "AND NOT (arr = ? AND infohash = ? AND al_id = ?)",
+                (infohash, _arr_key(arr), key.infohash, key.al_id),
+            ).fetchone()
         return int(row[0]) if row else 0
 
     @override

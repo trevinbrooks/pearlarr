@@ -701,6 +701,24 @@ class TestPendingImports:
         assert store.count_pending_for_infohash("other") == 0
         store.close()
 
+    def test_count_pending_excluding_leaves_out_one_arr_qualified_record(self, tmp_path: Path) -> None:
+        # The retiring record is resident under drop-last, so the gate excludes
+        # its own arr-qualified row: a lone record counts 0, a same-arr sibling
+        # still counts, and a same-key row under the OTHER arr is NOT excluded.
+        store = _open(tmp_path)
+        store.put_pending(Arr.SONARR, PendingKey("h", 11), {"infohash": "h", "al_id": 11})
+
+        assert store.count_pending_for_infohash("h", excluding=(Arr.SONARR, PendingKey("h", 11))) == 0
+
+        store.put_pending(Arr.SONARR, PendingKey("h", 22), {"infohash": "h", "al_id": 22})
+        assert store.count_pending_for_infohash("h", excluding=(Arr.SONARR, PendingKey("h", 11))) == 1
+
+        # The pathological same-(infohash, al_id)-in-both-arrs case: each retire
+        # excludes only its own row, so the cross-arr claim still defers.
+        store.put_pending(Arr.RADARR, PendingKey("h", 11), {"infohash": "h", "al_id": 11})
+        assert store.count_pending_for_infohash("h", excluding=(Arr.SONARR, PendingKey("h", 11))) == 2
+        store.close()
+
     def test_get_pending_for_series_filters_in_sql(self, tmp_path: Path) -> None:
         store = _open(tmp_path)
         a = {"infohash": "a", "series_id": 5, "al_id": 1}

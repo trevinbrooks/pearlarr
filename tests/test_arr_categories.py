@@ -8,7 +8,9 @@ is retried at the next use), the priority pick among several enabled clients,
 the per-arr field names (`tvCategory`/`tvImportedCategory` vs
 `movieCategory`/`movieImportedCategory`), and the fail-open matrix: a fetch
 failure, a missing/disabled qBittorrent client, and blank/junk fields all
-leave omitted categories blank.
+leave omitted categories blank. `move_untracks` answers off the fetched
+watched category first (a fetched blank is authoritative False), the
+configured grab on a failed fetch, and False when both are unknown.
 """
 
 from collections.abc import Sequence
@@ -253,3 +255,71 @@ def test_blank_and_junk_category_fields_fail_open() -> None:
 
     assert resolver.grab() is None
     assert resolver.post_import() is None
+
+
+# --- move_untracks() ---------------------------------------------------------
+
+
+@respx.mock
+def test_move_untracks_when_the_fetched_grab_category_differs() -> None:
+    respx.get(f"{_URL}/api/v3/downloadclient").respond(json=[_client(_sonarr_fields())])
+    resolver, _ = _resolver()
+
+    assert resolver.move_untracks("sonarr-done") is True
+    assert resolver.move_untracks("tv-sonarr") is False  # post == watched: the entry stays
+
+
+@respx.mock
+def test_move_untracks_fetched_blank_is_authoritative_false() -> None:
+    # A blank TvCategory means Sonarr sees every torrent, so no move ever clears
+    # the entry - even when pearlarr's own grab category is configured.
+    respx.get(f"{_URL}/api/v3/downloadclient").respond(
+        json=[_client([{"name": "tvCategory", "value": ""}])],
+    )
+    resolver, _ = _resolver(ArrSettings(torrent_category="anime"))
+
+    assert resolver.move_untracks("sonarr-done") is False
+
+
+@respx.mock
+def test_move_untracks_fetch_failure_falls_back_to_the_configured_grab() -> None:
+    # The single-attempt fetch handle can blip. The configured grab approximates
+    # the watched category so one dropped connection can't force the explicit
+    # delete (and its permanent Ignored marker) on a category-preferring setup.
+    respx.get(f"{_URL}/api/v3/downloadclient").respond(status_code=500)
+    resolver, _ = _resolver(ArrSettings(torrent_category="anime"))
+
+    assert resolver.move_untracks("sonarr-done") is True
+    assert resolver.move_untracks("anime") is False
+
+
+@respx.mock
+def test_move_untracks_fetch_failure_without_config_stays_false() -> None:
+    # Both sources unknown: conservative False keeps the explicit close.
+    respx.get(f"{_URL}/api/v3/downloadclient").respond(status_code=500)
+    resolver, _ = _resolver()
+
+    assert resolver.move_untracks("sonarr-done") is False
+
+
+def test_move_untracks_without_transport_reads_the_configured_grab() -> None:
+    resolver = ArrCategoryResolver(Arr.SONARR, ArrSettings(torrent_category="anime"), None)
+
+    assert resolver.move_untracks("sonarr-done") is True
+    assert resolver.move_untracks("anime") is False
+
+
+def test_move_untracks_explicit_blank_opt_out_is_false() -> None:
+    # `""` opts out of categories entirely: nothing is watched by our reckoning.
+    resolver = ArrCategoryResolver(Arr.SONARR, ArrSettings(torrent_category=""), None)
+
+    assert resolver.move_untracks("sonarr-done") is False
+
+
+@respx.mock
+def test_move_untracks_compares_exactly() -> None:
+    # qBittorrent categories are case-sensitive, so the compare must be too.
+    respx.get(f"{_URL}/api/v3/downloadclient").respond(json=[_client(_sonarr_fields())])
+    resolver, _ = _resolver()
+
+    assert resolver.move_untracks("TV-Sonarr") is True
