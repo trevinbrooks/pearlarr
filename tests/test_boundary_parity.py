@@ -17,7 +17,6 @@ import httpx
 import respx
 
 from pearlarr.arr_http import ArrHttp
-from pearlarr.manual_import import ImportReadiness
 from pearlarr.radarr_client import RadarrClient
 from pearlarr.seadex_types import HistoryRecord, ImportRejection, QueueRecord
 from pearlarr.sonarr_client import SonarrClient
@@ -92,7 +91,7 @@ def _drive_manual_import(
         snapshot=EpisodeSnapshot(episodes=episode_index([]), trusted={}),
     )
 
-    assert probe.readiness is ImportReadiness.RETRY
+    assert probe.files_present is False
     assert probe.command_issued is True
     body: object = json.loads(post_route.calls.last.request.content)
     return body
@@ -164,7 +163,7 @@ def test_golden_body_dead_tracked_folder_import_omits_download_id() -> None:
         snapshot=EpisodeSnapshot(episodes=episode_index([]), trusted={}),
     )
 
-    assert probe.readiness is ImportReadiness.RETRY
+    assert probe.files_present is False
     assert probe.command_issued is True
     body: object = json.loads(post_route.calls.last.request.content)
     assert body == {

@@ -14,7 +14,6 @@ from .manual_import import (
     EffectStatus,
     ImportProbe,
     ImportProgress,
-    ImportReadiness,
     PendingImport,
     path_leaf,
 )
@@ -353,7 +352,7 @@ class ImportExecutor:
         scan = self.scanner.scan(pending, content_path)
         if scan is None:
             # Transient (timeout or non-200). The folder-scan client already warned. Ask again.
-            return ImportProbe(ImportReadiness.RETRY, files_present=False, command_issued=False)
+            return ImportProbe.waiting()
 
         candidates_by_basename = self._mapper.candidate_files(scan.candidates)
         assignment = self._mapper.assign(pending, candidates_by_basename, snapshot.episodes.id_by_key)
@@ -363,14 +362,14 @@ class ImportExecutor:
         authoritative_map = assignment.assigned
         if not authoritative_map:
             self.logger.debug(f"{content_path}: no mappable files for {pending.display_label} yet")
-            return ImportProbe(ImportReadiness.RETRY, files_present=False, command_issued=False)
+            return ImportProbe.waiting()
 
         # Done-check against the COMPLETE (repaired) intended set, derived from the on-disk files.
         target_ids = sorted({i for ids in authoritative_map.values() for i in ids})
         statuses = snapshot.statuses(target_ids)
         if statuses.all_done():
             self.logger.debug(f"{content_path}: already imported (recommended files present)")
-            return ImportProbe(ImportReadiness.IMPORTED, files_present=True, command_issued=False)
+            return ImportProbe.imported()
 
         decisions = plan_import_files(authoritative_map, candidates_by_basename, statuses.needing_import())
 
@@ -399,8 +398,8 @@ class ImportExecutor:
 
         if not files:
             if missing:
-                return ImportProbe(ImportReadiness.RETRY, files_present=False, command_issued=False)
-            return ImportProbe(ImportReadiness.IMPORTED, files_present=True, command_issued=False)
+                return ImportProbe.waiting()
+            return ImportProbe.imported()
 
         import_mode = self._config.imports.mode
         if scan.omit_download_id and import_mode == "auto":
@@ -413,12 +412,12 @@ class ImportExecutor:
         )
         if cmd_id is None:
             self.logger.debug(f"{content_path}: Sonarr rejected the import command; will retry")
-            return ImportProbe(ImportReadiness.RETRY, files_present=False, command_issued=False)
+            return ImportProbe.waiting()
 
         # Sonarr's copy is async, so acceptance is not `files_present`.
         self._scratch.issued_command_ids.add(cmd_id)
         self.logger.debug(f"{content_path}: queued {count_noun(len(files), 'file')} for import (command {cmd_id})")
-        return ImportProbe(ImportReadiness.RETRY, files_present=False, command_issued=True)
+        return ImportProbe.waiting(command_issued=True)
 
     def _warn_unplaceable_files(
         self,
@@ -601,44 +600,28 @@ class ImportReconciler:
         # The done-check below still reads the raw statuses (a preowned target is done, just not ours to claim).
         done, total = self._net_counts(pending, gated_targets, seed.statuses)
 
-        def probe(
-            readiness: ImportReadiness,
-            *,
-            files_present: bool,
-            command_issued: bool,
-            deferred: bool = False,
-        ) -> ImportProbe:
-            return ImportProbe(
-                readiness,
-                files_present=files_present,
-                command_issued=command_issued,
-                imported_count=done,
-                target_count=total,
-                deferred=deferred,
-            )
-
         # Only a complete map makes the done-check trustworthy without a folder scan.
         if seed_complete and seed.statuses.all_done():
             self.logger.debug(f"{label}: already imported (recommended files present)")
-            return probe(ImportReadiness.IMPORTED, files_present=True, command_issued=False)
+            return ImportProbe.imported(imported_count=done, target_count=total)
 
         queue_rows = self._executor.queue_records(pending.infohash)
         if queue_rows is None:
             # Fail closed: an unreadable queue must never read as untracked (stepping in races Sonarr's
-            # import). RETRY defers via the poll loop until the ready deadline graduates the record.
+            # import). Waiting defers via the poll loop until the ready deadline graduates the record.
             self.logger.debug(f"{label}: queue read failed; retrying")
-            return probe(ImportReadiness.RETRY, files_present=False, command_issued=False)
+            return ImportProbe.waiting(imported_count=done, target_count=total)
         verdict = classify_queue(queue_rows)
         if verdict is QueueVerdict.WAIT:
             self.logger.debug(f"{label}: Sonarr is importing; waiting")
-            return probe(ImportReadiness.RETRY, files_present=False, command_issued=False)
+            return ImportProbe.waiting(imported_count=done, target_count=total)
         if (
             verdict is QueueVerdict.PENDING_CLEAN
             and not attempt.at_deadline
             and self._executor.completed_download_handling_enabled()
         ):
             self.logger.debug(f"{label}: Sonarr has it pending and will import it; waiting")
-            return probe(ImportReadiness.RETRY, files_present=False, command_issued=False)
+            return ImportProbe.waiting(imported_count=done, target_count=total)
 
         # Never gated on the attempt kind: our own import in flight is never raced.
         verdict = classify_commands(
@@ -652,11 +635,11 @@ class ImportReconciler:
         )
         if verdict.block:
             self.logger.debug(f"{label}: {verdict.block.value}; waiting")
-            return probe(
-                ImportReadiness.RETRY,
-                files_present=False,
+            return ImportProbe.waiting(
                 command_issued=verdict.command_issued,
                 deferred=verdict.deferred,
+                imported_count=done,
+                target_count=total,
             )
 
         result = self._executor.run_manual_import(

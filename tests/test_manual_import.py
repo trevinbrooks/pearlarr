@@ -20,9 +20,9 @@ from typing import cast
 import pytest
 
 from pearlarr.manual_import import (
+    LEAVE_PROBE,
     GuardFacts,
     ImportProbe,
-    ImportReadiness,
     OwnedEpisode,
     PendingImport,
     PendingKey,
@@ -1110,15 +1110,23 @@ class TestPendingStateAndProbe:
         assert PendingState.DOWNLOADED == "downloaded"
         assert PendingState.QUEUED == "queued"
 
-    def test_import_probe_holds_readiness_and_flags(self) -> None:
-        probe = ImportProbe(
-            readiness=ImportReadiness.RETRY,
-            files_present=False,
-            command_issued=True,
-        )
-        assert probe.readiness is ImportReadiness.RETRY
+    def test_imported_probe_claims_the_files_without_a_command(self) -> None:
+        probe = ImportProbe.imported(imported_count=2, target_count=2)
+        assert probe.files_present is True
+        assert probe.command_issued is False
+        assert (probe.imported_count, probe.target_count) == (2, 2)
+
+    def test_waiting_probe_carries_the_attempt_flags(self) -> None:
+        probe = ImportProbe.waiting(command_issued=True, deferred=True)
         assert probe.files_present is False
         assert probe.command_issued is True
+        assert probe.deferred is True
+        assert probe.attempted is True
+
+    def test_leave_probe_records_no_attempt(self) -> None:
+        assert LEAVE_PROBE.attempted is False
+        assert LEAVE_PROBE.files_present is False
+        assert LEAVE_PROBE.command_issued is False
 
 
 class TestClassifyPending:
@@ -1201,10 +1209,6 @@ class TestSanitizeTorrentTelemetry:
 
 def test_wait_outcome_members_exist() -> None:
     assert {o.name for o in WaitOutcome} == {"COMPLETE", "ERRORED", "MISSING"}
-
-
-def test_import_readiness_members_exist() -> None:
-    assert {o.name for o in ImportReadiness} == {"IMPORTED", "RETRY", "LEAVE"}
 
 
 class TestClassifyQueue:

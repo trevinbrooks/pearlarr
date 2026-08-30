@@ -36,13 +36,13 @@ from pearlarr.grab_pipeline import GrabPipeline
 from pearlarr.import_wait import ImportWaitManager, MonitorPass
 from pearlarr.log import LOG_NAME
 from pearlarr.manual_import import (
+    LEAVE_PROBE,
     PENDING_STATE_FOR_OUTCOME,
     AttemptKind,
     EffectStatus,
     GuardFacts,
     ImportProbe,
     ImportProgress,
-    ImportReadiness,
     ImportWaitMode,
     Outcome,
     PendingImport,
@@ -448,7 +448,7 @@ class _RecordingStrategy(FakeStrategy):
             return self._completed_sequence[idx]
         if self._completed is not None:
             return self._completed
-        return ImportProbe(ImportReadiness.LEAVE, files_present=False, command_issued=False)
+        return LEAVE_PROBE
 
     @override
     def close_tracked(self, pending: PendingImport) -> EffectStatus:
@@ -790,7 +790,7 @@ class TestCheckOnce:
 
     def test_imports_ready_carried_over_record(self) -> None:
         strategy = _RecordingStrategy(
-            completed=import_probe(ImportReadiness.IMPORTED, files_present=True),
+            completed=import_probe(files_present=True),
         )
         qbit = FakeQbit({"h": [FakeTorrent(is_complete=True, content_path="/d")]})
         mgr = make_orchestration_manager(
@@ -824,7 +824,7 @@ class TestCheckOnce:
         # MUTATION PIN: BOTH carried-over imports must land on the result rows
         # (_finalize_run's `imported` bump reads them).
         strategy = _RecordingStrategy(
-            completed=import_probe(ImportReadiness.IMPORTED, files_present=True),
+            completed=import_probe(files_present=True),
         )
         qbit = FakeQbit(
             {
@@ -859,7 +859,7 @@ class TestCheckOnce:
             ),
             pytest.param(
                 FakeTorrent(is_complete=True, content_path="/d"),
-                lambda: _RecordingStrategy(completed=import_probe(ImportReadiness.RETRY, files_present=False)),
+                lambda: _RecordingStrategy(completed=import_probe(files_present=False)),
                 Outcome.AWAITING_IMPORT,
                 PendingState.DOWNLOADED,
                 id="awaiting-import",
@@ -927,7 +927,7 @@ class TestCheckOnce:
         # issues the command, the progress read verifies every file, and the
         # record retires IMPORTED instead of graduating "import in progress".
         strategy = _RecordingStrategy(
-            completed=import_probe(ImportReadiness.RETRY, files_present=False, command_issued=True),
+            completed=import_probe(files_present=False, command_issued=True),
             progress=ImportProgress(2, 2, determinate=True),
         )
         mgr = make_orchestration_manager(
@@ -982,7 +982,7 @@ class TestMonitorRowDiscriminator:
         # carried-over row is flagged, even though the fresh import leaves
         # `pending_imports` mid-pass.
         strategy = _RecordingStrategy(
-            completed=import_probe(ImportReadiness.IMPORTED, files_present=True),
+            completed=import_probe(files_present=True),
         )
         fresh = pending_import(infohash="f", title="Fresh", added_at=_FRESH)
         carried = pending_import(infohash="c", title="Carried", added_at=_FRESH)
@@ -1210,7 +1210,7 @@ class TestRunMonitor:
         # "slow" is still downloading, then completes + imports a later cycle. Both
         # advance each cycle (interleaved), so the fast one isn't stuck behind slow.
         strategy = _RecordingStrategy(
-            completed=import_probe(ImportReadiness.RETRY, files_present=True),
+            completed=import_probe(files_present=True),
         )
         qbit = FakeQbit(
             {
@@ -1252,15 +1252,15 @@ class TestRunMonitor:
         )
 
     def test_imported_only_when_files_present_two_cycles(self) -> None:
-        # The copy is async: cycle 1 issues the command (RETRY + command_issued,
+        # The copy is async: cycle 1 issues the command (command_issued,
         # files NOT present) -> reads `importing`. Cycle 2 verifies files present
         # -> `imported`. imported is gated on verified files, never command accept.
         # progress_poll_interval=0 also pins the fast lane off: the heavy poll
         # alone drives completion.
         strategy = _RecordingStrategy(
             completed_sequence=[
-                import_probe(ImportReadiness.RETRY, files_present=False, command_issued=True),
-                import_probe(ImportReadiness.RETRY, files_present=True, command_issued=True),
+                import_probe(files_present=False, command_issued=True),
+                import_probe(files_present=True, command_issued=True),
             ],
         )
         mgr, view = _run_single_monitor(
@@ -1280,7 +1280,7 @@ class TestRunMonitor:
         # as files land and promotes the row to IMPORTED the instant all are present
         # - no second (heavy) import_completed poll, no RefreshMonitoredDownloads.
         strategy = _RecordingStrategy(
-            completed=import_probe(ImportReadiness.RETRY, files_present=False, command_issued=True),
+            completed=import_probe(files_present=False, command_issued=True),
             progress_sequence=[
                 ImportProgress(1, 3, determinate=True),
                 ImportProgress(2, 3, determinate=True),
@@ -1310,7 +1310,7 @@ class TestRunMonitor:
         # The copy never lands within imports.ready_timeout: the final attempt
         # (at_deadline) leaves it pending with "still importing; left" - no drop.
         strategy = _RecordingStrategy(
-            completed=import_probe(ImportReadiness.RETRY, files_present=False, command_issued=True),
+            completed=import_probe(files_present=False, command_issued=True),
         )
         mgr, view = _run_single_monitor(
             strategy,
@@ -1333,7 +1333,6 @@ class TestRunMonitor:
         strategy = _RecordingStrategy(
             completed_sequence=[
                 import_probe(
-                    ImportReadiness.RETRY,
                     files_present=False,
                     command_issued=True,
                     imported_count=done,
@@ -1341,7 +1340,7 @@ class TestRunMonitor:
                 )
                 for done in (0, 1, 2)
             ]
-            + [import_probe(ImportReadiness.RETRY, files_present=True, command_issued=True, target_count=3)],
+            + [import_probe(files_present=True, command_issued=True, target_count=3)],
         )
         mgr, view = _run_single_monitor(
             strategy,
@@ -1362,7 +1361,6 @@ class TestRunMonitor:
         strategy = _RecordingStrategy(
             completed_sequence=[
                 import_probe(
-                    ImportReadiness.RETRY,
                     files_present=False,
                     command_issued=True,
                     imported_count=done,
@@ -1387,11 +1385,8 @@ class TestRunMonitor:
         # credits its interval back, so the row rides the copy out to IMPORTED
         # instead of walking away.
         strategy = _RecordingStrategy(
-            completed_sequence=[
-                import_probe(ImportReadiness.RETRY, files_present=False, command_issued=True, deferred=True)
-                for _ in range(3)
-            ]
-            + [import_probe(ImportReadiness.RETRY, files_present=True, command_issued=True)],
+            completed_sequence=[import_probe(files_present=False, command_issued=True, deferred=True) for _ in range(3)]
+            + [import_probe(files_present=True, command_issued=True)],
         )
         mgr, view = _run_single_monitor(
             strategy,
@@ -1412,10 +1407,10 @@ class TestRunMonitor:
         # walk-away by exactly the time we spent waiting on our own work.
         strategy = _RecordingStrategy(
             completed_sequence=[
-                import_probe(ImportReadiness.RETRY, files_present=False, command_issued=True),
-                import_probe(ImportReadiness.RETRY, files_present=False, command_issued=True),
-                import_probe(ImportReadiness.RETRY, files_present=False, command_issued=True, deferred=True),
-                import_probe(ImportReadiness.RETRY, files_present=False, command_issued=True),
+                import_probe(files_present=False, command_issued=True),
+                import_probe(files_present=False, command_issued=True),
+                import_probe(files_present=False, command_issued=True, deferred=True),
+                import_probe(files_present=False, command_issued=True),
             ],
         )
         mgr, view = _run_single_monitor(
@@ -1436,7 +1431,7 @@ class TestRunMonitor:
         # bounded ("still importing; left pending") instead of hanging until
         # Ctrl-C. Ready 60s + cap (6x) 360s -> terminal by t=420.
         strategy = _RecordingStrategy(
-            completed=import_probe(ImportReadiness.RETRY, files_present=False, command_issued=True, deferred=True),
+            completed=import_probe(files_present=False, command_issued=True, deferred=True),
         )
         mgr, view = _run_single_monitor(
             strategy,
@@ -1453,7 +1448,6 @@ class TestRunMonitor:
         # move the anchor - the deadline still fires on schedule.
         strategy = _RecordingStrategy(
             completed=import_probe(
-                ImportReadiness.RETRY,
                 files_present=False,
                 command_issued=True,
                 imported_count=1,
@@ -1477,7 +1471,7 @@ class TestRunMonitor:
         # heavy poll's counts stay indeterminate. That rise alone must push the
         # deadline out one more heavy cycle (t=90, not t=60).
         strategy = _RecordingStrategy(
-            completed=import_probe(ImportReadiness.RETRY, files_present=False, command_issued=True),
+            completed=import_probe(files_present=False, command_issued=True),
             progress_sequence=[
                 ImportProgress(1, 3, determinate=True),
                 ImportProgress(2, 3, determinate=True),  # the rise, at t=10
@@ -1537,8 +1531,8 @@ class TestRunMonitor:
         # skipped - the row survives to the next heavy poll, which lands the import.
         strategy = _RecordingStrategy(
             completed_sequence=[
-                import_probe(ImportReadiness.RETRY, files_present=False, command_issued=True),
-                import_probe(ImportReadiness.RETRY, files_present=True, command_issued=True),
+                import_probe(files_present=False, command_issued=True),
+                import_probe(files_present=True, command_issued=True),
             ],
             progress_error=RuntimeError("progress boom"),
         )
@@ -1575,7 +1569,7 @@ class TestRunMonitor:
         # that is ONLY in the store (NOT a this-run grab) is still monitored. Here
         # there are no this-run grabs at all, yet the store record is driven.
         strategy = _RecordingStrategy(
-            completed=import_probe(ImportReadiness.RETRY, files_present=True),
+            completed=import_probe(files_present=True),
         )
         qbit = FakeQbit({"carried": [FakeTorrent(is_complete=True, content_path="/d")]})
         mgr = make_orchestration_manager(
@@ -1676,7 +1670,6 @@ class TestRunMonitor:
         # row carries the verified files count (the probe's seed target_count).
         strategy = _RecordingStrategy(
             completed=import_probe(
-                ImportReadiness.RETRY,
                 files_present=True,
                 imported_count=3,
                 target_count=3,
@@ -1695,7 +1688,7 @@ class TestRunMonitor:
         # The store drop precedes the result-row append: a drop that raises
         # must not record a phantom IMPORTED row for _finalize_run to count.
         strategy = _RecordingStrategy(
-            completed=import_probe(ImportReadiness.IMPORTED, files_present=True),
+            completed=import_probe(files_present=True),
         )
         mgr = make_orchestration_manager(
             qbit=FakeQbit({"h": [FakeTorrent(is_complete=True, content_path="/d")]}),
@@ -1722,7 +1715,7 @@ class TestRunMonitor:
         # The keep path's twin: the flagged upsert precedes the result-row append
         # exactly like the drop, so a raising put adds no phantom IMPORTED row.
         strategy = _RecordingStrategy(
-            completed=import_probe(ImportReadiness.IMPORTED, files_present=True),
+            completed=import_probe(files_present=True),
             close_return=EffectStatus.FAILED,
         )
         mgr = make_orchestration_manager(
@@ -1765,7 +1758,7 @@ class TestMonitorFastTelemetry:
         # a snapshot with fresh download telemetry (the row moves to 60% at
         # 999 B/s well before the next heavy cycle).
         strategy = _RecordingStrategy(
-            completed=import_probe(ImportReadiness.RETRY, files_present=True),
+            completed=import_probe(files_present=True),
         )
         pending = pending_import(infohash="h", added_at=_FRESH)
         qbit = FakeQbit(
@@ -1806,7 +1799,7 @@ class TestMonitorFastTelemetry:
             wants_telemetry = False
 
         strategy = _RecordingStrategy(
-            completed=import_probe(ImportReadiness.RETRY, files_present=True),
+            completed=import_probe(files_present=True),
         )
         pending = pending_import(infohash="h", added_at=_FRESH)
         qbit = FakeQbit(
@@ -2418,7 +2411,7 @@ class TestPostImportCategory:
 
     def test_monitor_moves_imported_torrent(self) -> None:
         strategy = _RecordingStrategy(
-            completed=import_probe(ImportReadiness.RETRY, files_present=True),
+            completed=import_probe(files_present=True),
         )
         pending = pending_import(infohash="h", added_at=_FRESH)
         qbit = CategoryQbit({"h": [FakeTorrent(is_complete=True, content_path="/d")]})
@@ -2519,9 +2512,9 @@ class TestPostImportCategorySiblingGate:
         first, second = self._siblings()
         strategy = _RecordingStrategy(
             completed_sequence=[
-                import_probe(ImportReadiness.IMPORTED, files_present=True),  # Cour 1, cycle 1
-                import_probe(ImportReadiness.RETRY, files_present=False, command_issued=True),  # Cour 2, cycle 1
-                import_probe(ImportReadiness.RETRY, files_present=True),  # Cour 2, cycle 2
+                import_probe(files_present=True),  # Cour 1, cycle 1
+                import_probe(files_present=False, command_issued=True),  # Cour 2, cycle 1
+                import_probe(files_present=True),  # Cour 2, cycle 2
             ],
         )
         qbit = CategoryQbit({"h": [FakeTorrent(is_complete=True, content_path="/d")]})
@@ -2753,7 +2746,7 @@ class TestCloseTrackedDownload:
 
     def test_monitor_import_closes_the_queue_entry(self) -> None:
         strategy = _RecordingStrategy(
-            completed=import_probe(ImportReadiness.RETRY, files_present=True),
+            completed=import_probe(files_present=True),
         )
         pending = pending_import(infohash="h", added_at=_FRESH)
         mgr = make_orchestration_manager(
@@ -3166,7 +3159,7 @@ class TestCleanupHeal:
         # A check-pass keep counts via its result row's carried_over_imported
         # bump. No state lands, so the finalize IMPORTED sum never sees the key.
         strategy = _RecordingStrategy(
-            completed=import_probe(ImportReadiness.IMPORTED, files_present=True),
+            completed=import_probe(files_present=True),
             close_return=EffectStatus.FAILED,
         )
         mgr = make_orchestration_manager(
@@ -3247,7 +3240,7 @@ class TestCleanupHeal:
         qbit = CategoryQbit({"h": [FakeTorrent(is_complete=True, content_path="/d")]})
         mgr = make_orchestration_manager(
             qbit=qbit,
-            strategy=_RecordingStrategy(completed=import_probe(ImportReadiness.IMPORTED, files_present=True)),
+            strategy=_RecordingStrategy(completed=import_probe(files_present=True)),
             store_records=[flagged, newer],
             post_import_category="pearlarr-done",
         )
@@ -3322,7 +3315,7 @@ class TestCleanupHealVerification:
         # Fresh evidence first: ONE probe through the same check as any pending
         # import, at DEADLINE, then both effects fire and the record drops.
         recording = install_recording_hub()
-        strategy = _RecordingStrategy(completed=import_probe(ImportReadiness.IMPORTED, files_present=True))
+        strategy = _RecordingStrategy(completed=import_probe(files_present=True))
         qbit = CategoryQbit({"h": [FakeTorrent(is_complete=True, content_path="/d")]})
         mgr = self._flagged_manager(strategy, qbit=qbit, post_import_category="pearlarr-done")
 
@@ -3351,9 +3344,9 @@ class TestCleanupHealVerification:
         assert pk("h") not in mgr._ctx.pending_states
 
     def test_transient_retry_probe_holds_the_flag(self) -> None:
-        # RETRY with no command is ambiguous (a blip, a busy queue): hold and
+        # A waiting probe with no command is ambiguous (a blip, a busy queue): hold and
         # retry next run, bounded by the pending TTL.
-        strategy = _RecordingStrategy(completed=import_probe(ImportReadiness.RETRY, files_present=False))
+        strategy = _RecordingStrategy(completed=import_probe(files_present=False))
         mgr = self._flagged_manager(strategy)
 
         mgr.retry_cleanup_records()
@@ -3368,7 +3361,7 @@ class TestCleanupHealVerification:
         # same run's end pass picks it up.
         recording = install_recording_hub()
         strategy = _RecordingStrategy(
-            completed=import_probe(ImportReadiness.RETRY, files_present=False, command_issued=True),
+            completed=import_probe(files_present=False, command_issued=True),
         )
         qbit = CategoryQbit({"h": [FakeTorrent(is_complete=True, content_path="/d")]})
         mgr = self._flagged_manager(strategy, qbit=qbit, post_import_category="pearlarr-done")
@@ -3393,7 +3386,7 @@ class TestCleanupHealVerification:
         # up and never imports the old file over the new one (and never demotes).
         recording = install_recording_hub()
         strategy = _RecordingStrategy(
-            completed=import_probe(ImportReadiness.IMPORTED, files_present=True, command_issued=False),
+            completed=import_probe(files_present=True, command_issued=False),
         )
         mgr = self._flagged_manager(strategy)
 
@@ -3408,7 +3401,7 @@ class TestCleanupHealVerification:
         # be fine, so no demote and no "files no longer present" warn.
         recording = install_recording_hub()
         strategy = _RecordingStrategy(
-            completed=import_probe(ImportReadiness.RETRY, files_present=False, command_issued=True, deferred=True),
+            completed=import_probe(files_present=False, command_issued=True, deferred=True),
         )
         mgr = self._flagged_manager(strategy)
 
@@ -3433,8 +3426,8 @@ class TestCleanupHealVerification:
             ) -> ImportProbe:
                 super().import_completed(pending, content_path, attempt)
                 if attempt.at_deadline:
-                    return import_probe(ImportReadiness.IMPORTED, files_present=True)
-                return import_probe(ImportReadiness.RETRY, files_present=False)
+                    return import_probe(files_present=True)
+                return import_probe(files_present=False)
 
         strategy = _AttemptGatedStrategy()
         mgr = self._flagged_manager(strategy)

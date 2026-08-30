@@ -22,7 +22,6 @@ from pearlarr.config import AppConfig
 from pearlarr.manual_import import (
     AttemptKind,
     ImportProgress,
-    ImportReadiness,
     normalize_basename,
 )
 from pearlarr.seadex_sonarr import SonarrSync
@@ -1444,8 +1443,8 @@ class TestYamadaEndToEnd:
 
         probe = strat.import_completed(pending, "/downloads/yamada", AttemptKind.POLL)
 
-        # The command was issued (copy is async -> RETRY + command_issued).
-        assert probe.readiness is ImportReadiness.RETRY
+        # The command was issued, and the copy is async, so nothing is present yet.
+        assert probe.files_present is False
         assert probe.command_issued is True
         assert len(sonarr.execute_calls) == 1
         # The configured import mode is threaded onto the execute command (default
@@ -1609,7 +1608,7 @@ class TestYamadaEndToEnd:
 
         probe = strat.import_completed(pending, "/downloads/yamada", AttemptKind.POLL)
 
-        assert probe.readiness is ImportReadiness.RETRY
+        assert probe.files_present is False
         assert probe.command_issued is True
         assert len(sonarr.execute_calls) == 1
         assert sonarr.execute_calls[0][1] == "auto"

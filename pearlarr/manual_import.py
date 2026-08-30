@@ -4,9 +4,8 @@ This module holds the domain shapes the wait side of the manual-import feature
 speaks: the configurable `ImportWaitMode`, the durable
 `PendingImport` record persisted through the cache store, the per-poll
 probe/outcome enums the engine and views consume (`WaitOutcome`,
-`ImportReadiness`, `PendingState`, `Outcome`), qBittorrent
-telemetry sanitization, and the basename/group normalizers every collaborator
-matches through.
+`PendingState`, `Outcome`), qBittorrent telemetry sanitization, and the
+basename/group normalizers every collaborator matches through.
 
 Everything here is deliberately side-effect free - no network, no disk, no
 qBittorrent. The pure *planning* helpers (queue verdict, episode assignment,
@@ -101,26 +100,6 @@ class WaitOutcome(Enum):
     """The torrent is gone from qBittorrent, so the record should be dropped."""
 
 
-class ImportReadiness(Enum):
-    """The result of one Sonarr import attempt, telling the engine what to do.
-
-    The strategy's `import_completed` returns this each poll so the engine's
-    blocking wait loop knows whether to stop or keep polling.
-    """
-
-    IMPORTED = auto()
-    """The files are imported (we queued a ManualImport, or Sonarr already handled them). Drop the durable
-    record."""
-
-    RETRY = auto()
-    """Not ready yet (Sonarr hasn't seen/parsed the files, is mid-import, or a call failed transiently). Poll
-    again until the readiness deadline."""
-
-    LEAVE = auto()
-    """The attempt raised (contained by the manager) or no strategy is bound - leave the record pending for a
-    later run."""
-
-
 class AttemptKind(Enum):
     """Which kind of import attempt a poll is (see `ImportCompleter.import_completed`)."""
 
@@ -211,21 +190,21 @@ def classify_pending(
 
 @dataclass(frozen=True)
 class ImportProbe:
-    """The outcome of one `import_completed` poll, richer than readiness alone.
+    """The outcome of one `import_completed` poll.
 
     Lets the engine tell `imported` (every intended episode file is verified
     present) from `importing` (an import command was accepted but the copy is
-    still running) - a distinction the bare `ImportReadiness` collapses.
+    still running).
     """
-
-    readiness: ImportReadiness
-    """What the engine should do (drop / retry / leave)."""
 
     files_present: bool
     """Whether every intended episode file is verified present in Sonarr."""
 
     command_issued: bool
     """Whether a manual-import command covering this download was accepted."""
+
+    attempted: bool = True
+    """False only when no attempt ran (it raised, or no strategy is bound), so the record stays pending."""
 
     imported_count: int = 0
     """How many of the intended episodes already hold the recommended file"""
@@ -236,9 +215,39 @@ class ImportProbe:
     deferred: bool = False
     """Whether this poll waited on OUR OWN Sonarr work."""
 
+    @classmethod
+    def imported(cls, *, imported_count: int = 0, target_count: int = 0) -> "ImportProbe":
+        """The intended files are verified present, with no import command of ours in flight."""
 
-LEAVE_PROBE = ImportProbe(ImportReadiness.LEAVE, files_present=False, command_issued=False)
-"""The fail-open probe: leave the record pending for a later run."""
+        return cls(
+            files_present=True,
+            command_issued=False,
+            imported_count=imported_count,
+            target_count=target_count,
+        )
+
+    @classmethod
+    def waiting(
+        cls,
+        *,
+        command_issued: bool = False,
+        deferred: bool = False,
+        imported_count: int = 0,
+        target_count: int = 0,
+    ) -> "ImportProbe":
+        """Not imported yet: poll again until the readiness deadline."""
+
+        return cls(
+            files_present=False,
+            command_issued=command_issued,
+            imported_count=imported_count,
+            target_count=target_count,
+            deferred=deferred,
+        )
+
+
+LEAVE_PROBE = ImportProbe(attempted=False, files_present=False, command_issued=False)
+"""The fail-open probe: no attempt ran, so leave the record pending for a later run."""
 
 
 class ImportProgress(NamedTuple):
