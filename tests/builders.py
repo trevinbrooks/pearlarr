@@ -34,7 +34,6 @@ from pearlarr.import_wait import ImportWaitManager
 from pearlarr.manual_import import (
     GuardFacts,
     ImportProbe,
-    ImportReadiness,
     ImportWaitMode,
     PendingImport,
     PendingKey,
@@ -890,7 +889,6 @@ def pending_import(**overrides: Any) -> PendingImport:
 
 
 def import_probe(
-    readiness: ImportReadiness = ImportReadiness.IMPORTED,
     *,
     files_present: bool = True,
     command_issued: bool = False,
@@ -898,10 +896,9 @@ def import_probe(
     target_count: int = 0,
     deferred: bool = False,
 ) -> ImportProbe:
-    """An `ImportProbe` defaulting to the verified-import outcome (`IMPORTED` plus `files_present`)."""
+    """An `ImportProbe` defaulting to the verified-import outcome (`files_present`)."""
 
     return ImportProbe(
-        readiness=readiness,
         files_present=files_present,
         command_issued=command_issued,
         imported_count=imported_count,

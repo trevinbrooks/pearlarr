@@ -31,7 +31,6 @@ from pearlarr.manual_import import (
     EffectStatus,
     GuardFacts,
     ImportProgress,
-    ImportReadiness,
     ImportWaitMode,
     OwnedEpisode,
     PendingImport,
@@ -687,13 +686,12 @@ class TestImportCompletedQueueState:
 
         probe = strat.import_completed(pending, "/d", AttemptKind.POLL)
 
-        assert probe.readiness is ImportReadiness.RETRY
         assert probe.files_present is False
         assert sonarr.candidate_calls == []
         assert sonarr.execute_calls == []
 
     def test_clean_pending_retries_until_forced(self) -> None:
-        # A clean importPending: defer to Sonarr (RETRY) unless forced.
+        # A clean importPending: defer to Sonarr unless forced.
         pending = pending_import(infohash="abc123")
         strat, sonarr = _make_sonarr_for_import(
             candidates=[manual_candidate("/d/Show - 01 [1080p].mkv")],
@@ -701,14 +699,13 @@ class TestImportCompletedQueueState:
         )
 
         probe = strat.import_completed(pending, "/d", AttemptKind.POLL)
-        assert probe.readiness is ImportReadiness.RETRY
         assert probe.files_present is False
         assert sonarr.candidate_calls == []
 
     @pytest.mark.parametrize("attempt", [AttemptKind.POLL, AttemptKind.DEADLINE])
     def test_queue_outage_retries_instead_of_stepping_in(self, attempt: AttemptKind) -> None:
         # A failed queue read must never read as "not tracked" (stepping in would
-        # race an import Sonarr may be running). RETRY with no deferral credit
+        # race an import Sonarr may be running). Waiting with no deferral credit
         # fails closed on BOTH passes: the poll loop retries, and a persistent
         # outage burns the ready deadline so the record graduates still pending.
         pending = pending_import(infohash="abc123")
@@ -719,7 +716,6 @@ class TestImportCompletedQueueState:
 
         probe = strat.import_completed(pending, "/d", attempt)
 
-        assert probe.readiness is ImportReadiness.RETRY
         assert probe.files_present is False
         assert probe.deferred is False
         assert sonarr.candidate_calls == []
@@ -742,14 +738,14 @@ class TestImportCompletedQueueState:
         sonarr.queue_return = []
         second = strat.import_completed(pending, "/d", AttemptKind.POLL)
 
-        assert first.readiness is ImportReadiness.RETRY
+        assert first.files_present is False
         assert first.command_issued is False
         assert second.command_issued is True
         assert len(sonarr.execute_calls) == 1
 
     def test_running_disk_command_defers_even_forced(self) -> None:
         # A disk command outliving the rescan's bounded absorb: a ManualImport
-        # POSTed now would queue behind it for a stale replay, so RETRY (force
+        # POSTed now would queue behind it for a stale replay, so it waits (force
         # must not override) with the determinate bar counts kept.
         pending = pending_import(infohash="abc123")
         strat, sonarr = _make_sonarr_for_import(
@@ -761,7 +757,6 @@ class TestImportCompletedQueueState:
 
         probe = strat.import_completed(pending, "/d", AttemptKind.DEADLINE)
 
-        assert probe.readiness is ImportReadiness.RETRY
         assert probe.files_present is False
         # A foreign command: no credit - its runtime keeps burning the ready
         # clock, so the walk-away stays bounded.
@@ -771,8 +766,8 @@ class TestImportCompletedQueueState:
         assert sonarr.execute_calls == []
 
     def test_own_running_import_defers_other_records_with_credit(self) -> None:
-        # Record A's issued copy is still running while record B polls: B defers
-        # (RETRY), and because the running command is OURS (an id we POSTed this
+        # Record A's issued copy is still running while record B polls: B defers,
+        # and because the running command is OURS (an id we POSTed this
         # run) the probe reads `deferred` - the monitor credits B's wait back to
         # its ready deadline instead of burning it.
         pending_a = pending_import(infohash="abc123")
@@ -787,7 +782,7 @@ class TestImportCompletedQueueState:
         probe = strat.import_completed(pending_b, "/e", AttemptKind.POLL)
 
         assert first.command_issued is True
-        assert probe.readiness is ImportReadiness.RETRY
+        assert probe.files_present is False
         assert probe.deferred is True
         assert probe.command_issued is False  # not B's command
         assert len(sonarr.execute_calls) == 1  # only A's import was POSTed
@@ -806,7 +801,7 @@ class TestImportCompletedQueueState:
 
         probe = strat.import_completed(pending, "/d", AttemptKind.DEADLINE)
 
-        assert probe.readiness is ImportReadiness.RETRY
+        assert probe.files_present is False
         assert probe.command_issued is True
         assert probe.deferred is True
         assert sonarr.execute_calls == []
@@ -830,7 +825,7 @@ class TestImportCompletedQueueState:
 
     def test_unproven_folder_import_waits_without_credit(self) -> None:
         # A no-download-id ManualImport matching only by path overlap (possibly
-        # a foreign folder import): still RETRY - never stack a duplicate - but
+        # a foreign folder import): still waits, never stacking a duplicate, but
         # unproven, so no credit and no "still importing" claim: its false
         # positives stay deadline-bounded.
         pending = pending_import(infohash="abc123")
@@ -850,7 +845,7 @@ class TestImportCompletedQueueState:
 
         probe = strat.import_completed(pending, "/d", AttemptKind.POLL)
 
-        assert probe.readiness is ImportReadiness.RETRY
+        assert probe.files_present is False
         assert probe.deferred is False
         assert probe.command_issued is False
         assert sonarr.execute_calls == []
@@ -874,7 +869,7 @@ class TestImportCompletedQueueState:
 
     def test_wrongly_excluded_file_is_still_imported_via_repair(self) -> None:
         # THE under-import guard: accounting is complete via excluded_files and
-        # every MAPPED target is done - yet no IMPORTED fast path. The repair
+        # every MAPPED target is done, yet no imported fast path. The repair
         # gets the final say (grab-time parses lie) and here it places the
         # "excluded" file onto the unclaimed episode and imports it.
         done_file = "Show - 01 [1080p].mkv"
@@ -903,7 +898,7 @@ class TestImportCompletedQueueState:
 
         probe = strat.import_completed(pending, "/d", AttemptKind.POLL)
 
-        assert probe.readiness is ImportReadiness.RETRY
+        assert probe.files_present is False
         assert probe.command_issued is True
         assert len(sonarr.execute_calls) == 1
         files, _mode = sonarr.execute_calls[0]
@@ -928,7 +923,7 @@ class TestImportCompletedQueueState:
 
         probe = strat.import_completed(pending, "/d", AttemptKind.POLL)
 
-        assert probe.readiness is ImportReadiness.RETRY
+        assert probe.files_present is False
         assert probe.command_issued is True
         assert len(sonarr.execute_calls) == 1
         assert sonarr.list_commands_calls >= 3
@@ -973,7 +968,7 @@ class TestImportCompletedQueueState:
 
     def test_clean_pending_forced_steps_in(self) -> None:
         # force=True (snapshot / final monitor poll): stop deferring, issue the
-        # import. The copy is async, so this reads RETRY + command_issued, NOT a
+        # import. The copy is async, so this reads command_issued, NOT a
         # verified files_present.
         pending = pending_import(
             infohash="abc123",
@@ -987,7 +982,6 @@ class TestImportCompletedQueueState:
 
         probe = strat.import_completed(pending, "/d", AttemptKind.DEADLINE)
 
-        assert probe.readiness is ImportReadiness.RETRY
         assert probe.command_issued is True
         assert probe.files_present is False
         assert len(sonarr.execute_calls) == 1
@@ -1008,7 +1002,7 @@ class TestImportCompletedQueueState:
         )
 
         probe = strat.import_completed(pending, "/d", AttemptKind.POLL)
-        assert probe.readiness is ImportReadiness.RETRY
+        assert probe.files_present is False
         assert probe.command_issued is True
         assert len(sonarr.execute_calls) == 1
 
@@ -1028,7 +1022,6 @@ class TestImportCompletedQueueState:
 
         probe = strat.import_completed(pending, "/d", AttemptKind.POLL)
 
-        assert probe.readiness is ImportReadiness.IMPORTED
         assert probe.files_present is True
         assert sonarr.candidate_calls == []
 
@@ -1050,7 +1043,6 @@ class TestImportCompletedQueueState:
 
         probe = strat.import_completed(pending, "/d", AttemptKind.POLL)
 
-        assert probe.readiness is ImportReadiness.IMPORTED
         assert probe.files_present is True
         assert sonarr.candidate_calls == []
 
@@ -1072,7 +1064,6 @@ class TestImportCompletedQueueState:
 
         probe = strat.import_completed(pending, "/d", AttemptKind.POLL)
 
-        assert probe.readiness is ImportReadiness.IMPORTED
         assert probe.files_present is True
         assert sonarr.candidate_calls == []
 
@@ -1114,7 +1105,7 @@ class TestImportCompletedQueueState:
     def test_import_blocked_steps_in_with_our_mapping(self) -> None:
         # Sonarr can't auto-import (importBlocked) -> our authoritative manual
         # import takes over and ISSUES the command. The copy is async, so right
-        # after issuing the probe reads RETRY + command_issued (NOT files_present).
+        # after issuing the probe reads command_issued (NOT files_present).
         # A later monitor cycle flips to files_present once the episode files land.
         pending = pending_import(
             infohash="abc123",
@@ -1128,7 +1119,6 @@ class TestImportCompletedQueueState:
 
         probe = strat.import_completed(pending, "/d", AttemptKind.POLL)
 
-        assert probe.readiness is ImportReadiness.RETRY
         assert probe.command_issued is True
         assert probe.files_present is False
         assert len(sonarr.candidate_calls) == 1
@@ -1138,8 +1128,8 @@ class TestImportCompletedQueueState:
         # Regression: import verification reads the episode FILES as the source of
         # truth, so the episode list must be re-fetched each poll, never served
         # stale from the per-run cache. Poll 1 (target absent) issues the import
-        # (RETRY + command_issued). Once the copy lands, poll 2 must observe the
-        # file -> IMPORTED + files_present, WITHOUT re-issuing. A stale cache would
+        # (command_issued). Once the copy lands, poll 2 must observe the
+        # file -> files_present, WITHOUT re-issuing. A stale cache would
         # keep files_present False forever (the monitor times out as "still
         # importing", and in move mode the import is never confirmed at all).
         pending = pending_import(
@@ -1161,7 +1151,6 @@ class TestImportCompletedQueueState:
         sonarr.episodes_return = [sonarr_ep(1, 1, ep_id=101, release_group="SubGroup")]
 
         second = strat.import_completed(pending, "/d", AttemptKind.POLL)
-        assert second.readiness is ImportReadiness.IMPORTED
         assert second.files_present is True
         # Episodes were re-read fresh each poll (not cached), and the landed import
         # was detected before any second execute.
@@ -1172,7 +1161,7 @@ class TestImportCompletedQueueState:
         # PIN: assignment self-heals THROUGH the frozen record's mutable map
         # field, and the cross-poll effect exists only because the caller holds
         # the same object. Poll 1 places the unseeded file (healing the map in
-        # place); poll 2 must take the map-complete IMPORTED fast path - no new
+        # place); poll 2 must take the map-complete imported fast path, no new
         # candidate scan - off the healed map. Anyone purifying the heal must
         # keep this behavior (rehydrated reconcile passes never see the heal).
         pending = pending_import(
@@ -1187,7 +1176,7 @@ class TestImportCompletedQueueState:
         )
 
         first = strat.import_completed(pending, "/d", AttemptKind.POLL)
-        assert first.readiness is ImportReadiness.RETRY
+        assert first.files_present is False
         assert first.command_issued is True
         # The heal: the placement landed on the record itself.
         assert pending.file_episode_map == {"show - s01e01.mkv": [101]}
@@ -1196,14 +1185,13 @@ class TestImportCompletedQueueState:
         sonarr.episodes_return = [sonarr_ep(1, 1, ep_id=101, release_group="SubGroup")]
 
         second = strat.import_completed(pending, "/d", AttemptKind.POLL)
-        assert second.readiness is ImportReadiness.IMPORTED
         assert second.files_present is True
         assert len(sonarr.candidate_calls) == 1
         assert len(sonarr.execute_calls) == 1
 
     def test_not_in_queue_steps_in(self) -> None:
         # Sonarr isn't tracking the download (our holding category) -> step in,
-        # issuing the import command (RETRY + command_issued until the copy lands).
+        # issuing the import command (command_issued until the copy lands).
         pending = pending_import(
             infohash="abc123",
             file_episode_map={"Show - 01 [1080p].mkv": [101]},
@@ -1216,7 +1204,7 @@ class TestImportCompletedQueueState:
 
         probe = strat.import_completed(pending, "/d", AttemptKind.POLL)
 
-        assert probe.readiness is ImportReadiness.RETRY
+        assert probe.files_present is False
         assert probe.command_issued is True
         assert len(sonarr.candidate_calls) == 1
         # Stepping in must ISSUE the import, not just scan candidates.
@@ -1388,7 +1376,7 @@ class TestInFlightManualImportGuard:
 
         probe = strat.import_completed(pending, "/d", AttemptKind.POLL)
 
-        assert probe.readiness is ImportReadiness.RETRY
+        assert probe.files_present is False
         # Honest flags: a command for this record IS running (so an at-deadline
         # outcome reads "still importing", never "not ready") and its runtime is
         # credited back to the ready deadline.
@@ -1414,7 +1402,7 @@ class TestInFlightManualImportGuard:
 
         probe = strat.import_completed(pending, "/d", AttemptKind.DEADLINE)
 
-        assert probe.readiness is ImportReadiness.RETRY
+        assert probe.files_present is False
         assert probe.command_issued is True
         assert probe.deferred is True
         assert sonarr.execute_calls == []
@@ -1435,7 +1423,7 @@ class TestInFlightManualImportGuard:
 
         probe = strat.import_completed(pending, "/d", AttemptKind.POLL)
 
-        assert probe.readiness is ImportReadiness.RETRY
+        assert probe.files_present is False
         assert probe.command_issued is True
         assert len(sonarr.execute_calls) == 1
 
@@ -1457,7 +1445,7 @@ class TestInFlightManualImportGuard:
 
         probe = strat.import_completed(pending, "/d", AttemptKind.POLL)
 
-        assert probe.readiness is ImportReadiness.RETRY
+        assert probe.files_present is False
         assert probe.command_issued is True
         assert len(sonarr.execute_calls) == 1
 
@@ -1483,9 +1471,9 @@ class TestImportCompletedPayload:
 
         probe = strat.import_completed(pending, "/downloads/Show", AttemptKind.POLL)
 
-        # The command was issued. The copy is async, so the probe is RETRY +
-        # command_issued (not yet files_present) right after issuing.
-        assert probe.readiness is ImportReadiness.RETRY
+        # The command was issued. The copy is async, so the probe carries
+        # command_issued without files_present right after issuing.
+        assert probe.files_present is False
         assert probe.command_issued is True
         assert sonarr.candidate_calls == [pending]
         files = sonarr.execute_calls[0][0]
@@ -1524,7 +1512,7 @@ class TestImportCompletedPayload:
 
         probe = strat.import_completed(pending, "/d", AttemptKind.POLL)
 
-        assert probe.readiness is ImportReadiness.RETRY
+        assert probe.files_present is False
         assert probe.command_issued is True
         entry = sonarr.execute_calls[0][0][0]
         quality = entry.quality
@@ -1563,7 +1551,7 @@ class TestImportCompletedPayload:
 
         probe = strat.import_completed(pending, "/d", AttemptKind.POLL)
 
-        assert probe.readiness is ImportReadiness.RETRY
+        assert probe.files_present is False
         assert probe.command_issued is True
         entry = sonarr.execute_calls[0][0][0]
         quality = entry.quality
@@ -1586,7 +1574,7 @@ class TestImportCompletedPayload:
         strat, sonarr = _make_sonarr_for_import(candidates=[manual_candidate(f"/d/{nfd}")])
 
         probe = strat.import_completed(pending, "/d", AttemptKind.POLL)
-        assert probe.readiness is ImportReadiness.RETRY
+        assert probe.files_present is False
         assert probe.command_issued is True
         assert sonarr.execute_calls[0][0][0].episodeIds == [101]
 
@@ -1606,7 +1594,7 @@ class TestImportCompletedPayload:
 
         probe = strat.import_completed(pending, "/d", AttemptKind.POLL)
 
-        assert probe.readiness is ImportReadiness.RETRY
+        assert probe.files_present is False
         assert probe.command_issued is True
         paths = [f.path for f in sonarr.execute_calls[0][0]]
         assert paths == ["/d/Show - 01 [1080p].mkv"]
@@ -1629,9 +1617,9 @@ class TestImportCompletedPayload:
 
         probe = strat.import_completed(pending, "/d", AttemptKind.POLL)
 
-        # The good file's import command was issued (RETRY + command_issued).
+        # The good file's import command was issued.
         # The sample is never queued.
-        assert probe.readiness is ImportReadiness.RETRY
+        assert probe.files_present is False
         assert probe.command_issued is True
         paths = [f.path for f in sonarr.execute_calls[0][0]]
         assert paths == ["/d/Show - 01 [1080p].mkv"]
@@ -1642,7 +1630,7 @@ class TestImportCompletedPayload:
         # the candidate WITH an "already imported" rejection (it fires whenever the
         # episode has any file on disk). That rejection must NOT veto our import:
         # we grabbed this exactly to replace the unidentifiable file, so we step in
-        # and ISSUE the command (RETRY + command_issued, the copy is async).
+        # and ISSUE the command (command_issued, the copy is async).
         pending = pending_import(
             release_group="SubGroup",
             file_episode_map={"Show - 01 [1080p].mkv": [101]},
@@ -1659,16 +1647,15 @@ class TestImportCompletedPayload:
 
         probe = strat.import_completed(pending, "/d", AttemptKind.POLL)
 
-        assert probe.readiness is ImportReadiness.RETRY
         assert probe.command_issued is True
         assert probe.files_present is False
         assert len(sonarr.execute_calls) == 1
 
     def test_missing_group_import_then_recognized_terminates(self) -> None:
         # Loop-termination regression (mirrors the import->recognize round-trip):
-        # poll 1 imports over a missing-group file (RETRY + command_issued).
+        # poll 1 imports over a missing-group file (command_issued).
         # The imported file now carries OUR group, so poll 2 reads it as RECOMMENDED ->
-        # nothing needed -> IMPORTED, with NO re-issue. Proves the fix can't loop.
+        # nothing needed -> files_present, with NO re-issue. Proves the fix can't loop.
         pending = pending_import(
             release_group="SubGroup",
             file_episode_map={"Show - 01 [1080p].mkv": [101]},
@@ -1691,7 +1678,6 @@ class TestImportCompletedPayload:
         sonarr.episodes_return = [sonarr_ep(1, 1, ep_id=101, release_group="SubGroup")]
 
         second = strat.import_completed(pending, "/d", AttemptKind.POLL)
-        assert second.readiness is ImportReadiness.IMPORTED
         assert second.files_present is True
         assert len(sonarr.execute_calls) == 1
 
@@ -1708,7 +1694,6 @@ class TestImportCompletedPayload:
         )
 
         probe = strat.import_completed(pending, "/d", AttemptKind.POLL)
-        assert probe.readiness is ImportReadiness.RETRY
         assert probe.command_issued is False
         assert probe.files_present is False
         assert sonarr.execute_calls == []
@@ -1718,7 +1703,7 @@ class TestImportCompletedPayload:
         strat, sonarr = _make_sonarr_for_import(candidates=None)
 
         probe = strat.import_completed(pending_import(), "/d", AttemptKind.POLL)
-        assert probe.readiness is ImportReadiness.RETRY
+        assert probe.files_present is False
         assert sonarr.execute_calls == []
 
     def test_languages_follow_dual_audio_flag(self) -> None:
@@ -1737,7 +1722,7 @@ class TestImportCompletedPayload:
 
         probe = strat.import_completed(pending, "/d", AttemptKind.POLL)
 
-        assert probe.readiness is ImportReadiness.RETRY
+        assert probe.files_present is False
         assert probe.command_issued is True
         names = [lang.name for lang in sonarr.execute_calls[0][0][0].languages]
         assert names == ["Japanese", "English"]
@@ -1752,10 +1737,10 @@ class TestImportCompletedPayload:
         strat, sonarr = _make_sonarr_for_import(candidates=[candidate], cmd_id=None)
 
         probe = strat.import_completed(pending, "/d", AttemptKind.POLL)
-        assert probe.readiness is ImportReadiness.RETRY
+        assert probe.files_present is False
         assert probe.command_issued is False
         # The execute WAS attempted (Sonarr rejected it -> command_issued False).
-        # A regression returning RETRY without even trying would still set False here.
+        # A regression returning early without even trying would still set False here.
         assert len(sonarr.execute_calls) == 1
 
     def test_quality_defs_and_languages_cached_per_run(self) -> None:
@@ -1815,7 +1800,6 @@ class TestRadarrImportCompletedHistory:
         probe = strat.import_completed(pending_import(infohash="h"), "/d", AttemptKind.POLL)
 
         assert probe.files_present is True
-        assert probe.readiness is ImportReadiness.IMPORTED
 
     @pytest.mark.parametrize(
         "history",
@@ -1827,7 +1811,7 @@ class TestRadarrImportCompletedHistory:
     )
     def test_missing_evidence_keeps_the_record_retrying(self, history: list[HistoryRecord] | None) -> None:
         # No import proof (none yet, a non-import event, or Radarr down): fail
-        # closed - RETRY keeps the record pending, never verified on a missing read.
+        # closed: waiting keeps the record pending, never verified on a missing read.
         radarr = FakeRadarrClient()
         radarr.history_since_return = history
         strat = make_radarr_sync(radarr=radarr)
@@ -1835,7 +1819,6 @@ class TestRadarrImportCompletedHistory:
         probe = strat.import_completed(pending_import(infohash="h"), "/d", AttemptKind.POLL)
 
         assert probe.files_present is False
-        assert probe.readiness is ImportReadiness.RETRY
 
     def test_matches_download_id_case_insensitively(self) -> None:
         # Radarr uppercases the stored downloadId; our infohash is lowercase.
@@ -1982,7 +1965,7 @@ class TestManualImportWarningGating:
         with caplog.at_level("DEBUG"):
             probe = strat.import_completed(pending, "/d", AttemptKind.POLL)
 
-        assert probe.readiness is ImportReadiness.RETRY
+        assert probe.files_present is False
         assert not any(
             "not visible to Sonarr" in message for message in diagnostic_messages(recording, Severity.WARNING)
         )
@@ -1994,7 +1977,7 @@ class TestManualImportWarningGating:
 
         probe = strat.import_completed(pending, "/d", AttemptKind.DEADLINE)
 
-        assert probe.readiness is ImportReadiness.RETRY
+        assert probe.files_present is False
         assert any("not visible to Sonarr" in message for message in diagnostic_messages(recording, Severity.WARNING))
 
 
@@ -2117,7 +2100,7 @@ class TestFolderScanFallback:
 
         probe = strat.import_completed(pending_import(), "/d/Show", AttemptKind.POLL)
 
-        assert probe.readiness is ImportReadiness.RETRY
+        assert probe.files_present is False
         assert probe.command_issued is True
         # The folder scan received the TRANSLATED (Sonarr-visible) path.
         assert [folder for folder, _ in sonarr.folder_candidate_calls] == ["/remote/tv/Show"]
@@ -2205,7 +2188,7 @@ class TestFolderScanFallback:
         pending = pending_import()
 
         probe = strat.import_completed(pending, "/d/Show", AttemptKind.POLL)
-        assert probe.readiness is ImportReadiness.RETRY
+        assert probe.files_present is False
         assert probe.command_issued is False
         assert sonarr.execute_calls == []
 
@@ -2277,7 +2260,7 @@ class TestFolderScanFallback:
 
         probe = strat.import_completed(pending_import(), "/d/Show", AttemptKind.POLL)
 
-        assert probe.readiness is ImportReadiness.RETRY
+        assert probe.files_present is False
         assert sonarr.history_probe_calls == []
         assert sonarr.folder_candidate_calls == []
 
@@ -2306,7 +2289,7 @@ class TestFolderScanFallback:
         ]
         probe = strat.import_completed(pending, "/d/Show", AttemptKind.POLL)
 
-        assert probe.readiness is ImportReadiness.RETRY
+        assert probe.files_present is False
         assert len(sonarr.execute_calls) == 1
 
     def test_single_file_content_path_scans_the_file(self) -> None:

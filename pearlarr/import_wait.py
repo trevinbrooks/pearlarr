@@ -17,7 +17,6 @@ from .manual_import import (
     EffectStatus,
     ImportProbe,
     ImportProgress,
-    ImportReadiness,
     Outcome,
     PendingImport,
     PendingKey,
@@ -123,7 +122,7 @@ class ImportWaitManager:
     ) -> ImportProbe:
         """Drive the strategy's `import_completed`, swallowing any error.
 
-        Fail-open: an exception leaves the record pending (a `LEAVE` probe) instead of aborting the run.
+        Fail-open: an exception leaves the record pending (`LEAVE_PROBE`) instead of aborting the run.
         """
 
         if self._active_strategy is None:
@@ -895,10 +894,10 @@ class MonitorPass:
                 Outcome.STILL_IMPORTING if probe.command_issued else Outcome.NOT_READY,
                 row,
             )
-        elif probe.readiness is ImportReadiness.LEAVE:
+        elif not probe.attempted:
             self._terminal(Outcome.ATTEMPT_FAILED, row)
         else:
-            # RETRY or copy in flight.
+            # Still waiting, or our copy is in flight.
             row.view_importing(probe, now_ts)
 
     def refresh_progress(self) -> bool:

@@ -14,7 +14,6 @@ from .manual_import import (
     AttemptKind,
     ImportProbe,
     ImportProgress,
-    ImportReadiness,
     ImportWaitMode,
     PendingImport,
 )
@@ -249,11 +248,7 @@ class RadarrSync(ArrSync[RadarrItem]):
         evidence = self._import_evidence()
         # An outage is no evidence, so wait. Never move a torrent on a missing read.
         imported = evidence.readable and pending.infohash.casefold() in evidence.imported_hashes
-        return ImportProbe(
-            ImportReadiness.IMPORTED if imported else ImportReadiness.RETRY,
-            files_present=imported,
-            command_issued=False,
-        )
+        return ImportProbe.imported() if imported else ImportProbe.waiting()
 
     @override
     def import_progress(self, pending: PendingImport) -> ImportProgress:
