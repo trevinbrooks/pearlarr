@@ -13,6 +13,7 @@ import threading
 import time
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass, field
+from enum import Enum, auto
 from typing import cast
 
 import httpx
@@ -59,6 +60,19 @@ class FailureStreaks:
 
     lock: threading.Lock = field(default_factory=threading.Lock)
     active: dict[tuple[str, str], _Streak] = field(default_factory=dict[tuple[str, str], _Streak])
+
+
+class DeleteOutcome(Enum):
+    """One DELETE's terminal reading (never rendered, so a plain Enum)."""
+
+    OK = auto()
+    """The arr confirmed the delete (200/204)."""
+
+    GONE = auto()
+    """404: the target no longer exists, so the goal is already met."""
+
+    FAILED = auto()
+    """A transport error or any other non-2xx."""
 
 
 class ArrConnectionError(Exception):
@@ -346,26 +360,30 @@ class ArrHttp:
         *,
         params: Mapping[str, str] | None = None,
         warn: str | None,
-    ) -> bool:
-        """DELETE `path`, failing open to False with one warning.
+    ) -> DeleteOutcome:
+        """DELETE `path`, failing open to FAILED with one warning.
 
         ONE attempt, never retried, like `post_json` (the caller's run/poll
         cadence is the retry mechanism). The body is ignored - the arr delete
-        endpoints return an empty object - so success is just a 200/204. Any
-        failure warns via `warn` (the same `{detail}` template) and returns
-        False.
+        endpoints return an empty object - so success is just a 200/204. A 404
+        reads as GONE, quietly: the target already left, which closes any open
+        streak with the recovery note. Any other failure warns via `warn` (the
+        same `{detail}` template) and returns FAILED.
         """
 
         try:
             response = self.client.delete(f"{self.base_url}{path}", params=params, headers=self.headers)
         except (httpx.HTTPError, httpx.InvalidURL) as e:
             self._fail(warn, f"request failed ({type(e).__name__})")
-            return False
+            return DeleteOutcome.FAILED
+        if response.status_code == 404:
+            self._recover(warn)
+            return DeleteOutcome.GONE
         if response.status_code not in (200, 204):
             self._fail(warn, f"status code {response.status_code}")
-            return False
+            return DeleteOutcome.FAILED
         self._recover(warn)
-        return True
+        return DeleteOutcome.OK
 
     def get_json_list_strict(
         self,

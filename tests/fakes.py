@@ -9,7 +9,7 @@ from typing import override
 
 import httpx
 
-from pearlarr.arr_http import ArrHttp
+from pearlarr.arr_http import ArrHttp, DeleteOutcome
 from pearlarr.clock import Clock
 from pearlarr.manual_import import AttemptKind, ImportProbe, ImportProgress, PendingImport
 from pearlarr.mappings import MappingEntry
@@ -293,7 +293,7 @@ class FakeSonarrClient(AbstractSonarrClient):
         self.download_client_config_return = DownloadClientConfig(
             enable_completed_download_handling=completed_download_handling,
         )
-        self.queue_delete_return: bool = True
+        self.queue_delete_return: DeleteOutcome = DeleteOutcome.OK
         self.candidate_calls: list[PendingImport] = []
         self.execute_calls: list[tuple[list[ManualImportFile], str]] = []
         self.all_series_calls: int = 0
@@ -319,7 +319,7 @@ class FakeSonarrClient(AbstractSonarrClient):
         return self.queue_return
 
     @override
-    def queue_delete(self, queue_id: int) -> bool:
+    def queue_delete(self, queue_id: int) -> DeleteOutcome:
         self.queue_delete_calls.append(queue_id)
         return self.queue_delete_return
 

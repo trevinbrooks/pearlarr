@@ -23,11 +23,12 @@ import logging
 from collections.abc import Callable
 from dataclasses import dataclass
 from datetime import datetime, timedelta
-from typing import override
+from typing import Any, override
 
 import pytest
 import qbittorrentapi
 
+from pearlarr.arr_categories import _CategoryPair
 from pearlarr.cache import UPDATED_AT_STR_FORMAT
 from pearlarr.config import Arr
 from pearlarr.grab_pipeline import GrabPipeline
@@ -36,6 +37,7 @@ from pearlarr.log import LOG_NAME
 from pearlarr.manual_import import (
     PENDING_STATE_FOR_OUTCOME,
     AttemptKind,
+    EffectStatus,
     GuardFacts,
     ImportProbe,
     ImportProgress,
@@ -75,7 +77,14 @@ from .builders import (
     one_release_dict,
     pending_import,
 )
-from .fakes import CaptureHandler, FakeClock, FakeRadarrClient, FakeStrategy, install_recording_hub
+from .fakes import (
+    CaptureHandler,
+    FakeClock,
+    FakeRadarrClient,
+    FakeStrategy,
+    diagnostic_messages,
+    install_recording_hub,
+)
 
 
 def pk(infohash: str, al_id: int = PENDING_AL_ID) -> PendingKey:
@@ -387,6 +396,8 @@ class _RecordingStrategy(FakeStrategy):
     `ImportProgress`, defaulting to an indeterminate zero - the Tier-2
     fast-poll no-op the heavy-poll tests rely on. `progress_error` is raised
     ONCE on the first call (the fast-lane containment path), then cleared.
+    `close_tracked` records (`close_calls`) and dispenses a single
+    `close_return` or a `close_sequence` advanced per call (clamped to its last).
     """
 
     def __init__(
@@ -398,6 +409,8 @@ class _RecordingStrategy(FakeStrategy):
         progress: ImportProgress | None = None,
         progress_sequence: list[ImportProgress] | None = None,
         progress_error: Exception | None = None,
+        close_return: EffectStatus = EffectStatus.DONE,
+        close_sequence: list[EffectStatus] | None = None,
     ) -> None:
         super().__init__(items=[], anilist_ids={})
         self._completed = completed
@@ -408,6 +421,9 @@ class _RecordingStrategy(FakeStrategy):
         self._progress_sequence = progress_sequence
         self._progress_error = progress_error
         self._progress_index = 0
+        self._close_return = close_return
+        self._close_sequence = close_sequence
+        self._close_index = 0
         self.import_calls: list[_ImportCall] = []
         self.progress_calls: list[PendingImport] = []
         self.close_calls: list[PendingImport] = []
@@ -431,8 +447,13 @@ class _RecordingStrategy(FakeStrategy):
         return ImportProbe(ImportReadiness.LEAVE, files_present=False, command_issued=False)
 
     @override
-    def close_tracked(self, pending: PendingImport) -> None:
+    def close_tracked(self, pending: PendingImport) -> EffectStatus:
         self.close_calls.append(pending)
+        if self._close_sequence is not None:
+            idx = min(self._close_index, len(self._close_sequence) - 1)
+            self._close_index += 1
+            return self._close_sequence[idx]
+        return self._close_return
 
     @override
     def import_progress(self, pending: PendingImport) -> ImportProgress:
@@ -1069,6 +1090,25 @@ class TestTallyCarriedOverIntoStats:
         assert mgr._ctx.stats.queued == 1
         assert mgr._ctx.stats.downloaded == 1
 
+    def test_cleanup_rows_are_counted_nowhere(self) -> None:
+        # The raw awaiting_cleanup flag alone skips a row (no pending_states entry
+        # needed), and a CLEANUP fold lands in neither bucket: the no-phantom
+        # invariant holds locally, without any distant state write.
+        mgr = make_orchestration_manager(
+            qbit=None,
+            strategy=_RecordingStrategy(),
+            store_records=[
+                pending_import(infohash="flagged", added_at=_FRESH, awaiting_cleanup=True),
+                pending_import(infohash="folded", added_at=_FRESH),
+            ],
+        )
+        mgr._ctx.pending_states = {pk("folded"): PendingState.CLEANUP}
+
+        mgr.tally_carried_over_into_stats()
+
+        assert mgr._ctx.stats.queued == 0
+        assert mgr._ctx.stats.downloaded == 0
+
 
 class TestMonitorWorkingSet:
     """_monitor_working_set dedups per record key, the in-memory record winning."""
@@ -1153,6 +1193,27 @@ class _ExplodingDropStore(FakeCacheStore):
     @override
     def drop_pending(self, arr: Arr, key: PendingKey) -> None:
         raise RuntimeError("drop boom")
+
+
+class _ExplodingPutStore(FakeCacheStore):
+    """A store whose pending upsert always fails, for the keep-path ordering pin."""
+
+    @override
+    def put_pending(self, arr: Arr, key: PendingKey, record: dict[str, Any]) -> None:
+        raise RuntimeError("put boom")
+
+
+class _SleepRecordingClock(FakeClock):
+    """A `FakeClock` recording each requested pause, for the retry-schedule pins."""
+
+    def __init__(self) -> None:
+        super().__init__()
+        self.sleeps: list[float] = []
+
+    @override
+    def sleep(self, seconds: float) -> None:
+        self.sleeps.append(seconds)
+        super().sleep(seconds)
 
 
 class TestRunMonitor:
@@ -1671,6 +1732,33 @@ class TestRunMonitor:
         assert mp.results == []
         assert mp.rows[rk("h")].active
 
+    def test_failed_store_keep_leaves_no_result_row(self) -> None:
+        # The keep path's twin: the flagged upsert precedes the result-row append
+        # exactly like the drop, so a raising put adds no phantom IMPORTED row.
+        strategy = _RecordingStrategy(
+            completed=import_probe(ImportReadiness.IMPORTED, files_present=True),
+            close_return=EffectStatus.FAILED,
+        )
+        mgr = make_orchestration_manager(
+            qbit=FakeQbit({"h": [FakeTorrent(is_complete=True, content_path="/d")]}),
+            strategy=strategy,
+        )
+        mgr.cache_store = _ExplodingPutStore()
+        mp = MonitorPass(
+            mgr,
+            [pending_import(infohash="h", added_at=_FRESH)],
+            kind=WaitKind.MONITOR,
+            clock=FakeClock(step=5),
+            dl_timeout=3600,
+            import_timeout=600,
+        )
+
+        with pytest.raises(RuntimeError, match="put boom"):
+            mp.run_cycle()
+
+        assert mp.results == []
+        assert mp.rows[rk("h")].active
+
 
 def _monitor_pass(
     qbit: FakeQbit,
@@ -1953,6 +2041,9 @@ class _FinalizeWaitManager:
         if name == self._raise_on:
             raise RuntimeError(f"{name} exploded")
 
+    def retry_cleanup_records(self) -> None:
+        self._mark("cleanup")
+
     def check_once(self) -> WaitResult | None:
         self._mark("check")
         return self._check_result
@@ -2016,7 +2107,8 @@ class TestFinalizeRunOrdering:
 
     `scan_finished` leads on every path - so the reconcile/tally diagnostics that
     follow place at run level, never inside the last entry - and `run_finished`
-    trails the save, so it is the leg's last event.
+    trails the save, so it is the leg's last event. The cleanup heal pass leads the
+    wait tail in every active mode, before any pass reads the store.
     """
 
     def test_blocking_summary_precedes_monitor_then_saves_last(self) -> None:
@@ -2031,7 +2123,7 @@ class TestFinalizeRunOrdering:
 
         engine._finalize_run()
 
-        assert calls == ["scan_finished", "tally", "summary", "monitor", "save", "run_finished"]
+        assert calls == ["scan_finished", "cleanup", "tally", "summary", "monitor", "save", "run_finished"]
 
     def test_deferred_does_not_run_monitor(self) -> None:
         # Deferred reconciles pre-summary but NEVER runs the blocking monitor.
@@ -2045,7 +2137,7 @@ class TestFinalizeRunOrdering:
         engine._finalize_run()
 
         assert "monitor" not in calls
-        assert calls == ["scan_finished", "check", "tally", "summary", "save", "run_finished"]
+        assert calls == ["scan_finished", "cleanup", "check", "tally", "summary", "save", "run_finished"]
 
     def test_preview_skips_monitor_and_tally(self) -> None:
         # A preview (no client) short-circuits reconcile/tally/monitor.
@@ -2073,7 +2165,7 @@ class TestFinalizeRunOrdering:
         engine._finalize_run()
 
         assert "monitor" not in calls
-        assert calls == ["scan_finished", "check", "tally", "summary", "save", "run_finished"]
+        assert calls == ["scan_finished", "cleanup", "check", "tally", "summary", "save", "run_finished"]
 
     def test_non_monitor_strategy_reconciles_in_hybrid_without_monitoring(self) -> None:
         # HYBRID gets the same treatment for a non-monitor strategy: reconcile, no monitor.
@@ -2088,7 +2180,7 @@ class TestFinalizeRunOrdering:
         engine._finalize_run()
 
         assert "monitor" not in calls
-        assert calls == ["scan_finished", "check", "tally", "summary", "save", "run_finished"]
+        assert calls == ["scan_finished", "cleanup", "check", "tally", "summary", "save", "run_finished"]
 
 
 class TestFinalizeRunUnwind:
@@ -2114,7 +2206,7 @@ class TestFinalizeRunUnwind:
 
         # The raise still escapes (bootstrap closes the run), but the finally now
         # saves so the run's staged writes persist rather than rolling back.
-        assert calls == ["scan_finished", "check", "save"]
+        assert calls == ["scan_finished", "cleanup", "check", "save"]
 
     def test_monitor_raise_still_saves_but_leaves_the_run_open(self) -> None:
         # run_finished sits OUTSIDE the save's finally on purpose: emitting it there
@@ -2130,7 +2222,7 @@ class TestFinalizeRunUnwind:
         with pytest.raises(RuntimeError, match="monitor exploded"):
             engine._finalize_run()
 
-        assert calls == ["scan_finished", "tally", "summary", "monitor", "save"]
+        assert calls == ["scan_finished", "cleanup", "tally", "summary", "monitor", "save"]
 
     def test_tally_raise_still_saves_but_leaves_the_run_open(self) -> None:
         # A pre-summary raise also lands in the finally, so the run's staged writes
@@ -2146,7 +2238,7 @@ class TestFinalizeRunUnwind:
         with pytest.raises(RuntimeError, match="tally exploded"):
             engine._finalize_run()
 
-        assert calls == ["scan_finished", "check", "tally", "save"]
+        assert calls == ["scan_finished", "cleanup", "check", "tally", "save"]
 
 
 class TestFinalizeRunImportedBump:
@@ -2186,6 +2278,17 @@ class TestFinalizeRunImportedBump:
         engine._finalize_run()
 
         assert engine._ctx.stats.imported == 1
+
+    def test_cleanup_state_adds_nothing(self) -> None:
+        # A CLEANUP fold (a kept record still failing its heal) is un-summed: its
+        # import was counted the run it verified, never again.
+        calls: list[str] = []
+        engine = _finalize_engine(calls, qbit=CLIENT_SENTINEL, mode=ImportWaitMode.DEFERRED)
+        engine._ctx.pending_states[PendingKey("kept", 1)] = PendingState.CLEANUP
+
+        engine._finalize_run()
+
+        assert engine._ctx.stats.imported == 0
 
 
 class TestDropPending:
@@ -2258,7 +2361,9 @@ class TestPostImportCategory:
     @pytest.mark.parametrize(
         ("category", "set_errors", "expected_sets", "expected_created"),
         [
-            # No 409 -> no create, the move fires before the record drops.
+            # No 409 -> no create. Also pins the exclude-self wiring: the record is
+            # resident during the move (drop-last), so a self-counting sibling gate
+            # would silently defer every single-record retire forever.
             pytest.param("pearlarr-done", [], [("pearlarr-done", "h")], [], id="clean-move"),
             # qBittorrent 409s an unknown category: create it, then re-apply.
             pytest.param(
@@ -2268,13 +2373,13 @@ class TestPostImportCategory:
                 ["pearlarr-done"],
                 id="409-creates-then-retries",
             ),
-            # Best-effort: a client error leaves the category as-is, never undoing the import.
+            # One transient client error recovers on the in-run retry: the move still lands.
             pytest.param(
                 "pearlarr-done",
                 [qbittorrentapi.APIConnectionError("down")],
+                [("pearlarr-done", "h")],
                 [],
-                [],
-                id="client-error-leaves-category",
+                id="client-error-recovers-on-retry",
             ),
             # Category left unset (the real config-file default): no call at all.
             pytest.param(None, [], [], [], id="unconfigured-no-call"),
@@ -2298,6 +2403,27 @@ class TestPostImportCategory:
         # (the `imported` bump is _finalize_run's, off that state).
         assert mgr._pending_records() == {}
         assert mgr._ctx.pending_states[pk("h")] is PendingState.IMPORTED
+
+    def test_exhausted_move_retries_keep_the_record_for_cleanup(self) -> None:
+        # Every in-run attempt fails: the import still counts IMPORTED, but the
+        # record survives flagged `awaiting_cleanup` with ONE keep warn naming the
+        # failed leg (the old per-move warn is gone).
+        recording = install_recording_hub()
+        errors: list[Exception] = [qbittorrentapi.APIConnectionError("down")] * 3
+        qbit = CategoryQbit({"h": [FakeTorrent(is_complete=True, content_path="/d")]}, set_errors=errors)
+        mgr = self._imported_manager(qbit, "pearlarr-done")
+
+        mgr.snapshot_pending_for_series(7)
+
+        assert qbit.set_category_calls == []
+        assert mgr._ctx.pending_states[pk("h")] is PendingState.IMPORTED
+        raw = mgr.cache_store.get_pending(Arr.SONARR)[pk("h")]
+        assert raw.get("awaiting_cleanup") is True
+        warnings = [d.message for d in recording.of_type(Diagnostic) if d.severity is Severity.WARNING]
+        assert len(warnings) == 1
+        assert "post-import cleanup" in warnings[0]
+        assert "(category move)" in warnings[0]
+        assert pk("h") in mgr._ctx.cleanup_kept_keys
 
     def test_monitor_moves_imported_torrent(self) -> None:
         strategy = _RecordingStrategy(
@@ -2730,6 +2856,386 @@ class TestCloseTrackedDownload:
         mgr.snapshot_pending_for_series(7)
 
         assert [c.key for c in strategy.close_calls] == [sonarr_record.key]
+
+
+class TestRetireEffectOrder:
+    """retire_imported: category move first, queue close second, drop last."""
+
+    def test_move_runs_before_close(self) -> None:
+        order: list[str] = []
+
+        class _OrderQbit(CategoryQbit):
+            @override
+            def torrents_set_category(self, *, category: str, torrent_hashes: str) -> None:
+                super().torrents_set_category(category=category, torrent_hashes=torrent_hashes)
+                order.append("move")
+
+        class _OrderStrategy(_RecordingStrategy):
+            @override
+            def close_tracked(self, pending: PendingImport) -> EffectStatus:
+                order.append("close")
+                return super().close_tracked(pending)
+
+        qbit = _OrderQbit({"h": [FakeTorrent(is_complete=True, content_path="/d")]})
+        strategy = _OrderStrategy(progress=ImportProgress(1, 1, determinate=True))
+        mgr = make_orchestration_manager(
+            qbit=qbit,
+            strategy=strategy,
+            store_records=[pending_import(infohash="h", series_id=7, added_at=_FRESH)],
+            post_import_category="pearlarr-done",
+        )
+
+        mgr.snapshot_pending_for_series(7)
+
+        assert order == ["move", "close"]
+        assert mgr._pending_records() == {}
+
+
+class TestCloseSkipWhenMoveUntracks:
+    """An untracking category move supersedes the explicit queue removal.
+
+    The gate reads would-untrack, never this run's move outcome: firing the
+    delete (a permanent "download ignored" history row) in a transiently
+    failed-move window is exactly what the skip exists to prevent.
+    """
+
+    @staticmethod
+    def _manager(
+        fetched: "_CategoryPair[str | None]",
+        *,
+        qbit: FakeQbit,
+        strategy: _RecordingStrategy,
+    ) -> ImportWaitManager:
+        """A manager whose resolver already fetched the arr's client categories (seeded, transportless)."""
+
+        mgr = make_orchestration_manager(
+            qbit=qbit,
+            strategy=strategy,
+            store_records=[pending_import(infohash="h", series_id=7, added_at=_FRESH)],
+        )
+        mgr._categories._fetched = fetched
+        return mgr
+
+    def test_untracking_move_skips_the_explicit_close(self) -> None:
+        strategy = _RecordingStrategy(progress=ImportProgress(1, 1, determinate=True))
+        qbit = CategoryQbit({"h": [FakeTorrent(is_complete=True, content_path="/d")]})
+        mgr = self._manager(_CategoryPair("tv-sonarr", "sonarr-done"), qbit=qbit, strategy=strategy)
+
+        mgr.snapshot_pending_for_series(7)
+
+        assert qbit.set_category_calls == [("sonarr-done", "h")]
+        assert strategy.close_calls == []
+        assert mgr._pending_records() == {}
+
+    def test_skip_holds_even_when_the_move_failed_this_run(self) -> None:
+        # A transiently failed move keeps the record for the move leg only: no
+        # delete fires meanwhile, so no Ignored marker can land in the window.
+        recording = install_recording_hub()
+        strategy = _RecordingStrategy(progress=ImportProgress(1, 1, determinate=True))
+        errors: list[Exception] = [qbittorrentapi.APIConnectionError("down")] * 3
+        qbit = CategoryQbit({"h": [FakeTorrent(is_complete=True, content_path="/d")]}, set_errors=errors)
+        mgr = self._manager(_CategoryPair("tv-sonarr", "sonarr-done"), qbit=qbit, strategy=strategy)
+
+        mgr.snapshot_pending_for_series(7)
+
+        assert strategy.close_calls == []
+        raw = mgr.cache_store.get_pending(Arr.SONARR)[pk("h")]
+        assert raw.get("awaiting_cleanup") is True
+        [warn] = diagnostic_messages(recording, Severity.WARNING)
+        assert "(category move)" in warn
+        assert "queue removal" not in warn
+
+    def test_fetched_blank_grab_keeps_the_explicit_close(self) -> None:
+        # A blank watched category means Sonarr sees everything: no move clears
+        # the entry, so the explicit close must still run.
+        strategy = _RecordingStrategy(progress=ImportProgress(1, 1, determinate=True))
+        qbit = CategoryQbit({"h": [FakeTorrent(is_complete=True, content_path="/d")]})
+        mgr = self._manager(_CategoryPair(None, "sonarr-done"), qbit=qbit, strategy=strategy)
+
+        mgr.snapshot_pending_for_series(7)
+
+        assert qbit.set_category_calls == [("sonarr-done", "h")]
+        assert [c.key for c in strategy.close_calls] == [pk("h")]
+
+    def test_post_equal_to_watched_keeps_the_explicit_close(self) -> None:
+        # Moving within the watched category clears nothing: the entry stays.
+        strategy = _RecordingStrategy(progress=ImportProgress(1, 1, determinate=True))
+        qbit = CategoryQbit({"h": [FakeTorrent(is_complete=True, content_path="/d")]})
+        mgr = self._manager(_CategoryPair("shared", "shared"), qbit=qbit, strategy=strategy)
+
+        mgr.snapshot_pending_for_series(7)
+
+        assert qbit.set_category_calls == [("shared", "h")]
+        assert [c.key for c in strategy.close_calls] == [pk("h")]
+
+    def test_unknown_watched_category_keeps_the_explicit_close(self) -> None:
+        # Neither a fetched pair nor a configured grab: conservative False.
+        strategy = _RecordingStrategy(progress=ImportProgress(1, 1, determinate=True))
+        qbit = CategoryQbit({"h": [FakeTorrent(is_complete=True, content_path="/d")]})
+        mgr = make_orchestration_manager(
+            qbit=qbit,
+            strategy=strategy,
+            store_records=[pending_import(infohash="h", series_id=7, added_at=_FRESH)],
+            post_import_category="pearlarr-done",
+        )
+
+        mgr.snapshot_pending_for_series(7)
+
+        assert qbit.set_category_calls == [("pearlarr-done", "h")]
+        assert [c.key for c in strategy.close_calls] == [pk("h")]
+
+
+class TestCloseRetrySchedule:
+    """The close effect rides the bounded in-run retry schedule off the injected clock."""
+
+    @staticmethod
+    def _drive(strategy: _RecordingStrategy, clock: FakeClock) -> ImportWaitManager:
+        """Verify one carried-over record through the snapshot, close scripted by `strategy`."""
+
+        mgr = make_orchestration_manager(
+            qbit=FakeQbit({"h": [FakeTorrent(is_complete=True, content_path="/d")]}),
+            strategy=strategy,
+            store_records=[pending_import(infohash="h", series_id=7, added_at=_FRESH)],
+            clock=clock,
+        )
+        mgr.snapshot_pending_for_series(7)
+        return mgr
+
+    def test_transient_retry_recovers_after_one_pause(self) -> None:
+        clock = _SleepRecordingClock()
+        strategy = _RecordingStrategy(
+            progress=ImportProgress(1, 1, determinate=True),
+            close_sequence=[EffectStatus.RETRY, EffectStatus.DONE],
+        )
+
+        mgr = self._drive(strategy, clock)
+
+        assert len(strategy.close_calls) == 2
+        assert clock.sleeps == [1.0]
+        assert mgr._pending_records() == {}
+
+    def test_exhausted_retries_keep_the_record(self) -> None:
+        recording = install_recording_hub()
+        clock = _SleepRecordingClock()
+        strategy = _RecordingStrategy(
+            progress=ImportProgress(1, 1, determinate=True),
+            close_return=EffectStatus.RETRY,
+        )
+
+        mgr = self._drive(strategy, clock)
+
+        assert len(strategy.close_calls) == 3
+        assert clock.sleeps == [1.0, 3.0]
+        raw = mgr.cache_store.get_pending(Arr.SONARR)[pk("h")]
+        assert raw.get("awaiting_cleanup") is True
+        [warn] = diagnostic_messages(recording, Severity.WARNING)
+        assert "(queue removal)" in warn
+
+    def test_failed_close_is_terminal_after_one_call(self) -> None:
+        # FAILED (the queue read already retried in the transport) never re-attempts in-run.
+        clock = _SleepRecordingClock()
+        strategy = _RecordingStrategy(
+            progress=ImportProgress(1, 1, determinate=True),
+            close_return=EffectStatus.FAILED,
+        )
+
+        mgr = self._drive(strategy, clock)
+
+        assert len(strategy.close_calls) == 1
+        assert clock.sleeps == []
+        raw = mgr.cache_store.get_pending(Arr.SONARR)[pk("h")]
+        assert raw.get("awaiting_cleanup") is True
+
+
+class TestCleanupHeal:
+    """Kept-for-cleanup records: invisible to the observe passes, healed once per run by the finalize pass."""
+
+    def test_keep_then_next_run_heal_success(self) -> None:
+        # Run 1: the import verifies but the close fails -> kept flagged, still
+        # counted IMPORTED this run. Run 2: the heal pass closes and drops.
+        run1_strategy = _RecordingStrategy(
+            progress=ImportProgress(1, 1, determinate=True),
+            close_return=EffectStatus.FAILED,
+        )
+        run1 = make_orchestration_manager(
+            qbit=FakeQbit({"h": [FakeTorrent(is_complete=True, content_path="/d")]}),
+            strategy=run1_strategy,
+            store_records=[pending_import(infohash="h", series_id=7, added_at=_FRESH)],
+        )
+
+        run1.snapshot_pending_for_series(7)
+
+        assert run1.cache_store.get_pending(Arr.SONARR)[pk("h")].get("awaiting_cleanup") is True
+        assert run1._ctx.pending_states[pk("h")] is PendingState.IMPORTED
+
+        recording = install_recording_hub()
+        run2_strategy = _RecordingStrategy()
+        run2 = make_orchestration_manager(qbit=FakeQbit({}), strategy=run2_strategy)
+        run2.cache_store = run1.cache_store  # the same durable store, next run
+
+        run2.retry_cleanup_records()
+
+        assert [c.key for c in run2_strategy.close_calls] == [pk("h")]
+        assert run2._pending_records() == {}
+        assert any(
+            "Completed the deferred post-import cleanup" in m for m in diagnostic_messages(recording, Severity.INFO)
+        )
+
+    def test_still_failing_heal_keeps_the_record_and_folds_cleanup(self) -> None:
+        recording = install_recording_hub()
+        strategy = _RecordingStrategy(close_return=EffectStatus.FAILED)
+        mgr = make_orchestration_manager(
+            qbit=FakeQbit({}),
+            strategy=strategy,
+            store_records=[pending_import(infohash="h", added_at=_FRESH, awaiting_cleanup=True)],
+        )
+
+        mgr.retry_cleanup_records()
+
+        assert mgr._ctx.pending_states[pk("h")] is PendingState.CLEANUP
+        assert mgr.cache_store.get_pending(Arr.SONARR)[pk("h")].get("awaiting_cleanup") is True
+        [warn] = diagnostic_messages(recording, Severity.WARNING)
+        assert "post-import cleanup" in warn
+        # The failed heal re-kept the record, so a second call retries nothing.
+        strategy.close_calls.clear()
+        mgr.retry_cleanup_records()
+        assert strategy.close_calls == []
+
+    def test_check_pass_keep_folds_cleanup_not_imported(self) -> None:
+        # A check-pass keep counts via its result row's carried_over_imported
+        # bump. The CLEANUP fold keeps the finalize IMPORTED sum off the key.
+        strategy = _RecordingStrategy(
+            completed=import_probe(ImportReadiness.IMPORTED, files_present=True),
+            close_return=EffectStatus.FAILED,
+        )
+        mgr = make_orchestration_manager(
+            qbit=FakeQbit({"h": [FakeTorrent(is_complete=True, content_path="/d")]}),
+            strategy=strategy,
+            store_records=[pending_import(infohash="h", added_at=_FRESH)],
+        )
+
+        result = mgr.check_once(view=RecordingWaitView())
+
+        assert result is not None
+        assert result.carried_over_imported == 1
+        assert mgr._ctx.pending_states[pk("h")] is PendingState.CLEANUP
+        assert mgr.cache_store.get_pending(Arr.SONARR)[pk("h")].get("awaiting_cleanup") is True
+
+    def test_finalize_heal_skips_a_record_kept_this_run(self) -> None:
+        # A record kept mid-scan is in cleanup_kept_keys: the finalize pass must
+        # not retry it in the same run.
+        strategy = _RecordingStrategy(
+            progress=ImportProgress(1, 1, determinate=True),
+            close_return=EffectStatus.FAILED,
+        )
+        mgr = make_orchestration_manager(
+            qbit=FakeQbit({"h": [FakeTorrent(is_complete=True, content_path="/d")]}),
+            strategy=strategy,
+            store_records=[pending_import(infohash="h", series_id=7, added_at=_FRESH)],
+        )
+        mgr.snapshot_pending_for_series(7)
+        assert len(strategy.close_calls) == 1
+
+        mgr.retry_cleanup_records()
+
+        assert len(strategy.close_calls) == 1  # no same-run second attempt
+
+    def test_cleanup_records_are_invisible_to_every_observe_pass(self) -> None:
+        reporter = _RecordingReporter()
+        strategy = _RecordingStrategy()
+        mgr = make_orchestration_manager(
+            qbit=FakeQbit({"h": [FakeTorrent(is_complete=True, content_path="/d")]}),
+            strategy=strategy,
+            store_records=[pending_import(infohash="h", series_id=7, added_at=_FRESH, awaiting_cleanup=True)],
+            reporter=reporter,
+        )
+
+        mgr.snapshot_pending_for_series(7)
+
+        assert reporter.snapshot_calls == []
+        assert mgr.check_once(view=RecordingWaitView()) is None
+        assert mgr.run_monitor(view=RecordingWaitView()) is None
+        assert strategy.import_calls == []
+        assert set(mgr._pending_records()) == {pk("h")}
+
+    def test_resident_cleanup_record_still_gates_a_sibling_retire(self) -> None:
+        # The flagged record still claims the hash: the sibling's verified retire
+        # defers both effects and still drops its own record.
+        flagged = pending_import(infohash="h", al_id=11, series_id=7, added_at=_FRESH, awaiting_cleanup=True)
+        fresh = pending_import(infohash="h", al_id=22, series_id=7, added_at=_FRESH)
+        strategy = _RecordingStrategy(progress=ImportProgress(1, 1, determinate=True))
+        qbit = CategoryQbit({"h": [FakeTorrent(is_complete=True, content_path="/d")]})
+        mgr = make_orchestration_manager(
+            qbit=qbit,
+            strategy=strategy,
+            store_records=[flagged, fresh],
+            post_import_category="pearlarr-done",
+        )
+
+        mgr.snapshot_pending_for_series(7)
+
+        assert qbit.set_category_calls == []
+        assert strategy.close_calls == []
+        assert set(mgr._pending_records()) == {pk("h", 11)}
+
+    def test_heal_with_a_new_same_hash_sibling_skips_the_move_and_drops(self) -> None:
+        # A later-run re-grab claims the hash: the new sibling owns the eventual
+        # move, so the healed record just drops.
+        flagged = pending_import(infohash="h", al_id=11, series_id=7, added_at=_FRESH, awaiting_cleanup=True)
+        newer = pending_import(infohash="h", al_id=22, series_id=7, added_at=_FRESH)
+        qbit = CategoryQbit({"h": [FakeTorrent(is_complete=True, content_path="/d")]})
+        mgr = make_orchestration_manager(
+            qbit=qbit,
+            strategy=_RecordingStrategy(),
+            store_records=[flagged, newer],
+            post_import_category="pearlarr-done",
+        )
+
+        mgr.retry_cleanup_records()
+
+        assert qbit.set_category_calls == []
+        assert set(mgr._pending_records()) == {pk("h", 22)}
+
+    def test_ttl_prune_of_a_flagged_record_names_the_cleanup(self) -> None:
+        # The import itself succeeded, so the give-up note abandons only the cleanup.
+        recording = install_recording_hub()
+        mgr = make_orchestration_manager(
+            qbit=None,
+            strategy=_RecordingStrategy(),
+            store_records=[pending_import(infohash="h", added_at=_EXPIRED, awaiting_cleanup=True)],
+        )
+
+        mgr.prune_expired_pending()
+
+        assert mgr._pending_records() == {}
+        assert any("giving up on its post-import cleanup" in m for m in diagnostic_messages(recording, Severity.INFO))
+
+    def test_keep_counts_once_on_entry_and_zero_on_heal(self) -> None:
+        # Entering run: the IMPORTED state feeds the finalize sum, the tally
+        # skips the flagged row. Healing run: nothing counts anywhere.
+        strategy = _RecordingStrategy(
+            progress=ImportProgress(1, 1, determinate=True),
+            close_return=EffectStatus.FAILED,
+        )
+        mgr = make_orchestration_manager(
+            qbit=FakeQbit({"h": [FakeTorrent(is_complete=True, content_path="/d")]}),
+            strategy=strategy,
+            store_records=[pending_import(infohash="h", series_id=7, added_at=_FRESH)],
+        )
+        mgr.snapshot_pending_for_series(7)
+        mgr.tally_carried_over_into_stats()
+
+        assert mgr._ctx.pending_states[pk("h")] is PendingState.IMPORTED
+        assert (mgr._ctx.stats.queued, mgr._ctx.stats.downloaded) == (0, 0)
+
+        heal = make_orchestration_manager(qbit=FakeQbit({}), strategy=_RecordingStrategy())
+        heal.cache_store = mgr.cache_store
+        heal.retry_cleanup_records()
+        heal.tally_carried_over_into_stats()
+
+        assert heal._ctx.pending_states == {}
+        assert (heal._ctx.stats.queued, heal._ctx.stats.downloaded) == (0, 0)
+        assert heal._ctx.stats.imported == 0
 
 
 class TestRadarrReconcile:

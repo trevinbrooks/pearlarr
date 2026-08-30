@@ -73,6 +73,23 @@ class ArrCategoryResolver:
         value = self._configured.post_import
         return self._client_pair().post_import if value is None else _explicit(value)
 
+    def move_untracks(self, category: str) -> bool:
+        """Whether moving a torrent to `category` takes it out of the arr's watched grab category.
+
+        The fetched client category is authoritative (blank means the arr watches everything).
+        On a failed fetch the configured grab category approximates it. Unknown stays False.
+        Exact compare: qBittorrent categories are case-sensitive.
+        """
+
+        pair = self._client_pair()
+        if self._fetched is not None:
+            watched = pair.grab
+        elif self._configured.grab is not None:
+            watched = _explicit(self._configured.grab)
+        else:
+            watched = None
+        return bool(watched) and category != watched
+
     def _client_pair(self) -> _CategoryPair[str | None]:
         if self._fetched is None:
             if self._http is None:

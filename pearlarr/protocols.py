@@ -2,7 +2,7 @@
 
 from abc import ABC, abstractmethod
 
-from .manual_import import AttemptKind, ImportProbe, ImportProgress, PendingImport
+from .manual_import import AttemptKind, EffectStatus, ImportProbe, ImportProgress, PendingImport
 from .mappings import MappingEntry
 from .seadex_types import ArrItem, HistoryRecord, ProgressSink
 
@@ -29,13 +29,15 @@ class ImportCompleter(ABC):
         MUST NOT refresh downloads, read the queue, or issue commands.
         """
 
-    def close_tracked(self, pending: PendingImport) -> None:
+    def close_tracked(self, pending: PendingImport) -> EffectStatus:
         """Dismiss the arr's leftover queue entry for a fully imported torrent.
 
         Sonarr auto-closes a tracked download only when ONE import covers the grab's full episode count.
+        RETRY asks the manager for another in-run attempt. FAILED keeps the record for a later run.
         """
 
         del pending
+        return EffectStatus.SKIPPED
 
     @property
     @abstractmethod

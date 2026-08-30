@@ -20,6 +20,8 @@ Pearlarr is a fork of [bbtufty/seadexarr](https://github.com/bbtufty/seadexarr).
 
 - An old-schema config file is now migrated in place at the start of a run, keeping the previous file as `config.yml.bak`, instead of warning on every run. `pearlarr config migrate` remains for migrating without a run.
 - An omitted `torrent_category` or `post_import_category` now adopts the matching category of that arr's qBittorrent download client (its grab and imported categories respectively); an explicit value still wins, and an explicit blank (`""`) keeps no category at all.
+- The post-import category move now runs before the queue cleanup, and when the effective post-import category takes the torrent out of the arr's watched download category the explicit queue removal is skipped: the leftover entry clears on its own, without Sonarr recording a permanent "download ignored" history row. Setups without an effective post-import category keep the explicit removal under `imports.remove_from_queue`.
+- Post-import cleanup now retries transient failures within the run and keeps the download's record on give-up so the next run finishes it, instead of losing the category move or queue removal to a one-shot attempt.
 
 ### Fixed
 
@@ -27,6 +29,7 @@ Pearlarr is a fork of [bbtufty/seadexarr](https://github.com/bbtufty/seadexarr).
 - A successful import no longer warns `Could not remove the finished download from Sonarr's queue (status code 500)` when Sonarr never matched the download's title to a series. Dismissing such a queue entry always fails inside Sonarr and records nothing, so Pearlarr now leaves it alone; the entry clears on its own once the imported torrent leaves Sonarr's watched category.
 - A Sonarr queue outage during the wait no longer risks a mistimed manual import. A failed queue read now retries on later polls and defers the download at the deadline.
 - A torrent re-added to qBittorrent no longer resets its pending-import age on every run, so stale pending records expire on schedule (`imports.pending_max_age_days`).
+- A queue entry Sonarr already dismissed no longer draws a removal warning. It now counts quietly as done.
 
 ## [1.1.0] - 2026-07-29
 

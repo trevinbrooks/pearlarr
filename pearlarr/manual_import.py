@@ -137,6 +137,22 @@ class AttemptKind(Enum):
         return self is AttemptKind.DEADLINE
 
 
+class EffectStatus(Enum):
+    """One post-import cleanup effect's result (the retire contract, never rendered)."""
+
+    DONE = auto()
+    """Ran, or the goal was verifiably already met."""
+
+    SKIPPED = auto()
+    """Not applicable or deferred to a sibling: nothing outstanding for THIS record."""
+
+    RETRY = auto()
+    """Transient, the manager may re-attempt in-run."""
+
+    FAILED = auto()
+    """Given up this run, kept for a later run."""
+
+
 class PendingState(StrEnum):
     """The current status of one carried-over pending import, for reporting.
 
@@ -152,13 +168,17 @@ class PendingState(StrEnum):
     """The download finished and will be imported by the end-of-run pass."""
 
     IMPORTED = "imported"
-    """The episode files are verified present. The record is dropped."""
+    """The episode files are verified present. The record is dropped, or kept only for its post-import
+    cleanup."""
 
     ERRORED = "errored"
     """The download errored in qBittorrent. Left for a later run."""
 
     MISSING = "missing"
     """The torrent is gone from qBittorrent. The record is dropped."""
+
+    CLEANUP = "cleanup"
+    """The import verified (and was counted) in an earlier pass. Only its post-import cleanup remains."""
 
 
 def classify_pending(
@@ -544,6 +564,9 @@ class PendingImport:
     preowned_episode_ids: list[int] = field(default_factory=list[int])
     """Target episodes that already held a recommended file at grab time."""
 
+    awaiting_cleanup: bool = False
+    """The import verified but a post-import effect (category move / queue close) still needs to run."""
+
     @property
     def key(self) -> PendingKey:
         """The record's composite store/tracking key (see `PendingKey`)."""
@@ -619,4 +642,5 @@ class PendingImport:
             guards=guards or GuardFacts(),
             release_sizes=raw.get("release_sizes", []),
             preowned_episode_ids=raw.get("preowned_episode_ids", []),
+            awaiting_cleanup=raw.get("awaiting_cleanup", False),
         )
