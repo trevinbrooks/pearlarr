@@ -71,6 +71,7 @@ from .builders import (
     make_bare_instance,
     make_categories,
     make_config,
+    make_fetched_categories,
     make_grab_pipeline,
     make_import_wait_manager,
     make_logger,
@@ -2961,8 +2962,9 @@ class TestCloseSkipWhenMoveUntracks:
 
     @staticmethod
     def _manager(
-        fetched: tuple[str | None, str | None],
         *,
+        grab: str | None,
+        post_import: str | None,
         qbit: FakeQbit,
         strategy: _RecordingStrategy,
     ) -> ImportWaitManager:
@@ -2972,13 +2974,13 @@ class TestCloseSkipWhenMoveUntracks:
             qbit=qbit,
             strategy=strategy,
             store_records=[pending_import(infohash="h", series_id=7, added_at=_FRESH)],
-            categories=make_categories(make_config(), fetched=fetched),
+            categories=make_fetched_categories(make_config(), grab=grab, post_import=post_import),
         )
 
     def test_untracking_move_skips_the_explicit_close(self) -> None:
         strategy = _RecordingStrategy(progress=ImportProgress(1, 1, determinate=True))
         qbit = CategoryQbit({"h": [FakeTorrent(is_complete=True, content_path="/d")]})
-        mgr = self._manager(("tv-sonarr", "sonarr-done"), qbit=qbit, strategy=strategy)
+        mgr = self._manager(grab="tv-sonarr", post_import="sonarr-done", qbit=qbit, strategy=strategy)
 
         mgr.snapshot_pending_for_series(7)
 
@@ -2993,7 +2995,7 @@ class TestCloseSkipWhenMoveUntracks:
         strategy = _RecordingStrategy(progress=ImportProgress(1, 1, determinate=True))
         errors: list[Exception] = [qbittorrentapi.APIConnectionError("down")] * 3
         qbit = CategoryQbit({"h": [FakeTorrent(is_complete=True, content_path="/d")]}, set_errors=errors)
-        mgr = self._manager(("tv-sonarr", "sonarr-done"), qbit=qbit, strategy=strategy)
+        mgr = self._manager(grab="tv-sonarr", post_import="sonarr-done", qbit=qbit, strategy=strategy)
 
         mgr.snapshot_pending_for_series(7)
 
@@ -3009,7 +3011,7 @@ class TestCloseSkipWhenMoveUntracks:
         # the entry, so the explicit close must still run.
         strategy = _RecordingStrategy(progress=ImportProgress(1, 1, determinate=True))
         qbit = CategoryQbit({"h": [FakeTorrent(is_complete=True, content_path="/d")]})
-        mgr = self._manager((None, "sonarr-done"), qbit=qbit, strategy=strategy)
+        mgr = self._manager(grab=None, post_import="sonarr-done", qbit=qbit, strategy=strategy)
 
         mgr.snapshot_pending_for_series(7)
 
@@ -3020,7 +3022,7 @@ class TestCloseSkipWhenMoveUntracks:
         # Moving within the watched category clears nothing: the entry stays.
         strategy = _RecordingStrategy(progress=ImportProgress(1, 1, determinate=True))
         qbit = CategoryQbit({"h": [FakeTorrent(is_complete=True, content_path="/d")]})
-        mgr = self._manager(("shared", "shared"), qbit=qbit, strategy=strategy)
+        mgr = self._manager(grab="shared", post_import="shared", qbit=qbit, strategy=strategy)
 
         mgr.snapshot_pending_for_series(7)
 
