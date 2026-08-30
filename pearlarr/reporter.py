@@ -181,6 +181,8 @@ class RunContext:
     )
     """Observed status of each carried-over record, keyed per record. Never a this-run grab, which stays
     `added`."""
+    cleanup_kept_keys: set[PendingKey] = field(default_factory=set[PendingKey])
+    """Records kept for cleanup THIS run. The finalize heal pass skips them (no same-run double retry)."""
 
 
 def is_preview(ctx: RunContext, qbit: qbittorrentapi.Client | None) -> bool:

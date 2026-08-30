@@ -13,6 +13,7 @@ from .manual_import import (
     NO_PROGRESS,
     PENDING_STATE_FOR_OUTCOME,
     AttemptKind,
+    EffectStatus,
     ImportProbe,
     ImportProgress,
     ImportReadiness,
@@ -31,6 +32,9 @@ from .protocols import ImportCompleter
 from .reporter import RunContext
 from .run_services import RunDeps
 from .wait_view import WaitOutcomeRow, WaitResult, WaitView, make_wait_view
+
+_EFFECT_BACKOFF_S: tuple[float, float] = (1.0, 3.0)
+"""Pauses between in-run cleanup-effect retries (3 attempts, 4s worst case per effect)."""
 
 
 class ImportWaitManager:
@@ -149,13 +153,50 @@ class ImportWaitManager:
 
         return self.fresh_grab_keys() | self._ctx.reacquired_keys
 
-    def retire_imported(self, pending: PendingImport) -> None:
-        """Retire a verified-imported record: drop it, then the queue close and category move."""
+    def retire_imported(self, pending: PendingImport) -> bool:
+        """Retire a verified-imported record: run both cleanup effects, then drop it.
 
-        # The drop runs first so both sibling gates count only remaining records.
+        Effects-first, drop-last: a FAILED effect keeps the record (flagged
+        `awaiting_cleanup`) instead, so the next run finishes the cleanup.
+        """
+
+        move = self.apply_post_import_category(pending)
+        close = self.close_tracked_download(pending)
+        failed = [
+            noun
+            for status, noun in ((move, "category move"), (close, "queue removal"))
+            if status is EffectStatus.FAILED
+        ]
+        if failed:
+            self._keep_for_cleanup(pending, " and ".join(failed))
+            return False
         self.drop_pending(pending)
-        self.close_tracked_download(pending)
-        self.apply_post_import_category(pending)
+        return True
+
+    def _keep_for_cleanup(self, pending: PendingImport, what: str) -> None:
+        """Keep a record whose import verified but whose cleanup (`what`) has not finished.
+
+        The round-trip preserves `added_at`, so the TTL still bounds a never-healing record.
+        """
+
+        kept = replace(pending, awaiting_cleanup=True)
+        self.cache_store.put_pending(self._ctx.arr, kept.key, kept.to_json())
+        self._ctx.cleanup_kept_keys.add(kept.key)
+        hub_warn(
+            f"Could not finish the post-import cleanup for {pending.display_label} ({what}) - "
+            "keeping its record to retry next run"
+        )
+
+    def _retry_effect(self, attempt: Callable[[], EffectStatus]) -> EffectStatus:
+        """Drive one cleanup effect through the bounded in-run retry schedule."""
+
+        for pause in _EFFECT_BACKOFF_S:
+            status = attempt()
+            if status is not EffectStatus.RETRY:
+                return status
+            self._clock.sleep(pause)
+        status = attempt()
+        return EffectStatus.FAILED if status is EffectStatus.RETRY else status
 
     def _observe_one(self, pending: PendingImport) -> PendingState:
         """Observe one carried-over record (never an import) and fold it to a `PendingState`."""
@@ -163,10 +204,11 @@ class ImportWaitManager:
         poll = self.poll_torrent(pending.infohash)
         files_present = poll.outcome is WaitOutcome.COMPLETE and self.import_progress(pending).files_present
         state = classify_pending(poll.outcome, files_present)
-        # Store effects precede the state write: a failed retire/drop must not leave
-        # a resident record that _finalize_run counts as IMPORTED anyway.
+        # Store effects precede the state write: a raising retire/drop must not
+        # leave a state for _finalize_run to count off an unwritten store.
         if state is PendingState.IMPORTED:
             # _finalize_run counts the IMPORTED entry into stats. No local bump.
+            # A kept-for-cleanup record still counts here: the import happened this run.
             self.retire_imported(pending)
         elif state is PendingState.MISSING:
             self.drop_pending(pending)
@@ -188,6 +230,9 @@ class ImportWaitManager:
             if key in reported:
                 continue
             pending = PendingImport.from_json(raw, guards=guard_rows.get(key.al_id))
+            if pending.awaiting_cleanup:
+                # The finalize heal pass owns these. The import already reported.
+                continue
             state = self._observe_one(pending)
             self._reporter.log_pending_snapshot(state, pending)
 
@@ -195,13 +240,16 @@ class ImportWaitManager:
         """Fold each still-pending carried-over record into `queued` / `downloaded`.
 
         Reacquired records count here too. Only a this-run grab is skipped (it stays `added`).
+        Cleanup-flagged rows are skipped off the raw flag, so the no-phantom-count invariant
+        holds locally instead of resting on distant state writes.
         """
 
         fresh = self.fresh_grab_keys()
-        # Iterate the raw stored keys, not `_pending_records()`: this loop reads only the key and
-        # `pending_states`, so rehydrating every record would build a full map only to discard it.
-        for key in self.cache_store.get_pending(self._ctx.arr):
-            if key in fresh:
+        # Iterate the raw stored rows, not `_pending_records()`: this loop reads only the key, the
+        # cleanup flag and `pending_states`, so rehydrating every record would build a full map
+        # only to discard it.
+        for key, raw in self.cache_store.get_pending(self._ctx.arr).items():
+            if key in fresh or raw.get("awaiting_cleanup"):
                 continue
             state = self._ctx.pending_states.get(key, PendingState.QUEUED)
             if state is PendingState.DOWNLOADED:
@@ -321,10 +369,14 @@ class ImportWaitManager:
                 view.update(mp.snapshot())
 
     def _carried_over_records(self) -> list[PendingImport]:
-        """Every store record that is not a this-run fresh grab."""
+        """Every store record that is not a this-run fresh grab or a cleanup-only leftover."""
 
         fresh = self.fresh_grab_keys()
-        return [pending for key, pending in self._pending_records().items() if key not in fresh]
+        return [
+            pending
+            for key, pending in self._pending_records().items()
+            if key not in fresh and not pending.awaiting_cleanup
+        ]
 
     def _monitor_working_set(self) -> list[PendingImport]:
         """This run's fresh grabs (first) plus `_carried_over_records`, deduped by `PendingKey`."""
@@ -356,9 +408,11 @@ class ImportWaitManager:
                 continue
             if added_at < cutoff:
                 pending = PendingImport.from_json(raw)
+                # A flagged record's import succeeded. Only the cleanup is being abandoned.
+                goal = "its post-import cleanup" if pending.awaiting_cleanup else "it"
                 hub_note(
                     f"Pending import {pending.display_label} is older than "
-                    f"{count_noun(self._config.imports.pending_max_age_days, 'day')} - giving up on it",
+                    f"{count_noun(self._config.imports.pending_max_age_days, 'day')} - giving up on {goal}",
                 )
                 self.drop_pending(pending)
 
@@ -368,54 +422,110 @@ class ImportWaitManager:
         self.cache_store.drop_pending(self._ctx.arr, pending.key)
         self._ctx.pending_imports = [p for p in self._ctx.pending_imports if p.key != pending.key]
 
-    def close_tracked_download(self, pending: PendingImport) -> None:
+    def close_tracked_download(self, pending: PendingImport) -> EffectStatus:
         """Dismiss Sonarr's leftover queue entry once `pending`'s torrent is fully imported.
 
         Per-arr sibling gate (the category gate's is cross-arr), import-only: a TTL or MISSING drop closes nothing.
+        Skipped outright whenever the post-import category move untracks the torrent, whatever this run's move
+        outcome: the entry then clears on its own, without the permanent "download ignored" history marker an
+        explicit delete writes.
         """
 
-        if not self._config.imports.remove_from_queue or self._active_strategy is None:
-            return
+        strategy = self._active_strategy
+        if not self._config.imports.remove_from_queue or strategy is None:
+            return EffectStatus.SKIPPED
+        category = self._categories.post_import() if self.qbit is not None else None
+        if category and self._categories.move_untracks(category):
+            self.logger.debug(
+                f"{pending.display_label}: the category move clears the queue entry on its own - "
+                "skipping the explicit removal",
+            )
+            return EffectStatus.SKIPPED
         target = pending.infohash.casefold()
-        # Keyed read: the gate needs only the stored keys, never a rehydrated record.
-        if any(key.infohash.casefold() == target for key in self.cache_store.get_pending(self._ctx.arr)):
+        # Keyed read: the gate needs only the stored keys, never a rehydrated record. Self is
+        # excluded explicitly: the retiring record is still resident under drop-last.
+        if any(
+            key != pending.key and key.infohash.casefold() == target
+            for key in self.cache_store.get_pending(self._ctx.arr)
+        ):
             self.logger.debug(
                 f"{pending.display_label}: sibling records still pending on this torrent - leaving its queue entry",
             )
-            return
-        self._active_strategy.close_tracked(pending)
+            return EffectStatus.SKIPPED
+        # Each retry re-runs the whole close: the fresh queue read self-corrects an entry cleared meanwhile.
+        return self._retry_effect(lambda: strategy.close_tracked(pending))
 
-    def apply_post_import_category(self, pending: PendingImport) -> None:
+    def apply_post_import_category(self, pending: PendingImport) -> EffectStatus:
         """Move a verified-imported torrent to this arr's resolved post-import category.
 
-        Gated on no record in EITHER arr claiming the hash. Creates the category (qBittorrent 409s an unknown one).
+        Gated on no OTHER record in either arr claiming the hash (the retiring record is still
+        resident under drop-last). Creates the category (qBittorrent 409s an unknown one).
         """
 
-        if self.qbit is None:
-            return
-        remaining = self.cache_store.count_pending_for_infohash(pending.infohash)
+        qbit = self.qbit
+        if qbit is None:
+            return EffectStatus.SKIPPED
+        remaining = self.cache_store.count_pending_for_infohash(
+            pending.infohash,
+            excluding=(self._ctx.arr, pending.key),
+        )
         if remaining:
             self.logger.debug(
                 f"{pending.display_label}: {count_noun(remaining, 'sibling record')} still pending on "
                 "this torrent - deferring the category move",
             )
-            return
+            return EffectStatus.SKIPPED
         category = self._categories.post_import()
         if not category:
-            return
-        label = pending.display_label
-        infohash = pending.infohash
+            return EffectStatus.SKIPPED
+
+        def attempt() -> EffectStatus:
+            detail = self._try_move(qbit, category, pending.infohash)
+            if detail is None:
+                return EffectStatus.DONE
+            # Give-up stays DEBUG too: the single user-visible warn is the keep warn.
+            self.logger.debug(f"category move to {category!r} failed ({detail}) - retrying")
+            return EffectStatus.RETRY
+
+        return self._retry_effect(attempt)
+
+    def _try_move(self, qbit: qbittorrentapi.Client, category: str, infohash: str) -> str | None:
+        """One category-move attempt (create-on-409), returning the failure detail or None on success."""
+
         try:
             try:
-                self.qbit.torrents_set_category(category=category, torrent_hashes=infohash)
+                qbit.torrents_set_category(category=category, torrent_hashes=infohash)
             except qbittorrentapi.Conflict409Error:
-                self.qbit.torrents_create_category(name=category)
-                self.qbit.torrents_set_category(category=category, torrent_hashes=infohash)
+                qbit.torrents_create_category(name=category)
+                qbit.torrents_set_category(category=category, torrent_hashes=infohash)
         except (qbittorrentapi.APIError, qbittorrentapi.APIConnectionError) as e:
-            hub_warn(
-                f"Could not move imported torrent {label} to category {category!r} ({e}) - "
-                "leaving its category unchanged"
-            )
+            return str(e) or type(e).__name__
+        return None
+
+    def _cleanup_records(self) -> list[PendingImport]:
+        """Store records flagged `awaiting_cleanup` (never a fresh grab)."""
+
+        return [pending for pending in self._pending_records().values() if pending.awaiting_cleanup]
+
+    def retry_cleanup_records(self) -> None:
+        """Heal records whose import verified in an earlier run but whose cleanup is still owed.
+
+        Runs once per run, at the top of the finalize tail. Records kept THIS run are skipped
+        (`cleanup_kept_keys`), so a fresh keep is never retried in its own run.
+        """
+
+        for record in self._cleanup_records():
+            if record.key in self._ctx.cleanup_kept_keys:
+                continue
+            if self.retire_imported(record):
+                hub_note(f"Completed the deferred post-import cleanup for {record.display_label}")
+            else:
+                self.note_cleanup(record.key)
+
+    def note_cleanup(self, key: PendingKey) -> None:
+        """Fold a kept-for-cleanup record as CLEANUP: untallied and un-summed, so its import counts once."""
+
+        self._ctx.pending_states[key] = PendingState.CLEANUP
 
 
 # Cap on deferral credit, in ready timeouts per row: a command wedged in flight forever cannot hold the watch
@@ -673,7 +783,10 @@ class MonitorPass:
         # Store effects precede the frozen frame and the result row: a failed drop
         # must leave the row active and add no phantom row for _finalize_run to count.
         if outcome is Outcome.IMPORTED:
-            self._mgr.retire_imported(record)
+            if not self._mgr.retire_imported(record) and row.carried_over:
+                # The kept record counts via this row's carried_over_imported bump.
+                # CLEANUP keeps every other counter off it.
+                self._mgr.note_cleanup(record.key)
         elif outcome.dropped:
             self._mgr.drop_pending(record)
         elif row.carried_over:
