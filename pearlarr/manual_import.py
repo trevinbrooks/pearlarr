@@ -416,6 +416,14 @@ class TorrentProbe:
     observed: bool = True
     """False when qBittorrent could not actually be read (no client / a transient error)."""
 
+    @property
+    def ready_path(self) -> str | None:
+        """The completed download's importable path: COMPLETE with a reported content path, else None."""
+
+        if self.outcome is WaitOutcome.COMPLETE and self.content_path:
+            return self.content_path
+        return None
+
 
 def sanitize_torrent_telemetry(row: object) -> TorrentTelemetry:
     """Fold one qBittorrent info row into sanitized telemetry (fields read best-effort off the row)."""
@@ -663,3 +671,12 @@ def is_awaiting_cleanup(raw: dict[str, Any]) -> bool:
     """The cleanup flag off a stored row's raw dict, sparing keys-only readers a rehydration."""
 
     return bool(raw.get("awaiting_cleanup"))
+
+
+def hydrate_pending(
+    rows: dict[PendingKey, dict[str, Any]],
+    guards: dict[int, GuardFacts],
+) -> dict[PendingKey, PendingImport]:
+    """Rehydrate stored rows into records, each fed its entry's guard row."""
+
+    return {key: PendingImport.from_json(raw, guards=guards.get(key.al_id)) for key, raw in rows.items()}

@@ -1089,7 +1089,7 @@ class TestImportCompletedQueueState:
         mgr = make_import_wait_manager(
             qbit=_CompletedQbit("/d"),
             cache_store=store,
-            _active_strategy=strat,
+            strategy=strat,
         )
 
         mgr.snapshot_pending_for_series(pending.series_id)

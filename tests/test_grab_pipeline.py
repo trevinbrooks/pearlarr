@@ -253,7 +253,7 @@ class TestAddOneUrlRegistersPending:
         # (evidence follows the newest plan, never a frozen per-record copy).
         assert _guards(pipeline) == {seeds["h1"].al_id: facts}
         assert pipeline._ctx.reacquired_keys == {seeds["h1"].key}
-        assert pipeline._ctx.pending_imports == []
+        assert pipeline._ctx.pending_imports == {}
         assert n_added == 0
         assert pipeline._ctx.torrents_added == 0
         assert pipeline._ctx.stats.added == []
@@ -271,7 +271,7 @@ class TestAddOneUrlRegistersPending:
 
         assert {k.infohash for k in _pending(pipeline)} == {"h1"}
         assert _guards(pipeline) == {seeds["h1"].al_id: facts}
-        assert [p.infohash for p in pipeline._ctx.pending_imports] == ["h1"]
+        assert [p.infohash for p in pipeline._ctx.pending_imports.values()] == ["h1"]
         assert n_added == 1
         assert pipeline._ctx.torrents_added == 1
         assert len(pipeline._ctx.stats.added) == 1
@@ -328,7 +328,7 @@ class TestAddOneUrlRegistersPending:
         )
 
         assert _pending(pipeline) == {}
-        assert pipeline._ctx.pending_imports == []
+        assert pipeline._ctx.pending_imports == {}
 
     def test_off_mode_does_not_register(self) -> None:
         torrents = FakeTorrents({"h1": (AddOutcome.ALREADY_ADDED, "x")})
@@ -341,7 +341,7 @@ class TestAddOneUrlRegistersPending:
 
         assert _pending(pipeline) == {}
         assert _guards(pipeline) == {}
-        assert pipeline._ctx.pending_imports == []
+        assert pipeline._ctx.pending_imports == {}
 
     def test_preview_does_not_register_but_returns_outcome(self) -> None:
         # No client -> preview: nothing persisted, but the outcome still surfaces.
@@ -355,7 +355,7 @@ class TestAddOneUrlRegistersPending:
 
         assert _pending(pipeline) == {}
         assert _guards(pipeline) == {}
-        assert pipeline._ctx.pending_imports == []
+        assert pipeline._ctx.pending_imports == {}
         assert [r.outcome for r in results] == [AddOutcome.ALREADY_ADDED]
 
     def test_radarr_registration_writes_no_guard_row(self) -> None:
@@ -415,7 +415,7 @@ class TestReacquireRegistration:
 
         assert self._added_at(pipeline) == self._STORED_AT
         assert pipeline._ctx.reacquired_keys == {self._KEY}
-        assert pipeline._ctx.pending_imports == []
+        assert pipeline._ctx.pending_imports == {}
 
     def test_ttl_past_resident_still_reacquires(self) -> None:
         # Residency outranks the TTL cutoff: the cutoff gates only the new
@@ -438,7 +438,7 @@ class TestReacquireRegistration:
 
         assert self._added_at(pipeline) == pending_import(infohash="h1").added_at
         assert pipeline._ctx.reacquired_keys == {self._KEY}
-        assert pipeline._ctx.pending_imports == []
+        assert pipeline._ctx.pending_imports == {}
         assert _guards(pipeline).keys() == {PENDING_AL_ID}
 
     def test_non_resident_joins_at_the_qbit_add_time(self) -> None:
@@ -449,7 +449,7 @@ class TestReacquireRegistration:
 
         assert self._added_at(pipeline) == stamp_of(added_on)
         assert pipeline._ctx.reacquired_keys == {self._KEY}
-        assert pipeline._ctx.pending_imports == []
+        assert pipeline._ctx.pending_imports == {}
 
     def test_ttl_past_non_resident_is_dropped(self) -> None:
         # Past the cutoff with nothing stored: never tracked, no guard row, but
@@ -470,7 +470,7 @@ class TestReacquireRegistration:
         self._add(pipeline)
 
         assert pipeline._ctx.reacquired_keys == set()
-        assert [p.infohash for p in pipeline._ctx.pending_imports] == ["h1"]
+        assert [p.infohash for p in pipeline._ctx.pending_imports.values()] == ["h1"]
         assert self._added_at(pipeline) == pending_import(infohash="h1").added_at
 
 

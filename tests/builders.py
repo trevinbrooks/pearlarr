@@ -30,7 +30,7 @@ from pearlarr.cache import (
 )
 from pearlarr.config import AppConfig, Arr
 from pearlarr.grab_pipeline import GrabPipeline, GrabRequest
-from pearlarr.import_wait import ImportWaitManager
+from pearlarr.import_wait import ImportProbes, ImportWaitManager, PostImportCleanup
 from pearlarr.manual_import import (
     GuardFacts,
     ImportProbe,
@@ -41,6 +41,7 @@ from pearlarr.manual_import import (
 from pearlarr.mappings import MappingResolver, MappingSources
 from pearlarr.notify import Notifier
 from pearlarr.output import SeverityCounts, emit_to_hub
+from pearlarr.pending_records import PendingRecords
 from pearlarr.planner import DownloadPlanner, PlanResult, PrivateOnlySkips
 from pearlarr.radarr_client import AbstractRadarrClient
 from pearlarr.reporter import RunContext, RunReporter
@@ -748,31 +749,60 @@ def make_grab_pipeline(**overrides: Any) -> GrabPipeline:
         "_ctx": RunContext(arr=Arr.SONARR, import_wait_mode=ImportWaitMode.BLOCKING),
     }
     defaults.update(overrides)
+    # The record seam binds the FINAL store + ctx, exactly as the real ctor + begin_run do.
+    records = PendingRecords(defaults["cache_store"])
+    records.begin_run(defaults["_ctx"])
+    defaults["_records"] = records
     return make_bare_instance(GrabPipeline, **defaults)
 
 
 def make_import_wait_manager(**overrides: Any) -> ImportWaitManager:
-    """A bare `ImportWaitManager` carrying only what its methods read, config keys routed through `AppConfig`."""
+    """A bare `ImportWaitManager` over real sub-objects, config keys routed through `AppConfig`.
 
-    config = _split_config(overrides)
-    logger = make_logger()
+    Constructs the records/probes/cleanup seams on the SAME store and ends with
+    `begin_run`, so every sub-object shares the one ctx (and strategy) a run would.
+    """
+
+    config = overrides.pop("config", None) or _split_config(overrides)
+    logger = overrides.pop("logger", None) or make_logger()
     cache_store = overrides.pop("cache_store", None) or FakeCacheStore()
-    defaults: dict[str, Any] = {
-        "_config": config,
-        # A fetchless resolver (`RunDeps.categories`): the config category passes through, the
-        # arr-client fallback being an `ArrCategoryResolver` concern.
-        "_categories": make_categories(config),
-        "cache_store": cache_store,
-        "_reporter": _real_reporter(logger, cache_store, httpx.Client()),
-        "logger": logger,
-        "qbit": None,
-        "_clock": FakeClock(),
-        "_ctx": RunContext(arr=Arr.SONARR),
-        # The production placeholder before a run binds one. Tests driving the import hook pass their own.
-        "_active_strategy": None,
-    }
-    defaults.update(overrides)
-    return make_bare_instance(ImportWaitManager, **defaults)
+    qbit = overrides.pop("qbit", None)
+    clock = overrides.pop("clock", None) or FakeClock()
+    # A fetchless resolver (`RunDeps.categories`): the config category passes through, the
+    # arr-client fallback being an `ArrCategoryResolver` concern.
+    categories = overrides.pop("categories", None) or make_categories(config)
+    # The production placeholder before a run binds one. Tests driving the import hook pass their own.
+    strategy = overrides.pop("strategy", None)
+    ctx = overrides.pop("ctx", None) or RunContext(arr=Arr.SONARR)
+    reporter = overrides.pop("reporter", None) or _real_reporter(logger, cache_store, httpx.Client())
+    if overrides:
+        msg = f"unknown make_import_wait_manager overrides: {sorted(overrides)}"
+        raise TypeError(msg)
+
+    records = PendingRecords(cache_store)
+    probes = make_bare_instance(ImportProbes, _qbit=qbit, _logger=logger, _strategy=None)
+    cleanup = make_bare_instance(
+        PostImportCleanup,
+        _imports=config.imports,
+        _categories=categories,
+        _qbit=qbit,
+        _clock=clock,
+        _logger=logger,
+        _records=records,
+        _probes=probes,
+    )
+    mgr = make_bare_instance(
+        ImportWaitManager,
+        imports=config.imports,
+        clock=clock,
+        logger=logger,
+        _reporter=reporter,
+        _records=records,
+        probes=probes,
+        _cleanup=cleanup,
+    )
+    mgr.begin_run(ctx, strategy)
+    return mgr
 
 
 def make_planner(**overrides: Any) -> DownloadPlanner:

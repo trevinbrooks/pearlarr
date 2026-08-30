@@ -298,7 +298,7 @@ class TestCompleteBlocksSelfClose:
 
     def test_pending_snapshot_emits_scope_closed_before_returning(self) -> None:
         reporter, events = _record()
-        assert reporter.log_pending_snapshot(
+        reporter.log_pending_snapshot(
             PendingState.IMPORTED,
             pending_import(title="My Show", coverage="S01 E01-E13", url="https://releases.moe/1"),
         )
@@ -412,30 +412,29 @@ class TestPendingSnapshot:
     """log_pending_snapshot renders the inline carried-over row + bumps NO counter."""
 
     def test_renders_and_bumps_no_counter(self) -> None:
-        reporter = _make_reporter()
+        reporter, events = _record()
         ctx = RunContext(arr=Arr.SONARR)
 
-        rendered = reporter.log_pending_snapshot(
+        reporter.log_pending_snapshot(
             PendingState.IMPORTED,
             pending_import(title="My Show", coverage="S01 E01-E13", url="https://releases.moe/1"),
         )
 
-        assert rendered is True
+        assert any(isinstance(e, EntryHeader) for e in events)
         # The reporter never touches the counters - the engine owns drop/count.
         assert ctx.stats.imported == 0
         assert ctx.stats.queued == 0
         assert ctx.stats.downloaded == 0
 
     def test_missing_state_renders_nothing(self) -> None:
-        reporter = _make_reporter()
+        reporter, events = _record()
 
-        assert (
-            reporter.log_pending_snapshot(
-                PendingState.MISSING,
-                pending_import(title="Gone"),
-            )
-            is False
+        reporter.log_pending_snapshot(
+            PendingState.MISSING,
+            pending_import(title="Gone"),
         )
+
+        assert events == []
 
 
 class TestSummaryPendingCounters:
