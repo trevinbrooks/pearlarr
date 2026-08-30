@@ -539,35 +539,53 @@ def make_categories(
     arr: Arr = Arr.SONARR,
     *,
     http: ArrHttp | None = None,
-    fetched: tuple[str | None, str | None] | None = None,
 ) -> ArrCategoryResolver:
     """A category resolver, fetchless by default (no transport: config values pass through, omitted stays blank).
 
-    `http` binds a real transport. `fetched` seeds the memoized (grab, post-import)
-    client pair, as if the run's one fetch already succeeded.
+    `http` binds a real transport for the live-fetch mode.
     """
 
     config = config or AppConfig()
-    resolver = ArrCategoryResolver(arr, config.for_arr(arr), http)
-    if fetched is not None:
-        resolver._fetched = _CategoryPair(*fetched)
+    return ArrCategoryResolver(arr, config.for_arr(arr), http)
+
+
+def make_fetched_categories(
+    config: AppConfig | None = None,
+    arr: Arr = Arr.SONARR,
+    *,
+    grab: str | None,
+    post_import: str | None,
+) -> ArrCategoryResolver:
+    """A resolver seeded as if its one live fetch already returned `(grab, post_import)`.
+
+    Pokes the resolver's private `_fetched` state directly, as no test builds a transport for this mode.
+    """
+
+    config = config or AppConfig()
+    resolver = ArrCategoryResolver(arr, config.for_arr(arr), None)
+    resolver._fetched = _CategoryPair(grab, post_import)
     return resolver
 
 
-def download_client_json(fields: Iterable[object], **overrides: object) -> dict[str, object]:
+def download_client_json(
+    fields: Iterable[object],
+    *,
+    enable: object = True,
+    implementation: object = "QBittorrent",
+    priority: object = 1,
+) -> dict[str, object]:
     """One realistic enabled-qBittorrent `DownloadClientResource` body carrying `fields` (junk allowed)."""
 
     return {
-        "enable": True,
+        "enable": enable,
         "protocol": "torrent",
-        "priority": 1,
+        "priority": priority,
         "name": "qBittorrent",
         "fields": list(fields),
         "implementationName": "qBittorrent",
-        "implementation": "QBittorrent",
+        "implementation": implementation,
         "configContract": "QBittorrentSettings",
         "id": 1,
-        **overrides,
     }
 
 
