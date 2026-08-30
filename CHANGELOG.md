@@ -7,6 +7,8 @@ Pearlarr is a fork of [bbtufty/seadexarr](https://github.com/bbtufty/seadexarr).
 
 ## [Unreleased]
 
+## [1.2.0] - 2026-08-30
+
 ### Upgrade notes
 
 - **Config files are now migrated on disk automatically.** The first run rewrites an old-schema `config.yml` at the current layout, keeping the previous file as `config.yml.bak`. The rewrite regenerates the file from the annotated template with your values filled in: hand-written comments are not carried over and survive only in `config.yml.bak` - until a later schema migration overwrites that backup in turn. A dry run never rewrites.
