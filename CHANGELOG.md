@@ -30,6 +30,8 @@ Pearlarr is a fork of [bbtufty/seadexarr](https://github.com/bbtufty/seadexarr).
 - A Sonarr queue outage during the wait no longer risks a mistimed manual import. A failed queue read now retries on later polls and defers the download at the deadline.
 - A torrent re-added to qBittorrent no longer resets its pending-import age on every run, so stale pending records expire on schedule (`imports.pending_max_age_days`).
 - A queue entry Sonarr already dismissed no longer draws a removal warning. It now counts quietly as done.
+- A deferred post-import cleanup now re-verifies the import before touching the torrent or the queue. If the imported files vanished since the import was verified, the download is re-imported instead of cleaned up; only a torrent gone from qBittorrent is still cleaned up unverified.
+- A transient category lookup failure during cleanup can no longer drop a download's record with both the category move and the queue removal silently skipped. Both effects now share one lookup.
 
 ## [1.1.0] - 2026-07-29
 

@@ -21,14 +21,16 @@ the contracts are pinned by recorded state.
 
 import logging
 from collections.abc import Callable
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from datetime import datetime, timedelta
 from typing import Any, override
 
+import httpx
 import pytest
 import qbittorrentapi
+import respx
 
-from pearlarr.arr_categories import _CategoryPair
+from pearlarr.arr_categories import ArrCategoryResolver, _CategoryPair
 from pearlarr.cache import UPDATED_AT_STR_FORMAT
 from pearlarr.config import Arr
 from pearlarr.grab_pipeline import GrabPipeline
@@ -82,6 +84,7 @@ from .fakes import (
     FakeClock,
     FakeRadarrClient,
     FakeStrategy,
+    bind_arr_http,
     diagnostic_messages,
     install_recording_hub,
 )
@@ -2481,7 +2484,7 @@ class TestPostImportCategory:
             post_import_category="pearlarr-done",
         )
         recording = install_recording_hub()
-        mgr.apply_post_import_category(pending_import(infohash="h"))  # must not raise
+        mgr.apply_post_import_category(pending_import(infohash="h"), "pearlarr-done")  # must not raise
 
         assert recording.of_type(Diagnostic) == []
 
@@ -2891,6 +2894,76 @@ class TestRetireEffectOrder:
         assert mgr._pending_records() == {}
 
 
+_ARR_URL = "http://arr.test"
+
+
+def _untracking_client_json() -> list[dict[str, object]]:
+    """One enabled qBittorrent client whose post-import category untracks the grab category."""
+
+    return [
+        {
+            "enable": True,
+            "protocol": "torrent",
+            "priority": 1,
+            "name": "qBittorrent",
+            "fields": [
+                {"name": "tvCategory", "value": "tv-sonarr"},
+                {"name": "tvImportedCategory", "value": "sonarr-done"},
+            ],
+            "implementationName": "qBittorrent",
+            "implementation": "QBittorrent",
+            "configContract": "QBittorrentSettings",
+            "id": 1,
+        },
+    ]
+
+
+class TestRetireCategoryResolve:
+    """retire_imported resolves the post-import category exactly once, feeding both effects."""
+
+    @respx.mock
+    def test_transient_fetch_failure_resolves_once_and_the_close_still_runs(self) -> None:
+        # The old shape resolved per effect: the move's failed fetch SKIPPED on
+        # no category while the close's second, successful resolve SKIPPED on
+        # move_untracks, dropping the record with neither effect done. One
+        # resolve now feeds both: the move skips, the close runs its explicit
+        # delete, and the fetch fires exactly once.
+        route = respx.get(f"{_ARR_URL}/api/v3/downloadclient").mock(
+            side_effect=[httpx.Response(500), httpx.Response(200, json=_untracking_client_json())],
+        )
+        strategy = _RecordingStrategy()
+        record = pending_import(infohash="h", added_at=_FRESH)
+        qbit = CategoryQbit({"h": [FakeTorrent(is_complete=True, content_path="/d")]})
+        mgr = make_orchestration_manager(qbit=qbit, strategy=strategy, store_records=[record])
+        http, _ = bind_arr_http(_ARR_URL)
+        mgr._categories = ArrCategoryResolver(Arr.SONARR, mgr._config.for_arr(Arr.SONARR), replace(http, retries=0))
+
+        assert mgr.retire_imported(record) is True
+
+        assert route.call_count == 1
+        assert qbit.set_category_calls == []
+        assert [c.key for c in strategy.close_calls] == [pk("h")]
+        assert mgr._pending_records() == {}
+
+    def test_no_client_with_a_configured_category_still_runs_the_explicit_close(self) -> None:
+        # qbit None resolves NO category at all: a configured untracking category
+        # must not make the close skip on move_untracks when no move can run.
+        strategy = _RecordingStrategy()
+        record = pending_import(infohash="h", added_at=_FRESH)
+        mgr = make_orchestration_manager(
+            qbit=None,
+            strategy=strategy,
+            store_records=[record],
+            torrent_category="tv-sonarr",
+            post_import_category="sonarr-done",
+        )
+
+        assert mgr.retire_imported(record) is True
+
+        assert [c.key for c in strategy.close_calls] == [pk("h")]
+        assert mgr._pending_records() == {}
+
+
 class TestCloseSkipWhenMoveUntracks:
     """An untracking category move supersedes the explicit queue removal.
 
@@ -3180,13 +3253,13 @@ class TestCleanupHeal:
 
     def test_heal_with_a_new_same_hash_sibling_skips_the_move_and_drops(self) -> None:
         # A later-run re-grab claims the hash: the new sibling owns the eventual
-        # move, so the healed record just drops.
+        # move, so the verified-again healed record just drops.
         flagged = pending_import(infohash="h", al_id=11, series_id=7, added_at=_FRESH, awaiting_cleanup=True)
         newer = pending_import(infohash="h", al_id=22, series_id=7, added_at=_FRESH)
         qbit = CategoryQbit({"h": [FakeTorrent(is_complete=True, content_path="/d")]})
         mgr = make_orchestration_manager(
             qbit=qbit,
-            strategy=_RecordingStrategy(),
+            strategy=_RecordingStrategy(completed=import_probe(ImportReadiness.IMPORTED, files_present=True)),
             store_records=[flagged, newer],
             post_import_category="pearlarr-done",
         )
@@ -3236,6 +3309,152 @@ class TestCleanupHeal:
         assert heal._ctx.pending_states == {}
         assert (heal._ctx.stats.queued, heal._ctx.stats.downloaded) == (0, 0)
         assert heal._ctx.stats.imported == 0
+
+
+class TestCleanupHealVerification:
+    """The heal re-verifies through the standard import check before any effect fires."""
+
+    @staticmethod
+    def _flagged_manager(
+        strategy: _RecordingStrategy,
+        *,
+        qbit: FakeQbit | None = None,
+        post_import_category: str | None = None,
+    ) -> ImportWaitManager:
+        """One flagged store record, its torrent complete unless `qbit` scripts otherwise."""
+
+        return make_orchestration_manager(
+            qbit=qbit if qbit is not None else FakeQbit({"h": [FakeTorrent(is_complete=True, content_path="/d")]}),
+            strategy=strategy,
+            store_records=[pending_import(infohash="h", series_id=7, added_at=_FRESH, awaiting_cleanup=True)],
+            post_import_category=post_import_category,
+        )
+
+    def test_verified_files_run_the_effects_at_deadline(self) -> None:
+        # Fresh evidence first: ONE probe through the same check as any pending
+        # import, at DEADLINE, then both effects fire and the record drops.
+        recording = install_recording_hub()
+        strategy = _RecordingStrategy(completed=import_probe(ImportReadiness.IMPORTED, files_present=True))
+        qbit = CategoryQbit({"h": [FakeTorrent(is_complete=True, content_path="/d")]})
+        mgr = self._flagged_manager(strategy, qbit=qbit, post_import_category="pearlarr-done")
+
+        mgr.retry_cleanup_records()
+
+        assert [c.attempt for c in strategy.import_calls] == [AttemptKind.DEADLINE]
+        assert qbit.set_category_calls == [("pearlarr-done", "h")]
+        assert [c.key for c in strategy.close_calls] == [pk("h")]
+        assert mgr._pending_records() == {}
+        assert any(
+            "Completed the deferred post-import cleanup" in m for m in diagnostic_messages(recording, Severity.INFO)
+        )
+
+    def test_unobserved_qbittorrent_holds_the_flag_without_effects(self) -> None:
+        strategy = _RecordingStrategy()
+        mgr = self._flagged_manager(
+            strategy,
+            qbit=FakeQbit({"h": [qbittorrentapi.APIConnectionError("down")]}),
+        )
+
+        mgr.retry_cleanup_records()
+
+        assert strategy.import_calls == []
+        assert strategy.close_calls == []
+        assert mgr.cache_store.get_pending(Arr.SONARR)[pk("h")].get("awaiting_cleanup") is True
+        assert mgr._ctx.pending_states[pk("h")] is PendingState.CLEANUP
+
+    def test_transient_retry_probe_holds_the_flag(self) -> None:
+        # RETRY with no command is ambiguous (a blip, a busy queue): hold and
+        # retry next run, bounded by the pending TTL.
+        strategy = _RecordingStrategy(completed=import_probe(ImportReadiness.RETRY, files_present=False))
+        mgr = self._flagged_manager(strategy)
+
+        mgr.retry_cleanup_records()
+
+        assert strategy.close_calls == []
+        assert mgr.cache_store.get_pending(Arr.SONARR)[pk("h")].get("awaiting_cleanup") is True
+        assert mgr._ctx.pending_states[pk("h")] is PendingState.CLEANUP
+
+    def test_files_gone_and_reimport_issued_demotes_to_pending(self) -> None:
+        # The files vanished and a fresh re-import command just went in: the
+        # record demotes to an ordinary carryover, no effect fires, and this
+        # same run's end pass picks it up.
+        recording = install_recording_hub()
+        strategy = _RecordingStrategy(
+            completed=import_probe(ImportReadiness.RETRY, files_present=False, command_issued=True),
+        )
+        qbit = CategoryQbit({"h": [FakeTorrent(is_complete=True, content_path="/d")]})
+        mgr = self._flagged_manager(strategy, qbit=qbit, post_import_category="pearlarr-done")
+
+        mgr.retry_cleanup_records()
+
+        assert qbit.set_category_calls == []
+        assert strategy.close_calls == []
+        assert mgr.cache_store.get_pending(Arr.SONARR)[pk("h")].get("awaiting_cleanup") is False
+        assert mgr._ctx.pending_states[pk("h")] is PendingState.DOWNLOADED
+        [warn] = diagnostic_messages(recording, Severity.WARNING)
+        assert "no longer present" in warn
+
+        result = mgr.check_once(view=RecordingWaitView())
+
+        assert result is not None
+        assert [(row.outcome, row.carried_over) for row in result.rows] == [(Outcome.IMPORT_IN_PROGRESS, True)]
+
+    def test_preowned_all_done_probe_retires_without_reimporting(self) -> None:
+        # The on-disk pick moved to another trusted group: the shared statuses
+        # machinery reports all-done with NO command issued, so the heal cleans
+        # up and never imports the old file over the new one (and never demotes).
+        recording = install_recording_hub()
+        strategy = _RecordingStrategy(
+            completed=import_probe(ImportReadiness.IMPORTED, files_present=True, command_issued=False),
+        )
+        mgr = self._flagged_manager(strategy)
+
+        mgr.retry_cleanup_records()
+
+        assert len(strategy.import_calls) == 1
+        assert mgr._pending_records() == {}
+        assert diagnostic_messages(recording, Severity.WARNING) == []
+
+    def test_own_command_in_flight_holds_without_a_false_demote(self) -> None:
+        # An OWN import command from an earlier pass is still running: files may
+        # be fine, so no demote and no "files no longer present" warn.
+        recording = install_recording_hub()
+        strategy = _RecordingStrategy(
+            completed=import_probe(ImportReadiness.RETRY, files_present=False, command_issued=True, deferred=True),
+        )
+        mgr = self._flagged_manager(strategy)
+
+        mgr.retry_cleanup_records()
+
+        assert strategy.close_calls == []
+        assert mgr.cache_store.get_pending(Arr.SONARR)[pk("h")].get("awaiting_cleanup") is True
+        assert mgr._ctx.pending_states[pk("h")] is PendingState.CLEANUP
+        assert diagnostic_messages(recording, Severity.WARNING) == []
+
+    def test_deadline_probe_steps_past_a_clean_pending_entry(self) -> None:
+        # A clean importPending holds every POLL attempt (the strategy defers to
+        # Sonarr), so a POLL heal would wedge until the TTL. The DEADLINE
+        # attempt steps in, verifies, and retires.
+        class _AttemptGatedStrategy(_RecordingStrategy):
+            @override
+            def import_completed(
+                self,
+                pending: PendingImport,
+                content_path: str,
+                attempt: AttemptKind,
+            ) -> ImportProbe:
+                super().import_completed(pending, content_path, attempt)
+                if attempt.at_deadline:
+                    return import_probe(ImportReadiness.IMPORTED, files_present=True)
+                return import_probe(ImportReadiness.RETRY, files_present=False)
+
+        strategy = _AttemptGatedStrategy()
+        mgr = self._flagged_manager(strategy)
+
+        mgr.retry_cleanup_records()
+
+        assert [c.attempt for c in strategy.import_calls] == [AttemptKind.DEADLINE]
+        assert mgr._pending_records() == {}
 
 
 class TestRadarrReconcile:
@@ -3290,6 +3509,37 @@ class TestRadarrReconcile:
         mgr.check_once(view=RecordingWaitView())
 
         assert set(mgr._pending_records()) == {pk("h")}
+        assert qbit.set_category_calls == []
+
+    def test_flagged_record_heals_off_a_history_event(self) -> None:
+        # The heal verifies a Radarr record the way a carryover checks out:
+        # through import history. A matching event retires it with its effects.
+        qbit = CategoryQbit({"h": [FakeTorrent(is_complete=True, content_path="/d")]})
+        mgr, _ = _radarr_reconcile_manager(
+            qbit=qbit,
+            history=[_movie_import("h")],
+            radarr_records=[pending_import(infohash="h", series_id=0, added_at=_FRESH, awaiting_cleanup=True)],
+            post_import_category="pearlarr-done",
+        )
+
+        mgr.retry_cleanup_records()
+
+        assert mgr._pending_records() == {}
+        assert qbit.set_category_calls == [("pearlarr-done", "h")]
+
+    def test_flagged_record_holds_on_an_unreadable_history(self) -> None:
+        # No evidence, no effects: a Radarr outage holds the flag for a later run.
+        qbit = CategoryQbit({"h": [FakeTorrent(is_complete=True, content_path="/d")]})
+        mgr, store = _radarr_reconcile_manager(
+            qbit=qbit,
+            history=None,
+            radarr_records=[pending_import(infohash="h", series_id=0, added_at=_FRESH, awaiting_cleanup=True)],
+            post_import_category="pearlarr-done",
+        )
+
+        mgr.retry_cleanup_records()
+
+        assert store.get_pending(Arr.RADARR)[pk("h")].get("awaiting_cleanup") is True
         assert qbit.set_category_calls == []
 
     def test_ttl_expiry_of_a_radarr_record_releases_the_gate(self) -> None:
