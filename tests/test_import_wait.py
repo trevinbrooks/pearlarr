@@ -30,7 +30,6 @@ import pytest
 import qbittorrentapi
 import respx
 
-from pearlarr.arr_categories import PostImportMove
 from pearlarr.cache import UPDATED_AT_STR_FORMAT
 from pearlarr.config import Arr
 from pearlarr.grab_pipeline import GrabPipeline
@@ -2473,8 +2472,7 @@ class TestPostImportCategory:
             post_import_category="pearlarr-done",
         )
         recording = install_recording_hub()
-        move = PostImportMove("pearlarr-done", untracks=False)
-        mgr.apply_post_import_category(pending_import(infohash="h"), move)  # must not raise
+        mgr.apply_post_import_category(pending_import(infohash="h"), "pearlarr-done")  # must not raise
 
         assert recording.of_type(Diagnostic) == []
 
@@ -2888,19 +2886,13 @@ _ARR_URL = "http://arr.test"
 
 
 class TestRetireCategoryResolve:
-    """retire_imported resolves the post-import category exactly once, feeding both effects."""
+    """retire_imported resolves the post-import category at most once, feeding both effects."""
 
     @respx.mock
     def test_transient_fetch_failure_resolves_once_and_the_close_still_runs(self) -> None:
-        # The old shape resolved per effect: the move's failed fetch SKIPPED on
-        # no category while the close's second, successful resolve SKIPPED on
-        # move_untracks, dropping the record with neither effect done. One
-        # resolve now feeds both: the move skips, the close runs its explicit
-        # delete, and the fetch fires exactly once.
-        # The untracking client body: the post-import category leaves the watched grab category.
-        route = respx.get(f"{_ARR_URL}/api/v3/downloadclient").mock(
-            side_effect=[httpx.Response(500), httpx.Response(200, json=[download_client_json(sonarr_client_fields())])],
-        )
+        # The failed fetch resolves no category: the move skips and the close's untrack
+        # gate short-circuits on the absent category, so the delete runs off ONE fetch.
+        route = respx.get(f"{_ARR_URL}/api/v3/downloadclient").mock(side_effect=[httpx.Response(500)])
         strategy = _RecordingStrategy()
         record = pending_import(infohash="h", added_at=_FRESH)
         qbit = CategoryQbit({"h": [FakeTorrent(is_complete=True, content_path="/d")]})
@@ -2931,6 +2923,32 @@ class TestRetireCategoryResolve:
         assert mgr.retire_imported(record) is True
 
         assert [c.key for c in strategy.close_calls] == [pk("h")]
+        assert mgr._pending_records() == {}
+
+    @respx.mock
+    def test_explicit_categories_and_no_queue_removal_never_fetch_the_client(self) -> None:
+        # Both categories explicit and the removal off: no gate may reach the client,
+        # or every retire pays a live fetch (and warns on a failing one).
+        route = respx.get(f"{_ARR_URL}/api/v3/downloadclient").respond(
+            json=[download_client_json(sonarr_client_fields("tv-sonarr", "sonarr-done"))],
+        )
+        record = pending_import(infohash="h", added_at=_FRESH)
+        qbit = CategoryQbit({"h": [FakeTorrent(is_complete=True, content_path="/d")]})
+        mgr = make_orchestration_manager(
+            qbit=qbit,
+            strategy=_RecordingStrategy(),
+            store_records=[record],
+            torrent_category="tv-sonarr",
+            post_import_category="sonarr-done",
+            remove_from_queue=False,
+        )
+        http, _ = bind_arr_http(_ARR_URL)
+        mgr._categories = make_categories(mgr._config, http=http)
+
+        assert mgr.retire_imported(record) is True
+
+        assert route.call_count == 0
+        assert qbit.set_category_calls == [("sonarr-done", "h")]
         assert mgr._pending_records() == {}
 
 

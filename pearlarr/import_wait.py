@@ -5,7 +5,6 @@ from dataclasses import dataclass, field, replace
 
 import qbittorrentapi
 
-from .arr_categories import NO_MOVE, PostImportMove
 from .cache import PendingRef, parse_stamp, pending_cutoff
 from .clock import Clock
 from .log import count_noun
@@ -163,20 +162,24 @@ class ImportWaitManager:
         `awaiting_cleanup`) instead, so the next run finishes the cleanup.
         """
 
-        # No client resolves NO move: a configured untracking category must not skip the close then.
-        move = self._categories.post_import_move() if self.qbit is not None else NO_MOVE
-        statuses = {
-            CleanupEffect.CATEGORY_MOVE: self.apply_post_import_category(pending, move),
-            CleanupEffect.QUEUE_REMOVAL: self.close_tracked_download(pending, move),
-        }
-        failed = [effect for effect, status in statuses.items() if status is EffectStatus.FAILED]
+        # No client resolves NO category: a configured untracking one must not skip the close then.
+        category = self._categories.post_import() if self.qbit is not None else None
+        # The pair tuple builds first, so the effects run in source order (move, then close).
+        failed = tuple(
+            effect
+            for effect, status in (
+                (CleanupEffect.CATEGORY_MOVE, self.apply_post_import_category(pending, category)),
+                (CleanupEffect.QUEUE_REMOVAL, self.close_tracked_download(pending, category)),
+            )
+            if status is EffectStatus.FAILED
+        )
         if failed:
             self._keep_for_cleanup(pending, failed)
             return False
         self.drop_pending(pending)
         return True
 
-    def _keep_for_cleanup(self, pending: PendingImport, failed: list[CleanupEffect]) -> None:
+    def _keep_for_cleanup(self, pending: PendingImport, failed: tuple[CleanupEffect, ...]) -> None:
         """Keep a record whose import verified but whose `failed` effects have not finished.
 
         The round-trip preserves `added_at`, so the TTL still bounds a never-healing record.
@@ -186,7 +189,8 @@ class ImportWaitManager:
         self.save_pending(kept)
         self._ctx.cleanup_kept_keys.add(kept.key)
         hub_warn(
-            f"Could not finish the post-import cleanup for {pending.display_label} ({' and '.join(failed)}) - "
+            f"Could not finish the post-import cleanup for {pending.display_label} "
+            f"({' and '.join(effect.value for effect in failed)}) - "
             "keeping its record to retry next run"
         )
 
@@ -431,11 +435,11 @@ class ImportWaitManager:
         self.cache_store.put_pending(self._ctx.arr, pending.key, pending.to_json())
         self._ctx.pending_imports = [pending if p.key == pending.key else p for p in self._ctx.pending_imports]
 
-    def close_tracked_download(self, pending: PendingImport, move: PostImportMove) -> EffectStatus:
+    def close_tracked_download(self, pending: PendingImport, moved_to: str | None) -> EffectStatus:
         """Dismiss Sonarr's leftover queue entry once `pending`'s torrent is fully imported.
 
         Per-arr sibling gate (the category gate's is cross-arr), import-only: a TTL or MISSING drop closes nothing.
-        Skipped outright whenever the post-import move untracks the torrent, whatever this run's
+        Skipped outright whenever the post-import move to `moved_to` untracks the torrent, whatever this run's
         move outcome: the entry then clears on its own, without the permanent
         "download ignored" history marker an explicit delete writes.
         """
@@ -443,7 +447,7 @@ class ImportWaitManager:
         strategy = self._active_strategy
         if not self._config.imports.remove_from_queue or strategy is None:
             return EffectStatus.SKIPPED
-        if move.untracks:
+        if moved_to and self._categories.move_untracks(moved_to):
             self.logger.debug(
                 f"{pending.display_label}: the category move clears the queue entry on its own - "
                 "skipping the explicit removal",
@@ -461,15 +465,14 @@ class ImportWaitManager:
         # Each retry re-runs the whole close: the fresh queue read self-corrects an entry cleared meanwhile.
         return self._retry_effect(lambda: strategy.close_tracked(pending))
 
-    def apply_post_import_category(self, pending: PendingImport, move: PostImportMove) -> EffectStatus:
-        """Move a verified-imported torrent to the resolved category.
+    def apply_post_import_category(self, pending: PendingImport, category: str | None) -> EffectStatus:
+        """Move a verified-imported torrent to `category` (the retire's one resolve).
 
         Gated on no OTHER record in either arr claiming the hash (the retiring record is still
         resident under drop-last). Creates the category (qBittorrent 409s an unknown one).
         """
 
         qbit = self.qbit
-        category = move.category
         if qbit is None or category is None:
             return EffectStatus.SKIPPED
         remaining = self.cache_store.count_pending_for_infohash(
