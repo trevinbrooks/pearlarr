@@ -20,7 +20,7 @@ import httpx
 import pytest
 import respx
 
-from pearlarr.arr_http import GET_RETRIES, ArrHttp
+from pearlarr.arr_http import GET_RETRIES, ArrHttp, DeleteOutcome
 from pearlarr.manual_import import PendingImport
 from pearlarr.output import Severity
 from pearlarr.seadex_types import (
@@ -254,7 +254,7 @@ def test_queue_delete_builds_request() -> None:
     route = respx.delete(f"{_BASE}/queue/1516314797").respond(json={})
     client = _make_client()
 
-    assert client.queue_delete(1516314797) is True
+    assert client.queue_delete(1516314797) is DeleteOutcome.OK
     request = route.calls.last.request
     url = str(request.url)
     assert "removeFromClient=false" in url
@@ -264,16 +264,27 @@ def test_queue_delete_builds_request() -> None:
 
 @respx.mock
 def test_queue_delete_non_200_fails_open() -> None:
-    """A failed delete warns and returns False - the close is best-effort, never a crash."""
+    """A failed delete warns and returns FAILED - the close is best-effort, never a crash."""
 
     respx.delete(f"{_BASE}/queue/7").respond(status_code=500)
-    assert _make_client().queue_delete(7) is False
+    assert _make_client().queue_delete(7) is DeleteOutcome.FAILED
 
 
 @respx.mock
 def test_queue_delete_request_error_fails_open() -> None:
     respx.delete(f"{_BASE}/queue/7").mock(side_effect=httpx.ConnectError("boom"))
-    assert _make_client().queue_delete(7) is False
+    assert _make_client().queue_delete(7) is DeleteOutcome.FAILED
+
+
+@respx.mock
+def test_queue_delete_404_is_gone_and_quiet() -> None:
+    """An already-dismissed entry reads GONE with zero diagnostics (the goal is met, not a failure)."""
+
+    recording = install_recording_hub()
+    respx.delete(f"{_BASE}/queue/7").respond(status_code=404)
+
+    assert _make_client().queue_delete(7) is DeleteOutcome.GONE
+    assert diagnostic_messages(recording) == []
 
 
 # --- episodes() -------------------------------------------------------------

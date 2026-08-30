@@ -13,6 +13,7 @@ from .grab_pipeline import GrabRequest
 from .log import EntryState, pluralize
 from .manual_import import (
     AttemptKind,
+    EffectStatus,
     ImportProbe,
     ImportProgress,
     ImportWaitMode,
@@ -516,10 +517,10 @@ class SonarrSync(ArrSync[SonarrItem]):
         return self._reconciler.import_progress(pending)
 
     @override
-    def close_tracked(self, pending: PendingImport) -> None:
+    def close_tracked(self, pending: PendingImport) -> EffectStatus:
         """Dismiss the torrent's leftover Sonarr queue entry (see `ImportExecutor.close_tracked`)."""
 
-        self._executor.close_tracked(pending)
+        return self._executor.close_tracked(pending)
 
     @property
     @override

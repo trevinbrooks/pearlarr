@@ -991,6 +991,7 @@ class TestPendingImportRoundTrip:
             slice_coverage="S02 E01-E02",
             excluded_files=["other-slice.mkv"],
             guards=GuardFacts(entry_groups=("Era-Raws", "OtherPick"), owned_episodes=(OwnedEpisode(11, 700),)),
+            awaiting_cleanup=True,
         )
         raw = pending.to_json()
         # Guard evidence is entry-level (its own guard_facts row): the per-torrent
@@ -1016,6 +1017,8 @@ class TestPendingImportRoundTrip:
         assert rebuilt.excluded_files == []
         # Pre-guards records guard on grabbed groups alone.
         assert rebuilt.guards == GuardFacts()
+        # A legacy record predates the cleanup flag: nothing is owed.
+        assert rebuilt.awaiting_cleanup is False
         # A legacy record with no al_id rehydrates under the 0 sentinel and keys
         # as its hash's singleton.
         assert rebuilt.al_id == 0
@@ -1101,6 +1104,7 @@ class TestPendingStateAndProbe:
             "IMPORTED",
             "ERRORED",
             "MISSING",
+            "CLEANUP",
         }
 
     def test_pending_state_is_its_string(self) -> None:

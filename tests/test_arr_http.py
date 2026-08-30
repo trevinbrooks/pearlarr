@@ -32,6 +32,7 @@ from pearlarr.arr_http import (
     ArrAuthError,
     ArrConnectionError,
     ArrHttp,
+    DeleteOutcome,
     make_httpx_client,
 )
 from pearlarr.log import LOG_NAME
@@ -415,6 +416,47 @@ def test_post_json_non_json_body_fails_open() -> None:
 
     assert http.post_json("/api/v3/command", json={"name": "X"}, warn="cmd ({detail})") is None
     assert _one_warning(recording).message == "cmd (non-JSON body)"
+
+
+# --- delete() ----------------------------------------------------------------
+
+
+@respx.mock
+def test_delete_404_is_gone_and_quiet() -> None:
+    """A 404 means the target already left: GONE with zero diagnostics, not the failure warning."""
+
+    respx.delete(f"{_URL}/api/v3/queue/7").respond(status_code=404)
+    http, recording = _bind()
+
+    assert http.delete("/api/v3/queue/7", warn="rm ({detail})") is DeleteOutcome.GONE
+    assert recording.of_type(Diagnostic) == []
+
+
+@respx.mock
+def test_delete_404_after_a_failure_closes_the_streak() -> None:
+    """GONE is a success for the ledger: it ends an open delete streak with the recovery note."""
+
+    route = respx.delete(f"{_URL}/api/v3/queue/7")
+    route.side_effect = [httpx.Response(500), httpx.Response(404)]
+    http, recording = _bind()
+
+    assert http.delete("/api/v3/queue/7", warn="rm ({detail})") is DeleteOutcome.FAILED
+    assert http.delete("/api/v3/queue/7", warn="rm ({detail})") is DeleteOutcome.GONE
+    assert [(note.severity, note.message) for note in recording.of_type(Diagnostic)] == [
+        (Severity.WARNING, "rm (status code 500)"),
+        (Severity.INFO, "rm - recovered after 1 failure (0s)"),
+    ]
+    assert http.streaks.active == {}
+
+
+@respx.mock
+def test_delete_non_2xx_fails_with_one_warning() -> None:
+    route = respx.delete(f"{_URL}/api/v3/queue/7").respond(status_code=500)
+    http, recording = _bind()
+
+    assert http.delete("/api/v3/queue/7", warn="rm ({detail})") is DeleteOutcome.FAILED
+    assert route.call_count == 1  # one attempt, never retried
+    assert _one_warning(recording).message == "rm (status code 500)"
 
 
 # --- get_json_list_strict() (the fail-CLOSED library fetch) ------------------

@@ -7,7 +7,7 @@ from typing import cast, override
 
 from pydantic import BaseModel, ConfigDict, ValidationError
 
-from .arr_http import ArrHttp
+from .arr_http import ArrHttp, DeleteOutcome
 from .json_narrow import is_json_obj
 from .manual_import import PendingImport
 from .output import hub_warn
@@ -98,7 +98,7 @@ class AbstractSonarrClient(ABC):
     def queue(self) -> list[QueueRecord] | None: ...
 
     @abstractmethod
-    def queue_delete(self, queue_id: int) -> bool: ...
+    def queue_delete(self, queue_id: int) -> DeleteOutcome: ...
 
     @abstractmethod
     def quality_definitions(self) -> list[QualityDefinition]: ...
@@ -418,7 +418,7 @@ class SonarrClient(AbstractSonarrClient):
             page += 1
 
     @override
-    def queue_delete(self, queue_id: int) -> bool:
+    def queue_delete(self, queue_id: int) -> DeleteOutcome:
         """Dismiss one queue item (`DELETE /api/v3/queue/{id}`), and with it the whole tracked download.
 
         `removeFromClient=false` + `blocklist=false`: Sonarr durably marks the download manually ignored (never

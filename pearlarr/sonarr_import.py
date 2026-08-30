@@ -5,11 +5,13 @@ from dataclasses import dataclass, field, replace
 from typing import NamedTuple
 from urllib.parse import urlsplit
 
+from .arr_http import DeleteOutcome
 from .config import Arr
 from .log import count_noun, pluralize
 from .manual_import import (
     NO_PROGRESS,
     AttemptKind,
+    EffectStatus,
     ImportProbe,
     ImportProgress,
     ImportReadiness,
@@ -306,25 +308,32 @@ class ImportExecutor:
             record for record in queue if record.download_id is not None and record.download_id.casefold() == target
         ]
 
-    def close_tracked(self, pending: PendingImport) -> None:
+    def close_tracked(self, pending: PendingImport) -> EffectStatus:
         """Dismiss Sonarr's leftover queue entry, leaving an unknown-series one alone (dismissing it 500s)."""
 
         rows = self.queue_records(pending.infohash)
         if rows is None:
-            self.logger.debug(f"{pending.display_label}: queue read failed - leaving any leftover entry")
-            return
+            # The read already retried inside the transport, so no in-run RETRY.
+            self.logger.debug(f"{pending.display_label}: queue read failed - the cleanup will retry next run")
+            return EffectStatus.FAILED
         queue_id = next((row.id for row in rows if row.id and row.series_id), None)
         if queue_id is None:
             if any(row.id for row in rows):
                 self.logger.debug(f"{pending.display_label}: unknown-series queue entry - left for Sonarr to drop")
             else:
                 self.logger.debug(f"{pending.display_label}: no leftover Sonarr queue entry to close")
-            return
-        if self.sonarr.queue_delete(queue_id):
-            hub_note(f"Removed the imported download {pending.display_label} from Sonarr's queue")
-        else:
-            # The client's warning names no download (coalesced template). This one does.
-            self.logger.debug(f"{pending.display_label}: queue entry {queue_id} not removed")
+            return EffectStatus.SKIPPED
+        match self.sonarr.queue_delete(queue_id):
+            case DeleteOutcome.OK:
+                hub_note(f"Removed the imported download {pending.display_label} from Sonarr's queue")
+                return EffectStatus.DONE
+            case DeleteOutcome.GONE:
+                self.logger.debug(f"{pending.display_label}: queue entry {queue_id} already gone - nothing to remove")
+                return EffectStatus.DONE
+            case DeleteOutcome.FAILED:
+                # The client's warning names no download (coalesced template). This one does.
+                self.logger.debug(f"{pending.display_label}: queue entry {queue_id} not removed - will retry")
+                return EffectStatus.RETRY
 
     def list_commands(self) -> list[CommandResource]:
         """The current Sonarr command list, never cached (an in-flight command's status changes)."""

@@ -21,12 +21,14 @@ import pytest
 from seadex import EntryRecord
 
 from pearlarr import sonarr_import as sonarr_import_module
+from pearlarr.arr_http import DeleteOutcome
 from pearlarr.cache import CacheRecord
 from pearlarr.config import Arr
 from pearlarr.grab_pipeline import GrabRequest
 from pearlarr.log import EntryState
 from pearlarr.manual_import import (
     AttemptKind,
+    EffectStatus,
     GuardFacts,
     ImportProgress,
     ImportReadiness,
@@ -1250,8 +1252,7 @@ class TestCloseTracked:
             ],
         )
 
-        strat.close_tracked(pending)
-
+        assert strat.close_tracked(pending) is EffectStatus.DONE
         assert sonarr.queue_delete_calls == [11]
 
     def test_other_downloads_rows_are_not_touched(self) -> None:
@@ -1261,21 +1262,20 @@ class TestCloseTracked:
             queue=[queue_record("FFFF", "importPending", queue_id=9)],
         )
 
-        strat.close_tracked(pending)
-
+        assert strat.close_tracked(pending) is EffectStatus.SKIPPED
         assert sonarr.queue_delete_calls == []
 
     def test_unknown_series_rows_are_left_for_sonarr(self) -> None:
         # Dismissing an unknown-series entry 500s in Sonarr without recording
         # the ignore; the row drops once the torrent leaves the watched category.
+        # SKIPPED, never FAILED: an unknown-series entry can't strand the record.
         pending = pending_import(infohash="abc123")
         strat, sonarr = _make_sonarr_for_import(
             candidates=None,
             queue=[queue_record("ABC123", "importPending", status="warning", queue_id=11, series_id=0)],
         )
 
-        strat.close_tracked(pending)
-
+        assert strat.close_tracked(pending) is EffectStatus.SKIPPED
         assert sonarr.queue_delete_calls == []
 
     def test_already_clear_queue_is_a_no_op(self) -> None:
@@ -1283,18 +1283,17 @@ class TestCloseTracked:
         pending = pending_import(infohash="abc123")
         strat, sonarr = _make_sonarr_for_import(candidates=None)
 
-        strat.close_tracked(pending)
-
+        assert strat.close_tracked(pending) is EffectStatus.SKIPPED
         assert sonarr.queue_delete_calls == []
 
-    def test_queue_outage_leaves_the_queue_alone(self) -> None:
-        # A failed read is "nothing to close", never a guessed delete.
+    def test_queue_outage_fails_the_effect_without_a_guessed_delete(self) -> None:
+        # A failed read already retried inside the transport: FAILED (kept for a
+        # later run), never an in-run RETRY and never a guessed delete.
         pending = pending_import(infohash="abc123")
         strat, sonarr = _make_sonarr_for_import(candidates=None)
         sonarr.queue_return = None
 
-        strat.close_tracked(pending)
-
+        assert strat.close_tracked(pending) is EffectStatus.FAILED
         assert sonarr.queue_calls == 1
         assert sonarr.queue_delete_calls == []
 
@@ -1305,23 +1304,41 @@ class TestCloseTracked:
             queue=[queue_record("ABC123", "importPending", queue_id=11)],
         )
 
-        strat.close_tracked(pending_import(infohash="abc123", title="Show"))
+        status = strat.close_tracked(pending_import(infohash="abc123", title="Show"))
 
+        assert status is EffectStatus.DONE
         assert any("from Sonarr's queue" in m for m in diagnostic_messages(recording, Severity.INFO))
 
-    def test_failed_delete_stays_quiet(self) -> None:
+    def test_failed_delete_asks_for_a_retry_and_stays_quiet(self) -> None:
         # The client's fail-open warning already fired; no success note on top.
         recording = install_recording_hub()
         strat, sonarr = _make_sonarr_for_import(
             candidates=None,
             queue=[queue_record("ABC123", "importPending", queue_id=11)],
         )
-        sonarr.queue_delete_return = False
+        sonarr.queue_delete_return = DeleteOutcome.FAILED
 
-        strat.close_tracked(pending_import(infohash="abc123"))
+        status = strat.close_tracked(pending_import(infohash="abc123"))
 
+        assert status is EffectStatus.RETRY
         assert sonarr.queue_delete_calls == [11]
         assert diagnostic_messages(recording, Severity.INFO) == []
+
+    def test_gone_queue_entry_is_quiet_success(self) -> None:
+        # Sonarr already dismissed the entry (its refresh cleared it first): DONE
+        # with zero diagnostics, not the coalesced could-not-remove warning.
+        recording = install_recording_hub()
+        strat, sonarr = _make_sonarr_for_import(
+            candidates=None,
+            queue=[queue_record("ABC123", "importPending", queue_id=11)],
+        )
+        sonarr.queue_delete_return = DeleteOutcome.GONE
+
+        status = strat.close_tracked(pending_import(infohash="abc123"))
+
+        assert status is EffectStatus.DONE
+        assert sonarr.queue_delete_calls == [11]
+        assert diagnostic_messages(recording) == []
 
 
 class TestScratchResetParity:
