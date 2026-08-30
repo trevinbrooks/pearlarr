@@ -35,21 +35,10 @@ _CATEGORY_FIELDS: dict[Arr, _CategoryPair[str]] = {
 }
 
 
-def _explicit(value: str) -> str | None:
+def _explicit(value: str | None) -> str | None:
     """An explicit config category: blank/whitespace-only is the opt-out (no category, no fallback)."""
 
-    return value if value.strip() else None
-
-
-class PostImportMove(NamedTuple):
-    """A retire's one category resolve: the target and whether moving there untracks the torrent."""
-
-    category: str | None
-    untracks: bool
-
-
-NO_MOVE = PostImportMove(None, untracks=False)
-"""The no-qBittorrent resolve: nothing to move, so no untrack skip either."""
+    return value if value and value.strip() else None
 
 
 @final
@@ -84,12 +73,6 @@ class ArrCategoryResolver:
         value = self._configured.post_import
         return self._client_pair().post_import if value is None else _explicit(value)
 
-    def post_import_move(self) -> PostImportMove:
-        """`post_import()` plus its untrack verdict, resolved ONCE per retire for both cleanup effects."""
-
-        category = self.post_import()
-        return PostImportMove(category, bool(category) and self.move_untracks(category))
-
     def move_untracks(self, category: str) -> bool:
         """Whether moving a torrent to `category` takes it out of the arr's watched grab category.
 
@@ -100,7 +83,7 @@ class ArrCategoryResolver:
         """
 
         pair = self._client_pair()
-        watched = pair.grab if self._fetched is not None else _explicit(self._configured.grab or "")
+        watched = pair.grab if self._fetched is not None else _explicit(self._configured.grab)
         return bool(watched) and category != watched
 
     def _client_pair(self) -> _CategoryPair[str | None]:
