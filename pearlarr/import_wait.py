@@ -269,7 +269,7 @@ class PostImportCleanup:
                 qbit.torrents_set_category(category=category, torrent_hashes=infohash)
         except (qbittorrentapi.APIError, qbittorrentapi.APIConnectionError) as e:
             # Give-up stays DEBUG too: the single user-visible warn is the keep warn.
-            self._logger.debug(f"category move to {category!r} failed ({str(e) or type(e).__name__}) - retrying")
+            self._logger.debug(f"category move to {category!r} failed ({str(e) or type(e).__name__})")
             return EffectStatus.RETRY
         return EffectStatus.DONE
 
@@ -405,7 +405,7 @@ class ImportWaitManager:
         return state
 
     def snapshot_pending_for_series(self, series_id: int) -> None:
-        """Report this series' carried-over pending records inline, read-only, in every mode."""
+        """Report this series' carried-over pending records inline, retiring any newly imported one."""
 
         if self._active_strategy is None:
             return
