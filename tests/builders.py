@@ -326,14 +326,15 @@ class FakeCacheStore(AbstractCacheStore):
 
     @override
     def count_pending_for_infohash(self, infohash: str, *, excluding: tuple[Arr, PendingKey] | None = None) -> int:
-        """Cross-arr remaining-record count, minus the one excluded arr-qualified record (mirrors the SQL)."""
+        """Cross-arr count, case-insensitive match with a byte-exact exclusion (mirrors the SQL)."""
 
+        target = infohash.casefold()
         excluded = (str(excluding[0]), excluding[1]) if excluding is not None else None
         return sum(
             1
             for arr, recs in self._pending.items()
             for key in recs
-            if key.infohash == infohash and (arr, key) != excluded
+            if key.infohash.casefold() == target and (arr, key) != excluded
         )
 
     # No deepcopy: GuardFacts is deeply immutable (frozen dataclass -> tuples of str/int/NamedTuple).

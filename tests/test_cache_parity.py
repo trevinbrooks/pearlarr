@@ -116,6 +116,7 @@ def _observe(store: AbstractCacheStore) -> dict[str, object]:
         "pending_sonarr": store.get_pending(Arr.SONARR),
         "pending_series7": store.get_pending_for_series(Arr.SONARR, 7),
         "pending_count_shared": store.count_pending_for_infohash("hashA"),
+        "pending_count_case": store.count_pending_for_infohash("HASHA"),
         "pending_count_single": store.count_pending_for_infohash("hashB"),
         "pending_count_missing": store.count_pending_for_infohash("nope"),
         "pending_count_excluding": store.count_pending_for_infohash(

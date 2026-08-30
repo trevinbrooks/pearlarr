@@ -726,13 +726,13 @@ class CacheStore(AbstractCacheStore):
 
         if excluding is None:
             row = self._conn.execute(
-                "SELECT count(*) FROM pending_imports WHERE infohash = ?",
+                "SELECT count(*) FROM pending_imports WHERE LOWER(infohash) = LOWER(?)",
                 (infohash,),
             ).fetchone()
         else:
             arr, key = excluding
             row = self._conn.execute(
-                "SELECT count(*) FROM pending_imports WHERE infohash = ? "
+                "SELECT count(*) FROM pending_imports WHERE LOWER(infohash) = LOWER(?) "
                 "AND NOT (arr = ? AND infohash = ? AND al_id = ?)",
                 (infohash, _arr_key(arr), key.infohash, key.al_id),
             ).fetchone()
