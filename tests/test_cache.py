@@ -16,7 +16,7 @@ from pathlib import Path
 import pytest
 
 import pearlarr
-from pearlarr.cache import SCHEMA_VERSION, CacheSchemaError, CacheStore, HistoryCheckpoint, PendingRef
+from pearlarr.cache import SCHEMA_VERSION, CacheSchemaError, CacheStore, HistoryCheckpoint
 from pearlarr.config import Arr
 from pearlarr.log import LOG_NAME
 from pearlarr.manual_import import GuardFacts, OwnedEpisode, PendingImport, PendingKey
@@ -234,7 +234,11 @@ class TestSchemaVersionGate:
         # It still round-trips: a sibling coexists beside it, and its own drop is
         # record-scoped (the singleton behaves exactly like a modern record).
         store.put_pending(Arr.SONARR, PendingKey("legacy", 44), {"infohash": "legacy", "al_id": 44})
-        assert store.count_pending_for_infohash("legacy") == 2
+        assert set(store.get_pending(Arr.SONARR)) == {
+            PendingKey("legacy", 0),
+            PendingKey("legacy", 44),
+            PendingKey("tagged", 9),
+        }
         store.drop_pending(Arr.SONARR, PendingKey("legacy", 0))
         assert set(store.get_pending(Arr.SONARR)) == {PendingKey("legacy", 44), PendingKey("tagged", 9)}
         store.close()
@@ -676,65 +680,59 @@ class TestPendingImports:
         store.put_pending(Arr.SONARR, PendingKey("h", 11), first)
         store.put_pending(Arr.SONARR, PendingKey("h", 22), second)
         assert store.get_pending(Arr.SONARR) == {PendingKey("h", 11): first, PendingKey("h", 22): second}
-        assert store.count_pending_for_infohash("h") == 2
 
         # Same-record re-registration overwrites, never duplicates.
         updated = dict(first, episode_ids=[1, 3])
         store.put_pending(Arr.SONARR, PendingKey("h", 11), updated)
         assert store.get_pending(Arr.SONARR)[PendingKey("h", 11)] == updated
-        assert store.count_pending_for_infohash("h") == 2
+        assert set(store.get_pending(Arr.SONARR)) == {PendingKey("h", 11), PendingKey("h", 22)}
 
         # Dropping one sibling leaves the other's claim intact.
         store.drop_pending(Arr.SONARR, PendingKey("h", 11))
         assert store.get_pending(Arr.SONARR) == {PendingKey("h", 22): second}
-        assert store.count_pending_for_infohash("h") == 1
         store.close()
 
-    def test_count_pending_matches_case_insensitively_excludes_exactly(self, tmp_path: Path) -> None:
-        # The gate must agree with the close gate's casefold on what "same
-        # torrent" means. The exclusion stays byte-exact: it names the retiring
-        # record's own row, so a distinct row differing only in hash case counts.
+    def test_sibling_count_matches_case_insensitively_excludes_exactly(self, tmp_path: Path) -> None:
+        # Both rows are the same torrent by fold. The exclusion stays byte-exact:
+        # it names the retiring record's own row, so the case-variant one counts.
         store = _open(tmp_path)
         store.put_pending(Arr.SONARR, PendingKey("ABCD", 11), {"infohash": "ABCD", "al_id": 11})
         store.put_pending(Arr.SONARR, PendingKey("abcd", 11), {"infohash": "abcd", "al_id": 11})
 
-        assert store.count_pending_for_infohash("abcd") == 2
-        assert store.count_pending_for_infohash("ABCD") == 2
-        assert store.count_pending_for_infohash("abcd", excluding=PendingRef(Arr.SONARR, PendingKey("ABCD", 11))) == 1
-        assert store.count_pending_for_infohash("abcd", excluding=PendingRef(Arr.SONARR, PendingKey("abcd", 11))) == 1
+        assert store.count_arr_siblings(Arr.SONARR, PendingKey("ABCD", 11)) == 1
         store.close()
 
-    def test_count_pending_for_infohash_is_cross_arr(self, tmp_path: Path) -> None:
+    def test_sibling_counts_split_on_the_arr_narrowing(self, tmp_path: Path) -> None:
         # The category gate counts BOTH arrs' claims on a hash (the flag is a
-        # property of the torrent, not of one arr's run); `arr` narrows to the
-        # close gate's one-arr slice.
+        # property of the torrent, not of one arr's run). The close gate counts
+        # only its own arr's slice.
         store = _open(tmp_path)
         store.put_pending(Arr.SONARR, PendingKey("h", 11), {"infohash": "h", "al_id": 11})
         store.put_pending(Arr.RADARR, PendingKey("h", 0), {"infohash": "h"})
 
-        assert store.count_pending_for_infohash("h") == 2
-        assert store.count_pending_for_infohash("other") == 0
-        assert store.count_pending_for_infohash("h", arr=Arr.SONARR) == 1
-        own_row = PendingRef(Arr.SONARR, PendingKey("h", 11))
-        assert store.count_pending_for_infohash("h", arr=Arr.SONARR, excluding=own_row) == 0
+        assert store.count_arr_siblings(Arr.SONARR, PendingKey("h", 11)) == 0
+        assert store.count_siblings_any_arr(Arr.SONARR, PendingKey("h", 11)) == 1
+        assert store.count_arr_siblings(Arr.SONARR, PendingKey("other", 11)) == 0
+        assert store.count_siblings_any_arr(Arr.SONARR, PendingKey("other", 11)) == 0
         store.close()
 
-    def test_count_pending_excluding_leaves_out_one_arr_qualified_record(self, tmp_path: Path) -> None:
+    def test_sibling_counts_leave_out_one_arr_qualified_record(self, tmp_path: Path) -> None:
         # The retiring record is resident under drop-last, so the gate excludes
         # its own arr-qualified row: a lone record counts 0, a same-arr sibling
         # still counts, and a same-key row under the OTHER arr is NOT excluded.
         store = _open(tmp_path)
         store.put_pending(Arr.SONARR, PendingKey("h", 11), {"infohash": "h", "al_id": 11})
 
-        assert store.count_pending_for_infohash("h", excluding=PendingRef(Arr.SONARR, PendingKey("h", 11))) == 0
+        assert store.count_siblings_any_arr(Arr.SONARR, PendingKey("h", 11)) == 0
 
         store.put_pending(Arr.SONARR, PendingKey("h", 22), {"infohash": "h", "al_id": 22})
-        assert store.count_pending_for_infohash("h", excluding=PendingRef(Arr.SONARR, PendingKey("h", 11))) == 1
+        assert store.count_siblings_any_arr(Arr.SONARR, PendingKey("h", 11)) == 1
 
         # The pathological same-(infohash, al_id)-in-both-arrs case: each retire
         # excludes only its own row, so the cross-arr claim still defers.
         store.put_pending(Arr.RADARR, PendingKey("h", 11), {"infohash": "h", "al_id": 11})
-        assert store.count_pending_for_infohash("h", excluding=PendingRef(Arr.SONARR, PendingKey("h", 11))) == 2
+        assert store.count_siblings_any_arr(Arr.SONARR, PendingKey("h", 11)) == 2
+        assert store.count_arr_siblings(Arr.SONARR, PendingKey("h", 11)) == 1
         store.close()
 
     def test_get_pending_for_series_filters_in_sql(self, tmp_path: Path) -> None:

@@ -307,13 +307,6 @@ def _arr_key(arr: Arr) -> str:
     return str(arr)
 
 
-class PendingRef(NamedTuple):
-    """One arr-qualified pending record, as `count_pending_for_infohash` excludes it."""
-
-    arr: Arr
-    key: PendingKey
-
-
 def selection_digest_key(arr: Arr) -> str:
     """The `kv` key holding the selection digest an arr's verdicts were vouched under."""
 
@@ -370,13 +363,9 @@ class AbstractCacheStore(ABC):
     @abstractmethod
     def drop_pending(self, arr: Arr, key: PendingKey) -> None: ...
     @abstractmethod
-    def count_pending_for_infohash(
-        self,
-        infohash: str,
-        *,
-        arr: Arr | None = None,
-        excluding: PendingRef | None = None,
-    ) -> int: ...
+    def count_arr_siblings(self, arr: Arr, key: PendingKey) -> int: ...
+    @abstractmethod
+    def count_siblings_any_arr(self, arr: Arr, key: PendingKey) -> int: ...
     @abstractmethod
     def put_guards(self, arr: Arr, al_id: int, guards: GuardFacts) -> None: ...
     @abstractmethod
@@ -731,28 +720,31 @@ class CacheStore(AbstractCacheStore):
         )
 
     @override
-    def count_pending_for_infohash(
-        self,
-        infohash: str,
-        *,
-        arr: Arr | None = None,
-        excluding: PendingRef | None = None,
-    ) -> int:
-        """How many pending records reference `infohash`: both arrs by default, one arr's slice under `arr`.
+    def count_arr_siblings(self, arr: Arr, key: PendingKey) -> int:
+        """How many OTHER records of `arr` claim `key`'s torrent.
 
-        `excluding` leaves one arr-qualified record out: the retiring record, still resident under drop-last.
-        The infohash match is case-folded, the exclusion byte-exact.
+        The infohash match is case-folded, the exclusion of `key` byte-exact.
         """
 
-        sql = "SELECT count(*) FROM pending_imports WHERE LOWER(infohash) = LOWER(?)"
-        params: list[str | int] = [infohash]
-        if arr is not None:
-            sql += " AND arr = ?"
-            params.append(_arr_key(arr))
-        if excluding is not None:
-            sql += " AND NOT (arr = ? AND infohash = ? AND al_id = ?)"
-            params += (_arr_key(excluding.arr), excluding.key.infohash, excluding.key.al_id)
-        row = self._conn.execute(sql, params).fetchone()
+        row = self._conn.execute(
+            "SELECT count(*) FROM pending_imports "
+            "WHERE arr = ? AND LOWER(infohash) = LOWER(?) AND NOT (infohash = ? AND al_id = ?)",
+            (_arr_key(arr), key.infohash, key.infohash, key.al_id),
+        ).fetchone()
+        return int(row[0]) if row else 0
+
+    @override
+    def count_siblings_any_arr(self, arr: Arr, key: PendingKey) -> int:
+        """How many records of EITHER arr claim `key`'s torrent, `arr` qualifying only the excluded record.
+
+        The infohash match is case-folded, the exclusion of `(arr, key)` byte-exact.
+        """
+
+        row = self._conn.execute(
+            "SELECT count(*) FROM pending_imports "
+            "WHERE LOWER(infohash) = LOWER(?) AND NOT (arr = ? AND infohash = ? AND al_id = ?)",
+            (key.infohash, _arr_key(arr), key.infohash, key.al_id),
+        ).fetchone()
         return int(row[0]) if row else 0
 
     @override

@@ -26,7 +26,6 @@ from pearlarr.cache import (
     CacheRecord,
     CacheStats,
     HistoryCheckpoint,
-    PendingRef,
     selection_digest_key,
 )
 from pearlarr.config import AppConfig, Arr
@@ -327,22 +326,24 @@ class FakeCacheStore(AbstractCacheStore):
         self._pending.get(str(arr), {}).pop(key, None)
 
     @override
-    def count_pending_for_infohash(
-        self,
-        infohash: str,
-        *,
-        arr: Arr | None = None,
-        excluding: PendingRef | None = None,
-    ) -> int:
-        """Case-insensitive match, byte-exact exclusion, cross-arr unless `arr` narrows (mirrors the SQL)."""
+    def count_arr_siblings(self, arr: Arr, key: PendingKey) -> int:
+        """One arr's other claims on `key`'s torrent: case-folded match, byte-exact exclusion (mirrors the SQL)."""
 
-        target = infohash.casefold()
-        excluded = (str(excluding.arr), excluding.key) if excluding is not None else None
+        target = key.infohash.casefold()
+        rows = self._pending.get(str(arr), {})
+        return sum(1 for other in rows if other.infohash.casefold() == target and other != key)
+
+    @override
+    def count_siblings_any_arr(self, arr: Arr, key: PendingKey) -> int:
+        """Both arrs' other claims on `key`'s torrent, `arr` qualifying only the exclusion (mirrors the SQL)."""
+
+        target = key.infohash.casefold()
+        excluded = (str(arr), key)
         return sum(
             1
             for arr_key, recs in self._pending.items()
-            for key in recs
-            if (arr is None or arr_key == str(arr)) and key.infohash.casefold() == target and (arr_key, key) != excluded
+            for other in recs
+            if other.infohash.casefold() == target and (arr_key, other) != excluded
         )
 
     # No deepcopy: GuardFacts is deeply immutable (frozen dataclass -> tuples of str/int/NamedTuple).
