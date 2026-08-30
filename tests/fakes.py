@@ -126,11 +126,13 @@ class AsciiStringIO(io.StringIO):
 
 
 class FakeClock(Clock):
-    """A hand-driven `Clock`: `sleep` advances by `step`, `tick` by hand, callable as `now`."""
+    """A hand-driven `Clock`: `sleep` records and advances by `step`, `tick` by hand, callable as `now`."""
 
     def __init__(self, step: float = 0.0) -> None:
         self.t = 0.0
         self._step = step
+        self.sleeps: list[float] = []
+        """Each requested pause, in call order (the retry-schedule pins read it)."""
 
     @override
     def now(self) -> float:
@@ -140,6 +142,7 @@ class FakeClock(Clock):
     def sleep(self, seconds: float) -> None:
         # Ignore the requested duration: advancing by the fixed step exercises the
         # deadline arithmetic without ever really sleeping.
+        self.sleeps.append(seconds)
         self.t += self._step
 
     def __call__(self) -> float:

@@ -13,7 +13,6 @@ watched category first (a fetched blank is authoritative False), the
 configured grab on a failed fetch, and False when both are unknown.
 """
 
-from collections.abc import Sequence
 from dataclasses import replace
 
 import httpx
@@ -24,6 +23,7 @@ from pearlarr.config import Arr, ArrSettings
 from pearlarr.output import Diagnostic, Severity
 from pearlarr.output.recording import RecordingHub
 
+from .builders import download_client_json, sonarr_client_fields
 from .fakes import bind_arr_http, diagnostic_messages
 
 _URL = "http://arr.test"
@@ -40,43 +40,12 @@ def _resolver(
     return ArrCategoryResolver(arr, config or ArrSettings(), replace(http, retries=0)), recording
 
 
-def _client(
-    fields: Sequence[object],
-    *,
-    enable: object = True,
-    implementation: str = "QBittorrent",
-    priority: object = 1,
-) -> dict[str, object]:
-    """One realistic `DownloadClientResource` body carrying `fields` (opaque JSON, junk allowed)."""
-
-    return {
-        "enable": enable,
-        "protocol": "torrent",
-        "priority": priority,
-        "name": "qBittorrent",
-        "fields": fields,
-        "implementationName": "qBittorrent",
-        "implementation": implementation,
-        "configContract": "QBittorrentSettings",
-        "id": 1,
-    }
-
-
-def _sonarr_fields(grab: str = "tv-sonarr", post_import: str = "sonarr-done") -> list[dict[str, object]]:
-    return [
-        {"name": "host", "value": "localhost"},
-        {"name": "port", "value": 8080},
-        {"name": "tvCategory", "value": grab},
-        {"name": "tvImportedCategory", "value": post_import},
-    ]
-
-
 @respx.mock
 def test_omitted_categories_adopt_the_sonarr_client_values_with_one_lazy_fetch() -> None:
     # Nothing is fetched at construction; the first use fetches once and the
     # success is memoized - a disabled sibling ahead of the client is passed over.
     route = respx.get(f"{_URL}/api/v3/downloadclient").respond(
-        json=[_client(_sonarr_fields(), enable=False), _client(_sonarr_fields())],
+        json=[download_client_json(sonarr_client_fields(), enable=False), download_client_json(sonarr_client_fields())],
     )
     resolver, recording = _resolver()
 
@@ -92,7 +61,7 @@ def test_omitted_categories_adopt_the_sonarr_client_values_with_one_lazy_fetch()
 def test_radarr_reads_the_movie_field_names() -> None:
     respx.get(f"{_URL}/api/v3/downloadclient").respond(
         json=[
-            _client(
+            download_client_json(
                 [
                     {"name": "movieCategory", "value": "radarr"},
                     {"name": "movieImportedCategory", "value": "radarr-done"},
@@ -108,7 +77,7 @@ def test_radarr_reads_the_movie_field_names() -> None:
 
 @respx.mock
 def test_explicit_config_wins_without_a_fetch() -> None:
-    route = respx.get(f"{_URL}/api/v3/downloadclient").respond(json=[_client(_sonarr_fields())])
+    route = respx.get(f"{_URL}/api/v3/downloadclient").respond(json=[download_client_json(sonarr_client_fields())])
     resolver, _ = _resolver(ArrSettings(torrent_category="anime", post_import_category="done"))
 
     assert resolver.grab() == "anime"
@@ -120,7 +89,7 @@ def test_explicit_config_wins_without_a_fetch() -> None:
 def test_a_blank_string_opts_out_without_a_fetch() -> None:
     # The explicit opt-out: `""` (or whitespace-only) means no category at
     # all - never the client's - and costs no fetch.
-    route = respx.get(f"{_URL}/api/v3/downloadclient").respond(json=[_client(_sonarr_fields())])
+    route = respx.get(f"{_URL}/api/v3/downloadclient").respond(json=[download_client_json(sonarr_client_fields())])
     resolver, _ = _resolver(ArrSettings(torrent_category="", post_import_category="   "))
 
     assert resolver.grab() is None
@@ -132,7 +101,7 @@ def test_a_blank_string_opts_out_without_a_fetch() -> None:
 def test_a_lone_omitted_category_adopts_only_its_own_fallback() -> None:
     # Per-category precedence: the explicit grab category stays, the omitted
     # post-import one adopts the client's - via the one fetch.
-    route = respx.get(f"{_URL}/api/v3/downloadclient").respond(json=[_client(_sonarr_fields())])
+    route = respx.get(f"{_URL}/api/v3/downloadclient").respond(json=[download_client_json(sonarr_client_fields())])
     resolver, _ = _resolver(ArrSettings(torrent_category="anime"))
 
     assert resolver.grab() == "anime"
@@ -156,9 +125,9 @@ def test_priority_beats_list_order_between_enabled_clients() -> None:
     # record never outranks a clean one.
     respx.get(f"{_URL}/api/v3/downloadclient").respond(
         json=[
-            _client(_sonarr_fields("junky", "junky-done"), priority="high"),
-            _client(_sonarr_fields("low", "low-done"), priority=10),
-            _client(_sonarr_fields("preferred", "preferred-done"), priority=1),
+            download_client_json(sonarr_client_fields("junky", "junky-done"), priority="high"),
+            download_client_json(sonarr_client_fields("low", "low-done"), priority=10),
+            download_client_json(sonarr_client_fields("preferred", "preferred-done"), priority=1),
         ],
     )
     resolver, _ = _resolver()
@@ -171,8 +140,8 @@ def test_priority_beats_list_order_between_enabled_clients() -> None:
 def test_equal_priorities_keep_list_order() -> None:
     respx.get(f"{_URL}/api/v3/downloadclient").respond(
         json=[
-            _client(_sonarr_fields("first", "first-done"), priority=25),
-            _client(_sonarr_fields("second", "second-done"), priority=25),
+            download_client_json(sonarr_client_fields("first", "first-done"), priority=25),
+            download_client_json(sonarr_client_fields("second", "second-done"), priority=25),
         ],
     )
     resolver, _ = _resolver()
@@ -186,9 +155,9 @@ def test_junk_enable_spellings_read_as_disabled() -> None:
     # disabled, so junk records never steal the pick from a clean sibling.
     respx.get(f"{_URL}/api/v3/downloadclient").respond(
         json=[
-            _client(_sonarr_fields("stringly", "stringly-done"), enable="false"),
-            _client(_sonarr_fields("listy", "listy-done"), enable=[0]),
-            _client(_sonarr_fields()),
+            download_client_json(sonarr_client_fields("stringly", "stringly-done"), enable="false"),
+            download_client_json(sonarr_client_fields("listy", "listy-done"), enable=[0]),
+            download_client_json(sonarr_client_fields()),
         ],
     )
     resolver, _ = _resolver()
@@ -203,7 +172,7 @@ def test_fetch_failure_fails_open_with_one_warning_and_retries_at_next_use() -> 
     route = respx.get(f"{_URL}/api/v3/downloadclient")
     route.side_effect = [
         httpx.Response(500),
-        httpx.Response(200, json=[_client(_sonarr_fields())]),
+        httpx.Response(200, json=[download_client_json(sonarr_client_fields())]),
     ]
     resolver, recording = _resolver()
 
@@ -224,8 +193,8 @@ def test_no_enabled_qbittorrent_client_fails_open_quietly_and_memoizes() -> None
     # and the successful fetch memoizes its negative answer.
     route = respx.get(f"{_URL}/api/v3/downloadclient").respond(
         json=[
-            _client(_sonarr_fields(), enable=False),
-            _client([{"name": "tvCategory", "value": "tv"}], implementation="Transmission"),
+            download_client_json(sonarr_client_fields(), enable=False),
+            download_client_json([{"name": "tvCategory", "value": "tv"}], implementation="Transmission"),
         ],
     )
     resolver, recording = _resolver()
@@ -242,7 +211,7 @@ def test_blank_and_junk_category_fields_fail_open() -> None:
     # (non-object, junk-typed value) are skipped without dropping the client.
     respx.get(f"{_URL}/api/v3/downloadclient").respond(
         json=[
-            _client(
+            download_client_json(
                 [
                     "junk",
                     {"name": "tvCategory", "value": ""},
@@ -262,7 +231,7 @@ def test_blank_and_junk_category_fields_fail_open() -> None:
 
 @respx.mock
 def test_move_untracks_when_the_fetched_grab_category_differs() -> None:
-    respx.get(f"{_URL}/api/v3/downloadclient").respond(json=[_client(_sonarr_fields())])
+    respx.get(f"{_URL}/api/v3/downloadclient").respond(json=[download_client_json(sonarr_client_fields())])
     resolver, _ = _resolver()
 
     assert resolver.move_untracks("sonarr-done") is True
@@ -274,7 +243,7 @@ def test_move_untracks_fetched_blank_is_authoritative_false() -> None:
     # A blank TvCategory means Sonarr sees every torrent, so no move ever clears
     # the entry - even when pearlarr's own grab category is configured.
     respx.get(f"{_URL}/api/v3/downloadclient").respond(
-        json=[_client([{"name": "tvCategory", "value": ""}])],
+        json=[download_client_json([{"name": "tvCategory", "value": ""}])],
     )
     resolver, _ = _resolver(ArrSettings(torrent_category="anime"))
 
@@ -319,7 +288,7 @@ def test_move_untracks_explicit_blank_opt_out_is_false() -> None:
 @respx.mock
 def test_move_untracks_compares_exactly() -> None:
     # qBittorrent categories are case-sensitive, so the compare must be too.
-    respx.get(f"{_URL}/api/v3/downloadclient").respond(json=[_client(_sonarr_fields())])
+    respx.get(f"{_URL}/api/v3/downloadclient").respond(json=[download_client_json(sonarr_client_fields())])
     resolver, _ = _resolver()
 
     assert resolver.move_untracks("TV-Sonarr") is True

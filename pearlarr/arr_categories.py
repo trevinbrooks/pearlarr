@@ -41,6 +41,17 @@ def _explicit(value: str) -> str | None:
     return value if value.strip() else None
 
 
+class PostImportMove(NamedTuple):
+    """A retire's one category resolve: the target and whether moving there untracks the torrent."""
+
+    category: str | None
+    untracks: bool
+
+
+NO_MOVE = PostImportMove(None, untracks=False)
+"""The no-qBittorrent resolve: nothing to move, so no untrack skip either."""
+
+
 @final
 class ArrCategoryResolver:
     """Resolves the two effective categories lazily, one client fetch per run at most.
@@ -73,21 +84,23 @@ class ArrCategoryResolver:
         value = self._configured.post_import
         return self._client_pair().post_import if value is None else _explicit(value)
 
+    def post_import_move(self) -> PostImportMove:
+        """`post_import()` plus its untrack verdict, resolved ONCE per retire for both cleanup effects."""
+
+        category = self.post_import()
+        return PostImportMove(category, bool(category) and self.move_untracks(category))
+
     def move_untracks(self, category: str) -> bool:
         """Whether moving a torrent to `category` takes it out of the arr's watched grab category.
 
         The fetched client category is authoritative (blank means the arr watches everything).
-        On a failed fetch the configured grab category approximates it. Unknown stays False.
+        On a failed fetch the configured grab category approximates it, deliberately inverting
+        `grab()`'s configured-first precedence. Unknown stays False.
         Exact compare: qBittorrent categories are case-sensitive.
         """
 
         pair = self._client_pair()
-        if self._fetched is not None:
-            watched = pair.grab
-        elif self._configured.grab is not None:
-            watched = _explicit(self._configured.grab)
-        else:
-            watched = None
+        watched = pair.grab if self._fetched is not None else _explicit(self._configured.grab or "")
         return bool(watched) and category != watched
 
     def _client_pair(self) -> _CategoryPair[str | None]:

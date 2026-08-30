@@ -1104,7 +1104,6 @@ class TestPendingStateAndProbe:
             "IMPORTED",
             "ERRORED",
             "MISSING",
-            "CLEANUP",
         }
 
     def test_pending_state_is_its_string(self) -> None:

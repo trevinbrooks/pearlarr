@@ -153,6 +153,13 @@ class EffectStatus(Enum):
     """Given up this run, kept for a later run."""
 
 
+class CleanupEffect(StrEnum):
+    """One post-import cleanup effect. Each member IS its keep-warn noun."""
+
+    CATEGORY_MOVE = "category move"
+    QUEUE_REMOVAL = "queue removal"
+
+
 class PendingState(StrEnum):
     """The current status of one carried-over pending import, for reporting.
 
@@ -176,9 +183,6 @@ class PendingState(StrEnum):
 
     MISSING = "missing"
     """The torrent is gone from qBittorrent. The record is dropped."""
-
-    CLEANUP = "cleanup"
-    """The import verified (and was counted) in an earlier pass. Only its post-import cleanup remains."""
 
 
 def classify_pending(
@@ -642,5 +646,11 @@ class PendingImport:
             guards=guards or GuardFacts(),
             release_sizes=raw.get("release_sizes", []),
             preowned_episode_ids=raw.get("preowned_episode_ids", []),
-            awaiting_cleanup=raw.get("awaiting_cleanup", False),
+            awaiting_cleanup=is_awaiting_cleanup(raw),
         )
+
+
+def is_awaiting_cleanup(raw: dict[str, Any]) -> bool:
+    """The cleanup flag off a stored row's raw dict, sparing keys-only readers a rehydration."""
+
+    return bool(raw.get("awaiting_cleanup"))
