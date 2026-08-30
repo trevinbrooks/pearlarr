@@ -132,7 +132,7 @@ class FakeClock(Clock):
         self.t = 0.0
         self._step = step
         self.sleeps: list[float] = []
-        """Each requested pause, in call order (the retry-schedule pins read it)."""
+        """The requested duration of each `sleep` call, in call order."""
 
     @override
     def now(self) -> float:
