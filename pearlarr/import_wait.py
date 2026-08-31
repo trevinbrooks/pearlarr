@@ -165,15 +165,12 @@ class PostImportCleanup:
 
         # No client resolves NO category: a configured untracking one must not skip the close then.
         category = self._categories.post_import() if self._qbit is not None else None
-        # The pair tuple builds first, so the effects run in source order (move, then close).
-        failed = tuple(
-            effect
-            for effect, status in (
-                (CleanupEffect.CATEGORY_MOVE, self._apply_post_import_category(pending, category)),
-                (CleanupEffect.QUEUE_REMOVAL, self._close_tracked_download(pending, category)),
-            )
-            if status is EffectStatus.FAILED
+        # Both effects run regardless of the other's outcome, in pinned order (move, then close).
+        statuses = (
+            (CleanupEffect.CATEGORY_MOVE, self._apply_post_import_category(pending, category)),
+            (CleanupEffect.QUEUE_REMOVAL, self._close_tracked_download(pending, category)),
         )
+        failed = tuple(effect for effect, status in statuses if status is EffectStatus.FAILED)
         if failed:
             self._keep_for_cleanup(pending, failed)
             return False
@@ -439,7 +436,7 @@ class ImportWaitManager:
             elif state is PendingState.QUEUED:
                 self._ctx.stats.queued += 1
 
-    def retry_cleanup_records(self) -> None:
+    def heal_flagged(self) -> None:
         """The finalize tail's heal pass over earlier runs' kept-for-cleanup records."""
 
         self._cleanup.heal_flagged()
@@ -471,7 +468,7 @@ class ImportWaitManager:
         if self.probes.strategy is None:
             return None
 
-        records = list(self._records.records().values())
+        records = list(self._records.active_records().values())
         if not records:
             return None
 
@@ -545,7 +542,7 @@ class ImportWaitManager:
         """
 
         records = [pending for pending in self._ctx.pending_imports.values() if pending.infohash]
-        records.extend(self._records.records().values())
+        records.extend(self._records.active_records().values())
         return records
 
     def prune_expired_pending(self) -> None:

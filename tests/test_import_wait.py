@@ -229,7 +229,7 @@ class _InterruptOnHash(FakeQbit):
 
 
 def make_probes(qbit: FakeQbit | None) -> ImportProbes:
-    """Bare `ImportProbes` wired only with the `qbit` the polls read."""
+    """Bare `ImportProbes` wired only with the `qbit` the polls read (the ctor takes a real client only)."""
 
     return make_bare_instance(ImportProbes, _qbit=qbit, _logger=make_logger(), strategy=None)
 
@@ -607,7 +607,7 @@ class TestPendingRecordsGuardHydration:
         facts = GuardFacts(entry_groups=("NewPick",), stale_groups=("OldPick",))
         store.put_guards(Arr.SONARR, 5, facts)
 
-        records = mgr._records.records()
+        records = mgr._records.active_records()
         assert records[PendingKey("run1", 5)].guards == facts
         assert records[PendingKey("run2", 5)].guards == facts
         # No row = empty facts, the designed state (Radarr, hash mode, degradation).
@@ -2006,7 +2006,7 @@ class _FinalizeWaitManager:
         if name == self._raise_on:
             raise RuntimeError(f"{name} exploded")
 
-    def retry_cleanup_records(self) -> None:
+    def heal_flagged(self) -> None:
         self._mark("cleanup")
 
     def check_once(self) -> WaitResult | None:
@@ -2883,7 +2883,7 @@ _ARR_URL = "http://arr.test"
 
 
 class TestRetireCategoryResolve:
-    """retire_imported resolves the post-import category at most once, feeding both effects."""
+    """retire resolves the post-import category at most once, feeding both effects."""
 
     @respx.mock
     def test_transient_fetch_failure_resolves_once_and_the_close_still_runs(self) -> None:
@@ -3185,8 +3185,8 @@ class TestCleanupHeal:
         assert mgr._records.rows()[pk("h")].get("awaiting_cleanup") is True
 
     def test_finalize_heal_skips_a_record_kept_this_run(self) -> None:
-        # A record kept mid-scan is in cleanup_kept_keys: the finalize pass must
-        # not retry it in the same run.
+        # A record kept mid-scan is in the cleanup's kept set: the finalize pass
+        # must not retry it in the same run.
         strategy = _RecordingStrategy(
             progress=ImportProgress(1, 1, determinate=True),
             close_return=EffectStatus.FAILED,
