@@ -231,7 +231,7 @@ class _InterruptOnHash(FakeQbit):
 def make_probes(qbit: FakeQbit | None) -> ImportProbes:
     """Bare `ImportProbes` wired only with the `qbit` the polls read."""
 
-    return make_bare_instance(ImportProbes, _qbit=qbit, _logger=make_logger(), _strategy=None)
+    return make_bare_instance(ImportProbes, _qbit=qbit, _logger=make_logger(), strategy=None)
 
 
 class TestPollTorrent:

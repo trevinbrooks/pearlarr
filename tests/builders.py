@@ -798,7 +798,7 @@ def make_import_wait_manager(**overrides: Any) -> ImportWaitManager:
         raise TypeError(msg)
 
     records = PendingRecords(cache_store)
-    probes = make_bare_instance(ImportProbes, _qbit=qbit, _logger=logger, _strategy=None)
+    probes = make_bare_instance(ImportProbes, _qbit=qbit, _logger=logger, strategy=None)
     cleanup = make_bare_instance(
         PostImportCleanup,
         _imports=config.imports,
