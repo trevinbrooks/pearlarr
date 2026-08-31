@@ -43,16 +43,18 @@ _EFFECT_BACKOFF_S: tuple[float, float] = (1.0, 3.0)
 class ImportProbes:
     """The run's fail-open pollers: qBittorrent reads plus the strategy's import hooks."""
 
+    strategy: ImportCompleter | None
+    """The run's ONE strategy binding (the manager and cleanup read it here). None until a run binds one."""
+
     def __init__(self, *, qbit: qbittorrentapi.Client | None, logger: logging.Logger) -> None:
         self._qbit = qbit
         self._logger = logger
-        # The None placeholder before begin_run binds the run's strategy.
-        self._strategy: ImportCompleter | None = None
+        self.strategy = None
 
     def begin_run(self, strategy: ImportCompleter | None) -> None:
         """Bind the active strategy whose import hooks the probes drive."""
 
-        self._strategy = strategy
+        self.strategy = strategy
 
     def poll_torrent(self, infohash: str) -> TorrentProbe:
         """Poll qBittorrent once for a torrent's terminal state.
@@ -111,10 +113,10 @@ class ImportProbes:
         Fail-open: an exception leaves the record pending (`LEAVE_PROBE`) instead of aborting the run.
         """
 
-        if self._strategy is None:
+        if self.strategy is None:
             return LEAVE_PROBE
         try:
-            return self._strategy.import_completed(pending, path, attempt)
+            return self.strategy.import_completed(pending, path, attempt)
         except Exception as e:
             hub_error(f"Manual import failed for {pending.display_label} - leaving it for a later run", exc=e)
             return LEAVE_PROBE
@@ -122,10 +124,10 @@ class ImportProbes:
     def import_progress(self, pending: PendingImport) -> ImportProgress:
         """Cheap, read-only files-landed count (the Tier-2 poll), never raising."""
 
-        if self._strategy is None:
+        if self.strategy is None:
             return NO_PROGRESS
         try:
-            return self._strategy.import_progress(pending)
+            return self.strategy.import_progress(pending)
         except Exception:
             self._logger.debug(f"import progress poll for {pending.key.row_key} failed", exc_info=True)
             return NO_PROGRESS
@@ -134,6 +136,9 @@ class ImportProbes:
 class PostImportCleanup:
     """Owns the post-import effects (category move, queue close) and the flagged-record heal."""
 
+    _ctx: RunContext
+    """The current run's context. Never bound at construction: `begin_run` rebinds it every run."""
+
     def __init__(self, deps: RunDeps, records: PendingRecords, probes: ImportProbes) -> None:
         self._imports = deps.config.imports
         self._categories = deps.categories
@@ -141,14 +146,15 @@ class PostImportCleanup:
         self._clock = deps.clock
         self._logger = deps.logger
         self._records = records
+        # Also the strategy source: the queue close drives the hook bound on the probes.
         self._probes = probes
+        self._kept_keys: set[PendingKey] = set()
 
-    def begin_run(self, ctx: RunContext, strategy: ImportCompleter | None) -> None:
-        """Bind the fresh run context + strategy, forgetting the prior run's keeps."""
+    def begin_run(self, ctx: RunContext) -> None:
+        """Bind the fresh run context, forgetting the prior run's keeps."""
 
         self._ctx = ctx
-        self._strategy = strategy
-        self._kept_keys: set[PendingKey] = set()
+        self._kept_keys = set()
 
     def retire(self, pending: PendingImport) -> bool:
         """Retire a verified-imported record: run both cleanup effects, then drop it.
@@ -222,7 +228,7 @@ class PostImportCleanup:
         "download ignored" history marker an explicit delete writes.
         """
 
-        strategy = self._strategy
+        strategy = self._probes.strategy
         if not self._imports.remove_from_queue or strategy is None:
             return EffectStatus.SKIPPED
         if moved_to and self._categories.move_untracks(moved_to):
@@ -324,7 +330,9 @@ class ImportWaitManager:
     clock: Clock
     """The wait passes' time seam."""
     probes: ImportProbes
-    """The run's fail-open pollers, shared with the cleanup (which needs them for the heal)."""
+    """The run's fail-open pollers and the one strategy binding, shared with the cleanup (for the heal)."""
+    _ctx: RunContext
+    """The current run's context. `__init__` seeds it through the first `begin_run`, which rebinds every run."""
 
     def __init__(self, *, deps: RunDeps, ctx: RunContext) -> None:
         self.imports = deps.config.imports
@@ -334,22 +342,19 @@ class ImportWaitManager:
         self._records = PendingRecords(deps.cache_store)
         self.probes = ImportProbes(qbit=deps.qbit, logger=deps.logger)
         self._cleanup = PostImportCleanup(deps, self._records, self.probes)
-        # The None placeholder before begin_run binds the run's strategy.
-        self._active_strategy: ImportCompleter | None = None
         self.begin_run(ctx, None)
 
     def begin_run(self, ctx: RunContext, strategy: ImportCompleter | None) -> None:
-        """Bind the fresh run context + active strategy to the manager and its sub-objects.
+        """Bind the fresh run context to the manager and its sub-objects, the strategy to the probes alone.
 
         Rebound EVERY run (`reset_run_stats` mints a fresh ctx), so none of them can
         operate on a dead context after the first run.
         """
 
         self._ctx = ctx
-        self._active_strategy = strategy
         self._records.begin_run(ctx)
         self.probes.begin_run(strategy)
-        self._cleanup.begin_run(ctx, strategy)
+        self._cleanup.begin_run(ctx)
 
     def fresh_grab_keys(self) -> set[PendingKey]:
         """Keys of the records written THIS run, tallied as `added` and never carried-over."""
@@ -407,7 +412,7 @@ class ImportWaitManager:
     def snapshot_pending_for_series(self, series_id: int) -> None:
         """Report this series' carried-over pending records inline, retiring any newly imported one."""
 
-        if self._active_strategy is None:
+        if self.probes.strategy is None:
             return
 
         reported = self._entry_reported_keys()
@@ -442,7 +447,7 @@ class ImportWaitManager:
     def run_monitor(self, *, view: WaitView | None = None) -> WaitResult | None:
         """The blocking/hybrid end-of-run pass: interleaved wait+import over every pending record."""
 
-        if self._active_strategy is None:
+        if self.probes.strategy is None:
             return None
 
         records = self._monitor_working_set()
@@ -463,7 +468,7 @@ class ImportWaitManager:
     def check_once(self, *, view: WaitView | None = None) -> WaitResult | None:
         """The deferred end-of-run pass: one non-blocking check cycle over the carried-over records."""
 
-        if self._active_strategy is None:
+        if self.probes.strategy is None:
             return None
 
         records = list(self._records.records().values())

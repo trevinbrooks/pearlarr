@@ -14,6 +14,9 @@ class PendingRecords:
     whose `pending_imports` is the run list) arrives via `begin_run` each run.
     """
 
+    _ctx: RunContext
+    """The current run's context. Never bound at construction: `begin_run` rebinds it every run."""
+
     def __init__(self, cache_store: AbstractCacheStore) -> None:
         self._store = cache_store
 
