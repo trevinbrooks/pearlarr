@@ -217,7 +217,7 @@ class GrabPipeline:
         pending = seeds[url_item.infohash]
         if result.outcome is AddOutcome.ADDED:
             self._records.insert_fresh(pending)
-        elif self.cache_store.has_pending(self._ctx.arr, pending.key):
+        elif self._records.has(pending.key):
             self._ctx.reacquired_keys.add(pending.key)
         else:
             if result.added_on is not None:
