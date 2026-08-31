@@ -58,7 +58,7 @@ class PendingRecords:
             return {}
         return hydrate_pending(rows, self._store.get_guards(self._ctx.arr))
 
-    def records(self) -> dict[PendingKey, PendingImport]:
+    def active_records(self) -> dict[PendingKey, PendingImport]:
         """The `active` rows rehydrated: the carried-over working set of the end-of-run passes."""
 
         return self.hydrate(self.active())

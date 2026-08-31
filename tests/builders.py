@@ -767,10 +767,11 @@ def make_grab_pipeline(**overrides: Any) -> GrabPipeline:
         "_ctx": RunContext(arr=Arr.SONARR, import_wait_mode=ImportWaitMode.BLOCKING),
     }
     defaults.update(overrides)
-    # The record seam binds the FINAL store + ctx, exactly as the real ctor + begin_run do.
-    records = PendingRecords(defaults["cache_store"])
-    records.begin_run(defaults["_ctx"])
-    defaults["_records"] = records
+    if "_records" not in defaults:
+        # The record seam binds the FINAL store + ctx, exactly as the real ctor + begin_run do.
+        records = PendingRecords(defaults["cache_store"])
+        records.begin_run(defaults["_ctx"])
+        defaults["_records"] = records
     return make_bare_instance(GrabPipeline, **defaults)
 
 
