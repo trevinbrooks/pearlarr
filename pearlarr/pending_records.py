@@ -35,6 +35,11 @@ class PendingRecords:
 
         return self._store.get_pending(self._ctx.arr)
 
+    def has(self, key: PendingKey) -> bool:
+        """Whether the store holds a record under `key`."""
+
+        return self._store.has_pending(self._ctx.arr, key)
+
     def flagged(self) -> dict[PendingKey, dict[str, Any]]:
         """The cleanup-flagged rows, raw (the heal pass's working set)."""
 
@@ -47,7 +52,7 @@ class PendingRecords:
         return {key: raw for key, raw in self.rows().items() if key not in fresh and not is_awaiting_cleanup(raw)}
 
     def hydrate(self, rows: dict[PendingKey, dict[str, Any]]) -> dict[PendingKey, PendingImport]:
-        """Rehydrate `rows`, each record fed its entry's guard row (empty in skips the guard read)."""
+        """Rehydrate `rows`, each record fed its entry's guard row (an empty `rows` skips the guard read)."""
 
         if not rows:
             return {}

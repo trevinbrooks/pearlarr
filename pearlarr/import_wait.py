@@ -761,14 +761,14 @@ class MonitorPass:
         self._mgr = manager
         self.kind = kind
         self._clock = manager.clock
-        self.dl_timeout = manager.imports.wait_timeout
-        self.import_timeout = manager.imports.ready_timeout
-        self.start = self._clock.now()
+        self._dl_timeout = manager.imports.wait_timeout
+        self._import_timeout = manager.imports.ready_timeout
+        self._start = self._clock.now()
         # Stamped at construction: an imported fresh grab leaves `pending_imports` mid-pass,
         # so a later membership check would misread it as carried-over.
         fresh = manager.fresh_grab_keys()
         self.rows = {
-            r.key.row_key: _MonitorRow(record=r, dl_start=self.start, carried_over=r.key not in fresh) for r in records
+            r.key.row_key: _MonitorRow(record=r, dl_start=self._start, carried_over=r.key not in fresh) for r in records
         }
         # Per-cycle heavy-poll memo: sibling records share ONE qBittorrent read per cycle.
         self._cycle_polls: dict[str, TorrentProbe] = {}
@@ -807,7 +807,7 @@ class MonitorPass:
     def elapsed(self) -> float:
         """Seconds since the pass started (off the injected clock)."""
 
-        return self._clock.now() - self.start
+        return self._clock.now() - self._start
 
     def snapshot(self) -> WaitSnapshot:
         """The current frame: every torrent's `TorrentView`, plus elapsed."""
@@ -848,7 +848,7 @@ class MonitorPass:
         if poll.outcome is None:
             # Monitor-only: `dl_start` is this pass's construction, so a check-pass timeout would
             # mislabel a still-downloading record. `_retire_active` words it truthfully there.
-            if self.kind is WaitKind.MONITOR and self._clock.now() - row.dl_start >= self.dl_timeout:
+            if self.kind is WaitKind.MONITOR and self._clock.now() - row.dl_start >= self._dl_timeout:
                 self._terminal(Outcome.DOWNLOAD_TIMED_OUT, row)
                 return
             if not poll.observed:
@@ -874,7 +874,7 @@ class MonitorPass:
         now_ts = self._clock.now()
         clock = row.clock
         if clock is None:
-            clock = row.clock = _ReadyClock(timeout=self.import_timeout, anchor=now_ts, started=now_ts)
+            clock = row.clock = _ReadyClock(timeout=self._import_timeout, anchor=now_ts, started=now_ts)
         clock.mark_poll(now_ts)
         at_deadline = clock.at_deadline(now_ts)
         probe = self._mgr.probes.try_import_completed(
