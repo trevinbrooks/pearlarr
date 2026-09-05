@@ -28,10 +28,12 @@ from pearlarr.cache import (
     HistoryCheckpoint,
     selection_digest_key,
 )
+from pearlarr.clock import Clock
 from pearlarr.config import AppConfig, Arr
 from pearlarr.grab_pipeline import GrabPipeline, GrabRequest
 from pearlarr.import_wait import ImportProbes, ImportWaitManager, PostImportCleanup
 from pearlarr.manual_import import (
+    Deferral,
     GuardFacts,
     ImportProbe,
     ImportWaitMode,
@@ -632,6 +634,7 @@ def make_run_deps(
     cache_store: AbstractCacheStore | None = None,
     seadex: SeaDexSource | None = None,
     logger: logging.Logger | None = None,
+    clock: Clock | None = None,
 ) -> RunDeps:
     """A real `RunDeps` over typed fakes, with a Sonarr url and api_key set and `qbit` None (preview)."""
 
@@ -650,7 +653,7 @@ def make_run_deps(
         # construction seams behave exactly as production's.
         arr_http=None,
         categories=categories,
-        clock=FakeClock(),
+        clock=clock or FakeClock(),
         web=http,
         http=http,
         qbit=None,
@@ -943,7 +946,7 @@ def import_probe(
     command_issued: bool = False,
     imported_count: int = 0,
     target_count: int = 0,
-    deferred: bool = False,
+    deferral: Deferral = Deferral.NONE,
 ) -> ImportProbe:
     """An `ImportProbe` defaulting to the verified-import outcome (`files_present`)."""
 
@@ -952,7 +955,7 @@ def import_probe(
         command_issued=command_issued,
         imported_count=imported_count,
         target_count=target_count,
-        deferred=deferred,
+        deferral=deferral,
     )
 
 
@@ -999,10 +1002,11 @@ def make_sonarr_sync(
     config: AppConfig | None = None,
     cache_store: AbstractCacheStore | None = None,
     ep_list_cache: dict[int, list[SonarrEpisode]] | None = None,
+    clock: Clock | None = None,
 ) -> SonarrSync:
     """A `SonarrSync` built through its real `__init__`, injecting a typed client and seeding `ep_list_cache`."""
 
-    deps = make_run_deps(config=config, cache_store=cache_store)
+    deps = make_run_deps(config=config, cache_store=cache_store, clock=clock)
     services = RunServices(deps, Arr.SONARR)
     strat = SonarrSync(
         deps,

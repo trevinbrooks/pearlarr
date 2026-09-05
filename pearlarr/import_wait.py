@@ -16,6 +16,7 @@ from .manual_import import (
     PENDING_STATE_FOR_OUTCOME,
     AttemptKind,
     CleanupEffect,
+    Deferral,
     EffectStatus,
     ImportProbe,
     ImportProgress,
@@ -302,7 +303,7 @@ class PostImportCleanup:
         probe = self._probes.try_import_completed(record, path, AttemptKind.DEADLINE)
         if probe.files_present:
             self._finish_cleanup(record)
-        elif probe.command_issued and not probe.deferred:
+        elif probe.deferral is Deferral.ISSUED:
             # A fresh re-import just started, so the "import done" premise is dead: demote to
             # an ordinary carryover and let this run's end pass track and recount it. Only a
             # fresh issue demotes. A blip or an own command still in flight holds the flag.
@@ -572,8 +573,8 @@ class ImportWaitManager:
                 self._records.drop(pending.key)
 
 
-# Cap on deferral credit, in ready timeouts per row: a command wedged in flight forever cannot hold the watch
-# open, yet a long multi-file copy rides through.
+# Cap on deferral credit, in ready timeouts per row: Sonarr work wedged forever (a command in flight, a pass that
+# never ends) cannot hold the watch open, yet a long serial backlog rides through.
 _DEFERRAL_CREDIT_CAP_MULT = 6
 
 
@@ -593,6 +594,7 @@ class _ReadyClock:
     _poll_gap: float = 0.0
     _poll_at: float | None = None
     _credited: float = 0.0
+    _issued_credited: bool = False
 
     def mark_poll(self, now: float) -> None:
         """Stamp a heavy poll, remembering the interval a deferral may credit back."""
@@ -605,14 +607,21 @@ class _ReadyClock:
 
         return now - self.anchor >= self.timeout
 
-    def can_defer(self) -> bool:
-        """Whether deferral credit remains (exhaustion resumes the ordinary deadline)."""
+    def can_defer(self, reason: Deferral) -> bool:
+        """Whether this deferral earns credit: none past the cap, and a fresh POST only once per row."""
 
+        # A POST whose files all fail inside Sonarr completes within the poll gap and is re-POSTed next poll.
+        # Credited every time, that retry loop would run to the cap. Credited once, it retries at the ordinary
+        # cadence and graduates at the ordinary deadline (a second POST for a remainder follows a landing anyway).
+        if reason is Deferral.ISSUED and self._issued_credited:
+            return False
         return self._credited < self.timeout * _DEFERRAL_CREDIT_CAP_MULT
 
-    def credit_deferral(self, now: float) -> None:
+    def credit_deferral(self, now: float, reason: Deferral) -> None:
         """Pause the clock by the last poll interval."""
 
+        if reason is Deferral.ISSUED:
+            self._issued_credited = True
         credit = min(self._poll_gap, self.timeout * _DEFERRAL_CREDIT_CAP_MULT - self._credited)
         self._credited += credit
         self.anchor = min(self.anchor + credit, now)
@@ -628,6 +637,17 @@ class _ReadyClock:
             return False
         self.anchor = now
         return True
+
+
+def _exhausted_outcome(probe: ImportProbe) -> Outcome:
+    """The truthful label for a row graduating with its wait uncredited (the deadline, or the credit cap)."""
+
+    # `command_issued` alone covers scripted probes: the reconciler pairs it with a deferral.
+    if probe.command_issued or probe.deferral in (Deferral.ISSUED, Deferral.IMPORT):
+        return Outcome.STILL_IMPORTING
+    if probe.deferral is Deferral.BUSY:
+        return Outcome.SONARR_BUSY
+    return Outcome.NOT_READY
 
 
 @dataclass(slots=True)
@@ -880,18 +900,15 @@ class MonitorPass:
             AttemptKind.DEADLINE if at_deadline else AttemptKind.POLL,
         )
         landed = clock.note_progress(probe.imported_count, probe.target_count, now_ts)
-        # Waiting on our own work is not this record stalling (a landed poll already re-anchored harder
-        # than a pause would).
-        deferred = probe.deferred and clock.can_defer()
+        # Waiting on Sonarr's import work is not this record stalling (a landed poll already re-anchored
+        # harder than a pause would).
+        deferred = probe.deferred and clock.can_defer(probe.deferral)
         if deferred and not landed:
-            clock.credit_deferral(now_ts)
+            clock.credit_deferral(now_ts, probe.deferral)
         if probe.files_present:
             self._terminal(Outcome.IMPORTED, row, files=probe.target_count or None)
         elif at_deadline and not landed and not deferred:
-            self._terminal(
-                Outcome.STILL_IMPORTING if probe.command_issued else Outcome.NOT_READY,
-                row,
-            )
+            self._terminal(_exhausted_outcome(probe), row)
         elif not probe.attempted:
             self._terminal(Outcome.ATTEMPT_FAILED, row)
         else:

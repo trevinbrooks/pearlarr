@@ -11,6 +11,7 @@ from .log import count_noun, pluralize
 from .manual_import import (
     NO_PROGRESS,
     AttemptKind,
+    Deferral,
     EffectStatus,
     ImportProbe,
     ImportProgress,
@@ -72,6 +73,10 @@ from .sonarr_parse import parsed_episodes, parsed_full_season, video_file_entrie
 # next reflects the rescan, then proceed regardless so a stuck command never blocks the run.
 _REFRESH_COMMAND_MAX_POLLS = 30
 _REFRESH_COMMAND_POLL_S = 1
+# The follow-up ProcessMonitoredDownloads pass settles in under a second when idle and runs for the whole copy
+# when it imports, so wait only for the idle case: parking on a copy froze the cockpit, and a stale queue read
+# lands one poll later. A slower idle pass trips the disk guard every poll, a credited wait bounded by the cap.
+_PROCESS_PASS_SETTLE_MAX_POLLS = 10
 _COMMAND_TERMINAL_STATES = frozenset({"completed", "failed", "aborted", "cancelled"})
 
 
@@ -265,15 +270,21 @@ class ImportExecutor:
         return command_id in self._scratch.issued_command_ids
 
     def refresh_downloads(self) -> None:
-        """Queue RefreshMonitoredDownloads (throttled), waiting for it and the follow-up ProcessMonitoredDownloads."""
+        """Queue RefreshMonitoredDownloads at most once per poll interval, settling the pass it starts."""
 
-        # The rescan is GLOBAL and the blocking pass walks several torrents back-to-back, so it is re-issued
-        # at most once per poll interval.
+        # The rescan is GLOBAL, so it is re-issued at most once per poll interval, measured from the refresh's
+        # END: back-to-back records in one pass share one refresh however long Sonarr's pass ran.
         now = self._clock.now()
         interval = self._config.imports.poll_interval
         if self._scratch.last_refresh_monotonic is not None and now - self._scratch.last_refresh_monotonic < interval:
             return
-        self._scratch.last_refresh_monotonic = now
+        try:
+            self._refresh_and_settle()
+        finally:
+            self._scratch.last_refresh_monotonic = self._clock.now()
+
+    def _refresh_and_settle(self) -> None:
+        """POST the rescan, wait for it, then briefly for the ProcessMonitoredDownloads pass it starts."""
 
         cmd_id = self.sonarr.refresh_monitored_downloads()
         if cmd_id is None:
@@ -289,7 +300,7 @@ class ImportExecutor:
         else:
             return
 
-        for _ in range(_REFRESH_COMMAND_MAX_POLLS):
+        for _ in range(_PROCESS_PASS_SETTLE_MAX_POLLS):
             if not sonarr_process_pass_running(self.list_commands()):
                 return
             self._clock.sleep(_REFRESH_COMMAND_POLL_S)
@@ -415,10 +426,10 @@ class ImportExecutor:
             self.logger.debug(f"{content_path}: Sonarr rejected the import command; will retry")
             return ImportProbe.waiting()
 
-        # Sonarr's copy is async, so acceptance is not `files_present`.
+        # Sonarr's copy is async, so acceptance is not `files_present`. Our fresh copy is a credited wait.
         self._scratch.issued_command_ids.add(cmd_id)
         self.logger.debug(f"{content_path}: queued {count_noun(len(files), 'file')} for import (command {cmd_id})")
-        return ImportProbe.waiting(command_issued=True)
+        return ImportProbe.waiting(command_issued=True, deferral=Deferral.ISSUED)
 
     def _warn_unplaceable_files(
         self,
@@ -614,18 +625,15 @@ class ImportReconciler:
             return ImportProbe.waiting(imported_count=done, target_count=total)
         verdict = classify_queue(queue_rows)
         if verdict is QueueVerdict.WAIT:
-            self.logger.debug(f"{label}: Sonarr is importing; waiting")
+            self.logger.debug(f"{label}: Sonarr still has it in motion; waiting")
             return ImportProbe.waiting(imported_count=done, target_count=total)
-        if (
-            verdict is QueueVerdict.PENDING_CLEAN
-            and not attempt.at_deadline
-            and self._executor.completed_download_handling_enabled()
-        ):
-            self.logger.debug(f"{label}: Sonarr has it pending and will import it; waiting")
-            return ImportProbe.waiting(imported_count=done, target_count=total)
+        if verdict is QueueVerdict.IMPORTING:
+            self.logger.debug(f"{label}: Sonarr is importing it; waiting")
+            return ImportProbe.waiting(deferral=Deferral.IMPORT, imported_count=done, target_count=total)
 
-        # Never gated on the attempt kind: our own import in flight is never raced.
-        verdict = classify_commands(
+        # Never gated on the attempt kind: an import in flight is never raced, and a busy Sonarr ahead of a
+        # clean pending row is a credited wait (the row burns its clock only while Sonarr is idle).
+        block = classify_commands(
             self._executor.list_commands(),
             DownloadMatch(
                 pending.infohash,
@@ -634,14 +642,21 @@ class ImportReconciler:
             ),
             self._executor.is_own_command,
         )
-        if verdict.block:
-            self.logger.debug(f"{label}: {verdict.block.value}; waiting")
+        if block is not None:
+            self.logger.debug(f"{label}: {block.value}; waiting")
             return ImportProbe.waiting(
-                command_issued=verdict.command_issued,
-                deferred=verdict.deferred,
+                command_issued=block.claims_import,
+                deferral=block.deferral,
                 imported_count=done,
                 target_count=total,
             )
+        if (
+            verdict is QueueVerdict.PENDING_CLEAN
+            and not attempt.at_deadline
+            and self._executor.completed_download_handling_enabled()
+        ):
+            self.logger.debug(f"{label}: Sonarr has it pending and will import it; waiting")
+            return ImportProbe.waiting(imported_count=done, target_count=total)
 
         result = self._executor.run_manual_import(
             pending,

@@ -21,6 +21,7 @@ import pytest
 
 from pearlarr.manual_import import (
     LEAVE_PROBE,
+    Deferral,
     GuardFacts,
     ImportProbe,
     OwnedEpisode,
@@ -54,7 +55,6 @@ from pearlarr.seadex_types import (
 from pearlarr.sonarr_import_plan import (
     CandidateFile,
     CommandBlock,
-    CommandVerdict,
     ContentPaths,
     DownloadMatch,
     EpisodeFileStatus,
@@ -506,35 +506,42 @@ class TestClassifyCommands:
     """The verdict layer: precedence + ownership over one command snapshot."""
 
     def test_clear_snapshot_steps_in(self) -> None:
-        verdict = classify_commands([], DownloadMatch("abc", _paths("/d"), set()), lambda _: False)
-        assert verdict == CommandVerdict(None, command_issued=False, deferred=False)
+        assert classify_commands([], DownloadMatch("abc", _paths("/d"), set()), lambda _: False) is None
 
-    def test_download_id_match_reads_honest_flags_without_issued_ids(self) -> None:
+    def test_download_id_match_is_our_import_without_issued_ids(self) -> None:
         # The download-id proof alone owns the copy (survives restarts).
         cmds = [_command(files=[{"downloadId": "ABC"}])]
-        verdict = classify_commands(cmds, DownloadMatch("abc", _paths("/d"), set()), lambda _: False)
-        assert verdict == CommandVerdict(CommandBlock.IN_FLIGHT_IMPORT, command_issued=True, deferred=True)
+        block = classify_commands(cmds, DownloadMatch("abc", _paths("/d"), set()), lambda _: False)
+        assert block is CommandBlock.OWN_IMPORT
 
-    def test_unproven_folder_match_stays_a_plain_wait(self) -> None:
-        # Possibly foreign: it blocks, but earns neither honest flags nor credit.
+    def test_unproven_folder_match_blocks_without_a_claim(self) -> None:
+        # Possibly foreign: it blocks (and the wait is credited) but never claims the import.
         cmds = [_command(files=[{"path": "/d/ep.mkv", "episodeIds": []}])]
-        verdict = classify_commands(cmds, DownloadMatch("abc", _paths("/d"), set()), lambda _: False)
-        assert verdict == CommandVerdict(CommandBlock.IN_FLIGHT_IMPORT, command_issued=False, deferred=False)
+        block = classify_commands(cmds, DownloadMatch("abc", _paths("/d"), set()), lambda _: False)
+        assert block is CommandBlock.IN_FLIGHT_IMPORT
 
     def test_issued_id_owns_an_unproven_folder_match(self) -> None:
         cmds = [_command(command_id=7, files=[{"path": "/d/ep.mkv", "episodeIds": []}])]
-        verdict = classify_commands(cmds, DownloadMatch("abc", _paths("/d"), set()), lambda cid: cid == 7)
-        assert verdict == CommandVerdict(CommandBlock.IN_FLIGHT_IMPORT, command_issued=True, deferred=True)
+        block = classify_commands(cmds, DownloadMatch("abc", _paths("/d"), set()), lambda cid: cid == 7)
+        assert block is CommandBlock.OWN_IMPORT
 
-    def test_own_disk_command_defers_without_claiming_the_import(self) -> None:
+    def test_own_disk_command_blocks_without_claiming_the_import(self) -> None:
         cmds = [_command(command_id=7, name="RenameFiles")]
-        verdict = classify_commands(cmds, DownloadMatch("abc", _paths("/d"), set()), lambda cid: cid == 7)
-        assert verdict == CommandVerdict(CommandBlock.DISK_COMMAND, command_issued=False, deferred=True)
+        block = classify_commands(cmds, DownloadMatch("abc", _paths("/d"), set()), lambda cid: cid == 7)
+        assert block is CommandBlock.DISK_COMMAND
 
-    def test_foreign_disk_command_burns_the_clock(self) -> None:
+    def test_foreign_disk_command_blocks(self) -> None:
         cmds = [_command(command_id=9, name="ProcessMonitoredDownloads")]
-        verdict = classify_commands(cmds, DownloadMatch("abc", _paths("/d"), set()), lambda _: False)
-        assert verdict == CommandVerdict(CommandBlock.DISK_COMMAND, command_issued=False, deferred=False)
+        block = classify_commands(cmds, DownloadMatch("abc", _paths("/d"), set()), lambda _: False)
+        assert block is CommandBlock.DISK_COMMAND
+
+    def test_block_properties(self) -> None:
+        # Only our own import claims `command_issued`; every import blocks as an
+        # IMPORT deferral, a disk command as BUSY.
+        assert [block.claims_import for block in CommandBlock] == [True, False, False]
+        assert CommandBlock.OWN_IMPORT.deferral is Deferral.IMPORT
+        assert CommandBlock.IN_FLIGHT_IMPORT.deferral is Deferral.IMPORT
+        assert CommandBlock.DISK_COMMAND.deferral is Deferral.BUSY
 
 
 class TestStartedDiskCommands:
@@ -1117,11 +1124,17 @@ class TestPendingStateAndProbe:
         assert (probe.imported_count, probe.target_count) == (2, 2)
 
     def test_waiting_probe_carries_the_attempt_flags(self) -> None:
-        probe = ImportProbe.waiting(command_issued=True, deferred=True)
+        probe = ImportProbe.waiting(command_issued=True, deferral=Deferral.IMPORT)
         assert probe.files_present is False
         assert probe.command_issued is True
+        assert probe.deferral is Deferral.IMPORT
         assert probe.deferred is True
         assert probe.attempted is True
+
+    def test_waiting_probe_defaults_to_no_deferral(self) -> None:
+        probe = ImportProbe.waiting()
+        assert probe.deferral is Deferral.NONE
+        assert probe.deferred is False
 
     def test_leave_probe_records_no_attempt(self) -> None:
         assert LEAVE_PROBE.attempted is False
@@ -1245,6 +1258,17 @@ class TestClassifyQueue:
         # Something is actively importing -> wait, don't race it, even if a sibling
         # record is blocked. A later poll re-evaluates once the import settles.
         records = [queue_record("A", "importing"), queue_record("A", "importBlocked")]
+        assert classify_queue(records) is QueueVerdict.IMPORTING
+
+    def test_importing_outranks_a_clean_pending_sibling(self) -> None:
+        # The copy itself is Sonarr's wait (credited), and it outranks every other reading.
+        records = [queue_record("A", "importPending", status="ok"), queue_record("A", "importing")]
+        assert classify_queue(records) is QueueVerdict.IMPORTING
+
+    def test_downloading_beats_blocked_as_a_plain_wait(self) -> None:
+        # In motion but not copying: Sonarr's view lags the finished torrent, so
+        # the wait is the record's own (uncredited).
+        records = [queue_record("A", "downloading"), queue_record("A", "importBlocked")]
         assert classify_queue(records) is QueueVerdict.WAIT
 
     def test_case_insensitive(self) -> None:
