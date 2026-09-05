@@ -959,6 +959,7 @@ class TestPendingStateFold:
             (Outcome.STILL_IMPORTING, PendingState.DOWNLOADED),
             (Outcome.SONARR_BUSY, PendingState.DOWNLOADED),
             (Outcome.NOT_READY, PendingState.DOWNLOADED),
+            (Outcome.UNMATCHED, PendingState.DOWNLOADED),
             (Outcome.ATTEMPT_FAILED, PendingState.DOWNLOADED),
             (Outcome.NO_CONTENT_PATH, PendingState.DOWNLOADED),
             (Outcome.DOWNLOAD_ERRORED, PendingState.ERRORED),
@@ -974,6 +975,79 @@ class TestPendingStateFold:
     def test_fold_covers_exactly_the_non_dropped_outcomes(self) -> None:
         # IMPORTED and MISSING leave the store, so the fold never sees them.
         assert set(PENDING_STATE_FOR_OUTCOME) == {o for o in Outcome if not o.dropped}
+
+
+class TestUnmatchedGraduation:
+    """A probe naming unmatched files graduates on the poll that returned it, in either pass, and stays resident."""
+
+    _NAMES = ("a.mkv", "b.mkv")
+
+    @classmethod
+    def _strategy(cls) -> _RecordingStrategy:
+        return _RecordingStrategy(completed=import_probe(files_present=False, unmatched_files=cls._NAMES))
+
+    def test_check_once_graduates_unmatched_and_keeps_the_record(self) -> None:
+        strategy = self._strategy()
+        mgr = make_orchestration_manager(
+            qbit=FakeQbit({"h": [FakeTorrent(is_complete=True, content_path="/d")]}),
+            strategy=strategy,
+            store_records=[pending_import(infohash="h", added_at=_FRESH)],
+        )
+        view = RecordingWaitView()
+
+        result = mgr.check_once(view=view)
+
+        assert result is not None
+        assert [(row.outcome, row.unmatched_files) for row in result.rows] == [(Outcome.UNMATCHED, self._NAMES)]
+        assert [call.attempt for call in strategy.import_calls] == [AttemptKind.POLL]
+        assert view.final(rk("h")).unmatched_files == self._NAMES
+        assert mgr._ctx.pending_states[pk("h")] is PendingState.DOWNLOADED
+        assert set(mgr._records.rows()) == {pk("h")}
+
+    def test_run_monitor_graduates_unmatched_on_the_first_poll(self) -> None:
+        # The verdict ends the wait on the poll that establishes it: no deadline attempt, no readiness clock.
+        strategy = self._strategy()
+        mgr, view = _run_single_monitor(
+            strategy,
+            FakeQbit({"h": [FakeTorrent(is_complete=True, content_path="/d")]}),
+            ready_timeout=600,
+        )
+
+        final = view.final(rk("h"))
+        assert final.outcome is Outcome.UNMATCHED
+        assert final.unmatched_files == self._NAMES
+        assert final.phase_elapsed_s < 600
+        assert [call.attempt for call in strategy.import_calls] == [AttemptKind.POLL]
+        assert set(mgr._records.rows()) == {pk("h")}
+
+    def test_later_monitor_cycles_never_re_poll_a_graduated_row(self) -> None:
+        # A slower sibling keeps the pass running past the first cycle. The graduated row is not asked again.
+        strategy = self._strategy()
+        qbit = FakeQbit(
+            {
+                "h": [FakeTorrent(is_complete=True, content_path="/d")],
+                "slow": [FakeTorrent(progress=0.5), FakeTorrent(is_complete=True, content_path="/slow")],
+            },
+        )
+        records = [pending_import(infohash="h", added_at=_FRESH), pending_import(infohash="slow", added_at=_FRESH)]
+        mgr = make_orchestration_manager(
+            qbit=qbit,
+            strategy=strategy,
+            store_records=records,
+            pending=records,
+            import_wait_timeout=3600,
+            import_ready_timeout=600,
+            import_poll_interval=30,
+            clock=FakeClock(step=30),
+        )
+        view = RecordingWaitView()
+
+        mgr.run_monitor(view=view)
+
+        assert [call.pending.infohash for call in strategy.import_calls] == ["h", "slow"]
+        assert view.final(rk("h")).outcome is Outcome.UNMATCHED
+        assert view.final(rk("slow")).outcome is Outcome.UNMATCHED
+        assert set(mgr._records.rows()) == {pk("h"), pk("slow")}
 
 
 class TestMonitorRowDiscriminator:

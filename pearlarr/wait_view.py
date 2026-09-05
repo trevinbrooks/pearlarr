@@ -31,6 +31,8 @@ class WaitOutcomeRow:
     outcome: Outcome
     carried_over: bool = False
     """Whether the record predates this run. A fresh grab tallies as `added`, never `imported`."""
+    unmatched_files: tuple[str, ...] = ()
+    """On the `UNMATCHED` outcome, the on-disk files no episode claimed."""
 
 
 @dataclass(frozen=True, slots=True)
@@ -60,7 +62,7 @@ class WaitResult:
 
     @property
     def left(self) -> int:
-        """Count of deferred ("left for a later run") torrents."""
+        """Count of deferred (left pending) torrents."""
 
         return self._count(OutcomeCategory.DEFERRED)
 
@@ -150,6 +152,7 @@ class HubWaitView(WaitView):
                         outcome=outcome,
                         files=view.import_total,
                         waited_s=view.phase_elapsed_s,
+                        unmatched_files=view.unmatched_files,
                     ),
                 )
             scope.progress(snapshot)

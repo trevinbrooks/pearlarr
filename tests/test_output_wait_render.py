@@ -46,8 +46,15 @@ def _term(label: str, outcome: Outcome) -> TorrentView:
     return TorrentView(key=label, label=label, phase=Phase.TERMINAL, outcome=outcome)
 
 
-def _grad(label: str, outcome: Outcome, *, files: int | None = None, waited: float = 0.0) -> TorrentGraduated:
-    return TorrentGraduated(label=label, outcome=outcome, files=files, waited_s=waited)
+def _grad(
+    label: str,
+    outcome: Outcome,
+    *,
+    files: int | None = None,
+    waited: float = 0.0,
+    unmatched_files: tuple[str, ...] = (),
+) -> TorrentGraduated:
+    return TorrentGraduated(label=label, outcome=outcome, files=files, waited_s=waited, unmatched_files=unmatched_files)
 
 
 # --- the shared PulseThrottle -----------------------------------------------------------
@@ -339,17 +346,17 @@ def test_phase_rank_covers_every_non_terminal_phase() -> None:
 
 
 def test_graduation_tail_states_files_and_elapsed_for_an_import() -> None:
-    assert graduation_tail(Outcome.IMPORTED, 12, 192) == f"12 files{SEP}3m 12s"
+    assert graduation_tail(_grad("A", Outcome.IMPORTED, files=12, waited=192)) == f"12 files{SEP}3m 12s"
 
 
 def test_graduation_tail_is_empty_when_an_import_has_no_detail() -> None:
     # No files count (incomplete seed) and a sub-second wait -> nothing to say.
-    assert graduation_tail(Outcome.IMPORTED, None, 0.0) == ""
+    assert graduation_tail(_grad("A", Outcome.IMPORTED)) == ""
 
 
 def test_graduation_tail_elapsed_alone_when_files_unknown() -> None:
     # An incomplete seed map hides the files count but the wait clock still shows.
-    assert graduation_tail(Outcome.IMPORTED, None, 192) == "3m 12s"
+    assert graduation_tail(_grad("A", Outcome.IMPORTED, waited=192)) == "3m 12s"
 
 
 def test_graduation_tail_says_left_pending_outcomes_retry() -> None:
@@ -361,8 +368,17 @@ def test_graduation_tail_says_left_pending_outcomes_retry() -> None:
         Outcome.NOT_READY,
         Outcome.ATTEMPT_FAILED,
     ):
-        assert graduation_tail(outcome, None, 0.0) == "retries next run"
+        assert graduation_tail(_grad("A", outcome)) == "retries next run"
+
+
+def test_graduation_tail_counts_unmatched_files_and_names_the_action() -> None:
+    # The names ride the structured log and the notification, so the console gets the count. Never "retries".
+    event = _grad("A", Outcome.UNMATCHED, waited=15, unmatched_files=("a.mkv", "b.mkv"))
+    assert graduation_tail(event) == "2 files matched no episode · import by hand in Sonarr"
+    assert graduation_tail(_grad("A", Outcome.UNMATCHED, unmatched_files=("a.mkv",))) == (
+        "1 file matched no episode · import by hand in Sonarr"
+    )
 
 
 def test_graduation_tail_says_a_missing_record_is_gone() -> None:
-    assert graduation_tail(Outcome.MISSING, None, 0.0) == "no longer tracked"
+    assert graduation_tail(_grad("A", Outcome.MISSING)) == "no longer tracked"

@@ -10,7 +10,7 @@ straight into cache.db and every mapping source is disabled, so the scan finds
 zero series, nothing leaves loopback, and the end-of-run blocking monitor is
 the only thing driving the import.
 
-Four scenarios pin the dead-loop cure end to end:
+Six scenarios pin the import wait end to end:
 
 * DEAD-TRACKED: the downloadId scan 500s forever (Sonarr's poisoned tracked
   download), history's newest relevant event is `downloadFolderImported`, and
@@ -27,6 +27,13 @@ Four scenarios pin the dead-loop cure end to end:
   empty grab-time map, absolute-only names resolved through Sonarr's
   series-matched `/parse` pairs, and an out-of-entry sibling episode + NC
   extra sharing the folder that must be skipped, never veto the batch.
+* IMPORTED-UNSEEN: Sonarr imported the download before any scan saw its
+  files. The by-id scan is dead, the folder is empty, and the history rows
+  rebuild the empty grab-time map, which the episode files verify at once.
+* NUMBERLESS: dead-tracked with three numberless names for a two-episode
+  record. No leg can place them on any poll, so the first poll ends the wait
+  with the `unmatched` outcome naming the files, and the record stays for a
+  human.
 """
 
 import json
@@ -36,6 +43,7 @@ from collections.abc import Generator
 from contextlib import contextmanager
 from dataclasses import dataclass, field
 from datetime import datetime
+from enum import StrEnum
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from typing import Literal, NamedTuple, cast, override
@@ -78,6 +86,12 @@ _ABS_FILES: tuple[tuple[int, str], ...] = (
 _ABS_SIBLING = "Demo Batch - 03 (BD 1080p) [Thighs].mkv"
 _ABS_EXTRA = "Demo Batch - NCED1 (BD 1080p) [Thighs].mkv"
 _ABSOLUTE_NUMBER = re.compile(r" - (\d{2}) ")
+# Three names carrying no episode number, for the two-episode record: no leg can place them.
+_NUMBERLESS_FILES = (
+    "Demo Batch - Movie Part One (BD 1080p) [Thighs].mkv",
+    "Demo Batch - Movie Part Two (BD 1080p) [Thighs].mkv",
+    "Demo Batch - Movie Part Three (BD 1080p) [Thighs].mkv",
+)
 _IMPORTED_EVENT_DATE = "2026-06-20T14:05:11Z"
 _DEAD_TRACKED_NOTE = (
     "Sonarr recorded this download as imported on 2026-06-20 and won't serve it by id - "
@@ -105,6 +119,17 @@ _DOWNLOAD_CLIENTS: Json = [
 ]
 
 
+class _Listing(StrEnum):
+    """The file names a scenario's download carries, which decides what the import has to place."""
+
+    EPISODES = "episodes"
+    """`SxxExx` names, mapped at grab time."""
+    ABSOLUTE = "absolute"
+    """Absolute-only names over an empty map, with an out-of-entry sibling and an NC extra on disk."""
+    NUMBERLESS = "numberless"
+    """Three names with no episode number for two episodes: nothing can place them."""
+
+
 @dataclass(frozen=True)
 class _Scenario:
     """One mock-Sonarr behavior matrix for the poisoned download's scans."""
@@ -125,11 +150,12 @@ class _Scenario:
     ready_timeout: int = 30
     """The run's `imports.ready_timeout`. Small for the deadline scenario."""
 
-    absolute_batch: bool = False
-    """Replay the real Thighs incident shape: an EMPTY grab-time map,
-    absolute-only names, and an out-of-entry sibling + NC extra in the folder.
-    The import must self-heal through `/parse`'s series-matched pairs, with
-    the sibling skipped instead of vetoing the batch."""
+    listing: _Listing = _Listing.EPISODES
+    """The download's file names. ABSOLUTE replays the real Thighs incident
+    shape: an EMPTY grab-time map, absolute-only names, and an out-of-entry
+    sibling + NC extra in the folder. The import must self-heal through
+    `/parse`'s series-matched pairs, with the sibling skipped instead of
+    vetoing the batch. NUMBERLESS serves names nothing can place."""
 
     imported_unseen: bool = False
     """Sonarr imported the download before any scan saw its files: an EMPTY
@@ -150,7 +176,13 @@ _ABSOLUTE_BATCH = _Scenario(
     heal_download_scan=False,
     folder_scan="candidates",
     history_event="downloadFolderImported",
-    absolute_batch=True,
+    listing=_Listing.ABSOLUTE,
+)
+_NUMBERLESS = _Scenario(
+    heal_download_scan=False,
+    folder_scan="candidates",
+    history_event="downloadFolderImported",
+    listing=_Listing.NUMBERLESS,
 )
 _IMPORTED_UNSEEN = _Scenario(
     heal_download_scan=False,
@@ -224,7 +256,7 @@ class _World:
         with self.lock:
             healed = self.scenario.heal_download_scan and self.folder_scans > 0
             self.download_scan_statuses.append(200 if healed else 500)
-            return _candidates(self.scenario.absolute_batch) if healed else None
+            return _candidates(self.scenario.listing) if healed else None
 
     def folder_scan_response(self) -> list[Json] | None:
         """The next folder-scan body (None = serve a 500) - and count the activation."""
@@ -233,7 +265,7 @@ class _World:
             self.folder_scans += 1
             match self.scenario.folder_scan:
                 case "candidates":
-                    return _candidates(self.scenario.absolute_batch)
+                    return _candidates(self.scenario.listing)
                 case "empty":
                     return []
                 case "error":
@@ -263,7 +295,7 @@ class _World:
                     "size": 1000,
                 }
             rows.append(row)
-        if self.scenario.absolute_batch:
+        if self.scenario.listing is _Listing.ABSOLUTE:
             # The sibling's episode EXISTS in the series but not in the entry,
             # so its rejection exercises the resolved-set scope gate.
             rows.append(
@@ -358,18 +390,23 @@ def _parse_payload(title: str) -> Json:
     }
 
 
-def _scenario_files(absolute: bool) -> list[str]:
+def _scenario_files(listing: _Listing) -> list[str]:
     """The on-disk file names a scan serves (sibling + extra exist on disk only)."""
 
-    named = _ABS_FILES if absolute else _EPISODES
-    return [name for _, name in named] + ([_ABS_SIBLING, _ABS_EXTRA] if absolute else [])
+    match listing:
+        case _Listing.EPISODES:
+            return [name for _, name in _EPISODES]
+        case _Listing.ABSOLUTE:
+            return [name for _, name in _ABS_FILES] + [_ABS_SIBLING, _ABS_EXTRA]
+        case _Listing.NUMBERLESS:
+            return list(_NUMBERLESS_FILES)
 
 
-def _candidates(absolute: bool) -> list[Json]:
+def _candidates(listing: _Listing) -> list[Json]:
     """The on-disk candidates either scan mode serves for the download folder."""
 
     out: list[Json] = []
-    for number, name in enumerate(_scenario_files(absolute), start=1):
+    for number, name in enumerate(_scenario_files(listing), start=1):
         out.append(
             {
                 "id": number,
@@ -602,21 +639,23 @@ def _seed_pending(cache_path: Path, checksum: str, scenario: _Scenario) -> None:
     incident state: grab time resolved nothing, import time must self-heal).
     Its `seadex_files` still name the episode files - never the extra, which
     only exists on disk. The imported-unseen record's map is empty too: the
-    rebuild from Sonarr's history has to fill it.
+    rebuild from Sonarr's history has to fill it. The numberless record's map
+    is empty as well, and its listing names the three files nothing can place.
     """
 
-    named = _ABS_FILES if scenario.absolute_batch else _EPISODES
+    named = _ABS_FILES if scenario.listing is _Listing.ABSOLUTE else _EPISODES
+    mapped = scenario.listing is _Listing.EPISODES and not scenario.imported_unseen
     record = PendingImport(
         infohash=_INFOHASH,
         series_id=_SERIES_ID,
         al_id=_AL_ID,
-        file_episode_map={}
-        if scenario.absolute_batch or scenario.imported_unseen
-        else {normalize_basename(name): [ep_id] for ep_id, name in named},
+        file_episode_map={normalize_basename(name): [ep_id] for ep_id, name in named} if mapped else {},
         episode_ids=[],
         release_group=_GROUP,
         is_dual_audio=False,
-        seadex_files=[name for _, name in named],
+        seadex_files=list(_NUMBERLESS_FILES)
+        if scenario.listing is _Listing.NUMBERLESS
+        else [name for _, name in named],
         title=_TITLE,
         added_at=datetime.now().strftime(UPDATED_AT_STR_FORMAT),
         coverage="S01 E01-E02",
@@ -861,6 +900,33 @@ def test_never_scanned_record_lands_from_history_on_the_first_check(
     assert outcome.world.manual_commands == []
     assert outcome.world.folder_scans == 1
     assert outcome.world.category_moves == [(_INFOHASH, _IMPORTED_CATEGORY)]
+
+
+def test_numberless_files_graduate_unmatched_on_the_first_poll(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    outcome = _drive(tmp_path, monkeypatch, _NUMBERLESS)
+    out = _flat(capsys.readouterr().out)
+
+    # Three numberless files for two episodes: no leg can place them, on this
+    # poll or any later one. The verdict ends the wait on the first poll,
+    # names the files, and leaves the record for a human.
+    assert outcome.ok is True
+    assert outcome.pending_after == frozenset({_INFOHASH})
+    assert out.count('unmatched title="Demo Batch · Thighs"') == 1
+    assert f'unmatched title="Demo Batch · Thighs" unmatched_files="{"; ".join(_NUMBERLESS_FILES)}"' in out
+    assert "complete kind=monitor imported=0 pending=0 deferred=1 failed=0" in out
+    assert current_hub().counts.mark().errors == 0
+
+    # One folder scan was the whole wait: nothing was POSTed or moved, no
+    # readiness deadline ran, and the partial-batch warning never fired.
+    assert outcome.world.folder_scans == 1
+    assert outcome.world.manual_commands == []
+    assert outcome.world.category_moves == []
+    assert "could not be matched" not in out
+    assert "not ready" not in out
 
 
 def test_unscannable_download_defers_with_folder_warn(

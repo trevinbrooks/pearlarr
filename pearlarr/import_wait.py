@@ -3,6 +3,7 @@
 import logging
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass, field, replace
+from typing import NamedTuple
 
 import qbittorrentapi
 
@@ -656,6 +657,16 @@ def _exhausted_outcome(probe: ImportProbe) -> Outcome:
     return Outcome.NOT_READY
 
 
+class _TerminalDetail(NamedTuple):
+    """The coda facts a terminal outcome carries: the imported files count, or the files no episode claimed."""
+
+    files: int | None = None
+    unmatched_files: tuple[str, ...] = ()
+
+
+_NO_DETAIL = _TerminalDetail()
+
+
 @dataclass(slots=True)
 class _MonitorRow:
     """One record's live state within a monitor pass. The row owns its `TorrentView` presentation."""
@@ -685,7 +696,7 @@ class _MonitorRow:
 
         return self.clock.started if self.clock is not None else self.dl_start
 
-    def view_terminal(self, outcome: Outcome, now: float, *, files: int | None = None) -> None:
+    def view_terminal(self, outcome: Outcome, now: float, detail: _TerminalDetail = _NO_DETAIL) -> None:
         """Freeze the terminal frame (`phase_elapsed_s` becomes the row's final wait clock)."""
 
         self.view = TorrentView(
@@ -693,8 +704,9 @@ class _MonitorRow:
             label=self.record.display_label,
             phase=Phase.TERMINAL,
             outcome=outcome,
-            import_done=files,
-            import_total=files,
+            import_done=detail.files,
+            import_total=detail.files,
+            unmatched_files=detail.unmatched_files,
             phase_elapsed_s=now - self.dl_start,
         )
 
@@ -837,14 +849,22 @@ class MonitorPass:
 
         return WaitSnapshot(tuple(row.view for row in self.rows.values()), elapsed_s=self.elapsed())
 
-    def _terminal(self, outcome: Outcome, row: _MonitorRow, *, files: int | None = None) -> None:
+    def _terminal(self, outcome: Outcome, row: _MonitorRow, detail: _TerminalDetail = _NO_DETAIL) -> None:
         """Record a terminal outcome: the drop or retire it implies, the frozen frame, then the result row."""
 
         record = row.record
         # Store effects precede the frozen frame and the result row (resolve_terminal's contract).
         self._mgr.resolve_terminal(record, outcome, carried_over=row.carried_over)
-        row.view_terminal(outcome, self._clock.now(), files=files)
-        self.results.append(WaitOutcomeRow(label=record.display_label, outcome=outcome, carried_over=row.carried_over))
+        row.view_terminal(outcome, self._clock.now(), detail)
+        # Read back from the frozen frame, so the frame stays the one source of the row's facts.
+        self.results.append(
+            WaitOutcomeRow(
+                label=record.display_label,
+                outcome=outcome,
+                carried_over=row.carried_over,
+                unmatched_files=row.view.unmatched_files,
+            )
+        )
 
     def _retire_active(self) -> None:
         """Graduate every still-active row with a truthful pending outcome."""
@@ -914,7 +934,10 @@ class MonitorPass:
         if deferred and not landed:
             clock.credit_deferral(now_ts, probe.deferral)
         if probe.files_present:
-            self._terminal(Outcome.IMPORTED, row, files=probe.target_count or None)
+            self._terminal(Outcome.IMPORTED, row, _TerminalDetail(files=probe.target_count or None))
+        elif probe.unmatched_files:
+            # Nothing to wait for: the deadline would only repeat the answer. Kept for a human, re-reported next run.
+            self._terminal(Outcome.UNMATCHED, row, _TerminalDetail(unmatched_files=probe.unmatched_files))
         elif at_deadline and not landed and not deferred:
             self._terminal(_exhausted_outcome(probe), row)
         elif not probe.attempted:
@@ -944,7 +967,7 @@ class MonitorPass:
                 continue
             clock.note_progress(progress.done, progress.total, self._clock.now())
             if progress.files_present:
-                self._terminal(Outcome.IMPORTED, row, files=progress.total)
+                self._terminal(Outcome.IMPORTED, row, _TerminalDetail(files=progress.total))
                 changed = True
             elif (progress.done, progress.total) != (row.view.import_done, row.view.import_total):
                 row.view_import_progress(progress, self._clock.now())
