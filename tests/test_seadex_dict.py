@@ -2,7 +2,7 @@
 """Characterization tests for `SeadexReleaseFilter.build` (entry -> release dict).
 
 This is the SeaDexGateway logic (the engine reaches it via `get_seadex_dict`):
-tracker filtering, the want_best / prefer_dual_audio narrowing, the is_public
+tracker filtering, the prefer_dual_audio / want_best narrowing, the is_public
 computation, and the per-group private-url drop.
 """
 
@@ -127,6 +127,39 @@ class TestGetSeadexDict:
             _torrent(release_group="Single", url="u2", tracker=Tracker.NYAA, is_dual_audio=False),
         )
         assert set(filt.build(entry)) == {"Single"}
+
+    def test_dual_alternative_outranks_single_audio_best(self) -> None:
+        filt = make_release_filter(want_best=True, prefer_dual_audio=True)
+        entry = _entry(
+            _torrent(release_group="Best", url="u1", tracker=Tracker.NYAA, is_best=True),
+            _torrent(release_group="DualAlt", url="u2", tracker=Tracker.NYAA, is_dual_audio=True),
+        )
+        assert set(filt.build(entry)) == {"DualAlt"}
+
+    def test_single_alternative_outranks_dual_best_when_flag_false(self) -> None:
+        filt = make_release_filter(want_best=True, prefer_dual_audio=False)
+        entry = _entry(
+            _torrent(release_group="DualBest", url="u1", tracker=Tracker.NYAA, is_best=True, is_dual_audio=True),
+            _torrent(release_group="SingleAlt", url="u2", tracker=Tracker.NYAA),
+        )
+        assert set(filt.build(entry)) == {"SingleAlt"}
+
+    def test_best_breaks_ties_within_preferred_audio(self) -> None:
+        filt = make_release_filter(want_best=True, prefer_dual_audio=True)
+        entry = _entry(
+            _torrent(release_group="DualBest", url="u1", tracker=Tracker.NYAA, is_best=True, is_dual_audio=True),
+            _torrent(release_group="DualAlt", url="u2", tracker=Tracker.NYAA, is_dual_audio=True),
+            _torrent(release_group="Single", url="u3", tracker=Tracker.NYAA),
+        )
+        assert set(filt.build(entry)) == {"DualBest"}
+
+    def test_falls_back_to_best_when_no_preferred_audio(self) -> None:
+        filt = make_release_filter(want_best=True, prefer_dual_audio=True)
+        entry = _entry(
+            _torrent(release_group="Best", url="u1", tracker=Tracker.NYAA, is_best=True),
+            _torrent(release_group="Rest", url="u2", tracker=Tracker.NYAA),
+        )
+        assert set(filt.build(entry)) == {"Best"}
 
     def test_is_public_false_for_private_tracker_name(self, monkeypatch: pytest.MonkeyPatch) -> None:
         # Even when the tracker claims public, a name in PRIVATE_TRACKERS is not public.

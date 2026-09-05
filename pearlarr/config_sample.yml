@@ -113,10 +113,11 @@ seadex:
   #              all.
   private_releases: warn
 
-  # Prefer dual-audio releases. When off, prefer Japanese-audio releases.
+  # Prefer dual-audio releases, even over a single-audio release marked best. When off, prefer
+  # Japanese-audio releases the same way.
   prefer_dual_audio: true
 
-  # Prefer releases SeaDex marks as best.
+  # Prefer releases SeaDex marks as best, among those matching the audio preference.
   want_best: true
 
   # SeaDex release tags to skip, e.g. Dolby Vision or Deband Required. Empty skips none.

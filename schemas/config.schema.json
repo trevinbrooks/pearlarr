@@ -473,13 +473,13 @@
         },
         "prefer_dual_audio": {
           "default": true,
-          "description": "Prefer dual-audio releases. When off, prefer Japanese-audio releases.",
+          "description": "Prefer dual-audio releases, even over a single-audio release marked best. When off, prefer Japanese-audio releases the same way.",
           "title": "Prefer Dual Audio",
           "type": "boolean"
         },
         "want_best": {
           "default": true,
-          "description": "Prefer releases SeaDex marks as best.",
+          "description": "Prefer releases SeaDex marks as best, among those matching the audio preference.",
           "title": "Want Best",
           "type": "boolean"
         },
