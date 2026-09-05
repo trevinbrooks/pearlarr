@@ -7,6 +7,10 @@ Pearlarr is a fork of [bbtufty/seadexarr](https://github.com/bbtufty/seadexarr).
 
 ## [Unreleased]
 
+### Fixed
+
+- A download whose files match no episode now ends its wait at once with the reason and the file names, on the console and in the Discord summary ("import by hand in Sonarr"), instead of warning twice and sitting on the readiness deadline. It stays pending and is reported once per run until it expires. The "could not be matched" warning for a partly matched download now waits for a poll whose parses and episode index were all served, so a Sonarr hiccup no longer raises it.
+
 ## [1.3.2] - 2026-09-05
 
 ### Fixed

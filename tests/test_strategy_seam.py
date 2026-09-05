@@ -31,6 +31,7 @@ from pearlarr.manual_import import (
     Deferral,
     EffectStatus,
     GuardFacts,
+    ImportProbe,
     ImportProgress,
     ImportWaitMode,
     OwnedEpisode,
@@ -2179,10 +2180,13 @@ class TestManualImportWarningGating:
 
     @staticmethod
     def _strat_with_unplaceable(*names: str) -> tuple[SonarrSync, FakeSonarrClient]:
-        # The mapped file plus `names`, none of which parse to an episode.
+        # The mapped file plus `names`, none of which parse to an episode. Sonarr serves every parse (numberless)
+        # and the bare target episode, so the skips are settled and the warn arm is the one under test.
         strat, sonarr = _make_sonarr_for_import(
             candidates=[manual_candidate("/d/Show - 01 [1080p].mkv"), *(manual_candidate(f"/d/{n}") for n in names)],
+            episodes=[sonarr_ep(1, 1, ep_id=101, episode_file_id=0)],
         )
+        sonarr.parse_episode_info_fn = lambda _n: ParsedFileInfo()
         logger = logging.getLogger("pearlarr-warning-gating")
         logger.handlers.clear()
         logger.propagate = True
@@ -2226,6 +2230,118 @@ class TestManualImportWarningGating:
         warnings = [m for m in diagnostic_messages(recording, Severity.WARNING) if "could not be matched" in m]
         assert len(warnings) == 1
         assert "1 file could not be matched" in warnings[0]
+
+    def test_unsettled_partial_skip_neither_warns_nor_blocks_the_import(self) -> None:
+        # The fake's default parse miss leaves the skip tentative: the seeded file still imports, and the
+        # "could not be matched" warning waits for a poll whose parses were all served.
+        pending = pending_import(seadex_files=["Show - 01 [1080p].mkv", "Extras.mkv"])
+        strat, sonarr = self._strat_with_unplaceable("Extras.mkv")
+        sonarr.parse_episode_info_fn = lambda _n: None
+        recording = install_recording_hub()
+
+        probe = strat.import_completed(pending, "/d", AttemptKind.POLL)
+
+        assert probe.command_issued is True
+        assert probe.unmatched_files == ()
+        assert len(sonarr.execute_calls) == 1
+        assert not any("could not be matched" in m for m in diagnostic_messages(recording, Severity.WARNING))
+
+
+class TestUnmatchedProbe:
+    """A download whose every on-disk file matches no episode is an outcome, not a wait.
+
+    The verdict needs settled inputs: every parse served and the episode index served. A miss on
+    either keeps the poll a plain wait, so a Sonarr hiccup never graduates a record.
+    """
+
+    _NAMES = ("Movie Part 1.mkv", "Movie Part 2.mkv")
+
+    @classmethod
+    def _numberless_pair(cls, *, excluded: tuple[str, ...] = ()) -> PendingImport:
+        # Two numberless files for one target episode: no leg can place either, on any poll.
+        return pending_import(
+            file_episode_map={},
+            episode_ids=[],
+            ordered_episode_ids=[101],
+            seadex_files=list(cls._NAMES),
+            excluded_files=[normalize_basename(name) for name in excluded],
+        )
+
+    @classmethod
+    def _strat(cls, *, served: bool = True) -> tuple[SonarrSync, FakeSonarrClient]:
+        strat, sonarr = _make_sonarr_for_import(
+            candidates=[manual_candidate(f"/d/{name}") for name in cls._NAMES],
+            episodes=[sonarr_ep(1, 1, ep_id=101, episode_file_id=0)] if served else None,
+        )
+        if served:
+            sonarr.parse_episode_info_fn = lambda _n: ParsedFileInfo()
+        return strat, sonarr
+
+    def test_settled_all_unmatched_returns_the_names_without_a_warning(self) -> None:
+        pending = self._numberless_pair()
+        strat, sonarr = self._strat()
+        recording = install_recording_hub()
+
+        first = strat.import_completed(pending, "/d", AttemptKind.POLL)
+        second = strat.import_completed(pending, "/d", AttemptKind.POLL)
+
+        assert first.unmatched_files == self._NAMES
+        assert first.files_present is False
+        assert first.command_issued is False
+        assert first.deferral is Deferral.NONE
+        assert second == first
+        assert sonarr.execute_calls == []
+        assert diagnostic_messages(recording, Severity.WARNING) == []
+
+    def test_a_parse_miss_keeps_the_poll_a_wait(self) -> None:
+        pending = self._numberless_pair()
+        strat, sonarr = self._strat()
+        sonarr.parse_episode_info_fn = lambda _n: None
+        recording = install_recording_hub()
+
+        probe = strat.import_completed(pending, "/d", AttemptKind.POLL)
+
+        assert probe == ImportProbe.waiting()
+        assert diagnostic_messages(recording, Severity.WARNING) == []
+
+    def test_an_empty_episode_index_keeps_the_poll_a_wait(self) -> None:
+        pending = self._numberless_pair()
+        strat, sonarr = self._strat(served=False)
+        sonarr.parse_episode_info_fn = lambda _n: ParsedFileInfo()
+        recording = install_recording_hub()
+
+        probe = strat.import_completed(pending, "/d", AttemptKind.POLL)
+
+        assert probe == ImportProbe.waiting()
+        assert diagnostic_messages(recording, Severity.WARNING) == []
+
+    def test_every_file_excluded_at_grab_time_keeps_the_poll_a_wait(self) -> None:
+        # Nothing of the record's own is on disk, and the exclusions account for every skip.
+        pending = self._numberless_pair(excluded=self._NAMES)
+        strat, _ = self._strat()
+
+        probe = strat.import_completed(pending, "/d", AttemptKind.POLL)
+
+        assert probe == ImportProbe.waiting()
+
+    def test_a_seeded_file_beside_an_unmatched_one_imports_and_warns_once(self) -> None:
+        # Something to import means the partial arm: today's once-a-run warning, no unmatched outcome.
+        pending = pending_import(seadex_files=["Show - 01 [1080p].mkv", "Extras.mkv"])
+        strat, sonarr = _make_sonarr_for_import(
+            candidates=[manual_candidate("/d/Show - 01 [1080p].mkv"), manual_candidate("/d/Extras.mkv")],
+            episodes=[sonarr_ep(1, 1, ep_id=101, episode_file_id=0)],
+        )
+        sonarr.parse_episode_info_fn = lambda _n: ParsedFileInfo()
+        recording = install_recording_hub()
+
+        first = strat.import_completed(pending, "/d", AttemptKind.POLL)
+        strat.import_completed(pending, "/d", AttemptKind.POLL)
+
+        assert first.command_issued is True
+        assert first.unmatched_files == ()
+        assert sonarr.execute_calls[0][0][0].path == "/d/Show - 01 [1080p].mkv"
+        warnings = [m for m in diagnostic_messages(recording, Severity.WARNING) if "could not be matched" in m]
+        assert len(warnings) == 1
 
 
 class TestDefaultQualityWarning:

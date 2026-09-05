@@ -29,7 +29,7 @@ from .manual_import import OutcomeCategory
 from .output import hub_warn
 from .seadex_types import SeadexDict, SeadexUrlItem
 from .torrents import AddOutcome, ReleaseOutcome
-from .wait_view import WaitResult
+from .wait_view import WaitOutcomeRow, WaitResult
 
 # Cap how many titles a single notification field lists before collapsing the
 # remainder into a "… +N more" line, keeping a big carried-over backlog readable.
@@ -90,6 +90,15 @@ def _wait_color(result: WaitResult) -> int:
     if result.left > 0:
         return COLOR_DEFERRED
     return COLOR_SUCCESS
+
+
+def _wait_row_text(row: WaitOutcomeRow) -> str:
+    """One summary row: the title alone for an import, else with its detail and any file no episode claimed."""
+
+    if row.outcome.category is OutcomeCategory.SUCCESS:
+        return row.label
+    # Discord strips leading whitespace and reads `_`, `*`, `[` as markdown, so each name rides in backticks.
+    return "\n".join((f"{row.label} - {row.outcome.detail}", *(f"`{name}`" for name in row.unmatched_files)))
 
 
 @dataclass(frozen=True, slots=True)
@@ -371,7 +380,7 @@ class Notifier:
 
         sections = (
             (OutcomeCategory.SUCCESS, "Imported"),
-            (OutcomeCategory.DEFERRED, "Left for a later run"),
+            (OutcomeCategory.DEFERRED, "Left pending"),
             (OutcomeCategory.FAILED, "Failed"),
         )
         fields: list[EmbedField] = []
@@ -379,11 +388,7 @@ class Notifier:
             rows = [r for r in result.rows if r.outcome.category is category]
             if not rows:
                 continue
-            lines = [
-                r.label if category is OutcomeCategory.SUCCESS else f"{r.label} - {r.outcome.detail}"
-                for r in rows[:_MAX_FIELD_TITLES]
-            ]
-            value = "\n".join(lines)
+            value = "\n".join(_wait_row_text(r) for r in rows[:_MAX_FIELD_TITLES])
             if len(rows) > _MAX_FIELD_TITLES:
                 value += f"\n… +{len(rows) - _MAX_FIELD_TITLES} more"
             fields.append(EmbedField(name=f"{name} ({len(rows)})", value=value))

@@ -236,6 +236,10 @@ class ImportProbe:
     """Import-time placements this poll made (normalized basename -> ids), for the record seam to persist.
     Empty when the poll placed nothing."""
 
+    unmatched_files: tuple[str, ...] = ()
+    """The download's on-disk files no episode claimed (one per distinct basename), when that is all the poll
+    found. Non-empty only from `unmatched()`: `files_present` and `command_issued` False, `deferral` NONE."""
+
     @property
     def deferred(self) -> bool:
         """Whether this poll waited on Sonarr's work (the monitor credits the interval back)."""
@@ -272,6 +276,12 @@ class ImportProbe:
             deferral=deferral,
         )
 
+    @classmethod
+    def unmatched(cls, names: tuple[str, ...]) -> "ImportProbe":
+        """Nothing to import or verify: every file on disk matched no episode."""
+
+        return cls(files_present=False, command_issued=False, unmatched_files=names)
+
 
 LEAVE_PROBE = ImportProbe(attempted=False, files_present=False, command_issued=False)
 """The fail-open probe: no attempt ran, so leave the record pending for a later run."""
@@ -304,8 +314,8 @@ class OutcomeCategory(Enum):
     """The torrent imported."""
 
     DEFERRED = ("⚠", "~", "yellow")
-    """Left pending for a later run (a download timeout, or an import that hasn't landed yet). Not a failure,
-    just unfinished."""
+    """Left pending for a later run (a download timeout, an import that hasn't landed yet, or files only a
+    human can place). Not a failure, just unfinished."""
 
     FAILED = ("✖", "x", "bold red")
     """The download errored or vanished from qBittorrent."""
@@ -349,6 +359,7 @@ class Outcome(Enum):
     STILL_IMPORTING = ("unfinished", "still importing; left pending", OutcomeCategory.DEFERRED, False)
     SONARR_BUSY = ("sonarr busy", "Sonarr busy with a disk command; left pending", OutcomeCategory.DEFERRED, False)
     NOT_READY = ("not ready", "import not ready; left pending", OutcomeCategory.DEFERRED, False)
+    UNMATCHED = ("unmatched", "no file matched an episode; import by hand in Sonarr", OutcomeCategory.DEFERRED, False)
     ATTEMPT_FAILED = ("failed", "import attempt failed; left pending", OutcomeCategory.DEFERRED, False)
     NOT_CHECKED = ("not checked", "qBittorrent unreachable; checked again next run", OutcomeCategory.DEFERRED, False)
     IMPORT_IN_PROGRESS = ("in progress", "import in progress; checked again next run", OutcomeCategory.PENDING, False)
@@ -403,6 +414,7 @@ PENDING_STATE_FOR_OUTCOME: dict[Outcome, PendingState] = {
     Outcome.STILL_IMPORTING: PendingState.DOWNLOADED,
     Outcome.SONARR_BUSY: PendingState.DOWNLOADED,
     Outcome.NOT_READY: PendingState.DOWNLOADED,
+    Outcome.UNMATCHED: PendingState.DOWNLOADED,
     Outcome.ATTEMPT_FAILED: PendingState.DOWNLOADED,
     Outcome.NO_CONTENT_PATH: PendingState.DOWNLOADED,
     Outcome.DOWNLOAD_ERRORED: PendingState.ERRORED,

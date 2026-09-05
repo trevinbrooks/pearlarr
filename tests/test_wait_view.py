@@ -17,7 +17,7 @@ import logging
 import pytest
 from rich.console import Console
 
-from pearlarr.log import RichConsoleHandler
+from pearlarr.log import STATE_WIDTH, RichConsoleHandler
 from pearlarr.manual_import import Outcome, OutcomeCategory
 from pearlarr.output import (
     Event,
@@ -65,7 +65,15 @@ def _downloading(key: str, label: str, frac: float = 0.5) -> TorrentView:
     return TorrentView(key=key, label=label, phase=Phase.DOWNLOADING, fraction=frac)
 
 
-def _terminal(key: str, label: str, outcome: Outcome, *, files: int | None = None, elapsed: float = 0.0) -> TorrentView:
+def _terminal(
+    key: str,
+    label: str,
+    outcome: Outcome,
+    *,
+    files: int | None = None,
+    elapsed: float = 0.0,
+    unmatched_files: tuple[str, ...] = (),
+) -> TorrentView:
     return TorrentView(
         key=key,
         label=label,
@@ -74,6 +82,7 @@ def _terminal(key: str, label: str, outcome: Outcome, *, files: int | None = Non
         import_done=files,
         import_total=files,
         phase_elapsed_s=elapsed,
+        unmatched_files=unmatched_files,
     )
 
 
@@ -194,6 +203,17 @@ class TestHubWaitViewNarration:
                 scope=opened.scope,
             ),
         ]
+
+    def test_graduation_carries_the_unmatched_files(self) -> None:
+        recording = RecordingHub()
+        install_hub(recording.hub)
+        row = _terminal("h1", "A", Outcome.UNMATCHED, elapsed=15.0, unmatched_files=("a.mkv", "b.mkv"))
+
+        self._view().update(WaitSnapshot((row,), elapsed_s=15))
+
+        (graduated,) = recording.of_type(TorrentGraduated)
+        assert graduated.unmatched_files == ("a.mkv", "b.mkv")
+        assert graduated.outcome is Outcome.UNMATCHED
 
     def test_first_snapshot_terminals_graduate_after_the_start(self) -> None:
         # A documented divergence, pinned deliberately: the old views
@@ -392,6 +412,11 @@ def test_wait_result_counts_by_category() -> None:
     assert result.imported == 2
     assert result.left == 1
     assert result.failed == 1
+
+
+def test_every_outcome_word_fits_the_state_column() -> None:
+    # The ledger prints the word in a fixed column, so a new outcome's word must fit it.
+    assert all(len(outcome.word) <= STATE_WIDTH for outcome in Outcome)
 
 
 def test_outcome_dropped_is_exactly_imported_and_missing() -> None:

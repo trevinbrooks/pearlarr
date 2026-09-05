@@ -986,6 +986,15 @@ class PlacementBatch(NamedTuple):
     """Series-agnostic parse per file (None when Sonarr's parse was unavailable
     and no SxxExx fell out of the name)."""
 
+    @property
+    def all_parses_known(self) -> bool:
+        """Every parse came from Sonarr this run: no transport miss (None) and no offline `SxxExx` stand-in.
+
+        Seeded and gone names ride the batch parsed by name, so a miss on any of them counts.
+        """
+
+        return all(parsed is not None and not parsed.offline for parsed in self.parsed.values())
+
 
 class TargetScope(NamedTuple):
     """The episode set a placement batch may assign into.
@@ -1231,11 +1240,9 @@ def assign_episode_ids(
     # for one (blind to absolutes: "S01E12 - 12" would launder its lost 12),
     # may be hiding a duplicate - the tell's input is incomplete, so the leg
     # fails CLOSED, the same posture a hiccuped leftover gets from the count.
-    all_parses_known = all(parsed is not None and not parsed.offline for parsed in batch.parsed.values())
-
     clean_absolute = (
         bool(abs_by_file)
-        and all_parses_known
+        and batch.all_parses_known
         and len(abs_by_file) == len(deferred)  # every leftover has one absolute
         and len(abs_by_file) == len(leftover_ids)  # 1:1 with the leftover ids
         and len(set(batch_absolutes)) == len(batch_absolutes)  # no shared absolute (restart numbering)

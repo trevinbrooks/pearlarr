@@ -1,4 +1,6 @@
 # pyright: strict
+# pyright: reportPrivateUsage=false
+# ^ the clamp pin reads the Discord field-value limit.
 """Tests for the Notifier pushes: the grab embed and the wait-complete summary.
 
 `Notifier.push_wait_summary` posts the wait-pass outcome (colored by its
@@ -21,6 +23,7 @@ from seadex import EntryRecord, Tag, Tracker
 from pearlarr import notify
 from pearlarr.config import Arr
 from pearlarr.discord import (
+    _MAX_VALUE_LEN,
     COLOR_DEFERRED,
     COLOR_FAILED,
     COLOR_GRAB,
@@ -160,11 +163,39 @@ def test_push_wait_summary_builds_discord_embed(pushes: list[DiscordEmbed]) -> N
     assert embed.title == "Radarr wait complete"
     assert f"2 imported{SEP}1 left{SEP}1 failed" in embed.description
     names = [field.name for field in embed.fields]
-    assert names == ["Imported (2)", "Left for a later run (1)", "Failed (1)"]
+    assert names == ["Imported (2)", "Left pending (1)", "Failed (1)"]
     assert "Frieren" in embed.fields[0].value
     # Deferred/failed rows carry the outcome detail. A failure colors the embed red.
     assert embed.fields[2].value == "Bleach TYBW - download errored; left pending"
     assert embed.color == COLOR_FAILED
+
+
+def test_push_wait_summary_lists_the_unmatched_files_under_their_row(pushes: list[DiscordEmbed]) -> None:
+    # One backticked line per name: Discord strips leading whitespace and reads `_` as markdown.
+    notifier = Notifier(discord_url="https://discord.example", web=httpx.Client())
+    row = WaitOutcomeRow("Demo Batch", Outcome.UNMATCHED, unmatched_files=("Part_1.mkv", "Part 2.mkv"))
+
+    assert notifier.push_wait_summary(arr=Arr.SONARR, result=WaitResult((row,), elapsed_s=15)) is True
+    [field] = pushes[0].fields
+    assert field.name == "Left pending (1)"
+    assert field.value == (
+        "Demo Batch - no file matched an episode; import by hand in Sonarr\n`Part_1.mkv`\n`Part 2.mkv`"
+    )
+    assert pushes[0].color == COLOR_DEFERRED
+
+
+def test_push_wait_summary_unmatched_names_stay_inside_the_value_clamp(pushes: list[DiscordEmbed]) -> None:
+    # A full section of three-name rows overflows a field value. The payload clamp is the backstop.
+    notifier = Notifier(discord_url="https://discord.example", web=httpx.Client())
+    names = tuple(f"Demo Batch Part {n} (BD 1080p) [Group].mkv" for n in range(3))
+    rows = tuple(WaitOutcomeRow(f"Title {i}", Outcome.UNMATCHED, unmatched_files=names) for i in range(25))
+
+    assert notifier.push_wait_summary(arr=Arr.SONARR, result=WaitResult(rows, elapsed_s=15)) is True
+    [field] = cast("list[dict[str, str]]", pushes[0].to_payload()["fields"])
+    assert len(field["value"]) <= _MAX_VALUE_LEN
+    assert field["value"].startswith(
+        "Title 0 - no file matched an episode; import by hand in Sonarr\n`Demo Batch Part 0"
+    )
 
 
 def test_push_wait_summary_all_imported_is_green(pushes: list[DiscordEmbed]) -> None:

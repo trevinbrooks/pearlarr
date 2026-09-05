@@ -135,6 +135,7 @@ def test_torrent_graduated_severity_follows_its_outcome_category() -> None:
 
     assert severity_of(graduated(Outcome.IMPORTED)) is Severity.INFO
     assert severity_of(graduated(Outcome.DOWNLOAD_TIMED_OUT)) is Severity.WARNING
+    assert severity_of(graduated(Outcome.UNMATCHED)) is Severity.WARNING
     assert severity_of(graduated(Outcome.MISSING)) is Severity.ERROR
 
 

@@ -477,6 +477,8 @@ class TorrentView:
     """"Files inserted" bar: both set = determinate, both None = indeterminate."""
     import_total: int | None = None
     """On a TERMINAL imported row, the ledger's final files count (`phase_elapsed_s` freezes as its wait clock)."""
+    unmatched_files: tuple[str, ...] = ()
+    """On a TERMINAL unmatched row, the on-disk files no episode claimed."""
     speed_history: tuple[int, ...] = ()
     """Speed samples (bytes/s, stalled = 0), newest last, bounded to `SPARK_SAMPLES`."""
     outcome: Outcome | None = None
@@ -576,6 +578,8 @@ class TorrentGraduated:
     outcome: Outcome
     files: int | None
     waited_s: float
+    unmatched_files: tuple[str, ...] = ()
+    """On the `UNMATCHED` outcome, the on-disk files no episode claimed."""
     scope: ScopeId | None = None
 
 

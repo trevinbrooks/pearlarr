@@ -276,6 +276,22 @@ def test_graduation_lines_ride_the_wait_breadcrumb() -> None:
     )
 
 
+def test_unmatched_graduation_line_names_the_files() -> None:
+    # The names ride the structured line as one joined string, the run-event field policy, only on this outcome.
+    context = (ScanStarted(arr=Arr.SONARR, total=182), ScopeOpened(scope=_WAIT, label="wait"))
+    graduated = TorrentGraduated(
+        label="Demo Batch",
+        outcome=Outcome.UNMATCHED,
+        files=None,
+        waited_s=15.0,
+        unmatched_files=("a.mkv", "b.mkv"),
+        scope=_WAIT,
+    )
+    assert _format(graduated, *context) == (
+        f'{_TS} WARNING [sonarr › wait] unmatched title="Demo Batch" unmatched_files="a.mkv; b.mkv" waited_s=15.00'
+    )
+
+
 def test_ambient_diagnostic_admits_its_placement_guess() -> None:
     diag = Diagnostic(
         severity=Severity.WARNING,

@@ -256,6 +256,8 @@ def _fields_graduated(event: TorrentGraduated) -> tuple[Field, ...]:
     fields: list[Field] = [Field("title", event.label)]
     if event.files is not None:
         fields.append(Field("files", event.files))
+    if event.unmatched_files:
+        fields.append(Field("unmatched_files", "; ".join(event.unmatched_files)))
     fields.append(Field("waited_s", event.waited_s))
     return tuple(fields)
 

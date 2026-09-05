@@ -455,7 +455,7 @@ The end-of-run pass opened, watching `total` torrents. `kind` is `monitor` (wait
 
 ### `torrent_graduated`
 
-One watched torrent reached a terminal outcome. `message` is the outcome word.
+One watched torrent reached a terminal outcome. `message` is the outcome word. `unmatched_files` names the files no episode claimed, only on the `unmatched` outcome.
 
 ```json
 {

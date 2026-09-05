@@ -22,6 +22,7 @@ from pearlarr.config import AppConfig
 from pearlarr.manual_import import (
     AttemptKind,
     ImportProgress,
+    PendingImport,
     normalize_basename,
 )
 from pearlarr.seadex_sonarr import SonarrSync
@@ -1087,6 +1088,60 @@ class TestAssignDuplicateLeaves:
         assert result.skipped == [normalize_basename(name)]
 
 
+class TestAssignSettled:
+    """`settled`: a skip is a verdict only when every parse was served and the episode index was."""
+
+    @staticmethod
+    def _numberless_pair() -> tuple[PendingImport, dict[str, CandidateFile]]:
+        names = ("Movie Part 1.mkv", "Movie Part 2.mkv")
+        pending = pending_import(
+            file_episode_map={},
+            episode_ids=[],
+            ordered_episode_ids=[101],
+            seadex_files=list(names),
+        )
+        return pending, {normalize_basename(name): _cand(name) for name in names}
+
+    def test_a_parse_miss_leaves_the_skip_tentative(self) -> None:
+        pending, candidates = self._numberless_pair()
+        mapper = make_sonarr_mapper(sonarr=FakeSonarrClient(parse_episode_info_fn=lambda _f: None))
+
+        result = mapper.assign(pending, candidates, {EpisodeKey(1, 1): 101})
+
+        assert sorted(result.skipped) == sorted(candidates)
+        assert result.settled is False
+
+    def test_an_empty_episode_index_leaves_the_skip_tentative(self) -> None:
+        # A failed episode fetch serves an empty index: the exact leg could not have matched anything.
+        pending, candidates = self._numberless_pair()
+        mapper = make_sonarr_mapper(sonarr=FakeSonarrClient(parse_episode_info_fn=lambda _f: _pinfo()))
+
+        result = mapper.assign(pending, candidates, {})
+
+        assert sorted(result.skipped) == sorted(candidates)
+        assert result.settled is False
+
+    def test_served_parses_over_a_served_index_settle_the_skip(self) -> None:
+        pending, candidates = self._numberless_pair()
+        mapper = make_sonarr_mapper(sonarr=FakeSonarrClient(parse_episode_info_fn=lambda _f: _pinfo()))
+
+        result = mapper.assign(pending, candidates, {EpisodeKey(1, 1): 101})
+
+        assert sorted(result.skipped) == sorted(candidates)
+        assert result.settled is True
+
+    def test_a_fully_seeded_batch_is_settled_without_a_parse(self) -> None:
+        # Nothing left to place means nothing to parse, so the fake's default parse miss is never asked.
+        name = "Show - 01 [1080p].mkv"
+        pending = pending_import(file_episode_map={name: [101]}, episode_ids=[101], ordered_episode_ids=[101])
+        mapper = make_sonarr_mapper(sonarr=FakeSonarrClient())
+
+        result = mapper.assign(pending, {normalize_basename(name): _cand(name)}, {EpisodeKey(1, 1): 101})
+
+        assert result.skipped == []
+        assert result.settled is True
+
+
 class TestAssignBogusKeyDowngrade:
     """A name key that exists nowhere in the series is noise, not identity.
 
@@ -1159,6 +1214,27 @@ class TestAssignBogusKeyDowngrade:
 
         assert result.assigned == {"sp.mkv": [900]}
         assert result.skipped == []
+
+
+class TestPlacementBatchParsesKnown:
+    """`all_parses_known`: the settled hinge on the parse leg. Any miss, transport or offline, unsettles the batch."""
+
+    def test_a_transport_miss_is_unknown(self) -> None:
+        parsed: dict[str, ParsedFileInfo | None] = {"a.mkv": _pinfo(), "b.mkv": None}
+        assert PlacementBatch(["a.mkv", "b.mkv"], parsed).all_parses_known is False
+
+    def test_an_offline_stand_in_is_unknown(self) -> None:
+        parsed: dict[str, ParsedFileInfo | None] = {"a.mkv": _pinfo(season=1, episodes=(1,), offline=True)}
+        assert PlacementBatch(["a.mkv"], parsed).all_parses_known is False
+
+    def test_served_parses_are_known(self) -> None:
+        # A numberless answer from Sonarr is a real answer: known, even though it places nothing.
+        parsed: dict[str, ParsedFileInfo | None] = {"a.mkv": _pinfo(), "b.mkv": _pinfo(season=1, episodes=(1,))}
+        assert PlacementBatch(["a.mkv", "b.mkv"], parsed).all_parses_known is True
+
+    def test_an_empty_batch_is_known(self) -> None:
+        # A fully seeded record parses nothing, and nothing is missing.
+        assert PlacementBatch([], {}).all_parses_known is True
 
 
 class TestAssignNumberlessZip:

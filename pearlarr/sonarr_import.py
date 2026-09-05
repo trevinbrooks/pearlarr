@@ -409,12 +409,25 @@ class ImportExecutor:
                 f"{content_path}: Sonarr's history placed {count_noun(len(recovered), 'file')} "
                 f"for {pending.display_label} that no scan saw"
             )
-        if assignment.skipped:
-            self._warn_unplaceable_files(pending, assignment.skipped)
+        authoritative = {**assignment.assigned, **recovered}
+        skips = self._reportable_skips(pending, assignment.skipped)
+        if skips and not assignment.settled:
+            # A parse or episode-index miss may be hiding the match, so the skip is no verdict yet. Ask again next poll.
+            self.logger.debug(
+                f"{pending.display_label}: {count_noun(len(skips), 'file')} unplaced behind a missing input"
+            )
+        elif skips and not authoritative:
+            # Nothing to verify or import, and the same files skip again next poll: an outcome, not a wait.
+            # Every skipped name is an on-disk key (the mapper skips only what it read from the scan), and
+            # nothing was placed, so the placements tail below has nothing to add.
+            names = tuple(path_leaf(context.candidates_by_basename[name].path) for name in skips)
+            return ImportProbe.unmatched(names)
+        elif skips:
+            self._warn_unplaceable_files(pending, skips)
         for name, ids in {**assignment.placed, **recovered}.items():
             self.logger.debug(f"{pending.display_label}: placed {name} -> {ids}")
 
-        probe = self._verify_or_import(context, {**assignment.assigned, **recovered})
+        probe = self._verify_or_import(context, authoritative)
         # The mapper's placements are kept whatever the branch (the file was on disk this poll). History's
         # are kept only once they verified, so a row that never verifies is re-derived next run, not pinned.
         placements = {**assignment.placed, **recovered} if probe.files_present else assignment.placed
@@ -511,30 +524,33 @@ class ImportExecutor:
         else:
             self.logger.debug(message)
 
-    def _warn_unplaceable_files(
-        self,
-        pending: PendingImport,
-        unplaceable: list[str],
-    ) -> None:
-        """Warn (once a run per download) about on-disk files we couldn't place.
+    def _reportable_skips(self, pending: PendingImport, skipped: list[str]) -> tuple[str, ...]:
+        """The skipped names no grab-time exclusion accounts for.
 
-        We import what we can and leave the rest, surfaced loudly so nothing is silently dropped. A file
-        excluded at grab time (a sibling's slice, a refused duplicate) was reported then and stays quiet.
+        A file excluded at grab time (a sibling's slice, a refused duplicate) was reported then and stays quiet.
         """
 
-        label = pending.display_label
         excluded = {normalized_leaf(name) for name in pending.excluded_files}
-        reportable = [name for name in unplaceable if name not in excluded]
-        if len(reportable) < len(unplaceable):
+        reportable = tuple(name for name in skipped if name not in excluded)
+        if len(reportable) < len(skipped):
             self.logger.debug(
-                f"{label}: {count_noun(len(unplaceable) - len(reportable), 'file')} excluded at grab time, not reported"
+                f"{pending.display_label}: {count_noun(len(skipped) - len(reportable), 'file')} "
+                "excluded at grab time, not reported"
             )
-        if not reportable or pending.infohash in self._scratch.warned_unplaceable:
+        return reportable
+
+    def _warn_unplaceable_files(self, pending: PendingImport, reportable: tuple[str, ...]) -> None:
+        """Warn (once a run per download) about on-disk files we couldn't place.
+
+        We import what we can and leave the rest, surfaced loudly so nothing is silently dropped.
+        """
+
+        if pending.infohash in self._scratch.warned_unplaceable:
             return
         self._scratch.warned_unplaceable.add(pending.infohash)
         coverage = f" ({pending.coverage})" if pending.coverage else ""
         hub_warn(
-            f"{label}{coverage}: {count_noun(len(reportable), 'file')} could not be matched "
+            f"{pending.display_label}{coverage}: {count_noun(len(reportable), 'file')} could not be matched "
             f"to an episode and {pluralize(len(reportable), 'was', 'were')} not imported"
         )
 

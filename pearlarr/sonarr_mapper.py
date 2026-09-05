@@ -58,6 +58,9 @@ class FileAssignment(NamedTuple):
     """Unplaceable on-disk video leaves, for the executor to warn about."""
     placed: dict[str, list[int]]
     """This poll's fresh placements alone, for the caller to persist."""
+    settled: bool
+    """Whether the skips are a verdict against real inputs: every parse known (`PlacementBatch.all_parses_known`)
+    and the episode index served. False makes a skip tentative, re-asked next poll."""
 
 
 class FileEpisodeMapper:
@@ -195,10 +198,8 @@ class FileEpisodeMapper:
             seeded_ids | {i for i in pending.episode_ids if i},
         )
 
-        result = assign_episode_ids(
-            PlacementBatch(leftover, parsed_by_file),
-            TargetScope(resolved_ids, id_by_key, used=frozenset(seeded_ids)),
-        )
+        batch = PlacementBatch(leftover, parsed_by_file)
+        result = assign_episode_ids(batch, TargetScope(resolved_ids, id_by_key, used=frozenset(seeded_ids)))
 
         merged = {**seeded, **result.assigned}
         # A duplicate leaf (one basename in two folders) collapses in the
@@ -206,7 +207,13 @@ class FileEpisodeMapper:
         # and lands in skipped even though the name WAS placed. The warning
         # follows the map - placed names drop out, repeats collapse.
         skipped = [name for name in dict.fromkeys(result.skipped) if name not in merged]
-        return FileAssignment(assigned=merged, skipped=skipped, placed=result.assigned)
+        # An empty index means the exact leg could not have matched a numbered name this poll.
+        return FileAssignment(
+            assigned=merged,
+            skipped=skipped,
+            placed=result.assigned,
+            settled=batch.all_parses_known and bool(id_by_key),
+        )
 
     def _parsed_file_info(self, raw_base: str) -> ParsedFileInfo | None:
         """Sonarr `/parse` of one on-disk leaf, cached per run.

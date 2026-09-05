@@ -48,15 +48,19 @@ _RESERVED_ROWS = 8
 MIN_SPARK_WIDTH = 80
 
 
-def graduation_tail(outcome: Outcome, files: int | None, waited_s: float) -> str:
+def graduation_tail(event: TorrentGraduated) -> str:
     """The ledger line's parenthesized coda. "" when there is nothing to say."""
 
+    outcome = event.outcome
+    if outcome is Outcome.UNMATCHED:
+        # The names ride the structured log and the notification. The console gets the count and the action.
+        return f"{count_noun(len(event.unmatched_files), 'file')} matched no episode · import by hand in Sonarr"
     if outcome is Outcome.IMPORTED:
         parts: list[str] = []
-        if files:
-            parts.append(count_noun(files, "file"))
-        if waited_s >= 1.0:
-            parts.append(format_elapsed(waited_s))
+        if event.files:
+            parts.append(count_noun(event.files, "file"))
+        if event.waited_s >= 1.0:
+            parts.append(format_elapsed(event.waited_s))
         return " · ".join(parts)
     if outcome.category is OutcomeCategory.PENDING:
         return "checked again next run"
@@ -93,7 +97,7 @@ def wait_graduation_line(event: TorrentGraduated, caps: Capabilities) -> LegacyL
 
     glyph = event.outcome.glyph(use_unicode=caps.unicode)
     line = f"{glyph} {event.outcome.word.ljust(STATE_WIDTH)} {event.label}"
-    tail = graduation_tail(event.outcome, event.files, event.waited_s)
+    tail = graduation_tail(event)
     if tail:
         line += f"  ({tail})"
     return LegacyLine(
