@@ -379,7 +379,7 @@ jobs:
             printf '\n**Full Changelog**: %s/%s/compare/%s...%s\n' \
               "$GITHUB_SERVER_URL" "$GITHUB_REPOSITORY" "$prev" "$TAG" >> /tmp/notes.md
           fi
-      - uses: softprops/action-gh-release@3d0d9888cb7fd7b750713d6e236d1fcb99157228 # v3
+      - uses: softprops/action-gh-release@efb35369e0ad2afab669f228072c1b0d510eae64 # v3
         with:
           tag_name: ${{ needs.version.outputs.tag }}
           name: Pearlarr ${{ needs.version.outputs.version }}
