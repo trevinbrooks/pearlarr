@@ -662,29 +662,58 @@ class HistoryRecord(_ApiModel):
     def _lift_reason(cls, data: object) -> object:
         """Lift the `data` map's reason value, matching its key case-insensitively."""
 
-        if not isinstance(data, dict):
-            return data
-        record = cast("dict[str, Any]", data)
-        raw_data = record.get("data")
-        if "reason" in record or not isinstance(raw_data, dict):
-            return record
-        for key, value in cast("dict[str, Any]", raw_data).items():
-            if key.casefold() == "reason" and isinstance(value, str):
-                return {**record, "reason": value}
+        return _lift_from_data(data, "reason", "reason")
+
+
+def _lift_from_data(data: object, key: str, field: str) -> object:
+    """Copy one `data` map value onto a top-level field, its key matched casefolded.
+
+    A field already present is left alone.
+    """
+
+    if not isinstance(data, dict):
+        return data
+    record = cast("dict[str, Any]", data)
+    raw_data = record.get("data")
+    if field in record or not isinstance(raw_data, dict):
         return record
+    wanted = key.casefold()
+    for name, value in cast("dict[str, Any]", raw_data).items():
+        if name.casefold() == wanted and isinstance(value, str):
+            return {**record, field: value}
+    return record
+
+
+class SonarrHistoryRecord(HistoryRecord):
+    """A Sonarr `HistoryResource` row with the import fields the download probe reads."""
+
+    episode_id: _ZeroInt = Field(default=0, validation_alias="episodeId")
+    """The episode an import row landed on; 0 on rows that carry none."""
+    dropped_path: _LenientStr = None
+    """The `data` map's `droppedPath`: the file's path in the download folder as Sonarr saw it,
+    its key read case-insensitively."""
+
+    @model_validator(mode="before")
+    @classmethod
+    def _lift_dropped_path(cls, data: object) -> object:
+        """Lift the `data` map's `droppedPath` onto `dropped_path`."""
+
+        return _lift_from_data(data, "droppedPath", "dropped_path")
 
 
 class HistoryPage(_ApiModel):
-    """One `/api/v3/history` page envelope, reduced to its `records` array."""
+    """One `/api/v3/history` page envelope, reduced to its `records` array and row count."""
 
-    records: tuple[HistoryRecord, ...] = ()
+    records: tuple[SonarrHistoryRecord, ...] = ()
+    total_records: _ZeroInt = Field(default=0, validation_alias="totalRecords")
+    """The envelope's row count; page 1 alone is fetched, so more than `len(records)` means the page is cut."""
 
     @field_validator("records", mode="before")
     @classmethod
     def _lenient_records(cls, value: object) -> object:
         """Skip junk `records[]` entries, never failing the whole page over one."""
 
-        return _validate_skipping_junk(HistoryRecord, value)
+        return _validate_skipping_junk(SonarrHistoryRecord, value)
 
 
 # --- Arr download clients (`/api/v3/downloadclient`) ------------------------

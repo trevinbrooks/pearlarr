@@ -131,6 +131,12 @@ class _Scenario:
     The import must self-heal through `/parse`'s series-matched pairs, with
     the sibling skipped instead of vetoing the batch."""
 
+    imported_unseen: bool = False
+    """Sonarr imported the download before any scan saw its files: an EMPTY
+    grab-time map, the episode files present from the start, and one history
+    row per listing file carrying its episode id and dropped path. The map
+    must rebuild from those rows and verify on the first poll, nothing POSTed."""
+
 
 _DEAD_TRACKED = _Scenario(heal_download_scan=False, folder_scan="candidates", history_event="downloadFolderImported")
 _TRANSIENT = _Scenario(heal_download_scan=True, folder_scan="empty", history_event="grabbed")
@@ -145,6 +151,12 @@ _ABSOLUTE_BATCH = _Scenario(
     folder_scan="candidates",
     history_event="downloadFolderImported",
     absolute_batch=True,
+)
+_IMPORTED_UNSEEN = _Scenario(
+    heal_download_scan=False,
+    folder_scan="empty",
+    history_event="downloadFolderImported",
+    imported_unseen=True,
 )
 
 
@@ -271,25 +283,42 @@ class _World:
         """The paged `/api/v3/history` envelope, date-descending.
 
         The newest row is an irrelevant `episodeFileDeleted` the classifier
-        must skip. The scenario's event decides the verdict beneath it.
+        must skip. The scenario's event decides the verdict beneath it: one
+        bare row, or (imported unseen) one import row per listing file.
         """
 
-        return {
-            "page": 1,
-            "pageSize": 100,
-            "sortKey": "date",
-            "sortDirection": "descending",
-            "totalRecords": 3,
-            "records": [
-                {"id": 913, "eventType": "episodeFileDeleted", "date": "2026-07-15T06:10:00Z"},
+        rows: list[Json] = [{"id": 913, "eventType": "episodeFileDeleted", "date": "2026-07-15T06:10:00Z"}]
+        if self.scenario.imported_unseen:
+            for number, (ep_id, name) in enumerate(_EPISODES, start=1):
+                row: dict[str, Json] = {
+                    "id": 910 + number,
+                    "eventType": self.scenario.history_event,
+                    "date": _IMPORTED_EVENT_DATE,
+                    "downloadId": _INFOHASH.upper(),
+                    "seriesId": _SERIES_ID,
+                    "episodeId": ep_id,
+                    "data": {"droppedPath": f"{_CONTENT_PATH}/{name}"},
+                }
+                rows.append(row)
+        else:
+            rows.append(
                 {
                     "id": 912,
                     "eventType": self.scenario.history_event,
                     "date": _IMPORTED_EVENT_DATE,
                     "downloadId": _INFOHASH.upper(),
                 },
-                {"id": 901, "eventType": "grabbed", "date": "2026-06-20T12:00:00Z", "downloadId": _INFOHASH.upper()},
-            ],
+            )
+        rows.append(
+            {"id": 901, "eventType": "grabbed", "date": "2026-06-20T12:00:00Z", "downloadId": _INFOHASH.upper()}
+        )
+        return {
+            "page": 1,
+            "pageSize": 100,
+            "sortKey": "date",
+            "sortDirection": "descending",
+            "totalRecords": len(rows),
+            "records": rows,
         }
 
     def command_list_payload(self) -> list[Json]:
@@ -572,7 +601,8 @@ def _seed_pending(cache_path: Path, checksum: str, scenario: _Scenario) -> None:
     The absolute-batch scenario's record carries an EMPTY grab-time map (the
     incident state: grab time resolved nothing, import time must self-heal).
     Its `seadex_files` still name the episode files - never the extra, which
-    only exists on disk.
+    only exists on disk. The imported-unseen record's map is empty too: the
+    rebuild from Sonarr's history has to fill it.
     """
 
     named = _ABS_FILES if scenario.absolute_batch else _EPISODES
@@ -581,7 +611,7 @@ def _seed_pending(cache_path: Path, checksum: str, scenario: _Scenario) -> None:
         series_id=_SERIES_ID,
         al_id=_AL_ID,
         file_episode_map={}
-        if scenario.absolute_batch
+        if scenario.absolute_batch or scenario.imported_unseen
         else {normalize_basename(name): [ep_id] for ep_id, name in named},
         episode_ids=[],
         release_group=_GROUP,
@@ -627,7 +657,8 @@ def _drive(tmp_path: Path, monkeypatch: pytest.MonkeyPatch, scenario: _Scenario)
     # so a deliberately-failing scan doesn't stretch each poll by seconds.
     monkeypatch.setattr(arr_http, "BACKOFF_BASE_S", 0.0)
 
-    world = _World(scenario)
+    # Imported unseen: the episode files are already there when the run starts.
+    world = _World(scenario, files_landed=scenario.imported_unseen)
     with _serve(world) as (sonarr_url, qbit_url):
         # qBittorrent configured -> a real (non-preview) run whose blocking
         # monitor drives the carried-over record. 1s polls keep it quick.
@@ -803,6 +834,33 @@ def test_absolute_batch_empty_seed_self_heals_and_sibling_is_skipped(
     assert {str(entry.get("path")): entry.get("episodeIds") for entry in files} == {
         f"{_CONTENT_PATH}/{name}": [ep_id] for ep_id, name in _ABS_FILES
     }
+
+
+def test_never_scanned_record_lands_from_history_on_the_first_check(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    outcome = _drive(tmp_path, monkeypatch, _IMPORTED_UNSEEN)
+    out = _flat(capsys.readouterr().out)
+
+    # Sonarr imported the download before any scan saw it: the by-id scan is
+    # dead, the folder is empty, and the grab-time map is empty. The history
+    # rows rebuild the map and the episode files verify it on the first poll.
+    assert outcome.ok is True
+    assert outcome.pending_after == frozenset()
+    # The seeded target count is 0 (nothing was mapped at grab time), so the
+    # line carries no file count: the indeterminate bar, not a wrong number.
+    assert 'imported title="Demo Batch · Thighs"' in out
+    assert 'imported title="Demo Batch · Thighs" files=' not in out
+    assert "complete kind=monitor imported=1 pending=0 deferred=0 failed=0" in out
+    assert current_hub().counts.mark().errors == 0
+
+    # Nothing was POSTed, the one empty folder scan was enough, and the
+    # confirmed site still moved the torrent to the imported category.
+    assert outcome.world.manual_commands == []
+    assert outcome.world.folder_scans == 1
+    assert outcome.world.category_moves == [(_INFOHASH, _IMPORTED_CATEGORY)]
 
 
 def test_unscannable_download_defers_with_folder_warn(

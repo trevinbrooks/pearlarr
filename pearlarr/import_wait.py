@@ -1,7 +1,7 @@
 """The completion-wait "consume" side: poll, observe, and the end-of-run import pass."""
 
 import logging
-from collections.abc import Callable
+from collections.abc import Callable, Mapping
 from dataclasses import dataclass, field, replace
 
 import qbittorrentapi
@@ -301,6 +301,7 @@ class PostImportCleanup:
         # DEADLINE, not POLL: the heal is one attempt per run with no clock to escalate it,
         # and a partial seed map only verifies past a clean importPending by stepping in.
         probe = self._probes.try_import_completed(record, path, AttemptKind.DEADLINE)
+        record = self._records.absorb_placements(record, probe.placements)
         if probe.files_present:
             self._finish_cleanup(record)
         elif probe.deferral is Deferral.ISSUED:
@@ -368,6 +369,11 @@ class ImportWaitManager:
         """Fold a pass's non-dropped outcome for a carried-over record into `pending_states`."""
 
         self._ctx.pending_states[key] = PENDING_STATE_FOR_OUTCOME[outcome]
+
+    def absorb_placements(self, record: PendingImport, placements: Mapping[str, list[int]]) -> PendingImport:
+        """Persist a poll's import-time placements onto the record and return the healed copy."""
+
+        return self._records.absorb_placements(record, placements)
 
     def resolve_terminal(self, record: PendingImport, outcome: Outcome, *, carried_over: bool) -> None:
         """One terminal outcome's store effects: retire on IMPORTED, drop on MISSING, else fold the state.
@@ -655,7 +661,7 @@ class _MonitorRow:
     """One record's live state within a monitor pass. The row owns its `TorrentView` presentation."""
 
     record: PendingImport
-    """The durable record this row tracks."""
+    """The durable record this row tracks, replaced by its placement-carrying copy after a placing poll."""
     dl_start: float
     """Download-phase clock, stamped at construction."""
     carried_over: bool
@@ -899,6 +905,8 @@ class MonitorPass:
             path,
             AttemptKind.DEADLINE if at_deadline else AttemptKind.POLL,
         )
+        # The placements land before any outcome: the retire, the keep, the next poll, and the Tier-2 bar read them.
+        record = row.record = self._mgr.absorb_placements(record, probe.placements)
         landed = clock.note_progress(probe.imported_count, probe.target_count, now_ts)
         # Waiting on Sonarr's import work is not this record stalling (a landed poll already re-anchored
         # harder than a pause would).

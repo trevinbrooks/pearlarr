@@ -2351,8 +2351,128 @@ class TestFinalizeRunImportedBump:
         assert engine._ctx.stats.imported == 1
 
 
+_PLACED = {"show - 01 [1080p].mkv": [101]}
+"""The placement a poll makes for the unmapped one-file record the placement tests share."""
+
+
+def _unmapped_record(**overrides: object) -> PendingImport:
+    """A fresh store record on hash "h" whose grab-time map is empty over a one-file listing."""
+
+    fields: dict[str, object] = {
+        "infohash": "h",
+        "file_episode_map": {},
+        "episode_ids": [],
+        "seadex_files": ["Show - 01 [1080p].mkv"],
+        "ordered_episode_ids": [101],
+        "added_at": _FRESH,
+    }
+    fields.update(overrides)
+    return pending_import(**fields)
+
+
+class TestMonitorAbsorbsPlacements:
+    """A placing poll's placements land on the record before any outcome reads it."""
+
+    def test_check_pass_persists_the_placements(self) -> None:
+        # A carried-over record (store-resident, not a this-run grab): the
+        # placing poll's placements reach the durable row before it is kept.
+        strategy = _RecordingStrategy(
+            completed=import_probe(
+                files_present=False,
+                command_issued=True,
+                deferral=Deferral.ISSUED,
+                placements=_PLACED,
+            ),
+        )
+        mgr = make_orchestration_manager(
+            qbit=FakeQbit({"h": [FakeTorrent(is_complete=True, content_path="/d")]}),
+            strategy=strategy,
+            store_records=[_unmapped_record()],
+        )
+
+        result = mgr.check_once(view=RecordingWaitView())
+
+        assert result is not None
+        assert [row.outcome for row in result.rows] == [Outcome.IMPORT_IN_PROGRESS]
+        assert mgr._records.rows()[pk("h")]["file_episode_map"] == _PLACED
+
+    def test_healed_record_reaches_the_next_poll_and_a_failed_retire_keeps_it(self) -> None:
+        # The next heavy poll runs on the healed record (mapped, so the fast
+        # path is open to it), and the kept flagged row carries the map too.
+        record = _unmapped_record()
+        strategy = _RecordingStrategy(
+            completed_sequence=[
+                import_probe(files_present=False, command_issued=True, deferral=Deferral.ISSUED, placements=_PLACED),
+                import_probe(files_present=True),
+            ],
+            close_return=EffectStatus.FAILED,
+        )
+        mgr = make_orchestration_manager(
+            qbit=FakeQbit({"h": [FakeTorrent(is_complete=True, content_path="/d")]}),
+            strategy=strategy,
+            store_records=[record],
+            pending=[record],
+            import_poll_interval=30,
+            clock=FakeClock(step=30),
+        )
+
+        mgr.run_monitor(view=RecordingWaitView())
+
+        first, second = strategy.import_calls
+        assert first.pending.file_episode_map == {}
+        assert second.pending.file_episode_map == _PLACED
+        assert second.pending.seed_coverage().mapped is True
+        row = mgr._records.rows()[pk("h")]
+        assert (row.get("awaiting_cleanup"), row["file_episode_map"]) == (True, _PLACED)
+
+    def test_no_placements_writes_nothing(self) -> None:
+        # Scripted probes carry no placements: the seam must not stage a blob
+        # write per poll, so a store whose put raises never fires here.
+        strategy = _RecordingStrategy(completed=import_probe(files_present=False))
+        mgr = make_orchestration_manager(
+            qbit=FakeQbit({"h": [FakeTorrent(is_complete=True, content_path="/d")]}),
+            strategy=strategy,
+            store=_ExplodingPutStore(),
+            clock=FakeClock(step=5),
+        )
+        mp = MonitorPass(mgr, [_unmapped_record()], kind=WaitKind.MONITOR)
+
+        mp.run_cycle()  # must not raise
+
+        assert mp.rows[rk("h")].active
+
+
 class TestPendingRecordWrites:
-    """`PendingRecords.drop` / `save` keep the durable store and the run list in step."""
+    """`PendingRecords.drop` / `save` / `absorb_placements` keep the durable store and the run list in step."""
+
+    def test_absorb_placements_persists_and_refreshes_the_run_list(self) -> None:
+        record = pending_import(
+            infohash="h",
+            file_episode_map={"Show - 01 [1080p].mkv": [101]},
+            seadex_files=["Show - 01 [1080p].mkv", "Show - 02 [1080p].mkv"],
+            added_at=_FRESH,
+        )
+        mgr = make_orchestration_manager(
+            qbit=None,
+            strategy=_RecordingStrategy(),
+            store_records=[record],
+            pending=[record],
+        )
+
+        healed = mgr._records.absorb_placements(record, {"show - 02 [1080p].mkv": [102]})
+
+        expected = {"show - 01 [1080p].mkv": [101], "show - 02 [1080p].mkv": [102]}
+        assert healed is not record
+        assert healed.file_episode_map == expected
+        assert record.file_episode_map == {"Show - 01 [1080p].mkv": [101]}
+        assert mgr._records.rows()[pk("h")]["file_episode_map"] == expected
+        assert mgr._ctx.pending_imports[record.key] is healed
+
+    def test_absorb_placements_with_none_is_a_no_op(self) -> None:
+        record = pending_import(infohash="h", added_at=_FRESH)
+        mgr = make_orchestration_manager(qbit=None, strategy=_RecordingStrategy(), store=_ExplodingPutStore())
+
+        assert mgr._records.absorb_placements(record, {}) is record
 
     def test_drop_removes_from_store_and_run_list(self) -> None:
         keep = pending_import(infohash="keep", added_at=_FRESH)
@@ -3470,6 +3590,33 @@ class TestCleanupHealVerification:
         assert strategy.close_calls == []
         assert mgr._records.rows()[pk("h")].get("awaiting_cleanup") is True
         assert pk("h") not in mgr._ctx.pending_states
+
+    @pytest.mark.parametrize(
+        ("probe", "flag"),
+        [
+            pytest.param(import_probe(files_present=True, placements=_PLACED), True, id="failed-retire-keeps"),
+            pytest.param(
+                import_probe(files_present=False, command_issued=True, deferral=Deferral.ISSUED, placements=_PLACED),
+                False,
+                id="reissue-demotes",
+            ),
+        ],
+    )
+    def test_heal_pass_absorbs_placements_before_the_effects(self, probe: ImportProbe, flag: bool) -> None:
+        # The placements land first, so the kept flagged row and the demoted
+        # row both carry the healed map.
+        strategy = _RecordingStrategy(completed=probe, close_return=EffectStatus.FAILED)
+        mgr = make_orchestration_manager(
+            qbit=FakeQbit({"h": [FakeTorrent(is_complete=True, content_path="/d")]}),
+            strategy=strategy,
+            store_records=[_unmapped_record(series_id=7, awaiting_cleanup=True)],
+        )
+
+        mgr._cleanup.heal_flagged()
+
+        row = mgr._records.rows()[pk("h")]
+        assert row.get("awaiting_cleanup") is flag
+        assert row["file_episode_map"] == _PLACED
 
     def test_files_gone_and_reimport_issued_demotes_to_pending(self) -> None:
         # The files vanished and a fresh re-import command just went in (the

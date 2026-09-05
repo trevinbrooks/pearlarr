@@ -8,13 +8,13 @@ set via the pure `assign_episode_ids`. Owns the per-run on-disk parse cache.
 """
 
 from collections.abc import Mapping
+from typing import NamedTuple
 
 from .manual_import import PendingImport, normalized_leaf, path_leaf
 from .seadex_types import EpisodeKey, ManualImportCandidate, ParsedFileInfo
 from .sonarr_client import AbstractSonarrClient
 from .sonarr_import_plan import (
     CandidateFile,
-    EpisodeAssignment,
     PlacementBatch,
     TargetScope,
     assign_episode_ids,
@@ -47,6 +47,17 @@ def _rejection_matches(candidate: ManualImportCandidate, tokens: tuple[str, ...]
         if any(token in lowered for token in tokens):
             return True
     return False
+
+
+class FileAssignment(NamedTuple):
+    """One poll's file -> episode map: the seeded entries plus what the mapper placed this poll."""
+
+    assigned: dict[str, list[int]]
+    """The seeded entries plus `placed`, keyed by normalized basename."""
+    skipped: list[str]
+    """Unplaceable on-disk video leaves, for the executor to warn about."""
+    placed: dict[str, list[int]]
+    """This poll's fresh placements alone, for the caller to persist."""
 
 
 class FileEpisodeMapper:
@@ -106,7 +117,7 @@ class FileEpisodeMapper:
         pending: PendingImport,
         candidates_by_basename: dict[str, CandidateFile],
         id_by_key: Mapping[EpisodeKey, int],
-    ) -> EpisodeAssignment:
+    ) -> FileAssignment:
         """Build the final `basename -> episode ids` map from OUR resolved set.
 
         Identity never comes from Sonarr's series-matched title parse alone: a
@@ -127,8 +138,9 @@ class FileEpisodeMapper:
         record predating that field, one synthesized from its seeds). When there is
         no set to scope against (an on-disk specials record whose grab-time parse
         found nothing), `assign_episode_ids` falls back to the live series map
-        for exactly named files (see `TargetScope.unscoped`). Fresh placements self-heal
-        onto the record. SeaDex order keeps output and the absolute leg stable.
+        for exactly named files (see `TargetScope.unscoped`). Fresh placements come
+        back as `placed` for the caller to persist; the record is never mutated.
+        SeaDex order keeps output and the absolute leg stable.
 
         Returns the merged map plus the unplaceable basenames. A basename
         duplicated across folders collapses in the basename-keyed pool, so it
@@ -188,17 +200,13 @@ class FileEpisodeMapper:
             TargetScope(resolved_ids, id_by_key, used=frozenset(seeded_ids)),
         )
 
-        # Self-heal: keep every fresh placement on the record for the run.
-        for norm_base, ids in result.assigned.items():
-            pending.file_episode_map[norm_base] = ids
-
         merged = {**seeded, **result.assigned}
         # A duplicate leaf (one basename in two folders) collapses in the
         # basename-keyed pool: its second occurrence defers off the used-set
         # and lands in skipped even though the name WAS placed. The warning
         # follows the map - placed names drop out, repeats collapse.
         skipped = [name for name in dict.fromkeys(result.skipped) if name not in merged]
-        return EpisodeAssignment(assigned=merged, skipped=skipped)
+        return FileAssignment(assigned=merged, skipped=skipped, placed=result.assigned)
 
     def _parsed_file_info(self, raw_base: str) -> ParsedFileInfo | None:
         """Sonarr `/parse` of one on-disk leaf, cached per run.
