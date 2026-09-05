@@ -38,11 +38,13 @@ from .seadex_types import (
 from .sonarr_client import AbstractSonarrClient
 from .sonarr_episodes import SonarrEpisodes
 from .sonarr_import_plan import (
+    CandidateFile,
     ContentPaths,
     DownloadHistoryVerdict,
     DownloadMatch,
     EpisodeFileStatus,
     EpisodeSnapshot,
+    HistoryImport,
     ImportAction,
     ImportDecision,
     ParsedQuality,
@@ -58,6 +60,7 @@ from .sonarr_import_plan import (
     derive_languages,
     episode_index,
     parse_quality_from_filename,
+    placements_from_history,
     plan_import_files,
     quality_axes_from_model,
     quality_axes_from_name,
@@ -90,34 +93,61 @@ def _hostname(url: str | None) -> str | None:
 
 
 class _CandidateScan(NamedTuple):
-    """One poll's candidate fetch plus the entry shape it implies."""
+    """One poll's candidate fetch plus the history verdict behind the entry shape it implies."""
 
     candidates: list[ManualImportCandidate]
-    omit_download_id: bool
-    """ALL entries must omit the downloadId: Sonarr's Execute tail NREs on the poisoned download."""
+    history: DownloadHistoryVerdict | None
+    """The fallback's history verdict. None when the by-id scan served or the probe failed, and both read clean."""
+
+    @property
+    def omit_download_id(self) -> bool:
+        """ALL entries must omit the downloadId: Sonarr's Execute tail NREs on the poisoned download."""
+
+        return self.history is not None and self.history.dead_tracked
+
+    @property
+    def dead_tracked_empty(self) -> bool:
+        """Sonarr won't serve the download by id and its folder scan found nothing."""
+
+        return self.omit_download_id and not self.candidates
+
+    @property
+    def import_rows(self) -> tuple[HistoryImport, ...]:
+        """The dead-tracking import's rows, for a never-scanned record's rebuild."""
+
+        return self.history.import_rows if self.history is not None else ()
 
 
-class _EntryContext(NamedTuple):
-    """Per-command context for building file entries."""
+@dataclass(frozen=True, slots=True)
+class _ImportContext:
+    """One poll's import context, bound once after the scan and read by every step past it."""
 
     pending: PendingImport
+    """The record this poll imports."""
     content_path: str
-    omit_download_id: bool
+    """The download's content path as qBittorrent reports it."""
+    scan: _CandidateScan
+    """This poll's candidate fetch plus the history verdict behind it."""
+    snapshot: EpisodeSnapshot
+    """The same-poll episode snapshot the done-check reads."""
+    candidates_by_basename: dict[str, CandidateFile]
+    """The scan's candidates keyed by normalized basename, built once for the planner and the file entries."""
+    at_deadline: bool
+    """Whether this is the readiness-deadline attempt, the one that warns."""
 
 
 @dataclass
 class _ScanScratch:
     """The scanner's per-run fallback scratch, reassigned wholesale by `reset`.
 
-    `path_mappings` None = unfetched, and `history_verdicts` memoizes VERDICTS
-    only, so a probe failure re-probes on the next activation.
+    `path_mappings` None = unfetched, and `history_verdicts` memoizes verdicts (with
+    their import rows), never a page, so a probe failure re-probes on the next activation.
     """
 
     folder_pinned: set[str] = field(default_factory=set[str])
     history_verdicts: dict[str, DownloadHistoryVerdict] = field(default_factory=dict[str, DownloadHistoryVerdict])
     path_mappings: list[RemotePathMapping] | None = None
     translated_paths: dict[str, str] = field(default_factory=dict[str, str])
-    warned_empty_folder: set[str] = field(default_factory=set[str])
 
 
 class CandidateScanner:
@@ -177,7 +207,7 @@ class CandidateScanner:
         page = self.sonarr.history_for_download(download_id=pending.infohash)
         if page is None:
             return None
-        verdict = classify_download_history(page.records)
+        verdict = classify_download_history(page)
         self._scratch.history_verdicts[pending.infohash] = verdict
         if verdict.dead_tracked:
             when = f" on {verdict.date.split('T')[0]}" if verdict.date else ""
@@ -187,13 +217,13 @@ class CandidateScanner:
             )
         return verdict
 
-    def scan(self, pending: PendingImport, content_path: str, *, at_deadline: bool) -> _CandidateScan | None:
+    def scan(self, pending: PendingImport, content_path: str) -> _CandidateScan | None:
         """The candidates for one poll: the downloadId scan, with the folder fallback. None when the scan failed."""
 
         if pending.infohash not in self._scratch.folder_pinned:
             candidates = self.sonarr.manual_import_candidates(pending=pending)
             if candidates is not None:
-                return _CandidateScan(candidates, omit_download_id=False)
+                return _CandidateScan(candidates, history=None)
             self.logger.debug(
                 f"{content_path}: downloadId scan failed for {pending.display_label} - trying the folder fallback"
             )
@@ -210,22 +240,7 @@ class CandidateScanner:
             # INVARIANT: pin folder mode on NONEMPTY success only. A 200 `[]` is exactly what an invisible or
             # untranslated folder returns, and pinning on it wedges the record blind to files, downloadId unretried.
             self._scratch.folder_pinned.add(pending.infohash)
-        elif verdict is not None and verdict.dead_tracked:
-            # An empty folder right after completion is expected (Sonarr's mount lags), so only the deadline
-            # attempt says so, once a run: dead-tracked plus still empty means silent retries until expiry.
-            message = (
-                f"{pending.display_label}: Sonarr won't serve this download by id and "
-                f"a scan of its folder found no files ({folder}) - will retry"
-            )
-            if at_deadline and pending.infohash not in self._scratch.warned_empty_folder:
-                self._scratch.warned_empty_folder.add(pending.infohash)
-                hub_warn(message)
-            else:
-                self.logger.debug(message)
-        return _CandidateScan(
-            folder_candidates,
-            omit_download_id=verdict is not None and verdict.dead_tracked,
-        )
+        return _CandidateScan(folder_candidates, history=verdict)
 
 
 @dataclass
@@ -235,6 +250,7 @@ class _ImportScratch:
     quality_defs: list[QualityDefinition] | None = None
     languages: list[Language] | None = None
     warned_unplaceable: set[str] = field(default_factory=set[str])
+    warned_empty_folder: set[str] = field(default_factory=set[str])
     warned_default_quality: bool = False
     last_refresh_monotonic: float | None = None
     issued_command_ids: set[int] = field(default_factory=set[int])
@@ -365,33 +381,66 @@ class ImportExecutor:
         snapshot: EpisodeSnapshot,
         at_deadline: bool = False,
     ) -> ImportProbe:
-        """Import EXACTLY the files our map intends, never over an episode already holding a recommended file."""
+        """Import EXACTLY the files our map intends, never over an episode already holding a recommended file.
 
-        scan = self.scanner.scan(pending, content_path, at_deadline=at_deadline)
+        The probe carries this poll's fresh placements for the record seam to persist.
+        """
+
+        scan = self.scanner.scan(pending, content_path)
         if scan is None:
             # Transient (timeout or non-200). The folder-scan client already warned. Ask again.
             return ImportProbe.waiting()
 
-        candidates_by_basename = self._mapper.candidate_files(scan.candidates)
-        assignment = self._mapper.assign(pending, candidates_by_basename, snapshot.episodes.id_by_key)
+        context = _ImportContext(
+            pending=pending,
+            content_path=content_path,
+            scan=scan,
+            snapshot=snapshot,
+            candidates_by_basename=self._mapper.candidate_files(scan.candidates),
+            at_deadline=at_deadline,
+        )
+        assignment = self._mapper.assign(pending, context.candidates_by_basename, snapshot.episodes.id_by_key)
+        recovered: dict[str, list[int]] = {}
+        if scan.dead_tracked_empty and not pending.seed_coverage().mapped:
+            # Sonarr moved the files before any scan saw them, so its import rows stand in for the scan.
+            # An empty scan means the mapper placed nothing, so the record's own map is the assignment.
+            recovered = placements_from_history(scan.import_rows, pending)
+            self.logger.debug(
+                f"{content_path}: Sonarr's history placed {count_noun(len(recovered), 'file')} "
+                f"for {pending.display_label} that no scan saw"
+            )
         if assignment.skipped:
             self._warn_unplaceable_files(pending, assignment.skipped)
+        for name, ids in {**assignment.placed, **recovered}.items():
+            self.logger.debug(f"{pending.display_label}: placed {name} -> {ids}")
 
-        authoritative_map = assignment.assigned
-        if not authoritative_map:
-            self.logger.debug(f"{content_path}: no mappable files for {pending.display_label} yet")
-            return ImportProbe.waiting()
+        probe = self._verify_or_import(context, {**assignment.assigned, **recovered})
+        # The mapper's placements are kept whatever the branch (the file was on disk this poll). History's
+        # are kept only once they verified, so a row that never verifies is re-derived next run, not pinned.
+        placements = {**assignment.placed, **recovered} if probe.files_present else assignment.placed
+        return replace(probe, placements=placements)
 
-        # Done-check against the COMPLETE (repaired) intended set, derived from the on-disk files.
+    def _verify_or_import(self, context: _ImportContext, authoritative_map: dict[str, list[int]]) -> ImportProbe:
+        """Verify the mapped files, or plan and POST the import for the ones still needed."""
+
+        pending = context.pending
+        content_path = context.content_path
+        # Done-check against the intended set: the seeded map plus what the mapper placed this poll, or what
+        # Sonarr's history says it imported when no scan saw the files. `all_done()` needs a non-empty `by_id`.
         target_ids = sorted({i for ids in authoritative_map.values() for i in ids})
-        statuses = snapshot.statuses(target_ids)
+        statuses = context.snapshot.statuses(target_ids)
         if statuses.all_done():
             self.logger.debug(f"{content_path}: already imported (recommended files present)")
             return ImportProbe.imported()
 
-        decisions = plan_import_files(authoritative_map, candidates_by_basename, statuses.needing_import())
+        if not authoritative_map:
+            if context.scan.dead_tracked_empty:
+                self._note_dead_tracked_empty(context)
+            self.logger.debug(f"{content_path}: no mappable files for {pending.display_label} yet")
+            return ImportProbe.waiting()
 
-        entry_context = _EntryContext(pending, content_path, scan.omit_download_id)
+        decisions = plan_import_files(authoritative_map, context.candidates_by_basename, statuses.needing_import())
+
         files: list[ManualImportFile] = []
         missing: list[str] = []
         for decision in decisions:
@@ -399,17 +448,21 @@ class ImportExecutor:
                 case ImportAction.MISSING:
                     missing.append(decision.basename)
                 case ImportAction.IMPORT:
-                    files.append(self._build_file_entry(decision, entry_context))
+                    files.append(self._build_file_entry(decision, context))
                 case _:
                     self.logger.debug(f"{decision.action.name}: {decision.basename}")
 
         if missing:
             # Absent files are expected on an early poll, so only the deadline attempt warns.
+            reason = ""
+            if context.scan.dead_tracked_empty:
+                folder = self.scanner.content_paths(content_path).sonarr_visible
+                reason = f" (it won't serve the download by id and a scan of {folder} found no files)"
             message = (
                 f"{content_path}: {count_noun(len(missing), 'intended file')} "
-                f"not visible to Sonarr for {pending.display_label} - will retry"
+                f"not visible to Sonarr for {pending.display_label}{reason} - will retry"
             )
-            if at_deadline:
+            if context.at_deadline:
                 hub_warn(message)
             else:
                 self.logger.debug(message)
@@ -420,7 +473,7 @@ class ImportExecutor:
             return ImportProbe.imported()
 
         import_mode = self._config.imports.mode
-        if scan.omit_download_id and import_mode == "auto":
+        if context.scan.omit_download_id and import_mode == "auto":
             # Untracked Execute with Auto resolves to MOVE (no DownloadClientItem to report CanMoveFiles),
             # ripping files from the seeding torrent. An explicitly configured move/copy is honored as set.
             import_mode = "copy"
@@ -436,6 +489,27 @@ class ImportExecutor:
         self._scratch.issued_command_ids.add(cmd_id)
         self.logger.debug(f"{content_path}: queued {count_noun(len(files), 'file')} for import (command {cmd_id})")
         return ImportProbe.waiting(command_issued=True, deferral=Deferral.ISSUED)
+
+    def _note_dead_tracked_empty(self, context: _ImportContext) -> None:
+        """Surface a dead-tracked, empty-folder poll for an unmapped record.
+
+        Debug until the deadline, then one warning a run.
+        """
+
+        pending = context.pending
+        # Read-only over the memo the fallback filled on this same poll, never a fetch.
+        folder = self.scanner.content_paths(context.content_path).sonarr_visible
+        # An empty folder right after completion is expected (Sonarr's mount lags), so only the deadline
+        # attempt says so, once a run: dead-tracked plus still empty means silent retries until expiry.
+        message = (
+            f"{pending.display_label}: Sonarr won't serve this download by id and "
+            f"a scan of its folder found no files ({folder}) - will retry"
+        )
+        if context.at_deadline and pending.infohash not in self._scratch.warned_empty_folder:
+            self._scratch.warned_empty_folder.add(pending.infohash)
+            hub_warn(message)
+        else:
+            self.logger.debug(message)
 
     def _warn_unplaceable_files(
         self,
@@ -486,7 +560,7 @@ class ImportExecutor:
     def _build_file_entry(
         self,
         decision: ImportDecision,
-        context: _EntryContext,
+        context: _ImportContext,
     ) -> ManualImportFile:
         """Build one ManualImport file payload, always with a real quality (an omitted key NREs in Sonarr)."""
 
@@ -528,7 +602,7 @@ class ImportExecutor:
             languages=lang_objs,
             quality=quality,
         )
-        if context.omit_download_id:
+        if context.scan.omit_download_id:
             # Left UNSET so the exclude_unset dump omits the key entirely (never null) and Execute takes the
             # untracked branch. The tracked tail dereferences the poisoned download's null ImportItem.
             return entry

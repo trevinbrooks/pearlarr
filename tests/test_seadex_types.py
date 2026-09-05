@@ -17,10 +17,12 @@ from pearlarr.seadex_types import (
     AniListMediaNode,
     BoundaryContractError,
     CommandResource,
+    HistoryPage,
     HistoryRecord,
     MovieFile,
     ParsedFileInfo,
     QueueRecord,
+    SonarrHistoryRecord,
     SonarrSeries,
     validate_each,
 )
@@ -150,3 +152,32 @@ def test_history_record_field_name_construction_matches_alias_parse() -> None:
         {"id": 2, "date": "d", "seriesId": 5, "eventType": "grabbed", "downloadId": "A"},
     )
     assert by_name == from_wire
+
+
+def test_sonarr_history_record_reads_the_import_row_fields() -> None:
+    """`episodeId` and the `data` map's `droppedPath` land on the Sonarr row; the two-arr base carries neither."""
+
+    row: dict[str, object] = {
+        "id": 1,
+        "eventType": "downloadFolderImported",
+        "date": "d",
+        "seriesId": 5,
+        "episodeId": 77,
+        "data": {"DroppedPath": "/d/a.mkv", "Reason": "x"},
+    }
+    record = SonarrHistoryRecord.model_validate(row)
+    assert (record.item_id, record.episode_id, record.dropped_path, record.reason) == (5, 77, "/d/a.mkv", "x")
+    # A top-level reason never blocks the path lift: each validator reads its own key.
+    with_reason = SonarrHistoryRecord.model_validate({**row, "reason": "top"})
+    assert (with_reason.reason, with_reason.dropped_path) == ("top", "/d/a.mkv")
+    bare = SonarrHistoryRecord.model_validate({"eventType": "grabbed"})
+    assert (bare.episode_id, bare.dropped_path) == (0, None)
+    assert set(SonarrHistoryRecord.model_fields) - set(HistoryRecord.model_fields) == {"episode_id", "dropped_path"}
+    assert "dropped_path" not in HistoryRecord.model_validate(row).model_dump()
+
+
+def test_history_page_reads_total_records() -> None:
+    """The envelope's `totalRecords` parses; an envelope without it reads as uncut."""
+
+    assert HistoryPage.model_validate({"records": [], "totalRecords": 250}).total_records == 250
+    assert HistoryPage.model_validate({"records": []}).total_records == 0

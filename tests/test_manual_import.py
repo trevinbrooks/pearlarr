@@ -42,7 +42,7 @@ from pearlarr.seadex_types import (
     SONARR_MISSING_KEY,
     CommandResource,
     EpisodeKey,
-    HistoryRecord,
+    HistoryPage,
     ParsedEpisode,
     Quality,
     QualityDefinition,
@@ -60,6 +60,7 @@ from pearlarr.sonarr_import_plan import (
     EpisodeFileStatus,
     EpisodeIndex,
     EpisodeSnapshot,
+    HistoryImport,
     ParsedQuality,
     QueueVerdict,
     TargetStatuses,
@@ -72,6 +73,7 @@ from pearlarr.sonarr_import_plan import (
     manual_import_in_flight,
     parse_quality_from_filename,
     parsed_outside_entry,
+    placements_from_history,
     plan_import_files,
     quality_axes_from_model,
     quality_axes_from_name,
@@ -81,7 +83,7 @@ from pearlarr.sonarr_import_plan import (
     translate_download_path,
 )
 
-from .builders import SEP, queue_record, sonarr_ep
+from .builders import SEP, pending_import, queue_record, sonarr_ep
 
 
 class TestEpisodeIndex:
@@ -626,13 +628,31 @@ class TestParsedOutsideEntry:
         assert not parsed_outside_entry(parsed, {EpisodeKey(3, 1): 101})
 
 
-def _history(*events: tuple[str, str]) -> list[HistoryRecord]:
-    """History records from `(eventType, date)` pairs, newest first (as the probe reads)."""
+def _event_row(event: str, date: str) -> dict[str, object]:
+    """A bare history row."""
 
-    return [
-        HistoryRecord.model_validate({"eventType": event, "date": date, "id": len(events) - index})
-        for index, (event, date) in enumerate(events)
+    return {"eventType": event, "date": date}
+
+
+def _import_row(episode_id: int, path: str, date: str) -> dict[str, object]:
+    """A `downloadFolderImported` row landing `path` on `episode_id` for series 7."""
+
+    return {
+        **_event_row("downloadFolderImported", date),
+        "seriesId": 7,
+        "episodeId": episode_id,
+        "data": {"droppedPath": path},
+    }
+
+
+def _history(*rows: tuple[str, str] | dict[str, object], total_records: int = 0) -> HistoryPage:
+    """A history page from `(eventType, date)` pairs or raw rows, newest first (as the probe reads)."""
+
+    records = [
+        {**(row if isinstance(row, dict) else _event_row(*row)), "id": len(rows) - index}
+        for index, row in enumerate(rows)
     ]
+    return HistoryPage.model_validate({"records": records, "totalRecords": total_records})
 
 
 class TestClassifyDownloadHistory:
@@ -682,10 +702,182 @@ class TestClassifyDownloadHistory:
         assert not verdict.dead_tracked
 
     def test_empty_history_is_clean(self) -> None:
-        assert not classify_download_history([]).dead_tracked
+        assert not classify_download_history(HistoryPage()).dead_tracked
 
     def test_event_type_matches_casefolded(self) -> None:
         assert classify_download_history(_history(("DOWNLOADFOLDERIMPORTED", "d"))).dead_tracked
+
+    def test_imported_verdict_carries_its_rows(self) -> None:
+        # The newer file-deleted row is skipped over; the import rows above the
+        # grab come back in page order, each carrying the series id.
+        verdict = classify_download_history(
+            _history(
+                ("episodeFileDeleted", "2026-01-04T00:00:00Z"),
+                _import_row(102, "/d/Show/Show - 02.mkv", "2026-01-03T00:00:00Z"),
+                _import_row(101, "/d/Show/Show - 01.mkv", "2026-01-03T00:00:00Z"),
+                ("grabbed", "2026-01-02T00:00:00Z"),
+            ),
+        )
+        assert verdict.dead_tracked
+        assert verdict.import_rows == (
+            HistoryImport("/d/Show/Show - 02.mkv", 102, 7),
+            HistoryImport("/d/Show/Show - 01.mkv", 101, 7),
+        )
+
+    def test_a_multi_episode_file_repeats_its_path(self) -> None:
+        verdict = classify_download_history(
+            _history(
+                _import_row(102, "/d/Show - 01-02.mkv", "d"),
+                _import_row(101, "/d/Show - 01-02.mkv", "d"),
+                ("grabbed", "d"),
+            ),
+        )
+        assert verdict.import_rows == (
+            HistoryImport("/d/Show - 01-02.mkv", 102, 7),
+            HistoryImport("/d/Show - 01-02.mkv", 101, 7),
+        )
+
+    def test_rows_stop_at_the_grab_below(self) -> None:
+        # An older cycle's import rows below the grab belong to another import.
+        verdict = classify_download_history(
+            _history(
+                _import_row(101, "/d/new.mkv", "d"),
+                ("grabbed", "d"),
+                _import_row(101, "/d/old.mkv", "d"),
+                ("grabbed", "d"),
+            ),
+        )
+        assert verdict.import_rows == (HistoryImport("/d/new.mkv", 101, 7),)
+
+    def test_failed_and_bare_import_rows_carry_nothing(self) -> None:
+        failed = classify_download_history(_history(("downloadFailed", "d"), ("grabbed", "d")))
+        bare = classify_download_history(_history(("downloadFolderImported", "d"), ("grabbed", "d")))
+        assert (failed.dead_tracked, failed.import_rows) == (True, ())
+        assert (bare.dead_tracked, bare.import_rows) == (True, ())
+
+    def test_a_cut_page_without_the_grab_carries_nothing(self) -> None:
+        # The page holds fewer rows than the envelope counts and no grab bounds
+        # the cycle: the rows may go on past the page, so none are trusted.
+        verdict = classify_download_history(_history(_import_row(101, "/d/a.mkv", "d"), total_records=150))
+        assert verdict.dead_tracked
+        assert verdict.import_rows == ()
+
+    def test_a_cut_page_with_the_grab_inside_is_trusted(self) -> None:
+        verdict = classify_download_history(
+            _history(_import_row(101, "/d/a.mkv", "d"), ("grabbed", "d"), total_records=150),
+        )
+        assert verdict.import_rows == (HistoryImport("/d/a.mkv", 101, 7),)
+
+
+def _unplaced(**overrides: object) -> PendingImport:
+    """A record with an empty map over a one-file listing resolved to episode 101."""
+
+    fields: dict[str, object] = {
+        "file_episode_map": {},
+        "episode_ids": [],
+        "ordered_episode_ids": [101],
+        "seadex_files": ["Show - 01.mkv"],
+    }
+    fields.update(overrides)
+    return pending_import(**fields)
+
+
+class TestPlacementsFromHistory:
+    """Sonarr's import rows fill only the listing files the record's own map leaves unplaced."""
+
+    def test_a_row_outside_the_listing_is_dropped(self) -> None:
+        rows = [HistoryImport("/d/Show - 01.mkv", 101, 7), HistoryImport("/d/Extra.mkv", 101, 7)]
+        assert placements_from_history(rows, _unplaced()) == {"show - 01.mkv": [101]}
+
+    def test_an_excluded_file_is_never_claimed(self) -> None:
+        pending = _unplaced(
+            ordered_episode_ids=[],
+            seadex_files=["Show - 01.mkv", "Show - 02.mkv"],
+            excluded_files=["show - 02.mkv"],
+        )
+        assert placements_from_history([HistoryImport("/d/Show - 02.mkv", 102, 7)], pending) == {}
+
+    def test_a_mapped_file_is_left_to_its_seed(self) -> None:
+        pending = _unplaced(
+            file_episode_map={"Show - 01.mkv": [101]},
+            ordered_episode_ids=[101, 102],
+            seadex_files=["Show - 01.mkv", "Show - 02.mkv"],
+        )
+        rows = [HistoryImport("/d/Show - 01.mkv", 102, 7), HistoryImport("/d/Show - 02.mkv", 102, 7)]
+        assert placements_from_history(rows, pending) == {"show - 02.mkv": [102]}
+
+    def test_another_series_row_is_dropped(self) -> None:
+        assert placements_from_history([HistoryImport("/d/Show - 01.mkv", 101, 8)], _unplaced()) == {}
+
+    def test_the_resolved_set_scopes_the_ids_when_present(self) -> None:
+        # A row outside the resolved set is a sibling's slice (or a parse we
+        # would not have made); an empty set, the legacy or specials shape,
+        # accepts every in-series row.
+        rows = [HistoryImport("/d/Show - 01.mkv", 999, 7)]
+        assert placements_from_history(rows, _unplaced()) == {}
+        assert placements_from_history(rows, _unplaced(ordered_episode_ids=[])) == {"show - 01.mkv": [999]}
+
+    def test_a_multi_episode_file_groups_its_sorted_ids(self) -> None:
+        pending = _unplaced(ordered_episode_ids=[101, 102], seadex_files=["Show - 01-02.mkv"])
+        rows = [HistoryImport("/d/Show - 01-02.mkv", 102, 7), HistoryImport("/d/Show - 01-02.mkv", 101, 7)]
+        assert placements_from_history(rows, pending) == {"show - 01-02.mkv": [101, 102]}
+
+    def test_a_remote_path_folds_to_the_normalized_leaf(self) -> None:
+        rows = [HistoryImport("C:\\downloads\\Show S01/SHOW - 01.MKV", 101, 7)]
+        assert placements_from_history(rows, _unplaced()) == {"show - 01.mkv": [101]}
+
+    def test_no_rows_give_no_placements(self) -> None:
+        assert placements_from_history([], _unplaced()) == {}
+
+
+class TestPendingImportPlacements:
+    """`with_placements` folds import-time placements into the map; `unplaced_names` is what a rebuild may fill."""
+
+    def test_with_placements_normalizes_and_merges(self) -> None:
+        # A raw-cased seed key collapses onto its normalized placement, a
+        # zero-id seed entry with no placement is dropped, a mixed entry keeps
+        # its real ids, and the original record is untouched.
+        seed = {"Show - 01 [1080p].MKV": [101], "Show - 02.mkv": [0], "Show - 03.mkv": [0, 103]}
+        pending = pending_import(file_episode_map=dict(seed))
+
+        healed = pending.with_placements({"SHOW - 01 [1080p].mkv": [111], "Show - 04.mkv": [104]})
+
+        assert healed.file_episode_map == {
+            "show - 01 [1080p].mkv": [111],
+            "show - 03.mkv": [103],
+            "show - 04.mkv": [104],
+        }
+        assert pending.file_episode_map == seed
+
+    def test_unplaced_names_is_the_listing_minus_map_and_exclusions(self) -> None:
+        pending = pending_import(
+            file_episode_map={"Show - 01.mkv": [101]},
+            seadex_files=["Show - 01.mkv", "Show - 02.mkv", "Show - 03.mkv"],
+            excluded_files=["show - 03.mkv"],
+        )
+        assert pending.unplaced_names() == {"show - 02.mkv"}
+
+    @pytest.mark.parametrize(
+        ("file_episode_map", "excluded_files"),
+        [
+            ({}, []),
+            ({"Show - 01.mkv": [101]}, []),
+            ({"Show - 01.mkv": [101]}, ["show - 02.mkv"]),
+            ({"Show - 01.mkv": [101], "Show - 02.mkv": [102]}, []),
+        ],
+    )
+    def test_seed_coverage_accounted_matches_unplaced_names(
+        self,
+        file_episode_map: dict[str, list[int]],
+        excluded_files: list[str],
+    ) -> None:
+        # The two reads must not drift: accounted means nothing is left unplaced.
+        pending = pending_import(
+            file_episode_map=file_episode_map,
+            seadex_files=["Show - 01.mkv", "Show - 02.mkv"],
+            excluded_files=excluded_files,
+        )
+        assert pending.seed_coverage().accounted == (not pending.unplaced_names())
 
 
 def _mapping(remote: str, local: str, *, host: str | None = None) -> RemotePathMapping:
@@ -1007,6 +1199,21 @@ class TestPendingImportRoundTrip:
         assert PendingImport.from_json(raw) == replace(pending, guards=GuardFacts())
         # The caller-supplied row (the read seams' join) hydrates it back whole.
         assert PendingImport.from_json(raw, guards=pending.guards) == pending
+
+    def test_healed_map_round_trips_and_flips_coverage(self) -> None:
+        # The placements live in the same blob field as the seed, so a healed
+        # record rehydrates mapped on the next run.
+        pending = pending_import(
+            file_episode_map={},
+            episode_ids=[],
+            seadex_files=["Show - 01 [1080p].mkv"],
+            ordered_episode_ids=[101],
+        )
+
+        healed = pending.with_placements({"show - 01 [1080p].mkv": [101]})
+
+        assert PendingImport.from_json(healed.to_json()) == healed
+        assert (pending.seed_coverage().mapped, healed.seed_coverage().mapped) == (False, True)
 
     def test_from_json_ignores_a_legacy_blob_guards_key(self) -> None:
         # A pre-v3 blob carries a frozen grab-time copy - the divergence the

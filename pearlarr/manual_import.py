@@ -16,8 +16,8 @@ which imports from this module - never the other way around.
 import math
 import os
 import unicodedata
-from collections.abc import Iterable
-from dataclasses import asdict, dataclass, field
+from collections.abc import Iterable, Mapping
+from dataclasses import asdict, dataclass, field, replace
 from enum import Enum, StrEnum, auto
 from typing import Any, NamedTuple
 
@@ -231,6 +231,10 @@ class ImportProbe:
 
     deferral: Deferral = Deferral.NONE
     """Why this poll waited on Sonarr's work instead of this record's."""
+
+    placements: Mapping[str, list[int]] = field(default_factory=dict[str, list[int]])
+    """Import-time placements this poll made (normalized basename -> ids), for the record seam to persist.
+    Empty when the poll placed nothing."""
 
     @property
     def deferred(self) -> bool:
@@ -504,6 +508,17 @@ def _normalized_names(names: Iterable[str]) -> set[str]:
     return {normalized_leaf(name) for name in names}
 
 
+def _normalized_map(entries: Mapping[str, list[int]]) -> dict[str, list[int]]:
+    """The map with every key normalized and zero ids dropped, minus the entries that leaves empty."""
+
+    normalized: dict[str, list[int]] = {}
+    for name, ids in entries.items():
+        clean = [i for i in ids if i]
+        if clean:
+            normalized[normalized_leaf(name)] = clean
+    return normalized
+
+
 class SeedCoverage(NamedTuple):
     """A record's two seed trust levels over its grabbed video files."""
 
@@ -564,7 +579,7 @@ class PendingImport:
     """The AniList entry this record's episode slice belongs to."""
 
     file_episode_map: dict[str, list[int]]
-    """The primary file (Basename) to episode (Sonarr episode ids) mapping."""
+    """Normalized basename -> Sonarr episode ids: the grab-time seed plus the placements later imports made."""
 
     episode_ids: list[int]
     """Legacy read-only fallback: new seeds always write `[]`"""
@@ -657,6 +672,20 @@ class PendingImport:
             return SeedCoverage(mapped=True, accounted=True)
         covered = mapped_names | _normalized_names(self.excluded_files)
         return SeedCoverage(mapped=False, accounted=covered >= needed)
+
+    def unplaced_names(self) -> set[str]:
+        """Normalized listing names the map does not cover and no exclusion claims: what a rebuild may still place."""
+
+        return (
+            _normalized_names(self.seadex_files)
+            - _normalized_names(self.file_episode_map)
+            - _normalized_names(self.excluded_files)
+        )
+
+    def with_placements(self, placements: Mapping[str, list[int]]) -> "PendingImport":
+        """The record with import-time placements folded into its map, every key normalized and zero ids dropped."""
+
+        return replace(self, file_episode_map={**_normalized_map(self.file_episode_map), **_normalized_map(placements)})
 
     def to_json(self) -> dict[str, Any]:
         """Serialize to the plain dict persisted under `pending_imports`."""

@@ -667,7 +667,7 @@ class TestAssignScopeGate:
         # A fully-seeded record (every resolved episode already seeded) whose batch
         # folder also holds an OUT-OF-SCOPE file (a season-2 file in a season-1 grab).
         # The leftover must be skipped - not imported via the unscoped fallback -
-        # and the grab-time seed map must stay un-contaminated by the self-heal.
+        # and the grab-time seed map must stay un-contaminated by the placements.
         seed_name = "Show - 01 [1080p].mkv"
         leftover_name = "Show - S02E01 [1080p].mkv"
         pending = pending_import(
@@ -685,11 +685,12 @@ class TestAssignScopeGate:
         }
         ep_id_map = {EpisodeKey(1, 1): 101, EpisodeKey(2, 1): 999}  # 999 is OUTSIDE the resolved {101}
 
-        merged, skipped = mapper.assign(pending, candidates, ep_id_map)
+        result = mapper.assign(pending, candidates, ep_id_map)
 
-        placed_ids = {i for ids in merged.values() for i in ids}
+        placed_ids = {i for ids in result.assigned.values() for i in ids}
         assert 999 not in placed_ids
-        assert normalize_basename(leftover_name) in skipped
+        assert normalize_basename(leftover_name) in result.skipped
+        assert result.placed == {}
         assert pending.file_episode_map == {seed_name: [101]}
 
     def test_count_mismatch_skips(self) -> None:
@@ -832,9 +833,50 @@ class TestAssignScopeGate:
         assert result.assigned == {}
         assert result.skipped == ["e-12v2.mkv"]
 
+    def test_assign_returns_placements_without_touching_the_record(self) -> None:
+        # The mapper reports its fresh placements for the caller to persist;
+        # the frozen record's map is never mutated behind it.
+        name = "Show - S01E01 [1080p].mkv"
+        sonarr = FakeSonarrClient(parse_episode_info_fn=lambda _f: _pinfo(season=1, episodes=(1,)))
+        mapper = make_sonarr_mapper(sonarr=sonarr)
+        pending = pending_import(file_episode_map={}, episode_ids=[], ordered_episode_ids=[101], seadex_files=[name])
+        candidates = {normalize_basename(name): _cand(name)}
+
+        result = mapper.assign(pending, candidates, {EpisodeKey(1, 1): 101})
+
+        assert result.placed == result.assigned == {normalize_basename(name): [101]}
+        assert pending.file_episode_map == {}
+
+    def test_placed_excludes_the_seeded_entries(self) -> None:
+        # `placed` is this poll's fresh work alone: a seeded entry rides
+        # `assigned` only, so the seam never re-persists what the record holds.
+        seed_name, leftover_name = "Show - S01E01 [1080p].mkv", "Show - S01E02 [1080p].mkv"
+        parses = {
+            seed_name: _pinfo(season=1, episodes=(1,)),
+            leftover_name: _pinfo(season=1, episodes=(2,)),
+        }
+        sonarr = FakeSonarrClient(parse_episode_info_fn=parses.get)
+        mapper = make_sonarr_mapper(sonarr=sonarr)
+        pending = pending_import(
+            file_episode_map={seed_name: [101]},
+            episode_ids=[],
+            ordered_episode_ids=[101, 102],
+            seadex_files=[seed_name, leftover_name],
+        )
+        candidates = {normalize_basename(name): _cand(name) for name in (seed_name, leftover_name)}
+
+        result = mapper.assign(pending, candidates, {EpisodeKey(1, 1): 101, EpisodeKey(1, 2): 102})
+
+        assert result.placed == {normalize_basename(leftover_name): [102]}
+        assert result.assigned == {
+            normalize_basename(seed_name): [101],
+            normalize_basename(leftover_name): [102],
+        }
+
     def test_placed_sharer_still_vetoes_on_the_next_poll(self) -> None:
-        # Poll 1 places the v1 and self-heals it onto the record. Poll 2 must
-        # not let the now-seeded v1 hide the shared absolute from the tell.
+        # Poll 1 places the v1 and the record seam folds it onto the record.
+        # Poll 2 must not let the now-seeded v1 hide the shared absolute from
+        # the tell.
         v1, v2 = "Show - 12 [1080p].mkv", "Show - 12v2 [1080p].mkv"
         parses = {
             v1: _pinfo(season=0, absolutes=(12,), matched=((1, 12),)),
@@ -851,12 +893,13 @@ class TestAssignScopeGate:
         candidates = {normalize_basename(name): _cand(name) for name in (v1, v2)}
         ep_id_map = {EpisodeKey(1, 12): 2586}
 
-        first, _ = mapper.assign(pending, candidates, ep_id_map)
-        second, skipped = mapper.assign(pending, candidates, ep_id_map)
+        first = mapper.assign(pending, candidates, ep_id_map)
+        second = mapper.assign(pending.with_placements(first.placed), candidates, ep_id_map)
 
-        assert first[normalize_basename(v1)] == [2586]
-        assert normalize_basename(v2) not in second
-        assert normalize_basename(v2) in skipped
+        assert first.placed == {normalize_basename(v1): [2586]}
+        assert normalize_basename(v2) not in second.assigned
+        assert normalize_basename(v2) in second.skipped
+        assert pending.file_episode_map == {}
 
     def test_seeded_sharer_parse_blip_fails_closed(self) -> None:
         # A LATER RUN (fresh parse cache): the seeded v1's /parse blips to
@@ -874,10 +917,10 @@ class TestAssignScopeGate:
         )
         candidates = {normalize_basename(name): _cand(name) for name in (v1, v2)}
 
-        merged, skipped = mapper.assign(pending, candidates, {EpisodeKey(1, 12): 2586})
+        result = mapper.assign(pending, candidates, {EpisodeKey(1, 12): 2586})
 
-        assert normalize_basename(v2) not in merged
-        assert normalize_basename(v2) in skipped
+        assert normalize_basename(v2) not in result.assigned
+        assert normalize_basename(v2) in result.skipped
 
     def test_seeded_dual_numbered_sharer_offline_fallback_fails_closed(self) -> None:
         # The seeded v1 is dual-numbered. Its /parse blips and the offline
@@ -895,10 +938,10 @@ class TestAssignScopeGate:
         )
         candidates = {normalize_basename(name): _cand(name) for name in (v1, v2)}
 
-        merged, skipped = mapper.assign(pending, candidates, {EpisodeKey(1, 12): 2586, EpisodeKey(1, 13): 2587})
+        result = mapper.assign(pending, candidates, {EpisodeKey(1, 12): 2586, EpisodeKey(1, 13): 2587})
 
-        assert normalize_basename(v2) not in merged
-        assert normalize_basename(v2) in skipped
+        assert normalize_basename(v2) not in result.assigned
+        assert normalize_basename(v2) in result.skipped
 
     def test_moved_out_seeded_sharer_still_vetoes(self) -> None:
         # The seeded v1 already imported and MOVED OUT of the folder. Its
@@ -919,10 +962,10 @@ class TestAssignScopeGate:
         )
         candidates = {normalize_basename(v2): _cand(v2)}  # v1 is gone from disk
 
-        merged, skipped = mapper.assign(pending, candidates, {EpisodeKey(1, 12): 2586})
+        result = mapper.assign(pending, candidates, {EpisodeKey(1, 12): 2586})
 
-        assert normalize_basename(v2) not in merged
-        assert normalize_basename(v2) in skipped
+        assert normalize_basename(v2) not in result.assigned
+        assert normalize_basename(v2) in result.skipped
 
     def test_none_parse_v2_never_rides_the_single_file_fallback(self) -> None:
         # The blip lands on the v2 itself: no parse at all is no evidence, so
@@ -939,10 +982,10 @@ class TestAssignScopeGate:
         )
         candidates = {normalize_basename(name): _cand(name) for name in (v1, v2)}
 
-        merged, skipped = mapper.assign(pending, candidates, {EpisodeKey(1, 12): 2586})
+        result = mapper.assign(pending, candidates, {EpisodeKey(1, 12): 2586})
 
-        assert normalize_basename(v2) not in merged
-        assert normalize_basename(v2) in skipped
+        assert normalize_basename(v2) not in result.assigned
+        assert normalize_basename(v2) in result.skipped
 
     def test_empty_resolved_set_skips_absolute_only_files(self) -> None:
         # With NO resolved set, the absolute leg has nothing to index into, so an
@@ -1018,10 +1061,11 @@ class TestAssignDuplicateLeaves:
         )
         candidates = {normalize_basename(name): _cand(name)}
 
-        merged, skipped = mapper.assign(pending, candidates, {EpisodeKey(1, 1): 101})
+        result = mapper.assign(pending, candidates, {EpisodeKey(1, 1): 101})
 
-        assert merged == {normalize_basename(name): [101]}
-        assert skipped == []
+        assert result.assigned == {normalize_basename(name): [101]}
+        assert result.placed == {normalize_basename(name): [101]}
+        assert result.skipped == []
 
     def test_unplaced_duplicate_leaf_is_reported_once(self) -> None:
         # Both occurrences of an unplaceable duplicate refuse - the warning
@@ -1037,10 +1081,10 @@ class TestAssignDuplicateLeaves:
         )
         candidates = {normalize_basename(name): _cand(name)}
 
-        merged, skipped = mapper.assign(pending, candidates, {})
+        result = mapper.assign(pending, candidates, {})
 
-        assert merged == {}
-        assert skipped == [normalize_basename(name)]
+        assert result.assigned == {}
+        assert result.skipped == [normalize_basename(name)]
 
 
 class TestAssignBogusKeyDowngrade:

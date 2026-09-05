@@ -1,5 +1,6 @@
 """Views and writes over one arr's durable pending-import rows plus the run list."""
 
+from collections.abc import Mapping
 from typing import Any
 
 from .cache import AbstractCacheStore
@@ -93,6 +94,18 @@ class PendingRecords:
         self._store.put_pending(self._ctx.arr, pending.key, pending.to_json())
         if pending.key in self._ctx.pending_imports:
             self._ctx.pending_imports[pending.key] = pending
+
+    def absorb_placements(self, record: PendingImport, placements: Mapping[str, list[int]]) -> PendingImport:
+        """Persist a poll's import-time placements onto the record and return the healed copy.
+
+        Empty placements are a no-op (no write).
+        """
+
+        if not placements:
+            return record
+        healed = record.with_placements(placements)
+        self.save(healed)
+        return healed
 
     def drop(self, key: PendingKey) -> None:
         """Remove ONE record (`PendingKey`-scoped, never its siblings) from the store and the run list."""

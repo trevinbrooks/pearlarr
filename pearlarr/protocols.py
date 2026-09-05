@@ -20,6 +20,7 @@ class ImportCompleter(ABC):
         """Reconcile one completed download with the arr (one poll).
 
         A manual import assigns with *our* file->episode mapping, never the arr's title parse.
+        The probe carries any import-time placements for the engine to persist onto the record.
         """
 
     @abstractmethod

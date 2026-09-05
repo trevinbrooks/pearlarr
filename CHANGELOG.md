@@ -14,6 +14,8 @@ Pearlarr is a fork of [bbtufty/seadexarr](https://github.com/bbtufty/seadexarr).
 - The wait screen's import bar no longer freezes for minutes while Sonarr copies a season pack: a poll no longer waits out Sonarr's import pass, and the rescan is issued once per poll interval as intended.
 - A finished download is no longer left "not ready" while Sonarr is importing it, or is busy importing another download ahead of it. Waiting on Sonarr's import work now pauses the readiness timeout, up to six times its value, an import Pearlarr issues past the deadline is followed to completion, and a record still waiting at the bound is left pending as "unfinished" (its import is running) or "sonarr busy" (another disk command is holding it).
 - Two warnings are quiet when they said nothing actionable: a file excluded at grab time (a sibling record's slice of a shared torrent, or a refused duplicate) is no longer reported as unmatched, and an empty folder scan right after completion is debug-only until the readiness deadline.
+- A download whose file-to-episode matches were only worked out at import time no longer sits "not ready" on every later run after Sonarr moves its files out of the download folder: the matches are saved on its record, so later runs verify from the episode files alone. The readiness deadline prints one warning for such a download, and none once it verified.
+- A download Sonarr imported before Pearlarr ever saw its files (a `check` wait, or Sonarr's own import beating the first check) takes its matches from Sonarr's history for the download instead of waiting until the record expires.
 
 ## [1.3.0] - 2026-09-05
 

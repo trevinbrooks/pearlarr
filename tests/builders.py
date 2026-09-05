@@ -947,6 +947,7 @@ def import_probe(
     imported_count: int = 0,
     target_count: int = 0,
     deferral: Deferral = Deferral.NONE,
+    placements: dict[str, list[int]] | None = None,
 ) -> ImportProbe:
     """An `ImportProbe` defaulting to the verified-import outcome (`files_present`)."""
 
@@ -956,6 +957,7 @@ def import_probe(
         imported_count=imported_count,
         target_count=target_count,
         deferral=deferral,
+        placements=placements or {},
     )
 
 

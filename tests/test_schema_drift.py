@@ -47,6 +47,7 @@ from pearlarr.seadex_types import (
     Revision,
     SonarrEpisode,
     SonarrEpisodeFile,
+    SonarrHistoryRecord,
     SonarrSeries,
 )
 
@@ -169,6 +170,8 @@ ROSTER: Final = (
     # `reason` is synthesized by a before-validator from the `data` map
     # (no such property exists). test_history_data_backs_the_reason_lift pins `data`.
     Spec(HistoryRecord, "HistoryResource", _BOTH, exempt=frozenset({"reason"})),
+    # `dropped_path` is lifted from `data` the same way, Sonarr only.
+    Spec(SonarrHistoryRecord, "HistoryResource", _SONARR, exempt=frozenset({"reason", "dropped_path"})),
     Spec(Quality, "Quality", _BOTH),
     Spec(Revision, "Revision", _BOTH),
     Spec(QualityModel, "QualityModel", _BOTH),
@@ -197,7 +200,7 @@ def test_declared_fields_exist_in_schema(spec: Spec) -> None:
 
 
 def test_history_data_backs_the_reason_lift() -> None:
-    """The `data` map feeding HistoryRecord's synthesized `reason` stays in both schemas."""
+    """The `data` map feeding the synthesized `reason` (both arrs) and `dropped_path` (Sonarr) stays in the schemas."""
 
     for schema in _SCHEMAS.values():
         assert "data" in schema.properties("HistoryResource"), f"{schema.name}:HistoryResource lost 'data'"

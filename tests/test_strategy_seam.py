@@ -1327,12 +1327,10 @@ class TestImportCompletedQueueState:
         assert len(sonarr.execute_calls) == 1
 
     def test_self_heal_on_one_poll_unlocks_the_fast_path_on_the_next(self) -> None:
-        # PIN: assignment self-heals THROUGH the frozen record's mutable map
-        # field, and the cross-poll effect exists only because the caller holds
-        # the same object. Poll 1 places the unseeded file (healing the map in
-        # place); poll 2 must take the map-complete imported fast path, no new
-        # candidate scan - off the healed map. Anyone purifying the heal must
-        # keep this behavior (rehydrated reconcile passes never see the heal).
+        # PIN: a placement rides the probe out of the strategy and the record
+        # seam applies it. Poll 1 places the unseeded file and reports it, the
+        # record itself untouched; poll 2 over the healed record must take the
+        # map-complete imported fast path, no new candidate scan.
         pending = pending_import(
             file_episode_map={},
             episode_ids=[],
@@ -1347,16 +1345,40 @@ class TestImportCompletedQueueState:
         first = strat.import_completed(pending, "/d", AttemptKind.POLL)
         assert first.files_present is False
         assert first.command_issued is True
-        # The heal: the placement landed on the record itself.
-        assert pending.file_episode_map == {"show - s01e01.mkv": [101]}
+        assert first.placements == {"show - s01e01.mkv": [101]}
+        assert pending.file_episode_map == {}
 
         # The copy landed; the next poll trusts the healed map alone.
+        healed = pending.with_placements(first.placements)
+        assert healed.seed_coverage().mapped is True
         sonarr.episodes_return = [sonarr_ep(1, 1, ep_id=101, release_group="SubGroup")]
 
-        second = strat.import_completed(pending, "/d", AttemptKind.POLL)
+        second = strat.import_completed(healed, "/d", AttemptKind.POLL)
         assert second.files_present is True
         assert len(sonarr.candidate_calls) == 1
         assert len(sonarr.execute_calls) == 1
+
+    def test_placements_ride_the_probe_through_the_reconciler(self) -> None:
+        # The reconciler's count overlay passes the executor's placements
+        # through untouched: a placing poll carries them, a seeded record's
+        # poll and the map-complete fast path carry none.
+        name = "Show - S01E01.mkv"
+        unseeded = pending_import(file_episode_map={}, episode_ids=[], seadex_files=[name], ordered_episode_ids=[101])
+        seeded = pending_import(file_episode_map={name: [101]}, episode_ids=[], seadex_files=[name])
+        strat, sonarr = _make_sonarr_for_import(
+            candidates=[manual_candidate(f"/d/{name}")],
+            episodes=[sonarr_ep(1, 1, ep_id=101, episode_file_id=0)],
+        )
+
+        placing = strat.import_completed(unseeded, "/d", AttemptKind.POLL)
+        seeded_poll = strat.import_completed(seeded, "/d", AttemptKind.POLL)
+        sonarr.episodes_return = [sonarr_ep(1, 1, ep_id=101, release_group="SubGroup")]
+        fast = strat.import_completed(seeded, "/d", AttemptKind.POLL)
+
+        assert placing.placements == {"show - s01e01.mkv": [101]}
+        assert unseeded.file_episode_map == {}
+        assert seeded_poll.placements == {}
+        assert (fast.files_present, fast.placements) == (True, {})
 
     def test_not_in_queue_steps_in(self) -> None:
         # Sonarr isn't tracking the download (our holding category) -> step in,
@@ -1514,6 +1536,7 @@ class TestScratchResetParity:
         scratch.quality_defs = []
         scratch.languages = []
         scratch.warned_unplaceable.add("h")
+        scratch.warned_empty_folder.add("h")
         scratch.warned_default_quality = True
         scratch.last_refresh_monotonic = 1.0
         scratch.issued_command_ids.add(42)
@@ -1523,7 +1546,6 @@ class TestScratchResetParity:
         scan.history_verdicts["h"] = DownloadHistoryVerdict(dead_tracked=True)
         scan.path_mappings = []
         scan.translated_paths["/a"] = "/b"
-        scan.warned_empty_folder.add("h")
 
         executor.reset()
 
@@ -2266,6 +2288,24 @@ class TestDefaultQualityWarning:
         assert self._default_quality_warnings(recording) == []
 
 
+def _imported_history(*rows: tuple[int, str]) -> HistoryPage:
+    """A dead-tracked page whose import rows carry `(episodeId, droppedPath)` for series 7, above the grab."""
+
+    records: list[dict[str, object]] = [
+        {
+            "id": 10 + index,
+            "eventType": "downloadFolderImported",
+            "date": "2026-01-02T00:00:00Z",
+            "seriesId": 7,
+            "episodeId": episode_id,
+            "data": {"droppedPath": path},
+        }
+        for index, (episode_id, path) in enumerate(rows)
+    ]
+    records.append({"id": 1, "eventType": "grabbed", "date": "2026-01-01T00:00:00Z"})
+    return HistoryPage.model_validate({"records": records, "totalRecords": len(records)})
+
+
 def _dead_history() -> HistoryPage:
     """A history page whose newest relevant event is a prior full import."""
 
@@ -2429,15 +2469,17 @@ class TestFolderScanFallback:
     def test_dead_tracked_empty_folder_warns_only_at_the_deadline(self, caplog: pytest.LogCaptureFixture) -> None:
         # An empty folder right after completion is expected (Sonarr's mount
         # lags), so ordinary polls note it at debug; the genuinely stuck shape
-        # (still empty at the deadline) warns once a run, re-armed by reset.
+        # (an unmapped record, still empty at the deadline) warns once a run,
+        # re-armed by reset. `_dead_history()` carries no import rows, so the
+        # rebuild yields nothing and the record stays unmapped.
         recording = install_recording_hub()
         strat, _ = self._strat(history=_dead_history(), folder_candidates=[])
         logger = logging.getLogger("pearlarr-folder-scan")
         logger.handlers.clear()
         logger.propagate = True
         logger.setLevel(logging.DEBUG)
-        strat._executor.scanner.logger = logger
-        pending = pending_import()
+        strat._executor.logger = logger
+        pending = pending_import(file_episode_map={}, episode_ids=[], ordered_episode_ids=[101])
 
         with caplog.at_level("DEBUG"):
             strat.import_completed(pending, "/d/Show", AttemptKind.POLL)
@@ -2456,6 +2498,132 @@ class TestFolderScanFallback:
         strat.import_completed(pending, "/d/Show", AttemptKind.DEADLINE)
         warnings = [w for w in diagnostic_messages(recording, Severity.WARNING) if "found no files" in w]
         assert len(warnings) == 2
+
+    def test_dead_tracked_empty_folder_stays_quiet_once_the_seed_verifies(self) -> None:
+        # An accounted-only record after a move-mode import: the by-id scan is
+        # dead, the folder is empty, and the seeded file already verifies. The
+        # deadline poll reads imported and prints nothing.
+        recording = install_recording_hub()
+        strat, sonarr = self._strat(history=_dead_history(), folder_candidates=[])
+        sonarr.episodes_return = [sonarr_ep(1, 1, ep_id=101, release_group="SubGroup")]
+        pending = pending_import(
+            file_episode_map={"Show - 01 [1080p].mkv": [101]},
+            episode_ids=[],
+            ordered_episode_ids=[101],
+            seadex_files=["Show - 01 [1080p].mkv", "Show - 02 [1080p].mkv"],
+            excluded_files=["show - 02 [1080p].mkv"],
+        )
+
+        probe = strat.import_completed(pending, "/d/Show", AttemptKind.DEADLINE)
+
+        assert probe.files_present is True
+        assert diagnostic_messages(recording, Severity.WARNING) == []
+
+    def test_seeded_unverified_record_warns_once_with_the_folder_reason(self) -> None:
+        # A seeded record whose file is neither in the folder nor on its
+        # episode: the deadline prints ONE warning, the missing-files one,
+        # carrying the empty-folder reason rather than a second line.
+        recording = install_recording_hub()
+        strat, _ = self._strat(history=_dead_history(), folder_candidates=[])
+
+        probe = strat.import_completed(pending_import(), "/d/Show", AttemptKind.DEADLINE)
+
+        assert probe.files_present is False
+        [warning] = diagnostic_messages(recording, Severity.WARNING)
+        assert "1 intended file not visible to Sonarr" in warning
+        assert "a scan of /d/Show found no files" in warning
+
+    def test_dead_tracked_empty_folder_warns_for_an_unmapped_record_at_the_deadline(self) -> None:
+        # Nothing to verify and nothing to place: the deadline says so once,
+        # the ordinary poll stays quiet, and no placement is invented.
+        recording = install_recording_hub()
+        strat, _ = self._strat(history=_dead_history(), folder_candidates=[])
+        pending = pending_import(file_episode_map={}, episode_ids=[], ordered_episode_ids=[101])
+
+        polled = strat.import_completed(pending, "/d/Show", AttemptKind.POLL)
+        assert diagnostic_messages(recording, Severity.WARNING) == []
+
+        deadline = strat.import_completed(pending, "/d/Show", AttemptKind.DEADLINE)
+
+        [warning] = diagnostic_messages(recording, Severity.WARNING)
+        assert "found no files" in warning
+        assert (polled.files_present, deadline.files_present) == (False, False)
+        assert deadline.placements == {}
+
+    def test_never_scanned_record_verifies_from_sonarr_history(self) -> None:
+        # Sonarr imported the download before any scan saw its files: the
+        # by-id scan is dead, the folder is empty, and the map is empty. Its
+        # history rows stand in for the scan, the rebuilt map verifies on the
+        # episode file, and the placements ride the probe with nothing POSTed.
+        recording = install_recording_hub()
+        name = "Show - 01 [1080p].mkv"
+        strat, sonarr = self._strat(history=_imported_history((101, f"/d/Show/{name}")), folder_candidates=[])
+        sonarr.episodes_return = [sonarr_ep(1, 1, ep_id=101, release_group="SubGroup")]
+        pending = pending_import(file_episode_map={}, episode_ids=[], ordered_episode_ids=[101], seadex_files=[name])
+
+        probe = strat.import_completed(pending, "/d/Show", AttemptKind.POLL)
+
+        assert probe.files_present is True
+        assert probe.placements == {normalize_basename(name): [101]}
+        assert pending.file_episode_map == {}
+        assert sonarr.execute_calls == []
+        assert diagnostic_messages(recording, Severity.WARNING) == []
+        assert len(sonarr.folder_candidate_calls) == 1
+        assert len(sonarr.history_probe_calls) == 1
+
+    def test_history_rebuild_leaves_seeds_and_exclusions_alone(self) -> None:
+        # A seeded file Sonarr placed elsewhere stays a genuine mismatch, and
+        # an excluded (sibling slice) file never lands on this record.
+        seeded, excluded = "Show - 01 [1080p].mkv", "Show - 02 [1080p].mkv"
+        strat, sonarr = self._strat(
+            history=_imported_history((102, f"/d/Show/{seeded}"), (102, f"/d/Show/{excluded}")),
+            folder_candidates=[],
+        )
+        sonarr.episodes_return = [sonarr_ep(1, 2, ep_id=102, release_group="SubGroup")]
+        pending = pending_import(
+            file_episode_map={seeded: [101]},
+            episode_ids=[],
+            ordered_episode_ids=[101],
+            seadex_files=[seeded, excluded],
+            excluded_files=[normalize_basename(excluded)],
+        )
+
+        probe = strat.import_completed(pending, "/d/Show", AttemptKind.POLL)
+
+        assert probe.files_present is False
+        assert probe.placements == {}
+        assert pending.file_episode_map == {seeded: [101]}
+
+    def test_rebuilt_map_that_does_not_verify_waits_without_pinning_it(self) -> None:
+        # The history row names an episode holding no recommended file (the
+        # import was replaced or deleted since): the deadline prints the one
+        # missing-files warning with the folder reason, and the history
+        # placement is NOT attached, so the next run re-derives it.
+        recording = install_recording_hub()
+        name = "Show - 01 [1080p].mkv"
+        strat, _ = self._strat(history=_imported_history((101, f"/d/Show/{name}")), folder_candidates=[])
+        pending = pending_import(file_episode_map={}, episode_ids=[], ordered_episode_ids=[101], seadex_files=[name])
+
+        probe = strat.import_completed(pending, "/d/Show", AttemptKind.DEADLINE)
+
+        assert probe.files_present is False
+        assert probe.placements == {}
+        [warning] = diagnostic_messages(recording, Severity.WARNING)
+        assert "1 intended file not visible to Sonarr" in warning
+        assert "a scan of /d/Show found no files" in warning
+
+    def test_covered_record_never_rebuilds(self) -> None:
+        # A mapped record verifies or waits on its own seed: the rows are
+        # never consulted, so a conflicting row changes nothing.
+        name = "Show - 01 [1080p].mkv"
+        strat, _ = self._strat(history=_imported_history((102, f"/d/Show/{name}")), folder_candidates=[])
+        pending = pending_import()
+
+        probe = strat.import_completed(pending, "/d/Show", AttemptKind.POLL)
+
+        assert probe.files_present is False
+        assert probe.placements == {}
+        assert pending.file_episode_map == {name: [101]}
 
     def test_empty_poll_then_files_never_warns(self) -> None:
         # The common shape: the first scan lands before the folder is visible,

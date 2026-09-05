@@ -31,7 +31,7 @@ from .manual_import import (
 from .seadex_types import (
     CommandResource,
     EpisodeKey,
-    HistoryRecord,
+    HistoryPage,
     Language,
     ParsedEpisode,
     ParsedFileInfo,
@@ -364,9 +364,26 @@ _DEAD_TRACKED_HISTORY_EVENTS = {
 _GRABBED_HISTORY_EVENT = "grabbed"
 
 
+_IMPORTED_HISTORY_EVENT = "downloadfolderimported"
+
+
+class HistoryImport(NamedTuple):
+    """One file Sonarr's history says it imported for a download, as one row per episode."""
+
+    path: str
+    """The imported file's download-folder path, `data.droppedPath`."""
+    episode_id: int
+    """The episode the row landed on."""
+    series_id: int
+    """The row's `seriesId`, so a record never claims another series' import."""
+
+
 @dataclass(frozen=True, slots=True)
 class DownloadHistoryVerdict:
-    """What a download's newest relevant Sonarr history event says about its state."""
+    """What a download's newest relevant Sonarr history event says about its state.
+
+    An imported verdict also carries the rows of that import.
+    """
 
     dead_tracked: bool
     """True when Sonarr's history maps the download to a queue-hidden state it
@@ -379,12 +396,17 @@ class DownloadHistoryVerdict:
     date: str | None = None
     """The dead-tracked event's raw ISO date, for the fallback's debug note."""
 
+    import_rows: tuple[HistoryImport, ...] = ()
+    """The rows of the import that dead-tracked the download, one per file and episode, for
+    rebuilding a never-scanned record's map. Empty for a failed or ignored verdict, for a clean
+    one, and when the page cannot bound the import."""
 
-def classify_download_history(records: Sequence[HistoryRecord]) -> DownloadHistoryVerdict:
+
+def classify_download_history(page: HistoryPage) -> DownloadHistoryVerdict:
     """Classify a download's tracked state from its newest relevant history event.
 
     The episode-history mirror of Sonarr's own `GetStateFromHistory`
-    latest-event rule: walk `records` (page 1, date-DESCENDING, as
+    latest-event rule: walk the page's records (page 1, date-DESCENDING, as
     `history_for_download` returns them) and decide on the first event among
     `grabbed` / `downloadFolderImported` / `downloadFailed` /
     `downloadIgnored`, skipping every other type (e.g. `episodeFileDeleted`).
@@ -392,16 +414,57 @@ def classify_download_history(records: Sequence[HistoryRecord]) -> DownloadHisto
     itself re-grabbed after an old failure is genuinely Downloading). None of
     the four found -> clean. Probing only for prior imports would misroute
     re-grabs of previously-FAILED/IGNORED hashes - the same NREs apply there.
+    An imported verdict carries its cycle's import rows.
     """
 
-    for record in records:
+    for index, record in enumerate(page.records):
         event = record.event_type.casefold()
         if event == _GRABBED_HISTORY_EVENT:
             return DownloadHistoryVerdict(dead_tracked=False)
         label = _DEAD_TRACKED_HISTORY_EVENTS.get(event)
         if label is not None:
-            return DownloadHistoryVerdict(dead_tracked=True, event=label, date=record.date)
+            rows = _import_rows(page, index) if event == _IMPORTED_HISTORY_EVENT else ()
+            return DownloadHistoryVerdict(dead_tracked=True, event=label, date=record.date, import_rows=rows)
     return DownloadHistoryVerdict(dead_tracked=False)
+
+
+def _import_rows(page: HistoryPage, start: int) -> tuple[HistoryImport, ...]:
+    """The rows of the import cycle starting at `start`, or none when the page cannot bound it.
+
+    Every `downloadFolderImported` row down to the next `grabbed`, skipping rows with no path or
+    episode id. Empty when the page ends before that grab and is cut, since the cycle may go on.
+    """
+
+    rows: list[HistoryImport] = []
+    for record in page.records[start:]:
+        event = record.event_type.casefold()
+        if event == _GRABBED_HISTORY_EVENT:
+            return tuple(rows)
+        if event == _IMPORTED_HISTORY_EVENT and record.dropped_path and record.episode_id:
+            rows.append(HistoryImport(record.dropped_path, record.episode_id, record.item_id))
+    if page.total_records > len(page.records):
+        return ()
+    return tuple(rows)
+
+
+def placements_from_history(imports: Sequence[HistoryImport], pending: PendingImport) -> dict[str, list[int]]:
+    """Sonarr's import rows as placements for the record's unplaced listing files, normalized leaf -> sorted ids.
+
+    Our seed stays authoritative, and a sibling's slice never lands on this record: by name
+    (`excluded_files`) and by id (the resolved set, when the record carries one).
+    """
+
+    wanted = pending.unplaced_names()
+    scope = set(pending.ordered_episode_ids)
+    grouped: dict[str, set[int]] = {}
+    for row in imports:
+        if row.series_id != pending.series_id:
+            continue
+        name = normalized_leaf(row.path)
+        if name not in wanted or (scope and row.episode_id not in scope):
+            continue
+        grouped.setdefault(name, set()).add(row.episode_id)
+    return {name: sorted(ids) for name, ids in grouped.items()}
 
 
 def _path_segments(path: str) -> list[str]:
