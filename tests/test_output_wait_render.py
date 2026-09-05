@@ -357,6 +357,7 @@ def test_graduation_tail_says_left_pending_outcomes_retry() -> None:
         Outcome.DOWNLOAD_TIMED_OUT,
         Outcome.DOWNLOAD_ERRORED,
         Outcome.STILL_IMPORTING,
+        Outcome.SONARR_BUSY,
         Outcome.NOT_READY,
         Outcome.ATTEMPT_FAILED,
     ):

@@ -107,7 +107,8 @@ class AttemptKind(Enum):
     """An ordinary poll: a clean `importPending` is Sonarr's while its completed download handling is on."""
 
     DEADLINE = auto()
-    """The final in-bound attempt: steps in past a clean `importPending`."""
+    """The attempt past the stall bound: steps in past a clean `importPending`, and an uncredited
+    result graduates the row."""
 
     @property
     def at_deadline(self) -> bool:
@@ -188,6 +189,22 @@ def classify_pending(
     return PendingState.DOWNLOADED
 
 
+class Deferral(Enum):
+    """Why a poll waited on Sonarr's work rather than this record's (the monitor credits every reason but NONE)."""
+
+    NONE = auto()
+    """Not deferred: the wait is this record's own and burns its ready clock."""
+
+    ISSUED = auto()
+    """Our ManualImport was accepted this poll (credited once per record)."""
+
+    IMPORT = auto()
+    """An import is in flight: ours from an earlier poll, an unproven one, or Sonarr's own `importing` row."""
+
+    BUSY = auto()
+    """A foreign disk command holds the line."""
+
+
 @dataclass(frozen=True)
 class ImportProbe:
     """The outcome of one `import_completed` poll.
@@ -212,8 +229,14 @@ class ImportProbe:
     target_count: int = 0
     """The intended episodes we mapped, 0 means the seed map is incomplete (indeterminate)."""
 
-    deferred: bool = False
-    """Whether this poll waited on OUR OWN Sonarr work."""
+    deferral: Deferral = Deferral.NONE
+    """Why this poll waited on Sonarr's work instead of this record's."""
+
+    @property
+    def deferred(self) -> bool:
+        """Whether this poll waited on Sonarr's work (the monitor credits the interval back)."""
+
+        return self.deferral is not Deferral.NONE
 
     @classmethod
     def imported(cls, *, imported_count: int = 0, target_count: int = 0) -> "ImportProbe":
@@ -231,7 +254,7 @@ class ImportProbe:
         cls,
         *,
         command_issued: bool = False,
-        deferred: bool = False,
+        deferral: Deferral = Deferral.NONE,
         imported_count: int = 0,
         target_count: int = 0,
     ) -> "ImportProbe":
@@ -242,7 +265,7 @@ class ImportProbe:
             command_issued=command_issued,
             imported_count=imported_count,
             target_count=target_count,
-            deferred=deferred,
+            deferral=deferral,
         )
 
 
@@ -320,6 +343,7 @@ class Outcome(Enum):
         False,
     )
     STILL_IMPORTING = ("unfinished", "still importing; left pending", OutcomeCategory.DEFERRED, False)
+    SONARR_BUSY = ("sonarr busy", "Sonarr busy with a disk command; left pending", OutcomeCategory.DEFERRED, False)
     NOT_READY = ("not ready", "import not ready; left pending", OutcomeCategory.DEFERRED, False)
     ATTEMPT_FAILED = ("failed", "import attempt failed; left pending", OutcomeCategory.DEFERRED, False)
     NOT_CHECKED = ("not checked", "qBittorrent unreachable; checked again next run", OutcomeCategory.DEFERRED, False)
@@ -373,6 +397,7 @@ PENDING_STATE_FOR_OUTCOME: dict[Outcome, PendingState] = {
     Outcome.AWAITING_IMPORT: PendingState.DOWNLOADED,
     Outcome.IMPORT_IN_PROGRESS: PendingState.DOWNLOADED,
     Outcome.STILL_IMPORTING: PendingState.DOWNLOADED,
+    Outcome.SONARR_BUSY: PendingState.DOWNLOADED,
     Outcome.NOT_READY: PendingState.DOWNLOADED,
     Outcome.ATTEMPT_FAILED: PendingState.DOWNLOADED,
     Outcome.NO_CONTENT_PATH: PendingState.DOWNLOADED,

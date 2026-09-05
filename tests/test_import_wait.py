@@ -39,6 +39,7 @@ from pearlarr.manual_import import (
     LEAVE_PROBE,
     PENDING_STATE_FOR_OUTCOME,
     AttemptKind,
+    Deferral,
     EffectStatus,
     GuardFacts,
     ImportProbe,
@@ -956,6 +957,7 @@ class TestPendingStateFold:
             (Outcome.AWAITING_IMPORT, PendingState.DOWNLOADED),
             (Outcome.IMPORT_IN_PROGRESS, PendingState.DOWNLOADED),
             (Outcome.STILL_IMPORTING, PendingState.DOWNLOADED),
+            (Outcome.SONARR_BUSY, PendingState.DOWNLOADED),
             (Outcome.NOT_READY, PendingState.DOWNLOADED),
             (Outcome.ATTEMPT_FAILED, PendingState.DOWNLOADED),
             (Outcome.NO_CONTENT_PATH, PendingState.DOWNLOADED),
@@ -1380,12 +1382,87 @@ class TestRunMonitor:
         # t=0/30 in-bound, t=60 forced-but-rescued, t=90 in-bound, t=120 forced.
         assert [c.attempt.at_deadline for c in strategy.import_calls] == [False, False, True, False, True]
 
+    def test_stalled_record_walks_away_not_ready(self) -> None:
+        # No deferral ever: the stall bound graduates the row "not ready" at
+        # the deadline attempt, and the record stays for the next run.
+        strategy = _RecordingStrategy(completed=import_probe(files_present=False))
+        mgr, view = _run_single_monitor(
+            strategy,
+            FakeQbit({"h": [FakeTorrent(is_complete=True, content_path="/d")]}),
+            ready_timeout=60,
+        )
+
+        assert view.final(rk("h")).outcome is Outcome.NOT_READY
+        assert set(mgr._records.rows()) == {pk("h")}
+        assert [c.attempt.at_deadline for c in strategy.import_calls] == [False, False, True]
+
+    def test_sonarr_side_deferral_rides_out_a_serial_backlog(self) -> None:
+        # Sonarr importing the download itself (or the pack ahead of it): no
+        # command of ours, yet every poll is credited, so the row rides the
+        # backlog out to IMPORTED without a forced attempt.
+        strategy = _RecordingStrategy(
+            completed_sequence=[import_probe(files_present=False, deferral=Deferral.IMPORT) for _ in range(4)]
+            + [import_probe(files_present=True)],
+        )
+        mgr, view = _run_single_monitor(
+            strategy,
+            FakeQbit({"h": [FakeTorrent(is_complete=True, content_path="/d")]}),
+            ready_timeout=60,
+        )
+
+        assert view.final(rk("h")).outcome is Outcome.IMPORTED
+        assert mgr._records.rows() == {}
+        assert len(strategy.import_calls) == 5
+        assert all(not c.attempt.at_deadline for c in strategy.import_calls)
+
+    def test_deadline_step_in_rides_its_own_copy_out(self) -> None:
+        # Two stalled polls, then the deadline attempt POSTs (ISSUED, credited):
+        # the row is not graduated "still importing" on that same poll, the
+        # copy in flight keeps crediting, and the done-check lands IMPORTED.
+        strategy = _RecordingStrategy(
+            completed_sequence=[
+                import_probe(files_present=False),
+                import_probe(files_present=False),
+                import_probe(files_present=False, command_issued=True, deferral=Deferral.ISSUED),
+                import_probe(files_present=False, command_issued=True, deferral=Deferral.IMPORT),
+                import_probe(files_present=True, command_issued=True),
+            ],
+        )
+        mgr, view = _run_single_monitor(
+            strategy,
+            FakeQbit({"h": [FakeTorrent(is_complete=True, content_path="/d")]}),
+            ready_timeout=60,
+        )
+
+        assert view.final(rk("h")).outcome is Outcome.IMPORTED
+        assert mgr._records.rows() == {}
+        assert [c.attempt.at_deadline for c in strategy.import_calls] == [False, False, True, True, True]
+
+    def test_fresh_post_is_credited_once_per_row(self) -> None:
+        # A POST whose files all fail inside Sonarr is re-POSTed every poll:
+        # only the first earns credit, so the retry loop graduates at the
+        # ordinary deadline (t=60), never riding to the cap.
+        strategy = _RecordingStrategy(
+            completed=import_probe(files_present=False, command_issued=True, deferral=Deferral.ISSUED),
+        )
+        mgr, view = _run_single_monitor(
+            strategy,
+            FakeQbit({"h": [FakeTorrent(is_complete=True, content_path="/d")]}),
+            ready_timeout=60,
+        )
+
+        assert view.final(rk("h")).outcome is Outcome.STILL_IMPORTING
+        assert set(mgr._records.rows()) == {pk("h")}
+        assert [c.attempt.at_deadline for c in strategy.import_calls] == [False, False, True]
+
     def test_deferred_polls_never_walk_away_mid_copy(self) -> None:
         # Our own copy in flight across the ready deadline: every deferred poll
         # credits its interval back, so the row rides the copy out to IMPORTED
         # instead of walking away.
         strategy = _RecordingStrategy(
-            completed_sequence=[import_probe(files_present=False, command_issued=True, deferred=True) for _ in range(3)]
+            completed_sequence=[
+                import_probe(files_present=False, command_issued=True, deferral=Deferral.IMPORT) for _ in range(3)
+            ]
             + [import_probe(files_present=True, command_issued=True)],
         )
         mgr, view = _run_single_monitor(
@@ -1409,7 +1486,7 @@ class TestRunMonitor:
             completed_sequence=[
                 import_probe(files_present=False, command_issued=True),
                 import_probe(files_present=False, command_issued=True),
-                import_probe(files_present=False, command_issued=True, deferred=True),
+                import_probe(files_present=False, command_issued=True, deferral=Deferral.IMPORT),
                 import_probe(files_present=False, command_issued=True),
             ],
         )
@@ -1431,7 +1508,7 @@ class TestRunMonitor:
         # bounded ("still importing; left pending") instead of hanging until
         # Ctrl-C. Ready 60s + cap (6x) 360s -> terminal by t=420.
         strategy = _RecordingStrategy(
-            completed=import_probe(files_present=False, command_issued=True, deferred=True),
+            completed=import_probe(files_present=False, command_issued=True, deferral=Deferral.IMPORT),
         )
         mgr, view = _run_single_monitor(
             strategy,
@@ -1440,6 +1517,35 @@ class TestRunMonitor:
         )
 
         assert view.final(rk("h")).outcome is Outcome.STILL_IMPORTING
+        assert set(mgr._records.rows()) == {pk("h")}
+
+    def test_credit_cap_reads_still_importing_for_an_import_deferral(self) -> None:
+        # Sonarr's own import (or an unproven one) still running at the cap:
+        # no command of ours, yet the label says "still importing", not "not
+        # ready". Ready 60s + cap (6x) 360s -> terminal by t=420.
+        strategy = _RecordingStrategy(completed=import_probe(files_present=False, deferral=Deferral.IMPORT))
+        mgr, view = _run_single_monitor(
+            strategy,
+            FakeQbit({"h": [FakeTorrent(is_complete=True, content_path="/d")]}),
+            ready_timeout=60,
+        )
+
+        assert view.final(rk("h")).outcome is Outcome.STILL_IMPORTING
+        assert set(mgr._records.rows()) == {pk("h")}
+        assert strategy.import_calls[-1].attempt.at_deadline is True
+        assert len(strategy.import_calls) == 15
+
+    def test_credit_cap_reads_sonarr_busy_for_a_foreign_disk_command(self) -> None:
+        # A foreign disk command holding the line to the cap: "sonarr busy",
+        # left pending, never a false "still importing".
+        strategy = _RecordingStrategy(completed=import_probe(files_present=False, deferral=Deferral.BUSY))
+        mgr, view = _run_single_monitor(
+            strategy,
+            FakeQbit({"h": [FakeTorrent(is_complete=True, content_path="/d")]}),
+            ready_timeout=60,
+        )
+
+        assert view.final(rk("h")).outcome is Outcome.SONARR_BUSY
         assert set(mgr._records.rows()) == {pk("h")}
 
     def test_static_done_count_never_extends_the_deadline(self) -> None:
@@ -3366,12 +3472,12 @@ class TestCleanupHealVerification:
         assert pk("h") not in mgr._ctx.pending_states
 
     def test_files_gone_and_reimport_issued_demotes_to_pending(self) -> None:
-        # The files vanished and a fresh re-import command just went in: the
-        # record demotes to an ordinary carryover, no effect fires, and this
-        # same run's end pass picks it up.
+        # The files vanished and a fresh re-import command just went in (the
+        # ISSUED reason): the record demotes to an ordinary carryover, no effect
+        # fires, and this same run's end pass picks it up.
         recording = install_recording_hub()
         strategy = _RecordingStrategy(
-            completed=import_probe(files_present=False, command_issued=True),
+            completed=import_probe(files_present=False, command_issued=True, deferral=Deferral.ISSUED),
         )
         qbit = CategoryQbit({"h": [FakeTorrent(is_complete=True, content_path="/d")]})
         mgr = self._flagged_manager(strategy, qbit=qbit, post_import_category="pearlarr-done")
@@ -3411,7 +3517,7 @@ class TestCleanupHealVerification:
         # be fine, so no demote and no "files no longer present" warn.
         recording = install_recording_hub()
         strategy = _RecordingStrategy(
-            completed=import_probe(files_present=False, command_issued=True, deferred=True),
+            completed=import_probe(files_present=False, command_issued=True, deferral=Deferral.IMPORT),
         )
         mgr = self._flagged_manager(strategy)
 
