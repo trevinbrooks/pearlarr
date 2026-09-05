@@ -694,6 +694,12 @@ class TestSelectionDigest:
         assert base not in digests
         assert len(set(digests)) == len(digests)  # each change lands a distinct digest
 
+    def test_moves_with_the_selection_rules_version(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        # A rule change in code re-checks cached verdicts like a config change.
+        base = make_config().selection_digest()
+        monkeypatch.setattr("pearlarr.config.SELECTION_RULES_VERSION", 999)
+        assert make_config().selection_digest() != base
+
     def test_ignores_non_selection_settings(self) -> None:
         base = make_config().selection_digest()
         assert make_config(discord_url="https://discord.example/hook").selection_digest() == base

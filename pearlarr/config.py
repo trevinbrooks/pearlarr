@@ -48,7 +48,7 @@ from .config_migrations import (
 from .env_registry import ENV_CONFIG_DELIMITER, ENV_CONFIG_PREFIX
 from .json_narrow import is_json_obj
 from .manual_import import ImportWaitMode
-from .seadex_types import Json
+from .seadex_types import SELECTION_RULES_VERSION, Json
 
 # Tracker name classification. The *_TRACKER_NAMES tuples keep SeaDex's exact casings
 # (the docs generator renders them into the sample and reference). The sets are
@@ -363,10 +363,13 @@ class SeadexSettings(_ConfigBase):
     """
 
     prefer_dual_audio: bool = True
-    """Prefer dual-audio releases. When off, prefer Japanese-audio releases."""
+    """Prefer dual-audio releases, even over a single-audio release marked best.
+
+    When off, prefer Japanese-audio releases the same way.
+    """
 
     want_best: bool = True
-    """Prefer releases SeaDex marks as best."""
+    """Prefer releases SeaDex marks as best, among those matching the audio preference."""
 
     ignore_tags: list[str] = Field(default_factory=list)
     """SeaDex release tags to skip, e.g. `Dolby Vision` or `Deband Required`. Empty skips none."""
@@ -820,16 +823,19 @@ class AppConfig(_ConfigBase):
         """SHA-256 hex over the selection-affecting settings (the cache's re-check key).
 
         Covers the whole `seadex` group plus `imports.languages_*` - the settings
-        that change which release a title should end up with. The cache compares
-        this against the digest a previous full pass vouched for
-        (`selection_stale`) and re-checks every cached verdict when it moved.
-        Whole-group on purpose: a future seadex knob is covered by default.
-        Over-inclusion costs one re-check run. Omission would leave stale verdicts.
+        that change which release a title should end up with - and the code's
+        `SELECTION_RULES_VERSION`, so a rule change re-checks like a config
+        change. The cache compares this against the digest a previous full pass
+        vouched for (`selection_stale`) and re-checks every cached verdict when
+        it moved. Whole-group on purpose: a future seadex knob is covered by
+        default. Over-inclusion costs one re-check run. Omission would leave
+        stale verdicts.
         Memoized (the model is immutable) so the run's repeated reads hash once.
         """
 
         if not self._selection_digest:
             payload: dict[str, object] = {
+                "rules": SELECTION_RULES_VERSION,
                 "seadex": self.seadex.model_dump(mode="python"),
                 "languages_dual": self.imports.languages_dual,
                 "languages_single": self.imports.languages_single,
