@@ -103,7 +103,7 @@ class SeadexReleaseFilter:
         # Filter down by allowed trackers
         final_torrent_list = [t for t in final_torrent_list if t.tracker.casefold() in self._config.seadex.trackers]
 
-        # The preferred picks: the want_best -> audio-preference cascade
+        # The preferred picks: the audio-preference -> want_best cascade
         candidates = self._narrow_candidates(final_torrent_list)
 
         # If a preferred private pick isn't covered by the public picks, offer the
@@ -215,22 +215,24 @@ class SeadexReleaseFilter:
             }
 
     def _narrow_candidates(self, torrents: list[TorrentRecord]) -> list[TorrentRecord]:
-        """Narrow one candidate pool via the want_best -> audio-preference cascade.
+        """Narrow one candidate pool via the audio-preference -> want_best cascade.
 
-        Each cut only applies when it leaves at least one torrent: narrow to
-        'best'-tagged releases (when `want_best`), then to the preferred audio
-        (dual when `prefer_dual_audio`, else single).
+        Each cut only applies when it leaves at least one torrent: narrow to the
+        preferred audio (dual when `prefer_dual_audio`, else single), then to
+        'best'-tagged releases within it (when `want_best`). Audio cuts first so
+        a dual-audio alternative outranks a single-audio best. Bump
+        `SELECTION_RULES_VERSION` when this order changes.
         """
-
-        best = [t for t in torrents if t.is_best]
-        if self._config.seadex.want_best and best:
-            torrents = best
 
         if self._config.seadex.prefer_dual_audio:
             preferred_audio = [t for t in torrents if t.is_dual_audio]
         else:
             preferred_audio = [t for t in torrents if not t.is_dual_audio]
-        return preferred_audio if preferred_audio else torrents
+        if preferred_audio:
+            torrents = preferred_audio
+
+        best = [t for t in torrents if t.is_best]
+        return best if self._config.seadex.want_best and best else torrents
 
     def interactive_pick(
         self,

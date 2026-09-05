@@ -7,6 +7,15 @@ Pearlarr is a fork of [bbtufty/seadexarr](https://github.com/bbtufty/seadexarr).
 
 ## [Unreleased]
 
+### Upgrade notes
+
+- **The audio preference now outranks SeaDex's best tag.** With `prefer_dual_audio: true`, a dual-audio alternative is chosen over a single-audio release marked best; with it off, a Japanese-audio alternative is chosen the same way. The first run re-checks every cached title once, and a title whose owned copy is now outranked is re-grabbed. Add `Broken` or `Incomplete` to `seadex.ignore_tags` before upgrading to keep alternatives carrying those tags out of the pick.
+
+### Changed
+
+- Release selection applies the audio preference before the best tag. Previously the audio preference only ranked releases within the best set, so an owned dual-audio copy listed on the entry was replaced by a single-audio best.
+- A change to the selection rules in code now re-checks cached titles on the next run, the same way a change to the `seadex` settings does.
+
 ## [1.2.0] - 2026-08-30
 
 ### Upgrade notes

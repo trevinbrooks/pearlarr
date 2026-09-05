@@ -114,7 +114,7 @@ Preview mode is the safe way to try a config against live Sonarr/Radarr instance
 ## seadex
 
 How a release is chosen for each title.
-Pearlarr takes the SeaDex entry for a title, prefers releases marked best (`want_best`) and dual-audio (`prefer_dual_audio`), then filters by `ignore_tags` and `trackers`, and finally compares the survivors against what the arr already has: by release group name, or by torrent hash when `use_torrent_hash_to_filter` is on.
+Pearlarr takes the SeaDex entry for a title, drops releases excluded by `ignore_tags` and `trackers`, keeps those matching the audio preference (`prefer_dual_audio`) and among them the ones marked best (`want_best`), and finally compares the survivors against what the arr already has: by release group name, or by torrent hash when `use_torrent_hash_to_filter` is on. The audio preference outranks the best tag: a dual-audio alternative is chosen over a single-audio best.
 
 Private releases are never grabbed (SeaDex carries no download link for them, and no private-tracker auth is supported).
 `private_releases` decides what happens when a title's preferred release is private-only: `warn` keeps the title uncached so every run re-checks it. `fallback` takes the best public alternative and remembers that the title was satisfied by a fallback.
@@ -124,8 +124,8 @@ Switching from `fallback` back to `warn` re-checks those remembered titles and r
 | Key | Default | Values | Description |
 | --- | --- | --- | --- |
 | `private_releases` | `warn` | `warn` / `fallback` | What to do when a title's preferred release sits only on private trackers. Private releases are never grabbed: SeaDex carries no download link for them, and no private-tracker auth is supported. `warn`: Warn and skip without caching, so the title is re-checked every run until a public release appears. `fallback`: Grab the entry's best public alternative instead. Warn only when none exists at all. |
-| `prefer_dual_audio` | `true` |  | Prefer dual-audio releases. When off, prefer Japanese-audio releases. |
-| `want_best` | `true` |  | Prefer releases SeaDex marks as best. |
+| `prefer_dual_audio` | `true` |  | Prefer dual-audio releases, even over a single-audio release marked best. When off, prefer Japanese-audio releases the same way. |
+| `want_best` | `true` |  | Prefer releases SeaDex marks as best, among those matching the audio preference. |
 | `ignore_tags` | *(blank)* |  | SeaDex release tags to skip, e.g. `Dolby Vision` or `Deband Required`. Empty skips none. |
 | `trackers` | all but Other/OtherPrivate | `Nyaa`, `AnimeTosho`, `AniDex`, `RuTracker`, `AB`, `BeyondHD`, `PassThePopcorn`, `BroadcastTheNet`, `HDBits`, `Blutopia`, `Aither`, `Other`, `OtherPrivate` | Tracker names considered during release selection, case-insensitive. Empty or absent considers every named tracker except the `Other` and `OtherPrivate` catch-alls. A listed tracker is not necessarily grabbable: private releases are never downloaded, and grabs come only from the public trackers Pearlarr can parse. |
 | `ignore_anilist_ids` | *(blank)* |  | AniList IDs never processed. Empty ignores none. |
