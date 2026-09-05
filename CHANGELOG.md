@@ -7,6 +7,8 @@ Pearlarr is a fork of [bbtufty/seadexarr](https://github.com/bbtufty/seadexarr).
 
 ## [Unreleased]
 
+## [1.3.2] - 2026-09-05
+
 ### Fixed
 
 - A download whose file-to-episode matches were only worked out at import time no longer sits "not ready" on every later run after Sonarr moves its files out of the download folder: the matches are saved on its record, so later runs verify from the episode files alone. The readiness deadline prints one warning for such a download, and none once it verified.
