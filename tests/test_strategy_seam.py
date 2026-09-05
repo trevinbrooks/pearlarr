@@ -2155,6 +2155,56 @@ class TestManualImportWarningGating:
         assert probe.files_present is False
         assert any("not visible to Sonarr" in message for message in diagnostic_messages(recording, Severity.WARNING))
 
+    @staticmethod
+    def _strat_with_unplaceable(*names: str) -> tuple[SonarrSync, FakeSonarrClient]:
+        # The mapped file plus `names`, none of which parse to an episode.
+        strat, sonarr = _make_sonarr_for_import(
+            candidates=[manual_candidate("/d/Show - 01 [1080p].mkv"), *(manual_candidate(f"/d/{n}") for n in names)],
+        )
+        logger = logging.getLogger("pearlarr-warning-gating")
+        logger.handlers.clear()
+        logger.propagate = True
+        logger.setLevel(logging.DEBUG)
+        strat._executor.logger = logger
+        return strat, sonarr
+
+    def test_grab_time_excluded_unplaceable_file_never_warns(self, caplog: pytest.LogCaptureFixture) -> None:
+        # A sibling record's slice of a shared torrent was decided at grab time:
+        # this record still imports its own file, and the unplaceable sibling
+        # file is a debug note, not a "could not be matched" warning.
+        sibling = "Show - S00E01 [1080p].mkv"
+        pending = pending_import(
+            seadex_files=["Show - 01 [1080p].mkv", sibling], excluded_files=[normalize_basename(sibling)]
+        )
+        strat, sonarr = self._strat_with_unplaceable(sibling)
+        recording = install_recording_hub()
+
+        with caplog.at_level("DEBUG"):
+            probe = strat.import_completed(pending, "/d", AttemptKind.POLL)
+
+        assert probe.command_issued is True
+        assert len(sonarr.execute_calls) == 1
+        assert not any("could not be matched" in m for m in diagnostic_messages(recording, Severity.WARNING))
+        assert any("1 file excluded at grab time" in r.message and r.levelname == "DEBUG" for r in caplog.records)
+
+    def test_partial_exclusion_warns_the_remainder_once(self) -> None:
+        # One excluded plus one genuinely unplaceable file: the warning names
+        # only the remainder, and the once-per-run memo is consumed by it.
+        sibling = "Show - S00E01 [1080p].mkv"
+        pending = pending_import(
+            seadex_files=["Show - 01 [1080p].mkv", sibling, "Extras.mkv"],
+            excluded_files=[normalize_basename(sibling)],
+        )
+        strat, _ = self._strat_with_unplaceable(sibling, "Extras.mkv")
+        recording = install_recording_hub()
+
+        strat.import_completed(pending, "/d", AttemptKind.POLL)
+        strat.import_completed(pending, "/d", AttemptKind.POLL)
+
+        warnings = [m for m in diagnostic_messages(recording, Severity.WARNING) if "could not be matched" in m]
+        assert len(warnings) == 1
+        assert "1 file could not be matched" in warnings[0]
+
 
 class TestDefaultQualityWarning:
     """An unmatched `imports.default_quality` warns once per run, at the consume seam.
@@ -2376,24 +2426,50 @@ class TestFolderScanFallback:
         assert len(sonarr.folder_candidate_calls) == 1
         assert sonarr.execute_calls[0][0][0].downloadId == "ABC123"
 
-    def test_dead_tracked_empty_folder_warns_once_per_run(self) -> None:
-        # The genuinely stuck shape (by-id never works, folder empty): warned
-        # once a run, re-armed by reset.
+    def test_dead_tracked_empty_folder_warns_only_at_the_deadline(self, caplog: pytest.LogCaptureFixture) -> None:
+        # An empty folder right after completion is expected (Sonarr's mount
+        # lags), so ordinary polls note it at debug; the genuinely stuck shape
+        # (still empty at the deadline) warns once a run, re-armed by reset.
         recording = install_recording_hub()
         strat, _ = self._strat(history=_dead_history(), folder_candidates=[])
+        logger = logging.getLogger("pearlarr-folder-scan")
+        logger.handlers.clear()
+        logger.propagate = True
+        logger.setLevel(logging.DEBUG)
+        strat._executor.scanner.logger = logger
         pending = pending_import()
 
-        strat.import_completed(pending, "/d/Show", AttemptKind.POLL)
-        strat.import_completed(pending, "/d/Show", AttemptKind.POLL)
+        with caplog.at_level("DEBUG"):
+            strat.import_completed(pending, "/d/Show", AttemptKind.POLL)
+            strat.import_completed(pending, "/d/Show", AttemptKind.POLL)
 
+        assert diagnostic_messages(recording, Severity.WARNING) == []
+        assert [r.levelname for r in caplog.records if "found no files" in r.message] == ["DEBUG", "DEBUG"]
+
+        strat.import_completed(pending, "/d/Show", AttemptKind.DEADLINE)
+        strat.import_completed(pending, "/d/Show", AttemptKind.DEADLINE)
         warnings = [w for w in diagnostic_messages(recording, Severity.WARNING) if "found no files" in w]
         assert len(warnings) == 1
         assert "/d/Show" in warnings[0]
 
         strat._executor.reset()
-        strat.import_completed(pending, "/d/Show", AttemptKind.POLL)
+        strat.import_completed(pending, "/d/Show", AttemptKind.DEADLINE)
         warnings = [w for w in diagnostic_messages(recording, Severity.WARNING) if "found no files" in w]
         assert len(warnings) == 2
+
+    def test_empty_poll_then_files_never_warns(self) -> None:
+        # The common shape: the first scan lands before the folder is visible,
+        # the next sees the files. No warning was ever due.
+        recording = install_recording_hub()
+        strat, sonarr = self._strat(history=_dead_history(), folder_candidates=[])
+        pending = pending_import()
+
+        strat.import_completed(pending, "/d/Show", AttemptKind.POLL)
+        sonarr.folder_candidates_return = [manual_candidate("/d/Show/Show - 01 [1080p].mkv")]
+        probe = strat.import_completed(pending, "/d/Show", AttemptKind.POLL)
+
+        assert probe.command_issued is True
+        assert not any("found no files" in w for w in diagnostic_messages(recording, Severity.WARNING))
 
     def test_clean_verdict_empty_folder_stays_quiet(self) -> None:
         # A transient by-id blip self-heals next poll, so no warning fires at

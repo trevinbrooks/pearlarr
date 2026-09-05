@@ -17,6 +17,7 @@ from .manual_import import (
     ImportProgress,
     PendingImport,
     hydrate_pending,
+    normalized_leaf,
     path_leaf,
 )
 from .output import hub_note, hub_warn
@@ -186,7 +187,7 @@ class CandidateScanner:
             )
         return verdict
 
-    def scan(self, pending: PendingImport, content_path: str) -> _CandidateScan | None:
+    def scan(self, pending: PendingImport, content_path: str, *, at_deadline: bool) -> _CandidateScan | None:
         """The candidates for one poll: the downloadId scan, with the folder fallback. None when the scan failed."""
 
         if pending.infohash not in self._scratch.folder_pinned:
@@ -209,13 +210,18 @@ class CandidateScanner:
             # INVARIANT: pin folder mode on NONEMPTY success only. A 200 `[]` is exactly what an invisible or
             # untranslated folder returns, and pinning on it wedges the record blind to files, downloadId unretried.
             self._scratch.folder_pinned.add(pending.infohash)
-        elif verdict is not None and verdict.dead_tracked and pending.infohash not in self._scratch.warned_empty_folder:
-            # Dead-tracked plus an empty folder means silent retries until the record expires. Say so once.
-            self._scratch.warned_empty_folder.add(pending.infohash)
-            hub_warn(
+        elif verdict is not None and verdict.dead_tracked:
+            # An empty folder right after completion is expected (Sonarr's mount lags), so only the deadline
+            # attempt says so, once a run: dead-tracked plus still empty means silent retries until expiry.
+            message = (
                 f"{pending.display_label}: Sonarr won't serve this download by id and "
                 f"a scan of its folder found no files ({folder}) - will retry"
             )
+            if at_deadline and pending.infohash not in self._scratch.warned_empty_folder:
+                self._scratch.warned_empty_folder.add(pending.infohash)
+                hub_warn(message)
+            else:
+                self.logger.debug(message)
         return _CandidateScan(
             folder_candidates,
             omit_download_id=verdict is not None and verdict.dead_tracked,
@@ -361,7 +367,7 @@ class ImportExecutor:
     ) -> ImportProbe:
         """Import EXACTLY the files our map intends, never over an episode already holding a recommended file."""
 
-        scan = self.scanner.scan(pending, content_path)
+        scan = self.scanner.scan(pending, content_path, at_deadline=at_deadline)
         if scan is None:
             # Transient (timeout or non-200). The folder-scan client already warned. Ask again.
             return ImportProbe.waiting()
@@ -438,17 +444,24 @@ class ImportExecutor:
     ) -> None:
         """Warn (once a run per download) about on-disk files we couldn't place.
 
-        We import what we can and leave the rest, surfaced loudly so nothing is silently dropped.
+        We import what we can and leave the rest, surfaced loudly so nothing is silently dropped. A file
+        excluded at grab time (a sibling's slice, a refused duplicate) was reported then and stays quiet.
         """
 
-        if pending.infohash in self._scratch.warned_unplaceable:
+        label = pending.display_label
+        excluded = {normalized_leaf(name) for name in pending.excluded_files}
+        reportable = [name for name in unplaceable if name not in excluded]
+        if len(reportable) < len(unplaceable):
+            self.logger.debug(
+                f"{label}: {count_noun(len(unplaceable) - len(reportable), 'file')} excluded at grab time, not reported"
+            )
+        if not reportable or pending.infohash in self._scratch.warned_unplaceable:
             return
         self._scratch.warned_unplaceable.add(pending.infohash)
-        label = pending.display_label
         coverage = f" ({pending.coverage})" if pending.coverage else ""
         hub_warn(
-            f"{label}{coverage}: {count_noun(len(unplaceable), 'file')} could not be matched "
-            f"to an episode and {pluralize(len(unplaceable), 'was', 'were')} not imported"
+            f"{label}{coverage}: {count_noun(len(reportable), 'file')} could not be matched "
+            f"to an episode and {pluralize(len(reportable), 'was', 'were')} not imported"
         )
 
     def _import_language_objects(self, pending: PendingImport) -> list[Language]:
