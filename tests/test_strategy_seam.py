@@ -2268,10 +2268,12 @@ class TestUnmatchedProbe:
         )
 
     @classmethod
-    def _strat(cls, *, served: bool = True) -> tuple[SonarrSync, FakeSonarrClient]:
+    def _strat(cls, *, served: bool = True, held_by: str | None = None) -> tuple[SonarrSync, FakeSonarrClient]:
+        # `held_by` names the group whose file the target episode already holds (None: no file).
+        target = sonarr_ep(1, 1, ep_id=101, release_group=held_by, episode_file_id=1 if held_by else 0)
         strat, sonarr = _make_sonarr_for_import(
             candidates=[manual_candidate(f"/d/{name}") for name in cls._NAMES],
-            episodes=[sonarr_ep(1, 1, ep_id=101, episode_file_id=0)] if served else None,
+            episodes=[target] if served else None,
         )
         if served:
             sonarr.parse_episode_info_fn = lambda _n: ParsedFileInfo()
@@ -2323,6 +2325,28 @@ class TestUnmatchedProbe:
         probe = strat.import_completed(pending, "/d", AttemptKind.POLL)
 
         assert probe == ImportProbe.waiting()
+
+    def test_a_hand_import_that_filled_every_intended_episode_reads_imported(self) -> None:
+        # The files still sit in the folder (a copy import), so the mapper skips them again. The
+        # intended episode holds the record's own group now: done, never re-reported.
+        pending = self._numberless_pair()
+        strat, sonarr = self._strat(held_by="SubGroup")
+        recording = install_recording_hub()
+
+        probe = strat.import_completed(pending, "/d", AttemptKind.POLL)
+
+        assert probe == ImportProbe.imported()
+        assert sonarr.execute_calls == []
+        assert diagnostic_messages(recording, Severity.WARNING) == []
+
+    def test_another_groups_copy_on_the_target_keeps_the_verdict_unmatched(self) -> None:
+        # The stale copy this grab replaces is not ours: the human still has the import to do.
+        pending = self._numberless_pair()
+        strat, _ = self._strat(held_by="OtherPick")
+
+        probe = strat.import_completed(pending, "/d", AttemptKind.POLL)
+
+        assert probe.unmatched_files == self._NAMES
 
     def test_a_seeded_file_beside_an_unmatched_one_imports_and_warns_once(self) -> None:
         # Something to import means the partial arm: today's once-a-run warning, no unmatched outcome.
