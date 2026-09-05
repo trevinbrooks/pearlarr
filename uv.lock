@@ -299,11 +299,11 @@ wheels = [
 
 [[package]]
 name = "filelock"
-version = "3.32.0"
+version = "3.32.3"
 source = { registry = "https://pypi.org/simple" }
-sdist = { url = "https://files.pythonhosted.org/packages/c0/80/8232b582c4b318b817cf1274ba74976b07b34d35ef439b3eb948f98645a1/filelock-3.32.0.tar.gz", hash = "sha256:7be2ad23a14607ccc71808e68fe30848aeace7058ace17852f68e2a68e310402", size = 213757, upload-time = "2026-07-21T13:17:42.898Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/7d/64/a02e6765de08964ed371eca577870593245afc9dfac16d037de7c10d18e6/filelock-3.32.3.tar.gz", hash = "sha256:0ffa185a3540854c95caa7fa76b76cb219d907415e2c5dc9af25fd970563487f", size = 218135, upload-time = "2026-08-13T16:00:05.577Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/06/79/b4c714bef36bc4ec2beeae1e0c124f0223888cd8c6feb1cdc56038116920/filelock-3.32.0-py3-none-any.whl", hash = "sha256:d396bea984af47333ef05e50eae7eff88c84256de6112aea0ec48a233c064fe3", size = 97732, upload-time = "2026-07-21T13:17:41.55Z" },
+    { url = "https://files.pythonhosted.org/packages/a7/8e/50f46a9c0ce8d2861a394c1347caae037ea0431d2f67d7feb151cbc4649a/filelock-3.32.3-py3-none-any.whl", hash = "sha256:7f0ca4bcc0e181c60dbbd8aa9ab5b120ebb99e4e064e83636340056f833a1f09", size = 98901, upload-time = "2026-08-13T16:00:03.974Z" },
 ]
 
 [[package]]
@@ -721,7 +721,7 @@ test = [
 [package.metadata]
 requires-dist = [
     { name = "beautifulsoup4", specifier = "==4.15.0" },
-    { name = "filelock", specifier = "==3.32.0" },
+    { name = "filelock", specifier = "==3.32.3" },
     { name = "httpx", specifier = "==0.28.1" },
     { name = "platformdirs", specifier = "==4.11.0" },
     { name = "pydantic", specifier = "==2.13.4" },
