@@ -673,6 +673,11 @@ class PendingImport:
                 ids.append(ep_id)
         return ids
 
+    def resolved_ids(self) -> list[int]:
+        """The episode set unplaced files assign into: `ordered_episode_ids`, or the seeds' ids for an older record."""
+
+        return list(self.ordered_episode_ids) or sorted(self.target_ids())
+
     def seed_coverage(self) -> SeedCoverage:
         """Coverage from normalized-name SUPERSETS (never lengths): a healed extra can't fake it."""
 

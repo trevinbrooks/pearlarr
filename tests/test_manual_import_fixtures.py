@@ -1216,6 +1216,29 @@ class TestAssignBogusKeyDowngrade:
         assert result.skipped == []
 
 
+class TestResolvedIds:
+    """`resolved_ids`: the ordered set when the record carries one, else the seeds' ids sorted."""
+
+    def test_the_ordered_set_wins(self) -> None:
+        pending = pending_import(file_episode_map={"a.mkv": [7]}, episode_ids=[9], ordered_episode_ids=[3, 1, 2])
+
+        assert pending.resolved_ids() == [3, 1, 2]
+
+    def test_an_older_record_falls_back_to_its_seeds_sorted(self) -> None:
+        pending = pending_import(
+            file_episode_map={"a.mkv": [7, 0], "b.mkv": [5]},
+            episode_ids=[9, 7],
+            ordered_episode_ids=[],
+        )
+
+        assert pending.resolved_ids() == [5, 7, 9]
+
+    def test_a_record_with_no_targets_reads_empty(self) -> None:
+        pending = pending_import(file_episode_map={}, episode_ids=[], ordered_episode_ids=[])
+
+        assert pending.resolved_ids() == []
+
+
 class TestPlacementBatchParsesKnown:
     """`all_parses_known`: the settled hinge on the parse leg. Any miss, transport or offline, unsettles the batch."""
 

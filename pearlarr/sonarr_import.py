@@ -417,6 +417,10 @@ class ImportExecutor:
                 f"{pending.display_label}: {count_noun(len(skips), 'file')} unplaced behind a missing input"
             )
         elif skips and not authoritative:
+            if context.snapshot.statuses(pending.resolved_ids()).all_done():
+                # A hand import placed what no poll could: every intended episode holds a recommended file.
+                self.logger.debug(f"{content_path}: already imported (recommended files present)")
+                return ImportProbe.imported()
             # Nothing to verify or import, and the same files skip again next poll: an outcome, not a wait.
             # Every skipped name is an on-disk key (the mapper skips only what it read from the scan), and
             # nothing was placed, so the placements tail below has nothing to add.

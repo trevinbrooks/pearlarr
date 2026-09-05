@@ -189,14 +189,10 @@ class FileEpisodeMapper:
                 if norm_base not in parsed_by_file:
                     parsed_by_file[norm_base] = self._parsed_file_info(path_leaf(name))
 
-        # The set the leftovers assign into: ordered_episode_ids, or - for a record
-        # predating that field - one synthesized from its seeds (so the old
-        # seed/single-file scoping survives). The seed-owned ids ride the scope as
-        # `used`, so a leftover file can't be handed an episode that's already
-        # placed - and a fully seeded record stays scope-enforced.
-        resolved_ids = pending.ordered_episode_ids or sorted(
-            seeded_ids | {i for i in pending.episode_ids if i},
-        )
+        # The set the leftovers assign into (see `PendingImport.resolved_ids`). The seed-owned ids
+        # ride the scope as `used`, so a leftover file can't be handed an episode that's already
+        # placed, and a fully seeded record stays scope-enforced.
+        resolved_ids = pending.resolved_ids()
 
         batch = PlacementBatch(leftover, parsed_by_file)
         result = assign_episode_ids(batch, TargetScope(resolved_ids, id_by_key, used=frozenset(seeded_ids)))

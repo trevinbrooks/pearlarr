@@ -7,6 +7,10 @@ Pearlarr is a fork of [bbtufty/seadexarr](https://github.com/bbtufty/seadexarr).
 
 ## [Unreleased]
 
+### Fixed
+
+- A download reported as matching no episode now counts as imported once the episodes it was grabbed for hold files from its release group (the import done by hand in Sonarr): its record is dropped and its torrent moves to the post-import category, instead of the same report repeating every run until the record expires.
+
 ## [1.3.3] - 2026-09-05
 
 ### Fixed

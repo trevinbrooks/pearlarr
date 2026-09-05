@@ -10,7 +10,7 @@ straight into cache.db and every mapping source is disabled, so the scan finds
 zero series, nothing leaves loopback, and the end-of-run blocking monitor is
 the only thing driving the import.
 
-Six scenarios pin the import wait end to end:
+Seven scenarios pin the import wait end to end:
 
 * DEAD-TRACKED: the downloadId scan 500s forever (Sonarr's poisoned tracked
   download), history's newest relevant event is `downloadFolderImported`, and
@@ -34,6 +34,10 @@ Six scenarios pin the import wait end to end:
   record. No leg can place them on any poll, so the first poll ends the wait
   with the `unmatched` outcome naming the files, and the record stays for a
   human.
+* NUMBERLESS-BY-HAND: the same download after its files were imported by
+  hand in Sonarr (a copy import, so the folder still holds them). No leg can
+  place them now either, but every intended episode holds the record's own
+  group, so the first poll verifies it imported and the torrent moves category.
 """
 
 import json
@@ -163,6 +167,11 @@ class _Scenario:
     row per listing file carrying its episode id and dropped path. The map
     must rebuild from those rows and verify on the first poll, nothing POSTed."""
 
+    landed_by_hand: bool = False
+    """The episode files are present from the start while the download folder
+    still holds the files: an import done by hand in Sonarr, copy mode. The
+    record must verify without placing anything."""
+
 
 _DEAD_TRACKED = _Scenario(heal_download_scan=False, folder_scan="candidates", history_event="downloadFolderImported")
 _TRANSIENT = _Scenario(heal_download_scan=True, folder_scan="empty", history_event="grabbed")
@@ -183,6 +192,13 @@ _NUMBERLESS = _Scenario(
     folder_scan="candidates",
     history_event="downloadFolderImported",
     listing=_Listing.NUMBERLESS,
+)
+_NUMBERLESS_BY_HAND = _Scenario(
+    heal_download_scan=False,
+    folder_scan="candidates",
+    history_event="downloadFolderImported",
+    listing=_Listing.NUMBERLESS,
+    landed_by_hand=True,
 )
 _IMPORTED_UNSEEN = _Scenario(
     heal_download_scan=False,
@@ -697,7 +713,7 @@ def _drive(tmp_path: Path, monkeypatch: pytest.MonkeyPatch, scenario: _Scenario)
     monkeypatch.setattr(arr_http, "BACKOFF_BASE_S", 0.0)
 
     # Imported unseen: the episode files are already there when the run starts.
-    world = _World(scenario, files_landed=scenario.imported_unseen)
+    world = _World(scenario, files_landed=scenario.imported_unseen or scenario.landed_by_hand)
     with _serve(world) as (sonarr_url, qbit_url):
         # qBittorrent configured -> a real (non-preview) run whose blocking
         # monitor drives the carried-over record. 1s polls keep it quick.
@@ -927,6 +943,33 @@ def test_numberless_files_graduate_unmatched_on_the_first_poll(
     assert outcome.world.category_moves == []
     assert "could not be matched" not in out
     assert "not ready" not in out
+
+
+def test_numberless_files_imported_by_hand_verify_on_the_first_poll(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    outcome = _drive(tmp_path, monkeypatch, _NUMBERLESS_BY_HAND)
+    out = _flat(capsys.readouterr().out)
+
+    # The folder still holds the three files a copy import left behind, and
+    # no leg can place them now either. The episode files are the truth: both
+    # intended episodes hold the record's group, so the record is done.
+    assert outcome.ok is True
+    assert outcome.pending_after == frozenset()
+    assert 'imported title="Demo Batch · Thighs"' in out
+    assert 'imported title="Demo Batch · Thighs" files=' not in out
+    assert "complete kind=monitor imported=1 pending=0 deferred=0 failed=0" in out
+    assert current_hub().counts.mark().errors == 0
+
+    # One folder scan, nothing POSTed, the torrent moved to the imported
+    # category, and neither the unmatched verdict nor the partial warning fired.
+    assert outcome.world.folder_scans == 1
+    assert outcome.world.manual_commands == []
+    assert outcome.world.category_moves == [(_INFOHASH, _IMPORTED_CATEGORY)]
+    assert "unmatched title=" not in out
+    assert "could not be matched" not in out
 
 
 def test_unscannable_download_defers_with_folder_warn(
