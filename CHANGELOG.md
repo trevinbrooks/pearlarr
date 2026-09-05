@@ -7,6 +7,8 @@ Pearlarr is a fork of [bbtufty/seadexarr](https://github.com/bbtufty/seadexarr).
 
 ## [Unreleased]
 
+## [1.3.1] - 2026-09-05
+
 ### Fixed
 
 - The wait screen's import bar no longer freezes for minutes while Sonarr copies a season pack: a poll no longer waits out Sonarr's import pass, and the rescan is issued once per poll interval as intended.
