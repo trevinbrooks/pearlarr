@@ -13,15 +13,18 @@ faked at the `httpx` boundary with the `respx` library (no `unittest.mock`).
 
 import re
 import time
+from typing import cast
 
 import httpx
 import pytest
 import respx
+from respx.models import Call
 
 from pearlarr.anilist_client import (
     _MEDIA_FIELDS,
     API_URL,
     MAX_RETRIES,
+    REQUEST_HEADERS,
     RETRYABLE_ERROR_SUBSTRINGS,
     RETRYABLE_STATUS,
     AniListClient,
@@ -33,6 +36,7 @@ from pearlarr.anilist_client import (
 from pearlarr.log import LOG_NAME
 from pearlarr.output import Diagnostic, Severity, install_hub
 from pearlarr.output.recording import RecordingHub
+from pearlarr.paths import PROJECT_URL
 from pearlarr.seadex_types import AniListError, AniListMediaNode
 
 
@@ -237,6 +241,23 @@ def test_query_returns_valid_200_body(monkeypatch: pytest.MonkeyPatch) -> None:
     assert route.call_count == 1
     assert body == expected
     assert media_from(body).episodes == 12
+
+
+@respx.mock
+def test_every_post_carries_the_project_referer(monkeypatch: pytest.MonkeyPatch) -> None:
+    """AniList refuses a Referer-less request, so the single and batch POSTs both name the project."""
+
+    monkeypatch.setattr(time, "sleep", _no_sleep)
+    route = respx.post(API_URL).respond(json={"data": {"Media": {"id": 1}}})
+
+    client = _client()
+    client.query(1)
+    client.query_batch([1, 2])
+
+    assert REQUEST_HEADERS == {"Referer": PROJECT_URL}
+    assert route.call_count == 2
+    calls = cast("list[Call]", route.calls)
+    assert [call.request.headers["Referer"] for call in calls] == [PROJECT_URL, PROJECT_URL]
 
 
 @respx.mock
