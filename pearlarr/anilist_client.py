@@ -36,6 +36,9 @@ RETRYABLE_STATUS = {429, 500, 502, 503, 504}
 MAX_RETRIES = 3
 MAX_BACKOFF = 60
 
+# A refusal's error message is quoted in the once-per-run warning, clamped to this.
+_REFUSAL_MESSAGE_MAX = 160
+
 
 def _exp_backoff(attempt: int) -> float:
     # Exponential, jittered so concurrent clients hitting the same limit window don't retry in lockstep.
@@ -100,43 +103,19 @@ query ($ids: [Int]) {{
 )
 
 
-class AniListRetryLog:
-    """Voices `_post_with_retry`'s waits and give-ups as hub Diagnostics.
+def _log_wait(reason: str, wait: float, retry: int, *, severity: Severity = Severity.INFO) -> None:
+    """One backoff notice, so a long Retry-After wait doesn't look like a hang."""
 
-    Without it a rate-limit backoff sleeps up to 60s with zero output (the run
-    looks hung) and a final give-up returns `{}` silently. One instance per
-    `AniListClient` - which is built once per arr run - so the give-up
-    warning fires once per run rather than once per title.
-    """
-
-    def __init__(self) -> None:
-        self._gave_up = False
-
-    def waiting(self, reason: str, wait: float, retry: int, *, severity: Severity = Severity.INFO) -> None:
-        """One backoff notice, so a long Retry-After wait doesn't look like a hang."""
-
-        hub_note(f"AniList {reason} - waiting {wait:.0f}s (retry {retry}/{MAX_RETRIES})", severity=severity)
-
-    def gave_up(self) -> None:
-        """Warn ONCE per run that AniList lookups are degraded, then stay quiet."""
-
-        if not self._gave_up:
-            hub_warn(
-                f"AniList request failed after {MAX_RETRIES} retries - "
-                "some titles/episode counts may be missing this run"
-            )
-        self._gave_up = True
+    # Fourth param: a network-blip wait rides at DEBUG, a throttle wait at INFO.
+    hub_note(f"AniList {reason} - waiting {wait:.0f}s (retry {retry}/{MAX_RETRIES})", severity=severity)
 
 
 def _errors_are_retryable(body: dict[str, Any] | None) -> bool:
     """True if a GraphQL body carries a throttle/rate-limit or 5xx-style error.
 
-    AniList sometimes soft-throttles with HTTP 200 and a non-empty "errors"
-    array (`{"data": null, "errors": [{"message": "Too Many Requests",
-    "status": 429}]}`). That should be retried like a real 429. A legitimate
-    "not found" is HTTP 200 with "data" present, the entry "null" and *no*
-    "errors" array, so a body without errors is never treated as retryable
-    here - the caller's null-safe extraction handles it as an ordinary miss.
+    AniList soft-throttles with HTTP 200 and a 429 error entry, retried like a
+    real 429. An unknown id answers HTTP 404 with `Media: null` under `data`
+    and a not-found error, which stays an ordinary miss.
     """
 
     for err in _parse_errors(body):
@@ -149,6 +128,26 @@ def _errors_are_retryable(body: dict[str, Any] | None) -> bool:
             return True
 
     return False
+
+
+def _is_refusal(status: int, body: dict[str, Any] | None) -> bool:
+    """True when AniList turned the request away instead of answering it.
+
+    A non-JSON error page, or an error body with no `data` at all. An unknown
+    id keeps its `data` node (`Media: null`) and is not a refusal.
+    """
+
+    if body is None:
+        return status >= 400
+    return body.get("data") is None and bool(_parse_errors(body))
+
+
+def _refusal_detail(status: int, body: dict[str, Any] | None) -> str:
+    """The once-per-run reason for a refusal, quoting AniList's first error message."""
+
+    errors = _parse_errors(body)
+    message = " ".join(errors[0].message.split())[:_REFUSAL_MESSAGE_MAX] if errors else ""
+    return f"refused the request (HTTP {status}: {message})" if message else f"refused the request (HTTP {status})"
 
 
 def _parse_errors(body: dict[str, Any] | None) -> list[AniListError]:
@@ -218,23 +217,29 @@ def media_from(body: dict[str, Any] | None) -> AniListMediaNode:
 class AniListClient:
     """AniList GraphQL wire client: the POST + retry policy, bound once.
 
-    The AniList analog of `arr_http.ArrHttp`: the shared web client
-    and the per-run retry narration are bound at construction, so callers ask
-    for bodies by id instead of threading `(client, retry_log)` through
-    every call. Construction is network-free. The gateway layers the run cache
-    on top. This class is deliberately cache-blind.
+    Cache-blind (the gateway layers the run cache on top). A per-run breaker
+    trips on retry exhaustion or a refusal, after which every call returns empty.
     """
 
     def __init__(self, *, client: httpx.Client) -> None:
-        """Bind the wire client to the shared web client.
-
-        Args:
-            client: The shared web client every POST rides (its
-                defaults carry the identifying User-Agent and timeout bounds).
-        """
+        """Bind the wire client to the shared web client (network-free)."""
 
         self._client = client
-        self._retry_log = AniListRetryLog()
+        # Set once AniList refused or exhausted its retries: every later call short-circuits this run.
+        self._outage = False
+
+    @property
+    def outage(self) -> bool:
+        """True once AniList has been declared unavailable for this run."""
+
+        return self._outage
+
+    def _note_outage(self, detail: str) -> None:
+        """Warn ONCE that AniList is unavailable, muting every later call via the flag."""
+
+        if not self._outage:
+            hub_warn(f"AniList {detail}, skipping AniList lookups for the rest of this run")
+        self._outage = True
 
     def query(self, al_id: int) -> dict[str, Any]:
         """Fetch one AniList Media by id (see _post_with_retry for the retry policy)."""
@@ -264,23 +269,14 @@ class AniListClient:
         return out
 
     def _post_with_retry(self, query: str, variables: dict[str, Any]) -> dict[str, Any]:
-        """POST a GraphQL query to AniList, retrying politely on rate-limits / 5xx.
+        """POST a GraphQL query, retrying politely on rate limits and 5xx.
 
-        On a rate-limit (HTTP 429) or a transient 5xx, AniList returns
-        "{"data": null, ...}". It can also soft-throttle with HTTP 200 and a
-        throttle/rate-limit error in the "errors" array (see
-        `_errors_are_retryable`). Both take the same backoff path. Returning a
-        throttled response untried is what surfaced downstream as
-        "'NoneType' object has no attribute 'get'" when a run made many requests
-        in quick succession, so we wait (honoring Retry-After when present) and
-        retry before giving up. Returns the parsed JSON - which may still be an
-        error payload after the final attempt - or "{}" if the response body
-        wasn't JSON. The bound retry log narrates the waits and warns once per
-        run on a final give-up. The bound client is the shared web client (its
-        defaults carry the identifying User-Agent and the timeout bounds). This
-        loop stays AniList's ONE retry policy - the web client's generic GET
-        helper is never involved.
+        Returns the parsed body, or `{}` when it was not JSON or the breaker has
+        tripped. Retry exhaustion and a refusal trip the breaker for the run.
         """
+
+        if self._outage:
+            return {}
 
         for attempt in range(MAX_RETRIES + 1):
             try:
@@ -288,17 +284,12 @@ class AniListClient:
                     API_URL, json={"query": query, "variables": variables}, headers=REQUEST_HEADERS
                 )
             except httpx.HTTPError as e:
-                # Network blip: back off and retry, then give up with an empty result
+                # Network blip: back off and retry, then trip the breaker with an empty result.
                 if attempt >= MAX_RETRIES:
-                    self._retry_log.gave_up()
+                    self._note_outage(f"request failed after {MAX_RETRIES} retries")
                     return {}
                 wait = _exp_backoff(attempt)
-                self._retry_log.waiting(
-                    f"request failed ({type(e).__name__})",
-                    wait,
-                    attempt + 1,
-                    severity=Severity.DEBUG,
-                )
+                _log_wait(f"request failed ({type(e).__name__})", wait, attempt + 1, severity=Severity.DEBUG)
                 time.sleep(wait)
                 continue
 
@@ -334,15 +325,16 @@ class AniListClient:
                     if resp.status_code in RETRYABLE_STATUS and resp.status_code != 429
                     else "rate-limited"
                 )
-                self._retry_log.waiting(reason, wait, attempt + 1)
+                _log_wait(reason, wait, attempt + 1)
                 time.sleep(wait)
                 continue
 
-            # Final attempt (or a non-retryable response): return the parsed body,
-            # or {} when the body wasn't JSON, so the caller degrades gracefully.
-            # Running out of attempts on a retryable response is a give-up too.
+            # Terminal: exhausted retries and a refusal both trip the breaker. The
+            # body (possibly an error payload) still returns so the caller degrades.
             if retryable:
-                self._retry_log.gave_up()
+                self._note_outage(f"request failed after {MAX_RETRIES} retries")
+            elif _is_refusal(resp.status_code, body):
+                self._note_outage(_refusal_detail(resp.status_code, body))
             return body if body is not None else {}
 
         return {}

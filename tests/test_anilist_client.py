@@ -60,11 +60,7 @@ def test_errors_are_retryable_none_body() -> None:
 
 
 def test_errors_are_retryable_no_errors() -> None:
-    """An empty body, a missing `errors` key, and an empty list are all misses.
-
-    A legitimate "not found" is HTTP 200 with no `errors` array, so it must not
-    be treated as a throttle.
-    """
+    """An empty body, a missing `errors` key, and an empty list are all misses, never a throttle."""
 
     assert _errors_are_retryable({}) is False
     assert _errors_are_retryable({"data": {"Media": None}}) is False
@@ -333,7 +329,7 @@ def test_query_json_array_body_is_no_data(monkeypatch: pytest.MonkeyPatch) -> No
     assert body == {}
 
 
-# --- retry narration (backoff waits + the once-per-run give-up warning) ------
+# --- retry narration and the per-run breaker ---------------------------------
 
 
 def _warnings(recording: RecordingHub) -> list[Diagnostic]:
@@ -342,23 +338,37 @@ def _warnings(recording: RecordingHub) -> list[Diagnostic]:
     return [d for d in recording.of_type(Diagnostic) if d.severity is Severity.WARNING]
 
 
+def _recording() -> RecordingHub:
+    """Install a recording hub (conftest teardown restores the default)."""
+
+    recording = RecordingHub()
+    install_hub(recording.hub)
+    return recording
+
+
+_DISABLED_MESSAGE = "The AniList API has been temporarily disabled due to severe stability issues."
+_DISABLED_BODY: dict[str, object] = {"errors": [{"message": _DISABLED_MESSAGE, "status": 403}], "data": None}
+_SKIPPING = "skipping AniList lookups for the rest of this run"
+
+
 @respx.mock
 def test_rate_limit_wait_is_narrated(monkeypatch: pytest.MonkeyPatch) -> None:
-    """A 429 backoff emits the (Retry-After) wait as an INFO hub Diagnostic - the run no longer looks hung - and a successful retry never fires the give-up warning."""
+    """A 429 backoff emits the (Retry-After) wait as an INFO hub Diagnostic - the run no longer looks hung - and a successful retry never trips the breaker."""
 
     monkeypatch.setattr(time, "sleep", _no_sleep)
-    recording = RecordingHub()
-    install_hub(recording.hub)  # conftest teardown restores the default
+    recording = _recording()
     success: dict[str, object] = {"data": {"Media": {"id": 2, "episodes": 24}}}
     route = respx.post(API_URL)
     route.side_effect = [
         httpx.Response(429, json={"data": None}, headers={"Retry-After": "42"}),
         httpx.Response(200, json=success),
     ]
+    client = _client()
 
-    body = _client().query(2)
+    body = client.query(2)
 
     assert body == success
+    assert client.outage is False
     (waited,) = recording.of_type(Diagnostic)
     assert waited.severity is Severity.INFO
     assert waited.message == f"AniList rate-limited - waiting 42s (retry 1/{MAX_RETRIES})"
@@ -366,39 +376,130 @@ def test_rate_limit_wait_is_narrated(monkeypatch: pytest.MonkeyPatch) -> None:
 
 
 @respx.mock
-def test_give_up_warns_once_per_run_not_per_title(monkeypatch: pytest.MonkeyPatch) -> None:
-    """Exhausting the retries warns ONCE.
-
-    A second exhausted request (another title, same run) stays quiet, since the
-    flag is per client, i.e. per run.
-    """
+def test_retry_give_up_trips_the_breaker(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Exhausting the retries warns ONCE and trips the breaker: later queries make no request at all."""
 
     monkeypatch.setattr(time, "sleep", _no_sleep)
-    recording = RecordingHub()
-    install_hub(recording.hub)  # conftest teardown restores the default
+    recording = _recording()
     client = _client()
     route = respx.post(API_URL).respond(status_code=429, json={"data": None})
 
     client.query(1)
-    client.query(2)
+    assert client.outage is True
+    assert client.query(2) == {}
+    assert client.query_batch([3, 4]) == {}
 
-    assert route.call_count == 2 * (MAX_RETRIES + 1)
+    assert route.call_count == MAX_RETRIES + 1
     warnings = _warnings(recording)
     assert len(warnings) == 1
-    assert f"AniList request failed after {MAX_RETRIES} retries" in warnings[0].message
+    assert warnings[0].message == f"AniList request failed after {MAX_RETRIES} retries, {_SKIPPING}"
 
 
 @respx.mock
-def test_network_give_up_returns_empty_and_warns(monkeypatch: pytest.MonkeyPatch) -> None:
-    """A hard network outage still degrades to `{}` - but now with one warning instead of total silence."""
+def test_network_give_up_trips_the_breaker(monkeypatch: pytest.MonkeyPatch) -> None:
+    """A hard network outage degrades to `{}` with one warning, and later calls never touch the wire."""
 
     monkeypatch.setattr(time, "sleep", _no_sleep)
-    recording = RecordingHub()
-    install_hub(recording.hub)  # conftest teardown restores the default
+    recording = _recording()
+    client = _client()
     route = respx.post(API_URL).mock(side_effect=httpx.ConnectError("down"))
 
-    body = _client().query(1)
+    assert client.query(1) == {}
+    assert client.outage is True
+    assert client.query(2) == {}
 
-    assert body == {}
     assert route.call_count == MAX_RETRIES + 1
     assert len(_warnings(recording)) == 1
+
+
+@respx.mock
+def test_refusal_warns_once_quoting_the_message(monkeypatch: pytest.MonkeyPatch) -> None:
+    """A 403 refusal trips the breaker on the first request, warning once with AniList's own message."""
+
+    monkeypatch.setattr(time, "sleep", _no_sleep)
+    recording = _recording()
+    client = _client()
+    route = respx.post(API_URL).respond(status_code=403, json=_DISABLED_BODY)
+
+    body = client.query(1)
+    assert client.outage is True
+    assert client.query(2) == {}
+    assert client.query_batch([3]) == {}
+
+    assert body == _DISABLED_BODY
+    assert route.call_count == 1
+    warnings = _warnings(recording)
+    assert len(warnings) == 1
+    assert warnings[0].message == f"AniList refused the request (HTTP 403: {_DISABLED_MESSAGE}), {_SKIPPING}"
+
+
+@respx.mock
+def test_refusal_delivered_as_200_trips(monkeypatch: pytest.MonkeyPatch) -> None:
+    """A maintenance refusal riding HTTP 200 (a 403 error entry, `data` null) trips the breaker too."""
+
+    monkeypatch.setattr(time, "sleep", _no_sleep)
+    recording = _recording()
+    client = _client()
+    route = respx.post(API_URL).respond(status_code=200, json=_DISABLED_BODY)
+
+    client.query(1)
+    client.query(2)
+
+    assert client.outage is True
+    assert route.call_count == 1
+    (warning,) = _warnings(recording)
+    assert warning.message == f"AniList refused the request (HTTP 200: {_DISABLED_MESSAGE}), {_SKIPPING}"
+
+
+@respx.mock
+def test_non_json_error_page_trips(monkeypatch: pytest.MonkeyPatch) -> None:
+    """A non-JSON error page (an HTML 403) is a refusal with no message to quote."""
+
+    monkeypatch.setattr(time, "sleep", _no_sleep)
+    recording = _recording()
+    client = _client()
+    route = respx.post(API_URL).respond(status_code=403, text="<html>forbidden</html>")
+
+    assert client.query(1) == {}
+    assert client.query(2) == {}
+
+    assert client.outage is True
+    assert route.call_count == 1
+    (warning,) = _warnings(recording)
+    assert warning.message == f"AniList refused the request (HTTP 403), {_SKIPPING}"
+
+
+@respx.mock
+def test_refusal_message_is_collapsed_and_clamped(monkeypatch: pytest.MonkeyPatch) -> None:
+    """The quoted message is whitespace-collapsed and clamped, so the warning stays one readable line."""
+
+    monkeypatch.setattr(time, "sleep", _no_sleep)
+    recording = _recording()
+    ragged = "down\n  for\t maintenance " + "x" * 200
+    body: dict[str, object] = {"errors": [{"message": ragged, "status": 403}], "data": None}
+    respx.post(API_URL).respond(status_code=403, json=body)
+
+    _client().query(1)
+
+    (warning,) = _warnings(recording)
+    quoted = warning.message.removeprefix("AniList refused the request (HTTP 403: ").removesuffix(f"), {_SKIPPING}")
+    assert quoted.startswith("down for maintenance xxx")
+    assert len(quoted) == 160
+
+
+@respx.mock
+def test_unknown_id_404_is_an_ordinary_miss(monkeypatch: pytest.MonkeyPatch) -> None:
+    """AniList's unknown-id answer (HTTP 404, `data.Media` null plus a not-found error) never trips the breaker."""
+
+    monkeypatch.setattr(time, "sleep", _no_sleep)
+    recording = _recording()
+    client = _client()
+    not_found: dict[str, object] = {"data": {"Media": None}, "errors": [{"message": "Not Found.", "status": 404}]}
+    route = respx.post(API_URL).respond(status_code=404, json=not_found)
+
+    assert client.query(1) == not_found
+    assert client.query(2) == not_found
+
+    assert client.outage is False
+    assert route.call_count == 2
+    assert _warnings(recording) == []
