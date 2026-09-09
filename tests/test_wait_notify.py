@@ -253,7 +253,7 @@ def _notice(
     *,
     arr: Arr = Arr.SONARR,
     arr_title: str = "Show",
-    al_title: str = "Show",
+    entry_title: str = "Show",
     entry: EntryRecord | None = None,
     thumb_url: str | None = None,
     banner_url: str | None = None,
@@ -268,7 +268,7 @@ def _notice(
     return GrabNotice(
         arr=arr,
         arr_title=arr_title,
-        al_title=al_title,
+        entry_title=entry_title,
         entry=entry if entry is not None else make_entry_record(),
         thumb_url=thumb_url,
         banner_url=banner_url,
@@ -288,7 +288,7 @@ def test_push_grab_builds_linked_embed(pushes: list[DiscordEmbed]) -> None:
     posted = _grab_notifier().push_grab(
         _notice(
             arr_title="Sousou no Frieren",
-            al_title="Frieren: Beyond Journey's End",
+            entry_title="Frieren: Beyond Journey's End",
             entry=make_entry_record(url="https://releases.moe/154587/"),
             thumb_url="https://img.anili.st/cover.png",
             banner_url="https://img.anili.st/banner.png",
@@ -334,7 +334,7 @@ class TestGrabNotes:
         # vs AniList's typographic one must not produce a duplicate byline.
         notes = self._notes(
             pushes,
-            _notice(arr_title="frieren: beyond journey's end", al_title="Frieren: Beyond Journey’s End"),
+            _notice(arr_title="frieren: beyond journey's end", entry_title="Frieren: Beyond Journey’s End"),
         )
 
         assert notes == ""
@@ -344,7 +344,7 @@ class TestGrabNotes:
         # so a byline would repeat the embed title directly above the notes.
         notes = self._notes(
             pushes,
-            _notice(arr_title="Frieren: Beyond Journey's End", al_title="Frieren: Beyond Journey's End Season 2"),
+            _notice(arr_title="Frieren: Beyond Journey's End", entry_title="Frieren: Beyond Journey's End Season 2"),
         )
 
         assert notes == ""
@@ -352,12 +352,12 @@ class TestGrabNotes:
     def test_shared_prefix_short_of_a_word_keeps_the_subtitle(self, pushes: list[DiscordEmbed]) -> None:
         # A prefix that splits a word is not a season suffix: the Arr title
         # names a different show and stays informative.
-        notes = self._notes(pushes, _notice(arr_title="Show", al_title="Showtime Season 1"))
+        notes = self._notes(pushes, _notice(arr_title="Show", entry_title="Showtime Season 1"))
 
         assert notes == "-# Show"
 
     def test_subtitle_escapes_markdown(self, pushes: list[DiscordEmbed]) -> None:
-        notes = self._notes(pushes, _notice(arr_title="K-ON! *Special*", al_title="K-ON!"))
+        notes = self._notes(pushes, _notice(arr_title="K-ON! *Special*", entry_title="K-ON!"))
 
         assert notes == "-# K-ON! \\*Special\\*"
 

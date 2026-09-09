@@ -111,8 +111,8 @@ class TestGrabReturnsPureBool:
 
         req = GrabRequest(
             al_id=1,
-            item_title="Show",
-            anilist_title="Show",
+            arr_title="Show",
+            entry_title="Show",
             entry=make_entry_record(url="https://seadex.example/1"),
             seadex_dict={},
             torrent_hashes=[],
@@ -135,8 +135,8 @@ class TestGrabReturnsPureBool:
 
         req = GrabRequest(
             al_id=1,
-            item_title="Show",
-            anilist_title="Show",
+            arr_title="Show",
+            entry_title="Show",
             entry=make_entry_record(url="https://seadex.example/1"),
             seadex_dict={},
             torrent_hashes=[],
@@ -194,8 +194,8 @@ class TestGrabPushesNotice:
                 al_id=7,
                 # The arr title must not prefix the AniList one, or the byline
                 # this class asserts on would (correctly) dedupe away.
-                item_title="The Show",
-                anilist_title="Show Title",
+                arr_title="The Show",
+                entry_title="Show Title",
                 entry=make_entry_record(url="https://releases.moe/7", notes="the why"),
                 seadex_dict=one_release_dict(srg="PMR", infohash="h1"),
                 torrent_hashes=["h1"],
@@ -586,8 +586,8 @@ class TestGrabAndCacheCapStop:
 
         req = GrabRequest(
             al_id=42,
-            item_title="Show",
-            anilist_title="Show",
+            arr_title="Show",
+            entry_title="Show",
             entry=make_entry_record(url="https://seadex.example/42"),
             seadex_dict=one_release_dict(srg="RG", infohash="h1"),
             torrent_hashes=["h1"],
@@ -616,8 +616,8 @@ class TestUpToDateTally:
         for al_id in (1, 2):
             req = GrabRequest(
                 al_id=al_id,
-                item_title="Show",
-                anilist_title="Show",
+                arr_title="Show",
+                entry_title="Show",
                 entry=make_entry_record(url=f"https://seadex.example/{al_id}"),
                 seadex_dict={},
                 torrent_hashes=[],
@@ -682,8 +682,8 @@ class TestUnsupportedTrackerSkip:
 
         req = GrabRequest(
             al_id=42,
-            item_title="Show",
-            anilist_title="Show",
+            arr_title="Show",
+            entry_title="Show",
             entry=make_entry_record(url="https://seadex.example/42"),
             seadex_dict=seadex_dict,
             torrent_hashes=["hA"],
@@ -714,8 +714,8 @@ class TestUnsupportedTrackerSkip:
 
         req = GrabRequest(
             al_id=7,
-            item_title="Show",
-            anilist_title="Show",
+            arr_title="Show",
+            entry_title="Show",
             entry=make_entry_record(url="https://seadex.example/7"),
             seadex_dict=seadex_dict,
             torrent_hashes=["hP", "hA"],
@@ -750,8 +750,8 @@ class TestUnsupportedTrackerSkip:
 
         req = GrabRequest(
             al_id=7,
-            item_title="Show",
-            anilist_title="Show",
+            arr_title="Show",
+            entry_title="Show",
             entry=make_entry_record(url="https://seadex.example/7"),
             seadex_dict=seadex_dict,
             torrent_hashes=["hP"],
@@ -783,8 +783,8 @@ class TestUnsupportedTrackerSkip:
 
         req = GrabRequest(
             al_id=7,
-            item_title="Show",
-            anilist_title="Show",
+            arr_title="Show",
+            entry_title="Show",
             entry=make_entry_record(url="https://seadex.example/7"),
             seadex_dict=seadex_dict,
             torrent_hashes=["hP"],
@@ -818,8 +818,8 @@ class TestUnsupportedTrackerSkip:
 
         req = GrabRequest(
             al_id=7,
-            item_title="Show",
-            anilist_title="Show",
+            arr_title="Show",
+            entry_title="Show",
             entry=make_entry_record(url="https://seadex.example/7"),
             seadex_dict=seadex_dict,
             torrent_hashes=["hP"],
@@ -854,8 +854,8 @@ class TestUnsupportedTrackerSkip:
 
         req = GrabRequest(
             al_id=42,
-            item_title="Show",
-            anilist_title="Show",
+            arr_title="Show",
+            entry_title="Show",
             entry=make_entry_record(url="https://seadex.example/42"),
             seadex_dict=seadex_dict,
             torrent_hashes=["hF"],
@@ -892,8 +892,8 @@ class TestUnsupportedTrackerSkip:
 
         req = GrabRequest(
             al_id=42,
-            item_title="Show",
-            anilist_title="Show",
+            arr_title="Show",
+            entry_title="Show",
             entry=make_entry_record(url="https://seadex.example/42"),
             seadex_dict=seadex_dict,
             torrent_hashes=["hN", "hA"],
@@ -928,8 +928,8 @@ class TestUnsupportedTrackerSkip:
 
         req = GrabRequest(
             al_id=7,
-            item_title="Show",
-            anilist_title="Show",
+            arr_title="Show",
+            entry_title="Show",
             entry=make_entry_record(url="https://seadex.example/7"),
             seadex_dict=seadex_dict,
             torrent_hashes=["hN"],
@@ -960,8 +960,8 @@ class TestUnsupportedTrackerSkip:
 
         req = GrabRequest(
             al_id=7,
-            item_title="Show",
-            anilist_title="Show",
+            arr_title="Show",
+            entry_title="Show",
             entry=make_entry_record(url="https://seadex.example/7"),
             seadex_dict=seadex_dict,
             torrent_hashes=["hN", "hP"],
@@ -986,8 +986,8 @@ class TestGrabFailureContainment:
     def _request(self, al_id: int, seadex_dict: SeadexDict, hashes: list[str | None]) -> GrabRequest:
         return GrabRequest(
             al_id=al_id,
-            item_title="Show",
-            anilist_title="Show",
+            arr_title="Show",
+            entry_title="Show",
             entry=make_entry_record(url=f"https://seadex.example/{al_id}"),
             seadex_dict=seadex_dict,
             torrent_hashes=hashes,
@@ -1150,8 +1150,8 @@ class TestFallbackHoldNeverCaches:
     def _request(self, al_id: int) -> GrabRequest:
         return GrabRequest(
             al_id=al_id,
-            item_title="Show",
-            anilist_title="Show",
+            arr_title="Show",
+            entry_title="Show",
             entry=make_entry_record(url=f"https://seadex.example/{al_id}"),
             seadex_dict=self._mixed_seadex_dict(),
             torrent_hashes=["hN"],

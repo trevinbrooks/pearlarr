@@ -82,7 +82,7 @@ def _notice(groups: Sequence[str]) -> GrabNotice:
     return GrabNotice(
         arr=Arr.SONARR,
         arr_title="Frieren: Beyond Journey's End",  # Sonarr's title (verified via Skyhook)
-        al_title="Frieren: Beyond Journey’s End",  # AniList english title (what the gateway returns)
+        entry_title="Frieren: Beyond Journey’s End",  # AniList english title (what the gateway returns)
         entry=entry,
         # AniList cover + banner for 154587, verified live.
         thumb_url="https://s4.anilist.co/file/anilistcdn/media/anime/cover/medium/bx154587-qQTzQnEJJ3oB.jpg",

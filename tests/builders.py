@@ -737,8 +737,8 @@ def grab_request(**overrides: Any) -> GrabRequest:
 
     defaults: dict[str, Any] = {
         "al_id": 1,
-        "item_title": "Show",
-        "anilist_title": "Show",
+        "arr_title": "Show",
+        "entry_title": "Show",
         "entry": make_entry_record(url="https://releases.moe/1"),
         "seadex_dict": {},
         "torrent_hashes": [],

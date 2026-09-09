@@ -135,6 +135,18 @@ CREATE TABLE pending_imports (
 """
 
 
+# The v3 shape of `entries` (current columns, names as an unreachable AniList
+# once stored them). Only the table the v3 -> v4 step rewrites is declared.
+_V3_ENTRIES_SCHEMA = """
+CREATE TABLE kv (key TEXT PRIMARY KEY, value TEXT);
+CREATE TABLE entries (
+    arr TEXT NOT NULL, al_id INTEGER NOT NULL,
+    name TEXT, url TEXT, coverage TEXT, updated_at TEXT,
+    fallback_satisfied INTEGER NOT NULL DEFAULT 0,
+    PRIMARY KEY (arr, al_id));
+"""
+
+
 def _seed_v2_db(db: Path, rows: list[tuple[str, str, int, str]]) -> None:
     """A v2-stamped db whose `pending_imports` holds the given (arr, infohash, al_id, json) rows."""
 
@@ -332,6 +344,28 @@ class TestSchemaVersionGate:
         store = CacheStore.load(str(db), config_checksum=CHECKSUM)
         assert store.get_guards(Arr.SONARR) == {9: GuardFacts(entry_groups=("Kept",))}
         store.close()
+
+    def test_v3_id_form_names_are_nulled(self, tmp_path: Path) -> None:
+        # The v3 -> v4 step: a name stored as the id-form fallback (an AniList
+        # outage at write time) is nulled so a later cached read resolves it. A
+        # real name and an absent one survive untouched.
+        db = tmp_path / "cache.db"
+        raw = sqlite3.connect(str(db))
+        raw.executescript(_V3_ENTRIES_SCHEMA)
+        raw.executemany(
+            "INSERT INTO entries (arr, al_id, name) VALUES (?, ?, ?)",
+            [("sonarr", 1, "AniList #1"), ("sonarr", 2, "Frieren"), ("radarr", 3, None)],
+        )
+        raw.execute("PRAGMA user_version=3")
+        raw.commit()
+        raw.close()
+
+        store = CacheStore.load(str(db), config_checksum=CHECKSUM)
+        assert _entry_name(store, 1) is None
+        assert _entry_name(store, 2) == "Frieren"
+        assert _entry_name(store, 3, Arr.RADARR) is None
+        store.close()
+        assert _user_version(db) == SCHEMA_VERSION
 
     def test_newer_schema_is_refused_not_quarantined(self, tmp_path: Path) -> None:
         db = tmp_path / "cache.db"

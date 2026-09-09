@@ -5,7 +5,7 @@ from datetime import UTC, datetime, timedelta
 from typing import override
 
 from .arr_activity import IMPORT_EVENTS, format_history_date
-from .cache import CacheRecord, now_stamp, parse_stamp
+from .cache import now_stamp, parse_stamp
 from .config import Arr
 from .grab_pipeline import GrabRequest
 from .log import pluralize
@@ -133,7 +133,7 @@ class RadarrSync(ArrSync[RadarrItem]):
 
         run = self._services
 
-        sd_entry = run.al_id_prologue(al_id)
+        sd_entry = run.al_id_prologue(al_id, item.title)
         if sd_entry is None:
             return False
         sd_url = sd_entry.url
@@ -142,16 +142,12 @@ class RadarrSync(ArrSync[RadarrItem]):
         if run.cached_entry_skip(al_id, sd_entry, lambda: ""):
             return False
 
-        anilist_title = run.get_anilist_title(al_id=al_id)
-        run.log_al_title(anilist_title=anilist_title, sd_entry=sd_entry)
+        title = run.resolve_title(al_id)
+        run.log_al_title(title=title.display, sd_entry=sd_entry)
 
-        cache_details: CacheRecord = {
-            "name": anilist_title,
-            "updated_at": sd_entry.updated_at,
-            "torrent_hashes": [],
-            "url": sd_url,
-            "coverage": "",
-        }
+        cache_details = run.new_cache_details(title, sd_entry)
+        cache_details["url"] = sd_url
+        cache_details["coverage"] = ""
 
         radarr_releases = self.get_radarr_releases(
             radarr_movie_id=item.id,
@@ -195,7 +191,7 @@ class RadarrSync(ArrSync[RadarrItem]):
                 infohash: PendingImport(
                     infohash=infohash,
                     al_id=al_id,
-                    title=anilist_title,
+                    title=title.display,
                     release_group=srg,
                     url=sd_url,
                     added_at=added_at,
@@ -213,8 +209,8 @@ class RadarrSync(ArrSync[RadarrItem]):
         return run.grab_and_cache(
             GrabRequest(
                 al_id=al_id,
-                item_title=item.title,
-                anilist_title=anilist_title,
+                arr_title=item.title,
+                entry_title=title.display,
                 entry=sd_entry,
                 seadex_dict=seadex_dict,
                 torrent_hashes=torrent_hashes,

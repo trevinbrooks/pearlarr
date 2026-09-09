@@ -248,8 +248,8 @@ OUTAGE_STATUS_DETAIL = EntryDetail(label="status", value=StyledValue("lookup ski
 OUTAGE_LINES: tuple[Line, ...] = (
     _blank(),
     _styled("  skipped     Cached Show", "grey50"),
-    # Quirk: the anilist id repeats on its own detail row even when the name
-    # came straight from the cache row (any resolved title gets the id line).
+    # The anilist id repeats on its own detail row under any real title, the
+    # cached name included. Only the id-form label omits it (it names the id itself).
     _detail("    anilist   1", "anilist", "1", style=None),
     _detail("    status    lookup skipped (SeaDex unreachable)", "status", "lookup skipped (SeaDex unreachable)"),
 )
@@ -259,6 +259,14 @@ NO_ENTRY_RESOLVED_DETAIL = EntryDetail(label="anilist", value=StyledValue("42"))
 NO_ENTRY_RESOLVED_LINES: tuple[Line, ...] = (
     _blank(),
     _styled("  no entry    Resolved Title", "grey50"),
+    _detail("    anilist   42", "anilist", "42", style=None),
+)
+
+NO_ENTRY_ARR_TITLE_ROW = LedgerRow(state=EntryState.NO_ENTRY, label="Arr Title")
+NO_ENTRY_ARR_TITLE_DETAIL = EntryDetail(label="anilist", value=StyledValue("42"))
+NO_ENTRY_ARR_TITLE_LINES: tuple[Line, ...] = (
+    _blank(),
+    _styled("  no entry    Arr Title", "grey50"),
     _detail("    anilist   42", "anilist", "42", style=None),
 )
 
@@ -931,13 +939,20 @@ class TestEntryHeaderParity:
 class TestTitledEntryParity:
     """`log_no_sd_entry` / `log_seadex_outage_skip` reproduce the pinned golden lines.
 
-    A title is resolved via the AniList gateway, or falls back when the gateway or cache has none.
+    A title is resolved via the AniList gateway, else the arr item's own title, else the id form alone.
     """
 
     def test_no_entry_with_resolved_title(self) -> None:
         harness = _Harness(title="Resolved Title")
         harness.reporter.log_no_sd_entry(RunContext(arr=Arr.SONARR), 42)
         assert harness.lines() == NO_ENTRY_RESOLVED_LINES
+
+    def test_no_entry_with_the_arr_title_fallback(self) -> None:
+        harness = _Harness(title=None)
+        ctx = RunContext(arr=Arr.SONARR)
+        ctx.per_title.arr_title = "Arr Title"
+        harness.reporter.log_no_sd_entry(ctx, 42)
+        assert harness.lines() == NO_ENTRY_ARR_TITLE_LINES
 
     def test_no_entry_without_a_title(self) -> None:
         harness = _Harness(title=None)

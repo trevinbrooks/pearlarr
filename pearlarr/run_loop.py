@@ -10,7 +10,7 @@ from .log import arr_item_noun, count_noun
 from .manual_import import ImportWaitMode, PendingState
 from .output import hub_error, hub_note, hub_warn
 from .protocols import ArrSync, ImportCompleter
-from .reporter import RunContext
+from .reporter import RunContext, unresolved_label
 from .run_services import RunDeps, RunServices
 from .seadex_types import ArrItem
 from .wait_view import (
@@ -251,7 +251,7 @@ class RunLoop:
             except Exception as e:
                 # Contain the failure to THIS AniList id: one bad season must not skip the item's others.
                 hub_error(
-                    f"{item_title} (AniList #{al_id}): unexpected error ({e}) - skipping this AniList id",
+                    f"{item_title} ({unresolved_label(al_id)}): unexpected error ({e}) - skipping this AniList id",
                     exc=e,
                 )
                 continue

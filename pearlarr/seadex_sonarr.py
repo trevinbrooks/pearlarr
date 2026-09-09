@@ -7,7 +7,7 @@ from typing import override
 
 from . import coverage as _coverage
 from .arr_http import make_httpx_client
-from .cache import CacheRecord, now_stamp
+from .cache import now_stamp
 from .config import Arr
 from .grab_pipeline import GrabRequest
 from .log import EntryState, pluralize
@@ -282,7 +282,7 @@ class SonarrSync(ArrSync[SonarrItem]):
 
         run = self._services
 
-        sd_entry = run.al_id_prologue(al_id)
+        sd_entry = run.al_id_prologue(al_id, item.title)
         if sd_entry is None:
             return False
         sd_url = sd_entry.url
@@ -331,16 +331,12 @@ class SonarrSync(ArrSync[SonarrItem]):
                 )
                 return False
 
-        # Resolve the AniList title (logged later, once episodes give us the
+        # Resolve the title (logged later, once episodes give us the
         # season/episode coverage)
-        anilist_title = run.get_anilist_title(al_id=al_id)
+        title = run.resolve_title(al_id)
 
         # Setup info for cache
-        cache_details: CacheRecord = {
-            "name": anilist_title,
-            "updated_at": sd_entry.updated_at,
-            "torrent_hashes": [],
-        }
+        cache_details = run.new_cache_details(title, sd_entry)
 
         # If we don't want to add movies that are already in Radarr, do that now
         if self.ignore_movies_in_radarr and self.all_radarr_movies is not None:
@@ -369,21 +365,21 @@ class SonarrSync(ArrSync[SonarrItem]):
         if not ep_list:
             # Resolved zero episodes (season not in Sonarr, offset past the end, or
             # AniBridge with no ranges): skip, don't mislabel "unmonitored" or grab orphans.
-            run.log_entry_status(EntryState.NO_EPISODES, anilist_title)
+            run.log_entry_status(EntryState.NO_EPISODES, title.display)
             if mapping.source is MappingSource.ANIBRIDGE and not mapping.tvdb_mappings:
                 # Surface any AniBridge no-usable-ranges case LOUDLY (distinct from a
                 # Sonarr-library gap): a WARNING under the skip row naming the cause.
                 # Keys off source, so it covers BOTH an empty-{} tvdb entry (mode
                 # ANIBRIDGE) and a degraded imdb/tmdb-resolved entry (mode ANIME_IDS),
                 # while a legit Kometa whole-series entry (source ANIME_IDS) stays quiet.
-                hub_warn(f"AniBridge has no usable season ranges for {anilist_title} - skipping")
+                hub_warn(f"AniBridge has no usable season ranges for {title.display} - skipping")
             time.sleep(self._config.advanced.sleep_time)
             return False
 
         # If all episodes are unmonitored, then skip if ignore_unmonitored is switched on
         if self._config.sonarr.ignore_unmonitored and not any(ep.monitored for ep in ep_list):
             run.log_anilist_item_unmonitored(
-                item_title=anilist_title,
+                item_title=title.display,
             )
             time.sleep(self._config.advanced.sleep_time)
             return False
@@ -395,7 +391,7 @@ class SonarrSync(ArrSync[SonarrItem]):
             _coverage.episodes_from_ep_list(ep_list),
         )
         run.log_al_title(
-            anilist_title=anilist_title,
+            title=title.display,
             sd_entry=sd_entry,
             coverage=coverage,
         )
@@ -462,7 +458,7 @@ class SonarrSync(ArrSync[SonarrItem]):
                 entry=PendingSeedContext(
                     al_id=al_id,
                     series_id=sonarr_series_id,
-                    title=anilist_title,
+                    title=title.display,
                     added_at=now_stamp(),
                     coverage=coverage,
                     url=sd_url,
@@ -473,8 +469,8 @@ class SonarrSync(ArrSync[SonarrItem]):
         return run.grab_and_cache(
             GrabRequest(
                 al_id=al_id,
-                item_title=item.title,
-                anilist_title=anilist_title,
+                arr_title=item.title,
+                entry_title=title.display,
                 entry=sd_entry,
                 seadex_dict=seadex_dict,
                 torrent_hashes=torrent_hashes,

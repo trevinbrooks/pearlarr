@@ -43,7 +43,7 @@ from pearlarr.mappings import ExternalIds, MappingEntry, MappingSource
 from pearlarr.output import Severity
 from pearlarr.output.recording import RecordingHub
 from pearlarr.planner import PlanResult
-from pearlarr.run_services import RunServices
+from pearlarr.run_services import EntryTitle, RunServices
 from pearlarr.seadex_radarr import RadarrSync
 from pearlarr.seadex_sonarr import SonarrSync
 from pearlarr.seadex_types import (
@@ -120,6 +120,13 @@ class GetAniListIdsCall(NamedTuple):
     log_ignored: bool = True
 
 
+class AlIdPrologueCall(NamedTuple):
+    """One recorded `al_id_prologue` call (the arr title the strategy seeded as the fallback)."""
+
+    al_id: int
+    arr_title: str
+
+
 class CheckAlIdInCacheCall(NamedTuple):
     """One recorded `check_al_id_in_cache` call (its explicit cross-arr `arr`)."""
 
@@ -178,7 +185,7 @@ class _FakeRunServices(RunServices):
         self._no_releases_result = no_releases_result
         self._import_wait_mode = import_wait_mode
         self.get_anilist_ids_calls: list[GetAniListIdsCall] = []
-        self.al_id_prologue_calls: list[int] = []
+        self.al_id_prologue_calls: list[AlIdPrologueCall] = []
         self.check_al_id_in_cache_calls: list[CheckAlIdInCacheCall] = []
         self.log_entry_status_calls: list[tuple[EntryState, str]] = []
         self.log_al_title_calls: list[str] = []
@@ -218,8 +225,8 @@ class _FakeRunServices(RunServices):
         return self._anilist_ids
 
     @override
-    def al_id_prologue(self, al_id: int) -> EntryRecord | None:
-        self.al_id_prologue_calls.append(al_id)
+    def al_id_prologue(self, al_id: int, arr_title: str) -> EntryRecord | None:
+        self.al_id_prologue_calls.append(AlIdPrologueCall(al_id, arr_title))
         return self._prologue_entry
 
     @override
@@ -234,9 +241,14 @@ class _FakeRunServices(RunServices):
         return self._cached_skip
 
     @override
-    def get_anilist_title(self, al_id: int) -> str:
+    def resolve_title(self, al_id: int) -> EntryTitle:
         del al_id
-        return self._anilist_title
+        return EntryTitle(display=self._anilist_title, anilist=self._anilist_title)
+
+    @override
+    def new_cache_details(self, title: EntryTitle, sd_entry: EntryRecord) -> CacheRecord:
+        # A pure builder over its arguments (no hub state), so the real one serves the fake.
+        return super().new_cache_details(title, sd_entry)
 
     @override
     def get_seadex_dict(self, sd_entry: EntryRecord) -> SeadexDict:
@@ -296,9 +308,9 @@ class _FakeRunServices(RunServices):
         del item_title
 
     @override
-    def log_al_title(self, anilist_title: str, sd_entry: EntryRecord, coverage: str | None = None) -> None:
+    def log_al_title(self, title: str, sd_entry: EntryRecord, coverage: str | None = None) -> None:
         del sd_entry, coverage
-        self.log_al_title_calls.append(anilist_title)
+        self.log_al_title_calls.append(title)
 
     @override
     def log_cached_entry(self, arr: Arr, al_id: int, state: EntryState = EntryState.UNCHANGED) -> None:
@@ -462,14 +474,14 @@ class TestProcessAlIdThreadsServices:
         strat = make_bare_instance(RadarrSync, _services=run)
 
         assert strat.process_al_id(_Item(id=1, title="Title"), 5, MappingEntry(anilist_id=5)) is False
-        assert run.al_id_prologue_calls == [5]
+        assert run.al_id_prologue_calls == [AlIdPrologueCall(5, "Title")]
 
     def test_sonarr_no_seadex_entry_returns_false(self) -> None:
         run = _FakeRunServices()
         strat = make_bare_instance(SonarrSync, _services=run)
 
         assert strat.process_al_id(_Item(id=1, title="Title"), 5, MappingEntry(anilist_id=5)) is False
-        assert run.al_id_prologue_calls == [5]
+        assert run.al_id_prologue_calls == [AlIdPrologueCall(5, "Title")]
 
     def test_sonarr_no_episodes_resolved_skips_explicitly(self) -> None:
         # An anime-id mapping that resolves to [] (season not in Sonarr / offset past
@@ -2988,8 +3000,8 @@ class TestRadarrProcessAlIdSeam:
         assert run.filter_downloads_calls == [(5, seadex_dict, ArrReleases(tagged={"OldGroup": (100,)}))]
         [req] = run.grab_requests
         assert req.al_id == 5
-        assert req.item_title == "Item Title"
-        assert req.anilist_title == "Movie Title"
+        assert req.arr_title == "Item Title"
+        assert req.entry_title == "Movie Title"
         # The SeaDex entry rides the request whole (the notifier reads its
         # url/notes/comparisons), so pin identity, not a copied field.
         assert req.entry is entry

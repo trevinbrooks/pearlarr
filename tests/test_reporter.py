@@ -180,9 +180,8 @@ class TestStatsCounters:
         assert client.query_calls == [42]
 
     def test_outage_skip_prefers_cached_name_over_anilist(self) -> None:
-        # A previously-processed title's name sits in the cache row: the outage
-        # skip must render it from there with NO AniList lookup - in a compound
-        # SeaDex+AniList outage a lookup would pay retry backoff per title.
+        # A prior run resolved the title and stored it on the cache row, so the
+        # outage skip renders the stored name with no AniList lookup at all.
         client = _ScriptedTitleClient()
         reporter, events = _record(_seeded_store(name="Stored Title", coverage="S01", url="u"), client=client)
         ctx = RunContext(arr=Arr.SONARR)
@@ -196,20 +195,72 @@ class TestStatsCounters:
 
 
 class _ScriptedTitleClient(AniListClient):
-    """Checked scripted `AniListClient`: a fixed resolvable title, queries recorded.
+    """Checked scripted `AniListClient`: a fixed resolvable title (or none), queries recorded.
 
     Injected into the gateway under the reporter, so a title lookup exercises
     the REAL gateway get-or-fetch (cache warm + store) over a canned wire body.
     """
 
-    def __init__(self) -> None:
+    def __init__(self, title: str | None = "Resolved") -> None:
         super().__init__(client=httpx.Client())
+        self._title = title
         self.query_calls: list[int] = []
 
     @override
     def query(self, al_id: int) -> dict[str, Any]:
         self.query_calls.append(al_id)
-        return {"data": {"Media": {"id": al_id, "title": {"english": "Resolved"}}}}
+        if self._title is None:
+            return {}
+        return {"data": {"Media": {"id": al_id, "title": {"english": self._title}}}}
+
+
+class TestTitleFallback:
+    """A titled row without an AniList title shows the arr's own title, else the id form alone.
+
+    The "anilist" id detail rides only under a real title: the id form already names the id.
+    """
+
+    def test_no_sd_entry_falls_back_to_the_arr_title(self) -> None:
+        reporter, events = _record(client=_ScriptedTitleClient(None))
+        ctx = RunContext(arr=Arr.SONARR)
+        ctx.per_title.arr_title = "Series"
+        reporter.log_no_sd_entry(ctx, 42)
+
+        messages = _event_messages(events)
+        assert any("no entry" in m and "Series" in m for m in messages)
+        assert any("anilist" in m and "42" in m for m in messages)
+
+    def test_no_sd_entry_without_any_title_shows_the_id_form_alone(self) -> None:
+        reporter, events = _record(client=_ScriptedTitleClient(None))
+        ctx = RunContext(arr=Arr.SONARR)
+        reporter.log_no_sd_entry(ctx, 42)
+
+        messages = _event_messages(events)
+        assert any("no entry" in m and "AniList #42" in m for m in messages)
+        assert not any(m.strip().startswith("anilist") for m in messages)
+
+    def test_cached_without_a_name_falls_back_to_the_arr_title(self) -> None:
+        # The stored name is empty and AniList still has none: the arr's own title labels the block.
+        store = FakeCacheStore()
+        store.update_cache(Arr.SONARR, 1, CacheRecord(coverage="S01", url="u"))
+        client = _ScriptedTitleClient(None)
+        reporter, events = _record(store, client=client)
+        ctx = RunContext(arr=Arr.SONARR)
+        ctx.per_title.arr_title = "Series"
+        reporter.log_cached_entry(ctx, Arr.SONARR, 1)
+
+        assert client.query_calls == [1]
+        assert any("Series" in m for m in _event_messages(events))
+
+    def test_cached_without_any_title_shows_the_id_form(self) -> None:
+        store = FakeCacheStore()
+        store.update_cache(Arr.SONARR, 1, CacheRecord(coverage="S01", url="u"))
+        reporter, events = _record(store, client=_ScriptedTitleClient(None))
+        reporter.log_cached_entry(RunContext(arr=Arr.SONARR), Arr.SONARR, 1)
+
+        joined = "\n".join(_event_messages(events))
+        assert "AniList #1" in joined
+        assert "unknown title" not in joined
 
 
 class TestActiveTitle:

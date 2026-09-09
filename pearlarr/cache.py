@@ -121,7 +121,7 @@ CREATE TABLE IF NOT EXISTS history_checkpoints (
 """
 
 # Current cache.db schema version, stored in `PRAGMA user_version`.
-SCHEMA_VERSION = 3
+SCHEMA_VERSION = 4
 
 
 class CacheSchemaError(RuntimeError):
@@ -182,10 +182,17 @@ def _migrate_2_to_3(conn: sqlite3.Connection) -> None:
     conn.execute("UPDATE pending_imports SET record = jsonb_remove(record, '$.guards')")
 
 
+def _migrate_3_to_4(conn: sqlite3.Connection) -> None:
+    """Null the id-form names an AniList outage once stored, so the next cached read resolves them."""
+
+    conn.execute("UPDATE entries SET name = NULL WHERE name LIKE 'AniList #%'")
+
+
 _MIGRATIONS: dict[int, Callable[[sqlite3.Connection], None]] = {
     0: _migrate_0_to_1,
     1: _migrate_1_to_2,
     2: _migrate_2_to_3,
+    3: _migrate_3_to_4,
 }
 
 

@@ -2,23 +2,70 @@
 # pyright: reportPrivateUsage=false
 # These read the hub's private run context (run._ctx). Strict re-flags that and
 # the repo disables reportPrivateUsage for tests.
-"""The cached-entry short-circuit (`RunServices.cached_entry_skip`).
+"""The cached-entry short-circuit (`RunServices.cached_entry_skip`) and the title seams around it.
 
 Pins the skip decision after it was folded onto a single `CacheStore.get_entry`
 read (was a `check_al_id_in_cache` + a per-field `get_cached_field`): a cached
 entry whose SeaDex `updated_at` still matches is skipped (and its url/coverage
-backfilled once if the record predates those fields). An absent or stale entry is
-re-processed.
+backfilled once if the record predates those fields, its name once AniList can
+resolve it). An absent or stale entry is re-processed.
 """
 
 from datetime import datetime
+from typing import Any, override
 
+import httpx
+
+from pearlarr.anilist_client import AniListClient
+from pearlarr.anilist_gateway import AniListGateway
+from pearlarr.cache import CacheRecord
 from pearlarr.config import Arr
 from pearlarr.log import EntryState
 from pearlarr.reporter import RunContext
-from pearlarr.run_services import RunServices
+from pearlarr.run_services import EntryTitle, RunServices
 
-from .builders import FakeCacheStore, FakeSeaDexSource, make_entry_record, make_services
+from .builders import FakeCacheStore, FakeSeaDexSource, make_entry_record, make_logger, make_services
+
+
+class _ScriptedTitleClient(AniListClient):
+    """Scripted AniList wire client: a fixed resolvable title or none, queries recorded."""
+
+    def __init__(self, title: str | None) -> None:
+        super().__init__(client=httpx.Client())
+        self._title = title
+        self.query_calls: list[int] = []
+
+    @override
+    def query(self, al_id: int) -> dict[str, Any]:
+        self.query_calls.append(al_id)
+        if self._title is None:
+            return {}
+        return {"data": {"Media": {"id": al_id, "title": {"english": self._title}}}}
+
+
+def _gateway(client: _ScriptedTitleClient) -> AniListGateway:
+    """A real gateway over the scripted wire client (its own cache leaf faked)."""
+
+    return AniListGateway(cache_store=FakeCacheStore(), logger=make_logger(), client=client)
+
+
+class _RecordingCacheStore(FakeCacheStore):
+    """The in-memory store, also recording each `update_cache` payload so one merged write can be asserted."""
+
+    def __init__(self) -> None:
+        super().__init__()
+        self.updates: list[CacheRecord] = []
+
+    @override
+    def update_cache(self, arr: Arr, al_id: int, cache_details: CacheRecord | None = None) -> None:
+        self.updates.append(cache_details if cache_details is not None else {})
+        super().update_cache(arr, al_id, cache_details)
+
+
+def _unresolving() -> AniListGateway:
+    """A gateway whose lookups resolve nothing, so a nameless cached entry stays nameless."""
+
+    return _gateway(_ScriptedTitleClient(None))
 
 
 class _RecordingReporter:
@@ -47,15 +94,15 @@ class TestCachedEntrySkip:
     @staticmethod
     def _run(cache: FakeCacheStore) -> RunServices:
         # cached_entry_skip touches only cache_store + _config (real, default
-        # ignore_seadex_update_times=False) + the reporter. ctx defaults to a SONARR
-        # RunContext (make_services), which cached_entry_skip now reads for the arr.
-        return make_services(cache_store=cache, _reporter=_RecordingReporter())
+        # ignore_seadex_update_times=False) + the reporter + the AniList gateway the
+        # name backfill asks. ctx defaults to a SONARR RunContext (make_services).
+        return make_services(cache_store=cache, _reporter=_RecordingReporter(), _anilist=_unresolving())
 
     def test_skips_when_cached_and_timestamp_matches(self) -> None:
         cache = FakeCacheStore()
         cache.update_cache(Arr.SONARR, 7, {"url": "u", "updated_at": datetime(2021, 1, 1)})
         reporter = _RecordingReporter()
-        run = make_services(cache_store=cache, _reporter=reporter)
+        run = make_services(cache_store=cache, _reporter=reporter, _anilist=_unresolving())
         assert run.cached_entry_skip(7, make_entry_record(updated_at=datetime(2021, 1, 1)), lambda: "") is True
         assert len(reporter.calls) == 1
 
@@ -81,6 +128,66 @@ class TestCachedEntrySkip:
         backfilled = cache.get_entry(Arr.SONARR, 7)
         assert backfilled is not None
         assert (backfilled.url, backfilled.coverage) == ("sd-url", "S01")
+
+    def test_backfills_the_name_when_anilist_resolves_it_now(self) -> None:
+        # A record written while AniList was unreachable carries no name. Once the
+        # gateway resolves one, the skip stores it (nothing else re-processes a fresh entry).
+        cache = _RecordingCacheStore()
+        cache.update_cache(Arr.SONARR, 7, {"url": "u", "updated_at": datetime(2021, 1, 1)})
+        cache.updates.clear()
+        client = _ScriptedTitleClient("Resolved")
+        run = make_services(cache_store=cache, _reporter=_RecordingReporter(), _anilist=_gateway(client))
+
+        assert run.cached_entry_skip(7, make_entry_record(updated_at=datetime(2021, 1, 1)), lambda: "") is True
+
+        assert cache.updates == [{"name": "Resolved"}]
+        assert client.query_calls == [7]
+
+    def test_leaves_the_name_empty_when_anilist_still_has_none(self) -> None:
+        cache = _RecordingCacheStore()
+        cache.update_cache(Arr.SONARR, 7, {"url": "u", "updated_at": datetime(2021, 1, 1)})
+        cache.updates.clear()
+        run = make_services(
+            cache_store=cache,
+            _reporter=_RecordingReporter(),
+            _anilist=_gateway(_ScriptedTitleClient(None)),
+        )
+
+        assert run.cached_entry_skip(7, make_entry_record(updated_at=datetime(2021, 1, 1)), lambda: "") is True
+
+        assert cache.updates == []
+        entry = cache.get_entry(Arr.SONARR, 7)
+        assert entry is not None
+        assert entry.name is None
+
+    def test_leaves_a_stored_name_alone_without_a_lookup(self) -> None:
+        cache = _RecordingCacheStore()
+        cache.update_cache(Arr.SONARR, 7, {"name": "Kept", "url": "u", "updated_at": datetime(2021, 1, 1)})
+        cache.updates.clear()
+        client = _ScriptedTitleClient("Resolved")
+        run = make_services(cache_store=cache, _reporter=_RecordingReporter(), _anilist=_gateway(client))
+
+        assert run.cached_entry_skip(7, make_entry_record(updated_at=datetime(2021, 1, 1)), lambda: "") is True
+
+        assert cache.updates == []
+        assert client.query_calls == []
+
+    def test_url_and_name_backfills_merge_into_one_write(self) -> None:
+        cache = _RecordingCacheStore()
+        cache.update_cache(Arr.SONARR, 7, {"updated_at": datetime(2021, 1, 1)})  # legacy: no url, no name
+        cache.updates.clear()
+        run = make_services(
+            cache_store=cache,
+            _reporter=_RecordingReporter(),
+            _anilist=_gateway(_ScriptedTitleClient("Resolved")),
+        )
+
+        assert (
+            run.cached_entry_skip(7, make_entry_record(updated_at=datetime(2021, 1, 1), url="sd-url"), lambda: "S01")
+            is True
+        )
+
+        assert cache.updates == [{"url": "sd-url", "coverage": "S01", "name": "Resolved"}]
 
     def test_ignore_update_times_reprocesses_even_when_fresh(self) -> None:
         # The config escape hatch: a fresh, matching timestamp is still re-processed.
@@ -123,6 +230,7 @@ class TestCachedEntrySkip:
         run = make_services(
             cache_store=cache,
             _reporter=_RecordingReporter(),
+            _anilist=_unresolving(),
             _filter=_CtxBind(),
             _grab_pipeline=_CtxBind(),
         )
@@ -146,7 +254,12 @@ class TestFallbackSatisfiedResurfacing:
 
     @staticmethod
     def _skips(cache: FakeCacheStore, private_releases: str) -> bool:
-        run = make_services(cache_store=cache, _reporter=_RecordingReporter(), private_releases=private_releases)
+        run = make_services(
+            cache_store=cache,
+            _reporter=_RecordingReporter(),
+            _anilist=_unresolving(),
+            private_releases=private_releases,
+        )
         return run.cached_entry_skip(7, make_entry_record(updated_at=datetime(2021, 1, 1)), lambda: "")
 
     def test_warn_mode_reprocesses_a_marked_entry(self) -> None:
@@ -257,7 +370,7 @@ class TestAlIdPrologue:
         reporter = _TailReporter()
         run = make_services(_seadex=FakeSeaDexSource(), _reporter=reporter)
 
-        assert run.al_id_prologue(5) is None
+        assert run.al_id_prologue(5, "Series") is None
         assert reporter.no_sd_entry_ids == [5]
         assert reporter.outage_skip_ids == []
         assert run._ctx.stats.checked == 1
@@ -268,7 +381,7 @@ class TestAlIdPrologue:
         reporter = _TailReporter()
         run = make_services(_seadex=FakeSeaDexSource(outage=True), _reporter=reporter)
 
-        assert run.al_id_prologue(5) is None
+        assert run.al_id_prologue(5, "Series") is None
         assert reporter.outage_skip_ids == [5]
         assert reporter.no_sd_entry_ids == []
         assert run._ctx.stats.checked == 1
@@ -278,6 +391,65 @@ class TestAlIdPrologue:
         run = make_services(_seadex=FakeSeaDexSource({5: entry}), _reporter=_TailReporter())
         run._ctx.per_title.private_only_skipped = True  # stale flag from a previous title
 
-        assert run.al_id_prologue(5) is entry
+        assert run.al_id_prologue(5, "Series") is entry
         assert run._ctx.per_title.private_only_skipped is False
         assert run._ctx.stats.checked == 1
+
+    def test_seeds_the_arr_title_as_the_fallback(self) -> None:
+        # The fresh per-title state carries the arr item's own title, so a later
+        # title resolution can fall back to it when AniList has nothing.
+        run = make_services(_seadex=FakeSeaDexSource({5: make_entry_record()}), _reporter=_TailReporter())
+
+        run.al_id_prologue(5, "Series")
+
+        assert run._ctx.per_title.arr_title == "Series"
+
+
+class TestResolveTitle:
+    """`resolve_title` shows AniList's title, else the arr's own, else the id form, and remembers it."""
+
+    @staticmethod
+    def _run(client: _ScriptedTitleClient, arr_title: str = "") -> RunServices:
+        run = make_services(_anilist=_gateway(client))
+        run._ctx.per_title.arr_title = arr_title
+        return run
+
+    def test_anilist_title_is_both_display_and_anilist(self) -> None:
+        run = self._run(_ScriptedTitleClient("Resolved"), arr_title="Series")
+
+        assert run.resolve_title(5) == EntryTitle(display="Resolved", anilist="Resolved")
+        assert run._ctx.per_title.current_title == "Resolved"
+
+    def test_falls_back_to_the_arr_title(self) -> None:
+        run = self._run(_ScriptedTitleClient(None), arr_title="Series")
+
+        assert run.resolve_title(5) == EntryTitle(display="Series", anilist=None)
+        assert run._ctx.per_title.current_title == "Series"
+
+    def test_falls_back_to_the_id_form_last(self) -> None:
+        run = self._run(_ScriptedTitleClient(None))
+
+        assert run.resolve_title(5) == EntryTitle(display="AniList #5", anilist=None)
+        assert run._ctx.per_title.current_title == "AniList #5"
+
+
+class TestNewCacheDetails:
+    """`new_cache_details` seeds the record, carrying a name only when AniList resolved one."""
+
+    def test_resolved_title_rides_as_the_name(self) -> None:
+        entry = make_entry_record(updated_at=datetime(2021, 1, 1))
+        run = make_services()
+
+        details = run.new_cache_details(EntryTitle(display="Resolved", anilist="Resolved"), entry)
+
+        assert details == {"name": "Resolved", "updated_at": entry.updated_at, "torrent_hashes": []}
+
+    def test_fallback_title_is_never_stored_as_the_name(self) -> None:
+        # A fallback label must not clobber a name a prior run stored (the merge
+        # keeps the omitted field), nor persist an id form a later run would have to undo.
+        entry = make_entry_record(updated_at=datetime(2021, 1, 1))
+        run = make_services()
+
+        details = run.new_cache_details(EntryTitle(display="Series", anilist=None), entry)
+
+        assert details == {"updated_at": entry.updated_at, "torrent_hashes": []}

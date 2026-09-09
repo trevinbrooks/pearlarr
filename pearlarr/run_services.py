@@ -33,7 +33,7 @@ from .mappings import ExternalIds, MappingEntry, MappingResolver
 from .notify import Notifier
 from .output import emit_to_hub, hub_counts
 from .planner import DownloadPlanner, PlanResult
-from .reporter import PerTitleState, RunContext, RunReporter, is_preview
+from .reporter import PerTitleState, RunContext, RunReporter, is_preview, unresolved_label
 from .seadex_filter import SeadexReleaseFilter
 from .seadex_gateway import SeaDexGateway, SeaDexMiss, SeaDexSource
 from .seadex_types import (
@@ -43,6 +43,16 @@ from .seadex_types import (
     SonarrEpisode,
 )
 from .torrents import TorrentService
+
+
+@dataclass(frozen=True, slots=True)
+class EntryTitle:
+    """An entry's resolved title: what the run shows, and the AniList title when one resolved."""
+
+    display: str
+    """The AniList title, else the arr item's own title, else the id form."""
+    anilist: str | None
+    """The AniList title alone, the only value the cache stores as the entry's name."""
 
 
 class QbitConnectionError(Exception):
@@ -462,29 +472,29 @@ class RunServices:
 
         return anilist_mappings
 
-    def get_anilist_title(
-        self,
-        al_id: int,
-    ) -> str:
-        """Resolve and remember the AniList title for an ID (no logging).
+    def resolve_title(self, al_id: int) -> EntryTitle:
+        """Resolve the entry's title and remember it as the active one (no logging).
 
-        The gateway resolves the raw title (no side-effects). The empty-result
-        fallback and the transitional `current_title` attribution live here so
-        later steps can attribute grabs to the active entry. The entry header is
-        logged separately by log_al_title, once episodes are known.
+        The display value falls back to the arr item's own title, then the id form, so an entry
+        stays identifiable when AniList has nothing. The header is logged later by `log_al_title`.
         """
 
-        anilist_title = self._anilist.title(al_id)
+        anilist = self._anilist.title(al_id) or None
+        display = anilist or self._ctx.per_title.arr_title or unresolved_label(al_id)
+        self._ctx.per_title.current_title = display
+        return EntryTitle(display=display, anilist=anilist)
 
-        # If the lookup came back empty (e.g., AniList was rate-limiting even
-        # after retries), fall back to the id so the entry is still identifiable
-        # rather than showing "None"
-        if not anilist_title:
-            anilist_title = f"AniList #{al_id}"
+    def new_cache_details(self, title: EntryTitle, sd_entry: EntryRecord) -> CacheRecord:
+        """The seed record a processed id accumulates into.
 
-        self._ctx.per_title.current_title = anilist_title
+        `name` rides only when AniList resolved: `update_cache` merges partially, so an omitted
+        name keeps what an earlier run stored instead of clobbering it with a fallback label.
+        """
 
-        return anilist_title
+        details: CacheRecord = {"updated_at": sd_entry.updated_at, "torrent_hashes": []}
+        if title.anilist is not None:
+            details["name"] = title.anilist
+        return details
 
     def get_seadex_dict(self, sd_entry: EntryRecord) -> SeadexDict:
         """Parse and filter a SeaDex entry into the run's release dict (delegates)."""
@@ -578,20 +588,19 @@ class RunServices:
         time.sleep(self._config.advanced.sleep_time)
         return False
 
-    def al_id_prologue(self, al_id: int) -> EntryRecord | None:
+    def al_id_prologue(self, al_id: int, arr_title: str) -> EntryRecord | None:
         """Shared per-AniList-id head: reset skip flags, tally, fetch SeaDex entry.
 
-        Returns the SeaDex entry to process, or None when there's nothing to do -
-        either the id has no SeaDex entry, or the lookup was skipped because
-        SeaDex is unreachable this run. The two misses are reported distinctly
-        (an outage skip must never read as "no entry"). The caller moves to the
-        next id either way.
+        `arr_title` is the arr item's own title, seeded as the title fallback. Returns the
+        SeaDex entry to process, or None when there's nothing to do: either the id has no
+        SeaDex entry, or the lookup was skipped because SeaDex is unreachable this run. The
+        two misses are reported distinctly (an outage skip must never read as "no entry").
         """
 
         # Reset the per-title skip flags (and the skipped group names) before we
         # make any download decisions for this title: a fresh PerTitleState clears
         # every field at once, so a new flag can never leak from the prior title.
-        self._ctx.per_title = PerTitleState()
+        self._ctx.per_title = PerTitleState(arr_title=arr_title)
         self._ctx.stats.checked += 1
 
         # Get the SeaDex entry if it exists
@@ -614,28 +623,30 @@ class RunServices:
         """Shared cached-entry short-circuit for both Arr runners.
 
         When the id is already cached and we're honoring SeaDex update times,
-        backfill the url + coverage on legacy records that predate those fields,
-        log the cached entry, and return True so the caller skips it. `coverage`
-        is a zero-arg callable so the (for Sonarr, episode-fetching) coverage
-        lookup runs only on the one-time backfill, never on the common
-        already-backfilled path. It builds "" for a movie, a season/episode
-        range for a series.
+        backfill what the record lacks, log the cached entry, and return True so
+        the caller skips it. `coverage` is a zero-arg callable so the (for Sonarr,
+        episode-fetching) coverage lookup runs only on the one-time url backfill,
+        never on the common already-backfilled path. It builds "" for a movie, a
+        season/episode range for a series.
         """
 
-        # The shared skip decision. Its one row read also serves the url-backfill
-        # check below.
+        # The shared skip decision. Its one row read also serves the backfill
+        # checks below.
         entry = self._skippable_entry(al_id, sd_entry)
         if entry is None:
             return False
 
-        # Backfill the enriched fields for records written before they existed,
-        # so cached rows can still link to SeaDex (and, for series, show the
-        # season/episode coverage). One-time per old entry.
+        # One-time backfills, merged into a single write: the url + coverage a
+        # record written before those fields lacks, and the name a record written
+        # while AniList was unreachable lacks (nothing else re-processes it).
+        backfill: CacheRecord = {}
         if not entry.url:
-            self._update_cache(
-                al_id=al_id,
-                cache_details={"url": sd_entry.url, "coverage": coverage()},
-            )
+            backfill["url"] = sd_entry.url
+            backfill["coverage"] = coverage()
+        if not entry.name and (name := self._anilist.title(al_id)):
+            backfill["name"] = name
+        if backfill:
+            self._update_cache(al_id=al_id, cache_details=backfill)
         self._reporter.log_cached_entry(self._ctx, self._ctx.arr, al_id)
         return True
 
@@ -666,14 +677,14 @@ class RunServices:
 
     def log_al_title(
         self,
-        anilist_title: str,
+        title: str,
         sd_entry: EntryRecord,
         coverage: str | None = None,
     ) -> None:
         """Log the active-entry header (delegates to RunReporter)."""
         self._reporter.log_al_title(
             self._ctx,
-            anilist_title,
+            title,
             sd_entry,
             coverage=coverage,
         )

@@ -107,7 +107,8 @@ class GrabNotice:
 
     arr: Arr
     arr_title: str
-    al_title: str
+    entry_title: str
+    """The entry's display title (AniList's when it resolved), the embed's title."""
     entry: EntryRecord
     """The SeaDex entry whole (url / notes / comparisons / incomplete flag)."""
     thumb_url: str | None
@@ -136,11 +137,11 @@ def _md_escape(text: str) -> str:
     return text
 
 
-def _arr_title_redundant(arr_title: str, al_title: str) -> bool:
-    """True when the Arr title repeats what the AniList title already says.
+def _arr_title_redundant(arr_title: str, entry_title: str) -> bool:
+    """True when the Arr title repeats what the entry title already says.
 
     The two are near-duplicates for most entries: identical up to case or
-    apostrophe style, or the AniList title extends the Arr's with a season
+    apostrophe style, or the entry title extends the Arr's with a season
     suffix ("Show Season 2" vs "Show"). The embed shows the Arr's own title
     only when it adds information. The prefix must end on a word boundary so a
     merely shared beginning ("Showtime") still counts as informative.
@@ -149,8 +150,8 @@ def _arr_title_redundant(arr_title: str, al_title: str) -> bool:
     def norm(title: str) -> str:
         return title.replace("’", "'").replace("‘", "'").casefold().strip()
 
-    arr, al = norm(arr_title), norm(al_title)
-    return al.startswith(arr) and (len(al) == len(arr) or not al[len(arr)].isalnum())
+    arr, entry = norm(arr_title), norm(entry_title)
+    return entry.startswith(arr) and (len(entry) == len(arr) or not entry[len(arr)].isalnum())
 
 
 def _notes_block(notes: str) -> str:
@@ -178,12 +179,12 @@ def _grab_notes(notice: GrabNotice) -> str:
     """The trailing notes stack: subtitle, entry notes, comparison links, caveats.
 
     The Arr's own title appears as a muted `-#` subtext byline only when it
-    adds information over the AniList one. Each piece is omitted when it has
+    adds information over the entry title. Each piece is omitted when it has
     nothing to say.
     """
 
     parts: list[str] = []
-    if not _arr_title_redundant(notice.arr_title, notice.al_title):
+    if not _arr_title_redundant(notice.arr_title, notice.entry_title):
         parts.append(f"-# {_md_escape(notice.arr_title)}")
     if notes := _notes_block(notice.entry.notes):
         parts.append(notes)
@@ -292,7 +293,7 @@ def _grab_embed(notice: GrabNotice) -> DiscordEmbed:
         fields.append(EmbedField(name="", value=notes))
     return DiscordEmbed(
         author_name=f"{notice.arr.capitalize()} · SeaDex grab",
-        title=notice.al_title,
+        title=notice.entry_title,
         color=COLOR_GRAB,
         url=notice.entry.url or None,
         description=description,
