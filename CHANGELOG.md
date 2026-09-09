@@ -7,13 +7,13 @@ Pearlarr is a fork of [bbtufty/seadexarr](https://github.com/bbtufty/seadexarr).
 
 ## [Unreleased]
 
+### Changed
+
+- An AniList refusal, or a request that exhausts its retries, warns once per arr pass with AniList's reason and stops further AniList lookups for that pass. An id AniList does not know is queried once per arr pass instead of once per field.
+
 ### Fixed
 
 - Console rows, Discord embeds, webhook rows, and pending records fall back to the Sonarr or Radarr title when AniList has no answer, instead of `AniList #<id>`. Cached AniList records are served past their refresh age and are no longer deleted while AniList is unreachable, and an entry cached without a name gets one on the next healthy lookup. Stored names that held the id form are cleared (cache schema v4).
-
-### Changed
-
-- An AniList refusal, or a request that exhausts its retries, warns once per arr pass with AniList's reason and stops further AniList lookups for that pass. An id AniList does not know is queried once per run instead of once per field.
 
 ## [1.3.5] - 2026-09-09
 
