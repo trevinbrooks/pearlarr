@@ -10,9 +10,14 @@ from pydantic import ValidationError
 
 from .json_narrow import is_json_list, is_json_obj
 from .output import Severity, hub_note, hub_warn
+from .paths import PROJECT_URL
 from .seadex_types import AniListError, AniListMediaNode, validation_summary
 
 API_URL = "https://graphql.anilist.co"
+
+# AniList refuses a request without a Referer (HTTP 403 "temporarily disabled",
+# any non-empty value passes), so every POST names the project.
+REQUEST_HEADERS = {"Referer": PROJECT_URL}
 
 type AniListCache = dict[int, dict[str, dict[str, Any]]]
 """In-memory AniList cache: id -> raw GraphQL body `{"data": {"Media": {...}}}`.
@@ -279,7 +284,9 @@ class AniListClient:
 
         for attempt in range(MAX_RETRIES + 1):
             try:
-                resp = self._client.post(API_URL, json={"query": query, "variables": variables})
+                resp = self._client.post(
+                    API_URL, json={"query": query, "variables": variables}, headers=REQUEST_HEADERS
+                )
             except httpx.HTTPError as e:
                 # Network blip: back off and retry, then give up with an empty result
                 if attempt >= MAX_RETRIES:
