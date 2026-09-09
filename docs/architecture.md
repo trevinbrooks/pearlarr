@@ -107,7 +107,7 @@ Every host Pearlarr talks to, and why:
 | Host | Purpose |
 | --- | --- |
 | `releases.moe` (SeaDex) | Entry lookups: which releases are tagged for each AniList ID. |
-| `graphql.anilist.co` | AniList titles. |
+| `graphql.anilist.co` | AniList titles, formats, and episode counts, served from the cache while unreachable. |
 | `github.com` -> `objects.githubusercontent.com` | The primary ID-mapping source (`anibridge-mappings`, a GitHub release asset that 302-redirects to the asset CDN). |
 | `raw.githubusercontent.com` | The two fallback ID-mapping sources (Kometa `Anime-IDs`, anime-lists XML). |
 | Your Sonarr / Radarr | Library, history, parse, and import APIs. |
