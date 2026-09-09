@@ -7,6 +7,8 @@ Pearlarr is a fork of [bbtufty/seadexarr](https://github.com/bbtufty/seadexarr).
 
 ## [Unreleased]
 
+## [1.3.5] - 2026-09-09
+
 ### Fixed
 
 - AniList metadata lookups work again. AniList began refusing every request that carries no Referer header (HTTP 403, "temporarily disabled"), which left titles as `AniList #<id>` on the console, in Discord embeds, and on pending records, and drained the AniList cache. Every AniList request now carries the project URL as its Referer.
