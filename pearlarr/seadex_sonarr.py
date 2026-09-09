@@ -331,8 +331,7 @@ class SonarrSync(ArrSync[SonarrItem]):
                 )
                 return False
 
-        # Resolve the title (logged later, once episodes give us the
-        # season/episode coverage)
+        # Resolved now, logged once the episode coverage is known.
         title = run.resolve_title(al_id)
 
         # Setup info for cache

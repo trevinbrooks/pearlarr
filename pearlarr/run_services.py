@@ -33,7 +33,7 @@ from .mappings import ExternalIds, MappingEntry, MappingResolver
 from .notify import Notifier
 from .output import emit_to_hub, hub_counts
 from .planner import DownloadPlanner, PlanResult
-from .reporter import PerTitleState, RunContext, RunReporter, is_preview, unresolved_label
+from .reporter import EntryTitle, PerTitleState, RunContext, RunReporter, is_preview, resolve_entry_title
 from .seadex_filter import SeadexReleaseFilter
 from .seadex_gateway import SeaDexGateway, SeaDexMiss, SeaDexSource
 from .seadex_types import (
@@ -43,16 +43,6 @@ from .seadex_types import (
     SonarrEpisode,
 )
 from .torrents import TorrentService
-
-
-@dataclass(frozen=True, slots=True)
-class EntryTitle:
-    """An entry's resolved title: what the run shows, and the AniList title when one resolved."""
-
-    display: str
-    """The AniList title, else the arr item's own title, else the id form."""
-    anilist: str | None
-    """The AniList title alone, the only value the cache stores as the entry's name."""
 
 
 class QbitConnectionError(Exception):
@@ -475,14 +465,13 @@ class RunServices:
     def resolve_title(self, al_id: int) -> EntryTitle:
         """Resolve the entry's title and remember it as the active one (no logging).
 
-        The display value falls back to the arr item's own title, then the id form, so an entry
-        stays identifiable when AniList has nothing. The header is logged later by `log_al_title`.
+        The stored name is deliberately not read: the gateway serves its cached record, and
+        `new_cache_details` writes the result back. The header is logged later by `log_al_title`.
         """
 
-        anilist = self._anilist.title(al_id) or None
-        display = anilist or self._ctx.per_title.arr_title or unresolved_label(al_id)
-        self._ctx.per_title.current_title = display
-        return EntryTitle(display=display, anilist=anilist)
+        title = resolve_entry_title(al_id, self._anilist.title(al_id), self._ctx.per_title.arr_title)
+        self._ctx.per_title.current_title = title.display
+        return title
 
     def new_cache_details(self, title: EntryTitle, sd_entry: EntryRecord) -> CacheRecord:
         """The seed record a processed id accumulates into.

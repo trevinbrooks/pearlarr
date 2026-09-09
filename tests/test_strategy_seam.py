@@ -43,7 +43,8 @@ from pearlarr.mappings import ExternalIds, MappingEntry, MappingSource
 from pearlarr.output import Severity
 from pearlarr.output.recording import RecordingHub
 from pearlarr.planner import PlanResult
-from pearlarr.run_services import EntryTitle, RunServices
+from pearlarr.reporter import EntryTitle
+from pearlarr.run_services import RunServices
 from pearlarr.seadex_radarr import RadarrSync
 from pearlarr.seadex_sonarr import SonarrSync
 from pearlarr.seadex_types import (
@@ -242,8 +243,7 @@ class _FakeRunServices(RunServices):
 
     @override
     def resolve_title(self, al_id: int) -> EntryTitle:
-        del al_id
-        return EntryTitle(display=self._anilist_title, anilist=self._anilist_title)
+        return EntryTitle(al_id=al_id, display=self._anilist_title, anilist=self._anilist_title)
 
     @override
     def new_cache_details(self, title: EntryTitle, sd_entry: EntryRecord) -> CacheRecord:

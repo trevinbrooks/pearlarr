@@ -59,6 +59,24 @@ def unresolved_label(al_id: int) -> str:
 
 
 @dataclass(frozen=True, slots=True)
+class EntryTitle:
+    """An entry's resolved title: what the run shows, and the AniList title when one resolved."""
+
+    al_id: int
+    display: str
+    """The AniList title, else the arr item's own title, else the id form."""
+    anilist: str | None
+    """The AniList title alone, the only value the cache stores as the entry's name."""
+
+
+def resolve_entry_title(al_id: int, anilist: str | None, arr_title: str) -> EntryTitle:
+    """The title ladder: the AniList title, else the arr item's own title, else the id form."""
+
+    anilist = anilist or None
+    return EntryTitle(al_id=al_id, display=anilist or arr_title or unresolved_label(al_id), anilist=anilist)
+
+
+@dataclass(frozen=True, slots=True)
 class GrabRecord:
     """One grab, recorded for the end-of-run summary's "added" detail block."""
 
@@ -345,7 +363,7 @@ class RunReporter:
         """Report an id with no SeaDex entry (bumps the tally, emits a titled row)."""
 
         ctx.stats.no_seadex_entry += 1
-        self._titled_row(EntryState.NO_ENTRY, al_id, self._display_title(ctx, al_id, None))
+        self._titled_row(EntryState.NO_ENTRY, self._display_title(ctx, al_id, None))
 
     def log_seadex_outage_skip(self, ctx: RunContext, al_id: int) -> None:
         """Report a title whose SeaDex lookup was skipped (SeaDex unreachable)."""
@@ -354,24 +372,22 @@ class RunReporter:
         # The stored name wins: a prior run resolved it, so no lookup is needed.
         entry = self.cache_store.get_entry(ctx.arr, al_id)
         title = self._display_title(ctx, al_id, entry.name if entry is not None else None)
-        self._titled_row(EntryState.SKIPPED, al_id, title)
+        self._titled_row(EntryState.SKIPPED, title)
         # Scope-free (the titled row closed the entry): the reason rides col-0.
         self.detail("status", StyledValue("lookup skipped (SeaDex unreachable)", Accent.DIM))
 
-    def _display_title(self, ctx: RunContext, al_id: int, stored: str | None) -> str:
-        """The entry's label: the stored name, else AniList, else the arr's own title, else the id form.
+    def _display_title(self, ctx: RunContext, al_id: int, stored: str | None) -> EntryTitle:
+        """The entry's label: the stored name, else AniList, else the arr's own title, else the id form."""
 
-        `stored` is a parameter because `log_cached_entry` reads it under an arr that may differ from `ctx.arr`.
-        """
+        # `stored` is a parameter because `log_cached_entry` reads it under an arr that may differ from `ctx.arr`.
+        return resolve_entry_title(al_id, stored or self.anilist.title(al_id), ctx.per_title.arr_title)
 
-        return stored or self.anilist.title(al_id) or ctx.per_title.arr_title or unresolved_label(al_id)
-
-    def _titled_row(self, state: EntryState, al_id: int, title: str) -> None:
+    def _titled_row(self, state: EntryState, title: EntryTitle) -> None:
         """A ledger row for an id with no entry block, the id repeated only when the row shows a title."""
 
-        self._ledger(state, title)
-        if title != unresolved_label(al_id):
-            self.detail("anilist", StyledValue(str(al_id)))
+        self._ledger(state, title.display)
+        if title.display != unresolved_label(title.al_id):
+            self.detail("anilist", StyledValue(str(title.al_id)))
 
     # --- entry-block headers -------------------------------------------------
 
@@ -426,7 +442,7 @@ class RunReporter:
         self._block(
             EntryHeader(
                 state,
-                title,
+                title.display,
                 al_id=al_id,
                 coverage=entry.coverage if entry is not None else None,
                 url=entry.url if entry is not None else None,

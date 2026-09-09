@@ -18,8 +18,8 @@ from pearlarr.anilist_gateway import AniListGateway
 from pearlarr.cache import CacheRecord
 from pearlarr.config import Arr
 from pearlarr.log import EntryState
-from pearlarr.reporter import RunContext
-from pearlarr.run_services import EntryTitle, RunServices
+from pearlarr.reporter import EntryTitle, RunContext
+from pearlarr.run_services import RunServices
 
 from .builders import (
     FakeCacheStore,
@@ -131,7 +131,7 @@ class TestCachedEntrySkip:
         assert cache.updates == [{"name": "Resolved"}]
         assert client.query_calls == [7]
 
-    def test_leaves_the_name_empty_when_anilist_still_has_none(self) -> None:
+    def test_leaves_the_name_unset_when_anilist_still_has_none(self) -> None:
         cache = _RecordingCacheStore()
         cache.update_cache(Arr.SONARR, 7, {"url": "u", "updated_at": datetime(2021, 1, 1)})
         cache.updates.clear()
@@ -405,19 +405,19 @@ class TestResolveTitle:
     def test_anilist_title_is_both_display_and_anilist(self) -> None:
         run = self._run(ScriptedTitleClient("Resolved"), arr_title="Series")
 
-        assert run.resolve_title(5) == EntryTitle(display="Resolved", anilist="Resolved")
+        assert run.resolve_title(5) == EntryTitle(al_id=5, display="Resolved", anilist="Resolved")
         assert run._ctx.per_title.current_title == "Resolved"
 
     def test_falls_back_to_the_arr_title(self) -> None:
         run = self._run(ScriptedTitleClient(None), arr_title="Series")
 
-        assert run.resolve_title(5) == EntryTitle(display="Series", anilist=None)
+        assert run.resolve_title(5) == EntryTitle(al_id=5, display="Series", anilist=None)
         assert run._ctx.per_title.current_title == "Series"
 
     def test_falls_back_to_the_id_form_last(self) -> None:
         run = self._run(ScriptedTitleClient(None))
 
-        assert run.resolve_title(5) == EntryTitle(display="AniList #5", anilist=None)
+        assert run.resolve_title(5) == EntryTitle(al_id=5, display="AniList #5", anilist=None)
         assert run._ctx.per_title.current_title == "AniList #5"
 
 
@@ -428,7 +428,7 @@ class TestNewCacheDetails:
         entry = make_entry_record(updated_at=datetime(2021, 1, 1))
         run = make_services()
 
-        details = run.new_cache_details(EntryTitle(display="Resolved", anilist="Resolved"), entry)
+        details = run.new_cache_details(EntryTitle(al_id=5, display="Resolved", anilist="Resolved"), entry)
 
         assert details == {"name": "Resolved", "updated_at": entry.updated_at, "torrent_hashes": []}
 
@@ -438,6 +438,6 @@ class TestNewCacheDetails:
         entry = make_entry_record(updated_at=datetime(2021, 1, 1))
         run = make_services()
 
-        details = run.new_cache_details(EntryTitle(display="Series", anilist=None), entry)
+        details = run.new_cache_details(EntryTitle(al_id=5, display="Series", anilist=None), entry)
 
         assert details == {"updated_at": entry.updated_at, "torrent_hashes": []}

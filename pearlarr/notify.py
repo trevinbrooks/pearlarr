@@ -272,7 +272,7 @@ def _meta_fields(notice: GrabNotice) -> list[EmbedField]:
 
 
 def _grab_embed(notice: GrabNotice) -> DiscordEmbed:
-    """The grab embed: the AniList title/art framing the outcome-labelled pick(s).
+    """The grab embed: the entry title (AniList, else the arr's own) and AniList art framing the pick(s).
 
     A single-group grab (the common case) reads as one compact card: its pick
     rides the description directly under the title, markdown intact. Several
@@ -336,7 +336,7 @@ class Notifier:
         return self.discord_url is not None
 
     def push_grab(self, notice: GrabNotice) -> bool:
-        """Post a grab notification: the AniList title linking to the SeaDex entry.
+        """Post a grab notification: the entry title (AniList, else the arr's own) linking to the SeaDex entry.
 
         The author line names the event ("Sonarr · SeaDex grab") under the
         arr's own logo. A single-group grab carries its pick in the
