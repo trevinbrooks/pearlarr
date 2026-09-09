@@ -16,7 +16,6 @@ composite, fake its leaves" seam - so the whole file type-checks at strict.
 """
 
 import time
-from typing import Any, override
 
 import httpx
 from seadex import Tag
@@ -49,7 +48,15 @@ from pearlarr.reporter import (
 )
 from pearlarr.torrents import AddOutcome, ReleaseOutcome
 
-from .builders import FakeCacheStore, make_entry_record, make_logger, pending_import, rg_group, url_item
+from .builders import (
+    FakeCacheStore,
+    ScriptedTitleClient,
+    make_entry_record,
+    make_logger,
+    pending_import,
+    rg_group,
+    url_item,
+)
 from .fakes import scan_lines_from_events
 
 
@@ -139,7 +146,7 @@ class TestStatsCounters:
         assert ctx.stats.cached == 1
 
     def test_no_sd_entry_increments_and_caches_title(self) -> None:
-        client = _ScriptedTitleClient()
+        client = ScriptedTitleClient()
         reporter = _make_reporter(client=client)
         ctx = RunContext(arr=Arr.SONARR)
         reporter.log_no_sd_entry(ctx, 42)
@@ -155,7 +162,7 @@ class TestStatsCounters:
         # through the gateway too, never a bare wire query.
         store = FakeCacheStore()
         store.update_cache(Arr.SONARR, 1, CacheRecord(coverage="S01", url="u"))
-        client = _ScriptedTitleClient()
+        client = ScriptedTitleClient()
         reporter = _make_reporter(store, client=client)
         ctx = RunContext(arr=Arr.SONARR)
         reporter.log_cached_entry(ctx, Arr.SONARR, 1)
@@ -166,7 +173,7 @@ class TestStatsCounters:
         # A SeaDex-unreachable skip lands in its own counter and its ledger row
         # reads "skipped" with the reason - never "no entry". An UNCACHED id has
         # no stored name, so the title still comes from the gateway lookup.
-        client = _ScriptedTitleClient()
+        client = ScriptedTitleClient()
         reporter, events = _record(client=client)
         ctx = RunContext(arr=Arr.SONARR)
         reporter.log_seadex_outage_skip(ctx, 42)
@@ -182,7 +189,7 @@ class TestStatsCounters:
     def test_outage_skip_prefers_cached_name_over_anilist(self) -> None:
         # A prior run resolved the title and stored it on the cache row, so the
         # outage skip renders the stored name with no AniList lookup at all.
-        client = _ScriptedTitleClient()
+        client = ScriptedTitleClient()
         reporter, events = _record(_seeded_store(name="Stored Title", coverage="S01", url="u"), client=client)
         ctx = RunContext(arr=Arr.SONARR)
         reporter.log_seadex_outage_skip(ctx, 1)
@@ -194,26 +201,6 @@ class TestStatsCounters:
         assert client.query_calls == []  # the stored name spared the lookup
 
 
-class _ScriptedTitleClient(AniListClient):
-    """Checked scripted `AniListClient`: a fixed resolvable title (or none), queries recorded.
-
-    Injected into the gateway under the reporter, so a title lookup exercises
-    the REAL gateway get-or-fetch (cache warm + store) over a canned wire body.
-    """
-
-    def __init__(self, title: str | None = "Resolved") -> None:
-        super().__init__(client=httpx.Client())
-        self._title = title
-        self.query_calls: list[int] = []
-
-    @override
-    def query(self, al_id: int) -> dict[str, Any]:
-        self.query_calls.append(al_id)
-        if self._title is None:
-            return {}
-        return {"data": {"Media": {"id": al_id, "title": {"english": self._title}}}}
-
-
 class TestTitleFallback:
     """A titled row without an AniList title shows the arr's own title, else the id form alone.
 
@@ -221,7 +208,7 @@ class TestTitleFallback:
     """
 
     def test_no_sd_entry_falls_back_to_the_arr_title(self) -> None:
-        reporter, events = _record(client=_ScriptedTitleClient(None))
+        reporter, events = _record(client=ScriptedTitleClient(None))
         ctx = RunContext(arr=Arr.SONARR)
         ctx.per_title.arr_title = "Series"
         reporter.log_no_sd_entry(ctx, 42)
@@ -231,7 +218,7 @@ class TestTitleFallback:
         assert any("anilist" in m and "42" in m for m in messages)
 
     def test_no_sd_entry_without_any_title_shows_the_id_form_alone(self) -> None:
-        reporter, events = _record(client=_ScriptedTitleClient(None))
+        reporter, events = _record(client=ScriptedTitleClient(None))
         ctx = RunContext(arr=Arr.SONARR)
         reporter.log_no_sd_entry(ctx, 42)
 
@@ -243,7 +230,7 @@ class TestTitleFallback:
         # The stored name is empty and AniList still has none: the arr's own title labels the block.
         store = FakeCacheStore()
         store.update_cache(Arr.SONARR, 1, CacheRecord(coverage="S01", url="u"))
-        client = _ScriptedTitleClient(None)
+        client = ScriptedTitleClient(None)
         reporter, events = _record(store, client=client)
         ctx = RunContext(arr=Arr.SONARR)
         ctx.per_title.arr_title = "Series"
@@ -255,7 +242,7 @@ class TestTitleFallback:
     def test_cached_without_any_title_shows_the_id_form(self) -> None:
         store = FakeCacheStore()
         store.update_cache(Arr.SONARR, 1, CacheRecord(coverage="S01", url="u"))
-        reporter, events = _record(store, client=_ScriptedTitleClient(None))
+        reporter, events = _record(store, client=ScriptedTitleClient(None))
         reporter.log_cached_entry(RunContext(arr=Arr.SONARR), Arr.SONARR, 1)
 
         joined = "\n".join(_event_messages(events))

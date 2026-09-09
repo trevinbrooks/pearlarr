@@ -165,6 +165,26 @@ def _evict_stale[K](store: dict[K, dict[str, Any]], cutoff: datetime) -> int:
     return len(stale)
 
 
+class ScriptedTitleClient(AniListClient):
+    """Scripted AniList wire client: a fixed resolvable title (or none), queries recorded.
+
+    Injected under a real gateway, so a title lookup exercises the gateway's
+    get-or-fetch over a canned wire body.
+    """
+
+    def __init__(self, title: str | None = "Resolved") -> None:
+        super().__init__(client=httpx.Client())
+        self._title = title
+        self.query_calls: list[int] = []
+
+    @override
+    def query(self, al_id: int) -> dict[str, Any]:
+        self.query_calls.append(al_id)
+        if self._title is None:
+            return {}
+        return {"data": {"Media": {"id": al_id, "title": {"english": self._title}}}}
+
+
 class FakeCacheStore(AbstractCacheStore):
     """In-memory stand-in mirroring the SQLite `CacheStore` public facade."""
 

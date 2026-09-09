@@ -20,14 +20,12 @@ import itertools
 import logging
 import time
 from dataclasses import dataclass
-from typing import Any, ClassVar, get_args, override
+from typing import ClassVar, get_args
 
-import httpx
 import pytest
 from rich.text import Span, Text
 from seadex import Tag
 
-from pearlarr.anilist_client import AniListClient
 from pearlarr.anilist_gateway import AniListGateway
 from pearlarr.cache import AbstractCacheStore, CacheRecord
 from pearlarr.config import Arr
@@ -80,7 +78,7 @@ from pearlarr.reporter import (
 from pearlarr.seadex_types import SeadexDict
 from pearlarr.torrents import AddOutcome, ReleaseOutcome
 
-from .builders import FakeCacheStore, make_entry_record, pending_import, rg_group, url_item
+from .builders import FakeCacheStore, ScriptedTitleClient, make_entry_record, pending_import, rg_group, url_item
 from .fakes import SCAN_EVENT_TYPES, scan_lines_from_events
 
 type Line = tuple[int, str, ConsoleRender | None]
@@ -795,20 +793,6 @@ def _fresh_logger() -> logging.Logger:
     return logger
 
 
-class _ScriptedTitleClient(AniListClient):
-    """Scripted AniList wire client: a fixed resolvable title, or none at all."""
-
-    def __init__(self, title: str | None) -> None:
-        super().__init__(client=httpx.Client())
-        self._title = title
-
-    @override
-    def query(self, al_id: int) -> dict[str, Any]:
-        if self._title is None:
-            return {}
-        return {"data": {"Media": {"id": al_id, "title": {"english": self._title}}}}
-
-
 class _Harness:
     """A real RunReporter (real gateway, faked leaves) recording emitted events."""
 
@@ -827,7 +811,7 @@ class _Harness:
             anilist=AniListGateway(
                 cache_store=FakeCacheStore(),
                 logger=self.logger,
-                client=_ScriptedTitleClient(title),
+                client=ScriptedTitleClient(title),
             ),
         )
 

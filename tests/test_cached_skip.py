@@ -12,11 +12,8 @@ resolve it). An absent or stale entry is re-processed.
 """
 
 from datetime import datetime
-from typing import Any, override
+from typing import override
 
-import httpx
-
-from pearlarr.anilist_client import AniListClient
 from pearlarr.anilist_gateway import AniListGateway
 from pearlarr.cache import CacheRecord
 from pearlarr.config import Arr
@@ -24,26 +21,17 @@ from pearlarr.log import EntryState
 from pearlarr.reporter import RunContext
 from pearlarr.run_services import EntryTitle, RunServices
 
-from .builders import FakeCacheStore, FakeSeaDexSource, make_entry_record, make_logger, make_services
+from .builders import (
+    FakeCacheStore,
+    FakeSeaDexSource,
+    ScriptedTitleClient,
+    make_entry_record,
+    make_logger,
+    make_services,
+)
 
 
-class _ScriptedTitleClient(AniListClient):
-    """Scripted AniList wire client: a fixed resolvable title or none, queries recorded."""
-
-    def __init__(self, title: str | None) -> None:
-        super().__init__(client=httpx.Client())
-        self._title = title
-        self.query_calls: list[int] = []
-
-    @override
-    def query(self, al_id: int) -> dict[str, Any]:
-        self.query_calls.append(al_id)
-        if self._title is None:
-            return {}
-        return {"data": {"Media": {"id": al_id, "title": {"english": self._title}}}}
-
-
-def _gateway(client: _ScriptedTitleClient) -> AniListGateway:
+def _gateway(client: ScriptedTitleClient) -> AniListGateway:
     """A real gateway over the scripted wire client (its own cache leaf faked)."""
 
     return AniListGateway(cache_store=FakeCacheStore(), logger=make_logger(), client=client)
@@ -65,7 +53,7 @@ class _RecordingCacheStore(FakeCacheStore):
 def _unresolving() -> AniListGateway:
     """A gateway whose lookups resolve nothing, so a nameless cached entry stays nameless."""
 
-    return _gateway(_ScriptedTitleClient(None))
+    return _gateway(ScriptedTitleClient(None))
 
 
 class _RecordingReporter:
@@ -135,7 +123,7 @@ class TestCachedEntrySkip:
         cache = _RecordingCacheStore()
         cache.update_cache(Arr.SONARR, 7, {"url": "u", "updated_at": datetime(2021, 1, 1)})
         cache.updates.clear()
-        client = _ScriptedTitleClient("Resolved")
+        client = ScriptedTitleClient("Resolved")
         run = make_services(cache_store=cache, _reporter=_RecordingReporter(), _anilist=_gateway(client))
 
         assert run.cached_entry_skip(7, make_entry_record(updated_at=datetime(2021, 1, 1)), lambda: "") is True
@@ -150,7 +138,7 @@ class TestCachedEntrySkip:
         run = make_services(
             cache_store=cache,
             _reporter=_RecordingReporter(),
-            _anilist=_gateway(_ScriptedTitleClient(None)),
+            _anilist=_gateway(ScriptedTitleClient(None)),
         )
 
         assert run.cached_entry_skip(7, make_entry_record(updated_at=datetime(2021, 1, 1)), lambda: "") is True
@@ -164,7 +152,7 @@ class TestCachedEntrySkip:
         cache = _RecordingCacheStore()
         cache.update_cache(Arr.SONARR, 7, {"name": "Kept", "url": "u", "updated_at": datetime(2021, 1, 1)})
         cache.updates.clear()
-        client = _ScriptedTitleClient("Resolved")
+        client = ScriptedTitleClient("Resolved")
         run = make_services(cache_store=cache, _reporter=_RecordingReporter(), _anilist=_gateway(client))
 
         assert run.cached_entry_skip(7, make_entry_record(updated_at=datetime(2021, 1, 1)), lambda: "") is True
@@ -179,7 +167,7 @@ class TestCachedEntrySkip:
         run = make_services(
             cache_store=cache,
             _reporter=_RecordingReporter(),
-            _anilist=_gateway(_ScriptedTitleClient("Resolved")),
+            _anilist=_gateway(ScriptedTitleClient("Resolved")),
         )
 
         assert (
@@ -409,25 +397,25 @@ class TestResolveTitle:
     """`resolve_title` shows AniList's title, else the arr's own, else the id form, and remembers it."""
 
     @staticmethod
-    def _run(client: _ScriptedTitleClient, arr_title: str = "") -> RunServices:
+    def _run(client: ScriptedTitleClient, arr_title: str = "") -> RunServices:
         run = make_services(_anilist=_gateway(client))
         run._ctx.per_title.arr_title = arr_title
         return run
 
     def test_anilist_title_is_both_display_and_anilist(self) -> None:
-        run = self._run(_ScriptedTitleClient("Resolved"), arr_title="Series")
+        run = self._run(ScriptedTitleClient("Resolved"), arr_title="Series")
 
         assert run.resolve_title(5) == EntryTitle(display="Resolved", anilist="Resolved")
         assert run._ctx.per_title.current_title == "Resolved"
 
     def test_falls_back_to_the_arr_title(self) -> None:
-        run = self._run(_ScriptedTitleClient(None), arr_title="Series")
+        run = self._run(ScriptedTitleClient(None), arr_title="Series")
 
         assert run.resolve_title(5) == EntryTitle(display="Series", anilist=None)
         assert run._ctx.per_title.current_title == "Series"
 
     def test_falls_back_to_the_id_form_last(self) -> None:
-        run = self._run(_ScriptedTitleClient(None))
+        run = self._run(ScriptedTitleClient(None))
 
         assert run.resolve_title(5) == EntryTitle(display="AniList #5", anilist=None)
         assert run._ctx.per_title.current_title == "AniList #5"
