@@ -36,7 +36,7 @@ RETRYABLE_STATUS = {429, 500, 502, 503, 504}
 MAX_RETRIES = 3
 MAX_BACKOFF = 60
 
-# A refusal's error message is quoted in the once-per-run warning, clamped to this.
+# AniList's error message is quoted in the once-per-run breaker warning, clamped to this.
 _REFUSAL_MESSAGE_MAX = 160
 
 
@@ -106,7 +106,7 @@ query ($ids: [Int]) {{
 def _log_wait(reason: str, wait: float, retry: int, *, severity: Severity = Severity.INFO) -> None:
     """One backoff notice, so a long Retry-After wait doesn't look like a hang."""
 
-    # Fourth param: a network-blip wait rides at DEBUG, a throttle wait at INFO.
+    # A network-blip wait rides at DEBUG, a throttle wait at INFO.
     hub_note(f"AniList {reason} - waiting {wait:.0f}s (retry {retry}/{MAX_RETRIES})", severity=severity)
 
 
@@ -130,24 +130,16 @@ def _errors_are_retryable(body: dict[str, Any] | None) -> bool:
     return False
 
 
-def _is_refusal(status: int, body: dict[str, Any] | None) -> bool:
-    """True when AniList turned the request away instead of answering it.
+def _refusal(status: int, body: dict[str, Any] | None) -> str | None:
+    """The breaker reason when AniList did not answer, else None. An unknown id keeps its `data` node."""
 
-    A non-JSON error page, or an error body with no `data` at all. An unknown
-    id keeps its `data` node (`Media: null`) and is not a refusal.
-    """
-
-    if body is None:
-        return status >= 400
-    return body.get("data") is None and bool(_parse_errors(body))
-
-
-def _refusal_detail(status: int, body: dict[str, Any] | None) -> str:
-    """The once-per-run reason for a refusal, quoting AniList's first error message."""
-
+    if body is not None and body.get("data") is not None:
+        return None
     errors = _parse_errors(body)
     message = " ".join(errors[0].message.split())[:_REFUSAL_MESSAGE_MAX] if errors else ""
-    return f"refused the request (HTTP {status}: {message})" if message else f"refused the request (HTTP {status})"
+    if message:
+        return f"refused the request (HTTP {status}: {message})"
+    return f"gave no usable answer (HTTP {status})"
 
 
 def _parse_errors(body: dict[str, Any] | None) -> list[AniListError]:
@@ -217,15 +209,15 @@ def media_from(body: dict[str, Any] | None) -> AniListMediaNode:
 class AniListClient:
     """AniList GraphQL wire client: the POST + retry policy, bound once.
 
-    Cache-blind (the gateway layers the run cache on top). A per-run breaker
-    trips on retry exhaustion or a refusal, after which every call returns empty.
+    Cache-blind (the gateway layers the run cache on top). A per-run breaker trips
+    on retry exhaustion or a dataless answer, after which every call returns empty.
     """
 
     def __init__(self, *, client: httpx.Client) -> None:
         """Bind the wire client to the shared web client (network-free)."""
 
         self._client = client
-        # Set once AniList refused or exhausted its retries: every later call short-circuits this run.
+        # Set once AniList gave no answer or exhausted its retries: every later call short-circuits this run.
         self._outage = False
 
     @property
@@ -238,7 +230,7 @@ class AniListClient:
         """Warn ONCE that AniList is unavailable, muting every later call via the flag."""
 
         if not self._outage:
-            hub_warn(f"AniList {detail}, skipping AniList lookups for the rest of this run")
+            hub_warn(f"AniList {detail}, skipping further lookups this run")
         self._outage = True
 
     def query(self, al_id: int) -> dict[str, Any]:
@@ -272,7 +264,7 @@ class AniListClient:
         """POST a GraphQL query, retrying politely on rate limits and 5xx.
 
         Returns the parsed body, or `{}` when it was not JSON or the breaker has
-        tripped. Retry exhaustion and a refusal trip the breaker for the run.
+        tripped. Retry exhaustion and any dataless answer trip the breaker for the run.
         """
 
         if self._outage:
@@ -296,9 +288,9 @@ class AniListClient:
             retryable = resp.status_code in RETRYABLE_STATUS
 
             # Parse the body so a soft-throttle (HTTP 200 + throttle error payload)
-            # can take the same retry path as a 429 status. A non-JSON body - or a
-            # JSON body that isn't an object (e.g. an array) - folds to None here
-            # and returns as {} below, the callers' no-data arm.
+            # can take the same retry path as a 429 status. A non-JSON body, or a
+            # JSON body that isn't an object (e.g. an array), folds to None here
+            # and trips the breaker below.
             raw_body: object
             try:
                 raw_body = resp.json()
@@ -329,12 +321,12 @@ class AniListClient:
                 time.sleep(wait)
                 continue
 
-            # Terminal: exhausted retries and a refusal both trip the breaker. The
+            # Terminal: exhausted retries and any dataless answer trip the breaker. The
             # body (possibly an error payload) still returns so the caller degrades.
             if retryable:
                 self._note_outage(f"request failed after {MAX_RETRIES} retries")
-            elif _is_refusal(resp.status_code, body):
-                self._note_outage(_refusal_detail(resp.status_code, body))
+            elif (detail := _refusal(resp.status_code, body)) is not None:
+                self._note_outage(detail)
             return body if body is not None else {}
 
         return {}

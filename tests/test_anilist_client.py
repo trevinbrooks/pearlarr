@@ -348,7 +348,7 @@ def _recording() -> RecordingHub:
 
 _DISABLED_MESSAGE = "The AniList API has been temporarily disabled due to severe stability issues."
 _DISABLED_BODY: dict[str, object] = {"errors": [{"message": _DISABLED_MESSAGE, "status": 403}], "data": None}
-_SKIPPING = "skipping AniList lookups for the rest of this run"
+_SKIPPING = "skipping further lookups this run"
 
 
 @respx.mock
@@ -453,7 +453,7 @@ def test_refusal_delivered_as_200_trips(monkeypatch: pytest.MonkeyPatch) -> None
 
 @respx.mock
 def test_non_json_error_page_trips(monkeypatch: pytest.MonkeyPatch) -> None:
-    """A non-JSON error page (an HTML 403) is a refusal with no message to quote."""
+    """A non-JSON error page (an HTML 403) trips the breaker with no message to quote."""
 
     monkeypatch.setattr(time, "sleep", _no_sleep)
     recording = _recording()
@@ -466,7 +466,43 @@ def test_non_json_error_page_trips(monkeypatch: pytest.MonkeyPatch) -> None:
     assert client.outage is True
     assert route.call_count == 1
     (warning,) = _warnings(recording)
-    assert warning.message == f"AniList refused the request (HTTP 403), {_SKIPPING}"
+    assert warning.message == f"AniList gave no usable answer (HTTP 403), {_SKIPPING}"
+
+
+@respx.mock
+def test_non_json_200_body_trips(monkeypatch: pytest.MonkeyPatch) -> None:
+    """A non-JSON body riding HTTP 200 is no answer at all: the breaker trips and later calls make no request."""
+
+    monkeypatch.setattr(time, "sleep", _no_sleep)
+    recording = _recording()
+    client = _client()
+    route = respx.post(API_URL).respond(status_code=200, text="<html>")
+
+    assert client.query(1) == {}
+    assert client.query(2) == {}
+
+    assert client.outage is True
+    assert route.call_count == 1
+    (warning,) = _warnings(recording)
+    assert warning.message == f"AniList gave no usable answer (HTTP 200), {_SKIPPING}"
+
+
+@respx.mock
+def test_dataless_200_body_without_errors_trips(monkeypatch: pytest.MonkeyPatch) -> None:
+    """An HTTP 200 `{"data": null}` with no errors is no answer either: the breaker trips, the body still returns."""
+
+    monkeypatch.setattr(time, "sleep", _no_sleep)
+    recording = _recording()
+    client = _client()
+    route = respx.post(API_URL).respond(status_code=200, json={"data": None})
+
+    assert client.query(1) == {"data": None}
+    assert client.query(2) == {}
+
+    assert client.outage is True
+    assert route.call_count == 1
+    (warning,) = _warnings(recording)
+    assert warning.message == f"AniList gave no usable answer (HTTP 200), {_SKIPPING}"
 
 
 @respx.mock
