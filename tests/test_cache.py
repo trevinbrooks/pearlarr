@@ -16,7 +16,15 @@ from pathlib import Path
 import pytest
 
 import pearlarr
-from pearlarr.cache import SCHEMA_VERSION, CacheSchemaError, CacheStore, HistoryCheckpoint
+from pearlarr.cache import (
+    SCHEMA_VERSION,
+    CacheSchemaError,
+    CacheStore,
+    HistoryCheckpoint,
+    record_is_fresh,
+    record_payload,
+    stamp_is_fresh,
+)
 from pearlarr.config import Arr
 from pearlarr.log import LOG_NAME
 from pearlarr.manual_import import GuardFacts, OwnedEpisode, PendingImport, PendingKey
@@ -616,6 +624,35 @@ class TestAnilistMeta:
         assert meta is not None
         assert meta["data"] == {"a": 2}
         store.close()
+
+
+class TestRecordFreshness:
+    """The persisted-record readers: the payload half, the stamp half, and their conjunction."""
+
+    def test_record_payload_wants_a_non_empty_object(self) -> None:
+        assert record_payload(None, "data") is None
+        assert record_payload({"fetched_at": "2026-06-26 12:00:00"}, "data") is None
+        assert record_payload({"data": {}}, "data") is None
+        assert record_payload({"data": [{"x": 1}]}, "data") is None
+        assert record_payload({"data": {"x": 1}}, "data") == {"x": 1}
+
+    def test_stamp_is_fresh_parses_and_compares(self) -> None:
+        cutoff = datetime(2026, 6, 20)
+        assert stamp_is_fresh({"fetched_at": "2026-06-26 12:00:00"}, cutoff) is True
+        assert stamp_is_fresh({"fetched_at": "2020-01-01 00:00:00"}, cutoff) is False
+        assert stamp_is_fresh({}, cutoff) is False
+        assert stamp_is_fresh({"fetched_at": 5}, cutoff) is False
+
+    def test_record_is_fresh_is_the_conjunction_over_a_list_payload(self) -> None:
+        # The parse cache's payload is a list, so the conjunction checks truthiness, not shape.
+        cutoff = datetime(2026, 6, 20)
+        eps = [{"season": 1, "episode": 1}]
+        fresh = {"fetched_at": "2026-06-26 12:00:00", "episodes": eps}
+        assert record_is_fresh(fresh, payload_key="episodes", cutoff=cutoff) is True
+        assert record_is_fresh({**fresh, "episodes": []}, payload_key="episodes", cutoff=cutoff) is False
+        aged = {**fresh, "fetched_at": "2020-01-01 00:00:00"}
+        assert record_is_fresh(aged, payload_key="episodes", cutoff=cutoff) is False
+        assert record_is_fresh(None, payload_key="episodes", cutoff=cutoff) is False
 
 
 class TestSonarrParse:

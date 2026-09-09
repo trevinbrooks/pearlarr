@@ -19,6 +19,7 @@ from seadex import EntryRecord
 
 from . import __version__
 from .config import Arr
+from .json_narrow import is_json_obj
 from .manual_import import GuardFacts, PendingKey
 from .output import hub_note
 from .sqlite_util import connect as _sqlite_connect
@@ -217,6 +218,24 @@ def _ensure_schema(conn: sqlite3.Connection, path: str) -> None:
         hub_note(f"Upgraded cache database schema v{step} -> v{step + 1}")
 
 
+def record_payload(record: dict[str, Any] | None, key: str) -> dict[str, Any] | None:
+    """The non-empty payload object a persisted record holds under `key`, else None."""
+
+    if not isinstance(record, dict):
+        return None
+    payload = record.get(key)
+    return payload if is_json_obj(payload) and payload else None
+
+
+def stamp_is_fresh(record: dict[str, Any], cutoff: datetime) -> bool:
+    """True if the record's `fetched_at` parses and is at or after `cutoff`."""
+
+    try:
+        return parse_stamp(record.get("fetched_at", "")) >= cutoff
+    except (TypeError, ValueError):
+        return False
+
+
 def record_is_fresh(
     record: dict[str, Any] | None,
     *,
@@ -225,15 +244,8 @@ def record_is_fresh(
 ) -> bool:
     """True if a persisted record has a payload under `payload_key` and its `fetched_at` is within TTL."""
 
-    if not isinstance(record, dict):
-        return False
-    if not record.get(payload_key):
-        return False
-    try:
-        stamp = parse_stamp(record.get("fetched_at", ""))
-    except (TypeError, ValueError):
-        return False
-    return stamp >= cutoff
+    # The payload check is truthiness, not shape: a parse record's payload is a list.
+    return isinstance(record, dict) and bool(record.get(payload_key)) and stamp_is_fresh(record, cutoff)
 
 
 class CacheRecord(TypedDict, total=False):

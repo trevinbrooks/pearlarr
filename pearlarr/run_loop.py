@@ -147,7 +147,11 @@ class RunLoop:
 
         with boot.step("Fetching AniList metadata") as step:
             fetched = self._anilist.prefetch(prefetch_ids, preview=self._services.is_preview(), progress=step)
-            step.note("cached" if fetched == 0 else count_noun(fetched, "entry", "entries"))
+            if self._anilist.outage:
+                # Terse: the client already warned once with the failure detail.
+                step.warn("unavailable")
+            else:
+                step.note("cached" if fetched == 0 else count_noun(fetched, "entry", "entries"))
 
         # Batched OR-filter queries collapse the per-id from_id round-trips. An outage mid-prefetch
         # must not claim "N entries" it never fetched.
