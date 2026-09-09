@@ -14,7 +14,7 @@ from collections.abc import Iterator, Mapping, Sequence
 from datetime import datetime, timedelta
 from typing import Any, NamedTuple, NotRequired, TypedDict, cast
 
-from .cache import UPDATED_AT_STR_FORMAT, record_is_fresh, stamp_is_fresh
+from .cache import UPDATED_AT_STR_FORMAT, stamp_is_fresh
 from .json_narrow import is_json_list, is_json_obj
 from .log import count_noun
 from .manual_import import path_leaf
@@ -256,11 +256,7 @@ class SonarrParseCache:
         """
 
         if record.get("episodes"):
-            return record_is_fresh(
-                record,
-                payload_key="episodes",
-                cutoff=window.cutoff,
-            )
+            return stamp_is_fresh(record, window.cutoff)
         if record.get("series_fp") != window.series_fp:
             return False
         return stamp_is_fresh(record, window.neg_cutoff)

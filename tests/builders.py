@@ -14,7 +14,7 @@ import httpx
 from pydantic import BaseModel
 from seadex import EntryRecord, File, Tag, TorrentRecord, Tracker
 
-from pearlarr.anilist_client import AniListClient
+from pearlarr.anilist_client import AniListCache, AniListClient
 from pearlarr.anilist_gateway import AniListGateway
 from pearlarr.arr_categories import ArrCategoryResolver, _CategoryPair
 from pearlarr.arr_http import ArrHttp
@@ -168,21 +168,28 @@ def _evict_stale[K](store: dict[K, dict[str, Any]], cutoff: datetime) -> int:
 class ScriptedTitleClient(AniListClient):
     """Scripted AniList wire client: a fixed resolvable title (or none), queries recorded.
 
-    Injected under a real gateway, so a title lookup exercises the gateway's
-    get-or-fetch over a canned wire body.
+    Injected under a real gateway, so a lookup exercises the gateway's get-or-fetch over a
+    canned wire body. The breaker never trips here, both overrides answer without a request.
     """
 
     def __init__(self, title: str | None = "Resolved") -> None:
         super().__init__(client=httpx.Client())
         self._title = title
         self.query_calls: list[int] = []
+        self.batch_calls: list[list[int]] = []
+
+    def _body(self, al_id: int) -> dict[str, dict[str, Any]]:
+        return {"data": {"Media": {"id": al_id, "title": {"english": self._title}}}}
 
     @override
     def query(self, al_id: int) -> dict[str, Any]:
         self.query_calls.append(al_id)
-        if self._title is None:
-            return {}
-        return {"data": {"Media": {"id": al_id, "title": {"english": self._title}}}}
+        return {} if self._title is None else self._body(al_id)
+
+    @override
+    def query_batch(self, al_ids: list[int]) -> AniListCache:
+        self.batch_calls.append(list(al_ids))
+        return {} if self._title is None else {al_id: self._body(al_id) for al_id in al_ids}
 
 
 class FakeCacheStore(AbstractCacheStore):

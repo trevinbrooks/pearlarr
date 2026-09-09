@@ -13,7 +13,7 @@ from typing import Any, override
 import httpx
 
 from pearlarr.anilist_client import ANILIST_BATCH_SIZE, MAX_RETRIES, AniListCache, AniListClient
-from pearlarr.anilist_gateway import ANILIST_CACHE_TTL_DAYS, AniListGateway
+from pearlarr.anilist_gateway import ANILIST_REFRESH_AGE_DAYS, AniListGateway
 from pearlarr.cache import UPDATED_AT_STR_FORMAT
 
 from .builders import FakeCacheStore, make_logger
@@ -58,7 +58,7 @@ def _full_media(al_id: int) -> dict[str, dict[str, Any]]:
 def _stale_record(al_id: int) -> dict[str, Any]:
     """A fully-populated store record stamped past the refresh age."""
 
-    return {"fetched_at": _stamp(days_ago=ANILIST_CACHE_TTL_DAYS + 1), "data": _full_media(al_id)}
+    return {"fetched_at": _stamp(days_ago=ANILIST_REFRESH_AGE_DAYS + 1), "data": _full_media(al_id)}
 
 
 class _ScriptedClient(AniListClient):
@@ -304,6 +304,8 @@ class TestSaveCache:
         assert rewritten["fetched_at"] == original
 
     def test_single_id_fetch_is_written(self) -> None:
+        # Pins the mechanism: a single-id fetch lands in `_fetched` and the
+        # prefetch-time save (the only production save) writes it.
         client = _ScriptedClient(full=True)
         gateway, store = _make_gateway(client)
 

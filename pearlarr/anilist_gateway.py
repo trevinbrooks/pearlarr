@@ -23,7 +23,7 @@ from .seadex_types import AniListMediaNode, ProgressSink
 # How old a persisted AniList response gets before a run refetches it.
 # title/format/coverImage are effectively static. Episodes for a currently airing
 # show drift, so this caps how stale that count can get (~one episode/week).
-ANILIST_CACHE_TTL_DAYS = 7
+ANILIST_REFRESH_AGE_DAYS = 7
 
 
 class AniListGateway:
@@ -65,7 +65,7 @@ class AniListGateway:
     def load_cache(self) -> None:
         """Seed the run cache from every stored record, marking those past the refresh age stale."""
 
-        cutoff = datetime.now() - timedelta(days=ANILIST_CACHE_TTL_DAYS)
+        cutoff = datetime.now() - timedelta(days=ANILIST_REFRESH_AGE_DAYS)
         loaded = 0
         for al_id, record in self._cache.iter_anilist_meta():
             payload = record_payload(record, "data")
@@ -90,13 +90,14 @@ class AniListGateway:
         now = datetime.now()
         now_str = now.strftime(UPDATED_AT_STR_FORMAT)
         written = len(self._fetched)
+        # Sorted so the write order is deterministic.
         for al_id in sorted(self._fetched):
             self._cache.put_anilist_meta(al_id, {"fetched_at": now_str, "data": self.al_cache[al_id]})
         self._fetched.clear()
 
         # Evicting during an outage would drain the very records serving the run.
-        cutoff = now - timedelta(days=ANILIST_CACHE_TTL_DAYS)
-        evicted = 0 if preview or self._client.outage else self._cache.evict_anilist_meta(cutoff)
+        cutoff = now - timedelta(days=ANILIST_REFRESH_AGE_DAYS)
+        evicted = 0 if preview or self.outage else self._cache.evict_anilist_meta(cutoff)
 
         if written or evicted:
             self._cache.save(preview=preview)
@@ -123,14 +124,14 @@ class AniListGateway:
         done = 0
         for start in range(0, total, ANILIST_BATCH_SIZE):
             # A tripped breaker answers every later batch empty, so stop asking.
-            if self._client.outage:
+            if self.outage:
                 break
             chunk = wanted[start : start + ANILIST_BATCH_SIZE]
             fetched = self._client.query_batch(chunk)
             for al_id, body in fetched.items():
                 self._store(al_id, body)
             # A healthy batch answers for its whole chunk: what it left out is unknown to AniList.
-            if not self._client.outage:
+            if not self.outage:
                 self._absent.update(i for i in chunk if i not in fetched)
             done += len(chunk)
             if progress is not None:
@@ -147,14 +148,14 @@ class AniListGateway:
         if body is not None:
             return media_from(body)
         # A remembered miss or a tripped breaker answers without a request.
-        if al_id in self._absent or self._client.outage:
+        if al_id in self._absent or self.outage:
             return AniListMediaNode()
 
         fetched = self._client.query(al_id)
         raw_media = extract_path(fetched, "data", "Media")
         if raw_media:
             self._store(al_id, fetched)
-        elif not self._client.outage:
+        elif not self.outage:
             # AniList answered and knows no such id. A failure trips the breaker instead.
             self._absent.add(al_id)
         return media_node_from(raw_media)

@@ -19,6 +19,8 @@ pinned by asserting recorded state.
 import logging
 from typing import override
 
+from pearlarr.anilist_client import MAX_RETRIES
+from pearlarr.anilist_gateway import AniListGateway
 from pearlarr.boot_flow import BootFlow
 from pearlarr.config import AppConfig, Arr
 from pearlarr.manual_import import Outcome, OutcomeCategory
@@ -31,7 +33,7 @@ from pearlarr.run_loop import RunLoop
 from pearlarr.seadex_types import ProgressSink
 from pearlarr.wait_view import WaitOutcomeRow, WaitResult
 
-from .builders import FakeCacheStore, make_bare_instance, make_config, make_services
+from .builders import FakeCacheStore, ScriptedTitleClient, make_bare_instance, make_config, make_services
 from .fakes import FakeArrItem, FakeStrategy, install_recording_hub
 
 
@@ -98,6 +100,7 @@ def _engine(
     config: AppConfig | None = None,
     seadex: _FakeGateway | None = None,
     cache_store: FakeCacheStore | None = None,
+    anilist: AniListGateway | None = None,
 ) -> RunLoop:
     """A bare `RunLoop` wired with typed fakes for the run-loop collaborators.
 
@@ -109,6 +112,7 @@ def _engine(
     ctx-bind fakes. The `cache_store` backs the activity scan's checkpoint.
     `config` overrides the loop's config (the activity-scan toggle tests).
     `cache_store` shares one store across engines (the checkpoint replay tests).
+    `anilist` swaps in a real gateway (the AniList boot-note tests).
     """
 
     config = config if config is not None else make_config()
@@ -123,7 +127,7 @@ def _engine(
         logger=logger,
         _config=config,
         _arr_config=config.for_arr(Arr.SONARR),
-        _anilist=_FakeGateway(),
+        _anilist=anilist if anilist is not None else _FakeGateway(),
         _seadex=seadex if seadex is not None else _FakeGateway(),
         _reporter=_FakeReporter(),
         _services=services,
@@ -311,6 +315,53 @@ class TestSeaDexBootNote:
         step = self._seadex_step(self._run(logger, seadex=_FakeGateway()))
 
         assert step.detail == "cached"  # the fake reports 0 fetched -> cache-warm
+        assert step.outcome is OutcomeCategory.SUCCESS
+
+
+class _TrippedClient(ScriptedTitleClient):
+    """The scripted client with its breaker already tripped, so the gateway reads an outage."""
+
+    def __init__(self) -> None:
+        super().__init__()
+        self._note_outage(f"request failed after {MAX_RETRIES} retries")
+
+
+class TestAniListBootNote:
+    """The AniList prefetch step's ledger note must be truthful on an outage.
+
+    The gateway is real over the shared scripted client, so the note reads the
+    breaker the way the run does (`AniListGateway.outage` mirrors its client).
+    """
+
+    def _anilist_step(self, recording: RecordingHub) -> BootStepFinished:
+        [step] = [e for e in recording.of_type(BootStepFinished) if e.label == "Fetching AniList metadata"]
+        return step
+
+    def _run(self, logger: logging.Logger, *, client: ScriptedTitleClient) -> RecordingHub:
+        strategy = FakeStrategy(
+            items=[FakeArrItem(item_id=1, title="A")],
+            anilist_ids={1: MappingEntry(anilist_id=1)},
+        )
+        anilist = AniListGateway(cache_store=FakeCacheStore(), logger=logger, client=client)
+        recording = install_recording_hub()
+        _engine(_FinalizeRecorder(), logger, anilist=anilist).run_sync(
+            strategy,
+            item_id=None,
+            dry_run=True,
+            boot=BootFlow(),
+        )
+        return recording
+
+    def test_outage_notes_unavailable_not_a_count(self, logger: logging.Logger) -> None:
+        step = self._anilist_step(self._run(logger, client=_TrippedClient()))
+
+        assert step.detail == "unavailable"
+        assert step.outcome is OutcomeCategory.DEFERRED  # graduates as a warning
+
+    def test_healthy_prefetch_keeps_the_count_note(self, logger: logging.Logger) -> None:
+        step = self._anilist_step(self._run(logger, client=ScriptedTitleClient()))
+
+        assert step.detail == "1 entry"  # the one mapped id needed fetching
         assert step.outcome is OutcomeCategory.SUCCESS
 
 

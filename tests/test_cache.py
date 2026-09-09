@@ -21,7 +21,6 @@ from pearlarr.cache import (
     CacheSchemaError,
     CacheStore,
     HistoryCheckpoint,
-    record_is_fresh,
     record_payload,
     stamp_is_fresh,
 )
@@ -135,8 +134,8 @@ CREATE TABLE pending_imports (
 """
 
 
-# The v3 shape of `entries` (current columns, names as an unreachable AniList
-# once stored them). Only the table the v3 -> v4 step rewrites is declared.
+# The v3 shape of `entries` (current columns). A name may hold the id form an
+# outage once stored. Only the table the v3 -> v4 step rewrites is declared.
 _V3_ENTRIES_SCHEMA = """
 CREATE TABLE kv (key TEXT PRIMARY KEY, value TEXT);
 CREATE TABLE entries (
@@ -677,17 +676,6 @@ class TestRecordFreshness:
         assert stamp_is_fresh({}, cutoff) is False
         assert stamp_is_fresh({"fetched_at": 5}, cutoff) is False
 
-    def test_record_is_fresh_is_the_conjunction_over_a_list_payload(self) -> None:
-        # The parse cache's payload is a list, so the conjunction checks truthiness, not shape.
-        cutoff = datetime(2026, 6, 20)
-        eps = [{"season": 1, "episode": 1}]
-        fresh = {"fetched_at": "2026-06-26 12:00:00", "episodes": eps}
-        assert record_is_fresh(fresh, payload_key="episodes", cutoff=cutoff) is True
-        assert record_is_fresh({**fresh, "episodes": []}, payload_key="episodes", cutoff=cutoff) is False
-        aged = {**fresh, "fetched_at": "2020-01-01 00:00:00"}
-        assert record_is_fresh(aged, payload_key="episodes", cutoff=cutoff) is False
-        assert record_is_fresh(None, payload_key="episodes", cutoff=cutoff) is False
-
 
 class TestSonarrParse:
     """Parsed Sonarr episode records round-trip keyed by filename, and a missing filename reads back None."""
@@ -1027,7 +1015,7 @@ class TestMaintenance:
 
     def test_evict_sweeps_stampless_records(self, tmp_path: Path) -> None:
         # A record with no fetched_at -> NULL generated column. It is unreadable
-        # (record_is_fresh rejects it) and must not become un-evictable dead weight.
+        # (stamp_is_fresh rejects it) and must not become un-evictable dead weight.
         store = _open(tmp_path)
         store.put_anilist_meta(1, {"data": {"x": 1}})  # no fetched_at -> NULL
         store.put_anilist_meta(2, {"fetched_at": "2026-06-26 12:00:00", "data": {"x": 2}})

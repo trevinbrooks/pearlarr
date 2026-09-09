@@ -185,6 +185,8 @@ def _migrate_2_to_3(conn: sqlite3.Connection) -> None:
 def _migrate_3_to_4(conn: sqlite3.Connection) -> None:
     """Null the id-form names an AniList outage once stored, so the next cached read resolves them."""
 
+    # The pattern is the frozen v3-era form of `reporter.unresolved_label`, spelled
+    # out on purpose so the migration never tracks the live label.
     conn.execute("UPDATE entries SET name = NULL WHERE name LIKE 'AniList #%'")
 
 
@@ -241,18 +243,6 @@ def stamp_is_fresh(record: dict[str, Any], cutoff: datetime) -> bool:
         return parse_stamp(record.get("fetched_at", "")) >= cutoff
     except (TypeError, ValueError):
         return False
-
-
-def record_is_fresh(
-    record: dict[str, Any] | None,
-    *,
-    payload_key: str,
-    cutoff: datetime,
-) -> bool:
-    """True if a persisted record has a payload under `payload_key` and its `fetched_at` is within TTL."""
-
-    # The payload check is truthiness, not shape: a parse record's payload is a list.
-    return isinstance(record, dict) and bool(record.get(payload_key)) and stamp_is_fresh(record, cutoff)
 
 
 class CacheRecord(TypedDict, total=False):
@@ -660,7 +650,7 @@ class CacheStore(AbstractCacheStore):
 
     @override
     def iter_anilist_meta(self) -> Iterator[tuple[int, dict[str, Any]]]:
-        """Yield `(al_id, record)` for every stored record, TTL unfiltered (see `record_is_fresh`)."""
+        """Yield `(al_id, record)` for every stored record, age unfiltered (see `stamp_is_fresh`)."""
 
         for al_id, rec_json in self._conn.execute(
             "SELECT al_id, json(record) FROM anilist_meta",
