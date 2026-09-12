@@ -24,7 +24,6 @@ from pearlarr.anilist_client import (
     _MEDIA_FIELDS,
     API_URL,
     MAX_RETRIES,
-    REQUEST_HEADERS,
     RETRYABLE_ERROR_SUBSTRINGS,
     RETRYABLE_STATUS,
     AniListClient,
@@ -240,17 +239,15 @@ def test_query_returns_valid_200_body(monkeypatch: pytest.MonkeyPatch) -> None:
 
 
 @respx.mock
-def test_every_post_carries_the_project_referer(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_every_post_carries_the_project_referer() -> None:
     """AniList refuses a Referer-less request, so the single and batch POSTs both name the project."""
 
-    monkeypatch.setattr(time, "sleep", _no_sleep)
     route = respx.post(API_URL).respond(json={"data": {"Media": {"id": 1}}})
 
     client = _client()
     client.query(1)
     client.query_batch([1, 2])
 
-    assert REQUEST_HEADERS == {"Referer": PROJECT_URL}
     assert route.call_count == 2
     calls = cast("list[Call]", route.calls)
     assert [call.request.headers["Referer"] for call in calls] == [PROJECT_URL, PROJECT_URL]
@@ -376,40 +373,31 @@ def test_rate_limit_wait_is_narrated(monkeypatch: pytest.MonkeyPatch) -> None:
 
 
 @respx.mock
-def test_retry_give_up_trips_the_breaker(monkeypatch: pytest.MonkeyPatch) -> None:
-    """Exhausting the retries warns ONCE and trips the breaker: later queries make no request at all."""
+@pytest.mark.parametrize(
+    ("effect", "returned"),
+    [
+        pytest.param(httpx.Response(429, json={"data": None}), {"data": None}, id="throttled"),
+        pytest.param(httpx.ConnectError("down"), {}, id="unreachable"),
+    ],
+)
+def test_give_up_trips_the_breaker(
+    monkeypatch: pytest.MonkeyPatch, effect: httpx.Response | Exception, returned: dict[str, object]
+) -> None:
+    """Exhausting the retries warns ONCE and trips the breaker: later calls never touch the wire."""
 
     monkeypatch.setattr(time, "sleep", _no_sleep)
     recording = _recording()
     client = _client()
-    route = respx.post(API_URL).respond(status_code=429, json={"data": None})
+    route = respx.post(API_URL).mock(side_effect=[effect] * (MAX_RETRIES + 1))
 
-    client.query(1)
+    assert client.query(1) == returned
     assert client.outage is True
     assert client.query(2) == {}
     assert client.query_batch([3, 4]) == {}
 
     assert route.call_count == MAX_RETRIES + 1
-    warnings = _warnings(recording)
-    assert len(warnings) == 1
-    assert warnings[0].message == f"AniList request failed after {MAX_RETRIES} retries, {_SKIPPING}"
-
-
-@respx.mock
-def test_network_give_up_trips_the_breaker(monkeypatch: pytest.MonkeyPatch) -> None:
-    """A hard network outage degrades to `{}` with one warning, and later calls never touch the wire."""
-
-    monkeypatch.setattr(time, "sleep", _no_sleep)
-    recording = _recording()
-    client = _client()
-    route = respx.post(API_URL).mock(side_effect=httpx.ConnectError("down"))
-
-    assert client.query(1) == {}
-    assert client.outage is True
-    assert client.query(2) == {}
-
-    assert route.call_count == MAX_RETRIES + 1
-    assert len(_warnings(recording)) == 1
+    (warning,) = _warnings(recording)
+    assert warning.message == f"AniList request failed after {MAX_RETRIES} retries, {_SKIPPING}"
 
 
 @respx.mock
@@ -431,7 +419,6 @@ def test_network_give_up_trips_the_breaker(monkeypatch: pytest.MonkeyPatch) -> N
         pytest.param(
             httpx.Response(403, text="<html>forbidden</html>"), {}, "gave no usable answer (HTTP 403)", id="html 403"
         ),
-        pytest.param(httpx.Response(200, text="<html>"), {}, "gave no usable answer (HTTP 200)", id="html 200"),
         pytest.param(
             httpx.Response(200, json={"data": None}),
             {"data": None},

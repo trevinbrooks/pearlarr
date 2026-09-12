@@ -16,7 +16,6 @@ producer will emit), so the golden is one shared spine: reporter call -> lines,
 event -> the same lines.
 """
 
-import itertools
 import logging
 import time
 from dataclasses import dataclass
@@ -26,7 +25,6 @@ import pytest
 from rich.text import Span, Text
 from seadex import Tag
 
-from pearlarr.anilist_gateway import AniListGateway
 from pearlarr.cache import AbstractCacheStore, CacheRecord
 from pearlarr.config import Arr
 from pearlarr.log import (
@@ -78,7 +76,15 @@ from pearlarr.reporter import (
 from pearlarr.seadex_types import SeadexDict
 from pearlarr.torrents import AddOutcome, ReleaseOutcome
 
-from .builders import FakeCacheStore, ScriptedTitleClient, make_entry_record, pending_import, rg_group, url_item
+from .builders import (
+    FakeCacheStore,
+    ScriptedAniListClient,
+    make_anilist_gateway,
+    make_entry_record,
+    pending_import,
+    rg_group,
+    url_item,
+)
 from .fakes import SCAN_EVENT_TYPES, scan_lines_from_events
 
 type Line = tuple[int, str, ConsoleRender | None]
@@ -266,8 +272,6 @@ NO_ENTRY_RESOLVED_LINES: tuple[Line, ...] = (
     _detail("    anilist   42", "anilist", "42", style=None),
 )
 
-NO_ENTRY_ARR_TITLE_ROW = LedgerRow(state=EntryState.NO_ENTRY, label="Arr Title")
-NO_ENTRY_ARR_TITLE_DETAIL = EntryDetail(label="anilist", value=StyledValue("42"))
 NO_ENTRY_ARR_TITLE_LINES: tuple[Line, ...] = (
     _blank(),
     _styled("  no entry    Arr Title", "grey50"),
@@ -787,26 +791,12 @@ SUMMARY_WAIT_OFF_LINES: tuple[Line, ...] = (
 
 # --- the harness: drive the REAL reporter, assert the goldens --------------------------
 
-_logger_ids = itertools.count()
-
-
-def _fresh_logger() -> logging.Logger:
-    """A uniquely-named DEBUG logger for the gateway/scripted-client collaborators."""
-
-    logger = logging.getLogger(f"scan-parity-{next(_logger_ids)}")
-    logger.propagate = False
-    logger.setLevel(logging.DEBUG)
-    return logger
-
 
 class _Harness:
     """A real RunReporter (real gateway, faked leaves) recording emitted events."""
 
     def __init__(self, store: AbstractCacheStore | None = None, title: str | None = None) -> None:
-        # NullHandler: the logger only serves the gateway/scripted client. The
-        # parity lines come from the recorded EVENTS below, never from records.
-        self.logger = _fresh_logger()
-        self.logger.addHandler(logging.NullHandler())
+        # The parity lines come from the recorded EVENTS below, never from log records.
         self.events: list[Event] = []
         # The summary's issues row diffs this bound counter (scripted directly).
         self.counts = SeverityCounts()
@@ -814,11 +804,7 @@ class _Harness:
             emit=self.events.append,
             counts=lambda: self.counts,
             cache_store=store if store is not None else FakeCacheStore(),
-            anilist=AniListGateway(
-                cache_store=FakeCacheStore(),
-                logger=self.logger,
-                client=ScriptedTitleClient(title),
-            ),
+            anilist=make_anilist_gateway(ScriptedAniListClient(title)),
         )
 
     def lines(self) -> tuple[Line, ...]:

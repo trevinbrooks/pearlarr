@@ -134,8 +134,8 @@ CREATE TABLE pending_imports (
 """
 
 
-# The v3 shape of `entries` (current columns). A name may hold the id form an
-# outage once stored. Only the table the v3 -> v4 step rewrites is declared.
+# The v3 shape of the tables `CacheStore.load` needs: `kv` plus the `entries`
+# the v3 -> v4 step rewrites (a name may hold the id form an outage once stored).
 _V3_ENTRIES_SCHEMA = """
 CREATE TABLE kv (key TEXT PRIMARY KEY, value TEXT);
 CREATE TABLE entries (
@@ -660,7 +660,7 @@ class TestAnilistMeta:
 
 
 class TestRecordFreshness:
-    """The persisted-record readers: the payload half, the stamp half, and their conjunction."""
+    """The persisted-record readers: the payload half and the stamp half, split apart."""
 
     def test_record_payload_wants_a_non_empty_object(self) -> None:
         assert record_payload(None, "data") is None

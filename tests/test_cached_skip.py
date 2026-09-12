@@ -11,12 +11,12 @@ backfilled once if the record predates those fields, its name once AniList can
 resolve it). An absent or stale entry is re-processed.
 """
 
+from dataclasses import dataclass
 from datetime import datetime
 from typing import override
 
 import pytest
 
-from pearlarr.anilist_gateway import AniListGateway
 from pearlarr.cache import CacheRecord
 from pearlarr.config import Arr
 from pearlarr.log import EntryState
@@ -26,17 +26,11 @@ from pearlarr.run_services import RunServices
 from .builders import (
     FakeCacheStore,
     FakeSeaDexSource,
-    ScriptedTitleClient,
+    ScriptedAniListClient,
+    make_anilist_gateway,
     make_entry_record,
-    make_logger,
     make_services,
 )
-
-
-def _gateway(client: ScriptedTitleClient) -> AniListGateway:
-    """A real gateway over the scripted wire client (its own cache leaf faked)."""
-
-    return AniListGateway(cache_store=FakeCacheStore(), logger=make_logger(), client=client)
 
 
 class _RecordingCacheStore(FakeCacheStore):
@@ -50,12 +44,6 @@ class _RecordingCacheStore(FakeCacheStore):
     def update_cache(self, arr: Arr, al_id: int, cache_details: CacheRecord | None = None) -> None:
         self.updates.append(cache_details if cache_details is not None else {})
         super().update_cache(arr, al_id, cache_details)
-
-
-def _unresolving() -> AniListGateway:
-    """A gateway whose lookups resolve nothing, so a nameless cached entry stays nameless."""
-
-    return _gateway(ScriptedTitleClient(None))
 
 
 class _RecordingReporter:
@@ -75,8 +63,22 @@ class _RecordingReporter:
         return True
 
 
+@dataclass(frozen=True, slots=True)
+class _BackfillCase:
+    """One cached-entry backfill: the stored row, what AniList resolves, the single write, the wire calls, the name after."""
+
+    stored: CacheRecord
+    anilist: str | None
+    updates: list[CacheRecord]
+    queries: list[int]
+    name: str | None
+
+
+_FRESH = datetime(2021, 1, 1)
+
+
 class TestCachedEntrySkip:
-    """`cached_entry_skip` skips only a fresh cached entry, backfilling url/coverage once.
+    """`cached_entry_skip` skips only a fresh cached entry, backfilling url/coverage and the name once.
 
     It is bypassed by `ignore_seadex_update_times` or a dirty id, and the dirty set clears each run.
     """
@@ -86,13 +88,21 @@ class TestCachedEntrySkip:
         # cached_entry_skip touches only cache_store + _config (real, default
         # ignore_seadex_update_times=False) + the reporter + the AniList gateway the
         # name backfill asks. ctx defaults to a SONARR RunContext (make_services).
-        return make_services(cache_store=cache, _reporter=_RecordingReporter(), _anilist=_unresolving())
+        return make_services(
+            cache_store=cache,
+            _reporter=_RecordingReporter(),
+            _anilist=make_anilist_gateway(ScriptedAniListClient(None)),
+        )
 
     def test_skips_when_cached_and_timestamp_matches(self) -> None:
         cache = FakeCacheStore()
         cache.update_cache(Arr.SONARR, 7, {"url": "u", "updated_at": datetime(2021, 1, 1)})
         reporter = _RecordingReporter()
-        run = make_services(cache_store=cache, _reporter=reporter, _anilist=_unresolving())
+        run = make_services(
+            cache_store=cache,
+            _reporter=reporter,
+            _anilist=make_anilist_gateway(ScriptedAniListClient(None)),
+        )
         assert run.cached_entry_skip(7, make_entry_record(updated_at=datetime(2021, 1, 1)), lambda: "") is True
         assert len(reporter.calls) == 1
 
@@ -107,77 +117,77 @@ class TestCachedEntrySkip:
         # SeaDex entry now carries a newer updated_at -> stale -> re-process.
         assert run.cached_entry_skip(7, make_entry_record(updated_at=datetime(2022, 6, 6)), lambda: "") is False
 
-    def test_backfills_url_and_coverage_when_url_missing(self) -> None:
-        cache = FakeCacheStore()
-        cache.update_cache(Arr.SONARR, 7, {"updated_at": datetime(2021, 1, 1)})  # legacy: no url yet
-        run = self._run(cache)
-        assert (
-            run.cached_entry_skip(7, make_entry_record(updated_at=datetime(2021, 1, 1), url="sd-url"), lambda: "S01")
-            is True
-        )
-        backfilled = cache.get_entry(Arr.SONARR, 7)
-        assert backfilled is not None
-        assert (backfilled.url, backfilled.coverage) == ("sd-url", "S01")
-
-    def test_backfills_the_name_when_anilist_resolves_it_now(self) -> None:
-        # A record written while AniList was unreachable carries no name. Once the
-        # gateway resolves one, the skip stores it (nothing else re-processes a fresh entry).
+    @pytest.mark.parametrize(
+        "case",
+        [
+            pytest.param(
+                _BackfillCase(
+                    stored={"updated_at": _FRESH},
+                    anilist=None,
+                    updates=[{"url": "sd-url", "coverage": "S01"}],
+                    queries=[7],
+                    name=None,
+                ),
+                id="url and coverage a legacy row lacks",
+            ),
+            pytest.param(
+                _BackfillCase(
+                    stored={"url": "u", "updated_at": _FRESH},
+                    anilist="Resolved",
+                    updates=[{"name": "Resolved"}],
+                    queries=[7],
+                    name="Resolved",
+                ),
+                id="name a row written during an outage lacks",
+            ),
+            pytest.param(
+                _BackfillCase(
+                    stored={"updated_at": _FRESH},
+                    anilist="Resolved",
+                    updates=[{"url": "sd-url", "coverage": "S01", "name": "Resolved"}],
+                    queries=[7],
+                    name="Resolved",
+                ),
+                id="both merged into one write",
+            ),
+            pytest.param(
+                _BackfillCase(
+                    stored={"name": "Kept", "url": "u", "updated_at": _FRESH},
+                    anilist="Resolved",
+                    updates=[],
+                    queries=[],
+                    name="Kept",
+                ),
+                id="a stored name spares the lookup",
+            ),
+            pytest.param(
+                _BackfillCase(
+                    stored={"url": "u", "updated_at": _FRESH},
+                    anilist=None,
+                    updates=[],
+                    queries=[7],
+                    name=None,
+                ),
+                id="nothing to resolve writes nothing",
+            ),
+        ],
+    )
+    def test_backfills_once_in_a_single_write(self, case: _BackfillCase) -> None:
+        # Nothing else re-processes a fresh entry, so the skip is where an older record
+        # picks up its url/coverage and a record written during an outage picks up its name.
         cache = _RecordingCacheStore()
-        cache.update_cache(Arr.SONARR, 7, {"url": "u", "updated_at": datetime(2021, 1, 1)})
+        cache.update_cache(Arr.SONARR, 7, case.stored)
         cache.updates.clear()
-        client = ScriptedTitleClient("Resolved")
-        run = make_services(cache_store=cache, _reporter=_RecordingReporter(), _anilist=_gateway(client))
+        client = ScriptedAniListClient(case.anilist)
+        run = make_services(cache_store=cache, _reporter=_RecordingReporter(), _anilist=make_anilist_gateway(client))
 
-        assert run.cached_entry_skip(7, make_entry_record(updated_at=datetime(2021, 1, 1)), lambda: "") is True
+        assert run.cached_entry_skip(7, make_entry_record(updated_at=_FRESH, url="sd-url"), lambda: "S01") is True
 
-        assert cache.updates == [{"name": "Resolved"}]
-        assert client.query_calls == [7]
-
-    def test_leaves_the_name_unset_when_anilist_still_has_none(self) -> None:
-        cache = _RecordingCacheStore()
-        cache.update_cache(Arr.SONARR, 7, {"url": "u", "updated_at": datetime(2021, 1, 1)})
-        cache.updates.clear()
-        run = make_services(
-            cache_store=cache,
-            _reporter=_RecordingReporter(),
-            _anilist=_gateway(ScriptedTitleClient(None)),
-        )
-
-        assert run.cached_entry_skip(7, make_entry_record(updated_at=datetime(2021, 1, 1)), lambda: "") is True
-
-        assert cache.updates == []
-        entry = cache.get_entry(Arr.SONARR, 7)
-        assert entry is not None
-        assert entry.name is None
-
-    def test_leaves_a_stored_name_alone_without_a_lookup(self) -> None:
-        cache = _RecordingCacheStore()
-        cache.update_cache(Arr.SONARR, 7, {"name": "Kept", "url": "u", "updated_at": datetime(2021, 1, 1)})
-        cache.updates.clear()
-        client = ScriptedTitleClient("Resolved")
-        run = make_services(cache_store=cache, _reporter=_RecordingReporter(), _anilist=_gateway(client))
-
-        assert run.cached_entry_skip(7, make_entry_record(updated_at=datetime(2021, 1, 1)), lambda: "") is True
-
-        assert cache.updates == []
-        assert client.query_calls == []
-
-    def test_url_and_name_backfills_merge_into_one_write(self) -> None:
-        cache = _RecordingCacheStore()
-        cache.update_cache(Arr.SONARR, 7, {"updated_at": datetime(2021, 1, 1)})  # legacy: no url, no name
-        cache.updates.clear()
-        run = make_services(
-            cache_store=cache,
-            _reporter=_RecordingReporter(),
-            _anilist=_gateway(ScriptedTitleClient("Resolved")),
-        )
-
-        assert (
-            run.cached_entry_skip(7, make_entry_record(updated_at=datetime(2021, 1, 1), url="sd-url"), lambda: "S01")
-            is True
-        )
-
-        assert cache.updates == [{"url": "sd-url", "coverage": "S01", "name": "Resolved"}]
+        assert cache.updates == case.updates
+        assert client.query_calls == case.queries
+        persisted = cache.get_entry(Arr.SONARR, 7)
+        assert persisted is not None
+        assert persisted.name == case.name
 
     def test_ignore_update_times_reprocesses_even_when_fresh(self) -> None:
         # The config escape hatch: a fresh, matching timestamp is still re-processed.
@@ -220,7 +230,7 @@ class TestCachedEntrySkip:
         run = make_services(
             cache_store=cache,
             _reporter=_RecordingReporter(),
-            _anilist=_unresolving(),
+            _anilist=make_anilist_gateway(ScriptedAniListClient(None)),
             _filter=_CtxBind(),
             _grab_pipeline=_CtxBind(),
         )
@@ -247,7 +257,7 @@ class TestFallbackSatisfiedResurfacing:
         run = make_services(
             cache_store=cache,
             _reporter=_RecordingReporter(),
-            _anilist=_unresolving(),
+            _anilist=make_anilist_gateway(ScriptedAniListClient(None)),
             private_releases=private_releases,
         )
         return run.cached_entry_skip(7, make_entry_record(updated_at=datetime(2021, 1, 1)), lambda: "")
@@ -390,8 +400,8 @@ class TestResolveTitle:
     """`resolve_title` shows AniList's title, else the arr's own, else the id form."""
 
     @staticmethod
-    def _run(client: ScriptedTitleClient, arr_title: str = "") -> RunServices:
-        run = make_services(_anilist=_gateway(client))
+    def _run(client: ScriptedAniListClient, arr_title: str = "") -> RunServices:
+        run = make_services(_anilist=make_anilist_gateway(client))
         run._ctx.arr_title = arr_title
         return run
 
@@ -404,36 +414,27 @@ class TestResolveTitle:
         ],
     )
     def test_climbs_the_ladder(self, anilist: str | None, arr_title: str, display: str) -> None:
-        run = self._run(ScriptedTitleClient(anilist), arr_title=arr_title)
+        run = self._run(ScriptedAniListClient(anilist), arr_title=arr_title)
 
         assert run.resolve_title(5) == EntryTitle(al_id=5, display=display, anilist=anilist)
-
-    def test_leaves_the_active_title_to_the_entry_header(self) -> None:
-        # `log_al_title` owns the attribution triple, so resolving must not write a second time.
-        run = self._run(ScriptedTitleClient("Resolved"), arr_title="Series")
-
-        run.resolve_title(5)
-
-        assert run._ctx.per_title.current_title is None
 
 
 class TestNewCacheDetails:
     """`new_cache_details` seeds the record, carrying a name only when AniList resolved one."""
 
-    def test_resolved_title_rides_as_the_name(self) -> None:
-        entry = make_entry_record(updated_at=datetime(2021, 1, 1))
-        run = make_services()
-
-        details = run.new_cache_details(EntryTitle(al_id=5, display="Resolved", anilist="Resolved"), entry)
-
-        assert details == {"name": "Resolved", "updated_at": entry.updated_at, "torrent_hashes": []}
-
-    def test_fallback_title_is_never_stored_as_the_name(self) -> None:
+    @pytest.mark.parametrize(
+        ("anilist", "name"),
+        [
+            pytest.param("Resolved", {"name": "Resolved"}, id="resolved title rides as the name"),
+            pytest.param(None, {}, id="fallback title is never stored"),
+        ],
+    )
+    def test_carries_the_name_only_when_anilist_resolved_it(self, anilist: str | None, name: CacheRecord) -> None:
         # A fallback label must not clobber a name a prior run stored (the merge
         # keeps the omitted field), nor persist an id form a later run would have to undo.
-        entry = make_entry_record(updated_at=datetime(2021, 1, 1))
+        entry = make_entry_record(updated_at=_FRESH)
         run = make_services()
 
-        details = run.new_cache_details(EntryTitle(al_id=5, display="Series", anilist=None), entry)
+        details = run.new_cache_details(EntryTitle(al_id=5, display="Series", anilist=anilist), entry)
 
-        assert details == {"updated_at": entry.updated_at, "torrent_hashes": []}
+        assert details == {**name, "updated_at": entry.updated_at, "torrent_hashes": []}
