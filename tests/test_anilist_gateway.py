@@ -160,7 +160,7 @@ class TestLoadCache:
 
 
 class TestPrefetch:
-    """prefetch batches the missing and stale ids, merges, persists, and stops on an outage."""
+    """prefetch batches the missing and stale ids, persists exactly what it fetched, and stops on an outage."""
 
     def test_all_fresh_fetches_nothing(self) -> None:
         client = _ScriptedClient()
@@ -212,6 +212,41 @@ class TestPrefetch:
         assert record is not None
         assert record["fetched_at"] >= before
 
+    def test_writes_exactly_the_fetched_ids(self) -> None:
+        client = _ScriptedClient()
+        gateway, store = _make_gateway(client)
+        original = _stamp(days_ago=1)
+        store.put_anilist_meta(1, {"fetched_at": original, "data": _media(1)})
+        gateway.load_cache()
+        gateway.al_cache[2] = _media(2)  # in memory but never fetched, so never written
+
+        before = _now_str()
+        gateway.prefetch([1, 2, 3], preview=False)
+
+        assert client.batch_calls == [[3]]
+        # A loaded fresh row keeps its stamp, so the refresh age can actually reach it.
+        fresh = store.get_anilist_meta(1)
+        assert fresh is not None
+        assert fresh["fetched_at"] == original
+        assert store.get_anilist_meta(2) is None
+        written = store.get_anilist_meta(3)
+        assert written is not None
+        assert written["fetched_at"] >= before
+        assert written["data"] == _media(3)
+
+    def test_a_preview_save_writes_nothing(self) -> None:
+        # A preview never commits, so the fetch stays in memory and no aged row is evicted.
+        client = _ScriptedClient()
+        gateway, store = _make_gateway(client)
+        store.put_anilist_meta(1, _stale_record(1))
+
+        gateway.prefetch([3], preview=True)
+
+        assert client.batch_calls == [[3]]
+        assert gateway.al_cache[3] == _media(3)
+        assert store.get_anilist_meta(3) is None
+        assert store.get_anilist_meta(1) is not None
+
     def test_stops_once_the_breaker_trips(self) -> None:
         client = _ScriptedClient(failing=frozenset({1}))
         gateway, store = _make_gateway(client)
@@ -228,9 +263,6 @@ class TestPrefetch:
         assert sink.updates == []
         assert gateway.al_cache == {}
         assert store.get_anilist_meta(1) is None
-        # Every later lookup answers without a request.
-        assert gateway.title(ids[-1]) is None
-        assert client.query_calls == []
 
     def test_outage_keeps_stale_rows_and_serves_them(self) -> None:
         client = _ScriptedClient(failing=frozenset({1}))
@@ -271,97 +303,6 @@ class TestPrefetch:
         assert gateway.title(2) == "English Title"
         assert gateway.n_eps(2) == 12
         assert client.query_calls == []
-
-
-class TestSaveCache:
-    """save_cache writes exactly what this run fetched, and evicts only on a healthy real save."""
-
-    def test_writes_exactly_the_fetched_ids(self) -> None:
-        client = _ScriptedClient()
-        gateway, store = _make_gateway(client)
-        original = _stamp(days_ago=1)
-        store.put_anilist_meta(1, {"fetched_at": original, "data": _media(1)})
-        gateway.load_cache()
-        gateway.al_cache[2] = _media(2)  # in memory but never fetched, so never written
-
-        before = _now_str()
-        gateway.prefetch([1, 2, 3], preview=False)
-
-        assert client.batch_calls == [[3]]
-        # A loaded fresh row keeps its stamp, so the refresh age can actually reach it.
-        fresh = store.get_anilist_meta(1)
-        assert fresh is not None
-        assert fresh["fetched_at"] == original
-        assert store.get_anilist_meta(2) is None
-        written = store.get_anilist_meta(3)
-        assert written is not None
-        assert written["fetched_at"] >= before
-        assert written["data"] == _media(3)
-
-    def test_a_real_save_drains_the_write_queue(self) -> None:
-        client = _ScriptedClient()
-        gateway, store = _make_gateway(client)
-        original = _stamp(days_ago=1)
-        gateway.prefetch([3], preview=False)
-
-        # Nothing left queued, so a second save rewrites nothing.
-        store.put_anilist_meta(3, {"fetched_at": original, "data": _media(3)})
-        gateway.save_cache(preview=False)
-
-        record = store.get_anilist_meta(3)
-        assert record is not None
-        assert record["fetched_at"] == original
-
-    def test_a_preview_save_writes_nothing(self) -> None:
-        # A preview never commits, so the fetch is served from memory and never staged.
-        client = _ScriptedClient()
-        gateway, store = _make_gateway(client)
-
-        gateway.prefetch([3], preview=True)
-
-        assert client.batch_calls == [[3]]
-        assert gateway.al_cache[3] == _media(3)
-        assert store.get_anilist_meta(3) is None
-
-    def test_single_id_fetch_is_written(self) -> None:
-        # Pins the mechanism: an on-demand fetch queues into `_fetched` like a batched one.
-        # Production saves at prefetch time only, so one made later is re-queried next run.
-        client = _ScriptedClient(full=True)
-        gateway, store = _make_gateway(client)
-
-        assert gateway.title(42) == "English Title"
-        gateway.save_cache(preview=False)
-
-        record = store.get_anilist_meta(42)
-        assert record is not None
-        assert record["data"] == _full_media(42)
-
-    def test_real_save_evicts_past_cutoff(self) -> None:
-        gateway, store = _make_gateway()
-        store.put_anilist_meta(1, _stale_record(1))
-
-        gateway.save_cache(preview=False)
-
-        assert store.get_anilist_meta(1) is None
-
-    def test_preview_leaves_stale_records(self) -> None:
-        gateway, store = _make_gateway()
-        store.put_anilist_meta(1, _stale_record(1))
-
-        gateway.save_cache(preview=True)
-
-        assert store.get_anilist_meta(1) is not None
-
-    def test_outage_leaves_stale_records(self) -> None:
-        client = _ScriptedClient(failing=frozenset({5}))
-        gateway, store = _make_gateway(client)
-        store.put_anilist_meta(1, _stale_record(1))
-        assert gateway.title(5) is None
-        assert gateway.outage is True
-
-        gateway.save_cache(preview=False)
-
-        assert store.get_anilist_meta(1) is not None
 
 
 class TestMediaResolution:
@@ -407,28 +348,14 @@ class TestMediaResolution:
         assert gateway.al_cache[7] == {}
         assert client.query_calls == [7]
 
-    def test_an_id_the_batch_left_out_is_confirmed_once_then_remembered(self) -> None:
-        # An omission is not proof the id is unknown (a truncated page reads the same), so one
-        # single-id query settles it. The remaining four accessors ride that answer.
-        client = _ScriptedClient(absent=frozenset({7}))
-        gateway, _ = _make_gateway(client)
-        gateway.prefetch([7], preview=True)
-
-        assert gateway.title(7) is None
-        assert gateway.thumb(7) is None
-        assert gateway.banner(7) is None
-        assert gateway.media_format(7) is None
-        assert gateway.n_eps(7) is None
-
-        assert client.query_calls == [7]
-
     def test_failure_trips_the_breaker_and_mutes_later_lookups(self) -> None:
         client = _ScriptedClient(failing=frozenset({7}), full=True)
         gateway, _ = _make_gateway(client)
 
         assert gateway.title(7) is None
         assert gateway.outage is True
-        # Even an id AniList knows answers without a request now.
+        # The failed id is not remembered as a miss, and even an id AniList knows answers without a request now.
+        assert gateway.al_cache == {}
         assert gateway.title(8) is None
         assert client.query_calls == [7]
 

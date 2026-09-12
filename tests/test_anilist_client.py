@@ -413,103 +413,57 @@ def test_network_give_up_trips_the_breaker(monkeypatch: pytest.MonkeyPatch) -> N
 
 
 @respx.mock
-def test_refusal_warns_once_quoting_the_message(monkeypatch: pytest.MonkeyPatch) -> None:
-    """A 403 refusal trips the breaker on the first request, warning once with AniList's own message."""
+@pytest.mark.parametrize(
+    ("response", "returned", "detail"),
+    [
+        pytest.param(
+            httpx.Response(403, json=_DISABLED_BODY),
+            _DISABLED_BODY,
+            f"refused the request (HTTP 403: {_DISABLED_MESSAGE})",
+            id="403 refusal",
+        ),
+        pytest.param(
+            httpx.Response(200, json=_DISABLED_BODY),
+            _DISABLED_BODY,
+            f"refused the request (HTTP 200: {_DISABLED_MESSAGE})",
+            id="refusal riding 200",
+        ),
+        pytest.param(
+            httpx.Response(403, text="<html>forbidden</html>"), {}, "gave no usable answer (HTTP 403)", id="html 403"
+        ),
+        pytest.param(httpx.Response(200, text="<html>"), {}, "gave no usable answer (HTTP 200)", id="html 200"),
+        pytest.param(
+            httpx.Response(200, json={"data": None}),
+            {"data": None},
+            "gave no usable answer (HTTP 200)",
+            id="dataless 200",
+        ),
+    ],
+)
+def test_dataless_answer_trips_the_breaker_once(
+    response: httpx.Response, returned: dict[str, object], detail: str
+) -> None:
+    """Any dataless answer trips the breaker on the first request: one warning, the body still returned, then no traffic."""
 
-    monkeypatch.setattr(time, "sleep", _no_sleep)
     recording = _recording()
     client = _client()
-    route = respx.post(API_URL).respond(status_code=403, json=_DISABLED_BODY)
+    route = respx.post(API_URL).mock(return_value=response)
 
     body = client.query(1)
     assert client.outage is True
     assert client.query(2) == {}
     assert client.query_batch([3]) == {}
 
-    assert body == _DISABLED_BODY
-    assert route.call_count == 1
-    warnings = _warnings(recording)
-    assert len(warnings) == 1
-    assert warnings[0].message == f"AniList refused the request (HTTP 403: {_DISABLED_MESSAGE}), {_SKIPPING}"
-
-
-@respx.mock
-def test_refusal_delivered_as_200_trips(monkeypatch: pytest.MonkeyPatch) -> None:
-    """A maintenance refusal riding HTTP 200 (a 403 error entry, `data` null) trips the breaker too."""
-
-    monkeypatch.setattr(time, "sleep", _no_sleep)
-    recording = _recording()
-    client = _client()
-    route = respx.post(API_URL).respond(status_code=200, json=_DISABLED_BODY)
-
-    client.query(1)
-    client.query(2)
-
-    assert client.outage is True
+    assert body == returned
     assert route.call_count == 1
     (warning,) = _warnings(recording)
-    assert warning.message == f"AniList refused the request (HTTP 200: {_DISABLED_MESSAGE}), {_SKIPPING}"
+    assert warning.message == f"AniList {detail}, {_SKIPPING}"
 
 
 @respx.mock
-def test_non_json_error_page_trips(monkeypatch: pytest.MonkeyPatch) -> None:
-    """A non-JSON error page (an HTML 403) trips the breaker with no message to quote."""
-
-    monkeypatch.setattr(time, "sleep", _no_sleep)
-    recording = _recording()
-    client = _client()
-    route = respx.post(API_URL).respond(status_code=403, text="<html>forbidden</html>")
-
-    assert client.query(1) == {}
-    assert client.query(2) == {}
-
-    assert client.outage is True
-    assert route.call_count == 1
-    (warning,) = _warnings(recording)
-    assert warning.message == f"AniList gave no usable answer (HTTP 403), {_SKIPPING}"
-
-
-@respx.mock
-def test_non_json_200_body_trips(monkeypatch: pytest.MonkeyPatch) -> None:
-    """A non-JSON body riding HTTP 200 is no answer at all: the breaker trips and later calls make no request."""
-
-    monkeypatch.setattr(time, "sleep", _no_sleep)
-    recording = _recording()
-    client = _client()
-    route = respx.post(API_URL).respond(status_code=200, text="<html>")
-
-    assert client.query(1) == {}
-    assert client.query(2) == {}
-
-    assert client.outage is True
-    assert route.call_count == 1
-    (warning,) = _warnings(recording)
-    assert warning.message == f"AniList gave no usable answer (HTTP 200), {_SKIPPING}"
-
-
-@respx.mock
-def test_dataless_200_body_without_errors_trips(monkeypatch: pytest.MonkeyPatch) -> None:
-    """An HTTP 200 `{"data": null}` with no errors is no answer either: the breaker trips, the body still returns."""
-
-    monkeypatch.setattr(time, "sleep", _no_sleep)
-    recording = _recording()
-    client = _client()
-    route = respx.post(API_URL).respond(status_code=200, json={"data": None})
-
-    assert client.query(1) == {"data": None}
-    assert client.query(2) == {}
-
-    assert client.outage is True
-    assert route.call_count == 1
-    (warning,) = _warnings(recording)
-    assert warning.message == f"AniList gave no usable answer (HTTP 200), {_SKIPPING}"
-
-
-@respx.mock
-def test_refusal_message_is_collapsed_and_clamped(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_refusal_message_is_collapsed_and_clamped() -> None:
     """The quoted message is whitespace-collapsed and clamped, so the warning stays one readable line."""
 
-    monkeypatch.setattr(time, "sleep", _no_sleep)
     recording = _recording()
     ragged = "down\n  for\t maintenance " + "x" * 200
     body: dict[str, object] = {"errors": [{"message": ragged, "status": 403}], "data": None}
@@ -524,10 +478,9 @@ def test_refusal_message_is_collapsed_and_clamped(monkeypatch: pytest.MonkeyPatc
 
 
 @respx.mock
-def test_unknown_id_404_is_an_ordinary_miss(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_unknown_id_404_is_an_ordinary_miss() -> None:
     """AniList's unknown-id answer (HTTP 404, `data.Media` null plus a not-found error) never trips the breaker."""
 
-    monkeypatch.setattr(time, "sleep", _no_sleep)
     recording = _recording()
     client = _client()
     not_found: dict[str, object] = {"data": {"Media": None}, "errors": [{"message": "Not Found.", "status": 404}]}

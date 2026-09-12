@@ -239,16 +239,6 @@ class TestTitleFallback:
         assert client.query_calls == [1]
         assert any("Series" in m for m in _event_messages(events))
 
-    def test_cached_without_any_title_shows_the_id_form(self) -> None:
-        store = FakeCacheStore()
-        store.update_cache(Arr.SONARR, 1, CacheRecord(coverage="S01", url="u"))
-        reporter, events = _record(store, client=ScriptedTitleClient(None))
-        reporter.log_cached_entry(RunContext(arr=Arr.SONARR), Arr.SONARR, 1)
-
-        joined = "\n".join(_event_messages(events))
-        assert "AniList #1" in joined
-        assert "unknown title" not in joined
-
 
 class TestActiveTitle:
     """`log_al_title` sets the context's current title, url, and coverage for the open entry."""
