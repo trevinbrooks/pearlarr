@@ -101,6 +101,7 @@ class RadarrSync(ArrSync[RadarrItem]):
 
         return self._services.get_anilist_ids(
             ExternalIds(tmdb=item.tmdbId, imdb=item.imdbId),
+            arr_title=item.title,
             log_ignored=log_ignored,
         )
 

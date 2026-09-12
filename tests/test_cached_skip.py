@@ -394,7 +394,7 @@ class TestAlIdPrologue:
 
 
 class TestResolveTitle:
-    """`resolve_title` shows AniList's title, else the arr's own, else the id form, and remembers it."""
+    """`resolve_title` shows AniList's title, else the arr's own, else the id form."""
 
     @staticmethod
     def _run(client: ScriptedTitleClient, arr_title: str = "") -> RunServices:
@@ -405,20 +405,25 @@ class TestResolveTitle:
     def test_anilist_title_is_both_display_and_anilist(self) -> None:
         run = self._run(ScriptedTitleClient("Resolved"), arr_title="Series")
 
-        assert run.resolve_title(5) == EntryTitle(al_id=5, display="Resolved", anilist="Resolved")
-        assert run._ctx.per_title.current_title == "Resolved"
+        assert run.resolve_title(5) == EntryTitle(al_id=5, display="Resolved", anilist="Resolved", resolved=True)
 
     def test_falls_back_to_the_arr_title(self) -> None:
         run = self._run(ScriptedTitleClient(None), arr_title="Series")
 
-        assert run.resolve_title(5) == EntryTitle(al_id=5, display="Series", anilist=None)
-        assert run._ctx.per_title.current_title == "Series"
+        assert run.resolve_title(5) == EntryTitle(al_id=5, display="Series", anilist=None, resolved=True)
 
     def test_falls_back_to_the_id_form_last(self) -> None:
         run = self._run(ScriptedTitleClient(None))
 
-        assert run.resolve_title(5) == EntryTitle(al_id=5, display="AniList #5", anilist=None)
-        assert run._ctx.per_title.current_title == "AniList #5"
+        assert run.resolve_title(5) == EntryTitle(al_id=5, display="AniList #5", anilist=None, resolved=False)
+
+    def test_leaves_the_active_title_to_the_entry_header(self) -> None:
+        # `log_al_title` owns the attribution triple, so resolving must not write a second time.
+        run = self._run(ScriptedTitleClient("Resolved"), arr_title="Series")
+
+        run.resolve_title(5)
+
+        assert run._ctx.per_title.current_title is None
 
 
 class TestNewCacheDetails:
@@ -428,7 +433,9 @@ class TestNewCacheDetails:
         entry = make_entry_record(updated_at=datetime(2021, 1, 1))
         run = make_services()
 
-        details = run.new_cache_details(EntryTitle(al_id=5, display="Resolved", anilist="Resolved"), entry)
+        details = run.new_cache_details(
+            EntryTitle(al_id=5, display="Resolved", anilist="Resolved", resolved=True), entry
+        )
 
         assert details == {"name": "Resolved", "updated_at": entry.updated_at, "torrent_hashes": []}
 
@@ -438,6 +445,6 @@ class TestNewCacheDetails:
         entry = make_entry_record(updated_at=datetime(2021, 1, 1))
         run = make_services()
 
-        details = run.new_cache_details(EntryTitle(al_id=5, display="Series", anilist=None), entry)
+        details = run.new_cache_details(EntryTitle(al_id=5, display="Series", anilist=None, resolved=True), entry)
 
         assert details == {"updated_at": entry.updated_at, "torrent_hashes": []}

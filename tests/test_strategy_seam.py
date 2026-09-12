@@ -118,6 +118,7 @@ class GetAniListIdsCall(NamedTuple):
     """
 
     ids: ExternalIds
+    arr_title: str = ""
     log_ignored: bool = True
 
 
@@ -218,10 +219,11 @@ class _FakeRunServices(RunServices):
     def get_anilist_ids(
         self,
         ids: ExternalIds,
+        arr_title: str = "",
         log_ignored: bool = True,
     ) -> dict[int, MappingEntry]:
         self.get_anilist_ids_calls.append(
-            GetAniListIdsCall(ids, log_ignored),
+            GetAniListIdsCall(ids, arr_title, log_ignored),
         )
         return self._anilist_ids
 
@@ -243,7 +245,7 @@ class _FakeRunServices(RunServices):
 
     @override
     def resolve_title(self, al_id: int) -> EntryTitle:
-        return EntryTitle(al_id=al_id, display=self._anilist_title, anilist=self._anilist_title)
+        return EntryTitle(al_id=al_id, display=self._anilist_title, anilist=self._anilist_title, resolved=True)
 
     @override
     def new_cache_details(self, title: EntryTitle, sd_entry: EntryRecord) -> CacheRecord:
@@ -374,18 +376,23 @@ class TestItemAnilistIdsDelegates:
         run = _FakeRunServices(anilist_ids={7: MappingEntry(anilist_id=7)})
         strat = make_bare_instance(RadarrSync, _services=run)
 
-        result = strat.item_anilist_ids(_Item(tmdbId=42, imdbId="tt7"), log_ignored=False)
+        result = strat.item_anilist_ids(_Item(tmdbId=42, imdbId="tt7", title="Movie"), log_ignored=False)
 
         assert result == {7: MappingEntry(anilist_id=7)}
-        assert run.get_anilist_ids_calls == [GetAniListIdsCall(ExternalIds(tmdb=42, imdb="tt7"), log_ignored=False)]
+        # The item's own title rides along as the label an ignored id's row falls back to.
+        assert run.get_anilist_ids_calls == [
+            GetAniListIdsCall(ExternalIds(tmdb=42, imdb="tt7"), "Movie", log_ignored=False)
+        ]
 
     def test_sonarr_uses_tvdb_and_imdb(self) -> None:
         run = _FakeRunServices()
         strat = make_bare_instance(SonarrSync, _services=run)
 
-        strat.item_anilist_ids(_Item(tvdbId=99, imdbId="tt9"))
+        strat.item_anilist_ids(_Item(tvdbId=99, imdbId="tt9", title="Series"))
 
-        assert run.get_anilist_ids_calls == [GetAniListIdsCall(ExternalIds(tvdb=99, imdb="tt9"), log_ignored=True)]
+        assert run.get_anilist_ids_calls == [
+            GetAniListIdsCall(ExternalIds(tvdb=99, imdb="tt9"), "Series", log_ignored=True)
+        ]
 
 
 class TestFilterToSingle:

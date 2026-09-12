@@ -178,6 +178,12 @@ IGNORED_LINES: tuple[Line, ...] = (
     _styled("  ignored     AniList #123", "grey50"),
 )
 
+IGNORED_TITLED_LINES: tuple[Line, ...] = (
+    _blank(),
+    _styled("  ignored     Ignored Show", "grey50"),
+    _detail("    anilist   123", "anilist", "123", style=None),
+)
+
 # --- entry headers (row + coverage/link continuation) ---------------------------------
 
 CHECKING_FULL = EntryHeader(
@@ -870,8 +876,13 @@ class TestLedgerRowParity:
 
     def test_ignored(self) -> None:
         harness = _Harness()
-        harness.reporter.log_ignored_anilist_id(123)
+        harness.reporter.log_ignored_anilist_id(123, "")
         assert harness.lines() == IGNORED_LINES
+
+    def test_ignored_with_the_arr_title(self) -> None:
+        harness = _Harness()
+        harness.reporter.log_ignored_anilist_id(123, "Ignored Show")
+        assert harness.lines() == IGNORED_TITLED_LINES
 
 
 class TestEntryHeaderParity:
@@ -1303,7 +1314,7 @@ class TestScopeLifecycle:
         ctx = RunContext(arr=Arr.SONARR)
         harness.reporter.log_arr_item_unmonitored(ctx, "Unmon")
         harness.reporter.log_no_anilist_mappings(ctx, "NoMap")
-        harness.reporter.log_ignored_anilist_id(7)
+        harness.reporter.log_ignored_anilist_id(7, "")
         harness.reporter.log_entry_status(EntryState.IN_RADARR, "Owned")
 
         assert not any(isinstance(e, (ScopeOpened, ScopeClosed)) for e in harness.events)

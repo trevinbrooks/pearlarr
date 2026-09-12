@@ -242,6 +242,7 @@ class SonarrSync(ArrSync[SonarrItem]):
 
         return self._services.get_anilist_ids(
             ExternalIds(tvdb=item.tvdbId, imdb=item.imdbId),
+            arr_title=item.title,
             log_ignored=log_ignored,
         )
 

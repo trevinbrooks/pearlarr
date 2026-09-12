@@ -437,6 +437,7 @@ class RunServices:
     def get_anilist_ids(
         self,
         ids: ExternalIds,
+        arr_title: str = "",
         log_ignored: bool = True,
     ) -> dict[int, MappingEntry]:
         """Resolve external Arr ids to a {AniList id -> mapping} dict.
@@ -447,6 +448,7 @@ class RunServices:
 
         Args:
             ids: The external Arr ids to resolve (at least one).
+            arr_title: The arr item's own title, the label an ignored id's row carries.
             log_ignored: Log a ledger row for each ignored AniList ID.
                 Pass False from the prefetch pass so ignored ids aren't logged
                 twice (once there, once in the main loop)
@@ -458,20 +460,18 @@ class RunServices:
         # main loop still logs every ignored id even after the prefetch pass ran
         if log_ignored:
             for al_id in ids_to_drop:
-                self._reporter.log_ignored_anilist_id(al_id)
+                self._reporter.log_ignored_anilist_id(al_id, arr_title)
 
         return anilist_mappings
 
     def resolve_title(self, al_id: int) -> EntryTitle:
-        """Resolve the entry's title and remember it as the active one (no logging).
+        """Resolve the entry's title through the ladder (resolves only: no logging, no attribution).
 
         The stored name is deliberately not read: the gateway serves its cached record, and
-        `new_cache_details` writes the result back. The header is logged later by `log_al_title`.
+        `new_cache_details` writes the result back. `log_al_title` opens the block with it.
         """
 
-        title = resolve_entry_title(al_id, self._anilist.title(al_id), self._ctx.per_title.arr_title)
-        self._ctx.per_title.current_title = title.display
-        return title
+        return resolve_entry_title(al_id, self._anilist.title(al_id), self._ctx.per_title.arr_title)
 
     def new_cache_details(self, title: EntryTitle, sd_entry: EntryRecord) -> CacheRecord:
         """The seed record a processed id accumulates into.

@@ -67,13 +67,16 @@ class EntryTitle:
     """The AniList title, else the arr item's own title, else the id form."""
     anilist: str | None
     """The AniList title alone, the only value the cache stores as the entry's name."""
+    resolved: bool
+    """False when nothing named the entry and `display` fell back to the id form."""
 
 
 def resolve_entry_title(al_id: int, anilist: str | None, arr_title: str) -> EntryTitle:
     """The title ladder: the AniList title, else the arr item's own title, else the id form."""
 
     anilist = anilist or None
-    return EntryTitle(al_id=al_id, display=anilist or arr_title or unresolved_label(al_id), anilist=anilist)
+    named = anilist or arr_title
+    return EntryTitle(al_id=al_id, display=named or unresolved_label(al_id), anilist=anilist, resolved=bool(named))
 
 
 @dataclass(frozen=True, slots=True)
@@ -354,10 +357,14 @@ class RunReporter:
         ctx.stats.no_mappings += 1
         self._ledger(EntryState.NO_MAPPING, title)
 
-    def log_ignored_anilist_id(self, al_id: int) -> None:
-        """Report an AniList ID skipped via the ignore list."""
+    def log_ignored_anilist_id(self, al_id: int, arr_title: str) -> None:
+        """Report an AniList ID skipped via the ignore list.
 
-        self._ledger(EntryState.IGNORED, unresolved_label(al_id))
+        No AniList lookup: an ignored id is dropped before the prefetch, so the arr's own title
+        is the only one in hand and asking would cost a request per ignored id.
+        """
+
+        self._titled_row(EntryState.IGNORED, resolve_entry_title(al_id, None, arr_title))
 
     def log_no_sd_entry(self, ctx: RunContext, al_id: int) -> None:
         """Report an id with no SeaDex entry (bumps the tally, emits a titled row)."""
@@ -386,7 +393,7 @@ class RunReporter:
         """A ledger row for an id with no entry block, the id repeated only when the row shows a title."""
 
         self._ledger(state, title.display)
-        if title.display != unresolved_label(title.al_id):
+        if title.resolved:
             self.detail("anilist", StyledValue(str(title.al_id)))
 
     # --- entry-block headers -------------------------------------------------
