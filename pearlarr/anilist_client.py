@@ -19,7 +19,10 @@ API_URL = "https://graphql.anilist.co"
 # any non-empty value passes), so every POST names the project.
 REQUEST_HEADERS = {"Referer": PROJECT_URL}
 
-type AniListCache = dict[int, dict[str, dict[str, Any]]]
+type AniListBody = dict[str, dict[str, Any]]
+"""One raw GraphQL body `{"data": {"Media": {...}}}`, stored verbatim."""
+
+type AniListCache = dict[int, AniListBody]
 """In-memory AniList cache: id -> raw GraphQL body `{"data": {"Media": {...}}}`.
 
 The cached value is the *whole* response body (what `AniListClient.query`

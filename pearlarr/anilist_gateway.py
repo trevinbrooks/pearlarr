@@ -13,9 +13,17 @@ caller owns the `current_title` attribution.
 import logging
 from collections.abc import Iterable
 from datetime import datetime, timedelta
-from typing import Any
+from itertools import batched
 
-from .anilist_client import ANILIST_BATCH_SIZE, AniListCache, AniListClient, extract_path, media_from, media_node_from
+from .anilist_client import (
+    ANILIST_BATCH_SIZE,
+    AniListBody,
+    AniListCache,
+    AniListClient,
+    extract_path,
+    media_from,
+    media_node_from,
+)
 from .cache import UPDATED_AT_STR_FORMAT, AbstractCacheStore, record_payload, stamp_is_fresh
 from .log import count_noun
 from .seadex_types import AniListMediaNode, ProgressSink
@@ -46,8 +54,6 @@ class AniListGateway:
         self._stale: set[int] = set()
         # Fetched this run: exactly what the save writes.
         self._fetched: set[int] = set()
-        # Confirmed unknown to AniList this run: no later accessor re-queries them.
-        self._absent: set[int] = set()
 
     @property
     def outage(self) -> bool:
@@ -55,7 +61,7 @@ class AniListGateway:
 
         return self._client.outage
 
-    def _store(self, al_id: int, body: dict[str, Any]) -> None:
+    def _store(self, al_id: int, body: AniListBody) -> None:
         """Put a freshly fetched body in the run cache and queue it for the save."""
 
         self.al_cache[al_id] = body
@@ -87,22 +93,23 @@ class AniListGateway:
         a stale id the batch did not return is gone, and absent next run.
         """
 
+        # A preview persists nothing, so its fetches stay in memory only.
+        if preview:
+            return
+
         now = datetime.now()
         now_str = now.strftime(UPDATED_AT_STR_FORMAT)
         written = len(self._fetched)
-        # Sorted so the write order is deterministic.
-        for al_id in sorted(self._fetched):
+        for al_id in self._fetched:
             self._cache.put_anilist_meta(al_id, {"fetched_at": now_str, "data": self.al_cache[al_id]})
-        # A preview persists nothing, so the queue has to outlive it for a later real save.
-        if not preview:
-            self._fetched.clear()
+        self._fetched.clear()
 
         # Evicting during an outage would drain the very records serving the run.
         cutoff = now - timedelta(days=ANILIST_REFRESH_AGE_DAYS)
-        evicted = 0 if preview or self.outage else self._cache.evict_anilist_meta(cutoff)
+        evicted = 0 if self.outage else self._cache.evict_anilist_meta(cutoff)
 
         if written or evicted:
-            self._cache.save(preview=preview)
+            self._cache.save(preview=False)
         if evicted:
             self.logger.debug(f"Evicted {count_noun(evicted, 'stale AniList meta record')}")
 
@@ -124,9 +131,8 @@ class AniListGateway:
             return 0
 
         done = 0
-        for start in range(0, total, ANILIST_BATCH_SIZE):
-            chunk = wanted[start : start + ANILIST_BATCH_SIZE]
-            fetched = self._client.query_batch(chunk)
+        for chunk in batched(wanted, ANILIST_BATCH_SIZE, strict=False):
+            fetched = self._client.query_batch(list(chunk))
             # A tripped breaker answered this batch empty and answers every later one the same.
             if self.outage:
                 break
@@ -146,17 +152,15 @@ class AniListGateway:
         body = self.al_cache.get(al_id)
         if body is not None:
             return media_from(body)
-        # A remembered miss or a tripped breaker answers without a request.
-        if al_id in self._absent or self.outage:
-            return AniListMediaNode()
 
+        # A tripped breaker answers {} without a request.
         fetched = self._client.query(al_id)
         raw_media = extract_path(fetched, "data", "Media")
         if raw_media:
             self._store(al_id, fetched)
         elif not self.outage:
-            # AniList answered and knows no such id. A failure trips the breaker instead.
-            self._absent.add(al_id)
+            # AniList answered and knows no such id: an empty body remembers that for the run.
+            self.al_cache[al_id] = {}
         return media_node_from(raw_media)
 
     def title(self, al_id: int) -> str | None:

@@ -62,7 +62,7 @@ def _stale_record(al_id: int) -> dict[str, Any]:
 
 
 class _ScriptedClient(AniListClient):
-    """Checked scripted `AniListClient`: canned bodies, calls recorded, no HTTP.
+    """Checked scripted `AniListClient`: canned bodies, wire calls recorded, no HTTP.
 
     `absent` ids are unknown to AniList (a Media-less answer). A request touching a
     `failing` id trips the breaker and answers empty. `full` scripts populated bodies.
@@ -88,9 +88,9 @@ class _ScriptedClient(AniListClient):
 
     @override
     def query(self, al_id: int) -> dict[str, Any]:
-        self.query_calls.append(al_id)
         if self.outage:
             return {}
+        self.query_calls.append(al_id)
         if al_id in self._failing:
             self._note_outage(f"request failed after {MAX_RETRIES} retries")
             return {}
@@ -100,9 +100,9 @@ class _ScriptedClient(AniListClient):
 
     @override
     def query_batch(self, al_ids: list[int]) -> AniListCache:
-        self.batch_calls.append(list(al_ids))
         if self.outage:
             return {}
+        self.batch_calls.append(list(al_ids))
         if self._failing & set(al_ids):
             self._note_outage(f"request failed after {MAX_RETRIES} retries")
             return {}
@@ -180,7 +180,7 @@ class TestPrefetch:
         sink = _RecordingSink()
         ids = list(range(1, ANILIST_BATCH_SIZE + 2))
 
-        fetched = gateway.prefetch(ids, preview=True, progress=sink)
+        fetched = gateway.prefetch(ids, preview=False, progress=sink)
 
         # Returns how many NEEDED fetching (the absent id still counted as work).
         assert fetched == len(ids)
@@ -203,7 +203,7 @@ class TestPrefetch:
         gateway.load_cache()
 
         before = _now_str()
-        assert gateway.prefetch([1, 2], preview=True) == 1
+        assert gateway.prefetch([1, 2], preview=False) == 1
 
         # Only the aged id was refetched, and its row carries a new stamp.
         assert client.batch_calls == [[2]]
@@ -312,19 +312,16 @@ class TestSaveCache:
         assert record is not None
         assert record["fetched_at"] == original
 
-    def test_a_preview_save_keeps_the_write_queue(self) -> None:
-        # A preview persists nothing, so what it queued has to survive for a later real save.
+    def test_a_preview_save_writes_nothing(self) -> None:
+        # A preview never commits, so the fetch is served from memory and never staged.
         client = _ScriptedClient()
         gateway, store = _make_gateway(client)
+
         gateway.prefetch([3], preview=True)
-        original = _stamp(days_ago=1)
-        store.put_anilist_meta(3, {"fetched_at": original, "data": _media(3)})
 
-        gateway.save_cache(preview=False)
-
-        record = store.get_anilist_meta(3)
-        assert record is not None
-        assert record["fetched_at"] > original
+        assert client.batch_calls == [[3]]
+        assert gateway.al_cache[3] == _media(3)
+        assert store.get_anilist_meta(3) is None
 
     def test_single_id_fetch_is_written(self) -> None:
         # Pins the mechanism: an on-demand fetch queues into `_fetched` like a batched one.
@@ -333,7 +330,7 @@ class TestSaveCache:
         gateway, store = _make_gateway(client)
 
         assert gateway.title(42) == "English Title"
-        gateway.save_cache(preview=True)
+        gateway.save_cache(preview=False)
 
         record = store.get_anilist_meta(42)
         assert record is not None
@@ -407,7 +404,7 @@ class TestMediaResolution:
         assert gateway.media_format(7) is None
         assert gateway.n_eps(7) is None
 
-        assert 7 not in gateway.al_cache
+        assert gateway.al_cache[7] == {}
         assert client.query_calls == [7]
 
     def test_an_id_the_batch_left_out_is_confirmed_once_then_remembered(self) -> None:
