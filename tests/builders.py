@@ -14,7 +14,7 @@ import httpx
 from pydantic import BaseModel
 from seadex import EntryRecord, File, Tag, TorrentRecord, Tracker
 
-from pearlarr.anilist_client import AniListClient
+from pearlarr.anilist_client import MAX_RETRIES, AniListBody, AniListCache, AniListClient
 from pearlarr.anilist_gateway import AniListGateway
 from pearlarr.arr_categories import ArrCategoryResolver, _CategoryPair
 from pearlarr.arr_http import ArrHttp
@@ -163,6 +163,72 @@ def _evict_stale[K](store: dict[K, dict[str, Any]], cutoff: datetime) -> int:
     for cache_key in stale:
         del store[cache_key]
     return len(stale)
+
+
+def anilist_body(al_id: int, title: str = "Resolved") -> AniListBody:
+    """A populated single-id AniList body: the run-cache value, and a stored record's `data`."""
+
+    return {
+        "data": {
+            "Media": {
+                "id": al_id,
+                "title": {"english": title},
+                "coverImage": {"large": "https://img/large"},
+                "bannerImage": "https://img/banner",
+                "episodes": 12,
+                "format": "TV",
+            },
+        },
+    }
+
+
+class ScriptedAniListClient(AniListClient):
+    """Scripted AniList wire client: canned bodies, wire calls recorded, no HTTP.
+
+    `title` names every known id (None: AniList knows none), an `absent` id answers the unknown-id
+    body, and a request touching a `failing` id trips the breaker, muting later calls like the real client.
+    """
+
+    def __init__(
+        self,
+        title: str | None = "Resolved",
+        *,
+        absent: frozenset[int] = frozenset(),
+        failing: frozenset[int] = frozenset(),
+    ) -> None:
+        super().__init__(client=httpx.Client())
+        self._title = title
+        self._absent = absent
+        self._failing = failing
+        self.query_calls: list[int] = []
+        self.batch_calls: list[list[int]] = []
+
+    def _trip(self) -> None:
+        self._note_outage(f"request failed after {MAX_RETRIES} retries")
+
+    @override
+    def query(self, al_id: int) -> dict[str, Any]:
+        if self.outage:
+            return {}
+        self.query_calls.append(al_id)
+        if al_id in self._failing:
+            self._trip()
+            return {}
+        if self._title is None or al_id in self._absent:
+            return {"data": {"Media": None}}
+        return anilist_body(al_id, self._title)
+
+    @override
+    def query_batch(self, al_ids: list[int]) -> AniListCache:
+        if self.outage:
+            return {}
+        self.batch_calls.append(list(al_ids))
+        if self._failing & set(al_ids):
+            self._trip()
+            return {}
+        if self._title is None:
+            return {}
+        return {al_id: anilist_body(al_id, self._title) for al_id in al_ids if al_id not in self._absent}
 
 
 class FakeCacheStore(AbstractCacheStore):
@@ -433,6 +499,16 @@ def make_logger(name: str = "pearlarr-test") -> logging.Logger:
     logger.propagate = False
     logger.setLevel(logging.WARNING)
     return logger
+
+
+def make_anilist_gateway(client: AniListClient | None = None, store: FakeCacheStore | None = None) -> AniListGateway:
+    """A real gateway over an in-memory store and a network-free wire client (scripted, or bare and never queried)."""
+
+    return AniListGateway(
+        cache_store=store if store is not None else FakeCacheStore(),
+        logger=make_logger(),
+        client=client if client is not None else AniListClient(client=httpx.Client()),
+    )
 
 
 def make_config(**overrides: Any) -> AppConfig:
@@ -737,8 +813,8 @@ def grab_request(**overrides: Any) -> GrabRequest:
 
     defaults: dict[str, Any] = {
         "al_id": 1,
-        "item_title": "Show",
-        "anilist_title": "Show",
+        "arr_title": "Show",
+        "entry_title": "Show",
         "entry": make_entry_record(url="https://releases.moe/1"),
         "seadex_dict": {},
         "torrent_hashes": [],

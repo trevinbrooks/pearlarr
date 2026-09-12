@@ -19,6 +19,7 @@ from seadex import EntryRecord
 
 from . import __version__
 from .config import Arr
+from .json_narrow import is_json_obj
 from .manual_import import GuardFacts, PendingKey
 from .output import hub_note
 from .sqlite_util import connect as _sqlite_connect
@@ -120,7 +121,7 @@ CREATE TABLE IF NOT EXISTS history_checkpoints (
 """
 
 # Current cache.db schema version, stored in `PRAGMA user_version`.
-SCHEMA_VERSION = 3
+SCHEMA_VERSION = 4
 
 
 class CacheSchemaError(RuntimeError):
@@ -181,10 +182,19 @@ def _migrate_2_to_3(conn: sqlite3.Connection) -> None:
     conn.execute("UPDATE pending_imports SET record = jsonb_remove(record, '$.guards')")
 
 
+def _migrate_3_to_4(conn: sqlite3.Connection) -> None:
+    """Null the id-form names an AniList outage once stored, so the next cached read resolves them."""
+
+    # The pattern is the frozen v3-era form of `reporter.unresolved_label`, spelled
+    # out on purpose so the migration never tracks the live label.
+    conn.execute("UPDATE entries SET name = NULL WHERE name LIKE 'AniList #%'")
+
+
 _MIGRATIONS: dict[int, Callable[[sqlite3.Connection], None]] = {
     0: _migrate_0_to_1,
     1: _migrate_1_to_2,
     2: _migrate_2_to_3,
+    3: _migrate_3_to_4,
 }
 
 
@@ -217,23 +227,22 @@ def _ensure_schema(conn: sqlite3.Connection, path: str) -> None:
         hub_note(f"Upgraded cache database schema v{step} -> v{step + 1}")
 
 
-def record_is_fresh(
-    record: dict[str, Any] | None,
-    *,
-    payload_key: str,
-    cutoff: datetime,
-) -> bool:
-    """True if a persisted record has a payload under `payload_key` and its `fetched_at` is within TTL."""
+def record_payload(record: dict[str, Any] | None, key: str) -> dict[str, Any] | None:
+    """The non-empty payload object a persisted record holds under `key`, else None."""
 
     if not isinstance(record, dict):
-        return False
-    if not record.get(payload_key):
-        return False
+        return None
+    payload = record.get(key)
+    return payload if is_json_obj(payload) and payload else None
+
+
+def stamp_is_fresh(record: dict[str, Any], cutoff: datetime) -> bool:
+    """True if the record's `fetched_at` parses and is at or after `cutoff`."""
+
     try:
-        stamp = parse_stamp(record.get("fetched_at", ""))
+        return parse_stamp(record.get("fetched_at", "")) >= cutoff
     except (TypeError, ValueError):
         return False
-    return stamp >= cutoff
 
 
 class CacheRecord(TypedDict, total=False):
@@ -641,7 +650,7 @@ class CacheStore(AbstractCacheStore):
 
     @override
     def iter_anilist_meta(self) -> Iterator[tuple[int, dict[str, Any]]]:
-        """Yield `(al_id, record)` for every stored record, TTL unfiltered (see `record_is_fresh`)."""
+        """Yield `(al_id, record)` for every stored record, age unfiltered (see `stamp_is_fresh`)."""
 
         for al_id, rec_json in self._conn.execute(
             "SELECT al_id, json(record) FROM anilist_meta",

@@ -10,7 +10,7 @@ from .log import arr_item_noun, count_noun
 from .manual_import import ImportWaitMode, PendingState
 from .output import hub_error, hub_note, hub_warn
 from .protocols import ArrSync, ImportCompleter
-from .reporter import RunContext
+from .reporter import RunContext, unresolved_label
 from .run_services import RunDeps, RunServices
 from .seadex_types import ArrItem
 from .wait_view import (
@@ -147,7 +147,11 @@ class RunLoop:
 
         with boot.step("Fetching AniList metadata") as step:
             fetched = self._anilist.prefetch(prefetch_ids, preview=self._services.is_preview(), progress=step)
-            step.note("cached" if fetched == 0 else count_noun(fetched, "entry", "entries"))
+            if self._anilist.outage:
+                # Terse: the client already warned once with the failure detail.
+                step.warn("unavailable")
+            else:
+                step.note("cached" if fetched == 0 else count_noun(fetched, "entry", "entries"))
 
         # Batched OR-filter queries collapse the per-id from_id round-trips. An outage mid-prefetch
         # must not claim "N entries" it never fetched.
@@ -216,6 +220,8 @@ class RunLoop:
 
         arr = self._services.arr
         item_title = item.title
+        # The display fallback for every id under this item.
+        self._ctx.arr_title = item_title
 
         self._reporter.log_arr_item_start(
             arr,
@@ -247,7 +253,7 @@ class RunLoop:
             except Exception as e:
                 # Contain the failure to THIS AniList id: one bad season must not skip the item's others.
                 hub_error(
-                    f"{item_title} (AniList #{al_id}): unexpected error ({e}) - skipping this AniList id",
+                    f"{item_title} ({unresolved_label(al_id)}): unexpected error ({e}) - skipping this AniList id",
                     exc=e,
                 )
                 continue

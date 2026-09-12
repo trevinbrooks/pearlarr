@@ -19,6 +19,7 @@ pinned by asserting recorded state.
 import logging
 from typing import override
 
+from pearlarr.anilist_gateway import AniListGateway
 from pearlarr.boot_flow import BootFlow
 from pearlarr.config import AppConfig, Arr
 from pearlarr.manual_import import Outcome, OutcomeCategory
@@ -31,7 +32,14 @@ from pearlarr.run_loop import RunLoop
 from pearlarr.seadex_types import ProgressSink
 from pearlarr.wait_view import WaitOutcomeRow, WaitResult
 
-from .builders import FakeCacheStore, make_bare_instance, make_config, make_services
+from .builders import (
+    FakeCacheStore,
+    ScriptedAniListClient,
+    make_anilist_gateway,
+    make_bare_instance,
+    make_config,
+    make_services,
+)
 from .fakes import FakeArrItem, FakeStrategy, install_recording_hub
 
 
@@ -98,6 +106,7 @@ def _engine(
     config: AppConfig | None = None,
     seadex: _FakeGateway | None = None,
     cache_store: FakeCacheStore | None = None,
+    anilist: AniListGateway | None = None,
 ) -> RunLoop:
     """A bare `RunLoop` wired with typed fakes for the run-loop collaborators.
 
@@ -109,6 +118,7 @@ def _engine(
     ctx-bind fakes. The `cache_store` backs the activity scan's checkpoint.
     `config` overrides the loop's config (the activity-scan toggle tests).
     `cache_store` shares one store across engines (the checkpoint replay tests).
+    `anilist` swaps in a real gateway (the AniList boot-note tests).
     """
 
     config = config if config is not None else make_config()
@@ -123,7 +133,7 @@ def _engine(
         logger=logger,
         _config=config,
         _arr_config=config.for_arr(Arr.SONARR),
-        _anilist=_FakeGateway(),
+        _anilist=anilist if anilist is not None else _FakeGateway(),
         _seadex=seadex if seadex is not None else _FakeGateway(),
         _reporter=_FakeReporter(),
         _services=services,
@@ -270,25 +280,35 @@ class TestNotifyWaitCompleteContainment:
         assert warning.trace is not None
 
 
-class TestSeaDexBootNote:
-    """The SeaDex prefetch step's ledger note must be truthful on an outage.
+class TestBootNotes:
+    """The two prefetch steps' ledger notes must be truthful on an outage.
 
     The boot flow emits events, so the graduated (label, detail, outcome) is
     read off the recorded `BootStepFinished` stream (conftest's autouse
-    teardown uninstalls the hub after every test).
+    teardown uninstalls the hub after every test). SeaDex is the flag-only
+    fake. The AniList gateway is real over the shared scripted client, so its
+    note reads the breaker the way the run does.
     """
 
-    def _seadex_step(self, recording: RecordingHub) -> BootStepFinished:
-        [step] = [e for e in recording.of_type(BootStepFinished) if e.label == "Fetching SeaDex entries"]
+    @staticmethod
+    def _step(recording: RecordingHub, label: str) -> BootStepFinished:
+        [step] = [e for e in recording.of_type(BootStepFinished) if e.label == label]
         return step
 
-    def _run(self, logger: logging.Logger, *, seadex: _FakeGateway) -> RecordingHub:
+    @staticmethod
+    def _run(
+        logger: logging.Logger,
+        *,
+        seadex: _FakeGateway | None = None,
+        client: ScriptedAniListClient | None = None,
+    ) -> RecordingHub:
         strategy = FakeStrategy(
             items=[FakeArrItem(item_id=1, title="A")],
             anilist_ids={1: MappingEntry(anilist_id=1)},
         )
+        anilist = make_anilist_gateway(client) if client is not None else None
         recording = install_recording_hub()
-        _engine(_FinalizeRecorder(), logger, seadex=seadex).run_sync(
+        _engine(_FinalizeRecorder(), logger, seadex=seadex, anilist=anilist).run_sync(
             strategy,
             item_id=None,
             dry_run=True,
@@ -296,22 +316,52 @@ class TestSeaDexBootNote:
         )
         return recording
 
-    def test_outage_notes_unreachable_not_a_count(self, logger: logging.Logger) -> None:
+    def test_seadex_outage_notes_unreachable_not_a_count(self, logger: logging.Logger) -> None:
         # The prefetch "return" is how many ids NEEDED fetching. On an outage
-        # none were actually fetched, so the old "N entries" note was a lie.
+        # none were actually fetched, so a count note would be a lie.
         seadex = _FakeGateway()
         seadex.outage = True
 
-        step = self._seadex_step(self._run(logger, seadex=seadex))
+        step = self._step(self._run(logger, seadex=seadex), "Fetching SeaDex entries")
 
         assert step.detail == "unreachable"
         assert step.outcome is OutcomeCategory.DEFERRED  # graduates as a warning
 
-    def test_healthy_prefetch_keeps_the_count_note(self, logger: logging.Logger) -> None:
-        step = self._seadex_step(self._run(logger, seadex=_FakeGateway()))
+    def test_healthy_seadex_prefetch_keeps_the_count_note(self, logger: logging.Logger) -> None:
+        step = self._step(self._run(logger), "Fetching SeaDex entries")
 
         assert step.detail == "cached"  # the fake reports 0 fetched -> cache-warm
         assert step.outcome is OutcomeCategory.SUCCESS
+
+    def test_anilist_outage_notes_unavailable_not_a_count(self, logger: logging.Logger) -> None:
+        client = ScriptedAniListClient(failing=frozenset({1}))
+
+        step = self._step(self._run(logger, client=client), "Fetching AniList metadata")
+
+        assert step.detail == "unavailable"
+        assert step.outcome is OutcomeCategory.DEFERRED
+
+    def test_healthy_anilist_prefetch_keeps_the_count_note(self, logger: logging.Logger) -> None:
+        step = self._step(self._run(logger, client=ScriptedAniListClient()), "Fetching AniList metadata")
+
+        assert step.detail == "1 entry"  # the one mapped id needed fetching
+        assert step.outcome is OutcomeCategory.SUCCESS
+
+
+class TestScanItemContext:
+    """The scan seeds the run context with the arr item's own title before any per-id line."""
+
+    def test_arr_title_follows_the_item(self, logger: logging.Logger) -> None:
+        strategy = FakeStrategy(
+            items=[FakeArrItem(item_id=1, title="A")],
+            anilist_ids={1: MappingEntry(anilist_id=1)},
+        )
+        engine = _engine(_FinalizeRecorder(), logger)
+        install_recording_hub()
+
+        engine.run_sync(strategy, item_id=None, dry_run=True, boot=BootFlow())
+
+        assert engine._ctx.arr_title == "A"
 
 
 class TestSelectionRecheck:

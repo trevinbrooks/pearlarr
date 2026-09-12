@@ -1,9 +1,10 @@
-"""AniList client gateway: the in-memory meta cache, its TTL, and prefetch.
+"""AniList client gateway: the in-memory meta cache, its refresh age, and prefetch.
 
 `AniListGateway` owns the per-run `al_cache` (AniList responses keyed by id)
 and the persisted `anilist_meta` block in the cache file: it seeds the cache
-from disk, batch-fetches everything still missing, persists newly seen
-responses (respecting a TTL), and resolves titles / thumbnails.
+from disk, batch-fetches whatever is missing or past the refresh age, persists
+what it fetched, and resolves titles / thumbnails. A record past the refresh
+age still serves, so an AniList outage never drains the cache.
 
 The gateway is deliberately side-effect-free with respect to run state - the
 caller owns the `current_title` attribution.
@@ -12,16 +13,25 @@ caller owns the `current_title` attribution.
 import logging
 from collections.abc import Iterable
 from datetime import datetime, timedelta
+from itertools import batched
 
-from .anilist_client import ANILIST_BATCH_SIZE, AniListCache, AniListClient, extract_path, media_from, media_node_from
-from .cache import UPDATED_AT_STR_FORMAT, AbstractCacheStore, record_is_fresh
+from .anilist_client import (
+    ANILIST_BATCH_SIZE,
+    AniListBody,
+    AniListCache,
+    AniListClient,
+    extract_path,
+    media_from,
+    media_node_from,
+)
+from .cache import UPDATED_AT_STR_FORMAT, AbstractCacheStore, record_payload, stamp_is_fresh
 from .log import count_noun
 from .seadex_types import AniListMediaNode, ProgressSink
 
-# How long a persisted AniList response stays usable before it's re-fetched.
+# How old a persisted AniList response gets before a run refetches it.
 # title/format/coverImage are effectively static. Episodes for a currently airing
 # show drift, so this caps how stale that count can get (~one episode/week).
-ANILIST_CACHE_TTL_DAYS = 7
+ANILIST_REFRESH_AGE_DAYS = 7
 
 
 class AniListGateway:
@@ -34,83 +44,72 @@ class AniListGateway:
         logger: logging.Logger,
         client: AniListClient,
     ) -> None:
-        """Wire the gateway to the cache store, logger and wire client.
-
-        Args:
-            cache_store: Owns the on-disk `anilist_meta`
-                block and the preview-gated save.
-            logger: For the prefetch / load progress lines.
-            client: The bound AniList wire client every lookup
-                rides (it carries the shared web client and the per-run retry
-                narration).
-        """
+        """Wire the gateway to the cache store, logger, and the bound wire client."""
 
         self._cache = cache_store
         self.logger = logger
         self._client = client
         self.al_cache: AniListCache = {}
+        # Loaded past the refresh age: served as-is while the prefetch tries to refresh them.
+        self._stale: set[int] = set()
+        # Fetched this run: exactly what the save writes.
+        self._fetched: set[int] = set()
+
+    @property
+    def outage(self) -> bool:
+        """True once AniList has been declared unavailable for this run."""
+
+        return self._client.outage
+
+    def _store(self, al_id: int, body: AniListBody) -> None:
+        """Put a freshly fetched body in the run cache and queue it for the save."""
+
+        self.al_cache[al_id] = body
+        self._stale.discard(al_id)
+        self._fetched.add(al_id)
 
     def load_cache(self) -> None:
-        """Seed the in-memory AniList cache from the persisted store.
+        """Seed the run cache from every stored record, marking those past the refresh age stale."""
 
-        AniList metadata (title / format / episodes / cover) is effectively
-        static, so reusing what we fetched on previous runs is what keeps a run
-        from re-querying AniList for ids it has already seen - the main cause of
-        the rate-limit stalls. Entries older than ANILIST_CACHE_TTL_DAYS are
-        skipped, so the data can't get arbitrarily stale (see prefetch /
-        save_cache for the writing side).
-        """
-
-        cutoff = datetime.now() - timedelta(days=ANILIST_CACHE_TTL_DAYS)
+        cutoff = datetime.now() - timedelta(days=ANILIST_REFRESH_AGE_DAYS)
         loaded = 0
         for al_id, record in self._cache.iter_anilist_meta():
-            if not record_is_fresh(
-                record,
-                payload_key="data",
-                cutoff=cutoff,
-            ):
+            payload = record_payload(record, "data")
+            if payload is None:
                 continue
-            self.al_cache[al_id] = record["data"]
+            self.al_cache[al_id] = payload
+            # An aged or unreadable stamp still serves: refetch, never drop.
+            if not stamp_is_fresh(record, cutoff):
+                self._stale.add(al_id)
             loaded += 1
 
         if loaded:
             self.logger.debug(f"Loaded {count_noun(loaded, 'AniList entry', 'AniList entries')} from cache")
 
     def save_cache(self, *, preview: bool) -> None:
-        """Persist any newly seen AniList responses back to the on-disk cache.
+        """Persist this run's fetches stamped now. The prefetch-time save is the only save.
 
-        An entry that's already stored and still fresh keeps its original
-        fetched_at (so the TTL actually expires it rather than resetting every
-        run). A missing OR stale entry is (re)written with the current time, so
-        an aged-out id is refreshed instead of being re-fetched on every run.
-
-        Args:
-            preview: When True, keep the warmed entries in memory but
-                don't persist them (the gate lives in `CacheStore.save`).
+        Rows past the refresh age are evicted only on a healthy, non-preview run:
+        a stale id the batch did not return is gone, and absent next run.
         """
+
+        # A preview persists nothing, so its fetches stay in memory only.
+        if preview:
+            return
 
         now = datetime.now()
         now_str = now.strftime(UPDATED_AT_STR_FORMAT)
-        cutoff = now - timedelta(days=ANILIST_CACHE_TTL_DAYS)
+        written = len(self._fetched)
+        for al_id in self._fetched:
+            self._cache.put_anilist_meta(al_id, {"fetched_at": now_str, "data": self.al_cache[al_id]})
+        self._fetched.clear()
 
-        written = 0
-        for al_id, data in self.al_cache.items():
-            if record_is_fresh(
-                self._cache.get_anilist_meta(al_id),
-                payload_key="data",
-                cutoff=cutoff,
-            ):
-                continue
-            self._cache.put_anilist_meta(al_id, {"fetched_at": now_str, "data": data})
-            written += 1
-
-        # Drop meta records aged past the same TTL we refuse to read, so the block
-        # stops accumulating dead weight (the un-evicted-stale problem). Skipped in
-        # preview (which persists nothing anyway).
-        evicted = 0 if preview else self._cache.evict_anilist_meta(cutoff)
+        # Evicting during an outage would drain the very records serving the run.
+        cutoff = now - timedelta(days=ANILIST_REFRESH_AGE_DAYS)
+        evicted = 0 if self.outage else self._cache.evict_anilist_meta(cutoff)
 
         if written or evicted:
-            self._cache.save(preview=preview)
+            self._cache.save(preview=False)
         if evicted:
             self.logger.debug(f"Evicted {count_noun(evicted, 'stale AniList meta record')}")
 
@@ -121,74 +120,47 @@ class AniListGateway:
         preview: bool,
         progress: ProgressSink | None = None,
     ) -> int:
-        """Warm the AniList cache for a set of ids in batched requests.
+        """Batch-fetch the missing and stale ids, then persist. Returns how many needed fetching.
 
-        Fetches everything still missing from the cache in ANILIST_BATCH_SIZE-id
-        "id_in" pages (one request per page) instead of one request per id on
-        demand, then persists the results. This is what collapses a cold run's
-        ~one-AniList-request-per-series into a handful, so the per-title loop
-        rarely has to hit AniList one id at a time and trip its rate limit.
-
-        Args:
-            al_ids: Candidate AniList IDs for this run
-            preview: Forwarded to the post-fetch save's preview gate.
-            progress: Boot cockpit step fed per-batch
-                fraction + "done/total" detail. None outside the cockpit.
-
-        Returns:
-            How many ids needed fetching (0 = fully cache-warm), for the
-            caller's ledger detail.
+        `progress` is the boot cockpit step fed per-batch fraction + "done/total".
         """
 
-        missing = sorted(
-            {i for i in al_ids if i not in self.al_cache},
-        )
-        total = len(missing)
+        wanted = sorted({i for i in al_ids if i not in self.al_cache or i in self._stale})
+        total = len(wanted)
         if not total:
             return 0
 
         done = 0
-        for start in range(0, total, ANILIST_BATCH_SIZE):
-            chunk = missing[start : start + ANILIST_BATCH_SIZE]
-            # Ids unknown to AniList are simply absent from the result. The
-            # per-id helpers will try once more on demand and degrade gracefully
-            for al_id, data in self._client.query_batch(chunk).items():
-                self.al_cache[al_id] = data
+        for chunk in batched(wanted, ANILIST_BATCH_SIZE, strict=False):
+            fetched = self._client.query_batch(list(chunk))
+            # A tripped breaker answered this batch empty and answers every later one the same.
+            if self.outage:
+                break
+            for al_id, body in fetched.items():
+                self._store(al_id, body)
             done += len(chunk)
             if progress is not None:
                 progress.progress(done / total, f"{done}/{total}")
 
-        # Persist now (before the main loop) so the batch's work survives even an
-        # early return - e.g., when max_torrents_to_add is hit mid-run
+        # Persist before the main loop so the batch's work survives an early return.
         self.save_cache(preview=preview)
         return total
 
     def _media(self, al_id: int) -> AniListMediaNode:
-        """Resolve the typed Media node for an id: the run cache, then the wire.
+        """Resolve the typed Media node for an id: the run cache, then one wire query. All-None on a miss."""
 
-        The get-or-fetch policy lives here, beside the cache it manages: a hit
-        parses the stored body. A miss queries AniList and stores the raw body
-        ONLY if it actually carried Media, so a transient failure (rate-limit,
-        network) isn't cached as a permanent miss - the next call gets a fresh
-        chance.
-
-        Returns:
-            The parsed `AniListMediaNode`. All-`None` on a miss.
-        """
-
-        # Cache hit: parse the stored body's Media node.
         body = self.al_cache.get(al_id)
         if body is not None:
             return media_from(body)
 
-        # Miss: query AniList. Extract the raw Media dict once to gate the cache
-        # store, then parse it into the typed node for the return. The cached
-        # body is only ever read, so store it directly rather than copying.
+        # A tripped breaker answers {} without a request.
         fetched = self._client.query(al_id)
         raw_media = extract_path(fetched, "data", "Media")
         if raw_media:
-            self.al_cache[al_id] = fetched
-
+            self._store(al_id, fetched)
+        elif not self.outage:
+            # AniList answered and knows no such id: an empty body remembers that for the run.
+            self.al_cache[al_id] = {}
         return media_node_from(raw_media)
 
     def title(self, al_id: int) -> str | None:
@@ -219,4 +191,5 @@ class AniListGateway:
     def n_eps(self, al_id: int) -> int | None:
         """Resolve the AniList episode count for an id, or None."""
 
+        # A stale count still answers: None downstream means "use every episode", which over-grabs.
         return self._media(al_id).episodes

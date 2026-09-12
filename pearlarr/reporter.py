@@ -52,6 +52,37 @@ if TYPE_CHECKING:
     from .planner import PrivateOnlySkips
 
 
+def unresolved_label(al_id: int) -> str:
+    """The id-form label an entry falls back to when no title resolved."""
+
+    return f"AniList #{al_id}"
+
+
+@dataclass(frozen=True, slots=True)
+class EntryTitle:
+    """An entry's resolved title: what the run shows, and the AniList title when one resolved."""
+
+    al_id: int
+    display: str
+    """The AniList title, else the arr item's own title, else the id form."""
+    anilist: str | None
+    """The AniList title alone, the only value the cache stores as the entry's name."""
+
+    @property
+    def resolved(self) -> bool:
+        """False when nothing named the entry and `display` fell back to the id form."""
+
+        return self.display != unresolved_label(self.al_id)
+
+
+def resolve_entry_title(al_id: int, anilist: str | None, arr_title: str) -> EntryTitle:
+    """The title ladder: the AniList title, else the arr item's own title, else the id form."""
+
+    anilist = anilist or None
+    named = anilist or arr_title
+    return EntryTitle(al_id=al_id, display=named or unresolved_label(al_id), anilist=anilist)
+
+
 @dataclass(frozen=True, slots=True)
 class GrabRecord:
     """One grab, recorded for the end-of-run summary's "added" detail block."""
@@ -165,6 +196,8 @@ class RunContext:
     torrents_added: int = 0
     per_title: PerTitleState = field(default_factory=PerTitleState)
     """Per-title scratch flags, reassigned fresh at the top of each title so none leak into the next."""
+    arr_title: str = ""
+    """The arr item under scan, the display fallback for its ids when AniList names none."""
     started_monotonic: float | None = None
     """Run clock (monotonic, so an NTP or DST step cannot move it)."""
     counts_mark: CountsMark = field(default_factory=lambda: SeverityCounts().bound_mark())
@@ -328,42 +361,51 @@ class RunReporter:
         ctx.stats.no_mappings += 1
         self._ledger(EntryState.NO_MAPPING, title)
 
-    def log_ignored_anilist_id(self, al_id: int) -> None:
-        """Report an AniList ID skipped via the ignore list."""
+    def log_ignored_anilist_id(self, ctx: RunContext, al_id: int) -> None:
+        """Report an AniList ID skipped via the ignore list.
 
-        self._ledger(EntryState.IGNORED, f"AniList #{al_id}")
+        No AniList lookup: an ignored id is dropped before the prefetch, so the arr's own title
+        is the only one in hand and asking would cost a request per ignored id.
+        """
+
+        self._titled_row(EntryState.IGNORED, resolve_entry_title(al_id, None, ctx.arr_title))
 
     def log_no_sd_entry(self, ctx: RunContext, al_id: int) -> None:
         """Report an id with no SeaDex entry (bumps the tally, emits a titled row)."""
 
         ctx.stats.no_seadex_entry += 1
-        self._log_titled_entry(EntryState.NO_ENTRY, al_id)
+        self._titled_row(EntryState.NO_ENTRY, self._display_title(ctx, al_id, None))
 
     def log_seadex_outage_skip(self, ctx: RunContext, al_id: int) -> None:
         """Report a title whose SeaDex lookup was skipped (SeaDex unreachable)."""
 
         ctx.stats.seadex_unreachable += 1
-        # Prefer the cached name: an AniList lookup in a compound outage pays retry backoff per title.
+        # The stored name wins: a prior run resolved it, so no lookup is needed.
         entry = self.cache_store.get_entry(ctx.arr, al_id)
-        self._log_titled_entry(EntryState.SKIPPED, al_id, name=entry.name if entry is not None else None)
+        title = self._display_title(ctx, al_id, entry.name if entry is not None else None)
+        self._titled_row(EntryState.SKIPPED, title)
         # Scope-free (the titled row closed the entry): the reason rides col-0.
         self.detail("status", StyledValue("lookup skipped (SeaDex unreachable)", Accent.DIM))
 
-    def _log_titled_entry(self, state: EntryState, al_id: int, *, name: str | None = None) -> None:
-        """A ledger row for an id with no SeaDex entry block to show."""
+    def _display_title(self, ctx: RunContext, al_id: int, stored: str | None) -> EntryTitle:
+        """The entry's label: the stored name, else AniList, else the arr's own title, else the id form."""
 
-        title = name if name is not None else self.anilist.title(al_id)
-        self._ledger(state, title or f"AniList #{al_id}")
-        # Only repeat the id when the ledger shows a title.
-        if title:
-            self.detail("anilist", StyledValue(str(al_id)))
+        # `stored` is a parameter because `log_cached_entry` reads it under an arr that may differ from `ctx.arr`.
+        return resolve_entry_title(al_id, stored or self.anilist.title(al_id), ctx.arr_title)
+
+    def _titled_row(self, state: EntryState, title: EntryTitle) -> None:
+        """A ledger row for an id with no entry block, the id repeated only when the row shows a title."""
+
+        self._ledger(state, title.display)
+        if title.resolved:
+            self.detail("anilist", StyledValue(str(title.al_id)))
 
     # --- entry-block headers -------------------------------------------------
 
     def log_al_title(
         self,
         ctx: RunContext,
-        anilist_title: str,
+        title: str,
         sd_entry: EntryRecord,
         coverage: str | None = None,
     ) -> None:
@@ -374,14 +416,14 @@ class RunReporter:
 
         # Remembered so add_torrent and the summary can attribute what they grab, and show the files we
         # mapped from the Arr even when a release's own file list can't be parsed.
-        ctx.per_title.current_title = anilist_title
+        ctx.per_title.current_title = title
         ctx.per_title.current_url = sd_entry.url
         ctx.per_title.current_coverage = coverage
 
         self._open_entry(
             EntryHeader(
                 EntryState.CHECKING,
-                anilist_title,
+                title,
                 al_id=sd_entry.anilist_id,
                 coverage=coverage,
                 url=sd_entry.url,
@@ -405,18 +447,13 @@ class RunReporter:
         ctx.stats.cached += 1
 
         entry = self.cache_store.get_entry(arr, al_id)
-        title = entry.name if entry is not None else None
-        if title is None:
-            # None-gated: an empty stored name must NOT trigger a lookup.
-            title = self.anilist.title(al_id)
-        if title is None:
-            title = "(unknown title)"
+        title = self._display_title(ctx, al_id, entry.name if entry is not None else None)
 
         # A complete block: self-close so a later diagnostic attributes to the open item, not to this row.
         self._block(
             EntryHeader(
                 state,
-                title,
+                title.display,
                 al_id=al_id,
                 coverage=entry.coverage if entry is not None else None,
                 url=entry.url if entry is not None else None,

@@ -16,13 +16,10 @@ composite, fake its leaves" seam - so the whole file type-checks at strict.
 """
 
 import time
-from typing import Any, override
 
-import httpx
 from seadex import Tag
 
 from pearlarr.anilist_client import AniListClient
-from pearlarr.anilist_gateway import AniListGateway
 from pearlarr.cache import AbstractCacheStore, CacheRecord
 from pearlarr.config import Arr
 from pearlarr.manual_import import ImportWaitMode, PendingState
@@ -49,7 +46,15 @@ from pearlarr.reporter import (
 )
 from pearlarr.torrents import AddOutcome, ReleaseOutcome
 
-from .builders import FakeCacheStore, make_entry_record, make_logger, pending_import, rg_group, url_item
+from .builders import (
+    FakeCacheStore,
+    ScriptedAniListClient,
+    make_anilist_gateway,
+    make_entry_record,
+    pending_import,
+    rg_group,
+    url_item,
+)
 from .fakes import scan_lines_from_events
 
 
@@ -66,11 +71,7 @@ def _record(
     """
 
     store: AbstractCacheStore = cache_store if cache_store is not None else FakeCacheStore()
-    anilist = AniListGateway(
-        cache_store=FakeCacheStore(),
-        logger=make_logger(),
-        client=client if client is not None else AniListClient(client=httpx.Client()),
-    )
+    anilist = make_anilist_gateway(client)
     events: list[Event] = []
     counts = SeverityCounts()
     reporter = RunReporter(emit=events.append, counts=lambda: counts, cache_store=store, anilist=anilist)
@@ -139,7 +140,7 @@ class TestStatsCounters:
         assert ctx.stats.cached == 1
 
     def test_no_sd_entry_increments_and_caches_title(self) -> None:
-        client = _ScriptedTitleClient()
+        client = ScriptedAniListClient()
         reporter = _make_reporter(client=client)
         ctx = RunContext(arr=Arr.SONARR)
         reporter.log_no_sd_entry(ctx, 42)
@@ -155,7 +156,7 @@ class TestStatsCounters:
         # through the gateway too, never a bare wire query.
         store = FakeCacheStore()
         store.update_cache(Arr.SONARR, 1, CacheRecord(coverage="S01", url="u"))
-        client = _ScriptedTitleClient()
+        client = ScriptedAniListClient()
         reporter = _make_reporter(store, client=client)
         ctx = RunContext(arr=Arr.SONARR)
         reporter.log_cached_entry(ctx, Arr.SONARR, 1)
@@ -166,7 +167,7 @@ class TestStatsCounters:
         # A SeaDex-unreachable skip lands in its own counter and its ledger row
         # reads "skipped" with the reason - never "no entry". An UNCACHED id has
         # no stored name, so the title still comes from the gateway lookup.
-        client = _ScriptedTitleClient()
+        client = ScriptedAniListClient()
         reporter, events = _record(client=client)
         ctx = RunContext(arr=Arr.SONARR)
         reporter.log_seadex_outage_skip(ctx, 42)
@@ -180,10 +181,9 @@ class TestStatsCounters:
         assert client.query_calls == [42]
 
     def test_outage_skip_prefers_cached_name_over_anilist(self) -> None:
-        # A previously-processed title's name sits in the cache row: the outage
-        # skip must render it from there with NO AniList lookup - in a compound
-        # SeaDex+AniList outage a lookup would pay retry backoff per title.
-        client = _ScriptedTitleClient()
+        # A prior run resolved the title and stored it on the cache row, so the
+        # outage skip renders the stored name with no AniList lookup at all.
+        client = ScriptedAniListClient()
         reporter, events = _record(_seeded_store(name="Stored Title", coverage="S01", url="u"), client=client)
         ctx = RunContext(arr=Arr.SONARR)
         reporter.log_seadex_outage_skip(ctx, 1)
@@ -194,22 +194,18 @@ class TestStatsCounters:
         assert "lookup skipped (SeaDex unreachable)" in joined
         assert client.query_calls == []  # the stored name spared the lookup
 
+    def test_cached_without_a_name_falls_back_to_the_arr_title(self) -> None:
+        # The stored name is empty and AniList still has none: the arr's own title labels the block.
+        store = FakeCacheStore()
+        store.update_cache(Arr.SONARR, 1, CacheRecord(coverage="S01", url="u"))
+        client = ScriptedAniListClient(None)
+        reporter, events = _record(store, client=client)
+        ctx = RunContext(arr=Arr.SONARR)
+        ctx.arr_title = "Series"
+        reporter.log_cached_entry(ctx, Arr.SONARR, 1)
 
-class _ScriptedTitleClient(AniListClient):
-    """Checked scripted `AniListClient`: a fixed resolvable title, queries recorded.
-
-    Injected into the gateway under the reporter, so a title lookup exercises
-    the REAL gateway get-or-fetch (cache warm + store) over a canned wire body.
-    """
-
-    def __init__(self) -> None:
-        super().__init__(client=httpx.Client())
-        self.query_calls: list[int] = []
-
-    @override
-    def query(self, al_id: int) -> dict[str, Any]:
-        self.query_calls.append(al_id)
-        return {"data": {"Media": {"id": al_id, "title": {"english": "Resolved"}}}}
+        assert client.query_calls == [1]
+        assert any("Series" in m for m in _event_messages(events))
 
 
 class TestActiveTitle:
@@ -365,11 +361,7 @@ class TestRunSummary:
         The mark carries the ORIGINAL counter.
         """
 
-        anilist = AniListGateway(
-            cache_store=FakeCacheStore(),
-            logger=make_logger(),
-            client=AniListClient(client=httpx.Client()),
-        )
+        anilist = make_anilist_gateway()
         counters = [SeverityCounts()]
         events: list[Event] = []
         reporter = RunReporter(

@@ -41,8 +41,10 @@ class GrabRequest:
     """The resolved per-id payload for the shared grab tail."""
 
     al_id: int
-    item_title: str
-    anilist_title: str
+    arr_title: str
+    """The arr item's own title (the notification's byline when it adds information)."""
+    entry_title: str
+    """The entry's display title: AniList's, else the arr's, else the id form."""
     entry: EntryRecord
     """The SeaDex entry whole: the notification renders its url, notes, comparison links, and incomplete flag."""
     seadex_dict: SeadexDict
@@ -409,8 +411,8 @@ class GrabPipeline:
             self._notifier.push_grab(
                 GrabNotice(
                     arr=self._ctx.arr,
-                    arr_title=req.item_title,
-                    al_title=req.anilist_title,
+                    arr_title=req.arr_title,
+                    entry_title=req.entry_title,
                     entry=req.entry,
                     thumb_url=anilist_thumb,
                     banner_url=anilist_banner,

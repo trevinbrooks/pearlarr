@@ -16,19 +16,15 @@ producer will emit), so the golden is one shared spine: reporter call -> lines,
 event -> the same lines.
 """
 
-import itertools
 import logging
 import time
 from dataclasses import dataclass
-from typing import Any, ClassVar, get_args, override
+from typing import ClassVar, get_args
 
-import httpx
 import pytest
 from rich.text import Span, Text
 from seadex import Tag
 
-from pearlarr.anilist_client import AniListClient
-from pearlarr.anilist_gateway import AniListGateway
 from pearlarr.cache import AbstractCacheStore, CacheRecord
 from pearlarr.config import Arr
 from pearlarr.log import (
@@ -80,7 +76,15 @@ from pearlarr.reporter import (
 from pearlarr.seadex_types import SeadexDict
 from pearlarr.torrents import AddOutcome, ReleaseOutcome
 
-from .builders import FakeCacheStore, make_entry_record, pending_import, rg_group, url_item
+from .builders import (
+    FakeCacheStore,
+    ScriptedAniListClient,
+    make_anilist_gateway,
+    make_entry_record,
+    pending_import,
+    rg_group,
+    url_item,
+)
 from .fakes import SCAN_EVENT_TYPES, scan_lines_from_events
 
 type Line = tuple[int, str, ConsoleRender | None]
@@ -180,6 +184,12 @@ IGNORED_LINES: tuple[Line, ...] = (
     _styled("  ignored     AniList #123", "grey50"),
 )
 
+IGNORED_TITLED_LINES: tuple[Line, ...] = (
+    _blank(),
+    _styled("  ignored     Ignored Show", "grey50"),
+    _detail("    anilist   123", "anilist", "123", style=None),
+)
+
 # --- entry headers (row + coverage/link continuation) ---------------------------------
 
 CHECKING_FULL = EntryHeader(
@@ -248,8 +258,8 @@ OUTAGE_STATUS_DETAIL = EntryDetail(label="status", value=StyledValue("lookup ski
 OUTAGE_LINES: tuple[Line, ...] = (
     _blank(),
     _styled("  skipped     Cached Show", "grey50"),
-    # Quirk: the anilist id repeats on its own detail row even when the name
-    # came straight from the cache row (any resolved title gets the id line).
+    # The anilist id repeats on its own detail row under any real title, the
+    # cached name included. Only the id-form label omits it (it names the id itself).
     _detail("    anilist   1", "anilist", "1", style=None),
     _detail("    status    lookup skipped (SeaDex unreachable)", "status", "lookup skipped (SeaDex unreachable)"),
 )
@@ -259,6 +269,12 @@ NO_ENTRY_RESOLVED_DETAIL = EntryDetail(label="anilist", value=StyledValue("42"))
 NO_ENTRY_RESOLVED_LINES: tuple[Line, ...] = (
     _blank(),
     _styled("  no entry    Resolved Title", "grey50"),
+    _detail("    anilist   42", "anilist", "42", style=None),
+)
+
+NO_ENTRY_ARR_TITLE_LINES: tuple[Line, ...] = (
+    _blank(),
+    _styled("  no entry    Arr Title", "grey50"),
     _detail("    anilist   42", "anilist", "42", style=None),
 )
 
@@ -775,40 +791,12 @@ SUMMARY_WAIT_OFF_LINES: tuple[Line, ...] = (
 
 # --- the harness: drive the REAL reporter, assert the goldens --------------------------
 
-_logger_ids = itertools.count()
-
-
-def _fresh_logger() -> logging.Logger:
-    """A uniquely-named DEBUG logger for the gateway/scripted-client collaborators."""
-
-    logger = logging.getLogger(f"scan-parity-{next(_logger_ids)}")
-    logger.propagate = False
-    logger.setLevel(logging.DEBUG)
-    return logger
-
-
-class _ScriptedTitleClient(AniListClient):
-    """Scripted AniList wire client: a fixed resolvable title, or none at all."""
-
-    def __init__(self, title: str | None) -> None:
-        super().__init__(client=httpx.Client())
-        self._title = title
-
-    @override
-    def query(self, al_id: int) -> dict[str, Any]:
-        if self._title is None:
-            return {}
-        return {"data": {"Media": {"id": al_id, "title": {"english": self._title}}}}
-
 
 class _Harness:
     """A real RunReporter (real gateway, faked leaves) recording emitted events."""
 
     def __init__(self, store: AbstractCacheStore | None = None, title: str | None = None) -> None:
-        # NullHandler: the logger only serves the gateway/scripted client. The
-        # parity lines come from the recorded EVENTS below, never from records.
-        self.logger = _fresh_logger()
-        self.logger.addHandler(logging.NullHandler())
+        # The parity lines come from the recorded EVENTS below, never from log records.
         self.events: list[Event] = []
         # The summary's issues row diffs this bound counter (scripted directly).
         self.counts = SeverityCounts()
@@ -816,11 +804,7 @@ class _Harness:
             emit=self.events.append,
             counts=lambda: self.counts,
             cache_store=store if store is not None else FakeCacheStore(),
-            anilist=AniListGateway(
-                cache_store=FakeCacheStore(),
-                logger=self.logger,
-                client=_ScriptedTitleClient(title),
-            ),
+            anilist=make_anilist_gateway(ScriptedAniListClient(title)),
         )
 
     def lines(self) -> tuple[Line, ...]:
@@ -878,8 +862,13 @@ class TestLedgerRowParity:
 
     def test_ignored(self) -> None:
         harness = _Harness()
-        harness.reporter.log_ignored_anilist_id(123)
+        harness.reporter.log_ignored_anilist_id(RunContext(arr=Arr.SONARR), 123)
         assert harness.lines() == IGNORED_LINES
+
+    def test_ignored_with_the_arr_title(self) -> None:
+        harness = _Harness()
+        harness.reporter.log_ignored_anilist_id(RunContext(arr=Arr.SONARR, arr_title="Ignored Show"), 123)
+        assert harness.lines() == IGNORED_TITLED_LINES
 
 
 class TestEntryHeaderParity:
@@ -931,13 +920,20 @@ class TestEntryHeaderParity:
 class TestTitledEntryParity:
     """`log_no_sd_entry` / `log_seadex_outage_skip` reproduce the pinned golden lines.
 
-    A title is resolved via the AniList gateway, or falls back when the gateway or cache has none.
+    A title is resolved via the AniList gateway, else the arr item's own title, else the id form alone.
     """
 
     def test_no_entry_with_resolved_title(self) -> None:
         harness = _Harness(title="Resolved Title")
         harness.reporter.log_no_sd_entry(RunContext(arr=Arr.SONARR), 42)
         assert harness.lines() == NO_ENTRY_RESOLVED_LINES
+
+    def test_no_entry_with_the_arr_title_fallback(self) -> None:
+        harness = _Harness(title=None)
+        ctx = RunContext(arr=Arr.SONARR)
+        ctx.arr_title = "Arr Title"
+        harness.reporter.log_no_sd_entry(ctx, 42)
+        assert harness.lines() == NO_ENTRY_ARR_TITLE_LINES
 
     def test_no_entry_without_a_title(self) -> None:
         harness = _Harness(title=None)
@@ -1304,7 +1300,7 @@ class TestScopeLifecycle:
         ctx = RunContext(arr=Arr.SONARR)
         harness.reporter.log_arr_item_unmonitored(ctx, "Unmon")
         harness.reporter.log_no_anilist_mappings(ctx, "NoMap")
-        harness.reporter.log_ignored_anilist_id(7)
+        harness.reporter.log_ignored_anilist_id(ctx, 7)
         harness.reporter.log_entry_status(EntryState.IN_RADARR, "Owned")
 
         assert not any(isinstance(e, (ScopeOpened, ScopeClosed)) for e in harness.events)

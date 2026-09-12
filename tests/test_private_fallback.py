@@ -124,8 +124,8 @@ def _grab_request(al_id: int, seadex_dict: SeadexDict, hashes: list[str | None],
 
     return GrabRequest(
         al_id=al_id,
-        item_title="Show",
-        anilist_title="Show",
+        arr_title="Show",
+        entry_title="Show",
         entry=entry,
         seadex_dict=seadex_dict,
         torrent_hashes=hashes,

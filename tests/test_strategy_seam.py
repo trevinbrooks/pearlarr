@@ -43,6 +43,7 @@ from pearlarr.mappings import ExternalIds, MappingEntry, MappingSource
 from pearlarr.output import Severity
 from pearlarr.output.recording import RecordingHub
 from pearlarr.planner import PlanResult
+from pearlarr.reporter import EntryTitle
 from pearlarr.run_services import RunServices
 from pearlarr.seadex_radarr import RadarrSync
 from pearlarr.seadex_sonarr import SonarrSync
@@ -207,14 +208,8 @@ class _FakeRunServices(RunServices):
         return self._needs_scan
 
     @override
-    def get_anilist_ids(
-        self,
-        ids: ExternalIds,
-        log_ignored: bool = True,
-    ) -> dict[int, MappingEntry]:
-        self.get_anilist_ids_calls.append(
-            GetAniListIdsCall(ids, log_ignored),
-        )
+    def get_anilist_ids(self, ids: ExternalIds, log_ignored: bool = True) -> dict[int, MappingEntry]:
+        self.get_anilist_ids_calls.append(GetAniListIdsCall(ids, log_ignored))
         return self._anilist_ids
 
     @override
@@ -234,9 +229,13 @@ class _FakeRunServices(RunServices):
         return self._cached_skip
 
     @override
-    def get_anilist_title(self, al_id: int) -> str:
-        del al_id
-        return self._anilist_title
+    def resolve_title(self, al_id: int) -> EntryTitle:
+        return EntryTitle(al_id=al_id, display=self._anilist_title, anilist=self._anilist_title)
+
+    @override
+    def new_cache_details(self, title: EntryTitle, sd_entry: EntryRecord) -> CacheRecord:
+        # A pure builder over its arguments (no hub state), so the real one serves the fake.
+        return super().new_cache_details(title, sd_entry)
 
     @override
     def get_seadex_dict(self, sd_entry: EntryRecord) -> SeadexDict:
@@ -296,9 +295,9 @@ class _FakeRunServices(RunServices):
         del item_title
 
     @override
-    def log_al_title(self, anilist_title: str, sd_entry: EntryRecord, coverage: str | None = None) -> None:
+    def log_al_title(self, title: str, sd_entry: EntryRecord, coverage: str | None = None) -> None:
         del sd_entry, coverage
-        self.log_al_title_calls.append(anilist_title)
+        self.log_al_title_calls.append(title)
 
     @override
     def log_cached_entry(self, arr: Arr, al_id: int, state: EntryState = EntryState.UNCHANGED) -> None:
@@ -2988,8 +2987,8 @@ class TestRadarrProcessAlIdSeam:
         assert run.filter_downloads_calls == [(5, seadex_dict, ArrReleases(tagged={"OldGroup": (100,)}))]
         [req] = run.grab_requests
         assert req.al_id == 5
-        assert req.item_title == "Item Title"
-        assert req.anilist_title == "Movie Title"
+        assert req.arr_title == "Item Title"
+        assert req.entry_title == "Movie Title"
         # The SeaDex entry rides the request whole (the notifier reads its
         # url/notes/comparisons), so pin identity, not a copied field.
         assert req.entry is entry

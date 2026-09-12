@@ -16,7 +16,14 @@ from pathlib import Path
 import pytest
 
 import pearlarr
-from pearlarr.cache import SCHEMA_VERSION, CacheSchemaError, CacheStore, HistoryCheckpoint
+from pearlarr.cache import (
+    SCHEMA_VERSION,
+    CacheSchemaError,
+    CacheStore,
+    HistoryCheckpoint,
+    record_payload,
+    stamp_is_fresh,
+)
 from pearlarr.config import Arr
 from pearlarr.log import LOG_NAME
 from pearlarr.manual_import import GuardFacts, OwnedEpisode, PendingImport, PendingKey
@@ -124,6 +131,18 @@ CREATE TABLE pending_imports (
     al_id    INTEGER NOT NULL DEFAULT 0,
     record   BLOB NOT NULL,
     PRIMARY KEY (arr, infohash, al_id));
+"""
+
+
+# The v3 shape of the tables `CacheStore.load` needs: `kv` plus the `entries`
+# the v3 -> v4 step rewrites (a name may hold the id form an outage once stored).
+_V3_ENTRIES_SCHEMA = """
+CREATE TABLE kv (key TEXT PRIMARY KEY, value TEXT);
+CREATE TABLE entries (
+    arr TEXT NOT NULL, al_id INTEGER NOT NULL,
+    name TEXT, url TEXT, coverage TEXT, updated_at TEXT,
+    fallback_satisfied INTEGER NOT NULL DEFAULT 0,
+    PRIMARY KEY (arr, al_id));
 """
 
 
@@ -324,6 +343,28 @@ class TestSchemaVersionGate:
         store = CacheStore.load(str(db), config_checksum=CHECKSUM)
         assert store.get_guards(Arr.SONARR) == {9: GuardFacts(entry_groups=("Kept",))}
         store.close()
+
+    def test_v3_id_form_names_are_nulled(self, tmp_path: Path) -> None:
+        # The v3 -> v4 step: a name stored as the id-form fallback (an AniList
+        # outage at write time) is nulled so a later cached read resolves it. A
+        # real name and an absent one survive untouched.
+        db = tmp_path / "cache.db"
+        raw = sqlite3.connect(str(db))
+        raw.executescript(_V3_ENTRIES_SCHEMA)
+        raw.executemany(
+            "INSERT INTO entries (arr, al_id, name) VALUES (?, ?, ?)",
+            [("sonarr", 1, "AniList #1"), ("sonarr", 2, "Frieren"), ("radarr", 3, None)],
+        )
+        raw.execute("PRAGMA user_version=3")
+        raw.commit()
+        raw.close()
+
+        store = CacheStore.load(str(db), config_checksum=CHECKSUM)
+        assert _entry_name(store, 1) is None
+        assert _entry_name(store, 2) == "Frieren"
+        assert _entry_name(store, 3, Arr.RADARR) is None
+        store.close()
+        assert _user_version(db) == SCHEMA_VERSION
 
     def test_newer_schema_is_refused_not_quarantined(self, tmp_path: Path) -> None:
         db = tmp_path / "cache.db"
@@ -616,6 +657,24 @@ class TestAnilistMeta:
         assert meta is not None
         assert meta["data"] == {"a": 2}
         store.close()
+
+
+class TestRecordFreshness:
+    """The persisted-record readers: the payload half and the stamp half, split apart."""
+
+    def test_record_payload_wants_a_non_empty_object(self) -> None:
+        assert record_payload(None, "data") is None
+        assert record_payload({"fetched_at": "2026-06-26 12:00:00"}, "data") is None
+        assert record_payload({"data": {}}, "data") is None
+        assert record_payload({"data": [{"x": 1}]}, "data") is None
+        assert record_payload({"data": {"x": 1}}, "data") == {"x": 1}
+
+    def test_stamp_is_fresh_parses_and_compares(self) -> None:
+        cutoff = datetime(2026, 6, 20)
+        assert stamp_is_fresh({"fetched_at": "2026-06-26 12:00:00"}, cutoff) is True
+        assert stamp_is_fresh({"fetched_at": "2020-01-01 00:00:00"}, cutoff) is False
+        assert stamp_is_fresh({}, cutoff) is False
+        assert stamp_is_fresh({"fetched_at": 5}, cutoff) is False
 
 
 class TestSonarrParse:
@@ -956,7 +1015,7 @@ class TestMaintenance:
 
     def test_evict_sweeps_stampless_records(self, tmp_path: Path) -> None:
         # A record with no fetched_at -> NULL generated column. It is unreadable
-        # (record_is_fresh rejects it) and must not become un-evictable dead weight.
+        # (stamp_is_fresh rejects it) and must not become un-evictable dead weight.
         store = _open(tmp_path)
         store.put_anilist_meta(1, {"data": {"x": 1}})  # no fetched_at -> NULL
         store.put_anilist_meta(2, {"fetched_at": "2026-06-26 12:00:00", "data": {"x": 2}})

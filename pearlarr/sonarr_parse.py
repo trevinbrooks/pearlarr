@@ -14,7 +14,7 @@ from collections.abc import Iterator, Mapping, Sequence
 from datetime import datetime, timedelta
 from typing import Any, NamedTuple, NotRequired, TypedDict, cast
 
-from .cache import UPDATED_AT_STR_FORMAT, parse_stamp, record_is_fresh
+from .cache import UPDATED_AT_STR_FORMAT, stamp_is_fresh
 from .json_narrow import is_json_list, is_json_obj
 from .log import count_noun
 from .manual_import import path_leaf
@@ -256,17 +256,10 @@ class SonarrParseCache:
         """
 
         if record.get("episodes"):
-            return record_is_fresh(
-                record,
-                payload_key="episodes",
-                cutoff=window.cutoff,
-            )
+            return stamp_is_fresh(record, window.cutoff)
         if record.get("series_fp") != window.series_fp:
             return False
-        try:
-            return parse_stamp(record.get("fetched_at", "")) >= window.neg_cutoff
-        except (TypeError, ValueError):
-            return False
+        return stamp_is_fresh(record, window.neg_cutoff)
 
     def _write_parse_record(self, filename: str, parse: SonarrParse, *, window: ParseWindow) -> None:
         """Upsert a Sonarr parse-cache record (one builder for both shapes).
