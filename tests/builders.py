@@ -169,7 +169,8 @@ class ScriptedTitleClient(AniListClient):
     """Scripted AniList wire client: a fixed resolvable title (or none), queries recorded.
 
     Injected under a real gateway, so a lookup exercises the gateway's get-or-fetch over a
-    canned wire body. The breaker never trips here, both overrides answer without a request.
+    canned wire body. The breaker never trips here: a title-less client answers with AniList's
+    unknown-id body, the only dataless shape the real client returns without tripping.
     """
 
     def __init__(self, title: str | None = "Resolved") -> None:
@@ -184,7 +185,7 @@ class ScriptedTitleClient(AniListClient):
     @override
     def query(self, al_id: int) -> dict[str, Any]:
         self.query_calls.append(al_id)
-        return {} if self._title is None else self._body(al_id)
+        return {"data": {"Media": None}} if self._title is None else self._body(al_id)
 
     @override
     def query_batch(self, al_ids: list[int]) -> AniListCache:

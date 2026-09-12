@@ -42,11 +42,11 @@ class AniListGateway:
         self.logger = logger
         self._client = client
         self.al_cache: AniListCache = {}
-        # Loaded past the refresh age: served, refetched, and the episode count held back.
+        # Loaded past the refresh age: served as-is while the prefetch tries to refresh them.
         self._stale: set[int] = set()
         # Fetched this run: exactly what the save writes.
         self._fetched: set[int] = set()
-        # Unknown to AniList this run: no accessor re-queries them.
+        # Confirmed unknown to AniList this run: no later accessor re-queries them.
         self._absent: set[int] = set()
 
     @property
@@ -93,7 +93,9 @@ class AniListGateway:
         # Sorted so the write order is deterministic.
         for al_id in sorted(self._fetched):
             self._cache.put_anilist_meta(al_id, {"fetched_at": now_str, "data": self.al_cache[al_id]})
-        self._fetched.clear()
+        # A preview persists nothing, so the queue has to outlive it for a later real save.
+        if not preview:
+            self._fetched.clear()
 
         # Evicting during an outage would drain the very records serving the run.
         cutoff = now - timedelta(days=ANILIST_REFRESH_AGE_DAYS)
@@ -123,16 +125,13 @@ class AniListGateway:
 
         done = 0
         for start in range(0, total, ANILIST_BATCH_SIZE):
-            # A tripped breaker answers every later batch empty, so stop asking.
-            if self.outage:
-                break
             chunk = wanted[start : start + ANILIST_BATCH_SIZE]
             fetched = self._client.query_batch(chunk)
+            # A tripped breaker answered this batch empty and answers every later one the same.
+            if self.outage:
+                break
             for al_id, body in fetched.items():
                 self._store(al_id, body)
-            # A healthy batch answers for its whole chunk: what it left out is unknown to AniList.
-            if not self.outage:
-                self._absent.update(i for i in chunk if i not in fetched)
             done += len(chunk)
             if progress is not None:
                 progress.progress(done / total, f"{done}/{total}")
@@ -186,9 +185,7 @@ class AniListGateway:
         return self._media(al_id).format
 
     def n_eps(self, al_id: int) -> int | None:
-        """Resolve the AniList episode count for an id, or None (also while its record is stale)."""
+        """Resolve the AniList episode count for an id, or None."""
 
-        # The count is the one field the refresh age exists for. None downstream means "use every episode".
-        if al_id in self._stale:
-            return None
+        # A stale count still answers: None downstream means "use every episode", which over-grabs.
         return self._media(al_id).episodes
