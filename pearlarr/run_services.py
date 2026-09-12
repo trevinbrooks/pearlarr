@@ -607,7 +607,7 @@ class RunServices:
         if not entry.url:
             backfill["url"] = sd_entry.url
             backfill["coverage"] = coverage()
-        if not entry.name and (name := self._anilist.title(al_id)):
+        if not entry.name and (name := self.resolve_title(al_id).anilist):
             backfill["name"] = name
         if backfill:
             self._update_cache(al_id=al_id, cache_details=backfill)

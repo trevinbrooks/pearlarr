@@ -230,7 +230,7 @@ class _FakeRunServices(RunServices):
 
     @override
     def resolve_title(self, al_id: int) -> EntryTitle:
-        return EntryTitle(al_id=al_id, display=self._anilist_title, anilist=self._anilist_title, resolved=True)
+        return EntryTitle(al_id=al_id, display=self._anilist_title, anilist=self._anilist_title)
 
     @override
     def new_cache_details(self, title: EntryTitle, sd_entry: EntryRecord) -> CacheRecord:

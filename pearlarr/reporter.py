@@ -67,8 +67,12 @@ class EntryTitle:
     """The AniList title, else the arr item's own title, else the id form."""
     anilist: str | None
     """The AniList title alone, the only value the cache stores as the entry's name."""
-    resolved: bool
-    """False when nothing named the entry and `display` fell back to the id form."""
+
+    @property
+    def resolved(self) -> bool:
+        """False when nothing named the entry and `display` fell back to the id form."""
+
+        return self.display != unresolved_label(self.al_id)
 
 
 def resolve_entry_title(al_id: int, anilist: str | None, arr_title: str) -> EntryTitle:
@@ -76,7 +80,7 @@ def resolve_entry_title(al_id: int, anilist: str | None, arr_title: str) -> Entr
 
     anilist = anilist or None
     named = anilist or arr_title
-    return EntryTitle(al_id=al_id, display=named or unresolved_label(al_id), anilist=anilist, resolved=bool(named))
+    return EntryTitle(al_id=al_id, display=named or unresolved_label(al_id), anilist=anilist)
 
 
 @dataclass(frozen=True, slots=True)
