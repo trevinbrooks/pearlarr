@@ -358,7 +358,7 @@ class TestAlIdPrologue:
         reporter = _TailReporter()
         run = make_services(_seadex=FakeSeaDexSource(), _reporter=reporter)
 
-        assert run.al_id_prologue(5, "Series") is None
+        assert run.al_id_prologue(5) is None
         assert reporter.no_sd_entry_ids == [5]
         assert reporter.outage_skip_ids == []
         assert run._ctx.stats.checked == 1
@@ -369,7 +369,7 @@ class TestAlIdPrologue:
         reporter = _TailReporter()
         run = make_services(_seadex=FakeSeaDexSource(outage=True), _reporter=reporter)
 
-        assert run.al_id_prologue(5, "Series") is None
+        assert run.al_id_prologue(5) is None
         assert reporter.outage_skip_ids == [5]
         assert reporter.no_sd_entry_ids == []
         assert run._ctx.stats.checked == 1
@@ -379,18 +379,9 @@ class TestAlIdPrologue:
         run = make_services(_seadex=FakeSeaDexSource({5: entry}), _reporter=_TailReporter())
         run._ctx.per_title.private_only_skipped = True  # stale flag from a previous title
 
-        assert run.al_id_prologue(5, "Series") is entry
+        assert run.al_id_prologue(5) is entry
         assert run._ctx.per_title.private_only_skipped is False
         assert run._ctx.stats.checked == 1
-
-    def test_seeds_the_arr_title_as_the_fallback(self) -> None:
-        # The fresh per-title state carries the arr item's own title, so a later
-        # title resolution can fall back to it when AniList has nothing.
-        run = make_services(_seadex=FakeSeaDexSource({5: make_entry_record()}), _reporter=_TailReporter())
-
-        run.al_id_prologue(5, "Series")
-
-        assert run._ctx.per_title.arr_title == "Series"
 
 
 class TestResolveTitle:
@@ -399,7 +390,7 @@ class TestResolveTitle:
     @staticmethod
     def _run(client: ScriptedTitleClient, arr_title: str = "") -> RunServices:
         run = make_services(_anilist=_gateway(client))
-        run._ctx.per_title.arr_title = arr_title
+        run._ctx.arr_title = arr_title
         return run
 
     def test_anilist_title_is_both_display_and_anilist(self) -> None:

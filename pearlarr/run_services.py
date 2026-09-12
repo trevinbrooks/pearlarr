@@ -434,33 +434,19 @@ class RunServices:
 
         self._dirty_al_ids.update(al_ids)
 
-    def get_anilist_ids(
-        self,
-        ids: ExternalIds,
-        arr_title: str = "",
-        log_ignored: bool = True,
-    ) -> dict[int, MappingEntry]:
-        """Resolve external Arr ids to a {AniList id -> mapping} dict.
+    def get_anilist_ids(self, ids: ExternalIds, log_ignored: bool = True) -> dict[int, MappingEntry]:
+        """Resolve external Arr ids to a {AniList id -> mapping} dict, logging the ignored ones.
 
-        The resolver does the mapping computation and reports which ids it
-        dropped (the configured ignore list). The logging stays here so the
-        presentation concern doesn't leak into the resolver.
-
-        Args:
-            ids: The external Arr ids to resolve (at least one).
-            arr_title: The arr item's own title, the label an ignored id's row carries.
-            log_ignored: Log a ledger row for each ignored AniList ID.
-                Pass False from the prefetch pass so ignored ids aren't logged
-                twice (once there, once in the main loop)
+        The resolver maps and reports the ids it dropped (the ignore list), and the ledger rows stay
+        here. `log_ignored=False` on the prefetch pass keeps an ignored id from being logged twice.
         """
 
         anilist_mappings, ids_to_drop = self._mappings.get_anilist_ids(ids)
 
-        # Log ignored ids per-call (not just on the cache-filling call), so the
-        # main loop still logs every ignored id even after the prefetch pass ran
+        # Logged per call, not only on the cache-filling one, so the main loop still logs every ignored id.
         if log_ignored:
             for al_id in ids_to_drop:
-                self._reporter.log_ignored_anilist_id(al_id, arr_title)
+                self._reporter.log_ignored_anilist_id(self._ctx, al_id)
 
         return anilist_mappings
 
@@ -471,7 +457,7 @@ class RunServices:
         `new_cache_details` writes the result back. `log_al_title` opens the block with it.
         """
 
-        return resolve_entry_title(al_id, self._anilist.title(al_id), self._ctx.per_title.arr_title)
+        return resolve_entry_title(al_id, self._anilist.title(al_id), self._ctx.arr_title)
 
     def new_cache_details(self, title: EntryTitle, sd_entry: EntryRecord) -> CacheRecord:
         """The seed record a processed id accumulates into.
@@ -577,19 +563,15 @@ class RunServices:
         time.sleep(self._config.advanced.sleep_time)
         return False
 
-    def al_id_prologue(self, al_id: int, arr_title: str) -> EntryRecord | None:
+    def al_id_prologue(self, al_id: int) -> EntryRecord | None:
         """Shared per-AniList-id head: reset skip flags, tally, fetch SeaDex entry.
 
-        `arr_title` is the arr item's own title, seeded as the title fallback. Returns the
-        SeaDex entry to process, or None when there's nothing to do: either the id has no
-        SeaDex entry, or the lookup was skipped because SeaDex is unreachable this run. The
-        two misses are reported distinctly (an outage skip must never read as "no entry").
+        Returns the entry to process, or None for a missing entry or a SeaDex outage skip.
+        The two misses are reported distinctly (an outage skip must never read as "no entry").
         """
 
-        # Reset the per-title skip flags (and the skipped group names) before we
-        # make any download decisions for this title: a fresh PerTitleState clears
-        # every field at once, so a new flag can never leak from the prior title.
-        self._ctx.per_title = PerTitleState(arr_title=arr_title)
+        # A fresh PerTitleState clears every flag at once, so none leaks from the prior title.
+        self._ctx.per_title = PerTitleState()
         self._ctx.stats.checked += 1
 
         # Get the SeaDex entry if it exists
@@ -609,25 +591,18 @@ class RunServices:
         sd_entry: EntryRecord,
         coverage: Callable[[], str],
     ) -> bool:
-        """Shared cached-entry short-circuit for both Arr runners.
+        """Shared cached-entry short-circuit: backfill, log, and return True when the id is cached and skippable.
 
-        When the id is already cached and we're honoring SeaDex update times,
-        backfill what the record lacks, log the cached entry, and return True so
-        the caller skips it. `coverage` is a zero-arg callable so the (for Sonarr,
-        episode-fetching) coverage lookup runs only on the one-time url backfill,
-        never on the common already-backfilled path. It builds "" for a movie, a
-        season/episode range for a series.
+        `coverage` stays a callable so the (for Sonarr, episode-fetching) lookup runs only on the
+        one-time url backfill, never on the common already-backfilled path.
         """
 
-        # The shared skip decision. Its one row read also serves the backfill
-        # checks below.
         entry = self._skippable_entry(al_id, sd_entry)
         if entry is None:
             return False
 
-        # One-time backfills, merged into a single write: the url + coverage a
-        # record written before those fields lacks, and the name a record written
-        # while AniList was unreachable lacks (nothing else re-processes it).
+        # One-time backfills merged into a single write: the url + coverage an older record lacks,
+        # and the name a record written while AniList was unreachable lacks.
         backfill: CacheRecord = {}
         if not entry.url:
             backfill["url"] = sd_entry.url

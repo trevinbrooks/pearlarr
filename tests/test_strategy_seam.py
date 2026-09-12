@@ -118,15 +118,7 @@ class GetAniListIdsCall(NamedTuple):
     """
 
     ids: ExternalIds
-    arr_title: str = ""
     log_ignored: bool = True
-
-
-class AlIdPrologueCall(NamedTuple):
-    """One recorded `al_id_prologue` call (the arr title the strategy seeded as the fallback)."""
-
-    al_id: int
-    arr_title: str
 
 
 class CheckAlIdInCacheCall(NamedTuple):
@@ -187,7 +179,7 @@ class _FakeRunServices(RunServices):
         self._no_releases_result = no_releases_result
         self._import_wait_mode = import_wait_mode
         self.get_anilist_ids_calls: list[GetAniListIdsCall] = []
-        self.al_id_prologue_calls: list[AlIdPrologueCall] = []
+        self.al_id_prologue_calls: list[int] = []
         self.check_al_id_in_cache_calls: list[CheckAlIdInCacheCall] = []
         self.log_entry_status_calls: list[tuple[EntryState, str]] = []
         self.log_al_title_calls: list[str] = []
@@ -216,20 +208,13 @@ class _FakeRunServices(RunServices):
         return self._needs_scan
 
     @override
-    def get_anilist_ids(
-        self,
-        ids: ExternalIds,
-        arr_title: str = "",
-        log_ignored: bool = True,
-    ) -> dict[int, MappingEntry]:
-        self.get_anilist_ids_calls.append(
-            GetAniListIdsCall(ids, arr_title, log_ignored),
-        )
+    def get_anilist_ids(self, ids: ExternalIds, log_ignored: bool = True) -> dict[int, MappingEntry]:
+        self.get_anilist_ids_calls.append(GetAniListIdsCall(ids, log_ignored))
         return self._anilist_ids
 
     @override
-    def al_id_prologue(self, al_id: int, arr_title: str) -> EntryRecord | None:
-        self.al_id_prologue_calls.append(AlIdPrologueCall(al_id, arr_title))
+    def al_id_prologue(self, al_id: int) -> EntryRecord | None:
+        self.al_id_prologue_calls.append(al_id)
         return self._prologue_entry
 
     @override
@@ -376,23 +361,18 @@ class TestItemAnilistIdsDelegates:
         run = _FakeRunServices(anilist_ids={7: MappingEntry(anilist_id=7)})
         strat = make_bare_instance(RadarrSync, _services=run)
 
-        result = strat.item_anilist_ids(_Item(tmdbId=42, imdbId="tt7", title="Movie"), log_ignored=False)
+        result = strat.item_anilist_ids(_Item(tmdbId=42, imdbId="tt7"), log_ignored=False)
 
         assert result == {7: MappingEntry(anilist_id=7)}
-        # The item's own title rides along as the label an ignored id's row falls back to.
-        assert run.get_anilist_ids_calls == [
-            GetAniListIdsCall(ExternalIds(tmdb=42, imdb="tt7"), "Movie", log_ignored=False)
-        ]
+        assert run.get_anilist_ids_calls == [GetAniListIdsCall(ExternalIds(tmdb=42, imdb="tt7"), log_ignored=False)]
 
     def test_sonarr_uses_tvdb_and_imdb(self) -> None:
         run = _FakeRunServices()
         strat = make_bare_instance(SonarrSync, _services=run)
 
-        strat.item_anilist_ids(_Item(tvdbId=99, imdbId="tt9", title="Series"))
+        strat.item_anilist_ids(_Item(tvdbId=99, imdbId="tt9"))
 
-        assert run.get_anilist_ids_calls == [
-            GetAniListIdsCall(ExternalIds(tvdb=99, imdb="tt9"), "Series", log_ignored=True)
-        ]
+        assert run.get_anilist_ids_calls == [GetAniListIdsCall(ExternalIds(tvdb=99, imdb="tt9"), log_ignored=True)]
 
 
 class TestFilterToSingle:
@@ -481,14 +461,14 @@ class TestProcessAlIdThreadsServices:
         strat = make_bare_instance(RadarrSync, _services=run)
 
         assert strat.process_al_id(_Item(id=1, title="Title"), 5, MappingEntry(anilist_id=5)) is False
-        assert run.al_id_prologue_calls == [AlIdPrologueCall(5, "Title")]
+        assert run.al_id_prologue_calls == [5]
 
     def test_sonarr_no_seadex_entry_returns_false(self) -> None:
         run = _FakeRunServices()
         strat = make_bare_instance(SonarrSync, _services=run)
 
         assert strat.process_al_id(_Item(id=1, title="Title"), 5, MappingEntry(anilist_id=5)) is False
-        assert run.al_id_prologue_calls == [AlIdPrologueCall(5, "Title")]
+        assert run.al_id_prologue_calls == [5]
 
     def test_sonarr_no_episodes_resolved_skips_explicitly(self) -> None:
         # An anime-id mapping that resolves to [] (season not in Sonarr / offset past

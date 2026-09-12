@@ -148,8 +148,6 @@ class RunStats:
 class PerTitleState:
     """Per-title scratch flags, reset at the top of each title."""
 
-    arr_title: str = ""
-    """The arr item's own title, the display fallback when AniList has none."""
     private_only_skipped: bool = False
     """A private-only release forced a skip, so the title must not be cached as done."""
     private_only_groups: list[str] = field(default_factory=list[str])
@@ -194,6 +192,8 @@ class RunContext:
     torrents_added: int = 0
     per_title: PerTitleState = field(default_factory=PerTitleState)
     """Per-title scratch flags, reassigned fresh at the top of each title so none leak into the next."""
+    arr_title: str = ""
+    """The arr item under scan, the display fallback for its ids when AniList names none."""
     started_monotonic: float | None = None
     """Run clock (monotonic, so an NTP or DST step cannot move it)."""
     counts_mark: CountsMark = field(default_factory=lambda: SeverityCounts().bound_mark())
@@ -357,14 +357,14 @@ class RunReporter:
         ctx.stats.no_mappings += 1
         self._ledger(EntryState.NO_MAPPING, title)
 
-    def log_ignored_anilist_id(self, al_id: int, arr_title: str) -> None:
+    def log_ignored_anilist_id(self, ctx: RunContext, al_id: int) -> None:
         """Report an AniList ID skipped via the ignore list.
 
         No AniList lookup: an ignored id is dropped before the prefetch, so the arr's own title
         is the only one in hand and asking would cost a request per ignored id.
         """
 
-        self._titled_row(EntryState.IGNORED, resolve_entry_title(al_id, None, arr_title))
+        self._titled_row(EntryState.IGNORED, resolve_entry_title(al_id, None, ctx.arr_title))
 
     def log_no_sd_entry(self, ctx: RunContext, al_id: int) -> None:
         """Report an id with no SeaDex entry (bumps the tally, emits a titled row)."""
@@ -387,7 +387,7 @@ class RunReporter:
         """The entry's label: the stored name, else AniList, else the arr's own title, else the id form."""
 
         # `stored` is a parameter because `log_cached_entry` reads it under an arr that may differ from `ctx.arr`.
-        return resolve_entry_title(al_id, stored or self.anilist.title(al_id), ctx.per_title.arr_title)
+        return resolve_entry_title(al_id, stored or self.anilist.title(al_id), ctx.arr_title)
 
     def _titled_row(self, state: EntryState, title: EntryTitle) -> None:
         """A ledger row for an id with no entry block, the id repeated only when the row shows a title."""

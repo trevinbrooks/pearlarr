@@ -220,6 +220,8 @@ class RunLoop:
 
         arr = self._services.arr
         item_title = item.title
+        # The display fallback for every id under this item.
+        self._ctx.arr_title = item_title
 
         self._reporter.log_arr_item_start(
             arr,

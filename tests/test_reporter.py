@@ -210,7 +210,7 @@ class TestTitleFallback:
     def test_no_sd_entry_falls_back_to_the_arr_title(self) -> None:
         reporter, events = _record(client=ScriptedTitleClient(None))
         ctx = RunContext(arr=Arr.SONARR)
-        ctx.per_title.arr_title = "Series"
+        ctx.arr_title = "Series"
         reporter.log_no_sd_entry(ctx, 42)
 
         messages = _event_messages(events)
@@ -233,7 +233,7 @@ class TestTitleFallback:
         client = ScriptedTitleClient(None)
         reporter, events = _record(store, client=client)
         ctx = RunContext(arr=Arr.SONARR)
-        ctx.per_title.arr_title = "Series"
+        ctx.arr_title = "Series"
         reporter.log_cached_entry(ctx, Arr.SONARR, 1)
 
         assert client.query_calls == [1]

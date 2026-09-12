@@ -876,12 +876,12 @@ class TestLedgerRowParity:
 
     def test_ignored(self) -> None:
         harness = _Harness()
-        harness.reporter.log_ignored_anilist_id(123, "")
+        harness.reporter.log_ignored_anilist_id(RunContext(arr=Arr.SONARR), 123)
         assert harness.lines() == IGNORED_LINES
 
     def test_ignored_with_the_arr_title(self) -> None:
         harness = _Harness()
-        harness.reporter.log_ignored_anilist_id(123, "Ignored Show")
+        harness.reporter.log_ignored_anilist_id(RunContext(arr=Arr.SONARR, arr_title="Ignored Show"), 123)
         assert harness.lines() == IGNORED_TITLED_LINES
 
 
@@ -945,7 +945,7 @@ class TestTitledEntryParity:
     def test_no_entry_with_the_arr_title_fallback(self) -> None:
         harness = _Harness(title=None)
         ctx = RunContext(arr=Arr.SONARR)
-        ctx.per_title.arr_title = "Arr Title"
+        ctx.arr_title = "Arr Title"
         harness.reporter.log_no_sd_entry(ctx, 42)
         assert harness.lines() == NO_ENTRY_ARR_TITLE_LINES
 
@@ -1314,7 +1314,7 @@ class TestScopeLifecycle:
         ctx = RunContext(arr=Arr.SONARR)
         harness.reporter.log_arr_item_unmonitored(ctx, "Unmon")
         harness.reporter.log_no_anilist_mappings(ctx, "NoMap")
-        harness.reporter.log_ignored_anilist_id(7, "")
+        harness.reporter.log_ignored_anilist_id(ctx, 7)
         harness.reporter.log_entry_status(EntryState.IN_RADARR, "Owned")
 
         assert not any(isinstance(e, (ScopeOpened, ScopeClosed)) for e in harness.events)
