@@ -7,6 +7,8 @@ Pearlarr is a fork of [bbtufty/seadexarr](https://github.com/bbtufty/seadexarr).
 
 ## [Unreleased]
 
+## [1.3.6] - 2026-09-14
+
 ### Changed
 
 - An AniList refusal, or a request that exhausts its retries, warns once per arr pass with AniList's reason and stops further AniList lookups for that pass. An id AniList does not know is queried once per arr pass instead of once per field.
