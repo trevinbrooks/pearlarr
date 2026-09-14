@@ -390,8 +390,33 @@ class TestBuildPendingSeeds:
         assert set(seeds) == {"h1"}
         assert seeds["h1"].file_episode_map == {}
         assert seeds["h1"].seadex_files == ["Show - 01.mkv"]
-        # Nothing claimed -> no slice (the label falls back to title · group).
-        assert seeds["h1"].slice_coverage is None
+        # Nothing claimed -> the slice is the whole window it is verified against.
+        assert seeds["h1"].slice_coverage == "S01 E01"
+
+    def test_unclaimed_record_labels_with_the_whole_window(self) -> None:
+        # Two urls over one window: the parsed file claims its episode, the
+        # unparsed one claims nothing, so its label names every episode it
+        # is verified against rather than losing the slice.
+        ep_list = [sonarr_ep(1, 1, ep_id=101, episode_file_id=0), sonarr_ep(1, 2, ep_id=102, episode_file_id=0)]
+        parse_cache = {"Show - S01E01.mkv": {"episodes": [{"season": 1, "episode": 1}]}}
+        seadex_dict = {
+            "RG": rg_group(
+                {
+                    "u1": url_item(files=["Show - S01E01.mkv"], size=[1000], infohash="h1", download=True),
+                    "u2": url_item(files=["Show - Extra.mkv"], size=[1000], infohash="h2", download=True),
+                },
+            ),
+        }
+
+        seeds = _strat(parse_cache)._reconciler.build_pending_seeds(
+            seadex_dict=seadex_dict,
+            ep_list=ep_list,
+            entry=PendingSeedContext(al_id=1, series_id=7, title="Show", added_at=_ADDED_AT),
+        )
+
+        assert seeds["h1"].display_label == f"Show{SEP}RG{SEP}S01 E01"
+        assert seeds["h2"].file_episode_map == {}
+        assert seeds["h2"].display_label == f"Show{SEP}RG{SEP}S01 E01-E02"
 
     def test_no_video_files_is_not_seeded(self) -> None:
         # A release with only non-video files (subs) has nothing to import.

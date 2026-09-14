@@ -618,7 +618,8 @@ class PendingImport:
     """The SeaDex entry URL at grab time, for the carried-over record's inline `link` line."""
 
     slice_coverage: str | None = None
-    """THIS record's own episode slice (e.g. `"S02 E06"`), from the grab-time map."""
+    """THIS record's episode slice (e.g. `"S02 E06"`): the grab-time map's claims, else every episode it is
+    verified against."""
 
     ordered_episode_ids: list[int] = field(default_factory=list[int])
     """The resolved episode ids for this entry, in season order"""

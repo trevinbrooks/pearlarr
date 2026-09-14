@@ -884,9 +884,9 @@ def build_pending_seed(
             # accounts for it. Any other refusal stays "possibly ours".
             excluded_files.append(normalized_leaf(seed_file.basename))
 
-    # This record's own slice of the entry (the episodes its files
-    # claimed), so sibling per-episode records label distinctly.
-    claimed_eps = [ep for ep in index.by_id.values() if ep.id in claimed]
+    # This record's own slice of the entry, so sibling per-episode records label
+    # distinctly: the episodes its files claimed, else every episode it is verified against.
+    slice_eps = [ep for ep in index.by_id.values() if not claimed or ep.id in claimed]
     seed = PendingImport(
         infohash=release.infohash,
         series_id=entry.series_id,
@@ -903,7 +903,7 @@ def build_pending_seed(
         coverage=entry.coverage,
         url=entry.url,
         ordered_episode_ids=list(index.by_id),
-        slice_coverage=coverage_string(episodes_from_ep_list(claimed_eps)) or None,
+        slice_coverage=coverage_string(episodes_from_ep_list(slice_eps)) or None,
         excluded_files=excluded_files,
         guards=entry.guards,
         release_sizes=list(release.url_item.size),
