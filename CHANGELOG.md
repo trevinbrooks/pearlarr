@@ -14,6 +14,7 @@ Pearlarr is a fork of [bbtufty/seadexarr](https://github.com/bbtufty/seadexarr).
 ### Fixed
 
 - Console rows, Discord embeds, webhook rows, and pending records fall back to the Sonarr or Radarr title when AniList has no answer, instead of `AniList #<id>`. Cached AniList records are served past their refresh age and are no longer deleted while AniList is unreachable, and an entry cached without a name gets one on the next healthy lookup. Stored names that held the id form are cleared (cache schema v4).
+- A pending download's row on the console, in the wait summary, and in Discord names the episodes it was grabbed for even when none of its files parsed at grab time, instead of only the title and release group.
 
 ## [1.3.5] - 2026-09-09
 

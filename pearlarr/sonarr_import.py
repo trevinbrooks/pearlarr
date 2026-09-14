@@ -552,9 +552,8 @@ class ImportExecutor:
         if pending.infohash in self._scratch.warned_unplaceable:
             return
         self._scratch.warned_unplaceable.add(pending.infohash)
-        coverage = f" ({pending.coverage})" if pending.coverage else ""
         hub_warn(
-            f"{pending.display_label}{coverage}: {count_noun(len(reportable), 'file')} could not be matched "
+            f"{pending.display_label}: {count_noun(len(reportable), 'file')} could not be matched "
             f"to an episode and {pluralize(len(reportable), 'was', 'were')} not imported"
         )
 
