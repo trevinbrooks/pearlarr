@@ -1,4 +1,6 @@
 # pyright: strict
+# pyright: reportPrivateUsage=false
+# The helper-level tests reach the planner's private predicate, which strict re-flags.
 """Characterization tests for the pure release-matching helpers.
 
 These functions move to `planner.py` in Phase 1. Pinning them here proves the
@@ -8,6 +10,7 @@ relocation is behavior-preserving.
 from pearlarr.coverage import format_episode_ranges
 from pearlarr.planner import (
     EpisodeCoverage,
+    _keys_into_index,
     episode_coverage,
     get_episode_keys,
     get_same_files_groups,
@@ -108,7 +111,8 @@ class TestEpisodeCoverage:
     """`episode_coverage` indexes each Sonarr-known episode's casefolded covering groups.
 
     A dict of one group short-circuits to the empty index. A group with an
-    unparsed url lands in `blanket` instead of a per-episode key.
+    unparsed url, or one whose parses all miss Sonarr's episodes, lands in
+    `blanket` instead of a per-episode key.
     """
 
     def test_single_group_short_circuits(self) -> None:
@@ -144,6 +148,16 @@ class TestEpisodeCoverage:
         result = episode_coverage(seadex, {EpisodeKey(1, 1): sonarr_ep(1, 1)})
         assert EpisodeKey(1, 99) not in result.by_key
         assert result.by_key[EpisodeKey(1, 1)] == {"b"}
+        # Every parse missed Sonarr's episodes: the url proves nothing, so its
+        # group blankets rather than vanishing from the index.
+        assert result.blanket == {"a"}
+
+    def test_a_none_pair_never_keys_into_the_index(self) -> None:
+        # The missing-number sentinel is a real key in the index, so the
+        # predicate must not let a numberless record key through it.
+        index = {EpisodeKey(999, 999): sonarr_ep(None, None)}
+        assert _keys_into_index([EpisodeRecord()], index) is False
+        assert _keys_into_index([EpisodeRecord(season=999, episode=999)], index) is True
 
     def test_blank_group_name_is_indexed_nowhere(self) -> None:
         # PIN: a group whose name normalizes to None (a blank name) must not

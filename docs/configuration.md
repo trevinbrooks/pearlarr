@@ -53,7 +53,7 @@ A misspelled path fails loudly: `PEARLARR_SONAR__URL` (or any name that resolves
 ## Configuration changes and the cache
 
 Titles that have been handled are cached in `cache.db` and skipped on later runs.
-Changing a selection-affecting setting (anything in the `seadex` group, or `imports.languages_*`) is detected automatically: the next run re-checks every cached title against the new rules and says so:
+Changing a selection-affecting setting (anything in the `seadex` group, or `imports.languages_*`), or upgrading to a release whose notes say the matching rules changed, is detected automatically: the next run re-checks every cached title against the new rules and says so:
 
 ```text
 Matching settings changed - rechecking cached entries

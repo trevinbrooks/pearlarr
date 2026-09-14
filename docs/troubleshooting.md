@@ -193,7 +193,7 @@ Four situations make a run noticeably slower, all expected:
 - **The first run** downloads and parses the ID-mapping sources and evaluates the whole library from scratch.
   On a large library this takes minutes. Later runs reuse the parsed mappings and the cache, and typically finish in well under a minute when little changed.
 - **A long gap since the last run** (or a restored cache) exceeds the arr-activity lookback, so change detection cannot vouch for the interval and every cached title is re-checked once (the "history gap" note above).
-- **A changed matching preference** (anything in the `seadex` group, or `imports.languages_*`) makes the next full run re-check every cached title against the new rules once (the "Matching settings changed" note above). See [configuration.md](configuration.md#configuration-changes-and-the-cache).
+- **A changed matching preference** (anything in the `seadex` group, or `imports.languages_*`), or an upgrade whose release notes say the matching rules changed, makes the next full run re-check every cached title against the new rules once (the "Matching settings changed" note above). See [configuration.md](configuration.md#configuration-changes-and-the-cache).
 - **A SeaDex or mapping-source hiccup** makes affected titles count as unchecked. They are simply retried next run.
 
 Runs are also deliberately paced (`advanced.sleep_time`) to be a polite API citizen, so "slow" is partly by design.
