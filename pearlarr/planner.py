@@ -115,6 +115,15 @@ def _owns_untagged_copy(counter: Counter[int] | None, listed_sizes: Iterable[int
     return counter is not None and counter <= Counter(listed_sizes)
 
 
+def _keys_into_index(episodes: Iterable[EpisodeRecord], sonarr_by_key: Mapping[EpisodeKey, SonarrEpisode]) -> bool:
+    """Whether any parsed episode keys into the Sonarr index. A None pair never keys."""
+
+    return any(
+        ep.season is not None and ep.episode is not None and season_episode_key(ep.season, ep.episode) in sonarr_by_key
+        for ep in episodes
+    )
+
+
 def get_episode_keys(
     all_episodes: Iterable[EpisodeRecord],
 ) -> set[tuple[int | None, int | None]]:
@@ -242,7 +251,8 @@ class EpisodeCoverage(NamedTuple):
     """
 
     blanket: frozenset[str]
-    """Groups with an unparsed url: coverage unprovable, so they cover every episode unconditionally."""
+    """Groups with a url whose parses key into nothing here: coverage unprovable, so they cover every
+    episode unconditionally."""
 
     by_key: Mapping[EpisodeKey, frozenset[str]]
     """The groups whose parsed urls cover each (season, episode) Sonarr actually has."""
@@ -275,9 +285,9 @@ def episode_coverage(
         for url_item in seadex_rg_item.urls.values():
             seadex_episodes = url_item.episodes
 
-            # An unparsed url proves nothing about coverage, so its group
-            # covers everything rather than nothing.
-            if len(seadex_episodes) == 0:
+            # A url whose parses say nothing about this entry proves nothing
+            # about coverage, so its group covers everything rather than nothing.
+            if not _keys_into_index(seadex_episodes, sonarr_by_key):
                 blanket.add(seadex_rg_normalized)
 
             for seadex_ep in seadex_episodes:
@@ -779,11 +789,12 @@ class DownloadPlanner:
         mismatch with no covering alternative, or an all-sizes mismatch among
         the rg-matched episodes, flips download on. An untagged on-disk file
         the entry's sizes identified (`_episode_identities`) matches by that
-        group instead of by its missing tag.
+        group instead of by its missing tag. A url whose parses all miss the
+        index is handed to `_match_url_no_episodes`.
         """
 
-        # At this point, we need an episode list from Sonarr. A non-None but
-        # empty list still runs the (no-op) loop below. Only an absent list skips.
+        # At this point, we need an episode list from Sonarr. Only an absent list
+        # skips: an empty one is never passed in production (the strategy returns first).
         if not ctx.has_ep_list:
             self.logger.debug(
                 "Skipping per-episode check: no Sonarr episode list available",
@@ -792,6 +803,16 @@ class DownloadPlanner:
 
         url = url_item.url
         seadex_episodes = url_item.episodes
+
+        # Every parse outside this entry's episodes says nothing about it, so the url
+        # is judged the way a numberless one is, by release group and size.
+        if not _keys_into_index(seadex_episodes, ctx.sonarr_by_key):
+            if ctx.debug_on:
+                self.logger.debug(
+                    f"No parsed episode of {url} is among this entry's episodes - checking by release group and size",
+                )
+            self._match_url_no_episodes(ctx, seadex_rg, url_item)
+            return
 
         # For each episode we've parsed from the torrent, check if a) it exists in the Sonarr list, b) if
         # the release group matches, and c) if the file sizes match. If there's any mismatch between release
