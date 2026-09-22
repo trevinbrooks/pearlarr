@@ -462,6 +462,7 @@ class SonarrSync(ArrSync[SonarrItem]):
                     coverage=coverage,
                     url=sd_url,
                     guards=plan.guards,
+                    names=title.names,
                 ),
             )
 

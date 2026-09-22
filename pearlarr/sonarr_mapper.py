@@ -225,7 +225,8 @@ class FileEpisodeMapper:
         resolved_ids = pending.resolved_ids()
 
         batch = PlacementBatch(leftover, parsed_by_file)
-        result = assign_episode_ids(batch, TargetScope(resolved_ids, id_by_key, used=frozenset(seeded_ids)))
+        scope = TargetScope(resolved_ids, id_by_key, used=frozenset(seeded_ids), names=pending.names)
+        result = assign_episode_ids(batch, scope)
         # An empty index means the exact leg could not have matched a numbered name this poll.
         return FileAssignment(result, seeded, settled=batch.all_parses_known and bool(id_by_key))
 

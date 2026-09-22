@@ -1,5 +1,971 @@
 [
  {
+  "name": "chunibyo-lite-named-in-romaji",
+  "provenance": "title",
+  "tags": [
+   "titled"
+  ],
+  "episodes": [
+   {
+    "id": 10350,
+    "season_number": 0,
+    "episode_number": 1,
+    "episode_file_id": 16109,
+    "monitored": false,
+    "episode_file": {
+     "release_group": "LYS1TH3A",
+     "size": 1621646401
+    }
+   },
+   {
+    "id": 10351,
+    "season_number": 0,
+    "episode_number": 2,
+    "episode_file_id": 16110,
+    "monitored": false,
+    "episode_file": {
+     "release_group": "uba",
+     "size": 7099812517
+    }
+   },
+   {
+    "id": 10352,
+    "season_number": 0,
+    "episode_number": 3,
+    "episode_file_id": 16136,
+    "monitored": false,
+    "episode_file": {
+     "release_group": "uba",
+     "size": 31158752337
+    }
+   },
+   {
+    "id": 10353,
+    "season_number": 0,
+    "episode_number": 4,
+    "episode_file_id": 16108,
+    "monitored": false,
+    "episode_file": {
+     "release_group": "YURI",
+     "size": 5965974465
+    }
+   },
+   {
+    "id": 10354,
+    "season_number": 0,
+    "episode_number": 5,
+    "episode_file_id": 16135,
+    "monitored": false,
+    "episode_file": {
+     "release_group": "MTBB",
+     "size": 1712738902
+    }
+   },
+   {
+    "id": 10355,
+    "season_number": 0,
+    "episode_number": 6,
+    "episode_file_id": 16135,
+    "monitored": false,
+    "episode_file": {
+     "release_group": "MTBB",
+     "size": 1712738902
+    }
+   },
+   {
+    "id": 10356,
+    "season_number": 0,
+    "episode_number": 7,
+    "episode_file_id": 16135,
+    "monitored": false,
+    "episode_file": {
+     "release_group": "MTBB",
+     "size": 1712738902
+    }
+   },
+   {
+    "id": 10357,
+    "season_number": 0,
+    "episode_number": 8,
+    "episode_file_id": 16135,
+    "monitored": false,
+    "episode_file": {
+     "release_group": "MTBB",
+     "size": 1712738902
+    }
+   },
+   {
+    "id": 10358,
+    "season_number": 0,
+    "episode_number": 9,
+    "episode_file_id": 16135,
+    "monitored": false,
+    "episode_file": {
+     "release_group": "MTBB",
+     "size": 1712738902
+    }
+   },
+   {
+    "id": 10359,
+    "season_number": 0,
+    "episode_number": 10,
+    "episode_file_id": 16135,
+    "monitored": false,
+    "episode_file": {
+     "release_group": "MTBB",
+     "size": 1712738902
+    }
+   },
+   {
+    "id": 10360,
+    "season_number": 0,
+    "episode_number": 11,
+    "episode_file_id": 16166,
+    "monitored": false,
+    "episode_file": {
+     "release_group": "YURI",
+     "size": 1318749073
+    }
+   },
+   {
+    "id": 10361,
+    "season_number": 0,
+    "episode_number": 12,
+    "episode_file_id": 16166,
+    "monitored": false,
+    "episode_file": {
+     "release_group": "YURI",
+     "size": 1318749073
+    }
+   },
+   {
+    "id": 10362,
+    "season_number": 0,
+    "episode_number": 13,
+    "episode_file_id": 16166,
+    "monitored": false,
+    "episode_file": {
+     "release_group": "YURI",
+     "size": 1318749073
+    }
+   },
+   {
+    "id": 10363,
+    "season_number": 0,
+    "episode_number": 14,
+    "episode_file_id": 16166,
+    "monitored": false,
+    "episode_file": {
+     "release_group": "YURI",
+     "size": 1318749073
+    }
+   },
+   {
+    "id": 10364,
+    "season_number": 0,
+    "episode_number": 15,
+    "episode_file_id": 16166,
+    "monitored": false,
+    "episode_file": {
+     "release_group": "YURI",
+     "size": 1318749073
+    }
+   },
+   {
+    "id": 10365,
+    "season_number": 0,
+    "episode_number": 16,
+    "episode_file_id": 16166,
+    "monitored": false,
+    "episode_file": {
+     "release_group": "YURI",
+     "size": 1318749073
+    }
+   },
+   {
+    "id": 10366,
+    "season_number": 0,
+    "episode_number": 17,
+    "episode_file_id": 0,
+    "monitored": false,
+    "episode_file": null
+   },
+   {
+    "id": 10367,
+    "season_number": 0,
+    "episode_number": 18,
+    "episode_file_id": 0,
+    "monitored": false,
+    "episode_file": null
+   },
+   {
+    "id": 10368,
+    "season_number": 0,
+    "episode_number": 19,
+    "episode_file_id": 0,
+    "monitored": false,
+    "episode_file": null
+   },
+   {
+    "id": 10369,
+    "season_number": 0,
+    "episode_number": 20,
+    "episode_file_id": 0,
+    "monitored": false,
+    "episode_file": null
+   },
+   {
+    "id": 10370,
+    "season_number": 0,
+    "episode_number": 21,
+    "episode_file_id": 16159,
+    "monitored": false,
+    "episode_file": {
+     "release_group": "YURI",
+     "size": 362225547
+    }
+   },
+   {
+    "id": 10371,
+    "season_number": 0,
+    "episode_number": 22,
+    "episode_file_id": 16160,
+    "monitored": false,
+    "episode_file": {
+     "release_group": "YURI",
+     "size": 370370876
+    }
+   },
+   {
+    "id": 10372,
+    "season_number": 0,
+    "episode_number": 23,
+    "episode_file_id": 16161,
+    "monitored": false,
+    "episode_file": {
+     "release_group": "YURI",
+     "size": 429901352
+    }
+   },
+   {
+    "id": 10373,
+    "season_number": 0,
+    "episode_number": 24,
+    "episode_file_id": 16162,
+    "monitored": false,
+    "episode_file": {
+     "release_group": "YURI",
+     "size": 533904535
+    }
+   },
+   {
+    "id": 10374,
+    "season_number": 0,
+    "episode_number": 25,
+    "episode_file_id": 16163,
+    "monitored": false,
+    "episode_file": {
+     "release_group": "YURI",
+     "size": 499648099
+    }
+   },
+   {
+    "id": 10375,
+    "season_number": 0,
+    "episode_number": 26,
+    "episode_file_id": 16164,
+    "monitored": false,
+    "episode_file": {
+     "release_group": "YURI",
+     "size": 520392945
+    }
+   },
+   {
+    "id": 10376,
+    "season_number": 0,
+    "episode_number": 27,
+    "episode_file_id": 16165,
+    "monitored": false,
+    "episode_file": {
+     "release_group": "YURI",
+     "size": 332135197
+    }
+   },
+   {
+    "id": 10377,
+    "season_number": 0,
+    "episode_number": 28,
+    "episode_file_id": 16167,
+    "monitored": false,
+    "episode_file": {
+     "release_group": "YURI",
+     "size": 154851948
+    }
+   },
+   {
+    "id": 10378,
+    "season_number": 0,
+    "episode_number": 29,
+    "episode_file_id": 16168,
+    "monitored": false,
+    "episode_file": {
+     "release_group": "YURI",
+     "size": 108556669
+    }
+   },
+   {
+    "id": 10379,
+    "season_number": 0,
+    "episode_number": 30,
+    "episode_file_id": 16169,
+    "monitored": false,
+    "episode_file": {
+     "release_group": "YURI",
+     "size": 143065603
+    }
+   },
+   {
+    "id": 10380,
+    "season_number": 0,
+    "episode_number": 31,
+    "episode_file_id": 16170,
+    "monitored": false,
+    "episode_file": {
+     "release_group": "YURI",
+     "size": 147564819
+    }
+   },
+   {
+    "id": 10381,
+    "season_number": 0,
+    "episode_number": 32,
+    "episode_file_id": 16171,
+    "monitored": false,
+    "episode_file": {
+     "release_group": "YURI",
+     "size": 171587223
+    }
+   },
+   {
+    "id": 10382,
+    "season_number": 0,
+    "episode_number": 33,
+    "episode_file_id": 16172,
+    "monitored": false,
+    "episode_file": {
+     "release_group": "YURI",
+     "size": 158632337
+    }
+   },
+   {
+    "id": 10383,
+    "season_number": 0,
+    "episode_number": 34,
+    "episode_file_id": 16173,
+    "monitored": false,
+    "episode_file": {
+     "release_group": "YURI",
+     "size": 216287230
+    }
+   },
+   {
+    "id": 10384,
+    "season_number": 1,
+    "episode_number": 1,
+    "episode_file_id": 16111,
+    "monitored": true,
+    "episode_file": {
+     "release_group": "LYS1TH3A",
+     "size": 1592875251
+    }
+   },
+   {
+    "id": 10385,
+    "season_number": 1,
+    "episode_number": 2,
+    "episode_file_id": 16112,
+    "monitored": true,
+    "episode_file": {
+     "release_group": "LYS1TH3A",
+     "size": 1692375194
+    }
+   },
+   {
+    "id": 10386,
+    "season_number": 1,
+    "episode_number": 3,
+    "episode_file_id": 16113,
+    "monitored": true,
+    "episode_file": {
+     "release_group": "LYS1TH3A",
+     "size": 1435090527
+    }
+   },
+   {
+    "id": 10387,
+    "season_number": 1,
+    "episode_number": 4,
+    "episode_file_id": 16114,
+    "monitored": true,
+    "episode_file": {
+     "release_group": "LYS1TH3A",
+     "size": 1597173466
+    }
+   },
+   {
+    "id": 10388,
+    "season_number": 1,
+    "episode_number": 5,
+    "episode_file_id": 16115,
+    "monitored": true,
+    "episode_file": {
+     "release_group": "LYS1TH3A",
+     "size": 1319940786
+    }
+   },
+   {
+    "id": 10389,
+    "season_number": 1,
+    "episode_number": 6,
+    "episode_file_id": 16116,
+    "monitored": true,
+    "episode_file": {
+     "release_group": "LYS1TH3A",
+     "size": 1501759804
+    }
+   },
+   {
+    "id": 10390,
+    "season_number": 1,
+    "episode_number": 7,
+    "episode_file_id": 16117,
+    "monitored": true,
+    "episode_file": {
+     "release_group": "LYS1TH3A",
+     "size": 1563413923
+    }
+   },
+   {
+    "id": 10391,
+    "season_number": 1,
+    "episode_number": 8,
+    "episode_file_id": 16118,
+    "monitored": true,
+    "episode_file": {
+     "release_group": "LYS1TH3A",
+     "size": 1653940991
+    }
+   },
+   {
+    "id": 10392,
+    "season_number": 1,
+    "episode_number": 9,
+    "episode_file_id": 16119,
+    "monitored": true,
+    "episode_file": {
+     "release_group": "LYS1TH3A",
+     "size": 1278593368
+    }
+   },
+   {
+    "id": 10393,
+    "season_number": 1,
+    "episode_number": 10,
+    "episode_file_id": 16120,
+    "monitored": true,
+    "episode_file": {
+     "release_group": "LYS1TH3A",
+     "size": 1498405997
+    }
+   },
+   {
+    "id": 10394,
+    "season_number": 1,
+    "episode_number": 11,
+    "episode_file_id": 16121,
+    "monitored": true,
+    "episode_file": {
+     "release_group": "LYS1TH3A",
+     "size": 1479218307
+    }
+   },
+   {
+    "id": 10395,
+    "season_number": 1,
+    "episode_number": 12,
+    "episode_file_id": 16122,
+    "monitored": true,
+    "episode_file": {
+     "release_group": "LYS1TH3A",
+     "size": 1511697739
+    }
+   },
+   {
+    "id": 10396,
+    "season_number": 2,
+    "episode_number": 1,
+    "episode_file_id": 16123,
+    "monitored": false,
+    "episode_file": {
+     "release_group": "uba",
+     "size": 7113686421
+    }
+   },
+   {
+    "id": 10397,
+    "season_number": 2,
+    "episode_number": 2,
+    "episode_file_id": 16124,
+    "monitored": false,
+    "episode_file": {
+     "release_group": "uba",
+     "size": 7110470569
+    }
+   },
+   {
+    "id": 10398,
+    "season_number": 2,
+    "episode_number": 3,
+    "episode_file_id": 16125,
+    "monitored": false,
+    "episode_file": {
+     "release_group": "uba",
+     "size": 7120417629
+    }
+   },
+   {
+    "id": 10399,
+    "season_number": 2,
+    "episode_number": 4,
+    "episode_file_id": 16126,
+    "monitored": false,
+    "episode_file": {
+     "release_group": "uba",
+     "size": 7122376290
+    }
+   },
+   {
+    "id": 10400,
+    "season_number": 2,
+    "episode_number": 5,
+    "episode_file_id": 16127,
+    "monitored": false,
+    "episode_file": {
+     "release_group": "uba",
+     "size": 7122665599
+    }
+   },
+   {
+    "id": 10401,
+    "season_number": 2,
+    "episode_number": 6,
+    "episode_file_id": 16128,
+    "monitored": false,
+    "episode_file": {
+     "release_group": "uba",
+     "size": 7111001594
+    }
+   },
+   {
+    "id": 10402,
+    "season_number": 2,
+    "episode_number": 7,
+    "episode_file_id": 16129,
+    "monitored": false,
+    "episode_file": {
+     "release_group": "uba",
+     "size": 7104505393
+    }
+   },
+   {
+    "id": 10403,
+    "season_number": 2,
+    "episode_number": 8,
+    "episode_file_id": 16130,
+    "monitored": false,
+    "episode_file": {
+     "release_group": "uba",
+     "size": 7121051507
+    }
+   },
+   {
+    "id": 10404,
+    "season_number": 2,
+    "episode_number": 9,
+    "episode_file_id": 16131,
+    "monitored": false,
+    "episode_file": {
+     "release_group": "uba",
+     "size": 7107077714
+    }
+   },
+   {
+    "id": 10405,
+    "season_number": 2,
+    "episode_number": 10,
+    "episode_file_id": 16132,
+    "monitored": false,
+    "episode_file": {
+     "release_group": "uba",
+     "size": 7120604665
+    }
+   },
+   {
+    "id": 10406,
+    "season_number": 2,
+    "episode_number": 11,
+    "episode_file_id": 16133,
+    "monitored": false,
+    "episode_file": {
+     "release_group": "uba",
+     "size": 7110141006
+    }
+   },
+   {
+    "id": 10407,
+    "season_number": 2,
+    "episode_number": 12,
+    "episode_file_id": 16134,
+    "monitored": false,
+    "episode_file": {
+     "release_group": "uba",
+     "size": 7109485465
+    }
+   }
+  ],
+  "entry_ids": [
+   10351
+  ],
+  "series_title": "Love, Chunibyo & Other Delusions!",
+  "titles": [
+   "Love, Chunibyo & Other Delusions - Heart Throb -: The Rikka Wars/ Apocalypse of the Wicked Lord Shingan Reborn",
+   "Chuunibyou demo Koi ga Shitai! Ren: Saisei no... Jaou Shingan Mokushiroku"
+  ],
+  "parses": {
+   "[YURI] Love, Chunibyo & Other Delusions!  S02E01 [BD 1080p x264 10bit FLAC].mkv": {
+    "parsedEpisodeInfo": {
+     "seasonNumber": 2,
+     "episodeNumbers": [
+      1
+     ],
+     "absoluteEpisodeNumbers": [],
+     "special": false,
+     "fullSeason": false
+    },
+    "episodes": [
+     {
+      "id": 10396,
+      "seasonNumber": 2,
+      "episodeNumber": 1
+     }
+    ]
+   },
+   "[YURI] Love, Chunibyo & Other Delusions!  S02E02 [BD 1080p x264 10bit FLAC].mkv": {
+    "parsedEpisodeInfo": {
+     "seasonNumber": 2,
+     "episodeNumbers": [
+      2
+     ],
+     "absoluteEpisodeNumbers": [],
+     "special": false,
+     "fullSeason": false
+    },
+    "episodes": [
+     {
+      "id": 10397,
+      "seasonNumber": 2,
+      "episodeNumber": 2
+     }
+    ]
+   },
+   "[YURI] Love, Chunibyo & Other Delusions!  S02E03 [BD 1080p x264 10bit FLAC].mkv": {
+    "parsedEpisodeInfo": {
+     "seasonNumber": 2,
+     "episodeNumbers": [
+      3
+     ],
+     "absoluteEpisodeNumbers": [],
+     "special": false,
+     "fullSeason": false
+    },
+    "episodes": [
+     {
+      "id": 10398,
+      "seasonNumber": 2,
+      "episodeNumber": 3
+     }
+    ]
+   },
+   "[YURI] Love, Chunibyo & Other Delusions!  S02E04 [BD 1080p x264 10bit FLAC].mkv": {
+    "parsedEpisodeInfo": {
+     "seasonNumber": 2,
+     "episodeNumbers": [
+      4
+     ],
+     "absoluteEpisodeNumbers": [],
+     "special": false,
+     "fullSeason": false
+    },
+    "episodes": [
+     {
+      "id": 10399,
+      "seasonNumber": 2,
+      "episodeNumber": 4
+     }
+    ]
+   },
+   "[YURI] Love, Chunibyo & Other Delusions!  S02E05 [BD 1080p x264 10bit FLAC].mkv": {
+    "parsedEpisodeInfo": {
+     "seasonNumber": 2,
+     "episodeNumbers": [
+      5
+     ],
+     "absoluteEpisodeNumbers": [],
+     "special": false,
+     "fullSeason": false
+    },
+    "episodes": [
+     {
+      "id": 10400,
+      "seasonNumber": 2,
+      "episodeNumber": 5
+     }
+    ]
+   },
+   "[YURI] Love, Chunibyo & Other Delusions!  S02E06 [BD 1080p x264 10bit FLAC].mkv": {
+    "parsedEpisodeInfo": {
+     "seasonNumber": 2,
+     "episodeNumbers": [
+      6
+     ],
+     "absoluteEpisodeNumbers": [],
+     "special": false,
+     "fullSeason": false
+    },
+    "episodes": [
+     {
+      "id": 10401,
+      "seasonNumber": 2,
+      "episodeNumber": 6
+     }
+    ]
+   },
+   "[YURI] Love, Chunibyo & Other Delusions!  S02E07 [BD 1080p x264 10bit FLAC].mkv": {
+    "parsedEpisodeInfo": {
+     "seasonNumber": 2,
+     "episodeNumbers": [
+      7
+     ],
+     "absoluteEpisodeNumbers": [],
+     "special": false,
+     "fullSeason": false
+    },
+    "episodes": [
+     {
+      "id": 10402,
+      "seasonNumber": 2,
+      "episodeNumber": 7
+     }
+    ]
+   },
+   "[YURI] Love, Chunibyo & Other Delusions!  S02E08 [BD 1080p x264 10bit FLAC].mkv": {
+    "parsedEpisodeInfo": {
+     "seasonNumber": 2,
+     "episodeNumbers": [
+      8
+     ],
+     "absoluteEpisodeNumbers": [],
+     "special": false,
+     "fullSeason": false
+    },
+    "episodes": [
+     {
+      "id": 10403,
+      "seasonNumber": 2,
+      "episodeNumber": 8
+     }
+    ]
+   },
+   "[YURI] Love, Chunibyo & Other Delusions!  S02E09 [BD 1080p x264 10bit FLAC].mkv": {
+    "parsedEpisodeInfo": {
+     "seasonNumber": 2,
+     "episodeNumbers": [
+      9
+     ],
+     "absoluteEpisodeNumbers": [],
+     "special": false,
+     "fullSeason": false
+    },
+    "episodes": [
+     {
+      "id": 10404,
+      "seasonNumber": 2,
+      "episodeNumber": 9
+     }
+    ]
+   },
+   "[YURI] Love, Chunibyo & Other Delusions!  S02E10 [BD 1080p x264 10bit FLAC].mkv": {
+    "parsedEpisodeInfo": {
+     "seasonNumber": 2,
+     "episodeNumbers": [
+      10
+     ],
+     "absoluteEpisodeNumbers": [],
+     "special": false,
+     "fullSeason": false
+    },
+    "episodes": [
+     {
+      "id": 10405,
+      "seasonNumber": 2,
+      "episodeNumber": 10
+     }
+    ]
+   },
+   "[YURI] Love, Chunibyo & Other Delusions!  S02E11 [BD 1080p x264 10bit FLAC].mkv": {
+    "parsedEpisodeInfo": {
+     "seasonNumber": 2,
+     "episodeNumbers": [
+      11
+     ],
+     "absoluteEpisodeNumbers": [],
+     "special": false,
+     "fullSeason": false
+    },
+    "episodes": [
+     {
+      "id": 10406,
+      "seasonNumber": 2,
+      "episodeNumber": 11
+     }
+    ]
+   },
+   "[YURI] Love, Chunibyo & Other Delusions!  S02E12 [BD 1080p x264 10bit FLAC].mkv": {
+    "parsedEpisodeInfo": {
+     "seasonNumber": 2,
+     "episodeNumbers": [
+      12
+     ],
+     "absoluteEpisodeNumbers": [],
+     "special": false,
+     "fullSeason": false
+    },
+    "episodes": [
+     {
+      "id": 10407,
+      "seasonNumber": 2,
+      "episodeNumber": 12
+     }
+    ]
+   },
+   "[YURI] Chuunibyou demo Koi ga Shitai! Ren Lite [BD 1080p x264 10bit FLAC].mkv": {
+    "parsedEpisodeInfo": {
+     "seasonNumber": null,
+     "episodeNumbers": [],
+     "absoluteEpisodeNumbers": [],
+     "special": false,
+     "fullSeason": false
+    },
+    "episodes": []
+   },
+   "[YURI] Love, Chunibyo & Other Delusions!  OVA [BD 1080p x264 10bit FLAC].mkv": {
+    "parsedEpisodeInfo": {
+     "seasonNumber": null,
+     "episodeNumbers": [],
+     "absoluteEpisodeNumbers": [],
+     "special": false,
+     "fullSeason": false
+    },
+    "episodes": []
+   },
+   "[YURI] Love, Chunibyo & Other Delusions! Kotatsu DE1 [BD 1080p x264 10bit FLAC].mkv": {
+    "parsedEpisodeInfo": {
+     "seasonNumber": null,
+     "episodeNumbers": [],
+     "absoluteEpisodeNumbers": [],
+     "special": false,
+     "fullSeason": false
+    },
+    "episodes": []
+   },
+   "[YURI] Love, Chunibyo & Other Delusions! Kotatsu DE2 [BD 1080p x264 10bit FLAC].mkv": {
+    "parsedEpisodeInfo": {
+     "seasonNumber": null,
+     "episodeNumbers": [],
+     "absoluteEpisodeNumbers": [],
+     "special": false,
+     "fullSeason": false
+    },
+    "episodes": []
+   },
+   "[YURI] Love, Chunibyo & Other Delusions! Kotatsu DE3 [BD 1080p x264 10bit FLAC].mkv": {
+    "parsedEpisodeInfo": {
+     "seasonNumber": null,
+     "episodeNumbers": [],
+     "absoluteEpisodeNumbers": [],
+     "special": false,
+     "fullSeason": false
+    },
+    "episodes": []
+   },
+   "[YURI] Love, Chunibyo & Other Delusions! Kotatsu DE4 [BD 1080p x264 10bit FLAC].mkv": {
+    "parsedEpisodeInfo": {
+     "seasonNumber": null,
+     "episodeNumbers": [],
+     "absoluteEpisodeNumbers": [],
+     "special": false,
+     "fullSeason": false
+    },
+    "episodes": []
+   },
+   "[YURI] Love, Chunibyo & Other Delusions! Kotatsu DE5 [BD 1080p x264 10bit FLAC].mkv": {
+    "parsedEpisodeInfo": {
+     "seasonNumber": null,
+     "episodeNumbers": [],
+     "absoluteEpisodeNumbers": [],
+     "special": false,
+     "fullSeason": false
+    },
+    "episodes": []
+   },
+   "[YURI] Love, Chunibyo & Other Delusions! Kotatsu DE6 [BD 1080p x264 10bit FLAC].mkv": {
+    "parsedEpisodeInfo": {
+     "seasonNumber": null,
+     "episodeNumbers": [],
+     "absoluteEpisodeNumbers": [],
+     "special": false,
+     "fullSeason": false
+    },
+    "episodes": []
+   },
+   "[YURI] Love, Chunibyo & Other Delusions! Kotatsu DE7 [BD 1080p x264 10bit FLAC].mkv": {
+    "parsedEpisodeInfo": {
+     "seasonNumber": null,
+     "episodeNumbers": [],
+     "absoluteEpisodeNumbers": [],
+     "special": false,
+     "fullSeason": false
+    },
+    "episodes": []
+   }
+  },
+  "expected": {},
+  "expected_excluded": [
+   "[YURI] Love, Chunibyo & Other Delusions!  S02E01 [BD 1080p x264 10bit FLAC].mkv",
+   "[YURI] Love, Chunibyo & Other Delusions!  S02E02 [BD 1080p x264 10bit FLAC].mkv",
+   "[YURI] Love, Chunibyo & Other Delusions!  S02E03 [BD 1080p x264 10bit FLAC].mkv",
+   "[YURI] Love, Chunibyo & Other Delusions!  S02E04 [BD 1080p x264 10bit FLAC].mkv",
+   "[YURI] Love, Chunibyo & Other Delusions!  S02E05 [BD 1080p x264 10bit FLAC].mkv",
+   "[YURI] Love, Chunibyo & Other Delusions!  S02E06 [BD 1080p x264 10bit FLAC].mkv",
+   "[YURI] Love, Chunibyo & Other Delusions!  S02E07 [BD 1080p x264 10bit FLAC].mkv",
+   "[YURI] Love, Chunibyo & Other Delusions!  S02E08 [BD 1080p x264 10bit FLAC].mkv",
+   "[YURI] Love, Chunibyo & Other Delusions!  S02E09 [BD 1080p x264 10bit FLAC].mkv",
+   "[YURI] Love, Chunibyo & Other Delusions!  S02E10 [BD 1080p x264 10bit FLAC].mkv",
+   "[YURI] Love, Chunibyo & Other Delusions!  S02E11 [BD 1080p x264 10bit FLAC].mkv",
+   "[YURI] Love, Chunibyo & Other Delusions!  S02E12 [BD 1080p x264 10bit FLAC].mkv"
+  ]
+ },
+ {
   "name": "oda-nobuna-unread-run",
   "provenance": "count",
   "tags": [
@@ -160,6 +1126,11 @@
    2390,
    2391,
    2392
+  ],
+  "series_title": "Oda Nobuna's Ambition",
+  "titles": [
+   "The Ambition of Oda Nobuna",
+   "Oda Nobuna no Yabou"
   ],
   "parses": {
    "[Lulu] The Ambition of Oda Nobuna - 12 [BD 1080p Hi10 FLAC][Dual-Audio].mkv": {
@@ -537,6 +1508,10 @@
    3083,
    3084,
    3085
+  ],
+  "series_title": "Angel Beats!",
+  "titles": [
+   "Angel Beats!"
   ],
   "parses": {
    "[Spirale] Angel Beats! - 01 [BDRip 1080p x264 FLAC] [B8AEF202].mkv": {
@@ -1136,6 +2111,10 @@
    3053,
    3054,
    3055
+  ],
+  "series_title": "Fate/Stay Night: Unlimited Blade Works",
+  "titles": [
+   "Fate/stay night: Unlimited Blade Works 2nd Season"
   ],
   "parses": {
    "[FateSucks] Fate Stay Night Unlimited Blade Works - S02E01 (BD Remux 1080p FLAC) [Dual-Audio] [1BF99762].mkv": {
@@ -2503,6 +3482,10 @@
    2117,
    2118
   ],
+  "series_title": "Overlord",
+  "titles": [
+   "Overlord: Ple Ple Pleiades - Clementine Toubou-hen"
+  ],
   "parses": {
    "Ple Ple Pleiades OVA Clementine The Fugitive Part 1.mkv": {
     "parsedEpisodeInfo": {
@@ -2996,6 +3979,11 @@
    2046,
    2047,
    2048
+  ],
+  "series_title": "Rage of Bahamut",
+  "titles": [
+   "Rage of Bahamut: Genesis",
+   "Shingeki no Bahamut: GENESIS"
   ],
   "parses": {
    "Shingeki no Bahamut - 01 - Encounter Wytearp [BD][1080p][x264][FLAC][Eng-Sub]-df68.mkv": {
@@ -3735,6 +4723,11 @@
    7095,
    7096
   ],
+  "series_title": "One-Punch Man",
+  "titles": [
+   "One-Punch Man Season 2 OVA",
+   "One Punch Man 2 OVA"
+  ],
   "parses": {
    "[sam] One Punch Man S2 - 01 [BD 1080p FLAC] [AA99DF58].mkv": {
     "parsedEpisodeInfo": {
@@ -4417,6 +5410,10 @@
    9770,
    9771,
    9772
+  ],
+  "series_title": "Cowboy Bebop",
+  "titles": [
+   "Cowboy Bebop"
   ],
   "parses": {
    "[JySzE] Cowboy Bebop - 01 [v3].mkv": {
@@ -5125,6 +6122,11 @@
   "entry_ids": [
    5818
   ],
+  "series_title": "Grimgar, Ashes and Illusions",
+  "titles": [
+   "Grimgar of Fantasy and Ash OVA 2.5",
+   "Hai to Gensou no Grimgar OVA 2.5"
+  ],
   "parses": {
    "[Datte13] Grimgar of Fantasy and Ash - S00E01 - Staking Our Youths On The Bath Wall - One More Centimeter [3E020DD9].mkv": {
     "parsedEpisodeInfo": {
@@ -5456,6 +6458,10 @@
   ],
   "entry_ids": [
    3056
+  ],
+  "series_title": "Death Parade",
+  "titles": [
+   "Death Billiards"
   ],
   "parses": {
    "[BKC] Death Billiards [BDRip 1920x1080 x264 FLAC].mkv": {
@@ -7511,6 +8517,11 @@
    9259,
    9260
   ],
+  "series_title": "My Hero Academia",
+  "titles": [
+   "My Hero Academia Season 5 OVA",
+   "Boku no Hero Academia 5 (ONA)"
+  ],
   "parses": {
    "[Usagi] Boku no Hero Academia - Hero League Baseball (1080p) [Dual-Audio].mkv": {
     "parsedEpisodeInfo": {
@@ -7875,6 +8886,11 @@
   "entry_ids": [
    9745
   ],
+  "series_title": "Cowboy Bebop",
+  "titles": [
+   "Cowboy Bebop: The Movie - Knockin' on Heaven's Door",
+   "Cowboy Bebop: Tengoku no Tobira"
+  ],
   "parses": {
    "[Arid] Cowboy Bebop The Movie (BDRip 1040p x264 Opus) [5EB26DB2].mkv": {
     "parsedEpisodeInfo": {
@@ -8228,6 +9244,11 @@
   "entry_ids": [
    9745
   ],
+  "series_title": "Cowboy Bebop",
+  "titles": [
+   "Cowboy Bebop: The Movie - Knockin' on Heaven's Door",
+   "Cowboy Bebop: Tengoku no Tobira"
+  ],
   "parses": {
    "[Aergia] Cowboy Bebop The Movie - Knockin' on Heaven's Door (2001) (BDRemux 1080p AVC FLAC) [Dual Audio].mkv": {
     "parsedEpisodeInfo": {
@@ -8408,6 +9429,11 @@
    7690,
    7691,
    7692
+  ],
+  "series_title": "The Vexations of a Shut-In Vampire Princess",
+  "titles": [
+   "The Vexations of a Shut-In Vampire Princess",
+   "Hikikomari Kyuuketsuki no Monmon"
   ],
   "parses": {
    "[Chihiro] Hikikomari Kyuuketsuki no Monmon - 01 [Blu-ray 1080p HEVC FLAC][27E96913].mkv": {
@@ -9332,6 +10358,11 @@
    10363,
    10364,
    10365
+  ],
+  "series_title": "Love, Chunibyo & Other Delusions!",
+  "titles": [
+   "Love, Chunibyo & Other Delusions - Heart Throb - Lite",
+   "Chuunibyou demo Koi ga Shitai! Ren Lite"
   ],
   "parses": {
    "Love, Chunibyo and Other Delusions! - S00E11-E16 - Lites [BD Remux 1080p FLAC] [uba].mkv": {
@@ -10757,6 +11788,11 @@
    9711,
    9712
   ],
+  "series_title": "Attack on Titan",
+  "titles": [
+   "Attack on Titan Season 3 Part 2",
+   "Shingeki no Kyojin Season 3 Part 2"
+  ],
   "parses": {
    "[Lulu] Attack on Titan Season 3 - 13 [BD 1080p HEVC FLAC][Dual-Audio].mkv": {
     "parsedEpisodeInfo": {
@@ -11203,6 +12239,11 @@
    7860,
    7861,
    7862
+  ],
+  "series_title": "Magical Girl Raising Project",
+  "titles": [
+   "Magical Girl Raising Project",
+   "Mahou Shoujo Ikusei Keikaku"
   ],
   "parses": {
    "[GJM] Mahou Shoujo Ikusei Keikaku Special - 06 (BD 720p) [04FC0353].mkv": {
@@ -12158,6 +13199,11 @@
    2596,
    2597
   ],
+  "series_title": "Mushoku Tensei: Jobless Reincarnation",
+  "titles": [
+   "Mushoku Tensei: Jobless Reincarnation Cour 2",
+   "Mushoku Tensei: Isekai Ittara Honki Dasu Part 2"
+  ],
   "parses": {
    "[Thighs] Mushoku Tensei Jobless Reincarnation - 12 (BD 1080p FLAC AAC) [Dual-Audio] [4071E150].mkv": {
     "parsedEpisodeInfo": {
@@ -12412,6 +13458,3657 @@
    ],
    "[Thighs] Mushoku Tensei Jobless Reincarnation - 23 (BD 1080p FLAC AAC) [Dual-Audio] [A16D99D3].mkv": [
     2597
+   ]
+  },
+  "expected_excluded": []
+ },
+ {
+  "name": "seven-deadly-sins-titled-run",
+  "provenance": "title",
+  "tags": [
+   "titled run",
+   "foreign"
+  ],
+  "episodes": [
+   {
+    "id": 6304,
+    "season_number": 0,
+    "episode_number": 1,
+    "episode_file_id": 0,
+    "monitored": false,
+    "episode_file": null
+   },
+   {
+    "id": 6305,
+    "season_number": 0,
+    "episode_number": 2,
+    "episode_file_id": 0,
+    "monitored": false,
+    "episode_file": null
+   },
+   {
+    "id": 6306,
+    "season_number": 0,
+    "episode_number": 3,
+    "episode_file_id": 0,
+    "monitored": false,
+    "episode_file": null
+   },
+   {
+    "id": 6307,
+    "season_number": 0,
+    "episode_number": 4,
+    "episode_file_id": 0,
+    "monitored": false,
+    "episode_file": null
+   },
+   {
+    "id": 6308,
+    "season_number": 0,
+    "episode_number": 5,
+    "episode_file_id": 0,
+    "monitored": false,
+    "episode_file": null
+   },
+   {
+    "id": 6309,
+    "season_number": 0,
+    "episode_number": 6,
+    "episode_file_id": 0,
+    "monitored": false,
+    "episode_file": null
+   },
+   {
+    "id": 6310,
+    "season_number": 0,
+    "episode_number": 7,
+    "episode_file_id": 0,
+    "monitored": false,
+    "episode_file": null
+   },
+   {
+    "id": 6311,
+    "season_number": 0,
+    "episode_number": 8,
+    "episode_file_id": 0,
+    "monitored": false,
+    "episode_file": null
+   },
+   {
+    "id": 6312,
+    "season_number": 0,
+    "episode_number": 9,
+    "episode_file_id": 14847,
+    "monitored": false,
+    "episode_file": {
+     "release_group": "TTGA",
+     "size": 33400415461
+    }
+   },
+   {
+    "id": 6313,
+    "season_number": 0,
+    "episode_number": 10,
+    "episode_file_id": 0,
+    "monitored": false,
+    "episode_file": null
+   },
+   {
+    "id": 6314,
+    "season_number": 0,
+    "episode_number": 11,
+    "episode_file_id": 0,
+    "monitored": false,
+    "episode_file": null
+   },
+   {
+    "id": 6315,
+    "season_number": 0,
+    "episode_number": 12,
+    "episode_file_id": 0,
+    "monitored": false,
+    "episode_file": null
+   },
+   {
+    "id": 6316,
+    "season_number": 0,
+    "episode_number": 13,
+    "episode_file_id": 0,
+    "monitored": false,
+    "episode_file": null
+   },
+   {
+    "id": 6317,
+    "season_number": 0,
+    "episode_number": 14,
+    "episode_file_id": 0,
+    "monitored": false,
+    "episode_file": null
+   },
+   {
+    "id": 6318,
+    "season_number": 0,
+    "episode_number": 15,
+    "episode_file_id": 0,
+    "monitored": false,
+    "episode_file": null
+   },
+   {
+    "id": 6319,
+    "season_number": 0,
+    "episode_number": 16,
+    "episode_file_id": 0,
+    "monitored": false,
+    "episode_file": null
+   },
+   {
+    "id": 6320,
+    "season_number": 0,
+    "episode_number": 17,
+    "episode_file_id": 0,
+    "monitored": false,
+    "episode_file": null
+   },
+   {
+    "id": 6321,
+    "season_number": 0,
+    "episode_number": 18,
+    "episode_file_id": 0,
+    "monitored": false,
+    "episode_file": null
+   },
+   {
+    "id": 6322,
+    "season_number": 0,
+    "episode_number": 19,
+    "episode_file_id": 0,
+    "monitored": false,
+    "episode_file": null
+   },
+   {
+    "id": 6323,
+    "season_number": 0,
+    "episode_number": 20,
+    "episode_file_id": 0,
+    "monitored": false,
+    "episode_file": null
+   },
+   {
+    "id": 6324,
+    "season_number": 0,
+    "episode_number": 21,
+    "episode_file_id": 0,
+    "monitored": false,
+    "episode_file": null
+   },
+   {
+    "id": 6325,
+    "season_number": 0,
+    "episode_number": 22,
+    "episode_file_id": 0,
+    "monitored": false,
+    "episode_file": null
+   },
+   {
+    "id": 6326,
+    "season_number": 0,
+    "episode_number": 23,
+    "episode_file_id": 0,
+    "monitored": false,
+    "episode_file": null
+   },
+   {
+    "id": 6327,
+    "season_number": 0,
+    "episode_number": 24,
+    "episode_file_id": 0,
+    "monitored": false,
+    "episode_file": null
+   },
+   {
+    "id": 6328,
+    "season_number": 0,
+    "episode_number": 25,
+    "episode_file_id": 0,
+    "monitored": false,
+    "episode_file": null
+   },
+   {
+    "id": 6329,
+    "season_number": 0,
+    "episode_number": 26,
+    "episode_file_id": 0,
+    "monitored": false,
+    "episode_file": null
+   },
+   {
+    "id": 6330,
+    "season_number": 0,
+    "episode_number": 27,
+    "episode_file_id": 0,
+    "monitored": false,
+    "episode_file": null
+   },
+   {
+    "id": 6331,
+    "season_number": 0,
+    "episode_number": 28,
+    "episode_file_id": 0,
+    "monitored": false,
+    "episode_file": null
+   },
+   {
+    "id": 6332,
+    "season_number": 1,
+    "episode_number": 1,
+    "episode_file_id": 6194,
+    "monitored": false,
+    "episode_file": {
+     "release_group": "Holomux",
+     "size": 1777661551
+    }
+   },
+   {
+    "id": 6333,
+    "season_number": 1,
+    "episode_number": 2,
+    "episode_file_id": 6195,
+    "monitored": false,
+    "episode_file": {
+     "release_group": "Holomux",
+     "size": 1842795552
+    }
+   },
+   {
+    "id": 6334,
+    "season_number": 1,
+    "episode_number": 3,
+    "episode_file_id": 6196,
+    "monitored": false,
+    "episode_file": {
+     "release_group": "Holomux",
+     "size": 2342295898
+    }
+   },
+   {
+    "id": 6335,
+    "season_number": 1,
+    "episode_number": 4,
+    "episode_file_id": 6197,
+    "monitored": false,
+    "episode_file": {
+     "release_group": "Holomux",
+     "size": 1762114880
+    }
+   },
+   {
+    "id": 6336,
+    "season_number": 1,
+    "episode_number": 5,
+    "episode_file_id": 6198,
+    "monitored": false,
+    "episode_file": {
+     "release_group": "Holomux",
+     "size": 1836576029
+    }
+   },
+   {
+    "id": 6337,
+    "season_number": 1,
+    "episode_number": 6,
+    "episode_file_id": 6199,
+    "monitored": false,
+    "episode_file": {
+     "release_group": "Holomux",
+     "size": 1877785536
+    }
+   },
+   {
+    "id": 6338,
+    "season_number": 1,
+    "episode_number": 7,
+    "episode_file_id": 6200,
+    "monitored": false,
+    "episode_file": {
+     "release_group": "Holomux",
+     "size": 1602478466
+    }
+   },
+   {
+    "id": 6339,
+    "season_number": 1,
+    "episode_number": 8,
+    "episode_file_id": 6201,
+    "monitored": false,
+    "episode_file": {
+     "release_group": "Holomux",
+     "size": 1591804714
+    }
+   },
+   {
+    "id": 6340,
+    "season_number": 1,
+    "episode_number": 9,
+    "episode_file_id": 6202,
+    "monitored": false,
+    "episode_file": {
+     "release_group": "Holomux",
+     "size": 1642503006
+    }
+   },
+   {
+    "id": 6341,
+    "season_number": 1,
+    "episode_number": 10,
+    "episode_file_id": 6203,
+    "monitored": false,
+    "episode_file": {
+     "release_group": "Holomux",
+     "size": 1673613720
+    }
+   },
+   {
+    "id": 6342,
+    "season_number": 1,
+    "episode_number": 11,
+    "episode_file_id": 6204,
+    "monitored": false,
+    "episode_file": {
+     "release_group": "Holomux",
+     "size": 1760605209
+    }
+   },
+   {
+    "id": 6343,
+    "season_number": 1,
+    "episode_number": 12,
+    "episode_file_id": 6205,
+    "monitored": false,
+    "episode_file": {
+     "release_group": "Holomux",
+     "size": 1810538285
+    }
+   },
+   {
+    "id": 6344,
+    "season_number": 1,
+    "episode_number": 13,
+    "episode_file_id": 6206,
+    "monitored": false,
+    "episode_file": {
+     "release_group": "Holomux",
+     "size": 1902728839
+    }
+   },
+   {
+    "id": 6345,
+    "season_number": 1,
+    "episode_number": 14,
+    "episode_file_id": 6207,
+    "monitored": false,
+    "episode_file": {
+     "release_group": "Holomux",
+     "size": 1752906342
+    }
+   },
+   {
+    "id": 6346,
+    "season_number": 1,
+    "episode_number": 15,
+    "episode_file_id": 6208,
+    "monitored": false,
+    "episode_file": {
+     "release_group": "Holomux",
+     "size": 2171544869
+    }
+   },
+   {
+    "id": 6347,
+    "season_number": 1,
+    "episode_number": 16,
+    "episode_file_id": 6209,
+    "monitored": false,
+    "episode_file": {
+     "release_group": "Holomux",
+     "size": 1754111371
+    }
+   },
+   {
+    "id": 6348,
+    "season_number": 1,
+    "episode_number": 17,
+    "episode_file_id": 6210,
+    "monitored": false,
+    "episode_file": {
+     "release_group": "Holomux",
+     "size": 1793506974
+    }
+   },
+   {
+    "id": 6349,
+    "season_number": 1,
+    "episode_number": 18,
+    "episode_file_id": 6211,
+    "monitored": false,
+    "episode_file": {
+     "release_group": "Holomux",
+     "size": 1773233920
+    }
+   },
+   {
+    "id": 6350,
+    "season_number": 1,
+    "episode_number": 19,
+    "episode_file_id": 6212,
+    "monitored": false,
+    "episode_file": {
+     "release_group": "Holomux",
+     "size": 1796012402
+    }
+   },
+   {
+    "id": 6351,
+    "season_number": 1,
+    "episode_number": 20,
+    "episode_file_id": 6213,
+    "monitored": false,
+    "episode_file": {
+     "release_group": "Holomux",
+     "size": 2018882975
+    }
+   },
+   {
+    "id": 6352,
+    "season_number": 1,
+    "episode_number": 21,
+    "episode_file_id": 6214,
+    "monitored": false,
+    "episode_file": {
+     "release_group": "Holomux",
+     "size": 1626924213
+    }
+   },
+   {
+    "id": 6353,
+    "season_number": 1,
+    "episode_number": 22,
+    "episode_file_id": 6215,
+    "monitored": false,
+    "episode_file": {
+     "release_group": "Holomux",
+     "size": 1880148301
+    }
+   },
+   {
+    "id": 6354,
+    "season_number": 1,
+    "episode_number": 23,
+    "episode_file_id": 6216,
+    "monitored": false,
+    "episode_file": {
+     "release_group": "Holomux",
+     "size": 1901343041
+    }
+   },
+   {
+    "id": 6355,
+    "season_number": 1,
+    "episode_number": 24,
+    "episode_file_id": 6217,
+    "monitored": false,
+    "episode_file": {
+     "release_group": "Holomux",
+     "size": 1876743384
+    }
+   },
+   {
+    "id": 6356,
+    "season_number": 2,
+    "episode_number": 1,
+    "episode_file_id": 6324,
+    "monitored": false,
+    "episode_file": {
+     "release_group": "Holomux",
+     "size": 1197405769
+    }
+   },
+   {
+    "id": 6357,
+    "season_number": 2,
+    "episode_number": 2,
+    "episode_file_id": 6325,
+    "monitored": false,
+    "episode_file": {
+     "release_group": "Holomux",
+     "size": 1201240750
+    }
+   },
+   {
+    "id": 6358,
+    "season_number": 2,
+    "episode_number": 3,
+    "episode_file_id": 6326,
+    "monitored": false,
+    "episode_file": {
+     "release_group": "Holomux",
+     "size": 1291433951
+    }
+   },
+   {
+    "id": 6359,
+    "season_number": 2,
+    "episode_number": 4,
+    "episode_file_id": 6327,
+    "monitored": false,
+    "episode_file": {
+     "release_group": "Holomux",
+     "size": 1332872296
+    }
+   },
+   {
+    "id": 6360,
+    "season_number": 2,
+    "episode_number": 5,
+    "episode_file_id": 6328,
+    "monitored": false,
+    "episode_file": {
+     "release_group": "Holomux",
+     "size": 1483930130
+    }
+   },
+   {
+    "id": 6361,
+    "season_number": 2,
+    "episode_number": 6,
+    "episode_file_id": 6329,
+    "monitored": false,
+    "episode_file": {
+     "release_group": "Holomux",
+     "size": 1094250153
+    }
+   },
+   {
+    "id": 6362,
+    "season_number": 2,
+    "episode_number": 7,
+    "episode_file_id": 6330,
+    "monitored": false,
+    "episode_file": {
+     "release_group": "Holomux",
+     "size": 1116651187
+    }
+   },
+   {
+    "id": 6363,
+    "season_number": 2,
+    "episode_number": 8,
+    "episode_file_id": 6331,
+    "monitored": false,
+    "episode_file": {
+     "release_group": "Holomux",
+     "size": 1291361920
+    }
+   },
+   {
+    "id": 6364,
+    "season_number": 2,
+    "episode_number": 9,
+    "episode_file_id": 6332,
+    "monitored": false,
+    "episode_file": {
+     "release_group": "Holomux",
+     "size": 1202360717
+    }
+   },
+   {
+    "id": 6365,
+    "season_number": 2,
+    "episode_number": 10,
+    "episode_file_id": 6333,
+    "monitored": false,
+    "episode_file": {
+     "release_group": "Holomux",
+     "size": 1210975788
+    }
+   },
+   {
+    "id": 6366,
+    "season_number": 2,
+    "episode_number": 11,
+    "episode_file_id": 6334,
+    "monitored": false,
+    "episode_file": {
+     "release_group": "Holomux",
+     "size": 1094229168
+    }
+   },
+   {
+    "id": 6367,
+    "season_number": 2,
+    "episode_number": 12,
+    "episode_file_id": 6335,
+    "monitored": false,
+    "episode_file": {
+     "release_group": "Holomux",
+     "size": 1151187277
+    }
+   },
+   {
+    "id": 6368,
+    "season_number": 2,
+    "episode_number": 13,
+    "episode_file_id": 6336,
+    "monitored": false,
+    "episode_file": {
+     "release_group": "Holomux",
+     "size": 1139006296
+    }
+   },
+   {
+    "id": 6369,
+    "season_number": 2,
+    "episode_number": 14,
+    "episode_file_id": 6337,
+    "monitored": false,
+    "episode_file": {
+     "release_group": "Holomux",
+     "size": 1204001170
+    }
+   },
+   {
+    "id": 6370,
+    "season_number": 2,
+    "episode_number": 15,
+    "episode_file_id": 6338,
+    "monitored": false,
+    "episode_file": {
+     "release_group": "Holomux",
+     "size": 1087548043
+    }
+   },
+   {
+    "id": 6371,
+    "season_number": 2,
+    "episode_number": 16,
+    "episode_file_id": 6339,
+    "monitored": false,
+    "episode_file": {
+     "release_group": "Holomux",
+     "size": 1180049050
+    }
+   },
+   {
+    "id": 6372,
+    "season_number": 2,
+    "episode_number": 17,
+    "episode_file_id": 6340,
+    "monitored": false,
+    "episode_file": {
+     "release_group": "Holomux",
+     "size": 1133713624
+    }
+   },
+   {
+    "id": 6373,
+    "season_number": 2,
+    "episode_number": 18,
+    "episode_file_id": 6341,
+    "monitored": false,
+    "episode_file": {
+     "release_group": "Holomux",
+     "size": 1201289419
+    }
+   },
+   {
+    "id": 6374,
+    "season_number": 2,
+    "episode_number": 19,
+    "episode_file_id": 6342,
+    "monitored": false,
+    "episode_file": {
+     "release_group": "Holomux",
+     "size": 1289604167
+    }
+   },
+   {
+    "id": 6375,
+    "season_number": 2,
+    "episode_number": 20,
+    "episode_file_id": 6343,
+    "monitored": false,
+    "episode_file": {
+     "release_group": "Holomux",
+     "size": 1129392805
+    }
+   },
+   {
+    "id": 6376,
+    "season_number": 2,
+    "episode_number": 21,
+    "episode_file_id": 6344,
+    "monitored": false,
+    "episode_file": {
+     "release_group": "Holomux",
+     "size": 1055348812
+    }
+   },
+   {
+    "id": 6377,
+    "season_number": 2,
+    "episode_number": 22,
+    "episode_file_id": 6345,
+    "monitored": false,
+    "episode_file": {
+     "release_group": "Holomux",
+     "size": 1467892806
+    }
+   },
+   {
+    "id": 6378,
+    "season_number": 2,
+    "episode_number": 23,
+    "episode_file_id": 6346,
+    "monitored": false,
+    "episode_file": {
+     "release_group": "Holomux",
+     "size": 1318893758
+    }
+   },
+   {
+    "id": 6379,
+    "season_number": 2,
+    "episode_number": 24,
+    "episode_file_id": 6347,
+    "monitored": false,
+    "episode_file": {
+     "release_group": "Holomux",
+     "size": 1069651189
+    }
+   },
+   {
+    "id": 6380,
+    "season_number": 3,
+    "episode_number": 1,
+    "episode_file_id": 6348,
+    "monitored": false,
+    "episode_file": {
+     "release_group": "Holomux",
+     "size": 2563948140
+    }
+   },
+   {
+    "id": 6381,
+    "season_number": 3,
+    "episode_number": 2,
+    "episode_file_id": 6349,
+    "monitored": false,
+    "episode_file": {
+     "release_group": "Holomux",
+     "size": 2473497420
+    }
+   },
+   {
+    "id": 6382,
+    "season_number": 3,
+    "episode_number": 3,
+    "episode_file_id": 6350,
+    "monitored": false,
+    "episode_file": {
+     "release_group": "Holomux",
+     "size": 2387812619
+    }
+   },
+   {
+    "id": 6383,
+    "season_number": 3,
+    "episode_number": 4,
+    "episode_file_id": 6351,
+    "monitored": false,
+    "episode_file": {
+     "release_group": "Holomux",
+     "size": 2668330962
+    }
+   },
+   {
+    "id": 6384,
+    "season_number": 3,
+    "episode_number": 5,
+    "episode_file_id": 6352,
+    "monitored": false,
+    "episode_file": {
+     "release_group": "Holomux",
+     "size": 2458665457
+    }
+   },
+   {
+    "id": 6385,
+    "season_number": 3,
+    "episode_number": 6,
+    "episode_file_id": 6353,
+    "monitored": false,
+    "episode_file": {
+     "release_group": "Holomux",
+     "size": 2303748122
+    }
+   },
+   {
+    "id": 6386,
+    "season_number": 3,
+    "episode_number": 7,
+    "episode_file_id": 6354,
+    "monitored": false,
+    "episode_file": {
+     "release_group": "Holomux",
+     "size": 2455956341
+    }
+   },
+   {
+    "id": 6387,
+    "season_number": 3,
+    "episode_number": 8,
+    "episode_file_id": 6355,
+    "monitored": false,
+    "episode_file": {
+     "release_group": "Holomux",
+     "size": 2324335848
+    }
+   },
+   {
+    "id": 6388,
+    "season_number": 3,
+    "episode_number": 9,
+    "episode_file_id": 6356,
+    "monitored": false,
+    "episode_file": {
+     "release_group": "Holomux",
+     "size": 2461302679
+    }
+   },
+   {
+    "id": 6389,
+    "season_number": 3,
+    "episode_number": 10,
+    "episode_file_id": 6357,
+    "monitored": false,
+    "episode_file": {
+     "release_group": "Holomux",
+     "size": 2646464367
+    }
+   },
+   {
+    "id": 6390,
+    "season_number": 3,
+    "episode_number": 11,
+    "episode_file_id": 6358,
+    "monitored": false,
+    "episode_file": {
+     "release_group": "Holomux",
+     "size": 2697418285
+    }
+   },
+   {
+    "id": 6391,
+    "season_number": 3,
+    "episode_number": 12,
+    "episode_file_id": 6359,
+    "monitored": false,
+    "episode_file": {
+     "release_group": "Holomux",
+     "size": 2609711020
+    }
+   },
+   {
+    "id": 6392,
+    "season_number": 3,
+    "episode_number": 13,
+    "episode_file_id": 6360,
+    "monitored": false,
+    "episode_file": {
+     "release_group": "Holomux",
+     "size": 2670030088
+    }
+   },
+   {
+    "id": 6393,
+    "season_number": 3,
+    "episode_number": 14,
+    "episode_file_id": 6361,
+    "monitored": false,
+    "episode_file": {
+     "release_group": "Holomux",
+     "size": 2308075216
+    }
+   },
+   {
+    "id": 6394,
+    "season_number": 3,
+    "episode_number": 15,
+    "episode_file_id": 6362,
+    "monitored": false,
+    "episode_file": {
+     "release_group": "Holomux",
+     "size": 2567973292
+    }
+   },
+   {
+    "id": 6395,
+    "season_number": 3,
+    "episode_number": 16,
+    "episode_file_id": 6363,
+    "monitored": false,
+    "episode_file": {
+     "release_group": "Holomux",
+     "size": 2467910613
+    }
+   },
+   {
+    "id": 6396,
+    "season_number": 3,
+    "episode_number": 17,
+    "episode_file_id": 6364,
+    "monitored": false,
+    "episode_file": {
+     "release_group": "Holomux",
+     "size": 2779516802
+    }
+   },
+   {
+    "id": 6397,
+    "season_number": 3,
+    "episode_number": 18,
+    "episode_file_id": 6365,
+    "monitored": false,
+    "episode_file": {
+     "release_group": "Holomux",
+     "size": 2365069134
+    }
+   },
+   {
+    "id": 6398,
+    "season_number": 3,
+    "episode_number": 19,
+    "episode_file_id": 6366,
+    "monitored": false,
+    "episode_file": {
+     "release_group": "Holomux",
+     "size": 2422069005
+    }
+   },
+   {
+    "id": 6399,
+    "season_number": 3,
+    "episode_number": 20,
+    "episode_file_id": 6367,
+    "monitored": false,
+    "episode_file": {
+     "release_group": "Holomux",
+     "size": 2338250596
+    }
+   },
+   {
+    "id": 6400,
+    "season_number": 3,
+    "episode_number": 21,
+    "episode_file_id": 6368,
+    "monitored": false,
+    "episode_file": {
+     "release_group": "Holomux",
+     "size": 2282624387
+    }
+   },
+   {
+    "id": 6401,
+    "season_number": 3,
+    "episode_number": 22,
+    "episode_file_id": 6369,
+    "monitored": false,
+    "episode_file": {
+     "release_group": "Holomux",
+     "size": 2486185701
+    }
+   },
+   {
+    "id": 6402,
+    "season_number": 3,
+    "episode_number": 23,
+    "episode_file_id": 6370,
+    "monitored": false,
+    "episode_file": {
+     "release_group": "Holomux",
+     "size": 2623595927
+    }
+   },
+   {
+    "id": 6403,
+    "season_number": 3,
+    "episode_number": 24,
+    "episode_file_id": 6371,
+    "monitored": false,
+    "episode_file": {
+     "release_group": "Holomux",
+     "size": 2648543209
+    }
+   },
+   {
+    "id": 6404,
+    "season_number": 4,
+    "episode_number": 1,
+    "episode_file_id": 0,
+    "monitored": false,
+    "episode_file": null
+   },
+   {
+    "id": 6405,
+    "season_number": 4,
+    "episode_number": 2,
+    "episode_file_id": 0,
+    "monitored": false,
+    "episode_file": null
+   },
+   {
+    "id": 6406,
+    "season_number": 4,
+    "episode_number": 3,
+    "episode_file_id": 0,
+    "monitored": false,
+    "episode_file": null
+   },
+   {
+    "id": 6407,
+    "season_number": 4,
+    "episode_number": 4,
+    "episode_file_id": 0,
+    "monitored": false,
+    "episode_file": null
+   },
+   {
+    "id": 6408,
+    "season_number": 4,
+    "episode_number": 5,
+    "episode_file_id": 0,
+    "monitored": false,
+    "episode_file": null
+   },
+   {
+    "id": 6409,
+    "season_number": 4,
+    "episode_number": 6,
+    "episode_file_id": 0,
+    "monitored": false,
+    "episode_file": null
+   },
+   {
+    "id": 6410,
+    "season_number": 4,
+    "episode_number": 7,
+    "episode_file_id": 0,
+    "monitored": false,
+    "episode_file": null
+   },
+   {
+    "id": 6411,
+    "season_number": 4,
+    "episode_number": 8,
+    "episode_file_id": 0,
+    "monitored": false,
+    "episode_file": null
+   },
+   {
+    "id": 6412,
+    "season_number": 4,
+    "episode_number": 9,
+    "episode_file_id": 0,
+    "monitored": false,
+    "episode_file": null
+   },
+   {
+    "id": 6413,
+    "season_number": 4,
+    "episode_number": 10,
+    "episode_file_id": 0,
+    "monitored": false,
+    "episode_file": null
+   },
+   {
+    "id": 6414,
+    "season_number": 4,
+    "episode_number": 11,
+    "episode_file_id": 0,
+    "monitored": false,
+    "episode_file": null
+   },
+   {
+    "id": 6415,
+    "season_number": 4,
+    "episode_number": 12,
+    "episode_file_id": 0,
+    "monitored": false,
+    "episode_file": null
+   },
+   {
+    "id": 6416,
+    "season_number": 4,
+    "episode_number": 13,
+    "episode_file_id": 0,
+    "monitored": false,
+    "episode_file": null
+   },
+   {
+    "id": 6417,
+    "season_number": 4,
+    "episode_number": 14,
+    "episode_file_id": 0,
+    "monitored": false,
+    "episode_file": null
+   },
+   {
+    "id": 6418,
+    "season_number": 4,
+    "episode_number": 15,
+    "episode_file_id": 0,
+    "monitored": false,
+    "episode_file": null
+   },
+   {
+    "id": 6419,
+    "season_number": 4,
+    "episode_number": 16,
+    "episode_file_id": 0,
+    "monitored": false,
+    "episode_file": null
+   },
+   {
+    "id": 6420,
+    "season_number": 4,
+    "episode_number": 17,
+    "episode_file_id": 0,
+    "monitored": false,
+    "episode_file": null
+   },
+   {
+    "id": 6421,
+    "season_number": 4,
+    "episode_number": 18,
+    "episode_file_id": 0,
+    "monitored": false,
+    "episode_file": null
+   },
+   {
+    "id": 6422,
+    "season_number": 4,
+    "episode_number": 19,
+    "episode_file_id": 0,
+    "monitored": false,
+    "episode_file": null
+   },
+   {
+    "id": 6423,
+    "season_number": 4,
+    "episode_number": 20,
+    "episode_file_id": 0,
+    "monitored": false,
+    "episode_file": null
+   },
+   {
+    "id": 6424,
+    "season_number": 4,
+    "episode_number": 21,
+    "episode_file_id": 0,
+    "monitored": false,
+    "episode_file": null
+   },
+   {
+    "id": 6425,
+    "season_number": 4,
+    "episode_number": 22,
+    "episode_file_id": 0,
+    "monitored": false,
+    "episode_file": null
+   },
+   {
+    "id": 6426,
+    "season_number": 4,
+    "episode_number": 23,
+    "episode_file_id": 0,
+    "monitored": false,
+    "episode_file": null
+   },
+   {
+    "id": 6427,
+    "season_number": 4,
+    "episode_number": 24,
+    "episode_file_id": 0,
+    "monitored": false,
+    "episode_file": null
+   }
+  ],
+  "entry_ids": [
+   6380,
+   6381,
+   6382,
+   6383,
+   6384,
+   6385,
+   6386,
+   6387,
+   6388,
+   6389,
+   6390,
+   6391,
+   6392,
+   6393,
+   6394,
+   6395,
+   6396,
+   6397,
+   6398,
+   6399,
+   6400,
+   6401,
+   6402,
+   6403
+  ],
+  "series_title": "The Seven Deadly Sins",
+  "titles": [
+   "The Seven Deadly Sins: Imperial Wrath of the Gods",
+   "Nanatsu no Taizai: Kamigami no Gekirin"
+  ],
+  "parses": {
+   "[Holomux] The Seven Deadly Sins - Prisoners of the Sky [BD 1080p x264 FLAC-AC3 Dual][C83050CE].mkv": {
+    "parsedEpisodeInfo": {
+     "seasonNumber": null,
+     "episodeNumbers": [],
+     "absoluteEpisodeNumbers": [],
+     "special": false,
+     "fullSeason": false
+    },
+    "episodes": []
+   },
+   "[Holomux] The Seven Deadly Sins - Revival Of The Comandments OAD  [DVDRip 480p x264 FLAC 2.0][E4B3BC08].mkv": {
+    "parsedEpisodeInfo": {
+     "seasonNumber": null,
+     "episodeNumbers": [],
+     "absoluteEpisodeNumbers": [],
+     "special": false,
+     "fullSeason": false
+    },
+    "episodes": []
+   },
+   "[Holomux] The Seven Deadly Sins - Revival of The Commandments 01 [BD 1080p x264 10bit FLAC-EAC3 2.0 Dual][2077E554].mkv": {
+    "parsedEpisodeInfo": {
+     "seasonNumber": 0,
+     "episodeNumbers": [],
+     "absoluteEpisodeNumbers": [
+      1
+     ],
+     "special": false,
+     "fullSeason": false
+    },
+    "episodes": []
+   },
+   "[Holomux] The Seven Deadly Sins - Revival of The Commandments 02 [BD 1080p x264 10bit FLAC-EAC3 2.0 Dual][93F27AED].mkv": {
+    "parsedEpisodeInfo": {
+     "seasonNumber": 0,
+     "episodeNumbers": [],
+     "absoluteEpisodeNumbers": [
+      2
+     ],
+     "special": false,
+     "fullSeason": false
+    },
+    "episodes": []
+   },
+   "[Holomux] The Seven Deadly Sins - Revival of The Commandments 03 [BD 1080p x264 10bit FLAC-EAC3 2.0 Dual][985B8EF0].mkv": {
+    "parsedEpisodeInfo": {
+     "seasonNumber": 0,
+     "episodeNumbers": [],
+     "absoluteEpisodeNumbers": [
+      3
+     ],
+     "special": false,
+     "fullSeason": false
+    },
+    "episodes": []
+   },
+   "[Holomux] The Seven Deadly Sins - Revival of The Commandments 04 [BD 1080p x264 10bit FLAC-EAC3 2.0 Dual][558C8792].mkv": {
+    "parsedEpisodeInfo": {
+     "seasonNumber": 0,
+     "episodeNumbers": [],
+     "absoluteEpisodeNumbers": [
+      4
+     ],
+     "special": false,
+     "fullSeason": false
+    },
+    "episodes": []
+   },
+   "[Holomux] The Seven Deadly Sins - Revival of The Commandments 05 [BD 1080p x264 10bit FLAC-EAC3 2.0 Dual][AE724807].mkv": {
+    "parsedEpisodeInfo": {
+     "seasonNumber": 0,
+     "episodeNumbers": [],
+     "absoluteEpisodeNumbers": [
+      5
+     ],
+     "special": false,
+     "fullSeason": false
+    },
+    "episodes": []
+   },
+   "[Holomux] The Seven Deadly Sins - Revival of The Commandments 06 [BD 1080p x264 10bit FLAC-EAC3 2.0 Dual][C348D5ED].mkv": {
+    "parsedEpisodeInfo": {
+     "seasonNumber": 0,
+     "episodeNumbers": [],
+     "absoluteEpisodeNumbers": [
+      6
+     ],
+     "special": false,
+     "fullSeason": false
+    },
+    "episodes": []
+   },
+   "[Holomux] The Seven Deadly Sins - Revival of The Commandments 07 [BD 1080p x264 10bit FLAC-EAC3 2.0 Dual][1ACFEC5C].mkv": {
+    "parsedEpisodeInfo": {
+     "seasonNumber": 0,
+     "episodeNumbers": [],
+     "absoluteEpisodeNumbers": [
+      7
+     ],
+     "special": false,
+     "fullSeason": false
+    },
+    "episodes": []
+   },
+   "[Holomux] The Seven Deadly Sins - Revival of The Commandments 08 [BD 1080p x264 10bit FLAC-EAC3 2.0 Dual][0FB8B5D7].mkv": {
+    "parsedEpisodeInfo": {
+     "seasonNumber": 0,
+     "episodeNumbers": [],
+     "absoluteEpisodeNumbers": [
+      8
+     ],
+     "special": false,
+     "fullSeason": false
+    },
+    "episodes": []
+   },
+   "[Holomux] The Seven Deadly Sins - Revival of The Commandments 09 [BD 1080p x264 10bit FLAC-EAC3 2.0 Dual][AB180724].mkv": {
+    "parsedEpisodeInfo": {
+     "seasonNumber": 0,
+     "episodeNumbers": [],
+     "absoluteEpisodeNumbers": [
+      9
+     ],
+     "special": false,
+     "fullSeason": false
+    },
+    "episodes": []
+   },
+   "[Holomux] The Seven Deadly Sins - Revival of The Commandments 10 [BD 1080p x264 10bit FLAC-EAC3 2.0 Dual][0A8CFD62].mkv": {
+    "parsedEpisodeInfo": {
+     "seasonNumber": 0,
+     "episodeNumbers": [],
+     "absoluteEpisodeNumbers": [
+      10
+     ],
+     "special": false,
+     "fullSeason": false
+    },
+    "episodes": []
+   },
+   "[Holomux] The Seven Deadly Sins - Revival of The Commandments 11 [BD 1080p x264 10bit FLAC-EAC3 2.0 Dual][EC18728D].mkv": {
+    "parsedEpisodeInfo": {
+     "seasonNumber": 0,
+     "episodeNumbers": [],
+     "absoluteEpisodeNumbers": [
+      11
+     ],
+     "special": false,
+     "fullSeason": false
+    },
+    "episodes": []
+   },
+   "[Holomux] The Seven Deadly Sins - Revival of The Commandments 12 [BD 1080p x264 10bit FLAC-EAC3 2.0 Dual][B7F043BD].mkv": {
+    "parsedEpisodeInfo": {
+     "seasonNumber": 0,
+     "episodeNumbers": [],
+     "absoluteEpisodeNumbers": [
+      12
+     ],
+     "special": false,
+     "fullSeason": false
+    },
+    "episodes": []
+   },
+   "[Holomux] The Seven Deadly Sins - Revival of The Commandments 13 [BD 1080p x264 10bit FLAC-EAC3 2.0 Dual][4B400324].mkv": {
+    "parsedEpisodeInfo": {
+     "seasonNumber": 0,
+     "episodeNumbers": [],
+     "absoluteEpisodeNumbers": [
+      13
+     ],
+     "special": false,
+     "fullSeason": false
+    },
+    "episodes": []
+   },
+   "[Holomux] The Seven Deadly Sins - Revival of The Commandments 14 [BD 1080p x264 10bit FLAC-EAC3 2.0 Dual][D9EB110F].mkv": {
+    "parsedEpisodeInfo": {
+     "seasonNumber": 0,
+     "episodeNumbers": [],
+     "absoluteEpisodeNumbers": [
+      14
+     ],
+     "special": false,
+     "fullSeason": false
+    },
+    "episodes": []
+   },
+   "[Holomux] The Seven Deadly Sins - Revival of The Commandments 15 [BD 1080p x264 10bit FLAC-EAC3 2.0 Dual][5DF6AC12].mkv": {
+    "parsedEpisodeInfo": {
+     "seasonNumber": 0,
+     "episodeNumbers": [],
+     "absoluteEpisodeNumbers": [
+      15
+     ],
+     "special": false,
+     "fullSeason": false
+    },
+    "episodes": []
+   },
+   "[Holomux] The Seven Deadly Sins - Revival of The Commandments 16 [BD 1080p x264 10bit FLAC-EAC3 2.0 Dual][C440F33D].mkv": {
+    "parsedEpisodeInfo": {
+     "seasonNumber": 0,
+     "episodeNumbers": [],
+     "absoluteEpisodeNumbers": [
+      16
+     ],
+     "special": false,
+     "fullSeason": false
+    },
+    "episodes": []
+   },
+   "[Holomux] The Seven Deadly Sins - Revival of The Commandments 17 [BD 1080p x264 10bit FLAC-EAC3 2.0 Dual][FECF3CC5].mkv": {
+    "parsedEpisodeInfo": {
+     "seasonNumber": 0,
+     "episodeNumbers": [],
+     "absoluteEpisodeNumbers": [
+      17
+     ],
+     "special": false,
+     "fullSeason": false
+    },
+    "episodes": []
+   },
+   "[Holomux] The Seven Deadly Sins - Revival of The Commandments 18 [BD 1080p x264 10bit FLAC-EAC3 2.0 Dual][7C3F6155].mkv": {
+    "parsedEpisodeInfo": {
+     "seasonNumber": 0,
+     "episodeNumbers": [],
+     "absoluteEpisodeNumbers": [
+      18
+     ],
+     "special": false,
+     "fullSeason": false
+    },
+    "episodes": []
+   },
+   "[Holomux] The Seven Deadly Sins - Revival of The Commandments 19 [BD 1080p x264 10bit FLAC-EAC3 2.0 Dual][FA4FA768].mkv": {
+    "parsedEpisodeInfo": {
+     "seasonNumber": 0,
+     "episodeNumbers": [],
+     "absoluteEpisodeNumbers": [
+      19
+     ],
+     "special": false,
+     "fullSeason": false
+    },
+    "episodes": []
+   },
+   "[Holomux] The Seven Deadly Sins - Revival of The Commandments 20 [BD 1080p x264 10bit FLAC-EAC3 2.0 Dual][FB654922].mkv": {
+    "parsedEpisodeInfo": {
+     "seasonNumber": 0,
+     "episodeNumbers": [],
+     "absoluteEpisodeNumbers": [
+      20
+     ],
+     "special": false,
+     "fullSeason": false
+    },
+    "episodes": []
+   },
+   "[Holomux] The Seven Deadly Sins - Revival of The Commandments 21 [BD 1080p x264 10bit FLAC-EAC3 2.0 Dual][6912F6D4].mkv": {
+    "parsedEpisodeInfo": {
+     "seasonNumber": 0,
+     "episodeNumbers": [],
+     "absoluteEpisodeNumbers": [
+      21
+     ],
+     "special": false,
+     "fullSeason": false
+    },
+    "episodes": []
+   },
+   "[Holomux] The Seven Deadly Sins - Revival of The Commandments 22 [BD 1080p x264 10bit FLAC-EAC3 2.0 Dual][DF6957C3].mkv": {
+    "parsedEpisodeInfo": {
+     "seasonNumber": 0,
+     "episodeNumbers": [],
+     "absoluteEpisodeNumbers": [
+      22
+     ],
+     "special": false,
+     "fullSeason": false
+    },
+    "episodes": []
+   },
+   "[Holomux] The Seven Deadly Sins - Revival of The Commandments 23 [BD 1080p x264 10bit FLAC-EAC3 2.0 Dual][2D81F169].mkv": {
+    "parsedEpisodeInfo": {
+     "seasonNumber": 0,
+     "episodeNumbers": [],
+     "absoluteEpisodeNumbers": [
+      23
+     ],
+     "special": false,
+     "fullSeason": false
+    },
+    "episodes": []
+   },
+   "[Holomux] The Seven Deadly Sins - Revival of The Commandments 24 [BD 1080p x264 10bit FLAC-EAC3 2.0 Dual][A686841F].mkv": {
+    "parsedEpisodeInfo": {
+     "seasonNumber": 0,
+     "episodeNumbers": [],
+     "absoluteEpisodeNumbers": [
+      24
+     ],
+     "special": false,
+     "fullSeason": false
+    },
+    "episodes": []
+   },
+   "[Holomux] The Seven Deadly Sins - Signs of Holy War 01 [BD 1080p x264 10bit FLAC-AC3 2.0 Dual][D562CA6D].mkv": {
+    "parsedEpisodeInfo": {
+     "seasonNumber": 0,
+     "episodeNumbers": [],
+     "absoluteEpisodeNumbers": [
+      1
+     ],
+     "special": false,
+     "fullSeason": false
+    },
+    "episodes": []
+   },
+   "[Holomux] The Seven Deadly Sins - Signs of Holy War 02 [BD 1080p x264 10bit FLAC-AC3 2.0 Dual][9CE658CB].mkv": {
+    "parsedEpisodeInfo": {
+     "seasonNumber": 0,
+     "episodeNumbers": [],
+     "absoluteEpisodeNumbers": [
+      2
+     ],
+     "special": false,
+     "fullSeason": false
+    },
+    "episodes": []
+   },
+   "[Holomux] The Seven Deadly Sins - Signs of Holy War 03 [BD 1080p x264 10bit FLAC-AC3 2.0 Dual][C7782A7B].mkv": {
+    "parsedEpisodeInfo": {
+     "seasonNumber": 0,
+     "episodeNumbers": [],
+     "absoluteEpisodeNumbers": [
+      3
+     ],
+     "special": false,
+     "fullSeason": false
+    },
+    "episodes": []
+   },
+   "[Holomux] The Seven Deadly Sins - Signs of Holy War 04 [BD 1080p x264 10bit FLAC-AC3 2.0 Dual][A435331F].mkv": {
+    "parsedEpisodeInfo": {
+     "seasonNumber": 0,
+     "episodeNumbers": [],
+     "absoluteEpisodeNumbers": [
+      4
+     ],
+     "special": false,
+     "fullSeason": false
+    },
+    "episodes": []
+   },
+   "[Holomux] The Seven Deadly Sins - Wrath of the Gods 01 [BD 1080p FLAC-AAC 2.0 Dual][3CE72A4B].mkv": {
+    "parsedEpisodeInfo": {
+     "seasonNumber": 0,
+     "episodeNumbers": [],
+     "absoluteEpisodeNumbers": [
+      1
+     ],
+     "special": false,
+     "fullSeason": false
+    },
+    "episodes": []
+   },
+   "[Holomux] The Seven Deadly Sins - Wrath of the Gods 02 [BD 1080p FLAC-AAC 2.0 Dual][6AE41C74].mkv": {
+    "parsedEpisodeInfo": {
+     "seasonNumber": 0,
+     "episodeNumbers": [],
+     "absoluteEpisodeNumbers": [
+      2
+     ],
+     "special": false,
+     "fullSeason": false
+    },
+    "episodes": []
+   },
+   "[Holomux] The Seven Deadly Sins - Wrath of the Gods 03 [BD 1080p FLAC-AAC 2.0 Dual][B307FB90].mkv": {
+    "parsedEpisodeInfo": {
+     "seasonNumber": 0,
+     "episodeNumbers": [],
+     "absoluteEpisodeNumbers": [
+      3
+     ],
+     "special": false,
+     "fullSeason": false
+    },
+    "episodes": []
+   },
+   "[Holomux] The Seven Deadly Sins - Wrath of the Gods 04 [BD 1080p FLAC-AAC 2.0 Dual][C9888EAD].mkv": {
+    "parsedEpisodeInfo": {
+     "seasonNumber": 0,
+     "episodeNumbers": [],
+     "absoluteEpisodeNumbers": [
+      4
+     ],
+     "special": false,
+     "fullSeason": false
+    },
+    "episodes": []
+   },
+   "[Holomux] The Seven Deadly Sins - Wrath of the Gods 05 [BD 1080p FLAC-AAC 2.0 Dual][821CED35].mkv": {
+    "parsedEpisodeInfo": {
+     "seasonNumber": 0,
+     "episodeNumbers": [],
+     "absoluteEpisodeNumbers": [
+      5
+     ],
+     "special": false,
+     "fullSeason": false
+    },
+    "episodes": []
+   },
+   "[Holomux] The Seven Deadly Sins - Wrath of the Gods 06 [BD 1080p FLAC-AAC 2.0 Dual][C104C208].mkv": {
+    "parsedEpisodeInfo": {
+     "seasonNumber": 0,
+     "episodeNumbers": [],
+     "absoluteEpisodeNumbers": [
+      6
+     ],
+     "special": false,
+     "fullSeason": false
+    },
+    "episodes": []
+   },
+   "[Holomux] The Seven Deadly Sins - Wrath of the Gods 07 [BD 1080p FLAC-AAC 2.0 Dual][47281BB2].mkv": {
+    "parsedEpisodeInfo": {
+     "seasonNumber": 0,
+     "episodeNumbers": [],
+     "absoluteEpisodeNumbers": [
+      7
+     ],
+     "special": false,
+     "fullSeason": false
+    },
+    "episodes": []
+   },
+   "[Holomux] The Seven Deadly Sins - Wrath of the Gods 08 [BD 1080p FLAC-AAC 2.0 Dual][F98DBC5D].mkv": {
+    "parsedEpisodeInfo": {
+     "seasonNumber": 0,
+     "episodeNumbers": [],
+     "absoluteEpisodeNumbers": [
+      8
+     ],
+     "special": false,
+     "fullSeason": false
+    },
+    "episodes": []
+   },
+   "[Holomux] The Seven Deadly Sins - Wrath of the Gods 09 [BD 1080p FLAC-AAC 2.0 Dual][52E75394].mkv": {
+    "parsedEpisodeInfo": {
+     "seasonNumber": 0,
+     "episodeNumbers": [],
+     "absoluteEpisodeNumbers": [
+      9
+     ],
+     "special": false,
+     "fullSeason": false
+    },
+    "episodes": []
+   },
+   "[Holomux] The Seven Deadly Sins - Wrath of the Gods 10 [BD 1080p FLAC-AAC 2.0 Dual][E5A5D4DA].mkv": {
+    "parsedEpisodeInfo": {
+     "seasonNumber": 0,
+     "episodeNumbers": [],
+     "absoluteEpisodeNumbers": [
+      10
+     ],
+     "special": false,
+     "fullSeason": false
+    },
+    "episodes": []
+   },
+   "[Holomux] The Seven Deadly Sins - Wrath of the Gods 11 [BD 1080p FLAC-AAC 2.0 Dual][37975CEA].mkv": {
+    "parsedEpisodeInfo": {
+     "seasonNumber": 0,
+     "episodeNumbers": [],
+     "absoluteEpisodeNumbers": [
+      11
+     ],
+     "special": false,
+     "fullSeason": false
+    },
+    "episodes": []
+   },
+   "[Holomux] The Seven Deadly Sins - Wrath of the Gods 12 [BD 1080p FLAC-AAC 2.0 Dual][609867F0].mkv": {
+    "parsedEpisodeInfo": {
+     "seasonNumber": 0,
+     "episodeNumbers": [],
+     "absoluteEpisodeNumbers": [
+      12
+     ],
+     "special": false,
+     "fullSeason": false
+    },
+    "episodes": []
+   },
+   "[Holomux] The Seven Deadly Sins - Wrath of the Gods 13 [BD 1080p FLAC-AAC 2.0 Dual][6FBAAD4E].mkv": {
+    "parsedEpisodeInfo": {
+     "seasonNumber": 0,
+     "episodeNumbers": [],
+     "absoluteEpisodeNumbers": [
+      13
+     ],
+     "special": false,
+     "fullSeason": false
+    },
+    "episodes": []
+   },
+   "[Holomux] The Seven Deadly Sins - Wrath of the Gods 14 [BD 1080p FLAC-AAC 2.0 Dual][9A19F2FA].mkv": {
+    "parsedEpisodeInfo": {
+     "seasonNumber": 0,
+     "episodeNumbers": [],
+     "absoluteEpisodeNumbers": [
+      14
+     ],
+     "special": false,
+     "fullSeason": false
+    },
+    "episodes": []
+   },
+   "[Holomux] The Seven Deadly Sins - Wrath of the Gods 15 [BD 1080p FLAC-AAC 2.0 Dual][92F785F5].mkv": {
+    "parsedEpisodeInfo": {
+     "seasonNumber": 0,
+     "episodeNumbers": [],
+     "absoluteEpisodeNumbers": [
+      15
+     ],
+     "special": false,
+     "fullSeason": false
+    },
+    "episodes": []
+   },
+   "[Holomux] The Seven Deadly Sins - Wrath of the Gods 16 [BD 1080p FLAC-AAC 2.0 Dual][36B64878].mkv": {
+    "parsedEpisodeInfo": {
+     "seasonNumber": 0,
+     "episodeNumbers": [],
+     "absoluteEpisodeNumbers": [
+      16
+     ],
+     "special": false,
+     "fullSeason": false
+    },
+    "episodes": []
+   },
+   "[Holomux] The Seven Deadly Sins - Wrath of the Gods 17 [BD 1080p FLAC-AAC 2.0 Dual][5977D269].mkv": {
+    "parsedEpisodeInfo": {
+     "seasonNumber": 0,
+     "episodeNumbers": [],
+     "absoluteEpisodeNumbers": [
+      17
+     ],
+     "special": false,
+     "fullSeason": false
+    },
+    "episodes": []
+   },
+   "[Holomux] The Seven Deadly Sins - Wrath of the Gods 18 [BD 1080p FLAC-AAC 2.0 Dual][50B3FDD4].mkv": {
+    "parsedEpisodeInfo": {
+     "seasonNumber": 0,
+     "episodeNumbers": [],
+     "absoluteEpisodeNumbers": [
+      18
+     ],
+     "special": false,
+     "fullSeason": false
+    },
+    "episodes": []
+   },
+   "[Holomux] The Seven Deadly Sins - Wrath of the Gods 19 [BD 1080p FLAC-AAC 2.0 Dual][EAE93AED].mkv": {
+    "parsedEpisodeInfo": {
+     "seasonNumber": 0,
+     "episodeNumbers": [],
+     "absoluteEpisodeNumbers": [
+      19
+     ],
+     "special": false,
+     "fullSeason": false
+    },
+    "episodes": []
+   },
+   "[Holomux] The Seven Deadly Sins - Wrath of the Gods 20 [BD 1080p FLAC-AAC 2.0 Dual][D6DCB93C].mkv": {
+    "parsedEpisodeInfo": {
+     "seasonNumber": 0,
+     "episodeNumbers": [],
+     "absoluteEpisodeNumbers": [
+      20
+     ],
+     "special": false,
+     "fullSeason": false
+    },
+    "episodes": []
+   },
+   "[Holomux] The Seven Deadly Sins - Wrath of the Gods 21 [BD 1080p FLAC-AAC 2.0 Dual][AC83C7C8].mkv": {
+    "parsedEpisodeInfo": {
+     "seasonNumber": 0,
+     "episodeNumbers": [],
+     "absoluteEpisodeNumbers": [
+      21
+     ],
+     "special": false,
+     "fullSeason": false
+    },
+    "episodes": []
+   },
+   "[Holomux] The Seven Deadly Sins - Wrath of the Gods 22 [BD 1080p FLAC-AAC 2.0 Dual][29DF3CE2].mkv": {
+    "parsedEpisodeInfo": {
+     "seasonNumber": 0,
+     "episodeNumbers": [],
+     "absoluteEpisodeNumbers": [
+      22
+     ],
+     "special": false,
+     "fullSeason": false
+    },
+    "episodes": []
+   },
+   "[Holomux] The Seven Deadly Sins - Wrath of the Gods 23 [BD 1080p FLAC-AAC 2.0 Dual][19681D21].mkv": {
+    "parsedEpisodeInfo": {
+     "seasonNumber": 0,
+     "episodeNumbers": [],
+     "absoluteEpisodeNumbers": [
+      23
+     ],
+     "special": false,
+     "fullSeason": false
+    },
+    "episodes": []
+   },
+   "[Holomux] The Seven Deadly Sins - Wrath of the Gods 24 [BD 1080p FLAC-AAC 2.0 Dual][7E65FB64].mkv": {
+    "parsedEpisodeInfo": {
+     "seasonNumber": 0,
+     "episodeNumbers": [],
+     "absoluteEpisodeNumbers": [
+      24
+     ],
+     "special": false,
+     "fullSeason": false
+    },
+    "episodes": []
+   },
+   "[Holomux] The Seven Deadly Sins 01 [BD 1080p x264 10bit FLAC 2.0 Dual][70A01794].mkv": {
+    "parsedEpisodeInfo": {
+     "seasonNumber": 0,
+     "episodeNumbers": [],
+     "absoluteEpisodeNumbers": [
+      1
+     ],
+     "special": false,
+     "fullSeason": false
+    },
+    "episodes": [
+     {
+      "id": 6332,
+      "seasonNumber": 1,
+      "episodeNumber": 1
+     }
+    ]
+   },
+   "[Holomux] The Seven Deadly Sins 02 [BD 1080p x264 10bit FLAC 2.0 Dual][E3B5788A].mkv": {
+    "parsedEpisodeInfo": {
+     "seasonNumber": 0,
+     "episodeNumbers": [],
+     "absoluteEpisodeNumbers": [
+      2
+     ],
+     "special": false,
+     "fullSeason": false
+    },
+    "episodes": [
+     {
+      "id": 6333,
+      "seasonNumber": 1,
+      "episodeNumber": 2
+     }
+    ]
+   },
+   "[Holomux] The Seven Deadly Sins 03 [BD 1080p x264 10bit FLAC 2.0 Dual][15C19463].mkv": {
+    "parsedEpisodeInfo": {
+     "seasonNumber": 0,
+     "episodeNumbers": [],
+     "absoluteEpisodeNumbers": [
+      3
+     ],
+     "special": false,
+     "fullSeason": false
+    },
+    "episodes": [
+     {
+      "id": 6334,
+      "seasonNumber": 1,
+      "episodeNumber": 3
+     }
+    ]
+   },
+   "[Holomux] The Seven Deadly Sins 04 [BD 1080p x264 10bit FLAC 2.0 Dual][18B8461D].mkv": {
+    "parsedEpisodeInfo": {
+     "seasonNumber": 0,
+     "episodeNumbers": [],
+     "absoluteEpisodeNumbers": [
+      4
+     ],
+     "special": false,
+     "fullSeason": false
+    },
+    "episodes": [
+     {
+      "id": 6335,
+      "seasonNumber": 1,
+      "episodeNumber": 4
+     }
+    ]
+   },
+   "[Holomux] The Seven Deadly Sins 05 [BD 1080p x264 10bit FLAC 2.0 Dual][16B360C0].mkv": {
+    "parsedEpisodeInfo": {
+     "seasonNumber": 0,
+     "episodeNumbers": [],
+     "absoluteEpisodeNumbers": [
+      5
+     ],
+     "special": false,
+     "fullSeason": false
+    },
+    "episodes": [
+     {
+      "id": 6336,
+      "seasonNumber": 1,
+      "episodeNumber": 5
+     }
+    ]
+   },
+   "[Holomux] The Seven Deadly Sins 06 [BD 1080p x264 10bit FLAC 2.0 Dual][87DCFF80].mkv": {
+    "parsedEpisodeInfo": {
+     "seasonNumber": 0,
+     "episodeNumbers": [],
+     "absoluteEpisodeNumbers": [
+      6
+     ],
+     "special": false,
+     "fullSeason": false
+    },
+    "episodes": [
+     {
+      "id": 6337,
+      "seasonNumber": 1,
+      "episodeNumber": 6
+     }
+    ]
+   },
+   "[Holomux] The Seven Deadly Sins 07 [BD 1080p x264 10bit FLAC 2.0 Dual][B9851B9E].mkv": {
+    "parsedEpisodeInfo": {
+     "seasonNumber": 0,
+     "episodeNumbers": [],
+     "absoluteEpisodeNumbers": [
+      7
+     ],
+     "special": false,
+     "fullSeason": false
+    },
+    "episodes": [
+     {
+      "id": 6338,
+      "seasonNumber": 1,
+      "episodeNumber": 7
+     }
+    ]
+   },
+   "[Holomux] The Seven Deadly Sins 08 [BD 1080p x264 10bit FLAC 2.0 Dual][EF39CE74].mkv": {
+    "parsedEpisodeInfo": {
+     "seasonNumber": 0,
+     "episodeNumbers": [],
+     "absoluteEpisodeNumbers": [
+      8
+     ],
+     "special": false,
+     "fullSeason": false
+    },
+    "episodes": [
+     {
+      "id": 6339,
+      "seasonNumber": 1,
+      "episodeNumber": 8
+     }
+    ]
+   },
+   "[Holomux] The Seven Deadly Sins 09 [BD 1080p x264 10bit FLAC 2.0 Dual][D555A913].mkv": {
+    "parsedEpisodeInfo": {
+     "seasonNumber": 0,
+     "episodeNumbers": [],
+     "absoluteEpisodeNumbers": [
+      9
+     ],
+     "special": false,
+     "fullSeason": false
+    },
+    "episodes": [
+     {
+      "id": 6340,
+      "seasonNumber": 1,
+      "episodeNumber": 9
+     }
+    ]
+   },
+   "[Holomux] The Seven Deadly Sins 10 [BD 1080p x264 10bit FLAC 2.0 Dual][D62BF52B].mkv": {
+    "parsedEpisodeInfo": {
+     "seasonNumber": 0,
+     "episodeNumbers": [],
+     "absoluteEpisodeNumbers": [
+      10
+     ],
+     "special": false,
+     "fullSeason": false
+    },
+    "episodes": [
+     {
+      "id": 6341,
+      "seasonNumber": 1,
+      "episodeNumber": 10
+     }
+    ]
+   },
+   "[Holomux] The Seven Deadly Sins 11 [BD 1080p x264 10bit FLAC 2.0 Dual][16877BA6].mkv": {
+    "parsedEpisodeInfo": {
+     "seasonNumber": 0,
+     "episodeNumbers": [],
+     "absoluteEpisodeNumbers": [
+      11
+     ],
+     "special": false,
+     "fullSeason": false
+    },
+    "episodes": [
+     {
+      "id": 6342,
+      "seasonNumber": 1,
+      "episodeNumber": 11
+     }
+    ]
+   },
+   "[Holomux] The Seven Deadly Sins 12 [BD 1080p x264 10bit FLAC 2.0 Dual][C9F05608].mkv": {
+    "parsedEpisodeInfo": {
+     "seasonNumber": 0,
+     "episodeNumbers": [],
+     "absoluteEpisodeNumbers": [
+      12
+     ],
+     "special": false,
+     "fullSeason": false
+    },
+    "episodes": [
+     {
+      "id": 6343,
+      "seasonNumber": 1,
+      "episodeNumber": 12
+     }
+    ]
+   },
+   "[Holomux] The Seven Deadly Sins 13 [BD 1080p x264 10bit FLAC 2.0 Dual][AB3EFC24].mkv": {
+    "parsedEpisodeInfo": {
+     "seasonNumber": 0,
+     "episodeNumbers": [],
+     "absoluteEpisodeNumbers": [
+      13
+     ],
+     "special": false,
+     "fullSeason": false
+    },
+    "episodes": [
+     {
+      "id": 6344,
+      "seasonNumber": 1,
+      "episodeNumber": 13
+     }
+    ]
+   },
+   "[Holomux] The Seven Deadly Sins 14 [BD 1080p x264 10bit FLAC 2.0 Dual][2C8022D1].mkv": {
+    "parsedEpisodeInfo": {
+     "seasonNumber": 0,
+     "episodeNumbers": [],
+     "absoluteEpisodeNumbers": [
+      14
+     ],
+     "special": false,
+     "fullSeason": false
+    },
+    "episodes": [
+     {
+      "id": 6345,
+      "seasonNumber": 1,
+      "episodeNumber": 14
+     }
+    ]
+   },
+   "[Holomux] The Seven Deadly Sins 15 [BD 1080p x264 10bit FLAC 2.0 Dual][03E83B66].mkv": {
+    "parsedEpisodeInfo": {
+     "seasonNumber": 0,
+     "episodeNumbers": [],
+     "absoluteEpisodeNumbers": [
+      15
+     ],
+     "special": false,
+     "fullSeason": false
+    },
+    "episodes": [
+     {
+      "id": 6346,
+      "seasonNumber": 1,
+      "episodeNumber": 15
+     }
+    ]
+   },
+   "[Holomux] The Seven Deadly Sins 16 [BD 1080p x264 10bit FLAC 2.0 Dual][01A455B8].mkv": {
+    "parsedEpisodeInfo": {
+     "seasonNumber": 0,
+     "episodeNumbers": [],
+     "absoluteEpisodeNumbers": [
+      16
+     ],
+     "special": false,
+     "fullSeason": false
+    },
+    "episodes": [
+     {
+      "id": 6347,
+      "seasonNumber": 1,
+      "episodeNumber": 16
+     }
+    ]
+   },
+   "[Holomux] The Seven Deadly Sins 17 [BD 1080p x264 10bit FLAC 2.0 Dual][6027362B].mkv": {
+    "parsedEpisodeInfo": {
+     "seasonNumber": 0,
+     "episodeNumbers": [],
+     "absoluteEpisodeNumbers": [
+      17
+     ],
+     "special": false,
+     "fullSeason": false
+    },
+    "episodes": [
+     {
+      "id": 6348,
+      "seasonNumber": 1,
+      "episodeNumber": 17
+     }
+    ]
+   },
+   "[Holomux] The Seven Deadly Sins 18 [BD 1080p x264 10bit FLAC 2.0 Dual][92AFCD1C].mkv": {
+    "parsedEpisodeInfo": {
+     "seasonNumber": 0,
+     "episodeNumbers": [],
+     "absoluteEpisodeNumbers": [
+      18
+     ],
+     "special": false,
+     "fullSeason": false
+    },
+    "episodes": [
+     {
+      "id": 6349,
+      "seasonNumber": 1,
+      "episodeNumber": 18
+     }
+    ]
+   },
+   "[Holomux] The Seven Deadly Sins 19 [BD 1080p x264 10bit FLAC 2.0 Dual][ADA1BB2C].mkv": {
+    "parsedEpisodeInfo": {
+     "seasonNumber": 0,
+     "episodeNumbers": [],
+     "absoluteEpisodeNumbers": [
+      19
+     ],
+     "special": false,
+     "fullSeason": false
+    },
+    "episodes": [
+     {
+      "id": 6350,
+      "seasonNumber": 1,
+      "episodeNumber": 19
+     }
+    ]
+   },
+   "[Holomux] The Seven Deadly Sins 20 [BD 1080p x264 10bit FLAC 2.0 Dual][7F72B4C3].mkv": {
+    "parsedEpisodeInfo": {
+     "seasonNumber": 0,
+     "episodeNumbers": [],
+     "absoluteEpisodeNumbers": [
+      20
+     ],
+     "special": false,
+     "fullSeason": false
+    },
+    "episodes": [
+     {
+      "id": 6351,
+      "seasonNumber": 1,
+      "episodeNumber": 20
+     }
+    ]
+   },
+   "[Holomux] The Seven Deadly Sins 21 [BD 1080p x264 10bit FLAC 2.0 Dual][09025980].mkv": {
+    "parsedEpisodeInfo": {
+     "seasonNumber": 0,
+     "episodeNumbers": [],
+     "absoluteEpisodeNumbers": [
+      21
+     ],
+     "special": false,
+     "fullSeason": false
+    },
+    "episodes": [
+     {
+      "id": 6352,
+      "seasonNumber": 1,
+      "episodeNumber": 21
+     }
+    ]
+   },
+   "[Holomux] The Seven Deadly Sins 22v2 [BD 1080p x264 10bit FLAC 2.0 Dual][04E88EFE].mkv": {
+    "parsedEpisodeInfo": {
+     "seasonNumber": 0,
+     "episodeNumbers": [],
+     "absoluteEpisodeNumbers": [
+      22
+     ],
+     "special": false,
+     "fullSeason": false
+    },
+    "episodes": [
+     {
+      "id": 6353,
+      "seasonNumber": 1,
+      "episodeNumber": 22
+     }
+    ]
+   },
+   "[Holomux] The Seven Deadly Sins 23 [BD 1080p x264 10bit FLAC 2.0 Dual][C845E405].mkv": {
+    "parsedEpisodeInfo": {
+     "seasonNumber": 0,
+     "episodeNumbers": [],
+     "absoluteEpisodeNumbers": [
+      23
+     ],
+     "special": false,
+     "fullSeason": false
+    },
+    "episodes": [
+     {
+      "id": 6354,
+      "seasonNumber": 1,
+      "episodeNumber": 23
+     }
+    ]
+   },
+   "[Holomux] The Seven Deadly Sins 24 [BD 1080p x264 10bit FLAC 2.0 Dual][468F72EE].mkv": {
+    "parsedEpisodeInfo": {
+     "seasonNumber": 0,
+     "episodeNumbers": [],
+     "absoluteEpisodeNumbers": [
+      24
+     ],
+     "special": false,
+     "fullSeason": false
+    },
+    "episodes": [
+     {
+      "id": 6355,
+      "seasonNumber": 1,
+      "episodeNumber": 24
+     }
+    ]
+   },
+   "[Holomux] The Seven Deadly Sins OAD 01v2 [DVD x264 480p FLAC 2.0][8E7C707D].mkv": {
+    "parsedEpisodeInfo": {
+     "seasonNumber": 0,
+     "episodeNumbers": [],
+     "absoluteEpisodeNumbers": [
+      1
+     ],
+     "special": false,
+     "fullSeason": false
+    },
+    "episodes": []
+   },
+   "[Holomux] The Seven Deadly Sins OAD 02v2 [DVD x264 480p FLAC 2.0][A1A71B36].mkv": {
+    "parsedEpisodeInfo": {
+     "seasonNumber": 0,
+     "episodeNumbers": [],
+     "absoluteEpisodeNumbers": [
+      2
+     ],
+     "special": false,
+     "fullSeason": false
+    },
+    "episodes": []
+   }
+  },
+  "expected": {
+   "[Holomux] The Seven Deadly Sins - Wrath of the Gods 01 [BD 1080p FLAC-AAC 2.0 Dual][3CE72A4B].mkv": [
+    6380
+   ],
+   "[Holomux] The Seven Deadly Sins - Wrath of the Gods 02 [BD 1080p FLAC-AAC 2.0 Dual][6AE41C74].mkv": [
+    6381
+   ],
+   "[Holomux] The Seven Deadly Sins - Wrath of the Gods 03 [BD 1080p FLAC-AAC 2.0 Dual][B307FB90].mkv": [
+    6382
+   ],
+   "[Holomux] The Seven Deadly Sins - Wrath of the Gods 04 [BD 1080p FLAC-AAC 2.0 Dual][C9888EAD].mkv": [
+    6383
+   ],
+   "[Holomux] The Seven Deadly Sins - Wrath of the Gods 05 [BD 1080p FLAC-AAC 2.0 Dual][821CED35].mkv": [
+    6384
+   ],
+   "[Holomux] The Seven Deadly Sins - Wrath of the Gods 06 [BD 1080p FLAC-AAC 2.0 Dual][C104C208].mkv": [
+    6385
+   ],
+   "[Holomux] The Seven Deadly Sins - Wrath of the Gods 07 [BD 1080p FLAC-AAC 2.0 Dual][47281BB2].mkv": [
+    6386
+   ],
+   "[Holomux] The Seven Deadly Sins - Wrath of the Gods 08 [BD 1080p FLAC-AAC 2.0 Dual][F98DBC5D].mkv": [
+    6387
+   ],
+   "[Holomux] The Seven Deadly Sins - Wrath of the Gods 09 [BD 1080p FLAC-AAC 2.0 Dual][52E75394].mkv": [
+    6388
+   ],
+   "[Holomux] The Seven Deadly Sins - Wrath of the Gods 10 [BD 1080p FLAC-AAC 2.0 Dual][E5A5D4DA].mkv": [
+    6389
+   ],
+   "[Holomux] The Seven Deadly Sins - Wrath of the Gods 11 [BD 1080p FLAC-AAC 2.0 Dual][37975CEA].mkv": [
+    6390
+   ],
+   "[Holomux] The Seven Deadly Sins - Wrath of the Gods 12 [BD 1080p FLAC-AAC 2.0 Dual][609867F0].mkv": [
+    6391
+   ],
+   "[Holomux] The Seven Deadly Sins - Wrath of the Gods 13 [BD 1080p FLAC-AAC 2.0 Dual][6FBAAD4E].mkv": [
+    6392
+   ],
+   "[Holomux] The Seven Deadly Sins - Wrath of the Gods 14 [BD 1080p FLAC-AAC 2.0 Dual][9A19F2FA].mkv": [
+    6393
+   ],
+   "[Holomux] The Seven Deadly Sins - Wrath of the Gods 15 [BD 1080p FLAC-AAC 2.0 Dual][92F785F5].mkv": [
+    6394
+   ],
+   "[Holomux] The Seven Deadly Sins - Wrath of the Gods 16 [BD 1080p FLAC-AAC 2.0 Dual][36B64878].mkv": [
+    6395
+   ],
+   "[Holomux] The Seven Deadly Sins - Wrath of the Gods 17 [BD 1080p FLAC-AAC 2.0 Dual][5977D269].mkv": [
+    6396
+   ],
+   "[Holomux] The Seven Deadly Sins - Wrath of the Gods 18 [BD 1080p FLAC-AAC 2.0 Dual][50B3FDD4].mkv": [
+    6397
+   ],
+   "[Holomux] The Seven Deadly Sins - Wrath of the Gods 19 [BD 1080p FLAC-AAC 2.0 Dual][EAE93AED].mkv": [
+    6398
+   ],
+   "[Holomux] The Seven Deadly Sins - Wrath of the Gods 20 [BD 1080p FLAC-AAC 2.0 Dual][D6DCB93C].mkv": [
+    6399
+   ],
+   "[Holomux] The Seven Deadly Sins - Wrath of the Gods 21 [BD 1080p FLAC-AAC 2.0 Dual][AC83C7C8].mkv": [
+    6400
+   ],
+   "[Holomux] The Seven Deadly Sins - Wrath of the Gods 22 [BD 1080p FLAC-AAC 2.0 Dual][29DF3CE2].mkv": [
+    6401
+   ],
+   "[Holomux] The Seven Deadly Sins - Wrath of the Gods 23 [BD 1080p FLAC-AAC 2.0 Dual][19681D21].mkv": [
+    6402
+   ],
+   "[Holomux] The Seven Deadly Sins - Wrath of the Gods 24 [BD 1080p FLAC-AAC 2.0 Dual][7E65FB64].mkv": [
+    6403
+   ]
+  },
+  "expected_excluded": [
+   "[Holomux] The Seven Deadly Sins 01 [BD 1080p x264 10bit FLAC 2.0 Dual][70A01794].mkv",
+   "[Holomux] The Seven Deadly Sins 02 [BD 1080p x264 10bit FLAC 2.0 Dual][E3B5788A].mkv",
+   "[Holomux] The Seven Deadly Sins 03 [BD 1080p x264 10bit FLAC 2.0 Dual][15C19463].mkv",
+   "[Holomux] The Seven Deadly Sins 04 [BD 1080p x264 10bit FLAC 2.0 Dual][18B8461D].mkv",
+   "[Holomux] The Seven Deadly Sins 05 [BD 1080p x264 10bit FLAC 2.0 Dual][16B360C0].mkv",
+   "[Holomux] The Seven Deadly Sins 06 [BD 1080p x264 10bit FLAC 2.0 Dual][87DCFF80].mkv",
+   "[Holomux] The Seven Deadly Sins 07 [BD 1080p x264 10bit FLAC 2.0 Dual][B9851B9E].mkv",
+   "[Holomux] The Seven Deadly Sins 08 [BD 1080p x264 10bit FLAC 2.0 Dual][EF39CE74].mkv",
+   "[Holomux] The Seven Deadly Sins 09 [BD 1080p x264 10bit FLAC 2.0 Dual][D555A913].mkv",
+   "[Holomux] The Seven Deadly Sins 10 [BD 1080p x264 10bit FLAC 2.0 Dual][D62BF52B].mkv",
+   "[Holomux] The Seven Deadly Sins 11 [BD 1080p x264 10bit FLAC 2.0 Dual][16877BA6].mkv",
+   "[Holomux] The Seven Deadly Sins 12 [BD 1080p x264 10bit FLAC 2.0 Dual][C9F05608].mkv",
+   "[Holomux] The Seven Deadly Sins 13 [BD 1080p x264 10bit FLAC 2.0 Dual][AB3EFC24].mkv",
+   "[Holomux] The Seven Deadly Sins 14 [BD 1080p x264 10bit FLAC 2.0 Dual][2C8022D1].mkv",
+   "[Holomux] The Seven Deadly Sins 15 [BD 1080p x264 10bit FLAC 2.0 Dual][03E83B66].mkv",
+   "[Holomux] The Seven Deadly Sins 16 [BD 1080p x264 10bit FLAC 2.0 Dual][01A455B8].mkv",
+   "[Holomux] The Seven Deadly Sins 17 [BD 1080p x264 10bit FLAC 2.0 Dual][6027362B].mkv",
+   "[Holomux] The Seven Deadly Sins 18 [BD 1080p x264 10bit FLAC 2.0 Dual][92AFCD1C].mkv",
+   "[Holomux] The Seven Deadly Sins 19 [BD 1080p x264 10bit FLAC 2.0 Dual][ADA1BB2C].mkv",
+   "[Holomux] The Seven Deadly Sins 20 [BD 1080p x264 10bit FLAC 2.0 Dual][7F72B4C3].mkv",
+   "[Holomux] The Seven Deadly Sins 21 [BD 1080p x264 10bit FLAC 2.0 Dual][09025980].mkv",
+   "[Holomux] The Seven Deadly Sins 22v2 [BD 1080p x264 10bit FLAC 2.0 Dual][04E88EFE].mkv",
+   "[Holomux] The Seven Deadly Sins 23 [BD 1080p x264 10bit FLAC 2.0 Dual][C845E405].mkv",
+   "[Holomux] The Seven Deadly Sins 24 [BD 1080p x264 10bit FLAC 2.0 Dual][468F72EE].mkv"
+  ]
+ },
+ {
+  "name": "overlord-movie-titled",
+  "provenance": "title",
+  "tags": [
+   "titled"
+  ],
+  "episodes": [
+   {
+    "id": 2075,
+    "season_number": 0,
+    "episode_number": 1,
+    "episode_file_id": 13533,
+    "monitored": false,
+    "episode_file": {
+     "release_group": "neko-kBaraka",
+     "size": 104402562
+    }
+   },
+   {
+    "id": 2076,
+    "season_number": 0,
+    "episode_number": 2,
+    "episode_file_id": 13534,
+    "monitored": false,
+    "episode_file": {
+     "release_group": "neko-kBaraka",
+     "size": 92957451
+    }
+   },
+   {
+    "id": 2077,
+    "season_number": 0,
+    "episode_number": 3,
+    "episode_file_id": 13535,
+    "monitored": false,
+    "episode_file": {
+     "release_group": "neko-kBaraka",
+     "size": 50839902
+    }
+   },
+   {
+    "id": 2078,
+    "season_number": 0,
+    "episode_number": 4,
+    "episode_file_id": 13536,
+    "monitored": false,
+    "episode_file": {
+     "release_group": "neko-kBaraka",
+     "size": 57927028
+    }
+   },
+   {
+    "id": 2079,
+    "season_number": 0,
+    "episode_number": 5,
+    "episode_file_id": 13537,
+    "monitored": false,
+    "episode_file": {
+     "release_group": "neko-kBaraka",
+     "size": 59193827
+    }
+   },
+   {
+    "id": 2080,
+    "season_number": 0,
+    "episode_number": 6,
+    "episode_file_id": 13538,
+    "monitored": false,
+    "episode_file": {
+     "release_group": "neko-kBaraka",
+     "size": 53741621
+    }
+   },
+   {
+    "id": 2081,
+    "season_number": 0,
+    "episode_number": 7,
+    "episode_file_id": 13539,
+    "monitored": false,
+    "episode_file": {
+     "release_group": "neko-kBaraka",
+     "size": 59034271
+    }
+   },
+   {
+    "id": 2082,
+    "season_number": 0,
+    "episode_number": 8,
+    "episode_file_id": 13540,
+    "monitored": false,
+    "episode_file": {
+     "release_group": "neko-kBaraka",
+     "size": 76204342
+    }
+   },
+   {
+    "id": 2083,
+    "season_number": 0,
+    "episode_number": 9,
+    "episode_file_id": 13541,
+    "monitored": false,
+    "episode_file": {
+     "release_group": "Drag",
+     "size": 868833830
+    }
+   },
+   {
+    "id": 2084,
+    "season_number": 0,
+    "episode_number": 10,
+    "episode_file_id": 13519,
+    "monitored": false,
+    "episode_file": {
+     "release_group": "Moxie",
+     "size": 28772090440
+    }
+   },
+   {
+    "id": 2085,
+    "season_number": 0,
+    "episode_number": 11,
+    "episode_file_id": 13532,
+    "monitored": false,
+    "episode_file": {
+     "release_group": "Moxie",
+     "size": 26370596241
+    }
+   },
+   {
+    "id": 2086,
+    "season_number": 0,
+    "episode_number": 12,
+    "episode_file_id": 0,
+    "monitored": false,
+    "episode_file": null
+   },
+   {
+    "id": 2087,
+    "season_number": 0,
+    "episode_number": 13,
+    "episode_file_id": 0,
+    "monitored": false,
+    "episode_file": null
+   },
+   {
+    "id": 2088,
+    "season_number": 0,
+    "episode_number": 14,
+    "episode_file_id": 0,
+    "monitored": false,
+    "episode_file": null
+   },
+   {
+    "id": 2089,
+    "season_number": 0,
+    "episode_number": 15,
+    "episode_file_id": 0,
+    "monitored": false,
+    "episode_file": null
+   },
+   {
+    "id": 2090,
+    "season_number": 0,
+    "episode_number": 16,
+    "episode_file_id": 13542,
+    "monitored": false,
+    "episode_file": {
+     "release_group": "neko-kBaraka",
+     "size": 30111345
+    }
+   },
+   {
+    "id": 2091,
+    "season_number": 0,
+    "episode_number": 17,
+    "episode_file_id": 13543,
+    "monitored": false,
+    "episode_file": {
+     "release_group": "neko-kBaraka",
+     "size": 25839621
+    }
+   },
+   {
+    "id": 2092,
+    "season_number": 0,
+    "episode_number": 18,
+    "episode_file_id": 13544,
+    "monitored": false,
+    "episode_file": {
+     "release_group": "neko-kBaraka",
+     "size": 27144715
+    }
+   },
+   {
+    "id": 2093,
+    "season_number": 0,
+    "episode_number": 19,
+    "episode_file_id": 13545,
+    "monitored": false,
+    "episode_file": {
+     "release_group": "neko-kBaraka",
+     "size": 23070552
+    }
+   },
+   {
+    "id": 2094,
+    "season_number": 0,
+    "episode_number": 20,
+    "episode_file_id": 13546,
+    "monitored": false,
+    "episode_file": {
+     "release_group": "neko-kBaraka",
+     "size": 32186131
+    }
+   },
+   {
+    "id": 2095,
+    "season_number": 0,
+    "episode_number": 21,
+    "episode_file_id": 13547,
+    "monitored": false,
+    "episode_file": {
+     "release_group": "neko-kBaraka",
+     "size": 32901864
+    }
+   },
+   {
+    "id": 2096,
+    "season_number": 0,
+    "episode_number": 22,
+    "episode_file_id": 13548,
+    "monitored": false,
+    "episode_file": {
+     "release_group": "neko-kBaraka",
+     "size": 30279907
+    }
+   },
+   {
+    "id": 2097,
+    "season_number": 0,
+    "episode_number": 23,
+    "episode_file_id": 13549,
+    "monitored": false,
+    "episode_file": {
+     "release_group": "neko-kBaraka",
+     "size": 26304744
+    }
+   },
+   {
+    "id": 2098,
+    "season_number": 0,
+    "episode_number": 24,
+    "episode_file_id": 13550,
+    "monitored": false,
+    "episode_file": {
+     "release_group": "neko-kBaraka",
+     "size": 29676183
+    }
+   },
+   {
+    "id": 2099,
+    "season_number": 0,
+    "episode_number": 25,
+    "episode_file_id": 13551,
+    "monitored": false,
+    "episode_file": {
+     "release_group": "neko-kBaraka",
+     "size": 26134339
+    }
+   },
+   {
+    "id": 2100,
+    "season_number": 0,
+    "episode_number": 26,
+    "episode_file_id": 13552,
+    "monitored": false,
+    "episode_file": {
+     "release_group": "neko-kBaraka",
+     "size": 30802942
+    }
+   },
+   {
+    "id": 2101,
+    "season_number": 0,
+    "episode_number": 27,
+    "episode_file_id": 13553,
+    "monitored": false,
+    "episode_file": {
+     "release_group": "neko-kBaraka",
+     "size": 26676860
+    }
+   },
+   {
+    "id": 2102,
+    "season_number": 0,
+    "episode_number": 28,
+    "episode_file_id": 13554,
+    "monitored": false,
+    "episode_file": {
+     "release_group": "neko-kBaraka",
+     "size": 32397939
+    }
+   },
+   {
+    "id": 2103,
+    "season_number": 0,
+    "episode_number": 29,
+    "episode_file_id": 0,
+    "monitored": false,
+    "episode_file": null
+   },
+   {
+    "id": 2104,
+    "season_number": 0,
+    "episode_number": 30,
+    "episode_file_id": 0,
+    "monitored": false,
+    "episode_file": null
+   },
+   {
+    "id": 2105,
+    "season_number": 0,
+    "episode_number": 31,
+    "episode_file_id": 0,
+    "monitored": false,
+    "episode_file": null
+   },
+   {
+    "id": 2106,
+    "season_number": 0,
+    "episode_number": 32,
+    "episode_file_id": 0,
+    "monitored": false,
+    "episode_file": null
+   },
+   {
+    "id": 2107,
+    "season_number": 0,
+    "episode_number": 33,
+    "episode_file_id": 0,
+    "monitored": false,
+    "episode_file": null
+   },
+   {
+    "id": 2108,
+    "season_number": 0,
+    "episode_number": 34,
+    "episode_file_id": 0,
+    "monitored": false,
+    "episode_file": null
+   },
+   {
+    "id": 2109,
+    "season_number": 0,
+    "episode_number": 35,
+    "episode_file_id": 0,
+    "monitored": false,
+    "episode_file": null
+   },
+   {
+    "id": 2110,
+    "season_number": 0,
+    "episode_number": 36,
+    "episode_file_id": 0,
+    "monitored": false,
+    "episode_file": null
+   },
+   {
+    "id": 2111,
+    "season_number": 0,
+    "episode_number": 37,
+    "episode_file_id": 0,
+    "monitored": false,
+    "episode_file": null
+   },
+   {
+    "id": 2112,
+    "season_number": 0,
+    "episode_number": 38,
+    "episode_file_id": 0,
+    "monitored": false,
+    "episode_file": null
+   },
+   {
+    "id": 2113,
+    "season_number": 0,
+    "episode_number": 39,
+    "episode_file_id": 0,
+    "monitored": false,
+    "episode_file": null
+   },
+   {
+    "id": 2114,
+    "season_number": 0,
+    "episode_number": 40,
+    "episode_file_id": 0,
+    "monitored": false,
+    "episode_file": null
+   },
+   {
+    "id": 2115,
+    "season_number": 0,
+    "episode_number": 41,
+    "episode_file_id": 0,
+    "monitored": false,
+    "episode_file": null
+   },
+   {
+    "id": 2116,
+    "season_number": 0,
+    "episode_number": 42,
+    "episode_file_id": 13568,
+    "monitored": false,
+    "episode_file": {
+     "release_group": "NOGRP",
+     "size": 323047876
+    }
+   },
+   {
+    "id": 2117,
+    "season_number": 0,
+    "episode_number": 43,
+    "episode_file_id": 13569,
+    "monitored": false,
+    "episode_file": {
+     "release_group": "NOGRP",
+     "size": 322314384
+    }
+   },
+   {
+    "id": 2118,
+    "season_number": 0,
+    "episode_number": 44,
+    "episode_file_id": 13570,
+    "monitored": false,
+    "episode_file": {
+     "release_group": "NOGRP",
+     "size": 324525419
+    }
+   },
+   {
+    "id": 1449,
+    "season_number": 0,
+    "episode_number": 45,
+    "episode_file_id": 0,
+    "monitored": false,
+    "episode_file": null
+   },
+   {
+    "id": 1450,
+    "season_number": 0,
+    "episode_number": 46,
+    "episode_file_id": 0,
+    "monitored": false,
+    "episode_file": null
+   },
+   {
+    "id": 1451,
+    "season_number": 0,
+    "episode_number": 47,
+    "episode_file_id": 0,
+    "monitored": false,
+    "episode_file": null
+   },
+   {
+    "id": 1452,
+    "season_number": 0,
+    "episode_number": 48,
+    "episode_file_id": 0,
+    "monitored": false,
+    "episode_file": null
+   },
+   {
+    "id": 1453,
+    "season_number": 0,
+    "episode_number": 49,
+    "episode_file_id": 0,
+    "monitored": false,
+    "episode_file": null
+   },
+   {
+    "id": 1454,
+    "season_number": 0,
+    "episode_number": 50,
+    "episode_file_id": 0,
+    "monitored": false,
+    "episode_file": null
+   },
+   {
+    "id": 1455,
+    "season_number": 0,
+    "episode_number": 51,
+    "episode_file_id": 0,
+    "monitored": false,
+    "episode_file": null
+   },
+   {
+    "id": 1456,
+    "season_number": 0,
+    "episode_number": 52,
+    "episode_file_id": 0,
+    "monitored": false,
+    "episode_file": null
+   },
+   {
+    "id": 1457,
+    "season_number": 0,
+    "episode_number": 53,
+    "episode_file_id": 0,
+    "monitored": false,
+    "episode_file": null
+   },
+   {
+    "id": 1458,
+    "season_number": 0,
+    "episode_number": 54,
+    "episode_file_id": 0,
+    "monitored": false,
+    "episode_file": null
+   },
+   {
+    "id": 1459,
+    "season_number": 0,
+    "episode_number": 55,
+    "episode_file_id": 0,
+    "monitored": false,
+    "episode_file": null
+   },
+   {
+    "id": 1460,
+    "season_number": 0,
+    "episode_number": 56,
+    "episode_file_id": 0,
+    "monitored": false,
+    "episode_file": null
+   },
+   {
+    "id": 1461,
+    "season_number": 0,
+    "episode_number": 57,
+    "episode_file_id": 0,
+    "monitored": false,
+    "episode_file": null
+   },
+   {
+    "id": 1462,
+    "season_number": 0,
+    "episode_number": 58,
+    "episode_file_id": 0,
+    "monitored": false,
+    "episode_file": null
+   },
+   {
+    "id": 1463,
+    "season_number": 0,
+    "episode_number": 59,
+    "episode_file_id": 0,
+    "monitored": false,
+    "episode_file": null
+   },
+   {
+    "id": 4606,
+    "season_number": 0,
+    "episode_number": 60,
+    "episode_file_id": 0,
+    "monitored": false,
+    "episode_file": null
+   },
+   {
+    "id": 6714,
+    "season_number": 0,
+    "episode_number": 61,
+    "episode_file_id": 13571,
+    "monitored": false,
+    "episode_file": {
+     "release_group": "RUDY",
+     "size": 35049089149
+    }
+   },
+   {
+    "id": 8888,
+    "season_number": 0,
+    "episode_number": 62,
+    "episode_file_id": 0,
+    "monitored": false,
+    "episode_file": null
+   },
+   {
+    "id": 2119,
+    "season_number": 1,
+    "episode_number": 1,
+    "episode_file_id": 13462,
+    "monitored": false,
+    "episode_file": {
+     "release_group": "sam",
+     "size": 2348864387
+    }
+   },
+   {
+    "id": 2120,
+    "season_number": 1,
+    "episode_number": 2,
+    "episode_file_id": 13463,
+    "monitored": false,
+    "episode_file": {
+     "release_group": "sam",
+     "size": 2314699289
+    }
+   },
+   {
+    "id": 2121,
+    "season_number": 1,
+    "episode_number": 3,
+    "episode_file_id": 13464,
+    "monitored": false,
+    "episode_file": {
+     "release_group": "sam",
+     "size": 2380446503
+    }
+   },
+   {
+    "id": 2122,
+    "season_number": 1,
+    "episode_number": 4,
+    "episode_file_id": 13465,
+    "monitored": false,
+    "episode_file": {
+     "release_group": "sam",
+     "size": 2669225955
+    }
+   },
+   {
+    "id": 2123,
+    "season_number": 1,
+    "episode_number": 5,
+    "episode_file_id": 13466,
+    "monitored": false,
+    "episode_file": {
+     "release_group": "sam",
+     "size": 2299780364
+    }
+   },
+   {
+    "id": 2124,
+    "season_number": 1,
+    "episode_number": 6,
+    "episode_file_id": 13467,
+    "monitored": false,
+    "episode_file": {
+     "release_group": "sam",
+     "size": 2663060041
+    }
+   },
+   {
+    "id": 2125,
+    "season_number": 1,
+    "episode_number": 7,
+    "episode_file_id": 13468,
+    "monitored": false,
+    "episode_file": {
+     "release_group": "sam",
+     "size": 2450883645
+    }
+   },
+   {
+    "id": 2126,
+    "season_number": 1,
+    "episode_number": 8,
+    "episode_file_id": 13469,
+    "monitored": false,
+    "episode_file": {
+     "release_group": "sam",
+     "size": 2635036164
+    }
+   },
+   {
+    "id": 2127,
+    "season_number": 1,
+    "episode_number": 9,
+    "episode_file_id": 13470,
+    "monitored": false,
+    "episode_file": {
+     "release_group": "sam",
+     "size": 2754505124
+    }
+   },
+   {
+    "id": 2128,
+    "season_number": 1,
+    "episode_number": 10,
+    "episode_file_id": 13471,
+    "monitored": false,
+    "episode_file": {
+     "release_group": "sam",
+     "size": 2577038951
+    }
+   },
+   {
+    "id": 2129,
+    "season_number": 1,
+    "episode_number": 11,
+    "episode_file_id": 13472,
+    "monitored": false,
+    "episode_file": {
+     "release_group": "sam",
+     "size": 2404746593
+    }
+   },
+   {
+    "id": 2130,
+    "season_number": 1,
+    "episode_number": 12,
+    "episode_file_id": 13473,
+    "monitored": false,
+    "episode_file": {
+     "release_group": "sam",
+     "size": 2493369618
+    }
+   },
+   {
+    "id": 2131,
+    "season_number": 1,
+    "episode_number": 13,
+    "episode_file_id": 13474,
+    "monitored": false,
+    "episode_file": {
+     "release_group": "sam",
+     "size": 2360850429
+    }
+   },
+   {
+    "id": 2132,
+    "season_number": 2,
+    "episode_number": 1,
+    "episode_file_id": 13506,
+    "monitored": false,
+    "episode_file": {
+     "release_group": "sam",
+     "size": 2822113301
+    }
+   },
+   {
+    "id": 2133,
+    "season_number": 2,
+    "episode_number": 2,
+    "episode_file_id": 13507,
+    "monitored": false,
+    "episode_file": {
+     "release_group": "sam",
+     "size": 2682821467
+    }
+   },
+   {
+    "id": 2134,
+    "season_number": 2,
+    "episode_number": 3,
+    "episode_file_id": 13508,
+    "monitored": false,
+    "episode_file": {
+     "release_group": "sam",
+     "size": 3170107949
+    }
+   },
+   {
+    "id": 2135,
+    "season_number": 2,
+    "episode_number": 4,
+    "episode_file_id": 13509,
+    "monitored": false,
+    "episode_file": {
+     "release_group": "sam",
+     "size": 2858100132
+    }
+   },
+   {
+    "id": 2136,
+    "season_number": 2,
+    "episode_number": 5,
+    "episode_file_id": 13510,
+    "monitored": false,
+    "episode_file": {
+     "release_group": "sam",
+     "size": 2751963695
+    }
+   },
+   {
+    "id": 2137,
+    "season_number": 2,
+    "episode_number": 6,
+    "episode_file_id": 13511,
+    "monitored": false,
+    "episode_file": {
+     "release_group": "sam",
+     "size": 2941456981
+    }
+   },
+   {
+    "id": 2138,
+    "season_number": 2,
+    "episode_number": 7,
+    "episode_file_id": 13512,
+    "monitored": false,
+    "episode_file": {
+     "release_group": "sam",
+     "size": 2626641295
+    }
+   },
+   {
+    "id": 2139,
+    "season_number": 2,
+    "episode_number": 8,
+    "episode_file_id": 13513,
+    "monitored": false,
+    "episode_file": {
+     "release_group": "sam",
+     "size": 2786621213
+    }
+   },
+   {
+    "id": 2140,
+    "season_number": 2,
+    "episode_number": 9,
+    "episode_file_id": 13514,
+    "monitored": false,
+    "episode_file": {
+     "release_group": "sam",
+     "size": 3002267145
+    }
+   },
+   {
+    "id": 2141,
+    "season_number": 2,
+    "episode_number": 10,
+    "episode_file_id": 13515,
+    "monitored": false,
+    "episode_file": {
+     "release_group": "sam",
+     "size": 2704179185
+    }
+   },
+   {
+    "id": 2142,
+    "season_number": 2,
+    "episode_number": 11,
+    "episode_file_id": 13516,
+    "monitored": false,
+    "episode_file": {
+     "release_group": "sam",
+     "size": 3177472704
+    }
+   },
+   {
+    "id": 2143,
+    "season_number": 2,
+    "episode_number": 12,
+    "episode_file_id": 13517,
+    "monitored": false,
+    "episode_file": {
+     "release_group": "sam",
+     "size": 2896690379
+    }
+   },
+   {
+    "id": 2144,
+    "season_number": 2,
+    "episode_number": 13,
+    "episode_file_id": 13518,
+    "monitored": false,
+    "episode_file": {
+     "release_group": "sam",
+     "size": 2884342842
+    }
+   },
+   {
+    "id": 2145,
+    "season_number": 3,
+    "episode_number": 1,
+    "episode_file_id": 13572,
+    "monitored": false,
+    "episode_file": {
+     "release_group": "sam",
+     "size": 2376914858
+    }
+   },
+   {
+    "id": 2146,
+    "season_number": 3,
+    "episode_number": 2,
+    "episode_file_id": 13573,
+    "monitored": false,
+    "episode_file": {
+     "release_group": "sam",
+     "size": 2469517534
+    }
+   },
+   {
+    "id": 2147,
+    "season_number": 3,
+    "episode_number": 3,
+    "episode_file_id": 13574,
+    "monitored": false,
+    "episode_file": {
+     "release_group": "sam",
+     "size": 2560765810
+    }
+   },
+   {
+    "id": 2148,
+    "season_number": 3,
+    "episode_number": 4,
+    "episode_file_id": 13575,
+    "monitored": false,
+    "episode_file": {
+     "release_group": "sam",
+     "size": 2478284176
+    }
+   },
+   {
+    "id": 2149,
+    "season_number": 3,
+    "episode_number": 5,
+    "episode_file_id": 13576,
+    "monitored": false,
+    "episode_file": {
+     "release_group": "sam",
+     "size": 2680378197
+    }
+   },
+   {
+    "id": 2150,
+    "season_number": 3,
+    "episode_number": 6,
+    "episode_file_id": 13577,
+    "monitored": false,
+    "episode_file": {
+     "release_group": "sam",
+     "size": 2364245606
+    }
+   },
+   {
+    "id": 2151,
+    "season_number": 3,
+    "episode_number": 7,
+    "episode_file_id": 13578,
+    "monitored": false,
+    "episode_file": {
+     "release_group": "sam",
+     "size": 2623674916
+    }
+   },
+   {
+    "id": 2152,
+    "season_number": 3,
+    "episode_number": 8,
+    "episode_file_id": 13579,
+    "monitored": false,
+    "episode_file": {
+     "release_group": "sam",
+     "size": 2586919504
+    }
+   },
+   {
+    "id": 2153,
+    "season_number": 3,
+    "episode_number": 9,
+    "episode_file_id": 13580,
+    "monitored": false,
+    "episode_file": {
+     "release_group": "sam",
+     "size": 2636232586
+    }
+   },
+   {
+    "id": 2154,
+    "season_number": 3,
+    "episode_number": 10,
+    "episode_file_id": 13581,
+    "monitored": false,
+    "episode_file": {
+     "release_group": "sam",
+     "size": 2421935955
+    }
+   },
+   {
+    "id": 2155,
+    "season_number": 3,
+    "episode_number": 11,
+    "episode_file_id": 13582,
+    "monitored": false,
+    "episode_file": {
+     "release_group": "sam",
+     "size": 2677691954
+    }
+   },
+   {
+    "id": 2156,
+    "season_number": 3,
+    "episode_number": 12,
+    "episode_file_id": 13583,
+    "monitored": false,
+    "episode_file": {
+     "release_group": "sam",
+     "size": 2709509477
+    }
+   },
+   {
+    "id": 2157,
+    "season_number": 3,
+    "episode_number": 13,
+    "episode_file_id": 13584,
+    "monitored": false,
+    "episode_file": {
+     "release_group": "sam",
+     "size": 2293993773
+    }
+   },
+   {
+    "id": 1503,
+    "season_number": 4,
+    "episode_number": 1,
+    "episode_file_id": 13555,
+    "monitored": false,
+    "episode_file": {
+     "release_group": "sam",
+     "size": 2555835311
+    }
+   },
+   {
+    "id": 1504,
+    "season_number": 4,
+    "episode_number": 2,
+    "episode_file_id": 13556,
+    "monitored": false,
+    "episode_file": {
+     "release_group": "sam",
+     "size": 2812128095
+    }
+   },
+   {
+    "id": 1505,
+    "season_number": 4,
+    "episode_number": 3,
+    "episode_file_id": 13557,
+    "monitored": false,
+    "episode_file": {
+     "release_group": "sam",
+     "size": 2771192848
+    }
+   },
+   {
+    "id": 1506,
+    "season_number": 4,
+    "episode_number": 4,
+    "episode_file_id": 13558,
+    "monitored": false,
+    "episode_file": {
+     "release_group": "sam",
+     "size": 2933240231
+    }
+   },
+   {
+    "id": 1507,
+    "season_number": 4,
+    "episode_number": 5,
+    "episode_file_id": 13559,
+    "monitored": false,
+    "episode_file": {
+     "release_group": "sam",
+     "size": 3002689618
+    }
+   },
+   {
+    "id": 1508,
+    "season_number": 4,
+    "episode_number": 6,
+    "episode_file_id": 13560,
+    "monitored": false,
+    "episode_file": {
+     "release_group": "sam",
+     "size": 3119785503
+    }
+   },
+   {
+    "id": 1509,
+    "season_number": 4,
+    "episode_number": 7,
+    "episode_file_id": 13561,
+    "monitored": false,
+    "episode_file": {
+     "release_group": "sam",
+     "size": 3244168100
+    }
+   },
+   {
+    "id": 1510,
+    "season_number": 4,
+    "episode_number": 8,
+    "episode_file_id": 13562,
+    "monitored": false,
+    "episode_file": {
+     "release_group": "sam",
+     "size": 2919851795
+    }
+   },
+   {
+    "id": 1511,
+    "season_number": 4,
+    "episode_number": 9,
+    "episode_file_id": 13563,
+    "monitored": false,
+    "episode_file": {
+     "release_group": "sam",
+     "size": 3021276881
+    }
+   },
+   {
+    "id": 1512,
+    "season_number": 4,
+    "episode_number": 10,
+    "episode_file_id": 13564,
+    "monitored": false,
+    "episode_file": {
+     "release_group": "sam",
+     "size": 2753705557
+    }
+   },
+   {
+    "id": 1513,
+    "season_number": 4,
+    "episode_number": 11,
+    "episode_file_id": 13565,
+    "monitored": false,
+    "episode_file": {
+     "release_group": "sam",
+     "size": 3169136335
+    }
+   },
+   {
+    "id": 1514,
+    "season_number": 4,
+    "episode_number": 12,
+    "episode_file_id": 13566,
+    "monitored": false,
+    "episode_file": {
+     "release_group": "sam",
+     "size": 2794228319
+    }
+   },
+   {
+    "id": 1515,
+    "season_number": 4,
+    "episode_number": 13,
+    "episode_file_id": 13567,
+    "monitored": false,
+    "episode_file": {
+     "release_group": "sam",
+     "size": 2714589163
+    }
+   }
+  ],
+  "entry_ids": [
+   2085
+  ],
+  "series_title": "Overlord",
+  "titles": [
+   "Overlord: The Dark Hero",
+   "Overlord: Shikkoku no Senshi"
+  ],
+  "parses": {
+   "[Moxie] Overlord Movie 1 - The Undead King (BD Remux 1080p FLAC) [7AC11783].mkv": {
+    "parsedEpisodeInfo": {
+     "seasonNumber": null,
+     "episodeNumbers": [],
+     "absoluteEpisodeNumbers": [],
+     "special": false,
+     "fullSeason": false
+    },
+    "episodes": []
+   },
+   "[Moxie] Overlord Movie 2 - The Dark Hero (BD Remux 1080p FLAC) [AB980564].mkv": {
+    "parsedEpisodeInfo": {
+     "seasonNumber": null,
+     "episodeNumbers": [],
+     "absoluteEpisodeNumbers": [],
+     "special": false,
+     "fullSeason": false
+    },
+    "episodes": []
+   }
+  },
+  "expected": {
+   "[Moxie] Overlord Movie 2 - The Dark Hero (BD Remux 1080p FLAC) [AB980564].mkv": [
+    2085
    ]
   },
   "expected_excluded": []

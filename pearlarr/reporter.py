@@ -12,7 +12,7 @@ from .anilist_gateway import AniListGateway
 from .cache import AbstractCacheStore
 from .config import Arr
 from .log import EntryState
-from .manual_import import ImportWaitMode, PendingImport, PendingKey, PendingState
+from .manual_import import EntryNames, ImportWaitMode, PendingImport, PendingKey, PendingState
 from .output import (
     Accent,
     CapReached,
@@ -65,8 +65,14 @@ class EntryTitle:
     al_id: int
     display: str
     """The AniList title, else the arr item's own title, else the id form."""
-    anilist: str | None
-    """The AniList title alone, the only value the cache stores as the entry's name."""
+    names: EntryNames = field(default_factory=EntryNames)
+    """The arr title and every AniList title, the placement's tie-break between look-alike files."""
+
+    @property
+    def anilist(self) -> str | None:
+        """The first AniList title alone, the only value the cache stores as the entry's name."""
+
+        return self.names.anilist[0] if self.names.anilist else None
 
     @property
     def resolved(self) -> bool:
@@ -75,12 +81,12 @@ class EntryTitle:
         return self.display != unresolved_label(self.al_id)
 
 
-def resolve_entry_title(al_id: int, anilist: str | None, arr_title: str) -> EntryTitle:
-    """The title ladder: the AniList title, else the arr item's own title, else the id form."""
+def resolve_entry_title(al_id: int, anilist_titles: tuple[str, ...], arr_title: str) -> EntryTitle:
+    """The title ladder: the first AniList title, else the arr item's own title, else the id form."""
 
-    anilist = anilist or None
-    named = anilist or arr_title
-    return EntryTitle(al_id=al_id, display=named or unresolved_label(al_id), anilist=anilist)
+    names = EntryNames(arr_title, tuple(title for title in anilist_titles if title))
+    named = names.anilist[0] if names.anilist else arr_title
+    return EntryTitle(al_id=al_id, display=named or unresolved_label(al_id), names=names)
 
 
 @dataclass(frozen=True, slots=True)
@@ -368,7 +374,7 @@ class RunReporter:
         is the only one in hand and asking would cost a request per ignored id.
         """
 
-        self._titled_row(EntryState.IGNORED, resolve_entry_title(al_id, None, ctx.arr_title))
+        self._titled_row(EntryState.IGNORED, resolve_entry_title(al_id, (), ctx.arr_title))
 
     def log_no_sd_entry(self, ctx: RunContext, al_id: int) -> None:
         """Report an id with no SeaDex entry (bumps the tally, emits a titled row)."""
@@ -391,7 +397,7 @@ class RunReporter:
         """The entry's label: the stored name, else AniList, else the arr's own title, else the id form."""
 
         # `stored` is a parameter because `log_cached_entry` reads it under an arr that may differ from `ctx.arr`.
-        return resolve_entry_title(al_id, stored or self.anilist.title(al_id), ctx.arr_title)
+        return resolve_entry_title(al_id, (stored,) if stored else self.anilist.titles(al_id), ctx.arr_title)
 
     def _titled_row(self, state: EntryState, title: EntryTitle) -> None:
         """A ledger row for an id with no entry block, the id repeated only when the row shows a title."""

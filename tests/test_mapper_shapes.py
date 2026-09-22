@@ -15,7 +15,7 @@ from pathlib import Path
 import pytest
 from pydantic import BaseModel, RootModel
 
-from pearlarr.manual_import import normalize_basename
+from pearlarr.manual_import import EntryNames, normalize_basename
 from pearlarr.seadex_types import (
     Json,
     ManualImportCandidate,
@@ -55,12 +55,16 @@ class ShapeTag(StrEnum):
     """Every member reads one distinct id inside the window, not in run order."""
     NUMBERED_RUN = "numbered run"
     """A blind 1..N run beside placed files, the mixed batch the ordered zip refuses."""
+    TITLED_RUN = "titled run"
+    """Several 1..N runs fit the window (a franchise pack), and an entry title picks one."""
     FOREIGN = "foreign"
     """A file whose complete reading resolves outside the entry."""
     EXACT = "exact"
     ABSOLUTE = "absolute"
     ORDERED = "ordered"
     SINGLE = "single"
+    TITLED = "titled"
+    """One numberless leftover among several, named by an entry title."""
 
 
 class Provenance(StrEnum):
@@ -86,6 +90,10 @@ class ShapeCase(BaseModel, frozen=True):
     """The WHOLE series, as the episode fetch returns it."""
     entry_ids: tuple[int, ...]
     """The record's resolved set, season order."""
+    series_title: str = ""
+    """The Sonarr series title, the words every file shares."""
+    titles: tuple[str, ...] = ()
+    """The entry's AniList titles, the placement's tie-break."""
     parses: dict[str, dict[str, Json]]
     """Raw `/parse` payload per file name, in listing order."""
     expected: dict[str, tuple[int, ...]]
@@ -97,16 +105,11 @@ class ShapeCatalog(RootModel[tuple[ShapeCase, ...]]):
 
 
 CASES = ShapeCatalog.model_validate(json.loads(_CATALOG.read_text(encoding="utf-8"))).root
-# Captured shapes no rule places yet: each fails until its rule lands, then the pin comes off.
-_KNOWN_GAPS = {
-    "mushoku-split-cour-shift": "a run offset into a split cour (12..23 over a 12-wide window) has no rule yet",
-}
-_PARAMS = [
-    pytest.param(case, id=case.name, marks=[pytest.mark.xfail(reason=_KNOWN_GAPS[case.name], strict=True)])
-    if case.name in _KNOWN_GAPS
-    else pytest.param(case, id=case.name)
-    for case in CASES
-]
+_PARAMS = [pytest.param(case, id=case.name) for case in CASES]
+
+
+def _names(case: ShapeCase) -> EntryNames:
+    return EntryNames(case.series_title, case.titles)
 
 
 def _parsed(case: ShapeCase) -> dict[str, ParsedFileInfo]:
@@ -128,7 +131,7 @@ def test_seed_places_captured_shape(case: ShapeCase) -> None:
     index = episode_index(case.episodes)
     scope = SeedScope(episode_index([index.by_id[episode_id] for episode_id in case.entry_ids]), index.id_by_key)
 
-    result = assign_episode_ids(PlacementBatch(list(case.parses), _parsed(case)), scope.target())
+    result = assign_episode_ids(PlacementBatch(list(case.parses), _parsed(case)), scope.target(_names(case)))
 
     assert result.assigned == {name: list(ids) for name, ids in case.expected.items()}
     assert _excluded_names(result.placements) == set(case.expected_excluded)
@@ -145,6 +148,7 @@ def test_mapper_matches_the_seed(case: ShapeCase) -> None:
         episode_ids=list(case.entry_ids),
         ordered_episode_ids=list(case.entry_ids),
         seadex_files=list(case.parses),
+        names=_names(case),
     )
     candidates = mapper.candidate_files([ManualImportCandidate(path=f"/dl/{name}") for name in case.parses])
 

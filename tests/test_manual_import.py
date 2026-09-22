@@ -310,13 +310,14 @@ class TestForeignClassification:
 
         assert _verdicts(parsed, TargetScope([101], self._MAP)) == {"d.mkv": ((), PlacementVerdict.SKIPPED)}
 
-    def test_a_vetoed_full_season_reading_stays_possibly_ours(self) -> None:
-        # Sonarr matches a bare "S0X" zip to the whole season: it may well BE our content.
+    def test_a_vetoed_full_season_reading_is_still_ours(self) -> None:
+        # Sonarr reads a bare "S0X" as the whole season: a missing episode token,
+        # not several episodes, so the one leftover id takes the file.
         parsed: dict[str, ParsedFileInfo | None] = {
             "pack.mkv": _parsed(season=2, episodes=(1,), full_season=True),
         }
 
-        assert _verdicts(parsed, TargetScope([101], self._MAP)) == {"pack.mkv": ((), PlacementVerdict.SKIPPED)}
+        assert _verdicts(parsed, TargetScope([101], self._MAP)) == {"pack.mkv": ((101,), PlacementVerdict.SINGLE)}
 
     def test_a_vetoed_wide_span_stays_possibly_ours(self) -> None:
         parsed: dict[str, ParsedFileInfo | None] = {"pack.mkv": _parsed(matched=tuple((9, n) for n in range(1, 11)))}
