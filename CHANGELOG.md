@@ -7,6 +7,16 @@ Pearlarr is a fork of [bbtufty/seadexarr](https://github.com/bbtufty/seadexarr).
 
 ## [Unreleased]
 
+### Changed
+
+- The Sonarr parse cache stores each file name's whole parse, so the grab-time map and the import-time placement read one reading per file. The first run after upgrading re-parses every listed file name once.
+
+### Fixed
+
+- A release numbered `1..N` for an entry whose TVDB numbering interleaves specials, where Sonarr's matched episodes shift after each special, now imports in the release's own order, at grab time and at import time alike. Both come from one placement pipeline, so the grab-time map can no longer disagree with the import.
+- A numbered run of files Sonarr cannot read, such as an OVA run beside a season pack, now imports by its numbering when the run exactly fills the entry's remaining episodes.
+- A file that resolves to another entry's episodes at import time is recorded on the pending record and no longer warned about on every poll. A file whose placement waits on a parse Sonarr has not served is warned about from the deadline attempt on. A download none of whose files this record can place is reported unmatched each run instead of waiting out its record.
+
 ## [1.3.6] - 2026-09-14
 
 ### Changed

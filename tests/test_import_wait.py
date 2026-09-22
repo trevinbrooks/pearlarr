@@ -2517,13 +2517,13 @@ class TestMonitorAbsorbsPlacements:
 
 
 class TestPendingRecordWrites:
-    """`PendingRecords.drop` / `save` / `absorb_placements` keep the durable store and the run list in step."""
+    """`PendingRecords.drop` / `save` / `absorb_probe` keep the durable store and the run list in step."""
 
-    def test_absorb_placements_persists_and_refreshes_the_run_list(self) -> None:
+    def test_absorb_probe_persists_placements_and_exclusions_in_one_save(self) -> None:
         record = pending_import(
             infohash="h",
             file_episode_map={"Show - 01 [1080p].mkv": [101]},
-            seadex_files=["Show - 01 [1080p].mkv", "Show - 02 [1080p].mkv"],
+            seadex_files=["Show - 01 [1080p].mkv", "Show - 02 [1080p].mkv", "Show - 03 [1080p].mkv"],
             added_at=_FRESH,
         )
         mgr = make_orchestration_manager(
@@ -2532,21 +2532,42 @@ class TestPendingRecordWrites:
             store_records=[record],
             pending=[record],
         )
+        probe = ImportProbe(
+            files_present=False,
+            command_issued=True,
+            placements={"show - 02 [1080p].mkv": [102]},
+            exclusions=("show - 03 [1080p].mkv",),
+        )
 
-        healed = mgr._records.absorb_placements(record, {"show - 02 [1080p].mkv": [102]})
+        healed = mgr._records.absorb_probe(record, probe)
 
         expected = {"show - 01 [1080p].mkv": [101], "show - 02 [1080p].mkv": [102]}
+        row = mgr._records.rows()[pk("h")]
         assert healed is not record
         assert healed.file_episode_map == expected
+        assert healed.excluded_files == ["show - 03 [1080p].mkv"]
         assert record.file_episode_map == {"Show - 01 [1080p].mkv": [101]}
-        assert mgr._records.rows()[pk("h")]["file_episode_map"] == expected
+        assert (row["file_episode_map"], row["excluded_files"]) == (expected, ["show - 03 [1080p].mkv"])
         assert mgr._ctx.pending_imports[record.key] is healed
 
-    def test_absorb_placements_with_none_is_a_no_op(self) -> None:
-        record = pending_import(infohash="h", added_at=_FRESH)
+    def test_absorb_probe_adding_nothing_is_a_no_op(self) -> None:
+        # Placements and exclusions the record already holds: an exploding store proves no write fires.
+        record = pending_import(
+            infohash="h",
+            file_episode_map={"show - 01 [1080p].mkv": [101]},
+            excluded_files=["show - 02 [1080p].mkv"],
+            added_at=_FRESH,
+        )
         mgr = make_orchestration_manager(qbit=None, strategy=_RecordingStrategy(), store=_ExplodingPutStore())
+        held = ImportProbe(
+            files_present=False,
+            command_issued=False,
+            placements={"show - 01 [1080p].mkv": [101]},
+            exclusions=("show - 02 [1080p].mkv",),
+        )
 
-        assert mgr._records.absorb_placements(record, {}) is record
+        assert mgr._records.absorb_probe(record, ImportProbe(files_present=True, command_issued=False)) is record
+        assert mgr._records.absorb_probe(record, held) is record
 
     def test_drop_removes_from_store_and_run_list(self) -> None:
         keep = pending_import(infohash="keep", added_at=_FRESH)

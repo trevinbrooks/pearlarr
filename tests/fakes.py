@@ -42,7 +42,6 @@ from pearlarr.seadex_types import (
     ManualImportCandidate,
     ManualImportFile,
     MovieFile,
-    ParsedEpisode,
     ParsedFileInfo,
     ProgressSink,
     QualityDefinition,
@@ -51,7 +50,6 @@ from pearlarr.seadex_types import (
     RemotePathMapping,
     SonarrEpisode,
     SonarrItem,
-    SonarrParse,
 )
 from pearlarr.sonarr_client import AbstractSonarrClient
 
@@ -256,9 +254,7 @@ class FakeSonarrClient(AbstractSonarrClient):
         candidates: list[ManualImportCandidate] | None = None,
         quality_defs: list[QualityDefinition] | None = None,
         languages: list[Language] | None = None,
-        parse: list[ParsedEpisode] | None = None,
-        parse_full_season: bool = False,
-        parse_episode_info_fn: Callable[[str], ParsedFileInfo | None] | None = None,
+        parse_fn: Callable[[str], ParsedFileInfo | None] | None = None,
         execute_command_id: int | None = None,
         command_status: CommandResource | None = None,
         command_status_script: list[CommandResource] | None = None,
@@ -279,9 +275,8 @@ class FakeSonarrClient(AbstractSonarrClient):
         self.candidates_return: list[ManualImportCandidate] | None = candidates
         self.quality_defs_return: list[QualityDefinition] = quality_defs or []
         self.languages_return: list[Language] = languages or []
-        self.parse_return: list[ParsedEpisode] | None = parse
-        self.parse_full_season_return: bool = parse_full_season
-        self.parse_episode_info_fn: Callable[[str], ParsedFileInfo | None] = parse_episode_info_fn or (lambda _f: None)
+        # The scripted `/parse` reading per filename (None = Sonarr could not parse it this call).
+        self.parse_fn: Callable[[str], ParsedFileInfo | None] = parse_fn or (lambda _f: None)
         self.execute_command_id = execute_command_id
         self.command_status_return = (
             command_status if command_status is not None else CommandResource(status="completed")
@@ -298,6 +293,7 @@ class FakeSonarrClient(AbstractSonarrClient):
         )
         self.queue_delete_return: DeleteOutcome = DeleteOutcome.OK
         self.candidate_calls: list[PendingImport] = []
+        self.parse_calls: list[str] = []
         self.execute_calls: list[tuple[list[ManualImportFile], str]] = []
         self.all_series_calls: int = 0
         self.queue_calls: int = 0
@@ -340,15 +336,9 @@ class FakeSonarrClient(AbstractSonarrClient):
         return self.episodes_return
 
     @override
-    def parse(self, filename: str) -> SonarrParse | None:
-        del filename
-        if self.parse_return is None:
-            return None
-        return SonarrParse(episodes=self.parse_return, full_season=self.parse_full_season_return)
-
-    @override
-    def parse_episode_info(self, filename: str) -> ParsedFileInfo | None:
-        return self.parse_episode_info_fn(filename)
+    def parse(self, filename: str) -> ParsedFileInfo | None:
+        self.parse_calls.append(filename)
+        return self.parse_fn(filename)
 
     @override
     def refresh_monitored_downloads(self) -> int | None:

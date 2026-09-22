@@ -5,10 +5,9 @@ from abc import ABC, abstractmethod
 from dataclasses import replace
 from typing import cast, override
 
-from pydantic import BaseModel, ConfigDict, ValidationError
+from pydantic import ValidationError
 
 from .arr_http import ArrHttp, DeleteOutcome
-from .json_narrow import is_json_obj
 from .manual_import import PendingImport
 from .output import hub_warn
 from .seadex_types import (
@@ -20,31 +19,20 @@ from .seadex_types import (
     Language,
     ManualImportCandidate,
     ManualImportFile,
-    ParsedEpisode,
     ParsedFileInfo,
     QualityDefinition,
     QueueRecord,
     RemotePathMapping,
     SonarrEpisode,
     SonarrItem,
-    SonarrParse,
     SonarrSeries,
     validate_each,
     validation_summary,
 )
 
-# Per-request timeout (seconds) for the manual-import reads over a slow remote mount: the folder scan and the
-# single-file parse. Bounded so a hung read surfaces as a transient miss (retry) instead of blocking the run.
+# Per-request timeout (seconds) for the manual-import folder scan over a slow remote mount. Bounded so a hung
+# read surfaces as a transient miss (retry) instead of blocking the run.
 MANUAL_IMPORT_TIMEOUT_S = 120
-
-
-class _ParsedEpisode(BaseModel):
-    """One `ParseResource.episodes[]` entry, reduced to the two numbers read."""
-
-    model_config = ConfigDict(frozen=True, extra="ignore")
-
-    seasonNumber: int | None = None
-    episodeNumber: int | None = None
 
 
 class AbstractSonarrClient(ABC):
@@ -57,10 +45,7 @@ class AbstractSonarrClient(ABC):
     def episodes(self, series_id: int, *, quiet: bool = False) -> list[SonarrEpisode] | None: ...
 
     @abstractmethod
-    def parse(self, filename: str) -> SonarrParse | None: ...
-
-    @abstractmethod
-    def parse_episode_info(self, filename: str) -> ParsedFileInfo | None: ...
+    def parse(self, filename: str) -> ParsedFileInfo | None: ...
 
     @abstractmethod
     def manual_import_candidates(
@@ -171,69 +156,31 @@ class SonarrClient(AbstractSonarrClient):
         return episodes
 
     @override
-    def parse(self, filename: str) -> SonarrParse | None:
-        """Ask Sonarr to parse a filename (a basename, not a full path) into season/episode numbers.
+    def parse(self, filename: str) -> ParsedFileInfo | None:
+        """Parse a filename (a basename, not a full path) via `/api/v3/parse`.
 
-        An empty episode list is a confirmed no-match (200, cacheable). None is a failure that must NOT be cached.
+        `parsedEpisodeInfo` carries series-agnostic numbers lifted from the release name (populated even when
+        Sonarr matches no library series) and `episodes` the series-matched pairs. None is a failure that must
+        NOT be cached. One transport for the sweep and the import wait: /parse is a string parse, never a disk
+        scan, so the main handle's in-call retries and client timeout fit both.
         """
 
         payload = self._http.get_json_dict(
             "/api/v3/parse",
             params={"title": filename},
-            warn=f"Could not parse {filename} via Sonarr ({{detail}}) - skipping file",
+            warn=f"Could not parse {filename} via Sonarr ({{detail}})",
         )
         if payload is None:
             return None
 
         # A present-but-non-list "episodes" is mangled, not a no-match: fail open to the uncacheable None.
-        raw_eps = payload.get("episodes", [])
-        if not isinstance(raw_eps, list):
-            return None
-
-        parsed: list[ParsedEpisode] = []
-        for ep in cast("list[object]", raw_eps):
-            try:
-                record = _ParsedEpisode.model_validate(ep)
-            except ValidationError:
-                self._logger.debug(f"Sonarr's parse returned a malformed episode entry for {filename}; skipping it")
-                continue
-
-            if record.seasonNumber is None or record.episodeNumber is None:
-                self._logger.debug(f"Sonarr's parse returned no season/episode number for {filename}; skipping it")
-                continue
-
-            parsed.append(ParsedEpisode(season=record.seasonNumber, episode=record.episodeNumber))
-
-        # Coerced truthy to match ParsedFileInfo's BeforeValidator(bool). Absent or malformed reads False.
-        info = payload.get("parsedEpisodeInfo")
-        full_season = bool(info.get("fullSeason")) if is_json_obj(info) else False
-        return SonarrParse(episodes=parsed, full_season=full_season)
-
-    @override
-    def parse_episode_info(self, filename: str) -> ParsedFileInfo | None:
-        """Parse a filename into season / episode / absolute numbers via `/api/v3/parse`.
-
-        `parsedEpisodeInfo` carries series-agnostic numbers lifted from the release name, populated even when
-        Sonarr matches no library series.
-        """
-
-        # Borrows the generous manual-import bound: this runs in the import wait over the same slow mount,
-        # unlike the sweep's plain parse(). Rides the no-retry poll handle, the wait loop re-asks.
-        payload = self._poll_http.get_json_dict(
-            "/api/v3/parse",
-            params={"title": filename},
-            warn=f"Could not parse {filename} via Sonarr ({{detail}}) - will retry",
-            timeout=MANUAL_IMPORT_TIMEOUT_S,
-        )
-        if payload is None:
+        if not isinstance(payload.get("episodes", []), list):
             return None
 
         try:
             return ParsedFileInfo.model_validate(payload)
         except ValidationError as e:
-            hub_warn(
-                f"Could not parse {filename} via Sonarr (malformed response: {validation_summary(e)}) - will retry"
-            )
+            hub_warn(f"Could not parse {filename} via Sonarr (malformed response: {validation_summary(e)})")
             return None
 
     @override

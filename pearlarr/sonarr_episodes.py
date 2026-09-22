@@ -1,7 +1,7 @@
 """Sonarr episode-domain collaborator: series enumeration + episode resolution.
 
 `SonarrEpisodes` owns the per-run episode cache (and the series-id fingerprint
-that pins negative `/parse` records) and the logic that turns a (series,
+that pins unmatched `/parse` records) and the logic that turns a (series,
 AniList id, mapping) into the relevant episode list: season / AniBridge
 filtering, AniDB remaps, offset slicing, the existing-file release dict, and
 the concurrent prefetch warm.
@@ -50,7 +50,7 @@ def fetch_workers(config: AppConfig) -> int:
 def sonarr_series_fingerprint(series_ids: Iterable[int]) -> str:
     """Stable fingerprint of the current Sonarr series-id set.
 
-    Invalidates negative `/parse` records: an empty parse almost always means
+    Invalidates unmatched `/parse` records: an unmatched parse almost always means
     the file's series isn't present, so a new series id flips the fingerprint and
     re-parses the affected entries. `hashlib` (not `hash()`) for stability
     across processes.
@@ -148,7 +148,7 @@ class SonarrEpisodes:
         self._ep_list_cache: dict[int, list[SonarrEpisode]] = {}
 
         # Fingerprint of the current Sonarr series-id set, recomputed each run in
-        # collect_series. Pins negative `/parse` cache records to the library
+        # collect_series. Pins unmatched `/parse` cache records to the library
         # state so they self-heal when a missing series is added.
         self._series_fp: str = ""
 
@@ -168,7 +168,7 @@ class SonarrEpisodes:
 
         self._ep_list_cache = {}
         series = self.get_all_sonarr_series()
-        # Fingerprint the current series-id set once per run for negative-parse
+        # Fingerprint the current series-id set once per run for unmatched-parse
         # cache invalidation (see sonarr_series_fingerprint).
         self._series_fp = sonarr_series_fingerprint(s.id for s in series)
         return series
@@ -262,7 +262,18 @@ class SonarrEpisodes:
                     progress.progress(done / total, f"{done}/{total}")
         return total
 
-    def episodes_for_series(self, series_id: int) -> list[SonarrEpisode]:
+    def cached_episodes(self, series_id: int) -> list[SonarrEpisode] | None:
+        """The series' whole episode list, cached per run (fetched when cold, None when the fetch failed)."""
+
+        ep_list = self._ep_list_cache.get(series_id)
+        if ep_list is None:
+            ep_list = self.sonarr.episodes(series_id)
+            if ep_list is None:
+                return None
+            self._ep_list_cache[series_id] = ep_list
+        return ep_list
+
+    def fresh_episodes(self, series_id: int) -> list[SonarrEpisode]:
         """Fetch the series' episodes FRESH for each import poll.
 
         Import verification reads the episode files as the source of truth for
@@ -303,12 +314,9 @@ class SonarrEpisodes:
         # per-AniList-id), so a multi-season series resolving to several ids would
         # otherwise re-request the identical list. Cache it per series for the run
         # and only do the per-id filtering below on the shared, read-only list.
-        ep_list = self._ep_list_cache.get(sonarr_series_id)
+        ep_list = self.cached_episodes(sonarr_series_id)
         if ep_list is None:
-            ep_list = self.sonarr.episodes(sonarr_series_id)
-            if ep_list is None:
-                return None
-            self._ep_list_cache[sonarr_series_id] = ep_list
+            return None
 
         # Filter down here by various things. Resolve the include test once by
         # mode rather than re-branching on a string for every episode. The

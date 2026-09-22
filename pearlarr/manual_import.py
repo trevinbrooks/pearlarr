@@ -236,6 +236,10 @@ class ImportProbe:
     """Import-time placements this poll made (normalized basename -> ids), for the record seam to persist.
     Empty when the poll placed nothing."""
 
+    exclusions: tuple[str, ...] = ()
+    """On-disk files this poll proved never this record's to import (a sibling's slice, a duplicate), for the
+    record seam to persist. Empty when the poll excluded nothing."""
+
     unmatched_files: tuple[str, ...] = ()
     """The download's on-disk files no episode claimed (one per distinct basename), when that is all the poll
     found. Non-empty only from `unmatched()`: `files_present` and `command_issued` False, `deferral` NONE."""
@@ -625,8 +629,8 @@ class PendingImport:
     """The resolved episode ids for this entry, in season order"""
 
     excluded_files: list[str] = field(default_factory=list[str])
-    """Normalized basenames of grabbed video files this record knowably never imports: a sibling entry's
-    slice or a collision-refused duplicate."""
+    """Normalized basenames of video files this record knowably never imports (a sibling entry's slice, a
+    collision-refused duplicate), found at grab time or by an import poll."""
 
     guards: GuardFacts = field(default_factory=GuardFacts)
     """The plan's overwrite-guard evidence"""
@@ -704,6 +708,12 @@ class PendingImport:
         """The record with import-time placements folded into its map, every key normalized and zero ids dropped."""
 
         return replace(self, file_episode_map={**_normalized_map(self.file_episode_map), **_normalized_map(placements)})
+
+    def with_exclusions(self, names: Iterable[str]) -> "PendingImport":
+        """The record with import-time exclusions appended, normalized, deduplicated, order kept."""
+
+        merged = dict.fromkeys(normalized_leaf(name) for name in (*self.excluded_files, *names))
+        return replace(self, excluded_files=list(merged))
 
     def to_json(self) -> dict[str, Any]:
         """Serialize to the plain dict persisted under `pending_imports`."""

@@ -32,6 +32,7 @@ from .manual_import import ImportWaitMode
 from .mappings import ExternalIds, MappingEntry, MappingResolver
 from .notify import Notifier
 from .output import emit_to_hub, hub_counts
+from .parse_records import ParseRecords
 from .planner import DownloadPlanner, PlanResult
 from .reporter import EntryTitle, PerTitleState, RunContext, RunReporter, is_preview, resolve_entry_title
 from .seadex_filter import SeadexReleaseFilter
@@ -104,6 +105,8 @@ class RunDeps:
     logger: logging.Logger
     seadex: SeaDexSource
     cache_store: AbstractCacheStore
+    parse_records: ParseRecords
+    """The Sonarr parse-cache leaf over `cache_store`, one instance for the sweep and the seed builder."""
     anilist: AniListGateway
     torrents: TorrentService
     notifier: Notifier
@@ -234,6 +237,7 @@ class RunDeps:
             categories=categories,
             clock=SystemClock(),
             web=web,
+            parse_records=ParseRecords(cache_store),
             http=http,
             qbit=qbit,
             mappings=mappings,

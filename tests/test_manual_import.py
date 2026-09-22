@@ -15,7 +15,7 @@ pure, no network or disk. `SonarrEpisode` is built directly via
 from collections.abc import MutableMapping
 from dataclasses import replace
 from types import SimpleNamespace
-from typing import cast
+from typing import ClassVar, cast
 
 import pytest
 
@@ -43,7 +43,8 @@ from pearlarr.seadex_types import (
     CommandResource,
     EpisodeKey,
     HistoryPage,
-    ParsedEpisode,
+    MatchedEpisode,
+    ParsedFileInfo,
     Quality,
     QualityDefinition,
     QualityModel,
@@ -62,17 +63,19 @@ from pearlarr.sonarr_import_plan import (
     EpisodeSnapshot,
     HistoryImport,
     ParsedQuality,
+    PlacementBatch,
+    PlacementVerdict,
     QueueVerdict,
+    TargetScope,
     TargetStatuses,
+    assign_episode_ids,
     classify_commands,
     classify_download_history,
     classify_queue,
     derive_languages,
-    episode_ids_for_parsed,
     episode_index,
     manual_import_in_flight,
     parse_quality_from_filename,
-    parsed_outside_entry,
     placements_from_history,
     plan_import_files,
     quality_axes_from_model,
@@ -185,67 +188,152 @@ class TestNormalize:
         assert normalize_group("Aergia") == normalize_rg("-Aergia-")
 
 
-class TestEpisodeIdsForParsed:
-    """`episode_ids_for_parsed` maps `/parse` pairs to ids under the seed-side borrow limits.
+def _parsed(
+    *,
+    season: int | None = None,
+    episodes: tuple[int, ...] = (),
+    absolutes: tuple[int, ...] = (),
+    matched: tuple[tuple[int, int], ...] = (),
+    full_season: bool = False,
+) -> ParsedFileInfo:
+    """Shorthand `ParsedFileInfo` for the placement tests."""
 
-    The pairs are Sonarr's series-matched resolution, so the grab-time seed
-    mirrors the import-time borrow gates: span cap, all-or-nothing resolution,
-    duplicate-claim collapse.
+    return ParsedFileInfo(
+        season_number=season,
+        episode_numbers=episodes,
+        absolute_episode_numbers=absolutes,
+        matched_episodes=tuple(MatchedEpisode(season_number=s, episode_number=e) for s, e in matched),
+        full_season=full_season,
+    )
+
+
+def _verdicts(
+    parsed: dict[str, ParsedFileInfo | None],
+    scope: TargetScope,
+) -> dict[str, tuple[tuple[int, ...], PlacementVerdict]]:
+    """Run one batch through `assign_episode_ids`, keyed name -> (ids, verdict)."""
+
+    result = assign_episode_ids(PlacementBatch(list(parsed), parsed), scope)
+    return {p.name: (p.ids, p.verdict) for p in result.placements}
+
+
+class TestBorrowedPairPlacement:
+    """The reading limits every pass shares: borrow cap, all-or-nothing resolution, duplicate collapse.
+
+    Sonarr's series-matched pairs are borrowed only by a name carrying no
+    numbers of its own, and only inside the record's set.
     """
 
-    def test_maps_via_index(self) -> None:
-        idx = {EpisodeKey(1, 1): 11, EpisodeKey(1, 2): 12}
-        parsed = [ParsedEpisode(season=1, episode=1), ParsedEpisode(season=1, episode=2)]
-        assert episode_ids_for_parsed(parsed, idx) == [11, 12]
+    _SCOPE: ClassVar[TargetScope] = TargetScope(
+        [11, 12, 13], {EpisodeKey(1, 1): 11, EpisodeKey(1, 2): 12, EpisodeKey(1, 3): 13}
+    )
 
-    def test_unknown_single_pair_is_not_seeded(self) -> None:
-        assert episode_ids_for_parsed([ParsedEpisode(season=9, episode=9)], {EpisodeKey(1, 1): 11}) == []
+    def test_a_pair_inside_the_entry_places_exactly(self) -> None:
+        parsed: dict[str, ParsedFileInfo | None] = {"span.mkv": _parsed(matched=((1, 1), (1, 2)))}
 
-    def test_partially_resolving_span_refuses_the_whole_file(self) -> None:
-        # One pair in the map, one out: seeding the resolved half would
-        # half-import a multi-episode file, so nothing is seeded.
-        idx = {EpisodeKey(1, 1): 11}
-        parsed = [
-            ParsedEpisode(season=1, episode=1),
-            ParsedEpisode(season=9, episode=9),
-        ]
-        assert episode_ids_for_parsed(parsed, idx) == []
+        assert _verdicts(parsed, self._SCOPE) == {"span.mkv": ((11, 12), PlacementVerdict.EXACT)}
 
-    def test_full_season_span_never_seeds(self) -> None:
-        # A bare-"S05" extra matches the WHOLE season: the record carries every
-        # episode pair, and none of them may seed.
-        idx = {EpisodeKey(5, e): 500 + e for e in range(1, 13)}
-        parsed = [ParsedEpisode(season=5, episode=e) for e in range(1, 13)]
-        assert episode_ids_for_parsed(parsed, idx) == []
+    def test_a_pair_resolving_nowhere_in_the_series_is_skipped(self) -> None:
+        # D11: the series map knows nothing of it, so it is possibly ours, never proved another slice's.
+        parsed: dict[str, ParsedFileInfo | None] = {"span.mkv": _parsed(matched=((9, 9),))}
 
-    def test_span_just_over_the_cap_is_refused(self) -> None:
-        idx = {EpisodeKey(1, e): 10 + e for e in range(1, 5)}
-        parsed = [ParsedEpisode(season=1, episode=e) for e in range(1, 5)]
-        assert episode_ids_for_parsed(parsed, idx) == []
+        assert _verdicts(parsed, self._SCOPE) == {"span.mkv": ((), PlacementVerdict.SKIPPED)}
 
-    def test_triple_span_still_seeds(self) -> None:
-        idx = {EpisodeKey(1, 1): 11, EpisodeKey(1, 2): 12, EpisodeKey(1, 3): 13}
-        parsed = [ParsedEpisode(season=1, episode=e) for e in (1, 2, 3)]
-        assert episode_ids_for_parsed(parsed, idx) == [11, 12, 13]
+    def test_a_partially_resolving_span_refuses_the_whole_file(self) -> None:
+        # One pair in the map, one out: placing the resolved half would half-import a multi-episode file.
+        parsed: dict[str, ParsedFileInfo | None] = {"span.mkv": _parsed(matched=((1, 1), (9, 9)))}
+
+        assert _verdicts(parsed, self._SCOPE) == {"span.mkv": ((), PlacementVerdict.SKIPPED)}
+
+    def test_a_full_season_match_never_borrows(self) -> None:
+        # D6: a bare "S01" extra matches the WHOLE season, so none of its pairs may place.
+        parsed: dict[str, ParsedFileInfo | None] = {"pack.mkv": _parsed(matched=((1, 1), (1, 2)), full_season=True)}
+
+        assert _verdicts(parsed, self._SCOPE) == {"pack.mkv": ((), PlacementVerdict.SKIPPED)}
+
+    def test_a_full_season_name_key_is_refused_too(self) -> None:
+        # D6 again, on the other claim source: the flag vetoes the name's own key, not just the borrow.
+        parsed: dict[str, ParsedFileInfo | None] = {"pack.mkv": _parsed(season=1, episodes=(1,), full_season=True)}
+
+        assert _verdicts(parsed, self._SCOPE) == {"pack.mkv": ((), PlacementVerdict.SKIPPED)}
+
+    def test_a_wide_span_the_name_claims_itself_places_whole(self) -> None:
+        # The cap is a BORROW limit. An explicit "E01-E04" range resolving every key inside the
+        # set is a complete reading of the name's own claim, so width never refuses it.
+        scope = TargetScope([11, 12, 13, 14], {EpisodeKey(1, e): 10 + e for e in range(1, 5)})
+        parsed: dict[str, ParsedFileInfo | None] = {"span.mkv": _parsed(season=1, episodes=(1, 2, 3, 4))}
+
+        assert _verdicts(parsed, scope) == {"span.mkv": ((11, 12, 13, 14), PlacementVerdict.EXACT)}
+
+    def test_a_borrowed_span_just_over_the_cap_is_refused(self) -> None:
+        # Four distinct pairs a NUMBERLESS name only borrowed is the season-pack shape sans flag.
+        scope = TargetScope([11, 12, 13, 14], {EpisodeKey(1, e): 10 + e for e in range(1, 5)})
+        parsed: dict[str, ParsedFileInfo | None] = {"pack.mkv": _parsed(matched=tuple((1, e) for e in range(1, 5)))}
+
+        assert _verdicts(parsed, scope) == {"pack.mkv": ((), PlacementVerdict.SKIPPED)}
+
+    def test_a_triple_span_still_places(self) -> None:
+        # The cap boundary: three episodes is still one file's claim.
+        parsed: dict[str, ParsedFileInfo | None] = {"triple.mkv": _parsed(matched=((1, 1), (1, 2), (1, 3)))}
+
+        assert _verdicts(parsed, self._SCOPE) == {"triple.mkv": ((11, 12, 13), PlacementVerdict.EXACT)}
 
     def test_duplicate_pairs_collapse_to_one_claim(self) -> None:
-        idx = {EpisodeKey(1, 1): 11}
-        parsed = [ParsedEpisode(season=1, episode=1), ParsedEpisode(season=1, episode=1)]
-        assert episode_ids_for_parsed(parsed, idx) == [11]
+        # Junk wire repeats are one claim, so the file places rather than reading as a wide span.
+        parsed: dict[str, ParsedFileInfo | None] = {"one.mkv": _parsed(matched=((1, 1), (1, 1)))}
 
-    def test_small_full_season_refused_by_the_flag(self) -> None:
-        # A whole season of <= _MATCHED_SPAN_CAP episodes slips under the span
-        # cap, so Sonarr's own fullSeason flag is the only thing that refuses it.
-        idx = {EpisodeKey(1, 1): 11, EpisodeKey(1, 2): 12}
-        parsed = [ParsedEpisode(season=1, episode=1), ParsedEpisode(season=1, episode=2)]
-        assert episode_ids_for_parsed(parsed, idx, full_season=True) == []
+        assert _verdicts(parsed, self._SCOPE) == {"one.mkv": ((11,), PlacementVerdict.EXACT)}
 
-    def test_same_small_span_without_the_flag_still_seeds(self) -> None:
-        # The pins for legit small multi-episode files: absent the flag, the same
-        # pairs seed exactly as before (mirrors test_triple_span_still_seeds).
-        idx = {EpisodeKey(1, 1): 11, EpisodeKey(1, 2): 12}
-        parsed = [ParsedEpisode(season=1, episode=1), ParsedEpisode(season=1, episode=2)]
-        assert episode_ids_for_parsed(parsed, idx) == [11, 12]
+
+class TestForeignClassification:
+    """D11: `FOREIGN` needs a COMPLETE reading landing entirely outside the record's set.
+
+    Anything less (a partial span, a veto, no reading at all) is possibly ours
+    and stays `SKIPPED`, so the count legs may still place it.
+    """
+
+    _MAP: ClassVar[dict[EpisodeKey, int]] = {EpisodeKey(3, 1): 101, EpisodeKey(3, 12): 112, EpisodeKey(3, 13): 113}
+
+    def test_a_clean_reading_fully_outside_is_another_slice(self) -> None:
+        parsed: dict[str, ParsedFileInfo | None] = {"other.mkv": _parsed(season=3, episodes=(13,))}
+
+        assert _verdicts(parsed, TargetScope([101], self._MAP)) == {"other.mkv": ((), PlacementVerdict.FOREIGN)}
+
+    def test_a_reading_inside_the_entry_is_ours(self) -> None:
+        parsed: dict[str, ParsedFileInfo | None] = {"mine.mkv": _parsed(season=3, episodes=(1,))}
+
+        assert _verdicts(parsed, TargetScope([101], self._MAP)) == {"mine.mkv": ((101,), PlacementVerdict.EXACT)}
+
+    def test_a_partially_resolving_span_stays_possibly_ours(self) -> None:
+        # A boundary double-episode with one pair off the map may be partly ours.
+        parsed: dict[str, ParsedFileInfo | None] = {"d.mkv": _parsed(season=3, episodes=(12, 99))}
+
+        assert _verdicts(parsed, TargetScope([101], self._MAP)) == {"d.mkv": ((), PlacementVerdict.SKIPPED)}
+
+    def test_a_vetoed_full_season_reading_stays_possibly_ours(self) -> None:
+        # Sonarr matches a bare "S0X" zip to the whole season: it may well BE our content.
+        parsed: dict[str, ParsedFileInfo | None] = {
+            "pack.mkv": _parsed(season=2, episodes=(1,), full_season=True),
+        }
+
+        assert _verdicts(parsed, TargetScope([101], self._MAP)) == {"pack.mkv": ((), PlacementVerdict.SKIPPED)}
+
+    def test_a_vetoed_wide_span_stays_possibly_ours(self) -> None:
+        parsed: dict[str, ParsedFileInfo | None] = {"pack.mkv": _parsed(matched=tuple((9, n) for n in range(1, 11)))}
+
+        assert _verdicts(parsed, TargetScope([101], self._MAP)) == {"pack.mkv": ((), PlacementVerdict.SKIPPED)}
+
+    def test_no_reading_at_all_stays_possibly_ours(self) -> None:
+        # Two leftover ids keep the degenerate single-file arm out, so the classification is what is pinned.
+        parsed: dict[str, ParsedFileInfo | None] = {"blank.mkv": _parsed()}
+
+        assert _verdicts(parsed, TargetScope([101, 112], self._MAP)) == {"blank.mkv": ((), PlacementVerdict.SKIPPED)}
+
+    def test_an_empty_series_map_refuses_the_verdict(self) -> None:
+        # D8: every key misses an unserved map, so nothing may be called another slice's.
+        parsed: dict[str, ParsedFileInfo | None] = {"other.mkv": _parsed(season=3, episodes=(13,))}
+
+        assert _verdicts(parsed, TargetScope([101, 112], {})) == {"other.mkv": ((), PlacementVerdict.SKIPPED)}
 
 
 class TestEpisodeFileStatuses:
@@ -601,33 +689,6 @@ class TestSonarrProcessPassRunning:
         assert not sonarr_process_pass_running(cmds)
 
 
-class TestParsedOutsideEntry:
-    """The knowably-other-slice refusal: only a clean parse landing ENTIRELY outside our set."""
-
-    def test_clean_parse_fully_outside_is_another_slice(self) -> None:
-        assert parsed_outside_entry([ParsedEpisode(season=3, episode=13)], {EpisodeKey(3, 1): 101})
-
-    def test_resolving_parse_is_ours(self) -> None:
-        assert not parsed_outside_entry([ParsedEpisode(season=3, episode=1)], {EpisodeKey(3, 1): 101})
-
-    def test_partially_resolving_span_stays_possibly_ours(self) -> None:
-        # A boundary double-episode (one pair in, one out) may be partly ours.
-        parsed = [ParsedEpisode(season=3, episode=12), ParsedEpisode(season=3, episode=13)]
-        assert not parsed_outside_entry(parsed, {EpisodeKey(3, 12): 101})
-
-    def test_full_season_veto_stays_possibly_ours(self) -> None:
-        # Sonarr matches a bare "S0X" zip to the whole season: it may well BE
-        # our content, so the veto never proves it is another slice's.
-        assert not parsed_outside_entry([ParsedEpisode(season=2, episode=1)], {EpisodeKey(3, 1): 101}, full_season=True)
-
-    def test_no_parse_stays_possibly_ours(self) -> None:
-        assert not parsed_outside_entry([], {EpisodeKey(3, 1): 101})
-
-    def test_wide_span_veto_stays_possibly_ours(self) -> None:
-        parsed = [ParsedEpisode(season=9, episode=n) for n in range(1, 11)]
-        assert not parsed_outside_entry(parsed, {EpisodeKey(3, 1): 101})
-
-
 def _event_row(event: str, date: str) -> dict[str, object]:
     """A bare history row."""
 
@@ -832,6 +893,22 @@ class TestPlacementsFromHistory:
 
 class TestPendingImportPlacements:
     """`with_placements` folds import-time placements into the map; `unplaced_names` is what a rebuild may fill."""
+
+    def test_with_exclusions_normalizes_dedupes_and_appends(self) -> None:
+        # The recorded order is the reading order: what the record already held, then this poll's
+        # additions, each normalized once and never repeated.
+        pending = pending_import(excluded_files=["show - 01.mkv"])
+
+        healed = pending.with_exclusions(["SHOW - 03.MKV", " Show - 02.mkv ", "show - 03.mkv", "Show - 01.mkv"])
+
+        assert healed.excluded_files == ["show - 01.mkv", "show - 03.mkv", "show - 02.mkv"]
+        assert pending.excluded_files == ["show - 01.mkv"]
+
+    def test_with_exclusions_of_nothing_leaves_the_record_equal(self) -> None:
+        # The no-op the record seam gates its write on.
+        pending = pending_import(excluded_files=["show - 01.mkv"])
+
+        assert pending.with_exclusions(()) == pending
 
     def test_with_placements_normalizes_and_merges(self) -> None:
         # A raw-cased seed key collapses onto its normalized placement, a

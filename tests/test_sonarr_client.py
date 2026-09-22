@@ -31,12 +31,10 @@ from pearlarr.seadex_types import (
     Language,
     ManualImportFile,
     MatchedEpisode,
-    ParsedEpisode,
     ParsedFileInfo,
     Quality,
     QueueRecord,
     SonarrItem,
-    SonarrParse,
 )
 from pearlarr.sonarr_client import SonarrClient
 
@@ -384,26 +382,75 @@ def test_episodes_request_error_returns_none() -> None:
     assert _make_client().episodes(228, quiet=True) is None
 
 
-# --- parse() ----------------------------------------------------------------
+# --- parse() (the one parse: agnostic numbers + matched pairs) ---------------
 
 
 @respx.mock
-def test_parse_skips_entries_missing_season_or_episode() -> None:
-    """`parse()` drops any parsed entry missing a season OR episode number.
+def test_parse_decodes_season_episode() -> None:
+    """An `SxxExx` release decodes to its own numbers plus Sonarr's matched pair.
 
-    It keeps only the fully-resolved `{season, episode}` mappings.
+    The request carries the title in the URL and the api key in the
+    X-Api-Key header.
+    """
+
+    route = respx.get(f"{_BASE}/parse").respond(json=sonarr_fixture("parse_bahamut_s01e01.json"))
+    info = _make_client().parse("Show.S01E01.mkv")
+
+    assert info == ParsedFileInfo(
+        season_number=1,
+        episode_numbers=(1,),
+        absolute_episode_numbers=(),
+        special=False,
+        matched_episodes=(MatchedEpisode(season_number=1, episode_number=1, id=8476),),
+    )
+    request = route.calls.last.request
+    url = str(request.url)
+    assert "title=" in url
+    assert "apikey" not in url
+    assert request.headers["X-Api-Key"] == "testkey"
+
+
+@respx.mock
+def test_parse_decodes_absolute() -> None:
+    """An absolute-numbered release decodes to its absolute numbers (season 0, no SxxExx episode numbers).
+
+    The name alone carries no `(season, episode)`. Sonarr's series-matched
+    `episodes` array rides along as `matched_episodes`, the exact leg's
+    in-set fallback for exactly this shape.
+    """
+
+    respx.get(f"{_BASE}/parse").respond(json=sonarr_fixture("parse_glimmerzu_abs14.json"))
+    info = _make_client().parse("GlimmerZu.-.14.mkv")
+
+    assert info == ParsedFileInfo(
+        season_number=0,
+        episode_numbers=(),
+        absolute_episode_numbers=(14,),
+        special=False,
+        matched_episodes=(MatchedEpisode(season_number=1, episode_number=14, id=2886),),
+    )
+
+
+@respx.mock
+def test_parse_junk_matched_entry_drops_the_whole_array() -> None:
+    """One unreadable `episodes[]` entry folds the WHOLE array away, the name's own numbers surviving.
+
+    All-or-nothing on purpose: dropping the bad entry alone would shorten a
+    span and slip the every-pair check.
     """
 
     body: dict[str, object] = {
+        "parsedEpisodeInfo": {"seasonNumber": 1, "episodeNumbers": [1]},
         "episodes": [
             {"seasonNumber": 1, "episodeNumber": 1},
-            {"episodeNumber": 5},  # no seasonNumber -> dropped
+            {"episodeNumber": 5},  # no seasonNumber
         ],
     }
     respx.get(f"{_BASE}/parse").respond(json=body)
 
-    assert _make_client().parse("Cool.Anime.S01E01.mkv") == SonarrParse(
-        episodes=[ParsedEpisode(season=1, episode=1)],
+    assert _make_client().parse("Cool.Anime.S01E01.mkv") == ParsedFileInfo(
+        season_number=1,
+        episode_numbers=(1,),
     )
 
 
@@ -412,7 +459,7 @@ def test_parse_reads_full_season_flag() -> None:
     """`parse()` lifts `parsedEpisodeInfo.fullSeason` onto the result.
 
     A bare-"S05" name Sonarr matches to a whole season carries the flag the
-    grab-time seed refuses on - even when the season is small enough to slip
+    grab-time seed refuses on, even when the season is small enough to slip
     under the span cap. Absent/false reads False.
     """
 
@@ -435,12 +482,12 @@ def test_parse_reads_full_season_flag() -> None:
 
 
 @respx.mock
-def test_parse_clean_no_match_returns_empty_list() -> None:
-    """A clean 200 where Sonarr matched no episode returns empty episodes.
+def test_parse_clean_no_match_returns_an_empty_parse() -> None:
+    """A clean 200 where Sonarr matched no episode returns the empty parse.
 
-    This is a *confirmed* no-match the caller may negative-cache, distinct
-    from a failure's None. A missing `episodes` key is the same clean
-    no-match.
+    This is a *confirmed* no-match the caller may cache (pinned to the series
+    fingerprint), distinct from a failure's None. A missing `episodes` key is
+    the same clean no-match.
     """
 
     respx.get(f"{_BASE}/parse").mock(
@@ -449,15 +496,15 @@ def test_parse_clean_no_match_returns_empty_list() -> None:
             httpx.Response(200, json={}),
         ],
     )
-    assert _make_client().parse("Unmatched.Release.mkv") == SonarrParse(episodes=[])
-    assert _make_client().parse("Unmatched.Release.mkv") == SonarrParse(episodes=[])
+    assert _make_client().parse("Unmatched.Release.mkv") == ParsedFileInfo()
+    assert _make_client().parse("Unmatched.Release.mkv") == ParsedFileInfo()
 
 
 @respx.mock
 def test_parse_wrong_shape_episodes_returns_none() -> None:
     """A 200 whose `episodes` is present but not a list (a mangled response) returns the uncacheable None.
 
-    This is NOT the negative-cacheable `[]`.
+    This is NOT the cacheable empty parse.
     """
 
     respx.get(f"{_BASE}/parse").mock(
@@ -468,6 +515,22 @@ def test_parse_wrong_shape_episodes_returns_none() -> None:
     )
     assert _make_client().parse("Cool.Anime.S01E01.mkv") is None
     assert _make_client().parse("Cool.Anime.S01E01.mkv") is None
+
+
+@respx.mock
+def test_parse_malformed_payload_warns_and_returns_none() -> None:
+    """A payload the parse model refuses warns with the field summary and returns None."""
+
+    respx.get(f"{_BASE}/parse").respond(json={"parsedEpisodeInfo": {"seasonNumber": "one"}})
+    recording = install_recording_hub()
+
+    assert _make_client().parse("Cool.Anime.S01E01.mkv") is None
+    assert diagnostic_messages(recording, Severity.WARNING) == [
+        (
+            "Could not parse Cool.Anime.S01E01.mkv via Sonarr "
+            "(malformed response: parsedEpisodeInfo.seasonNumber: int_parsing)"
+        ),
+    ]
 
 
 @respx.mock
@@ -484,74 +547,6 @@ def test_parse_request_error_returns_none() -> None:
 
     respx.get(f"{_BASE}/parse").mock(side_effect=httpx.ConnectError("boom"))
     assert _make_client().parse("Cool.Anime.S01E01.mkv") is None
-
-
-# --- parse_episode_info() (series-AGNOSTIC parsedEpisodeInfo) ----------------
-
-
-@respx.mock
-def test_parse_episode_info_decodes_season_episode() -> None:
-    """An `SxxExx` release decodes to its season + episode numbers.
-
-    The request carries the title in the URL and the api key in the
-    X-Api-Key header.
-    """
-
-    route = respx.get(f"{_BASE}/parse").respond(json=sonarr_fixture("parse_bahamut_s01e01.json"))
-    info = _make_client().parse_episode_info("Bahamut.S01E01.mkv")
-
-    assert info == ParsedFileInfo(
-        season_number=1,
-        episode_numbers=(1,),
-        absolute_episode_numbers=(),
-        special=False,
-        matched_episodes=(MatchedEpisode(season_number=1, episode_number=1, id=8476),),
-    )
-    request = route.calls.last.request
-    url = str(request.url)
-    assert "title=" in url
-    assert "apikey" not in url
-    assert request.headers["X-Api-Key"] == "testkey"
-    # Import-path parses ride the long manual-import timeout, not the 30s default.
-    timeout = cast("dict[str, float | None]", request.extensions["timeout"])
-    assert timeout == {"connect": 120, "read": 120, "write": 120, "pool": 120}
-
-
-@respx.mock
-def test_parse_episode_info_decodes_absolute() -> None:
-    """An absolute-numbered release decodes to its absolute numbers (season 0, no SxxExx episode numbers).
-
-    The name alone carries no `(season, episode)`. Sonarr's series-matched
-    `episodes` array rides along as `matched_episodes` - the exact leg's
-    in-set fallback for exactly this shape.
-    """
-
-    respx.get(f"{_BASE}/parse").respond(json=sonarr_fixture("parse_glimmerzu_abs14.json"))
-    info = _make_client().parse_episode_info("GlimmerZu.-.14.mkv")
-
-    assert info == ParsedFileInfo(
-        season_number=0,
-        episode_numbers=(),
-        absolute_episode_numbers=(14,),
-        special=False,
-        matched_episodes=(MatchedEpisode(season_number=1, episode_number=14, id=2886),),
-    )
-
-
-@respx.mock
-def test_parse_episode_info_non_200_returns_none() -> None:
-    """A non-200 parse leaves the file for retry (returns None)."""
-
-    respx.get(f"{_BASE}/parse").respond(status_code=500)
-    assert _make_client().parse_episode_info("Bahamut.S01E01.mkv") is None
-
-
-@respx.mock
-def test_parse_episode_info_request_error_returns_none() -> None:
-    """A transient request error leaves the file for retry (returns None)."""
-
-    respx.get(f"{_BASE}/parse").mock(side_effect=httpx.ConnectError("boom"))
-    assert _make_client().parse_episode_info("Bahamut.S01E01.mkv") is None
 
 
 # --- manual_import_candidates() ---------------------------------------------
@@ -592,7 +587,7 @@ def test_manual_import_candidates_decodes_and_uppercases_downloadid() -> None:
 def test_manual_import_candidates_non_200_returns_none_silently() -> None:
     """A non-200 scan returns None with NO warning.
 
-    The executor owns the fallback's messaging - a warn here would brand every
+    The executor owns the fallback's messaging, since a warn here would brand every
     dead-tracked poll with a misleading "will retry" right before the folder
     scan handles it.
     """
@@ -760,17 +755,15 @@ def test_remote_path_mappings_non_200_returns_none() -> None:
 
 @respx.mock
 def test_wait_path_polls_make_exactly_one_attempt() -> None:
-    """The four wait-path polls ride the no-retry handle: ONE attempt each.
+    """The three wait-path polls ride the no-retry handle: ONE attempt each.
 
-    manual_import_candidates / the folder scan / the history probe /
-    parse_episode_info run inside the import monitor loop, which IS the retry
-    mechanism - in-call retries would only stretch each poll cycle and
-    multiply identical warnings.
+    manual_import_candidates / the folder scan / the history probe run inside
+    the import monitor loop, which IS the retry mechanism, while in-call retries
+    would only stretch each poll cycle and multiply identical warnings.
     """
 
     manualimport = respx.get(f"{_BASE}/manualimport").respond(status_code=500)
     history = respx.get(f"{_BASE}/history").respond(status_code=500)
-    parse = respx.get(f"{_BASE}/parse").respond(status_code=500)
     client = _make_client()
     pending = _make_pending(infohash="a" * 40, title="Yamada-kun")
 
@@ -780,17 +773,24 @@ def test_wait_path_polls_make_exactly_one_attempt() -> None:
     assert manualimport.call_count == 2
     assert client.history_for_download(download_id="a" * 40) is None
     assert history.call_count == 1
-    assert client.parse_episode_info("Bahamut.S01E01.mkv") is None
-    assert parse.call_count == 1
 
 
 @respx.mock
 def test_sweep_reads_keep_the_retry_budget() -> None:
-    """A non-wait read (episodes) still rides the primary retrying handle."""
+    """The non-wait reads (episodes, parse) ride the primary retrying handle.
 
-    route = respx.get(f"{_BASE}/episode").respond(status_code=500)
-    assert _make_client().episodes(1, quiet=True) is None
-    assert route.call_count == GET_RETRIES + 1
+    `/parse` is a string parse, never a disk scan, so one transport serves the
+    sweep and the import wait alike.
+    """
+
+    episodes = respx.get(f"{_BASE}/episode").respond(status_code=500)
+    parse = respx.get(f"{_BASE}/parse").respond(status_code=500)
+    client = _make_client()
+
+    assert client.episodes(1, quiet=True) is None
+    assert episodes.call_count == GET_RETRIES + 1
+    assert client.parse("Show.S01E01.mkv") is None
+    assert parse.call_count == GET_RETRIES + 1
 
 
 # --- manual_import_execute() / refresh_monitored_downloads() (POST /command) -
