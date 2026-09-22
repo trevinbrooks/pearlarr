@@ -16,7 +16,7 @@ from datetime import datetime
 
 from pearlarr.cache import UPDATED_AT_STR_FORMAT
 from pearlarr.config import Arr
-from pearlarr.manual_import import GuardFacts, OwnedEpisode, normalize_basename
+from pearlarr.manual_import import EntryNames, GuardFacts, OwnedEpisode, normalize_basename
 from pearlarr.parse_records import to_parse_record
 from pearlarr.seadex_sonarr import SonarrSync
 from pearlarr.seadex_types import EpisodeRecord, Json, MatchedEpisode, ParsedFileInfo, SonarrEpisode
@@ -101,7 +101,9 @@ class TestBuildPendingSeeds:
         seeds = _strat(parses, ep_list)._reconciler.build_pending_seeds(
             seadex_dict=seadex_dict,
             ep_list=ep_list,
-            entry=PendingSeedContext(al_id=1, series_id=7, title="Show", added_at=_ADDED_AT),
+            entry=PendingSeedContext(
+                al_id=1, series_id=7, title="Show", added_at=_ADDED_AT, names=EntryNames("Show", ("Show", "Shou"))
+            ),
         )
 
         # Only the download+hash url is seeded (no download / no hash are skipped).
@@ -110,6 +112,7 @@ class TestBuildPendingSeeds:
         assert seed.series_id == 7
         assert seed.al_id == 1  # part of the record's PendingKey
         assert seed.title == "Show"
+        assert seed.names == EntryNames("Show", ("Show", "Shou"))
         assert seed.added_at == _ADDED_AT  # the context stamp, not a fold-side clock read
         assert seed.file_episode_map == {normalize_basename("Show - 01.mkv"): [101]}
         assert seed.seadex_files == ["Show - 01.mkv"]

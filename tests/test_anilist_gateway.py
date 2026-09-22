@@ -118,7 +118,7 @@ class TestPrefetch:
         store.put_anilist_meta(1, {"fetched_at": original, "data": anilist_body(1)})
         gateway.load_cache()
         # A confirmed miss is remembered for the run, so the prefetch has nothing to ask about it.
-        assert gateway.title(2) is None
+        assert gateway.titles(2) == ()
 
         before = _now_str()
         gateway.prefetch([1, 2, 3], preview=False)
@@ -181,7 +181,7 @@ class TestPrefetch:
         # Nothing evicted: the aged rows are what is serving this run.
         assert store.get_anilist_meta(1) is not None
         assert store.get_anilist_meta(9) is not None
-        assert gateway.title(1) == "Resolved"
+        assert gateway.titles(1) == ("Resolved",)
         # The aged count still answers: the alternative is grabbing every episode.
         assert gateway.n_eps(1) == 12
         assert client.query_calls == []
@@ -205,7 +205,7 @@ class TestPrefetch:
         assert gateway.n_eps(1) == 12
         # Not returned: still served from memory this run, but evicted from disk.
         assert store.get_anilist_meta(2) is None
-        assert gateway.title(2) == "Resolved"
+        assert gateway.titles(2) == ("Resolved",)
         assert gateway.n_eps(2) == 12
         assert client.query_calls == []
 
@@ -217,7 +217,7 @@ class TestMediaResolution:
         client = ScriptedAniListClient()
         gateway = make_anilist_gateway(client)
 
-        assert gateway.title(42) == "Resolved"
+        assert gateway.titles(42) == ("Resolved",)
         assert gateway.thumb(42) == "https://img/large"
         assert gateway.banner(42) == "https://img/banner"
         assert gateway.media_format(42) == "TV"
@@ -227,24 +227,26 @@ class TestMediaResolution:
         assert client.query_calls == [42]
         assert 42 in gateway.al_cache
 
-    def test_title_prefers_english_then_romaji(self) -> None:
+    def test_titles_list_english_then_romaji_once_each(self) -> None:
         gateway = make_anilist_gateway()
         gateway.al_cache = {
             1: {"data": {"Media": {"id": 1, "title": {"english": "E", "romaji": "R"}}}},
-            2: {"data": {"Media": {"id": 2, "title": {"romaji": "R"}}}},
-            3: {"data": {"Media": {"id": 3}}},
+            2: {"data": {"Media": {"id": 2, "title": {"english": "Same", "romaji": "Same"}}}},
+            3: {"data": {"Media": {"id": 3, "title": {"romaji": "R"}}}},
+            4: {"data": {"Media": {"id": 4}}},
         }
 
-        assert gateway.title(1) == "E"
-        assert gateway.title(2) == "R"
-        assert gateway.title(3) is None
+        assert gateway.titles(1) == ("E", "R")
+        assert gateway.titles(2) == ("Same",)
+        assert gateway.titles(3) == ("R",)
+        assert gateway.titles(4) == ()
 
     def test_definite_miss_is_remembered_for_the_run(self) -> None:
         # AniList answered with no Media: the id is unknown, so no later accessor asks again.
         client = ScriptedAniListClient(absent=frozenset({7}))
         gateway = make_anilist_gateway(client)
 
-        assert gateway.title(7) is None
+        assert gateway.titles(7) == ()
         assert gateway.n_eps(7) is None
 
         assert gateway.al_cache[7] == {}
@@ -254,7 +256,7 @@ class TestMediaResolution:
         client = ScriptedAniListClient(failing=frozenset({7}))
         gateway = make_anilist_gateway(client)
 
-        assert gateway.title(7) is None
+        assert gateway.titles(7) == ()
         assert gateway.outage is True
         # No answer is not a miss: the id stays unknown instead of remembered as absent.
         assert gateway.al_cache == {}

@@ -551,6 +551,24 @@ class OwnedEpisode(NamedTuple):
     size: int
 
 
+@dataclass(frozen=True, slots=True)
+class EntryNames:
+    """What names an entry: the arr series title and the AniList titles (English first, then romaji).
+
+    The placement's tie-break between look-alike files scores on the words
+    an AniList title adds to the series title, so both ride together.
+    """
+
+    series: str = ""
+    anilist: tuple[str, ...] = ()
+
+    @classmethod
+    def from_json(cls, raw: dict[str, Any]) -> "EntryNames":
+        """Rebuild from the persisted dict (a record written before the names were kept reads empty)."""
+
+        return cls(series=raw.get("series", ""), anilist=tuple(raw.get("anilist", [])))
+
+
 @dataclass(frozen=True)
 class GuardFacts:
     """The plan's per-entry overwrite-guard evidence, carried whole."""
@@ -644,6 +662,9 @@ class PendingImport:
 
     awaiting_cleanup: bool = False
     """The import verified but a post-import effect (category move / queue close) still needs to run."""
+
+    names: EntryNames = field(default_factory=EntryNames)
+    """The series and AniList titles the placement breaks ties by (see `EntryNames`)."""
 
     @property
     def key(self) -> PendingKey:
@@ -746,6 +767,7 @@ class PendingImport:
             release_sizes=raw.get("release_sizes", []),
             preowned_episode_ids=raw.get("preowned_episode_ids", []),
             awaiting_cleanup=is_awaiting_cleanup(raw),
+            names=EntryNames.from_json(raw.get("names", {})),
         )
 
 

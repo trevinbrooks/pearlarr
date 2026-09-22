@@ -163,15 +163,14 @@ class AniListGateway:
             self.al_cache[al_id] = {}
         return media_node_from(raw_media)
 
-    def title(self, al_id: int) -> str | None:
-        """Resolve the AniList title for an id (cache or live query), or None.
+    def titles(self, al_id: int) -> tuple[str, ...]:
+        """Every distinct AniList title for an id (English first, then romaji, cached or queried live), empty on a miss.
 
-        Prefers the English title, falling back to romaji. Side-effect-free: the
-        caller owns any fallback and the `current_title` attribution.
+        Side-effect-free: the caller owns any fallback and the `current_title` attribution.
         """
 
         media = self._media(al_id)
-        return media.title_english or media.title_romaji
+        return tuple(dict.fromkeys(title for title in (media.title_english, media.title_romaji) if title))
 
     def thumb(self, al_id: int) -> str | None:
         """Resolve the AniList cover thumbnail URL for an id, or None."""

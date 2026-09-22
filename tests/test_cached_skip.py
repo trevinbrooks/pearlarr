@@ -20,6 +20,7 @@ import pytest
 from pearlarr.cache import CacheRecord
 from pearlarr.config import Arr
 from pearlarr.log import EntryState
+from pearlarr.manual_import import EntryNames
 from pearlarr.reporter import EntryTitle, RunContext
 from pearlarr.run_services import RunServices
 
@@ -416,7 +417,9 @@ class TestResolveTitle:
     def test_climbs_the_ladder(self, anilist: str | None, arr_title: str, display: str) -> None:
         run = self._run(ScriptedAniListClient(anilist), arr_title=arr_title)
 
-        assert run.resolve_title(5) == EntryTitle(al_id=5, display=display, anilist=anilist)
+        assert run.resolve_title(5) == EntryTitle(
+            al_id=5, display=display, names=EntryNames(arr_title, (anilist,) if anilist else ())
+        )
 
 
 class TestNewCacheDetails:
@@ -435,6 +438,8 @@ class TestNewCacheDetails:
         entry = make_entry_record(updated_at=_FRESH)
         run = make_services()
 
-        details = run.new_cache_details(EntryTitle(al_id=5, display="Series", anilist=anilist), entry)
+        title = EntryTitle(al_id=5, display="Series", names=EntryNames("Series", (anilist,) if anilist else ()))
+
+        details = run.new_cache_details(title, entry)
 
         assert details == {**name, "updated_at": entry.updated_at, "torrent_hashes": []}

@@ -461,7 +461,7 @@ class RunServices:
         `new_cache_details` writes the result back. `log_al_title` opens the block with it.
         """
 
-        return resolve_entry_title(al_id, self._anilist.title(al_id), self._ctx.arr_title)
+        return resolve_entry_title(al_id, self._anilist.titles(al_id), self._ctx.arr_title)
 
     def new_cache_details(self, title: EntryTitle, sd_entry: EntryRecord) -> CacheRecord:
         """The seed record a processed id accumulates into.

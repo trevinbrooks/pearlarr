@@ -30,6 +30,7 @@ from pearlarr.manual_import import (
     AttemptKind,
     Deferral,
     EffectStatus,
+    EntryNames,
     GuardFacts,
     ImportProbe,
     ImportProgress,
@@ -230,7 +231,7 @@ class _FakeRunServices(RunServices):
 
     @override
     def resolve_title(self, al_id: int) -> EntryTitle:
-        return EntryTitle(al_id=al_id, display=self._anilist_title, anilist=self._anilist_title)
+        return EntryTitle(al_id=al_id, display=self._anilist_title, names=EntryNames(anilist=(self._anilist_title,)))
 
     @override
     def new_cache_details(self, title: EntryTitle, sd_entry: EntryRecord) -> CacheRecord:
