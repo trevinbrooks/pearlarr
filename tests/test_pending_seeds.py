@@ -6,23 +6,25 @@
 
 The seed-construction heart of the wait/import feature: it turns the filtered
 SeaDex releases into the durable `PendingImport` records the import path later
-reads, mapping each grabbed video file to authoritative Sonarr episode ids via the
-cached `/parse` results and the `(season, episode) -> id` index. Built bare
-(no live Sonarr) with a seeded in-memory parse cache.
+reads, placing each grabbed video file by the same `assign_episode_ids` the
+import wait runs. Built bare (no live Sonarr) with a seeded in-memory parse
+cache and a warm whole-series episode list.
 """
 
 from collections.abc import Mapping
+from datetime import datetime
 
+from pearlarr.cache import UPDATED_AT_STR_FORMAT
 from pearlarr.config import Arr
 from pearlarr.manual_import import GuardFacts, OwnedEpisode, normalize_basename
+from pearlarr.parse_records import to_parse_record
 from pearlarr.seadex_sonarr import SonarrSync
-from pearlarr.seadex_types import EpisodeRecord, ParsedEpisode
+from pearlarr.seadex_types import EpisodeRecord, Json, MatchedEpisode, ParsedFileInfo, SonarrEpisode
 from pearlarr.sonarr_import_plan import EpisodeFileStatus, PendingSeedContext, trusted_groups
 
 from .builders import (
     SEP,
     FakeCacheStore,
-    make_config,
     make_sonarr_sync,
     pending_import,
     rg_group,
@@ -31,32 +33,61 @@ from .builders import (
 )
 from .fakes import FakeSonarrClient
 
-# One persisted `/parse` cache shape: `filename -> {"episodes": [{season, episode}]}`,
-# plus the optional `full_season` bool the grab-time seed guard reads. The seed
-# builder reads both straight off this (no freshness stamp). A covariant Mapping
-# so a records-only literal and a full-season one both pass without annotation.
-type ParseCache = Mapping[str, Mapping[str, object]]
+# The grab-time parses the seed reads back, keyed by filename. A covariant
+# Mapping so a plain literal passes without annotation.
+type ParseCache = Mapping[str, ParsedFileInfo]
 
 # The per-entry grab stamp, threaded through the context onto every seed.
 _ADDED_AT = "2026-06-24 00:00:00"
 
 
-def _strat(parse_cache: ParseCache) -> SonarrSync:
+def _pinfo(
+    *,
+    season: int | None = None,
+    episodes: tuple[int, ...] = (),
+    matched: tuple[MatchedEpisode, ...] = (),
+    full_season: bool = False,
+) -> ParsedFileInfo:
+    """One Sonarr parse: the name's own numbers, plus any series-matched pairs."""
+
+    return ParsedFileInfo(
+        season_number=season,
+        episode_numbers=episodes,
+        matched_episodes=matched,
+        full_season=full_season,
+    )
+
+
+def _rows(parses: ParseCache) -> dict[str, dict[str, Json]]:
+    """The persisted parse records, stamped now so the seed's freshness window counts them."""
+
+    stamp = datetime.now().strftime(UPDATED_AT_STR_FORMAT)
+    return {name: {"fetched_at": stamp, "parse": to_parse_record(info)} for name, info in parses.items()}
+
+
+def _strat(parses: ParseCache, series: list[SonarrEpisode]) -> SonarrSync:
+    """A strat holding the pre-seeded parse records and series 7's whole episode list.
+
+    Every parse resolves through that whole-series map, so an unread list
+    (the bare default) refuses every map-dependent verdict.
+    """
+
     return make_sonarr_sync(
-        cache_store=FakeCacheStore(sonarr_parse={name: dict(rec) for name, rec in parse_cache.items()}),
+        cache_store=FakeCacheStore(sonarr_parse=_rows(parses)),
+        ep_list_cache={7: series},
     )
 
 
 class TestBuildPendingSeeds:
     """`build_pending_seeds` seeds a `PendingImport` per download+hash video url.
 
-    Filenames map to episode ids via the parse cache (falling back flat when
-    unparsed). Releases with no video files are skipped.
+    Filenames are placed onto episode ids through the parse cache and the
+    whole-series map. Releases with no video files are skipped.
     """
 
     def test_seeds_only_download_with_hash(self) -> None:
         ep_list = [sonarr_ep(1, 1, ep_id=101, episode_file_id=0)]
-        parse_cache = {"Show - 01.mkv": {"episodes": [{"season": 1, "episode": 1}]}}
+        parses = {"Show - 01.mkv": _pinfo(season=1, episodes=(1,))}
         seadex_dict = {
             "RG": rg_group(
                 {
@@ -67,7 +98,7 @@ class TestBuildPendingSeeds:
             ),
         }
 
-        seeds = _strat(parse_cache)._reconciler.build_pending_seeds(
+        seeds = _strat(parses, ep_list)._reconciler.build_pending_seeds(
             seadex_dict=seadex_dict,
             ep_list=ep_list,
             entry=PendingSeedContext(al_id=1, series_id=7, title="Show", added_at=_ADDED_AT),
@@ -87,17 +118,43 @@ class TestBuildPendingSeeds:
         # episode_ids is a legacy read-only fallback. New seeds never write it.
         assert seed.episode_ids == []
 
+    def test_stale_parse_record_is_a_miss(self) -> None:
+        # The seed reads the sweep's own rows under the sweep's freshness rule: a
+        # row the sweep refused and could not refresh must not place a file here.
+        ep_list = [sonarr_ep(1, 1, ep_id=101, episode_file_id=0)]
+        stale = {
+            "Show - 01.mkv": {
+                "fetched_at": "2020-01-01 00:00:00",
+                "parse": to_parse_record(_pinfo(season=1, episodes=(1,))),
+            },
+        }
+        strat = make_sonarr_sync(
+            cache_store=FakeCacheStore(sonarr_parse=stale),
+            ep_list_cache={7: ep_list},
+        )
+        seadex_dict = {
+            "RG": rg_group({"u1": url_item(files=["Show - 01.mkv"], size=[1000], infohash="h1", download=True)}),
+        }
+
+        seeds = strat._reconciler.build_pending_seeds(
+            seadex_dict=seadex_dict,
+            ep_list=ep_list,
+            entry=PendingSeedContext(al_id=1, series_id=7, title="Show", added_at=_ADDED_AT),
+        )
+
+        assert seeds["h1"].file_episode_map == {}
+
     def test_seed_copies_the_plan_guard_groups(self) -> None:
         # entry_groups/stale_groups are the PLAN's verdicts, copied through
         # verbatim (see the planner's group-verdict tests for the derivation)
         # so the import guard reads exactly what the grab decision judged.
         ep_list = [sonarr_ep(1, 1, ep_id=101, episode_file_id=0)]
-        parse_cache = {"Show - 01.mkv": {"episodes": [{"season": 1, "episode": 1}]}}
+        parses = {"Show - 01.mkv": _pinfo(season=1, episodes=(1,))}
         seadex_dict = {
             "RG": rg_group({"u1": url_item(files=["Show - 01.mkv"], size=[1000], infohash="h1", download=True)}),
         }
 
-        seeds = _strat(parse_cache)._reconciler.build_pending_seeds(
+        seeds = _strat(parses, ep_list)._reconciler.build_pending_seeds(
             seadex_dict=seadex_dict,
             ep_list=ep_list,
             entry=PendingSeedContext(
@@ -116,14 +173,14 @@ class TestBuildPendingSeeds:
         # The grabbed url's file sizes ride the record so the import can tell
         # this release's own files from a stale same-group copy.
         ep_list = [sonarr_ep(1, 1, ep_id=101, episode_file_id=0)]
-        parse_cache = {"Show - 01.mkv": {"episodes": [{"season": 1, "episode": 1}]}}
+        parses = {"Show - 01.mkv": _pinfo(season=1, episodes=(1,))}
         seadex_dict = {
             "RG": rg_group(
                 {"u1": url_item(files=["Show - 01.mkv"], size=[1000, 50], infohash="h1", download=True)},
             ),
         }
 
-        seeds = _strat(parse_cache)._reconciler.build_pending_seeds(
+        seeds = _strat(parses, ep_list)._reconciler.build_pending_seeds(
             seadex_dict=seadex_dict,
             ep_list=ep_list,
             entry=PendingSeedContext(al_id=1, series_id=7, title="Show", added_at=_ADDED_AT),
@@ -139,9 +196,9 @@ class TestBuildPendingSeeds:
             sonarr_ep(1, 1, ep_id=101, size=500, release_group="Kept"),
             sonarr_ep(1, 2, ep_id=102, episode_file_id=0),
         ]
-        parse_cache = {
-            "Show - 01.mkv": {"episodes": [{"season": 1, "episode": 1}]},
-            "Show - 02.mkv": {"episodes": [{"season": 1, "episode": 2}]},
+        parses = {
+            "Show - 01.mkv": _pinfo(season=1, episodes=(1,)),
+            "Show - 02.mkv": _pinfo(season=1, episodes=(2,)),
         }
         seadex_dict = {
             "RG": rg_group(
@@ -156,7 +213,7 @@ class TestBuildPendingSeeds:
             ),
         }
 
-        seeds = _strat(parse_cache)._reconciler.build_pending_seeds(
+        seeds = _strat(parses, ep_list)._reconciler.build_pending_seeds(
             seadex_dict=seadex_dict,
             ep_list=ep_list,
             entry=PendingSeedContext(
@@ -174,9 +231,9 @@ class TestBuildPendingSeeds:
         # The plan resolved which untagged files a pick's listed size named
         # (see the planner's owned-episodes tests). The seed persists the
         # (id, size) pairs so the import doesn't copy over the very file the
-        # grab just called ours - and can re-verify the claim by size.
+        # grab just called ours, and can re-verify the claim by size.
         ep_list = [sonarr_ep(1, 1, ep_id=101, size=1000), sonarr_ep(1, 2, ep_id=102, episode_file_id=0)]
-        parse_cache = {"Show - 02.mkv": {"episodes": [{"season": 1, "episode": 2}]}}
+        parses = {"Show - 02.mkv": _pinfo(season=1, episodes=(2,))}
         seadex_dict = {
             "RG": rg_group(
                 {
@@ -191,7 +248,7 @@ class TestBuildPendingSeeds:
             ),
         }
 
-        seeds = _strat(parse_cache)._reconciler.build_pending_seeds(
+        seeds = _strat(parses, ep_list)._reconciler.build_pending_seeds(
             seadex_dict=seadex_dict,
             ep_list=ep_list,
             entry=PendingSeedContext(
@@ -207,9 +264,9 @@ class TestBuildPendingSeeds:
 
     def test_multi_file_pack_de_unions_flat_fallback(self) -> None:
         ep_list = [sonarr_ep(1, 1, ep_id=101, episode_file_id=0), sonarr_ep(1, 2, ep_id=102, episode_file_id=0)]
-        parse_cache = {
-            "Show - 01.mkv": {"episodes": [{"season": 1, "episode": 1}]},
-            "Show - 02.mkv": {"episodes": [{"season": 1, "episode": 2}]},
+        parses = {
+            "Show - 01.mkv": _pinfo(season=1, episodes=(1,)),
+            "Show - 02.mkv": _pinfo(season=1, episodes=(2,)),
         }
         seadex_dict = {
             "RG": rg_group(
@@ -224,7 +281,7 @@ class TestBuildPendingSeeds:
             ),
         }
 
-        seeds = _strat(parse_cache)._reconciler.build_pending_seeds(
+        seeds = _strat(parses, ep_list)._reconciler.build_pending_seeds(
             seadex_dict=seadex_dict,
             ep_list=ep_list,
             entry=PendingSeedContext(al_id=1, series_id=7, title="Show", added_at=_ADDED_AT),
@@ -240,16 +297,59 @@ class TestBuildPendingSeeds:
         # old cross-file union bug (a whole season stamped onto one file) is out.
         assert seed.episode_ids == []
 
+    def test_empty_entry_seeds_nothing_and_excludes_nothing(self) -> None:
+        # An entry that resolved no episodes has no scope to place into. An empty
+        # index must never read as "no scope" (which places against the live map).
+        series = [sonarr_ep(1, 1, ep_id=101, episode_file_id=0)]
+        parses = {"Show - 01.mkv": _pinfo(season=1, episodes=(1,))}
+        seadex_dict = {
+            "RG": rg_group({"u1": url_item(files=["Show - 01.mkv"], size=[1000], infohash="h1", download=True)}),
+        }
+
+        seeds = _strat(parses, series)._reconciler.build_pending_seeds(
+            seadex_dict=seadex_dict,
+            ep_list=[],
+            entry=PendingSeedContext(al_id=1, series_id=7, title="Show", added_at=_ADDED_AT),
+        )
+
+        assert seeds["h1"].file_episode_map == {}
+        assert seeds["h1"].excluded_files == []
+
+    def test_unread_series_map_seeds_nothing(self) -> None:
+        # D12: the count legs need no map, but a seed is final where an import poll is retried,
+        # so the whole placement waits for a served list. Two numberless files over two episodes
+        # would otherwise zip in name order.
+        ep_list = [sonarr_ep(1, 1, ep_id=101, episode_file_id=0), sonarr_ep(1, 2, ep_id=102, episode_file_id=0)]
+        files = ["Show - Special A.mkv", "Show - Special B.mkv"]
+        parses = {name: _pinfo() for name in files}
+        seadex_dict = {"RG": rg_group({"u1": url_item(files=files, size=[1000, 1000], infohash="h1", download=True)})}
+        sonarr = FakeSonarrClient()
+        sonarr.episodes_return = None
+        strat = make_sonarr_sync(
+            sonarr=sonarr, cache_store=FakeCacheStore(sonarr_parse=_rows(parses)), ep_list_cache={}
+        )
+
+        seeds = strat._reconciler.build_pending_seeds(
+            seadex_dict=seadex_dict,
+            ep_list=ep_list,
+            entry=PendingSeedContext(al_id=1, series_id=7, title="Show", added_at=_ADDED_AT),
+        )
+
+        assert seeds["h1"].file_episode_map == {}
+        assert seeds["h1"].excluded_files == []
+        assert seeds["h1"].ordered_episode_ids == [101, 102]
+
     def test_sibling_slice_files_are_excluded_not_intended(self) -> None:
-        # A Part 1 entry over a Part 1+2 pack: files parsing cleanly OUTSIDE
-        # this entry's set land in excluded_files, so map + excluded account
-        # for every file and the record stays determinate (a real progress
+        # A Part 1 entry over a Part 1+2 pack: files resolving in the series map
+        # but OUTSIDE this entry's set land in excluded_files, so map + excluded
+        # account for every file and the record stays determinate (a real progress
         # bar, a deadline that re-anchors per landing file).
         ep_list = [sonarr_ep(3, 1, ep_id=101, episode_file_id=0), sonarr_ep(3, 2, ep_id=102, episode_file_id=0)]
-        parse_cache = {
-            "Show - S03E01.mkv": {"episodes": [{"season": 3, "episode": 1}]},
-            "Show - S03E02.mkv": {"episodes": [{"season": 3, "episode": 2}]},
-            "Show - S03E13.mkv": {"episodes": [{"season": 3, "episode": 13}]},
+        series = [*ep_list, sonarr_ep(3, 13, ep_id=113, episode_file_id=0)]
+        parses = {
+            "Show - S03E01.mkv": _pinfo(season=3, episodes=(1,)),
+            "Show - S03E02.mkv": _pinfo(season=3, episodes=(2,)),
+            "Show - S03E13.mkv": _pinfo(season=3, episodes=(13,)),
         }
         seadex_dict = {
             "RG": rg_group(
@@ -264,7 +364,7 @@ class TestBuildPendingSeeds:
             ),
         }
 
-        seeds = _strat(parse_cache)._reconciler.build_pending_seeds(
+        seeds = _strat(parses, series)._reconciler.build_pending_seeds(
             seadex_dict=seadex_dict,
             ep_list=ep_list,
             entry=PendingSeedContext(al_id=1, series_id=7, title="Show", added_at=_ADDED_AT),
@@ -277,14 +377,32 @@ class TestBuildPendingSeeds:
         }
         assert seed.excluded_files == [normalize_basename("Show - S03E13.mkv")]
 
+    def test_file_resolving_nowhere_in_the_series_is_not_excluded(self) -> None:
+        # Its key exists nowhere in the series, so nothing proves it another
+        # slice's: the record keeps it as possibly ours rather than writing it off.
+        ep_list = [sonarr_ep(1, 1, ep_id=101, episode_file_id=0), sonarr_ep(1, 2, ep_id=102, episode_file_id=0)]
+        parses = {"Show - S09E09.mkv": _pinfo(season=9, episodes=(9,))}
+        seadex_dict = {
+            "RG": rg_group({"u1": url_item(files=["Show - S09E09.mkv"], size=[1000], infohash="h1", download=True)}),
+        }
+
+        seeds = _strat(parses, ep_list)._reconciler.build_pending_seeds(
+            seadex_dict=seadex_dict,
+            ep_list=ep_list,
+            entry=PendingSeedContext(al_id=1, series_id=7, title="Show", added_at=_ADDED_AT),
+        )
+
+        assert seeds["h1"].file_episode_map == {}
+        assert seeds["h1"].excluded_files == []
+
     def test_collision_refused_duplicate_is_excluded(self) -> None:
         # A second claimant on an already-claimed episode (a v2 duplicate): the
-        # seed refuses it (first claim wins) AND excludes it - this record will
+        # seed refuses it (first claim wins) AND excludes it, so this record will
         # never import it, so completeness may account for it.
         ep_list = [sonarr_ep(1, 1, ep_id=101, episode_file_id=0)]
-        parse_cache = {
-            "Show - 01.mkv": {"episodes": [{"season": 1, "episode": 1}]},
-            "Show - 01v2.mkv": {"episodes": [{"season": 1, "episode": 1}]},
+        parses = {
+            "Show - 01.mkv": _pinfo(season=1, episodes=(1,)),
+            "Show - 01v2.mkv": _pinfo(season=1, episodes=(1,)),
         }
         seadex_dict = {
             "RG": rg_group(
@@ -299,7 +417,7 @@ class TestBuildPendingSeeds:
             ),
         }
 
-        seeds = _strat(parse_cache)._reconciler.build_pending_seeds(
+        seeds = _strat(parses, ep_list)._reconciler.build_pending_seeds(
             seadex_dict=seadex_dict,
             ep_list=ep_list,
             entry=PendingSeedContext(al_id=1, series_id=7, title="Show", added_at=_ADDED_AT),
@@ -314,10 +432,10 @@ class TestBuildPendingSeeds:
         # KNOWABLY another slice's, so neither is excluded - the record stays
         # indeterminate (conservative) rather than trusting an incomplete map.
         ep_list = [sonarr_ep(1, 1, ep_id=101, episode_file_id=0)]
-        parse_cache = {
-            "Show - 01.mkv": {"episodes": [{"season": 1, "episode": 1}]},
+        parses = {
+            "Show - 01.mkv": _pinfo(season=1, episodes=(1,)),
             # "Show - Extra.mkv" has no cached parse at all.
-            "Show - Zip.mkv": {"episodes": [{"season": 2, "episode": 1}], "full_season": True},
+            "Show - Zip.mkv": _pinfo(matched=(MatchedEpisode(season_number=2, episode_number=1),), full_season=True),
         }
         seadex_dict = {
             "RG": rg_group(
@@ -332,7 +450,7 @@ class TestBuildPendingSeeds:
             ),
         }
 
-        seeds = _strat(parse_cache)._reconciler.build_pending_seeds(
+        seeds = _strat(parses, ep_list)._reconciler.build_pending_seeds(
             seadex_dict=seadex_dict,
             ep_list=ep_list,
             entry=PendingSeedContext(al_id=1, series_id=7, title="Show", added_at=_ADDED_AT),
@@ -347,9 +465,9 @@ class TestBuildPendingSeeds:
         # torrent per episode. Identical title·group labels made "which episodes
         # imported?" unanswerable from the wait report / notification.
         ep_list = [sonarr_ep(2, 6, ep_id=101, episode_file_id=0), sonarr_ep(2, 7, ep_id=102, episode_file_id=0)]
-        parse_cache = {
-            "Show - S02E06.mkv": {"episodes": [{"season": 2, "episode": 6}]},
-            "Show - S02E07.mkv": {"episodes": [{"season": 2, "episode": 7}]},
+        parses = {
+            "Show - S02E06.mkv": _pinfo(season=2, episodes=(6,)),
+            "Show - S02E07.mkv": _pinfo(season=2, episodes=(7,)),
         }
         seadex_dict = {
             "RG": rg_group(
@@ -360,7 +478,7 @@ class TestBuildPendingSeeds:
             ),
         }
 
-        seeds = _strat(parse_cache)._reconciler.build_pending_seeds(
+        seeds = _strat(parses, ep_list)._reconciler.build_pending_seeds(
             seadex_dict=seadex_dict,
             ep_list=ep_list,
             entry=PendingSeedContext(al_id=1, series_id=7, title="Show", added_at=_ADDED_AT),
@@ -381,7 +499,7 @@ class TestBuildPendingSeeds:
             ),
         }
 
-        seeds = _strat({})._reconciler.build_pending_seeds(
+        seeds = _strat({}, ep_list)._reconciler.build_pending_seeds(
             seadex_dict=seadex_dict,
             ep_list=ep_list,
             entry=PendingSeedContext(al_id=1, series_id=7, title="Show", added_at=_ADDED_AT),
@@ -398,7 +516,7 @@ class TestBuildPendingSeeds:
         # unparsed one claims nothing, so its label names every episode it
         # is verified against rather than losing the slice.
         ep_list = [sonarr_ep(1, 1, ep_id=101, episode_file_id=0), sonarr_ep(1, 2, ep_id=102, episode_file_id=0)]
-        parse_cache = {"Show - S01E01.mkv": {"episodes": [{"season": 1, "episode": 1}]}}
+        parses = {"Show - S01E01.mkv": _pinfo(season=1, episodes=(1,))}
         seadex_dict = {
             "RG": rg_group(
                 {
@@ -408,7 +526,7 @@ class TestBuildPendingSeeds:
             ),
         }
 
-        seeds = _strat(parse_cache)._reconciler.build_pending_seeds(
+        seeds = _strat(parses, ep_list)._reconciler.build_pending_seeds(
             seadex_dict=seadex_dict,
             ep_list=ep_list,
             entry=PendingSeedContext(al_id=1, series_id=7, title="Show", added_at=_ADDED_AT),
@@ -429,7 +547,7 @@ class TestBuildPendingSeeds:
             ),
         }
 
-        seeds = _strat({})._reconciler.build_pending_seeds(
+        seeds = _strat({}, ep_list)._reconciler.build_pending_seeds(
             seadex_dict=seadex_dict,
             ep_list=ep_list,
             entry=PendingSeedContext(al_id=1, series_id=7, title="Show", added_at=_ADDED_AT),
@@ -449,11 +567,13 @@ class TestSeedGuards:
 
     def test_full_season_parse_never_seeds(self) -> None:
         # An OP/ED whose bare-"S05" name Sonarr matches to the whole season:
-        # the parse record carries all 12 pairs, and none of them may seed
+        # the parse carries all 12 matched pairs, and none of them may seed
         # (the old behavior imported this one file as every episode).
         ep_list = [sonarr_ep(5, e, ep_id=500 + e, episode_file_id=0) for e in range(1, 13)]
-        parse_cache = {
-            "Show S05 Ending.mkv": {"episodes": [{"season": 5, "episode": e} for e in range(1, 13)]},
+        parses = {
+            "Show S05 Ending.mkv": _pinfo(
+                matched=tuple(MatchedEpisode(season_number=5, episode_number=e) for e in range(1, 13)),
+            ),
         }
         seadex_dict = {
             "RG": rg_group(
@@ -461,7 +581,7 @@ class TestSeedGuards:
             ),
         }
 
-        seeds = _strat(parse_cache)._reconciler.build_pending_seeds(
+        seeds = _strat(parses, ep_list)._reconciler.build_pending_seeds(
             seadex_dict=seadex_dict,
             ep_list=ep_list,
             entry=PendingSeedContext(al_id=1, series_id=7, title="Show", added_at=_ADDED_AT),
@@ -477,11 +597,14 @@ class TestSeedGuards:
         # episodes: the pair count slips under the span cap, so Sonarr's own
         # fullSeason flag on the record is what keeps it from seeding.
         ep_list = [sonarr_ep(1, 1, ep_id=101, episode_file_id=0), sonarr_ep(1, 2, ep_id=102, episode_file_id=0)]
-        parse_cache = {
-            "Show S01 Opening.mkv": {
-                "episodes": [{"season": 1, "episode": 1}, {"season": 1, "episode": 2}],
-                "full_season": True,
-            },
+        parses = {
+            "Show S01 Opening.mkv": _pinfo(
+                matched=(
+                    MatchedEpisode(season_number=1, episode_number=1),
+                    MatchedEpisode(season_number=1, episode_number=2),
+                ),
+                full_season=True,
+            ),
         }
         seadex_dict = {
             "RG": rg_group(
@@ -489,7 +612,7 @@ class TestSeedGuards:
             ),
         }
 
-        seeds = _strat(parse_cache)._reconciler.build_pending_seeds(
+        seeds = _strat(parses, ep_list)._reconciler.build_pending_seeds(
             seadex_dict=seadex_dict,
             ep_list=ep_list,
             entry=PendingSeedContext(al_id=1, series_id=7, title="Show", added_at=_ADDED_AT),
@@ -501,16 +624,14 @@ class TestSeedGuards:
 
     def test_legitimate_double_episode_span_still_seeds(self) -> None:
         ep_list = [sonarr_ep(1, 1, ep_id=101, episode_file_id=0), sonarr_ep(1, 2, ep_id=102, episode_file_id=0)]
-        parse_cache = {
-            "Show - 01-02.mkv": {"episodes": [{"season": 1, "episode": 1}, {"season": 1, "episode": 2}]},
-        }
+        parses = {"Show - 01-02.mkv": _pinfo(season=1, episodes=(1, 2))}
         seadex_dict = {
             "RG": rg_group(
                 {"u1": url_item(files=["Show - 01-02.mkv"], size=[1000], infohash="h1", download=True)},
             ),
         }
 
-        seeds = _strat(parse_cache)._reconciler.build_pending_seeds(
+        seeds = _strat(parses, ep_list)._reconciler.build_pending_seeds(
             seadex_dict=seadex_dict,
             ep_list=ep_list,
             entry=PendingSeedContext(al_id=1, series_id=7, title="Show", added_at=_ADDED_AT),
@@ -522,16 +643,15 @@ class TestSeedGuards:
         # A double-episode file straddling the entry boundary: only episode 1
         # is in this entry's list, so seeding [101] would half-import the file.
         ep_list = [sonarr_ep(1, 1, ep_id=101, episode_file_id=0)]
-        parse_cache = {
-            "Show - 01-02.mkv": {"episodes": [{"season": 1, "episode": 1}, {"season": 1, "episode": 2}]},
-        }
+        series = [*ep_list, sonarr_ep(1, 2, ep_id=102, episode_file_id=0)]
+        parses = {"Show - 01-02.mkv": _pinfo(season=1, episodes=(1, 2))}
         seadex_dict = {
             "RG": rg_group(
                 {"u1": url_item(files=["Show - 01-02.mkv"], size=[1000], infohash="h1", download=True)},
             ),
         }
 
-        seeds = _strat(parse_cache)._reconciler.build_pending_seeds(
+        seeds = _strat(parses, series)._reconciler.build_pending_seeds(
             seadex_dict=seadex_dict,
             ep_list=ep_list,
             entry=PendingSeedContext(al_id=1, series_id=7, title="Show", added_at=_ADDED_AT),
@@ -544,9 +664,9 @@ class TestSeedGuards:
         # wins, deterministically, and the later claimant is left for
         # import-time assignment (which refuses the second claim of a taken id).
         ep_list = [sonarr_ep(2, 13, ep_id=213, episode_file_id=0)]
-        parse_cache = {
-            "Show - 13.mkv": {"episodes": [{"season": 2, "episode": 13}]},
-            "Show - 13v2.mkv": {"episodes": [{"season": 2, "episode": 13}]},
+        parses = {
+            "Show - 13.mkv": _pinfo(season=2, episodes=(13,)),
+            "Show - 13v2.mkv": _pinfo(season=2, episodes=(13,)),
         }
         seadex_dict = {
             "RG": rg_group(
@@ -561,7 +681,7 @@ class TestSeedGuards:
             ),
         }
 
-        seeds = _strat(parse_cache)._reconciler.build_pending_seeds(
+        seeds = _strat(parses, ep_list)._reconciler.build_pending_seeds(
             seadex_dict=seadex_dict,
             ep_list=ep_list,
             entry=PendingSeedContext(al_id=1, series_id=7, title="Show", added_at=_ADDED_AT),
@@ -574,9 +694,9 @@ class TestSeedGuards:
         # defers the whole file on any collision, so the seed refuses it whole
         # rather than seeding the free half.
         ep_list = [sonarr_ep(1, 1, ep_id=101, episode_file_id=0), sonarr_ep(1, 2, ep_id=102, episode_file_id=0)]
-        parse_cache = {
-            "Show - 01.mkv": {"episodes": [{"season": 1, "episode": 1}]},
-            "Show - 01-02.mkv": {"episodes": [{"season": 1, "episode": 1}, {"season": 1, "episode": 2}]},
+        parses = {
+            "Show - 01.mkv": _pinfo(season=1, episodes=(1,)),
+            "Show - 01-02.mkv": _pinfo(season=1, episodes=(1, 2)),
         }
         seadex_dict = {
             "RG": rg_group(
@@ -591,7 +711,7 @@ class TestSeedGuards:
             ),
         }
 
-        seeds = _strat(parse_cache)._reconciler.build_pending_seeds(
+        seeds = _strat(parses, ep_list)._reconciler.build_pending_seeds(
             seadex_dict=seadex_dict,
             ep_list=ep_list,
             entry=PendingSeedContext(al_id=1, series_id=7, title="Show", added_at=_ADDED_AT),
@@ -604,7 +724,7 @@ class TestSeedGuards:
         # map: the first occurrence's claim stands and the copy is refused,
         # so the map is deterministic and never double-claims the id.
         ep_list = [sonarr_ep(1, 1, ep_id=101, episode_file_id=0)]
-        parse_cache = {"Show - 01.mkv": {"episodes": [{"season": 1, "episode": 1}]}}
+        parses = {"Show - 01.mkv": _pinfo(season=1, episodes=(1,))}
         seadex_dict = {
             "RG": rg_group(
                 {
@@ -618,7 +738,7 @@ class TestSeedGuards:
             ),
         }
 
-        seeds = _strat(parse_cache)._reconciler.build_pending_seeds(
+        seeds = _strat(parses, ep_list)._reconciler.build_pending_seeds(
             seadex_dict=seadex_dict,
             ep_list=ep_list,
             entry=PendingSeedContext(al_id=1, series_id=7, title="Show", added_at=_ADDED_AT),
@@ -636,15 +756,20 @@ class TestParseWriteVisibleToSeeds:
     visible to the seed read - the staged-write invariant the split risks.
     """
 
-    def test_parse_write_feeds_seed_build(self) -> None:
-        sonarr = FakeSonarrClient(parse=[ParsedEpisode(season=1, episode=1)])
-        # No pre-seed: the parse pass must populate the shared cache itself.
-        strat = make_sonarr_sync(
-            sonarr=sonarr,
-            config=make_config(sleep_time=2),  # sequential: deterministic, no warm pool
+    @staticmethod
+    def _strat(parse: ParsedFileInfo, ep_list: list[SonarrEpisode]) -> SonarrSync:
+        """A strat whose Sonarr answers every `/parse` with `parse`, its cache cold."""
+
+        return make_sonarr_sync(
+            sonarr=FakeSonarrClient(parse_fn=lambda _f: parse),
             cache_store=FakeCacheStore(),
+            ep_list_cache={7: ep_list},
         )
+
+    def test_parse_write_feeds_seed_build(self) -> None:
         ep_list = [sonarr_ep(1, 1, ep_id=101, episode_file_id=0)]
+        parse = _pinfo(season=1, episodes=(1,), matched=(MatchedEpisode(season_number=1, episode_number=1),))
+        strat = self._strat(parse, ep_list)
         seadex_dict = {
             "RG": rg_group(
                 {"u1": url_item(files=["Show - 01.mkv"], size=[1000], infohash="h1", download=True)},
@@ -652,7 +777,7 @@ class TestParseWriteVisibleToSeeds:
         }
 
         # Writer: fills the SHARED cache_store via the parse collaborator.
-        strat._parse.parse_episodes_from_seadex(seadex_dict, series_fp="fp")
+        strat._parse.parse_episodes_from_seadex(seadex_dict, series_fp="")
         # Reader: the seed builder reads that record back out of the same store.
         seeds = strat._reconciler.build_pending_seeds(
             seadex_dict=seadex_dict,
@@ -665,23 +790,22 @@ class TestParseWriteVisibleToSeeds:
     def test_full_season_flag_flows_from_parse_write_to_seed_refusal(self) -> None:
         # End-to-end through the real write path: a fullSeason parse persists the
         # flag on the record, and the seed builder refuses the file by it.
-        sonarr = FakeSonarrClient(
-            parse=[ParsedEpisode(season=1, episode=1), ParsedEpisode(season=1, episode=2)],
-            parse_full_season=True,
-        )
-        strat = make_sonarr_sync(
-            sonarr=sonarr,
-            config=make_config(sleep_time=2),  # sequential: deterministic, no warm pool
-            cache_store=FakeCacheStore(),
-        )
         ep_list = [sonarr_ep(1, 1, ep_id=101, episode_file_id=0), sonarr_ep(1, 2, ep_id=102, episode_file_id=0)]
+        parse = _pinfo(
+            matched=(
+                MatchedEpisode(season_number=1, episode_number=1),
+                MatchedEpisode(season_number=1, episode_number=2),
+            ),
+            full_season=True,
+        )
+        strat = self._strat(parse, ep_list)
         seadex_dict = {
             "RG": rg_group(
                 {"u1": url_item(files=["Show S01 Opening.mkv"], size=[1000], infohash="h1", download=True)},
             ),
         }
 
-        strat._parse.parse_episodes_from_seadex(seadex_dict, series_fp="fp")
+        strat._parse.parse_episodes_from_seadex(seadex_dict, series_fp="")
         seeds = strat._reconciler.build_pending_seeds(
             seadex_dict=seadex_dict,
             ep_list=ep_list,

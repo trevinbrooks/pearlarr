@@ -866,26 +866,6 @@ class MovieFile(_ApiModel):
 # --- Sonarr parse (`/api/v3/parse` `parsedEpisodeInfo`) -------------------
 
 
-class ParsedEpisode(NamedTuple):
-    """One Sonarr `/parse` series-MATCHED `(season, episode)` pair.
-
-    Persisted as a `{"season", "episode"}` JSON object at the parse-cache seam.
-    """
-
-    season: int
-    episode: int
-
-
-class SonarrParse(NamedTuple):
-    """One Sonarr `/parse` result: the matched pairs plus the parse-level flag.
-
-    `full_season` (a bare "S0X" name) is parse-level, not per pair. A failed parse stays `None`, never this.
-    """
-
-    episodes: list[ParsedEpisode]
-    full_season: bool = False
-
-
 def _tuple_or_empty(value: object) -> object:
     """Fold a null/absent number array to () (Sonarr nulls empty arrays)."""
 
@@ -898,7 +878,8 @@ class MatchedEpisode(_ApiModel):
     season_number: int = Field(validation_alias="seasonNumber")
     episode_number: int = Field(validation_alias="episodeNumber")
     id: int | None = None
-    """Sonarr's episode id, cross-checked against OUR map so a wrong-series title match is refused."""
+    """Sonarr's episode id, cross-checked against OUR map so a wrong-series title match is refused (None only
+    from an offline stand-in)."""
 
 
 class ParsedFileInfo(_ApiModel):
@@ -933,7 +914,8 @@ class ParsedFileInfo(_ApiModel):
     )
     """A season-pack-shaped name (bare "S01"). Its matched pairs span the season, never one file's claims."""
     offline: bool = False
-    """Built by the offline SxxExx fallback, not Sonarr's parser (`ParseResource` has no such property)."""
+    """Built by the offline SxxExx fallback, not Sonarr's parser (`ParseResource` has no such property). Never
+    persisted: the parse cache refuses an offline stand-in."""
     matched_episodes: tuple[MatchedEpisode, ...] = Field(default=(), validation_alias="episodes")
     """Sonarr's series-matched pairs. The exact leg's fallback when the name carries no `(season, episode)`."""
 

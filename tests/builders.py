@@ -43,6 +43,7 @@ from pearlarr.manual_import import (
 from pearlarr.mappings import MappingResolver, MappingSources
 from pearlarr.notify import Notifier
 from pearlarr.output import SeverityCounts, emit_to_hub
+from pearlarr.parse_records import ParseRecords
 from pearlarr.pending_records import PendingRecords
 from pearlarr.planner import DownloadPlanner, PlanResult, PrivateOnlySkips
 from pearlarr.radarr_client import AbstractRadarrClient
@@ -731,6 +732,7 @@ def make_run_deps(
         categories=categories,
         clock=clock or FakeClock(),
         web=http,
+        parse_records=ParseRecords(cache_store),
         http=http,
         qbit=None,
         # A real resolver over empty in-memory mappings (no network). It carries a real (empty)
@@ -1024,6 +1026,7 @@ def import_probe(
     target_count: int = 0,
     deferral: Deferral = Deferral.NONE,
     placements: dict[str, list[int]] | None = None,
+    exclusions: tuple[str, ...] = (),
     unmatched_files: tuple[str, ...] = (),
 ) -> ImportProbe:
     """An `ImportProbe` defaulting to the verified-import outcome (`files_present`)."""
@@ -1035,6 +1038,7 @@ def import_probe(
         target_count=target_count,
         deferral=deferral,
         placements=placements or {},
+        exclusions=exclusions,
         unmatched_files=unmatched_files,
     )
 

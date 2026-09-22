@@ -21,6 +21,7 @@ from .manual_import import (
     path_leaf,
 )
 from .output import hub_note, hub_warn
+from .parse_records import ParseWindow
 from .run_services import RunDeps
 from .seadex_types import (
     CommandResource,
@@ -52,6 +53,7 @@ from .sonarr_import_plan import (
     QueueVerdict,
     SeedFile,
     SeedRelease,
+    SeedScope,
     TargetStatuses,
     build_pending_seed,
     classify_commands,
@@ -71,7 +73,7 @@ from .sonarr_import_plan import (
     trusted_groups,
 )
 from .sonarr_mapper import FileEpisodeMapper
-from .sonarr_parse import parsed_episodes, parsed_full_season, video_file_entries
+from .sonarr_parse import video_file_entries
 
 # RefreshMonitoredDownloads is quick. Poll its status this many times (sleeping between) so the queue we read
 # next reflects the rescan, then proceed regardless so a stuck command never blocks the run.
@@ -409,33 +411,42 @@ class ImportExecutor:
                 f"{content_path}: Sonarr's history placed {count_noun(len(recovered), 'file')} "
                 f"for {pending.display_label} that no scan saw"
             )
-        authoritative = {**assignment.assigned, **recovered}
-        skips = self._reportable_skips(pending, assignment.skipped)
-        if skips and not assignment.settled:
-            # A parse or episode-index miss may be hiding the match, so the skip is no verdict yet. Ask again next poll.
-            self.logger.debug(
-                f"{pending.display_label}: {count_noun(len(skips), 'file')} unplaced behind a missing input"
-            )
-        elif skips and not authoritative:
+        placed = assignment.placed
+        excluded = assignment.excluded
+        authoritative = {**assignment.seeded, **placed, **recovered}
+        on_record = set(pending.excluded_files)
+        if new_exclusions := [p for p in excluded if p.name not in on_record]:
+            verdicts = ", ".join(f"{p.name} ({p.verdict})" for p in new_exclusions)
+            self.logger.debug(f"{pending.display_label}: never this record's to import: {verdicts}")
+        unplaced = assignment.unplaced
+        if unplaced and assignment.settled and not authoritative:
             if context.snapshot.statuses(pending.resolved_ids()).all_done():
                 # A hand import placed what no poll could: every intended episode holds a recommended file.
                 self.logger.debug(f"{content_path}: already imported (recommended files present)")
-                return ImportProbe.imported()
-            # Nothing to verify or import, and the same files skip again next poll: an outcome, not a wait.
-            # Every skipped name is an on-disk key (the mapper skips only what it read from the scan), and
-            # nothing was placed, so the placements tail below has nothing to add.
-            names = tuple(path_leaf(context.candidates_by_basename[name].path) for name in skips)
-            return ImportProbe.unmatched(names)
-        elif skips:
-            self._warn_unplaceable_files(pending, skips)
-        for name, ids in {**assignment.placed, **recovered}.items():
-            self.logger.debug(f"{pending.display_label}: placed {name} -> {ids}")
-
-        probe = self._verify_or_import(context, authoritative)
-        # The mapper's placements are kept whatever the branch (the file was on disk this poll). History's
-        # are kept only once they verified, so a row that never verifies is re-derived next run, not pinned.
-        placements = {**assignment.placed, **recovered} if probe.files_present else assignment.placed
-        return replace(probe, placements=placements)
+                probe = ImportProbe.imported()
+            else:
+                # Nothing to verify or import, and the same files come back next poll: an outcome, not a wait.
+                # The skips name what a hand import must place (every one an on-disk key, since the mapper
+                # judges only what it read from the scan). Only exclusions fall back to naming those.
+                unmatched = assignment.skipped or unplaced
+                names = tuple(path_leaf(context.candidates_by_basename[name].path) for name in unmatched)
+                probe = ImportProbe.unmatched(names)
+        else:
+            if unplaced and not assignment.settled and not context.at_deadline:
+                # A parse or episode-index miss may be hiding the match, so the skip is no verdict yet. Ask again next poll.
+                self.logger.debug(
+                    f"{pending.display_label}: {count_noun(len(unplaced), 'file')} unplaced behind a missing input"
+                )
+            elif skips := self._reportable_skips(pending, assignment.skipped):
+                # From the deadline on a miss that never healed is reported like any other skip.
+                self._warn_unplaceable_files(pending, skips)
+            for name, ids in {**placed, **recovered}.items():
+                self.logger.debug(f"{pending.display_label}: placed {name} -> {ids}")
+            probe = self._verify_or_import(context, authoritative)
+        # The mapper's placements and exclusions are kept whatever the branch (the file was on disk this poll).
+        # History's are kept only once they verified, so a row that never verifies is re-derived next run, not pinned.
+        placements = {**placed, **recovered} if probe.files_present else placed
+        return replace(probe, placements=placements, exclusions=tuple(p.name for p in excluded))
 
     def _verify_or_import(self, context: _ImportContext, authoritative_map: dict[str, list[int]]) -> ImportProbe:
         """Verify the mapped files, or plan and POST the import for the ones still needed."""
@@ -528,10 +539,11 @@ class ImportExecutor:
         else:
             self.logger.debug(message)
 
-    def _reportable_skips(self, pending: PendingImport, skipped: list[str]) -> tuple[str, ...]:
-        """The skipped names no grab-time exclusion accounts for.
+    def _reportable_skips(self, pending: PendingImport, skipped: tuple[str, ...]) -> tuple[str, ...]:
+        """The skipped names no recorded exclusion accounts for.
 
-        A file excluded at grab time (a sibling's slice, a refused duplicate) was reported then and stays quiet.
+        A file excluded at grab time or on an earlier poll (a sibling's slice, a refused duplicate) was
+        reported then and stays quiet.
         """
 
         excluded = {normalized_leaf(name) for name in pending.excluded_files}
@@ -539,7 +551,7 @@ class ImportExecutor:
         if len(reportable) < len(skipped):
             self.logger.debug(
                 f"{pending.display_label}: {count_noun(len(skipped) - len(reportable), 'file')} "
-                "excluded at grab time, not reported"
+                "excluded on record, not reported"
             )
         return reportable
 
@@ -645,6 +657,7 @@ class ImportReconciler:
 
         self._episodes = episodes
         self._executor = executor
+        self._parses = deps.parse_records
         self.cache_store = deps.cache_store
         self.logger = deps.logger
 
@@ -661,9 +674,16 @@ class ImportReconciler:
         if not flagged:
             return {}
 
-        # One index for the whole entry: its ordered ids ride every record, so import-time assignment maps files
-        # into OUR set instead of re-deriving identity from Sonarr's title parse.
-        index = episode_index(ep_list)
+        # One scope for the whole entry: its ordered ids ride every record, so import-time assignment maps files
+        # into OUR set instead of re-deriving identity from Sonarr's title parse. The series map is the same
+        # whole-series index the mapper reads at import time. A list that could not be read seeds NOTHING
+        # (an empty map refuses every map-dependent verdict) and import time places from scratch: the
+        # entry's own index is no stand-in, since a key it lacks would read as bogus and place as numberless.
+        series = self._episodes.cached_episodes(entry.series_id)
+        scope = SeedScope(episode_index(ep_list), episode_index(series or []).id_by_key)
+        # The parses are the sweep's own staged rows, read under the same freshness rule (a row the sweep
+        # refused and could not refresh is a miss here too).
+        window = ParseWindow.open(self._episodes.series_fp)
 
         pending_seeds: dict[str, PendingImport] = {}
         for srg, url_item, infohash in flagged:
@@ -674,9 +694,9 @@ class ImportReconciler:
                 release_group=srg,
                 url_item=url_item,
                 infohash=infohash,
-                files=tuple(self._seed_file(base) for base in video_files),
+                files=tuple(SeedFile(base, self._parses.read(base, window=window)) for base in video_files),
             )
-            seed = build_pending_seed(release, index, entry)
+            seed = build_pending_seed(release, scope, entry)
             if seed.excluded_files:
                 self.logger.debug(
                     f"{entry.title}: not counted toward completeness "
@@ -685,14 +705,6 @@ class ImportReconciler:
             pending_seeds[infohash] = seed
 
         return pending_seeds
-
-    def _seed_file(self, base: str) -> SeedFile:
-        """One video file with its grab-time parse (staged SQLite writes are visible on the same connection)."""
-
-        record = self.cache_store.get_sonarr_parse(base)
-        if not record:
-            return SeedFile(base, episodes=None)
-        return SeedFile(base, tuple(parsed_episodes(record)), parsed_full_season(record))
 
     def import_completed(
         self,
@@ -785,7 +797,7 @@ class ImportReconciler:
     def _seed_statuses(self, pending: PendingImport, targets: list[int]) -> _SeedStatuses:
         """Fetch the series' episodes FRESH and classify `targets` against them (`[]` still builds the snapshot)."""
 
-        episodes = self._episodes.episodes_for_series(pending.series_id)
+        episodes = self._episodes.fresh_episodes(pending.series_id)
         snapshot = EpisodeSnapshot(
             episodes=episode_index(episodes),
             trusted=trusted_groups(pending, self._series_pending_records(pending.series_id)),

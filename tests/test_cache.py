@@ -29,7 +29,8 @@ from pearlarr.log import LOG_NAME
 from pearlarr.manual_import import GuardFacts, OwnedEpisode, PendingImport, PendingKey
 from pearlarr.output import Diagnostic, Severity, install_hub
 from pearlarr.output.recording import RecordingHub
-from pearlarr.sonarr_parse import parsed_full_season
+from pearlarr.parse_records import parsed_info, to_parse_record
+from pearlarr.seadex_types import ParsedFileInfo
 from pearlarr.sqlite_util import is_corruption
 
 from .builders import make_entry_record
@@ -678,37 +679,42 @@ class TestRecordFreshness:
 
 
 class TestSonarrParse:
-    """Parsed Sonarr episode records round-trip keyed by filename, and a missing filename reads back None."""
+    """Parsed Sonarr records round-trip whole keyed by filename, and a missing filename reads back None."""
 
     def test_roundtrip_get(self, tmp_path: Path) -> None:
         store = _open(tmp_path)
-        rec = {"fetched_at": "2026-06-20 12:00:00", "episodes": [{"season": 1, "episode": 2}]}
+        info = ParsedFileInfo(season_number=1, episode_numbers=(2,))
+        rec = {"fetched_at": "2026-06-20 12:00:00", "parse": to_parse_record(info)}
         store.put_sonarr_parse("file.mkv", rec)
-        assert store.get_sonarr_parse("file.mkv") == rec
+        read_back = store.get_sonarr_parse("file.mkv")
+        assert read_back == rec
+        assert read_back is not None
+        assert parsed_info(read_back) == info
         assert store.get_sonarr_parse("missing.mkv") is None
         store.close()
 
-    def test_full_season_key_round_trips(self, tmp_path: Path) -> None:
+    def test_series_fingerprint_key_round_trips(self, tmp_path: Path) -> None:
+        # The unmatched record's pin: the freshness reader dispatches on its presence.
         store = _open(tmp_path)
         rec = {
             "fetched_at": "2026-06-20 12:00:00",
-            "episodes": [{"season": 5, "episode": 1}],
-            "full_season": True,
+            "parse": to_parse_record(ParsedFileInfo()),
+            "series_fp": "fp",
         }
-        store.put_sonarr_parse("op.mkv", rec)
-        assert store.get_sonarr_parse("op.mkv") == rec
+        store.put_sonarr_parse("unmatched.mkv", rec)
+        assert store.get_sonarr_parse("unmatched.mkv") == rec
         store.close()
 
-    def test_legacy_record_reads_back_without_full_season(self, tmp_path: Path) -> None:
-        # A pre-existing row carries no full_season key: it reads back absent, so
-        # parsed_full_season yields False and it seeds exactly as before.
+    def test_legacy_record_reads_back_unreadable(self, tmp_path: Path) -> None:
+        # A pre-existing row carries an episode list, not a whole parse: it reads
+        # back verbatim and the parse reader refuses it, so the file re-parses.
         store = _open(tmp_path)
         rec = {"fetched_at": "2026-06-20 12:00:00", "episodes": [{"season": 1, "episode": 1}]}
         store.put_sonarr_parse("legacy.mkv", rec)
         read_back = store.get_sonarr_parse("legacy.mkv")
+        assert read_back == rec
         assert read_back is not None
-        assert "full_season" not in read_back
-        assert parsed_full_season(read_back) is False
+        assert parsed_info(read_back) is None
         store.close()
 
 
@@ -1005,9 +1011,9 @@ class TestMaintenance:
 
     def test_evict_sonarr_parse_drops_only_stale(self, tmp_path: Path) -> None:
         store = _open(tmp_path)
-        eps = [{"season": 1, "episode": 1}]
-        store.put_sonarr_parse("old.mkv", {"fetched_at": "2020-01-01 00:00:00", "episodes": eps})
-        store.put_sonarr_parse("new.mkv", {"fetched_at": "2026-06-26 12:00:00", "episodes": eps})
+        parse = to_parse_record(ParsedFileInfo(season_number=1, episode_numbers=(1,)))
+        store.put_sonarr_parse("old.mkv", {"fetched_at": "2020-01-01 00:00:00", "parse": parse})
+        store.put_sonarr_parse("new.mkv", {"fetched_at": "2026-06-26 12:00:00", "parse": parse})
         assert store.evict_sonarr_parse(datetime(2026, 6, 20)) == 1
         assert store.get_sonarr_parse("old.mkv") is None
         assert store.get_sonarr_parse("new.mkv") is not None
@@ -1022,7 +1028,7 @@ class TestMaintenance:
         assert store.evict_anilist_meta(datetime(2026, 6, 20)) == 1  # only the stampless
         assert store.get_anilist_meta(1) is None
         assert store.get_anilist_meta(2) is not None  # fresh, stamped -> kept
-        store.put_sonarr_parse("nostamp.mkv", {"episodes": []})  # no fetched_at -> NULL
+        store.put_sonarr_parse("nostamp.mkv", {"parse": {}})  # no fetched_at -> NULL
         assert store.evict_sonarr_parse(datetime(2026, 6, 20)) == 1
         assert store.get_sonarr_parse("nostamp.mkv") is None
         store.close()

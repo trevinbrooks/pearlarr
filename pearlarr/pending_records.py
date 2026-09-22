@@ -1,10 +1,9 @@
 """Views and writes over one arr's durable pending-import rows plus the run list."""
 
-from collections.abc import Mapping
 from typing import Any
 
 from .cache import AbstractCacheStore
-from .manual_import import PendingImport, PendingKey, hydrate_pending, is_awaiting_cleanup
+from .manual_import import ImportProbe, PendingImport, PendingKey, hydrate_pending, is_awaiting_cleanup
 from .reporter import RunContext
 
 
@@ -95,15 +94,15 @@ class PendingRecords:
         if pending.key in self._ctx.pending_imports:
             self._ctx.pending_imports[pending.key] = pending
 
-    def absorb_placements(self, record: PendingImport, placements: Mapping[str, list[int]]) -> PendingImport:
-        """Persist a poll's import-time placements onto the record and return the healed copy.
+    def absorb_probe(self, record: PendingImport, probe: ImportProbe) -> PendingImport:
+        """Persist a poll's import-time placements and exclusions onto the record and return the healed copy.
 
-        Empty placements are a no-op (no write).
+        Writes only when the healed record differs from the stored one.
         """
 
-        if not placements:
+        healed = record.with_placements(probe.placements).with_exclusions(probe.exclusions)
+        if healed == record:
             return record
-        healed = record.with_placements(placements)
         self.save(healed)
         return healed
 

@@ -1,7 +1,7 @@
 """The completion-wait "consume" side: poll, observe, and the end-of-run import pass."""
 
 import logging
-from collections.abc import Callable, Mapping
+from collections.abc import Callable
 from dataclasses import dataclass, field, replace
 from typing import NamedTuple
 
@@ -302,7 +302,7 @@ class PostImportCleanup:
         # DEADLINE, not POLL: the heal is one attempt per run with no clock to escalate it,
         # and a partial seed map only verifies past a clean importPending by stepping in.
         probe = self._probes.try_import_completed(record, path, AttemptKind.DEADLINE)
-        record = self._records.absorb_placements(record, probe.placements)
+        record = self._records.absorb_probe(record, probe)
         if probe.files_present:
             self._finish_cleanup(record)
         elif probe.deferral is Deferral.ISSUED:
@@ -371,10 +371,10 @@ class ImportWaitManager:
 
         self._ctx.pending_states[key] = PENDING_STATE_FOR_OUTCOME[outcome]
 
-    def absorb_placements(self, record: PendingImport, placements: Mapping[str, list[int]]) -> PendingImport:
-        """Persist a poll's import-time placements onto the record and return the healed copy."""
+    def absorb_probe(self, record: PendingImport, probe: ImportProbe) -> PendingImport:
+        """Persist a poll's import-time placements and exclusions onto the record and return the healed copy."""
 
-        return self._records.absorb_placements(record, placements)
+        return self._records.absorb_probe(record, probe)
 
     def resolve_terminal(self, record: PendingImport, outcome: Outcome, *, carried_over: bool) -> None:
         """One terminal outcome's store effects: retire on IMPORTED, drop on MISSING, else fold the state.
@@ -926,7 +926,7 @@ class MonitorPass:
             AttemptKind.DEADLINE if at_deadline else AttemptKind.POLL,
         )
         # The placements land before any outcome: the retire, the keep, the next poll, and the Tier-2 bar read them.
-        record = row.record = self._mgr.absorb_placements(record, probe.placements)
+        record = row.record = self._mgr.absorb_probe(record, probe)
         landed = clock.note_progress(probe.imported_count, probe.target_count, now_ts)
         # Waiting on Sonarr's import work is not this record stalling (a landed poll already re-anchored
         # harder than a pause would).

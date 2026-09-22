@@ -15,6 +15,8 @@ from .seadex_types import EpisodeKey, ManualImportCandidate, ParsedFileInfo
 from .sonarr_client import AbstractSonarrClient
 from .sonarr_import_plan import (
     CandidateFile,
+    EpisodeAssignment,
+    Placement,
     PlacementBatch,
     TargetScope,
     assign_episode_ids,
@@ -50,17 +52,45 @@ def _rejection_matches(candidate: ManualImportCandidate, tokens: tuple[str, ...]
 
 
 class FileAssignment(NamedTuple):
-    """One poll's file -> episode map: the seeded entries plus what the mapper placed this poll."""
+    """One poll's file -> episode map: the seeded entries plus this poll's verdict on every other leaf."""
 
-    assigned: dict[str, list[int]]
-    """The seeded entries plus `placed`, keyed by normalized basename."""
-    skipped: list[str]
-    """Unplaceable on-disk video leaves, for the executor to warn about."""
-    placed: dict[str, list[int]]
-    """This poll's fresh placements alone, for the caller to persist."""
+    result: EpisodeAssignment
+    """This poll's verdicts on the unseeded on-disk video leaves, SeaDex order."""
+    seeded: dict[str, list[int]]
+    """The grab-time map's entries, keyed by normalized basename."""
     settled: bool
     """Whether the skips are a verdict against real inputs: every parse known (`PlacementBatch.all_parses_known`)
     and the episode index served. False makes a skip tentative, re-asked next poll."""
+
+    @property
+    def placed(self) -> dict[str, list[int]]:
+        """This poll's fresh placements alone, for the caller to persist."""
+
+        return self.result.assigned
+
+    @property
+    def assigned(self) -> dict[str, list[int]]:
+        """The seeded entries plus `placed`."""
+
+        return {**self.seeded, **self.placed}
+
+    @property
+    def skipped(self) -> tuple[str, ...]:
+        """Unplaceable on-disk video leaves nothing proved foreign, for the executor to warn about."""
+
+        return self.result.skipped
+
+    @property
+    def excluded(self) -> tuple[Placement, ...]:
+        """The leaves this record knowably never imports, with their verdicts (for the caller to persist)."""
+
+        return self.result.excluded
+
+    @property
+    def unplaced(self) -> tuple[str, ...]:
+        """Every leaf without ids: the skips plus the exclusions."""
+
+        return self.result.unplaced
 
 
 class FileEpisodeMapper:
@@ -145,9 +175,9 @@ class FileEpisodeMapper:
         back as `placed` for the caller to persist; the record is never mutated.
         SeaDex order keeps output and the absolute leg stable.
 
-        Returns the merged map plus the unplaceable basenames. A basename
+        Returns the seeded map plus one verdict per leftover leaf. A basename
         duplicated across folders collapses in the basename-keyed pool, so it
-        is reported unplaceable at most once - and never when the map placed it.
+        carries one verdict.
         """
 
         on_disk = {
@@ -196,20 +226,8 @@ class FileEpisodeMapper:
 
         batch = PlacementBatch(leftover, parsed_by_file)
         result = assign_episode_ids(batch, TargetScope(resolved_ids, id_by_key, used=frozenset(seeded_ids)))
-
-        merged = {**seeded, **result.assigned}
-        # A duplicate leaf (one basename in two folders) collapses in the
-        # basename-keyed pool: its second occurrence defers off the used-set
-        # and lands in skipped even though the name WAS placed. The warning
-        # follows the map - placed names drop out, repeats collapse.
-        skipped = [name for name in dict.fromkeys(result.skipped) if name not in merged]
         # An empty index means the exact leg could not have matched a numbered name this poll.
-        return FileAssignment(
-            assigned=merged,
-            skipped=skipped,
-            placed=result.assigned,
-            settled=batch.all_parses_known and bool(id_by_key),
-        )
+        return FileAssignment(result, seeded, settled=batch.all_parses_known and bool(id_by_key))
 
     def _parsed_file_info(self, raw_base: str) -> ParsedFileInfo | None:
         """Sonarr `/parse` of one on-disk leaf, cached per run.
@@ -222,7 +240,7 @@ class FileEpisodeMapper:
 
         if raw_base in self._parse_info_cache:
             return self._parse_info_cache[raw_base]
-        info = self.sonarr.parse_episode_info(raw_base)
+        info = self.sonarr.parse(raw_base)
         if info is None:
             return parse_se_from_filename(raw_base)
         self._parse_info_cache[raw_base] = info

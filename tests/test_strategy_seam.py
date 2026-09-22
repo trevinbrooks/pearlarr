@@ -978,9 +978,7 @@ class TestImportCompletedQueueState:
             quality_defs=[],
             languages=[],
             execute_command_id=42,
-            parse_episode_info_fn=lambda name: (
-                ParsedFileInfo(season_number=1, episode_numbers=(2,)) if name == wrong_file else None
-            ),
+            parse_fn=lambda name: ParsedFileInfo(season_number=1, episode_numbers=(2,)) if name == wrong_file else None,
         )
         strat = make_sonarr_sync(sonarr=sonarr, config=make_config(), cache_store=FakeCacheStore())
 
@@ -2185,7 +2183,7 @@ class TestManualImportWarningGating:
             candidates=[manual_candidate("/d/Show - 01 [1080p].mkv"), *(manual_candidate(f"/d/{n}") for n in names)],
             episodes=[sonarr_ep(1, 1, ep_id=101, episode_file_id=0)],
         )
-        sonarr.parse_episode_info_fn = lambda _n: ParsedFileInfo()
+        sonarr.parse_fn = lambda _n: ParsedFileInfo()
         logger = logging.getLogger("pearlarr-warning-gating")
         logger.handlers.clear()
         logger.propagate = True
@@ -2210,7 +2208,7 @@ class TestManualImportWarningGating:
         assert probe.command_issued is True
         assert len(sonarr.execute_calls) == 1
         assert not any("could not be matched" in m for m in diagnostic_messages(recording, Severity.WARNING))
-        assert any("1 file excluded at grab time" in r.message and r.levelname == "DEBUG" for r in caplog.records)
+        assert any("1 file excluded on record" in r.message and r.levelname == "DEBUG" for r in caplog.records)
 
     def test_partial_exclusion_warns_the_remainder_once(self) -> None:
         # One excluded plus one genuinely unplaceable file: the warning names
@@ -2235,7 +2233,7 @@ class TestManualImportWarningGating:
         # "could not be matched" warning waits for a poll whose parses were all served.
         pending = pending_import(seadex_files=["Show - 01 [1080p].mkv", "Extras.mkv"])
         strat, sonarr = self._strat_with_unplaceable("Extras.mkv")
-        sonarr.parse_episode_info_fn = lambda _n: None
+        sonarr.parse_fn = lambda _n: None
         recording = install_recording_hub()
 
         probe = strat.import_completed(pending, "/d", AttemptKind.POLL)
@@ -2244,6 +2242,21 @@ class TestManualImportWarningGating:
         assert probe.unmatched_files == ()
         assert len(sonarr.execute_calls) == 1
         assert not any("could not be matched" in m for m in diagnostic_messages(recording, Severity.WARNING))
+
+    def test_unsettled_skip_warns_at_the_deadline(self) -> None:
+        # A miss that never healed is reported from the deadline on, so a record held behind it is
+        # visible rather than silently re-asked until it ages out. The seeded file still imports.
+        pending = pending_import(seadex_files=["Show - 01 [1080p].mkv", "Extras.mkv"])
+        strat, sonarr = self._strat_with_unplaceable("Extras.mkv")
+        sonarr.parse_fn = lambda _n: None
+        recording = install_recording_hub()
+
+        probe = strat.import_completed(pending, "/d", AttemptKind.DEADLINE)
+
+        assert probe.command_issued is True
+        assert len(sonarr.execute_calls) == 1
+        warnings = [m for m in diagnostic_messages(recording, Severity.WARNING) if "could not be matched" in m]
+        assert len(warnings) == 1
 
 
 class TestUnmatchedProbe:
@@ -2275,7 +2288,7 @@ class TestUnmatchedProbe:
             episodes=[target] if served else None,
         )
         if served:
-            sonarr.parse_episode_info_fn = lambda _n: ParsedFileInfo()
+            sonarr.parse_fn = lambda _n: ParsedFileInfo()
         return strat, sonarr
 
     def test_settled_all_unmatched_returns_the_names_without_a_warning(self) -> None:
@@ -2297,7 +2310,7 @@ class TestUnmatchedProbe:
     def test_a_parse_miss_keeps_the_poll_a_wait(self) -> None:
         pending = self._numberless_pair()
         strat, sonarr = self._strat()
-        sonarr.parse_episode_info_fn = lambda _n: None
+        sonarr.parse_fn = lambda _n: None
         recording = install_recording_hub()
 
         probe = strat.import_completed(pending, "/d", AttemptKind.POLL)
@@ -2308,7 +2321,7 @@ class TestUnmatchedProbe:
     def test_an_empty_episode_index_keeps_the_poll_a_wait(self) -> None:
         pending = self._numberless_pair()
         strat, sonarr = self._strat(served=False)
-        sonarr.parse_episode_info_fn = lambda _n: ParsedFileInfo()
+        sonarr.parse_fn = lambda _n: ParsedFileInfo()
         recording = install_recording_hub()
 
         probe = strat.import_completed(pending, "/d", AttemptKind.POLL)
@@ -2316,14 +2329,15 @@ class TestUnmatchedProbe:
         assert probe == ImportProbe.waiting()
         assert diagnostic_messages(recording, Severity.WARNING) == []
 
-    def test_every_file_excluded_at_grab_time_keeps_the_poll_a_wait(self) -> None:
-        # Nothing of the record's own is on disk, and the exclusions account for every skip.
+    def test_every_file_excluded_at_grab_time_still_reads_unmatched(self) -> None:
+        # Nothing of the record's own is on disk and nothing is authoritative: a recorded exclusion
+        # silences the warning, never the verdict, so the record graduates instead of waiting out its deadline.
         pending = self._numberless_pair(excluded=self._NAMES)
         strat, _ = self._strat()
 
         probe = strat.import_completed(pending, "/d", AttemptKind.POLL)
 
-        assert probe == ImportProbe.waiting()
+        assert probe.unmatched_files == self._NAMES
 
     def test_a_hand_import_that_filled_every_intended_episode_reads_imported(self) -> None:
         # The files still sit in the folder (a copy import), so the mapper skips them again. The
@@ -2354,7 +2368,7 @@ class TestUnmatchedProbe:
             candidates=[manual_candidate("/d/Show - 01 [1080p].mkv"), manual_candidate("/d/Extras.mkv")],
             episodes=[sonarr_ep(1, 1, ep_id=101, episode_file_id=0)],
         )
-        sonarr.parse_episode_info_fn = lambda _n: ParsedFileInfo()
+        sonarr.parse_fn = lambda _n: ParsedFileInfo()
         recording = install_recording_hub()
 
         first = strat.import_completed(pending, "/d", AttemptKind.POLL)
@@ -2367,12 +2381,97 @@ class TestUnmatchedProbe:
         assert len(warnings) == 1
 
 
+class TestProbeExclusions:
+    """The exclusions one poll proved ride the probe, and a recorded one never warns again."""
+
+    _MINE = "show - s01e01 [1080p].mkv"
+    _THEIRS = "show - s02e01 [1080p].mkv"
+
+    @classmethod
+    def _strat(cls) -> tuple[SonarrSync, FakeSonarrClient]:
+        # Both seasons are served, so the season-2 file resolves cleanly OUTSIDE the record's set.
+        parses = {
+            cls._MINE: ParsedFileInfo(season_number=1, episode_numbers=(1,)),
+            cls._THEIRS: ParsedFileInfo(season_number=2, episode_numbers=(1,)),
+        }
+        strat, sonarr = _make_sonarr_for_import(
+            candidates=[manual_candidate(f"/d/{name}") for name in (cls._MINE, cls._THEIRS)],
+            episodes=[sonarr_ep(1, 1, ep_id=101, episode_file_id=0), sonarr_ep(2, 1, ep_id=201, episode_file_id=0)],
+        )
+        sonarr.parse_fn = parses.get
+        return strat, sonarr
+
+    @classmethod
+    def _record(cls, *, resolved: list[int]) -> PendingImport:
+        return pending_import(
+            file_episode_map={},
+            episode_ids=[],
+            ordered_episode_ids=resolved,
+            seadex_files=[cls._MINE, cls._THEIRS],
+        )
+
+    def test_a_foreign_file_rides_the_probe_as_an_exclusion(self) -> None:
+        strat, sonarr = self._strat()
+
+        probe = strat.import_completed(self._record(resolved=[101]), "/d", AttemptKind.POLL)
+
+        assert probe.exclusions == (self._THEIRS,)
+        assert probe.placements == {self._MINE: [101]}
+        assert [f.path for f in sonarr.execute_calls[0][0]] == [f"/d/{self._MINE}"]
+
+    def test_a_recorded_exclusion_silences_the_next_poll(self, caplog: pytest.LogCaptureFixture) -> None:
+        # Season 2 drops out of the next episode read, so the same file reads as a plain skip. The
+        # exclusion the first poll recorded keeps it a debug note instead of a fresh warning.
+        strat, sonarr = self._strat()
+        logger = logging.getLogger("pearlarr-recorded-exclusion")
+        logger.handlers.clear()
+        logger.propagate = True
+        logger.setLevel(logging.DEBUG)
+        strat._executor.logger = logger
+        first = strat.import_completed(self._record(resolved=[101]), "/d", AttemptKind.POLL)
+        healed = self._record(resolved=[101]).with_placements(first.placements).with_exclusions(first.exclusions)
+        sonarr.episodes_return = [sonarr_ep(1, 1, ep_id=101, episode_file_id=0)]
+        recording = install_recording_hub()
+
+        with caplog.at_level("DEBUG"):
+            probe = strat.import_completed(healed, "/d", AttemptKind.POLL)
+
+        assert probe.exclusions == ()
+        assert not any("could not be matched" in m for m in diagnostic_messages(recording, Severity.WARNING))
+        assert any("1 file excluded on record" in r.message and r.levelname == "DEBUG" for r in caplog.records)
+
+    def test_every_file_foreign_with_nothing_authoritative_reads_unmatched(self) -> None:
+        # Both files resolve outside the record's set: excluded, never skipped, and nothing was placed,
+        # so the poll is an outcome rather than a wait for files that are not this record's. The
+        # exclusions ride this branch too, so the record can record what it already proved foreign.
+        strat, sonarr = self._strat()
+
+        probe = strat.import_completed(self._record(resolved=[301]), "/d", AttemptKind.POLL)
+
+        assert probe.unmatched_files == (self._MINE, self._THEIRS)
+        assert probe.exclusions == (self._MINE, self._THEIRS)
+        assert sonarr.execute_calls == []
+
+    def test_the_unmatched_names_are_the_skips_not_the_exclusions(self) -> None:
+        # One file another slice's, one nothing could read: the outcome names what a hand import
+        # must place, and the foreign file rides only as an exclusion.
+        strat, sonarr = self._strat()
+        parses = {self._THEIRS: ParsedFileInfo(season_number=2, episode_numbers=(1,)), self._MINE: ParsedFileInfo()}
+        sonarr.parse_fn = parses.get
+
+        probe = strat.import_completed(self._record(resolved=[101, 102]), "/d", AttemptKind.POLL)
+
+        assert probe.unmatched_files == (self._MINE,)
+        assert probe.exclusions == (self._THEIRS,)
+        assert sonarr.execute_calls == []
+
+
 class TestDefaultQualityWarning:
     """An unmatched `imports.default_quality` warns once per run, at the consume seam.
 
     `quality_axes_from_name` stays pure (its silent-empty return is pinned
     elsewhere). The executor is where the configured name meets the run's real
-    Sonarr definitions, and it runs once per FILE - hence the once-per-run guard.
+    Sonarr definitions, and it runs once per FILE, hence the once-per-run guard.
     """
 
     @staticmethod

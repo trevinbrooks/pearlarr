@@ -875,11 +875,11 @@ def test_absolute_batch_empty_seed_self_heals_and_sibling_is_skipped(
     out = _flat(capsys.readouterr().out)
 
     # The real Thighs incident shape: the entry's own files place exactly and
-    # import. The out-of-entry sibling is skipped + warned, never a veto.
+    # import. The out-of-entry sibling resolves to an episode of the series
+    # outside the entry, so it is another slice's (excluded), never a veto and
+    # never a warning.
     _assert_converged_imported(outcome, out)
-
-    # The sibling surfaced loudly, exactly once (per-run memo, not per poll).
-    assert out.count("1 file could not be matched to an episode and was not imported") == 1
+    assert "could not be matched to an episode" not in out
 
     # ONE ManualImport carrying exactly the two episode files on their matched
     # ids. Neither the sibling nor the extra ever reached the wire.
