@@ -7,16 +7,17 @@ taken as-is, every other on-disk leaf is parsed and placed into our resolved
 set via the pure `assign_episode_ids`. Owns the per-run on-disk parse cache.
 """
 
+from collections.abc import Mapping
 from typing import NamedTuple
 
 from .import_files import CandidateFile
 from .manual_import import PendingImport, normalized_leaf, path_leaf
 from .placement_types import EpisodeAssignment, EpisodeIndex, Placement, PlacementBatch, TargetScope
-from .placer import assign_episode_ids
 from .release_names import parse_se_from_filename
 from .seadex_types import ManualImportCandidate, ParsedFileInfo
 from .sonarr_client import AbstractSonarrClient
 from .sonarr_parse import is_video_candidate
+from .window_placement import assign_across_windows
 
 # Rejection-reason substrings, matched case-insensitively against each
 # rejection's reason/message text. `ALREADY_IMPORTED` means Sonarr already has
@@ -142,26 +143,27 @@ class FileEpisodeMapper:
     def assign(
         self,
         pending: PendingImport,
-        candidates_by_basename: dict[str, CandidateFile],
+        candidates_by_basename: Mapping[str, CandidateFile],
         episodes: EpisodeIndex,
     ) -> FileAssignment:
         """Build the final `basename -> episode ids` map from OUR resolved set.
 
         Identity never comes from Sonarr's series-matched title parse alone: a
-        file's parsed `(season, episode)` - from its name, or from Sonarr's
-        matched resolution of an absolute-only name - is honored only *inside*
+        file's parsed `(season, episode)`, from its name or from Sonarr's
+        matched resolution of an absolute-only name, is honored only *inside*
         our resolved set, an absolute-numbered pack is mapped positionally onto
         it, and anything ambiguous is returned as skipped (the caller warns and
-        leaves it - the chosen safe posture).
+        leaves it, the chosen safe posture).
 
         Files our grab-time `file_episode_map` already covers (the add-time
         assignment) keep their seeded ids untouched. When anything is left to
         place, their parses are still fetched so the positional leg's
         shared-absolute tell sees the whole batch (an earlier poll's placement
         must not hide a v2 duplicate). Every uncovered on-disk video leaf is
-        handed to the pure `assign_episode_ids`, which places it into our
+        handed to `assign_across_windows` under the record's one window (the
+        pure `assign_episode_ids` beneath it), which places it into our
         resolved set
-        (`ordered_episode_ids`, the add-flow's season-sorted episodes - or, for a
+        (`ordered_episode_ids`, the add-flow's season-sorted episodes, or, for a
         record predating that field, one synthesized from its seeds). When there is
         no set to scope against (an on-disk specials record whose grab-time parse
         found nothing), `assign_episode_ids` falls back to the live series map
@@ -219,10 +221,10 @@ class FileEpisodeMapper:
         resolved_ids = pending.resolved_ids()
 
         batch = PlacementBatch(leftover, parsed_by_file)
-        scope = TargetScope(resolved_ids, episodes, used=frozenset(seeded_ids), names=pending.names)
-        result = assign_episode_ids(batch, scope)
+        window = TargetScope(resolved_ids, episodes, used=frozenset(seeded_ids), names=pending.names)
+        windowed = assign_across_windows(batch, (window,))
         # An empty index means the exact leg could not have matched a numbered name this poll.
-        return FileAssignment(result, seeded, settled=batch.all_parses_known and bool(episodes.id_by_key))
+        return FileAssignment(windowed.merged, seeded, settled=batch.all_parses_known and bool(episodes.id_by_key))
 
     def _parsed_file_info(self, raw_base: str) -> ParsedFileInfo | None:
         """Sonarr `/parse` of one on-disk leaf, cached per run.

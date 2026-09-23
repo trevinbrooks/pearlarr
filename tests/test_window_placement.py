@@ -1,0 +1,223 @@
+# pyright: strict
+"""A torrent placed under several windows: each judges the whole torrent, the verdicts merge by window order."""
+
+from collections.abc import Iterable, Mapping
+
+import pytest
+
+from pearlarr.manual_import import EntryNames
+from pearlarr.placement_types import EpisodeIndex, PlacementBatch, PlacementVerdict, TargetScope
+from pearlarr.placer import assign_episode_ids
+from pearlarr.seadex_types import EpisodeKey, ParsedFileInfo
+from pearlarr.window_placement import WindowedAssignment, assign_across_windows
+
+from .builders import by_name, numbered_names, parsed_info, series_index
+
+_SERIES = series_index(
+    {
+        **{EpisodeKey(0, n): 500 + n for n in (1, 2, 3)},
+        **{EpisodeKey(1, n): 600 + n for n in range(1, 7)},
+        **{EpisodeKey(2, n): 700 + n for n in range(1, 7)},
+    }
+)
+_SPECIALS = [501, 502, 503]
+_FIRST_COUR = [601, 602, 603]
+_SECOND_COUR = [604, 605, 606]
+# A series numbering its one season 2, so a first-season key resolves to nothing under it.
+_OTHER_SERIES = series_index({EpisodeKey(2, n): 200 + n for n in (1, 2, 3)})
+
+
+def _window(resolved: list[int], *titles: str, used: Iterable[int] = (), series: EpisodeIndex = _SERIES) -> TargetScope:
+    return TargetScope(resolved, series, used=frozenset(used), names=EntryNames("Show", titles))
+
+
+def _blind(names: Iterable[str]) -> dict[str, ParsedFileInfo | None]:
+    return {name: parsed_info() for name in names}
+
+
+def _batch(parsed: Mapping[str, ParsedFileInfo | None]) -> PlacementBatch:
+    return PlacementBatch(list(parsed), parsed)
+
+
+def _placed_under(result: WindowedAssignment) -> dict[str, tuple[tuple[int, ...], int]]:
+    """Name -> (ids, window index) for the files a window placed."""
+
+    return {v.placement.name: (v.placement.ids, v.window_index) for v in result.verdicts if v.window_index is not None}
+
+
+class TestOneWindow:
+    """The composition under one window is the placer, verdict for verdict."""
+
+    def test_one_window_is_the_single_window_placer(self) -> None:
+        # The identity covers a placed run, a foreign file, and a skipped one alike.
+        run = numbered_names("sp", 3)
+        batch = _batch({**_blind(run), "keyed.mkv": parsed_info(season=1, episodes=(1,)), "loose.mkv": parsed_info()})
+        window = _window(_SPECIALS, used=[0])
+        alone = assign_episode_ids(batch, window)
+
+        result = assign_across_windows(batch, (window,))
+
+        assert result.merged == alone
+        assert {p.verdict for p in alone.placements} == {
+            PlacementVerdict.RELEASE_RUN,
+            PlacementVerdict.FOREIGN,
+            PlacementVerdict.SKIPPED,
+        }
+        assert [v.window_index for v in result.verdicts] == [0 if p.verdict.placed else None for p in alone.placements]
+
+    def test_no_windows_skip_every_file(self) -> None:
+        result = assign_across_windows(_batch(_blind(["a.mkv", "b.mkv"])), ())
+
+        assert by_name(result.merged) == dict.fromkeys(("a.mkv", "b.mkv"), ((), PlacementVerdict.SKIPPED))
+
+
+class TestSeveralWindows:
+    """Every window judges the whole torrent, and window order decides what several windows would take."""
+
+    def test_a_season_pack_splits_across_two_cour_windows(self) -> None:
+        run = numbered_names("show", 6)
+
+        result = assign_across_windows(_batch(_blind(run)), (_window(_FIRST_COUR), _window(_SECOND_COUR)))
+
+        assert _placed_under(result) == {name: ((601 + i,), i // 3) for i, name in enumerate(run)}
+        assert result.assigned_under(0) == {name: [601 + i] for i, name in enumerate(run[:3])}
+        assert result.assigned_under(1) == {name: [604 + i] for i, name in enumerate(run[3:])}
+
+    def test_a_franchise_pack_places_each_run_under_the_window_its_title_names(self) -> None:
+        alpha = numbered_names("show alpha", 3)
+        beta = numbered_names("show beta", 3)
+        windows = (_window(_SPECIALS, "Show Alpha"), _window(_FIRST_COUR, "Show Beta"))
+
+        result = assign_across_windows(_batch(_blind([*alpha, *beta])), windows)
+
+        assert _placed_under(result) == {
+            **{name: ((501 + i,), 0) for i, name in enumerate(alpha)},
+            **{name: ((601 + i,), 1) for i, name in enumerate(beta)},
+        }
+
+    def test_a_later_windows_placement_does_not_re_judge_an_earlier_one(self) -> None:
+        # A blind pair under the first window stays a tie once the second takes its named run: every
+        # window judges the whole torrent, since a remainder re-read as a fresh run (a `1..6` whose
+        # last three another window placed reads as `1..3`) could index a window the whole run never could.
+        alpha = numbered_names("show alpha", 3)
+        beta = numbered_names("show beta", 3)
+        windows = (_window(_SPECIALS), _window(_FIRST_COUR, "Show Beta"))
+
+        result = assign_across_windows(_batch(_blind([*alpha, *beta])), windows)
+
+        assert _placed_under(result) == {name: ((601 + i,), 1) for i, name in enumerate(beta)}
+        assert result.merged.skipped == tuple(alpha)
+
+    def test_windows_on_different_series_place_their_own_files(self) -> None:
+        parsed = {"a.mkv": parsed_info(season=1, episodes=(1,)), "b.mkv": parsed_info(season=2, episodes=(1,))}
+        windows = (_window(_FIRST_COUR), _window([201, 202, 203], series=_OTHER_SERIES))
+
+        result = assign_across_windows(_batch(parsed), windows)
+
+        assert _placed_under(result) == {"a.mkv": ((601,), 0), "b.mkv": ((201,), 1)}
+
+    def test_an_id_placed_under_one_window_is_used_under_an_overlapping_one(self) -> None:
+        # The run takes the first three episodes under the first window. Alone, the second window's
+        # ordered zip would put the blind file onto the first of them: two files never share an episode
+        # across windows, so the ids the first window placed are seeds under the second.
+        run = numbered_names("show", 3)
+        parsed = {**_blind(run), "b.mkv": parsed_info()}
+        wider = [*_FIRST_COUR, 604]
+        assert assign_episode_ids(_batch(parsed), _window(wider)).assigned["b.mkv"] == [601]
+
+        result = assign_across_windows(_batch(parsed), (_window(_FIRST_COUR), _window(wider)))
+
+        assert _placed_under(result) == {name: ((601 + i,), 0) for i, name in enumerate(run)}
+        assert by_name(result.merged)["b.mkv"] == ((), PlacementVerdict.SKIPPED)
+
+    def test_a_window_untouched_by_earlier_placements_keeps_its_count_legs(self) -> None:
+        # A run from anywhere fits the second window's width: nothing placed under the first is a seed there.
+        run = [f"sp - {n} [grp].mkv" for n in (14, 15, 16)]
+        parsed = {"a.mkv": parsed_info(season=1, episodes=(1,)), **_blind(run)}
+
+        result = assign_across_windows(_batch(parsed), (_window([601]), _window([701, 702, 703])))
+
+        assert _placed_under(result) == {"a.mkv": ((601,), 0), **{name: ((701 + i,), 1) for i, name in enumerate(run)}}
+
+    def test_an_id_placed_under_one_window_narrows_an_overlapping_one(self) -> None:
+        # The id the first window placed is a seed under the second, whose window is then the three
+        # episodes left, and a run numbered as those fits it. Four wide, the run would fit nothing.
+        run = numbered_names("sp", 4)[1:]
+        parsed = {"a.mkv": parsed_info(season=1, episodes=(1,)), **_blind(run)}
+
+        result = assign_across_windows(_batch(parsed), (_window([601]), _window([601, 602, 603, 604])))
+
+        assert _placed_under(result) == {"a.mkv": ((601,), 0), **{name: ((602 + i,), 1) for i, name in enumerate(run)}}
+
+    def test_a_placed_verdict_wins_over_every_claim(self) -> None:
+        parsed = {"a.mkv": parsed_info(season=1, episodes=(1,))}
+
+        result = assign_across_windows(_batch(parsed), (_window([501]), _window([601])))
+
+        assert _placed_under(result) == {"a.mkv": ((601,), 1)}
+        assert result.merged.excluded == ()
+
+    @pytest.mark.parametrize(
+        ("windows", "verdict"),
+        [
+            pytest.param(
+                (_window([501]), _window([201], series=_OTHER_SERIES)),
+                PlacementVerdict.SKIPPED,
+                id="foreign then skipped",
+            ),
+            pytest.param(
+                (_window([201], series=_OTHER_SERIES), _window([601])),
+                PlacementVerdict.DUPLICATE,
+                id="skipped then duplicate",
+            ),
+            pytest.param((_window([501]), _window([601])), PlacementVerdict.DUPLICATE, id="foreign then duplicate"),
+            pytest.param((_window([601]), _window([501])), PlacementVerdict.DUPLICATE, id="duplicate then foreign"),
+        ],
+    )
+    def test_claims_merge_to_the_most_specific(
+        self, windows: tuple[TargetScope, ...], verdict: PlacementVerdict
+    ) -> None:
+        # Two files keyed alike: the second is a duplicate wherever the first places, foreign where the
+        # key resolves outside, and skipped where it resolves to nothing.
+        parsed = {name: parsed_info(season=1, episodes=(1,)) for name in ("a.mkv", "d.mkv")}
+
+        result = assign_across_windows(_batch(parsed), windows)
+
+        assert by_name(result.merged)["d.mkv"] == ((), verdict)
+
+    def test_an_unscoped_window_seeds_every_earlier_placement(self) -> None:
+        # The unscoped window resolves any key against the whole series: an id another window placed
+        # is used there too, so the keyed file cannot take it a second time.
+        run = numbered_names("show", 3)
+        parsed = {**_blind(run), "d.mkv": parsed_info(season=1, episodes=(3, 4))}
+
+        result = assign_across_windows(_batch(parsed), (_window([601, 602, 603, 604], used=[604]), _window([])))
+
+        assert _placed_under(result) == {name: ((601 + i,), 0) for i, name in enumerate(run)}
+        assert by_name(result.merged)["d.mkv"] == ((), PlacementVerdict.SKIPPED)
+
+    def test_an_earlier_windows_held_file_outranks_a_later_windows_placement(self) -> None:
+        # The first member's key would place it under the second window's exact pass: the hold stands.
+        run = numbered_names("sp", 3)
+        parsed = {**_blind(run), run[0]: parsed_info(season=1, episodes=(1,)), "x.mkv": None}
+
+        result = assign_across_windows(_batch(parsed), (_window(_SPECIALS), _window([601])))
+
+        assert _placed_under(result) == {}
+        assert {by_name(result.merged)[name] for name in run} == {((), PlacementVerdict.HELD)}
+
+    def test_the_parse_flag_is_the_torrents(self) -> None:
+        # An unknown parse the first window never held (its window is one slot) still holds the run
+        # under the second: the flag counts every file of the torrent under every window.
+        run = numbered_names("sp", 3)
+        parsed = {**_blind(run), "x.mkv": None}
+
+        result = assign_across_windows(_batch(parsed), (_window([501]), _window(_FIRST_COUR)))
+
+        assert _placed_under(result) == {}
+        assert {by_name(result.merged)[name] for name in run} == {((), PlacementVerdict.HELD)}
+
+    def test_two_numberless_files_over_two_one_slot_windows_place_nowhere(self) -> None:
+        result = assign_across_windows(_batch(_blind(["a.mkv", "b.mkv"])), (_window([501]), _window([502])))
+
+        assert by_name(result.merged) == dict.fromkeys(("a.mkv", "b.mkv"), ((), PlacementVerdict.SKIPPED))
