@@ -1087,12 +1087,18 @@ class _Reading(NamedTuple):
     """The claims are Sonarr's matched pairs (the name carried no `(season, episode)` of its own)."""
 
     vetoed: bool
-    """A full-season parse, or a borrowed span past `_MATCHED_SPAN_CAP` or not covering the name's own
-    absolutes: the claims are real but never placed on their own."""
+    """A full-season parse, a borrowed span past `_MATCHED_SPAN_CAP` or short of the name's own absolutes,
+    or a run's reads that dispute its count (a tie, or a covering run read into another season): the
+    claims are real but never placed on their own, and never prove the file foreign."""
 
     corroborated: bool
     """Sonarr's series match names every claimed pair (a borrowed reading always is). An own key Sonarr
     could not match to the series is a parse it did not believe either (a CRC tag read as "E8")."""
+
+    tied: tuple[int, ...] | None = None
+    """The episodes a tie's name may be, under the season's and the specials' numbering: spoken for, so
+    no other run takes a window holding one, and a run of them stands aside only from a scope holding
+    none."""
 
     @property
     def outside(self) -> bool:
@@ -1540,15 +1546,6 @@ class _RunWindow(NamedTuple):
     """The ids' episode numbers (absolute numbers across seasons), the same order."""
 
 
-def _covering(runs: Iterable[_Run], window: _RunWindow, season_counts: Mapping[int, int]) -> list[_Run]:
-    """The runs numbered `1..N` for the whole season a strict slice window belongs to: N members over fewer slots."""
-
-    if window.season is None:
-        return []
-    count = season_counts.get(window.season, 0)
-    return _from_one(runs, count) if count > len(window.ids) else []
-
-
 class _TitledEpisode(NamedTuple):
     """One series episode with a title, as folded words."""
 
@@ -1597,9 +1594,9 @@ class _Placer:
     """The series' episodes that carry a title."""
     verdicts: dict[str, Placement] = field(default_factory=dict[str, Placement])
     used: set[int] = field(default_factory=set[int])
-    run_ambiguous: bool = False
-    """The release-run pass found several runs of the window's width, or refused its pick: the numbered run
-    stands down too."""
+    count_legs_barred: bool = False
+    """The release-run pass found several runs, or refused the one it found: no count leg (the numbered run,
+    the absolute and ordered zips) places what it would not."""
 
     @classmethod
     def start(cls, batch: PlacementBatch, scope: TargetScope) -> Self:
@@ -1645,24 +1642,26 @@ class _Placer:
         return bool(self.scope.id_by_key)
 
     def reread_season_runs(self) -> None:
-        """Re-read a `1..N` run Sonarr matched into the one season of exactly N episodes as that season's own numbering.
+        """Re-read a `1..N` run Sonarr matched into one season of exactly N episodes as that season's own numbering.
 
         TVDB interleaves specials into the absolute numbering, so Sonarr's
         match of a season-only release drifts onto a special after each one.
         The count tells the shapes apart: a release that carried the special
         would number N + 1. Only a run of names without keys of their own,
-        read by Sonarr into that season and its specials (more into the
-        season), is re-read.
+        read by Sonarr into that one season and its specials, is re-read:
+        more into the season, or as many when the specials are not N either.
+        As many onto the specials when they count N too is a tie: the reads
+        are vetoed, the episodes either numbering gives are `tied`, and only
+        the run's count over an entry's window places it. A lower version of
+        a member reads as the member does.
         """
 
         if not self.map_known:
             return
         for run in _runs(list(self.readings), self.batch.parsed):
             width = len(run.members)
-            seasons = [s for s, count in self.season_counts.items() if count == width and s != 0]
-            if run.numbers != tuple(range(1, width + 1)) or len(seasons) != 1:
+            if run.numbers != tuple(range(1, width + 1)):
                 continue
-            season = seasons[0]
             infos = [self.batch.parsed.get(name) for name in run.names]
             if any(info is None or info.episode_numbers for info in infos):
                 continue
@@ -1670,17 +1669,45 @@ class _Placer:
             if any(len(r.resolved) > 1 for r in readings):
                 continue
             read = [self.key_by_id[r.resolved[0]].season for r in readings if r.resolved]
+            seasons = {season for season in read if season != 0}
+            if len(seasons) != 1:
+                continue
+            season = seasons.pop()
+            if self.season_counts.get(season) != width:
+                continue
             into_season = read.count(season)
             onto_specials = read.count(0)
-            if not onto_specials or into_season <= onto_specials or into_season + onto_specials != len(read):
+            if not onto_specials or into_season < onto_specials:
                 continue
-            for member in run.members:
-                ep_id = self.scope.id_by_key.get(EpisodeKey(season, member.number))
-                if ep_id:
-                    inside = (ep_id,) if ep_id in self.resolved else ()
-                    self.readings[member.name] = _Reading(
-                        (ep_id,), inside, complete=True, borrowed=True, vetoed=False, corroborated=True
-                    )
+            if into_season == onto_specials and self.season_counts.get(0) == width:
+                self.tie(run, season)
+            else:
+                self.reread(run, season)
+
+    def tie(self, run: _Run, season: int) -> None:
+        """Veto the run's reads and record the episodes each name may be under either numbering."""
+
+        for numbered in run.whole:
+            keys = (EpisodeKey(season, numbered.number), EpisodeKey(0, numbered.number))
+            ids = tuple(i for key in keys if (i := self.scope.id_by_key.get(key)))
+            self.readings[numbered.name] = self.readings[numbered.name]._replace(vetoed=True, tied=ids)
+
+    def reread(self, run: _Run, season: int) -> None:
+        """Read every name of the run as the season's episode of its number."""
+
+        for numbered in run.whole:
+            ep_id = self.scope.id_by_key.get(EpisodeKey(season, numbered.number))
+            if ep_id:
+                inside = (ep_id,) if ep_id in self.resolved else ()
+                self.readings[numbered.name] = _Reading(
+                    (ep_id,), inside, complete=True, borrowed=True, vetoed=False, corroborated=True
+                )
+
+    def veto(self, run: _Run) -> None:
+        """Veto every reading of the run, its displaced versions included."""
+
+        for numbered in run.whole:
+            self.readings[numbered.name] = self.readings[numbered.name]._replace(vetoed=True)
 
     def window(self) -> list[int]:
         """The leftover ids: the scope's resolved set minus every id used so far, scope order."""
@@ -1736,12 +1763,49 @@ class _Placer:
         )
 
     def settled_elsewhere(self, run: _Run) -> bool:
-        """Whether Sonarr read the run whole into distinct episodes outside the scope: another season's, or the other cour's."""
+        """Whether Sonarr read the run whole into distinct episodes outside the scope: another season's, or the other cour's.
+
+        A tie's run is elsewhere when neither numbering reaches the scope.
+        """
 
         readings = [self.readings[name] for name in run.names]
+        if all(r.tied is not None for r in readings):
+            return not any(i in self.resolved for r in readings for i in r.tied or ())
         if not all(r.outside and r.corroborated and len(r.resolved) == 1 for r in readings):
             return False
         return len({r.resolved[0] for r in readings}) == len(readings)
+
+    def covering(self, runs: Iterable[_Run], window: _RunWindow) -> list[_Run]:
+        """The `1..N` runs for the whole season a strict slice window belongs to: N members over fewer slots."""
+
+        if window.season is None:
+            return []
+        count = self.season_counts.get(window.season, 0)
+        return _from_one(runs, count) if count > len(window.ids) else []
+
+    def covering_refused(self, window: _RunWindow) -> bool:
+        """Whether a season run's count says nothing about the window.
+
+        A specials window (a season run as wide as the specials count is a
+        coincidence), or a season whose numbering has a gap (the run counts
+        on past it).
+        """
+
+        season = window.season
+        if not season:  # the specials (an absolute window has no covering run)
+            return True
+        count = self.season_counts.get(season, 0)
+        return any(EpisodeKey(season, n) not in self.scope.id_by_key for n in range(1, count + 1))
+
+    def seasons_read(self, run: _Run) -> set[int]:
+        """The seasons Sonarr read the run's members into."""
+
+        return {self.key_by_id[ep_id].season for name in run.names for ep_id in self.readings[name].resolved}
+
+    def read_elsewhere(self, run: _Run, season: int | None) -> bool:
+        """Whether Sonarr read a member into another season than the window's: the reads dispute the run's count."""
+
+        return any(read != season for read in self.seasons_read(run))
 
     def title_evidence(self, run: _Run, window_set: frozenset[int]) -> _TitleEvidence:
         """Count the run's tails naming an episode inside the window against those naming one outside it.
@@ -1838,10 +1902,17 @@ def _pass_release_run(state: _Placer) -> None:
     width = len(window.ids)
     window_set = frozenset(window.ids)
     runs = _runs(state.remaining(), state.batch.parsed)
+    covering = state.covering(runs, window)
+    # Reads into another season dispute a covering run's count, pick or not: read whole into one other
+    # season, it is that season's (its members foreign), else its files are nowhere.
+    disputed = [run for run in covering if state.read_elsewhere(run, window.season)]
+    for run in disputed:
+        if not (state.settled_elsewhere(run) and len(state.seasons_read(run)) == 1):
+            state.veto(run)
     tiers = (
         _from_one(runs, width),
         _fitting(runs, window.numbers),
-        _covering(runs, window, state.season_counts),
+        covering,
         # A window a seed already took part of fits a run from anywhere by chance, never by count.
         [
             run
@@ -1850,8 +1921,8 @@ def _pass_release_run(state: _Placer) -> None:
         ],
     )
     candidates = list(dict.fromkeys(run for tier in tiers for run in tier))
-    state.run_ambiguous = len(candidates) > 1
-    if state.run_ambiguous:
+    state.count_legs_barred = len(candidates) > 1
+    if state.count_legs_barred:
         candidates = [run for run in candidates if not state.settled_elsewhere(run)] or candidates
     if (
         len(candidates) > 1
@@ -1866,16 +1937,20 @@ def _pass_release_run(state: _Placer) -> None:
         return
     run = candidates[0]
     if not state.batch.all_parses_known:
-        for name in run.names:
-            state.set_aside(name, PlacementVerdict.HELD)
+        state.set_aside_each(run.whole, PlacementVerdict.HELD)
         return
-    if _run_refused(state, run, window):
-        return
-    if _pick_refused(state, run, runs, window_set):
-        state.run_ambiguous = True
+    covers = run in covering
+    refused = (
+        _run_refused(state, run, window)
+        or (covers and state.covering_refused(window))
+        or run in disputed
+        or _pick_refused(state, run, runs, window_set)
+    )
+    if refused:
+        state.count_legs_barred = True
         return
     # A whole-season run over a slice window places the slice's numbers; the rest is the other slice's.
-    members = run.members if len(run.members) == width else tuple(m for m in run.members if m.number in window.numbers)
+    members = tuple(m for m in run.members if m.number in window.numbers) if covers else run.members
     readings = [state.readings[member.name] for member in members]
     coherent = all(
         r.complete and not r.vetoed and len(r.resolved) == 1 and r.resolved[0] in window_set for r in readings
@@ -1906,10 +1981,14 @@ def _run_refused(state: _Placer, run: _Run, window: _RunWindow) -> bool:
         # specials window: a torrent mislisted on a sequel entry never imports onto it.
         if keyed_outside and window.season != 0:
             return True
-    members_set = set(run.names)
+    members_set = {numbered.name for numbered in run.whole}
     for name in state.remaining():
+        if name in members_set:
+            continue
         reading = state.readings[name]
-        if name in members_set or not reading.complete or reading.vetoed:
+        if any(i in window_set for i in reading.tied or ()):
+            return True
+        if not reading.complete or reading.vetoed:
             continue
         if reading.resolved and all(i in window_set for i in reading.resolved):
             return True
@@ -1928,7 +2007,7 @@ def _pick_refused(state: _Placer, run: _Run, runs: Sequence[_Run], window_set: f
         return True
     open_runs = [candidate for candidate in runs if not state.settled_elsewhere(candidate)]
     named = _named([candidate.prefix for candidate in open_runs], state.scope.names)
-    return bool(named) and open_runs.index(run) not in named
+    return bool(named) and (run not in open_runs or open_runs.index(run) not in named)
 
 
 def _pass_exact(state: _Placer) -> None:
@@ -1982,6 +2061,7 @@ def _pass_counted(state: _Placer) -> None:
     # fails CLOSED, the same posture a hiccuped leftover gets from the count.
     if (
         abs_by_file
+        and not state.count_legs_barred
         and state.batch.all_parses_known
         and len(abs_by_file) == len(open_names)  # every leftover has one absolute
         and len(abs_by_file) == len(window)  # 1:1 with the leftover ids
@@ -1997,13 +2077,15 @@ def _pass_counted(state: _Placer) -> None:
         # that exists nowhere in the series (a None parse is no evidence at
         # all, and multi-episode evidence would half-import, so both refuse).
         # The sole such file is that episode. Among several, once every parse
-        # is known, the one an AniList title names is, never an extra.
+        # is known, the one an AniList title names is, never an extra. A tie's
+        # file is neither: its number is the season's or the specials'.
         numberless = [
             name
             for name in open_names
             if (info := parsed.get(name)) is not None
             and (_has_no_signal(info) or (state.map_known and _signal_is_bogus(info, state.scope.id_by_key)))
             and not state.spans_multiple(info)
+            and state.readings[name].tied is None
         ]
         if len(open_names) == 1 and numberless:
             state.place(numberless[0], [window[0]], PlacementVerdict.SINGLE)
@@ -2016,6 +2098,7 @@ def _pass_counted(state: _Placer) -> None:
 
     if (
         len(open_names) > 1
+        and not state.count_legs_barred
         and len(open_names) == len(window)
         and len(open_names) == len(parsed)
         and not state.verdicts
@@ -2047,7 +2130,7 @@ def _pass_numbered_run(state: _Placer) -> None:
     positional run must never re-home it.
     """
 
-    if not state.map_known or not state.batch.all_parses_known or state.run_ambiguous:
+    if not state.map_known or not state.batch.all_parses_known or state.count_legs_barred:
         return
     window = state.run_window()
     if window is None:
