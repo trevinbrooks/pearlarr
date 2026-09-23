@@ -1849,9 +1849,14 @@ class TestReleaseNumberForms:
 
         assert self._place(names).assigned == {names[0]: [501], names[1]: [502], names[2]: [503]}
 
-    def test_a_later_version_displaces_the_earlier_one_in_the_run(self) -> None:
+    @pytest.mark.parametrize(
+        "template",
+        ["show - 0{n}{v} [tag].mkv", "show - 0{n}{v} - title [tag].mkv"],
+        ids=["trailing", "before the title"],
+    )
+    def test_a_later_version_displaces_the_earlier_one_in_the_run(self, template: str) -> None:
         # Two names share a number: the higher `vN` is the member and the other its duplicate once the run places.
-        names = ["show - 01 [tag].mkv", "show - 02 [tag].mkv", "show - 02v2 [tag].mkv", "show - 03 [tag].mkv"]
+        names = [template.format(n=n, v=v) for n, v in ((1, ""), (2, ""), (2, "v2"), (3, ""))]
 
         result = self._place(names)
 
@@ -2466,6 +2471,17 @@ class TestAssignNumberedRun:
         assert result.assigned == {self._MAIN: [10384], **{name: [10370 + i] for i, name in enumerate(run)}}
         assert (result.skipped, result.excluded) == ((), ())
         assert {p.verdict for p in result.placements if p.name in run} == {PlacementVerdict.NUMBERED_RUN}
+
+    def test_a_later_version_displaces_the_earlier_one_in_a_blind_run(self) -> None:
+        # The blind run keeps the higher `vN` and leaves the lower as its duplicate, as the release run does.
+        run = self._run("extra ", range(1, 4))
+        later = "[grp] show extra 2v2 [bd 1080p x264 10bit flac].mkv"
+        parsed = self._batch([*run, later])
+
+        result = self._place(parsed, self._scope())
+
+        assert result.assigned == {self._MAIN: [10384], run[0]: [10370], later: [10371], run[2]: [10372]}
+        assert _verdicts(result)[run[1]] == PlacementVerdict.DUPLICATE
 
     def test_a_season_zero_absolute_run_still_counts_as_blind(self) -> None:
         # Absolutes alone resolve nothing, so a season-0 run reads as blind and indexes the window.

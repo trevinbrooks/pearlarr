@@ -1213,13 +1213,15 @@ _TRAILING_TAG = re.compile(rf"\s*{_BRACKETED.pattern}$")
 _NON_WORD = re.compile(r"[^0-9a-z]+")
 _TRAILING_VERSION = re.compile(r"v(\d+)$")
 # The episode of an "S02E01" key (a keyed run is judged by its keys), else
-# the LAST " - NN - " (a title follows the number, which an "Episode" word
-# or the absolute in brackets may frame), else the episode of a packed
-# "S0101" (a season the series lacks, read as the release's count), else a
-# trailing 1-3 digit integer not glued to more digits (a year or CRC tail
-# is no release number).
+# the LAST " - NN - " (an "Episode" word may lead the number, a "vN" and
+# the absolute in brackets may trail it, and a title follows), else the
+# episode of a packed "S0101" (a season the series lacks, read as the
+# release's count), else a trailing 1-3 digit integer not glued to more
+# digits (a year or CRC tail is no release number).
 _KEYED_NUMBER = re.compile(r"^(.*?[Ss]\d{1,2}[Ee])(\d{1,3})(?!\d)")
-_MIDDLE_NUMBER = re.compile(r"^(.*) - (?:[Ee]pisode |[Ee]p\.? )?(\d{1,3})(?: \[\d{1,3}\])?(?= - )")
+_MIDDLE_NUMBER = re.compile(
+    r"^(.*) - (?:[Ee]pisode |[Ee]p\.? )?(\d{1,3})(?:v(?P<version>\d+))?(?: \[\d{1,3}\])?(?= - )"
+)
 _PACKED_NUMBER = re.compile(r"^(.*?(?:^|[\s._-])[Ss]\d{2})(\d{2})(?=[\s._-]|$)")
 _TRAILING_NUMBER = re.compile(r"^(.*?)(?<!\d)(\d{1,3})$")
 _NUMBER_FORMS = (_KEYED_NUMBER, _MIDDLE_NUMBER, _PACKED_NUMBER, _TRAILING_NUMBER)
@@ -1239,7 +1241,7 @@ class _RunMember(NamedTuple):
     tail: str
     """The text after the number when a title separator follows it (the episode's title), else empty."""
     version: int
-    """The trailing `vN` (1 when none): of two names sharing a number, the higher one is the member."""
+    """The `vN` after the number or trailing (1 when none): of two names sharing a number, the higher is the member."""
 
 
 def _stem(name: str) -> str:
@@ -1281,7 +1283,16 @@ def _run_member(name: str) -> _RunMember | None:
         return None
     rest = stem[match.end() :]
     tail = rest.removeprefix(_TITLE_SEPARATOR) if rest.startswith(_TITLE_SEPARATOR) else ""
+    if (middle := match.groupdict().get("version")) is not None:
+        version = max(version, int(middle))
     return _RunMember(prefix, int(match.group(2)), tail, version)
+
+
+def _version(name: str) -> int:
+    """The name's `vN` (1 when none), trailing or after its release number."""
+
+    member = _run_member(name)
+    return member.version if member is not None else _stem_version(name)[1]
 
 
 def _extras_named(name: str) -> bool:
@@ -1919,7 +1930,7 @@ def _pass_exact(state: _Placer) -> None:
     "- 09". The loser is left over (a duplicate).
     """
 
-    for name in sorted(state.remaining(), key=lambda name: (state.readings[name].rank, -_stem_version(name)[1])):
+    for name in sorted(state.remaining(), key=lambda name: (state.readings[name].rank, -_version(name))):
         reading = state.readings[name]
         if not reading.complete or reading.vetoed or reading.inside != reading.resolved:
             continue
