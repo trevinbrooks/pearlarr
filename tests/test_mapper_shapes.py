@@ -65,13 +65,27 @@ class ShapeTag(StrEnum):
     SINGLE = "single"
     TITLED = "titled"
     """One numberless leftover among several, named by an entry title."""
+    RUN_TITLED_MEMBERS = "run titled members"
+    """Several runs fit, and the episode titles the members carry pick one."""
+    RUN_NAMED_ELSEWHERE = "run named elsewhere"
+    """The one run that fits is not the one the entry's title names: refused."""
+    SEASON_RUN_REREAD = "season run reread"
+    """A 1..N run Sonarr matched into the N-episode season and its specials is the season's own numbering."""
+    ABSOLUTE_WINDOW = "absolute window"
+    """The entry holds a special TVDB interleaves, so the series' absolute numbering orders the window."""
+    COVERING_RUN = "covering run"
+    """A whole-season run listed on one cour's entry places that cour's slice."""
+    VERSIONED_RUN = "versioned run"
+    """Members come in two versions: the later one is the member, the earlier its duplicate."""
+    SEASON_COUNTED = "season counted"
+    """The entry's title and the release count the season differently ("3" against "III")."""
 
 
 class Provenance(StrEnum):
     """What establishes a case's expectation."""
 
     TITLE = "title"
-    """The episode title embedded in the file name, matched against the series list."""
+    """The titles the file names carry, matched against the series list or the entry's own titles."""
     COUNT = "count"
     """A release run as wide as the window it covers."""
     DISK_AGREES = "disk agrees"
@@ -129,7 +143,7 @@ def test_seed_places_captured_shape(case: ShapeCase) -> None:
     """The grab-time scope places every captured file where independent truth puts it."""
 
     index = episode_index(case.episodes)
-    scope = SeedScope(episode_index([index.by_id[episode_id] for episode_id in case.entry_ids]), index.id_by_key)
+    scope = SeedScope(episode_index([index.by_id[episode_id] for episode_id in case.entry_ids]), index)
 
     result = assign_episode_ids(PlacementBatch(list(case.parses), _parsed(case)), scope.target(_names(case)))
 
@@ -152,7 +166,7 @@ def test_mapper_matches_the_seed(case: ShapeCase) -> None:
     )
     candidates = mapper.candidate_files([ManualImportCandidate(path=f"/dl/{name}") for name in case.parses])
 
-    assignment = mapper.assign(pending, candidates, episode_index(case.episodes).id_by_key)
+    assignment = mapper.assign(pending, candidates, episode_index(case.episodes))
 
     assert assignment.assigned == {normalize_basename(name): list(ids) for name, ids in case.expected.items()}
     assert {placement.name for placement in assignment.excluded} == {
