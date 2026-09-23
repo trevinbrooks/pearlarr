@@ -132,6 +132,12 @@ def _verdicts(result: EpisodeAssignment) -> dict[str, PlacementVerdict]:
     return {p.name: p.verdict for p in result.placements}
 
 
+def _by_name(result: EpisodeAssignment) -> dict[str, tuple[tuple[int, ...], PlacementVerdict]]:
+    """One assignment keyed name -> (ids, verdict), for the tests that pin every placement."""
+
+    return {p.name: (p.ids, p.verdict) for p in result.placements}
+
+
 # --------------------------------------------------------------------------- #
 # Quality resolution - the (source, resolution) match, on real bodies
 # --------------------------------------------------------------------------- #
@@ -1900,32 +1906,28 @@ class TestAssignReleaseRun:
     def _ran(cls) -> dict[str, tuple[tuple[int, ...], PlacementVerdict]]:
         return {name: ((501 + i,), PlacementVerdict.RELEASE_RUN) for i, name in enumerate(cls._RUN)}
 
-    @classmethod
-    def _by_name(cls, result: EpisodeAssignment) -> dict[str, tuple[tuple[int, ...], PlacementVerdict]]:
-        return {p.name: (p.ids, p.verdict) for p in result.placements}
-
     def test_a_reading_of_nothing_lets_the_run_index_the_window(self) -> None:
         # Sonarr read no number from any member, so the release's own 1..N is all there is.
-        assert self._by_name(self._place({name: _pinfo() for name in self._RUN})) == self._ran()
+        assert _by_name(self._place({name: _pinfo() for name in self._RUN})) == self._ran()
 
     def test_matched_pairs_outside_the_window_do_not_stand(self) -> None:
         # Every member matched the same out-of-window episode: incoherent, so the run wins.
         parsed: dict[str, ParsedFileInfo | None] = {name: _pinfo(matched=((1, 1),)) for name in self._RUN}
 
-        assert self._by_name(self._place(parsed)) == self._ran()
+        assert _by_name(self._place(parsed)) == self._ran()
 
     def test_a_members_own_key_outside_a_specials_window_is_overridden(self) -> None:
         # D1'': a TVDB-shifted special names another season. Over a season-0 window the run stands.
         parsed: dict[str, ParsedFileInfo | None] = {name: _pinfo() for name in self._RUN}
         parsed[self._RUN[0]] = _pinfo(season=1, episodes=(1,))
 
-        assert self._by_name(self._place(parsed)) == self._ran()
+        assert _by_name(self._place(parsed)) == self._ran()
 
     def test_bogus_keys_do_not_stand(self) -> None:
         # Keys that exist nowhere in the series are parse artifacts, never a reading.
         parsed: dict[str, ParsedFileInfo | None] = {name: _pinfo(season=20, episodes=(20,)) for name in self._RUN}
 
-        assert self._by_name(self._place(parsed)) == self._ran()
+        assert _by_name(self._place(parsed)) == self._ran()
 
     def test_a_coherent_permuted_reading_stands(self) -> None:
         # D2: every member reads one distinct id inside the window, so Sonarr's
@@ -1936,7 +1938,7 @@ class TestAssignReleaseRun:
             self._RUN[2]: _pinfo(season=0, episodes=(2,)),
         }
 
-        assert self._by_name(self._place(parsed)) == {
+        assert _by_name(self._place(parsed)) == {
             self._RUN[0]: ((503,), PlacementVerdict.EXACT),
             self._RUN[1]: ((501,), PlacementVerdict.EXACT),
             self._RUN[2]: ((502,), PlacementVerdict.EXACT),
@@ -1954,7 +1956,7 @@ class TestAssignReleaseRun:
         # A one-id window is no run: the degenerate single-file leg is what places it.
         result = self._place({self._RUN[0]: _pinfo()}, scope=TargetScope([501], series_index(self._MAP)))
 
-        assert self._by_name(result) == {self._RUN[0]: ((501,), PlacementVerdict.SINGLE)}
+        assert _by_name(result) == {self._RUN[0]: ((501,), PlacementVerdict.SINGLE)}
 
     def test_a_gappy_window_refuses(self) -> None:
         # Episodes 1, 2, 4 are not a run's worth of consecutive slots.
@@ -1993,7 +1995,7 @@ class TestAssignReleaseRun:
         parsed: dict[str, ParsedFileInfo | None] = {name: _pinfo(season=101, full_season=True) for name in self._RUN}
         parsed[self._RUN[1]] = _pinfo(season=1, full_season=True)
 
-        assert self._by_name(self._place(parsed)) == self._ran()
+        assert _by_name(self._place(parsed)) == self._ran()
 
     def test_a_run_numbered_as_the_windows_episodes_indexes_it(self) -> None:
         # A split cour's second half counts on from the first: 12..14 over S01E12..E14.
@@ -2003,7 +2005,7 @@ class TestAssignReleaseRun:
 
         result = self._place(parsed, scope=scope)
 
-        assert self._by_name(result) == {name: ((612 + i,), PlacementVerdict.RELEASE_RUN) for i, name in enumerate(run)}
+        assert _by_name(result) == {name: ((612 + i,), PlacementVerdict.RELEASE_RUN) for i, name in enumerate(run)}
 
     def test_a_run_from_anywhere_indexes_a_window_sonarr_read_nothing_of(self) -> None:
         # A release numbering the whole series: 14..16 over a 3-wide window, no member read.
@@ -2014,7 +2016,7 @@ class TestAssignReleaseRun:
 
         result = self._place(parsed)
 
-        assert self._by_name(result) == {name: ((501 + i,), PlacementVerdict.RELEASE_RUN) for i, name in enumerate(run)}
+        assert _by_name(result) == {name: ((501 + i,), PlacementVerdict.RELEASE_RUN) for i, name in enumerate(run)}
 
     def test_a_run_from_anywhere_needs_every_member_unread(self) -> None:
         # One member Sonarr did read says the numbering is not the series' own: the tier stands down.
@@ -2025,7 +2027,7 @@ class TestAssignReleaseRun:
 
         result = self._place(parsed, to_place=run)
 
-        assert self._by_name(result) == {
+        assert _by_name(result) == {
             run[0]: ((), PlacementVerdict.FOREIGN),
             run[1]: ((), PlacementVerdict.SKIPPED),
             run[2]: ((), PlacementVerdict.SKIPPED),
@@ -2038,7 +2040,7 @@ class TestAssignReleaseRun:
 
         result = self._place(parsed)
 
-        assert self._by_name(result) == {**self._ran(), **dict.fromkeys(offset, ((), PlacementVerdict.SKIPPED))}
+        assert _by_name(result) == {**self._ran(), **dict.fromkeys(offset, ((), PlacementVerdict.SKIPPED))}
 
     def test_two_runs_from_anywhere_are_ambiguous(self) -> None:
         run_a = [f"sp - {n} [grp].mkv" for n in (14, 15, 16)]
@@ -2060,7 +2062,7 @@ class TestAssignReleaseRun:
             parsed, scope=TargetScope(self._WINDOW, series_index(self._MAP), names=EntryNames("Show", ("Show Beta",)))
         )
 
-        assert self._by_name(result) == {
+        assert _by_name(result) == {
             **{name: ((501 + i,), PlacementVerdict.RELEASE_RUN) for i, name in enumerate(beta)},
             **dict.fromkeys(alpha, ((), PlacementVerdict.SKIPPED)),
         }
@@ -2079,6 +2081,8 @@ class TestAssignReleaseRun:
 
     # A whole first season beside the specials, for the franchise-pack shapes.
     _SEASONED: ClassVar[dict[EpisodeKey, int]] = {**_MAP, **{EpisodeKey(1, n): 600 + n for n in (3, 4, 5, 6)}}
+    # Six specials beside the six-episode season, for the specials-window shapes.
+    _WIDE_SPECIALS: ClassVar[dict[EpisodeKey, int]] = {**_SEASONED, **{EpisodeKey(0, n): 500 + n for n in (4, 5, 6)}}
 
     def test_a_run_sonarr_read_whole_elsewhere_stands_aside(self) -> None:
         # A franchise pack: the AniList title names the base run, but Sonarr read that run whole into
@@ -2093,7 +2097,7 @@ class TestAssignReleaseRun:
 
         result = self._place(parsed, scope=scope)
 
-        assert self._by_name(result) == {
+        assert _by_name(result) == {
             **{name: ((501 + i,), PlacementVerdict.RELEASE_RUN) for i, name in enumerate(sequel)},
             **dict.fromkeys(base, ((), PlacementVerdict.FOREIGN)),
         }
@@ -2110,7 +2114,7 @@ class TestAssignReleaseRun:
 
         result = self._place(parsed, scope=TargetScope(window, series_index(self._SEASONED)))
 
-        assert self._by_name(result) == {
+        assert _by_name(result) == {
             **{name: ((window[i],), PlacementVerdict.RELEASE_RUN) for i, name in enumerate(second)},
             **dict.fromkeys(first, ((), PlacementVerdict.FOREIGN)),
         }
@@ -2148,6 +2152,21 @@ class TestAssignReleaseRun:
         assert result.assigned == {}
         assert {p.verdict for p in result.placements} == {PlacementVerdict.HELD}
 
+    def test_a_held_run_holds_its_superseded_versions_too(self) -> None:
+        # The earlier version is the run's duplicate once it places, so it waits with the members
+        # rather than taking the episode by its own exact key.
+        names = [*self._RUN, "sp - 02v2 [grp].mkv"]
+        parsed: dict[str, ParsedFileInfo | None] = {
+            name: _pinfo(matched=((0, i),)) for i, name in enumerate(self._RUN, 1)
+        }
+        parsed[names[3]] = _pinfo(matched=((0, 2),))
+        parsed["gone.mkv"] = None
+
+        result = self._place(parsed, to_place=names)
+
+        assert result.assigned == {}
+        assert {p.verdict for p in result.placements} == {PlacementVerdict.HELD}
+
     def test_a_members_own_key_in_another_regular_season_stands_the_run_down(self) -> None:
         # D1'': over a REGULAR-season window a member naming another season is
         # evidence the torrent is mislisted, so nothing is indexed onto it.
@@ -2158,7 +2177,7 @@ class TestAssignReleaseRun:
         result = self._place(parsed, scope=TargetScope([701, 702, 703], series_index(regular)))
 
         assert result.assigned == {}
-        assert self._by_name(result)[self._RUN[0]] == ((), PlacementVerdict.FOREIGN)
+        assert _by_name(result)[self._RUN[0]] == ((), PlacementVerdict.FOREIGN)
         assert sorted(result.skipped) == sorted(self._RUN[1:])
 
     def test_a_non_member_reading_inside_the_window_refuses_the_run(self) -> None:
@@ -2233,7 +2252,7 @@ class TestAssignReleaseRun:
 
         result = self._place(parsed, scope=TargetScope([603, 604], series_index(self._SEASONED)))
 
-        assert self._by_name(result) == {
+        assert _by_name(result) == {
             run[2]: ((603,), PlacementVerdict.RELEASE_RUN),
             run[3]: ((604,), PlacementVerdict.RELEASE_RUN),
             **dict.fromkeys((run[0], run[1], run[4], run[5]), ((), PlacementVerdict.FOREIGN)),
@@ -2249,6 +2268,111 @@ class TestAssignReleaseRun:
 
         assert result.assigned == {run[2]: [603], run[3]: [604]}
         assert {_verdicts(result)[name] for name in (run[2], run[3])} == {PlacementVerdict.EXACT}
+
+    def test_a_specials_window_takes_no_covering_run(self) -> None:
+        # A `1..6` run Sonarr read nothing from, on an entry of two of the six specials: neither its count
+        # nor a slice indexes the specials.
+        run = [f"show - 0{i} [grp].mkv" for i in (1, 2, 3, 4, 5, 6)]
+        parsed: dict[str, ParsedFileInfo | None] = dict.fromkeys(run, _pinfo())
+
+        result = self._place(parsed, scope=TargetScope([501, 502], series_index(self._WIDE_SPECIALS)))
+
+        assert _by_name(result) == dict.fromkeys(run, ((), PlacementVerdict.SKIPPED))
+
+    @pytest.mark.parametrize(
+        ("read", "verdict"),
+        [pytest.param(6, PlacementVerdict.FOREIGN, id="whole"), pytest.param(3, PlacementVerdict.SKIPPED, id="half")],
+    )
+    def test_a_run_sonarr_read_into_another_season_never_covers(self, read: int, verdict: PlacementVerdict) -> None:
+        # A shorts run as wide as the season, which Sonarr read into the specials: read whole, it is
+        # theirs, and read only in part, it is nowhere.
+        run = [f"show mini - 0{i} [grp].mkv" for i in (1, 2, 3, 4, 5, 6)]
+        parsed: dict[str, ParsedFileInfo | None] = {
+            name: _pinfo(matched=((0, i),)) if i <= read else _pinfo() for i, name in enumerate(run, 1)
+        }
+
+        result = self._place(parsed, scope=TargetScope([604, 605, 606], series_index(self._WIDE_SPECIALS)))
+
+        assert _by_name(result) == dict.fromkeys(run, ((), verdict))
+
+    def test_a_run_read_across_the_season_and_the_specials_is_nowhere(self) -> None:
+        # Sonarr read the first file into the season and the rest onto the specials: no one season
+        # claims the run, so its files are neither the entry's nor foreign.
+        run = [f"show - 0{i} [grp].mkv" for i in (1, 2, 3, 4, 5, 6)]
+        reads = ((1, 1), (0, 1), (0, 2), (0, 3), (0, 4), (0, 5))
+        parsed: dict[str, ParsedFileInfo | None] = {
+            name: _pinfo(matched=(pair,)) for name, pair in zip(run, reads, strict=True)
+        }
+
+        result = self._place(parsed, scope=TargetScope([604, 605, 606], series_index(self._WIDE_SPECIALS)))
+
+        assert _by_name(result) == dict.fromkeys(run, ((), PlacementVerdict.SKIPPED))
+
+    def test_a_runs_own_lower_version_inside_the_window_does_not_refuse_it(self) -> None:
+        # The displaced `- 02` reads as the second episode, as its `- 02v2` does: a member's own version
+        # is no rival file, so the run still indexes the third episode Sonarr read nothing for.
+        run = [f"show - 0{i} [grp].mkv" for i in (1, 2, 3, 4, 5, 6)]
+        later = "show - 02v2 [grp].mkv"
+        parsed: dict[str, ParsedFileInfo | None] = {
+            name: _pinfo(matched=((1, i),)) if i != 3 else _pinfo() for i, name in enumerate(run, 1)
+        }
+        parsed[later] = _pinfo(matched=((1, 2),))
+        window = [601, 602, 603, 604, 605, 606]
+
+        result = self._place(parsed, scope=TargetScope(window, series_index(self._SEASONED)))
+
+        members = [run[0], later, *run[2:]]
+        assert _by_name(result) == {
+            **{name: ((ep_id,), PlacementVerdict.RELEASE_RUN) for name, ep_id in zip(members, window, strict=True)},
+            run[1]: ((), PlacementVerdict.DUPLICATE),
+        }
+
+    @pytest.mark.parametrize("beside", [False, True], ids=["alone", "beside another run"])
+    def test_a_run_read_partly_into_another_season_places_nothing_by_its_reads(self, beside: bool) -> None:
+        # A bare sequel pack Sonarr read by absolute number, two files into the first season and the rest
+        # from the sequel's start: the read that lands in the entry is as disputed as the rest.
+        two_seasons = {
+            **{EpisodeKey(1, n): 600 + n for n in (1, 2)},
+            **{EpisodeKey(2, n): 700 + n for n in range(1, 7)},
+        }
+        run = [f"show - 0{i} [grp].mkv" for i in (1, 2, 3, 4, 5, 6)]
+        other = [f"show alt - 0{i} [grp].mkv" for i in (1, 2, 3, 4, 5, 6)] if beside else []
+        reads = ((1, 1), (1, 2), (2, 1), (2, 2), (2, 3), (2, 4))
+        parsed: dict[str, ParsedFileInfo | None] = {
+            name: _pinfo(matched=(pair,)) for name, pair in zip(run, reads, strict=True)
+        }
+        parsed.update(dict.fromkeys(other, _pinfo()))
+
+        result = self._place(parsed, scope=TargetScope([704, 705, 706], series_index(two_seasons)))
+
+        assert _by_name(result) == dict.fromkeys((*run, *other), ((), PlacementVerdict.SKIPPED))
+
+    def test_a_refused_pick_stands_the_numbered_run_down(self) -> None:
+        # A keyed file inside the window refuses the season's run and takes its episode: the two blind
+        # extras that now fit what is left do not fill it.
+        run = [f"show - 0{i} [grp].mkv" for i in (1, 2, 3, 4, 5, 6)]
+        keyed = "show S01E04 [grp].mkv"
+        extras = [f"show extra - 0{i} [grp].mkv" for i in (1, 2)]
+        parsed: dict[str, ParsedFileInfo | None] = dict.fromkeys((*run, *extras), _pinfo())
+        parsed[keyed] = _pinfo(season=1, episodes=(4,), matched=((1, 4),))
+
+        result = self._place(parsed, scope=TargetScope([604, 605, 606], series_index(self._SEASONED)))
+
+        assert _by_name(result) == {
+            keyed: ((604,), PlacementVerdict.EXACT),
+            **dict.fromkeys((*run, *extras), ((), PlacementVerdict.SKIPPED)),
+        }
+
+    def test_a_season_with_a_numbering_gap_takes_no_covering_run(self) -> None:
+        # TVDB skips the third episode, so the season counts five and a 1..5 run fits its count while its
+        # numbers count on past the gap: the slice is not the run's fourth and fifth.
+        gapped = {key: ep_id for key, ep_id in self._SEASONED.items() if key != EpisodeKey(1, 3)}
+        run = [f"show - 0{i} [grp].mkv" for i in (1, 2, 3, 4, 5)]
+        parsed: dict[str, ParsedFileInfo | None] = {name: _pinfo() for name in run}
+
+        result = self._place(parsed, scope=TargetScope([604, 605, 606], series_index(gapped)))
+
+        assert _by_name(result) == dict.fromkeys(run, ((), PlacementVerdict.SKIPPED))
 
     def test_a_seed_owning_part_of_the_scope_keeps_a_run_from_anywhere_out(self) -> None:
         # Three files fit a three-wide leftover by chance once a seed holds the rest of the scope:
@@ -2365,10 +2489,11 @@ class TestAssignRunTitleEvidence:
 
         assert self._place(inside, other).assigned == {}
 
-    def test_members_naming_only_other_episodes_refuse_the_run(self) -> None:
-        # The one fitting run is titled as another season's episodes: nothing places, and the numbered
-        # run stands down with it.
-        result = self._place(self._run("show", "Pilot", "The Return", "Bonus"), blocked=True)
+    @pytest.mark.parametrize("blocked", [True, False], ids=["mixed batch", "pristine batch"])
+    def test_members_naming_only_other_episodes_refuse_the_run(self, blocked: bool) -> None:
+        # The one fitting run is titled as another season's episodes: nothing places, and neither the
+        # numbered run nor the ordered zip of a pristine batch fills the window behind the refusal.
+        result = self._place(self._run("show", "Pilot", "The Return", "Bonus"), blocked=blocked)
 
         assert result.assigned == {}
 
@@ -2388,17 +2513,28 @@ class TestRereadSeasonRun:
     _MAP: ClassVar[dict[EpisodeKey, int]] = {EpisodeKey(0, 1): 501, **{EpisodeKey(1, n): 600 + n for n in (1, 2, 3, 4)}}
     _SHIFTED: ClassVar[tuple[tuple[int, int], ...]] = ((1, 1), (1, 2), (0, 1), (1, 3), (1, 4))
     """Sonarr's reading after the special TVDB interleaved after the second episode shifted it."""
+    _TWO_OF_FOUR: ClassVar[dict[EpisodeKey, int]] = {
+        **{EpisodeKey(0, n): 500 + n for n in (1, 2, 3, 4)},
+        **{EpisodeKey(1, n): 600 + n for n in (1, 2, 3, 4)},
+    }
+    """Four specials beside a four-episode season, the tie's shape."""
+    _TIED: ClassVar[tuple[tuple[int, int], ...]] = ((1, 1), (0, 1), (1, 2), (0, 2))
+    """Sonarr's reading of a four-file run, as many onto the specials as into the season."""
 
     @staticmethod
     def _run(count: int) -> list[str]:
         return [f"show - 0{i} [grp].mkv" for i in range(1, count + 1)]
 
+    @staticmethod
+    def _reads(run: list[str], pairs: tuple[tuple[int, int], ...]) -> dict[str, ParsedFileInfo | None]:
+        return {name: _pinfo(matched=(pair,)) for name, pair in zip(run, pairs[: len(run)], strict=True)}
+
     @classmethod
-    def _place(cls, run: list[str], window: list[int]) -> EpisodeAssignment:
-        parsed: dict[str, ParsedFileInfo | None] = {
-            name: _pinfo(matched=(pair,)) for name, pair in zip(run, cls._SHIFTED, strict=False)
-        }
-        return assign_episode_ids(PlacementBatch(run, parsed), TargetScope(window, series_index(cls._MAP)))
+    def _place(
+        cls, run: list[str], window: list[int], series: dict[EpisodeKey, int] | None = None
+    ) -> EpisodeAssignment:
+        parsed = cls._reads(run, cls._SHIFTED)
+        return assign_episode_ids(PlacementBatch(run, parsed), TargetScope(window, series_index(series or cls._MAP)))
 
     def test_the_specials_entry_gets_none_of_the_seasons_run(self) -> None:
         # Four files for a four-episode season: the third is the third episode, not the special Sonarr read.
@@ -2415,6 +2551,77 @@ class TestRereadSeasonRun:
         assert result.assigned == {name: [601 + i] for i, name in enumerate(run)}
         assert {p.verdict for p in result.placements} == {PlacementVerdict.EXACT}
 
+    def test_a_lower_version_of_a_member_is_re_read_with_it(self) -> None:
+        # Sonarr shifted the `- 03` and its `- 03v2` onto the special alike: the lower version is re-read
+        # as the third episode with its member, so the specials entry places neither.
+        run = self._run(4)
+        later = "show - 03v2 [grp].mkv"
+        parsed = self._reads(run, self._SHIFTED)
+        parsed[later] = _pinfo(matched=((0, 1),))
+
+        result = assign_episode_ids(PlacementBatch([*run, later], parsed), TargetScope([501], series_index(self._MAP)))
+
+        assert result.assigned == {}
+        assert {p.verdict for p in result.placements} == {PlacementVerdict.FOREIGN}
+
+    def test_a_ties_possible_episode_keeps_another_run_out_of_the_window(self) -> None:
+        # Under the tie the first file may be the season's first episode, so two blind extras that fit
+        # the entry's first two episodes do not take them.
+        run = self._run(4)
+        extras = [f"show extra - 0{i} [grp].mkv" for i in (1, 2)]
+        parsed = self._reads(run, self._TIED)
+        parsed.update(dict.fromkeys(extras, _pinfo()))
+
+        result = assign_episode_ids(
+            PlacementBatch([*run, *extras], parsed), TargetScope([601, 602], series_index(self._TWO_OF_FOUR))
+        )
+
+        assert _by_name(result) == dict.fromkeys((*run, *extras), ((), PlacementVerdict.SKIPPED))
+
+    def test_a_title_never_places_a_ties_file_alone(self) -> None:
+        # Over the one special's entry the AniList title names the run's second file: under the tie it
+        # is the second episode or the second special, never the first special.
+        series = {key: ep_id for key, ep_id in self._TWO_OF_FOUR.items() if key.episode <= 2}
+        run = self._run(2)
+        parsed = self._reads(run, self._TIED)
+        scope = TargetScope([501], series_index(series), names=EntryNames("Show", ("Show 2",)))
+
+        result = assign_episode_ids(PlacementBatch(run, parsed), scope)
+
+        assert _by_name(result) == dict.fromkeys(run, ((), PlacementVerdict.SKIPPED))
+
+    def test_a_title_naming_files_that_form_no_run_refuses_the_tied_pick(self) -> None:
+        # The sequel's entry lists its title, which names three loose sequel files and not the tied run:
+        # the run is refused there rather than indexed by count.
+        run = self._run(4)
+        loose = [f"show two - {n} [grp].mkv" for n in ("05", "06", "08")]
+        parsed = self._reads(run, self._TIED)
+        parsed.update(dict.fromkeys(loose, _pinfo()))
+        series = {**self._TWO_OF_FOUR, **{EpisodeKey(2, n): 700 + n for n in (1, 2, 3, 4)}}
+        scope = TargetScope([701, 702, 703, 704], series_index(series), names=EntryNames("Show", ("Show Two",)))
+
+        result = assign_episode_ids(PlacementBatch([*run, *loose], parsed), scope)
+
+        assert _by_name(result) == dict.fromkeys((*run, *loose), ((), PlacementVerdict.SKIPPED))
+
+    def test_a_ties_run_stands_aside_from_an_entry_neither_numbering_reaches(self) -> None:
+        # The tie is between the first season and the specials, so over the second season's entry the
+        # tied run is elsewhere and the blind sequel run indexes it.
+        run = self._run(4)
+        sequel = [f"show 2 - 0{i} [grp].mkv" for i in (1, 2, 3, 4)]
+        parsed = self._reads(run, self._TIED)
+        parsed.update(dict.fromkeys(sequel, _pinfo()))
+        series = {**self._TWO_OF_FOUR, **{EpisodeKey(2, n): 700 + n for n in (1, 2, 3, 4)}}
+
+        result = assign_episode_ids(
+            PlacementBatch([*run, *sequel], parsed), TargetScope([701, 702, 703, 704], series_index(series))
+        )
+
+        assert _by_name(result) == {
+            **dict.fromkeys(run, ((), PlacementVerdict.SKIPPED)),
+            **{name: ((701 + i,), PlacementVerdict.RELEASE_RUN) for i, name in enumerate(sequel)},
+        }
+
     def test_a_run_one_wider_than_the_season_carried_the_special(self) -> None:
         # Five files for four episodes and one special: Sonarr's reading stands.
         run = self._run(5)
@@ -2422,6 +2629,36 @@ class TestRereadSeasonRun:
         result = self._place(run, [501])
 
         assert result.assigned == {run[2]: [501]}
+
+    def test_another_season_of_the_same_width_does_not_block_the_reread(self) -> None:
+        # Sonarr's reads name the season the run belongs to, so a second four-episode season is no rival.
+        two_seasons = {**self._MAP, **{EpisodeKey(2, n): 700 + n for n in (1, 2, 3, 4)}}
+
+        result = self._place(self._run(4), [501], series=two_seasons)
+
+        assert result.assigned == {}
+        assert {p.verdict for p in result.placements} == {PlacementVerdict.FOREIGN}
+
+    @pytest.mark.parametrize(
+        ("specials", "verdict"),
+        [
+            pytest.param(2, PlacementVerdict.FOREIGN, id="fewer specials"),
+            pytest.param(4, PlacementVerdict.SKIPPED, id="as many specials"),
+        ],
+    )
+    def test_as_many_onto_the_specials_as_into_the_season_is_read_by_the_specials_count(
+        self, specials: int, verdict: PlacementVerdict
+    ) -> None:
+        # Two of four members onto two specials: the season's, unless a specials release could be as
+        # wide as the run, which is a tie nothing places over the specials entry.
+        series = {key: ep_id for key, ep_id in self._TWO_OF_FOUR.items() if key.season or key.episode <= specials}
+        run = self._run(4)
+        parsed = self._reads(run, self._TIED)
+
+        result = assign_episode_ids(PlacementBatch(run, parsed), TargetScope([501, 502], series_index(series)))
+
+        assert result.assigned == {}
+        assert {p.verdict for p in result.placements} == {verdict}
 
 
 class TestAssignNumberedRun:
