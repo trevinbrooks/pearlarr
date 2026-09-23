@@ -8,16 +8,16 @@ from typing import NamedTuple, Self
 from .parse_reading import Reading, claims_several_episodes, numbers_miss_the_series, parse_has_no_number, read_parse
 from .placement_types import EpisodeAssignment, Placement, PlacementBatch, PlacementVerdict, TargetScope
 from .release_names import (
-    NumberedName,
+    NameRead,
     NumberedRun,
+    RunMember,
     best_title_matches,
     folded_words,
     is_consecutive,
     is_extras_name,
-    name_stem,
-    name_version,
     natural_key,
     numbered_runs,
+    read_name,
     runs_from_one,
     runs_with_numbers,
     sole_title_match,
@@ -134,6 +134,8 @@ class _Placer:
     scope: TargetScope
     readings: dict[str, Reading]
     """One reading per distinct name to place, batch order."""
+    name_reads: Mapping[str, NameRead]
+    """One read of each name to place: its stem and run membership."""
     key_by_id: Mapping[int, EpisodeKey]
     """The series map inverted once (it never changes, only `used` does)."""
     evidenced: frozenset[int]
@@ -155,6 +157,7 @@ class _Placer:
         """Read every name once against the scope."""
 
         readings = {name: read_parse(batch.parsed.get(name), scope) for name in dict.fromkeys(batch.to_place)}
+        name_reads = {name: read_name(name) for name in readings}
         key_by_id = {ep_id: key for key, ep_id in scope.id_by_key.items()}
         evidenced = frozenset(
             ep_id
@@ -167,6 +170,7 @@ class _Placer:
             batch,
             scope,
             readings,
+            name_reads,
             key_by_id,
             evidenced,
             season_counts=Counter(key.season for key in scope.id_by_key),
@@ -206,7 +210,7 @@ class _Placer:
 
         if not self.map_known:
             return
-        for run in numbered_runs(list(self.readings), self.batch.parsed):
+        for run in self.runs(self.readings):
             width = len(run.members)
             if run.numbers != tuple(range(1, width + 1)):
                 continue
@@ -366,7 +370,7 @@ class _Placer:
 
         inside = outside = 0
         for member in run.members:
-            words = folded_words(member.tail)
+            words = member.tail_words
             if not words:
                 continue
             sides = {
@@ -389,11 +393,17 @@ class _Placer:
 
         self.verdicts[name] = Placement(name, (), verdict)
 
-    def set_aside_each(self, numbered: Iterable[NumberedName], verdict: PlacementVerdict) -> None:
-        """Record one id-less verdict for each numbered name."""
+    def set_aside_each(self, members: Iterable[RunMember], verdict: PlacementVerdict) -> None:
+        """Record one id-less verdict for each run member."""
 
-        for one in numbered:
-            self.set_aside(one.name, verdict)
+        for member in members:
+            self.set_aside(member.name, verdict)
+
+    def runs(self, names: Iterable[str]) -> list[NumberedRun]:
+        """The numbered runs among `names` (each a name to place), by their reads."""
+
+        members = (member for name in names if (member := self.name_reads[name].member) is not None)
+        return numbered_runs(members, self.batch.parsed)
 
     def finish(self) -> EpisodeAssignment:
         """Classify what is still open, then fold the verdicts in batch order."""
@@ -450,7 +460,7 @@ def _pass_release_run(state: _Placer) -> None:
         return
     width = len(window.ids)
     window_set = frozenset(window.ids)
-    runs = numbered_runs(state.remaining(), state.batch.parsed)
+    runs = state.runs(state.remaining())
     covering = state.covering(runs, window)
     # Reads into another season dispute a covering run's count, pick or not: read whole into one other
     # season, it is that season's (its members foreign), else its files are nowhere.
@@ -527,7 +537,9 @@ def _pass_exact(state: _Placer) -> None:
     "- 09". The loser is left over (a duplicate).
     """
 
-    for name in sorted(state.remaining(), key=lambda name: (state.readings[name].rank, -name_version(name))):
+    for name in sorted(
+        state.remaining(), key=lambda name: (state.readings[name].rank, -state.name_reads[name].version)
+    ):
         reading = state.readings[name]
         if not reading.complete or reading.vetoed or reading.inside != reading.resolved:
             continue
@@ -601,7 +613,8 @@ def _pass_counted(state: _Placer) -> None:
             return
         if state.batch.all_parses_known:
             episodic = [name for name in numberless if not is_extras_name(name)]
-            if (named := sole_title_match([name_stem(name) for name in episodic], state.scope.names)) is not None:
+            stems = [state.name_reads[name].stem.text for name in episodic]
+            if (named := sole_title_match(stems, state.scope.names)) is not None:
                 state.place(episodic[named], [window[0]], PlacementVerdict.TITLED)
                 return
 
@@ -654,7 +667,7 @@ def _pass_numbered_run(state: _Placer) -> None:
         and not info.episode_numbers
         and not state.spans_multiple(info)
     ]
-    fits = runs_from_one(numbered_runs(blind, parsed), len(window.ids))
+    fits = runs_from_one(state.runs(blind), len(window.ids))
     if len(fits) != 1:
         return
     run = fits[0]

@@ -3,6 +3,7 @@
 import re
 import unicodedata
 from collections.abc import Iterable, Mapping, Sequence
+from dataclasses import dataclass
 from itertools import takewhile
 from typing import NamedTuple
 
@@ -58,26 +59,55 @@ _TITLE_SEPARATOR = " - "
 _EXTRAS_RUN_TOKENS = frozenset({"pv", "cm", "menu", "trailer", "preview", "teaser", "promo", "op", "ed"})
 
 
-class _NumberRead(NamedTuple):
-    """A file's numbered-run membership, read purely from its name."""
+class Stem(NamedTuple):
+    """A name shed of its extension, trailing tags and `vN`s (to a fixpoint), and the highest `vN` shed (1 when none)."""
 
+    text: str
+    version: int
+
+
+@dataclass(frozen=True, slots=True)
+class RunMember:
+    """One file's numbered-run membership, read purely from its name."""
+
+    name: str
     prefix: str
     """The text before the release number: the grouping key."""
     number: int
-    tail: str
-    """The text after the number when a title separator follows it (the episode's title), else empty."""
+    tail_words: tuple[str, ...]
+    """The folded words of the title after the number when a title separator follows it, else empty."""
     version: int
     """The `vN` after the number or trailing (1 when none): of two names sharing a number, the higher is the member."""
+
+
+class NameRead(NamedTuple):
+    """One name read once: its stem, and its run membership when it carries a release number."""
+
+    stem: Stem
+    member: RunMember | None
+
+    @property
+    def version(self) -> int:
+        """The name's `vN` (1 when none), trailing or after its release number."""
+
+        return self.member.version if self.member is not None else self.stem.version
+
+
+def read_name(name: str) -> NameRead:
+    """Read a name once: its stem and version, and its run membership."""
+
+    stem = _stem_version(name)
+    return NameRead(stem, _member_of(name, stem))
 
 
 def name_stem(name: str) -> str:
     """A name without its extension, trailing bracketed tags, and trailing `vN` (to a fixpoint), underscores as spaces."""
 
-    return _stem_version(name)[0]
+    return _stem_version(name).text
 
 
-def _stem_version(name: str) -> tuple[str, int]:
-    """`name_stem` plus the highest trailing `vN` it shed (1 when none)."""
+def _stem_version(name: str) -> Stem:
+    """The stem plus the highest trailing `vN` it shed (1 when none)."""
 
     stem = (name.rsplit(".", 1)[0] if "." in name else name).replace("_", " ")
     version = 1
@@ -87,11 +117,11 @@ def _stem_version(name: str) -> tuple[str, int]:
             version = max(version, int(found.group(1)))
             trimmed = trimmed[: found.start()].rstrip(" .-")
         if trimmed == stem:
-            return stem, version
+            return Stem(stem, version)
         stem = trimmed
 
 
-def _read_number(name: str) -> _NumberRead | None:
+def _member_of(name: str, stem: Stem) -> RunMember | None:
     """The release's own number in a name, read purely from the text.
 
     The stem's separator before the number is dropped, so
@@ -99,26 +129,19 @@ def _read_number(name: str) -> _NumberRead | None:
     or the number counts extras ("show - PV 01").
     """
 
-    stem, version = _stem_version(name)
-    match = next((found for form in _NUMBER_FORMS if (found := form.match(stem)) is not None), None)
+    match = next((found for form in _NUMBER_FORMS if (found := form.match(stem.text)) is not None), None)
     if match is None:
         return None
     prefix = match.group(1).rstrip(" .-")
     words = [word for word in _NON_WORD.split(prefix.casefold()) if word]
     if words and words[-1] in _EXTRAS_RUN_TOKENS:
         return None
-    rest = stem[match.end() :]
+    rest = stem.text[match.end() :]
     tail = rest.removeprefix(_TITLE_SEPARATOR) if rest.startswith(_TITLE_SEPARATOR) else ""
+    version = stem.version
     if (middle := match.groupdict().get("version")) is not None:
         version = max(version, int(middle))
-    return _NumberRead(prefix, int(match.group(2)), tail, version)
-
-
-def name_version(name: str) -> int:
-    """The name's `vN` (1 when none), trailing or after its release number."""
-
-    member = _read_number(name)
-    return member.version if member is not None else _stem_version(name)[1]
+    return RunMember(name, prefix, int(match.group(2)), folded_words(tail), version)
 
 
 def natural_key(name: str) -> str:
@@ -134,17 +157,9 @@ def is_extras_name(name: str) -> bool:
 
 
 def is_consecutive(numbers: Sequence[int]) -> bool:
-    """Whether the numbers count up by one from the first."""
+    """Whether the numbers count up by one from the first (an empty sequence does)."""
 
-    return list(numbers) == list(range(numbers[0], numbers[0] + len(numbers)))
-
-
-class NumberedName(NamedTuple):
-    """One run member: its release number, its name, and the title text after the number (empty when none)."""
-
-    number: int
-    name: str
-    tail: str
+    return not numbers or list(numbers) == list(range(numbers[0], numbers[0] + len(numbers)))
 
 
 class NumberedRun(NamedTuple):
@@ -152,8 +167,8 @@ class NumberedRun(NamedTuple):
 
     prefix: str
     """The text before the number every member shares: the grouping key."""
-    members: tuple[NumberedName, ...]
-    superseded: tuple[NumberedName, ...] = ()
+    members: tuple[RunMember, ...]
+    superseded: tuple[RunMember, ...]
     """The lower versions a member's higher `vN` displaced: duplicates once the run is placed."""
 
     @property
@@ -161,7 +176,7 @@ class NumberedRun(NamedTuple):
         return tuple(member.name for member in self.members)
 
     @property
-    def whole(self) -> tuple[NumberedName, ...]:
+    def whole(self) -> tuple[RunMember, ...]:
         """The members and the lower versions they displaced."""
 
         return (*self.members, *self.superseded)
@@ -176,36 +191,41 @@ class NumberedRun(NamedTuple):
         return len(self.members) == width and is_consecutive(self.numbers)
 
 
-def numbered_runs(names: Iterable[str], parsed: Mapping[str, ParsedFileInfo | None]) -> list[NumberedRun]:
-    """Every numbered run among `names`, grouped by prefix.
+def numbered_runs(members: Iterable[RunMember], parsed: Mapping[str, ParsedFileInfo | None]) -> list[NumberedRun]:
+    """Every numbered run among the members, grouped by prefix.
 
-    A name whose parse carries exactly one absolute that disagrees with its
-    release number is no member. Of several names sharing a number the
-    highest `vN` is the member and the rest are superseded (equal versions
-    all stay, which breaks the run).
+    A member whose parse carries exactly one absolute that disagrees with its
+    release number is dropped. Of several members sharing a number the
+    highest `vN` stays and the rest are superseded (equal versions all stay,
+    which breaks the run).
     """
 
-    members: dict[str, dict[int, list[tuple[int, NumberedName]]]] = {}
-    for name in names:
-        member = _read_number(name)
-        if member is None:
-            continue
-        info = parsed.get(name)
+    by_prefix: dict[str, dict[int, list[RunMember]]] = {}
+    for member in members:
+        info = parsed.get(member.name)
         absolutes: set[int] = set(info.absolute_episode_numbers) if info is not None else set()
         if len(absolutes) == 1 and member.number not in absolutes:
             continue
-        versions = members.setdefault(member.prefix, {}).setdefault(member.number, [])
-        versions.append((member.version, NumberedName(member.number, name, member.tail)))
-    runs: list[NumberedRun] = []
-    for prefix, by_number in members.items():
-        kept: list[NumberedName] = []
-        superseded: list[NumberedName] = []
-        for versions in by_number.values():
-            top = max(version for version, _ in versions)
-            kept.extend(numbered for version, numbered in versions if version == top)
-            superseded.extend(numbered for version, numbered in versions if version < top)
-        runs.append(NumberedRun(prefix, tuple(sorted(kept)), tuple(superseded)))
-    return runs
+        by_prefix.setdefault(member.prefix, {}).setdefault(member.number, []).append(member)
+    return [_run_of(prefix, by_number) for prefix, by_number in by_prefix.items()]
+
+
+def _member_order(member: RunMember) -> tuple[int, str]:
+    """Number order, name order within a number (names are unique per batch)."""
+
+    return (member.number, member.name)
+
+
+def _run_of(prefix: str, by_number: Mapping[int, Sequence[RunMember]]) -> NumberedRun:
+    """One prefix's run: the top version at each number kept, the lower ones superseded."""
+
+    kept: list[RunMember] = []
+    superseded: list[RunMember] = []
+    for versions in by_number.values():
+        top = max(member.version for member in versions)
+        kept.extend(member for member in versions if member.version == top)
+        superseded.extend(member for member in versions if member.version < top)
+    return NumberedRun(prefix, tuple(sorted(kept, key=_member_order)), tuple(superseded))
 
 
 def runs_with_numbers(runs: Iterable[NumberedRun], numbers: Iterable[int]) -> list[NumberedRun]:
