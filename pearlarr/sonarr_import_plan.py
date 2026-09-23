@@ -1462,12 +1462,18 @@ class _Run(NamedTuple):
 
     prefix: str
     members: tuple[_Numbered, ...]
-    superseded: tuple[str, ...] = ()
-    """The names a higher `vN` of the same number displaced: duplicates once the run is placed."""
+    superseded: tuple[_Numbered, ...] = ()
+    """The lower versions a member's higher `vN` displaced: duplicates once the run is placed."""
 
     @property
     def names(self) -> tuple[str, ...]:
         return tuple(member.name for member in self.members)
+
+    @property
+    def whole(self) -> tuple[_Numbered, ...]:
+        """The members and the lower versions they displaced."""
+
+        return (*self.members, *self.superseded)
 
     @property
     def numbers(self) -> tuple[int, ...]:
@@ -1502,11 +1508,11 @@ def _runs(names: Iterable[str], parsed: Mapping[str, ParsedFileInfo | None]) -> 
     runs: list[_Run] = []
     for prefix, by_number in members.items():
         kept: list[_Numbered] = []
-        superseded: list[str] = []
+        superseded: list[_Numbered] = []
         for versions in by_number.values():
             top = max(version for version, _ in versions)
             kept.extend(numbered for version, numbered in versions if version == top)
-            superseded.extend(numbered.name for version, numbered in versions if version < top)
+            superseded.extend(numbered for version, numbered in versions if version < top)
         runs.append(_Run(prefix, tuple(sorted(kept)), tuple(superseded)))
     return runs
 
@@ -1770,6 +1776,12 @@ class _Placer:
 
         self.verdicts[name] = Placement(name, (), verdict)
 
+    def set_aside_each(self, numbered: Iterable[_Numbered], verdict: PlacementVerdict) -> None:
+        """Record one id-less verdict for each numbered name."""
+
+        for one in numbered:
+            self.set_aside(one.name, verdict)
+
     def finish(self) -> EpisodeAssignment:
         """Classify what is still open, then fold the verdicts in batch order."""
 
@@ -1804,15 +1816,15 @@ def _pass_release_run(state: _Placer) -> None:
     series across its seasons). Among several (a franchise pack), a run
     Sonarr read whole elsewhere stands aside for the rest, then the episode
     titles the members carry name one, then an AniList title does, then the
-    highest tier holds. Several left is none, and the numbered run stands
-    down too. With any parse in the batch unknown the members are HELD (no
+    highest tier holds. Several left is none, and the other count legs
+    stand down too. With any parse in the batch unknown the members are HELD (no
     later pass may place what this one could not judge). Refuses (the exact
-    pass proceeds) when a member's name claims several episodes, a member's
-    own key resolves outside a non-special window, or a non-member reads
-    cleanly inside the window, and stands the numbered run down too when the
-    pick's episode titles name only other episodes or an AniList title names
-    other runs and not it. A coherent reading (every member one distinct id
-    inside the window) stands. Otherwise Sonarr's reading is incoherent (a
+    pass proceeds) on `_run_refused`, on a covering run whose count says
+    nothing about the window, on a covering run Sonarr read into another
+    season, or on `_pick_refused`. Every refusal stands the other count
+    legs down too, and a disputed covering run Sonarr did not read whole into
+    one other season is vetoed before any pick. A coherent reading (every
+    member one distinct id inside the window) stands. Otherwise Sonarr's reading is incoherent (a
     TVDB special shifted its match, the pairs point outside, the keys are
     bogus, or it read nothing) and the run indexes the window. A
     whole-season run's members past a slice window are the other slice's.
@@ -1875,8 +1887,7 @@ def _pass_release_run(state: _Placer) -> None:
     for member in run.members:
         if member not in members:
             state.set_aside(member.name, PlacementVerdict.FOREIGN)
-    for name in run.superseded:
-        state.set_aside(name, PlacementVerdict.DUPLICATE)
+    state.set_aside_each(run.superseded, PlacementVerdict.DUPLICATE)
 
 
 def _run_refused(state: _Placer, run: _Run, window: _RunWindow) -> bool:
@@ -2057,8 +2068,7 @@ def _pass_numbered_run(state: _Placer) -> None:
     run = fits[0]
     for name, ep_id in zip(run.names, window.ids, strict=True):
         state.place(name, [ep_id], PlacementVerdict.NUMBERED_RUN)
-    for name in run.superseded:
-        state.set_aside(name, PlacementVerdict.DUPLICATE)
+    state.set_aside_each(run.superseded, PlacementVerdict.DUPLICATE)
 
 
 def assign_episode_ids(
