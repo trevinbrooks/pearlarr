@@ -72,18 +72,23 @@ class UrlPlacement(NamedTuple):
     failed and a run may be held, so the title is re-checked next run."""
 
 
-def place_release(files: Sequence[SeedFile], scope: SeedScope) -> UrlPlacement:
-    """Place one url's files by the same `assign_episode_ids` the import wait runs.
+def seed_batch(files: Sequence[SeedFile]) -> PlacementBatch:
+    """One url's files as a placement batch keyed by NORMALIZED leaf, as the on-disk leaves are at import time.
 
-    Pure. The batch is keyed by NORMALIZED leaf so it matches the on-disk leaves at import time
-    (NFC/NFD-safe): two raw files sharing a leaf share its verdict and keep their own sizes.
+    NFC/NFD-safe: two raw files sharing a leaf share its verdict (the first parse read) and keep their own sizes.
     """
 
     to_place = list(dict.fromkeys(normalized_leaf(f.basename) for f in files))
     parsed: dict[str, ParsedFileInfo | None] = {}
     for f in files:
         parsed.setdefault(normalized_leaf(f.basename), f.parse)
-    batch = PlacementBatch(to_place, parsed)
+    return PlacementBatch(to_place, parsed)
+
+
+def place_release(files: Sequence[SeedFile], scope: SeedScope) -> UrlPlacement:
+    """Place one url's files by the same `assign_episode_ids` the import wait runs. Pure."""
+
+    batch = seed_batch(files)
     assignment = assign_episode_ids(batch, scope.target()) if scope.can_place else EpisodeAssignment(())
     assigned = assignment.assigned
     records: list[EpisodeRecord] = []
