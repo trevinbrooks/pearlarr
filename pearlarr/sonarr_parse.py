@@ -13,6 +13,7 @@ import concurrent.futures
 import os
 from collections.abc import Iterator, Sequence
 
+from .grab_placement import SeedFile
 from .log import count_noun
 from .manual_import import path_leaf
 from .parse_records import ParseWindow
@@ -20,7 +21,6 @@ from .run_services import RunDeps
 from .seadex_types import ParsedFileInfo, SeadexDict
 from .sonarr_client import AbstractSonarrClient
 from .sonarr_episodes import fetch_workers
-from .sonarr_import_plan import SeedFile
 
 TORRENT_FILENAMES_TO_SKIP = [
     "NCED",

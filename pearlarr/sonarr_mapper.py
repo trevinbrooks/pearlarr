@@ -9,19 +9,13 @@ set via the pure `assign_episode_ids`. Owns the per-run on-disk parse cache.
 
 from typing import NamedTuple
 
+from .import_files import CandidateFile
 from .manual_import import PendingImport, normalized_leaf, path_leaf
+from .placement_types import EpisodeAssignment, EpisodeIndex, Placement, PlacementBatch, TargetScope
+from .placer import assign_episode_ids
+from .release_names import parse_se_from_filename
 from .seadex_types import ManualImportCandidate, ParsedFileInfo
 from .sonarr_client import AbstractSonarrClient
-from .sonarr_import_plan import (
-    CandidateFile,
-    EpisodeAssignment,
-    EpisodeIndex,
-    Placement,
-    PlacementBatch,
-    TargetScope,
-    assign_episode_ids,
-    parse_se_from_filename,
-)
 from .sonarr_parse import is_video_candidate
 
 # Rejection-reason substrings, matched case-insensitively against each

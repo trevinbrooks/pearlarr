@@ -10,6 +10,7 @@ from .arr_http import make_httpx_client
 from .cache import now_stamp
 from .config import Arr
 from .grab_pipeline import GrabRequest
+from .grab_placement import EntryPlacements, PendingSeedContext, SeedScope, build_pending_seeds
 from .log import EntryState, pluralize
 from .manual_import import (
     AttemptKind,
@@ -21,6 +22,7 @@ from .manual_import import (
 )
 from .mappings import ExternalIds, MappingEntry, MappingSource
 from .output import hub_warn
+from .placement_types import episode_index
 from .planner import get_episode_keys
 from .protocols import ArrSync
 from .radarr_client import AbstractRadarrClient, RadarrClient, collect_anime_movies
@@ -35,7 +37,6 @@ from .seadex_types import (
 from .sonarr_client import AbstractSonarrClient, SonarrClient
 from .sonarr_episodes import SonarrEpisodes
 from .sonarr_import import ImportExecutor, ImportReconciler
-from .sonarr_import_plan import EntryPlacements, PendingSeedContext, SeedScope, build_pending_seeds, episode_index
 from .sonarr_mapper import FileEpisodeMapper
 from .sonarr_parse import SonarrParseCache
 

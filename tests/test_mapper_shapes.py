@@ -15,22 +15,16 @@ from pathlib import Path
 import pytest
 from pydantic import BaseModel, RootModel
 
+from pearlarr.grab_placement import SeedFile, SeedScope, place_release
 from pearlarr.manual_import import EntryNames, normalize_basename
+from pearlarr.placement_types import Placement, PlacementBatch, episode_index
+from pearlarr.placer import assign_episode_ids
 from pearlarr.seadex_types import (
     EpisodeRecord,
     Json,
     ManualImportCandidate,
     ParsedFileInfo,
     SonarrEpisode,
-)
-from pearlarr.sonarr_import_plan import (
-    Placement,
-    PlacementBatch,
-    SeedFile,
-    SeedScope,
-    assign_episode_ids,
-    episode_index,
-    place_release,
 )
 
 from .builders import make_sonarr_mapper, pending_import

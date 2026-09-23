@@ -8,9 +8,10 @@ probe/outcome enums the engine and views consume (`WaitOutcome`,
 basename/group normalizers every collaborator matches through.
 
 Everything here is deliberately side-effect free - no network, no disk, no
-qBittorrent. The pure *planning* helpers (queue verdict, episode assignment,
-import plan, quality/language resolution) live in `sonarr_import_plan`,
-which imports from this module - never the other way around.
+qBittorrent. The pure *planning* helpers (the probe verdicts, the episode
+state, the placement and the names it reads, the grab-time seeds, the import
+plan, quality/language resolution) live in the sibling planning modules that
+`docs/architecture.md` lists. This module imports none of them.
 """
 
 import math
