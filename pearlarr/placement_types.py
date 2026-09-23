@@ -14,21 +14,21 @@ from .seadex_types import EpisodeKey, ParsedFileInfo, SonarrEpisode, index_episo
 class EpisodeIndex:
     """The import family's one episode index, built once per episode fetch.
 
-    Both facets detach and wrap read-only at construction; `episode_index` is
+    Both facets detach and wrap read-only at construction. `episode_index` is
     the one builder. Episodes with a falsy id (0) are dropped from EVERY facet
-    before keying - a 0 id can never be POSTed to Sonarr, and a real-id twin
+    before keying: a 0 id can never be POSTed to Sonarr, and a real-id twin
     behind one must still win its `(season, episode)` key. The planner's
     `index_episodes_by_key` deliberately KEEPS them (a 0-id file is still
-    identity evidence) - do not unify the two.
+    identity evidence). Do not unify the two.
     """
 
     by_id: Mapping[int, SonarrEpisode]
-    """Episode id -> episode, in the fetch's (season) order - `list(by_id)` is
+    """Episode id -> episode, in the fetch's (season) order. `list(by_id)` is
     the resolved set the add flow persists onto each seed."""
 
     id_by_key: Mapping[EpisodeKey, int]
     """`(season, episode)` -> episode id (missing numbers collapse to
-    `SONARR_MISSING_KEY`, first record wins - via `index_episodes_by_key`)."""
+    `SONARR_MISSING_KEY`, first record wins, via `index_episodes_by_key`)."""
 
     def __post_init__(self) -> None:
         # Detach from the caller's dicts, then wrap read-only.
@@ -177,8 +177,8 @@ class TargetScope(NamedTuple):
     """
 
     resolved: Sequence[int]
-    """The entry's resolved episode ids, season order - seeded included. A stray
-    zero id still makes the scope real; it is never placed."""
+    """The entry's resolved episode ids, season order, seeded included. A stray
+    zero id still makes the scope real. It is never placed."""
 
     series: EpisodeIndex
     """ALL the series' episodes: the `(season, episode)` map every key resolves
@@ -187,7 +187,7 @@ class TargetScope(NamedTuple):
     run evidence reads."""
 
     used: frozenset[int] = frozenset()
-    """Ids a seed already owns - never handed to a leftover file."""
+    """Ids a seed already owns, never handed to a leftover file."""
 
     names: EntryNames = EntryNames()
     """The series and AniList titles: when several runs or numberless files could take the window, the one

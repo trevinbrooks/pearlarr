@@ -8,7 +8,7 @@ from .seadex_types import Language, Quality, QualityDefinition, QualityModel, Qu
 # Filename source tokens -> QualitySource, ordered most-specific first so a
 # "BluRay Remux" name resolves to BLURAY_RAW (not BLURAY), "BD" counts as BluRay,
 # and "WEB-DL" wins over a bare "WEB". A token that matches nothing leaves the
-# source axis undetermined (None) - it is NEVER defaulted to WEB here. The
+# source axis undetermined (None). It is NEVER defaulted to WEB here. The
 # configured default fills it.
 _SOURCE_PATTERNS: list[tuple[re.Pattern[str], QualitySource]] = [
     (re.compile(r"remux", re.IGNORECASE), QualitySource.BLURAY_RAW),
@@ -43,7 +43,7 @@ def parse_quality_from_filename(filename: str) -> ParsedQuality:
 
     Detects a resolution (`2160`/`1080`/`720`/`480`) and a source
     (Remux, BluRay, WEB-DL, WEBRip, WEB, HDTV, DVD), case-insensitively and
-    independently. Either axis is `None` when not found - notably an
+    independently. Either axis is `None` when not found: notably an
     unrecognized source is left `None` (NOT defaulted to WEB), so the configured
     default can fill it rather than the file being silently mislabeled.
     """
@@ -89,7 +89,7 @@ def quality_axes_from_name(
 
     Resolves the configured `imports.default_quality` (a Sonarr quality name like
     `"Bluray-2160p"`) to its structured axes by matching it, case-insensitively,
-    against the `/api/v3/qualitydefinition` list - so the default contributes a
+    against the `/api/v3/qualitydefinition` list, so the default contributes a
     real `(source, resolution)` the decision fills gaps from. An unset name, or
     one that matches no definition, yields `ParsedQuality()` (no default).
     """
@@ -153,7 +153,7 @@ def resolve_quality(
     quality_defs: list[QualityDefinition],
     candidate_model: QualityModel | None,
 ) -> QualityModel:
-    """Resolve the final manual-import `QualityModel` - never omitted.
+    """Resolve the final manual-import `QualityModel`, never omitted.
 
     The source and resolution axes are decided independently, each taking the
     first authoritative value in precedence order: Sonarr's parse, then our
@@ -171,7 +171,7 @@ def resolve_quality(
     candidate carries no quality at all is an explicit `Unknown` synthesized.
     """
 
-    # Invariant: the import payload always carries a quality key - omitting it
+    # Invariant: the import payload always carries a quality key. Omitting it
     # crashes Sonarr in FileNameBuilder.AddQualityTokens (observed on Sonarr 4.x).
     source = sonarr.source or ours.source or default.source
     resolution = sonarr.resolution or ours.resolution or default.resolution

@@ -17,7 +17,7 @@ def parse_se_from_filename(name: str) -> ParsedFileInfo | None:
 
     Pure + regex-only: pulls a single `SxxExx` out of a leaf and returns it as a
     `ParsedFileInfo` (season + episode). Returns None when the name carries
-    no `SxxExx` (an absolute-numbered or unparseable leaf) - those are left to
+    no `SxxExx` (an absolute-numbered or unparseable leaf): those are left to
     Sonarr's parse or the absolute-index leg, never guessed from a bare number.
     Marked `offline` because the regex knows nothing about absolute numbers: a
     dual-numbered name ("S01E12 - 12") parsed here would otherwise launder its

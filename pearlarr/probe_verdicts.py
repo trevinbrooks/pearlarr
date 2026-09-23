@@ -13,8 +13,8 @@ class QueueVerdict(Enum):
     """What Sonarr's queue says to do with a tracked download THIS poll.
 
     Derived purely from the queue records sharing a `downloadId` (a season pack
-    has one record per episode), reading `trackedDownloadState` plus - for
-    pending records - `trackedDownloadStatus`. "Already imported" is NOT decided
+    has one record per episode), reading `trackedDownloadState` plus (for
+    pending records) `trackedDownloadStatus`. "Already imported" is NOT decided
     here (a successful import is removed from the queue). The caller reads the
     episode files.
     """
@@ -38,7 +38,7 @@ class QueueVerdict(Enum):
 
 
 # trackedDownloadState values (camelCase from Sonarr, compared case-folded) that
-# mean Sonarr is genuinely working the download right now - wait rather than race
+# mean Sonarr is genuinely working the download right now: wait rather than race
 # it. `importing` is the copy itself (a credited wait). `queued`/`delay`/`paused`
 # are QueueStatus-ish transients Sonarr may surface in the same field. Treat
 # them as "still working" too.
@@ -69,7 +69,7 @@ def classify_queue(records: list[QueueRecord]) -> QueueVerdict:
          "handle this yourself").
       3. a CLEAN `importPending` (status `ok`, or none reported) ->
          `PENDING_CLEAN`: Sonarr is about to import it, so let it settle rather
-         than step in - stepping in would race Sonarr's own import.
+         than step in. Stepping in would race Sonarr's own import.
       4. otherwise (empty because Sonarr isn't tracking it, all `imported`, or an
          unknown state) -> `STEP_IN`.
 
@@ -92,7 +92,7 @@ def classify_queue(records: list[QueueRecord]) -> QueueVerdict:
         elif state in _QUEUE_STEP_IN_STATES:
             troubled = True
         elif state == "importpending":
-            # Invariant: only a CLEAN importPending defers to Sonarr - a
+            # Invariant: only a CLEAN importPending defers to Sonarr. A
             # warning/error-flagged one is a failed Sonarr import attempt it
             # won't reliably retry, so waiting would burn the readiness deadline.
             if (record.status or "").casefold() in _QUEUE_FLAGGED_STATUSES:
@@ -113,7 +113,7 @@ def classify_queue(records: list[QueueRecord]) -> QueueVerdict:
 
 # A command counts as a ManualImport only under this name (Sonarr's command
 # `name`, compared case-folded), and only these statuses mean it is still
-# running - a terminal command (completed / failed / aborted / cancelled /
+# running. A terminal command (completed / failed / aborted / cancelled /
 # orphaned) is no longer in flight, so it never wedges a re-import.
 _MANUAL_IMPORT_COMMAND_NAME = "manualimport"
 _COMMAND_IN_FLIGHT_STATES = frozenset({"queued", "started"})
@@ -130,7 +130,7 @@ class ContentPaths(NamedTuple):
 
     A dead-tracked folder import POSTs the TRANSLATED (Sonarr-visible) path, so
     a command read back carries that form while the durable record carries the
-    raw qBittorrent one - the guard needs both prefixes.
+    raw qBittorrent one: the guard needs both prefixes.
     """
 
     raw: str
@@ -145,14 +145,14 @@ class InFlightImport(NamedTuple):
     """The in-flight ManualImport `manual_import_in_flight` matched, plus HOW.
 
     Only a provable (`by_download_id`) or own-issued match may be credited back
-    to the ready deadline; an unproven one stays a plain deadline-bounded wait.
+    to the ready deadline. An unproven one stays a plain deadline-bounded wait.
     """
 
     command: CommandResource
     """The matched, still-running ManualImport."""
 
     by_download_id: bool
-    """True for the primary `download_id` match; False for the path/episode fallback."""
+    """True for the primary `download_id` match. False for the path/episode fallback."""
 
 
 class DownloadMatch(NamedTuple):
@@ -173,10 +173,10 @@ def manual_import_in_flight(commands: list[CommandResource], match: DownloadMatc
 
     Pure (mirrors `classify_queue`). Sonarr copies asynchronously and drops the
     torrent from the queue meanwhile, so the queue alone reads "empty -> step
-    in" and we'd stack a duplicate every poll; matching the durable infohash
+    in" and we'd stack a duplicate every poll. Matching the durable infohash
     (case-insensitive) closes that loop and survives a process restart. A
     no-download-id folder import falls back to a `content_paths`-prefix or
-    `target_ep_ids` overlap - deliberately broad, since a false positive only
+    `target_ep_ids` overlap, deliberately broad, since a false positive only
     makes us wait (deadline-bounded, never credited) while a miss re-opens the
     duplicate-import loop.
     """
@@ -207,7 +207,7 @@ def manual_import_in_flight(commands: list[CommandResource], match: DownloadMatc
 
 
 # The monitored-download pass a completed RefreshMonitoredDownloads immediately
-# starts - the one the rescan settles (see `sonarr_process_pass_running`).
+# starts, the one the rescan settles (see `sonarr_process_pass_running`).
 _SONARR_PROCESS_PASS_NAMES = frozenset({"processmonitoreddownloads"})
 
 # Sonarr's disk-access commands (its RequiresDiskAccess scheduling class),
@@ -230,7 +230,7 @@ def started_disk_commands(commands: list[CommandResource]) -> list[CommandResour
 
     A ManualImport POSTed while one is `started` queues behind it and replays
     minutes stale, re-copying files an intervening pass already placed. Only
-    `started` blocks - a queued pass is near-permanently present during a wait,
+    `started` blocks: a queued pass is near-permanently present during a wait,
     so blocking on it would starve the step-in entirely. The list form lets
     `classify_commands` tell an own running command from a foreign one.
     """
@@ -269,7 +269,7 @@ def classify_commands(
 ) -> CommandBlock | None:
     """Reduce one `/api/v3/command` snapshot to the block holding a step-in, or None when clear.
 
-    Pure (mirrors `classify_queue`); `is_own` is the executor's this-run
+    Pure (mirrors `classify_queue`). `is_own` is the executor's this-run
     issued-id memory. An in-flight import covering this download outranks the
     broad disk guard, and it is ours by the download-id match (survives
     restarts) or an issued id. An unproven or foreign command still blocks
@@ -309,7 +309,7 @@ def _started(commands: list[CommandResource], names: frozenset[str]) -> list[Com
 
 
 # The episode-history events that map a re-appeared download to a queue-hidden
-# tracked state (Imported / Failed / Ignored) - states Sonarr never runs its
+# tracked state (Imported / Failed / Ignored), states Sonarr never runs its
 # completed-download Check on, so `manualimport?downloadId=` NREs (HTTP 500)
 # forever. Keyed by casefolded eventType, valued by the human label the hub
 # note renders. `grabbed` (or none of the four) means genuinely Downloading.
@@ -342,7 +342,7 @@ class DownloadHistoryVerdict:
 
     dead_tracked: bool
     """True when Sonarr's history maps the download to a queue-hidden state it
-    will never serve by id - import from its folder instead."""
+    will never serve by id. Import from its folder instead."""
 
     event: str | None = None
     """The dead-tracked event label (`imported`/`failed`/`ignored`), for the
@@ -368,7 +368,7 @@ def classify_download_history(page: HistoryPage) -> DownloadHistoryVerdict:
     Imported/failed/ignored -> dead-tracked. `grabbed` -> clean (a hash Sonarr
     itself re-grabbed after an old failure is genuinely Downloading). None of
     the four found -> clean. Probing only for prior imports would misroute
-    re-grabs of previously-FAILED/IGNORED hashes - the same NREs apply there.
+    re-grabs of previously-FAILED/IGNORED hashes: the same NREs apply there.
     An imported verdict carries its cycle's import rows.
     """
 
