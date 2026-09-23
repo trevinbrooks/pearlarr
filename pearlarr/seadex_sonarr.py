@@ -484,6 +484,7 @@ class SonarrSync(ArrSync[SonarrItem]):
                 replaced_groups=sonarr_releases.replaced_groups(),
                 coverage=coverage,
                 pending_seeds=pending_seeds,
+                parse_failed_groups=placed.parse_failed_groups(seadex_dict),
             ),
         )
 

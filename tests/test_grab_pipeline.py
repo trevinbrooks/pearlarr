@@ -975,6 +975,65 @@ class TestUnsupportedTrackerSkip:
         assert set(pipeline.cache_store.torrent_hashes(Arr.SONARR, 7)) == {"hN", "hP"}
 
 
+class TestParseFailed:
+    """A failed Sonarr parse request at grab time leaves the title uncached, with a retry row in the summary."""
+
+    @staticmethod
+    def _request(seadex_dict: SeadexDict, hashes: list[str | None]) -> GrabRequest:
+        return GrabRequest(
+            al_id=42,
+            arr_title="Show",
+            entry_title="Show",
+            entry=make_entry_record(url="https://seadex.example/42"),
+            seadex_dict=seadex_dict,
+            torrent_hashes=hashes,
+            cache_details={"updated_at": "2026-01-01 00:00:00"},
+            replaced_groups=(),
+            parse_failed_groups=("RG",),
+        )
+
+    def test_a_grabbed_title_stays_uncached_with_a_retry_row(self) -> None:
+        nyaa = _nyaa_release(url="https://nyaa.si/view/1", infohash="h1")
+        seadex_dict: SeadexDict = {"RG": rg_group({nyaa.url: nyaa})}
+        pipeline = _pipeline(torrents=FakeTorrents({"h1": (AddOutcome.ADDED, "Show-RG")}), sleep_time=0)
+        pipeline._anilist.al_cache.update({42: {}})
+        pipeline._ctx.per_title.current_title = "Show S1"
+
+        stop = pipeline.grab_and_cache(self._request(seadex_dict, ["h1"]))
+
+        assert stop is False
+        assert pipeline._ctx.torrents_added == 1
+        assert pipeline.cache_store.get_entry(Arr.SONARR, 42) is None
+        rows = pipeline._ctx.stats.needs_action
+        assert [r.kind for r in rows] == [NeedsActionKind.PARSE_FAILED]
+        assert rows[0].reason == "a Sonarr parse request failed; will retry next run"
+        assert rows[0].group == "RG"
+
+    def test_a_title_nothing_was_flagged_for_is_neither_up_to_date_nor_cached(self) -> None:
+        # The placement may have held a run, so the coverage judgment was coarse: no "already have it".
+        seadex_dict: SeadexDict = {"RG": rg_group({"u1": url_item(url="u1", infohash="h1", download=False)})}
+        pipeline = _pipeline(torrents=FakeTorrents({}), sleep_time=0)
+        pipeline._ctx.per_title.current_title = "Show S1"
+
+        pipeline.grab_and_cache(self._request(seadex_dict, []))
+
+        assert pipeline._ctx.stats.up_to_date == 0
+        assert pipeline.cache_store.get_entry(Arr.SONARR, 42) is None
+        assert [r.kind for r in pipeline._ctx.stats.needs_action] == [NeedsActionKind.PARSE_FAILED]
+
+    def test_a_failed_grab_outranks_the_parse_miss(self) -> None:
+        nyaa = _nyaa_release(url="https://nyaa.si/view/1", infohash="h1")
+        seadex_dict: SeadexDict = {"RG": rg_group({nyaa.url: nyaa})}
+        torrents = FakeTorrents({}, raises={"h1": httpx.ConnectError("nyaa down")})
+        pipeline = _pipeline(torrents=torrents, sleep_time=0)
+        pipeline._anilist.al_cache.update({42: {}})
+        pipeline._ctx.per_title.current_title = "Show S1"
+
+        pipeline.grab_and_cache(self._request(seadex_dict, ["h1"]))
+
+        assert [r.kind for r in pipeline._ctx.stats.needs_action] == [NeedsActionKind.GRAB_FAILED]
+
+
 class TestGrabFailureContainment:
     """An expected external failure (tracker or qBittorrent down/erroring) is contained at the add.
 

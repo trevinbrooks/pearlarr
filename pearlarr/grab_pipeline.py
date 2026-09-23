@@ -56,6 +56,9 @@ class GrabRequest:
     coverage: str = ""
     """Sonarr's episode coverage string ("" for Radarr)."""
     pending_seeds: dict[str, PendingImport] | None = None
+    parse_failed_groups: tuple[str, ...] = ()
+    """Groups with a file whose Sonarr parse request failed this run, so the grab-time placement may have
+    held a run: the title is never cached as done and re-checks next run."""
 
 
 class GrabPipeline:
@@ -253,7 +256,8 @@ class GrabPipeline:
     def _should_cache_as_done(self, *, cap_reached: bool, added_this_title: int, grab_failed: bool) -> bool:
         """Whether this title's outcome may be cached as done.
 
-        Only if something was grabbed or nothing was skipped. The run cap, a fallback hold, or a failed grab vetoes it.
+        Only if something was grabbed or nothing was skipped. The run cap, a fallback hold, a failed grab, or a
+        failed parse request vetoes it.
         """
 
         # A non-interactive fallback-mode private hold means the fallback COULDN'T cover these files: never cache, so
@@ -267,6 +271,7 @@ class GrabPipeline:
             not cap_reached
             and not fallback_hold
             and not grab_failed
+            and not self._ctx.per_title.parse_failed_groups
             and (
                 added_this_title > 0
                 or not (self._ctx.per_title.private_only_skipped or self._ctx.per_title.unsupported_tracker_skipped)
@@ -276,7 +281,7 @@ class GrabPipeline:
     def _classify_needs_action(self, *, grab_failed: bool) -> NeedsActionRecord | None:
         """The single needs-action row for a title NOT cached as done, or None.
 
-        Flat guard-returns preserve the precedence private-only > unsupported-tracker > grab-failed.
+        Flat guard-returns preserve the precedence private-only > unsupported-tracker > grab-failed > parse-missed.
         """
 
         if self._ctx.per_title.private_only_skipped:
@@ -297,6 +302,14 @@ class GrabPipeline:
                 self._ctx.per_title.grab_failed_groups,
                 "grab failed; will retry next run",
                 NeedsActionKind.GRAB_FAILED,
+            )
+
+        if self._ctx.per_title.parse_failed_groups:
+            # The placement may have held a run on the missing parse, so the grab was judged coarsely: re-check.
+            return self._needs_action(
+                self._ctx.per_title.parse_failed_groups,
+                "a Sonarr parse request failed; will retry next run",
+                NeedsActionKind.PARSE_FAILED,
             )
 
         return None
@@ -331,13 +344,16 @@ class GrabPipeline:
         """Shared per-id tail: add torrents, notify, cache the outcome. True when the run-wide cap was hit."""
 
         any_to_download = self._planner.get_any_to_download(req.seadex_dict)
+        # The strategy's placement facts land on the title's flags beside the add loop's own.
+        self._ctx.per_title.parse_failed_groups.extend(req.parse_failed_groups)
 
         # The cap can stop the url loop mid-title, so a capped title is never cached as done, only classified below.
         cap_reached = False
         added_this_title = 0
 
         if not any_to_download:
-            if not self._ctx.per_title.private_only_skipped:
+            # A failed parse request may have held a placement, so "already have it" is not claimed either.
+            if not (self._ctx.per_title.private_only_skipped or self._ctx.per_title.parse_failed_groups):
                 self._ctx.stats.up_to_date += 1
                 self._reporter.detail(
                     "status",
