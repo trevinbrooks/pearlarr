@@ -23,6 +23,16 @@ from typing import ClassVar
 import pytest
 
 from pearlarr.config import AppConfig
+from pearlarr.grab_placement import (
+    PendingSeedContext,
+    SeedFile,
+    SeedRelease,
+    SeedScope,
+    build_pending_seed,
+    place_release,
+)
+from pearlarr.import_files import CandidateFile
+from pearlarr.import_quality import ParsedQuality, quality_axes_from_model, resolve_quality
 from pearlarr.manual_import import (
     AttemptKind,
     EntryNames,
@@ -30,6 +40,25 @@ from pearlarr.manual_import import (
     PendingImport,
     normalize_basename,
 )
+from pearlarr.placement_types import (
+    EpisodeAssignment,
+    EpisodeIndex,
+    Placement,
+    PlacementBatch,
+    PlacementVerdict,
+    TargetScope,
+    episode_index,
+)
+from pearlarr.placer import assign_episode_ids
+from pearlarr.probe_verdicts import (
+    ContentPaths,
+    DownloadMatch,
+    QueueVerdict,
+    classify_queue,
+    manual_import_in_flight,
+    started_disk_commands,
+)
+from pearlarr.release_names import parse_se_from_filename
 from pearlarr.seadex_sonarr import SonarrSync
 from pearlarr.seadex_types import (
     CommandResource,
@@ -41,33 +70,6 @@ from pearlarr.seadex_types import (
     QualitySource,
     QueueRecord,
     SonarrEpisode,
-)
-from pearlarr.sonarr_import_plan import (
-    CandidateFile,
-    ContentPaths,
-    DownloadMatch,
-    EpisodeAssignment,
-    EpisodeIndex,
-    ParsedQuality,
-    PendingSeedContext,
-    Placement,
-    PlacementBatch,
-    PlacementVerdict,
-    QueueVerdict,
-    SeedFile,
-    SeedRelease,
-    SeedScope,
-    TargetScope,
-    assign_episode_ids,
-    build_pending_seed,
-    classify_queue,
-    episode_index,
-    manual_import_in_flight,
-    parse_se_from_filename,
-    place_release,
-    quality_axes_from_model,
-    resolve_quality,
-    started_disk_commands,
 )
 
 from .builders import (
@@ -1350,7 +1352,7 @@ class TestAssignBogusKeyDowngrade:
     """
 
     def test_movie_year_bogus_key_places_the_sole_resolved_episode(self) -> None:
-        # "Chronicle.2020" parses S20E20 - a key the series doesn't have. One
+        # "Title.2020" parses S20E20, a key the series doesn't have. One
         # file, one resolved id: the parse artifact downgrades to numberless.
         parsed = {"movie.mkv": _pinfo(season=20, episodes=(20,))}
         ep_id_map = {EpisodeKey(1, 1): 501}

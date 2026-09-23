@@ -45,6 +45,7 @@ from pearlarr.notify import Notifier
 from pearlarr.output import SeverityCounts, emit_to_hub
 from pearlarr.parse_records import ParseRecords
 from pearlarr.pending_records import PendingRecords
+from pearlarr.placement_types import EpisodeIndex, episode_index
 from pearlarr.planner import DownloadPlanner, PlanResult, PrivateOnlySkips
 from pearlarr.radarr_client import AbstractRadarrClient
 from pearlarr.reporter import RunContext, RunReporter
@@ -66,7 +67,6 @@ from pearlarr.seadex_types import (
 )
 from pearlarr.sonarr_client import AbstractSonarrClient
 from pearlarr.sonarr_episodes import SonarrEpisodes
-from pearlarr.sonarr_import_plan import EpisodeIndex, episode_index
 from pearlarr.sonarr_mapper import FileEpisodeMapper
 from pearlarr.sonarr_parse import SonarrParseCache
 from pearlarr.torrents import AddOutcome, AddResult, TorrentService

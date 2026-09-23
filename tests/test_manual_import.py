@@ -1,15 +1,13 @@
 # pyright: strict
 """Characterization tests for the pure manual-import helpers.
 
-Pins the deterministic decision helpers in
-`manual_import` (the wait vocabulary, the normalizers,
-the `PendingImport` JSON round-trip) and
-`sonarr_import_plan` (the `(season, episode) -> id`
-map, the authoritative file->episode mapping and import planning (strict-honor
-+ never-overwrite + never-skip), the queue classifier and episode-file status,
-the filename quality parse, and the layered quality/language selection). All
-pure, no network or disk. `SonarrEpisode` is built directly via
-`SonarrEpisode.model_validate`.
+Pins the deterministic decision helpers in `manual_import` (the wait vocabulary, the normalizers,
+the `PendingImport` JSON round-trip) and in the planning modules: the `(season, episode) -> id`
+index in `placement_types`, the episode-file status in `episode_state`, the authoritative file to
+episode mapping in `placer` and the import plan in `import_files` (strict-honor, never-overwrite,
+never-skip), the queue classifier in `probe_verdicts`, the filename quality parse and the layered
+quality/language selection in `import_quality`. All pure, no network or disk. `SonarrEpisode` is
+built directly via `SonarrEpisode.model_validate`.
 """
 
 from collections.abc import MutableMapping
@@ -19,6 +17,16 @@ from typing import ClassVar, cast
 
 import pytest
 
+from pearlarr.episode_state import EpisodeFileStatus, EpisodeSnapshot, TargetStatuses
+from pearlarr.import_files import CandidateFile, plan_import_files
+from pearlarr.import_quality import (
+    ParsedQuality,
+    derive_languages,
+    parse_quality_from_filename,
+    quality_axes_from_model,
+    quality_axes_from_name,
+    resolve_quality,
+)
 from pearlarr.manual_import import (
     LEAVE_PROBE,
     Deferral,
@@ -38,6 +46,23 @@ from pearlarr.manual_import import (
     path_leaf,
     sanitize_torrent_telemetry,
 )
+from pearlarr.placement_types import EpisodeIndex, PlacementBatch, PlacementVerdict, TargetScope, episode_index
+from pearlarr.placer import assign_episode_ids
+from pearlarr.probe_verdicts import (
+    CommandBlock,
+    ContentPaths,
+    DownloadMatch,
+    HistoryImport,
+    QueueVerdict,
+    classify_commands,
+    classify_download_history,
+    classify_queue,
+    manual_import_in_flight,
+    placements_from_history,
+    sonarr_process_pass_running,
+    started_disk_commands,
+    translate_download_path,
+)
 from pearlarr.seadex_types import (
     SONARR_MISSING_KEY,
     CommandResource,
@@ -52,38 +77,6 @@ from pearlarr.seadex_types import (
     RemotePathMapping,
     Revision,
     SonarrEpisode,
-)
-from pearlarr.sonarr_import_plan import (
-    CandidateFile,
-    CommandBlock,
-    ContentPaths,
-    DownloadMatch,
-    EpisodeFileStatus,
-    EpisodeIndex,
-    EpisodeSnapshot,
-    HistoryImport,
-    ParsedQuality,
-    PlacementBatch,
-    PlacementVerdict,
-    QueueVerdict,
-    TargetScope,
-    TargetStatuses,
-    assign_episode_ids,
-    classify_commands,
-    classify_download_history,
-    classify_queue,
-    derive_languages,
-    episode_index,
-    manual_import_in_flight,
-    parse_quality_from_filename,
-    placements_from_history,
-    plan_import_files,
-    quality_axes_from_model,
-    quality_axes_from_name,
-    resolve_quality,
-    sonarr_process_pass_running,
-    started_disk_commands,
-    translate_download_path,
 )
 
 from .builders import SEP, pending_import, queue_record, series_index, sonarr_ep
@@ -1450,7 +1443,7 @@ class TestPendingStateAndProbe:
 
 
 class TestClassifyPending:
-    """classify_pending folds a poll's outcome + the files-present flag into a state."""
+    """`classify_pending` folds a poll's outcome + the files-present flag into a state."""
 
     def test_missing(self) -> None:
         assert classify_pending(WaitOutcome.MISSING, False) is PendingState.MISSING
@@ -1532,7 +1525,7 @@ def test_wait_outcome_members_exist() -> None:
 
 
 class TestClassifyQueue:
-    """classify_queue buckets queue records (state + pending status) into one verdict."""
+    """`classify_queue` buckets queue records (state + pending status) into one verdict."""
 
     def test_empty_steps_in(self) -> None:
         assert classify_queue([]) is QueueVerdict.STEP_IN

@@ -1,20 +1,18 @@
 # pyright: strict
 """The grab-time placement: what `place_release` records for the planner, and what the seeds fold from it."""
 
-from pearlarr.manual_import import EntryNames, normalize_basename, normalized_leaf
-from pearlarr.seadex_types import EpisodeRecord, MatchedEpisode, ParsedFileInfo, SeadexDict, SonarrEpisode
-from pearlarr.sonarr_import_plan import (
+from pearlarr.grab_placement import (
     EntryPlacements,
-    EpisodeAssignment,
     PendingSeedContext,
-    PlacementVerdict,
     SeedFile,
     SeedScope,
     UrlPlacement,
     build_pending_seeds,
-    episode_index,
     place_release,
 )
+from pearlarr.manual_import import EntryNames, normalize_basename, normalized_leaf
+from pearlarr.placement_types import EpisodeAssignment, PlacementVerdict, episode_index
+from pearlarr.seadex_types import EpisodeRecord, MatchedEpisode, ParsedFileInfo, SeadexDict, SonarrEpisode
 
 from .builders import rg_group, sonarr_ep, url_item
 

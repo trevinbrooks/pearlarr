@@ -18,6 +18,7 @@ from seadex import EntryRecord
 
 from pearlarr.cache import UPDATED_AT_STR_FORMAT
 from pearlarr.config import Arr
+from pearlarr.grab_placement import SeedFile
 from pearlarr.mappings import ExternalIds, MappingEntry
 from pearlarr.parse_records import (
     SONARR_PARSE_CACHE_TTL_DAYS,
@@ -36,7 +37,6 @@ from pearlarr.sonarr_episodes import (
     fetch_workers,
     sonarr_series_fingerprint,
 )
-from pearlarr.sonarr_import_plan import SeedFile
 from pearlarr.sonarr_parse import (
     SonarrParseCache,
     is_video_candidate,
