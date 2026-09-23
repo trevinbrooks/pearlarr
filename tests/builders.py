@@ -5,7 +5,7 @@
 
 import dataclasses
 import logging
-from collections.abc import Iterable, Iterator, Mapping
+from collections.abc import Iterable, Iterator, Mapping, Sequence
 from copy import deepcopy
 from datetime import datetime
 from typing import Any, override
@@ -45,7 +45,7 @@ from pearlarr.notify import Notifier
 from pearlarr.output import SeverityCounts, emit_to_hub
 from pearlarr.parse_records import ParseRecords
 from pearlarr.pending_records import PendingRecords
-from pearlarr.placement_types import EpisodeIndex, episode_index
+from pearlarr.placement_types import EpisodeAssignment, EpisodeIndex, PlacementVerdict, episode_index
 from pearlarr.planner import DownloadPlanner, PlanResult, PrivateOnlySkips
 from pearlarr.radarr_client import AbstractRadarrClient
 from pearlarr.reporter import RunContext, RunReporter
@@ -58,6 +58,8 @@ from pearlarr.seadex_types import (
     EpisodeKey,
     EpisodeRecord,
     ManualImportCandidate,
+    MatchedEpisode,
+    ParsedFileInfo,
     ProgressSink,
     QueueRecord,
     SeadexDict,
@@ -1000,10 +1002,62 @@ def sonarr_ep(
     return SonarrEpisode.model_validate(raw)
 
 
-def series_index(id_by_key: Mapping[EpisodeKey, int]) -> EpisodeIndex:
-    """A whole-series index synthesized from a `(season, episode) -> id` map: no titles, no absolutes."""
+def series_index(
+    id_by_key: Mapping[EpisodeKey, int],
+    *,
+    absolutes: Mapping[int, int] | None = None,
+    titles: Mapping[int, str] | None = None,
+) -> EpisodeIndex:
+    """A whole-series index synthesized from a `(season, episode) -> id` map, with the absolutes and titles given by id."""
 
-    return episode_index([sonarr_ep(key.season, key.episode, ep_id=ep_id) for key, ep_id in id_by_key.items()])
+    absolute_of = absolutes or {}
+    title_of = titles or {}
+    return episode_index(
+        [
+            sonarr_ep(
+                key.season, key.episode, ep_id=ep_id, absolute=absolute_of.get(ep_id), title=title_of.get(ep_id, "")
+            )
+            for key, ep_id in id_by_key.items()
+        ]
+    )
+
+
+def parsed_info(
+    *,
+    season: int | None = None,
+    episodes: tuple[int, ...] = (),
+    absolutes: tuple[int, ...] = (),
+    matched: tuple[tuple[int, int], ...] = (),
+    full_season: bool = False,
+    offline: bool = False,
+) -> ParsedFileInfo:
+    """Shorthand `ParsedFileInfo` for the placement tests: the name's own numbers, plus any series-matched pairs."""
+
+    return ParsedFileInfo(
+        season_number=season,
+        episode_numbers=episodes,
+        absolute_episode_numbers=absolutes,
+        matched_episodes=tuple(
+            MatchedEpisode(season_number=matched_season, episode_number=episode) for matched_season, episode in matched
+        ),
+        full_season=full_season,
+        offline=offline,
+    )
+
+
+def by_name(result: EpisodeAssignment) -> dict[str, tuple[tuple[int, ...], PlacementVerdict]]:
+    """One assignment keyed name -> (ids, verdict), for the tests that pin every placement."""
+
+    return {p.name: (p.ids, p.verdict) for p in result.placements}
+
+
+def numbered_names(prefix: str, count: int, tails: Sequence[str] = ()) -> list[str]:
+    """`prefix - 01 [grp].mkv` names for `1..count`, each with its tail (a title after the number) when given."""
+
+    return [
+        f"{prefix} - {n:02d} - {tail} [grp].mkv" if tail else f"{prefix} - {n:02d} [grp].mkv"
+        for n, tail in zip(range(1, count + 1), tails or [""] * count, strict=True)
+    ]
 
 
 # The `al_id` every `pending_import` record carries unless overridden, exported so tests can spell
