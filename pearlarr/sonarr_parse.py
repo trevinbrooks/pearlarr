@@ -68,6 +68,12 @@ NON_VIDEO_EXTENSIONS = {
     ".rar",
     ".zip",
     ".7z",
+    # Bundled manga volumes and books.
+    ".cbz",
+    ".cbr",
+    ".cb7",
+    ".pdf",
+    ".epub",
     # Audio tracks + rip sidecars (OSTs, EAC logs/cuesheets) bundled in releases:
     # never an episode. `.mka` is Matroska audio (the video `.mkv` is kept).
     ".flac",
