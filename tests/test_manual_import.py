@@ -86,7 +86,7 @@ from pearlarr.sonarr_import_plan import (
     translate_download_path,
 )
 
-from .builders import SEP, pending_import, queue_record, sonarr_ep
+from .builders import SEP, pending_import, queue_record, series_index, sonarr_ep
 
 
 class TestEpisodeIndex:
@@ -127,6 +127,14 @@ class TestEpisodeIndex:
         index = episode_index(eps)
         assert index.id_by_key == {(1, 2): 9}
         assert tuple(index.by_id) == (9,)
+
+    def test_the_title_and_absolute_number_ride_the_record(self) -> None:
+        raw = {"id": 6, "seasonNumber": 1, "episodeNumber": 1, "absoluteEpisodeNumber": 13, "title": "Beach Day"}
+        ep = SonarrEpisode.model_validate({**raw, "episodeFileId": 0})
+        bare = SonarrEpisode.model_validate({"id": 6, "seasonNumber": 1, "episodeNumber": 1, "episodeFileId": 0})
+
+        assert (ep.absolute_episode_number, ep.title) == (13, "Beach Day")
+        assert (bare.absolute_episode_number, bare.title) == (None, "")
 
     def test_facets_detach_and_reject_mutation(self) -> None:
         source = {EpisodeKey(1, 1): 11}
@@ -225,7 +233,7 @@ class TestBorrowedPairPlacement:
     """
 
     _SCOPE: ClassVar[TargetScope] = TargetScope(
-        [11, 12, 13], {EpisodeKey(1, 1): 11, EpisodeKey(1, 2): 12, EpisodeKey(1, 3): 13}
+        [11, 12, 13], series_index({EpisodeKey(1, 1): 11, EpisodeKey(1, 2): 12, EpisodeKey(1, 3): 13})
     )
 
     def test_a_pair_inside_the_entry_places_exactly(self) -> None:
@@ -260,14 +268,14 @@ class TestBorrowedPairPlacement:
     def test_a_wide_span_the_name_claims_itself_places_whole(self) -> None:
         # The cap is a BORROW limit. An explicit "E01-E04" range resolving every key inside the
         # set is a complete reading of the name's own claim, so width never refuses it.
-        scope = TargetScope([11, 12, 13, 14], {EpisodeKey(1, e): 10 + e for e in range(1, 5)})
+        scope = TargetScope([11, 12, 13, 14], series_index({EpisodeKey(1, e): 10 + e for e in range(1, 5)}))
         parsed: dict[str, ParsedFileInfo | None] = {"span.mkv": _parsed(season=1, episodes=(1, 2, 3, 4))}
 
         assert _verdicts(parsed, scope) == {"span.mkv": ((11, 12, 13, 14), PlacementVerdict.EXACT)}
 
     def test_a_borrowed_span_just_over_the_cap_is_refused(self) -> None:
         # Four distinct pairs a NUMBERLESS name only borrowed is the season-pack shape sans flag.
-        scope = TargetScope([11, 12, 13, 14], {EpisodeKey(1, e): 10 + e for e in range(1, 5)})
+        scope = TargetScope([11, 12, 13, 14], series_index({EpisodeKey(1, e): 10 + e for e in range(1, 5)}))
         parsed: dict[str, ParsedFileInfo | None] = {"pack.mkv": _parsed(matched=tuple((1, e) for e in range(1, 5)))}
 
         assert _verdicts(parsed, scope) == {"pack.mkv": ((), PlacementVerdict.SKIPPED)}
@@ -297,18 +305,24 @@ class TestForeignClassification:
     def test_a_clean_reading_fully_outside_is_another_slice(self) -> None:
         parsed: dict[str, ParsedFileInfo | None] = {"other.mkv": _parsed(season=3, episodes=(13,))}
 
-        assert _verdicts(parsed, TargetScope([101], self._MAP)) == {"other.mkv": ((), PlacementVerdict.FOREIGN)}
+        assert _verdicts(parsed, TargetScope([101], series_index(self._MAP))) == {
+            "other.mkv": ((), PlacementVerdict.FOREIGN)
+        }
 
     def test_a_reading_inside_the_entry_is_ours(self) -> None:
         parsed: dict[str, ParsedFileInfo | None] = {"mine.mkv": _parsed(season=3, episodes=(1,))}
 
-        assert _verdicts(parsed, TargetScope([101], self._MAP)) == {"mine.mkv": ((101,), PlacementVerdict.EXACT)}
+        assert _verdicts(parsed, TargetScope([101], series_index(self._MAP))) == {
+            "mine.mkv": ((101,), PlacementVerdict.EXACT)
+        }
 
     def test_a_partially_resolving_span_stays_possibly_ours(self) -> None:
         # A boundary double-episode with one pair off the map may be partly ours.
         parsed: dict[str, ParsedFileInfo | None] = {"d.mkv": _parsed(season=3, episodes=(12, 99))}
 
-        assert _verdicts(parsed, TargetScope([101], self._MAP)) == {"d.mkv": ((), PlacementVerdict.SKIPPED)}
+        assert _verdicts(parsed, TargetScope([101], series_index(self._MAP))) == {
+            "d.mkv": ((), PlacementVerdict.SKIPPED)
+        }
 
     def test_a_vetoed_full_season_reading_is_still_ours(self) -> None:
         # Sonarr reads a bare "S0X" as the whole season: a missing episode token,
@@ -317,24 +331,32 @@ class TestForeignClassification:
             "pack.mkv": _parsed(season=2, episodes=(1,), full_season=True),
         }
 
-        assert _verdicts(parsed, TargetScope([101], self._MAP)) == {"pack.mkv": ((101,), PlacementVerdict.SINGLE)}
+        assert _verdicts(parsed, TargetScope([101], series_index(self._MAP))) == {
+            "pack.mkv": ((101,), PlacementVerdict.SINGLE)
+        }
 
     def test_a_vetoed_wide_span_stays_possibly_ours(self) -> None:
         parsed: dict[str, ParsedFileInfo | None] = {"pack.mkv": _parsed(matched=tuple((9, n) for n in range(1, 11)))}
 
-        assert _verdicts(parsed, TargetScope([101], self._MAP)) == {"pack.mkv": ((), PlacementVerdict.SKIPPED)}
+        assert _verdicts(parsed, TargetScope([101], series_index(self._MAP))) == {
+            "pack.mkv": ((), PlacementVerdict.SKIPPED)
+        }
 
     def test_no_reading_at_all_stays_possibly_ours(self) -> None:
         # Two leftover ids keep the degenerate single-file arm out, so the classification is what is pinned.
         parsed: dict[str, ParsedFileInfo | None] = {"blank.mkv": _parsed()}
 
-        assert _verdicts(parsed, TargetScope([101, 112], self._MAP)) == {"blank.mkv": ((), PlacementVerdict.SKIPPED)}
+        assert _verdicts(parsed, TargetScope([101, 112], series_index(self._MAP))) == {
+            "blank.mkv": ((), PlacementVerdict.SKIPPED)
+        }
 
     def test_an_empty_series_map_refuses_the_verdict(self) -> None:
         # D8: every key misses an unserved map, so nothing may be called another slice's.
         parsed: dict[str, ParsedFileInfo | None] = {"other.mkv": _parsed(season=3, episodes=(13,))}
 
-        assert _verdicts(parsed, TargetScope([101, 112], {})) == {"other.mkv": ((), PlacementVerdict.SKIPPED)}
+        assert _verdicts(parsed, TargetScope([101, 112], series_index({}))) == {
+            "other.mkv": ((), PlacementVerdict.SKIPPED)
+        }
 
 
 class TestEpisodeFileStatuses:

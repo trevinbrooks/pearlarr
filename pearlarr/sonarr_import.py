@@ -401,7 +401,7 @@ class ImportExecutor:
             candidates_by_basename=self._mapper.candidate_files(scan.candidates),
             at_deadline=at_deadline,
         )
-        assignment = self._mapper.assign(pending, context.candidates_by_basename, snapshot.episodes.id_by_key)
+        assignment = self._mapper.assign(pending, context.candidates_by_basename, snapshot.episodes)
         recovered: dict[str, list[int]] = {}
         if scan.dead_tracked_empty and not pending.seed_coverage().mapped:
             # Sonarr moved the files before any scan saw them, so its import rows stand in for the scan.
@@ -680,7 +680,7 @@ class ImportReconciler:
         # (an empty map refuses every map-dependent verdict) and import time places from scratch: the
         # entry's own index is no stand-in, since a key it lacks would read as bogus and place as numberless.
         series = self._episodes.cached_episodes(entry.series_id)
-        scope = SeedScope(episode_index(ep_list), episode_index(series or []).id_by_key)
+        scope = SeedScope(episode_index(ep_list), episode_index(series or []))
         # The parses are the sweep's own staged rows, read under the same freshness rule (a row the sweep
         # refused and could not refresh is a miss here too).
         window = ParseWindow.open(self._episodes.series_fp)
