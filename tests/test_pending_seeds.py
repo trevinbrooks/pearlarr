@@ -1,8 +1,8 @@
 # pyright: strict
 # pyright: reportPrivateUsage=false
-# The tests assert on the strat's private collaborators (_parse / _reconciler),
+# The tests assert on the strat's private collaborators (_parse / _episodes),
 # which strict re-flags. The repo disables reportPrivateUsage for tests.
-"""Unit tests for `ImportReconciler.build_pending_seeds` (via the strat).
+"""Unit tests for `build_pending_seeds` over the strat's grab-time placement.
 
 The seed-construction heart of the wait/import feature: it turns the filtered
 SeaDex releases into the durable `PendingImport` records the import path later
@@ -16,11 +16,19 @@ from datetime import datetime
 
 from pearlarr.cache import UPDATED_AT_STR_FORMAT
 from pearlarr.config import Arr
-from pearlarr.manual_import import EntryNames, GuardFacts, OwnedEpisode, normalize_basename
+from pearlarr.manual_import import EntryNames, GuardFacts, OwnedEpisode, PendingImport, normalize_basename
 from pearlarr.parse_records import to_parse_record
 from pearlarr.seadex_sonarr import SonarrSync
-from pearlarr.seadex_types import EpisodeRecord, Json, MatchedEpisode, ParsedFileInfo, SonarrEpisode
-from pearlarr.sonarr_import_plan import EpisodeFileStatus, PendingSeedContext, trusted_groups
+from pearlarr.seadex_types import EpisodeRecord, Json, MatchedEpisode, ParsedFileInfo, SeadexDict, SonarrEpisode
+from pearlarr.sonarr_import_plan import (
+    EntryPlacements,
+    EpisodeFileStatus,
+    PendingSeedContext,
+    SeedScope,
+    build_pending_seeds,
+    episode_index,
+    trusted_groups,
+)
 
 from .builders import (
     SEP,
@@ -78,6 +86,27 @@ def _strat(parses: ParseCache, series: list[SonarrEpisode]) -> SonarrSync:
     )
 
 
+def _build(
+    strat: SonarrSync,
+    seadex_dict: SeadexDict,
+    entry: PendingSeedContext,
+    *,
+    scope: SeedScope | None = None,
+) -> dict[str, PendingImport]:
+    """Place the entry's files under `scope` (by default the strat's whole series), then fold the seeds."""
+
+    series = strat._episodes.cached_episodes(entry.series_id) or []
+    scope = scope or _scope(series, series)
+    placed = EntryPlacements.place(scope, strat._parse.parsed_files(seadex_dict, series_fp=""))
+    return build_pending_seeds(seadex_dict, placed, entry)
+
+
+def _scope(ep_list: list[SonarrEpisode], series: list[SonarrEpisode], names: EntryNames | None = None) -> SeedScope:
+    """The grab-time scope: the entry's own list over the whole-series map."""
+
+    return SeedScope(episode_index(ep_list), episode_index(series), names or EntryNames())
+
+
 class TestBuildPendingSeeds:
     """`build_pending_seeds` seeds a `PendingImport` per download+hash video url.
 
@@ -98,12 +127,11 @@ class TestBuildPendingSeeds:
             ),
         }
 
-        seeds = _strat(parses, ep_list)._reconciler.build_pending_seeds(
-            seadex_dict=seadex_dict,
-            ep_list=ep_list,
-            entry=PendingSeedContext(
-                al_id=1, series_id=7, title="Show", added_at=_ADDED_AT, names=EntryNames("Show", ("Show", "Shou"))
-            ),
+        seeds = _build(
+            _strat(parses, ep_list),
+            seadex_dict,
+            entry=PendingSeedContext(al_id=1, series_id=7, title="Show", added_at=_ADDED_AT),
+            scope=_scope(ep_list, ep_list, EntryNames("Show", ("Show", "Shou"))),
         )
 
         # Only the download+hash url is seeded (no download / no hash are skipped).
@@ -139,9 +167,9 @@ class TestBuildPendingSeeds:
             "RG": rg_group({"u1": url_item(files=["Show - 01.mkv"], size=[1000], infohash="h1", download=True)}),
         }
 
-        seeds = strat._reconciler.build_pending_seeds(
-            seadex_dict=seadex_dict,
-            ep_list=ep_list,
+        seeds = _build(
+            strat,
+            seadex_dict,
             entry=PendingSeedContext(al_id=1, series_id=7, title="Show", added_at=_ADDED_AT),
         )
 
@@ -157,9 +185,9 @@ class TestBuildPendingSeeds:
             "RG": rg_group({"u1": url_item(files=["Show - 01.mkv"], size=[1000], infohash="h1", download=True)}),
         }
 
-        seeds = _strat(parses, ep_list)._reconciler.build_pending_seeds(
-            seadex_dict=seadex_dict,
-            ep_list=ep_list,
+        seeds = _build(
+            _strat(parses, ep_list),
+            seadex_dict,
             entry=PendingSeedContext(
                 al_id=1,
                 series_id=7,
@@ -183,9 +211,9 @@ class TestBuildPendingSeeds:
             ),
         }
 
-        seeds = _strat(parses, ep_list)._reconciler.build_pending_seeds(
-            seadex_dict=seadex_dict,
-            ep_list=ep_list,
+        seeds = _build(
+            _strat(parses, ep_list),
+            seadex_dict,
             entry=PendingSeedContext(al_id=1, series_id=7, title="Show", added_at=_ADDED_AT),
         )
 
@@ -216,9 +244,9 @@ class TestBuildPendingSeeds:
             ),
         }
 
-        seeds = _strat(parses, ep_list)._reconciler.build_pending_seeds(
-            seadex_dict=seadex_dict,
-            ep_list=ep_list,
+        seeds = _build(
+            _strat(parses, ep_list),
+            seadex_dict,
             entry=PendingSeedContext(
                 al_id=1,
                 series_id=7,
@@ -251,9 +279,9 @@ class TestBuildPendingSeeds:
             ),
         }
 
-        seeds = _strat(parses, ep_list)._reconciler.build_pending_seeds(
-            seadex_dict=seadex_dict,
-            ep_list=ep_list,
+        seeds = _build(
+            _strat(parses, ep_list),
+            seadex_dict,
             entry=PendingSeedContext(
                 al_id=1,
                 series_id=7,
@@ -284,9 +312,9 @@ class TestBuildPendingSeeds:
             ),
         }
 
-        seeds = _strat(parses, ep_list)._reconciler.build_pending_seeds(
-            seadex_dict=seadex_dict,
-            ep_list=ep_list,
+        seeds = _build(
+            _strat(parses, ep_list),
+            seadex_dict,
             entry=PendingSeedContext(al_id=1, series_id=7, title="Show", added_at=_ADDED_AT),
         )
 
@@ -309,10 +337,11 @@ class TestBuildPendingSeeds:
             "RG": rg_group({"u1": url_item(files=["Show - 01.mkv"], size=[1000], infohash="h1", download=True)}),
         }
 
-        seeds = _strat(parses, series)._reconciler.build_pending_seeds(
-            seadex_dict=seadex_dict,
-            ep_list=[],
+        seeds = _build(
+            _strat(parses, series),
+            seadex_dict,
             entry=PendingSeedContext(al_id=1, series_id=7, title="Show", added_at=_ADDED_AT),
+            scope=_scope([], series),
         )
 
         assert seeds["h1"].file_episode_map == {}
@@ -332,10 +361,11 @@ class TestBuildPendingSeeds:
             sonarr=sonarr, cache_store=FakeCacheStore(sonarr_parse=_rows(parses)), ep_list_cache={}
         )
 
-        seeds = strat._reconciler.build_pending_seeds(
-            seadex_dict=seadex_dict,
-            ep_list=ep_list,
+        seeds = _build(
+            strat,
+            seadex_dict,
             entry=PendingSeedContext(al_id=1, series_id=7, title="Show", added_at=_ADDED_AT),
+            scope=_scope(ep_list, []),
         )
 
         assert seeds["h1"].file_episode_map == {}
@@ -367,10 +397,11 @@ class TestBuildPendingSeeds:
             ),
         }
 
-        seeds = _strat(parses, series)._reconciler.build_pending_seeds(
-            seadex_dict=seadex_dict,
-            ep_list=ep_list,
+        seeds = _build(
+            _strat(parses, series),
+            seadex_dict,
             entry=PendingSeedContext(al_id=1, series_id=7, title="Show", added_at=_ADDED_AT),
+            scope=_scope(ep_list, series),
         )
 
         seed = seeds["h1"]
@@ -389,9 +420,9 @@ class TestBuildPendingSeeds:
             "RG": rg_group({"u1": url_item(files=["Show - S09E09.mkv"], size=[1000], infohash="h1", download=True)}),
         }
 
-        seeds = _strat(parses, ep_list)._reconciler.build_pending_seeds(
-            seadex_dict=seadex_dict,
-            ep_list=ep_list,
+        seeds = _build(
+            _strat(parses, ep_list),
+            seadex_dict,
             entry=PendingSeedContext(al_id=1, series_id=7, title="Show", added_at=_ADDED_AT),
         )
 
@@ -420,9 +451,9 @@ class TestBuildPendingSeeds:
             ),
         }
 
-        seeds = _strat(parses, ep_list)._reconciler.build_pending_seeds(
-            seadex_dict=seadex_dict,
-            ep_list=ep_list,
+        seeds = _build(
+            _strat(parses, ep_list),
+            seadex_dict,
             entry=PendingSeedContext(al_id=1, series_id=7, title="Show", added_at=_ADDED_AT),
         )
 
@@ -453,9 +484,9 @@ class TestBuildPendingSeeds:
             ),
         }
 
-        seeds = _strat(parses, ep_list)._reconciler.build_pending_seeds(
-            seadex_dict=seadex_dict,
-            ep_list=ep_list,
+        seeds = _build(
+            _strat(parses, ep_list),
+            seadex_dict,
             entry=PendingSeedContext(al_id=1, series_id=7, title="Show", added_at=_ADDED_AT),
         )
 
@@ -481,9 +512,9 @@ class TestBuildPendingSeeds:
             ),
         }
 
-        seeds = _strat(parses, ep_list)._reconciler.build_pending_seeds(
-            seadex_dict=seadex_dict,
-            ep_list=ep_list,
+        seeds = _build(
+            _strat(parses, ep_list),
+            seadex_dict,
             entry=PendingSeedContext(al_id=1, series_id=7, title="Show", added_at=_ADDED_AT),
         )
 
@@ -502,9 +533,9 @@ class TestBuildPendingSeeds:
             ),
         }
 
-        seeds = _strat({}, ep_list)._reconciler.build_pending_seeds(
-            seadex_dict=seadex_dict,
-            ep_list=ep_list,
+        seeds = _build(
+            _strat({}, ep_list),
+            seadex_dict,
             entry=PendingSeedContext(al_id=1, series_id=7, title="Show", added_at=_ADDED_AT),
         )
 
@@ -529,9 +560,9 @@ class TestBuildPendingSeeds:
             ),
         }
 
-        seeds = _strat(parses, ep_list)._reconciler.build_pending_seeds(
-            seadex_dict=seadex_dict,
-            ep_list=ep_list,
+        seeds = _build(
+            _strat(parses, ep_list),
+            seadex_dict,
             entry=PendingSeedContext(al_id=1, series_id=7, title="Show", added_at=_ADDED_AT),
         )
 
@@ -550,9 +581,9 @@ class TestBuildPendingSeeds:
             ),
         }
 
-        seeds = _strat({}, ep_list)._reconciler.build_pending_seeds(
-            seadex_dict=seadex_dict,
-            ep_list=ep_list,
+        seeds = _build(
+            _strat({}, ep_list),
+            seadex_dict,
             entry=PendingSeedContext(al_id=1, series_id=7, title="Show", added_at=_ADDED_AT),
         )
 
@@ -584,9 +615,9 @@ class TestSeedGuards:
             ),
         }
 
-        seeds = _strat(parses, ep_list)._reconciler.build_pending_seeds(
-            seadex_dict=seadex_dict,
-            ep_list=ep_list,
+        seeds = _build(
+            _strat(parses, ep_list),
+            seadex_dict,
             entry=PendingSeedContext(al_id=1, series_id=7, title="Show", added_at=_ADDED_AT),
         )
 
@@ -615,9 +646,9 @@ class TestSeedGuards:
             ),
         }
 
-        seeds = _strat(parses, ep_list)._reconciler.build_pending_seeds(
-            seadex_dict=seadex_dict,
-            ep_list=ep_list,
+        seeds = _build(
+            _strat(parses, ep_list),
+            seadex_dict,
             entry=PendingSeedContext(al_id=1, series_id=7, title="Show", added_at=_ADDED_AT),
         )
 
@@ -634,9 +665,9 @@ class TestSeedGuards:
             ),
         }
 
-        seeds = _strat(parses, ep_list)._reconciler.build_pending_seeds(
-            seadex_dict=seadex_dict,
-            ep_list=ep_list,
+        seeds = _build(
+            _strat(parses, ep_list),
+            seadex_dict,
             entry=PendingSeedContext(al_id=1, series_id=7, title="Show", added_at=_ADDED_AT),
         )
 
@@ -654,10 +685,11 @@ class TestSeedGuards:
             ),
         }
 
-        seeds = _strat(parses, series)._reconciler.build_pending_seeds(
-            seadex_dict=seadex_dict,
-            ep_list=ep_list,
+        seeds = _build(
+            _strat(parses, series),
+            seadex_dict,
             entry=PendingSeedContext(al_id=1, series_id=7, title="Show", added_at=_ADDED_AT),
+            scope=_scope(ep_list, series),
         )
 
         assert seeds["h1"].file_episode_map == {}
@@ -684,9 +716,9 @@ class TestSeedGuards:
             ),
         }
 
-        seeds = _strat(parses, ep_list)._reconciler.build_pending_seeds(
-            seadex_dict=seadex_dict,
-            ep_list=ep_list,
+        seeds = _build(
+            _strat(parses, ep_list),
+            seadex_dict,
             entry=PendingSeedContext(al_id=1, series_id=7, title="Show", added_at=_ADDED_AT),
         )
 
@@ -714,9 +746,9 @@ class TestSeedGuards:
             ),
         }
 
-        seeds = _strat(parses, ep_list)._reconciler.build_pending_seeds(
-            seadex_dict=seadex_dict,
-            ep_list=ep_list,
+        seeds = _build(
+            _strat(parses, ep_list),
+            seadex_dict,
             entry=PendingSeedContext(al_id=1, series_id=7, title="Show", added_at=_ADDED_AT),
         )
 
@@ -741,9 +773,9 @@ class TestSeedGuards:
             ),
         }
 
-        seeds = _strat(parses, ep_list)._reconciler.build_pending_seeds(
-            seadex_dict=seadex_dict,
-            ep_list=ep_list,
+        seeds = _build(
+            _strat(parses, ep_list),
+            seadex_dict,
             entry=PendingSeedContext(al_id=1, series_id=7, title="Show", added_at=_ADDED_AT),
         )
 
@@ -752,47 +784,40 @@ class TestSeedGuards:
         assert seeds["h1"].seadex_files == ["Show - 01.mkv", "Show - 01.mkv"]
 
 
-class TestParseWriteVisibleToSeeds:
-    """The parse cache (writer) and the seed builder (reader) are now separate objects.
-
-    They must share one `cache_store` so a parse write earlier in the run is
-    visible to the seed read - the staged-write invariant the split risks.
-    """
+class TestParseWriteFeedsSeeds:
+    """One `/parse` per file name: the gather asks Sonarr, persists the reading, and the placement seeds by it."""
 
     @staticmethod
-    def _strat(parse: ParsedFileInfo, ep_list: list[SonarrEpisode]) -> SonarrSync:
+    def _cold(parse: ParsedFileInfo, ep_list: list[SonarrEpisode]) -> tuple[SonarrSync, FakeSonarrClient]:
         """A strat whose Sonarr answers every `/parse` with `parse`, its cache cold."""
 
-        return make_sonarr_sync(
-            sonarr=FakeSonarrClient(parse_fn=lambda _f: parse),
-            cache_store=FakeCacheStore(),
-            ep_list_cache={7: ep_list},
-        )
+        sonarr = FakeSonarrClient(parse_fn=lambda _f: parse)
+        return make_sonarr_sync(sonarr=sonarr, cache_store=FakeCacheStore(), ep_list_cache={7: ep_list}), sonarr
 
     def test_parse_write_feeds_seed_build(self) -> None:
         ep_list = [sonarr_ep(1, 1, ep_id=101, episode_file_id=0)]
         parse = _pinfo(season=1, episodes=(1,), matched=(MatchedEpisode(season_number=1, episode_number=1),))
-        strat = self._strat(parse, ep_list)
+        strat, sonarr = self._cold(parse, ep_list)
         seadex_dict = {
             "RG": rg_group(
                 {"u1": url_item(files=["Show - 01.mkv"], size=[1000], infohash="h1", download=True)},
             ),
         }
 
-        # Writer: fills the SHARED cache_store via the parse collaborator.
-        strat._parse.parse_episodes_from_seadex(seadex_dict, series_fp="")
-        # Reader: the seed builder reads that record back out of the same store.
-        seeds = strat._reconciler.build_pending_seeds(
-            seadex_dict=seadex_dict,
-            ep_list=ep_list,
+        seeds = _build(
+            strat,
+            seadex_dict,
             entry=PendingSeedContext(al_id=1, series_id=7, title="Show", added_at=_ADDED_AT),
         )
 
         assert seeds["h1"].file_episode_map == {normalize_basename("Show - 01.mkv"): [101]}
+        # Asked once, and persisted for the next run's gather.
+        assert sonarr.parse_calls == ["Show - 01.mkv"]
+        assert strat._parse.cache_store.get_sonarr_parse("Show - 01.mkv") is not None
 
     def test_full_season_flag_flows_from_parse_write_to_seed_refusal(self) -> None:
         # End-to-end through the real write path: a fullSeason parse persists the
-        # flag on the record, and the seed builder refuses the file by it.
+        # flag on the record, and the placement refuses the file by it.
         ep_list = [sonarr_ep(1, 1, ep_id=101, episode_file_id=0), sonarr_ep(1, 2, ep_id=102, episode_file_id=0)]
         parse = _pinfo(
             matched=(
@@ -801,17 +826,16 @@ class TestParseWriteVisibleToSeeds:
             ),
             full_season=True,
         )
-        strat = self._strat(parse, ep_list)
+        strat, _ = self._cold(parse, ep_list)
         seadex_dict = {
             "RG": rg_group(
                 {"u1": url_item(files=["Show S01 Opening.mkv"], size=[1000], infohash="h1", download=True)},
             ),
         }
 
-        strat._parse.parse_episodes_from_seadex(seadex_dict, series_fp="")
-        seeds = strat._reconciler.build_pending_seeds(
-            seadex_dict=seadex_dict,
-            ep_list=ep_list,
+        seeds = _build(
+            strat,
+            seadex_dict,
             entry=PendingSeedContext(al_id=1, series_id=7, title="Show", added_at=_ADDED_AT),
         )
 

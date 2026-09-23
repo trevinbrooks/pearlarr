@@ -115,15 +115,6 @@ def _owns_untagged_copy(counter: Counter[int] | None, listed_sizes: Iterable[int
     return counter is not None and counter <= Counter(listed_sizes)
 
 
-def _keys_into_index(episodes: Iterable[EpisodeRecord], sonarr_by_key: Mapping[EpisodeKey, SonarrEpisode]) -> bool:
-    """Whether any parsed episode keys into the Sonarr index. A None pair never keys."""
-
-    return any(
-        ep.season is not None and ep.episode is not None and season_episode_key(ep.season, ep.episode) in sonarr_by_key
-        for ep in episodes
-    )
-
-
 def get_episode_keys(
     all_episodes: Iterable[EpisodeRecord],
 ) -> set[tuple[int | None, int | None]]:
@@ -140,18 +131,12 @@ def get_episode_keys(
 def get_same_files_groups(seadex_dict: SeadexDict) -> list[list[str]]:
     """Group SeaDex release groups that cover exactly the same files.
 
-    Release groups are grouped by their parsed episode coverage: two groups are
-    only treated as covering the same files when their parsed episode lists are
-    identical. This is deliberately stricter than "episodes overlap" -- groups
-    that overlap without being equal (e.g., a full-season batch and a single
-    cour) cover *different* files and must not be collapsed, or we'd silently
-    drop episodes when keeping only one of them.
-
-    Release groups with no episode parsing at all (e.g., Radarr movies) are
-    treated as covering the same files. Release groups whose files couldn't be
-    parsed (Sonarr parse failure, empty episode list) are each kept on their
-    own: we can't prove what they cover, so we'd rather grab a duplicate than
-    silently drop content. Returns a list of lists of release group names.
+    Groups are keyed by their placed episode coverage and collapse only when the sets are identical: a
+    season batch and one cour overlap yet cover different files. Groups with no parsing at all (Radarr
+    movies) share one key. A group none of whose files placed on the entry is kept on its own, since its
+    coverage is unproven and a duplicate grab beats silently dropped content. Two groups a count leg
+    placed onto the same window reduce to one, so a wrong placement drops the real release, the same
+    hazard the import carries.
     """
 
     # The grouping key is one of three shapes: a shared "all cover one movie"
@@ -264,10 +249,11 @@ def episode_coverage(
 ) -> EpisodeCoverage:
     """Index which SeaDex groups cover each episode, by normalized name.
 
-    `sonarr_by_key` gates recording to episodes Sonarr has (an O(1) key
-    lookup). Built once by the caller and shared with the per-episode match
-    loop in filter_by_release_group. A single-group entry skips the build:
-    coverage only ever excuses a mismatch against a SIBLING pick.
+    The records are the grab-time placement's, so every key is one of the
+    entry's own episodes. `sonarr_by_key` is that index, built once by the
+    caller and shared with the per-episode match loop in
+    filter_by_release_group. A single-group entry skips the build: coverage
+    only ever excuses a mismatch against a SIBLING pick.
     """
 
     if len(seadex_dict) < 2:
@@ -285,9 +271,9 @@ def episode_coverage(
         for url_item in seadex_rg_item.urls.values():
             seadex_episodes = url_item.episodes
 
-            # A url whose parses say nothing about this entry proves nothing
+            # A url none of whose files placed on this entry proves nothing
             # about coverage, so its group covers everything rather than nothing.
-            if not _keys_into_index(seadex_episodes, sonarr_by_key):
+            if not seadex_episodes:
                 blanket.add(seadex_rg_normalized)
 
             for seadex_ep in seadex_episodes:
@@ -672,8 +658,8 @@ class DownloadPlanner:
             self.logger.debug(f"Filtering for release group {seadex_rg}")
 
             for url_item in seadex_rg_item.urls.values():
-                # Simple case, we have no episode mappings, so
-                # just fall back to checking against release group
+                # A url none of whose files placed on this entry (numberless names, a
+                # held run, another season's pack) is judged by release group and size.
                 if not url_item.episodes:
                     self._match_url_no_episodes(ctx, seadex_rg, url_item)
                     continue
@@ -686,7 +672,7 @@ class DownloadPlanner:
 
         # The hash list is whatever is still flagged, so it matches the set
         # we'll add - `flagged_urls` is the shared filter. Private torrents carry no infohash.
-        torrent_hashes: list[str | None] = [infohash for _srg, _url_item, infohash in flagged_urls(seadex_dict)]
+        torrent_hashes: list[str | None] = [flagged.infohash for flagged in flagged_urls(seadex_dict)]
 
         verdicts = _group_verdicts(seadex_dict, ctx)
         return PlanResult(
@@ -781,16 +767,15 @@ class DownloadPlanner:
         seadex_rg: str,
         url_item: SeadexUrlItem,
     ) -> None:
-        """Decide a single url against its parsed episodes, per episode.
+        """Decide a single url against its placed episodes, per episode.
 
-        Flips `url_item.download` in place. For each parsed SeaDex episode
-        we check whether it exists in the Sonarr index, whether the release
-        group matches, and whether the file sizes match. A release-group
-        mismatch with no covering alternative, or an all-sizes mismatch among
-        the rg-matched episodes, flips download on. An untagged on-disk file
-        the entry's sizes identified (`_episode_identities`) matches by that
-        group instead of by its missing tag. A url whose parses all miss the
-        index is handed to `_match_url_no_episodes`.
+        Flips `url_item.download` in place. For each episode the placement put
+        a SeaDex file on we check whether the release group matches and whether
+        the file sizes match. A release-group mismatch with no covering
+        alternative, or an all-sizes mismatch among the rg-matched episodes,
+        flips download on. An untagged on-disk file the entry's sizes
+        identified (`_episode_identities`) matches by that group instead of by
+        its missing tag.
         """
 
         # At this point, we need an episode list from Sonarr. Only an absent list
@@ -804,20 +789,9 @@ class DownloadPlanner:
         url = url_item.url
         seadex_episodes = url_item.episodes
 
-        # Every parse outside this entry's episodes says nothing about it, so the url
-        # is judged the way a numberless one is, by release group and size.
-        if not _keys_into_index(seadex_episodes, ctx.sonarr_by_key):
-            if ctx.debug_on:
-                self.logger.debug(
-                    f"No parsed episode of {url} is among this entry's episodes - checking by release group and size",
-                )
-            self._match_url_no_episodes(ctx, seadex_rg, url_item)
-            return
-
-        # For each episode we've parsed from the torrent, check if a) it exists in the Sonarr list, b) if
-        # the release group matches, and c) if the file sizes match. If there's any mismatch between release
-        # groups (and there are no alternatives), then flip download to True. If all the sizes mismatch,
-        # flip download to true
+        # For each episode the placement put this url on, check whether the release group matches and
+        # whether the file sizes match. A release-group mismatch with no alternative flips download to
+        # True, and so does every size mismatching.
 
         rg_matches = [False] * len(seadex_episodes)
         size_matches = [False] * len(seadex_episodes)
@@ -1158,7 +1132,7 @@ class DownloadPlanner:
         matcher (the Arr provably lacks their files) before this pass dropped
         them, so re-flagging can't re-download owned content. Scoped to THIS
         set's just-dropped urls only - never matcher-unflagged ones - and a url
-        with no parsed episodes (movies, unparsed groups) has no coverage
+        with no placed episodes (movies, unplaced groups) has no coverage
         vocabulary, so it is never rescued.
         """
 

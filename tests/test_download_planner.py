@@ -34,12 +34,9 @@ import logging
 from pearlarr.config import Arr
 from pearlarr.output import Severity
 from pearlarr.planner import DownloadPlanner
-from pearlarr.seadex_types import ArrReleases, EpisodeRecord, SeadexReleaseGroupItem, flagged_urls
+from pearlarr.seadex_types import ArrReleases, EpisodeRecord, FlaggedUrl, SeadexReleaseGroupItem, flagged_urls
 
 from .builders import make_planner, rg_group, sonarr_ep, url_item
-
-# Parses that all fall outside a specials-only entry window.
-_OUTSIDE_PARSES = [EpisodeRecord(season=1, episode=1, size=100), EpisodeRecord(season=1, episode=2, size=100)]
 
 
 class TestGetAnyToDownload:
@@ -64,7 +61,7 @@ class TestFlaggedUrls:
             "B": rg_group({"u3": url_item(url="u3", download=False, infohash="h3")}),
         }
 
-        assert flagged_urls(seadex) == [("A", grabbed, "h1")]
+        assert flagged_urls(seadex) == [FlaggedUrl("A", "u1", grabbed, "h1")]
 
 
 class TestReduceOverlappingDownloads:
@@ -745,13 +742,13 @@ class TestFilterByReleaseGroup:
         assert result.seadex_dict["Ember"].urls["u1"].upgrade is True
         assert result.torrent_hashes == ["h1"]
 
-    def test_all_parses_outside_the_entry_nothing_on_disk_downloads(self) -> None:
-        # Every parsed episode misses the entry's episodes (its other seasons'
-        # names carry numbers, the entry's own do not): judged like a numberless
-        # url, by group and size, so an absent entry is grabbed rather than
-        # read as owned because no episode was ever compared.
+    def test_nothing_placed_on_the_entry_nothing_on_disk_downloads(self) -> None:
+        # The placement put none of the url's files on the entry's episodes (its
+        # other seasons' names carry numbers, the entry's own do not): judged like
+        # a numberless url, by group and size, so an absent entry is grabbed rather
+        # than read as owned because no episode was ever compared.
         planner = make_planner()
-        seadex = {"RG": rg_group({"u1": url_item(episodes=_OUTSIDE_PARSES, size=[100], infohash="h1")})}
+        seadex = {"RG": rg_group({"u1": url_item(episodes=[], size=[100], infohash="h1")})}
         result = planner.filter_by_release_group(
             seadex_dict=seadex,
             arr_releases=ArrReleases(),
@@ -760,10 +757,10 @@ class TestFilterByReleaseGroup:
         assert result.seadex_dict["RG"].urls["u1"].download is True
         assert result.torrent_hashes == ["h1"]
 
-    def test_all_parses_outside_the_entry_owned_copy_holds(self) -> None:
+    def test_nothing_placed_on_the_entry_owned_copy_holds(self) -> None:
         # The entry's copy on disk is this group's at a listed size: held.
         planner = make_planner()
-        seadex = {"RG": rg_group({"u1": url_item(episodes=_OUTSIDE_PARSES, size=[100], infohash="h1")})}
+        seadex = {"RG": rg_group({"u1": url_item(episodes=[], size=[100], infohash="h1")})}
         result = planner.filter_by_release_group(
             seadex_dict=seadex,
             arr_releases=ArrReleases(tagged={"RG": (100,)}),
@@ -772,11 +769,11 @@ class TestFilterByReleaseGroup:
         assert result.seadex_dict["RG"].urls["u1"].download is False
         assert result.torrent_hashes == []
 
-    def test_all_parses_outside_the_entry_sibling_copy_holds(self) -> None:
+    def test_nothing_placed_on_the_entry_sibling_copy_holds(self) -> None:
         # The entry's copy on disk is a sibling recommended group's: nothing to flag.
         planner = make_planner()
         seadex = {
-            "RG": rg_group({"u1": url_item(episodes=_OUTSIDE_PARSES, size=[100], infohash="h1")}),
+            "RG": rg_group({"u1": url_item(episodes=[], size=[100], infohash="h1")}),
             "Other": rg_group(
                 {"u2": url_item(episodes=[EpisodeRecord(season=0, episode=21, size=200)], size=[200], infohash="h2")},
             ),
@@ -789,12 +786,12 @@ class TestFilterByReleaseGroup:
         assert result.seadex_dict["RG"].urls["u1"].download is False
         assert result.torrent_hashes == []
 
-    def test_one_parse_inside_the_entry_keeps_the_per_episode_leg(self) -> None:
-        # One parse keys into the entry, so the per-episode leg still decides:
-        # the entry's copy is this group's at another size, an upgrade the
+    def test_one_placed_record_keeps_the_per_episode_leg(self) -> None:
+        # One file placed on the entry, so the per-episode leg decides: the
+        # entry's copy is this group's at another size, an upgrade the
         # group-and-size leg (a listed size on disk) would have held.
         planner = make_planner()
-        episodes = [EpisodeRecord(season=1, episode=1, size=999), EpisodeRecord(season=1, episode=2, size=100)]
+        episodes = [EpisodeRecord(season=1, episode=1, size=999)]
         seadex = {"RG": rg_group({"u1": url_item(episodes=episodes, size=[100, 999], infohash="h1")})}
         result = planner.filter_by_release_group(
             seadex_dict=seadex,

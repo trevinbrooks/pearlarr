@@ -64,6 +64,7 @@ from pearlarr.sonarr_import_plan import (
     episode_index,
     manual_import_in_flight,
     parse_se_from_filename,
+    place_release,
     quality_axes_from_model,
     resolve_quality,
     started_disk_commands,
@@ -2851,23 +2852,24 @@ class TestSeedEqualsMapper:
         return episode_index([sonarr_ep(0, 1, ep_id=501), sonarr_ep(0, 2, ep_id=502)])
 
     def test_seed_scope_targets_the_entrys_ids_over_the_series_map(self) -> None:
-        scope = SeedScope(self._index(), series_index(self._MAP))
+        scope = SeedScope(self._index(), series_index(self._MAP), EntryNames())
 
-        assert scope.target(EntryNames()) == TargetScope([501, 502], series_index(self._MAP))
+        assert scope.target() == TargetScope([501, 502], series_index(self._MAP))
 
     def test_the_seed_and_the_mapper_place_and_exclude_alike(self) -> None:
         parses = self._parses()
-        index = self._index()
+        scope = SeedScope(self._index(), series_index(self._MAP), EntryNames())
+        index = scope.entry
         release = SeedRelease(
             release_group="grp",
             url_item=url_item(url="u", infohash="h"),
             infohash="h",
-            files=tuple(SeedFile(name, parses[name]) for name in self._NAMES),
+            placed=place_release([SeedFile(name, 1000, parses[name]) for name in self._NAMES], scope),
         )
 
         seed = build_pending_seed(
             release,
-            SeedScope(index, series_index(self._MAP)),
+            scope,
             PendingSeedContext(al_id=1, series_id=2, title="t", added_at="2026-01-01 00:00:00"),
         )
         mapper = make_sonarr_mapper(sonarr=FakeSonarrClient(parse_fn=parses.get))

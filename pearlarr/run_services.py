@@ -106,7 +106,7 @@ class RunDeps:
     seadex: SeaDexSource
     cache_store: AbstractCacheStore
     parse_records: ParseRecords
-    """The Sonarr parse-cache leaf over `cache_store`, one instance for the sweep and the seed builder."""
+    """The Sonarr parse-cache leaf over `cache_store`, read by the sweep's parse step."""
     anilist: AniListGateway
     torrents: TorrentService
     notifier: Notifier

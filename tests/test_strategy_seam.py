@@ -67,7 +67,7 @@ from pearlarr.seadex_types import (
     SonarrItem,
 )
 from pearlarr.sonarr_episodes import sonarr_series_fingerprint
-from pearlarr.sonarr_import_plan import DownloadHistoryVerdict, resolve_language_objects
+from pearlarr.sonarr_import_plan import DownloadHistoryVerdict, SeedFile, resolve_language_objects
 
 from .builders import (
     SEP,
@@ -326,12 +326,16 @@ def test_fake_overrides_the_full_public_surface() -> None:
 
 
 class _FakeEpisodes:
-    """Minimal episode collaborator: scripts `get_ep_list`'s resolved episode list."""
+    """Minimal episode collaborator: scripts `get_ep_list`'s resolved episode list, doubling as the series list."""
 
     series_fp = "fp"
 
     def __init__(self, *, ep_list: list[SonarrEpisode] | None) -> None:
         self._ep_list = ep_list
+
+    def cached_episodes(self, series_id: int) -> list[SonarrEpisode] | None:
+        del series_id
+        return self._ep_list
 
     def get_ep_list(
         self,
@@ -348,11 +352,11 @@ class _FakeEpisodes:
 
 
 class _PassThroughParse:
-    """Parse collaborator that returns the dict unchanged (no Sonarr round-trip)."""
+    """Parse collaborator that reads no file for any url (no Sonarr round-trip)."""
 
-    def parse_episodes_from_seadex(self, seadex_dict: SeadexDict, *, series_fp: str) -> SeadexDict:
+    def parsed_files(self, seadex_dict: SeadexDict, *, series_fp: str) -> dict[str, tuple[SeedFile, ...]]:
         del series_fp
-        return seadex_dict
+        return {url: () for rg_item in seadex_dict.values() for url in rg_item.urls}
 
 
 class TestItemAnilistIdsDelegates:

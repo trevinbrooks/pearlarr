@@ -91,23 +91,33 @@ SeadexDict = dict[str, SeadexReleaseGroupItem]
 """SeaDex release groups keyed by group name."""
 
 
-def flagged_urls(seadex_dict: SeadexDict) -> list[tuple[str, SeadexUrlItem, str]]:
-    """The urls flagged to grab that carry an infohash, as `(group, url item, infohash)` triples.
+class FlaggedUrl(NamedTuple):
+    """One url flagged to grab that carries an infohash."""
 
-    Narrow at the riders, never here.
-    """
+    group: str
+    """The release group's name, the key of `SeadexDict`."""
+    url: str
+    """The key under `SeadexReleaseGroupItem.urls`."""
+    item: SeadexUrlItem
+    """The url's item, the flag and file list the planner read."""
+    infohash: str
+    """The torrent's infohash, lowercase."""
+
+
+def flagged_urls(seadex_dict: SeadexDict) -> list[FlaggedUrl]:
+    """The urls flagged to grab that carry an infohash. Narrow at the riders, never here."""
 
     return [
-        (srg, url_item, url_item.infohash)
+        FlaggedUrl(srg, url, url_item, url_item.infohash)
         for srg, srg_item in seadex_dict.items()
-        for url_item in srg_item.urls.values()
+        for url, url_item in srg_item.urls.items()
         if url_item.download and url_item.infohash
     ]
 
 
 # Folded into the config's selection digest: bump when the release-selection
 # rules change in code so every cached verdict re-checks once after an upgrade.
-SELECTION_RULES_VERSION: int = 3
+SELECTION_RULES_VERSION: int = 4
 
 SONARR_MISSING_KEY: int = 999
 """Out-of-range stand-in for a missing Sonarr `seasonNumber`/`episodeNumber`, never colliding with a real one."""

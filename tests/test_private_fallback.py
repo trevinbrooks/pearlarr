@@ -78,7 +78,7 @@ def _entry_private_pick_plus_public_alt() -> EntryRecord:
 
 
 def _fill_episodes(sd: SeadexDict, mapping: dict[str, list[EpisodeRecord]]) -> None:
-    """Mirror `parse_episodes_from_seadex`: per-url episodes + the group union."""
+    """Mirror `attach_records`: per-url episodes + the group union."""
 
     for rg_item in sd.values():
         all_eps: list[EpisodeRecord] = []
