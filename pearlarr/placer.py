@@ -78,6 +78,7 @@ def assign_episode_ids(
     """
 
     state = _Placer.start(batch, scope)
+    _pass_reread_season_runs(state)
     _pass_release_run(state)
     _pass_exact(state)
     _pass_counted(state)
@@ -141,6 +142,13 @@ class _TitleEvidence(NamedTuple):
         """The tails name other episodes and none of the window's."""
 
         return self.outside >= _MIN_TITLE_HITS and not self.inside
+
+
+class _SeasonFit(NamedTuple):
+    """The one season a `1..N` run counts as, and whether the specials count it too."""
+
+    season: int
+    tied: bool
 
 
 @dataclass(frozen=True, slots=True)
@@ -219,9 +227,7 @@ class _Placer:
 
         readings = {name: read_parse(batch.parsed.get(name), scope) for name in dict.fromkeys(batch.to_place)}
         name_reads = {name: read_name(name) for name in readings}
-        state = cls(batch, scope, readings, name_reads, _SeriesFacts.of(scope.series), used=set(scope.used))
-        state.reread_season_runs()
-        return state
+        return cls(batch, scope, readings, name_reads, _SeriesFacts.of(scope.series), used=set(scope.used))
 
     @property
     def map_known(self) -> bool:
@@ -229,48 +235,35 @@ class _Placer:
 
         return bool(self.scope.id_by_key)
 
-    def reread_season_runs(self) -> None:
-        """Re-read a `1..N` run Sonarr matched into one season of exactly N episodes as that season's own numbering.
+    def season_fit(self, run: NumberedRun) -> _SeasonFit | None:
+        """The season a keyless `1..N` run counts as: Sonarr read it into that one season of exactly N episodes.
 
-        TVDB interleaves specials into the absolute numbering, so Sonarr's
-        match of a season-only release drifts onto a special after each one.
-        The count tells the shapes apart: a release that carried the special
-        would number N + 1. Only a run of names without keys of their own,
-        read by Sonarr into that one season and its specials, is re-read:
-        more into the season, or as many when the specials are not N either.
-        As many onto the specials when they count N too is a tie: the reads
-        are vetoed, the episodes either numbering gives are `tied`, and only
-        the run's count over an entry's window places it. A lower version of
-        a member reads as the member does.
+        Some members read onto the specials instead (never more than into
+        the season), and the fit is tied when as many did and the specials
+        count N too. None when the run is not that shape.
         """
 
-        if not self.map_known:
-            return
-        for run in self.runs(self.readings):
-            width = len(run.members)
-            if run.numbers != tuple(range(1, width + 1)):
-                continue
-            infos = [self.batch.parsed.get(name) for name in run.names]
-            if any(info is None or info.episode_numbers for info in infos):
-                continue
-            readings = [self.readings[name] for name in run.names]
-            if any(len(r.resolved) > 1 for r in readings):
-                continue
-            read = [self.facts.key_by_id[r.resolved[0]].season for r in readings if r.resolved]
-            seasons = {season for season in read if season != 0}
-            if len(seasons) != 1:
-                continue
-            season = seasons.pop()
-            if self.facts.season_counts.get(season) != width:
-                continue
-            into_season = read.count(season)
-            onto_specials = read.count(0)
-            if not onto_specials or into_season < onto_specials:
-                continue
-            if into_season == onto_specials and self.facts.season_counts.get(0) == width:
-                self.tie(run, season)
-            else:
-                self.reread(run, season)
+        width = len(run.members)
+        if run.numbers != tuple(range(1, width + 1)):
+            return None
+        infos = [self.batch.parsed.get(name) for name in run.names]
+        if any(info is None or info.episode_numbers for info in infos):
+            return None
+        readings = [self.readings[name] for name in run.names]
+        if any(len(r.resolved) > 1 for r in readings):
+            return None
+        read = [self.facts.key_by_id[r.resolved[0]].season for r in readings if r.resolved]
+        seasons = {season for season in read if season != 0}
+        if len(seasons) != 1:
+            return None
+        season = seasons.pop()
+        if self.facts.season_counts.get(season) != width:
+            return None
+        into_season = read.count(season)
+        onto_specials = read.count(0)
+        if not onto_specials or into_season < onto_specials:
+            return None
+        return _SeasonFit(season, into_season == onto_specials and self.facts.season_counts.get(0) == width)
 
     def tie(self, run: NumberedRun, season: int) -> None:
         """Veto the run's reads and record the episodes each name may be under either numbering."""
@@ -448,6 +441,33 @@ class _Placer:
             else:
                 self.set_aside(name, PlacementVerdict.SKIPPED)
         return EpisodeAssignment(tuple(self.verdicts[name] for name in self.readings))
+
+
+def _pass_reread_season_runs(state: _Placer) -> None:
+    """Re-read a `1..N` run Sonarr matched into one season of exactly N episodes as that season's own numbering.
+
+    TVDB interleaves specials into the absolute numbering, so Sonarr's
+    match of a season-only release drifts onto a special after each one.
+    The count tells the shapes apart: a release that carried the special
+    would number N + 1. Only a run of names without keys of their own,
+    read by Sonarr into that one season and its specials, is re-read:
+    more into the season, or as many when the specials are not N either.
+    As many onto the specials when they count N too is a tie: the reads
+    are vetoed, the episodes either numbering gives are `tied`, and only
+    the run's count over an entry's window places it. A lower version of
+    a member reads as the member does.
+    """
+
+    if not state.map_known:
+        return
+    for run in state.runs(state.readings.keys()):
+        fit = state.season_fit(run)
+        if fit is None:
+            continue
+        if fit.tied:
+            state.tie(run, fit.season)
+        else:
+            state.reread(run, fit.season)
 
 
 def _pass_release_run(state: _Placer) -> None:
