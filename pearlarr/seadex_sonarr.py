@@ -35,7 +35,7 @@ from .seadex_types import (
 from .sonarr_client import AbstractSonarrClient, SonarrClient
 from .sonarr_episodes import SonarrEpisodes
 from .sonarr_import import ImportExecutor, ImportReconciler
-from .sonarr_import_plan import PendingSeedContext
+from .sonarr_import_plan import EntryPlacements, PendingSeedContext, SeedScope, build_pending_seeds, episode_index
 from .sonarr_mapper import FileEpisodeMapper
 from .sonarr_parse import SonarrParseCache
 
@@ -157,9 +157,8 @@ class SonarrSync(ArrSync[SonarrItem]):
         self._episodes = SonarrEpisodes(deps, self.sonarr, self._services)
 
         # Parse-cache collaborator: grab-time `/parse` of SeaDex filenames + the
-        # durable, freshness-checked parse cache (read-through the shared
-        # cache_store, so its staged writes are visible to the seed builder's reads
-        # later in the same run). The run's series fingerprint is threaded per call.
+        # durable, freshness-checked parse cache (read-through the shared cache_store).
+        # The run's series fingerprint is threaded per call.
         self._parse = SonarrParseCache(deps, self.sonarr)
 
         # Import-time file -> episode mapper: owns the gnarly assignment of on-disk
@@ -411,8 +410,16 @@ class SonarrSync(ArrSync[SonarrItem]):
 
         self.logger.debug(f"SeaDex: {', '.join(seadex_dict)}")
 
-        # Parse out filenames
-        seadex_dict = self._parse.parse_episodes_from_seadex(seadex_dict, series_fp=self._episodes.series_fp)
+        # Place every listed file where the import will put it, so the grab is judged by the map the import
+        # runs. The series map is the whole-series list the entry's own list was cut from (a per-run cache hit).
+        scope = SeedScope(
+            episode_index(ep_list),
+            episode_index(self._episodes.cached_episodes(sonarr_series_id) or []),
+            title.names,
+        )
+        placed = EntryPlacements.place(scope, self._parse.parsed_files(seadex_dict, series_fp=self._episodes.series_fp))
+        placed.attach_records(seadex_dict)
+        self._log_placements(placed)
 
         # If we're in interactive mode and there are multiple equivalent options here, then select
         if (
@@ -451,10 +458,10 @@ class SonarrSync(ArrSync[SonarrItem]):
         # seeds and the whole pass silently no-ops.
         pending_seeds: dict[str, PendingImport] | None = None
         if run.import_wait_mode is not ImportWaitMode.OFF:
-            pending_seeds = self._reconciler.build_pending_seeds(
-                seadex_dict=seadex_dict,
-                ep_list=ep_list,
-                entry=PendingSeedContext(
+            pending_seeds = build_pending_seeds(
+                seadex_dict,
+                placed,
+                PendingSeedContext(
                     al_id=al_id,
                     series_id=sonarr_series_id,
                     title=title.display,
@@ -462,7 +469,6 @@ class SonarrSync(ArrSync[SonarrItem]):
                     coverage=coverage,
                     url=sd_url,
                     guards=plan.guards,
-                    names=title.names,
                 ),
             )
 
@@ -480,6 +486,19 @@ class SonarrSync(ArrSync[SonarrItem]):
                 pending_seeds=pending_seeds,
             ),
         )
+
+    def _log_placements(self, placed: EntryPlacements) -> None:
+        """One debug line per url with video files: what placed (the coverage the plan reads), what was set aside."""
+
+        for url, placement in placed.by_url.items():
+            if not placement.files:
+                continue
+            aside = ", ".join(p.name for p in placement.assignment.excluded)
+            self.logger.debug(
+                f"{url}: placed {_coverage.coverage_string(list(placement.records)) or 'nothing'}"
+                f"{'' if placement.parses_known else ' (a parse request failed)'}"
+                f"{f'; set aside (other slice / duplicate): {aside}' if aside else ''}"
+            )
 
     @override
     def pending_import_series_id(self, item: SonarrItem) -> int | None:

@@ -10,6 +10,7 @@ Pearlarr is a fork of [bbtufty/seadexarr](https://github.com/bbtufty/seadexarr).
 ### Changed
 
 - The Sonarr parse cache stores each file name's whole parse, so the grab-time map and the import-time placement read one reading per file. The first run after upgrading re-parses every listed file name once.
+- Which episodes a release covers is judged at grab time by where the import would place each file, not by the episodes Sonarr's parse matched. A release Sonarr reads into another season, or reads nothing of, is judged where it would import, and a whole-series pack by the entry's own episodes. The first run after upgrading re-checks every cached title once, for Sonarr and Radarr alike, and says so.
 
 ### Fixed
 

@@ -36,6 +36,7 @@ from pearlarr.sonarr_episodes import (
     fetch_workers,
     sonarr_series_fingerprint,
 )
+from pearlarr.sonarr_import_plan import SeedFile
 from pearlarr.sonarr_parse import (
     SonarrParseCache,
     is_video_candidate,
@@ -573,9 +574,8 @@ class TestPrefetchSkipsUnchanged:
 class _ParseSonarr:
     """A scripted Sonarr `/parse` client recording each parsed filename.
 
-    `parse_episodes_from_seadex` only touches `sonarr.parse`. This scripts the
-    one result and records the calls so the not-parsed assertions read recorded
-    state.
+    `parsed_files` only touches `sonarr.parse`. This scripts the one result and
+    records the calls so the not-parsed assertions read recorded state.
     """
 
     def __init__(self, result: ParsedFileInfo | None) -> None:
@@ -587,8 +587,8 @@ class _ParseSonarr:
         return self._result
 
 
-class TestParseEpisodesUnmatchedCache:
-    """`parse_episodes_from_seadex` caches a genuine unmatched parse with the series fingerprint.
+class TestParsedFilesUnmatchedCache:
+    """`parsed_files` caches a genuine unmatched parse with the series fingerprint.
 
     It skips a fresh hit's network call, never caches a transient `None`, and
     never parses audio files.
@@ -625,12 +625,12 @@ class TestParseEpisodesUnmatchedCache:
 
     def test_genuine_unmatched_is_cached_with_fp(self) -> None:
         parse, _ = self._parse(parse_result=_UNMATCHED)
-        parse.parse_episodes_from_seadex(self._dict("[X] Show - 01.mkv"), series_fp="fp")
+        parse.parsed_files(self._dict("[X] Show - 01.mkv"), series_fp="fp")
         self._assert_pinned(parse, "[X] Show - 01.mkv")
 
     def test_transient_none_is_not_cached(self) -> None:
         parse, _ = self._parse(parse_result=None)
-        parse.parse_episodes_from_seadex(self._dict("[X] Show - 01.mkv"), series_fp="fp")
+        parse.parsed_files(self._dict("[X] Show - 01.mkv"), series_fp="fp")
         assert parse.cache_store.get_sonarr_parse("[X] Show - 01.mkv") is None
 
     def test_fresh_unmatched_hit_skips_network(self) -> None:
@@ -642,7 +642,7 @@ class TestParseEpisodesUnmatchedCache:
             },
         }
         parse, sonarr = self._parse(parse_result=_UNMATCHED, sonarr_parse=seeded)
-        parse.parse_episodes_from_seadex(self._dict("[X] Show - 01.mkv"), series_fp="fp")
+        parse.parsed_files(self._dict("[X] Show - 01.mkv"), series_fp="fp")
         assert sonarr.calls == []
 
     def test_unreadable_row_is_re_fetched_and_rewritten(self) -> None:
@@ -666,12 +666,18 @@ class TestParseEpisodesUnmatchedCache:
 
     def test_audio_file_never_parsed(self) -> None:
         parse, sonarr = self._parse(parse_result=_UNMATCHED)
-        parse.parse_episodes_from_seadex(self._dict("[X] OST - 01.flac"), series_fp="fp")
+        parse.parsed_files(self._dict("[X] OST - 01.flac"), series_fp="fp")
         assert sonarr.calls == []
+
+    def test_parsed_files_pairs_each_video_file_with_its_size_and_parse(self) -> None:
+        # Every url gets an entry, video files only, each with its listed size and its parse.
+        parse, _ = self._parse(parse_result=_matched(1, 1))
+        gathered = parse.parsed_files(self._dict("[X] Show - 01.mkv", "[X] Show - 01.ass"), series_fp="fp")
+        assert gathered == {"u": (SeedFile("[X] Show - 01.mkv", 100, _matched(1, 1)),)}
 
     def test_concurrent_pass_caches_each_file(self) -> None:
         parse, _ = self._parse(parse_result=_UNMATCHED, sleep_time=0)
-        parse.parse_episodes_from_seadex(self._dict("[X] Show - 01.mkv", "[X] Show - 02.mkv"), series_fp="fp")
+        parse.parsed_files(self._dict("[X] Show - 01.mkv", "[X] Show - 02.mkv"), series_fp="fp")
         for name in ("[X] Show - 01.mkv", "[X] Show - 02.mkv"):
             self._assert_pinned(parse, name)
 

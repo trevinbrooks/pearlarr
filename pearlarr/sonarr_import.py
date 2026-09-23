@@ -21,7 +21,6 @@ from .manual_import import (
     path_leaf,
 )
 from .output import hub_note, hub_warn
-from .parse_records import ParseWindow
 from .run_services import RunDeps
 from .seadex_types import (
     CommandResource,
@@ -32,9 +31,6 @@ from .seadex_types import (
     QualitySource,
     QueueRecord,
     RemotePathMapping,
-    SeadexDict,
-    SonarrEpisode,
-    flagged_urls,
 )
 from .sonarr_client import AbstractSonarrClient
 from .sonarr_episodes import SonarrEpisodes
@@ -49,13 +45,8 @@ from .sonarr_import_plan import (
     ImportAction,
     ImportDecision,
     ParsedQuality,
-    PendingSeedContext,
     QueueVerdict,
-    SeedFile,
-    SeedRelease,
-    SeedScope,
     TargetStatuses,
-    build_pending_seed,
     classify_commands,
     classify_download_history,
     classify_queue,
@@ -73,7 +64,6 @@ from .sonarr_import_plan import (
     trusted_groups,
 )
 from .sonarr_mapper import FileEpisodeMapper
-from .sonarr_parse import video_file_entries
 
 # RefreshMonitoredDownloads is quick. Poll its status this many times (sleeping between) so the queue we read
 # next reflects the rescan, then proceed regardless so a stuck command never blocks the run.
@@ -657,54 +647,8 @@ class ImportReconciler:
 
         self._episodes = episodes
         self._executor = executor
-        self._parses = deps.parse_records
         self.cache_store = deps.cache_store
         self.logger = deps.logger
-
-    def build_pending_seeds(
-        self,
-        *,
-        seadex_dict: SeadexDict,
-        ep_list: list[SonarrEpisode],
-        entry: PendingSeedContext,
-    ) -> dict[str, PendingImport]:
-        """Build `infohash -> PendingImport` per grabbed torrent: a best-effort map that self-heals at import."""
-
-        flagged = flagged_urls(seadex_dict)
-        if not flagged:
-            return {}
-
-        # One scope for the whole entry: its ordered ids ride every record, so import-time assignment maps files
-        # into OUR set instead of re-deriving identity from Sonarr's title parse. The series map is the same
-        # whole-series index the mapper reads at import time. A list that could not be read seeds NOTHING
-        # (an empty map refuses every map-dependent verdict) and import time places from scratch: the
-        # entry's own index is no stand-in, since a key it lacks would read as bogus and place as numberless.
-        series = self._episodes.cached_episodes(entry.series_id)
-        scope = SeedScope(episode_index(ep_list), episode_index(series or []))
-        # The parses are the sweep's own staged rows, read under the same freshness rule (a row the sweep
-        # refused and could not refresh is a miss here too).
-        window = ParseWindow.open(self._episodes.series_fp)
-
-        pending_seeds: dict[str, PendingImport] = {}
-        for srg, url_item, infohash in flagged:
-            video_files = [base for _, base in video_file_entries(url_item.files)]
-            if not video_files:
-                continue
-            release = SeedRelease(
-                release_group=srg,
-                url_item=url_item,
-                infohash=infohash,
-                files=tuple(SeedFile(base, self._parses.read(base, window=window)) for base in video_files),
-            )
-            seed = build_pending_seed(release, scope, entry)
-            if seed.excluded_files:
-                self.logger.debug(
-                    f"{entry.title}: not counted toward completeness "
-                    f"(other slice / duplicate): {', '.join(seed.excluded_files)}",
-                )
-            pending_seeds[infohash] = seed
-
-        return pending_seeds
 
     def import_completed(
         self,

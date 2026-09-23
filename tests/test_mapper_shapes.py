@@ -17,6 +17,7 @@ from pydantic import BaseModel, RootModel
 
 from pearlarr.manual_import import EntryNames, normalize_basename
 from pearlarr.seadex_types import (
+    EpisodeRecord,
     Json,
     ManualImportCandidate,
     ParsedFileInfo,
@@ -25,9 +26,11 @@ from pearlarr.seadex_types import (
 from pearlarr.sonarr_import_plan import (
     Placement,
     PlacementBatch,
+    SeedFile,
     SeedScope,
     assign_episode_ids,
     episode_index,
+    place_release,
 )
 
 from .builders import make_sonarr_mapper, pending_import
@@ -126,6 +129,13 @@ def _names(case: ShapeCase) -> EntryNames:
     return EntryNames(case.series_title, case.titles)
 
 
+def _scope(case: ShapeCase) -> SeedScope:
+    """The grab-time scope: the entry's slice of the whole-series index, and the names."""
+
+    index = episode_index(case.episodes)
+    return SeedScope(episode_index([index.by_id[episode_id] for episode_id in case.entry_ids]), index, _names(case))
+
+
 def _parsed(case: ShapeCase) -> dict[str, ParsedFileInfo]:
     """The case's raw payloads through the boundary model, listing order kept."""
 
@@ -142,13 +152,31 @@ def _excluded_names(placements: tuple[Placement, ...]) -> set[str]:
 def test_seed_places_captured_shape(case: ShapeCase) -> None:
     """The grab-time scope places every captured file where independent truth puts it."""
 
-    index = episode_index(case.episodes)
-    scope = SeedScope(episode_index([index.by_id[episode_id] for episode_id in case.entry_ids]), index)
+    scope = _scope(case)
 
-    result = assign_episode_ids(PlacementBatch(list(case.parses), _parsed(case)), scope.target(_names(case)))
+    result = assign_episode_ids(PlacementBatch(list(case.parses), _parsed(case)), scope.target())
 
     assert result.assigned == {name: list(ids) for name, ids in case.expected.items()}
     assert _excluded_names(result.placements) == set(case.expected_excluded)
+
+
+@pytest.mark.parametrize("case", _PARAMS)
+def test_the_grab_records_the_placed_episodes(case: ShapeCase) -> None:
+    """The records the planner judges coverage by are exactly the placed episodes' numbers, sized per file."""
+
+    scope = _scope(case)
+    parsed = _parsed(case)
+    files = [SeedFile(name, size, parsed[name]) for size, name in enumerate(case.parses, start=1)]
+
+    placement = place_release(files, scope)
+
+    expected = [
+        EpisodeRecord(scope.series.by_id[ep_id].season_number, scope.series.by_id[ep_id].episode_number, size)
+        for size, name in enumerate(case.parses, start=1)
+        for ep_id in case.expected.get(name, ())
+    ]
+    assert list(placement.records) == expected
+    assert placement.parses_known
 
 
 @pytest.mark.parametrize("case", _PARAMS)

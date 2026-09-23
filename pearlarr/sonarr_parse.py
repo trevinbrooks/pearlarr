@@ -1,12 +1,12 @@
-"""Sonarr `/parse` cache collaborator: SeaDex filenames -> season/episode.
+"""Sonarr `/parse` cache collaborator: SeaDex filenames, read through the parse cache, for the placement.
 
 `SonarrParseCache` owns the grab-time `/parse` of a release's filenames plus
-the durable parse cache: cold-cache warm, TTL eviction, and the mapping loop.
-The cache leaf itself (`ParseRecords`, in `parse_records`) is bound once on
-`RunDeps` and shared with the seed builder, so both read one `ParsedFileInfo`
-per file. The series-id fingerprint that pins unmatched records is threaded in
-per call (`series_fp`) so this stays decoupled from the episode collaborator
-that computes it.
+the durable parse cache: cold-cache warm, TTL eviction, and the gather that
+pairs each video file with its parse for `place_release`. The cache leaf
+itself (`ParseRecords`, in `parse_records`) is bound once on `RunDeps`. The
+series-id fingerprint that pins unmatched records is threaded in per call
+(`series_fp`) so this stays decoupled from the episode collaborator that
+computes it.
 """
 
 import concurrent.futures
@@ -17,9 +17,10 @@ from .log import count_noun
 from .manual_import import path_leaf
 from .parse_records import ParseWindow
 from .run_services import RunDeps
-from .seadex_types import EpisodeRecord, ParsedFileInfo, SeadexDict
+from .seadex_types import ParsedFileInfo, SeadexDict
 from .sonarr_client import AbstractSonarrClient
 from .sonarr_episodes import fetch_workers
+from .sonarr_import_plan import SeedFile
 
 TORRENT_FILENAMES_TO_SKIP = [
     "NCED",
@@ -118,8 +119,8 @@ def is_video_candidate(basename: str) -> bool:
 def video_file_entries(files: Sequence[str]) -> Iterator[tuple[int, str]]:
     """Yield `(index, basename)` for each importable video file in `files`.
 
-    The one basename+skip iteration the warm pass, the parse loop, and the seed
-    builder share. The index survives so an index-aligned size list stays usable.
+    The one basename+skip iteration the warm pass and the gather share. The
+    index survives so an index-aligned size list stays usable.
     """
 
     for idx, name in enumerate(files):
@@ -132,9 +133,8 @@ class SonarrParseCache:
     """Owns the grab-time `/parse` + the durable, freshness-checked parse cache.
 
     Constructed once per run in `SonarrSync` from the shared `RunDeps` and the
-    strategy's Sonarr client. The cache is read-through `cache_store` (the same
-    leaf the seed builder reads), so staged writes from `parse_episodes_from_seadex`
-    are visible to a later same-run read.
+    strategy's Sonarr client. The cache is read-through `cache_store`, so a
+    write staged by `gather` is visible to a later same-run read.
     """
 
     def __init__(self, deps: RunDeps, sonarr: AbstractSonarrClient) -> None:
@@ -220,29 +220,17 @@ class SonarrParseCache:
                 continue
             self.records.write(name, result, window=window)
 
-    def parse_episodes_from_seadex(
+    def parsed_files(
         self,
         seadex_dict: SeadexDict,
         *,
         series_fp: str,
-    ) -> SeadexDict:
-        """For files in a SeaDex release, parse this through Sonarr to get season/episode numbers.
+    ) -> dict[str, tuple[SeedFile, ...]]:
+        """Each url's video files with their sizes and Sonarr parses, keyed as the groups key their urls.
 
-        This gets an overall episode list per-release group, and also episode lists per-torrent,
-        if there are multiple
-
-        Parsed filenames are cached through the cache store, so a given
-        filename is only ever sent to Sonarr once - both within a run, where
-        the same file can appear across overlapping release groups, and across
-        runs. The mapping is deterministic for a SeaDex release name, so this is
-        safe. Only successful parses are cached, so a file becomes parseable as
-        soon as its series is added to Sonarr.
-
-        Args:
-            seadex_dict: The releases to parse. Episode lists are attached to
-                its items in place, and it is returned.
-            series_fp: The run's series-id fingerprint, pinning unmatched
-                records (from the episode collaborator).
+        A name goes to Sonarr once, within a run (the same file across overlapping groups) and across
+        runs through the durable parse cache, its unmatched rows pinned by `series_fp`. Every url gets
+        an entry, empty when it lists no video file. Never mutates `seadex_dict`.
         """
 
         # Cutoffs computed once per call (not per file), all anchored to one instant.
@@ -256,46 +244,18 @@ class SonarrParseCache:
         if evicted:
             self.logger.debug(f"Evicted {count_noun(evicted, 'stale Sonarr parse record')}")
 
-        # Concurrently warm the cache for any not-yet-cached files so the mapping
-        # loop below reads them as hits (no-op when sequential or already warm).
+        # Concurrently warm the cache for any not-yet-cached files so the loop
+        # below reads them as hits (no-op when sequential or already warm).
         self._warm_parse_cache(seadex_dict, window=window)
 
+        gathered: dict[str, tuple[SeedFile, ...]] = {}
         for release_group_item in seadex_dict.values():
-            # Set up an overall "all episodes" list (bound locally so the
-            # appends below stay typed as list, not list | None)
-            all_episodes: list[EpisodeRecord] = []
-            release_group_item.all_episodes = all_episodes
-
-            for url_item in release_group_item.urls.values():
-                # Set up a list to parse episodes from files
-                episodes: list[EpisodeRecord] = []
-                url_item.episodes = episodes
+            for url, url_item in release_group_item.urls.items():
                 sizes = url_item.size
-
-                # Video files only (NCED/NCOP, subs, fonts, audio dropped) - the
+                # Video files only (NCED/NCOP, subs, fonts, audio dropped), the
                 # same rule the warm pass uses. The index keys the size list.
-                for sd_file_idx, f in video_file_entries(url_item.files):
-                    # Fresh cache hit, or query Sonarr and cache the result so it
-                    # expires (re-validates) rather than being trusted forever.
-                    info = self._parse_for(f, window=window)
-                    if info is None or not info.matched_episodes:
-                        continue
-
-                    size = sizes[sd_file_idx]
-                    for matched in info.matched_episodes:
-                        season = matched.season_number
-                        episode = matched.episode_number
-
-                        self.logger.debug(f"{f} mapped to: S{season:02d}E{episode:02d}")
-
-                        # EpisodeRecord is immutable, so the per-url and the
-                        # release-group-wide lists can share one instance.
-                        ep_record = EpisodeRecord(
-                            season=season,
-                            episode=episode,
-                            size=size,
-                        )
-                        episodes.append(ep_record)
-                        all_episodes.append(ep_record)
-
-        return seadex_dict
+                gathered[url] = tuple(
+                    SeedFile(f, sizes[sd_file_idx], self._parse_for(f, window=window))
+                    for sd_file_idx, f in video_file_entries(url_item.files)
+                )
+        return gathered

@@ -188,11 +188,11 @@ class RadarrSync(ArrSync[RadarrItem]):
             added_at = now_stamp()
             # No guard fields: Radarr's import path reads nothing but the infohash.
             pending_seeds = {
-                infohash: PendingImport(
-                    infohash=infohash,
+                flagged.infohash: PendingImport(
+                    infohash=flagged.infohash,
                     al_id=al_id,
                     title=title.display,
-                    release_group=srg,
+                    release_group=flagged.group,
                     url=sd_url,
                     added_at=added_at,
                     series_id=0,
@@ -203,7 +203,7 @@ class RadarrSync(ArrSync[RadarrItem]):
                     coverage=None,
                     ordered_episode_ids=[],
                 )
-                for srg, _url_item, infohash in flagged_urls(seadex_dict)
+                for flagged in flagged_urls(seadex_dict)
             }
 
         return run.grab_and_cache(
