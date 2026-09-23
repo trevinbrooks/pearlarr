@@ -342,6 +342,7 @@ class NeedsActionCause(Enum):
     PRIVATE_ONLY_STALE = auto()
     UNSUPPORTED_TRACKER = auto()
     GRAB_FAILED = auto()
+    PARSE_FAILED = auto()
 
 
 @dataclass(frozen=True, slots=True)
