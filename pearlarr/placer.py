@@ -135,7 +135,7 @@ class _Placer:
     readings: dict[str, Reading]
     """One reading per distinct name to place, batch order."""
     key_by_id: Mapping[int, EpisodeKey]
-    """The series map inverted once (it never changes; only `used` does)."""
+    """The series map inverted once (it never changes, only `used` does)."""
     resolved: frozenset[int]
     """The scope's real ids (a stray zero is never one)."""
     evidenced: frozenset[int]
@@ -510,7 +510,7 @@ def _pass_release_run(state: _Placer) -> None:
     if refused:
         state.count_legs_barred = True
         return
-    # A whole-season run over a slice window places the slice's numbers; the rest is the other slice's.
+    # A whole-season run over a slice window places the slice's numbers. The rest is the other slice's.
     members = tuple(m for m in run.members if m.number in window.numbers) if covers else run.members
     readings = [state.readings[member.name] for member in members]
     coherent = all(
@@ -562,7 +562,7 @@ def _pass_counted(state: _Placer) -> None:
         if info is not None and len(info.absolute_episode_numbers) == 1:
             abs_by_file[name] = info.absolute_episode_numbers[0]
     # The restart-numbering tell is a BATCH property, counting every absolute
-    # of every parse supplied - seeded files included, or a v1 placed on an
+    # of every parse supplied, seeded files included, or a v1 placed on an
     # earlier poll would hide its v2 from this leg. Deduped per parse: the
     # tell is two FILES sharing an absolute, not junk repeats within one.
     batch_absolutes = [
@@ -573,7 +573,7 @@ def _pass_counted(state: _Placer) -> None:
     ]
     # A parse the caller couldn't get (None), or the offline regex stand-in
     # for one (blind to absolutes: "S01E12 - 12" would launder its lost 12),
-    # may be hiding a duplicate - the tell's input is incomplete, so the leg
+    # may be hiding a duplicate: the tell's input is incomplete, so the leg
     # fails CLOSED, the same posture a hiccuped leftover gets from the count.
     if (
         abs_by_file

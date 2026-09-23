@@ -141,7 +141,7 @@ class PendingSeedContext:
     """
 
     al_id: int
-    """The AniList entry id - part of each record's `PendingKey`."""
+    """The AniList entry id, part of each record's `PendingKey`."""
     series_id: int
     """The Sonarr series id the entry's files belong to."""
     title: str

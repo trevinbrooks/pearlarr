@@ -17,7 +17,7 @@ class _EpisodeClaim(NamedTuple):
     season: int | None
     episode: int
     claimed_id: int | None
-    """Sonarr's own episode id from a borrowed matched pair - it must agree
+    """Sonarr's own episode id from a borrowed matched pair. It must agree
     with our map's id. None for a name-parsed claim (no id to cross-check)."""
 
 

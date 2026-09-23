@@ -34,7 +34,7 @@ class ImportAction(StrEnum):
 
     A `StrEnum` (so each member IS its rendered word, matching the
     `PendingState` / `QueueVerdict` / `EpisodeFileStatus`
-    style) - the consumer branches on a typed value instead of a magic string.
+    style): the consumer branches on a typed value instead of a magic string.
     Only `IMPORT` and `MISSING` drive behavior. The three "nothing to import
     for this file" members are kept distinct purely for reporting.
     """
