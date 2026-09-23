@@ -248,7 +248,7 @@ class _Placer:
     def start(cls, batch: PlacementBatch, scope: TargetScope) -> Self:
         """Read every name once against the scope."""
 
-        readings = {name: read_parse(batch.parsed.get(name), scope) for name in dict.fromkeys(batch.to_place)}
+        readings = {name: read_parse(batch.parsed.get(name), scope) for name in batch.names}
         name_reads = {name: read_name(name) for name in readings}
         return cls(batch, scope, readings, name_reads, _SeriesFacts.of(scope.series), used=set(scope.used))
 

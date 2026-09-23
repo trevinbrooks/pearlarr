@@ -156,6 +156,12 @@ class PlacementBatch(NamedTuple):
     and no SxxExx fell out of the name)."""
 
     @property
+    def names(self) -> tuple[str, ...]:
+        """The distinct names to place, batch order."""
+
+        return tuple(dict.fromkeys(self.to_place))
+
+    @property
     def all_parses_known(self) -> bool:
         """Every parse came from Sonarr this run: no transport miss (None) and no offline `SxxExx` stand-in.
 
