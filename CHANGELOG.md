@@ -7,6 +7,8 @@ Pearlarr is a fork of [bbtufty/seadexarr](https://github.com/bbtufty/seadexarr).
 
 ## [Unreleased]
 
+## [1.4.0] - 2026-09-23
+
 ### Changed
 
 - The Sonarr parse cache stores each file name's whole parse, so the grab-time map and the import-time placement read one reading per file. The first run after upgrading re-parses every listed file name once.
