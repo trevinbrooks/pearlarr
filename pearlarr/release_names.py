@@ -5,7 +5,7 @@ import unicodedata
 from collections.abc import Iterable, Mapping, Sequence
 from dataclasses import dataclass
 from itertools import takewhile
-from typing import NamedTuple
+from typing import NamedTuple, Self
 
 from .manual_import import EntryNames
 from .seadex_types import ParsedFileInfo
@@ -98,12 +98,6 @@ def read_name(name: str) -> NameRead:
 
     stem = _stem_version(name)
     return NameRead(stem, _member_of(name, stem))
-
-
-def name_stem(name: str) -> str:
-    """A name without its extension, trailing bracketed tags, and trailing `vN` (to a fixpoint), underscores as spaces."""
-
-    return _stem_version(name).text
 
 
 def _stem_version(name: str) -> Stem:
@@ -296,18 +290,18 @@ def _word_set(text: str) -> frozenset[str]:
 class _Leftover(NamedTuple):
     """An AniList title's words beyond the series title, in title order, and as a set."""
 
-    ordered: tuple[str, ...]
-    words: frozenset[str]
+    words: tuple[str, ...]
+    distinct: frozenset[str]
 
     @classmethod
     def of(cls, title: str, ground: frozenset[str]) -> "_Leftover":
-        ordered = tuple(word for word in folded_words(title) if word not in ground)
-        return cls(ordered, frozenset(ordered))
+        words = tuple(word for word in folded_words(title) if word not in ground)
+        return cls(words, frozenset(words))
 
     def overlap(self, rest: frozenset[str]) -> float:
         """The share of the combined leftover words a candidate's leftover has in common with this title."""
 
-        return len(rest & self.words) / len(rest | self.words)
+        return len(rest & self.distinct) / len(rest | self.distinct)
 
     def opening_only(self, rest: frozenset[str]) -> bool:
         """Whether a candidate shares nothing past this title's opening run of words.
@@ -316,47 +310,71 @@ class _Leftover(NamedTuple):
         series title's words cannot shed, and names the entry after it.
         """
 
-        opening = frozenset(takewhile(rest.__contains__, self.ordered))
-        return opening != self.words and opening == rest & self.words
+        opening = frozenset(takewhile(rest.__contains__, self.words))
+        return opening != self.distinct and opening == rest & self.distinct
 
 
-class _Naming(NamedTuple):
-    """Every candidate scored against the entry's AniList titles, both sides shed of the series title's words."""
+class _Scored(NamedTuple):
+    """One candidate's leftover words and its best overlap with a title."""
+
+    rest: frozenset[str]
+    score: float
+
+
+@dataclass(frozen=True, slots=True)
+class Naming:
+    """Every candidate scored against the entry's AniList titles, both sides shed of the series title's words.
+
+    Built once over every candidate. The questions take index subsets, and each answer depends only on
+    the subset's own scores, so one naming serves every tie-break and refusal over the same candidates.
+    """
 
     leftovers: tuple[_Leftover, ...]
-    rests: tuple[frozenset[str], ...]
-    scores: tuple[float, ...]
-    """Each candidate's best overlap with a title."""
+    scored: tuple[_Scored, ...]
 
     @classmethod
-    def of(cls, candidates: Sequence[str], names: EntryNames) -> "_Naming | None":
+    def of(cls, candidates: Sequence[str], names: EntryNames) -> Self | None:
         """Score the candidates, or None when nothing can name them: no ground, no titles, or a title that IS the series."""
 
         ground = _word_set(names.series)
         leftovers = tuple(_Leftover.of(title, ground) for title in names.anilist)
-        if not ground or not leftovers or not all(leftover.words for leftover in leftovers):
+        if not ground or not leftovers or not all(leftover.distinct for leftover in leftovers):
             return None
-        rests = tuple(_word_set(candidate) - ground for candidate in candidates)
-        scores = tuple(max(leftover.overlap(rest) for leftover in leftovers) for rest in rests)
-        return cls(leftovers, rests, scores)
+        scored: list[_Scored] = []
+        for candidate in candidates:
+            rest = _word_set(candidate) - ground
+            scored.append(_Scored(rest, max(leftover.overlap(rest) for leftover in leftovers)))
+        return cls(leftovers, tuple(scored))
 
-    @property
-    def winners(self) -> frozenset[int]:
-        """The candidates at the top score, when it reaches `_MIN_TITLE_OVERLAP`."""
+    def best_among(self, indices: Iterable[int]) -> frozenset[int]:
+        """The candidates among `indices` at the top score, when it reaches `_MIN_TITLE_OVERLAP`."""
 
-        top = max(self.scores, default=0.0)
+        among = frozenset(indices)
+        top = max((self.scored[index].score for index in among), default=0.0)
         if top < _MIN_TITLE_OVERLAP:
             return frozenset()
-        return frozenset(index for index, score in enumerate(self.scores) if score == top)
+        return frozenset(index for index in among if self.scored[index].score == top)
 
-    def named(self, index: int) -> bool:
+    def sole_among(self, indices: Iterable[int]) -> int | None:
+        """The one candidate among `indices` a title names, else None: a tie or an opening-words winner refuses."""
+
+        winners = self.best_among(indices)
+        if len(winners) != 1:
+            return None
+        index = next(iter(winners))
+        return index if self._named(index) else None
+
+    def _named(self, index: int) -> bool:
         """Whether a winner shares more than the opening words of some title it scores best against."""
 
-        rest = self.rests[index]
-        return any(
-            leftover.overlap(rest) == self.scores[index] and not leftover.opening_only(rest)
-            for leftover in self.leftovers
-        )
+        rest, score = self.scored[index]
+        return any(leftover.overlap(rest) == score and not leftover.opening_only(rest) for leftover in self.leftovers)
+
+    def names_another(self, pick: int, among: Iterable[int]) -> bool:
+        """Whether a title names candidates among `among` best and not `pick`. Refuses the pick, never promotes."""
+
+        winners = self.best_among(among)
+        return bool(winners) and pick not in winners
 
 
 def sole_title_match(candidates: Sequence[str], names: EntryNames) -> int | None:
@@ -368,15 +386,5 @@ def sole_title_match(candidates: Sequence[str], names: EntryNames) -> int | None
     promotes a runner-up.
     """
 
-    naming = _Naming.of(candidates, names)
-    if naming is None or len(naming.winners) != 1:
-        return None
-    index = next(iter(naming.winners))
-    return index if naming.named(index) else None
-
-
-def best_title_matches(candidates: Sequence[str], names: EntryNames) -> frozenset[int]:
-    """The indices of the candidates an AniList title names best (ties included), empty when it names none."""
-
-    naming = _Naming.of(candidates, names)
-    return frozenset() if naming is None else naming.winners
+    naming = Naming.of(candidates, names)
+    return None if naming is None else naming.sole_among(range(len(candidates)))
