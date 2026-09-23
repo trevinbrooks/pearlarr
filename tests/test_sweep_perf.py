@@ -696,6 +696,17 @@ class TestIsVideoCandidate:
         ):
             assert not is_video_candidate(name)
 
+    def test_bundled_reading_matter_rejected(self) -> None:
+        # Manga volumes and books ride beside the video in some releases.
+        for name in (
+            "[X] Show - Volume 01.cbz",
+            "[X] Show - Volume 02.cbr",
+            "[X] Show - Volume 03.cb7",
+            "[X] Show - Guidebook.pdf",
+            "[X] Show - Novel 01.epub",
+        ):
+            assert not is_video_candidate(name)
+
     def test_video_containers_kept(self) -> None:
         assert is_video_candidate("[X] Show - S01E01.mkv")
         assert is_video_candidate("[X] Show - S01E01.mp4")

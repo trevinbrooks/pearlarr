@@ -22,6 +22,7 @@ Pearlarr is a fork of [bbtufty/seadexarr](https://github.com/bbtufty/seadexarr).
 - A release numbered `1..N` for a season of N episodes, which Sonarr matched partly onto that season's specials, imports as the season's own numbering. An entry holding an episode TVDB files as a special, such as a recap between two episodes, takes a release run in the series' absolute order. A whole-season release listed on one cour's entry imports that cour's slice and leaves the other cour's files alone.
 - A release carrying two versions of a file (`- 09` and `- 09v2`) imports the later version and sets the earlier one aside as a duplicate. Release numbers framed by an `Episode` word or followed by the absolute number in brackets (`S2 - 01 [13] - Title`) are read.
 - Where several runs fit an entry, the episode titles the file names carry pick the run whose titles the series list knows, and a run whose titles name only other episodes, or that the entry's AniList title puts elsewhere, is left for a hand import instead of imported wrongly. Season words are compared as counts, so `3`, `III`, `3rd Season`, and `S3` agree.
+- Manga volumes and books bundled in a release (`.cbz`, `.cbr`, `.cb7`, `.pdf`, `.epub`) are no longer listed as files to place.
 
 ## [1.3.6] - 2026-09-14
 
