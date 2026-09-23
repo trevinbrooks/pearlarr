@@ -3,15 +3,16 @@
 from collections import Counter
 from collections.abc import Iterable, Mapping, Sequence
 from dataclasses import dataclass, field
+from enum import IntEnum
 from typing import NamedTuple, Self
 
 from .parse_reading import Reading, claims_several_episodes, numbers_miss_the_series, parse_has_no_number, read_parse
 from .placement_types import EpisodeAssignment, EpisodeIndex, Placement, PlacementBatch, PlacementVerdict, TargetScope
 from .release_names import (
     NameRead,
+    Naming,
     NumberedRun,
     RunMember,
-    best_title_matches,
     folded_words,
     is_consecutive,
     is_extras_name,
@@ -142,6 +143,28 @@ class _TitleEvidence(NamedTuple):
         """The tails name other episodes and none of the window's."""
 
         return self.outside >= _MIN_TITLE_HITS and not self.inside
+
+
+class _Tier(IntEnum):
+    """The release-run pass's candidate tiers, best first."""
+
+    WHOLE = 1
+    """Numbered `1..N` for the window's width N."""
+    NUMBERED = 2
+    """Numbered exactly as the window's episodes."""
+    COVERING = 3
+    """Numbered `1..N` for the whole season a slice window belongs to."""
+    ANYWHERE = 4
+    """N consecutive numbers from anywhere, no member read completely, nothing seeded."""
+
+
+class _Candidate(NamedTuple):
+    """One run that could index the window: its position among the runs, the first tier it fits, its title evidence."""
+
+    position: int
+    run: NumberedRun
+    tier: _Tier
+    evidence: _TitleEvidence
 
 
 class _SeasonFit(NamedTuple):
@@ -415,6 +438,36 @@ class _Placer:
         members = (member for name in names if (member := self.name_reads[name].member) is not None)
         return numbered_runs(members, self.batch.parsed)
 
+    def runs_from_anywhere(self, runs: Iterable[NumberedRun], width: int) -> list[NumberedRun]:
+        """The runs of `width` consecutive numbers wherever they start, no member of which Sonarr read completely.
+
+        None once a seed owns part of the scope: such a run fits what is left by chance, never by count.
+        """
+
+        if self.used:
+            return []
+        return [run for run in runs if run.consecutive(width) and not any(self.readings[n].complete for n in run.names)]
+
+    def release_candidates(self, runs: Sequence[NumberedRun], window: _RunWindow) -> list[_Candidate]:
+        """Every run that could index the window, at the first tier it fits, tier order then run order."""
+
+        width = len(window.ids)
+        tiers = {
+            _Tier.WHOLE: runs_from_one(runs, width),
+            _Tier.NUMBERED: runs_with_numbers(runs, window.numbers),
+            _Tier.COVERING: self.covering(runs, window),
+            _Tier.ANYWHERE: self.runs_from_anywhere(runs, width),
+        }
+        tier_of: dict[NumberedRun, _Tier] = {}
+        for tier, fits in tiers.items():
+            for run in fits:
+                tier_of.setdefault(run, tier)
+        position = {run: index for index, run in enumerate(runs)}
+        return [
+            _Candidate(position[run], run, tier, self.facts.title_evidence(run, window))
+            for run, tier in tier_of.items()
+        ]
+
     def finish(self) -> EpisodeAssignment:
         """Classify what is still open, then fold the verdicts in batch order."""
 
@@ -475,26 +528,30 @@ def _pass_release_run(state: _Placer) -> None:
 
     Stands down unless the window is consecutive episodes (one season's, or
     the series' absolutes across several) and one run is left to index it.
-    The candidates, by tier: runs numbered `1..N` for its width N, runs
+
+    Candidates, by tier: runs numbered `1..N` for the window's width N, runs
     numbered exactly as its episodes (a split cour's second half), runs
     numbered `1..N` for the whole season a slice window belongs to, and N
     consecutive numbers from anywhere when no member's reading is complete
-    and no seed owns part of the scope (a release numbering the whole
-    series across its seasons). Among several (a franchise pack), a run
-    Sonarr read whole elsewhere stands aside for the rest, then the episode
-    titles the members carry name one, then an AniList title does, then the
-    highest tier holds. Several left is none, and the other count legs
-    stand down too. With any parse in the batch unknown the members are HELD (no
-    later pass may place what this one could not judge). Refuses (the exact
-    pass proceeds) on `_run_refused`, on a covering run whose count says
-    nothing about the window, on a covering run Sonarr read into another
-    season, or on `_pick_refused`. Every refusal stands the other count
-    legs down too, and a disputed covering run Sonarr did not read whole into
-    one other season is vetoed before any pick. A coherent reading (every
-    member one distinct id inside the window) stands. Otherwise Sonarr's reading is incoherent (a
-    TVDB special shifted its match, the pairs point outside, the keys are
-    bogus, or it read nothing) and the run indexes the window. A
-    whole-season run's members past a slice window are the other slice's.
+    and no seed owns part of the scope (a release numbering the whole series
+    across its seasons). A disputed covering run Sonarr did not read whole
+    into one other season is vetoed before any pick.
+
+    Tie-breaks, in order (a franchise pack): a run Sonarr read whole
+    elsewhere stands aside for the rest, then the episode titles the members
+    carry name one, then an AniList title does, then the highest tier holds.
+    Several left is none, and the other count legs stand down too. With any
+    parse in the batch unknown the members are HELD (no later pass may place
+    what this one could not judge).
+
+    A refusal (`refused` below) bars the count legs and lets the exact pass
+    proceed.
+
+    Placement: a coherent reading (every member one distinct id inside the
+    window) stands. Otherwise Sonarr's reading is incoherent (a TVDB special
+    shifted its match, the pairs point outside, the keys are bogus, or it
+    read nothing) and the run indexes the window. A whole-season run's
+    members past a slice window are the other slice's.
     """
 
     if not state.map_known:
@@ -502,54 +559,31 @@ def _pass_release_run(state: _Placer) -> None:
     window = state.run_window()
     if window is None:
         return
-    width = len(window.ids)
     runs = state.runs(state.remaining())
-    covering = state.covering(runs, window)
+    candidates = state.release_candidates(runs, window)
     # Reads into another season dispute a covering run's count, pick or not: read whole into one other
     # season, it is that season's (its members foreign), else its files are nowhere.
-    disputed = [run for run in covering if state.read_elsewhere(run, window.season)]
+    disputed = [c.run for c in candidates if c.tier is _Tier.COVERING and state.read_elsewhere(c.run, window.season)]
     for run in disputed:
         if not (state.settled_elsewhere(run) and len(state.seasons_read(run)) == 1):
             state.veto(run)
-    tiers = (
-        runs_from_one(runs, width),
-        runs_with_numbers(runs, window.numbers),
-        covering,
-        # A window a seed already took part of fits a run from anywhere by chance, never by count.
-        [
-            run
-            for run in runs
-            if not state.used and run.consecutive(width) and not any(state.readings[n].complete for n in run.names)
-        ],
-    )
-    candidates = list(dict.fromkeys(run for tier in tiers for run in tier))
+    open_runs = frozenset(index for index, run in enumerate(runs) if not state.settled_elsewhere(run))
+    naming = Naming.of([run.prefix for run in runs], state.scope.names)
     state.count_legs_barred = len(candidates) > 1
-    if state.count_legs_barred:
-        candidates = [run for run in candidates if not state.settled_elsewhere(run)] or candidates
-    if (
-        len(candidates) > 1
-        and len(selected := [r for r in candidates if state.facts.title_evidence(r, window).selects]) == 1
-    ):
-        candidates = selected
-    if (
-        len(candidates) > 1
-        and (named := sole_title_match([run.prefix for run in candidates], state.scope.names)) is not None
-    ):
-        candidates = [candidates[named]]
-    if len(candidates) > 1:
-        candidates = next(kept for tier in tiers if (kept := [run for run in tier if run in candidates]))
-    if len(candidates) != 1:
+    pick = _sole_candidate(candidates, open_runs, naming)
+    if pick is None:
         return
-    run = candidates[0]
+    run = pick.run
     if not state.batch.all_parses_known:
         state.set_aside_each(run.whole, PlacementVerdict.HELD)
         return
-    covers = run in covering
+    covers = pick.tier is _Tier.COVERING
     refused = (
         _run_refused(state, run, window)
         or (covers and state.covering_refused(window))
         or run in disputed
-        or _pick_refused(state, run, runs, window)
+        or pick.evidence.vetoes
+        or (naming is not None and naming.names_another(pick.position, open_runs))
     )
     if refused:
         state.count_legs_barred = True
@@ -568,6 +602,27 @@ def _pass_release_run(state: _Placer) -> None:
         if member not in members:
             state.set_aside(member.name, PlacementVerdict.FOREIGN)
     state.set_aside_each(run.superseded, PlacementVerdict.DUPLICATE)
+
+
+def _sole_candidate(
+    candidates: Sequence[_Candidate], open_runs: frozenset[int], naming: Naming | None
+) -> _Candidate | None:
+    """The one candidate the tie-breaks leave, else None (see `_pass_release_run`)."""
+
+    if len(candidates) > 1:
+        candidates = [c for c in candidates if c.position in open_runs] or candidates
+    if len(candidates) > 1 and len(selected := [c for c in candidates if c.evidence.selects]) == 1:
+        candidates = selected
+    if (
+        len(candidates) > 1
+        and naming is not None
+        and (named := naming.sole_among(c.position for c in candidates)) is not None
+    ):
+        candidates = [c for c in candidates if c.position == named]
+    if len(candidates) > 1:
+        top = min(c.tier for c in candidates)
+        candidates = [c for c in candidates if c.tier is top]
+    return candidates[0] if len(candidates) == 1 else None
 
 
 def _pass_exact(state: _Placer) -> None:
@@ -747,18 +802,3 @@ def _run_refused(state: _Placer, run: NumberedRun, window: _RunWindow) -> bool:
         if reading.resolved and all(i in window_set for i in reading.resolved):
             return True
     return False
-
-
-def _pick_refused(state: _Placer, run: NumberedRun, runs: Sequence[NumberedRun], window: _RunWindow) -> bool:
-    """Whether the names put the window's files elsewhere.
-
-    The pick's episode titles name only other episodes, or an AniList title
-    names other runs of the batch (ones Sonarr did not read whole elsewhere)
-    and not the pick. Either refuses, never promotes.
-    """
-
-    if state.facts.title_evidence(run, window).vetoes:
-        return True
-    open_runs = [candidate for candidate in runs if not state.settled_elsewhere(candidate)]
-    named = best_title_matches([candidate.prefix for candidate in open_runs], state.scope.names)
-    return bool(named) and (run not in open_runs or open_runs.index(run) not in named)
