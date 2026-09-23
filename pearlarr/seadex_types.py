@@ -375,6 +375,9 @@ class SonarrEpisode(_ApiModel):
     id: int = 0
     season_number: int | None = Field(default=None, validation_alias="seasonNumber")
     episode_number: int | None = Field(default=None, validation_alias="episodeNumber")
+    absolute_episode_number: int | None = Field(default=None, validation_alias="absoluteEpisodeNumber")
+    """The series-wide number TVDB gives the episode (specials interleaved), when it has one."""
+    title: str = ""
     episode_file_id: int = Field(default=0, validation_alias="episodeFileId")
     monitored: bool = True
     episode_file: Annotated[SonarrEpisodeFile | None, BeforeValidator(_none_if_falsy)] = Field(

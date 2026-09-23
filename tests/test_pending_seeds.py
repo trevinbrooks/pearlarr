@@ -399,9 +399,9 @@ class TestBuildPendingSeeds:
         assert seeds["h1"].excluded_files == []
 
     def test_collision_refused_duplicate_is_excluded(self) -> None:
-        # A second claimant on an already-claimed episode (a v2 duplicate): the
-        # seed refuses it (first claim wins) AND excludes it, so this record will
-        # never import it, so completeness may account for it.
+        # Two claimants on one episode (a v2 beside its v1): the seed takes the
+        # later version AND excludes the other, so this record will never
+        # import it, so completeness may account for it.
         ep_list = [sonarr_ep(1, 1, ep_id=101, episode_file_id=0)]
         parses = {
             "Show - 01.mkv": _pinfo(season=1, episodes=(1,)),
@@ -427,8 +427,8 @@ class TestBuildPendingSeeds:
         )
 
         seed = seeds["h1"]
-        assert seed.file_episode_map == {normalize_basename("Show - 01.mkv"): [101]}
-        assert seed.excluded_files == [normalize_basename("Show - 01v2.mkv")]
+        assert seed.file_episode_map == {normalize_basename("Show - 01v2.mkv"): [101]}
+        assert seed.excluded_files == [normalize_basename("Show - 01.mkv")]
 
     def test_unparsed_and_vetoed_files_stay_possibly_ours(self) -> None:
         # A file with no parse record and a full-season-vetoed zip: neither is
@@ -663,9 +663,9 @@ class TestSeedGuards:
         assert seeds["h1"].file_episode_map == {}
 
     def test_second_claim_of_a_seeded_id_is_not_seeded(self) -> None:
-        # "13" and "13v2" both parse to S02E13: the first file in SeaDex order
-        # wins, deterministically, and the later claimant is left for
-        # import-time assignment (which refuses the second claim of a taken id).
+        # "13" and "13v2" both parse to S02E13: the later version wins,
+        # deterministically, and the other claimant is left for import-time
+        # assignment (which refuses the second claim of a taken id).
         ep_list = [sonarr_ep(2, 13, ep_id=213, episode_file_id=0)]
         parses = {
             "Show - 13.mkv": _pinfo(season=2, episodes=(13,)),
@@ -690,7 +690,7 @@ class TestSeedGuards:
             entry=PendingSeedContext(al_id=1, series_id=7, title="Show", added_at=_ADDED_AT),
         )
 
-        assert seeds["h1"].file_episode_map == {normalize_basename("Show - 13.mkv"): [213]}
+        assert seeds["h1"].file_episode_map == {normalize_basename("Show - 13v2.mkv"): [213]}
 
     def test_partial_collision_refuses_the_whole_later_file(self) -> None:
         # The later file claims one taken id and one free one: assignment

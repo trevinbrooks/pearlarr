@@ -5,7 +5,7 @@
 
 import dataclasses
 import logging
-from collections.abc import Iterable, Iterator
+from collections.abc import Iterable, Iterator, Mapping
 from copy import deepcopy
 from datetime import datetime
 from typing import Any, override
@@ -54,6 +54,7 @@ from pearlarr.seadex_gateway import SeaDexMiss, SeaDexSource
 from pearlarr.seadex_radarr import RadarrSync
 from pearlarr.seadex_sonarr import SonarrSync
 from pearlarr.seadex_types import (
+    EpisodeKey,
     EpisodeRecord,
     ManualImportCandidate,
     ProgressSink,
@@ -65,6 +66,7 @@ from pearlarr.seadex_types import (
 )
 from pearlarr.sonarr_client import AbstractSonarrClient
 from pearlarr.sonarr_episodes import SonarrEpisodes
+from pearlarr.sonarr_import_plan import EpisodeIndex, episode_index
 from pearlarr.sonarr_mapper import FileEpisodeMapper
 from pearlarr.sonarr_parse import SonarrParseCache
 from pearlarr.torrents import AddOutcome, AddResult, TorrentService
@@ -980,6 +982,8 @@ def sonarr_ep(
     release_group: str | None = None,
     episode_file_id: int = 1,
     ep_id: int = 0,
+    absolute: int | None = None,
+    title: str = "",
 ) -> SonarrEpisode:
     """`episode_file_id=0` omits the `episodeFile` block, as in Sonarr's record for a missing episode."""
 
@@ -987,11 +991,19 @@ def sonarr_ep(
         "id": ep_id,
         "seasonNumber": season,
         "episodeNumber": episode,
+        "absoluteEpisodeNumber": absolute,
+        "title": title,
         "episodeFileId": episode_file_id,
     }
     if episode_file_id:
         raw["episodeFile"] = {"size": size, "releaseGroup": release_group}
     return SonarrEpisode.model_validate(raw)
+
+
+def series_index(id_by_key: Mapping[EpisodeKey, int]) -> EpisodeIndex:
+    """A whole-series index synthesized from a `(season, episode) -> id` map: no titles, no absolutes."""
+
+    return episode_index([sonarr_ep(key.season, key.episode, ep_id=ep_id) for key, ep_id in id_by_key.items()])
 
 
 # The `al_id` every `pending_import` record carries unless overridden, exported so tests can spell

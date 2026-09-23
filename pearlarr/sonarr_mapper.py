@@ -7,15 +7,15 @@ taken as-is, every other on-disk leaf is parsed and placed into our resolved
 set via the pure `assign_episode_ids`. Owns the per-run on-disk parse cache.
 """
 
-from collections.abc import Mapping
 from typing import NamedTuple
 
 from .manual_import import PendingImport, normalized_leaf, path_leaf
-from .seadex_types import EpisodeKey, ManualImportCandidate, ParsedFileInfo
+from .seadex_types import ManualImportCandidate, ParsedFileInfo
 from .sonarr_client import AbstractSonarrClient
 from .sonarr_import_plan import (
     CandidateFile,
     EpisodeAssignment,
+    EpisodeIndex,
     Placement,
     PlacementBatch,
     TargetScope,
@@ -149,7 +149,7 @@ class FileEpisodeMapper:
         self,
         pending: PendingImport,
         candidates_by_basename: dict[str, CandidateFile],
-        id_by_key: Mapping[EpisodeKey, int],
+        episodes: EpisodeIndex,
     ) -> FileAssignment:
         """Build the final `basename -> episode ids` map from OUR resolved set.
 
@@ -225,10 +225,10 @@ class FileEpisodeMapper:
         resolved_ids = pending.resolved_ids()
 
         batch = PlacementBatch(leftover, parsed_by_file)
-        scope = TargetScope(resolved_ids, id_by_key, used=frozenset(seeded_ids), names=pending.names)
+        scope = TargetScope(resolved_ids, episodes, used=frozenset(seeded_ids), names=pending.names)
         result = assign_episode_ids(batch, scope)
         # An empty index means the exact leg could not have matched a numbered name this poll.
-        return FileAssignment(result, seeded, settled=batch.all_parses_known and bool(id_by_key))
+        return FileAssignment(result, seeded, settled=batch.all_parses_known and bool(episodes.id_by_key))
 
     def _parsed_file_info(self, raw_base: str) -> ParsedFileInfo | None:
         """Sonarr `/parse` of one on-disk leaf, cached per run.
