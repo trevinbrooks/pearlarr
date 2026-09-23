@@ -1,4 +1,4 @@
-"""Pure verdicts over the import probes' Sonarr reads: queue, in-flight import, commands, history rows, paths."""
+"""Pure verdicts over the import probes' Sonarr reads: queue, in-flight import, commands, history rows."""
 
 from collections.abc import Callable, Sequence
 from dataclasses import dataclass
@@ -6,7 +6,7 @@ from enum import Enum, auto
 from typing import NamedTuple
 
 from .manual_import import Deferral, PendingImport, fold_path_separators, normalized_leaf
-from .seadex_types import CommandResource, HistoryPage, QueueRecord, RemotePathMapping
+from .seadex_types import CommandResource, HistoryPage, QueueRecord
 
 
 class QueueVerdict(Enum):
@@ -420,57 +420,3 @@ def placements_from_history(imports: Sequence[HistoryImport], pending: PendingIm
             continue
         grouped.setdefault(name, set()).add(row.episode_id)
     return {name: sorted(ids) for name, ids in grouped.items()}
-
-
-def _path_segments(path: str) -> list[str]:
-    """Split a path into non-empty segments for the boundary-aware compare (separators folded)."""
-
-    return [segment for segment in fold_path_separators(path).split("/") if segment]
-
-
-def translate_download_path(
-    content_path: str,
-    mappings: Sequence[RemotePathMapping],
-    qbit_host: str | None,
-) -> str:
-    """Map a download-client path into Sonarr's filesystem view.
-
-    Longest-`remotePath`-prefix match is the PRIMARY rule. Host equality (our
-    `qbit_host`, folded here) only tiebreaks equally-long prefixes, and host
-    inequality never excludes a mapping: Sonarr's `host` is the download-client
-    host as SONARR configured it, routinely a different string from our
-    qBittorrent host (localhost vs container name vs IP). Matching is per path
-    segment, so it is separator-boundary-aware (`/downloads` never matches
-    `/downloads-x/f`), tolerant of trailing slashes and Windows backslashes on
-    either side, and case-insensitive, while the suffix keeps its ORIGINAL case
-    (POSIX targets are case-sensitive). No match returns the path untranslated
-    (the same-filesystem no-op). `content_path` is qBittorrent's, a folder or a
-    single file.
-    """
-
-    content_segments = _path_segments(content_path)
-    folded = [segment.casefold() for segment in content_segments]
-    target_host = qbit_host.casefold() if qbit_host else None
-
-    best_rank: tuple[int, bool] | None = None
-    best_local = ""
-    for mapping in mappings:
-        if not mapping.remote_path or not mapping.local_path:
-            continue
-        remote = [segment.casefold() for segment in _path_segments(mapping.remote_path)]
-        if not remote or folded[: len(remote)] != remote:
-            continue
-        host_matches = target_host is not None and (mapping.host or "").casefold() == target_host
-        rank = (len(remote), host_matches)
-        if best_rank is None or rank > best_rank:
-            best_rank = rank
-            best_local = mapping.local_path
-
-    if best_rank is None:
-        return content_path
-    base = best_local.rstrip("/\\") or "/"
-    suffix = content_segments[best_rank[0] :]
-    if not suffix:
-        return base
-    joined = "/".join(suffix)
-    return f"/{joined}" if base == "/" else f"{base}/{joined}"
