@@ -9,6 +9,9 @@ from typing import NamedTuple
 from .manual_import import PendingImport, normalize_group, normalize_rg
 from .placement_types import EpisodeIndex
 
+type TrustPolicy = Mapping[str, frozenset[int] | None]
+"""Normalized group -> the sizes that verify its files, or None to trust the group by name alone."""
+
 
 class EpisodeFileStatus(Enum):
     """How an intended target episode's CURRENT Sonarr file relates to ours.
@@ -71,10 +74,9 @@ class EpisodeSnapshot(NamedTuple):
     episodes: EpisodeIndex
     """The fresh episode index."""
 
-    trusted: Mapping[str, frozenset[int] | None]
-    """The per-group trust policy (see `trusted_groups`): normalized group -> the sizes that verify
-    its files, or None to trust it by name alone. A group absent here is not recommended: its files
-    are replaced."""
+    trusted: TrustPolicy
+    """The per-group trust policy (see `trusted_groups`). A group absent here is not recommended: its
+    files are replaced."""
 
     owned_episode_sizes: Mapping[int, int] = MappingProxyType({})
     """Episode id -> the untagged file size the grab-time identification recorded. The claim is honored
@@ -127,7 +129,7 @@ class EpisodeSnapshot(NamedTuple):
 def trusted_groups(
     pending: PendingImport,
     series_records: Sequence[PendingImport] = (),
-) -> dict[str, frozenset[int] | None]:
+) -> TrustPolicy:
     """One record's per-group trust policy: group -> verifying sizes, or None for trust-by-name.
 
     The one home of the overwrite-guard composition, for grab time (no

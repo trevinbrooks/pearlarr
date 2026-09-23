@@ -1,7 +1,7 @@
 """Pure placement vocabulary: the episode index, verdicts, one file's placement, the assignment, batch, and scope."""
 
 from collections.abc import Iterable, Mapping, Sequence
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from enum import StrEnum
 from types import MappingProxyType
 from typing import NamedTuple
@@ -167,7 +167,8 @@ class PlacementBatch(NamedTuple):
         return all((info := self.parsed.get(name)) is not None and not info.offline for name in names)
 
 
-class TargetScope(NamedTuple):
+@dataclass(frozen=True, slots=True)
+class TargetScope:
     """The episode set a placement batch may assign into.
 
     `resolved` is the FULL resolved set and `used` the ids seeds already own,
@@ -189,9 +190,15 @@ class TargetScope(NamedTuple):
     used: frozenset[int] = frozenset()
     """Ids a seed already owns, never handed to a leftover file."""
 
-    names: EntryNames = EntryNames()
+    names: EntryNames = field(default_factory=EntryNames)
     """The series and AniList titles: when several runs or numberless files could take the window, the one
     an AniList title names does."""
+
+    real_ids: frozenset[int] = field(init=False, repr=False, compare=False)
+    """The resolved ids that can be placed. A stray zero keeps the scope real but is never one."""
+
+    def __post_init__(self) -> None:
+        object.__setattr__(self, "real_ids", frozenset(i for i in self.resolved if i))
 
     @property
     def id_by_key(self) -> Mapping[EpisodeKey, int]:

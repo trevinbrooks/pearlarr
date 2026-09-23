@@ -17,7 +17,7 @@ plan, quality/language resolution) live in the sibling planning modules that
 import math
 import os
 import unicodedata
-from collections.abc import Iterable, Mapping
+from collections.abc import Iterable, Mapping, Sequence
 from dataclasses import asdict, dataclass, field, replace
 from enum import Enum, StrEnum, auto
 from typing import Any, NamedTuple
@@ -206,6 +206,10 @@ class Deferral(Enum):
     """A foreign disk command holds the line."""
 
 
+type FileEpisodeMap = Mapping[str, Sequence[int]]
+"""A read view of normalized basename -> episode ids: a seed's map, a poll's placements, or both merged."""
+
+
 @dataclass(frozen=True)
 class ImportProbe:
     """The outcome of one `import_completed` poll.
@@ -233,7 +237,7 @@ class ImportProbe:
     deferral: Deferral = Deferral.NONE
     """Why this poll waited on Sonarr's work instead of this record's."""
 
-    placements: Mapping[str, list[int]] = field(default_factory=dict[str, list[int]])
+    placements: FileEpisodeMap = field(default_factory=dict[str, list[int]])
     """Import-time placements this poll made (normalized basename -> ids), for the record seam to persist.
     Empty when the poll placed nothing."""
 
@@ -525,7 +529,7 @@ def _normalized_names(names: Iterable[str]) -> set[str]:
     return {normalized_leaf(name) for name in names}
 
 
-def _normalized_map(entries: Mapping[str, list[int]]) -> dict[str, list[int]]:
+def _normalized_map(entries: FileEpisodeMap) -> dict[str, list[int]]:
     """The map with every key normalized and zero ids dropped, minus the entries that leaves empty."""
 
     normalized: dict[str, list[int]] = {}
@@ -726,7 +730,7 @@ class PendingImport:
             - _normalized_names(self.excluded_files)
         )
 
-    def with_placements(self, placements: Mapping[str, list[int]]) -> "PendingImport":
+    def with_placements(self, placements: FileEpisodeMap) -> "PendingImport":
         """The record with import-time placements folded into its map, every key normalized and zero ids dropped."""
 
         return replace(self, file_episode_map={**_normalized_map(self.file_episode_map), **_normalized_map(placements)})

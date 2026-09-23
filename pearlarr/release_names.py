@@ -253,18 +253,18 @@ def _count_word(word: str) -> str | None:
     return _COUNT_WORDS.get(word)
 
 
-def folded_words(text: str) -> list[str]:
+def folded_words(text: str) -> tuple[str, ...]:
     """The words of a title or name in order: case and accents folded, bracketed groups dropped, seasons counted plainly."""
 
     folded = unicodedata.normalize("NFKD", _BRACKETED.sub(" ", text)).encode("ascii", "ignore").decode().casefold()
     words = [_count_word(word) or word for word in _NON_WORD.split(folded) if word]
     # "Season" beside its number says nothing the number does not.
-    return [
+    return tuple(
         word
         for index, word in enumerate(words)
         if word != "season"
         or not any(words[near].isdigit() for near in (index - 1, index + 1) if 0 <= near < len(words))
-    ]
+    )
 
 
 def _word_set(text: str) -> frozenset[str]:

@@ -24,6 +24,7 @@ from .manual_import import (
     AttemptKind,
     Deferral,
     EffectStatus,
+    FileEpisodeMap,
     ImportProbe,
     ImportProgress,
     PendingImport,
@@ -388,7 +389,7 @@ class ImportExecutor:
             at_deadline=at_deadline,
         )
         assignment = self._mapper.assign(pending, context.candidates_by_basename, snapshot.episodes)
-        recovered: dict[str, list[int]] = {}
+        recovered: FileEpisodeMap = {}
         if scan.dead_tracked_empty and not pending.seed_coverage().mapped:
             # Sonarr moved the files before any scan saw them, so its import rows stand in for the scan.
             # An empty scan means the mapper placed nothing, so the record's own map is the assignment.
@@ -434,7 +435,7 @@ class ImportExecutor:
         placements = {**placed, **recovered} if probe.files_present else placed
         return replace(probe, placements=placements, exclusions=tuple(p.name for p in excluded))
 
-    def _verify_or_import(self, context: _ImportContext, authoritative_map: dict[str, list[int]]) -> ImportProbe:
+    def _verify_or_import(self, context: _ImportContext, authoritative_map: FileEpisodeMap) -> ImportProbe:
         """Verify the mapped files, or plan and POST the import for the ones still needed."""
 
         pending = context.pending
@@ -614,7 +615,7 @@ class ImportExecutor:
         entry = ManualImportFile(
             path=path,
             seriesId=pending.series_id,
-            episodeIds=decision.episode_ids,
+            episodeIds=list(decision.episode_ids),
             releaseGroup=pending.release_group,
             languages=lang_objs,
             quality=quality,

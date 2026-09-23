@@ -1,6 +1,7 @@
 """Pure layered quality and language resolution for the manual-import payload (the quality key is never omitted)."""
 
 import re
+from collections.abc import Sequence
 from dataclasses import dataclass
 
 from .seadex_types import Language, Quality, QualityDefinition, QualityModel, QualitySource, Revision
@@ -83,7 +84,7 @@ def quality_axes_from_model(model: QualityModel | None) -> ParsedQuality:
 
 def quality_axes_from_name(
     name: str | None,
-    quality_defs: list[QualityDefinition],
+    quality_defs: Sequence[QualityDefinition],
 ) -> ParsedQuality:
     """The `(source, resolution)` axes of a configured default quality NAME.
 
@@ -110,7 +111,7 @@ def quality_axes_from_name(
 def _find_definition(
     source: QualitySource,
     resolution: int,
-    quality_defs: list[QualityDefinition],
+    quality_defs: Sequence[QualityDefinition],
 ) -> Quality | None:
     """The nested `Quality` whose `(source, resolution)` matches, or None.
 
@@ -150,7 +151,7 @@ def resolve_quality(
     sonarr: ParsedQuality,
     ours: ParsedQuality,
     default: ParsedQuality,
-    quality_defs: list[QualityDefinition],
+    quality_defs: Sequence[QualityDefinition],
     candidate_model: QualityModel | None,
 ) -> QualityModel:
     """Resolve the final manual-import `QualityModel`, never omitted.
@@ -197,17 +198,17 @@ def resolve_quality(
 
 def derive_languages(
     is_dual_audio: bool,
-    dual: list[str],
-    single: list[str],
-) -> list[str]:
+    dual: Sequence[str],
+    single: Sequence[str],
+) -> Sequence[str]:
     """Pick the import language list: `dual` when dual-audio, else `single`."""
 
     return dual if is_dual_audio else single
 
 
 def resolve_language_objects(
-    names: list[str],
-    lang_defs: list[Language],
+    names: Sequence[str],
+    lang_defs: Sequence[Language],
 ) -> list[Language]:
     """Resolve configured language names to Sonarr `{id, name}` objects.
 

@@ -1,12 +1,15 @@
 """Pure per-file import plan: which of our intended files import onto which episodes, and which are left."""
 
+from collections.abc import Mapping
+from collections.abc import Set as AbstractSet
 from dataclasses import dataclass
 from enum import StrEnum
 
+from .manual_import import FileEpisodeMap
 from .seadex_types import QualityModel
 
 
-@dataclass(frozen=True)
+@dataclass(frozen=True, slots=True)
 class CandidateFile:
     """An on-disk manual-import candidate, reduced to what planning needs.
 
@@ -55,7 +58,7 @@ class ImportAction(StrEnum):
     """Our map intends this file but it isn't on disk (surfaced, never silently skipped)."""
 
 
-@dataclass(frozen=True)
+@dataclass(frozen=True, slots=True)
 class ImportDecision:
     """One decision per entry in OUR authoritative map (the source of truth).
 
@@ -68,14 +71,14 @@ class ImportDecision:
     """The on-disk path, supplied by the matched candidate."""
 
     quality: QualityModel | None
-    episode_ids: list[int]
+    episode_ids: tuple[int, ...]
     """The episode assignment, strictly from our map, never the candidate's own parse."""
 
 
 def plan_import_files(
-    authoritative_map: dict[str, list[int]],
-    candidates_by_basename: dict[str, CandidateFile],
-    needing_import: set[int],
+    authoritative_map: FileEpisodeMap,
+    candidates_by_basename: Mapping[str, CandidateFile],
+    needing_import: AbstractSet[int],
 ) -> list[ImportDecision]:
     """Decide, per intended file, whether/how to import it, strictly from our map.
 
@@ -108,19 +111,19 @@ def plan_import_files(
     for basename, ep_ids in authoritative_map.items():
         candidate = candidates_by_basename.get(basename)
         if candidate is None:
-            decisions.append(ImportDecision(basename, ImportAction.MISSING, None, None, ep_ids))
+            decisions.append(ImportDecision(basename, ImportAction.MISSING, None, None, tuple(ep_ids)))
             continue
         if candidate.is_sample:
-            decisions.append(ImportDecision(basename, ImportAction.SAMPLE, candidate.path, None, []))
+            decisions.append(ImportDecision(basename, ImportAction.SAMPLE, candidate.path, None, ()))
             continue
-        import_ids = [i for i in ep_ids if i in needing_import]
+        import_ids = tuple(i for i in ep_ids if i in needing_import)
         if not import_ids:
             # Nothing of ours still needs this file. Sonarr's already-imported
             # rejection and our episode-file done-check agree here, so report the
             # more specific `ALREADY` when Sonarr flagged it, else `SKIP_DONE`.
             action = ImportAction.ALREADY if candidate.is_already_imported else ImportAction.SKIP_DONE
             decisions.append(
-                ImportDecision(basename, action, candidate.path, None, ep_ids),
+                ImportDecision(basename, action, candidate.path, None, tuple(ep_ids)),
             )
             continue
         # A target still needs our file: import it over whatever is there, even
