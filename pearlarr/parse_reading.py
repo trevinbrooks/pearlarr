@@ -70,12 +70,12 @@ class Reading(NamedTuple):
 _NO_READING = Reading((), (), complete=False, borrowed=False, vetoed=False, corroborated=False)
 
 
-def read_parse(info: ParsedFileInfo | None, scope: TargetScope, resolved_set: frozenset[int]) -> Reading:
+def read_parse(info: ParsedFileInfo | None, scope: TargetScope) -> Reading:
     """Read one parse against the scope.
 
     The name's own `(season, episode)` keys are the claims. A name with none
     borrows Sonarr's series-MATCHED pairs, but ONLY under scope enforcement:
-    membership in `resolved_set` is what keeps Sonarr's series match from
+    membership in `scope.real_ids` is what keeps Sonarr's series match from
     deciding identity on its own, so matched pairs never apply `unscoped`. A
     borrowed pair's own episode id must AGREE with our map's id for the same
     numbers, or a wrong-series title match whose numbers coincide with ours
@@ -119,7 +119,7 @@ def read_parse(info: ParsedFileInfo | None, scope: TargetScope, resolved_set: fr
     # The triple dedup keeps (s,e,None) and (s,e,id) apart. Collapse the
     # resolved ids so one episode never reaches the wire twice.
     ids = tuple(dict.fromkeys(resolved))
-    inside = ids if scope.unscoped else tuple(i for i in ids if i in resolved_set)
+    inside = ids if scope.unscoped else tuple(i for i in ids if i in scope.real_ids)
     return Reading(ids, inside, complete=complete, borrowed=borrowed, vetoed=vetoed, corroborated=corroborated)
 
 

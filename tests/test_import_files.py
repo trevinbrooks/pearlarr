@@ -29,7 +29,7 @@ class TestPlanImportFiles:
         decisions = plan_import_files(amap, cands, needing_import={11})
         by_base = {d.basename: d for d in decisions}
         assert by_base["a.mkv"].action == "import"
-        assert by_base["a.mkv"].episode_ids == [11]
+        assert by_base["a.mkv"].episode_ids == (11,)
         assert by_base["b.mkv"].action == "skip_done"
 
     def test_candidate_not_in_map_is_never_imported(self) -> None:
@@ -62,7 +62,7 @@ class TestPlanImportFiles:
         cands = {"i.mkv": _candidate("i.mkv", already=True)}
         decisions = plan_import_files(amap, cands, needing_import={12})
         assert decisions[0].action == "import"
-        assert decisions[0].episode_ids == [12]
+        assert decisions[0].episode_ids == (12,)
 
     def test_already_imported_skips_only_when_no_target_needs_us(self) -> None:
         # When every target already holds a recommended file (none in needing),

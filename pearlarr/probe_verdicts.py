@@ -53,7 +53,7 @@ _QUEUE_STEP_IN_STATES = frozenset(
 _QUEUE_FLAGGED_STATUSES = frozenset({"warning", "error"})
 
 
-def classify_queue(records: list[QueueRecord]) -> QueueVerdict:
+def classify_queue(records: Sequence[QueueRecord]) -> QueueVerdict:
     """Reduce a download's queue records to a single verdict for this poll.
 
     Side-effect free so the decision can be unit-tested without any HTTP.
@@ -168,7 +168,7 @@ class DownloadMatch(NamedTuple):
     """Our intended episode ids, for the same fallback."""
 
 
-def manual_import_in_flight(commands: list[CommandResource], match: DownloadMatch) -> InFlightImport | None:
+def manual_import_in_flight(commands: Sequence[CommandResource], match: DownloadMatch) -> InFlightImport | None:
     """The queued/started ManualImport covering THIS download, or None.
 
     Pure (mirrors `classify_queue`). Sonarr copies asynchronously and drops the
@@ -225,7 +225,7 @@ _SONARR_DISK_COMMAND_NAMES = _SONARR_PROCESS_PASS_NAMES | {
 }
 
 
-def started_disk_commands(commands: list[CommandResource]) -> list[CommandResource]:
+def started_disk_commands(commands: Sequence[CommandResource]) -> list[CommandResource]:
     """The Sonarr disk-access commands executing right now.
 
     A ManualImport POSTed while one is `started` queues behind it and replays
@@ -263,7 +263,7 @@ class CommandBlock(Enum):
 
 
 def classify_commands(
-    commands: list[CommandResource],
+    commands: Sequence[CommandResource],
     match: DownloadMatch,
     is_own: Callable[[int], bool],
 ) -> CommandBlock | None:
@@ -286,7 +286,7 @@ def classify_commands(
     return None
 
 
-def sonarr_process_pass_running(commands: list[CommandResource]) -> bool:
+def sonarr_process_pass_running(commands: Sequence[CommandResource]) -> bool:
     """Whether Sonarr's monitored-download pass is executing right now.
 
     A completed RefreshMonitoredDownloads immediately starts one, so the rescan
@@ -298,7 +298,7 @@ def sonarr_process_pass_running(commands: list[CommandResource]) -> bool:
     return bool(_started(commands, _SONARR_PROCESS_PASS_NAMES))
 
 
-def _started(commands: list[CommandResource], names: frozenset[str]) -> list[CommandResource]:
+def _started(commands: Sequence[CommandResource], names: frozenset[str]) -> list[CommandResource]:
     """The named commands currently `started`, casefolded on both axes."""
 
     return [

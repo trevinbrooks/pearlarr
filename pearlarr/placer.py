@@ -136,8 +136,6 @@ class _Placer:
     """One reading per distinct name to place, batch order."""
     key_by_id: Mapping[int, EpisodeKey]
     """The series map inverted once (it never changes, only `used` does)."""
-    resolved: frozenset[int]
-    """The scope's real ids (a stray zero is never one)."""
     evidenced: frozenset[int]
     """The ids some file outside `to_place` (a seeded or gone name) resolves to by its own reading."""
     season_counts: Mapping[int, int]
@@ -156,18 +154,13 @@ class _Placer:
     def start(cls, batch: PlacementBatch, scope: TargetScope) -> Self:
         """Read every name once against the scope."""
 
-        # A stray zero id can never be placed, but it still keeps the scope real
-        # (only an EMPTY resolved set unlocks the live-map fallback).
-        resolved_set = frozenset(i for i in scope.resolved if i)
-        readings = {
-            name: read_parse(batch.parsed.get(name), scope, resolved_set) for name in dict.fromkeys(batch.to_place)
-        }
+        readings = {name: read_parse(batch.parsed.get(name), scope) for name in dict.fromkeys(batch.to_place)}
         key_by_id = {ep_id: key for key, ep_id in scope.id_by_key.items()}
         evidenced = frozenset(
             ep_id
             for name, info in batch.parsed.items()
             if name not in readings
-            for ep_id in read_parse(info, scope, resolved_set).resolved
+            for ep_id in read_parse(info, scope).resolved
         )
         episodes = scope.series.by_id
         state = cls(
@@ -175,7 +168,6 @@ class _Placer:
             scope,
             readings,
             key_by_id,
-            resolved_set,
             evidenced,
             season_counts=Counter(key.season for key in scope.id_by_key),
             absolute_of={
@@ -184,9 +176,7 @@ class _Placer:
                 if ep.absolute_episode_number is not None
             },
             titled=tuple(
-                _TitledEpisode(ep_id, tuple(words))
-                for ep_id, ep in episodes.items()
-                if (words := folded_words(ep.title))
+                _TitledEpisode(ep_id, words) for ep_id, ep in episodes.items() if (words := folded_words(ep.title))
             ),
             used=set(scope.used),
         )
@@ -256,7 +246,7 @@ class _Placer:
         for numbered in run.whole:
             ep_id = self.scope.id_by_key.get(EpisodeKey(season, numbered.number))
             if ep_id:
-                inside = (ep_id,) if ep_id in self.resolved else ()
+                inside = (ep_id,) if ep_id in self.scope.real_ids else ()
                 self.readings[numbered.name] = Reading(
                     (ep_id,), inside, complete=True, borrowed=True, vetoed=False, corroborated=True
                 )
@@ -317,7 +307,8 @@ class _Placer:
         if not info.full_season:
             return True
         return any(
-            self.scope.id_by_key.get(season_episode_key(season, episode)) in self.resolved for season, episode in pairs
+            self.scope.id_by_key.get(season_episode_key(season, episode)) in self.scope.real_ids
+            for season, episode in pairs
         )
 
     def settled_elsewhere(self, run: NumberedRun) -> bool:
@@ -328,7 +319,7 @@ class _Placer:
 
         readings = [self.readings[name] for name in run.names]
         if all(r.tied is not None for r in readings):
-            return not any(i in self.resolved for r in readings for i in r.tied or ())
+            return not any(i in self.scope.real_ids for r in readings for i in r.tied or ())
         if not all(r.outside and r.corroborated and len(r.resolved) == 1 for r in readings):
             return False
         return len({r.resolved[0] for r in readings}) == len(readings)
@@ -375,7 +366,7 @@ class _Placer:
 
         inside = outside = 0
         for member in run.members:
-            words = tuple(folded_words(member.tail))
+            words = folded_words(member.tail)
             if not words:
                 continue
             sides = {
