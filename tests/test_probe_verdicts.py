@@ -1,5 +1,5 @@
 # pyright: strict
-"""The pure verdicts over the import probes' Sonarr reads: queue, in-flight import, commands, history, paths."""
+"""The pure verdicts over the import probes' Sonarr reads: queue, in-flight import, commands, history."""
 
 from pearlarr.manual_import import Deferral, PendingImport
 from pearlarr.probe_verdicts import (
@@ -15,9 +15,8 @@ from pearlarr.probe_verdicts import (
     placements_from_history,
     sonarr_process_pass_running,
     started_disk_commands,
-    translate_download_path,
 )
-from pearlarr.seadex_types import CommandResource, HistoryPage, RemotePathMapping
+from pearlarr.seadex_types import CommandResource, HistoryPage
 
 from .builders import pending_import, queue_record
 
@@ -449,83 +448,3 @@ class TestPlacementsFromHistory:
 
     def test_no_rows_give_no_placements(self) -> None:
         assert placements_from_history([], _unplaced()) == {}
-
-
-def _mapping(remote: str, local: str, *, host: str | None = None) -> RemotePathMapping:
-    """One remote path mapping from the raw API field names."""
-
-    return RemotePathMapping.model_validate({"host": host, "remotePath": remote, "localPath": local})
-
-
-class TestTranslateDownloadPath:
-    """The remote-path translation behind the folder-scan fallback."""
-
-    def test_no_mappings_is_a_no_op(self) -> None:
-        assert translate_download_path("/d/folder", [], "qbit") == "/d/folder"
-
-    def test_prefix_translates_and_suffix_survives(self) -> None:
-        # The live incident mapping: trailing slash on both stored paths.
-        mappings = [_mapping("/home/u/torrents/4k-tv/", "/remote/torrents/4k-tv/")]
-        assert (
-            translate_download_path("/home/u/torrents/4k-tv/Show S01", mappings, None)
-            == "/remote/torrents/4k-tv/Show S01"
-        )
-
-    def test_exact_match_translates_to_local_root(self) -> None:
-        mappings = [_mapping("/downloads", "/data")]
-        assert translate_download_path("/downloads", mappings, None) == "/data"
-
-    def test_separator_boundary_is_respected(self) -> None:
-        # /downloads must NOT prefix-match /downloads-x/f.
-        mappings = [_mapping("/downloads", "/data")]
-        assert translate_download_path("/downloads-x/f", mappings, None) == "/downloads-x/f"
-
-    def test_trailing_slash_tolerated_on_either_side(self) -> None:
-        assert translate_download_path("/d/f", [_mapping("/d/", "/l")], None) == "/l/f"
-        assert translate_download_path("/d/f", [_mapping("/d", "/l/")], None) == "/l/f"
-
-    def test_suffix_case_is_preserved(self) -> None:
-        # Compare case-insensitively but never fold the suffix - POSIX targets
-        # are case-sensitive.
-        mappings = [_mapping("/Downloads", "/data")]
-        assert translate_download_path("/downloads/Show S01/Ep.MKV", mappings, None) == "/data/Show S01/Ep.MKV"
-
-    def test_windows_backslash_remote_path(self) -> None:
-        mappings = [_mapping("C:\\torrents\\", "/data/torrents")]
-        assert translate_download_path("C:\\torrents\\Show\\ep.mkv", mappings, None) == "/data/torrents/Show/ep.mkv"
-
-    def test_longest_prefix_wins(self) -> None:
-        mappings = [
-            _mapping("/d", "/short"),
-            _mapping("/d/tv", "/long"),
-        ]
-        assert translate_download_path("/d/tv/Show", mappings, None) == "/long/Show"
-
-    def test_host_equality_tiebreaks_equal_prefixes(self) -> None:
-        mappings = [
-            _mapping("/d", "/other-client", host="other"),
-            _mapping("/d", "/ours", host="qbit.local"),
-        ]
-        assert translate_download_path("/d/Show", mappings, "QBIT.LOCAL") == "/ours/Show"
-
-    def test_host_mismatch_never_excludes(self) -> None:
-        # Sonarr's host is the download-client host as SONARR knows it -
-        # routinely a different string from our qBittorrent host.
-        mappings = [_mapping("/d", "/data", host="sonarr-view-of-qbit")]
-        assert translate_download_path("/d/Show", mappings, "localhost") == "/data/Show"
-
-    def test_longer_prefix_beats_host_match(self) -> None:
-        mappings = [
-            _mapping("/d", "/host-matched", host="qbit"),
-            _mapping("/d/tv", "/longer", host="other"),
-        ]
-        assert translate_download_path("/d/tv/Show", mappings, "qbit") == "/longer/Show"
-
-    def test_mapping_missing_either_path_is_skipped(self) -> None:
-        mappings = [_mapping("", "/data"), _mapping("/d", "")]
-        assert translate_download_path("/d/Show", mappings, None) == "/d/Show"
-
-    def test_single_file_content_path_translates(self) -> None:
-        # A single-FILE torrent's content_path is the file itself.
-        mappings = [_mapping("/d/", "/data/")]
-        assert translate_download_path("/d/Show - 01.mkv", mappings, None) == "/data/Show - 01.mkv"

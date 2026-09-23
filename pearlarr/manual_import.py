@@ -4,8 +4,9 @@ This module holds the domain shapes the wait side of the manual-import feature
 speaks: the configurable `ImportWaitMode`, the durable
 `PendingImport` record persisted through the cache store, the per-poll
 probe/outcome enums the engine and views consume (`WaitOutcome`,
-`PendingState`, `Outcome`), qBittorrent telemetry sanitization, and the
-basename/group normalizers every collaborator matches through.
+`PendingState`, `Outcome`), qBittorrent telemetry sanitization, the
+basename/group normalizers every collaborator matches through, and the
+download-path translation beside the path folders.
 
 Everything here is deliberately side-effect free - no network, no disk, no
 qBittorrent. The pure *planning* helpers (the probe verdicts, the episode
@@ -22,7 +23,7 @@ from dataclasses import asdict, dataclass, field, replace
 from enum import Enum, StrEnum, auto
 from typing import Any, NamedTuple
 
-from .seadex_types import coerce_int
+from .seadex_types import RemotePathMapping, coerce_int
 
 
 def normalize_basename(name: str) -> str:
@@ -42,6 +43,60 @@ def fold_path_separators(path: str) -> str:
     r"""Fold `\` to `/` for cross-platform comparison."""
 
     return path.replace("\\", "/")
+
+
+def _path_segments(path: str) -> list[str]:
+    """Split a path into non-empty segments for the boundary-aware compare (separators folded)."""
+
+    return [segment for segment in fold_path_separators(path).split("/") if segment]
+
+
+def translate_download_path(
+    content_path: str,
+    mappings: Sequence[RemotePathMapping],
+    qbit_host: str | None,
+) -> str:
+    """Map a download-client path into Sonarr's filesystem view.
+
+    Longest-`remotePath`-prefix match is the PRIMARY rule. Host equality (our
+    `qbit_host`, folded here) only tiebreaks equally-long prefixes, and host
+    inequality never excludes a mapping: Sonarr's `host` is the download-client
+    host as SONARR configured it, routinely a different string from our
+    qBittorrent host (localhost vs container name vs IP). Matching is per path
+    segment, so it is separator-boundary-aware (`/downloads` never matches
+    `/downloads-x/f`), tolerant of trailing slashes and Windows backslashes on
+    either side, and case-insensitive, while the suffix keeps its ORIGINAL case
+    (POSIX targets are case-sensitive). No match returns the path untranslated
+    (the same-filesystem no-op). `content_path` is qBittorrent's, a folder or a
+    single file.
+    """
+
+    content_segments = _path_segments(content_path)
+    folded = [segment.casefold() for segment in content_segments]
+    target_host = qbit_host.casefold() if qbit_host else None
+
+    best_rank: tuple[int, bool] | None = None
+    best_local = ""
+    for mapping in mappings:
+        if not mapping.remote_path or not mapping.local_path:
+            continue
+        remote = [segment.casefold() for segment in _path_segments(mapping.remote_path)]
+        if not remote or folded[: len(remote)] != remote:
+            continue
+        host_matches = target_host is not None and (mapping.host or "").casefold() == target_host
+        rank = (len(remote), host_matches)
+        if best_rank is None or rank > best_rank:
+            best_rank = rank
+            best_local = mapping.local_path
+
+    if best_rank is None:
+        return content_path
+    base = best_local.rstrip("/\\") or "/"
+    suffix = content_segments[best_rank[0] :]
+    if not suffix:
+        return base
+    joined = "/".join(suffix)
+    return f"/{joined}" if base == "/" else f"{base}/{joined}"
 
 
 def path_leaf(name: str) -> str:

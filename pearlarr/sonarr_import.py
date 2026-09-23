@@ -31,6 +31,7 @@ from .manual_import import (
     hydrate_pending,
     normalized_leaf,
     path_leaf,
+    translate_download_path,
 )
 from .output import hub_note, hub_warn
 from .placement_types import episode_index
@@ -45,7 +46,6 @@ from .probe_verdicts import (
     classify_queue,
     placements_from_history,
     sonarr_process_pass_running,
-    translate_download_path,
 )
 from .run_services import RunDeps
 from .seadex_types import (
