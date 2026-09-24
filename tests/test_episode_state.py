@@ -1,7 +1,7 @@
 # pyright: strict
 """Episode-file statuses and the per-target snapshot (never-overwrite, the trust map it reads)."""
 
-from pearlarr.episode_state import EpisodeFileStatus, EpisodeSnapshot, TargetStatuses
+from pearlarr.episode_state import EpisodeFileStatus, EpisodeSnapshot, RecordSnapshot, TargetStatuses
 from pearlarr.manual_import import normalize_group
 from pearlarr.placement_types import episode_index
 from pearlarr.seadex_types import SonarrEpisode
@@ -111,3 +111,36 @@ class TestEpisodeFileStatuses:
             }
         )
         assert statuses.needing_import() == {1, 3, 4}
+
+
+class TestRecordSnapshot:
+    """`RecordSnapshot`: one series snapshot per claim series, the window indexes derived, each target routed."""
+
+    @staticmethod
+    def _snapshot() -> RecordSnapshot:
+        first = EpisodeSnapshot(
+            episode_index([sonarr_ep(1, 1, ep_id=1, episode_file_id=10, release_group="SubGroup")]),
+            {"subgroup": None},
+        )
+        second = EpisodeSnapshot(
+            episode_index([sonarr_ep(1, 1, ep_id=2, episode_file_id=20, release_group="SubGroup")]),
+            {},
+        )
+        return RecordSnapshot({7: first, 8: second})
+
+    def test_indexes_are_each_series_episode_index(self) -> None:
+        snapshot = self._snapshot()
+
+        assert dict(snapshot.indexes) == {7: snapshot.by_series[7].episodes, 8: snapshot.by_series[8].episodes}
+        assert (snapshot.series_of(1), snapshot.series_of(2), snapshot.series_of(3)) == (7, 8, None)
+
+    def test_statuses_route_each_target_to_its_series(self) -> None:
+        # Each id classifies under the series whose index holds it (the same group is trusted on one
+        # and not the other), target order is kept, and an id no index holds is absent.
+        statuses = self._snapshot().statuses([2, 3, 1, 2])
+
+        assert list(statuses.by_id.items()) == [
+            (2, EpisodeFileStatus.OTHER_GROUP),
+            (3, EpisodeFileStatus.ABSENT),
+            (1, EpisodeFileStatus.RECOMMENDED),
+        ]

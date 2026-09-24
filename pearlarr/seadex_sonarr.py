@@ -7,7 +7,6 @@ from typing import override
 
 from . import coverage as _coverage
 from .arr_http import make_httpx_client
-from .cache import now_stamp
 from .config import Arr
 from .grab_pipeline import GrabRequest
 from .grab_placement import EntryPlacements, PendingSeedContext, SeedScope, build_pending_seeds
@@ -39,6 +38,7 @@ from .sonarr_episodes import SonarrEpisodes
 from .sonarr_import import ImportExecutor, ImportReconciler
 from .sonarr_mapper import FileEpisodeMapper
 from .sonarr_parse import SonarrParseCache
+from .stamps import now_stamp
 
 
 def get_overlapping_results(seadex_dict: SeadexDict) -> bool:

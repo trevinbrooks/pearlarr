@@ -1,12 +1,12 @@
 """Pure episode-file statuses, the per-target snapshot an import checks, and the group trust its guard reads."""
 
 from collections.abc import Mapping, Sequence
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from enum import Enum, auto
 from types import MappingProxyType
 from typing import NamedTuple
 
-from .manual_import import PendingImport, normalize_group, normalize_rg
+from .manual_import import GuardFacts, OwnGroup, PendingImport, normalize_group, normalize_rg
 from .placement_types import EpisodeIndex
 
 type TrustPolicy = Mapping[str, frozenset[int] | None]
@@ -126,17 +126,56 @@ class EpisodeSnapshot(NamedTuple):
         return TargetStatuses(statuses)
 
 
+@dataclass(frozen=True, slots=True)
+class RecordSnapshot:
+    """One poll's coherent view of every series a record spans, keyed by series id."""
+
+    by_series: Mapping[int, EpisodeSnapshot]
+    """Each series' same-poll snapshot."""
+
+    indexes: Mapping[int, EpisodeIndex] = field(init=False)
+    """Each series' fresh episode index, the placement windows' inputs (a view over `by_series`)."""
+
+    def __post_init__(self) -> None:
+        object.__setattr__(self, "by_series", MappingProxyType(dict(self.by_series)))
+        object.__setattr__(
+            self,
+            "indexes",
+            MappingProxyType({series_id: snapshot.episodes for series_id, snapshot in self.by_series.items()}),
+        )
+
+    def series_of(self, ep_id: int) -> int | None:
+        """The series whose index holds `ep_id` (Sonarr episode ids are global, so at most one does)."""
+
+        return next((sid for sid, snapshot in self.by_series.items() if ep_id in snapshot.episodes.by_id), None)
+
+    def statuses(self, target_ep_ids: Sequence[int]) -> TargetStatuses:
+        """Classify each target under its series' snapshot; an id no index holds is ABSENT."""
+
+        grouped: dict[int | None, list[int]] = {}
+        for ep_id in dict.fromkeys(target_ep_ids):
+            grouped.setdefault(self.series_of(ep_id), []).append(ep_id)
+        by_id: dict[int, EpisodeFileStatus] = {}
+        for series_id, ids in grouped.items():
+            if series_id is None:
+                by_id.update(dict.fromkeys(ids, EpisodeFileStatus.ABSENT))
+            else:
+                by_id.update(self.by_series[series_id].statuses(ids).by_id)
+        return TargetStatuses({ep_id: by_id[ep_id] for ep_id in dict.fromkeys(target_ep_ids)})
+
+
 def trusted_groups(
-    pending: PendingImport,
+    guards: GuardFacts,
+    own: OwnGroup,
     series_records: Sequence[PendingImport] = (),
 ) -> TrustPolicy:
-    """One record's per-group trust policy: group -> verifying sizes, or None for trust-by-name.
+    """One claim's per-group trust policy: group -> verifying sizes, or None for trust-by-name.
 
     The one home of the overwrite-guard composition, for grab time (no
     `series_records`) and import time (the series' pending records, which may
     include this record's own row, whose votes are no-ops) alike. The entry's
     verified-current pick groups and the series' other grabbed groups are
-    trusted by name. A sibling's group is refused when THIS record's plan
+    trusted by name. A sibling's group is refused when THIS claim's plan
     judged it stale on disk (the copies being replaced must not ride back into
     protection on a sibling's vote). The record's OWN group joins last and
     unconditionally (it is the identity of the files being imported), but at
@@ -145,20 +184,18 @@ def trusted_groups(
     sizes means no size gate (the legacy trust-by-name behavior).
     """
 
-    stale = {norm for g in pending.guards.stale_groups if (norm := normalize_rg(g))}
-    trusted: dict[str, frozenset[int] | None] = {
-        norm: None for g in pending.guards.entry_groups if (norm := normalize_rg(g))
-    }
-    own = normalize_rg(pending.release_group)
-    own_sizes = set(pending.release_sizes)
+    stale = {norm for g in guards.stale_groups if (norm := normalize_rg(g))}
+    trusted: dict[str, frozenset[int] | None] = {norm: None for g in guards.entry_groups if (norm := normalize_rg(g))}
+    own_norm = normalize_rg(own.release_group)
+    own_sizes = set(own.sizes)
     for record in series_records:
         norm = normalize_rg(record.release_group)
         if norm is None:
             continue
-        if norm == own:
+        if norm == own_norm:
             own_sizes.update(record.release_sizes)
         if norm not in stale:
             trusted.setdefault(norm, None)
-    if own:
-        trusted[own] = frozenset(own_sizes) or None
+    if own_norm:
+        trusted[own_norm] = frozenset(own_sizes) or None
     return trusted

@@ -19,11 +19,14 @@ import math
 import os
 import unicodedata
 from collections.abc import Iterable, Mapping, Sequence
-from dataclasses import asdict, dataclass, field, replace
+from dataclasses import dataclass, field, replace
+from datetime import datetime
 from enum import Enum, StrEnum, auto
+from types import MappingProxyType
 from typing import Any, NamedTuple
 
 from .seadex_types import RemotePathMapping, coerce_int
+from .stamps import parse_stamp_or_none
 
 
 def normalize_basename(name: str) -> str:
@@ -565,19 +568,6 @@ def _as_float(value: object) -> float | None:
     return None
 
 
-class PendingKey(NamedTuple):
-    """One pending record's composite identity: the torrent plus the entry claiming it."""
-
-    infohash: str
-    al_id: int
-
-    @property
-    def row_key(self) -> str:
-        """The per-record string key snapshot rows carry (`TorrentView.key`)."""
-
-        return f"{self.infohash}:{self.al_id}"
-
-
 def _normalized_names(names: Iterable[str]) -> set[str]:
     """Normalized-leaf SET, deliberately not a multiset."""
 
@@ -611,6 +601,13 @@ class OwnedEpisode(NamedTuple):
     size: int
 
 
+class OwnGroup(NamedTuple):
+    """A torrent's own release group and the sizes its current listing carries (the trust policy's last vote)."""
+
+    release_group: str
+    sizes: tuple[int, ...]
+
+
 @dataclass(frozen=True, slots=True)
 class EntryNames:
     """What names an entry: the arr series title and the AniList titles (English first, then romaji).
@@ -621,6 +618,11 @@ class EntryNames:
 
     series: str = ""
     anilist: tuple[str, ...] = ()
+
+    def to_json(self) -> dict[str, Any]:
+        """The plain dict persisted inside a claim."""
+
+        return {"series": self.series, "anilist": list(self.anilist)}
 
     @classmethod
     def from_json(cls, raw: dict[str, Any]) -> "EntryNames":
@@ -649,6 +651,19 @@ class GuardFacts:
         return dict(self.owned_episodes)
 
     @classmethod
+    def merged(cls, parts: Iterable["GuardFacts"]) -> "GuardFacts":
+        """Several entries' evidence as one: the groups unioned in order, the owned episodes concatenated."""
+
+        entry_groups: dict[str, None] = {}
+        stale_groups: dict[str, None] = {}
+        owned: list[OwnedEpisode] = []
+        for part in parts:
+            entry_groups.update(dict.fromkeys(part.entry_groups))
+            stale_groups.update(dict.fromkeys(part.stale_groups))
+            owned.extend(part.owned_episodes)
+        return cls(tuple(entry_groups), tuple(stale_groups), tuple(owned))
+
+    @classmethod
     def from_json(cls, raw: dict[str, Any]) -> "GuardFacts":
         """Rebuild from the persisted dict (missing keys fall back empty)."""
 
@@ -659,24 +674,90 @@ class GuardFacts:
         )
 
 
-@dataclass(frozen=True)
-class PendingImport:
-    """A durable record of one added torrent awaiting a series-pinned import."""
-
-    infohash: str
-    """The qBittorrent tracking key (never None). Also the dedup `downloadId` sent to Sonarr."""
-
-    series_id: int
-    """The Sonarr series id the files belong to."""
+@dataclass(frozen=True, slots=True, kw_only=True)
+class EntryClaim:
+    """One AniList entry's claim on a torrent: the window its files are judged under and the slice it intends."""
 
     al_id: int
-    """The AniList entry this record's episode slice belongs to."""
+    """The AniList entry id, also the key of the entry's `guard_facts` row."""
 
-    file_episode_map: dict[str, list[int]]
-    """Normalized basename -> Sonarr episode ids: the grab-time seed plus the placements later imports made."""
+    series_id: int
+    """The Sonarr series id the entry's files belong to (0 on Radarr, which has no series windows)."""
 
-    episode_ids: list[int]
-    """Legacy read-only fallback: new seeds always write `[]`"""
+    title: str | None
+    """Display title (logging only)."""
+
+    coverage: str | None
+    """The entry's season/episode coverage when it claimed (e.g. `"S01 E01-E13"`, logging only)."""
+
+    url: str | None
+    """The SeaDex entry URL when it claimed, for the carried-over record's inline `link` line."""
+
+    ordered_episode_ids: tuple[int, ...]
+    """The entry's resolved episode ids in season order. Empty means unscoped: any id the series map holds."""
+
+    names: EntryNames
+    """The series and AniList titles the placement breaks ties by (see `EntryNames`)."""
+
+    preowned_episode_ids: tuple[int, ...]
+    """Claimed ids that already held a recommended file at the FIRST claim (the wait bar's net-out)."""
+
+    slice_coverage: str | None
+    """This claim's own ids as a coverage string (e.g. `"S02 E06"`)."""
+
+    claimed_at: str
+    """The claim's clock in `UPDATED_AT_STR_FORMAT`, stamped by the pipeline. The TTL drop ages the newest."""
+
+    guards: GuardFacts = field(default_factory=GuardFacts)
+    """The plan's overwrite-guard evidence. Not serialized: hydrated from `guard_facts` by `al_id`."""
+
+    def admits(self, ep_id: int) -> bool:
+        """Whether the claim's window holds `ep_id` (an unscoped claim admits every id)."""
+
+        return not self.ordered_episode_ids or ep_id in self.ordered_episode_ids
+
+    def to_json(self) -> dict[str, Any]:
+        """The plain dict persisted inside the record (the guards ride their own row)."""
+
+        return {
+            "al_id": self.al_id,
+            "series_id": self.series_id,
+            "title": self.title,
+            "coverage": self.coverage,
+            "url": self.url,
+            "ordered_episode_ids": list(self.ordered_episode_ids),
+            "names": self.names.to_json(),
+            "preowned_episode_ids": list(self.preowned_episode_ids),
+            "slice_coverage": self.slice_coverage,
+            "claimed_at": self.claimed_at,
+        }
+
+    @classmethod
+    def from_json(cls, raw: dict[str, Any], *, guards: Mapping[int, GuardFacts]) -> "EntryClaim":
+        """Rebuild a claim from its persisted dict, fed the arr's guard rows by entry."""
+
+        al_id = raw.get("al_id", 0)
+        return cls(
+            al_id=al_id,
+            series_id=raw.get("series_id", 0),
+            title=raw.get("title"),
+            coverage=raw.get("coverage"),
+            url=raw.get("url"),
+            ordered_episode_ids=tuple(raw.get("ordered_episode_ids", [])),
+            names=EntryNames.from_json(raw.get("names", {})),
+            preowned_episode_ids=tuple(raw.get("preowned_episode_ids", [])),
+            slice_coverage=raw.get("slice_coverage"),
+            claimed_at=raw.get("claimed_at", ""),
+            guards=guards.get(al_id, GuardFacts()),
+        )
+
+
+@dataclass(frozen=True, slots=True)
+class PendingImport:
+    """One torrent awaiting import: its whole file map and every entry's claim on it."""
+
+    infohash: str
+    """The qBittorrent tracking key, lowercase (never None). Also the dedup `downloadId` sent to Sonarr."""
 
     release_group: str
     """The SeaDex release group (authoritative)."""
@@ -684,85 +765,102 @@ class PendingImport:
     is_dual_audio: bool
     """Whether the SeaDex release is dual-audio. Selects the dual vs. single language list."""
 
-    seadex_files: list[str]
+    seadex_files: tuple[str, ...]
     """SeaDex filenames, for our regex quality parse."""
 
-    title: str | None
-    """Display title (logging only)."""
-
     added_at: str
-    """When the record was written, in `UPDATED_AT_STR_FORMAT`, used for the TTL drop."""
+    """The torrent's birth in `UPDATED_AT_STR_FORMAT`: the pipeline's stamp at the add (Radarr's history floor)."""
 
-    coverage: str | None = None
-    """The entry's season/episode coverage at grab time (e.g. `"S01 E01-E13"`)."""
+    file_episode_map: FileEpisodeMap
+    """Normalized basename -> Sonarr episode ids over the WHOLE torrent: the grab-time seeds plus the placements
+    later imports made. Wrapped read-only at construction."""
 
-    url: str | None = None
-    """The SeaDex entry URL at grab time, for the carried-over record's inline `link` line."""
+    claims: tuple["EntryClaim", ...]
+    """Every entry's claim on the torrent, accretion order (the import's window order)."""
 
-    slice_coverage: str | None = None
-    """THIS record's episode slice (e.g. `"S02 E06"`): the grab-time map's claims, else every episode it is
-    verified against."""
+    excluded_files: tuple[str, ...] = ()
+    """Normalized basenames of video files this record knowably never imports (a collision-refused duplicate,
+    a file every claim's window resolves outside), found at grab time or by an import poll."""
 
-    ordered_episode_ids: list[int] = field(default_factory=list[int])
-    """The resolved episode ids for this entry, in season order"""
-
-    excluded_files: list[str] = field(default_factory=list[str])
-    """Normalized basenames of video files this record knowably never imports (a sibling entry's slice, a
-    collision-refused duplicate), found at grab time or by an import poll."""
-
-    guards: GuardFacts = field(default_factory=GuardFacts)
-    """The plan's overwrite-guard evidence"""
-
-    release_sizes: list[int] = field(default_factory=list[int])
+    release_sizes: tuple[int, ...] = ()
     """The grabbed listing's file sizes. Lets the import tell this release's own files from a stale
     same-group copy."""
-
-    preowned_episode_ids: list[int] = field(default_factory=list[int])
-    """Target episodes that already held a recommended file at grab time."""
 
     awaiting_cleanup: bool = False
     """The import verified but a post-import effect (category move / queue close) still needs to run."""
 
-    names: EntryNames = field(default_factory=EntryNames)
-    """The series and AniList titles the placement breaks ties by (see `EntryNames`)."""
+    def __post_init__(self) -> None:
+        # Detach from the caller's map, then wrap read-only (the ids as tuples, so nothing inside mutates).
+        object.__setattr__(
+            self,
+            "file_episode_map",
+            MappingProxyType({name: tuple(ids) for name, ids in self.file_episode_map.items()}),
+        )
 
     @property
-    def key(self) -> PendingKey:
-        """The record's composite store/tracking key (see `PendingKey`)."""
+    def own_group(self) -> OwnGroup:
+        """The torrent's own group at its listing's sizes, the trust policy's last vote."""
 
-        return PendingKey(self.infohash, self.al_id)
+        return OwnGroup(self.release_group, self.release_sizes)
+
+    @property
+    def series_ids(self) -> tuple[int, ...]:
+        """The distinct series the claims span, claim order."""
+
+        return tuple(dict.fromkeys(claim.series_id for claim in self.claims))
+
+    @property
+    def al_ids(self) -> tuple[int, ...]:
+        """The distinct entries claiming the torrent, claim order."""
+
+        return tuple(dict.fromkeys(claim.al_id for claim in self.claims))
+
+    def claim_for(self, series_id: int) -> "EntryClaim | None":
+        """The first claim on `series_id`, if any."""
+
+        return next((claim for claim in self.claims if claim.series_id == series_id), None)
+
+    def claim_of(self, al_id: int) -> "EntryClaim | None":
+        """The entry's claim, if it holds one."""
+
+        return next((claim for claim in self.claims if claim.al_id == al_id), None)
 
     @property
     def display_label(self) -> str:
-        """The cockpit/ledger/report row label: `title · group[ · episode slice]`."""
+        """The cockpit/ledger/report row label: `titles · group[ · episode slices]`, every claim named."""
 
-        base = self.title or self.infohash
+        base = " & ".join(dict.fromkeys(claim.title for claim in self.claims if claim.title)) or self.infohash
         if self.release_group:
             base = f"{base} · {self.release_group}"
-        if self.slice_coverage:
-            base = f"{base} · {self.slice_coverage}"
+        if slices := ", ".join(dict.fromkeys(c.slice_coverage for c in self.claims if c.slice_coverage)):
+            base = f"{base} · {slices}"
         return base
 
-    def target_ids(self) -> list[int]:
-        """Our intended episode ids: map values first-claim order, then the legacy fallback."""
+    def seeded_map(self) -> dict[str, list[int]]:
+        """The map as the placement reads it: keys normalized, zero ids dropped (see `_normalized_map`)."""
 
-        ids: list[int] = []
-        seen: set[int] = set()
-        for file_ids in self.file_episode_map.values():
-            for ep_id in file_ids:
-                if ep_id and ep_id not in seen:
-                    seen.add(ep_id)
-                    ids.append(ep_id)
-        for ep_id in self.episode_ids:
-            if ep_id and ep_id not in seen:
-                seen.add(ep_id)
-                ids.append(ep_id)
-        return ids
+        return _normalized_map(self.file_episode_map)
+
+    def target_ids(self) -> list[int]:
+        """Our intended episode ids: the map's values in first-claim order."""
+
+        return list(dict.fromkeys(ep_id for file_ids in self.file_episode_map.values() for ep_id in file_ids if ep_id))
 
     def resolved_ids(self) -> list[int]:
-        """The episode set unplaced files assign into: `ordered_episode_ids`, or the seeds' ids for an older record."""
+        """The episode set unplaced files assign into: the claims' windows in order, else the seeds' ids."""
 
-        return list(self.ordered_episode_ids) or sorted(self.target_ids())
+        windows = list(dict.fromkeys(ep_id for claim in self.claims for ep_id in claim.ordered_episode_ids))
+        return windows or sorted(self.target_ids())
+
+    def preowned_ids(self) -> list[int]:
+        """Every claim's preowned ids, claim order."""
+
+        return list(dict.fromkeys(ep_id for claim in self.claims for ep_id in claim.preowned_episode_ids))
+
+    def guards_for(self, series_id: int) -> GuardFacts:
+        """The guard evidence of every claim on `series_id`, merged."""
+
+        return GuardFacts.merged(claim.guards for claim in self.claims if claim.series_id == series_id)
 
     def seed_coverage(self) -> SeedCoverage:
         """Coverage from normalized-name SUPERSETS (never lengths): a healed extra can't fake it."""
@@ -786,48 +884,69 @@ class PendingImport:
         )
 
     def with_placements(self, placements: FileEpisodeMap) -> "PendingImport":
-        """The record with import-time placements folded into its map, every key normalized and zero ids dropped."""
+        """The record with placements folded into its map (normalized, zero ids dropped), their names no longer excluded."""
 
-        return replace(self, file_episode_map={**_normalized_map(self.file_episode_map), **_normalized_map(placements)})
+        merged = {**_normalized_map(self.file_episode_map), **_normalized_map(placements)}
+        excluded = tuple(name for name in self.excluded_files if name not in merged)
+        return replace(self, file_episode_map=merged, excluded_files=excluded)
 
     def with_exclusions(self, names: Iterable[str]) -> "PendingImport":
         """The record with import-time exclusions appended, normalized, deduplicated, order kept."""
 
         merged = dict.fromkeys(normalized_leaf(name) for name in (*self.excluded_files, *names))
-        return replace(self, excluded_files=list(merged))
+        return replace(self, excluded_files=tuple(merged))
+
+    def with_claim(self, claim: "EntryClaim") -> "PendingImport":
+        """The record with `claim` in place of the entry's stored claim (its preowned ids kept), else appended."""
+
+        for index, stored in enumerate(self.claims):
+            if stored.al_id == claim.al_id:
+                refreshed = replace(claim, preowned_episode_ids=stored.preowned_episode_ids)
+                return replace(self, claims=(*self.claims[:index], refreshed, *self.claims[index + 1 :]))
+        return replace(self, claims=(*self.claims, claim))
+
+    def restamped(self, stamp: str) -> "PendingImport":
+        """The record with its birth and every claim's clock set to `stamp` (a fresh add starts every clock)."""
+
+        return replace(self, added_at=stamp, claims=tuple(replace(c, claimed_at=stamp) for c in self.claims))
+
+    def newest_claimed_at(self) -> datetime | None:
+        """The newest parseable claim stamp, the age the TTL drop reads (None when no claim stamp parses)."""
+
+        stamps = [moment for claim in self.claims if (moment := parse_stamp_or_none(claim.claimed_at)) is not None]
+        return max(stamps) if stamps else None
 
     def to_json(self) -> dict[str, Any]:
         """Serialize to the plain dict persisted under `pending_imports`."""
 
-        raw = asdict(self)
-        del raw["guards"]
-        return raw
+        return {
+            "infohash": self.infohash,
+            "release_group": self.release_group,
+            "is_dual_audio": self.is_dual_audio,
+            "seadex_files": list(self.seadex_files),
+            "added_at": self.added_at,
+            "file_episode_map": {name: list(ids) for name, ids in self.file_episode_map.items()},
+            "claims": [claim.to_json() for claim in self.claims],
+            "excluded_files": list(self.excluded_files),
+            "release_sizes": list(self.release_sizes),
+            "awaiting_cleanup": self.awaiting_cleanup,
+        }
 
     @classmethod
-    def from_json(cls, raw: dict[str, Any], *, guards: GuardFacts | None = None) -> "PendingImport":
-        """Rebuild a record from its persisted cache-store dict."""
+    def from_json(cls, raw: dict[str, Any], *, guards: Mapping[int, GuardFacts]) -> "PendingImport":
+        """Rebuild a record from its persisted cache-store dict, each claim fed its entry's guard row."""
 
         return cls(
             infohash=raw.get("infohash", ""),
-            series_id=raw.get("series_id", 0),
-            al_id=raw.get("al_id", 0),
-            file_episode_map=raw.get("file_episode_map", {}),
-            episode_ids=raw.get("episode_ids", []),
             release_group=raw.get("release_group", ""),
             is_dual_audio=raw.get("is_dual_audio", False),
-            seadex_files=raw.get("seadex_files", []),
-            title=raw.get("title"),
-            added_at=raw.get("added_at", ""),
-            coverage=raw.get("coverage"),
-            url=raw.get("url"),
-            ordered_episode_ids=raw.get("ordered_episode_ids", []),
-            slice_coverage=raw.get("slice_coverage"),
-            excluded_files=raw.get("excluded_files", []),
-            guards=guards or GuardFacts(),
-            release_sizes=raw.get("release_sizes", []),
-            preowned_episode_ids=raw.get("preowned_episode_ids", []),
+            seadex_files=tuple(raw.get("seadex_files", [])),
+            added_at=added_at_of(raw),
+            file_episode_map=raw.get("file_episode_map", {}),
+            claims=tuple(EntryClaim.from_json(claim, guards=guards) for claim in raw.get("claims", [])),
+            excluded_files=tuple(raw.get("excluded_files", [])),
+            release_sizes=tuple(raw.get("release_sizes", [])),
             awaiting_cleanup=is_awaiting_cleanup(raw),
-            names=EntryNames.from_json(raw.get("names", {})),
         )
 
 
@@ -837,10 +956,14 @@ def is_awaiting_cleanup(raw: dict[str, Any]) -> bool:
     return bool(raw.get("awaiting_cleanup"))
 
 
-def hydrate_pending(
-    rows: dict[PendingKey, dict[str, Any]],
-    guards: dict[int, GuardFacts],
-) -> dict[PendingKey, PendingImport]:
-    """Rehydrate stored rows into records, each fed its entry's guard row."""
+def added_at_of(raw: dict[str, Any]) -> str:
+    """The birth stamp off a stored row's raw dict (`""` when unset or not a string)."""
 
-    return {key: PendingImport.from_json(raw, guards=guards.get(key.al_id)) for key, raw in rows.items()}
+    stamp = raw.get("added_at", "")
+    return stamp if isinstance(stamp, str) else ""
+
+
+def hydrate_pending(rows: Mapping[str, dict[str, Any]], guards: Mapping[int, GuardFacts]) -> dict[str, PendingImport]:
+    """Rehydrate stored rows into records, keyed by infohash, each claim fed its entry's guard row."""
+
+    return {key: PendingImport.from_json(raw, guards=guards) for key, raw in rows.items()}

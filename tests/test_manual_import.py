@@ -5,22 +5,27 @@ The planning modules' tests sit beside this file, one per module: `test_placemen
 `test_episode_state`, `test_import_files`, `test_probe_verdicts`, `test_import_quality`.
 """
 
+from collections.abc import Sequence
 from dataclasses import replace
+from datetime import datetime
 from types import SimpleNamespace
+from typing import cast
 
 import pytest
 
 from pearlarr.manual_import import (
     LEAVE_PROBE,
     Deferral,
+    EntryClaim,
+    EntryNames,
     GuardFacts,
     ImportProbe,
     OwnedEpisode,
     PendingImport,
-    PendingKey,
     PendingState,
     TorrentTelemetry,
     WaitOutcome,
+    added_at_of,
     classify_pending,
     normalize_basename,
     normalize_group,
@@ -32,7 +37,7 @@ from pearlarr.manual_import import (
 )
 from pearlarr.seadex_types import RemotePathMapping
 
-from .builders import SEP, pending_import
+from .builders import SEP, entry_claim, pending_import
 
 
 class TestNormalize:
@@ -94,8 +99,8 @@ class TestPendingImportPlacements:
 
         healed = pending.with_exclusions(["SHOW - 03.MKV", " Show - 02.mkv ", "show - 03.mkv", "Show - 01.mkv"])
 
-        assert healed.excluded_files == ["show - 01.mkv", "show - 03.mkv", "show - 02.mkv"]
-        assert pending.excluded_files == ["show - 01.mkv"]
+        assert healed.excluded_files == ("show - 01.mkv", "show - 03.mkv", "show - 02.mkv")
+        assert pending.excluded_files == ("show - 01.mkv",)
 
     def test_with_exclusions_of_nothing_leaves_the_record_equal(self) -> None:
         # The no-op the record seam gates its write on.
@@ -112,12 +117,36 @@ class TestPendingImportPlacements:
 
         healed = pending.with_placements({"SHOW - 01 [1080p].mkv": [111], "Show - 04.mkv": [104]})
 
-        assert healed.file_episode_map == {
-            "show - 01 [1080p].mkv": [111],
-            "show - 03.mkv": [103],
-            "show - 04.mkv": [104],
+        assert dict(healed.file_episode_map) == {
+            "show - 01 [1080p].mkv": (111,),
+            "show - 03.mkv": (103,),
+            "show - 04.mkv": (104,),
         }
-        assert pending.file_episode_map == seed
+        assert dict(pending.file_episode_map) == {name: tuple(ids) for name, ids in seed.items()}
+
+    def test_with_placements_lifts_a_placed_name_out_of_the_exclusions(self) -> None:
+        # A name an earlier poll excluded that a later import placed is a placement, never both.
+        pending = pending_import(
+            seadex_files=["Show - 01 [1080p].mkv", "Show - 02.mkv"],
+            excluded_files=["show - 02.mkv", "show - 03.mkv"],
+        )
+
+        healed = pending.with_placements({"Show - 02.mkv": [102]})
+
+        assert healed.excluded_files == ("show - 03.mkv",)
+        assert dict(healed.file_episode_map) == {"show - 01 [1080p].mkv": (101,), "show - 02.mkv": (102,)}
+
+    def test_the_map_is_detached_and_read_only(self) -> None:
+        # The record copies the caller's map at construction and wraps it read-only, so neither the
+        # caller's dict nor a holder of the record can mutate the map behind it.
+        seed: dict[str, Sequence[int]] = {"Show - 01.mkv": [101]}
+        pending = pending_import(file_episode_map=seed)
+        seed["Show - 02.mkv"] = [102]
+        mutable = cast("dict[str, Sequence[int]]", pending.file_episode_map)
+
+        with pytest.raises(TypeError):
+            mutable["Show - 02.mkv"] = (102,)
+        assert dict(pending.file_episode_map) == {"Show - 01.mkv": (101,)}
 
     def test_unplaced_names_is_the_listing_minus_map_and_exclusions(self) -> None:
         pending = pending_import(
@@ -150,102 +179,297 @@ class TestPendingImportPlacements:
         assert pending.seed_coverage().accounted == (not pending.unplaced_names())
 
 
-class TestPendingImportRoundTrip:
-    """`PendingImport`'s JSON round-trip tolerates missing/unknown keys and defaults coverage/url to None.
+class TestPendingImportClaims:
+    """The claim reads over a record: every entry's series, window, guards, and ids, in claim order."""
 
-    `display_label` falls back title -> infohash when the title/group is absent.
-    """
+    def test_series_ids_and_al_ids_are_distinct_in_claim_order(self) -> None:
+        pending = pending_import(
+            claims=(
+                entry_claim(al_id=3, series_id=8),
+                entry_claim(al_id=1, series_id=7),
+                entry_claim(al_id=2, series_id=8),
+            ),
+        )
+
+        assert pending.series_ids == (8, 7)
+        assert pending.al_ids == (3, 1, 2)
+
+    def test_claim_for_is_the_first_claim_on_the_series(self) -> None:
+        first, second = entry_claim(al_id=1, series_id=8), entry_claim(al_id=2, series_id=8)
+        pending = pending_import(claims=(first, second))
+
+        assert pending.claim_for(8) is first
+        assert pending.claim_for(9) is None
+
+    def test_claim_of_is_the_entrys_claim(self) -> None:
+        ours = entry_claim(al_id=2, series_id=8)
+        pending = pending_import(claims=(entry_claim(al_id=1), ours))
+
+        assert pending.claim_of(2) is ours
+        assert pending.claim_of(3) is None
+
+    def test_guards_for_merges_the_series_claims_evidence(self) -> None:
+        # Groups union in claim order, owned episodes concatenate, and the owned-size read is
+        # last-wins per episode. Another series' claim contributes nothing.
+        pending = pending_import(
+            claims=(
+                entry_claim(al_id=1, guards=GuardFacts(("A", "B"), ("S",), (OwnedEpisode(11, 700),))),
+                entry_claim(al_id=2, series_id=8, guards=GuardFacts(("Z",), ("Y",), (OwnedEpisode(11, 999),))),
+                entry_claim(
+                    al_id=3,
+                    guards=GuardFacts(("B", "C"), ("S", "T"), (OwnedEpisode(11, 710), OwnedEpisode(12, 720))),
+                ),
+            ),
+        )
+
+        merged = pending.guards_for(7)
+
+        assert merged == GuardFacts(
+            ("A", "B", "C"),
+            ("S", "T"),
+            (OwnedEpisode(11, 700), OwnedEpisode(11, 710), OwnedEpisode(12, 720)),
+        )
+        assert merged.owned_sizes == {11: 710, 12: 720}
+        assert pending.guards_for(9) == GuardFacts()
+
+    def test_resolved_ids_union_the_claims_windows_in_claim_order(self) -> None:
+        pending = pending_import(
+            file_episode_map={"a.mkv": [9]},
+            claims=(
+                entry_claim(al_id=1, ordered_episode_ids=[3, 1]),
+                entry_claim(al_id=2, series_id=8, ordered_episode_ids=[1, 2]),
+            ),
+        )
+
+        assert pending.resolved_ids() == [3, 1, 2]
+
+    def test_resolved_ids_fall_back_to_the_seeds_sorted_when_every_claim_is_unscoped(self) -> None:
+        # The map's ids alone, a stray zero dropped: the specials shape with no window to scope against.
+        pending = pending_import(
+            file_episode_map={"a.mkv": [7, 0], "b.mkv": [5]},
+            claims=(entry_claim(al_id=1), entry_claim(al_id=2, series_id=8)),
+        )
+
+        assert pending.resolved_ids() == [5, 7]
+        assert pending_import(file_episode_map={}).resolved_ids() == []
+
+    def test_preowned_ids_union_in_claim_order(self) -> None:
+        pending = pending_import(
+            claims=(
+                entry_claim(al_id=1, preowned_episode_ids=[12, 11]),
+                entry_claim(al_id=2, series_id=8, preowned_episode_ids=[11, 13]),
+            ),
+        )
+
+        assert pending.preowned_ids() == [12, 11, 13]
+
+    def test_with_claim_appends_a_new_entry(self) -> None:
+        pending = pending_import()
+        added = entry_claim(al_id=2, series_id=8)
+
+        assert pending.with_claim(added).claims == (*pending.claims, added)
+        assert len(pending.claims) == 1
+
+    def test_with_claim_replaces_the_entrys_claim_in_place_keeping_its_preowned_ids(self) -> None:
+        # A re-flag refreshes the window and the clock, but the net-out stays what the FIRST claim saw.
+        stored = entry_claim(al_id=1, ordered_episode_ids=[101], preowned_episode_ids=[101])
+        other = entry_claim(al_id=2, series_id=8)
+        pending = pending_import(claims=(stored, other))
+        fresh = entry_claim(
+            al_id=1,
+            ordered_episode_ids=[101, 102],
+            preowned_episode_ids=[102],
+            claimed_at="2026-06-25 00:00:00",
+        )
+
+        refreshed = pending.with_claim(fresh)
+
+        assert refreshed.claims == (replace(fresh, preowned_episode_ids=(101,)), other)
+        assert pending.claims == (stored, other)
+
+    def test_restamped_sets_the_birth_and_every_claims_clock(self) -> None:
+        pending = pending_import(
+            claims=(
+                entry_claim(al_id=1, claimed_at="2026-06-24 00:00:00"),
+                entry_claim(al_id=2, series_id=8, claimed_at="2026-06-25 00:00:00"),
+            ),
+        )
+
+        stamped = pending.restamped("2026-07-01 12:00:00")
+
+        assert stamped.added_at == "2026-07-01 12:00:00"
+        assert [claim.claimed_at for claim in stamped.claims] == ["2026-07-01 12:00:00"] * 2
+        assert pending.added_at == "2026-06-24 00:00:00"
+
+    def test_newest_claimed_at_is_the_newest_parseable_stamp(self) -> None:
+        pending = pending_import(
+            claims=(
+                entry_claim(al_id=1, claimed_at="2026-06-24 00:00:00"),
+                entry_claim(al_id=2, series_id=8, claimed_at="junk"),
+                entry_claim(al_id=3, claimed_at="2026-06-26 00:00:00"),
+            ),
+        )
+
+        assert pending.newest_claimed_at() == datetime(2026, 6, 26)
+
+    def test_newest_claimed_at_is_none_when_no_stamp_parses(self) -> None:
+        pending = pending_import(claims=(entry_claim(al_id=1, claimed_at="junk"), entry_claim(al_id=2, claimed_at="")))
+
+        assert pending.newest_claimed_at() is None
+        assert pending_import(claims=()).newest_claimed_at() is None
+
+
+class TestDisplayLabel:
+    """`display_label`: every claim's title, the group, then the distinct slices. The infohash names a titleless record."""
+
+    def test_one_claim_is_title_group_slice(self) -> None:
+        # The group tells apart a series that grabbed several torrents, the slice one group's
+        # per-episode siblings.
+        pending = pending_import(release_group="Era-Raws", slice_coverage="S02 E06")
+
+        assert pending.display_label == f"Show{SEP}Era-Raws{SEP}S02 E06"
+
+    def test_two_claims_join_their_titles_and_slices(self) -> None:
+        pending = pending_import(
+            release_group="Era-Raws",
+            claims=(
+                entry_claim(al_id=1, title="A", slice_coverage="S01 E01"),
+                entry_claim(al_id=2, series_id=8, title="B", slice_coverage="S02 E01"),
+            ),
+        )
+
+        assert pending.display_label == f"A & B{SEP}Era-Raws{SEP}S01 E01, S02 E01"
+
+    def test_a_repeated_title_or_slice_shows_once(self) -> None:
+        pending = pending_import(
+            release_group="",
+            claims=(
+                entry_claim(al_id=1, title="A", slice_coverage="S01 E01"),
+                entry_claim(al_id=2, title="A", slice_coverage="S01 E01"),
+            ),
+        )
+
+        assert pending.display_label == f"A{SEP}S01 E01"
+
+    def test_a_groupless_record_shows_the_bare_title(self) -> None:
+        assert pending_import(release_group="").display_label == "Show"
+
+    def test_a_titleless_record_falls_back_to_its_infohash(self) -> None:
+        assert pending_import(infohash="h", release_group="", title=None).display_label == "h"
+        assert pending_import(infohash="h", release_group="Era-Raws", title=None).display_label == f"h{SEP}Era-Raws"
+
+
+def _guarded_claim() -> EntryClaim:
+    """A scoped claim on series 55 carrying every serialized field plus a guard row."""
+
+    return entry_claim(
+        al_id=990,
+        series_id=55,
+        title="Some Show",
+        coverage="S02 E01-E12",
+        url="https://releases.moe/1",
+        ordered_episode_ids=[11, 12],
+        names=EntryNames("Some Show", ("Some Show", "Aru Show")),
+        preowned_episode_ids=[11],
+        slice_coverage="S02 E01-E02",
+        claimed_at="2026-06-24 12:00:00",
+        guards=GuardFacts(entry_groups=("Era-Raws", "OtherPick"), owned_episodes=(OwnedEpisode(11, 700),)),
+    )
+
+
+class TestPendingImportRoundTrip:
+    """`PendingImport`'s JSON round trip: the claims ride the blob, the guards their own row, unknown keys are ignored."""
 
     def test_to_json_from_json_round_trip(self) -> None:
+        claim = _guarded_claim()
         pending = PendingImport(
             infohash="abc123",
-            series_id=55,
-            al_id=990,
-            file_episode_map={"ep1.mkv": [11], "ep2.mkv": [12]},
-            episode_ids=[11, 12],
             release_group="Era-Raws",
             is_dual_audio=True,
-            seadex_files=["ep1.mkv", "ep2.mkv"],
-            title="Some Show",
+            seadex_files=("ep1.mkv", "ep2.mkv"),
             added_at="2026-06-24 12:00:00",
-            coverage="S02 E01-E12",
-            url="https://releases.moe/1",
-            slice_coverage="S02 E01-E02",
-            excluded_files=["other-slice.mkv"],
-            guards=GuardFacts(entry_groups=("Era-Raws", "OtherPick"), owned_episodes=(OwnedEpisode(11, 700),)),
+            file_episode_map={"ep1.mkv": [11], "ep2.mkv": [12]},
+            claims=(claim,),
+            excluded_files=("other-slice.mkv",),
+            release_sizes=(700, 710),
             awaiting_cleanup=True,
         )
+
         raw = pending.to_json()
-        # Guard evidence is entry-level (its own guard_facts row): the per-torrent
-        # blob never carries a copy, so a bare rehydrate comes back guard-empty.
+
+        # Guard evidence is entry-level (its own guard_facts row): neither the record nor a claim
+        # carries a copy, so a bare rehydrate comes back guard-empty.
         assert "guards" not in raw
-        assert PendingImport.from_json(raw) == replace(pending, guards=GuardFacts())
-        # The caller-supplied row (the read seams' join) hydrates it back whole.
-        assert PendingImport.from_json(raw, guards=pending.guards) == pending
+        claims_raw: list[dict[str, object]] = raw["claims"]
+        assert all("guards" not in claim_raw for claim_raw in claims_raw)
+        bare = PendingImport.from_json(raw, guards={})
+        assert bare == replace(pending, claims=(replace(claim, guards=GuardFacts()),))
+        # The caller-supplied rows (the read seams' join) hydrate the claim back whole.
+        assert PendingImport.from_json(raw, guards={claim.al_id: claim.guards}) == pending
+
+    def test_from_json_rehydrates_each_claims_guards_by_al_id(self) -> None:
+        first, second = GuardFacts(entry_groups=("A",)), GuardFacts(stale_groups=("B",))
+        pending = pending_import(
+            claims=(entry_claim(al_id=1, guards=first), entry_claim(al_id=2, series_id=8, guards=second)),
+        )
+        rows = {2: second, 1: first, 3: GuardFacts(entry_groups=("Unclaimed",))}
+
+        rebuilt = PendingImport.from_json(pending.to_json(), guards=rows)
+
+        assert [claim.guards for claim in rebuilt.claims] == [first, second]
+        assert rebuilt == pending
 
     def test_healed_map_round_trips_and_flips_coverage(self) -> None:
         # The placements live in the same blob field as the seed, so a healed
         # record rehydrates mapped on the next run.
-        pending = pending_import(
-            file_episode_map={},
-            episode_ids=[],
-            seadex_files=["Show - 01 [1080p].mkv"],
-            ordered_episode_ids=[101],
-        )
+        pending = pending_import(file_episode_map={}, seadex_files=["Show - 01 [1080p].mkv"], ordered_episode_ids=[101])
 
         healed = pending.with_placements({"show - 01 [1080p].mkv": [101]})
 
-        assert PendingImport.from_json(healed.to_json()) == healed
+        assert PendingImport.from_json(healed.to_json(), guards={}) == healed
         assert (pending.seed_coverage().mapped, healed.seed_coverage().mapped) == (False, True)
 
-    def test_from_json_ignores_a_legacy_blob_guards_key(self) -> None:
-        # A pre-v3 blob carries a frozen grab-time copy - the divergence the
-        # guard_facts row exists to kill - so it must never resurrect.
-        raw = {"infohash": "h", "series_id": 1, "guards": {"entry_groups": ["Stale"]}}
-        assert PendingImport.from_json(raw).guards == GuardFacts()
+    def test_from_json_ignores_a_blob_guards_key(self) -> None:
+        # A frozen grab-time copy in the blob (the divergence the guard_facts row exists to kill)
+        # must never resurrect, on the record or inside a claim.
+        stale = {"entry_groups": ["Stale"]}
+        raw = {"infohash": "h", "guards": stale, "claims": [{"al_id": 1, "series_id": 1, "guards": stale}]}
+
+        assert PendingImport.from_json(raw, guards={}).claims[0].guards == GuardFacts()
 
     def test_from_json_tolerates_missing_keys(self) -> None:
-        rebuilt = PendingImport.from_json({"infohash": "h", "series_id": 1})
+        rebuilt = PendingImport.from_json({"infohash": "h"}, guards={})
         assert rebuilt.infohash == "h"
-        assert rebuilt.file_episode_map == {}
-        assert rebuilt.title is None
+        assert dict(rebuilt.file_episode_map) == {}
+        assert rebuilt.claims == ()
+        assert rebuilt.added_at == ""
         # Pre-excluded_files records rehydrate empty (completeness stays
         # conservative for them).
-        assert rebuilt.excluded_files == []
-        # Pre-guards records guard on grabbed groups alone.
-        assert rebuilt.guards == GuardFacts()
-        # A legacy record predates the cleanup flag: nothing is owed.
+        assert rebuilt.excluded_files == ()
+        assert rebuilt.release_sizes == ()
+        # A record predating the cleanup flag owes nothing.
         assert rebuilt.awaiting_cleanup is False
-        # A legacy record with no al_id rehydrates under the 0 sentinel and keys
-        # as its hash's singleton.
-        assert rebuilt.al_id == 0
-        assert rebuilt.key == PendingKey("h", 0)
 
-    def test_display_label_is_title_dot_group_with_fallbacks(self) -> None:
-        # The group disambiguates a series that grabbed several torrents. A
-        # groupless record shows the bare title, a titleless one its infohash.
-        rebuilt = PendingImport.from_json({"infohash": "h", "series_id": 1})
-        assert rebuilt.display_label == "h"
-        titled = PendingImport.from_json({"infohash": "h", "series_id": 1, "title": "Show"})
-        assert titled.display_label == "Show"
-        grouped = PendingImport.from_json(
-            {"infohash": "h", "series_id": 1, "title": "Show", "release_group": "Era-Raws"},
-        )
-        assert grouped.display_label == f"Show{SEP}Era-Raws"
+    def test_a_claim_tolerates_missing_keys(self) -> None:
+        # A claim missing every optional key rehydrates unscoped, unnamed, unstamped, guard-empty,
+        # with coverage and url None, and a missing al_id lands under the 0 sentinel.
+        rebuilt = PendingImport.from_json({"infohash": "h", "claims": [{"series_id": 1}]}, guards={})
 
-    def test_display_label_appends_the_record_episode_slice(self) -> None:
-        # Sibling records from ONE group (a per-episode torrent each) share the
-        # title and group - only the slice tells a wait/notification row apart.
-        sliced = PendingImport.from_json(
-            {
-                "infohash": "h",
-                "series_id": 1,
-                "title": "Show",
-                "release_group": "Era-Raws",
-                "slice_coverage": "S02 E06",
-            },
+        assert rebuilt.claims == (
+            EntryClaim(
+                al_id=0,
+                series_id=1,
+                title=None,
+                coverage=None,
+                url=None,
+                ordered_episode_ids=(),
+                names=EntryNames(),
+                preowned_episode_ids=(),
+                slice_coverage=None,
+                claimed_at="",
+            ),
         )
-        assert sliced.display_label == f"Show{SEP}Era-Raws{SEP}S02 E06"
+        assert rebuilt.claim_of(0) is rebuilt.claims[0]
 
     def test_old_record_with_unknown_keys_rehydrates(self) -> None:
         # Back-compat: a record persisted with since-removed keys still loads
@@ -253,42 +477,22 @@ class TestPendingImportRoundTrip:
         raw = {
             "infohash": "h",
             "series_id": 1,
-            "file_episode_map": {"a.mkv": [1]},
             "episode_ids": [1],
-            "release_group": "RG",
-            "is_dual_audio": False,
-            "seadex_files": ["a.mkv"],
             "seadex_sizes": [1000],
             "title": "T",
-            "added_at": "2026-06-24 00:00:00",
+            "claims": [{"al_id": 1, "series_id": 1, "key": "h"}],
         }
-        assert PendingImport.from_json(raw).infohash == "h"
 
-    def test_old_record_without_coverage_url_defaults_to_none(self) -> None:
-        # Migration-safe: a record persisted before coverage/url existed loads with
-        # both defaulting to None (via from_json's .get).
-        raw = {"infohash": "h", "series_id": 1}
-        rebuilt = PendingImport.from_json(raw)
-        assert rebuilt.coverage is None
-        assert rebuilt.url is None
+        rebuilt = PendingImport.from_json(raw, guards={})
 
-    def test_coverage_url_default_none_on_dataclass(self) -> None:
-        # The dataclass defaults coverage/url to None so callers (and old records)
-        # need not supply them.
-        pending = PendingImport(
-            infohash="h",
-            series_id=1,
-            al_id=1,
-            file_episode_map={},
-            episode_ids=[],
-            release_group="RG",
-            is_dual_audio=False,
-            seadex_files=[],
-            title=None,
-            added_at="2026-06-24 00:00:00",
-        )
-        assert pending.coverage is None
-        assert pending.url is None
+        assert rebuilt.infohash == "h"
+        assert rebuilt.al_ids == (1,)
+
+    def test_added_at_of_reads_the_raw_row(self) -> None:
+        # The keys-only readers age a row without rehydrating it: a missing or non-string stamp is unset.
+        assert added_at_of({"added_at": "2026-06-24 00:00:00"}) == "2026-06-24 00:00:00"
+        assert added_at_of({}) == ""
+        assert added_at_of({"added_at": 20260624}) == ""
 
 
 class TestPendingStateAndProbe:

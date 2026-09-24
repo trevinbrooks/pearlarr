@@ -7,12 +7,13 @@ One `CacheStore` per arr, never shared across arrs or threads.
 
 import contextlib
 import json
+import logging
 import os
 import sqlite3
 from abc import ABC, abstractmethod
-from collections.abc import Callable, Iterator
+from collections.abc import Callable, Iterator, Sequence
 from dataclasses import asdict, dataclass
-from datetime import datetime, timedelta
+from datetime import datetime
 from typing import Any, NamedTuple, TypedDict, cast, override
 
 from seadex import EntryRecord
@@ -20,38 +21,12 @@ from seadex import EntryRecord
 from . import __version__
 from .config import Arr
 from .json_narrow import is_json_obj
-from .manual_import import GuardFacts, PendingKey
+from .log import LOG_NAME
+from .manual_import import EntryNames, GuardFacts
 from .output import hub_note
 from .sqlite_util import connect as _sqlite_connect
 from .sqlite_util import open_or_quarantine, rollback_and_close
-
-# Timestamp format for cache record fields (`updated_at`, `fetched_at`).
-UPDATED_AT_STR_FORMAT = "%Y-%m-%d %H:%M:%S"
-
-
-def stamp_of(moment: datetime) -> str:
-    """`moment` in `UPDATED_AT_STR_FORMAT` (record `added_at` stamps)."""
-
-    return moment.strftime(UPDATED_AT_STR_FORMAT)
-
-
-def now_stamp() -> str:
-    """The current local time in `UPDATED_AT_STR_FORMAT` (record `added_at` stamps)."""
-
-    return stamp_of(datetime.now())
-
-
-def parse_stamp(stamp: str) -> datetime:
-    """`stamp` parsed back from `UPDATED_AT_STR_FORMAT`, raising like `strptime` on junk."""
-
-    return datetime.strptime(stamp, UPDATED_AT_STR_FORMAT)
-
-
-def pending_cutoff(max_age_days: int) -> datetime:
-    """The oldest add time a pending record may carry: now minus `imports.pending_max_age_days`."""
-
-    return datetime.now() - timedelta(days=max_age_days)
-
+from .stamps import UPDATED_AT_STR_FORMAT, parse_stamp, parse_stamp_or_none
 
 # `CREATE TABLE IF NOT EXISTS` never alters an existing table: shape changes need a SCHEMA_VERSION bump + migration.
 # anilist_meta / sonarr_parse expose `fetched_at` as a VIRTUAL generated column, indexed for the TTL sweep's DELETE.
@@ -98,11 +73,10 @@ CREATE INDEX IF NOT EXISTS ix_sonarr_parse_fetched ON sonarr_parse (fetched_at);
 
 CREATE TABLE IF NOT EXISTS pending_imports (
     arr      TEXT NOT NULL,
+    -- One record per torrent (lowercase hash): every entry listing it rides the record as a claim.
     infohash TEXT NOT NULL,
-    -- al_id is in the key: one torrent can be listed on several entries. 0 is the legacy sentinel.
-    al_id    INTEGER NOT NULL DEFAULT 0,
     record   BLOB NOT NULL,
-    PRIMARY KEY (arr, infohash, al_id)
+    PRIMARY KEY (arr, infohash)
 );
 
 CREATE TABLE IF NOT EXISTS guard_facts (
@@ -121,7 +95,9 @@ CREATE TABLE IF NOT EXISTS history_checkpoints (
 """
 
 # Current cache.db schema version, stored in `PRAGMA user_version`.
-SCHEMA_VERSION = 4
+SCHEMA_VERSION = 5
+
+_LOG = logging.getLogger(f"{LOG_NAME}.cache")
 
 
 class CacheSchemaError(RuntimeError):
@@ -190,11 +166,129 @@ def _migrate_3_to_4(conn: sqlite3.Connection) -> None:
     conn.execute("UPDATE entries SET name = NULL WHERE name LIKE 'AniList #%'")
 
 
+@dataclass(frozen=True, slots=True, kw_only=True)
+class _PendingV4:
+    """One v4 `pending_imports` row narrowed once: the per-entry record shape before the torrent-level fold."""
+
+    al_id: int
+    series_id: int
+    title: str | None
+    coverage: str | None
+    url: str | None
+    ordered_episode_ids: list[int]
+    names: dict[str, Any]
+    preowned_episode_ids: list[int]
+    slice_coverage: str | None
+    added_at: str
+    release_group: str
+    is_dual_audio: bool
+    seadex_files: list[str]
+    release_sizes: list[int]
+    file_episode_map: dict[str, list[int]]
+    episode_ids: list[int]
+    excluded_files: list[str]
+    awaiting_cleanup: bool
+
+    @classmethod
+    def from_row(cls, raw: dict[str, Any]) -> "_PendingV4":
+        """Narrow a stored v4 dict with the defaults its reader applied."""
+
+        return cls(
+            al_id=raw.get("al_id", 0),
+            series_id=raw.get("series_id", 0),
+            title=raw.get("title"),
+            coverage=raw.get("coverage"),
+            url=raw.get("url"),
+            ordered_episode_ids=list(raw.get("ordered_episode_ids", [])),
+            names=dict(raw.get("names", {})),
+            preowned_episode_ids=list(raw.get("preowned_episode_ids", [])),
+            slice_coverage=raw.get("slice_coverage"),
+            added_at=raw.get("added_at", ""),
+            release_group=raw.get("release_group", ""),
+            is_dual_audio=bool(raw.get("is_dual_audio", False)),
+            seadex_files=list(raw.get("seadex_files", [])),
+            release_sizes=list(raw.get("release_sizes", [])),
+            file_episode_map={name: list(ids) for name, ids in raw.get("file_episode_map", {}).items()},
+            episode_ids=list(raw.get("episode_ids", [])),
+            excluded_files=list(raw.get("excluded_files", [])),
+            awaiting_cleanup=bool(raw.get("awaiting_cleanup")),
+        )
+
+    def claim(self) -> dict[str, Any]:
+        """The v5 claim this row becomes: its clock, and its legacy ids folded into the ordered fallback."""
+
+        ordered = self.ordered_episode_ids or sorted(
+            {i for ids in self.file_episode_map.values() for i in ids if i} | {i for i in self.episode_ids if i}
+        )
+        return {
+            "al_id": self.al_id,
+            "series_id": self.series_id,
+            "title": self.title,
+            "coverage": self.coverage,
+            "url": self.url,
+            "ordered_episode_ids": ordered,
+            "names": EntryNames.from_json(self.names).to_json(),
+            "preowned_episode_ids": self.preowned_episode_ids,
+            "slice_coverage": self.slice_coverage,
+            "claimed_at": self.added_at,
+        }
+
+
+def _fold_v4_rows(infohash: str, rows: Sequence[_PendingV4]) -> dict[str, Any]:
+    """One torrent's v4 rows (`al_id` order) as the v5 record: the first row's facts, the maps unioned."""
+
+    first = rows[0]
+    if any(row.release_group != first.release_group or row.is_dual_audio != first.is_dual_audio for row in rows):
+        _LOG.debug(f"pending records of {infohash} disagree on their release; keeping entry {first.al_id}'s")
+    stamps = [moment for row in rows if (moment := parse_stamp_or_none(row.added_at)) is not None]
+    file_episode_map: dict[str, list[int]] = {}
+    for row in rows:
+        for name, ids in row.file_episode_map.items():
+            file_episode_map.setdefault(name, ids)
+    excluded = dict.fromkeys(name for row in rows for name in row.excluded_files if name not in file_episode_map)
+    return {
+        "infohash": infohash,
+        "release_group": first.release_group,
+        "is_dual_audio": first.is_dual_audio,
+        "seadex_files": first.seadex_files,
+        "added_at": min(stamps).strftime(UPDATED_AT_STR_FORMAT) if stamps else "",
+        "file_episode_map": file_episode_map,
+        "claims": [row.claim() for row in rows],
+        "excluded_files": list(excluded),
+        "release_sizes": first.release_sizes,
+        "awaiting_cleanup": all(row.awaiting_cleanup for row in rows),
+    }
+
+
+def _migrate_4_to_5(conn: sqlite3.Connection) -> None:
+    """Fold the per-entry `pending_imports` rows into one record per torrent, each old row a claim."""
+
+    if not _has_column(conn, "pending_imports", "al_id"):
+        return
+    grouped: dict[tuple[str, str], list[_PendingV4]] = {}
+    for arr, infohash, rec_json in conn.execute(
+        "SELECT arr, LOWER(infohash), json(record) FROM pending_imports ORDER BY arr, LOWER(infohash), al_id",
+    ):
+        grouped.setdefault((arr, infohash), []).append(_PendingV4.from_row(json.loads(rec_json)))
+    conn.execute(
+        "CREATE TABLE pending_imports_v5 ("
+        "arr TEXT NOT NULL, infohash TEXT NOT NULL, record BLOB NOT NULL, "
+        "PRIMARY KEY (arr, infohash))",
+    )
+    conn.executemany(
+        "INSERT INTO pending_imports_v5 (arr, infohash, record) VALUES (?, ?, jsonb(?))",
+        [(arr, infohash, json.dumps(_fold_v4_rows(infohash, rows))) for (arr, infohash), rows in grouped.items()],
+    )
+    conn.execute("DROP TABLE pending_imports")
+    conn.execute("ALTER TABLE pending_imports_v5 RENAME TO pending_imports")
+
+
 _MIGRATIONS: dict[int, Callable[[sqlite3.Connection], None]] = {
     0: _migrate_0_to_1,
     1: _migrate_1_to_2,
     2: _migrate_2_to_3,
     3: _migrate_3_to_4,
+    4: _migrate_4_to_5,
 }
 
 
@@ -294,7 +388,7 @@ class _JsonBlock(NamedTuple):
 
 _ANILIST_META = _JsonBlock("anilist_meta", ("al_id",))
 _SONARR_PARSE = _JsonBlock("sonarr_parse", ("filename",))
-_PENDING_IMPORTS = _JsonBlock("pending_imports", ("arr", "infohash", "al_id"))
+_PENDING_IMPORTS = _JsonBlock("pending_imports", ("arr", "infohash"))
 _GUARD_FACTS = _JsonBlock("guard_facts", ("arr", "al_id"))
 
 
@@ -362,19 +456,19 @@ class AbstractCacheStore(ABC):
     @abstractmethod
     def evict_sonarr_parse(self, cutoff: datetime) -> int: ...
     @abstractmethod
-    def get_pending(self, arr: Arr) -> dict[PendingKey, dict[str, Any]]: ...
+    def get_pending(self, arr: Arr) -> dict[str, dict[str, Any]]: ...
     @abstractmethod
-    def get_pending_for_series(self, arr: Arr, series_id: int) -> dict[PendingKey, dict[str, Any]]: ...
+    def get_pending_record(self, arr: Arr, infohash: str) -> dict[str, Any] | None: ...
     @abstractmethod
-    def put_pending(self, arr: Arr, key: PendingKey, record: dict[str, Any]) -> None: ...
+    def get_pending_for_series(self, arr: Arr, series_id: int) -> dict[str, dict[str, Any]]: ...
     @abstractmethod
-    def has_pending(self, arr: Arr, key: PendingKey) -> bool: ...
+    def put_pending(self, arr: Arr, infohash: str, record: dict[str, Any]) -> None: ...
     @abstractmethod
-    def drop_pending(self, arr: Arr, key: PendingKey) -> None: ...
+    def has_pending(self, arr: Arr, infohash: str) -> bool: ...
     @abstractmethod
-    def count_arr_siblings(self, arr: Arr, key: PendingKey) -> int: ...
+    def drop_pending(self, arr: Arr, infohash: str) -> None: ...
     @abstractmethod
-    def count_siblings_any_arr(self, arr: Arr, key: PendingKey) -> int: ...
+    def other_arr_holds(self, arr: Arr, infohash: str) -> bool: ...
     @abstractmethod
     def put_guards(self, arr: Arr, al_id: int, guards: GuardFacts) -> None: ...
     @abstractmethod
@@ -629,13 +723,10 @@ class CacheStore(AbstractCacheStore):
             (*key, json.dumps(record)),
         )
 
-    def _pending_rows(self, sql: str, params: tuple[int | str, ...]) -> dict[PendingKey, dict[str, Any]]:
-        """Deserialize a `SELECT infohash, al_id, json(record)` pending-imports query, keyed per record."""
+    def _pending_rows(self, sql: str, params: tuple[int | str, ...]) -> dict[str, dict[str, Any]]:
+        """Deserialize a `SELECT infohash, json(record)` pending-imports query, keyed by infohash."""
 
-        out: dict[PendingKey, dict[str, Any]] = {}
-        for infohash, al_id, rec_json in self._conn.execute(sql, params):
-            out[PendingKey(infohash, al_id)] = json.loads(rec_json)
-        return out
+        return {infohash: json.loads(rec_json) for infohash, rec_json in self._conn.execute(sql, params)}
 
     def _evict_stale_json(self, block: _JsonBlock, cutoff: datetime) -> int:
         """Delete records older than `cutoff` (or stamp-less, which is otherwise un-evictable). Count deleted."""
@@ -686,75 +777,61 @@ class CacheStore(AbstractCacheStore):
     # -- pending imports -----------------------------------------------------
 
     @override
-    def get_pending(self, arr: Arr) -> dict[PendingKey, dict[str, Any]]:
-        """All pending-import records for an arr, keyed per record (snapshot)."""
+    def get_pending(self, arr: Arr) -> dict[str, dict[str, Any]]:
+        """All pending-import records for an arr, keyed by infohash (snapshot)."""
 
         return self._pending_rows(
-            "SELECT infohash, al_id, json(record) FROM pending_imports WHERE arr = ?",
+            "SELECT infohash, json(record) FROM pending_imports WHERE arr = ?",
             (_arr_key(arr),),
         )
 
     @override
-    def get_pending_for_series(self, arr: Arr, series_id: int) -> dict[PendingKey, dict[str, Any]]:
-        """Pending-import records for one Sonarr `series_id` (a record without one yields NULL, excluded)."""
+    def get_pending_record(self, arr: Arr, infohash: str) -> dict[str, Any] | None:
+        """One torrent's stored record, or None."""
+
+        return self._json_get(_PENDING_IMPORTS, (_arr_key(arr), infohash))
+
+    @override
+    def get_pending_for_series(self, arr: Arr, series_id: int) -> dict[str, dict[str, Any]]:
+        """The records with a claim on one Sonarr `series_id`, keyed by infohash."""
 
         return self._pending_rows(
-            "SELECT infohash, al_id, json(record) FROM pending_imports WHERE arr = ? AND record ->> 'series_id' = ?",
+            "SELECT infohash, json(record) FROM pending_imports WHERE arr = ? AND EXISTS ("
+            "SELECT 1 FROM json_each(record, '$.claims') WHERE value ->> 'series_id' = ?)",
             (_arr_key(arr), series_id),
         )
 
     @override
-    def put_pending(self, arr: Arr, key: PendingKey, record: dict[str, Any]) -> None:
-        """Upsert one record under its `PendingKey` (staged, persisted at a save point)."""
+    def put_pending(self, arr: Arr, infohash: str, record: dict[str, Any]) -> None:
+        """Upsert one torrent's record (staged, persisted at a save point)."""
 
-        self._json_put(_PENDING_IMPORTS, (_arr_key(arr), key.infohash, key.al_id), record)
+        self._json_put(_PENDING_IMPORTS, (_arr_key(arr), infohash), record)
 
     @override
-    def has_pending(self, arr: Arr, key: PendingKey) -> bool:
-        """Whether ONE pending record exists under its `PendingKey` (a keyed EXISTS, never a scan)."""
+    def has_pending(self, arr: Arr, infohash: str) -> bool:
+        """Whether the arr holds a record on the torrent (a keyed EXISTS, never a scan)."""
 
         row = self._conn.execute(
-            "SELECT 1 FROM pending_imports WHERE arr = ? AND infohash = ? AND al_id = ? LIMIT 1",
-            (_arr_key(arr), key.infohash, key.al_id),
+            "SELECT 1 FROM pending_imports WHERE arr = ? AND infohash = ? LIMIT 1",
+            (_arr_key(arr), infohash),
         ).fetchone()
         return row is not None
 
     @override
-    def drop_pending(self, arr: Arr, key: PendingKey) -> None:
-        """Delete ONE pending record, never its siblings on the same torrent."""
+    def drop_pending(self, arr: Arr, infohash: str) -> None:
+        """Delete one torrent's record."""
 
-        self._conn.execute(
-            "DELETE FROM pending_imports WHERE arr = ? AND infohash = ? AND al_id = ?",
-            (_arr_key(arr), key.infohash, key.al_id),
-        )
+        self._conn.execute("DELETE FROM pending_imports WHERE arr = ? AND infohash = ?", (_arr_key(arr), infohash))
 
     @override
-    def count_arr_siblings(self, arr: Arr, key: PendingKey) -> int:
-        """How many OTHER records of `arr` claim `key`'s torrent.
-
-        The infohash match is case-folded, the exclusion of `key` byte-exact.
-        """
+    def other_arr_holds(self, arr: Arr, infohash: str) -> bool:
+        """Whether the OTHER arr holds a record on the torrent (case-folded match)."""
 
         row = self._conn.execute(
-            "SELECT count(*) FROM pending_imports "
-            "WHERE arr = ? AND LOWER(infohash) = LOWER(?) AND NOT (infohash = ? AND al_id = ?)",
-            (_arr_key(arr), key.infohash, key.infohash, key.al_id),
+            "SELECT 1 FROM pending_imports WHERE arr != ? AND LOWER(infohash) = LOWER(?) LIMIT 1",
+            (_arr_key(arr), infohash),
         ).fetchone()
-        return int(row[0]) if row else 0
-
-    @override
-    def count_siblings_any_arr(self, arr: Arr, key: PendingKey) -> int:
-        """How many records of EITHER arr claim `key`'s torrent, `arr` qualifying only the excluded record.
-
-        The infohash match is case-folded, the exclusion of `(arr, key)` byte-exact.
-        """
-
-        row = self._conn.execute(
-            "SELECT count(*) FROM pending_imports "
-            "WHERE LOWER(infohash) = LOWER(?) AND NOT (arr = ? AND infohash = ? AND al_id = ?)",
-            (key.infohash, _arr_key(arr), key.infohash, key.al_id),
-        ).fetchone()
-        return int(row[0]) if row else 0
+        return row is not None
 
     @override
     def put_guards(self, arr: Arr, al_id: int, guards: GuardFacts) -> None:
@@ -769,8 +846,8 @@ class CacheStore(AbstractCacheStore):
         return {
             al_id: GuardFacts.from_json(json.loads(rec_json))
             for al_id, rec_json in self._conn.execute(
-                "SELECT al_id, json(record) FROM guard_facts "
-                "WHERE arr = ? AND al_id IN (SELECT al_id FROM pending_imports WHERE arr = ?)",
+                "SELECT al_id, json(record) FROM guard_facts WHERE arr = ? AND al_id IN ("
+                "SELECT e.value ->> 'al_id' FROM pending_imports p, json_each(p.record, '$.claims') e WHERE p.arr = ?)",
                 (_arr_key(arr), _arr_key(arr)),
             )
         }

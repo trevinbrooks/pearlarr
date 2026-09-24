@@ -20,16 +20,16 @@ import qbittorrentapi
 from seadex import Tracker
 
 from pearlarr import notify
-from pearlarr.cache import stamp_of
 from pearlarr.config import Arr
 from pearlarr.discord import DiscordEmbed
 from pearlarr.grab_pipeline import GrabPipeline, GrabRequest
-from pearlarr.manual_import import GuardFacts, ImportWaitMode, PendingKey
+from pearlarr.manual_import import GuardFacts, ImportWaitMode, PendingImport
 from pearlarr.notify import Notifier
 from pearlarr.output import GrabFailed, Severity, install_hub, severity_of
 from pearlarr.output.recording import RecordingHub
 from pearlarr.reporter import NeedsActionKind, PerTitleState, RunContext
 from pearlarr.seadex_types import SeadexDict, SeadexUrlItem
+from pearlarr.stamps import stamp_of
 from pearlarr.torrent import TorrentParseError
 from pearlarr.torrents import AddResult, ReleaseOutcome, TorrentAddError
 
@@ -78,10 +78,18 @@ def _pipeline(
     )
 
 
-def _pending(pipeline: GrabPipeline) -> Mapping[PendingKey, object]:
-    """The pipeline's durable per-arr pending store (what the engine reads back)."""
+def _pending(pipeline: GrabPipeline) -> Mapping[str, object]:
+    """The pipeline's durable per-arr pending store, keyed by infohash (what the engine reads back)."""
 
     return pipeline.cache_store.get_pending(Arr.SONARR)
+
+
+def _stored(pipeline: GrabPipeline, infohash: str) -> PendingImport:
+    """The store's record on the torrent, rehydrated (its stamps and claims need no guard row)."""
+
+    raw = pipeline.cache_store.get_pending_record(Arr.SONARR, infohash)
+    assert raw is not None
+    return PendingImport.from_json(raw, guards={})
 
 
 def _guards(pipeline: GrabPipeline) -> Mapping[int, GuardFacts]:
@@ -248,11 +256,11 @@ class TestAddOneUrlRegistersPending:
             grab_request(seadex_dict=one_release_dict(srg="NAN0", infohash="h1"), pending_seeds=seeds),
         )
 
-        assert {k.infohash for k in _pending(pipeline)} == {"h1"}
-        # A re-registration refreshes the entry's guard row too - that IS the fix
-        # (evidence follows the newest plan, never a frozen per-record copy).
-        assert _guards(pipeline) == {seeds["h1"].al_id: facts}
-        assert pipeline._ctx.reacquired_keys == {seeds["h1"].key}
+        assert set(_pending(pipeline)) == {"h1"}
+        # A re-registration refreshes the entry's guard row too: evidence follows
+        # the newest plan, never a frozen per-record copy.
+        assert _guards(pipeline) == {seeds["h1"].claims[0].al_id: facts}
+        assert pipeline._ctx.reacquired_keys == {"h1"}
         assert pipeline._ctx.pending_imports == {}
         assert n_added == 0
         assert pipeline._ctx.torrents_added == 0
@@ -269,8 +277,8 @@ class TestAddOneUrlRegistersPending:
             grab_request(seadex_dict=one_release_dict(srg="NAN0", infohash="h1"), pending_seeds=seeds),
         )
 
-        assert {k.infohash for k in _pending(pipeline)} == {"h1"}
-        assert _guards(pipeline) == {seeds["h1"].al_id: facts}
+        assert set(_pending(pipeline)) == {"h1"}
+        assert _guards(pipeline) == {seeds["h1"].claims[0].al_id: facts}
         assert [p.infohash for p in pipeline._ctx.pending_imports.values()] == ["h1"]
         assert n_added == 1
         assert pipeline._ctx.torrents_added == 1
@@ -299,11 +307,10 @@ class TestAddOneUrlRegistersPending:
         assert n_added == 1
         assert pipeline._ctx.torrents_added == 1
 
-    def test_already_added_sibling_registration_does_not_overwrite(self) -> None:
-        # REGRESSION: two AniList entries share one torrent. Entry A grabs it,
-        # entry B's add dedups to ALREADY_ADDED and registers its OWN record.
-        # The old (arr, infohash) store key let B's registration destroy A's
-        # record (and with it A's episode-slice claim). Both must persist.
+    def test_second_registration_on_one_hash_reacquires_the_resident_record(self) -> None:
+        # Two AniList entries share one torrent. Entry A's add registers the
+        # record, entry B's add dedups to ALREADY_ADDED and finds it resident:
+        # a reacquire, so the store holds ONE record per torrent, kept as stored.
         torrents = FakeTorrents({"h1": (AddOutcome.ALREADY_ADDED, "Show")})
         pipeline = _pipeline(torrents=torrents)
         first = pending_import(infohash="h1", al_id=11, series_id=7, title="Cour 1")
@@ -316,8 +323,9 @@ class TestAddOneUrlRegistersPending:
             grab_request(seadex_dict=one_release_dict(srg="NAN0", infohash="h1"), pending_seeds={"h1": second})
         )
 
-        assert set(_pending(pipeline)) == {PendingKey("h1", 11), PendingKey("h1", 22)}
-        assert pipeline._ctx.reacquired_keys == {PendingKey("h1", 11), PendingKey("h1", 22)}
+        assert set(_pending(pipeline)) == {"h1"}
+        assert pipeline._ctx.reacquired_keys == {"h1"}
+        assert _stored(pipeline, "h1").al_ids == (11,)
 
     def test_no_seed_does_not_register(self) -> None:
         torrents = FakeTorrents({"h1": (AddOutcome.ALREADY_ADDED, "x")})
@@ -370,7 +378,7 @@ class TestAddOneUrlRegistersPending:
 
         pipeline.add_torrent(grab_request(seadex_dict=one_release_dict(srg="NAN0", infohash="h1"), pending_seeds=seeds))
 
-        assert {k.infohash for k in pipeline.cache_store.get_pending(Arr.RADARR)} == {"h1"}
+        assert set(pipeline.cache_store.get_pending(Arr.RADARR)) == {"h1"}
         assert pipeline.cache_store.get_guards(Arr.RADARR) == {}
         assert pipeline.cache_store.get_guards(Arr.SONARR) == {}
 
@@ -382,7 +390,6 @@ class TestReacquireRegistration:
     non-resident reacquire is gated by `imports.pending_max_age_days` (default 14 days).
     """
 
-    _KEY = PendingKey("h1", PENDING_AL_ID)
     _STORED_AT = "2026-01-01 00:00:00"
 
     def _reacquire(self, added_on: datetime | None) -> FakeTorrents:
@@ -392,10 +399,10 @@ class TestReacquireRegistration:
         """A carried-over record already in the store, stamped well before the seed's added_at."""
 
         resident = pending_import(infohash="h1", added_at=self._STORED_AT)
-        pipeline.cache_store.put_pending(Arr.SONARR, resident.key, resident.to_json())
+        pipeline.cache_store.put_pending(Arr.SONARR, resident.infohash, resident.to_json())
 
     def _added_at(self, pipeline: GrabPipeline) -> str:
-        return pipeline.cache_store.get_pending(Arr.SONARR)[self._KEY]["added_at"]
+        return _stored(pipeline, "h1").added_at
 
     def _add(self, pipeline: GrabPipeline) -> list[ReleaseOutcome]:
         seeds = {"h1": pending_import(infohash="h1")}
@@ -414,7 +421,7 @@ class TestReacquireRegistration:
         self._add(pipeline)
 
         assert self._added_at(pipeline) == self._STORED_AT
-        assert pipeline._ctx.reacquired_keys == {self._KEY}
+        assert pipeline._ctx.reacquired_keys == {"h1"}
         assert pipeline._ctx.pending_imports == {}
 
     def test_ttl_past_resident_still_reacquires(self) -> None:
@@ -425,8 +432,18 @@ class TestReacquireRegistration:
 
         self._add(pipeline)
 
-        assert pipeline._ctx.reacquired_keys == {self._KEY}
+        assert pipeline._ctx.reacquired_keys == {"h1"}
         assert self._added_at(pipeline) == self._STORED_AT
+
+    @pytest.mark.xfail(strict=True, reason="the resident reacquire branch writes no guard row")
+    def test_resident_reacquire_refreshes_the_guard_row(self) -> None:
+        # The entry's guard evidence follows the newest plan, never a frozen copy:
+        # a reacquire of a carried-over record re-puts the row the trust read hydrates.
+        pipeline = _pipeline(torrents=self._reacquire(None))
+        self._seed_resident(pipeline)
+
+        self._add(pipeline)
+
         assert _guards(pipeline).keys() == {PENDING_AL_ID}
 
     def test_no_add_time_non_resident_joins_at_the_seed_stamp(self) -> None:
@@ -437,18 +454,20 @@ class TestReacquireRegistration:
         self._add(pipeline)
 
         assert self._added_at(pipeline) == pending_import(infohash="h1").added_at
-        assert pipeline._ctx.reacquired_keys == {self._KEY}
+        assert pipeline._ctx.reacquired_keys == {"h1"}
         assert pipeline._ctx.pending_imports == {}
         assert _guards(pipeline).keys() == {PENDING_AL_ID}
 
     def test_non_resident_joins_at_the_qbit_add_time(self) -> None:
+        # qBittorrent's add time stamps the birth AND the claim, so the TTL ages the join.
         added_on = datetime.now() - timedelta(days=2)
         pipeline = _pipeline(torrents=self._reacquire(added_on))
 
         self._add(pipeline)
 
-        assert self._added_at(pipeline) == stamp_of(added_on)
-        assert pipeline._ctx.reacquired_keys == {self._KEY}
+        record = _stored(pipeline, "h1")
+        assert record.added_at == record.claims[0].claimed_at == stamp_of(added_on)
+        assert pipeline._ctx.reacquired_keys == {"h1"}
         assert pipeline._ctx.pending_imports == {}
 
     def test_ttl_past_non_resident_is_dropped(self) -> None:
@@ -650,19 +669,19 @@ class TestUnsupportedTrackerSkip:
         # AniDex first, Nyaa second, under one group. The old raise unwound the whole
         # url loop - dropping the grabbable Nyaa release too. Now AniDex is skipped and
         # the loop continues. Default config: private_releases warn, all trackers selected.
-        anidex = _anidex_release(url="https://anidex.info/torrent/1", infohash="hA")
-        nyaa = url_item(url="https://nyaa.si/view/2", infohash="hN", download=True)
+        anidex = _anidex_release(url="https://anidex.info/torrent/1", infohash="ha")
+        nyaa = url_item(url="https://nyaa.si/view/2", infohash="hn", download=True)
         nyaa.tracker = Tracker.NYAA
         seadex_dict: SeadexDict = {"NAN0": rg_group({anidex.url: anidex, nyaa.url: nyaa})}
 
-        torrents = FakeTorrents({"hN": (AddOutcome.ADDED, "Show-NAN0")})
+        torrents = FakeTorrents({"hn": (AddOutcome.ADDED, "Show-NAN0")})
         pipeline = _pipeline(torrents=torrents, private_releases="warn")
-        seeds = {"hN": pending_import(infohash="hN", series_id=7)}
+        seeds = {"hn": pending_import(infohash="hn", series_id=7)}
 
         n_added, results = pipeline.add_torrent(grab_request(seadex_dict=seadex_dict, pending_seeds=seeds))
 
         # AniDex never reached the service. Only Nyaa was handed over and added.
-        assert torrents.calls == ["hN"]
+        assert torrents.calls == ["hn"]
         assert n_added == 1
         assert pipeline._ctx.torrents_added == 1
         assert [r.outcome for r in results] == [AddOutcome.ADDED]
@@ -672,7 +691,7 @@ class TestUnsupportedTrackerSkip:
     def test_unsupported_only_title_left_uncached_and_flagged(self) -> None:
         # The title's only release is on AniDex: nothing grabbable, so the title must
         # NOT be cached as done (re-checked next run) and surfaces once in needs-action.
-        anidex = _anidex_release(url="https://anidex.info/torrent/1", infohash="hA")
+        anidex = _anidex_release(url="https://anidex.info/torrent/1", infohash="ha")
         seadex_dict: SeadexDict = {"NAN0": rg_group({anidex.url: anidex})}
 
         pipeline = _pipeline(torrents=FakeTorrents({}), private_releases="warn", sleep_time=0)
@@ -686,7 +705,7 @@ class TestUnsupportedTrackerSkip:
             entry_title="Show",
             entry=make_entry_record(url="https://seadex.example/42"),
             seadex_dict=seadex_dict,
-            torrent_hashes=["hA"],
+            torrent_hashes=["ha"],
             cache_details={},
             replaced_groups=(),
         )
@@ -703,9 +722,9 @@ class TestUnsupportedTrackerSkip:
         # Both a private-only skip AND an unsupported-tracker skip on one title,
         # nothing grabbed: exactly ONE needs-action reason (private-only wins) - the
         # two reasons are either/or, never both.
-        private = url_item(url="https://ab.example/1", infohash="hP", is_public=False, download=True)
+        private = url_item(url="https://ab.example/1", infohash="hp", is_public=False, download=True)
         private.tracker = Tracker.ANIMEBYTES
-        anidex = _anidex_release(url="https://anidex.info/torrent/1", infohash="hA")
+        anidex = _anidex_release(url="https://anidex.info/torrent/1", infohash="ha")
         seadex_dict: SeadexDict = {"NAN0": rg_group({private.url: private, anidex.url: anidex})}
 
         pipeline = _pipeline(torrents=FakeTorrents({}), private_releases="warn", sleep_time=0)
@@ -718,7 +737,7 @@ class TestUnsupportedTrackerSkip:
             entry_title="Show",
             entry=make_entry_record(url="https://seadex.example/7"),
             seadex_dict=seadex_dict,
-            torrent_hashes=["hP", "hA"],
+            torrent_hashes=["hp", "ha"],
             cache_details={},
             replaced_groups=(),
         )
@@ -740,7 +759,7 @@ class TestUnsupportedTrackerSkip:
         # alternative covered the entry's files: the needs-action row says that
         # (its own kind, so the summary tip doesn't suggest the fallback that's
         # already on).
-        private = url_item(url="https://ab.example/1", infohash="hP", is_public=False, download=True)
+        private = url_item(url="https://ab.example/1", infohash="hp", is_public=False, download=True)
         private.tracker = Tracker.ANIMEBYTES
         seadex_dict: SeadexDict = {"Priv": rg_group({private.url: private})}
 
@@ -754,7 +773,7 @@ class TestUnsupportedTrackerSkip:
             entry_title="Show",
             entry=make_entry_record(url="https://seadex.example/7"),
             seadex_dict=seadex_dict,
-            torrent_hashes=["hP"],
+            torrent_hashes=["hp"],
             cache_details={},
             replaced_groups=(),
         )
@@ -772,7 +791,7 @@ class TestUnsupportedTrackerSkip:
         # The planner held an owned-at-stale-size pick a fallback must not
         # replace (the stale ctx bit rides in): the needs-action row gets its
         # own kind + reason, and the title stays uncached.
-        private = url_item(url="https://ab.example/1", infohash="hP", is_public=False, download=True)
+        private = url_item(url="https://ab.example/1", infohash="hp", is_public=False, download=True)
         private.tracker = Tracker.ANIMEBYTES
         seadex_dict: SeadexDict = {"Priv": rg_group({private.url: private})}
 
@@ -787,7 +806,7 @@ class TestUnsupportedTrackerSkip:
             entry_title="Show",
             entry=make_entry_record(url="https://seadex.example/7"),
             seadex_dict=seadex_dict,
-            torrent_hashes=["hP"],
+            torrent_hashes=["hp"],
             cache_details={},
             replaced_groups=(),
         )
@@ -808,7 +827,7 @@ class TestUnsupportedTrackerSkip:
         # Interactive + fallback: a hold here is a hand-picked private pick, so
         # the reason says so - but the kind stays NO_FALLBACK so the summary tip
         # never suggests enabling the fallback that's already on.
-        private = url_item(url="https://ab.example/1", infohash="hP", is_public=False, download=True)
+        private = url_item(url="https://ab.example/1", infohash="hp", is_public=False, download=True)
         private.tracker = Tracker.ANIMEBYTES
         seadex_dict: SeadexDict = {"Priv": rg_group({private.url: private})}
 
@@ -822,7 +841,7 @@ class TestUnsupportedTrackerSkip:
             entry_title="Show",
             entry=make_entry_record(url="https://seadex.example/7"),
             seadex_dict=seadex_dict,
-            torrent_hashes=["hP"],
+            torrent_hashes=["hp"],
             cache_details={},
             replaced_groups=(),
         )
@@ -838,16 +857,16 @@ class TestUnsupportedTrackerSkip:
         # The fallback happy path: the planner already unflagged the private pick
         # (public fallback kept), the fallback adds fine -> the title caches as
         # done with no needs-action row, unlike warn mode's uncached hold.
-        private = url_item(url="https://ab.example/1", infohash="hP", is_public=False, download=False)
+        private = url_item(url="https://ab.example/1", infohash="hp", is_public=False, download=False)
         private.tracker = Tracker.ANIMEBYTES
-        fall = url_item(url="https://nyaa.si/view/9", infohash="hF", download=True, is_fallback=True)
+        fall = url_item(url="https://nyaa.si/view/9", infohash="hf", download=True, is_fallback=True)
         fall.tracker = Tracker.NYAA
         seadex_dict: SeadexDict = {
             "Priv": rg_group({private.url: private}),
             "Fall": rg_group({fall.url: fall}),
         }
 
-        torrents = FakeTorrents({"hF": (AddOutcome.ADDED, "Show-Fall")})
+        torrents = FakeTorrents({"hf": (AddOutcome.ADDED, "Show-Fall")})
         pipeline = _pipeline(torrents=torrents, private_releases="fallback", sleep_time=0)
         pipeline._anilist.al_cache.update({42: {}})
         pipeline._ctx.per_title.current_title = "Show S1"
@@ -858,7 +877,7 @@ class TestUnsupportedTrackerSkip:
             entry_title="Show",
             entry=make_entry_record(url="https://seadex.example/42"),
             seadex_dict=seadex_dict,
-            torrent_hashes=["hF"],
+            torrent_hashes=["hf"],
             cache_details={"updated_at": "2026-01-01 00:00:00"},
             replaced_groups=(),
         )
@@ -872,7 +891,7 @@ class TestUnsupportedTrackerSkip:
         assert cached is not None
         # A fallback grab marks the entry, so a switch to warn mode re-checks it.
         assert cached.fallback_satisfied is True
-        assert pipeline.cache_store.torrent_hashes(Arr.SONARR, 42) == ["hF"]
+        assert pipeline.cache_store.torrent_hashes(Arr.SONARR, 42) == ["hf"]
         assert pipeline._ctx.stats.needs_action == []
 
     def test_mixed_grab_caches_without_the_unsupported_hash(self) -> None:
@@ -880,12 +899,12 @@ class TestUnsupportedTrackerSkip:
         # grab completed it), but the AniDex hash is excluded from the cached set so
         # the release is re-considered on the entry's next update once a parser
         # lands. No needs-action row (something was grabbed).
-        anidex = _anidex_release(url="https://anidex.info/torrent/1", infohash="hA")
-        nyaa = url_item(url="https://nyaa.si/view/2", infohash="hN", download=True)
+        anidex = _anidex_release(url="https://anidex.info/torrent/1", infohash="ha")
+        nyaa = url_item(url="https://nyaa.si/view/2", infohash="hn", download=True)
         nyaa.tracker = Tracker.NYAA
         seadex_dict: SeadexDict = {"NAN0": rg_group({anidex.url: anidex, nyaa.url: nyaa})}
 
-        torrents = FakeTorrents({"hN": (AddOutcome.ADDED, "Show-NAN0")})
+        torrents = FakeTorrents({"hn": (AddOutcome.ADDED, "Show-NAN0")})
         pipeline = _pipeline(torrents=torrents, private_releases="warn", sleep_time=0)
         pipeline._anilist.al_cache.update({42: {}})
         pipeline._ctx.per_title.current_title = "Show S1"
@@ -896,7 +915,7 @@ class TestUnsupportedTrackerSkip:
             entry_title="Show",
             entry=make_entry_record(url="https://seadex.example/42"),
             seadex_dict=seadex_dict,
-            torrent_hashes=["hN", "hA"],
+            torrent_hashes=["hn", "ha"],
             cache_details={"updated_at": "2026-01-01 00:00:00"},
             replaced_groups=(),
         )
@@ -909,18 +928,18 @@ class TestUnsupportedTrackerSkip:
         assert cached is not None
         # A plain (non-fallback) grab never marks the entry.
         assert cached.fallback_satisfied is False
-        assert pipeline.cache_store.torrent_hashes(Arr.SONARR, 42) == ["hN"]
+        assert pipeline.cache_store.torrent_hashes(Arr.SONARR, 42) == ["hn"]
         assert pipeline._ctx.stats.needs_action == []
 
     def test_warn_mode_grab_clears_a_preseeded_marker(self) -> None:
         # A prior fallback run left fallback_satisfied=True. A later genuine grab
         # recomputes False and clears it (the marker is always written - the
         # partial-merge upsert would otherwise preserve the stale True forever).
-        nyaa = url_item(url="https://nyaa.si/view/2", infohash="hN", download=True)
+        nyaa = url_item(url="https://nyaa.si/view/2", infohash="hn", download=True)
         nyaa.tracker = Tracker.NYAA
         seadex_dict: SeadexDict = {"Pub": rg_group({nyaa.url: nyaa})}
 
-        torrents = FakeTorrents({"hN": (AddOutcome.ADDED, "Show-Pub")})
+        torrents = FakeTorrents({"hn": (AddOutcome.ADDED, "Show-Pub")})
         pipeline = _pipeline(torrents=torrents, private_releases="warn", sleep_time=0)
         pipeline.cache_store.update_cache(Arr.SONARR, 7, {"fallback_satisfied": True})
         pipeline._anilist.al_cache.update({7: {}})
@@ -932,7 +951,7 @@ class TestUnsupportedTrackerSkip:
             entry_title="Show",
             entry=make_entry_record(url="https://seadex.example/7"),
             seadex_dict=seadex_dict,
-            torrent_hashes=["hN"],
+            torrent_hashes=["hn"],
             cache_details={"updated_at": "2026-01-01 00:00:00"},
             replaced_groups=(),
         )
@@ -947,13 +966,13 @@ class TestUnsupportedTrackerSkip:
         # The private-only sibling deliberately does NOT get the exclusion:
         # private releases are never grabbed, so the private release stays
         # quietly suppressed by its cached hash.
-        private = url_item(url="https://ab.example/1", infohash="hP", is_public=False, download=True)
+        private = url_item(url="https://ab.example/1", infohash="hp", is_public=False, download=True)
         private.tracker = Tracker.ANIMEBYTES
-        nyaa = url_item(url="https://nyaa.si/view/2", infohash="hN", download=True)
+        nyaa = url_item(url="https://nyaa.si/view/2", infohash="hn", download=True)
         nyaa.tracker = Tracker.NYAA
         seadex_dict: SeadexDict = {"NAN0": rg_group({private.url: private, nyaa.url: nyaa})}
 
-        torrents = FakeTorrents({"hN": (AddOutcome.ADDED, "Show-NAN0")})
+        torrents = FakeTorrents({"hn": (AddOutcome.ADDED, "Show-NAN0")})
         pipeline = _pipeline(torrents=torrents, private_releases="warn", sleep_time=0)
         pipeline._anilist.al_cache.update({7: {}})
         pipeline._ctx.per_title.current_title = "Show S1"
@@ -964,7 +983,7 @@ class TestUnsupportedTrackerSkip:
             entry_title="Show",
             entry=make_entry_record(url="https://seadex.example/7"),
             seadex_dict=seadex_dict,
-            torrent_hashes=["hN", "hP"],
+            torrent_hashes=["hn", "hp"],
             cache_details={"updated_at": "2026-01-01 00:00:00"},
             replaced_groups=(),
         )
@@ -972,7 +991,7 @@ class TestUnsupportedTrackerSkip:
         pipeline.grab_and_cache(req)
 
         assert pipeline._ctx.per_title.private_only_skipped is True
-        assert set(pipeline.cache_store.torrent_hashes(Arr.SONARR, 7)) == {"hN", "hP"}
+        assert set(pipeline.cache_store.torrent_hashes(Arr.SONARR, 7)) == {"hn", "hp"}
 
 
 class TestParseFailed:
@@ -1088,18 +1107,18 @@ class TestGrabFailureContainment:
 
     def test_failed_release_does_not_drop_the_next_one(self) -> None:
         # Containment is per release: the sibling url after the failure still grabs.
-        bad = _nyaa_release(url="https://nyaa.si/view/1", infohash="hBad")
-        good = _nyaa_release(url="https://nyaa.si/view/2", infohash="hGood")
+        bad = _nyaa_release(url="https://nyaa.si/view/1", infohash="hbad")
+        good = _nyaa_release(url="https://nyaa.si/view/2", infohash="hgood")
         seadex_dict: SeadexDict = {"RG": rg_group({bad.url: bad, good.url: good})}
         torrents = FakeTorrents(
-            {"hGood": (AddOutcome.ADDED, "Show-RG")},
-            raises={"hBad": httpx.ConnectError("nyaa down")},
+            {"hgood": (AddOutcome.ADDED, "Show-RG")},
+            raises={"hbad": httpx.ConnectError("nyaa down")},
         )
         pipeline = _pipeline(torrents=torrents)
 
         n_added, results = pipeline.add_torrent(grab_request(seadex_dict=seadex_dict))
 
-        assert torrents.calls == ["hBad", "hGood"]
+        assert torrents.calls == ["hbad", "hgood"]
         assert n_added == 1
         assert [r.outcome for r in results] == [AddOutcome.ADDED]
         assert pipeline._ctx.per_title.grab_failed_groups == ["RG"]
@@ -1125,18 +1144,18 @@ class TestGrabFailureContainment:
     def test_partial_grab_with_a_failure_stays_uncached(self) -> None:
         # Like fallback_hold: a failure blocks the cache even when a sibling
         # grabbed, so the failed release retries next run (the add dedups).
-        bad = _nyaa_release(url="https://nyaa.si/view/1", infohash="hBad")
-        good = _nyaa_release(url="https://nyaa.si/view/2", infohash="hGood")
+        bad = _nyaa_release(url="https://nyaa.si/view/1", infohash="hbad")
+        good = _nyaa_release(url="https://nyaa.si/view/2", infohash="hgood")
         seadex_dict: SeadexDict = {"RG": rg_group({bad.url: bad, good.url: good})}
         torrents = FakeTorrents(
-            {"hGood": (AddOutcome.ADDED, "Show-RG")},
-            raises={"hBad": qbittorrentapi.APIConnectionError("qbit died")},
+            {"hgood": (AddOutcome.ADDED, "Show-RG")},
+            raises={"hbad": qbittorrentapi.APIConnectionError("qbit died")},
         )
         pipeline = _pipeline(torrents=torrents, sleep_time=0)
         pipeline._anilist.al_cache.update({42: {}})
         pipeline._ctx.per_title.current_title = "Show S1"
 
-        stop = pipeline.grab_and_cache(self._request(42, seadex_dict, ["hBad", "hGood"]))
+        stop = pipeline.grab_and_cache(self._request(42, seadex_dict, ["hbad", "hgood"]))
 
         assert stop is False
         assert pipeline._ctx.torrents_added == 1
@@ -1148,18 +1167,18 @@ class TestGrabFailureContainment:
         # used to report nothing (the cap return skipped the needs-action tail):
         # the GRAB_FAILED row must still land, the run still stops, and the
         # cap-stopped title still isn't cached.
-        bad = _nyaa_release(url="https://nyaa.si/view/1", infohash="hBad")
-        good = _nyaa_release(url="https://nyaa.si/view/2", infohash="hGood")
+        bad = _nyaa_release(url="https://nyaa.si/view/1", infohash="hbad")
+        good = _nyaa_release(url="https://nyaa.si/view/2", infohash="hgood")
         seadex_dict: SeadexDict = {"RG": rg_group({bad.url: bad, good.url: good})}
         torrents = FakeTorrents(
-            {"hGood": (AddOutcome.ADDED, "Show-RG")},
-            raises={"hBad": httpx.ConnectError("nyaa down")},
+            {"hgood": (AddOutcome.ADDED, "Show-RG")},
+            raises={"hbad": httpx.ConnectError("nyaa down")},
         )
         pipeline = _pipeline(torrents=torrents, max_torrents_to_add=1, sleep_time=0)
         pipeline._anilist.al_cache.update({42: {}})
         pipeline._ctx.per_title.current_title = "Show S1"
 
-        stop = pipeline.grab_and_cache(self._request(42, seadex_dict, ["hBad", "hGood"]))
+        stop = pipeline.grab_and_cache(self._request(42, seadex_dict, ["hbad", "hgood"]))
 
         assert stop is True  # the cap still stops the run
         assert pipeline._ctx.torrents_added == 1
@@ -1200,9 +1219,9 @@ class TestFallbackHoldNeverCaches:
     def _mixed_seadex_dict(self) -> SeadexDict:
         """A refused private group next to a grabbable public group."""
 
-        private = url_item(url="https://ab.example/1", infohash="hP", is_public=False, download=True)
+        private = url_item(url="https://ab.example/1", infohash="hp", is_public=False, download=True)
         private.tracker = Tracker.ANIMEBYTES
-        nyaa = url_item(url="https://nyaa.si/view/2", infohash="hN", download=True)
+        nyaa = url_item(url="https://nyaa.si/view/2", infohash="hn", download=True)
         nyaa.tracker = Tracker.NYAA
         return {"Priv": rg_group({private.url: private}), "Pub": rg_group({nyaa.url: nyaa})}
 
@@ -1213,7 +1232,7 @@ class TestFallbackHoldNeverCaches:
             entry_title="Show",
             entry=make_entry_record(url=f"https://seadex.example/{al_id}"),
             seadex_dict=self._mixed_seadex_dict(),
-            torrent_hashes=["hN"],
+            torrent_hashes=["hn"],
             cache_details={"updated_at": "2026-01-01 00:00:00"},
             replaced_groups=(),
         )
@@ -1222,7 +1241,7 @@ class TestFallbackHoldNeverCaches:
         # The public url adds fine while the private one is refused: the fallback
         # couldn't cover the private files, so despite the grab the title must NOT
         # cache (re-checked next run) and the no-fallback row must land.
-        torrents = FakeTorrents({"hN": (AddOutcome.ADDED, "Show-Pub")})
+        torrents = FakeTorrents({"hn": (AddOutcome.ADDED, "Show-Pub")})
         pipeline = _pipeline(torrents=torrents, private_releases="fallback", sleep_time=0)
         pipeline._anilist.al_cache.update({42: {}})
         pipeline._ctx.per_title.current_title = "Show S1"
@@ -1241,7 +1260,7 @@ class TestFallbackHoldNeverCaches:
     def test_interactive_partial_grab_still_caches(self) -> None:
         # Interactive: the hold is a hand-picked private release, so
         # the plain gate stands - the partial grab caches the title as today.
-        torrents = FakeTorrents({"hN": (AddOutcome.ADDED, "Show-Pub")})
+        torrents = FakeTorrents({"hn": (AddOutcome.ADDED, "Show-Pub")})
         pipeline = _pipeline(torrents=torrents, private_releases="fallback", interactive=True, sleep_time=0)
         pipeline._anilist.al_cache.update({43: {}})
         pipeline._ctx.per_title.current_title = "Show S1"

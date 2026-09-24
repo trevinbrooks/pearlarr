@@ -18,7 +18,7 @@ from pearlarr.probe_verdicts import (
 )
 from pearlarr.seadex_types import CommandResource, HistoryPage
 
-from .builders import pending_import, queue_record
+from .builders import entry_claim, pending_import, queue_record
 
 
 class TestClassifyQueue:
@@ -394,7 +394,6 @@ def _unplaced(**overrides: object) -> PendingImport:
 
     fields: dict[str, object] = {
         "file_episode_map": {},
-        "episode_ids": [],
         "ordered_episode_ids": [101],
         "seadex_files": ["Show - 01.mkv"],
     }
@@ -429,10 +428,23 @@ class TestPlacementsFromHistory:
     def test_another_series_row_is_dropped(self) -> None:
         assert placements_from_history([HistoryImport("/d/Show - 01.mkv", 101, 8)], _unplaced()) == {}
 
-    def test_the_resolved_set_scopes_the_ids_when_present(self) -> None:
-        # A row outside the resolved set is a sibling's slice (or a parse we
-        # would not have made); an empty set, the legacy or specials shape,
-        # accepts every in-series row.
+    def test_a_row_is_admitted_by_the_claim_on_its_series(self) -> None:
+        # A row lands only where a claim on ITS series admits the episode: the other series' claim
+        # holding the same id never vouches for it.
+        pending = _unplaced(
+            seadex_files=["Show - 01.mkv", "Show - 02.mkv"],
+            claims=(
+                entry_claim(al_id=1, series_id=7, ordered_episode_ids=[101]),
+                entry_claim(al_id=2, series_id=8, ordered_episode_ids=[201]),
+            ),
+        )
+        rows = [HistoryImport("/d/Show - 01.mkv", 201, 8), HistoryImport("/d/Show - 02.mkv", 201, 7)]
+        assert placements_from_history(rows, pending) == {"show - 01.mkv": [201]}
+
+    def test_the_claims_window_scopes_the_ids_when_present(self) -> None:
+        # A row outside the claim's window is a sibling's slice (or a parse we
+        # would not have made). An unscoped claim, the specials shape, accepts
+        # every in-series row.
         rows = [HistoryImport("/d/Show - 01.mkv", 999, 7)]
         assert placements_from_history(rows, _unplaced()) == {}
         assert placements_from_history(rows, _unplaced(ordered_episode_ids=[])) == {"show - 01.mkv": [999]}

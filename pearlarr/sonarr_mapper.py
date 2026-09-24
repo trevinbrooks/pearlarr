@@ -12,12 +12,12 @@ from typing import NamedTuple
 
 from .import_files import CandidateFile
 from .manual_import import PendingImport, normalized_leaf, path_leaf
-from .placement_types import EpisodeAssignment, EpisodeIndex, Placement, PlacementBatch, TargetScope
+from .placement_types import EpisodeAssignment, EpisodeIndex, Placement, PlacementBatch
 from .release_names import parse_se_from_filename
 from .seadex_types import ManualImportCandidate, ParsedFileInfo
 from .sonarr_client import AbstractSonarrClient
 from .sonarr_parse import is_video_candidate
-from .window_placement import assign_across_windows
+from .window_placement import place_leftover, windows_of
 
 # Rejection-reason substrings, matched case-insensitively against each
 # rejection's reason/message text. `ALREADY_IMPORTED` means Sonarr already has
@@ -144,7 +144,7 @@ class FileEpisodeMapper:
         self,
         pending: PendingImport,
         candidates_by_basename: Mapping[str, CandidateFile],
-        episodes: EpisodeIndex,
+        indexes: Mapping[int, EpisodeIndex],
     ) -> FileAssignment:
         """Build the final `basename -> episode ids` map from OUR resolved set.
 
@@ -160,16 +160,15 @@ class FileEpisodeMapper:
         place, their parses are still fetched so the positional leg's
         shared-absolute tell sees the whole batch (an earlier poll's placement
         must not hide a v2 duplicate). Every uncovered on-disk video leaf is
-        handed to `assign_across_windows` under the record's one window (the
-        pure `assign_episode_ids` beneath it), which places it into our
-        resolved set
-        (`ordered_episode_ids`, the add-flow's season-sorted episodes, or, for a
-        record predating that field, one synthesized from its seeds). When there is
-        no set to scope against (an on-disk specials record whose grab-time parse
-        found nothing), `assign_episode_ids` falls back to the live series map
-        for exactly named files (see `TargetScope.unscoped`). Fresh placements come
-        back as `placed` for the caller to persist; the record is never mutated.
-        SeaDex order keeps output and the absolute leg stable.
+        handed to `place_leftover` under one window per claim (`indexes` holds
+        each claim's series), which places it into that entry's resolved set
+        (`ordered_episode_ids`, the add-flow's season-sorted episodes). When a
+        claim has no set to scope against (an on-disk specials record whose
+        grab-time parse found nothing), `assign_episode_ids` falls back to the
+        live series map for exactly named files (see `TargetScope.unscoped`).
+        Fresh placements come back as `placed` for the caller to persist; the
+        record is never mutated. SeaDex order keeps output and the absolute leg
+        stable.
 
         Returns the seeded map plus one verdict per leftover leaf. A basename
         duplicated across folders collapses in the basename-keyed pool, so it
@@ -193,13 +192,7 @@ class FileEpisodeMapper:
         # planner detects them missing and retries (never silent-drops). Only
         # the on-disk leftovers the seed doesn't cover (e.g. a specials pack
         # whose grab-time parse found nothing) are resolved from their parse.
-        seeded: dict[str, list[int]] = {}
-        for name, ids in pending.file_episode_map.items():
-            clean = [i for i in ids if i]
-            if clean:
-                seeded[normalized_leaf(name)] = clean
-        seeded_ids = {i for ids in seeded.values() for i in ids}
-
+        seeded = pending.seeded_map()
         leftover = [norm for norm in ordered if norm not in seeded]
         # Parse the WHOLE batch when anything is left to place: the positional
         # leg's shared-absolute tell scans seeded files too, or a v1 placed on
@@ -215,16 +208,12 @@ class FileEpisodeMapper:
                 if norm_base not in parsed_by_file:
                     parsed_by_file[norm_base] = self._parsed_file_info(path_leaf(name))
 
-        # The set the leftovers assign into (see `PendingImport.resolved_ids`). The seed-owned ids
-        # ride the scope as `used`, so a leftover file can't be handed an episode that's already
-        # placed, and a fully seeded record stays scope-enforced.
-        resolved_ids = pending.resolved_ids()
-
+        # The leftovers assign into each claim's window in turn, the seeded ids already used there.
         batch = PlacementBatch(leftover, parsed_by_file)
-        window = TargetScope(resolved_ids, episodes, used=frozenset(seeded_ids), names=pending.names)
-        windowed = assign_across_windows(batch, (window,))
+        windowed = place_leftover(seeded, batch, windows_of(pending.claims, indexes))
         # An empty index means the exact leg could not have matched a numbered name this poll.
-        return FileAssignment(windowed.merged, seeded, settled=batch.all_parses_known and bool(episodes.id_by_key))
+        settled = batch.all_parses_known and all(indexes[sid].id_by_key for sid in pending.series_ids)
+        return FileAssignment(windowed.merged, seeded, settled=settled)
 
     def _parsed_file_info(self, raw_base: str) -> ParsedFileInfo | None:
         """Sonarr `/parse` of one on-disk leaf, cached per run.

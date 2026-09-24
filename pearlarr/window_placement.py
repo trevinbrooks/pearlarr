@@ -8,11 +8,12 @@ outranks pass order across windows), and the ids an earlier window placed are `u
 window that resolves them. A name no window placed or held carries its most specific claim.
 """
 
-from collections.abc import Mapping, Sequence
+from collections.abc import Iterable, Mapping, Sequence
 from dataclasses import replace
 from typing import NamedTuple
 
-from .placement_types import EpisodeAssignment, Placement, PlacementBatch, PlacementVerdict, TargetScope
+from .manual_import import EntryClaim, FileEpisodeMap
+from .placement_types import EpisodeAssignment, EpisodeIndex, Placement, PlacementBatch, PlacementVerdict, TargetScope
 from .placer import assign_episode_ids
 
 
@@ -82,3 +83,28 @@ def _merged_claim(name: str, claims: Sequence[Placement]) -> WindowVerdict:
     if not claims:
         return WindowVerdict(Placement(name, (), PlacementVerdict.SKIPPED), None)
     return WindowVerdict(max(claims, key=lambda claim: _CLAIM_RANK[claim.verdict]), None)
+
+
+def windows_of(claims: Iterable[EntryClaim], indexes: Mapping[int, EpisodeIndex]) -> tuple[TargetScope, ...]:
+    """One placement window per claim in order, over its series' index (`indexes` holds every claim's series)."""
+
+    return tuple(
+        TargetScope(list(claim.ordered_episode_ids), indexes[claim.series_id], names=claim.names) for claim in claims
+    )
+
+
+def place_leftover(seeded: FileEpisodeMap, batch: PlacementBatch, windows: Sequence[TargetScope]) -> WindowedAssignment:
+    """The names of `batch` the map does not cover, placed under `windows` with the mapped ids already used.
+
+    The mapped ids ride each window as `used` narrowed to the window's own ids (every id under an
+    unscoped window), the same rule the cross-window seeds follow, so one series' placements never
+    close another series' count legs.
+    """
+
+    leftover = [name for name in batch.to_place if name not in seeded]
+    mapped = frozenset(ep_id for ids in seeded.values() for ep_id in ids)
+    narrowed = tuple(
+        replace(window, used=window.used | (mapped if window.unscoped else mapped & window.real_ids))
+        for window in windows
+    )
+    return assign_across_windows(PlacementBatch(leftover, batch.parsed), narrowed)

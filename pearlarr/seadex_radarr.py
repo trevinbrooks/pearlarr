@@ -5,17 +5,19 @@ from datetime import UTC, datetime, timedelta
 from typing import override
 
 from .arr_activity import IMPORT_EVENTS, format_history_date
-from .cache import now_stamp, parse_stamp
 from .config import Arr
 from .grab_pipeline import GrabRequest
 from .log import pluralize
 from .manual_import import (
     NO_PROGRESS,
     AttemptKind,
+    EntryClaim,
+    EntryNames,
     ImportProbe,
     ImportProgress,
     ImportWaitMode,
     PendingImport,
+    added_at_of,
 )
 from .mappings import ExternalIds, MappingEntry
 from .output import hub_warn
@@ -23,6 +25,7 @@ from .protocols import ArrSync
 from .radarr_client import AbstractRadarrClient, RadarrClient, collect_anime_movies
 from .run_services import RunDeps, RunServices, bind_arr_http
 from .seadex_types import ArrReleases, HistoryRecord, ProgressSink, RadarrItem, flagged_urls
+from .stamps import now_stamp, parse_stamp_or_none
 
 # Clock-skew cushion subtracted from the oldest pending record's grab time before the history query.
 # The added_at stamps are converted to UTC first, so this absorbs only genuine NTP drift, never a timezone
@@ -190,18 +193,25 @@ class RadarrSync(ArrSync[RadarrItem]):
             pending_seeds = {
                 flagged.infohash: PendingImport(
                     infohash=flagged.infohash,
-                    al_id=al_id,
-                    title=title.display,
                     release_group=flagged.group,
-                    url=sd_url,
-                    added_at=added_at,
-                    series_id=0,
-                    file_episode_map={},
-                    episode_ids=[],
                     is_dual_audio=False,
-                    seadex_files=[],
-                    coverage=None,
-                    ordered_episode_ids=[],
+                    seadex_files=(),
+                    added_at=added_at,
+                    file_episode_map={},
+                    claims=(
+                        EntryClaim(
+                            al_id=al_id,
+                            series_id=0,
+                            title=title.display,
+                            coverage=None,
+                            url=sd_url,
+                            ordered_episode_ids=(),
+                            names=EntryNames(),
+                            preowned_episode_ids=(),
+                            slice_coverage=None,
+                            claimed_at=added_at,
+                        ),
+                    ),
                 )
                 for flagged in flagged_urls(seadex_dict)
             }
@@ -287,12 +297,11 @@ class RadarrSync(ArrSync[RadarrItem]):
         """
 
         floor = datetime.now(UTC) - timedelta(days=self._config.imports.pending_max_age_days)
-        stamps: list[datetime] = []
-        for raw in self.cache_store.get_pending(Arr.RADARR).values():
-            try:
-                stamps.append(parse_stamp(PendingImport.from_json(raw).added_at).astimezone(UTC))
-            except (TypeError, ValueError):
-                continue
+        stamps = [
+            moment.astimezone(UTC)
+            for raw in self.cache_store.get_pending(Arr.RADARR).values()
+            if (moment := parse_stamp_or_none(added_at_of(raw))) is not None
+        ]
         oldest = min(stamps) if stamps else floor
         return oldest - timedelta(hours=_HISTORY_SKEW_HOURS)
 

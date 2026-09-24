@@ -17,7 +17,8 @@ import httpx
 import respx
 
 from pearlarr.arr_http import ArrHttp
-from pearlarr.episode_state import EpisodeSnapshot
+from pearlarr.episode_state import EpisodeSnapshot, RecordSnapshot
+from pearlarr.manual_import import PendingImport
 from pearlarr.placement_types import episode_index
 from pearlarr.probe_verdicts import QueueVerdict, classify_queue
 from pearlarr.radarr_client import RadarrClient
@@ -72,6 +73,12 @@ def _make_radarr() -> RadarrClient:
 _CANDIDATE_PATH = "/d/Show - 01 [1080p].mkv"
 
 
+def _bare_snapshot(pending: PendingImport) -> RecordSnapshot:
+    """An empty same-poll index for every series the record claims (nothing on disk yet)."""
+
+    return RecordSnapshot({sid: EpisodeSnapshot(episodes=episode_index([]), trusted={}) for sid in pending.series_ids})
+
+
 def _drive_manual_import(
     *,
     candidate: dict[str, object],
@@ -87,11 +94,8 @@ def _drive_manual_import(
 
     client = _make_sonarr_client()
     executor = ImportExecutor(make_run_deps(), client, FileEpisodeMapper(client))
-    probe = executor.run_manual_import(
-        pending_import(),
-        "/d",
-        snapshot=EpisodeSnapshot(episodes=episode_index([]), trusted={}),
-    )
+    pending = pending_import()
+    probe = executor.run_manual_import(pending, "/d", snapshot=_bare_snapshot(pending))
 
     assert probe.files_present is False
     assert probe.command_issued is True
@@ -159,11 +163,8 @@ def test_golden_body_dead_tracked_folder_import_omits_download_id() -> None:
 
     client = _make_sonarr_client()
     executor = ImportExecutor(make_run_deps(), client, FileEpisodeMapper(client))
-    probe = executor.run_manual_import(
-        pending_import(),
-        "/d",
-        snapshot=EpisodeSnapshot(episodes=episode_index([]), trusted={}),
-    )
+    pending = pending_import()
+    probe = executor.run_manual_import(pending, "/d", snapshot=_bare_snapshot(pending))
 
     assert probe.files_present is False
     assert probe.command_issued is True

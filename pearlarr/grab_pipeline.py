@@ -1,14 +1,14 @@
 """The grab "produce" side: add torrents, register pending records, write cache."""
 
 import time
-from dataclasses import dataclass, replace
+from dataclasses import dataclass
 from typing import TYPE_CHECKING, NamedTuple
 
 from seadex import EntryRecord
 
 from . import coverage as _coverage
-from .cache import CacheRecord, pending_cutoff, stamp_of
-from .config import Arr, PrivateReleaseAction
+from .cache import CacheRecord
+from .config import PrivateReleaseAction
 from .log import count_noun
 from .manual_import import ImportWaitMode, PendingImport
 from .notify import GrabNotice
@@ -22,6 +22,7 @@ from .reporter import (
     is_preview,
 )
 from .seadex_types import SeadexDict, SeadexUrlItem
+from .stamps import pending_cutoff, stamp_of
 from .torrents import GRAB_FAILURES, PARSEABLE_TRACKERS, AddOutcome, AddResult, ReleaseOutcome
 
 if TYPE_CHECKING:
@@ -220,10 +221,11 @@ class GrabPipeline:
         ):
             return
         pending = seeds[url_item.infohash]
+        claim = pending.claims[0]
         if result.outcome is AddOutcome.ADDED:
-            self._records.insert_fresh(pending)
-        elif self._records.has(pending.key):
-            self._ctx.reacquired_keys.add(pending.key)
+            self._records.insert_fresh(pending, claim)
+        elif self._records.has(pending.infohash):
+            self._ctx.reacquired_keys.add(pending.infohash)
         else:
             if result.added_on is not None:
                 max_age_days = self._config.imports.pending_max_age_days
@@ -233,13 +235,10 @@ class GrabPipeline:
                         f"{count_noun(max_age_days, 'day')}, not tracking it",
                     )
                     return
-                pending = replace(pending, added_at=stamp_of(result.added_on))
+                pending = pending.restamped(stamp_of(result.added_on))
             # A reacquire, not a fresh grab: `save` refreshes without a run-list insert.
-            self._records.save(pending)
-            self._ctx.reacquired_keys.add(pending.key)
-        # One guard row per entry (Sonarr only): each per-release firing re-puts the same row, a no-op upsert.
-        if self._ctx.arr is Arr.SONARR:
-            self.cache_store.put_guards(self._ctx.arr, pending.al_id, pending.guards)
+            self._records.save(pending, pending.claims[0])
+            self._ctx.reacquired_keys.add(pending.infohash)
 
     def _needs_action(self, groups: list[str], reason: str, kind: NeedsActionKind) -> NeedsActionRecord:
         """A needs-action record for the current title."""

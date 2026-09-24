@@ -12,7 +12,7 @@ from .anilist_gateway import AniListGateway
 from .cache import AbstractCacheStore
 from .config import Arr
 from .log import EntryState
-from .manual_import import EntryNames, ImportWaitMode, PendingImport, PendingKey, PendingState
+from .manual_import import EntryNames, ImportWaitMode, PendingImport, PendingState
 from .output import (
     Accent,
     CapReached,
@@ -212,17 +212,14 @@ class RunContext:
     """Run clock (monotonic, so an NTP or DST step cannot move it)."""
     counts_mark: CountsMark = field(default_factory=lambda: SeverityCounts().bound_mark())
     """Stamped at run start and diffed for the summary's issues row (an unstamped ctx diffs to zero)."""
-    pending_imports: dict[PendingKey, PendingImport] = field(
-        default_factory=dict[PendingKey, PendingImport],
-    )
-    """Records written THIS run, keyed for the run-list writes. The durable copies live in `cache_store`."""
-    reacquired_keys: set[PendingKey] = field(default_factory=set[PendingKey])
-    """Store-resident records re-seen in qBittorrent this run (`ALREADY_ADDED`), skipped by the snapshot but
-    counted by the tally. Never also a `pending_imports` record."""
-    pending_states: dict[PendingKey, PendingState] = field(
-        default_factory=dict[PendingKey, PendingState],
-    )
-    """Observed status of each carried-over record, keyed per record. Never a this-run grab, which stays
+    pending_imports: dict[str, PendingImport] = field(default_factory=dict[str, PendingImport])
+    """Records written THIS run, keyed by infohash for the run-list writes. The durable copies live in
+    `cache_store`."""
+    reacquired_keys: set[str] = field(default_factory=set[str])
+    """Store-resident records this run re-saw (`ALREADY_ADDED`) without grabbing them, skipped by the snapshot
+    but counted by the tally. Never also a `pending_imports` record."""
+    pending_states: dict[str, PendingState] = field(default_factory=dict[str, PendingState])
+    """Observed status of each carried-over record, keyed by infohash. Never a this-run grab, which stays
     `added`."""
 
 
@@ -477,22 +474,24 @@ class RunReporter:
         PendingState.IMPORTED: EntryState.IMPORTED,
     }
 
-    def log_pending_snapshot(self, state: PendingState, pending: PendingImport) -> None:
+    def log_pending_snapshot(self, state: PendingState, pending: PendingImport, series_id: int) -> None:
         """Emit a carried-over pending record's self-contained block inline in the series block.
 
-        Bumps no counter: the engine owns the drop and count bookkeeping.
+        The header reads the record's claim on `series_id`. Bumps no counter: the engine owns the
+        drop and count bookkeeping.
         """
 
         entry_state = self._PENDING_ENTRY_STATES.get(state)
         if entry_state is None:
             return
+        claim = pending.claim_for(series_id)
         # Row style is renderer policy keyed on state, so the producer passes no style.
         self._block(
             EntryHeader(
                 entry_state,
                 pending.display_label,
-                coverage=pending.coverage,
-                url=pending.url,
+                coverage=claim.coverage if claim else None,
+                url=claim.url if claim else None,
             ),
         )
 

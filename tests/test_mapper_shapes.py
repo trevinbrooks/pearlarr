@@ -27,7 +27,7 @@ from pearlarr.seadex_types import (
     SonarrEpisode,
 )
 
-from .builders import make_sonarr_mapper, pending_import
+from .builders import indexes_for, make_sonarr_mapper, pending_import
 from .fakes import FakeSonarrClient
 
 _CATALOG = Path(__file__).parent / "fixtures" / "sonarr" / "mapper_shapes.json"
@@ -181,14 +181,13 @@ def test_mapper_matches_the_seed(case: ShapeCase) -> None:
     mapper = make_sonarr_mapper(sonarr=FakeSonarrClient(parse_fn=parsed.get))
     pending = pending_import(
         file_episode_map={},
-        episode_ids=list(case.entry_ids),
         ordered_episode_ids=list(case.entry_ids),
         seadex_files=list(case.parses),
         names=_names(case),
     )
     candidates = mapper.candidate_files([ManualImportCandidate(path=f"/dl/{name}") for name in case.parses])
 
-    assignment = mapper.assign(pending, candidates, episode_index(case.episodes))
+    assignment = mapper.assign(pending, candidates, indexes_for(pending, episode_index(case.episodes)))
 
     assert assignment.assigned == {normalize_basename(name): list(ids) for name, ids in case.expected.items()}
     assert {placement.name for placement in assignment.excluded} == {

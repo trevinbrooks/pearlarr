@@ -18,9 +18,9 @@ from typing import Any
 
 from pearlarr.cache import AbstractCacheStore, CacheRecord, CacheStore, HistoryCheckpoint
 from pearlarr.config import Arr
-from pearlarr.manual_import import GuardFacts, PendingKey
+from pearlarr.manual_import import GuardFacts
 
-from .builders import FakeCacheStore, make_entry_record
+from .builders import FakeCacheStore, entry_claim, make_entry_record, pending_import
 
 # fetched_at stamps straddling the eviction cutoff (UPDATED_AT_STR_FORMAT strings).
 _OLD = "2020-01-01 00:00:00"
@@ -72,21 +72,28 @@ def _apply_ops(store: AbstractCacheStore) -> None:
     store.put_sonarr_parse("fresh.mkv", {"fetched_at": _NEW, "episodes": [1]})
     store.put_sonarr_parse("stale.mkv", {"fetched_at": _OLD, "episodes": [2]})
 
-    store.put_pending(Arr.SONARR, PendingKey("hashA", 7), {"series_id": 7, "title": "A"})
-    store.put_pending(Arr.SONARR, PendingKey("hashB", 8), {"series_id": 8, "title": "B"})
-    # A sibling record on hashA (another entry claiming the same torrent): the
-    # composite key must keep BOTH, in the fake exactly as in SQLite.
-    store.put_pending(Arr.SONARR, PendingKey("hashA", 9), {"series_id": 7, "title": "A2"})
-    # A Radarr claim on that same torrent, so the two sibling counts diverge: a
-    # fake ignoring the arr narrowing cannot answer both.
-    store.put_pending(Arr.RADARR, PendingKey("hashA", 7), {"title": "AR"})
+    # hashA carries TWO claims spanning two series: the series filter and the guard
+    # join must both walk every claim, in the fake exactly as in SQLite's json_each.
+    store.put_pending(
+        Arr.SONARR,
+        "hashA",
+        pending_import(
+            infohash="hashA",
+            claims=(entry_claim(al_id=7, series_id=7, title="A"), entry_claim(al_id=9, series_id=8, title="A2")),
+        ).to_json(),
+    )
+    store.put_pending(Arr.SONARR, "hashB", pending_import(infohash="hashB", al_id=8, series_id=8, title="B").to_json())
+    # A Radarr record on hashA, so `other_arr_holds` answers differently per arr: a
+    # fake ignoring the arr narrowing cannot match both.
+    store.put_pending(Arr.RADARR, "hashA", pending_import(infohash="hashA", al_id=7, series_id=0, title="AR").to_json())
 
-    # Guard rows: a same-id re-put (latest wins, al 7 has a live pending record)
-    # + an orphan sonarr row and a radarr row with no pending record - both are
-    # stored but filtered out of every read (get_guards joins live pending). The
-    # parity test's later drop of hashA/7 re-orphans al 7's row too.
+    # Guard rows: a same-id re-put (latest wins, al 7 has a live claim), al 9 live
+    # only through hashA's second claim, plus an orphan sonarr row and a radarr row
+    # with no claim, both stored but filtered out of every read (get_guards joins
+    # live claims). The parity test's later drop of hashA re-orphans 7 and 9 too.
     store.put_guards(Arr.SONARR, 7, GuardFacts(entry_groups=("Old",)))
     store.put_guards(Arr.SONARR, 7, GuardFacts(entry_groups=("New",), stale_groups=("Old",)))
+    store.put_guards(Arr.SONARR, 9, GuardFacts(entry_groups=("Second",)))
     store.put_guards(Arr.SONARR, 4242, GuardFacts(entry_groups=("Orphan",)))
     store.put_guards(Arr.RADARR, 99, GuardFacts(entry_groups=("MovieGrp",)))
 
@@ -117,16 +124,20 @@ def _observe(store: AbstractCacheStore) -> dict[str, object]:
         "sonarr_parse_fresh": store.get_sonarr_parse("fresh.mkv"),
         "sonarr_parse_stale": store.get_sonarr_parse("stale.mkv"),
         "pending_sonarr": store.get_pending(Arr.SONARR),
+        "pending_record_hasha": store.get_pending_record(Arr.SONARR, "hashA"),
+        "pending_record_wrong_arr": store.get_pending_record(Arr.RADARR, "hashB"),
+        "pending_record_missing": store.get_pending_record(Arr.SONARR, "nope"),
         "pending_series7": store.get_pending_for_series(Arr.SONARR, 7),
+        "pending_series8": store.get_pending_for_series(Arr.SONARR, 8),
+        "pending_series_missing": store.get_pending_for_series(Arr.SONARR, 4242),
+        "has_pending_hasha": store.has_pending(Arr.SONARR, "hashA"),
+        "has_pending_missing": store.has_pending(Arr.SONARR, "nope"),
         # Hashes stay ASCII: SQLite's LOWER() folds ASCII only, the fake casefolds Unicode.
-        "siblings_arr_shared": store.count_arr_siblings(Arr.SONARR, PendingKey("hashA", 7)),
-        "siblings_arr_radarr": store.count_arr_siblings(Arr.RADARR, PendingKey("hashA", 7)),
-        "siblings_arr_single": store.count_arr_siblings(Arr.SONARR, PendingKey("hashB", 8)),
-        "siblings_arr_case": store.count_arr_siblings(Arr.SONARR, PendingKey("HASHA", 7)),
-        "siblings_arr_absent_key": store.count_arr_siblings(Arr.SONARR, PendingKey("hashA", 4242)),
-        "siblings_arr_missing_hash": store.count_arr_siblings(Arr.SONARR, PendingKey("nope", 0)),
-        "siblings_any_arr_shared": store.count_siblings_any_arr(Arr.SONARR, PendingKey("hashA", 7)),
-        "siblings_any_arr_single": store.count_siblings_any_arr(Arr.SONARR, PendingKey("hashB", 8)),
+        "other_arr_sonarr": store.other_arr_holds(Arr.SONARR, "hashA"),
+        "other_arr_radarr": store.other_arr_holds(Arr.RADARR, "hashA"),
+        "other_arr_own_only": store.other_arr_holds(Arr.SONARR, "hashB"),
+        "other_arr_case": store.other_arr_holds(Arr.SONARR, "HASHA"),
+        "other_arr_missing": store.other_arr_holds(Arr.SONARR, "nope"),
         "guards_sonarr": store.get_guards(Arr.SONARR),
         "guards_radarr": store.get_guards(Arr.RADARR),
         "checkpoint_sonarr": store.get_history_checkpoint(Arr.SONARR),
@@ -156,7 +167,7 @@ class _JsonbBlock:
     iter_records: Callable[[AbstractCacheStore], list[dict[str, Any]]]
 
 
-_ISO_KEY = PendingKey("hiso", 4242)
+_ISO_KEY = "hiso"
 _ISO_AL = 4242
 _ISO_FILE = "iso.mkv"
 _ISO_SID = 7
@@ -170,14 +181,14 @@ def _sonarr_parse_records(store: AbstractCacheStore) -> list[dict[str, Any]]:
 
 
 # The three blocks the real store round-trips through JSON on both ends. Each carries
-# series_id so the pending block's get_pending_for_series filter matches the record.
+# a claim on `_ISO_SID` so the pending block's get_pending_for_series filter matches the record.
 # guard_facts is deliberately absent: the scribble check needs raw mutable dicts and
 # `GuardFacts` is frozen (isolation by construction), so `_apply_ops` covers it instead.
 _JSONB_BLOCKS: tuple[_JsonbBlock, ...] = (
     _JsonbBlock(
         "pending",
         put=lambda s, r: s.put_pending(Arr.SONARR, _ISO_KEY, r),
-        get=lambda s: s.get_pending(Arr.SONARR).get(_ISO_KEY),
+        get=lambda s: s.get_pending_record(Arr.SONARR, _ISO_KEY),
         iter_records=lambda s: [
             *s.get_pending(Arr.SONARR).values(),
             *s.get_pending_for_series(Arr.SONARR, _ISO_SID).values(),
@@ -225,7 +236,7 @@ def _assert_block_snapshot_isolated(store: AbstractCacheStore, block: _JsonbBloc
     Mutating the dict handed to `put` afterwards, or any dict returned by `get` / `iter`, must not reach the store.
     """
 
-    record: dict[str, Any] = {"series_id": _ISO_SID, "title": "orig", "nested": {"k": "v"}}
+    record: dict[str, Any] = {"claims": [{"series_id": _ISO_SID}], "title": "orig", "nested": {"k": "v"}}
     block.put(store, record)
 
     # write side: mutate the caller's own dict after the put.
@@ -266,8 +277,8 @@ def test_fake_cache_store_observably_matches_real(tmp_path: Path) -> None:
         assert fake.evict_anilist_meta(_CUTOFF) == real.evict_anilist_meta(_CUTOFF) == 2
         assert fake.evict_sonarr_parse(_CUTOFF) == real.evict_sonarr_parse(_CUTOFF) == 1
 
-        fake.drop_pending(Arr.SONARR, PendingKey("hashA", 7))
-        real.drop_pending(Arr.SONARR, PendingKey("hashA", 7))
+        fake.drop_pending(Arr.SONARR, "hashA")
+        real.drop_pending(Arr.SONARR, "hashA")
 
         # save is a no-op for the fake and stages+promotes for the real. Neither must
         # disturb the observable reads that follow.

@@ -59,9 +59,9 @@ class SeadexUrlItem:
 
     def __post_init__(self) -> None:
         # Blank -> None: an empty `hashes` filter matches every torrent in the qbit dedup, and "" collides
-        # with the cache's _NO_HASH.
+        # with the cache's _NO_HASH. Lowercase: the pending store keys on the hash byte-exact.
         if self.infohash is not None:
-            self.infohash = self.infohash.strip() or None
+            self.infohash = self.infohash.strip().lower() or None
 
     def flag(self, *, upgrade: bool = False) -> None:
         """Mark the url to grab, `upgrade` also marking a size upgrade. Never clears an upgrade already set."""

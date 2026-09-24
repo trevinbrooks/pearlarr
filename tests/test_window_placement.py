@@ -9,9 +9,9 @@ from pearlarr.manual_import import EntryNames
 from pearlarr.placement_types import EpisodeIndex, PlacementBatch, PlacementVerdict, TargetScope
 from pearlarr.placer import assign_episode_ids
 from pearlarr.seadex_types import EpisodeKey, ParsedFileInfo
-from pearlarr.window_placement import WindowedAssignment, assign_across_windows
+from pearlarr.window_placement import WindowedAssignment, assign_across_windows, place_leftover, windows_of
 
-from .builders import by_name, numbered_names, parsed_info, series_index
+from .builders import by_name, entry_claim, numbered_names, parsed_info, series_index
 
 _SERIES = series_index(
     {
@@ -221,3 +221,94 @@ class TestSeveralWindows:
         result = assign_across_windows(_batch(_blind(["a.mkv", "b.mkv"])), (_window([501]), _window([502])))
 
         assert by_name(result.merged) == dict.fromkeys(("a.mkv", "b.mkv"), ((), PlacementVerdict.SKIPPED))
+
+
+class TestWindowsOf:
+    """`windows_of`: one window per claim in order, over its series' index, carrying the claim's names."""
+
+    def test_one_window_per_claim_over_its_series_index(self) -> None:
+        names = EntryNames("Show", ("Show Alpha",))
+        claims = (
+            entry_claim(al_id=1, series_id=7, ordered_episode_ids=[601, 602], names=names),
+            entry_claim(al_id=2, series_id=8, ordered_episode_ids=[201]),
+        )
+
+        windows = windows_of(claims, {7: _SERIES, 8: _OTHER_SERIES})
+
+        assert windows == (
+            TargetScope([601, 602], _SERIES, names=names),
+            TargetScope([201], _OTHER_SERIES, names=EntryNames()),
+        )
+
+    def test_an_unscoped_claim_gives_an_unscoped_window(self) -> None:
+        (window,) = windows_of((entry_claim(series_id=7),), {7: _SERIES})
+
+        assert window == TargetScope([], _SERIES)
+        assert window.unscoped
+
+
+class TestPlaceLeftover:
+    """`place_leftover`: the mapped names stay put, their ids are used, and the whole batch's parses ride along."""
+
+    def test_the_mapped_names_are_not_re_placed(self) -> None:
+        run = numbered_names("show", 3)
+
+        result = place_leftover({run[0]: [601]}, _batch(_blind(run)), (_window(_FIRST_COUR),))
+
+        assert [v.placement.name for v in result.verdicts] == run[1:]
+        assert _placed_under(result) == {run[1]: ((602,), 0), run[2]: ((603,), 0)}
+
+    def test_the_parse_overlay_keeps_the_whole_batchs_parses(self) -> None:
+        # The mapped sharer's parse still feeds the shared-absolute tell: over the leftover alone, the
+        # v2 would take the spare id.
+        v1, v2 = "e - 12.mkv", "e - 12v2.mkv"
+        parsed = {v1: parsed_info(absolutes=(12,)), v2: parsed_info(absolutes=(12,))}
+        series = series_index({EpisodeKey(1, 12): 2586, EpisodeKey(1, 13): 2587})
+        alone = assign_across_windows(_batch({v2: parsed[v2]}), (_window([2586, 2587], used=[2586], series=series),))
+        assert _placed_under(alone) == {v2: ((2587,), 0)}
+
+        result = place_leftover({v1: [2586]}, _batch(parsed), (_window([2586, 2587], series=series),))
+
+        assert by_name(result.merged) == {v2: ((), PlacementVerdict.SKIPPED)}
+
+    def test_a_mapped_id_is_used_under_a_scoped_window_only_inside_its_ids(self) -> None:
+        # One slot, one blind file: the slot is gone when the map holds it, open when the map's id is
+        # another window's.
+        batch = _batch(_blind(["a.mkv", "b.mkv"]))
+
+        inside = place_leftover({"a.mkv": [601]}, batch, (_window([601]),))
+        outside = place_leftover({"a.mkv": [999]}, batch, (_window([601]),))
+
+        assert by_name(inside.merged) == {"b.mkv": ((), PlacementVerdict.SKIPPED)}
+        assert _placed_under(outside) == {"b.mkv": ((601,), 0)}
+
+    def test_every_mapped_id_is_used_under_an_unscoped_window(self) -> None:
+        # The unscoped window resolves any key against the whole series, so an id mapped anywhere is
+        # taken there: the keyed file cannot land on it a second time.
+        keyed = {"b.mkv": parsed_info(season=1, episodes=(1,))}
+
+        free = place_leftover({}, _batch(keyed), (_window([]),))
+        used = place_leftover({"a.mkv": [601]}, _batch({**_blind(["a.mkv"]), **keyed}), (_window([]),))
+
+        assert _placed_under(free) == {"b.mkv": ((601,), 0)}
+        assert by_name(used.merged) == {"b.mkv": ((), PlacementVerdict.SKIPPED)}
+
+    def test_two_windows_on_two_series_place_each_file_under_the_first_that_resolves_it(self) -> None:
+        # The season-2 key resolves outside the first series' window and inside the second's.
+        parsed = {
+            "s.mkv": parsed_info(),
+            "a.mkv": parsed_info(season=1, episodes=(1,)),
+            "b.mkv": parsed_info(season=2, episodes=(1,)),
+        }
+        windows = (_window(_FIRST_COUR), _window([201, 202, 203], series=_OTHER_SERIES))
+
+        result = place_leftover({"s.mkv": [602]}, _batch(parsed), windows)
+
+        assert _placed_under(result) == {"a.mkv": ((601,), 0), "b.mkv": ((201,), 1)}
+
+    def test_one_window_and_an_empty_map_is_the_cross_window_placement(self) -> None:
+        run = numbered_names("sp", 3)
+        batch = _batch({**_blind(run), "keyed.mkv": parsed_info(season=1, episodes=(1,)), "x.mkv": None})
+        window = _window(_SPECIALS)
+
+        assert place_leftover({}, batch, (window,)) == assign_across_windows(batch, (window,))

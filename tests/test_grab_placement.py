@@ -168,7 +168,9 @@ class TestEntryPlacements:
 
         # The subs-only url seeds nothing; the held one is seeded with an empty map for import time.
         assert set(seeds) == {"h1", "h2"}
-        assert seeds["h1"].file_episode_map == {normalize_basename(name): [100 + n] for n, name in enumerate(_RUN, 1)}
-        assert seeds["h1"].seadex_files == _RUN
-        assert seeds["h1"].names == names
-        assert seeds["h2"].file_episode_map == {}
+        assert dict(seeds["h1"].file_episode_map) == {
+            normalize_basename(name): (100 + n,) for n, name in enumerate(_RUN, 1)
+        }
+        assert seeds["h1"].seadex_files == tuple(_RUN)
+        assert seeds["h1"].claims[0].names == names
+        assert dict(seeds["h2"].file_episode_map) == {}

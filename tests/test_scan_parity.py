@@ -913,7 +913,7 @@ class TestEntryHeaderParity:
             (PendingState.IMPORTED, PENDING_IMPORTED_LINES),
         ):
             harness.events.clear()
-            harness.reporter.log_pending_snapshot(state, pending)
+            harness.reporter.log_pending_snapshot(state, pending, pending.claims[0].series_id)
             assert harness.lines() == expected
 
 

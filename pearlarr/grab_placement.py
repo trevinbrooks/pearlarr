@@ -1,12 +1,12 @@
 """Grab-time placement: urls placed under the entry's scope, the records `attach_records` writes onto it, the seeds."""
 
 from collections.abc import Mapping, Sequence
-from dataclasses import dataclass, field, replace
+from dataclasses import dataclass, field
 from typing import NamedTuple
 
 from .coverage import coverage_string, episodes_from_ep_list
 from .episode_state import EpisodeFileStatus, EpisodeSnapshot, trusted_groups
-from .manual_import import EntryNames, GuardFacts, PendingImport, normalized_leaf
+from .manual_import import EntryClaim, EntryNames, GuardFacts, OwnGroup, PendingImport, normalized_leaf
 from .placement_types import EpisodeAssignment, EpisodeIndex, PlacementBatch, TargetScope
 from .placer import assign_episode_ids
 from .seadex_types import EpisodeRecord, ParsedFileInfo, SeadexDict, SeadexUrlItem, flagged_urls
@@ -196,50 +196,50 @@ def build_pending_seed(
 
     placed = release.placed
     file_episode_map = placed.assignment.assigned
-    excluded_files = [placement.name for placement in placed.assignment.excluded]
     claimed = {ep_id for ids in file_episode_map.values() for ep_id in ids}
+    own = OwnGroup(release.release_group, tuple(release.url_item.size))
 
-    # This record's own slice of the entry, so sibling per-episode records label
-    # distinctly: the episodes its files claimed, else every episode it is verified against.
+    # This claim's own slice of the entry, so records on sibling entries label distinctly: the episodes its
+    # files claimed, else every episode it is verified against.
     index = scope.entry
     slice_eps = [ep for ep in index.by_id.values() if not claimed or ep.id in claimed]
-    seed = PendingImport(
-        infohash=release.infohash,
-        series_id=entry.series_id,
-        al_id=entry.al_id,
-        file_episode_map=file_episode_map,
-        # episode_ids is a legacy read-only fallback: never seeded (any
-        # value here would only duplicate the map, which readers dedupe).
-        episode_ids=[],
-        release_group=release.release_group,
-        is_dual_audio=release.url_item.is_dual_audio,
-        seadex_files=[f.basename for f in placed.files],
-        title=entry.title,
-        added_at=entry.added_at,
-        coverage=entry.coverage,
-        url=entry.url,
-        ordered_episode_ids=list(index.by_id),
-        slice_coverage=coverage_string(episodes_from_ep_list(slice_eps)) or None,
-        excluded_files=excluded_files,
-        guards=entry.guards,
-        release_sizes=list(release.url_item.size),
-        names=scope.names,
-    )
-    # Targets that already hold a recommended file at grab time were
-    # never this torrent's to insert: classify them against the record's
-    # own trust slice (no sibling votes yet) so the wait's inserted
+    # Targets that already hold a recommended file at grab time were never this torrent's to insert:
+    # classify them against the claim's own trust slice (no sibling votes yet) so the wait's inserted
     # counts start at 0.
     grab_snapshot = EpisodeSnapshot(
         episodes=index,
-        trusted=trusted_groups(seed),
-        owned_episode_sizes=seed.guards.owned_sizes,
+        trusted=trusted_groups(entry.guards, own),
+        owned_episode_sizes=entry.guards.owned_sizes,
     )
-    preowned = [
+    preowned = tuple(
         ep_id
         for ep_id, status in grab_snapshot.statuses(sorted(claimed)).by_id.items()
         if status is EpisodeFileStatus.RECOMMENDED
-    ]
-    return replace(seed, preowned_episode_ids=preowned)
+    )
+    claim = EntryClaim(
+        al_id=entry.al_id,
+        series_id=entry.series_id,
+        title=entry.title,
+        coverage=entry.coverage,
+        url=entry.url,
+        ordered_episode_ids=tuple(index.by_id),
+        names=scope.names,
+        preowned_episode_ids=preowned,
+        slice_coverage=coverage_string(episodes_from_ep_list(slice_eps)) or None,
+        claimed_at=entry.added_at,
+        guards=entry.guards,
+    )
+    return PendingImport(
+        infohash=release.infohash,
+        release_group=release.release_group,
+        is_dual_audio=release.url_item.is_dual_audio,
+        seadex_files=tuple(f.basename for f in placed.files),
+        added_at=entry.added_at,
+        file_episode_map=file_episode_map,
+        claims=(claim,),
+        excluded_files=tuple(placement.name for placement in placed.assignment.excluded),
+        release_sizes=own.sizes,
+    )
 
 
 def build_pending_seeds(
