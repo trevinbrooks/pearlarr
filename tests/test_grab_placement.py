@@ -373,8 +373,8 @@ class TestPendingSeedRecordAt:
         assert seed.accreted
         assert dict(record.file_episode_map) == {"show - 01.mkv": (101,), "show - 02.mkv": (102,)}
         assert record.excluded_files == ("show - 09.mkv", "show - 03.mkv")
-        # The entry's own claim is replaced at the stamp, its first preowned ids kept.
-        assert record.claims == (replace(claim, claimed_at=_STAMP, preowned_episode_ids=(101,)),)
+        # The entry's own claim is replaced under its first clock, its first preowned ids kept.
+        assert record.claims == (replace(claim, claimed_at=stored.added_at, preowned_episode_ids=(101,)),)
         assert record.awaiting_cleanup is False
         # Not a fresh add: the birth keeps its clock, and the identity stays the stored record's.
         assert record.added_at == "2026-01-01 00:00:00"

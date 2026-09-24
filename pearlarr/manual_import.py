@@ -752,7 +752,7 @@ class EntryClaim:
         )
 
 
-@dataclass(frozen=True, slots=True)
+@dataclass(frozen=True, slots=True, kw_only=True)
 class PendingImport:
     """One torrent awaiting import: its whole file map and every entry's claim on it."""
 
@@ -775,7 +775,7 @@ class PendingImport:
     """Normalized basename -> Sonarr episode ids over the WHOLE torrent: the grab-time seeds plus the placements
     later imports made. Wrapped read-only at construction."""
 
-    claims: tuple["EntryClaim", ...]
+    claims: tuple[EntryClaim, ...]
     """Every entry's claim on the torrent, accretion order (the import's window order)."""
 
     excluded_files: tuple[str, ...] = ()
@@ -896,14 +896,19 @@ class PendingImport:
         merged = dict.fromkeys(normalized_leaf(name) for name in (*self.excluded_files, *names))
         return replace(self, excluded_files=tuple(merged))
 
-    def with_claim(self, claim: "EntryClaim") -> "PendingImport":
-        """The record with `claim` in place of the entry's stored claim (its preowned ids kept), else appended."""
+    def with_claim(self, claim: EntryClaim) -> "PendingImport":
+        """The record with `claim` joined and its cleanup flag cleared (new files to import make it active again).
+
+        A re-flag by an entry already claiming replaces its claim, keeping the stored claim's first clock and
+        preowned ids: the window follows the newest plan, the TTL and the wait bar's net-out never restart.
+        """
 
         for index, stored in enumerate(self.claims):
             if stored.al_id == claim.al_id:
-                refreshed = replace(claim, preowned_episode_ids=stored.preowned_episode_ids)
-                return replace(self, claims=(*self.claims[:index], refreshed, *self.claims[index + 1 :]))
-        return replace(self, claims=(*self.claims, claim))
+                kept = replace(claim, preowned_episode_ids=stored.preowned_episode_ids, claimed_at=stored.claimed_at)
+                claims = (*self.claims[:index], kept, *self.claims[index + 1 :])
+                break
+        return replace(self, claims=claims, awaiting_cleanup=False)
 
     def restamped(self, stamp: str) -> "PendingImport":
         """The record with its birth and every claim's clock set to `stamp` (a fresh add starts every clock)."""

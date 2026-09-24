@@ -270,8 +270,9 @@ class TestPendingImportClaims:
         assert pending.with_claim(added).claims == (*pending.claims, added)
         assert len(pending.claims) == 1
 
-    def test_with_claim_replaces_the_entrys_claim_in_place_keeping_its_preowned_ids(self) -> None:
-        # A re-flag refreshes the window and the clock, but the net-out stays what the FIRST claim saw.
+    def test_with_claim_replaces_the_entrys_claim_in_place_keeping_its_clock_and_preowned_ids(self) -> None:
+        # A re-flag refreshes the window, but the clock stays the FIRST claim's (the TTL never
+        # restarts on a re-flag) and so does the net-out.
         stored = entry_claim(al_id=1, ordered_episode_ids=[101], preowned_episode_ids=[101])
         other = entry_claim(al_id=2, series_id=8)
         pending = pending_import(claims=(stored, other))
@@ -284,8 +285,16 @@ class TestPendingImportClaims:
 
         refreshed = pending.with_claim(fresh)
 
-        assert refreshed.claims == (replace(fresh, preowned_episode_ids=(101,)), other)
+        assert refreshed.claims == (replace(fresh, preowned_episode_ids=(101,), claimed_at=stored.claimed_at), other)
         assert pending.claims == (stored, other)
+
+    def test_with_claim_clears_the_cleanup_flag(self) -> None:
+        # A claim joining (or re-flagging) means new files to import: the record is active again, so
+        # its owed effects re-run at the eventual retire instead of the heal pass retiring it.
+        flagged = pending_import(awaiting_cleanup=True)
+
+        assert flagged.with_claim(entry_claim(al_id=2, series_id=8)).awaiting_cleanup is False
+        assert flagged.with_claim(entry_claim(ordered_episode_ids=[101])).awaiting_cleanup is False
 
     def test_restamped_sets_the_birth_and_every_claims_clock(self) -> None:
         pending = pending_import(

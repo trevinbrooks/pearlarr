@@ -490,20 +490,19 @@ class TestReacquireRegistration:
 
     def test_accretion_replaces_the_entrys_own_claim_and_merges_the_map(self) -> None:
         # A re-flag by the entry already claiming the record: its claim is replaced
-        # (stamped now), the fresh placements fold into the map, the birth stands.
+        # under its first clock, the fresh placements fold into the map, the birth stands.
         pipeline = _pipeline(torrents=self._reacquire(None))
         resident = self._resident(pipeline)
         seed = pending_seed(
             "h1", ordered_episode_ids=(101, 102), placements={"Show - 02 [1080p].mkv": [102]}, stored=resident
         )
-        before = now_stamp()
 
         self._add(pipeline, seed)
 
         record = _stored(pipeline, "h1")
         (claim,) = record.claims
         assert claim.ordered_episode_ids == (101, 102)
-        assert before <= claim.claimed_at <= now_stamp()
+        assert claim.claimed_at == self._STORED_AT
         assert record.added_at == self._STORED_AT
         assert dict(record.file_episode_map) == {
             normalize_basename("Show - 01 [1080p].mkv"): (101,),
