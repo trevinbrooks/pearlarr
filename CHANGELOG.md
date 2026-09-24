@@ -7,6 +7,8 @@ Pearlarr is a fork of [bbtufty/seadexarr](https://github.com/bbtufty/seadexarr).
 
 ## [Unreleased]
 
+## [1.5.0] - 2026-09-24
+
 ### Changed
 
 - A torrent listed on several AniList entries is tracked by one pending record for all of them. The wait rows and the queued, downloaded, and imported counts now count torrents, not entries, and a multi-entry row's label names every entry. When an entry that already waits on a torrent is re-checked, the torrent's still-unmatched files are matched against that entry's current episode list. Pending records of the same torrent fold into one on the first start after upgrading (cache schema v5).
