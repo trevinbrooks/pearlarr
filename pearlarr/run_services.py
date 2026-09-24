@@ -22,7 +22,7 @@ from .anilist_gateway import AniListGateway
 from .arr_categories import ArrCategoryResolver
 from .arr_http import ArrHttp, make_httpx_client
 from .boot_flow import BootFlow
-from .cache import UPDATED_AT_STR_FORMAT, AbstractCacheStore, CachedEntry, CacheRecord, CacheStore
+from .cache import AbstractCacheStore, CachedEntry, CacheRecord, CacheStore
 from .clock import Clock, SystemClock
 from .config import AppConfig, Arr, ArrSettings, PrivateReleaseAction, secret_value
 from .grab_pipeline import GrabPipeline, GrabRequest
