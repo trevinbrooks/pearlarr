@@ -49,7 +49,7 @@ flowchart LR
 | Grabbing | `grab_pipeline`, `torrents` | tracker page parsing, qBittorrent adds, per-release outcomes |
 | Import wait | `manual_import`, `sonarr_import`, `probe_verdicts`, `episode_state`, `import_files`, `import_quality`, `import_wait`, `wait_view` | waiting on downloads, Sonarr queue classification, the never-overwrite check, the series-pinned manual import, the per-file plan and its quality key |
 | Placement | `placement_types`, `parse_reading`, `release_names`, `placer`, `window_placement`, `grab_placement`, `sonarr_mapper`, `sonarr_parse` | mapping a release's files onto episodes at grab time and at import time, and the Sonarr `/parse` cache the placement reads |
-| State | `cache` | the SQLite decision cache, staged writes, backup/restore |
+| State | `cache`, `stamps`, `pending_records` | the SQLite decision cache, staged writes, backup/restore, the shared timestamp format, the pending-record seam over the store |
 | Output | `output/*`, `log`, `console_caps`, `boot_flow` | the event hub, renderers, the always-on file log |
 | Notifications | `notify`, `discord` | Discord embeds, the generic wait webhook |
 | Reporting | `reporter` | run summary and needs-action rows |

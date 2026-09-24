@@ -299,6 +299,8 @@ def _fields_summary_head(summary: RunSummary) -> tuple[Field, ...]:
     fields.append(Field("checked", tally.checked))
     fields.append(Field("needs_action", len(tally.needs_action)))
     fields.append(Field("added", summary.added_count))
+    if tally.held_by_cap:
+        fields.append(Field("held_by_cap", tally.held_by_cap))
     if summary.wait_mode_on:
         for key, value in (
             ("queued", tally.queued),

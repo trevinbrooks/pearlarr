@@ -1,21 +1,24 @@
 """The Radarr strategy: movie matching and per-AniList-id processing over the services hub."""
 
+from collections.abc import Mapping
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 from typing import override
 
 from .arr_activity import IMPORT_EVENTS, format_history_date
-from .cache import now_stamp, parse_stamp
 from .config import Arr
-from .grab_pipeline import GrabRequest
+from .grab_pipeline import NO_SEEDS, GrabRequest
+from .grab_placement import EntryFacts, PendingSeed, build_unscoped_seed
 from .log import pluralize
 from .manual_import import (
     NO_PROGRESS,
     AttemptKind,
+    GuardFacts,
     ImportProbe,
     ImportProgress,
     ImportWaitMode,
     PendingImport,
+    added_at_of,
 )
 from .mappings import ExternalIds, MappingEntry
 from .output import hub_warn
@@ -23,6 +26,7 @@ from .protocols import ArrSync
 from .radarr_client import AbstractRadarrClient, RadarrClient, collect_anime_movies
 from .run_services import RunDeps, RunServices, bind_arr_http
 from .seadex_types import ArrReleases, HistoryRecord, ProgressSink, RadarrItem, flagged_urls
+from .stamps import parse_stamp_or_none
 
 # Clock-skew cushion subtracted from the oldest pending record's grab time before the history query.
 # The added_at stamps are converted to UTC first, so this absorbs only genuine NTP drift, never a timezone
@@ -53,7 +57,6 @@ class RadarrSync(ArrSync[RadarrItem]):
         self._services = services
         self._config = deps.config
         self.logger = deps.logger
-        self.cache_store = deps.cache_store
         # The check's Radarr import history, memoized. Reset at run start (get_items) so it can't stale.
         self._evidence: _ImportEvidence | None = None
         # Two id sources for collect_anime_movies: the resolver's Anime-IDs candidate sets
@@ -128,19 +131,19 @@ class RadarrSync(ArrSync[RadarrItem]):
         item: RadarrItem,
         al_id: int,
         mapping: MappingEntry,
-    ) -> bool:
+    ) -> None:
         """Process one AniList id for a Radarr movie."""
 
         run = self._services
 
         sd_entry = run.al_id_prologue(al_id)
         if sd_entry is None:
-            return False
+            return
         sd_url = sd_entry.url
 
         # Movies have no episode coverage, so the backfill is just the URL.
         if run.cached_entry_skip(al_id, sd_entry, lambda: ""):
-            return False
+            return
 
         title = run.resolve_title(al_id)
         run.log_al_title(title=title.display, sd_entry=sd_entry)
@@ -160,7 +163,8 @@ class RadarrSync(ArrSync[RadarrItem]):
         seadex_dict = run.get_seadex_dict(sd_entry=sd_entry)
 
         if len(seadex_dict) == 0:
-            return run.no_releases_skip(al_id, cache_details)
+            run.no_releases_skip(al_id, cache_details)
+            return
 
         self.logger.debug(f"SeaDex: {', '.join(seadex_dict)}")
 
@@ -172,7 +176,8 @@ class RadarrSync(ArrSync[RadarrItem]):
             # Every token was invalid: skip WITHOUT caching, since grab_and_cache would cache the
             # title as done and suppress it forever. It re-prompts next run.
             if len(seadex_dict) == 0:
-                return run.invalid_selection_skip()
+                run.invalid_selection_skip()
+                return
 
         plan = run.filter_seadex_downloads(
             al_id=al_id,
@@ -183,30 +188,17 @@ class RadarrSync(ArrSync[RadarrItem]):
 
         # Seed a pending record per grabbed torrent so the engine's gate persists it: the category move then
         # defers until Radarr imports the movie, and for a torrent shared with a Sonarr grab until both arrs clear.
-        pending_seeds: dict[str, PendingImport] | None = None
+        # A torrent already downloading under a stored record takes this entry's claim (a re-flag replaces it).
+        pending_seeds: Mapping[str, PendingSeed] = NO_SEEDS
         if run.import_wait_mode is not ImportWaitMode.OFF:
-            added_at = now_stamp()
-            # No guard fields: Radarr's import path reads nothing but the infohash.
-            pending_seeds = {
-                flagged.infohash: PendingImport(
-                    infohash=flagged.infohash,
-                    al_id=al_id,
-                    title=title.display,
-                    release_group=flagged.group,
-                    url=sd_url,
-                    added_at=added_at,
-                    series_id=0,
-                    file_episode_map={},
-                    episode_ids=[],
-                    is_dual_audio=False,
-                    seadex_files=[],
-                    coverage=None,
-                    ordered_episode_ids=[],
-                )
-                for flagged in flagged_urls(seadex_dict)
-            }
+            flagged = flagged_urls(seadex_dict)
+            stored = run.records.stored_records(f.infohash for f in flagged)
+            facts = EntryFacts(
+                al_id=al_id, series_id=0, title=title.display, coverage=None, url=sd_url, guards=GuardFacts()
+            )
+            pending_seeds = {f.infohash: build_unscoped_seed(f, facts, stored.get(f.infohash)) for f in flagged}
 
-        return run.grab_and_cache(
+        run.grab_and_cache(
             GrabRequest(
                 al_id=al_id,
                 arr_title=item.title,
@@ -287,12 +279,11 @@ class RadarrSync(ArrSync[RadarrItem]):
         """
 
         floor = datetime.now(UTC) - timedelta(days=self._config.imports.pending_max_age_days)
-        stamps: list[datetime] = []
-        for raw in self.cache_store.get_pending(Arr.RADARR).values():
-            try:
-                stamps.append(parse_stamp(PendingImport.from_json(raw).added_at).astimezone(UTC))
-            except (TypeError, ValueError):
-                continue
+        stamps = [
+            moment.astimezone(UTC)
+            for raw in self._services.records.rows().values()
+            if (moment := parse_stamp_or_none(added_at_of(raw))) is not None
+        ]
         oldest = min(stamps) if stamps else floor
         return oldest - timedelta(hours=_HISTORY_SKEW_HOURS)
 

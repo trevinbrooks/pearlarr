@@ -46,7 +46,6 @@ import threading
 from collections.abc import Generator
 from contextlib import contextmanager
 from dataclasses import dataclass, field
-from datetime import datetime
 from enum import StrEnum
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
@@ -57,14 +56,15 @@ import pytest
 import yaml
 
 import pearlarr.arr_http as arr_http
-from pearlarr.cache import UPDATED_AT_STR_FORMAT, CacheStore
+from pearlarr.cache import CacheStore
 from pearlarr.cli import run_single
 from pearlarr.config import AppConfig, Arr
 from pearlarr.json_narrow import is_json_list, is_json_obj
-from pearlarr.manual_import import PendingImport, normalize_basename
+from pearlarr.manual_import import EntryClaim, EntryNames, PendingImport, normalize_basename
 from pearlarr.output import current_hub
 from pearlarr.paths import DATA_DIR_ENV
 from pearlarr.seadex_types import Json
+from pearlarr.stamps import now_stamp
 
 from .builders import make_config
 from .http_mock import sonarr_fixture
@@ -661,26 +661,33 @@ def _seed_pending(cache_path: Path, checksum: str, scenario: _Scenario) -> None:
 
     named = _ABS_FILES if scenario.listing is _Listing.ABSOLUTE else _EPISODES
     mapped = scenario.listing is _Listing.EPISODES and not scenario.imported_unseen
-    record = PendingImport(
-        infohash=_INFOHASH,
-        series_id=_SERIES_ID,
+    stamp = now_stamp()
+    claim = EntryClaim(
         al_id=_AL_ID,
-        file_episode_map={normalize_basename(name): [ep_id] for ep_id, name in named} if mapped else {},
-        episode_ids=[],
-        release_group=_GROUP,
-        is_dual_audio=False,
-        seadex_files=list(_NUMBERLESS_FILES)
-        if scenario.listing is _Listing.NUMBERLESS
-        else [name for _, name in named],
+        series_id=_SERIES_ID,
         title=_TITLE,
-        added_at=datetime.now().strftime(UPDATED_AT_STR_FORMAT),
         coverage="S01 E01-E02",
         url=None,
-        ordered_episode_ids=[ep_id for ep_id, _ in named],
+        ordered_episode_ids=tuple(ep_id for ep_id, _ in named),
+        names=EntryNames(),
+        preowned_episode_ids=(),
+        slice_coverage=None,
+        claimed_at=stamp,
+    )
+    record = PendingImport(
+        infohash=_INFOHASH,
+        release_group=_GROUP,
+        is_dual_audio=False,
+        seadex_files=tuple(_NUMBERLESS_FILES)
+        if scenario.listing is _Listing.NUMBERLESS
+        else tuple(name for _, name in named),
+        added_at=stamp,
+        file_episode_map={normalize_basename(name): [ep_id] for ep_id, name in named} if mapped else {},
+        claims=(claim,),
     )
     store = CacheStore.load(str(cache_path), config_checksum=checksum)
     try:
-        store.put_pending(Arr.SONARR, record.key, record.to_json())
+        store.put_pending(Arr.SONARR, record.infohash, record.to_json())
         store.save(preview=False)
     finally:
         store.close()
@@ -691,7 +698,7 @@ def _pending_after(cache_path: Path, checksum: str) -> frozenset[str]:
 
     store = CacheStore.load(str(cache_path), config_checksum=checksum)
     try:
-        return frozenset(key.infohash for key in store.get_pending(Arr.SONARR))
+        return frozenset(store.get_pending(Arr.SONARR))
     finally:
         store.close()
 

@@ -598,10 +598,9 @@ class TestInteractivePick:
             return "42"  # out of range -> every token invalid -> empty pick
 
         monkeypatch.setattr("builtins.input", fake_input)
-        result = strat.process_al_id(_MovieItem(), al_id, MappingEntry(anilist_id=al_id))
+        strat.process_al_id(_MovieItem(), al_id, MappingEntry(anilist_id=al_id))
         capsys.readouterr()  # drain the picker's terminal rows
 
-        assert result is False
         # Nothing persisted: the title must resurface (and re-prompt) next run.
         assert cache.get_entry(Arr.RADARR, al_id) is None
 

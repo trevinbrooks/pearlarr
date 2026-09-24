@@ -619,9 +619,10 @@ class AdvancedSettings(_ConfigBase):
     max_torrents_to_add: int = Field(default=10, ge=0)
     """Cap on torrents added per run. `0` removes the cap.
 
-    Keeps a first run on a large library from flooding qBittorrent. Later runs
-    pick up where the cap stopped. Preview runs ignore the cap, so a preview
-    always reports the whole library.
+    Keeps a first run on a large library from flooding qBittorrent. Past the cap a
+    run still checks every title, so a torrent already downloading stays matched to
+    every entry that lists it, and the held titles are grabbed on later runs.
+    Preview runs ignore the cap, so a preview always reports the whole library.
     """
 
     detect_arr_activity: bool = True

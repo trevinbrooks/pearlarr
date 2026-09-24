@@ -12,7 +12,7 @@ from .anilist_gateway import AniListGateway
 from .cache import AbstractCacheStore
 from .config import Arr
 from .log import EntryState
-from .manual_import import EntryNames, ImportWaitMode, PendingImport, PendingKey, PendingState
+from .manual_import import EntryNames, ImportWaitMode, PendingImport, PendingState
 from .output import (
     Accent,
     CapReached,
@@ -113,8 +113,8 @@ class NeedsActionKind(Enum):
     """A recommended release is on a tracker we have no parser for."""
     GRAB_FAILED = auto()
     """A contained transient failure (tracker/qBittorrent down)."""
-    PARSE_FAILED = auto()
-    """A Sonarr parse request failed, so the grab was judged without that file's placement."""
+    PLACEMENT_INPUT_MISSING = auto()
+    """A Sonarr read the grab-time placement needs failed, so the grab was judged without it."""
 
 
 @dataclass(frozen=True, slots=True)
@@ -154,12 +154,16 @@ class RunStats:
     """Carried-over `DOWNLOADED` records (a this-run grab stays in `added`)."""
     imported: int = 0
     """Carried-over `IMPORTED` records (a this-run grab stays in `added`)."""
+    held_by_cap: int = 0
+    """Titles with a grabbable release held past the run cap (re-checked and grabbed next run)."""
 
 
 @dataclass
 class PerTitleState:
     """Per-title scratch flags, reset at the top of each title."""
 
+    held_by_cap: bool = False
+    """A grabbable release was held by the run cap, so the title must not be cached as done."""
     private_only_skipped: bool = False
     """A private-only release forced a skip, so the title must not be cached as done."""
     private_only_groups: list[str] = field(default_factory=list[str])
@@ -176,8 +180,8 @@ class PerTitleState:
     """Hashes held out of the cached hash set, so the release is re-considered once a parser lands."""
     grab_failed_groups: list[str] = field(default_factory=list[str])
     """Groups whose release hit a contained grab failure (tracker or client down), so the title stays uncached."""
-    parse_failed_groups: list[str] = field(default_factory=list[str])
-    """Groups with a file whose Sonarr parse request failed, so the title stays uncached and re-checks."""
+    input_missing_groups: list[str] = field(default_factory=list[str])
+    """Groups with a url whose placement waited on a Sonarr read that failed, so the title stays uncached and re-checks."""
     current_title: str | None = None
     """Title of the entry currently being processed, so grabs and the summary can attribute what they grab."""
     current_url: str | None = None
@@ -212,17 +216,14 @@ class RunContext:
     """Run clock (monotonic, so an NTP or DST step cannot move it)."""
     counts_mark: CountsMark = field(default_factory=lambda: SeverityCounts().bound_mark())
     """Stamped at run start and diffed for the summary's issues row (an unstamped ctx diffs to zero)."""
-    pending_imports: dict[PendingKey, PendingImport] = field(
-        default_factory=dict[PendingKey, PendingImport],
-    )
-    """Records written THIS run, keyed for the run-list writes. The durable copies live in `cache_store`."""
-    reacquired_keys: set[PendingKey] = field(default_factory=set[PendingKey])
-    """Store-resident records re-seen in qBittorrent this run (`ALREADY_ADDED`), skipped by the snapshot but
-    counted by the tally. Never also a `pending_imports` record."""
-    pending_states: dict[PendingKey, PendingState] = field(
-        default_factory=dict[PendingKey, PendingState],
-    )
-    """Observed status of each carried-over record, keyed per record. Never a this-run grab, which stays
+    pending_imports: dict[str, PendingImport] = field(default_factory=dict[str, PendingImport])
+    """Records written THIS run, keyed by infohash for the run-list writes. The durable copies live in
+    `cache_store`."""
+    reacquired_keys: set[str] = field(default_factory=set[str])
+    """Store-resident records this run re-saw (`ALREADY_ADDED`) without grabbing them, skipped by the snapshot
+    but counted by the tally. Never also a `pending_imports` record."""
+    pending_states: dict[str, PendingState] = field(default_factory=dict[str, PendingState])
+    """Observed status of each carried-over record, keyed by infohash. Never a this-run grab, which stays
     `added`."""
 
 
@@ -477,22 +478,24 @@ class RunReporter:
         PendingState.IMPORTED: EntryState.IMPORTED,
     }
 
-    def log_pending_snapshot(self, state: PendingState, pending: PendingImport) -> None:
+    def log_pending_snapshot(self, state: PendingState, pending: PendingImport, series_id: int) -> None:
         """Emit a carried-over pending record's self-contained block inline in the series block.
 
-        Bumps no counter: the engine owns the drop and count bookkeeping.
+        The header reads the record's claim on `series_id`. Bumps no counter: the engine owns the
+        drop and count bookkeeping.
         """
 
         entry_state = self._PENDING_ENTRY_STATES.get(state)
         if entry_state is None:
             return
+        claim = pending.claim_for(series_id)
         # Row style is renderer policy keyed on state, so the producer passes no style.
         self._block(
             EntryHeader(
                 entry_state,
                 pending.display_label,
-                coverage=pending.coverage,
-                url=pending.url,
+                coverage=claim.coverage if claim else None,
+                url=claim.url if claim else None,
             ),
         )
 
@@ -555,8 +558,8 @@ class RunReporter:
     def log_max_torrents_added(self, cap: int) -> None:
         """Report hitting the per-run torrent cap (advanced.max_torrents_to_add)."""
 
-        # Close the entry first: the scan breaks here and _finalize_run's check runs before the summary, so
-        # a still-open entry frontier would misplace its diagnostics under the capped title.
+        # Close the entry first: the cap line is a run-level fact and the capped title logs nothing further, so a
+        # still-open entry frontier would misplace it under that title.
         self._close_entry()
         self._emit(CapReached(cap=cap))
 

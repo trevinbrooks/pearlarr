@@ -7,7 +7,6 @@ from typing import NamedTuple
 
 import qbittorrentapi
 
-from .cache import parse_stamp, pending_cutoff
 from .clock import Clock
 from .config import ImportsSettings
 from .log import count_noun
@@ -23,12 +22,13 @@ from .manual_import import (
     ImportProgress,
     Outcome,
     PendingImport,
-    PendingKey,
     PendingState,
     TorrentProbe,
     TorrentTelemetry,
     WaitOutcome,
     classify_pending,
+    is_awaiting_cleanup,
+    newest_claimed_at_of,
     sanitize_torrent_telemetry,
 )
 from .output import SPARK_SAMPLES, Phase, TorrentView, WaitKind, WaitSnapshot, hub_error, hub_note, hub_warn
@@ -36,6 +36,7 @@ from .pending_records import PendingRecords
 from .protocols import ImportCompleter
 from .reporter import RunContext
 from .run_services import RunDeps
+from .stamps import pending_cutoff
 from .wait_view import WaitOutcomeRow, WaitResult, WaitView, make_wait_view
 
 _EFFECT_BACKOFF_S: tuple[float, float] = (1.0, 3.0)
@@ -131,7 +132,7 @@ class ImportProbes:
         try:
             return self.strategy.import_progress(pending)
         except Exception:
-            self._logger.debug(f"import progress poll for {pending.key.row_key} failed", exc_info=True)
+            self._logger.debug(f"import progress poll for {pending.infohash} failed", exc_info=True)
             return NO_PROGRESS
 
 
@@ -150,7 +151,7 @@ class PostImportCleanup:
         self._records = records
         # Also the strategy source: the queue close drives the hook bound on the probes.
         self._probes = probes
-        self._kept_keys: set[PendingKey] = set()
+        self._kept_keys: set[str] = set()
 
     def begin_run(self, ctx: RunContext) -> None:
         """Bind the fresh run context, forgetting the prior run's keeps."""
@@ -176,7 +177,7 @@ class PostImportCleanup:
         if failed:
             self._keep_for_cleanup(pending, failed)
             return False
-        self._records.drop(pending.key)
+        self._records.drop(pending.infohash)
         return True
 
     def heal_flagged(self) -> None:
@@ -200,7 +201,7 @@ class PostImportCleanup:
 
         kept = replace(pending, awaiting_cleanup=True)
         self._records.save(kept)
-        self._kept_keys.add(kept.key)
+        self._kept_keys.add(kept.infohash)
         hub_warn(
             f"Could not finish the post-import cleanup for {pending.display_label} "
             f"({' and '.join(effect.value for effect in failed)}) - "
@@ -221,10 +222,9 @@ class PostImportCleanup:
     def _close_tracked_download(self, pending: PendingImport, moved_to: str | None) -> EffectStatus:
         """Dismiss the arr's leftover queue entry once `pending`'s torrent is fully imported.
 
-        Per-arr sibling gate (the category gate's is cross-arr), import-only: a TTL or MISSING drop closes nothing.
-        Skipped outright whenever the post-import move to `moved_to` untracks the torrent, whatever this run's
-        move outcome: the entry then clears on its own, without the permanent
-        "download ignored" history marker an explicit delete writes.
+        Import-only: a TTL or MISSING drop closes nothing. Skipped outright whenever the post-import move
+        to `moved_to` untracks the torrent, whatever this run's move outcome: the entry then clears on its
+        own, without the permanent "download ignored" history marker an explicit delete writes.
         """
 
         strategy = self._probes.strategy
@@ -236,29 +236,23 @@ class PostImportCleanup:
                 "skipping the explicit removal",
             )
             return EffectStatus.SKIPPED
-        if self._records.count_arr_siblings(pending.key):
-            self._logger.debug(
-                f"{pending.display_label}: sibling records still pending on this torrent - leaving its queue entry",
-            )
-            return EffectStatus.SKIPPED
         # Each retry re-runs the whole close: the fresh queue read self-corrects an entry cleared meanwhile.
         return self._retry_effect(lambda: strategy.close_tracked(pending))
 
     def _apply_post_import_category(self, pending: PendingImport, category: str | None) -> EffectStatus:
         """Move a verified-imported torrent to `category` (the retire's one resolve).
 
-        Gated on no OTHER record in either arr claiming the hash (the retiring record is still
-        resident under drop-last). Creates the category (qBittorrent 409s an unknown one).
+        Gated on the other arr holding no record on the hash (a torrent both arrs grabbed moves once
+        the last of them imports). Creates the category (qBittorrent 409s an unknown one).
         """
 
         qbit = self._qbit
         if qbit is None or category is None:
             return EffectStatus.SKIPPED
-        remaining = self._records.count_siblings_any_arr(pending.key)
-        if remaining:
+        if self._records.other_arr_holds(pending.infohash):
             self._logger.debug(
-                f"{pending.display_label}: {count_noun(remaining, 'sibling record')} still pending on "
-                "this torrent - deferring the category move",
+                f"{pending.display_label}: the other arr's record is still pending on this torrent - "
+                "deferring the category move",
             )
             return EffectStatus.SKIPPED
         return self._retry_effect(lambda: self._attempt_move(qbit, category, pending.infohash))
@@ -312,7 +306,7 @@ class PostImportCleanup:
             self._records.save(replace(record, awaiting_cleanup=False))
             # Blocking mode tallies before the monitor: fold DOWNLOADED so the summary does
             # not default the never-snapshotted key to queued.
-            self._ctx.pending_states[record.key] = PendingState.DOWNLOADED
+            self._ctx.pending_states[record.infohash] = PendingState.DOWNLOADED
             hub_warn(f"Imported files for {record.display_label} are no longer present - re-importing")
 
     def _finish_cleanup(self, record: PendingImport) -> None:
@@ -334,12 +328,13 @@ class ImportWaitManager:
     _ctx: RunContext
     """The current run's context. `__init__` seeds it through the first `begin_run`, which rebinds every run."""
 
-    def __init__(self, *, deps: RunDeps, ctx: RunContext) -> None:
+    def __init__(self, *, deps: RunDeps, ctx: RunContext, records: PendingRecords) -> None:
         self.imports = deps.config.imports
         self.clock = deps.clock
         self.logger = deps.logger
         self._reporter = deps.reporter
-        self._records = PendingRecords(deps.cache_store)
+        # The hub's seam, shared with the grab pipeline, which binds it each run: one run list, one store binding.
+        self._records = records
         self.probes = ImportProbes(qbit=deps.qbit, logger=deps.logger)
         self._cleanup = PostImportCleanup(deps, self._records, self.probes)
         self.begin_run(ctx, None)
@@ -348,25 +343,27 @@ class ImportWaitManager:
         """Bind the fresh run context to the manager and its sub-objects, the strategy to the probes alone.
 
         Rebound EVERY run (`reset_run_stats` mints a fresh ctx), so none of them can
-        operate on a dead context after the first run.
+        operate on a dead context after the first run. The record seam is the hub's to bind.
         """
 
         self._ctx = ctx
-        self._records.begin_run(ctx)
         self.probes.begin_run(strategy)
         self._cleanup.begin_run(ctx)
 
-    def fresh_grab_keys(self) -> set[PendingKey]:
+    def fresh_grab_keys(self) -> set[str]:
         """Keys of the records written THIS run, tallied as `added` and never carried-over."""
 
         return self._records.fresh_keys()
 
-    def _entry_reported_keys(self) -> set[PendingKey]:
-        """Keys an entry block already reported this run, which the snapshot skips."""
+    def _entry_reported_keys(self) -> set[str]:
+        """Keys an entry block already reported this run, which the snapshot skips.
 
-        return self.fresh_grab_keys() | self._ctx.reacquired_keys
+        A record spanning several series is observed once, under whichever of its series scans first.
+        """
 
-    def note_pending_state(self, key: PendingKey, outcome: Outcome) -> None:
+        return self.fresh_grab_keys() | self._ctx.reacquired_keys | set(self._ctx.pending_states)
+
+    def note_pending_state(self, key: str, outcome: Outcome) -> None:
         """Fold a pass's non-dropped outcome for a carried-over record into `pending_states`."""
 
         self._ctx.pending_states[key] = PENDING_STATE_FOR_OUTCOME[outcome]
@@ -388,11 +385,11 @@ class ImportWaitManager:
             # and the flag keeps every later counter off the key.
             self._cleanup.retire(record)
         elif outcome.dropped:
-            self._records.drop(record.key)
+            self._records.drop(record.infohash)
         elif carried_over:
             # Still store-resident: fold the outcome so the check pass's tally buckets
             # it truthfully (the monitor runs post-tally, where the fold is unread).
-            self.note_pending_state(record.key, outcome)
+            self.note_pending_state(record.infohash, outcome)
 
     def _observe_one(self, pending: PendingImport) -> PendingState:
         """Observe one carried-over record (never an import) and fold it to a `PendingState`."""
@@ -407,11 +404,11 @@ class ImportWaitManager:
             # A kept-for-cleanup record still counts here: the import happened this run.
             self._cleanup.retire(pending)
         elif state is PendingState.MISSING:
-            self._records.drop(pending.key)
+            self._records.drop(pending.infohash)
             hub_warn(f"Pending import {pending.display_label} is gone from qBittorrent - dropping its record")
         elif state is PendingState.ERRORED:
             self.logger.debug(f"Pending import {pending.display_label} errored in qBittorrent - left for a later run")
-        self._ctx.pending_states[pending.key] = state
+        self._ctx.pending_states[pending.infohash] = state
         return state
 
     def snapshot_pending_for_series(self, series_id: int) -> None:
@@ -421,11 +418,14 @@ class ImportWaitManager:
             return
 
         reported = self._entry_reported_keys()
-        for key, pending in self._records.for_series(series_id).items():
-            if key in reported:
-                continue
+        rows = {
+            key: raw
+            for key, raw in self._records.rows_for_series(series_id).items()
+            if key not in reported and not is_awaiting_cleanup(raw)
+        }
+        for pending in self._records.hydrate(rows).values():
             state = self._observe_one(pending)
-            self._reporter.log_pending_snapshot(state, pending)
+            self._reporter.log_pending_snapshot(state, pending, series_id)
 
     def tally_carried_over_into_stats(self) -> None:
         """Fold each still-pending carried-over record into `queued` / `downloaded`.
@@ -554,30 +554,30 @@ class ImportWaitManager:
         return records
 
     def prune_expired_pending(self) -> None:
-        """Drop durable pending records past `imports.pending_max_age_days` (or with an unparseable stamp)."""
+        """Drop durable pending records whose newest claim is past `imports.pending_max_age_days`.
+
+        A record with no parseable claim stamp drops too.
+        """
 
         cutoff = pending_cutoff(self.imports.pending_max_age_days)
-
-        # Keyed raw reads: the age check needs only the stamp, so a record rehydrates
-        # (guard-less) solely for the aged drop's note.
-        for key, raw in self._records.rows().items():
-            try:
-                added_at = parse_stamp(raw.get("added_at", ""))
-            except (TypeError, ValueError):
-                self.logger.debug(
-                    f"Pending import {key.infohash} has an unparseable timestamp; dropping as expired",
-                )
-                self._records.drop(key)
-                continue
-            if added_at < cutoff:
-                pending = PendingImport.from_json(raw)
-                # A flagged record's import succeeded. Only the cleanup is being abandoned.
-                goal = "its post-import cleanup" if pending.awaiting_cleanup else "it"
-                hub_note(
-                    f"Pending import {pending.display_label} is older than "
-                    f"{count_noun(self.imports.pending_max_age_days, 'day')} - giving up on {goal}",
-                )
-                self._records.drop(pending.key)
+        rows = self._records.rows()
+        # The clocks are read off the raw rows, so only an aged row rehydrates, for its note.
+        clocks = {infohash: newest_claimed_at_of(raw) for infohash, raw in rows.items()}
+        for infohash, newest in clocks.items():
+            if newest is None:
+                self.logger.debug(f"Pending import {infohash} has no parseable timestamp; dropping as expired")
+                self._records.drop(infohash)
+        aged = {
+            infohash: rows[infohash] for infohash, newest in clocks.items() if newest is not None and newest < cutoff
+        }
+        for pending in self._records.hydrate(aged).values():
+            # A flagged record's import succeeded. Only the cleanup is being abandoned.
+            goal = "its post-import cleanup" if pending.awaiting_cleanup else "it"
+            hub_note(
+                f"Pending import {pending.display_label} is older than "
+                f"{count_noun(self.imports.pending_max_age_days, 'day')} - giving up on {goal}",
+            )
+            self._records.drop(pending.infohash)
 
 
 # Cap on deferral credit, in ready timeouts per row: Sonarr work wedged forever (a command in flight, a pass that
@@ -683,7 +683,7 @@ class _MonitorRow:
     """The row's current frame entry, snapshotted by the manager each push."""
 
     def __post_init__(self) -> None:
-        self.view = TorrentView(key=self.record.key.row_key, label=self.record.display_label, phase=Phase.QUEUED)
+        self.view = TorrentView(key=self.record.infohash, label=self.record.display_label, phase=Phase.QUEUED)
 
     @property
     def active(self) -> bool:
@@ -700,7 +700,7 @@ class _MonitorRow:
         """Freeze the terminal frame (`phase_elapsed_s` becomes the row's final wait clock)."""
 
         self.view = TorrentView(
-            key=self.record.key.row_key,
+            key=self.record.infohash,
             label=self.record.display_label,
             phase=Phase.TERMINAL,
             outcome=outcome,
@@ -718,7 +718,7 @@ class _MonitorRow:
 
         history = self.view.speed_history if self.view.phase is Phase.DOWNLOADING else ()
         self.view = TorrentView(
-            key=self.record.key.row_key,
+            key=self.record.infohash,
             label=self.record.display_label,
             phase=Phase.DOWNLOADING,
             fraction=telemetry.progress,
@@ -742,7 +742,7 @@ class _MonitorRow:
         total = probe.target_count
         done = probe.imported_count
         self.view = TorrentView(
-            key=self.record.key.row_key,
+            key=self.record.infohash,
             label=self.record.display_label,
             phase=Phase.IMPORTING,
             fraction=(done / total if total else 1.0),
@@ -788,7 +788,7 @@ class MonitorPass:
     kind: WaitKind
     """Which end-of-run pass this is. Only the monitor applies the download timeout."""
     rows: dict[str, _MonitorRow]
-    """Each record's live `_MonitorRow`, keyed by `PendingKey.row_key` in working-set order."""
+    """Each record's live `_MonitorRow`, keyed by infohash in working-set order."""
     results: list[WaitOutcomeRow]
     """One per record that reached a terminal outcome."""
 
@@ -803,7 +803,8 @@ class MonitorPass:
         # so a later membership check would misread it as carried-over.
         fresh = manager.fresh_grab_keys()
         self.rows = {
-            r.key.row_key: _MonitorRow(record=r, dl_start=self._start, carried_over=r.key not in fresh) for r in records
+            r.infohash: _MonitorRow(record=r, dl_start=self._start, carried_over=r.infohash not in fresh)
+            for r in records
         }
         # Per-cycle heavy-poll memo: sibling records share ONE qBittorrent read per cycle.
         self._cycle_polls: dict[str, TorrentProbe] = {}

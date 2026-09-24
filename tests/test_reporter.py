@@ -49,6 +49,7 @@ from pearlarr.torrents import AddOutcome, ReleaseOutcome
 from .builders import (
     FakeCacheStore,
     ScriptedAniListClient,
+    entry_claim,
     make_anilist_gateway,
     make_entry_record,
     pending_import,
@@ -294,10 +295,8 @@ class TestCompleteBlocksSelfClose:
 
     def test_pending_snapshot_emits_scope_closed_before_returning(self) -> None:
         reporter, events = _record()
-        reporter.log_pending_snapshot(
-            PendingState.IMPORTED,
-            pending_import(title="My Show", coverage="S01 E01-E13", url="https://releases.moe/1"),
-        )
+        pending = pending_import(title="My Show", coverage="S01 E01-E13", url="https://releases.moe/1")
+        reporter.log_pending_snapshot(PendingState.IMPORTED, pending, pending.claims[0].series_id)
         assert [type(e) for e in events] == [ScopeOpened, EntryHeader, ScopeClosed]
 
 
@@ -406,11 +405,9 @@ class TestPendingSnapshot:
     def test_renders_and_bumps_no_counter(self) -> None:
         reporter, events = _record()
         ctx = RunContext(arr=Arr.SONARR)
+        pending = pending_import(title="My Show", coverage="S01 E01-E13", url="https://releases.moe/1")
 
-        reporter.log_pending_snapshot(
-            PendingState.IMPORTED,
-            pending_import(title="My Show", coverage="S01 E01-E13", url="https://releases.moe/1"),
-        )
+        reporter.log_pending_snapshot(PendingState.IMPORTED, pending, pending.claims[0].series_id)
 
         assert any(isinstance(e, EntryHeader) for e in events)
         # The reporter never touches the counters - the engine owns drop/count.
@@ -420,13 +417,29 @@ class TestPendingSnapshot:
 
     def test_missing_state_renders_nothing(self) -> None:
         reporter, events = _record()
+        pending = pending_import(title="Gone")
 
-        reporter.log_pending_snapshot(
-            PendingState.MISSING,
-            pending_import(title="Gone"),
-        )
+        reporter.log_pending_snapshot(PendingState.MISSING, pending, pending.claims[0].series_id)
 
         assert events == []
+
+    def test_header_reads_the_claim_on_the_reported_series(self) -> None:
+        # A two-series record is reported once per series it claims: the header carries that
+        # claim's coverage and link, and the label names every claim.
+        reporter, events = _record()
+        pending = pending_import(
+            claims=(
+                entry_claim(al_id=1, series_id=7, title="Show", coverage="S01 E01-E13", url="https://releases.moe/1"),
+                entry_claim(al_id=2, series_id=8, title="Other", coverage="S02 E01", url="https://releases.moe/2"),
+            ),
+        )
+
+        reporter.log_pending_snapshot(PendingState.DOWNLOADED, pending, 8)
+
+        header = next(e for e in events if isinstance(e, EntryHeader))
+        assert header.title == pending.display_label
+        assert "Show & Other" in header.title
+        assert (header.coverage, header.url) == ("S02 E01", "https://releases.moe/2")
 
 
 class TestSummaryPendingCounters:

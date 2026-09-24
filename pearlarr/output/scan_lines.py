@@ -80,7 +80,10 @@ _BLANK = LegacyLine(logging.INFO, "")
 _SUMMARY_KEY_WIDTH: Final = 12
 _BLOCK_KEY_WIDTH: Final = 7
 
-_CAP_MESSAGE: Final = "Reached the maximum number of torrents for this run (advanced.max_torrents_to_add); stopping"
+_CAP_MESSAGE: Final = (
+    "Reached the maximum number of torrents for this run (advanced.max_torrents_to_add); "
+    "checking the remaining titles without grabbing"
+)
 
 # Causes without a tip render no line. The PRIVATE_ONLY > NO_FALLBACK > STALE precedence is settled by
 # whoever populates `RunSummary.tip`, never re-derived here.
@@ -371,6 +374,8 @@ def run_summary_lines(event: RunSummaryReady) -> tuple[LegacyLine, ...]:
     lines.append(_summary_kv("added", str(summary.added_count), value_style="green" if summary.added_count else None))
     for grab in tally.added:
         lines.extend(_added_block(grab, dry_run=summary.dry_run))
+    if tally.held_by_cap:
+        lines.append(_summary_kv("held by cap", str(tally.held_by_cap), value_style="yellow"))
 
     if summary.wait_mode_on:
         if tally.queued:

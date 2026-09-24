@@ -439,7 +439,8 @@ ACTION_MIXED_LINES: tuple[Line, ...] = (
 CAP_REACHED = CapReached(cap=5)
 CAP_REACHED_LINES: tuple[Line, ...] = (
     _styled(
-        "Reached the maximum number of torrents for this run (advanced.max_torrents_to_add); stopping",
+        "Reached the maximum number of torrents for this run (advanced.max_torrents_to_add); "
+        "checking the remaining titles without grabbing",
         "yellow",
     ),
 )
@@ -506,6 +507,7 @@ def _rich_stats() -> RunStats:
         queued=1,
         downloaded=1,
         imported=2,
+        held_by_cap=3,
     )
 
 
@@ -555,6 +557,7 @@ SUMMARY_RICH_LINES: tuple[Line, ...] = (
     _brow("      link    https://releases.moe/900", "link", "https://releases.moe/900", "grey50"),
     # Quirk: a name-less grab renders "[group] " with a trailing space.
     _brow("      torrent [PrivGrp] ", "torrent", _torrent_text(None, "PrivGrp", dry=False), "green"),
+    _srow("  held by cap  : 3", "held by cap", "3", style="yellow"),
     _srow("  queued       : 1", "queued", "1", style="grey50"),
     _srow("  downloaded   : 1", "downloaded", "1", style="yellow"),
     _srow("  imported     : 2", "imported", "2", style="green"),
@@ -913,7 +916,7 @@ class TestEntryHeaderParity:
             (PendingState.IMPORTED, PENDING_IMPORTED_LINES),
         ):
             harness.events.clear()
-            harness.reporter.log_pending_snapshot(state, pending)
+            harness.reporter.log_pending_snapshot(state, pending, pending.claims[0].series_id)
             assert harness.lines() == expected
 
 

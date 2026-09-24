@@ -279,7 +279,7 @@ class TestFallbackSatisfiedResurfacing:
         # the shared tail overwrites a stale True.
         cache = self._cache(marker=True)
         run = make_services(cache_store=cache, _reporter=_TailReporter(), sleep_time=0)
-        assert run.no_releases_skip(7, {"name": "Title"}) is False
+        run.no_releases_skip(7, {"name": "Title"})
         entry = cache.get_entry(Arr.SONARR, 7)
         assert entry is not None
         assert entry.fallback_satisfied is False
@@ -349,14 +349,14 @@ class TestNoReleasesSkip:
     """`no_releases_skip` runs the real four-step tail: log, cache write, throttle, then report not-grabbed."""
 
     def test_logs_persists_and_reports_not_grabbed(self) -> None:
-        # The real four-step tail (log + cache write + throttle + False). Its body
+        # The real three-step tail (log + cache write + throttle). Its body
         # previously had fake-only coverage: the seam tests script it, nothing
         # drove the real thing.
         cache = FakeCacheStore()
         reporter = _TailReporter()
         run = make_services(cache_store=cache, _reporter=reporter, sleep_time=0)
 
-        assert run.no_releases_skip(7, {"name": "Title", "url": "u"}) is False
+        run.no_releases_skip(7, {"name": "Title", "url": "u"})
 
         persisted = cache.get_entry(Arr.SONARR, 7)
         assert persisted is not None

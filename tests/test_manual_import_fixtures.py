@@ -25,7 +25,6 @@ import pytest
 
 from pearlarr.config import AppConfig
 from pearlarr.grab_placement import (
-    PendingSeedContext,
     SeedFile,
     SeedRelease,
     SeedScope,
@@ -75,6 +74,8 @@ from pearlarr.seadex_types import (
 from .builders import (
     FakeCacheStore,
     by_name,
+    entry_facts,
+    indexes_for,
     make_config,
     make_sonarr_mapper,
     make_sonarr_sync,
@@ -845,7 +846,6 @@ class TestAssignScopeGate:
         leftover_name = "Show - S02E01 [1080p].mkv"
         pending = pending_import(
             file_episode_map={seed_name: [101]},
-            episode_ids=[101],
             ordered_episode_ids=[101],
             seadex_files=[seed_name],
         )
@@ -858,14 +858,14 @@ class TestAssignScopeGate:
         }
         ep_id_map = {EpisodeKey(1, 1): 101, EpisodeKey(2, 1): 999}  # 999 is OUTSIDE the resolved {101}
 
-        result = mapper.assign(pending, candidates, series_index(ep_id_map))
+        result = mapper.assign(pending, candidates, indexes_for(pending, series_index(ep_id_map)))
 
         placed_ids = {i for ids in result.assigned.values() for i in ids}
         assert 999 not in placed_ids
         # The map resolves it to 999, outside the record's set, so it is another slice's.
         assert result.excluded == (Placement(normalize_basename(leftover_name), (), PlacementVerdict.FOREIGN),)
         assert result.placed == {}
-        assert pending.file_episode_map == {seed_name: [101]}
+        assert dict(pending.file_episode_map) == {seed_name: (101,)}
 
     def test_count_mismatch_skips(self) -> None:
         # Two absolute files but three resolved ids -> not a clean 1:1 -> skip both.
@@ -1021,13 +1021,13 @@ class TestAssignScopeGate:
         name = "Show - S01E01 [1080p].mkv"
         sonarr = FakeSonarrClient(parse_fn=lambda _f: parsed_info(season=1, episodes=(1,)))
         mapper = make_sonarr_mapper(sonarr=sonarr)
-        pending = pending_import(file_episode_map={}, episode_ids=[], ordered_episode_ids=[101], seadex_files=[name])
+        pending = pending_import(file_episode_map={}, ordered_episode_ids=[101], seadex_files=[name])
         candidates = {normalize_basename(name): _cand(name)}
 
-        result = mapper.assign(pending, candidates, series_index({EpisodeKey(1, 1): 101}))
+        result = mapper.assign(pending, candidates, indexes_for(pending, series_index({EpisodeKey(1, 1): 101})))
 
         assert result.placed == result.assigned == {normalize_basename(name): [101]}
-        assert pending.file_episode_map == {}
+        assert dict(pending.file_episode_map) == {}
 
     def test_placed_excludes_the_seeded_entries(self) -> None:
         # `placed` is this poll's fresh work alone: a seeded entry rides
@@ -1041,13 +1041,14 @@ class TestAssignScopeGate:
         mapper = make_sonarr_mapper(sonarr=sonarr)
         pending = pending_import(
             file_episode_map={seed_name: [101]},
-            episode_ids=[],
             ordered_episode_ids=[101, 102],
             seadex_files=[seed_name, leftover_name],
         )
         candidates = {normalize_basename(name): _cand(name) for name in (seed_name, leftover_name)}
 
-        result = mapper.assign(pending, candidates, series_index({EpisodeKey(1, 1): 101, EpisodeKey(1, 2): 102}))
+        result = mapper.assign(
+            pending, candidates, indexes_for(pending, series_index({EpisodeKey(1, 1): 101, EpisodeKey(1, 2): 102}))
+        )
 
         assert result.placed == {normalize_basename(leftover_name): [102]}
         assert result.assigned == {
@@ -1068,20 +1069,21 @@ class TestAssignScopeGate:
         mapper = make_sonarr_mapper(sonarr=sonarr)
         pending = pending_import(
             file_episode_map={},
-            episode_ids=[2586, 2587],
             ordered_episode_ids=[2586, 2587],
             seadex_files=[v1, v2],
         )
         candidates = {normalize_basename(name): _cand(name) for name in (v1, v2)}
         ep_id_map = {EpisodeKey(1, 12): 2586}
 
-        first = mapper.assign(pending, candidates, series_index(ep_id_map))
-        second = mapper.assign(pending.with_placements(first.placed), candidates, series_index(ep_id_map))
+        first = mapper.assign(pending, candidates, indexes_for(pending, series_index(ep_id_map)))
+        second = mapper.assign(
+            pending.with_placements(first.placed), candidates, indexes_for(pending, series_index(ep_id_map))
+        )
 
         assert first.placed == {normalize_basename(v2): [2586]}
         assert normalize_basename(v1) not in second.assigned
         assert second.excluded == (Placement(normalize_basename(v1), (), PlacementVerdict.DUPLICATE),)
-        assert pending.file_episode_map == {}
+        assert dict(pending.file_episode_map) == {}
 
     def test_seeded_sharer_parse_blip_fails_closed(self) -> None:
         # A LATER RUN (fresh parse cache): the seeded v1's /parse blips to
@@ -1094,13 +1096,12 @@ class TestAssignScopeGate:
         mapper = make_sonarr_mapper(sonarr=sonarr)
         pending = pending_import(
             file_episode_map={v1: [2586]},
-            episode_ids=[2586, 2587],
             ordered_episode_ids=[2586, 2587],
             seadex_files=[v1, v2],
         )
         candidates = {normalize_basename(name): _cand(name) for name in (v1, v2)}
 
-        result = mapper.assign(pending, candidates, series_index({EpisodeKey(1, 12): 2586}))
+        result = mapper.assign(pending, candidates, indexes_for(pending, series_index({EpisodeKey(1, 12): 2586})))
 
         assert normalize_basename(v2) not in result.assigned
         assert result.skipped == (normalize_basename(v2),)
@@ -1116,13 +1117,14 @@ class TestAssignScopeGate:
         mapper = make_sonarr_mapper(sonarr=sonarr)
         pending = pending_import(
             file_episode_map={v1: [2586]},
-            episode_ids=[2586, 2587],
             ordered_episode_ids=[2586, 2587],
             seadex_files=[v1, v2],
         )
         candidates = {normalize_basename(name): _cand(name) for name in (v1, v2)}
 
-        result = mapper.assign(pending, candidates, series_index({EpisodeKey(1, 12): 2586, EpisodeKey(1, 13): 2587}))
+        result = mapper.assign(
+            pending, candidates, indexes_for(pending, series_index({EpisodeKey(1, 12): 2586, EpisodeKey(1, 13): 2587}))
+        )
 
         assert normalize_basename(v2) not in result.assigned
         assert result.excluded == (Placement(normalize_basename(v2), (), PlacementVerdict.DUPLICATE),)
@@ -1140,13 +1142,12 @@ class TestAssignScopeGate:
         mapper = make_sonarr_mapper(sonarr=sonarr)
         pending = pending_import(
             file_episode_map={v1: [2586]},
-            episode_ids=[2586, 2999],
             ordered_episode_ids=[2586, 2999],
             seadex_files=[v1, v2],
         )
         candidates = {normalize_basename(v2): _cand(v2)}  # v1 is gone from disk
 
-        result = mapper.assign(pending, candidates, series_index({EpisodeKey(1, 12): 2586}))
+        result = mapper.assign(pending, candidates, indexes_for(pending, series_index({EpisodeKey(1, 12): 2586})))
 
         assert normalize_basename(v2) not in result.assigned
         assert result.excluded == (Placement(normalize_basename(v2), (), PlacementVerdict.DUPLICATE),)
@@ -1160,13 +1161,12 @@ class TestAssignScopeGate:
         mapper = make_sonarr_mapper(sonarr=sonarr)
         pending = pending_import(
             file_episode_map={v1: [2586]},
-            episode_ids=[2586, 2587],
             ordered_episode_ids=[2586, 2587],
             seadex_files=[v1, v2],
         )
         candidates = {normalize_basename(name): _cand(name) for name in (v1, v2)}
 
-        result = mapper.assign(pending, candidates, series_index({EpisodeKey(1, 12): 2586}))
+        result = mapper.assign(pending, candidates, indexes_for(pending, series_index({EpisodeKey(1, 12): 2586})))
 
         assert normalize_basename(v2) not in result.assigned
         assert normalize_basename(v2) in result.skipped
@@ -1241,13 +1241,12 @@ class TestAssignDuplicateLeaves:
         mapper = make_sonarr_mapper(sonarr=sonarr)
         pending = pending_import(
             file_episode_map={},
-            episode_ids=[101],
             ordered_episode_ids=[101],
             seadex_files=[name, name],
         )
         candidates = {normalize_basename(name): _cand(name)}
 
-        result = mapper.assign(pending, candidates, series_index({EpisodeKey(1, 1): 101}))
+        result = mapper.assign(pending, candidates, indexes_for(pending, series_index({EpisodeKey(1, 1): 101})))
 
         assert result.assigned == {normalize_basename(name): [101]}
         assert result.placed == {normalize_basename(name): [101]}
@@ -1261,13 +1260,12 @@ class TestAssignDuplicateLeaves:
         mapper = make_sonarr_mapper(sonarr=sonarr)
         pending = pending_import(
             file_episode_map={},
-            episode_ids=[101, 102],
             ordered_episode_ids=[101, 102],
             seadex_files=[name, name],
         )
         candidates = {normalize_basename(name): _cand(name)}
 
-        result = mapper.assign(pending, candidates, series_index({}))
+        result = mapper.assign(pending, candidates, indexes_for(pending, series_index({})))
 
         assert result.assigned == {}
         assert result.skipped == (normalize_basename(name),)
@@ -1281,7 +1279,6 @@ class TestAssignSettled:
         names = ("Movie Part 1.mkv", "Movie Part 2.mkv")
         pending = pending_import(
             file_episode_map={},
-            episode_ids=[],
             ordered_episode_ids=[101],
             seadex_files=list(names),
         )
@@ -1291,7 +1288,7 @@ class TestAssignSettled:
         pending, candidates = self._numberless_pair()
         mapper = make_sonarr_mapper(sonarr=FakeSonarrClient(parse_fn=lambda _f: None))
 
-        result = mapper.assign(pending, candidates, series_index({EpisodeKey(1, 1): 101}))
+        result = mapper.assign(pending, candidates, indexes_for(pending, series_index({EpisodeKey(1, 1): 101})))
 
         assert sorted(result.skipped) == sorted(candidates)
         assert result.settled is False
@@ -1301,7 +1298,7 @@ class TestAssignSettled:
         pending, candidates = self._numberless_pair()
         mapper = make_sonarr_mapper(sonarr=FakeSonarrClient(parse_fn=lambda _f: parsed_info()))
 
-        result = mapper.assign(pending, candidates, series_index({}))
+        result = mapper.assign(pending, candidates, indexes_for(pending, series_index({})))
 
         assert sorted(result.skipped) == sorted(candidates)
         assert result.settled is False
@@ -1310,7 +1307,7 @@ class TestAssignSettled:
         pending, candidates = self._numberless_pair()
         mapper = make_sonarr_mapper(sonarr=FakeSonarrClient(parse_fn=lambda _f: parsed_info()))
 
-        result = mapper.assign(pending, candidates, series_index({EpisodeKey(1, 1): 101}))
+        result = mapper.assign(pending, candidates, indexes_for(pending, series_index({EpisodeKey(1, 1): 101})))
 
         assert sorted(result.skipped) == sorted(candidates)
         assert result.settled is True
@@ -1318,10 +1315,14 @@ class TestAssignSettled:
     def test_a_fully_seeded_batch_is_settled_without_a_parse(self) -> None:
         # Nothing left to place means nothing to parse, so the fake's default parse miss is never asked.
         name = "Show - 01 [1080p].mkv"
-        pending = pending_import(file_episode_map={name: [101]}, episode_ids=[101], ordered_episode_ids=[101])
+        pending = pending_import(file_episode_map={name: [101]}, ordered_episode_ids=[101])
         mapper = make_sonarr_mapper(sonarr=FakeSonarrClient())
 
-        result = mapper.assign(pending, {normalize_basename(name): _cand(name)}, series_index({EpisodeKey(1, 1): 101}))
+        result = mapper.assign(
+            pending,
+            {normalize_basename(name): _cand(name)},
+            indexes_for(pending, series_index({EpisodeKey(1, 1): 101})),
+        )
 
         assert result.skipped == ()
         assert result.settled is True
@@ -1404,24 +1405,23 @@ class TestAssignBogusKeyDowngrade:
 
 
 class TestResolvedIds:
-    """`resolved_ids`: the ordered set when the record carries one, else the seeds' ids sorted."""
+    """`resolved_ids`: the claim's window when the record carries one, else the seeds' ids sorted."""
 
-    def test_the_ordered_set_wins(self) -> None:
-        pending = pending_import(file_episode_map={"a.mkv": [7]}, episode_ids=[9], ordered_episode_ids=[3, 1, 2])
+    def test_the_claims_window_wins(self) -> None:
+        pending = pending_import(file_episode_map={"a.mkv": [7]}, ordered_episode_ids=[3, 1, 2])
 
         assert pending.resolved_ids() == [3, 1, 2]
 
-    def test_an_older_record_falls_back_to_its_seeds_sorted(self) -> None:
+    def test_an_unscoped_claim_falls_back_to_its_seeds_sorted(self) -> None:
         pending = pending_import(
             file_episode_map={"a.mkv": [7, 0], "b.mkv": [5]},
-            episode_ids=[9, 7],
             ordered_episode_ids=[],
         )
 
-        assert pending.resolved_ids() == [5, 7, 9]
+        assert pending.resolved_ids() == [5, 7]
 
     def test_a_record_with_no_targets_reads_empty(self) -> None:
-        pending = pending_import(file_episode_map={}, episode_ids=[], ordered_episode_ids=[])
+        pending = pending_import(file_episode_map={}, ordered_episode_ids=[])
 
         assert pending.resolved_ids() == []
 
@@ -2818,46 +2818,42 @@ class TestSeedEqualsMapper:
         return series_index({EpisodeKey(0, 1): 501, EpisodeKey(0, 2): 502})
 
     def test_seed_scope_targets_the_entrys_ids_over_the_series_map(self) -> None:
-        scope = SeedScope(self._index(), series_index(self._MAP), EntryNames())
+        scope = SeedScope(1, self._index(), series_index(self._MAP), EntryNames())
 
         assert scope.target() == TargetScope([501, 502], series_index(self._MAP))
 
     def test_the_seed_and_the_mapper_place_and_exclude_alike(self) -> None:
         parses = self._parses()
-        scope = SeedScope(self._index(), series_index(self._MAP), EntryNames())
+        scope = SeedScope(1, self._index(), series_index(self._MAP), EntryNames())
         index = scope.entry
         release = SeedRelease(
             release_group="grp",
             url_item=url_item(url="u", infohash="h"),
             infohash="h",
-            placed=place_release([SeedFile(name, 1000, parses[name]) for name in self._NAMES], scope),
+            placed=place_release([SeedFile(name, 1000, parses[name]) for name in self._NAMES], scope, None),
         )
 
-        seed = build_pending_seed(
-            release,
-            scope,
-            PendingSeedContext(al_id=1, series_id=2, title="t", added_at="2026-01-01 00:00:00"),
-        )
+        seed = build_pending_seed(release, scope, entry_facts(al_id=1, series_id=2, title="t"))
         mapper = make_sonarr_mapper(sonarr=FakeSonarrClient(parse_fn=parses.get))
+        pending = pending_import(file_episode_map={}, ordered_episode_ids=list(index.by_id), seadex_files=self._NAMES)
         live = mapper.assign(
-            pending_import(
-                file_episode_map={},
-                episode_ids=[],
-                ordered_episode_ids=list(index.by_id),
-                seadex_files=self._NAMES,
-            ),
+            pending,
             {normalize_basename(name): _cand(name) for name in self._NAMES},
-            series_index(self._MAP),
+            indexes_for(pending, series_index(self._MAP)),
         )
 
-        assert seed.file_episode_map == live.assigned
-        assert seed.excluded_files == [p.name for p in live.excluded]
+        assert seed.placements == live.assigned
+        assert seed.excluded == tuple(p.name for p in live.excluded)
         # And it is a real placement, not two empty maps agreeing.
-        assert seed.file_episode_map == {
+        assert seed.placements == {
             normalize_basename(self._NAMES[0]): [501],
             normalize_basename(self._NAMES[1]): [502],
         }
-        assert seed.excluded_files == [normalize_basename(self._NAMES[2])]
+        assert seed.excluded == (normalize_basename(self._NAMES[2]),)
+        # The record the pipeline persists carries the same map and exclusions.
+        record = seed.record_at("2026-01-01 00:00:00", fresh=True)
+        assert dict(record.file_episode_map) == {name: tuple(ids) for name, ids in live.assigned.items()}
+        assert record.excluded_files == seed.excluded
 
 
 # --------------------------------------------------------------------------- #
@@ -2887,28 +2883,27 @@ class TestClassifyRealQueue:
 
 
 # --------------------------------------------------------------------------- #
-# PendingImport round-trip carries the new resolved set (with back-compat)
+# PendingImport round-trip carries the claim's resolved set (with back-compat)
 # --------------------------------------------------------------------------- #
 class TestPendingImportOrderedIds:
-    """`ordered_episode_ids` round-trips through JSON.
+    """The claim's `ordered_episode_ids` round-trips through JSON.
 
-    A legacy record missing the key rehydrates to an empty list.
+    A claim missing the key rehydrates unscoped.
     """
 
     def test_round_trip_preserves_ordered_episode_ids(self) -> None:
         rec = pending_import(ordered_episode_ids=[8030, 8031, 8032])
-        from pearlarr.manual_import import PendingImport
 
-        again = PendingImport.from_json(rec.to_json())
-        assert again.ordered_episode_ids == [8030, 8031, 8032]
+        again = PendingImport.from_json(rec.to_json(), guards={})
+
+        assert again.claims[0].ordered_episode_ids == (8030, 8031, 8032)
         assert again == rec
 
-    def test_legacy_record_without_ordered_ids_rehydrates_empty(self) -> None:
-        from pearlarr.manual_import import PendingImport
-
+    def test_claim_without_ordered_ids_rehydrates_unscoped(self) -> None:
         raw = pending_import().to_json()
-        del raw["ordered_episode_ids"]
-        assert PendingImport.from_json(raw).ordered_episode_ids == []
+        del raw["claims"][0]["ordered_episode_ids"]
+
+        assert PendingImport.from_json(raw, guards={}).claims[0].ordered_episode_ids == ()
 
 
 # --------------------------------------------------------------------------- #
@@ -3063,7 +3058,6 @@ class TestCapturedSpecialsEndToEnd:
             title="Yamada-kun and the Seven Witches",
             release_group="Headpatter",
             file_episode_map={},  # the real grab-time failure: nothing seeded
-            episode_ids=[],
             ordered_episode_ids=[8030, 8031, 8032],
             seadex_files=seadex_files,
         )
@@ -3096,7 +3090,6 @@ class TestCapturedSpecialsEndToEnd:
             title="Yamada-kun and the Seven Witches",
             release_group="Headpatter",
             file_episode_map={},
-            episode_ids=[],
             ordered_episode_ids=[8030, 8031, 8032],
             seadex_files=seadex_files,
         )
@@ -3116,7 +3109,6 @@ class TestCapturedSpecialsEndToEnd:
             series_id=213,
             release_group="Headpatter",
             file_episode_map=ep_map,
-            episode_ids=[],
             ordered_episode_ids=[v[0] for v in ep_map.values()],
             seadex_files=seadex_files,
         )
@@ -3136,7 +3128,6 @@ class TestCapturedSpecialsEndToEnd:
             series_id=213,
             release_group="Headpatter",
             file_episode_map=ep_map,
-            episode_ids=[],
             ordered_episode_ids=[v[0] for v in ep_map.values()],
             seadex_files=seadex_files,
         )
@@ -3160,7 +3151,6 @@ class TestCapturedSpecialsEndToEnd:
             series_id=213,
             release_group="Headpatter",
             file_episode_map={},  # the real grab-time gap
-            episode_ids=[],
             ordered_episode_ids=[8030, 8031, 8032],
             seadex_files=seadex_files,
         )
@@ -3171,18 +3161,17 @@ class TestCapturedSpecialsEndToEnd:
         assert sonarr.episodes_calls == []
         assert sonarr.execute_calls == []
 
-    def test_import_progress_indeterminate_for_legacy_flat_record(self) -> None:
-        # A legacy flat record (episode_ids only, no SeaDex file list): targets
-        # exist but there is nothing to measure completeness against, so the
-        # row stays indeterminate rather than trusting a listless record.
+    def test_import_progress_indeterminate_for_a_listless_record(self) -> None:
+        # A record with a window but no SeaDex file list (a migrated legacy row folds its flat ids
+        # into the claim's window): targets exist but there is nothing to measure completeness
+        # against, so the row stays indeterminate rather than trusting a listless record.
         strat, sonarr, _seadex_files = _specials_strat()
         pending = pending_import(
             infohash="6666666666666666666666666666666666666666",
             series_id=213,
             release_group="Headpatter",
             file_episode_map={},
-            episode_ids=[8030],
-            ordered_episode_ids=[],
+            ordered_episode_ids=[8030],
             seadex_files=[],
         )
 
@@ -3202,7 +3191,6 @@ class TestCapturedSpecialsEndToEnd:
             series_id=213,
             release_group="Headpatter",
             file_episode_map={seadex_files[0]: [8030]},
-            episode_ids=[],
             ordered_episode_ids=[8030],
             seadex_files=seadex_files,
             excluded_files=[normalize_basename(name) for name in seadex_files[1:]],
@@ -3228,7 +3216,6 @@ class TestCapturedSpecialsEndToEnd:
             title="Yamada and the Seven Witches (OVA)",
             release_group="Headpatter",
             file_episode_map={},
-            episode_ids=[],
             ordered_episode_ids=[],  # the pre-fix stuck record
             seadex_files=seadex_files,
         )

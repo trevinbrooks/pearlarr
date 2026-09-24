@@ -10,8 +10,10 @@ the in-memory -> file promotion for a missing cache.
 import contextlib
 import json
 import sqlite3
+from collections.abc import Sequence
 from datetime import datetime
 from pathlib import Path
+from typing import Any
 
 import pytest
 
@@ -26,14 +28,15 @@ from pearlarr.cache import (
 )
 from pearlarr.config import Arr
 from pearlarr.log import LOG_NAME
-from pearlarr.manual_import import GuardFacts, OwnedEpisode, PendingImport, PendingKey
+from pearlarr.manual_import import EntryNames, GuardFacts, OwnedEpisode, PendingImport, newest_claimed_at_of
 from pearlarr.output import Diagnostic, Severity, install_hub
 from pearlarr.output.recording import RecordingHub
 from pearlarr.parse_records import parsed_info, to_parse_record
 from pearlarr.seadex_types import ParsedFileInfo
 from pearlarr.sqlite_util import is_corruption
+from pearlarr.stamps import parse_stamp_or_none
 
-from .builders import make_entry_record
+from .builders import entry_claim, make_entry_record, pending_import
 
 # Stand-in for a config-file checksum. `CacheStore` only stamps and compares the
 # value it is handed. It never computes one, so any string works here.
@@ -161,6 +164,82 @@ def _seed_v2_db(db: Path, rows: list[tuple[str, str, int, str]]) -> None:
     raw.close()
 
 
+# The v4 shape: the v2 pending table (still one row per entry) plus the `guard_facts`
+# rows the v2 -> v3 step backfilled. The v4 -> v5 step folds the rows per torrent.
+_V4_PENDING_SCHEMA = (
+    _V2_PENDING_SCHEMA
+    + """
+CREATE TABLE guard_facts (
+    arr    TEXT    NOT NULL,
+    al_id  INTEGER NOT NULL,
+    record BLOB    NOT NULL,
+    PRIMARY KEY (arr, al_id));
+"""
+)
+
+
+def _seed_v4_db(
+    db: Path, rows: Sequence[tuple[str, str, int, str]], guards: Sequence[tuple[str, int, str]] = ()
+) -> None:
+    """A v4-stamped db holding the given (arr, infohash, al_id, json) pending rows and (arr, al_id, json) guard rows."""
+
+    raw = sqlite3.connect(str(db))
+    raw.executescript(_V4_PENDING_SCHEMA)
+    raw.executemany(
+        "INSERT INTO pending_imports (arr, infohash, al_id, record) VALUES (?, ?, ?, jsonb(?))",
+        rows,
+    )
+    raw.executemany("INSERT INTO guard_facts (arr, al_id, record) VALUES (?, ?, jsonb(?))", list(guards))
+    raw.execute("PRAGMA user_version=4")
+    raw.commit()
+    raw.close()
+
+
+def _v4_blob(infohash: str, al_id: int, **fields: Any) -> dict[str, Any]:
+    """A fully shaped v4 pending row: one entry's per-entry record on `infohash`, `fields` overriding."""
+
+    blob: dict[str, Any] = {
+        "infohash": infohash,
+        "series_id": 5,
+        "al_id": al_id,
+        "title": f"Entry {al_id}",
+        "coverage": "S01",
+        "url": f"https://releases.moe/{al_id}",
+        "ordered_episode_ids": [101],
+        "names": {"series": "Series", "anilist": ["Alias"]},
+        "preowned_episode_ids": [],
+        "slice_coverage": "S01 E01",
+        "added_at": "2026-07-01 00:00:00",
+        "release_group": "Grp",
+        "is_dual_audio": False,
+        "seadex_files": ["a.mkv", "b.mkv"],
+        "release_sizes": [10, 20],
+        "file_episode_map": {"a.mkv": [101]},
+        "excluded_files": [],
+        "awaiting_cleanup": False,
+    }
+    blob.update(fields)
+    return blob
+
+
+def _assert_round_trips(records: dict[str, dict[str, Any]]) -> None:
+    """Every migrated blob re-serializes byte-for-byte through the record class (no key added, dropped, or moved)."""
+
+    for infohash, blob in records.items():
+        rebuilt = PendingImport.from_json(blob, guards={}).to_json()
+        assert json.dumps(rebuilt) == json.dumps(blob), infohash
+
+
+def _pending_columns(db: Path) -> list[str]:
+    """The `pending_imports` column names as the file holds them."""
+
+    raw = sqlite3.connect(str(db))
+    try:
+        return [str(row[1]) for row in raw.execute("PRAGMA table_info(pending_imports)")]
+    finally:
+        raw.close()
+
+
 def _user_version(db: Path) -> int:
     raw = sqlite3.connect(str(db))
     try:
@@ -224,11 +303,12 @@ class TestSchemaVersionGate:
         store.close()
         assert _user_version(db) == SCHEMA_VERSION
 
-    def test_v1_pending_imports_rebuild_to_the_composite_key(self, tmp_path: Path) -> None:
-        # The v1 -> v2 step: the (arr, infohash) PK grows to (arr, infohash, al_id)
-        # via a table rebuild. A legacy row with no al_id in its JSON lands under
-        # the 0 sentinel and still round-trips as its hash's singleton. A row that
-        # DOES carry al_id in its JSON backfills the key from it.
+    def test_v1_pending_imports_walk_the_chain_to_torrent_records(self, tmp_path: Path) -> None:
+        # The v1 -> v2 step grows the (arr, infohash) PK to (arr, infohash, al_id)
+        # via a table rebuild, and the v4 -> v5 fold turns each row into a claim.
+        # A legacy row with no al_id in its JSON lands under the 0 sentinel and
+        # ends as its hash's one claim with al_id 0. A row that DOES carry al_id
+        # in its JSON backfills the key from it.
         db = tmp_path / "cache.db"
         raw = sqlite3.connect(str(db))
         raw.executescript(_V1_PENDING_SCHEMA)
@@ -246,21 +326,17 @@ class TestSchemaVersionGate:
 
         store = CacheStore.load(str(db), config_checksum=CHECKSUM)
         pending = store.get_pending(Arr.SONARR)
-        assert set(pending) == {PendingKey("legacy", 0), PendingKey("tagged", 9)}
-        # The sentinel-keyed legacy record rehydrates with the matching al_id=0.
-        rebuilt = PendingImport.from_json(pending[PendingKey("legacy", 0)])
-        assert rebuilt.al_id == 0
-        assert rebuilt.title == "Old Show"
-        # It still round-trips: a sibling coexists beside it, and its own drop is
-        # record-scoped (the singleton behaves exactly like a modern record).
-        store.put_pending(Arr.SONARR, PendingKey("legacy", 44), {"infohash": "legacy", "al_id": 44})
-        assert set(store.get_pending(Arr.SONARR)) == {
-            PendingKey("legacy", 0),
-            PendingKey("legacy", 44),
-            PendingKey("tagged", 9),
-        }
-        store.drop_pending(Arr.SONARR, PendingKey("legacy", 0))
-        assert set(store.get_pending(Arr.SONARR)) == {PendingKey("legacy", 44), PendingKey("tagged", 9)}
+        assert set(pending) == {"legacy", "tagged"}
+        # The sentinel-keyed legacy row rehydrates as a claim with al_id 0.
+        legacy = PendingImport.from_json(pending["legacy"], guards={})
+        assert legacy.al_ids == (0,)
+        assert legacy.claims[0].title == "Old Show"
+        tagged = PendingImport.from_json(pending["tagged"], guards={})
+        assert tagged.al_ids == (9,)
+        assert tagged.series_ids == (6,)
+        # The folded rows behave exactly like modern records: keyed by hash, dropped by hash.
+        store.drop_pending(Arr.SONARR, "legacy")
+        assert set(store.get_pending(Arr.SONARR)) == {"tagged"}
         store.close()
         assert _user_version(db) == SCHEMA_VERSION
 
@@ -366,6 +442,235 @@ class TestSchemaVersionGate:
         assert _entry_name(store, 3, Arr.RADARR) is None
         store.close()
         assert _user_version(db) == SCHEMA_VERSION
+
+    def test_v4_rows_of_one_torrent_fold_into_one_record(self, tmp_path: Path) -> None:
+        # The v4 -> v5 step: one torrent's per-entry rows become ONE record whose
+        # claims sit in al_id order, each keeping its row's clock as its own. The
+        # rows group by case fold and the key + record hash come out lowercase.
+        # The release facts are the first row's, the maps union with the first
+        # row winning a shared name, an exclusion another row mapped is dropped,
+        # the birth is the oldest stamp, and the flag holds when every row had it.
+        # The union keeps distinct file-name keys byte-exact (an NFC and an NFD
+        # spelling stay two keys): `normalized_leaf` reconciles them at read time.
+        db = tmp_path / "cache.db"
+        first = _v4_blob("abcd", 11, excluded_files=["b.mkv", "y.mkv"], awaiting_cleanup=True)
+        second = _v4_blob(
+            "ABCD",
+            22,
+            title="Second",
+            coverage="S02",
+            url="u2",
+            ordered_episode_ids=[201, 202],
+            names={"series": "Series", "anilist": ["Second Alias"]},
+            preowned_episode_ids=[201],
+            slice_coverage="S02 E01-E02",
+            added_at="2026-07-02 00:00:00",
+            release_group="Other",
+            is_dual_audio=True,
+            seadex_files=["z.mkv"],
+            release_sizes=[30],
+            file_episode_map={"b.mkv": [202], "a.mkv": [999]},
+            excluded_files=["x.mkv"],
+            awaiting_cleanup=True,
+        )
+        # Inserted newest first: the fold orders claims by al_id, not by row order.
+        _seed_v4_db(db, [("sonarr", "ABCD", 22, json.dumps(second)), ("sonarr", "abcd", 11, json.dumps(first))])
+
+        store = CacheStore.load(str(db), config_checksum=CHECKSUM)
+        records = store.get_pending(Arr.SONARR)
+        assert records == {
+            "abcd": {
+                "infohash": "abcd",
+                "release_group": "Grp",
+                "is_dual_audio": False,
+                "seadex_files": ["a.mkv", "b.mkv"],
+                "added_at": "2026-07-01 00:00:00",
+                "file_episode_map": {"a.mkv": [101], "b.mkv": [202]},
+                "claims": [
+                    {
+                        "al_id": 11,
+                        "series_id": 5,
+                        "title": "Entry 11",
+                        "coverage": "S01",
+                        "url": "https://releases.moe/11",
+                        "ordered_episode_ids": [101],
+                        "names": {"series": "Series", "anilist": ["Alias"]},
+                        "preowned_episode_ids": [],
+                        "slice_coverage": "S01 E01",
+                        "claimed_at": "2026-07-01 00:00:00",
+                    },
+                    {
+                        "al_id": 22,
+                        "series_id": 5,
+                        "title": "Second",
+                        "coverage": "S02",
+                        "url": "u2",
+                        "ordered_episode_ids": [201, 202],
+                        "names": {"series": "Series", "anilist": ["Second Alias"]},
+                        "preowned_episode_ids": [201],
+                        "slice_coverage": "S02 E01-E02",
+                        "claimed_at": "2026-07-02 00:00:00",
+                    },
+                ],
+                "excluded_files": ["y.mkv", "x.mkv"],
+                "release_sizes": [10, 20],
+                "awaiting_cleanup": True,
+            },
+        }
+        _assert_round_trips(records)
+        assert _pending_columns(db) == ["arr", "infohash", "record"]
+        store.close()
+        assert _user_version(db) == SCHEMA_VERSION
+
+    def test_v4_fold_needs_every_cleanup_flag_and_keeps_the_arrs_apart(self, tmp_path: Path) -> None:
+        # One unflagged row clears the folded flag. The other arr's row on the
+        # same hash stays its own record, and the guard rows survive the step
+        # to be read through the folded claims (the orphan stays unread).
+        db = tmp_path / "cache.db"
+        _seed_v4_db(
+            db,
+            [
+                ("sonarr", "h", 11, json.dumps(_v4_blob("h", 11, awaiting_cleanup=True))),
+                ("sonarr", "h", 22, json.dumps(_v4_blob("h", 22, awaiting_cleanup=False))),
+                ("radarr", "h", 0, json.dumps(_v4_blob("h", 0, series_id=0, awaiting_cleanup=True))),
+            ],
+            guards=[
+                ("sonarr", 11, json.dumps({"entry_groups": ["A"]})),
+                ("sonarr", 22, json.dumps({"entry_groups": ["B"]})),
+                ("sonarr", 33, json.dumps({"entry_groups": ["Orphan"]})),
+            ],
+        )
+
+        store = CacheStore.load(str(db), config_checksum=CHECKSUM)
+        sonarr = store.get_pending(Arr.SONARR)
+        radarr = store.get_pending(Arr.RADARR)
+        assert PendingImport.from_json(sonarr["h"], guards={}).awaiting_cleanup is False
+        assert PendingImport.from_json(sonarr["h"], guards={}).al_ids == (11, 22)
+        assert PendingImport.from_json(radarr["h"], guards={}).awaiting_cleanup is True
+        assert PendingImport.from_json(radarr["h"], guards={}).al_ids == (0,)
+        assert store.other_arr_holds(Arr.SONARR, "h") is True
+        assert store.get_guards(Arr.SONARR) == {
+            11: GuardFacts(entry_groups=("A",)),
+            22: GuardFacts(entry_groups=("B",)),
+        }
+        _assert_round_trips(sonarr)
+        _assert_round_trips(radarr)
+        store.close()
+
+    def test_v4_fold_takes_the_oldest_parseable_stamp(self, tmp_path: Path) -> None:
+        # The birth is the oldest row stamp that parses. A junk stamp is skipped
+        # for the birth yet stays the claim's own clock verbatim, and a torrent
+        # whose rows all carry junk is born unstamped.
+        db = tmp_path / "cache.db"
+        _seed_v4_db(
+            db,
+            [
+                ("sonarr", "k", 1, json.dumps(_v4_blob("k", 1, added_at="junk"))),
+                ("sonarr", "k", 2, json.dumps(_v4_blob("k", 2, added_at="2026-07-03 00:00:00"))),
+                ("sonarr", "k", 3, json.dumps(_v4_blob("k", 3, added_at="2026-07-02 00:00:00"))),
+                ("sonarr", "j", 1, json.dumps(_v4_blob("j", 1, added_at="junk"))),
+            ],
+        )
+
+        store = CacheStore.load(str(db), config_checksum=CHECKSUM)
+        records = store.get_pending(Arr.SONARR)
+        assert records["k"]["added_at"] == "2026-07-02 00:00:00"
+        assert [claim["claimed_at"] for claim in records["k"]["claims"]] == [
+            "junk",
+            "2026-07-03 00:00:00",
+            "2026-07-02 00:00:00",
+        ]
+        assert records["j"]["added_at"] == ""
+        assert newest_claimed_at_of(records["j"]) is None
+        _assert_round_trips(records)
+        store.close()
+
+    def test_v4_legacy_ids_fold_into_the_claims_window(self, tmp_path: Path) -> None:
+        # A row from before the ordered window (no `ordered_episode_ids`) claims
+        # the ids its map and legacy `episode_ids` list held, sorted, zeros
+        # dropped. A row that carried its window keeps it as is, and the legacy
+        # list reaches no record.
+        db = tmp_path / "cache.db"
+        legacy = {
+            "infohash": "old",
+            "al_id": 3,
+            "series_id": 5,
+            "added_at": "2026-07-01 00:00:00",
+            "file_episode_map": {"a.mkv": [2, 0]},
+            "episode_ids": [3, 1, 0],
+        }
+        windowed = _v4_blob("new", 4, ordered_episode_ids=[9, 8], episode_ids=[1])
+        _seed_v4_db(db, [("sonarr", "old", 3, json.dumps(legacy)), ("sonarr", "new", 4, json.dumps(windowed))])
+
+        store = CacheStore.load(str(db), config_checksum=CHECKSUM)
+        records = store.get_pending(Arr.SONARR)
+        assert all("episode_ids" not in record for record in records.values())
+        old = PendingImport.from_json(records["old"], guards={})
+        assert old.claims[0].ordered_episode_ids == (1, 2, 3)
+        assert old.claims[0].names == EntryNames()
+        # The map itself is carried verbatim: the fold only derives the window from it.
+        assert dict(old.file_episode_map) == {"a.mkv": (2, 0)}
+        new = PendingImport.from_json(records["new"], guards={})
+        assert new.claims[0].ordered_episode_ids == (9, 8)
+        _assert_round_trips({"new": records["new"]})
+        store.close()
+
+    def test_v4_unscoped_row_stays_unscoped_and_carries_its_names_verbatim(self, tmp_path: Path) -> None:
+        # An unscoped v4 claim (an empty window, no legacy list) claims nothing off
+        # its map, and the stored names dict rides as is, never re-encoded through
+        # the live class.
+        db = tmp_path / "cache.db"
+        unscoped = _v4_blob("u", 5, ordered_episode_ids=[], names={"series": "Series"})
+        _seed_v4_db(db, [("sonarr", "u", 5, json.dumps(unscoped))])
+
+        store = CacheStore.load(str(db), config_checksum=CHECKSUM)
+        records = store.get_pending(Arr.SONARR)
+        (claim,) = records["u"]["claims"]
+        assert claim["ordered_episode_ids"] == []
+        assert claim["names"] == {"series": "Series"}
+        assert PendingImport.from_json(records["u"], guards={}).claims[0].names == EntryNames(series="Series")
+        store.close()
+
+    def test_v4_migration_is_a_no_op_on_reopen(self, tmp_path: Path) -> None:
+        # The migrated db reopens as found: same records, no step announced, and
+        # a v4 stamp over a table already in the v5 shape (no al_id column) is
+        # stamped current without touching the rows.
+        db = tmp_path / "cache.db"
+        _seed_v4_db(db, [("sonarr", "h", 11, json.dumps(_v4_blob("h", 11)))])
+        migrated = CacheStore.load(str(db), config_checksum=CHECKSUM)
+        records = migrated.get_pending(Arr.SONARR)
+        migrated.close()
+        assert _user_version(db) == SCHEMA_VERSION
+
+        recording = RecordingHub()
+        install_hub(recording.hub)  # conftest teardown restores the default
+        reopened = CacheStore.load(str(db), config_checksum=CHECKSUM)
+        assert reopened.get_pending(Arr.SONARR) == records
+        reopened.close()
+        assert recording.of_type(Diagnostic) == []
+
+        folded = tmp_path / "folded.db"
+        raw = sqlite3.connect(str(folded))
+        raw.executescript(_V1_PENDING_SCHEMA)  # the (arr, infohash) PK: v5's shape too
+        raw.execute(
+            "INSERT INTO pending_imports (arr, infohash, record) VALUES ('sonarr', 'h', jsonb(?))",
+            (json.dumps(records["h"]),),
+        )
+        raw.execute("PRAGMA user_version=4")
+        raw.commit()
+        raw.close()
+        store = CacheStore.load(str(folded), config_checksum=CHECKSUM)
+        assert store.get_pending(Arr.SONARR) == records
+        store.close()
+        assert _user_version(folded) == SCHEMA_VERSION
+
+    def test_fresh_db_starts_at_v5_without_an_al_id_column(self, tmp_path: Path) -> None:
+        db = tmp_path / "cache.db"
+        store = _open(tmp_path)
+        store.save(preview=False)
+        store.close()
+        assert _user_version(db) == SCHEMA_VERSION
+        assert _pending_columns(db) == ["arr", "infohash", "record"]
 
     def test_newer_schema_is_refused_not_quarantined(self, tmp_path: Path) -> None:
         db = tmp_path / "cache.db"
@@ -677,6 +982,14 @@ class TestRecordFreshness:
         assert stamp_is_fresh({}, cutoff) is False
         assert stamp_is_fresh({"fetched_at": 5}, cutoff) is False
 
+    def test_parse_stamp_or_none_swallows_junk_and_non_strings(self) -> None:
+        assert parse_stamp_or_none("2026-06-26 12:00:00") == datetime(2026, 6, 26, 12)
+        assert parse_stamp_or_none("junk") is None
+        assert parse_stamp_or_none("") is None
+        # A raw row's stamp may not even be a string: the reader answers None, never raises.
+        raw: dict[str, Any] = {"added_at": 5}
+        assert parse_stamp_or_none(raw["added_at"]) is None
+
 
 class TestSonarrParse:
     """Parsed Sonarr records round-trip whole keyed by filename, and a missing filename reads back None."""
@@ -719,114 +1032,108 @@ class TestSonarrParse:
 
 
 class TestPendingImports:
-    """Pending imports are tracked per (arr, infohash, al_id), droppable, and filterable by series id in SQL."""
+    """Pending records are tracked per (arr, infohash), read keyed or by any claim's series id, and droppable."""
 
     def test_roundtrip_drop_and_arr_isolation(self, tmp_path: Path) -> None:
         store = _open(tmp_path)
-        rec = {"infohash": "h1", "series_id": 5, "al_id": 3, "episode_ids": [1, 2]}
-        store.put_pending(Arr.SONARR, PendingKey("h1", 3), rec)
-        store.put_pending(Arr.RADARR, PendingKey("h2", 4), {"infohash": "h2"})
-        assert store.get_pending(Arr.SONARR) == {PendingKey("h1", 3): rec}
-        assert store.get_pending(Arr.RADARR) == {PendingKey("h2", 4): {"infohash": "h2"}}
+        rec = pending_import(infohash="h1", al_id=3, series_id=5).to_json()
+        store.put_pending(Arr.SONARR, "h1", rec)
+        store.put_pending(Arr.RADARR, "h2", {"infohash": "h2"})
+        assert store.get_pending(Arr.SONARR) == {"h1": rec}
+        assert store.get_pending(Arr.RADARR) == {"h2": {"infohash": "h2"}}
+        # The keyed reads see only their own arr's row.
+        assert store.get_pending_record(Arr.SONARR, "h1") == rec
+        assert store.get_pending_record(Arr.RADARR, "h1") is None
 
-        store.drop_pending(Arr.SONARR, PendingKey("h1", 3))
+        store.drop_pending(Arr.SONARR, "h1")
         assert store.get_pending(Arr.SONARR) == {}
+        assert store.get_pending_record(Arr.SONARR, "h1") is None
         # Dropping a missing key is a no-op.
-        store.drop_pending(Arr.SONARR, PendingKey("nope", 0))
+        store.drop_pending(Arr.SONARR, "nope")
         store.close()
 
-    def test_sibling_records_coexist_per_al_id(self, tmp_path: Path) -> None:
-        # One torrent listed on two AniList entries: both records persist side by
-        # side (the old (arr, infohash) PK let the second overwrite the first),
-        # a same-key re-put overwrites idempotently, and a drop is record-scoped.
+    def test_one_record_per_torrent_replaced_whole(self, tmp_path: Path) -> None:
+        # One torrent listed on two AniList entries is ONE row carrying both
+        # claims: a re-put under the hash replaces the record whole (never a
+        # second row), and the drop takes every claim with it.
         store = _open(tmp_path)
-        first = {"infohash": "h", "series_id": 5, "al_id": 11, "episode_ids": [1]}
-        second = {"infohash": "h", "series_id": 5, "al_id": 22, "episode_ids": [2]}
-        store.put_pending(Arr.SONARR, PendingKey("h", 11), first)
-        store.put_pending(Arr.SONARR, PendingKey("h", 22), second)
-        assert store.get_pending(Arr.SONARR) == {PendingKey("h", 11): first, PendingKey("h", 22): second}
+        store.put_pending(Arr.SONARR, "h", pending_import(infohash="h", al_id=11, series_id=5).to_json())
+        both = pending_import(
+            infohash="h",
+            claims=(entry_claim(al_id=11, series_id=5), entry_claim(al_id=22, series_id=5)),
+        ).to_json()
+        store.put_pending(Arr.SONARR, "h", both)
+        assert store.get_pending(Arr.SONARR) == {"h": both}
+        assert store.stats().pending_imports == 1
 
-        # Same-record re-registration overwrites, never duplicates.
-        updated = dict(first, episode_ids=[1, 3])
-        store.put_pending(Arr.SONARR, PendingKey("h", 11), updated)
-        assert store.get_pending(Arr.SONARR)[PendingKey("h", 11)] == updated
-        assert set(store.get_pending(Arr.SONARR)) == {PendingKey("h", 11), PendingKey("h", 22)}
-
-        # Dropping one sibling leaves the other's claim intact.
-        store.drop_pending(Arr.SONARR, PendingKey("h", 11))
-        assert store.get_pending(Arr.SONARR) == {PendingKey("h", 22): second}
+        store.drop_pending(Arr.SONARR, "h")
+        assert store.get_pending(Arr.SONARR) == {}
         store.close()
 
-    def test_sibling_count_matches_case_insensitively_excludes_exactly(self, tmp_path: Path) -> None:
-        # Both rows are the same torrent by fold. The exclusion stays byte-exact:
-        # it names the retiring record's own row, so the case-variant one counts.
+    def test_other_arr_holds_matches_the_key_exactly(self, tmp_path: Path) -> None:
+        # Every record key is the lowercase infohash, so the other arr's row is
+        # found by exact key and never by case fold.
         store = _open(tmp_path)
-        store.put_pending(Arr.SONARR, PendingKey("ABCD", 11), {"infohash": "ABCD", "al_id": 11})
-        store.put_pending(Arr.SONARR, PendingKey("abcd", 11), {"infohash": "abcd", "al_id": 11})
+        store.put_pending(Arr.RADARR, "abcd", {"infohash": "abcd"})
 
-        assert store.count_arr_siblings(Arr.SONARR, PendingKey("ABCD", 11)) == 1
+        assert store.other_arr_holds(Arr.SONARR, "abcd") is True
+        assert store.other_arr_holds(Arr.SONARR, "ABCD") is False
+        assert store.other_arr_holds(Arr.RADARR, "abcd") is False
         store.close()
 
-    def test_sibling_counts_split_on_the_arr_narrowing(self, tmp_path: Path) -> None:
-        # The category gate counts BOTH arrs' claims on a hash (the flag is a
-        # property of the torrent, not of one arr's run). The close gate counts
-        # only its own arr's slice.
+    def test_other_arr_holds_ignores_the_arrs_own_record(self, tmp_path: Path) -> None:
+        # The category gate asks whether the OTHER arr still claims the torrent:
+        # an arr's own record never counts, a missing hash reads False, and the
+        # other arr's row flips the answer for as long as it lives.
         store = _open(tmp_path)
-        store.put_pending(Arr.SONARR, PendingKey("h", 11), {"infohash": "h", "al_id": 11})
-        store.put_pending(Arr.RADARR, PendingKey("h", 0), {"infohash": "h"})
+        store.put_pending(Arr.SONARR, "h", pending_import(infohash="h", al_id=11).to_json())
 
-        assert store.count_arr_siblings(Arr.SONARR, PendingKey("h", 11)) == 0
-        assert store.count_siblings_any_arr(Arr.SONARR, PendingKey("h", 11)) == 1
-        assert store.count_arr_siblings(Arr.SONARR, PendingKey("other", 11)) == 0
-        assert store.count_siblings_any_arr(Arr.SONARR, PendingKey("other", 11)) == 0
+        assert store.other_arr_holds(Arr.SONARR, "h") is False
+        assert store.other_arr_holds(Arr.RADARR, "h") is True
+        assert store.other_arr_holds(Arr.SONARR, "other") is False
+
+        store.put_pending(Arr.RADARR, "h", {"infohash": "h"})
+        assert store.other_arr_holds(Arr.SONARR, "h") is True
+        store.drop_pending(Arr.RADARR, "h")
+        assert store.other_arr_holds(Arr.SONARR, "h") is False
         store.close()
 
-    def test_sibling_counts_leave_out_one_arr_qualified_record(self, tmp_path: Path) -> None:
-        # The retiring record is resident under drop-last, so the gate excludes
-        # its own arr-qualified row: a lone record counts 0, a same-arr sibling
-        # still counts, and a same-key row under the OTHER arr is NOT excluded.
+    def test_get_pending_for_series_matches_any_claim_in_sql(self, tmp_path: Path) -> None:
         store = _open(tmp_path)
-        store.put_pending(Arr.SONARR, PendingKey("h", 11), {"infohash": "h", "al_id": 11})
+        a = pending_import(infohash="a", al_id=1, series_id=5).to_json()
+        b = pending_import(infohash="b", al_id=2, series_id=5).to_json()
+        c = pending_import(infohash="c", al_id=3, series_id=9).to_json()
+        # A two-claim record spanning both series answers to either.
+        both = pending_import(
+            infohash="t",
+            claims=(entry_claim(al_id=6, series_id=5), entry_claim(al_id=7, series_id=9)),
+        ).to_json()
+        store.put_pending(Arr.SONARR, "a", a)
+        store.put_pending(Arr.SONARR, "b", b)
+        store.put_pending(Arr.SONARR, "c", c)
+        store.put_pending(Arr.SONARR, "t", both)
+        # A claim with no series id, and a record with no claims: never matched.
+        store.put_pending(Arr.SONARR, "d", {"infohash": "d", "claims": [{"al_id": 4}]})
+        store.put_pending(Arr.SONARR, "e", {"infohash": "e"})
 
-        assert store.count_siblings_any_arr(Arr.SONARR, PendingKey("h", 11)) == 0
-
-        store.put_pending(Arr.SONARR, PendingKey("h", 22), {"infohash": "h", "al_id": 22})
-        assert store.count_siblings_any_arr(Arr.SONARR, PendingKey("h", 11)) == 1
-
-        # The pathological same-(infohash, al_id)-in-both-arrs case: each retire
-        # excludes only its own row, so the cross-arr claim still defers.
-        store.put_pending(Arr.RADARR, PendingKey("h", 11), {"infohash": "h", "al_id": 11})
-        assert store.count_siblings_any_arr(Arr.SONARR, PendingKey("h", 11)) == 2
-        assert store.count_arr_siblings(Arr.SONARR, PendingKey("h", 11)) == 1
-        store.close()
-
-    def test_get_pending_for_series_filters_in_sql(self, tmp_path: Path) -> None:
-        store = _open(tmp_path)
-        a = {"infohash": "a", "series_id": 5, "al_id": 1}
-        b = {"infohash": "b", "series_id": 5, "al_id": 2}
-        c = {"infohash": "c", "series_id": 9, "al_id": 3}
-        d = {"infohash": "d", "al_id": 4}  # no series_id key -> excluded (record ->> 'series_id' is NULL)
-        for h, al_id, rec in (("a", 1, a), ("b", 2, b), ("c", 3, c), ("d", 4, d)):
-            store.put_pending(Arr.SONARR, PendingKey(h, al_id), rec)
-
-        # Only this series' records come back. The integer series_id binds directly.
-        assert store.get_pending_for_series(Arr.SONARR, 5) == {PendingKey("a", 1): a, PendingKey("b", 2): b}
-        assert store.get_pending_for_series(Arr.SONARR, 9) == {PendingKey("c", 3): c}
+        # Only records with a claim on the series come back. The integer series_id binds directly.
+        assert store.get_pending_for_series(Arr.SONARR, 5) == {"a": a, "b": b, "t": both}
+        assert store.get_pending_for_series(Arr.SONARR, 9) == {"c": c, "t": both}
         assert store.get_pending_for_series(Arr.SONARR, 404) == {}
 
         # Fresh per call: a drop is reflected immediately (no stale snapshot).
-        store.drop_pending(Arr.SONARR, PendingKey("a", 1))
-        assert store.get_pending_for_series(Arr.SONARR, 5) == {PendingKey("b", 2): b}
+        store.drop_pending(Arr.SONARR, "a")
+        assert store.get_pending_for_series(Arr.SONARR, 5) == {"b": b, "t": both}
         store.close()
 
 
 class TestGuardFacts:
-    """One guard-evidence row per (arr, al_id), read-filtered to entries with live pending records."""
+    """One guard-evidence row per (arr, al_id), read-filtered to entries with a live claim."""
 
     def test_roundtrip_and_arr_isolation(self, tmp_path: Path) -> None:
         store = _open(tmp_path)
-        store.put_pending(Arr.SONARR, PendingKey("hs", 7), {"al_id": 7})
-        store.put_pending(Arr.RADARR, PendingKey("hr", 7), {"al_id": 7})
+        store.put_pending(Arr.SONARR, "hs", pending_import(infohash="hs", al_id=7).to_json())
+        store.put_pending(Arr.RADARR, "hr", pending_import(infohash="hr", al_id=7, series_id=0).to_json())
         facts = GuardFacts(
             entry_groups=("SubsPlease", "Erai-raws"),
             stale_groups=("HorribleSubs",),
@@ -844,7 +1151,7 @@ class TestGuardFacts:
         # The fix's write semantic: a re-seed overwrites the entry's single row
         # whole, so no two reads can ever see divergent evidence for one entry.
         store = _open(tmp_path)
-        store.put_pending(Arr.SONARR, PendingKey("h", 7), {"al_id": 7})
+        store.put_pending(Arr.SONARR, "h", pending_import(infohash="h", al_id=7).to_json())
         store.put_guards(Arr.SONARR, 7, GuardFacts(entry_groups=("Old",)))
         newest = GuardFacts(entry_groups=("New",), stale_groups=("Old",))
         store.put_guards(Arr.SONARR, 7, newest)
@@ -852,22 +1159,37 @@ class TestGuardFacts:
         store.close()
 
     def test_orphan_rows_are_stored_but_never_read(self, tmp_path: Path) -> None:
-        # There is deliberately no delete path (siblings share the row), so reads
-        # join live pending records: the read stays bounded by in-flight work,
-        # not all-time grab history, and an orphan row is invisible until the
-        # entry seeds again.
+        # There is deliberately no delete path (an entry's claims on several
+        # torrents share the row), so reads join live claims: the read stays
+        # bounded by in-flight work, not all-time grab history, and an orphan
+        # row is invisible until the entry seeds again.
         store = _open(tmp_path)
         facts = GuardFacts(entry_groups=("SubGroup",))
         store.put_guards(Arr.SONARR, 7, facts)
         assert store.get_guards(Arr.SONARR) == {}
 
-        store.put_pending(Arr.SONARR, PendingKey("h", 7), {"al_id": 7})
+        store.put_pending(Arr.SONARR, "h", pending_import(infohash="h", al_id=7).to_json())
         assert store.get_guards(Arr.SONARR) == {7: facts}
 
-        # The last record dropping re-orphans the row - stored, no longer read.
-        store.drop_pending(Arr.SONARR, PendingKey("h", 7))
+        # The last record dropping re-orphans the row: stored, no longer read.
+        store.drop_pending(Arr.SONARR, "h")
         assert store.get_guards(Arr.SONARR) == {}
         assert store.stats().guard_facts == 1
+        store.close()
+
+    def test_reads_through_every_claim_of_a_record(self, tmp_path: Path) -> None:
+        # The join walks every claim on a live record: both entries sharing one
+        # torrent get their evidence back, an entry claiming nothing stays unread.
+        store = _open(tmp_path)
+        seven = GuardFacts(entry_groups=("A",))
+        eight = GuardFacts(entry_groups=("B",))
+        store.put_guards(Arr.SONARR, 7, seven)
+        store.put_guards(Arr.SONARR, 8, eight)
+        store.put_guards(Arr.SONARR, 9, GuardFacts(entry_groups=("C",)))
+        shared = pending_import(infohash="h", claims=(entry_claim(al_id=7), entry_claim(al_id=8, series_id=8)))
+        store.put_pending(Arr.SONARR, "h", shared.to_json())
+
+        assert store.get_guards(Arr.SONARR) == {7: seven, 8: eight}
         store.close()
 
     def test_empty_store_reads_empty(self, tmp_path: Path) -> None:
@@ -914,8 +1236,8 @@ class TestHistoryCheckpoints:
         store = _open(tmp_path)
         # Remembered hashes incl. a None marker (stored as the "" sentinel, excluded).
         store.update_cache(Arr.SONARR, 7, {"torrent_hashes": ["ABCDEF", None]})
-        store.put_pending(Arr.SONARR, PendingKey("FEDCBA", 7), {"series_id": 7})
-        store.put_pending(Arr.RADARR, PendingKey("other", 0), {})
+        store.put_pending(Arr.SONARR, "FEDCBA", {"infohash": "FEDCBA"})
+        store.put_pending(Arr.RADARR, "other", {})
 
         assert store.own_download_ids(Arr.SONARR) == frozenset({"abcdef", "fedcba"})
         assert store.own_download_ids(Arr.RADARR) == frozenset({"other"})
@@ -976,7 +1298,8 @@ class TestRunLifecycle:
             },
         )
         store.put_anilist_meta(7, {"fetched_at": "2026-06-26 12:00:00", "data": {"id": 7}})
-        store.put_pending(Arr.SONARR, PendingKey("aaa", 7), {"infohash": "aaa", "series_id": 5, "al_id": 7})
+        carried = pending_import(infohash="aaa", al_id=7, series_id=5).to_json()
+        store.put_pending(Arr.SONARR, "aaa", carried)
         store.save(preview=False)  # mid/end-of-run commit
         store.close()  # finally: rollback is a no-op (already committed)
 
@@ -984,11 +1307,9 @@ class TestRunLifecycle:
         again = CacheStore.load(db, config_checksum=CHECKSUM)
         assert again.check_al_id_in_cache(Arr.SONARR, 7, make_entry_record(updated_at=datetime(2026, 1, 2, 3, 4, 5)))
         assert again.torrent_hashes(Arr.SONARR, 7) == ["aaa", "bbb"]
-        assert again.get_pending(Arr.SONARR) == {
-            PendingKey("aaa", 7): {"infohash": "aaa", "series_id": 5, "al_id": 7},
-        }
+        assert again.get_pending(Arr.SONARR) == {"aaa": carried}
         # A completed import is dropped, and that drop persists across a save.
-        again.drop_pending(Arr.SONARR, PendingKey("aaa", 7))
+        again.drop_pending(Arr.SONARR, "aaa")
         again.save(preview=False)
         again.close()
 

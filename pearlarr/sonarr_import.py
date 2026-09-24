@@ -6,8 +6,14 @@ from typing import NamedTuple
 from urllib.parse import urlsplit
 
 from .arr_http import DeleteOutcome
-from .config import Arr
-from .episode_state import EpisodeFileStatus, EpisodeSnapshot, TargetStatuses, trusted_groups
+from .episode_state import (
+    EpisodeFileStatus,
+    EpisodeSnapshot,
+    RecordSnapshot,
+    TargetStatuses,
+    routable_claims,
+    trusted_groups,
+)
 from .import_files import CandidateFile, ImportAction, ImportDecision, plan_import_files
 from .import_quality import (
     ParsedQuality,
@@ -28,12 +34,12 @@ from .manual_import import (
     ImportProbe,
     ImportProgress,
     PendingImport,
-    hydrate_pending,
     normalized_leaf,
     path_leaf,
     translate_download_path,
 )
 from .output import hub_note, hub_warn
+from .pending_records import PendingRecords
 from .placement_types import episode_index
 from .probe_verdicts import (
     ContentPaths,
@@ -117,12 +123,23 @@ class _ImportContext:
     """The download's content path as qBittorrent reports it."""
     scan: _CandidateScan
     """This poll's candidate fetch plus the history verdict behind it."""
-    snapshot: EpisodeSnapshot
-    """The same-poll episode snapshot the done-check reads."""
+    snapshot: RecordSnapshot
+    """The same-poll snapshot of every series the record spans, which the done-check reads."""
     candidates_by_basename: dict[str, CandidateFile]
     """The scan's candidates keyed by normalized basename, built once for the planner and the file entries."""
     at_deadline: bool
     """Whether this is the readiness-deadline attempt, the one that warns."""
+
+    def posting_series(self, ep_id: int) -> int | None:
+        """The series a file posts under: its route's, else a one-series record's.
+
+        The last arm keeps an index read failure from stranding a one-series record's files.
+        """
+
+        if (series_id := self.snapshot.route(ep_id).series_id) is not None:
+            return series_id
+        series_ids = self.pending.series_ids
+        return series_ids[0] if len(series_ids) == 1 else None
 
 
 @dataclass
@@ -367,7 +384,7 @@ class ImportExecutor:
         pending: PendingImport,
         content_path: str,
         *,
-        snapshot: EpisodeSnapshot,
+        snapshot: RecordSnapshot,
         at_deadline: bool = False,
     ) -> ImportProbe:
         """Import EXACTLY the files our map intends, never over an episode already holding a recommended file.
@@ -388,7 +405,7 @@ class ImportExecutor:
             candidates_by_basename=self._mapper.candidate_files(scan.candidates),
             at_deadline=at_deadline,
         )
-        assignment = self._mapper.assign(pending, context.candidates_by_basename, snapshot.episodes)
+        assignment = self._mapper.assign(pending, context.candidates_by_basename, snapshot.indexes)
         recovered: FileEpisodeMap = {}
         if scan.dead_tracked_empty and not pending.seed_coverage().mapped:
             # Sonarr moved the files before any scan saw them, so its import rows stand in for the scan.
@@ -458,14 +475,30 @@ class ImportExecutor:
 
         files: list[ManualImportFile] = []
         missing: list[str] = []
+        unrouted: list[str] = []
         for decision in decisions:
             match decision.action:
                 case ImportAction.MISSING:
                     missing.append(decision.basename)
                 case ImportAction.IMPORT:
-                    files.append(self._build_file_entry(decision, context))
+                    series_id = context.posting_series(decision.episode_ids[0]) if decision.episode_ids else None
+                    if series_id is None:
+                        unrouted.append(decision.basename)
+                    else:
+                        files.append(self._build_file_entry(decision, context, series_id))
                 case _:
                     self.logger.debug(f"{decision.action.name}: {decision.basename}")
+
+        if unrouted:
+            # No claim's window and no series index places the file: it waits, and never verifies as imported.
+            message = (
+                f"{content_path}: {count_noun(len(unrouted), 'intended file')} resolve to no series "
+                f"{pending.display_label} claims ({', '.join(unrouted)}) - will retry"
+            )
+            if context.at_deadline:
+                hub_warn(message)
+            else:
+                self.logger.debug(message)
 
         if missing:
             # Absent files are expected on an early poll, so only the deadline attempt warns.
@@ -483,7 +516,7 @@ class ImportExecutor:
                 self.logger.debug(message)
 
         if not files:
-            if missing:
+            if missing or unrouted:
                 return ImportProbe.waiting()
             return ImportProbe.imported()
 
@@ -492,6 +525,7 @@ class ImportExecutor:
             # Untracked Execute with Auto resolves to MOVE (no DownloadClientItem to report CanMoveFiles),
             # ripping files from the seeding torrent. An explicitly configured move/copy is honored as set.
             import_mode = "copy"
+        # One command for every series the record spans: Sonarr's ManualImportCommand resolves the series per file.
         cmd_id = self.sonarr.manual_import_execute(
             files=files,
             import_mode=import_mode,
@@ -579,6 +613,7 @@ class ImportExecutor:
         self,
         decision: ImportDecision,
         context: _ImportContext,
+        series_id: int,
     ) -> ManualImportFile:
         """Build one ManualImport file payload, always with a real quality (an omitted key NREs in Sonarr)."""
 
@@ -614,7 +649,7 @@ class ImportExecutor:
             )
         entry = ManualImportFile(
             path=path,
-            seriesId=pending.series_id,
+            seriesId=series_id,
             episodeIds=list(decision.episode_ids),
             releaseGroup=pending.release_group,
             languages=lang_objs,
@@ -630,22 +665,22 @@ class ImportExecutor:
 
 
 class _SeedStatuses(NamedTuple):
-    """A same-poll episode snapshot plus the per-target file statuses pinned to the seed set."""
+    """A same-poll record snapshot plus the per-target file statuses pinned to the seed set."""
 
-    snapshot: EpisodeSnapshot
+    snapshot: RecordSnapshot
     statuses: TargetStatuses
 
 
 class ImportReconciler:
     """Decides a completed download's state and builds the grab-time seeds."""
 
-    def __init__(self, deps: RunDeps, episodes: SonarrEpisodes, executor: ImportExecutor) -> None:
-        """Bind the cache/logger off the deps + the composed collaborators."""
+    def __init__(self, records: PendingRecords, episodes: SonarrEpisodes, executor: ImportExecutor) -> None:
+        """Bind the run's record seam and the composed collaborators (the logger is the executor's)."""
 
+        self._records = records
         self._episodes = episodes
         self._executor = executor
-        self.cache_store = deps.cache_store
-        self.logger = deps.logger
+        self.logger = executor.logger
 
     def import_completed(
         self,
@@ -669,7 +704,7 @@ class ImportReconciler:
         gated_targets = seeded_targets if accounted else []
         seed = self._seed_statuses(pending, gated_targets)
         # The done-check below still reads the raw statuses (a preowned target is done, just not ours to claim).
-        done, total = self._net_counts(pending, gated_targets, seed.statuses)
+        done, total = self._net_counts(seed, gated_targets)
 
         # Only a complete map makes the done-check trustworthy without a folder scan.
         if seed_complete and seed.statuses.all_done():
@@ -732,43 +767,47 @@ class ImportReconciler:
         if not seeded_targets or not pending.seed_coverage().mapped:
             return NO_PROGRESS
         seed = self._seed_statuses(pending, seeded_targets)
-        done, total = self._net_counts(pending, seeded_targets, seed.statuses)
+        done, total = self._net_counts(seed, seeded_targets)
         return ImportProgress(done, total, determinate=True)
 
     def _seed_statuses(self, pending: PendingImport, targets: list[int]) -> _SeedStatuses:
-        """Fetch the series' episodes FRESH and classify `targets` against them (`[]` still builds the snapshot)."""
+        """Fetch every claimed series' episodes FRESH and classify `targets`, each under its own claim's guards.
 
-        episodes = self._episodes.fresh_episodes(pending.series_id)
-        snapshot = EpisodeSnapshot(
-            episodes=episode_index(episodes),
-            trusted=trusted_groups(pending, self._series_pending_records(pending.series_id)),
-            owned_episode_sizes=pending.guards.owned_sizes,
-        )
+        `[]` still builds the snapshot. One guards read and one episode fetch per series serve every policy.
+        """
+
+        guards = self._records.guards()
+        own = pending.own_group
+        indexes = {
+            series_id: episode_index(self._episodes.fresh_episodes(series_id)) for series_id in pending.series_ids
+        }
+        # Unfiltered: a cleanup-flagged sibling's files are on disk, so dropping it would loosen the guard.
+        siblings = {
+            series_id: tuple(self._records.for_series(series_id, guards).values()) for series_id in pending.series_ids
+        }
+        by_series: dict[int, EpisodeSnapshot] = {}
+        for series_id in pending.series_ids:
+            merged = pending.guards_for(series_id)
+            by_series[series_id] = EpisodeSnapshot(
+                episodes=indexes[series_id],
+                trusted=trusted_groups(merged, own, siblings[series_id]),
+                owned_episode_sizes=merged.owned_sizes,
+            )
+        by_claim = {
+            claim.al_id: EpisodeSnapshot(
+                episodes=indexes[claim.series_id],
+                trusted=trusted_groups(claim.guards, own, siblings[claim.series_id]),
+                owned_episode_sizes=claim.guards.owned_sizes,
+            )
+            for claim in routable_claims(pending.claims)
+        }
+        snapshot = RecordSnapshot(pending, by_series, by_claim)
         return _SeedStatuses(snapshot, snapshot.statuses(targets))
 
     @staticmethod
-    def _net_counts(
-        pending: PendingImport,
-        targets: list[int],
-        statuses: TargetStatuses,
-    ) -> tuple[int, int]:
-        """The bar's `(done, total)`, net of the grab-time preowned targets (empty `targets` nets to 0/0)."""
+    def _net_counts(seed: _SeedStatuses, targets: list[int]) -> tuple[int, int]:
+        """The bar's `(done, total)`, net of the targets preowned under the claim judging each (`[]` nets to 0/0)."""
 
-        preowned = len(set(pending.preowned_episode_ids) & set(targets))
-        recommended = sum(1 for status in statuses.by_id.values() if status is EpisodeFileStatus.RECOMMENDED)
+        preowned = sum(1 for ep_id in targets if seed.snapshot.preowned(ep_id))
+        recommended = sum(1 for status in seed.statuses.by_id.values() if status is EpisodeFileStatus.RECOMMENDED)
         return max(0, recommended - preowned), len(targets) - preowned
-
-    def _series_pending_records(self, series_id: int) -> list[PendingImport]:
-        """The series' durable pending records (any release group), rehydrated UNFILTERED.
-
-        Deliberately not `PendingRecords.for_series`: this feeds `trusted_groups` (the overwrite
-        guard), and a cleanup-flagged record's files are on disk, so dropping it loosens the guard.
-        A fresh snapshot already filtered in SQL, so a record dropped earlier this run is absent.
-        """
-
-        return list(
-            hydrate_pending(
-                self.cache_store.get_pending_for_series(Arr.SONARR, series_id),
-                self.cache_store.get_guards(Arr.SONARR),
-            ).values(),
-        )

@@ -45,7 +45,7 @@ class RunLoop:
         # Its dry_run=False and OFF wait mode keep every preview and pending-import path a safe no-op before run_sync.
         self._ctx = services.ctx
 
-        self._wait_manager = ImportWaitManager(deps=deps, ctx=self._ctx)
+        self._wait_manager = ImportWaitManager(deps=deps, ctx=self._ctx, records=services.records)
         self.begin_run(self._ctx)
 
     def begin_run(self, ctx: RunContext) -> None:
@@ -181,20 +181,18 @@ class RunLoop:
         if item_id is None and self._services.selection_stale and not self._config.seadex.ignore_seadex_update_times:
             hub_note("Matching settings changed - rechecking cached entries")
 
-        cap_reached = False
         for item_idx, item in enumerate(all_items):
             try:
-                if self._scan_item(strategy, item, item_idx, n_items):
-                    cap_reached = True
-                    break
+                self._scan_item(strategy, item, item_idx, n_items)
             except Exception as e:
                 title = getattr(item, "title", "unknown title")
                 hub_error(f"{title}: unexpected error ({e}) - skipping this title", exc=e)
                 continue
 
         # ONE full-coverage predicate for both gates below. They drifted apart once: an outage run committed the
-        # checkpoint, consuming drift events it never acted on.
-        full_pass = item_id is None and not cap_reached and not self._seadex.outage
+        # checkpoint, consuming drift events it never acted on. A held title's old cache row may read done and its
+        # drift mark may be pending, so a run that held anything past the cap neither vouches nor commits.
+        full_pass = item_id is None and self._ctx.stats.held_by_cap == 0 and not self._seadex.outage
 
         # Held on outage so the next healthy run re-derives the same dirty ids (the query overlap and id
         # dedup absorb the replay). The staged write persists only at _finalize_run's non-preview save.
@@ -215,8 +213,8 @@ class RunLoop:
         item: ItemT,
         item_idx: int,
         n_items: int,
-    ) -> bool:
-        """Scan one library item, returning True iff a grab hit the add cap."""
+    ) -> None:
+        """Scan one library item: every AniList id it maps to, then its pending-record snapshot."""
 
         arr = self._services.arr
         item_title = item.title
@@ -232,24 +230,19 @@ class RunLoop:
 
         if not item.monitored and self._arr_config.ignore_unmonitored:
             self._reporter.log_arr_item_unmonitored(self._ctx, item_title)
-            return False
+            return
 
         al_mappings = strategy.item_anilist_ids(item)
 
         if len(al_mappings) == 0:
             self._reporter.log_no_anilist_mappings(self._ctx, item_title)
-            return False
+            return
 
         for al_id, mapping in al_mappings.items():
-            # process_al_id returns True only when max_torrents_to_add was reached, which stops the whole run. A
-            # post-loop max check would be redundant: the in-block check fires after every add.
+            # Past the run cap a title is still checked (a torrent already downloading keeps its mapping), its grab
+            # held for the next run.
             try:
-                if strategy.process_al_id(
-                    item=item,
-                    al_id=al_id,
-                    mapping=mapping,
-                ):
-                    return True
+                strategy.process_al_id(item=item, al_id=al_id, mapping=mapping)
             except Exception as e:
                 # Contain the failure to THIS AniList id: one bad season must not skip the item's others.
                 hub_error(
@@ -262,8 +255,6 @@ class RunLoop:
         # Placed after all of the item's AniList ids so it covers the cached, grabbed and no-entry paths alike.
         if self._wait_active and (sid := strategy.pending_import_series_id(item)) is not None:
             self._wait_manager.snapshot_pending_for_series(sid)
-
-        return False
 
     # --- Wait-for-completion orchestration ----------------------------------
 

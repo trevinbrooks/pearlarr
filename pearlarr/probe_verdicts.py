@@ -405,18 +405,17 @@ def _import_rows(page: HistoryPage, start: int) -> tuple[HistoryImport, ...]:
 def placements_from_history(imports: Sequence[HistoryImport], pending: PendingImport) -> dict[str, list[int]]:
     """Sonarr's import rows as placements for the record's unplaced listing files, normalized leaf -> sorted ids.
 
-    Our seed stays authoritative, and a sibling's slice never lands on this record: by name
-    (`excluded_files`) and by id (the resolved set, when the record carries one).
+    Our seed stays authoritative, and a row lands only where some claim admits it: by name
+    (`excluded_files`) and by id (a claim on the row's series whose window holds the episode).
     """
 
     wanted = pending.unplaced_names()
-    scope = set(pending.ordered_episode_ids)
     grouped: dict[str, set[int]] = {}
     for row in imports:
-        if row.series_id != pending.series_id:
-            continue
         name = normalized_leaf(row.path)
-        if name not in wanted or (scope and row.episode_id not in scope):
+        if name not in wanted:
+            continue
+        if not any(c.series_id == row.series_id and c.admits(row.episode_id) for c in pending.claims):
             continue
         grouped.setdefault(name, set()).add(row.episode_id)
     return {name: sorted(ids) for name, ids in grouped.items()}

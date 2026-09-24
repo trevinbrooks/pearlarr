@@ -38,6 +38,7 @@ from pearlarr.seadex_types import (
 )
 from pearlarr.sonarr_client import SonarrClient
 
+from .builders import entry_claim
 from .fakes import diagnostic_messages, install_recording_hub
 from .http_mock import sonarr_fixture
 
@@ -71,15 +72,12 @@ def _make_pending(*, infohash: str, title: str) -> PendingImport:
 
     return PendingImport(
         infohash=infohash,
-        series_id=1,
-        al_id=1,
-        file_episode_map={},
-        episode_ids=[],
         release_group="",
         is_dual_audio=False,
-        seadex_files=[],
-        title=title,
+        seadex_files=(),
         added_at="",
+        file_episode_map={},
+        claims=(entry_claim(title=title),),
     )
 
 

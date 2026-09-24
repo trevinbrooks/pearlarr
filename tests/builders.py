@@ -20,7 +20,6 @@ from pearlarr.arr_categories import ArrCategoryResolver, _CategoryPair
 from pearlarr.arr_http import ArrHttp
 from pearlarr.cache import (
     _ENTRY_SCALAR_COLUMNS,
-    UPDATED_AT_STR_FORMAT,
     AbstractCacheStore,
     CachedEntry,
     CacheRecord,
@@ -31,14 +30,17 @@ from pearlarr.cache import (
 from pearlarr.clock import Clock
 from pearlarr.config import AppConfig, Arr
 from pearlarr.grab_pipeline import GrabPipeline, GrabRequest
+from pearlarr.grab_placement import EntryFacts, PendingSeed, TorrentFacts
 from pearlarr.import_wait import ImportProbes, ImportWaitManager, PostImportCleanup
 from pearlarr.manual_import import (
     Deferral,
+    EntryClaim,
+    EntryNames,
+    FileEpisodeMap,
     GuardFacts,
     ImportProbe,
     ImportWaitMode,
     PendingImport,
-    PendingKey,
 )
 from pearlarr.mappings import MappingResolver, MappingSources
 from pearlarr.notify import Notifier
@@ -71,6 +73,7 @@ from pearlarr.sonarr_client import AbstractSonarrClient
 from pearlarr.sonarr_episodes import SonarrEpisodes
 from pearlarr.sonarr_mapper import FileEpisodeMapper
 from pearlarr.sonarr_parse import SonarrParseCache
+from pearlarr.stamps import UPDATED_AT_STR_FORMAT
 from pearlarr.torrents import AddOutcome, AddResult, TorrentService
 
 from .fakes import FakeClock, FakeRadarrClient, FakeSonarrClient
@@ -243,12 +246,10 @@ class FakeCacheStore(AbstractCacheStore):
         self,
         *,
         sonarr_parse: dict[str, dict[str, Any]] | None = None,
-        pending: dict[str, dict[PendingKey, dict[str, Any]]] | None = None,
+        pending: dict[str, dict[str, dict[str, Any]]] | None = None,
     ) -> None:
         self._sonarr_parse: dict[str, dict[str, Any]] = dict(sonarr_parse or {})
-        self._pending: dict[str, dict[PendingKey, dict[str, Any]]] = {
-            arr: dict(recs) for arr, recs in (pending or {}).items()
-        }
+        self._pending: dict[str, dict[str, dict[str, Any]]] = {arr: dict(recs) for arr, recs in (pending or {}).items()}
         # The entries / torrent_hashes split, keyed by (arr, al_id). An entry with an empty scalar dict
         # still "exists": the existence checks key on membership, never the dict's truthiness.
         self._entries: dict[tuple[str, int], dict[str, Any]] = {}
@@ -373,53 +374,37 @@ class FakeCacheStore(AbstractCacheStore):
 
     # -- pending imports --
     @override
-    def get_pending(self, arr: Arr) -> dict[PendingKey, dict[str, Any]]:
+    def get_pending(self, arr: Arr) -> dict[str, dict[str, Any]]:
         return {key: deepcopy(rec) for key, rec in self._pending.get(str(arr), {}).items()}
 
     @override
-    def get_pending_for_series(self, arr: Arr, series_id: int) -> dict[PendingKey, dict[str, Any]]:
-        """Fresh deep-copied snapshot filtered to one series (mirrors the SQL `->> 'series_id'`)."""
+    def get_pending_record(self, arr: Arr, infohash: str) -> dict[str, Any] | None:
+        return deepcopy(self._pending.get(str(arr), {}).get(infohash))
+
+    @override
+    def get_pending_for_series(self, arr: Arr, series_id: int) -> dict[str, dict[str, Any]]:
+        """Fresh deep-copied snapshot of the records with a claim on the series (mirrors the `json_each` read)."""
 
         return {
             key: deepcopy(rec)
             for key, rec in self._pending.get(str(arr), {}).items()
-            if rec.get("series_id") == series_id
+            if any(claim.get("series_id") == series_id for claim in rec.get("claims", []))
         }
 
     @override
-    def put_pending(self, arr: Arr, key: PendingKey, record: dict[str, Any]) -> None:
-        self._pending.setdefault(str(arr), {})[key] = deepcopy(record)
+    def put_pending(self, arr: Arr, infohash: str, record: dict[str, Any]) -> None:
+        self._pending.setdefault(str(arr), {})[infohash] = deepcopy(record)
 
     @override
-    def has_pending(self, arr: Arr, key: PendingKey) -> bool:
-        return key in self._pending.get(str(arr), {})
+    def drop_pending(self, arr: Arr, infohash: str) -> None:
+        self._pending.get(str(arr), {}).pop(infohash, None)
 
     @override
-    def drop_pending(self, arr: Arr, key: PendingKey) -> None:
-        self._pending.get(str(arr), {}).pop(key, None)
+    def other_arr_holds(self, arr: Arr, infohash: str) -> bool:
+        """Whether the other arr holds a record on the torrent, by exact key (mirrors the SQL)."""
 
-    @override
-    def count_arr_siblings(self, arr: Arr, key: PendingKey) -> int:
-        """One arr's other claims on `key`'s torrent: case-folded match, byte-exact exclusion (mirrors the SQL)."""
+        return any(infohash in recs for arr_key, recs in self._pending.items() if arr_key != str(arr))
 
-        target = key.infohash.casefold()
-        rows = self._pending.get(str(arr), {})
-        return sum(1 for other in rows if other.infohash.casefold() == target and other != key)
-
-    @override
-    def count_siblings_any_arr(self, arr: Arr, key: PendingKey) -> int:
-        """Both arrs' other claims on `key`'s torrent, `arr` qualifying only the exclusion (mirrors the SQL)."""
-
-        target = key.infohash.casefold()
-        excluded = (str(arr), key)
-        return sum(
-            1
-            for arr_key, recs in self._pending.items()
-            for other in recs
-            if other.infohash.casefold() == target and (arr_key, other) != excluded
-        )
-
-    # No deepcopy: GuardFacts is deeply immutable (frozen dataclass -> tuples of str/int/NamedTuple).
     @override
     def put_guards(self, arr: Arr, al_id: int, guards: GuardFacts) -> None:
         self._guards.setdefault(str(arr), {})[al_id] = guards
@@ -428,7 +413,9 @@ class FakeCacheStore(AbstractCacheStore):
     def get_guards(self, arr: Arr) -> dict[int, GuardFacts]:
         """Only entries with a live pending record (mirrors the real store's join)."""
 
-        live = {key.al_id for key in self._pending.get(str(arr), {})}
+        live = {
+            claim.get("al_id") for rec in self._pending.get(str(arr), {}).values() for claim in rec.get("claims", [])
+        }
         return {al_id: g for al_id, g in self._guards.get(str(arr), {}).items() if al_id in live}
 
     # -- history checkpoints --
@@ -446,7 +433,7 @@ class FakeCacheStore(AbstractCacheStore):
 
         key = str(arr)
         hashes = {h.casefold() for k, hs in self._entry_hashes.items() if k[0] == key for h in hs if h}
-        hashes |= {pending_key.infohash.casefold() for pending_key in self._pending.get(key, {})}
+        hashes |= {infohash.casefold() for infohash in self._pending.get(key, {})}
         return frozenset(hashes)
 
     # -- maintenance: stats, integrity --
@@ -704,6 +691,7 @@ def make_services(**overrides: Any) -> RunServices:
         # The real __init__ mints these too. Without them the dirty-aware / selection-aware skip predicates fail.
         "_dirty_al_ids": set[int](),
         "_selection_stale": False,
+        "_clock": FakeClock(),
     }
     defaults.update(overrides)
     return make_bare_instance(RunServices, **defaults)
@@ -776,6 +764,12 @@ def make_release_filter(**overrides: Any) -> SeadexReleaseFilter:
 CLIENT_SENTINEL = object()
 
 
+def _lower_hash(infohash: str | None) -> str | None:
+    """A scripted hash as the url item carries it (lowercased)."""
+
+    return None if infohash is None else infohash.lower()
+
+
 class FakeTorrents:
     """Mimics `TorrentService.add`: a per-hash scripted `(outcome, name)` or full `AddResult`."""
 
@@ -785,8 +779,9 @@ class FakeTorrents:
         *,
         raises: dict[str | None, Exception] | None = None,
     ) -> None:
-        self._by_hash = by_hash
-        self._raises = raises or {}
+        # The SeaDex boundary lowercases hashes, so a scripted mixed-case hash is read lowercased too.
+        self._by_hash = {_lower_hash(h): scripted for h, scripted in by_hash.items()}
+        self._raises = {_lower_hash(h): exc for h, exc in (raises or {}).items()}
         self.calls: list[str | None] = []
 
     def add(
@@ -812,6 +807,41 @@ def one_release_dict(*, srg: str, infohash: str, url: str = "https://nyaa.si/vie
     item = url_item(url=url, infohash=infohash, download=True)
     item.tracker = Tracker.NYAA
     return {srg: rg_group({url: item})}
+
+
+def pending_seed(
+    infohash: str,
+    *,
+    stored: PendingImport | None = None,
+    placements: FileEpisodeMap | None = None,
+    **claim: Any,
+) -> PendingSeed:
+    """A seed on `infohash` (group NAN0, no files) claimed by `entry_claim(**claim)`, born unless `stored` is given."""
+
+    return PendingSeed(
+        facts=TorrentFacts(
+            infohash=infohash, release_group="NAN0", is_dual_audio=False, seadex_files=(), release_sizes=()
+        ),
+        placements=placements or {},
+        excluded=(),
+        claim=entry_claim(claimed_at="", **claim),
+        stored=stored,
+    )
+
+
+def entry_facts(**overrides: Any) -> EntryFacts:
+    """Entry 1 on series 7 titled Show, with no coverage, url, or guard facts unless given."""
+
+    defaults: dict[str, Any] = {
+        "al_id": 1,
+        "series_id": 7,
+        "title": "Show",
+        "coverage": None,
+        "url": None,
+        "guards": GuardFacts(),
+    }
+    defaults.update(overrides)
+    return EntryFacts(**defaults)
 
 
 def grab_request(**overrides: Any) -> GrabRequest:
@@ -850,6 +880,7 @@ def make_grab_pipeline(**overrides: Any) -> GrabPipeline:
         "logger": logger,
         "qbit": CLIENT_SENTINEL,
         "_ctx": RunContext(arr=Arr.SONARR, import_wait_mode=ImportWaitMode.BLOCKING),
+        "_clock": FakeClock(),
     }
     defaults.update(overrides)
     if "_records" not in defaults:
@@ -863,8 +894,8 @@ def make_grab_pipeline(**overrides: Any) -> GrabPipeline:
 def make_import_wait_manager(**overrides: Any) -> ImportWaitManager:
     """A bare `ImportWaitManager` over real sub-objects, config keys routed through `AppConfig`.
 
-    Constructs the records/probes/cleanup seams on the SAME store and ends with
-    `begin_run`, so every sub-object shares the one ctx (and strategy) a run would.
+    Constructs the records/probes/cleanup seams on the SAME store, binds the record seam as
+    the hub would, and ends with `begin_run`, so every sub-object shares the one ctx (and strategy) a run would.
     """
 
     config = overrides.pop("config", None) or _split_config(overrides)
@@ -884,6 +915,7 @@ def make_import_wait_manager(**overrides: Any) -> ImportWaitManager:
         raise TypeError(msg)
 
     records = PendingRecords(cache_store)
+    records.begin_run(ctx)
     probes = make_bare_instance(ImportProbes, _qbit=qbit, _logger=logger, strategy=None)
     cleanup = make_bare_instance(
         PostImportCleanup,
@@ -1002,6 +1034,12 @@ def sonarr_ep(
     return SonarrEpisode.model_validate(raw)
 
 
+def indexes_for(pending: PendingImport, index: EpisodeIndex) -> dict[int, EpisodeIndex]:
+    """The one index under every series the record claims (what the mapper's `indexes` reads for a one-series test)."""
+
+    return dict.fromkeys(pending.series_ids, index)
+
+
 def series_index(
     id_by_key: Mapping[EpisodeKey, int],
     *,
@@ -1060,27 +1098,75 @@ def numbered_names(prefix: str, count: int, tails: Sequence[str] = ()) -> list[s
     ]
 
 
-# The `al_id` every `pending_import` record carries unless overridden, exported so tests can spell
-# a builder record's composite key without magic ints.
+# The `al_id` every `pending_import` record's claim carries unless overridden, exported so tests can
+# spell a builder record's guard-row key without magic ints.
 PENDING_AL_ID = 1
+
+_CLAIM_KEYS = frozenset(EntryClaim.__dataclass_fields__)
+_STAMP = "2026-06-24 00:00:00"
+
+
+def entry_claim(**overrides: Any) -> EntryClaim:
+    """An `EntryClaim` on series 7 by entry `PENDING_AL_ID`, unscoped unless `ordered_episode_ids` is given."""
+
+    defaults: dict[str, Any] = {
+        "al_id": PENDING_AL_ID,
+        "series_id": 7,
+        "title": "Show",
+        "coverage": None,
+        "url": None,
+        "ordered_episode_ids": (),
+        "names": EntryNames(),
+        "preowned_episode_ids": (),
+        "slice_coverage": None,
+        "claimed_at": _STAMP,
+    }
+    defaults.update(overrides)
+    for key in ("ordered_episode_ids", "preowned_episode_ids"):
+        defaults[key] = tuple(defaults[key])
+    return EntryClaim(**defaults)
+
+
+def two_claim_record(
+    *,
+    al_ids: tuple[int, int] = (1, 2),
+    series_ids: tuple[int, int] = (7, 7),
+    windows: tuple[tuple[int, ...], tuple[int, ...]] = ((101, 102), (103, 104)),
+    titles: tuple[str, str] = ("Show", "Show"),
+    **record: Any,
+) -> PendingImport:
+    """A `pending_import(**record)` claimed by two entries, each on its series over its window."""
+
+    claims = tuple(
+        entry_claim(al_id=al_id, series_id=series_id, ordered_episode_ids=window, title=title)
+        for al_id, series_id, window, title in zip(al_ids, series_ids, windows, titles, strict=True)
+    )
+    return pending_import(claims=claims, **record)
 
 
 def pending_import(**overrides: Any) -> PendingImport:
-    """A `PendingImport` wiring one mapped file to one episode id, with a matching flat fallback."""
+    """A `PendingImport` wiring one mapped file to one episode id under one claim.
 
+    Claim keys (`series_id`, `al_id`, `title`, `ordered_episode_ids`, ...) build that claim unless
+    `claims` is given; its clock defaults to the record's `added_at`.
+    """
+
+    claim_overrides = {key: overrides.pop(key) for key in list(overrides) if key in _CLAIM_KEYS}
     defaults: dict[str, Any] = {
         "infohash": "abc123",
-        "series_id": 7,
-        "al_id": PENDING_AL_ID,
         "file_episode_map": {"Show - 01 [1080p].mkv": [101]},
-        "episode_ids": [101],
         "release_group": "SubGroup",
         "is_dual_audio": False,
-        "seadex_files": ["Show - 01 [1080p].mkv"],
-        "title": "Show",
-        "added_at": "2026-06-24 00:00:00",
+        "seadex_files": ("Show - 01 [1080p].mkv",),
+        "added_at": _STAMP,
     }
     defaults.update(overrides)
+    if "claims" not in defaults:
+        claim_overrides.setdefault("claimed_at", defaults["added_at"])
+        defaults["claims"] = (entry_claim(**claim_overrides),)
+    for key in ("seadex_files", "excluded_files", "release_sizes"):
+        if key in defaults:
+            defaults[key] = tuple(defaults[key])
     return PendingImport(**defaults)
 
 

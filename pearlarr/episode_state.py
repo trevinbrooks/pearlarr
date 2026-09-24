@@ -1,12 +1,13 @@
 """Pure episode-file statuses, the per-target snapshot an import checks, and the group trust its guard reads."""
 
+from collections import Counter
 from collections.abc import Mapping, Sequence
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from enum import Enum, auto
 from types import MappingProxyType
 from typing import NamedTuple
 
-from .manual_import import PendingImport, normalize_group, normalize_rg
+from .manual_import import EntryClaim, GuardFacts, OwnGroup, PendingImport, normalize_group, normalize_rg
 from .placement_types import EpisodeIndex
 
 type TrustPolicy = Mapping[str, frozenset[int] | None]
@@ -126,17 +127,120 @@ class EpisodeSnapshot(NamedTuple):
         return TargetStatuses(statuses)
 
 
+class Route(NamedTuple):
+    """Where an episode id is judged: the claim whose guards apply, if one, and the series whose index holds it."""
+
+    claim: EntryClaim | None
+    series_id: int | None
+
+
+def lone_unscoped_claims(claims: Sequence[EntryClaim]) -> dict[int, EntryClaim]:
+    """The one unscoped claim of each series that has exactly one: it judges the series' ids outside every window."""
+
+    unscoped_on = Counter(claim.series_id for claim in claims if not claim.ordered_episode_ids)
+    return {
+        claim.series_id: claim
+        for claim in claims
+        if not claim.ordered_episode_ids and unscoped_on[claim.series_id] == 1
+    }
+
+
+def routable_claims(claims: Sequence[EntryClaim]) -> tuple[EntryClaim, ...]:
+    """The claims `RecordSnapshot.route` can name: every scoped claim, and an unscoped claim alone on its series."""
+
+    lone = lone_unscoped_claims(claims)
+    return tuple(claim for claim in claims if claim.ordered_episode_ids or lone.get(claim.series_id) is claim)
+
+
+@dataclass(frozen=True, slots=True)
+class RecordSnapshot:
+    """One poll's coherent view of a record: each claimed series' snapshot, and each routable claim's own over it."""
+
+    pending: PendingImport
+    """The record the poll judges, whose claims route each target."""
+
+    by_series: Mapping[int, EpisodeSnapshot]
+    """Each claimed series' same-poll snapshot under the series' merged guard evidence (the routing fallback)."""
+
+    by_claim: Mapping[int, EpisodeSnapshot]
+    """Each routable claim's snapshot by AniList id: its series' same index under the claim's OWN guard evidence."""
+
+    indexes: Mapping[int, EpisodeIndex] = field(init=False)
+    """Each series' fresh episode index, the placement windows' inputs (a view over `by_series`)."""
+
+    lone_unscoped: Mapping[int, EntryClaim] = field(init=False)
+    """Each series' one unscoped claim where it has exactly one (see `lone_unscoped_claims`)."""
+
+    def __post_init__(self) -> None:
+        object.__setattr__(self, "by_series", MappingProxyType(dict(self.by_series)))
+        object.__setattr__(self, "by_claim", MappingProxyType(dict(self.by_claim)))
+        object.__setattr__(self, "lone_unscoped", MappingProxyType(lone_unscoped_claims(self.pending.claims)))
+        object.__setattr__(
+            self,
+            "indexes",
+            MappingProxyType({series_id: snapshot.episodes for series_id, snapshot in self.by_series.items()}),
+        )
+
+    def series_of(self, ep_id: int) -> int | None:
+        """The series whose index holds `ep_id` (Sonarr episode ids are global, so at most one does)."""
+
+        return next((sid for sid, snapshot in self.by_series.items() if ep_id in snapshot.episodes.by_id), None)
+
+    def route(self, ep_id: int) -> Route:
+        """The claim and series that judge `ep_id`.
+
+        The first scoped claim naming it decides. Otherwise the series whose index holds it does, under its
+        unscoped claim when it has exactly one (two unscoped claims on a series merge), else under its merged evidence.
+        """
+
+        for claim in self.pending.claims:
+            if ep_id in claim.ordered_episode_ids:
+                return Route(claim, claim.series_id)
+        series_id = self.series_of(ep_id)
+        if series_id is None:
+            return Route(None, None)
+        return Route(self.lone_unscoped.get(series_id), series_id)
+
+    def snapshot_for(self, ep_id: int) -> EpisodeSnapshot | None:
+        """The snapshot that judges `ep_id`: its route's claim's own, else its route's series'.
+
+        None when no claim and no index holds it.
+        """
+
+        route = self.route(ep_id)
+        if route.claim is not None and (own := self.by_claim.get(route.claim.al_id)) is not None:
+            return own
+        return None if route.series_id is None else self.by_series.get(route.series_id)
+
+    def preowned(self, ep_id: int) -> bool:
+        """Whether the grab judging `ep_id` found it owned: its route's claim says, else any claim (the merged fallback)."""
+
+        route = self.route(ep_id)
+        claims = (route.claim,) if route.claim is not None else self.pending.claims
+        return any(ep_id in claim.preowned_episode_ids for claim in claims)
+
+    def statuses(self, target_ep_ids: Sequence[int]) -> TargetStatuses:
+        """Classify each target under the snapshot that judges it. An id no snapshot judges is ABSENT."""
+
+        by_id: dict[int, EpisodeFileStatus] = {}
+        for ep_id in dict.fromkeys(target_ep_ids):
+            snapshot = self.snapshot_for(ep_id)
+            by_id[ep_id] = EpisodeFileStatus.ABSENT if snapshot is None else snapshot.statuses([ep_id]).by_id[ep_id]
+        return TargetStatuses(by_id)
+
+
 def trusted_groups(
-    pending: PendingImport,
+    guards: GuardFacts,
+    own: OwnGroup,
     series_records: Sequence[PendingImport] = (),
 ) -> TrustPolicy:
-    """One record's per-group trust policy: group -> verifying sizes, or None for trust-by-name.
+    """One claim's per-group trust policy: group -> verifying sizes, or None for trust-by-name.
 
     The one home of the overwrite-guard composition, for grab time (no
     `series_records`) and import time (the series' pending records, which may
     include this record's own row, whose votes are no-ops) alike. The entry's
     verified-current pick groups and the series' other grabbed groups are
-    trusted by name. A sibling's group is refused when THIS record's plan
+    trusted by name. A sibling's group is refused when THIS claim's plan
     judged it stale on disk (the copies being replaced must not ride back into
     protection on a sibling's vote). The record's OWN group joins last and
     unconditionally (it is the identity of the files being imported), but at
@@ -145,20 +249,18 @@ def trusted_groups(
     sizes means no size gate (the legacy trust-by-name behavior).
     """
 
-    stale = {norm for g in pending.guards.stale_groups if (norm := normalize_rg(g))}
-    trusted: dict[str, frozenset[int] | None] = {
-        norm: None for g in pending.guards.entry_groups if (norm := normalize_rg(g))
-    }
-    own = normalize_rg(pending.release_group)
-    own_sizes = set(pending.release_sizes)
+    stale = {norm for g in guards.stale_groups if (norm := normalize_rg(g))}
+    trusted: dict[str, frozenset[int] | None] = {norm: None for g in guards.entry_groups if (norm := normalize_rg(g))}
+    own_norm = normalize_rg(own.release_group)
+    own_sizes = set(own.sizes)
     for record in series_records:
         norm = normalize_rg(record.release_group)
         if norm is None:
             continue
-        if norm == own:
+        if norm == own_norm:
             own_sizes.update(record.release_sizes)
         if norm not in stale:
             trusted.setdefault(norm, None)
-    if own:
-        trusted[own] = frozenset(own_sizes) or None
+    if own_norm:
+        trusted[own_norm] = frozenset(own_sizes) or None
     return trusted

@@ -208,6 +208,7 @@ def test_run_tally_freezes_run_stats_whole() -> None:
         queued=1,
         downloaded=2,
         imported=3,
+        held_by_cap=0,
     )
     # Frozen tuples of owned facts: later stats mutation can't reach into the tally.
     stats.added.append(grab)

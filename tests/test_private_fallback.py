@@ -176,9 +176,7 @@ class TestUpgradePendingHoldsForOwnedStale:
         # The fallback hold keeps the title uncached and surfaces the STALE row,
         # so it resurfaces every run until the copy is updated or deleted.
         pipe = make_grab_pipeline(cache_store=cache, _ctx=ctx, private_releases="fallback", sleep_time=0)
-        stopped = pipe.grab_and_cache(_grab_request(11, plan.seadex_dict, plan.torrent_hashes, entry))
-
-        assert stopped is False
+        pipe.grab_and_cache(_grab_request(11, plan.seadex_dict, plan.torrent_hashes, entry))
         assert cache.get_entry(Arr.SONARR, 11) is None
         assert [n.kind for n in ctx.stats.needs_action] == [NeedsActionKind.PRIVATE_ONLY_STALE]
         assert [n.reason for n in ctx.stats.needs_action] == [STALE_ROW_REASON]
@@ -251,9 +249,7 @@ class TestOwnedPreferredPrivateAtMatchingSize:
         assert ctx.per_title.private_only_stale_held is False
 
         pipe = make_grab_pipeline(cache_store=cache, _ctx=ctx, private_releases="fallback", sleep_time=0)
-        stopped = pipe.grab_and_cache(_grab_request(11, plan.seadex_dict, plan.torrent_hashes, entry))
-
-        assert stopped is False
+        pipe.grab_and_cache(_grab_request(11, plan.seadex_dict, plan.torrent_hashes, entry))
         assert ctx.stats.up_to_date == 1
         assert ctx.stats.needs_action == []
         assert cache.check_al_id_in_cache(Arr.SONARR, 11, entry) is True
@@ -289,9 +285,7 @@ class TestOwnedPreferredPrivateAtMatchingSize:
         assert ctx.per_title.private_only_stale_held is False
 
         pipe = make_grab_pipeline(cache_store=cache, _ctx=ctx, private_releases="fallback", sleep_time=0)
-        stopped = pipe.grab_and_cache(_grab_request(22, plan.seadex_dict, plan.torrent_hashes, entry))
-
-        assert stopped is False
+        pipe.grab_and_cache(_grab_request(22, plan.seadex_dict, plan.torrent_hashes, entry))
         assert ctx.stats.up_to_date == 1
         assert ctx.stats.needs_action == []
         assert cache.check_al_id_in_cache(Arr.RADARR, 22, entry) is True
@@ -557,9 +551,7 @@ class TestMixedGroupKeeperPreference:
             sleep_time=0,
         )
         pipe._anilist.al_cache.update({55: {}})
-        stopped = pipe.grab_and_cache(_grab_request(55, plan.seadex_dict, plan.torrent_hashes, entry))
-
-        assert stopped is False
+        pipe.grab_and_cache(_grab_request(55, plan.seadex_dict, plan.torrent_hashes, entry))
         assert torrents.calls == [self.H_HASH]
         assert ctx.stats.needs_action == []
         assert cache.check_al_id_in_cache(Arr.SONARR, 55, entry) is True
@@ -772,9 +764,7 @@ class TestPromotionGeneralization:
             sleep_time=0,
         )
         pipe._anilist.al_cache.update({66: {}})
-        stopped = pipe.grab_and_cache(_grab_request(66, plan.seadex_dict, plan.torrent_hashes, entry))
-
-        assert stopped is False
+        pipe.grab_and_cache(_grab_request(66, plan.seadex_dict, plan.torrent_hashes, entry))
         assert torrents.calls == [PUB_HASH]
         assert ctx.stats.needs_action == []
         # Nothing is held, so the fallback-hold uncache must not fire.

@@ -4,11 +4,9 @@
 # seam). The repo disables reportPrivateUsage for tests, strict re-flags it.
 """Guards the single end-of-run finalize site.
 
-When `max_torrents_to_add` is reached mid-run, `_grab` returns a pure bool
-(it no longer finalizes). `run_sync` breaks the per-item scan and runs the ONE
-post-loop `_finalize_run` site - the same site the normal end-of-run path
-reaches. These pin both halves of that hoist so a future change can't silently
-double-finalize or skip the blocking/import pass on the cap-reached break.
+A title held past `max_torrents_to_add` never stops the scan, and the ONE
+post-loop `_finalize_run` site runs once on every path. These pin that hoist so
+a future change can't silently double-finalize or skip the blocking/import pass.
 
 The strategy is the shared typed `FakeStrategy` (an `ArrSync` recording
 its `process_al_id` calls), the engine's collaborators are small typed fakes,
@@ -29,7 +27,7 @@ from pearlarr.output.recording import RecordingHub
 from pearlarr.protocols import ImportCompleter
 from pearlarr.reporter import RunContext
 from pearlarr.run_loop import RunLoop
-from pearlarr.seadex_types import ProgressSink
+from pearlarr.seadex_types import HistoryRecord, ProgressSink
 from pearlarr.wait_view import WaitOutcomeRow, WaitResult
 
 from .builders import (
@@ -40,7 +38,7 @@ from .builders import (
     make_config,
     make_services,
 )
-from .fakes import FakeArrItem, FakeStrategy, install_recording_hub
+from .fakes import CapMeeting, FakeArrItem, FakeStrategy, install_recording_hub
 
 
 class _FakeGateway:
@@ -143,27 +141,25 @@ def _engine(
     )
 
 
-class TestCapReachedFinalizesOnce:
-    """A mid-run cap stops the scan and finalizes exactly once, at the single site."""
+class TestHeldTitleKeepsScanning:
+    """A title held past the run cap stops nothing: every item is scanned and the single finalize site runs once."""
 
-    def test_cap_reached_breaks_loop_and_finalizes_once(self, logger: logging.Logger) -> None:
-        # Cap reached on the first id: process_al_id returns True (stop the run).
+    def test_held_title_keeps_scanning_and_finalizes_once(self, logger: logging.Logger) -> None:
+        finalize = _FinalizeRecorder()
+        engine = _engine(finalize, logger)
+        # Every id is held by the cap, as the pipeline holds a grabbable release past it.
         strategy = FakeStrategy(
             items=[FakeArrItem(item_id=1, title="A"), FakeArrItem(item_id=2, title="B")],
             anilist_ids={1: MappingEntry(anilist_id=1)},
-            process_returns=True,
-        )
-        finalize = _FinalizeRecorder()
-
-        _engine(finalize, logger).run_sync(
-            strategy,
-            item_id=None,
-            dry_run=True,
-            boot=BootFlow(),
+            cap_through=engine._services,
+            cap=CapMeeting.HELD,
         )
 
-        # The cap stopped the scan after the first id: the second item is never reached.
-        assert strategy.process_calls == [1]
+        engine.run_sync(strategy, item_id=None, dry_run=True, boot=BootFlow())
+
+        # The hold on the first item never stopped the scan: the second item's id is still checked.
+        assert strategy.process_calls == [1, 1]
+        assert engine._services.ctx.stats.held_by_cap == 2
         # ...and the single post-loop finalize ran exactly once.
         assert finalize.calls == 1
 
@@ -364,6 +360,12 @@ class TestScanItemContext:
         assert engine._ctx.arr_title == "A"
 
 
+# One import event on the scanned item, so the activity scan has a checkpoint to commit.
+_IMPORT_EVENT = HistoryRecord(
+    id=1, date="2026-07-06T10:00:00Z", item_id=3, event_type="downloadFolderImported", download_id=None, reason=None
+)
+
+
 class TestSelectionRecheck:
     """The stale-selection announcement + the full-coverage vouch rule.
 
@@ -381,15 +383,17 @@ class TestSelectionRecheck:
         item_id: int | None = None,
         config: AppConfig | None = None,
         seadex: _FakeGateway | None = None,
-        process_returns: bool = False,
+        cap: CapMeeting = CapMeeting.NONE,
     ) -> tuple[RunLoop, RecordingHub]:
+        recording = install_recording_hub()
+        engine = _engine(_FinalizeRecorder(), logger, config=config, seadex=seadex)
         strategy = FakeStrategy(
             items=[FakeArrItem(item_id=3, title="A")],
             anilist_ids={11: MappingEntry(anilist_id=11)},
-            process_returns=process_returns,
+            cap_through=engine._services if cap is not CapMeeting.NONE else None,
+            cap=cap,
+            history=[_IMPORT_EVENT] if cap is not CapMeeting.NONE else None,
         )
-        recording = install_recording_hub()
-        engine = _engine(_FinalizeRecorder(), logger, config=config, seadex=seadex)
         engine._services._selection_stale = stale
         engine.run_sync(strategy, item_id=item_id, dry_run=True, boot=BootFlow())
         return engine, recording
@@ -437,10 +441,20 @@ class TestSelectionRecheck:
 
         assert self._vouched_any(engine) is False
 
-    def test_capped_run_does_not_vouch(self, logger: logging.Logger) -> None:
-        engine, _ = self._run(logger, process_returns=True)
+    def test_held_run_neither_vouches_nor_commits_the_checkpoint(self, logger: logging.Logger) -> None:
+        engine, _ = self._run(logger, cap=CapMeeting.HELD)
 
         assert self._vouched_any(engine) is False
+        assert engine.cache_store.get_history_checkpoint(Arr.SONARR) is None
+
+    def test_exact_cap_run_with_nothing_held_vouches_and_commits_the_checkpoint(self, logger: logging.Logger) -> None:
+        # Reaching the cap is not a hold: only a title held PAST it leaves the pass partial.
+        engine, _ = self._run(logger, config=make_config(max_torrents_to_add=1), cap=CapMeeting.FILLED)
+
+        assert engine._services.ctx.torrents_added == 1
+        assert engine._services.ctx.stats.held_by_cap == 0
+        assert self._vouched_any(engine) is True
+        assert engine.cache_store.get_history_checkpoint(Arr.SONARR) is not None
 
     def test_outage_run_does_not_vouch(self, logger: logging.Logger) -> None:
         outage = _FakeGateway()

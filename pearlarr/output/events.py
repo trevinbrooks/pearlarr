@@ -342,7 +342,7 @@ class NeedsActionCause(Enum):
     PRIVATE_ONLY_STALE = auto()
     UNSUPPORTED_TRACKER = auto()
     GRAB_FAILED = auto()
-    PARSE_FAILED = auto()
+    PLACEMENT_INPUT_MISSING = auto()
 
 
 @dataclass(frozen=True, slots=True)
@@ -374,6 +374,7 @@ class RunTally:
     queued: int
     downloaded: int
     imported: int
+    held_by_cap: int
 
     @classmethod
     def from_stats(cls, stats: RunStats) -> RunTally:
@@ -403,6 +404,7 @@ class RunTally:
             queued=stats.queued,
             downloaded=stats.downloaded,
             imported=stats.imported,
+            held_by_cap=stats.held_by_cap,
         )
 
 

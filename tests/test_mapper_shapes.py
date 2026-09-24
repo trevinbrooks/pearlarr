@@ -27,7 +27,7 @@ from pearlarr.seadex_types import (
     SonarrEpisode,
 )
 
-from .builders import make_sonarr_mapper, pending_import
+from .builders import indexes_for, make_sonarr_mapper, pending_import
 from .fakes import FakeSonarrClient
 
 _CATALOG = Path(__file__).parent / "fixtures" / "sonarr" / "mapper_shapes.json"
@@ -127,7 +127,7 @@ def _scope(case: ShapeCase) -> SeedScope:
     """The grab-time scope: the entry's slice of the whole-series index, and the names."""
 
     index = episode_index(case.episodes)
-    return SeedScope(episode_index([index.by_id[episode_id] for episode_id in case.entry_ids]), index, _names(case))
+    return SeedScope(1, episode_index([index.by_id[episode_id] for episode_id in case.entry_ids]), index, _names(case))
 
 
 def _parsed(case: ShapeCase) -> dict[str, ParsedFileInfo]:
@@ -162,7 +162,7 @@ def test_the_grab_records_the_placed_episodes(case: ShapeCase) -> None:
     parsed = _parsed(case)
     files = [SeedFile(name, size, parsed[name]) for size, name in enumerate(case.parses, start=1)]
 
-    placement = place_release(files, scope)
+    placement = place_release(files, scope, None)
 
     expected = [
         EpisodeRecord(scope.series.by_id[ep_id].season_number, scope.series.by_id[ep_id].episode_number, size)
@@ -170,7 +170,7 @@ def test_the_grab_records_the_placed_episodes(case: ShapeCase) -> None:
         for ep_id in case.expected.get(name, ())
     ]
     assert list(placement.records) == expected
-    assert placement.parses_known
+    assert placement.inputs_known
 
 
 @pytest.mark.parametrize("case", _PARAMS)
@@ -181,14 +181,13 @@ def test_mapper_matches_the_seed(case: ShapeCase) -> None:
     mapper = make_sonarr_mapper(sonarr=FakeSonarrClient(parse_fn=parsed.get))
     pending = pending_import(
         file_episode_map={},
-        episode_ids=list(case.entry_ids),
         ordered_episode_ids=list(case.entry_ids),
         seadex_files=list(case.parses),
         names=_names(case),
     )
     candidates = mapper.candidate_files([ManualImportCandidate(path=f"/dl/{name}") for name in case.parses])
 
-    assignment = mapper.assign(pending, candidates, episode_index(case.episodes))
+    assignment = mapper.assign(pending, candidates, indexes_for(pending, episode_index(case.episodes)))
 
     assert assignment.assigned == {normalize_basename(name): list(ids) for name, ids in case.expected.items()}
     assert {placement.name for placement in assignment.excluded} == {

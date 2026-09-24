@@ -84,8 +84,8 @@ class ArrSync[ItemT: ArrItem](ImportCompleter):
         item: ItemT,
         al_id: int,
         mapping: MappingEntry,
-    ) -> bool:
-        """Process one AniList id for one Arr item, returning True if it grabbed."""
+    ) -> None:
+        """Process one AniList id for one Arr item: judge it, grab or hold, cache the outcome."""
 
     @abstractmethod
     def pending_import_series_id(self, item: ItemT) -> int | None:

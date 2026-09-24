@@ -105,7 +105,7 @@ $ pearlarr run single
 ```
 
 The blocks now read "adding SeaDex's recommended release" instead of "would add", and the results are cached, so handled titles are skipped on later runs until SeaDex or your library changes.
-A real run adds at most `advanced.max_torrents_to_add` torrents (default 10). The preview ignored that cap, so on a large library later runs pick up where the first stopped.
+A real run adds at most `advanced.max_torrents_to_add` torrents (default 10) and holds the rest, so on a large library later runs grab the titles the first run held. The preview ignored that cap.
 (`pearlarr run single --dry-run` still simulates with credentials set, if you want one more rehearsal.)
 
 ## 7. Confirm the grab
