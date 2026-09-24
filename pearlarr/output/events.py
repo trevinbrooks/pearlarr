@@ -374,6 +374,7 @@ class RunTally:
     queued: int
     downloaded: int
     imported: int
+    held_by_cap: int
 
     @classmethod
     def from_stats(cls, stats: RunStats) -> RunTally:
@@ -403,6 +404,7 @@ class RunTally:
             queued=stats.queued,
             downloaded=stats.downloaded,
             imported=stats.imported,
+            held_by_cap=stats.held_by_cap,
         )
 
 

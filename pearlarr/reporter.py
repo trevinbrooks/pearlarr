@@ -154,12 +154,16 @@ class RunStats:
     """Carried-over `DOWNLOADED` records (a this-run grab stays in `added`)."""
     imported: int = 0
     """Carried-over `IMPORTED` records (a this-run grab stays in `added`)."""
+    held_by_cap: int = 0
+    """Titles with a grabbable release held past the run cap (re-checked and grabbed next run)."""
 
 
 @dataclass
 class PerTitleState:
     """Per-title scratch flags, reset at the top of each title."""
 
+    held_by_cap: bool = False
+    """A grabbable release was held by the run cap, so the title must not be cached as done."""
     private_only_skipped: bool = False
     """A private-only release forced a skip, so the title must not be cached as done."""
     private_only_groups: list[str] = field(default_factory=list[str])
@@ -554,8 +558,8 @@ class RunReporter:
     def log_max_torrents_added(self, cap: int) -> None:
         """Report hitting the per-run torrent cap (advanced.max_torrents_to_add)."""
 
-        # Close the entry first: the scan breaks here and _finalize_run's check runs before the summary, so
-        # a still-open entry frontier would misplace its diagnostics under the capped title.
+        # Close the entry first: the cap line is a run-level fact and the capped title logs nothing further, so a
+        # still-open entry frontier would misplace it under that title.
         self._close_entry()
         self._emit(CapReached(cap=cap))
 

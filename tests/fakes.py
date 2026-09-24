@@ -33,6 +33,7 @@ from pearlarr.output.recording import RecordingHub
 from pearlarr.output.scan_lines import LegacyLine, scan_event_lines
 from pearlarr.protocols import ArrSync
 from pearlarr.radarr_client import AbstractRadarrClient
+from pearlarr.run_services import RunServices
 from pearlarr.seadex_types import (
     CommandResource,
     DownloadClientConfig,
@@ -170,14 +171,16 @@ class FakeStrategy(ArrSync[FakeArrItem]):
         *,
         items: list[FakeArrItem],
         anilist_ids: dict[int, MappingEntry],
-        process_returns: bool = False,
+        holds_through: RunServices | None = None,
         process_raises_on: int | None = None,
         history: list[HistoryRecord] | None = None,
         supports_blocking_monitor: bool = True,
     ) -> None:
         self._items = items
         self._anilist_ids = anilist_ids
-        self._process_returns = process_returns
+        # When set, every processed id is held by the run cap on this hub's run context, as the grab pipeline
+        # holds a grabbable release past the cap.
+        self._holds_through = holds_through
         self._process_raises_on = process_raises_on
         self._supports_blocking_monitor = supports_blocking_monitor
         self.process_calls: list[int] = []
@@ -212,11 +215,13 @@ class FakeStrategy(ArrSync[FakeArrItem]):
         return self.history
 
     @override
-    def process_al_id(self, item: FakeArrItem, al_id: int, mapping: MappingEntry) -> bool:
+    def process_al_id(self, item: FakeArrItem, al_id: int, mapping: MappingEntry) -> None:
         self.process_calls.append(al_id)
         if self._process_raises_on is not None and al_id == self._process_raises_on:
             raise ValueError(f"boom on al_id {al_id}")
-        return self._process_returns
+        if self._holds_through is not None:
+            self._holds_through.ctx.per_title.held_by_cap = True
+            self._holds_through.ctx.stats.held_by_cap += 1
 
     @override
     def pending_import_series_id(self, item: FakeArrItem) -> int | None:

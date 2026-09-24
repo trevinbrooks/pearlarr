@@ -1,6 +1,5 @@
 """The Sonarr strategy: series/episode coverage and per-AniList-id processing over the services hub."""
 
-import time
 from collections.abc import Iterable, Mapping, Sequence
 from dataclasses import replace
 from typing import override
@@ -138,6 +137,7 @@ class SonarrSync(ArrSync[SonarrItem]):
 
         self._services = services
         self._config = deps.config
+        self._clock = deps.clock
         self.logger = deps.logger
         self._mappings = deps.mappings
         self.anibridge = deps.mappings.anibridge
@@ -279,7 +279,7 @@ class SonarrSync(ArrSync[SonarrItem]):
         item: SonarrItem,
         al_id: int,
         mapping: MappingEntry,
-    ) -> bool:
+    ) -> None:
         """Process one AniList id for a Sonarr series.
 
         The middle is the episode-aware part: resolve the relevant episode list,
@@ -291,7 +291,7 @@ class SonarrSync(ArrSync[SonarrItem]):
 
         sd_entry = run.al_id_prologue(al_id)
         if sd_entry is None:
-            return False
+            return
         sd_url = sd_entry.url
         sonarr_series_id = item.id
 
@@ -311,7 +311,7 @@ class SonarrSync(ArrSync[SonarrItem]):
                 ),
             ),
         ):
-            return False
+            return
 
         # Also check if it's in the Radarr cache, if we have that option. Skipped
         # alongside the same re-check signals the per-id gate honors: a forced
@@ -336,7 +336,7 @@ class SonarrSync(ArrSync[SonarrItem]):
                     al_id=al_id,
                     state=EntryState.IN_RADARR,
                 )
-                return False
+                return
 
         # Resolved now, logged once the episode coverage is known.
         title = run.resolve_title(al_id)
@@ -355,8 +355,8 @@ class SonarrSync(ArrSync[SonarrItem]):
                         movie.title,
                     )
 
-                time.sleep(self._config.advanced.sleep_time)
-                return False
+                self._clock.sleep(self._config.advanced.sleep_time)
+                return
 
         # Get the episode list for all relevant episodes
         ep_list = self._episodes.get_ep_list(
@@ -366,7 +366,7 @@ class SonarrSync(ArrSync[SonarrItem]):
         )
 
         if ep_list is None:
-            return False
+            return
 
         if not ep_list:
             # Resolved zero episodes (season not in Sonarr, offset past the end, or
@@ -379,16 +379,16 @@ class SonarrSync(ArrSync[SonarrItem]):
                 # ANIBRIDGE) and a degraded imdb/tmdb-resolved entry (mode ANIME_IDS),
                 # while a legit Kometa whole-series entry (source ANIME_IDS) stays quiet.
                 hub_warn(f"AniBridge has no usable season ranges for {title.display} - skipping")
-            time.sleep(self._config.advanced.sleep_time)
-            return False
+            self._clock.sleep(self._config.advanced.sleep_time)
+            return
 
         # If all episodes are unmonitored, then skip if ignore_unmonitored is switched on
         if self._config.sonarr.ignore_unmonitored and not any(ep.monitored for ep in ep_list):
             run.log_anilist_item_unmonitored(
                 item_title=title.display,
             )
-            time.sleep(self._config.advanced.sleep_time)
-            return False
+            self._clock.sleep(self._config.advanced.sleep_time)
+            return
 
         # Now that we have the episodes, log the active entry with its
         # season/episode coverage + URL, and remember them for the cache so
@@ -414,7 +414,8 @@ class SonarrSync(ArrSync[SonarrItem]):
         seadex_dict = run.get_seadex_dict(sd_entry=sd_entry)
 
         if len(seadex_dict) == 0:
-            return run.no_releases_skip(al_id, cache_details)
+            run.no_releases_skip(al_id, cache_details)
+            return
 
         self.logger.debug(f"SeaDex: {', '.join(seadex_dict)}")
 
@@ -447,7 +448,8 @@ class SonarrSync(ArrSync[SonarrItem]):
             # cache the title as done and suppress it forever) so it re-prompts
             # next run.
             if len(seadex_dict) == 0:
-                return run.invalid_selection_skip()
+                run.invalid_selection_skip()
+                return
 
         # Filter downloads by whether the episodes in each torrent match the release
         # group we have in Sonarr
@@ -478,7 +480,7 @@ class SonarrSync(ArrSync[SonarrItem]):
                 ),
             )
 
-        return run.grab_and_cache(
+        run.grab_and_cache(
             GrabRequest(
                 al_id=al_id,
                 arr_title=item.title,

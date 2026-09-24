@@ -4,11 +4,9 @@
 # seam). The repo disables reportPrivateUsage for tests, strict re-flags it.
 """Guards the single end-of-run finalize site.
 
-When `max_torrents_to_add` is reached mid-run, `_grab` returns a pure bool
-(it no longer finalizes). `run_sync` breaks the per-item scan and runs the ONE
-post-loop `_finalize_run` site - the same site the normal end-of-run path
-reaches. These pin both halves of that hoist so a future change can't silently
-double-finalize or skip the blocking/import pass on the cap-reached break.
+A title held past `max_torrents_to_add` never stops the scan, and the ONE
+post-loop `_finalize_run` site runs once on every path. These pin that hoist so
+a future change can't silently double-finalize or skip the blocking/import pass.
 
 The strategy is the shared typed `FakeStrategy` (an `ArrSync` recording
 its `process_al_id` calls), the engine's collaborators are small typed fakes,
@@ -143,27 +141,24 @@ def _engine(
     )
 
 
-class TestCapReachedFinalizesOnce:
-    """A mid-run cap stops the scan and finalizes exactly once, at the single site."""
+class TestHeldTitleKeepsScanning:
+    """A title held past the run cap stops nothing: every item is scanned and the single finalize site runs once."""
 
-    def test_cap_reached_breaks_loop_and_finalizes_once(self, logger: logging.Logger) -> None:
-        # Cap reached on the first id: process_al_id returns True (stop the run).
+    def test_held_title_keeps_scanning_and_finalizes_once(self, logger: logging.Logger) -> None:
+        finalize = _FinalizeRecorder()
+        engine = _engine(finalize, logger)
+        # Every id is held by the cap, as the pipeline holds a grabbable release past it.
         strategy = FakeStrategy(
             items=[FakeArrItem(item_id=1, title="A"), FakeArrItem(item_id=2, title="B")],
             anilist_ids={1: MappingEntry(anilist_id=1)},
-            process_returns=True,
-        )
-        finalize = _FinalizeRecorder()
-
-        _engine(finalize, logger).run_sync(
-            strategy,
-            item_id=None,
-            dry_run=True,
-            boot=BootFlow(),
+            holds_through=engine._services,
         )
 
-        # The cap stopped the scan after the first id: the second item is never reached.
-        assert strategy.process_calls == [1]
+        engine.run_sync(strategy, item_id=None, dry_run=True, boot=BootFlow())
+
+        # The hold on the first item never stopped the scan: the second item's id is still checked.
+        assert strategy.process_calls == [1, 1]
+        assert engine._services.ctx.stats.held_by_cap == 2
         # ...and the single post-loop finalize ran exactly once.
         assert finalize.calls == 1
 
@@ -381,15 +376,15 @@ class TestSelectionRecheck:
         item_id: int | None = None,
         config: AppConfig | None = None,
         seadex: _FakeGateway | None = None,
-        process_returns: bool = False,
+        held: bool = False,
     ) -> tuple[RunLoop, RecordingHub]:
+        recording = install_recording_hub()
+        engine = _engine(_FinalizeRecorder(), logger, config=config, seadex=seadex)
         strategy = FakeStrategy(
             items=[FakeArrItem(item_id=3, title="A")],
             anilist_ids={11: MappingEntry(anilist_id=11)},
-            process_returns=process_returns,
+            holds_through=engine._services if held else None,
         )
-        recording = install_recording_hub()
-        engine = _engine(_FinalizeRecorder(), logger, config=config, seadex=seadex)
         engine._services._selection_stale = stale
         engine.run_sync(strategy, item_id=item_id, dry_run=True, boot=BootFlow())
         return engine, recording
@@ -437,8 +432,8 @@ class TestSelectionRecheck:
 
         assert self._vouched_any(engine) is False
 
-    def test_capped_run_does_not_vouch(self, logger: logging.Logger) -> None:
-        engine, _ = self._run(logger, process_returns=True)
+    def test_held_run_does_not_vouch(self, logger: logging.Logger) -> None:
+        engine, _ = self._run(logger, held=True)
 
         assert self._vouched_any(engine) is False
 

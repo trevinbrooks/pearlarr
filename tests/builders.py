@@ -701,6 +701,7 @@ def make_services(**overrides: Any) -> RunServices:
         # The real __init__ mints these too. Without them the dirty-aware / selection-aware skip predicates fail.
         "_dirty_al_ids": set[int](),
         "_selection_stale": False,
+        "_clock": FakeClock(),
     }
     defaults.update(overrides)
     return make_bare_instance(RunServices, **defaults)
@@ -872,6 +873,7 @@ def make_grab_pipeline(**overrides: Any) -> GrabPipeline:
         "logger": logger,
         "qbit": CLIENT_SENTINEL,
         "_ctx": RunContext(arr=Arr.SONARR, import_wait_mode=ImportWaitMode.BLOCKING),
+        "_clock": FakeClock(),
     }
     defaults.update(overrides)
     if "_records" not in defaults:

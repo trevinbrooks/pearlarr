@@ -357,7 +357,7 @@ The matching close of a `scope_opened` (anything nested deeper closes with it).
 
 ### `cap_reached`
 
-The `advanced.max_torrents_to_add` cap was reached. The run adds nothing further.
+The `advanced.max_torrents_to_add` cap was reached. The run keeps checking the remaining titles without grabbing, so a torrent already downloading keeps its mapping, and the held titles are grabbed on later runs.
 
 ```json
 {
@@ -389,7 +389,7 @@ The per-arr scan closed (a boundary event, the summary carries the facts).
 
 ### `run_summary`
 
-The end-of-run scoreboard: the tally counters, plus `needs_action_records` and `added_records` arrays mirroring the summary's per-title lines.
+The end-of-run scoreboard: the tally counters (`held_by_cap` only when the run held titles past the cap), plus `needs_action_records` and `added_records` arrays mirroring the summary's per-title lines.
 
 ```json
 {

@@ -26,7 +26,7 @@ from pearlarr.grab_pipeline import GrabPipeline, GrabRequest
 from pearlarr.grab_placement import PendingSeed
 from pearlarr.manual_import import GuardFacts, ImportWaitMode, PendingImport, normalize_basename
 from pearlarr.notify import Notifier
-from pearlarr.output import GrabFailed, Severity, install_hub, severity_of
+from pearlarr.output import CapReached, EntryDetail, GrabFailed, Severity, install_hub, severity_of
 from pearlarr.output.recording import RecordingHub
 from pearlarr.reporter import NeedsActionKind, PerTitleState, RunContext
 from pearlarr.seadex_types import SeadexDict, SeadexUrlItem
@@ -49,14 +49,14 @@ from .builders import (
     rg_group,
     url_item,
 )
+from .fakes import FakeClock, install_recording_hub
 
 
 def _stub_add_torrent(req: GrabRequest) -> tuple[int, list[ReleaseOutcome]]:
-    """Replaces `GrabPipeline.add_torrent` for the cap-return test.
+    """Replaces `GrabPipeline.add_torrent` for the cap-notice tests.
 
-    Returns a fixed `(n_added, results)` so `_grab`'s cap-reached return is
-    exercised without a real qBittorrent add - the bool the engine's single
-    finalize site keys off.
+    Returns a fixed `(n_added, results)` so `_grab`'s cap notice is exercised without a real qBittorrent add. The
+    counter it reads (`ctx.torrents_added`) is set by the test.
     """
 
     del req
@@ -101,61 +101,71 @@ def _guards(pipeline: GrabPipeline) -> Mapping[int, GuardFacts]:
     return pipeline.cache_store.get_guards(Arr.SONARR)
 
 
-class TestGrabReturnsPureBool:
-    """_grab signals cap-reached as a bool and never finalizes itself.
+class TestGrabAnnouncesTheCap:
+    """`_grab` returns the added count and posts the cap notice once, from the title whose adds crossed it.
 
-    GrabPipeline holds no reference back to the engine, so "without finalizing" is
-    now a structural property - the pipeline can't reach `_finalize_run` at all.
-    The test pins the cap-reached return value the engine's single finalize site
-    keys off.
+    GrabPipeline holds no reference back to the engine, so the notice is the only cap signal it emits: the scan
+    never stops on it.
     """
 
-    def test_grab_at_cap_returns_true(self) -> None:
-        # A real (non-preview) run: the cap only binds when grabs are real.
-        pipeline = make_grab_pipeline(
-            max_torrents_to_add=1,
-            add_torrent=_stub_add_torrent,
+    @staticmethod
+    def _request() -> GrabRequest:
+        return GrabRequest(
+            al_id=1,
+            arr_title="Show",
+            entry_title="Show",
+            entry=make_entry_record(url="https://seadex.example/1"),
+            seadex_dict={},
+            torrent_hashes=[],
+            cache_details={},
+            replaced_groups=(),
         )
-        pipeline._ctx.torrents_added = 1  # already at the cap of 1
+
+    def test_the_title_crossing_the_cap_announces_it(self) -> None:
+        # The stub reports one add without touching the counter, so the counter is advanced by hand to the cap.
+        recording = install_recording_hub()
+        pipeline = make_grab_pipeline(max_torrents_to_add=1, add_torrent=_stub_add_torrent)
         # Warm the gateway cache so the embed's thumb lookup never hits AniList.
         pipeline._anilist.al_cache.update({1: {}})
+        pipeline._ctx.torrents_added = 0
 
-        req = GrabRequest(
-            al_id=1,
-            arr_title="Show",
-            entry_title="Show",
-            entry=make_entry_record(url="https://seadex.example/1"),
-            seadex_dict={},
-            torrent_hashes=[],
-            cache_details={},
-            replaced_groups=(),
-        )
+        def add_and_count(req: GrabRequest) -> tuple[int, list[ReleaseOutcome]]:
+            pipeline._ctx.torrents_added += 1
+            return _stub_add_torrent(req)
 
-        assert pipeline._grab(req).cap_reached is True
+        pipeline.add_torrent = add_and_count
 
-    def test_grab_at_cap_in_preview_returns_false(self) -> None:
-        # MUTATION PIN: reading the raw config cap instead of _effective_cap would
-        # stop a preview scan at the cap, truncating the whole-library report.
-        pipeline = make_grab_pipeline(
-            qbit=None,
-            max_torrents_to_add=1,
-            add_torrent=_stub_add_torrent,
-        )
-        pipeline._ctx.torrents_added = 1  # at the cap, but this run is a preview
+        assert pipeline._grab(self._request()) == 1
+        assert [e.cap for e in recording.of_type(CapReached)] == [1]
+
+    def test_a_title_already_past_the_cap_stays_quiet(self) -> None:
+        # The notice belongs to the crossing title alone: a later title adds nothing and re-announces nothing.
+        recording = install_recording_hub()
+        pipeline = make_grab_pipeline(max_torrents_to_add=1, add_torrent=_stub_add_torrent)
         pipeline._anilist.al_cache.update({1: {}})
+        pipeline._ctx.torrents_added = 1  # already at the cap of 1
 
-        req = GrabRequest(
-            al_id=1,
-            arr_title="Show",
-            entry_title="Show",
-            entry=make_entry_record(url="https://seadex.example/1"),
-            seadex_dict={},
-            torrent_hashes=[],
-            cache_details={},
-            replaced_groups=(),
-        )
+        pipeline._grab(self._request())
 
-        assert pipeline._grab(req).cap_reached is False
+        assert recording.of_type(CapReached) == []
+
+    def test_a_preview_never_announces_the_cap(self) -> None:
+        # MUTATION PIN: reading the raw config cap instead of _effective_cap would announce a cap a preview
+        # never enforces.
+        recording = install_recording_hub()
+        pipeline = make_grab_pipeline(qbit=None, max_torrents_to_add=1, add_torrent=_stub_add_torrent)
+        pipeline._anilist.al_cache.update({1: {}})
+        pipeline._ctx.torrents_added = 0
+
+        def add_and_count(req: GrabRequest) -> tuple[int, list[ReleaseOutcome]]:
+            pipeline._ctx.torrents_added += 1
+            return _stub_add_torrent(req)
+
+        pipeline.add_torrent = add_and_count
+
+        pipeline._grab(self._request())
+
+        assert recording.of_type(CapReached) == []
 
 
 class TestGrabPushesNotice:
@@ -591,7 +601,7 @@ def _nyaa_release(*, url: str, infohash: str) -> SeadexUrlItem:
 class TestAddTorrentCap:
     """add_torrent honors max_torrents_to_add within ONE title's url loop."""
 
-    def test_cap_stops_after_exactly_cap_adds(self) -> None:
+    def test_cap_holds_the_urls_past_it(self) -> None:
         # MUTATION PIN: `cap = None` and `>= cap` -> `> cap` both over-grab. Three
         # flagged urls under a cap of 2: exactly the first two reach the service,
         # both counters read 2, and the third url is never attempted.
@@ -610,10 +620,82 @@ class TestAddTorrentCap:
 
         n_added, results = pipeline.add_torrent(grab_request(seadex_dict=seadex_dict))
 
-        assert torrents.calls == ["h1", "h2"]  # early stop: h3 never attempted
+        assert torrents.calls == ["h1", "h2"]  # h3 is held, never asked of qBittorrent
         assert n_added == 2
         assert pipeline._ctx.torrents_added == 2
         assert [r.outcome for r in results] == [AddOutcome.ADDED, AddOutcome.ADDED]
+        assert pipeline._ctx.per_title.held_by_cap is True
+        assert pipeline._ctx.stats.held_by_cap == 1
+
+    def test_a_title_hitting_the_cap_exactly_holds_nothing(self) -> None:
+        u1 = _nyaa_release(url="https://nyaa.si/view/1", infohash="h1")
+        seadex_dict: SeadexDict = {"RG": rg_group({u1.url: u1})}
+        pipeline = _pipeline(torrents=FakeTorrents({"h1": (AddOutcome.ADDED, "one")}), max_torrents_to_add=1)
+
+        n_added, _results = pipeline.add_torrent(grab_request(seadex_dict=seadex_dict))
+
+        assert n_added == 1
+        assert pipeline._ctx.per_title.held_by_cap is False
+        assert pipeline._ctx.stats.held_by_cap == 0
+
+    def test_a_title_past_the_cap_is_held_and_tallied_once(self) -> None:
+        # Two grabbable urls past the cap: one hold flag, one tally, no qBittorrent call.
+        u1 = _nyaa_release(url="https://nyaa.si/view/1", infohash="h1")
+        u2 = _nyaa_release(url="https://nyaa.si/view/2", infohash="h2")
+        seadex_dict: SeadexDict = {"RG": rg_group({u1.url: u1, u2.url: u2})}
+        torrents = FakeTorrents({"h1": (AddOutcome.ADDED, "one"), "h2": (AddOutcome.ADDED, "two")})
+        pipeline = _pipeline(torrents=torrents, max_torrents_to_add=1)
+        pipeline._ctx.torrents_added = 1
+
+        n_added, results = pipeline.add_torrent(grab_request(seadex_dict=seadex_dict))
+
+        assert torrents.calls == []
+        assert (n_added, results) == (0, [])
+        assert pipeline._ctx.per_title.held_by_cap is True
+        assert pipeline._ctx.stats.held_by_cap == 1
+
+    def test_a_screened_out_url_past_the_cap_is_not_held(self) -> None:
+        # The private skip still lands (its flag and line), and no hold forms for a url that could not be grabbed.
+        private = url_item(url="https://private.example/1", infohash="h1", download=True, is_public=False)
+        seadex_dict: SeadexDict = {"RG": rg_group({private.url: private})}
+        pipeline = _pipeline(torrents=FakeTorrents({}), max_torrents_to_add=1)
+        pipeline._ctx.torrents_added = 1
+
+        pipeline.add_torrent(grab_request(seadex_dict=seadex_dict))
+
+        assert pipeline._ctx.per_title.private_only_skipped is True
+        assert pipeline._ctx.per_title.held_by_cap is False
+        assert pipeline._ctx.stats.held_by_cap == 0
+
+    def test_a_held_accreted_seed_saves_its_claim(self) -> None:
+        # A torrent already downloading under a stored record keeps its mapping past the cap: the entry's claim
+        # joins the record without a qBittorrent call, and nothing joins the reacquired keys.
+        u1 = _nyaa_release(url="https://nyaa.si/view/1", infohash="h1")
+        seadex_dict: SeadexDict = {"RG": rg_group({u1.url: u1})}
+        torrents = FakeTorrents({"h1": (AddOutcome.ADDED, "one")})
+        pipeline = _pipeline(torrents=torrents, max_torrents_to_add=1)
+        pipeline._ctx.torrents_added = 1
+        resident = pending_import(infohash="h1", al_id=11)
+        pipeline.cache_store.put_pending(Arr.SONARR, "h1", resident.to_json())
+        seeds = {"h1": pending_seed("h1", al_id=22, stored=resident)}
+
+        pipeline.add_torrent(grab_request(seadex_dict=seadex_dict, pending_seeds=seeds))
+
+        assert torrents.calls == []
+        assert _stored(pipeline, "h1").al_ids == (11, 22)
+        assert pipeline._ctx.reacquired_keys == set()
+        assert pipeline._ctx.pending_imports == {}
+
+    def test_a_held_born_seed_stores_nothing(self) -> None:
+        u1 = _nyaa_release(url="https://nyaa.si/view/1", infohash="h1")
+        seadex_dict: SeadexDict = {"RG": rg_group({u1.url: u1})}
+        pipeline = _pipeline(torrents=FakeTorrents({"h1": (AddOutcome.ADDED, "one")}), max_torrents_to_add=1)
+        pipeline._ctx.torrents_added = 1
+
+        pipeline.add_torrent(grab_request(seadex_dict=seadex_dict, pending_seeds={"h1": pending_seed("h1")}))
+
+        assert pipeline.cache_store.get_pending_record(Arr.SONARR, "h1") is None
+        assert pipeline._ctx.per_title.held_by_cap is True
 
     def test_zero_removes_the_cap(self) -> None:
         # MUTATION PIN: without the `cap == 0` branch, 0 would flow into `>= cap`
@@ -678,37 +760,64 @@ class TestAddTorrentCap:
         assert [r.outcome for r in results] == [AddOutcome.ALREADY_ADDED, AddOutcome.ADDED]
 
 
-class TestGrabAndCacheCapStop:
-    """grab_and_cache propagates the cap stop: True out, and NO cache write."""
+class TestGrabAndCacheAtTheCap:
+    """The title whose add hits the cap exactly is cached done; a title with a held url is not, and still paces."""
 
-    def test_cap_stop_returns_true_and_skips_the_cache_write(self) -> None:
-        # MUTATION PIN: the cap branch's `return True` flipped to `False` would
-        # fall through to the per-title cache update - caching a title mid-cap -
-        # and tell the engine to keep scanning. Drive the real add path to the cap.
+    @staticmethod
+    def _request(al_id: int, seadex_dict: SeadexDict, hashes: list[str | None]) -> GrabRequest:
+        return GrabRequest(
+            al_id=al_id,
+            arr_title="Show",
+            entry_title="Show",
+            entry=make_entry_record(url=f"https://seadex.example/{al_id}"),
+            seadex_dict=seadex_dict,
+            torrent_hashes=hashes,
+            cache_details={"updated_at": "2026-01-01 00:00:00"},
+            replaced_groups=(),
+        )
+
+    def test_hitting_the_cap_exactly_caches_the_title(self) -> None:
+        # MUTATION PIN: a "cap reached" veto in the cache gate would leave the crossing title uncached, so the
+        # next run re-checked and re-grabbed it. Drive the real add path to the cap.
         torrents = FakeTorrents({"h1": (AddOutcome.ADDED, "Show-RG")})
         pipeline = _pipeline(torrents=torrents, max_torrents_to_add=1, sleep_time=0)
         pipeline._anilist.al_cache.update({42: {}})
         pipeline._ctx.per_title.current_title = "Show S1"
 
-        req = GrabRequest(
-            al_id=42,
-            arr_title="Show",
-            entry_title="Show",
-            entry=make_entry_record(url="https://seadex.example/42"),
-            seadex_dict=one_release_dict(srg="RG", infohash="h1"),
-            torrent_hashes=["h1"],
-            cache_details={"updated_at": "2026-01-01 00:00:00"},
-            replaced_groups=(),
-        )
+        pipeline.grab_and_cache(self._request(42, one_release_dict(srg="RG", infohash="h1"), ["h1"]))
 
-        stop = pipeline.grab_and_cache(req)
-
-        assert stop is True
         assert pipeline._ctx.torrents_added == 1
-        # The engine's single finalize site owns the save. No per-title write here.
-        assert pipeline.cache_store.get_entry(Arr.SONARR, 42) is None
-        # A clean cap stop reports nothing extra (no phantom needs-action row).
+        assert pipeline.cache_store.get_entry(Arr.SONARR, 42) is not None
         assert pipeline._ctx.stats.needs_action == []
+
+    def test_a_held_title_is_neither_cached_nor_a_needs_action_row(self) -> None:
+        # Held is not a problem to act on: the title stays uncached so the next run grabs it, and the run keeps
+        # pacing through the clock.
+        clock = FakeClock()
+        torrents = FakeTorrents({"h1": (AddOutcome.ADDED, "Show-RG")})
+        pipeline = _pipeline(torrents=torrents, max_torrents_to_add=1, sleep_time=3, _clock=clock)
+        pipeline._anilist.al_cache.update({42: {}})
+        pipeline._ctx.per_title.current_title = "Show S1"
+        pipeline._ctx.torrents_added = 1
+
+        pipeline.grab_and_cache(self._request(42, one_release_dict(srg="RG", infohash="h1"), ["h1"]))
+
+        assert torrents.calls == []
+        assert pipeline.cache_store.get_entry(Arr.SONARR, 42) is None
+        assert pipeline._ctx.stats.needs_action == []
+        assert pipeline._ctx.stats.held_by_cap == 1
+        assert clock.sleeps == [3]
+
+    def test_a_held_title_posts_the_held_status(self) -> None:
+        recording = install_recording_hub()
+        pipeline = _pipeline(torrents=FakeTorrents({"h1": (AddOutcome.ADDED, "Show-RG")}), max_torrents_to_add=1)
+        pipeline._anilist.al_cache.update({42: {}})
+        pipeline._ctx.torrents_added = 1
+
+        pipeline.grab_and_cache(self._request(42, one_release_dict(srg="RG", infohash="h1"), ["h1"]))
+
+        statuses = [d.value.text for d in recording.of_type(EntryDetail) if d.label == "status"]
+        assert statuses == ["held by the run cap; grabbed next run"]
 
 
 class TestUpToDateTally:
@@ -730,7 +839,7 @@ class TestUpToDateTally:
                 cache_details={},
                 replaced_groups=(),
             )
-            assert pipeline.grab_and_cache(req) is False
+            pipeline.grab_and_cache(req)
 
         assert pipeline._ctx.stats.up_to_date == 2
 
@@ -797,9 +906,7 @@ class TestUnsupportedTrackerSkip:
             replaced_groups=(),
         )
 
-        stop = pipeline.grab_and_cache(req)
-
-        assert stop is False
+        pipeline.grab_and_cache(req)
         assert pipeline._ctx.torrents_added == 0
         assert pipeline.cache_store.get_entry(Arr.SONARR, 42) is None
         assert [r.reason for r in pipeline._ctx.stats.needs_action] == ["tracker not yet supported; grab manually"]
@@ -969,9 +1076,7 @@ class TestUnsupportedTrackerSkip:
             replaced_groups=(),
         )
 
-        stop = pipeline.grab_and_cache(req)
-
-        assert stop is False
+        pipeline.grab_and_cache(req)
         assert pipeline._ctx.torrents_added == 1
         assert pipeline._ctx.per_title.private_only_skipped is False
         cached = pipeline.cache_store.get_entry(Arr.SONARR, 42)
@@ -1007,9 +1112,7 @@ class TestUnsupportedTrackerSkip:
             replaced_groups=(),
         )
 
-        stop = pipeline.grab_and_cache(req)
-
-        assert stop is False
+        pipeline.grab_and_cache(req)
         assert pipeline._ctx.torrents_added == 1
         cached = pipeline.cache_store.get_entry(Arr.SONARR, 42)
         assert cached is not None
@@ -1105,9 +1208,7 @@ class TestPlacementInputMissing:
         pipeline._anilist.al_cache.update({42: {}})
         pipeline._ctx.per_title.current_title = "Show S1"
 
-        stop = pipeline.grab_and_cache(self._request(seadex_dict, ["h1"]))
-
-        assert stop is False
+        pipeline.grab_and_cache(self._request(seadex_dict, ["h1"]))
         assert pipeline._ctx.torrents_added == 1
         assert pipeline.cache_store.get_entry(Arr.SONARR, 42) is None
         rows = pipeline._ctx.stats.needs_action
@@ -1218,9 +1319,7 @@ class TestGrabFailureContainment:
         pipeline._anilist.al_cache.update({42: {}})
         pipeline._ctx.per_title.current_title = "Show S1"
 
-        stop = pipeline.grab_and_cache(self._request(42, seadex_dict, ["h1"]))
-
-        assert stop is False
+        pipeline.grab_and_cache(self._request(42, seadex_dict, ["h1"]))
         assert pipeline._ctx.torrents_added == 0
         assert pipeline.cache_store.get_entry(Arr.SONARR, 42) is None
         rows = pipeline._ctx.stats.needs_action
@@ -1242,9 +1341,7 @@ class TestGrabFailureContainment:
         pipeline._anilist.al_cache.update({42: {}})
         pipeline._ctx.per_title.current_title = "Show S1"
 
-        stop = pipeline.grab_and_cache(self._request(42, seadex_dict, ["hbad", "hgood"]))
-
-        assert stop is False
+        pipeline.grab_and_cache(self._request(42, seadex_dict, ["hbad", "hgood"]))
         assert pipeline._ctx.torrents_added == 1
         assert pipeline.cache_store.get_entry(Arr.SONARR, 42) is None
         assert [r.kind for r in pipeline._ctx.stats.needs_action] == [NeedsActionKind.GRAB_FAILED]
@@ -1265,9 +1362,8 @@ class TestGrabFailureContainment:
         pipeline._anilist.al_cache.update({42: {}})
         pipeline._ctx.per_title.current_title = "Show S1"
 
-        stop = pipeline.grab_and_cache(self._request(42, seadex_dict, ["hbad", "hgood"]))
+        pipeline.grab_and_cache(self._request(42, seadex_dict, ["hbad", "hgood"]))
 
-        assert stop is True  # the cap still stops the run
         assert pipeline._ctx.torrents_added == 1
         rows = pipeline._ctx.stats.needs_action
         assert [r.kind for r in rows] == [NeedsActionKind.GRAB_FAILED]
@@ -1333,9 +1429,7 @@ class TestFallbackHoldNeverCaches:
         pipeline._anilist.al_cache.update({42: {}})
         pipeline._ctx.per_title.current_title = "Show S1"
 
-        stop = pipeline.grab_and_cache(self._request(42))
-
-        assert stop is False
+        pipeline.grab_and_cache(self._request(42))
         assert pipeline._ctx.torrents_added == 1
         assert pipeline._ctx.per_title.private_only_skipped is True
         assert pipeline.cache_store.get_entry(Arr.SONARR, 42) is None
@@ -1374,7 +1468,7 @@ class TestShouldCacheAsDone:
         interactive: bool = False,
         private_only_skipped: bool = False,
         unsupported_tracker_skipped: bool = False,
-        cap_reached: bool = False,
+        held_by_cap: bool = False,
         added_this_title: int = 0,
         grab_failed: bool = False,
     ) -> bool:
@@ -1383,11 +1477,10 @@ class TestShouldCacheAsDone:
         pipeline = make_grab_pipeline(private_releases=private_releases, interactive=interactive)
         pipeline._ctx.per_title.private_only_skipped = private_only_skipped
         pipeline._ctx.per_title.unsupported_tracker_skipped = unsupported_tracker_skipped
-        return pipeline._should_cache_as_done(
-            cap_reached=cap_reached,
-            added_this_title=added_this_title,
-            grab_failed=grab_failed,
-        )
+        pipeline._ctx.per_title.held_by_cap = held_by_cap
+        if grab_failed:
+            pipeline._ctx.per_title.grab_failed_groups.append("RG")
+        return pipeline._should_cache_as_done(added_this_title=added_this_title)
 
     def test_plain_grab_caches(self) -> None:
         assert self._predicate(added_this_title=1) is True
@@ -1396,9 +1489,9 @@ class TestShouldCacheAsDone:
         # The up-to-date case: nothing grabbed because nothing was needed.
         assert self._predicate() is True
 
-    def test_cap_vetoes_an_otherwise_cacheable_grab(self) -> None:
-        # The cap can stop the url loop mid-title, leaving later urls unattempted.
-        assert self._predicate(added_this_title=1, cap_reached=True) is False
+    def test_a_hold_vetoes_an_otherwise_cacheable_grab(self) -> None:
+        # A url held past the cap is grabbed next run, so the title must re-check.
+        assert self._predicate(added_this_title=1, held_by_cap=True) is False
 
     def test_fallback_hold_vetoes_despite_a_partial_grab(self) -> None:
         # The documented-surprising row: fallback mode + non-interactive + a

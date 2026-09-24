@@ -1041,6 +1041,29 @@ def test_json_summary_carries_nested_record_arrays() -> None:
     assert first_added["torrent"] == "[SubsPlease] Sousou no Frieren"
 
 
+def test_json_summary_carries_held_by_cap_only_when_the_run_held_titles() -> None:
+    (quiet,) = _json_lines([_quiet_summary_ready()])
+    assert "held_by_cap" not in quiet
+
+    stats = RunStats(checked=3)
+    stats.held_by_cap = 2
+    held = RunSummaryReady(
+        RunSummary(
+            arr=Arr.SONARR,
+            dry_run_note=None,
+            added_count=1,
+            tally=RunTally.from_stats(stats),
+            wait_mode_on=False,
+            warnings=0,
+            errors=0,
+            elapsed_s=None,
+            tip=None,
+        ),
+    )
+    (payload,) = _json_lines([held])
+    assert payload["held_by_cap"] == 2
+
+
 def test_json_scoped_events_carry_their_breadcrumb_path() -> None:
     events: list[Event] = [
         *_entry_context(),

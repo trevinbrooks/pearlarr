@@ -170,8 +170,6 @@ class _FakeRunServices(RunServices):
         seadex_dict: SeadexDict | None = None,
         interactive_result: SeadexDict | None = None,
         filter_downloads_result: PlanResult | None = None,
-        grab_result: bool = False,
-        no_releases_result: bool = False,
         import_wait_mode: ImportWaitMode = ImportWaitMode.OFF,
         selection_stale: bool = False,
         arr: Arr = Arr.SONARR,
@@ -191,8 +189,6 @@ class _FakeRunServices(RunServices):
         self._seadex_dict: SeadexDict = seadex_dict if seadex_dict is not None else {}
         self._interactive_result = interactive_result
         self._filter_downloads_result = filter_downloads_result
-        self._grab_result = grab_result
-        self._no_releases_result = no_releases_result
         self._import_wait_mode = import_wait_mode
         self.get_anilist_ids_calls: list[GetAniListIdsCall] = []
         self.al_id_prologue_calls: list[int] = []
@@ -293,19 +289,16 @@ class _FakeRunServices(RunServices):
         return self._records
 
     @override
-    def no_releases_skip(self, al_id: int, cache_details: CacheRecord) -> bool:
+    def no_releases_skip(self, al_id: int, cache_details: CacheRecord) -> None:
         self.no_releases_calls.append((al_id, cache_details))
-        return self._no_releases_result
 
     @override
-    def invalid_selection_skip(self) -> bool:
+    def invalid_selection_skip(self) -> None:
         self.invalid_selection_skips += 1
-        return False
 
     @override
-    def grab_and_cache(self, req: GrabRequest) -> bool:
+    def grab_and_cache(self, req: GrabRequest) -> None:
         self.grab_requests.append(req)
-        return self._grab_result
 
     @override
     def log_entry_status(self, state: EntryState, label: str) -> None:
@@ -489,18 +482,18 @@ class TestRadarrPrefetchEpisodes:
 class TestProcessAlIdThreadsServices:
     """The per-id head runs through the held services. A missing entry stops this id."""
 
-    def test_radarr_no_seadex_entry_returns_false(self) -> None:
+    def test_radarr_no_seadex_entry_stops_at_the_prologue(self) -> None:
         run = _FakeRunServices()
         strat = make_bare_instance(RadarrSync, _services=run)
 
-        assert strat.process_al_id(_Item(id=1, title="Title"), 5, MappingEntry(anilist_id=5)) is False
+        strat.process_al_id(_Item(id=1, title="Title"), 5, MappingEntry(anilist_id=5))
         assert run.al_id_prologue_calls == [5]
 
-    def test_sonarr_no_seadex_entry_returns_false(self) -> None:
+    def test_sonarr_no_seadex_entry_stops_at_the_prologue(self) -> None:
         run = _FakeRunServices()
         strat = make_bare_instance(SonarrSync, _services=run)
 
-        assert strat.process_al_id(_Item(id=1, title="Title"), 5, MappingEntry(anilist_id=5)) is False
+        strat.process_al_id(_Item(id=1, title="Title"), 5, MappingEntry(anilist_id=5))
         assert run.al_id_prologue_calls == [5]
 
     def test_sonarr_no_episodes_resolved_skips_explicitly(self) -> None:
@@ -515,13 +508,12 @@ class TestProcessAlIdThreadsServices:
             _services=run,
             _episodes=episodes,
             _config=make_config(sleep_time=0),
+            _clock=FakeClock(),
             ignore_movies_in_radarr=False,
             logger=make_logger(),
         )
 
-        result = strat.process_al_id(_Item(id=1, title="Title"), 5, MappingEntry(anilist_id=5))
-
-        assert result is False
+        strat.process_al_id(_Item(id=1, title="Title"), 5, MappingEntry(anilist_id=5))
         assert run.log_entry_status_calls == [(EntryState.NO_EPISODES, "Title")]
         assert run.log_al_title_calls == []
         # anime-id empty is NOT the AniBridge case -> no warning surfaced.
@@ -541,17 +533,16 @@ class TestProcessAlIdThreadsServices:
             _services=run,
             _episodes=episodes,
             _config=make_config(sleep_time=0),
+            _clock=FakeClock(),
             ignore_movies_in_radarr=False,
             logger=make_logger(),
         )
 
-        result = strat.process_al_id(
+        strat.process_al_id(
             _Item(id=1, title="Title"),
             5,
             MappingEntry(anilist_id=5, tvdb_mappings={}, source=MappingSource.ANIBRIDGE),
         )
-
-        assert result is False
         assert run.log_entry_status_calls == [(EntryState.NO_EPISODES, "Title")]
         assert run.log_al_title_calls == []
         # AniBridge-specific notice surfaced.
@@ -582,9 +573,7 @@ class TestProcessAlIdThreadsServices:
             logger=make_logger(),
         )
 
-        result = strat.process_al_id(_Item(id=1, title="Title"), 5, MappingEntry(anilist_id=5))
-
-        assert result is False
+        strat.process_al_id(_Item(id=1, title="Title"), 5, MappingEntry(anilist_id=5))
         assert run.invalid_selection_skips == 1
         assert run.grab_requests == []
         assert run.no_releases_calls == []
@@ -600,13 +589,12 @@ class TestProcessAlIdThreadsServices:
             _services=run,
             _episodes=_FakeEpisodes(ep_list=[]),
             _config=make_config(sleep_time=0),
+            _clock=FakeClock(),
             ignore_movies_in_radarr=True,
             logger=make_logger(),
         )
 
-        result = strat.process_al_id(_Item(id=1, title="Title"), 5, MappingEntry(anilist_id=5))
-
-        assert result is False
+        strat.process_al_id(_Item(id=1, title="Title"), 5, MappingEntry(anilist_id=5))
         assert run.check_al_id_in_cache_calls == [CheckAlIdInCacheCall(Arr.RADARR, 5, entry)]
         assert run.log_cached_entry_calls == [LogCachedEntryCall(Arr.RADARR, 5, EntryState.IN_RADARR)]
 
@@ -621,14 +609,13 @@ class TestProcessAlIdThreadsServices:
             _services=run,
             _episodes=_FakeEpisodes(ep_list=[]),
             _config=make_config(sleep_time=0),
+            _clock=FakeClock(),
             ignore_movies_in_radarr=True,
             all_radarr_movies=None,
             logger=make_logger(),
         )
 
-        result = strat.process_al_id(_Item(id=1, title="Title"), 5, MappingEntry(anilist_id=5))
-
-        assert result is False
+        strat.process_al_id(_Item(id=1, title="Title"), 5, MappingEntry(anilist_id=5))
         assert run.check_al_id_in_cache_calls == []  # the stale run never trusts the cross-arr cache
 
 
@@ -3394,9 +3381,7 @@ class TestRadarrProcessAlIdSeam:
         run = _FakeRunServices(prologue_entry=make_entry_record(), cached_skip=True)
         strat, radarr = self._make_strat(run)
 
-        result = strat.process_al_id(_Item(id=1, title="Title"), 5, MappingEntry(anilist_id=5))
-
-        assert result is False
+        strat.process_al_id(_Item(id=1, title="Title"), 5, MappingEntry(anilist_id=5))
         # Neither the SeaDex parse nor the movie files were reached.
         assert run.get_seadex_dict_calls == []
         assert radarr.movie_files_calls == []
@@ -3410,13 +3395,10 @@ class TestRadarrProcessAlIdSeam:
             prologue_entry=entry,
             anilist_title="Movie Title",
             seadex_dict={},
-            no_releases_result=True,  # a sentinel: pins the pass-through return
         )
         strat, _ = self._make_strat(run)
 
-        result = strat.process_al_id(_Item(id=1, title="Title"), 5, MappingEntry(anilist_id=5))
-
-        assert result is True
+        strat.process_al_id(_Item(id=1, title="Title"), 5, MappingEntry(anilist_id=5))
         expected: CacheRecord = {
             "name": "Movie Title",
             "updated_at": entry.updated_at,
@@ -3436,14 +3418,10 @@ class TestRadarrProcessAlIdSeam:
             anilist_title="Movie Title",
             seadex_dict=seadex_dict,
             filter_downloads_result=plan_result(["feedface"], filtered),
-            grab_result=True,
         )
         strat, _ = self._make_strat(run, files=[MovieFile(release_group="OldGroup", size=100)])
 
-        result = strat.process_al_id(_Item(id=3, title="Item Title"), 5, MappingEntry(anilist_id=5))
-
-        # grab_and_cache's scripted bool passes straight through.
-        assert result is True
+        strat.process_al_id(_Item(id=3, title="Item Title"), 5, MappingEntry(anilist_id=5))
         # The download filter received the movie's accumulated releases.
         assert run.filter_downloads_calls == [(5, seadex_dict, ArrReleases(tagged={"OldGroup": (100,)}))]
         [req] = run.grab_requests
@@ -3468,7 +3446,6 @@ class TestRadarrProcessAlIdSeam:
             anilist_title="Movie Title",
             seadex_dict=_one_group_dict("SubGroup"),
             filter_downloads_result=plan_result([], _one_group_dict("SubGroup")),
-            grab_result=True,
         )
         strat, _ = self._make_strat(
             run,

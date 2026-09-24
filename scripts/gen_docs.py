@@ -688,10 +688,12 @@ EVENT_DESCRIPTIONS: dict[str, str] = {
     "grab_action": "The grab decision for a title. `message` distinguishes a real add, a dry-run "
     "would-add, and already in qBittorrent.",
     "scope_closed": "The matching close of a `scope_opened` (anything nested deeper closes with it).",
-    "cap_reached": "The `advanced.max_torrents_to_add` cap was reached. The run adds nothing further.",
+    "cap_reached": "The `advanced.max_torrents_to_add` cap was reached. The run keeps checking the remaining "
+    "titles without grabbing, so a torrent already downloading keeps its mapping, and the held titles are grabbed "
+    "on later runs.",
     "scan_finished": "The per-arr scan closed (a boundary event, the summary carries the facts).",
-    "run_summary": "The end-of-run scoreboard: the tally counters, plus `needs_action_records` and "
-    "`added_records` arrays mirroring the summary's per-title lines.",
+    "run_summary": "The end-of-run scoreboard: the tally counters (`held_by_cap` only when the run held titles "
+    "past the cap), plus `needs_action_records` and `added_records` arrays mirroring the summary's per-title lines.",
     "wait_started": "The end-of-run pass opened, watching `total` torrents. `kind` is `monitor` (waits for "
     "downloads to finish, then imports) or `check` (one non-blocking poll of earlier runs' downloads).",
     "torrent_graduated": "One watched torrent reached a terminal outcome. `message` is the outcome word. "
@@ -761,6 +763,7 @@ def _specimen_stream() -> tuple[ev.Event, ...]:
         queued=0,
         downloaded=0,
         imported=1,
+        held_by_cap=0,
     )
     summary = ev.RunSummary(
         arr=Arr.SONARR,

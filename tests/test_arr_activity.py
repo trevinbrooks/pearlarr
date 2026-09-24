@@ -29,6 +29,7 @@ from pearlarr.cache import HistoryCheckpoint
 from pearlarr.config import AppConfig, Arr
 from pearlarr.mappings import MappingEntry
 from pearlarr.run_loop import RunLoop
+from pearlarr.run_services import RunServices
 from pearlarr.seadex_types import HistoryRecord
 
 from .builders import FakeCacheStore, make_config, make_logger
@@ -305,12 +306,12 @@ class TestRunLoopActivityWiring:
     def _strategy(
         *,
         history: list[HistoryRecord] | None = None,
-        process_returns: bool = False,
+        holds_through: RunServices | None = None,
     ) -> FakeStrategy:
         return FakeStrategy(
             items=[FakeArrItem(item_id=3, title="A")],
             anilist_ids={11: MappingEntry(anilist_id=11)},
-            process_returns=process_returns,
+            holds_through=holds_through,
             history=history,
         )
 
@@ -362,9 +363,11 @@ class TestRunLoopActivityWiring:
 
         assert engine.cache_store.get_history_checkpoint(Arr.SONARR) is None
 
-    def test_capped_run_does_not_advance_the_checkpoint(self, logger: logging.Logger) -> None:
-        strategy = self._strategy(history=[_rec(1, item_id=3)], process_returns=True)
-        engine = self._run(strategy, logger)
+    def test_held_run_does_not_advance_the_checkpoint(self, logger: logging.Logger) -> None:
+        # A held title's drift mark may be pending, so the run keeps the checkpoint for the next full pass.
+        engine = _engine(_FinalizeRecorder(), logger)
+        strategy = self._strategy(history=[_rec(1, item_id=3)], holds_through=engine._services)
+        engine.run_sync(strategy, item_id=None, dry_run=True, boot=BootFlow())
 
         assert engine.cache_store.get_history_checkpoint(Arr.SONARR) is None
 

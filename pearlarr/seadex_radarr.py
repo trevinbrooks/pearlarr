@@ -133,19 +133,19 @@ class RadarrSync(ArrSync[RadarrItem]):
         item: RadarrItem,
         al_id: int,
         mapping: MappingEntry,
-    ) -> bool:
+    ) -> None:
         """Process one AniList id for a Radarr movie."""
 
         run = self._services
 
         sd_entry = run.al_id_prologue(al_id)
         if sd_entry is None:
-            return False
+            return
         sd_url = sd_entry.url
 
         # Movies have no episode coverage, so the backfill is just the URL.
         if run.cached_entry_skip(al_id, sd_entry, lambda: ""):
-            return False
+            return
 
         title = run.resolve_title(al_id)
         run.log_al_title(title=title.display, sd_entry=sd_entry)
@@ -165,7 +165,8 @@ class RadarrSync(ArrSync[RadarrItem]):
         seadex_dict = run.get_seadex_dict(sd_entry=sd_entry)
 
         if len(seadex_dict) == 0:
-            return run.no_releases_skip(al_id, cache_details)
+            run.no_releases_skip(al_id, cache_details)
+            return
 
         self.logger.debug(f"SeaDex: {', '.join(seadex_dict)}")
 
@@ -177,7 +178,8 @@ class RadarrSync(ArrSync[RadarrItem]):
             # Every token was invalid: skip WITHOUT caching, since grab_and_cache would cache the
             # title as done and suppress it forever. It re-prompts next run.
             if len(seadex_dict) == 0:
-                return run.invalid_selection_skip()
+                run.invalid_selection_skip()
+                return
 
         plan = run.filter_seadex_downloads(
             al_id=al_id,
@@ -216,7 +218,7 @@ class RadarrSync(ArrSync[RadarrItem]):
                 for f in flagged
             }
 
-        return run.grab_and_cache(
+        run.grab_and_cache(
             GrabRequest(
                 al_id=al_id,
                 arr_title=item.title,

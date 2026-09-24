@@ -9,7 +9,6 @@ this module only and never see the loop type.
 """
 
 import logging
-import time
 from collections.abc import Callable, Iterable
 from dataclasses import dataclass, replace
 from typing import Literal
@@ -97,7 +96,7 @@ class RunDeps:
     post-import move), where the arr is provably up."""
 
     clock: Clock
-    """The wait passes' time seam (the grab throttle and run clock read time directly)."""
+    """The time seam: the wait passes' clock and the per-title throttle (the run clock reads time directly)."""
 
     web: httpx.Client
     http: httpx.Client
@@ -320,6 +319,7 @@ class RunServices:
         self._notifier = deps.notifier
         self._planner = deps.planner
         self._reporter = deps.reporter
+        self._clock = deps.clock
 
         self.arr = arr
 
@@ -540,39 +540,29 @@ class RunServices:
         self,
         al_id: int,
         cache_details: CacheRecord,
-    ) -> bool:
+    ) -> None:
         """Shared no-suitable-releases tail both Arr strategies fall into.
 
-        When SeaDex yields no usable releases for an id, every strategy does the
-        same four things: log the outcome, persist what it knows into the cache,
-        throttle, and report "not grabbed". Hoisted here so the two strategies
-        share one definition instead of a byte-for-byte duplicated block.
-
-        Returns:
-            Always `False` (nothing was grabbed).
+        When SeaDex yields no usable releases for an id, every strategy does the same three things: log the
+        outcome, persist what it knows into the cache, and throttle. Hoisted here so the two strategies share one
+        definition instead of a byte-for-byte duplicated block.
         """
 
         self._log_no_seadex_releases()
         # Never fallback-satisfied: overwrite any stale True from a prior fallback run.
         cache_details["fallback_satisfied"] = False
         self._update_cache(al_id=al_id, cache_details=cache_details)
-        time.sleep(self._config.advanced.sleep_time)
-        return False
+        self._clock.sleep(self._config.advanced.sleep_time)
 
-    def invalid_selection_skip(self) -> bool:
+    def invalid_selection_skip(self) -> None:
         """Shared tail for an interactive pick that left zero valid selections.
 
-        Unlike `no_releases_skip` this deliberately persists NOTHING: caching
-        the title as done would suppress it forever, when the input was only
-        fumbled - it must re-prompt on the next run. The picker already warned about
-        the empty selection. This just throttles and reports "not grabbed".
-
-        Returns:
-            Always `False` (nothing was grabbed).
+        Unlike `no_releases_skip` this deliberately persists NOTHING: caching the title as done would suppress it
+        forever, when the input was only fumbled, so it must re-prompt on the next run. The picker already warned
+        about the empty selection. This just throttles.
         """
 
-        time.sleep(self._config.advanced.sleep_time)
-        return False
+        self._clock.sleep(self._config.advanced.sleep_time)
 
     def al_id_prologue(self, al_id: int) -> EntryRecord | None:
         """Shared per-AniList-id head: reset skip flags, tally, fetch SeaDex entry.
@@ -625,7 +615,7 @@ class RunServices:
         self._reporter.log_cached_entry(self._ctx, self._ctx.arr, al_id)
         return True
 
-    def grab_and_cache(self, req: GrabRequest) -> bool:
+    def grab_and_cache(self, req: GrabRequest) -> None:
         """Shared per-id tail: add torrents, notify, cache the outcome (delegates).
 
         Both strategies build a `GrabRequest` and call this through their
