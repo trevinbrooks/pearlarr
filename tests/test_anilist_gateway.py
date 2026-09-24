@@ -12,7 +12,7 @@ from typing import Any
 
 from pearlarr.anilist_client import ANILIST_BATCH_SIZE
 from pearlarr.anilist_gateway import ANILIST_REFRESH_AGE_DAYS, AniListGateway
-from pearlarr.cache import UPDATED_AT_STR_FORMAT
+from pearlarr.stamps import UPDATED_AT_STR_FORMAT
 
 from .builders import FakeCacheStore, ScriptedAniListClient, anilist_body, make_anilist_gateway
 from .fakes import CaptureHandler

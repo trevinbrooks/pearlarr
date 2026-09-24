@@ -20,7 +20,6 @@ from pearlarr.arr_categories import ArrCategoryResolver, _CategoryPair
 from pearlarr.arr_http import ArrHttp
 from pearlarr.cache import (
     _ENTRY_SCALAR_COLUMNS,
-    UPDATED_AT_STR_FORMAT,
     AbstractCacheStore,
     CachedEntry,
     CacheRecord,
@@ -74,6 +73,7 @@ from pearlarr.sonarr_client import AbstractSonarrClient
 from pearlarr.sonarr_episodes import SonarrEpisodes
 from pearlarr.sonarr_mapper import FileEpisodeMapper
 from pearlarr.sonarr_parse import SonarrParseCache
+from pearlarr.stamps import UPDATED_AT_STR_FORMAT
 from pearlarr.torrents import AddOutcome, AddResult, TorrentService
 
 from .fakes import FakeClock, FakeRadarrClient, FakeSonarrClient

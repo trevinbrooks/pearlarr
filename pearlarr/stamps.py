@@ -34,6 +34,6 @@ def parse_stamp_or_none(stamp: str) -> datetime | None:
 
 
 def pending_cutoff(max_age_days: int) -> datetime:
-    """The oldest add time a pending record may carry: now minus `imports.pending_max_age_days`."""
+    """The oldest clock still inside `imports.pending_max_age_days`: a record's newest claim ages against it."""
 
     return datetime.now() - timedelta(days=max_age_days)

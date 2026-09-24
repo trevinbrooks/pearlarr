@@ -26,7 +26,7 @@ from .manual_import import EntryNames, GuardFacts
 from .output import hub_note
 from .sqlite_util import connect as _sqlite_connect
 from .sqlite_util import open_or_quarantine, rollback_and_close
-from .stamps import UPDATED_AT_STR_FORMAT, parse_stamp, parse_stamp_or_none
+from .stamps import parse_stamp, parse_stamp_or_none, stamp_of
 
 # `CREATE TABLE IF NOT EXISTS` never alters an existing table: shape changes need a SCHEMA_VERSION bump + migration.
 # anilist_meta / sonarr_parse expose `fetched_at` as a VIRTUAL generated column, indexed for the TTL sweep's DELETE.
@@ -251,7 +251,7 @@ def _fold_v4_rows(infohash: str, rows: Sequence[_PendingV4]) -> dict[str, Any]:
         "release_group": first.release_group,
         "is_dual_audio": first.is_dual_audio,
         "seadex_files": first.seadex_files,
-        "added_at": min(stamps).strftime(UPDATED_AT_STR_FORMAT) if stamps else "",
+        "added_at": stamp_of(min(stamps)) if stamps else "",
         "file_episode_map": file_episode_map,
         "claims": [row.claim() for row in rows],
         "excluded_files": list(excluded),
@@ -621,7 +621,7 @@ class CacheStore(AbstractCacheStore):
     ) -> bool:
         """True if the cached entry's timestamp matches the SeaDex entry's `updated_at`."""
 
-        sd_time_str = seadex_entry.updated_at.strftime(UPDATED_AT_STR_FORMAT)
+        sd_time_str = stamp_of(seadex_entry.updated_at)
         row = self._conn.execute(
             "SELECT updated_at FROM entries WHERE arr = ? AND al_id = ?",
             (_arr_key(arr), al_id),
@@ -661,7 +661,7 @@ class CacheStore(AbstractCacheStore):
 
         updated_at = details.get("updated_at")
         if isinstance(updated_at, datetime):
-            details["updated_at"] = updated_at.strftime(UPDATED_AT_STR_FORMAT)
+            details["updated_at"] = stamp_of(updated_at)
 
         arr_key = _arr_key(arr)
 
@@ -733,7 +733,7 @@ class CacheStore(AbstractCacheStore):
 
         cursor = self._conn.execute(
             f"DELETE FROM {block.table} WHERE fetched_at < ? OR fetched_at IS NULL",
-            (cutoff.strftime(UPDATED_AT_STR_FORMAT),),
+            (stamp_of(cutoff),),
         )
         return cursor.rowcount
 

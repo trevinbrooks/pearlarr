@@ -43,6 +43,7 @@ from .seadex_types import (
     SeadexDict,
     SonarrEpisode,
 )
+from .stamps import stamp_of
 from .torrents import TorrentService
 
 
@@ -423,7 +424,7 @@ class RunServices:
         if self._config.seadex.ignore_seadex_update_times or self._selection_stale or al_id in self._dirty_al_ids:
             return None
         entry = self.cache_store.get_entry(self._ctx.arr, al_id)
-        if entry is None or entry.updated_at != sd_entry.updated_at.strftime(UPDATED_AT_STR_FORMAT):
+        if entry is None or entry.updated_at != stamp_of(sd_entry.updated_at):
             return None
         if entry.fallback_satisfied and self._config.seadex.private_releases is PrivateReleaseAction.WARN:
             return None

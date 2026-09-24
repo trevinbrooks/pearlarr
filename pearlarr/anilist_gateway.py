@@ -24,9 +24,10 @@ from .anilist_client import (
     media_from,
     media_node_from,
 )
-from .cache import UPDATED_AT_STR_FORMAT, AbstractCacheStore, record_payload, stamp_is_fresh
+from .cache import AbstractCacheStore, record_payload, stamp_is_fresh
 from .log import count_noun
 from .seadex_types import AniListMediaNode, ProgressSink
+from .stamps import stamp_of
 
 # How old a persisted AniList response gets before a run refetches it.
 # title/format/coverImage are effectively static. Episodes for a currently airing
@@ -98,7 +99,7 @@ class AniListGateway:
             return
 
         now = datetime.now()
-        now_str = now.strftime(UPDATED_AT_STR_FORMAT)
+        now_str = stamp_of(now)
         written = len(self._fetched)
         for al_id in self._fetched:
             self._cache.put_anilist_meta(al_id, {"fetched_at": now_str, "data": self.al_cache[al_id]})

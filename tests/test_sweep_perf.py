@@ -16,7 +16,6 @@ from datetime import datetime, timedelta
 import pytest
 from seadex import EntryRecord
 
-from pearlarr.cache import UPDATED_AT_STR_FORMAT
 from pearlarr.config import Arr
 from pearlarr.grab_placement import SeedFile
 from pearlarr.mappings import ExternalIds, MappingEntry
@@ -41,6 +40,7 @@ from pearlarr.sonarr_parse import (
     SonarrParseCache,
     is_video_candidate,
 )
+from pearlarr.stamps import UPDATED_AT_STR_FORMAT
 
 from .builders import (
     FakeCacheStore,
