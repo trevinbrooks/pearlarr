@@ -908,6 +908,7 @@ class PendingImport:
                 kept = replace(claim, preowned_episode_ids=stored.preowned_episode_ids, claimed_at=stored.claimed_at)
                 claims = (*self.claims[:index], kept, *self.claims[index + 1 :])
                 break
+        claims = (*self.claims, claim)
         return replace(self, claims=claims, awaiting_cleanup=False)
 
     def restamped(self, stamp: str) -> "PendingImport":
