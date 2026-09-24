@@ -22,7 +22,7 @@ from seadex import Tracker
 from pearlarr import notify
 from pearlarr.config import Arr
 from pearlarr.discord import DiscordEmbed
-from pearlarr.grab_pipeline import GrabPipeline, GrabRequest
+from pearlarr.grab_pipeline import NO_SEEDS, GrabPipeline, GrabRequest
 from pearlarr.grab_placement import PendingSeed
 from pearlarr.manual_import import GuardFacts, ImportWaitMode, PendingImport, normalize_basename
 from pearlarr.notify import Notifier
@@ -376,13 +376,14 @@ class TestAddOneUrlRegistersPending:
         assert _pending(pipeline) == {}
         assert pipeline._ctx.pending_imports == {}
 
-    def test_off_mode_does_not_register(self) -> None:
+    def test_off_mode_registers_nothing_off_the_strategys_empty_seeds(self) -> None:
+        # The wait-mode gate is the strategy's: it seeds nothing when the mode is off, and the
+        # pipeline persists only what it is fed.
         torrents = FakeTorrents({"h1": (AddOutcome.ALREADY_ADDED, "x")})
         pipeline = _pipeline(torrents=torrents, mode=ImportWaitMode.OFF)
-        seeds = {"h1": pending_seed("h1")}
 
         pipeline.add_torrent(
-            grab_request(seadex_dict=one_release_dict(srg="NAN0", infohash="h1"), pending_seeds=seeds),
+            grab_request(seadex_dict=one_release_dict(srg="NAN0", infohash="h1"), pending_seeds=NO_SEEDS),
         )
 
         assert _pending(pipeline) == {}

@@ -185,9 +185,7 @@ class GrabPipeline:
     def _hold_capped(self, url_item: SeadexUrlItem, req: GrabRequest) -> None:
         """Hold a grabbable url past the cap: the title stays uncached, and a resident torrent keeps its claim.
 
-        The torrent is never asked of qBittorrent, so the hold touches no reacquire bookkeeping: an accreted record
-        is carried over and polled by the series snapshot like any stored record. The tally lands here, not at the
-        title's tail, so a raise in between can never leave the run's full-pass gate open with a held title.
+        The tally lands before the save, so a raise in between never leaves the full-pass gate open.
         """
 
         if not self._ctx.per_title.held_by_cap:
@@ -242,22 +240,14 @@ class GrabPipeline:
         return None
 
     def _seed_for(self, url_item: SeadexUrlItem, req: GrabRequest) -> PendingSeed | None:
-        """The url's seed, or None when nothing is persisted: the wait mode is off, a preview, or no hash.
+        """The url's seed (the strategy seeds nothing when the wait mode is off), or None on a preview or no hash."""
 
-        A seed carries the store's current record for its hash (the strategies read the store while seeding,
-        and a staged write is visible to the next read), so a born seed's hash has no record to overwrite.
-        """
-
-        if self._ctx.import_wait_mode is ImportWaitMode.OFF or self._is_preview() or not url_item.infohash:
+        if self._is_preview() or not url_item.infohash:
             return None
         return req.pending_seeds.get(url_item.infohash)
 
     def _register_pending_import(self, url_item: SeadexUrlItem, req: GrabRequest, result: AddResult) -> None:
-        """Persist the durable record for a grabbed or already-present release, through one of three arms.
-
-        A fresh `ADDED` tracks the seed's record as a this-run grab. An `ALREADY_ADDED` accretes the seed
-        onto its stored record, or, with no record, reacquires the torrent at qBittorrent's add time.
-        """
+        """Persist a grabbed or already-present release: a fresh `ADDED` tracks, an `ALREADY_ADDED` accretes or reacquires."""
 
         seed = self._seed_for(url_item, req)
         if seed is None:
