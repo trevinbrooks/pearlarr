@@ -5,6 +5,7 @@ import io
 import logging
 import re
 from collections.abc import Callable, Iterable
+from enum import Enum, auto
 from typing import override
 
 import httpx
@@ -163,6 +164,14 @@ class FakeArrItem:
         self.monitored = monitored
 
 
+class CapMeeting(Enum):
+    """How a scripted strategy meets the run cap: not at all, held past it, or filled exactly."""
+
+    NONE = auto()
+    HELD = auto()
+    FILLED = auto()
+
+
 class FakeStrategy(ArrSync[FakeArrItem]):
     """A typed `ArrSync` with scripted returns, for engine-orchestration tests."""
 
@@ -171,19 +180,20 @@ class FakeStrategy(ArrSync[FakeArrItem]):
         *,
         items: list[FakeArrItem],
         anilist_ids: dict[int, MappingEntry],
-        held_by_cap_through: RunServices | None = None,
-        adds_through: RunServices | None = None,
+        cap_through: RunServices | None = None,
+        cap: CapMeeting = CapMeeting.NONE,
         process_raises_on: int | None = None,
         history: list[HistoryRecord] | None = None,
         supports_blocking_monitor: bool = True,
     ) -> None:
         self._items = items
         self._anilist_ids = anilist_ids
-        # When set, every processed id is held by the run cap on this hub's run context, as the grab pipeline
-        # holds a grabbable release past the cap.
-        self._held_by_cap_through = held_by_cap_through
-        # When set, every processed id counts one torrent added on this hub's run context, the pipeline's own tally.
-        self._adds_through = adds_through
+        if cap is not CapMeeting.NONE and cap_through is None:
+            raise ValueError("a met cap needs the hub whose run context tallies it")
+        # Every processed id meets the cap on this hub's run context as the grab pipeline would: held past
+        # it (the title's hold and the run tally), or filling it (one torrent added).
+        self._cap_through = cap_through
+        self._cap = cap
         self._process_raises_on = process_raises_on
         self._supports_blocking_monitor = supports_blocking_monitor
         self.process_calls: list[int] = []
@@ -222,11 +232,13 @@ class FakeStrategy(ArrSync[FakeArrItem]):
         self.process_calls.append(al_id)
         if self._process_raises_on is not None and al_id == self._process_raises_on:
             raise ValueError(f"boom on al_id {al_id}")
-        if self._held_by_cap_through is not None:
-            self._held_by_cap_through.ctx.per_title.held_by_cap = True
-            self._held_by_cap_through.ctx.stats.held_by_cap += 1
-        if self._adds_through is not None:
-            self._adds_through.ctx.torrents_added += 1
+        if self._cap_through is None:
+            return
+        if self._cap is CapMeeting.HELD:
+            self._cap_through.ctx.per_title.held_by_cap = True
+            self._cap_through.ctx.stats.held_by_cap += 1
+        elif self._cap is CapMeeting.FILLED:
+            self._cap_through.ctx.torrents_added += 1
 
     @override
     def pending_import_series_id(self, item: FakeArrItem) -> int | None:

@@ -2242,6 +2242,27 @@ class TestMultiSeriesImport:
         assert progress == ImportProgress(1, 2, determinate=True)
         assert sonarr.episodes_calls == [7]
 
+    def test_an_id_outside_every_window_is_judged_under_the_lone_unscoped_claim(self) -> None:
+        # One series: A's window holds 101 and its picks carry G, B is unscoped and its plan judged G stale.
+        # 102 sits outside every window, so B alone judges it and it still needs importing (one of two
+        # done), where the series' merged evidence would have trusted G for both.
+        pending = pending_import(
+            file_episode_map={_SHOW_FILE: [101], _OTHER_FILE: [102]},
+            claims=(
+                entry_claim(al_id=1, ordered_episode_ids=(101,), guards=GuardFacts(entry_groups=("G",))),
+                entry_claim(al_id=2, guards=GuardFacts(stale_groups=("G",))),
+            ),
+        )
+        sonarr = _PerSeriesSonarr(
+            {7: [sonarr_ep(1, 1, ep_id=101, release_group="G"), sonarr_ep(1, 2, ep_id=102, release_group="G")]},
+            candidates=[],
+        )
+
+        progress = self._strat(sonarr).import_progress(pending)
+
+        assert progress == ImportProgress(1, 2, determinate=True)
+        assert sonarr.episodes_calls == [7]
+
     def test_an_id_two_windows_hold_is_judged_and_netted_under_the_first_claim(self) -> None:
         # A's window (101-104) and B's (103-104) overlap on G files. 103 and 104 are judged under A, whose
         # plan judged G stale, so they still need importing, and B's preowned 103 nets nothing out of the

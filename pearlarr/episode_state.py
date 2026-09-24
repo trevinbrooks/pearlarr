@@ -134,11 +134,22 @@ class Route(NamedTuple):
     series_id: int | None
 
 
+def lone_unscoped_claims(claims: Sequence[EntryClaim]) -> dict[int, EntryClaim]:
+    """The one unscoped claim of each series that has exactly one: it judges the series' ids outside every window."""
+
+    unscoped_on = Counter(claim.series_id for claim in claims if not claim.ordered_episode_ids)
+    return {
+        claim.series_id: claim
+        for claim in claims
+        if not claim.ordered_episode_ids and unscoped_on[claim.series_id] == 1
+    }
+
+
 def routable_claims(claims: Sequence[EntryClaim]) -> tuple[EntryClaim, ...]:
     """The claims `RecordSnapshot.route` can name: every scoped claim, and an unscoped claim alone on its series."""
 
-    unscoped_on = Counter(claim.series_id for claim in claims if not claim.ordered_episode_ids)
-    return tuple(claim for claim in claims if claim.ordered_episode_ids or unscoped_on[claim.series_id] == 1)
+    lone = lone_unscoped_claims(claims)
+    return tuple(claim for claim in claims if claim.ordered_episode_ids or lone.get(claim.series_id) is claim)
 
 
 @dataclass(frozen=True, slots=True)
@@ -157,9 +168,13 @@ class RecordSnapshot:
     indexes: Mapping[int, EpisodeIndex] = field(init=False)
     """Each series' fresh episode index, the placement windows' inputs (a view over `by_series`)."""
 
+    lone_unscoped: Mapping[int, EntryClaim] = field(init=False)
+    """Each series' one unscoped claim where it has exactly one (see `lone_unscoped_claims`)."""
+
     def __post_init__(self) -> None:
         object.__setattr__(self, "by_series", MappingProxyType(dict(self.by_series)))
         object.__setattr__(self, "by_claim", MappingProxyType(dict(self.by_claim)))
+        object.__setattr__(self, "lone_unscoped", MappingProxyType(lone_unscoped_claims(self.pending.claims)))
         object.__setattr__(
             self,
             "indexes",
@@ -184,11 +199,13 @@ class RecordSnapshot:
         series_id = self.series_of(ep_id)
         if series_id is None:
             return Route(None, None)
-        unscoped = (claim for claim in routable_claims(self.pending.claims) if not claim.ordered_episode_ids)
-        return Route(next((claim for claim in unscoped if claim.series_id == series_id), None), series_id)
+        return Route(self.lone_unscoped.get(series_id), series_id)
 
     def snapshot_for(self, ep_id: int) -> EpisodeSnapshot | None:
-        """The snapshot that judges `ep_id`: its route's claim's own, else its route's series' (None off every index)."""
+        """The snapshot that judges `ep_id`: its route's claim's own, else its route's series'.
+
+        None when no claim and no index holds it.
+        """
 
         route = self.route(ep_id)
         if route.claim is not None and (own := self.by_claim.get(route.claim.al_id)) is not None:

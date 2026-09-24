@@ -561,12 +561,12 @@ class ImportWaitManager:
 
         cutoff = pending_cutoff(self.imports.pending_max_age_days)
         rows = self._records.rows()
+        # The clocks are read off the raw rows, so only an aged row rehydrates, for its note.
         clocks = {infohash: newest_claimed_at_of(raw) for infohash, raw in rows.items()}
         for infohash, newest in clocks.items():
             if newest is None:
                 self.logger.debug(f"Pending import {infohash} has no parseable timestamp; dropping as expired")
                 self._records.drop(infohash)
-        # The clocks are read off the raw rows: only an aged row rehydrates, for its note.
         aged = {
             infohash: rows[infohash] for infohash, newest in clocks.items() if newest is not None and newest < cutoff
         }

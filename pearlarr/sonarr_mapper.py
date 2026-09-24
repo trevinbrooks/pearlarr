@@ -118,11 +118,10 @@ class FileEpisodeMapper:
         self,
         candidates: list[ManualImportCandidate],
     ) -> dict[str, CandidateFile]:
-        """Index on-disk manual-import candidates by normalized basename.
+        """Index on-disk candidates by normalized basename: a basename duplicated across folders carries one verdict.
 
-        The candidates arrive already parsed at the Sonarr client boundary
-        (`SonarrClient.manual_import_candidates`), so each is read by
-        attribute and the raw DTO never reaches the decision path.
+        The candidates arrive parsed at the Sonarr client boundary (`SonarrClient.manual_import_candidates`),
+        so each is read by attribute and the raw DTO never reaches the decision path.
         """
 
         by_basename: dict[str, CandidateFile] = {}

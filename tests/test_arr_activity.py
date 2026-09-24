@@ -33,7 +33,7 @@ from pearlarr.run_services import RunServices
 from pearlarr.seadex_types import HistoryRecord
 
 from .builders import FakeCacheStore, make_config, make_logger
-from .fakes import CaptureHandler, FakeArrItem, FakeStrategy
+from .fakes import CapMeeting, CaptureHandler, FakeArrItem, FakeStrategy
 from .test_run_finalize import _engine, _FakeGateway, _FinalizeRecorder
 
 _NOW = datetime(2026, 7, 6, 12, 0, 0, tzinfo=UTC)
@@ -306,12 +306,13 @@ class TestRunLoopActivityWiring:
     def _strategy(
         *,
         history: list[HistoryRecord] | None = None,
-        held_by_cap_through: RunServices | None = None,
+        held_through: RunServices | None = None,
     ) -> FakeStrategy:
         return FakeStrategy(
             items=[FakeArrItem(item_id=3, title="A")],
             anilist_ids={11: MappingEntry(anilist_id=11)},
-            held_by_cap_through=held_by_cap_through,
+            cap_through=held_through,
+            cap=CapMeeting.NONE if held_through is None else CapMeeting.HELD,
             history=history,
         )
 
@@ -366,7 +367,7 @@ class TestRunLoopActivityWiring:
     def test_held_run_does_not_advance_the_checkpoint(self, logger: logging.Logger) -> None:
         # A held title's drift mark may be pending, so the run keeps the checkpoint for the next full pass.
         engine = _engine(_FinalizeRecorder(), logger)
-        strategy = self._strategy(history=[_rec(1, item_id=3)], held_by_cap_through=engine._services)
+        strategy = self._strategy(history=[_rec(1, item_id=3)], held_through=engine._services)
         engine.run_sync(strategy, item_id=None, dry_run=True, boot=BootFlow())
 
         assert engine.cache_store.get_history_checkpoint(Arr.SONARR) is None

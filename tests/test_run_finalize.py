@@ -15,7 +15,6 @@ pinned by asserting recorded state.
 """
 
 import logging
-from enum import Enum, auto
 from typing import override
 
 from pearlarr.anilist_gateway import AniListGateway
@@ -39,7 +38,7 @@ from .builders import (
     make_config,
     make_services,
 )
-from .fakes import FakeArrItem, FakeStrategy, install_recording_hub
+from .fakes import CapMeeting, FakeArrItem, FakeStrategy, install_recording_hub
 
 
 class _FakeGateway:
@@ -152,7 +151,8 @@ class TestHeldTitleKeepsScanning:
         strategy = FakeStrategy(
             items=[FakeArrItem(item_id=1, title="A"), FakeArrItem(item_id=2, title="B")],
             anilist_ids={1: MappingEntry(anilist_id=1)},
-            held_by_cap_through=engine._services,
+            cap_through=engine._services,
+            cap=CapMeeting.HELD,
         )
 
         engine.run_sync(strategy, item_id=None, dry_run=True, boot=BootFlow())
@@ -360,14 +360,6 @@ class TestScanItemContext:
         assert engine._ctx.arr_title == "A"
 
 
-class _CapMeeting(Enum):
-    """How the scripted strategy meets the run cap: not at all, held past it, or filled exactly."""
-
-    NONE = auto()
-    HELD = auto()
-    FILLED = auto()
-
-
 # One import event on the scanned item, so the activity scan has a checkpoint to commit.
 _IMPORT_EVENT = HistoryRecord(
     id=1, date="2026-07-06T10:00:00Z", item_id=3, event_type="downloadFolderImported", download_id=None, reason=None
@@ -391,16 +383,16 @@ class TestSelectionRecheck:
         item_id: int | None = None,
         config: AppConfig | None = None,
         seadex: _FakeGateway | None = None,
-        cap: _CapMeeting = _CapMeeting.NONE,
+        cap: CapMeeting = CapMeeting.NONE,
     ) -> tuple[RunLoop, RecordingHub]:
         recording = install_recording_hub()
         engine = _engine(_FinalizeRecorder(), logger, config=config, seadex=seadex)
         strategy = FakeStrategy(
             items=[FakeArrItem(item_id=3, title="A")],
             anilist_ids={11: MappingEntry(anilist_id=11)},
-            held_by_cap_through=engine._services if cap is _CapMeeting.HELD else None,
-            adds_through=engine._services if cap is _CapMeeting.FILLED else None,
-            history=[_IMPORT_EVENT] if cap is not _CapMeeting.NONE else None,
+            cap_through=engine._services if cap is not CapMeeting.NONE else None,
+            cap=cap,
+            history=[_IMPORT_EVENT] if cap is not CapMeeting.NONE else None,
         )
         engine._services._selection_stale = stale
         engine.run_sync(strategy, item_id=item_id, dry_run=True, boot=BootFlow())
@@ -450,14 +442,14 @@ class TestSelectionRecheck:
         assert self._vouched_any(engine) is False
 
     def test_held_run_neither_vouches_nor_commits_the_checkpoint(self, logger: logging.Logger) -> None:
-        engine, _ = self._run(logger, cap=_CapMeeting.HELD)
+        engine, _ = self._run(logger, cap=CapMeeting.HELD)
 
         assert self._vouched_any(engine) is False
         assert engine.cache_store.get_history_checkpoint(Arr.SONARR) is None
 
     def test_exact_cap_run_with_nothing_held_vouches_and_commits_the_checkpoint(self, logger: logging.Logger) -> None:
         # Reaching the cap is not a hold: only a title held PAST it leaves the pass partial.
-        engine, _ = self._run(logger, config=make_config(max_torrents_to_add=1), cap=_CapMeeting.FILLED)
+        engine, _ = self._run(logger, config=make_config(max_torrents_to_add=1), cap=CapMeeting.FILLED)
 
         assert engine._services.ctx.torrents_added == 1
         assert engine._services.ctx.stats.held_by_cap == 0

@@ -12,11 +12,8 @@ from .reporter import RunContext
 class PendingRecords:
     """One seam for the pending-import store: raw and hydrated views, run-list-aware writes.
 
-    Binds the cache store once. The run context (whose `arr` scopes every read and
-    whose `pending_imports` is the run list) arrives via `begin_run` each run.
-    Every key is a torrent's infohash. A claim's guard row is written by the grab
-    that produced it (`insert_fresh`, `save_claim`) and never re-put from a hydrated
-    copy, which may trail a newer write.
+    Binds the cache store once. The run context (whose `arr` scopes every read and whose
+    `pending_imports` is the run list) arrives via `begin_run` each run. Every key is a torrent's infohash.
     """
 
     _ctx: RunContext
@@ -95,7 +92,7 @@ class PendingRecords:
         self._put_guards(claim)
         self._ctx.pending_imports[record.infohash] = record
 
-    def save_claim(self, record: PendingImport, claim: EntryClaim) -> None:
+    def save_with_claim(self, record: PendingImport, claim: EntryClaim) -> None:
         """`save` plus `claim`'s guard row: the write of a grab whose claim joins or refreshes a stored record."""
 
         self.save(record)
@@ -118,7 +115,11 @@ class PendingRecords:
         self._store.put_pending(self._ctx.arr, record.infohash, record.to_json())
 
     def _put_guards(self, claim: EntryClaim) -> None:
-        """The claim's guard row (Sonarr only: Radarr's import reads no guards)."""
+        """The claim's guard row (Sonarr only: Radarr's import reads no guards).
+
+        Written only by the grab that produced the evidence, never re-put from a hydrated copy that
+        may trail a newer write.
+        """
 
         if self._ctx.arr is Arr.SONARR:
             self._store.put_guards(self._ctx.arr, claim.al_id, claim.guards)
