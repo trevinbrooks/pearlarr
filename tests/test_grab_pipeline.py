@@ -479,7 +479,7 @@ class TestReacquireRegistration:
 
     def test_resident_reacquire_refreshes_the_guard_row(self) -> None:
         # The entry's guard evidence follows the newest plan, never a frozen copy:
-        # accreting onto a carried-over record re-puts the row the trust read hydrates.
+        # a claim joining a carried-over record re-puts the row the trust read hydrates.
         pipeline = _pipeline(torrents=self._reacquire(None))
         resident = self._resident(pipeline)
         facts = GuardFacts(entry_groups=("NAN0",))
