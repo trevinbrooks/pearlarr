@@ -2673,6 +2673,17 @@ class TestPendingRecordWrites:
         assert set(mgr._records.rows()) == {"h"}
         assert mgr._ctx.pending_imports == {}
 
+    def test_save_writes_no_guard_row(self) -> None:
+        # A claim's guard row is its grab's to write: a record saved from a hydrated copy never re-puts one.
+        store = FakeCacheStore()
+        record = pending_import(infohash="h", al_id=5, added_at=_FRESH, guards=GuardFacts(entry_groups=("G",)))
+        mgr = make_orchestration_manager(qbit=None, strategy=_RecordingStrategy(), store=store)
+
+        mgr._records.save(record)
+
+        assert set(mgr._records.rows()) == {"h"}
+        assert store.get_guards(Arr.SONARR) == {}
+
 
 class CategoryQbit(FakeQbit):
     """A `FakeQbit` recording the category writes the post-import move makes.

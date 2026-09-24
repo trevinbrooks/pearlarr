@@ -5,7 +5,7 @@ from typing import Any
 
 from .cache import AbstractCacheStore
 from .config import Arr
-from .manual_import import GuardFacts, ImportProbe, PendingImport, hydrate_pending, is_awaiting_cleanup
+from .manual_import import EntryClaim, GuardFacts, ImportProbe, PendingImport, hydrate_pending, is_awaiting_cleanup
 from .reporter import RunContext
 
 
@@ -14,7 +14,9 @@ class PendingRecords:
 
     Binds the cache store once. The run context (whose `arr` scopes every read and
     whose `pending_imports` is the run list) arrives via `begin_run` each run.
-    Every key is a torrent's infohash.
+    Every key is a torrent's infohash. A claim's guard row is written by the grab
+    that produced it (`insert_fresh`, `save_claim`) and never re-put from a hydrated
+    copy, which may trail a newer write.
     """
 
     _ctx: RunContext
@@ -86,14 +88,21 @@ class PendingRecords:
         }
         return self.hydrate(rows)
 
-    def insert_fresh(self, record: PendingImport) -> None:
-        """Persist a this-run grab and enter it in the run list (it tallies as `added`)."""
+    def insert_fresh(self, record: PendingImport, claim: EntryClaim) -> None:
+        """Persist a this-run grab with `claim`'s guard row and enter it in the run list (it tallies as `added`)."""
 
         self._put(record)
+        self._put_guards(claim)
         self._ctx.pending_imports[record.infohash] = record
 
+    def save_claim(self, record: PendingImport, claim: EntryClaim) -> None:
+        """`save` plus `claim`'s guard row: the write of a grab whose claim joins or refreshes a stored record."""
+
+        self.save(record)
+        self._put_guards(claim)
+
     def save(self, record: PendingImport) -> None:
-        """Persist ONE record, refreshing any run-list copy but NEVER inserting one.
+        """Persist ONE record (no guard row), refreshing any run-list copy but NEVER inserting one.
 
         A run-list upsert would silently convert a reacquire or accretion into a fresh
         grab, skewing the carried-over tally and the heal's recount.
@@ -104,12 +113,15 @@ class PendingRecords:
             self._ctx.pending_imports[record.infohash] = record
 
     def _put(self, record: PendingImport) -> None:
-        """The store write plus every claim's guard row (Sonarr only: Radarr's import reads no guards)."""
+        """The record's row write."""
 
         self._store.put_pending(self._ctx.arr, record.infohash, record.to_json())
+
+    def _put_guards(self, claim: EntryClaim) -> None:
+        """The claim's guard row (Sonarr only: Radarr's import reads no guards)."""
+
         if self._ctx.arr is Arr.SONARR:
-            for claim in record.claims:
-                self._store.put_guards(self._ctx.arr, claim.al_id, claim.guards)
+            self._store.put_guards(self._ctx.arr, claim.al_id, claim.guards)
 
     def absorb_probe(self, record: PendingImport, probe: ImportProbe) -> PendingImport:
         """Persist a poll's import-time placements and exclusions onto the record and return the healed copy.

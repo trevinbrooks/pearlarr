@@ -481,6 +481,19 @@ class TestReacquireRegistration:
 
         assert _guards(pipeline) == {PENDING_AL_ID: facts}
 
+    def test_accretion_writes_only_the_joining_claims_guard_row(self) -> None:
+        # The stored claim's row is the evidence its own grab wrote. A second entry joining the record
+        # never re-puts it from the hydrated copy, so a row written since the copy was read stands.
+        pipeline = _pipeline(torrents=self._reacquire(None))
+        resident = self._resident(pipeline)
+        newer = GuardFacts(entry_groups=("NewPick",))
+        joining = GuardFacts(entry_groups=("NAN0",))
+        pipeline.cache_store.put_guards(Arr.SONARR, PENDING_AL_ID, newer)
+
+        self._add(pipeline, pending_seed("h1", al_id=22, guards=joining, stored=resident))
+
+        assert _guards(pipeline) == {PENDING_AL_ID: newer, 22: joining}
+
     def test_accretion_replaces_the_entrys_own_claim_and_merges_the_map(self) -> None:
         # A re-flag by the entry already claiming the record: its claim is replaced
         # under its first clock, the fresh placements fold into the map, the birth stands.

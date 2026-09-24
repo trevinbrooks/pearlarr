@@ -193,7 +193,7 @@ class GrabPipeline:
             self._ctx.stats.held_by_cap += 1
         seed = self._seed_for(url_item, req)
         if seed is not None and seed.accreted:
-            self._records.save(seed.record_at(now_stamp(), fresh=False))
+            self._records.save_claim(seed.record_at(now_stamp(), fresh=False), seed.claim)
 
     def _add_one_url(
         self,
@@ -262,7 +262,7 @@ class GrabPipeline:
     def _track_fresh(self, seed: PendingSeed) -> None:
         """A fresh add: the record enters the run list, its birth and every claim stamped now (a re-add too)."""
 
-        self._records.insert_fresh(seed.record_at(now_stamp(), fresh=True))
+        self._records.insert_fresh(seed.record_at(now_stamp(), fresh=True), seed.claim)
 
     def _accrete_resident(self, seed: PendingSeed) -> None:
         """A torrent already downloading under a stored record: the entry's claim and placements join it.
@@ -271,7 +271,7 @@ class GrabPipeline:
         """
 
         record = seed.record_at(now_stamp(), fresh=False)
-        self._records.save(record)
+        self._records.save_claim(record, seed.claim)
         if record.infohash not in self._ctx.pending_imports:
             self._ctx.reacquired_keys.add(record.infohash)
 
@@ -292,9 +292,9 @@ class GrabPipeline:
                 )
                 return
             stamp = stamp_of(added_on)
-        # A reacquire, not a fresh grab: `save` refreshes without a run-list insert.
+        # A reacquire, not a fresh grab: `save_claim` refreshes without a run-list insert.
         record = seed.record_at(stamp, fresh=False)
-        self._records.save(record)
+        self._records.save_claim(record, seed.claim)
         self._ctx.reacquired_keys.add(record.infohash)
 
     def _needs_action(self, groups: list[str], reason: str, kind: NeedsActionKind) -> NeedsActionRecord:
