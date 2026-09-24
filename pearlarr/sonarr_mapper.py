@@ -146,33 +146,12 @@ class FileEpisodeMapper:
         candidates_by_basename: Mapping[str, CandidateFile],
         indexes: Mapping[int, EpisodeIndex],
     ) -> FileAssignment:
-        """Build the final `basename -> episode ids` map from OUR resolved set.
+        """Build the final `basename -> episode ids` map from OUR resolved set, never from Sonarr's parse alone.
 
-        Identity never comes from Sonarr's series-matched title parse alone: a
-        file's parsed `(season, episode)`, from its name or from Sonarr's
-        matched resolution of an absolute-only name, is honored only *inside*
-        our resolved set, an absolute-numbered pack is mapped positionally onto
-        it, and anything ambiguous is returned as skipped (the caller warns and
-        leaves it, the chosen safe posture).
-
-        Files our grab-time `file_episode_map` already covers (the add-time
-        assignment) keep their seeded ids untouched. When anything is left to
-        place, their parses are still fetched so the positional leg's
-        shared-absolute tell sees the whole batch (an earlier poll's placement
-        must not hide a v2 duplicate). Every uncovered on-disk video leaf is
-        handed to `place_leftover` under one window per claim (`indexes` holds
-        each claim's series), which places it into that entry's resolved set
-        (`ordered_episode_ids`, the add-flow's season-sorted episodes). When a
-        claim has no set to scope against (an on-disk specials record whose
-        grab-time parse found nothing), `assign_episode_ids` falls back to the
-        live series map for exactly named files (see `TargetScope.unscoped`).
-        Fresh placements come back as `placed` for the caller to persist; the
-        record is never mutated. SeaDex order keeps output and the absolute leg
-        stable.
-
-        Returns the seeded map plus one verdict per leftover leaf. A basename
-        duplicated across folders collapses in the basename-keyed pool, so it
-        carries one verdict.
+        Seeded files keep their grab-time ids. The on-disk leftover is placed under one window per claim, in
+        claim order (`indexes` holds each claim's series), and anything ambiguous comes back skipped for the
+        caller to warn about. The record is never mutated: fresh placements ride `placed` for the caller to
+        persist. A basename duplicated across folders carries one verdict.
         """
 
         on_disk = {

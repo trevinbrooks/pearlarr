@@ -18,9 +18,9 @@ from pearlarr.config import Arr
 from pearlarr.episode_state import EpisodeFileStatus, TrustPolicy, trusted_groups
 from pearlarr.grab_placement import (
     NO_RESIDENTS,
+    EntryFacts,
     EntryPlacements,
     PendingSeed,
-    PendingSeedContext,
     SeedScope,
     build_pending_seeds,
 )
@@ -34,6 +34,7 @@ from pearlarr.stamps import now_stamp
 from .builders import (
     SEP,
     FakeCacheStore,
+    entry_facts,
     make_sonarr_sync,
     parsed_info,
     pending_import,
@@ -74,7 +75,7 @@ def _strat(parses: ParseCache, series: list[SonarrEpisode]) -> SonarrSync:
 def _build(
     strat: SonarrSync,
     seadex_dict: SeadexDict,
-    entry: PendingSeedContext,
+    entry: EntryFacts,
     *,
     scope: SeedScope | None = None,
 ) -> dict[str, PendingSeed]:
@@ -127,7 +128,7 @@ class TestBuildPendingSeeds:
         seeds = _build(
             _strat(parses, ep_list),
             seadex_dict,
-            entry=PendingSeedContext(al_id=1, series_id=7, title="Show"),
+            entry=entry_facts(),
             scope=_scope(ep_list, ep_list, EntryNames("Show", ("Show", "Shou"))),
         )
 
@@ -172,7 +173,7 @@ class TestBuildPendingSeeds:
         seeds = _build(
             strat,
             seadex_dict,
-            entry=PendingSeedContext(al_id=1, series_id=7, title="Show"),
+            entry=entry_facts(),
         )
 
         assert dict(seeds["h1"].placements) == {}
@@ -190,10 +191,7 @@ class TestBuildPendingSeeds:
         seeds = _build(
             _strat(parses, ep_list),
             seadex_dict,
-            entry=PendingSeedContext(
-                al_id=1,
-                series_id=7,
-                title="Show",
+            entry=entry_facts(
                 guards=GuardFacts(entry_groups=("RG", "Kept"), stale_groups=("Stale",)),
             ),
         )
@@ -216,7 +214,7 @@ class TestBuildPendingSeeds:
         seeds = _build(
             _strat(parses, ep_list),
             seadex_dict,
-            entry=PendingSeedContext(al_id=1, series_id=7, title="Show"),
+            entry=entry_facts(),
         )
 
         assert seeds["h1"].facts.release_sizes == (1000, 50)
@@ -249,10 +247,7 @@ class TestBuildPendingSeeds:
         seeds = _build(
             _strat(parses, ep_list),
             seadex_dict,
-            entry=PendingSeedContext(
-                al_id=1,
-                series_id=7,
-                title="Show",
+            entry=entry_facts(
                 guards=GuardFacts(entry_groups=("RG", "Kept")),
             ),
         )
@@ -283,10 +278,7 @@ class TestBuildPendingSeeds:
         seeds = _build(
             _strat(parses, ep_list),
             seadex_dict,
-            entry=PendingSeedContext(
-                al_id=1,
-                series_id=7,
-                title="Show",
+            entry=entry_facts(
                 guards=GuardFacts(owned_episodes=(OwnedEpisode(101, 1000),)),
             ),
         )
@@ -315,7 +307,7 @@ class TestBuildPendingSeeds:
         seeds = _build(
             _strat(parses, ep_list),
             seadex_dict,
-            entry=PendingSeedContext(al_id=1, series_id=7, title="Show"),
+            entry=entry_facts(),
         )
 
         seed = seeds["h1"]
@@ -340,7 +332,7 @@ class TestBuildPendingSeeds:
         seeds = _build(
             _strat(parses, series),
             seadex_dict,
-            entry=PendingSeedContext(al_id=1, series_id=7, title="Show"),
+            entry=entry_facts(),
             scope=_scope([], series),
         )
 
@@ -364,7 +356,7 @@ class TestBuildPendingSeeds:
         seeds = _build(
             strat,
             seadex_dict,
-            entry=PendingSeedContext(al_id=1, series_id=7, title="Show"),
+            entry=entry_facts(),
             scope=_scope(ep_list, []),
         )
 
@@ -400,7 +392,7 @@ class TestBuildPendingSeeds:
         seeds = _build(
             _strat(parses, series),
             seadex_dict,
-            entry=PendingSeedContext(al_id=1, series_id=7, title="Show"),
+            entry=entry_facts(),
             scope=_scope(ep_list, series),
         )
 
@@ -423,7 +415,7 @@ class TestBuildPendingSeeds:
         seeds = _build(
             _strat(parses, ep_list),
             seadex_dict,
-            entry=PendingSeedContext(al_id=1, series_id=7, title="Show"),
+            entry=entry_facts(),
         )
 
         assert dict(seeds["h1"].placements) == {}
@@ -454,7 +446,7 @@ class TestBuildPendingSeeds:
         seeds = _build(
             _strat(parses, ep_list),
             seadex_dict,
-            entry=PendingSeedContext(al_id=1, series_id=7, title="Show"),
+            entry=entry_facts(),
         )
 
         seed = seeds["h1"]
@@ -487,7 +479,7 @@ class TestBuildPendingSeeds:
         seeds = _build(
             _strat(parses, ep_list),
             seadex_dict,
-            entry=PendingSeedContext(al_id=1, series_id=7, title="Show"),
+            entry=entry_facts(),
         )
 
         seed = seeds["h1"]
@@ -515,7 +507,7 @@ class TestBuildPendingSeeds:
         seeds = _build(
             _strat(parses, ep_list),
             seadex_dict,
-            entry=PendingSeedContext(al_id=1, series_id=7, title="Show"),
+            entry=entry_facts(),
         )
 
         assert _record(seeds["h1"]).display_label == f"Show{SEP}RG{SEP}S02 E06"
@@ -536,7 +528,7 @@ class TestBuildPendingSeeds:
         seeds = _build(
             _strat({}, ep_list),
             seadex_dict,
-            entry=PendingSeedContext(al_id=1, series_id=7, title="Show"),
+            entry=entry_facts(),
         )
 
         assert set(seeds) == {"h1"}
@@ -563,7 +555,7 @@ class TestBuildPendingSeeds:
         seeds = _build(
             _strat(parses, ep_list),
             seadex_dict,
-            entry=PendingSeedContext(al_id=1, series_id=7, title="Show"),
+            entry=entry_facts(),
         )
 
         assert _record(seeds["h1"]).display_label == f"Show{SEP}RG{SEP}S01 E01"
@@ -584,7 +576,7 @@ class TestBuildPendingSeeds:
         seeds = _build(
             _strat({}, ep_list),
             seadex_dict,
-            entry=PendingSeedContext(al_id=1, series_id=7, title="Show"),
+            entry=entry_facts(),
         )
 
         assert seeds == {}
@@ -618,7 +610,7 @@ class TestSeedGuards:
         seeds = _build(
             _strat(parses, ep_list),
             seadex_dict,
-            entry=PendingSeedContext(al_id=1, series_id=7, title="Show"),
+            entry=entry_facts(),
         )
 
         # Still tracked (it carries a video file), just never pre-assigned.
@@ -646,7 +638,7 @@ class TestSeedGuards:
         seeds = _build(
             _strat(parses, ep_list),
             seadex_dict,
-            entry=PendingSeedContext(al_id=1, series_id=7, title="Show"),
+            entry=entry_facts(),
         )
 
         # Still tracked (it carries a video file), just never pre-assigned.
@@ -665,7 +657,7 @@ class TestSeedGuards:
         seeds = _build(
             _strat(parses, ep_list),
             seadex_dict,
-            entry=PendingSeedContext(al_id=1, series_id=7, title="Show"),
+            entry=entry_facts(),
         )
 
         assert dict(seeds["h1"].placements) == {normalize_basename("Show - 01-02.mkv"): [101, 102]}
@@ -685,7 +677,7 @@ class TestSeedGuards:
         seeds = _build(
             _strat(parses, series),
             seadex_dict,
-            entry=PendingSeedContext(al_id=1, series_id=7, title="Show"),
+            entry=entry_facts(),
             scope=_scope(ep_list, series),
         )
 
@@ -716,7 +708,7 @@ class TestSeedGuards:
         seeds = _build(
             _strat(parses, ep_list),
             seadex_dict,
-            entry=PendingSeedContext(al_id=1, series_id=7, title="Show"),
+            entry=entry_facts(),
         )
 
         assert dict(seeds["h1"].placements) == {normalize_basename("Show - 13v2.mkv"): [213]}
@@ -746,7 +738,7 @@ class TestSeedGuards:
         seeds = _build(
             _strat(parses, ep_list),
             seadex_dict,
-            entry=PendingSeedContext(al_id=1, series_id=7, title="Show"),
+            entry=entry_facts(),
         )
 
         assert dict(seeds["h1"].placements) == {normalize_basename("Show - 01.mkv"): [101]}
@@ -773,7 +765,7 @@ class TestSeedGuards:
         seeds = _build(
             _strat(parses, ep_list),
             seadex_dict,
-            entry=PendingSeedContext(al_id=1, series_id=7, title="Show"),
+            entry=entry_facts(),
         )
 
         assert dict(seeds["h1"].placements) == {normalize_basename("Show - 01.mkv"): [101]}
@@ -804,7 +796,7 @@ class TestParseWriteFeedsSeeds:
         seeds = _build(
             strat,
             seadex_dict,
-            entry=PendingSeedContext(al_id=1, series_id=7, title="Show"),
+            entry=entry_facts(),
         )
 
         assert dict(seeds["h1"].placements) == {normalize_basename("Show - 01.mkv"): [101]}
@@ -833,7 +825,7 @@ class TestParseWriteFeedsSeeds:
         seeds = _build(
             strat,
             seadex_dict,
-            entry=PendingSeedContext(al_id=1, series_id=7, title="Show"),
+            entry=entry_facts(),
         )
 
         assert dict(seeds["h1"].placements) == {}

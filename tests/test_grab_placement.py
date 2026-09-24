@@ -7,7 +7,6 @@ from pearlarr.grab_placement import (
     NO_RESIDENTS,
     EntryPlacements,
     PendingSeed,
-    PendingSeedContext,
     ResidentScope,
     SeedFile,
     SeedRelease,
@@ -16,14 +15,15 @@ from pearlarr.grab_placement import (
     UrlPlacement,
     build_entry_claim,
     build_pending_seeds,
+    build_unscoped_seed,
     place_release,
     resident_scopes,
 )
 from pearlarr.manual_import import EntryNames, PendingImport, normalize_basename, normalized_leaf
 from pearlarr.placement_types import EpisodeAssignment, PlacementVerdict, episode_index
-from pearlarr.seadex_types import EpisodeRecord, MatchedEpisode, ParsedFileInfo, SeadexDict, SonarrEpisode
+from pearlarr.seadex_types import EpisodeRecord, FlaggedUrl, MatchedEpisode, ParsedFileInfo, SeadexDict, SonarrEpisode
 
-from .builders import entry_claim, pending_import, rg_group, sonarr_ep, url_item
+from .builders import entry_claim, entry_facts, pending_import, rg_group, sonarr_ep, two_claim_record, url_item
 
 _SEASON = [sonarr_ep(1, n, ep_id=100 + n, episode_file_id=0) for n in range(1, 5)]
 _SPECIAL = sonarr_ep(0, 1, ep_id=501, episode_file_id=0)
@@ -191,6 +191,24 @@ class TestPlaceOntoResident:
         assert placement.claimed_ids == frozenset()
         assert placement.inputs_known
 
+    def test_a_re_flag_places_the_leftover_under_its_fresh_window(self) -> None:
+        # The entry's stored claim covers two episodes; re-listed over the whole season, its fresh window
+        # replaces the stale one in place, so the third file lands where the stale window could not put it.
+        record = pending_import(
+            infohash="h1",
+            file_episode_map={"show - s01e01.mkv": [101]},
+            seadex_files=_PACK[:3],
+            ordered_episode_ids=(101, 102),
+        )
+        files = _pack(3)
+
+        stale = place_release(files, _scope(_SEASON[:2]), ResidentScope(record, _INDEXES))
+        fresh = place_release(files, _scope(_SEASON), ResidentScope(record, _INDEXES))
+
+        assert stale.assignment.assigned == {"show - s01e02.mkv": [102]}
+        assert fresh.assignment.assigned == {"show - s01e02.mkv": [102], "show - s01e03.mkv": [103]}
+        assert fresh.claimed_ids == {101, 102, 103}
+
     def test_an_unread_claim_series_places_nothing_and_its_inputs_are_not_known(self) -> None:
         # A stored claim on a series this run could not read: the leftover waits for the import poll.
         record = _resident_record(series_id=8)
@@ -210,15 +228,6 @@ class TestPlaceOntoResident:
 class TestResidentScope:
     """The stored claims' windows, the entry's own in place of its stored claim."""
 
-    @staticmethod
-    def _two_claims() -> PendingImport:
-        return pending_import(
-            claims=(
-                entry_claim(al_id=1, series_id=7, ordered_episode_ids=(101, 102)),
-                entry_claim(al_id=2, series_id=7, ordered_episode_ids=(103, 104)),
-            )
-        )
-
     def test_can_place_needs_every_claims_series_read(self) -> None:
         record = pending_import(claims=(entry_claim(al_id=1, series_id=7), entry_claim(al_id=2, series_id=8)))
 
@@ -228,7 +237,7 @@ class TestResidentScope:
     def test_windows_replace_the_entrys_own_claim_in_place(self) -> None:
         own = _scope(_SEASON).target()
 
-        windows = ResidentScope(self._two_claims(), _INDEXES).windows(1, own)
+        windows = ResidentScope(two_claim_record(), _INDEXES).windows(1, own)
 
         assert windows[0] is own
         assert [tuple(w.resolved) for w in windows] == [(101, 102, 103, 104), (103, 104)]
@@ -236,7 +245,7 @@ class TestResidentScope:
     def test_windows_append_a_new_entrys_own_last(self) -> None:
         own = _scope(_SEASON, al_id=3).target()
 
-        windows = ResidentScope(self._two_claims(), _INDEXES).windows(3, own)
+        windows = ResidentScope(two_claim_record(), _INDEXES).windows(3, own)
 
         assert windows[-1] is own
         assert [tuple(w.resolved) for w in windows] == [(101, 102), (103, 104), (101, 102, 103, 104)]
@@ -300,7 +309,7 @@ class TestEntryPlacements:
     def test_seeds_fold_the_placement_and_carry_the_scopes_names(self) -> None:
         names = EntryNames("Show", ("Show", "Shou"))
         placed, seadex_dict = self._entry(names)
-        entry = PendingSeedContext(al_id=1, series_id=7, title="Show")
+        entry = entry_facts()
 
         seeds = build_pending_seeds(seadex_dict, placed, entry)
 
@@ -321,7 +330,7 @@ class TestEntryPlacements:
             ),
         }
 
-        seeds = build_pending_seeds(seadex_dict, placed, PendingSeedContext(al_id=1, series_id=7, title="Show"))
+        seeds = build_pending_seeds(seadex_dict, placed, entry_facts())
 
         assert seeds["h1"].accreted
         assert seeds["h1"].stored is record
@@ -402,6 +411,38 @@ class TestPendingSeedRecordAt:
         assert [c.claimed_at for c in record.claims] == [_STAMP, _STAMP]
 
 
+class TestBuildUnscopedSeed:
+    """A Radarr grab's seed: the listing's facts, no files or window, an id-less claim on the entry."""
+
+    @staticmethod
+    def _flagged() -> FlaggedUrl:
+        return FlaggedUrl("RG", "https://nyaa.si/view/1", url_item(infohash="h1", is_dual_audio=True), "h1")
+
+    def test_a_new_torrent_seeds_an_id_less_claim(self) -> None:
+        facts = entry_facts(al_id=9, series_id=0, title="Movie", url="https://releases.moe/9")
+
+        seed = build_unscoped_seed(self._flagged(), facts, None)
+
+        assert not seed.accreted
+        assert seed.facts == TorrentFacts(
+            infohash="h1", release_group="RG", is_dual_audio=True, seadex_files=(), release_sizes=()
+        )
+        assert seed.placements == {} and seed.excluded == ()
+        assert seed.claim == entry_claim(
+            al_id=9, series_id=0, title="Movie", url="https://releases.moe/9", claimed_at="", guards=facts.guards
+        )
+
+    def test_a_listed_torrent_accretes_its_stored_record(self) -> None:
+        stored = pending_import(infohash="h1", al_id=1, series_id=0)
+
+        record = build_unscoped_seed(self._flagged(), entry_facts(al_id=2, series_id=0), stored).record_at(
+            _STAMP, fresh=False
+        )
+
+        assert record.release_group == stored.release_group
+        assert [claim.al_id for claim in record.claims] == [1, 2]
+
+
 class TestEntryClaim:
     """The entry's claim reads the whole map inside the entry, its clock blank until the record is stamped."""
 
@@ -417,9 +458,7 @@ class TestEntryClaim:
         files = _pack(3)
         placed = place_release(files, _scope(_SEASON), ResidentScope(_resident_record(), _INDEXES))
 
-        claim = build_entry_claim(
-            self._release(files, placed), _scope(_SEASON), PendingSeedContext(al_id=1, series_id=7, title="Show")
-        )
+        claim = build_entry_claim(self._release(files, placed), _scope(_SEASON), entry_facts())
 
         # This call placed E03 alone, yet the slice also carries the record's E01 and E02.
         assert placed.assignment.assigned == {"show - s01e03.mkv": [103]}
@@ -433,8 +472,6 @@ class TestEntryClaim:
         files = _pack(3)
         placed = place_release(files, _scope(entry), ResidentScope(_resident_record(), _INDEXES))
 
-        claim = build_entry_claim(
-            self._release(files, placed), _scope(entry), PendingSeedContext(al_id=1, series_id=7, title="Show")
-        )
+        claim = build_entry_claim(self._release(files, placed), _scope(entry), entry_facts())
 
         assert claim.preowned_episode_ids == (101,)

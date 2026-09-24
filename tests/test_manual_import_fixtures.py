@@ -25,7 +25,6 @@ import pytest
 
 from pearlarr.config import AppConfig
 from pearlarr.grab_placement import (
-    PendingSeedContext,
     SeedFile,
     SeedRelease,
     SeedScope,
@@ -75,6 +74,7 @@ from pearlarr.seadex_types import (
 from .builders import (
     FakeCacheStore,
     by_name,
+    entry_facts,
     indexes_for,
     make_config,
     make_sonarr_mapper,
@@ -2833,7 +2833,7 @@ class TestSeedEqualsMapper:
             placed=place_release([SeedFile(name, 1000, parses[name]) for name in self._NAMES], scope, None),
         )
 
-        seed = build_pending_seed(release, scope, PendingSeedContext(al_id=1, series_id=2, title="t"))
+        seed = build_pending_seed(release, scope, entry_facts(al_id=1, series_id=2, title="t"))
         mapper = make_sonarr_mapper(sonarr=FakeSonarrClient(parse_fn=parses.get))
         pending = pending_import(file_episode_map={}, ordered_episode_ids=list(index.by_id), seadex_files=self._NAMES)
         live = mapper.assign(

@@ -8,13 +8,12 @@ from typing import override
 from .arr_activity import IMPORT_EVENTS, format_history_date
 from .config import Arr
 from .grab_pipeline import NO_SEEDS, GrabRequest
-from .grab_placement import PendingSeed, TorrentFacts
+from .grab_placement import EntryFacts, PendingSeed, build_unscoped_seed
 from .log import pluralize
 from .manual_import import (
     NO_PROGRESS,
     AttemptKind,
-    EntryClaim,
-    EntryNames,
+    GuardFacts,
     ImportProbe,
     ImportProgress,
     ImportWaitMode,
@@ -194,28 +193,10 @@ class RadarrSync(ArrSync[RadarrItem]):
         if run.import_wait_mode is not ImportWaitMode.OFF:
             flagged = flagged_urls(seadex_dict)
             stored = run.records.stored_records(f.infohash for f in flagged)
-            # No guard fields and no window: Radarr's import path reads nothing but the infohash.
-            pending_seeds = {
-                f.infohash: PendingSeed(
-                    facts=TorrentFacts(f.infohash, f.group, False, (), ()),
-                    placements={},
-                    excluded=(),
-                    claim=EntryClaim(
-                        al_id=al_id,
-                        series_id=0,
-                        title=title.display,
-                        coverage=None,
-                        url=sd_url,
-                        ordered_episode_ids=(),
-                        names=EntryNames(),
-                        preowned_episode_ids=(),
-                        slice_coverage=None,
-                        claimed_at="",
-                    ),
-                    stored=stored.get(f.infohash),
-                )
-                for f in flagged
-            }
+            facts = EntryFacts(
+                al_id=al_id, series_id=0, title=title.display, coverage=None, url=sd_url, guards=GuardFacts()
+            )
+            pending_seeds = {f.infohash: build_unscoped_seed(f, facts, stored.get(f.infohash)) for f in flagged}
 
         run.grab_and_cache(
             GrabRequest(

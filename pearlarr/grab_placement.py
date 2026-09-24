@@ -1,7 +1,7 @@
 """Grab-time placement: urls placed under the entry's scope, the records `attach_records` writes onto it, the seeds."""
 
 from collections.abc import Mapping, Sequence
-from dataclasses import dataclass, field, replace
+from dataclasses import dataclass, replace
 from types import MappingProxyType
 from typing import NamedTuple
 
@@ -9,7 +9,7 @@ from .coverage import coverage_string, episodes_from_ep_list
 from .episode_state import EpisodeFileStatus, EpisodeSnapshot, trusted_groups
 from .manual_import import EntryClaim, EntryNames, FileEpisodeMap, GuardFacts, OwnGroup, PendingImport, normalized_leaf
 from .placement_types import EpisodeAssignment, EpisodeIndex, PlacementBatch, TargetScope
-from .seadex_types import EpisodeRecord, ParsedFileInfo, SeadexDict, SeadexUrlItem, flagged_urls
+from .seadex_types import EpisodeRecord, FlaggedUrl, ParsedFileInfo, SeadexDict, SeadexUrlItem, flagged_urls
 from .window_placement import place_leftover, windows_of
 
 
@@ -149,22 +149,18 @@ def seed_batch(files: Sequence[SeedFile]) -> PlacementBatch:
 def place_release(files: Sequence[SeedFile], scope: SeedScope, resident: ResidentScope | None) -> UrlPlacement:
     """Place one url's files ONCE, by the `place_leftover` the import wait runs. Pure.
 
-    A new torrent places its whole batch under the entry's window. A torrent with a stored record places
-    the record's leftover under the stored claims' windows plus this entry's, the mapped ids already used,
-    and only when every window's series was read: a grab-time verdict under an unread map would be final
-    where the import poll retries, so the leftover waits for the poll instead.
+    A stored record's leftover is placed under every claim's window, and only when each window's series
+    was read: a grab-time verdict under an unread map would be final where the import poll retries.
     """
 
     batch = seed_batch(files)
-    if resident is None:
-        placeable = scope.can_place
-        seeded: dict[str, list[int]] = {}
-        windows: tuple[TargetScope, ...] = (scope.target(),)
+    seeded: dict[str, list[int]] = {} if resident is None else resident.record.seeded_map()
+    placeable = scope.can_place and (resident is None or resident.can_place)
+    if placeable:
+        windows = (scope.target(),) if resident is None else resident.windows(scope.al_id, scope.target())
+        assignment = place_leftover(seeded, batch, windows).merged
     else:
-        placeable = scope.can_place and resident.can_place
-        seeded = resident.record.seeded_map()
-        windows = resident.windows(scope.al_id, scope.target()) if placeable else ()
-    assignment = place_leftover(seeded, batch, windows).merged if placeable else EpisodeAssignment(())
+        assignment = EpisodeAssignment(())
     mapped = {**seeded, **assignment.assigned}
     records: list[EpisodeRecord] = []
     claimed: set[int] = set()
@@ -228,37 +224,37 @@ class EntryPlacements(NamedTuple):
         )
 
 
-@dataclass(frozen=True, slots=True)
-class PendingSeedContext:
-    """The per-entry values every claim built for one AniList entry carries.
-
-    One instance per `process_al_id` call, threaded whole into `build_pending_seeds` (instead of loose
-    params) and copied onto each claim the entry produces.
-    """
+@dataclass(frozen=True, slots=True, kw_only=True)
+class EntryFacts:
+    """What an entry is, independent of any torrent: the fields every claim it makes carries."""
 
     al_id: int
     """The AniList entry id, the claim's key."""
     series_id: int
-    """The Sonarr series id the entry's files belong to."""
+    """The Sonarr series id the entry's files belong to (0 for a Radarr movie)."""
     title: str
     """The AniList display title (logging only)."""
-    coverage: str | None = None
+    coverage: str | None
     """The entry's season/episode coverage at grab time (logging only)."""
-    url: str | None = None
+    url: str | None
     """The SeaDex entry URL at grab time (logging only)."""
-    guards: GuardFacts = field(default_factory=GuardFacts)
-    """The plan's overwrite-guard evidence, copied onto every claim unchanged
-    (see `GuardFacts`)."""
+    guards: GuardFacts
+    """The plan's overwrite-guard evidence, copied onto every claim unchanged (see `GuardFacts`)."""
 
 
 class TorrentFacts(NamedTuple):
     """What a listed torrent is, independent of any entry: the record's identity fields."""
 
     infohash: str
+    """The qBittorrent tracking key, lowercase."""
     release_group: str
+    """The SeaDex release group (authoritative)."""
     is_dual_audio: bool
+    """The listing's dual-audio flag."""
     seadex_files: tuple[str, ...]
+    """The listing's video file names, the import's progress denominator."""
     release_sizes: tuple[int, ...]
+    """The listing's file sizes, the trust policy's own-group vote."""
 
 
 class SeedRelease(NamedTuple):
@@ -321,11 +317,7 @@ class PendingSeed:
         return self.stored is not None
 
     def record_at(self, stamp: str, *, fresh: bool) -> PendingImport:
-        """The record to persist, stamped.
-
-        A new record is born at `stamp`. An accreted one takes the placements, the exclusions, and the
-        claim (replacing the entry's own), leaves cleanup, and restarts every clock when `fresh` (a re-add).
-        """
+        """The record to persist, stamped: born at `stamp`, or accreted, every clock restarted when `fresh`."""
 
         claim = replace(self.claim, claimed_at=stamp)
         if self.stored is None:
@@ -341,12 +333,10 @@ class PendingSeed:
                 release_sizes=self.facts.release_sizes,
             )
         record = self.stored.with_placements(self.placements).with_exclusions(self.excluded).with_claim(claim)
-        # A record with new files to import is active again; its owed effects re-run at the eventual retire.
-        record = replace(record, awaiting_cleanup=False)
         return record.restamped(stamp) if fresh else record
 
 
-def build_entry_claim(release: SeedRelease, scope: SeedScope, entry: PendingSeedContext) -> EntryClaim:
+def build_entry_claim(release: SeedRelease, scope: SeedScope, entry: EntryFacts) -> EntryClaim:
     """The entry's claim on the release: the whole map's ids inside the entry, its window, slice, and preowned ids.
 
     Pure. The claim's clock is blank: `PendingSeed.record_at` stamps it.
@@ -385,14 +375,11 @@ def build_entry_claim(release: SeedRelease, scope: SeedScope, entry: PendingSeed
     )
 
 
-def build_pending_seed(release: SeedRelease, scope: SeedScope, entry: PendingSeedContext) -> PendingSeed:
-    """Fold one flagged release into the entry's seed on its torrent.
+def build_pending_seed(release: SeedRelease, scope: SeedScope, entry: EntryFacts) -> PendingSeed:
+    """Fold one placed release into the entry's seed on its torrent. Pure, never places.
 
-    Pure: consumes the placement riding `release`, the entry's scope, and the per-entry context, and never
-    places. The files were placed by the same `place_leftover` the import wait runs, so a seed is an
-    import-time placement made early: a placed file is seeded, an excluded one (another slice's, a refused
-    duplicate) is recorded as never the record's to import, and anything held or skipped is left for import
-    time, where the parses are re-read.
+    A placed file is seeded, an excluded one recorded as never the record's, and a held or skipped one
+    left for import time, where the parses are re-read.
     """
 
     placed = release.placed
@@ -405,10 +392,40 @@ def build_pending_seed(release: SeedRelease, scope: SeedScope, entry: PendingSee
     )
 
 
+def build_unscoped_seed(flagged: FlaggedUrl, entry: EntryFacts, stored: PendingImport | None) -> PendingSeed:
+    """The seed of a torrent whose import reads nothing but its infohash (a Radarr grab): an id-less claim."""
+
+    return PendingSeed(
+        facts=TorrentFacts(
+            infohash=flagged.infohash,
+            release_group=flagged.group,
+            is_dual_audio=flagged.item.is_dual_audio,
+            seadex_files=(),
+            release_sizes=(),
+        ),
+        placements={},
+        excluded=(),
+        claim=EntryClaim(
+            al_id=entry.al_id,
+            series_id=entry.series_id,
+            title=entry.title,
+            coverage=entry.coverage,
+            url=entry.url,
+            ordered_episode_ids=(),
+            names=EntryNames(),
+            preowned_episode_ids=(),
+            slice_coverage=None,
+            claimed_at="",
+            guards=entry.guards,
+        ),
+        stored=stored,
+    )
+
+
 def build_pending_seeds(
     seadex_dict: SeadexDict,
     placed: EntryPlacements,
-    entry: PendingSeedContext,
+    entry: EntryFacts,
 ) -> dict[str, PendingSeed]:
     """Fold every flagged url carrying an infohash and a video file into its seed, keyed by infohash. Pure."""
 

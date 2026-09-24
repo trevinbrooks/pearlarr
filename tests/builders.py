@@ -30,7 +30,7 @@ from pearlarr.cache import (
 from pearlarr.clock import Clock
 from pearlarr.config import AppConfig, Arr
 from pearlarr.grab_pipeline import GrabPipeline, GrabRequest
-from pearlarr.grab_placement import PendingSeed, TorrentFacts
+from pearlarr.grab_placement import EntryFacts, PendingSeed, TorrentFacts
 from pearlarr.import_wait import ImportProbes, ImportWaitManager, PostImportCleanup
 from pearlarr.manual_import import (
     Deferral,
@@ -819,12 +819,29 @@ def pending_seed(
     """A seed on `infohash` (group NAN0, no files) claimed by `entry_claim(**claim)`, born unless `stored` is given."""
 
     return PendingSeed(
-        facts=TorrentFacts(infohash, "NAN0", False, (), ()),
+        facts=TorrentFacts(
+            infohash=infohash, release_group="NAN0", is_dual_audio=False, seadex_files=(), release_sizes=()
+        ),
         placements=placements or {},
         excluded=(),
         claim=entry_claim(claimed_at="", **claim),
         stored=stored,
     )
+
+
+def entry_facts(**overrides: Any) -> EntryFacts:
+    """Entry 1 on series 7 titled Show, with no coverage, url, or guard facts unless given."""
+
+    defaults: dict[str, Any] = {
+        "al_id": 1,
+        "series_id": 7,
+        "title": "Show",
+        "coverage": None,
+        "url": None,
+        "guards": GuardFacts(),
+    }
+    defaults.update(overrides)
+    return EntryFacts(**defaults)
 
 
 def grab_request(**overrides: Any) -> GrabRequest:
@@ -1107,6 +1124,23 @@ def entry_claim(**overrides: Any) -> EntryClaim:
     for key in ("ordered_episode_ids", "preowned_episode_ids"):
         defaults[key] = tuple(defaults[key])
     return EntryClaim(**defaults)
+
+
+def two_claim_record(
+    *,
+    al_ids: tuple[int, int] = (1, 2),
+    series_ids: tuple[int, int] = (7, 7),
+    windows: tuple[tuple[int, ...], tuple[int, ...]] = ((101, 102), (103, 104)),
+    titles: tuple[str, str] = ("Show", "Show"),
+    **record: Any,
+) -> PendingImport:
+    """A `pending_import(**record)` claimed by two entries, each on its series over its window."""
+
+    claims = tuple(
+        entry_claim(al_id=al_id, series_id=series_id, ordered_episode_ids=window, title=title)
+        for al_id, series_id, window, title in zip(al_ids, series_ids, windows, titles, strict=True)
+    )
+    return pending_import(claims=claims, **record)
 
 
 def pending_import(**overrides: Any) -> PendingImport:

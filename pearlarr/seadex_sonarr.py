@@ -9,10 +9,9 @@ from .arr_http import make_httpx_client
 from .config import Arr
 from .grab_pipeline import NO_SEEDS, GrabRequest
 from .grab_placement import (
-    NO_RESIDENTS,
+    EntryFacts,
     EntryPlacements,
     PendingSeed,
-    PendingSeedContext,
     SeedScope,
     build_pending_seeds,
     resident_scopes,
@@ -422,14 +421,16 @@ class SonarrSync(ArrSync[SonarrItem]):
         # Place every listed file where the import will put it, so the grab is judged by the map the import
         # runs: a torrent already downloading under a stored record is placed as that record's leftover, under
         # every claim's window. The series maps are the whole-series lists (a per-run cache hit each).
-        stored = self._stored_records(seadex_dict, run)
+        waits_on_imports = run.import_wait_mode is not ImportWaitMode.OFF
+        stored: dict[str, PendingImport] = self._stored_records(seadex_dict) if waits_on_imports else {}
         indexes = self._series_indexes(
             {sonarr_series_id, *(sid for record in stored.values() for sid in record.series_ids)}
         )
         scope = SeedScope(al_id, episode_index(ep_list), indexes.get(sonarr_series_id, episode_index([])), title.names)
-        residents = resident_scopes(seadex_dict, stored, indexes) if stored else NO_RESIDENTS
         placed = EntryPlacements.place(
-            scope, self._parse.parsed_files(seadex_dict, series_fp=self._episodes.series_fp), residents
+            scope,
+            self._parse.parsed_files(seadex_dict, series_fp=self._episodes.series_fp),
+            resident_scopes(seadex_dict, stored, indexes),
         )
         placed.attach_records(seadex_dict)
         self._log_placements(placed)
@@ -466,11 +467,11 @@ class SonarrSync(ArrSync[SonarrItem]):
         # trusts Sonarr's blind parse. Gated on the engine's RESOLVED mode (cli > config), not the raw config, so
         # a CLI override agrees with the engine's persist/reconcile/blocking gates.
         pending_seeds: Mapping[str, PendingSeed] = NO_SEEDS
-        if run.import_wait_mode is not ImportWaitMode.OFF:
+        if waits_on_imports:
             pending_seeds = build_pending_seeds(
                 seadex_dict,
                 placed,
-                PendingSeedContext(
+                EntryFacts(
                     al_id=al_id,
                     series_id=sonarr_series_id,
                     title=title.display,
@@ -496,12 +497,10 @@ class SonarrSync(ArrSync[SonarrItem]):
             ),
         )
 
-    def _stored_records(self, seadex_dict: SeadexDict, run: RunServices) -> dict[str, PendingImport]:
-        """The stored records on the entry's listed torrents, by infohash (none when the wait mode is off)."""
+    def _stored_records(self, seadex_dict: SeadexDict) -> dict[str, PendingImport]:
+        """The stored records on the entry's listed torrents, by infohash."""
 
-        if run.import_wait_mode is ImportWaitMode.OFF:
-            return {}
-        return run.records.stored_records(
+        return self._services.records.stored_records(
             url_item.infohash
             for rg_item in seadex_dict.values()
             for url_item in rg_item.urls.values()
