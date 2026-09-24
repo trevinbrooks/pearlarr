@@ -9,12 +9,12 @@ Pearlarr is a fork of [bbtufty/seadexarr](https://github.com/bbtufty/seadexarr).
 
 ### Changed
 
-- A torrent listed on several AniList entries is tracked by one pending record holding every entry's file map, so it is verified, removed from the queue, and moved to the post-import category once, after the last intended file lands. The wait rows and the queued, downloaded, and imported counts now count torrents, not entries, and a multi-entry row's label names every entry. An entry that lists a torrent it already claims re-judges the torrent's unmapped files and refreshes its claim. Pending records of the same torrent fold into one on the first start after upgrading (cache schema v5).
-- Past `advanced.max_torrents_to_add` a run keeps checking the remaining titles without grabbing, so a torrent already downloading for one entry still maps under the other entries listing it. The held titles are grabbed next run and counted in the summary. The title whose grab hit the cap exactly is cached like any other.
+- A torrent listed on several AniList entries is tracked by one pending record for all of them. The wait rows and the queued, downloaded, and imported counts now count torrents, not entries, and a multi-entry row's label names every entry. When an entry that already waits on a torrent is re-checked, the torrent's still-unmatched files are matched to that entry's episodes again. Pending records of the same torrent fold into one on the first start after upgrading (cache schema v5).
+- Past `advanced.max_torrents_to_add` a run keeps checking the remaining titles without grabbing, so a torrent already downloading stays matched to every entry that lists it. The held titles are grabbed next run and counted in the summary. The title whose grab hit the cap exactly is cached like any other.
 
 ### Fixed
 
-- A torrent listed on several AniList entries moves to the post-import category once every entry's files have imported, instead of staying in the grab category when its entries finished in the same pass.
+- A torrent listed on several AniList entries is verified, removed from the queue, and moved to the post-import category once, after the last entry's files have imported, instead of staying in the grab category when its entries finished in the same pass.
 
 ## [1.4.0] - 2026-09-23
 

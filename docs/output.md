@@ -357,7 +357,7 @@ The matching close of a `scope_opened` (anything nested deeper closes with it).
 
 ### `cap_reached`
 
-The `advanced.max_torrents_to_add` cap was reached. The run keeps checking the remaining titles without grabbing, so a torrent already downloading keeps its mapping, and the held titles are grabbed on later runs.
+The `advanced.max_torrents_to_add` cap was reached. The run keeps checking the remaining titles without grabbing, so a torrent already downloading stays matched to every entry that lists it, and the held titles are grabbed on later runs.
 
 ```json
 {

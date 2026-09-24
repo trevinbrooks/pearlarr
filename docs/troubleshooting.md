@@ -154,7 +154,7 @@ Titles with no public alternative stay in the summary's "needs action" list and 
 
 ## A Sonarr read the placement needs failed
 
-The run summary lists a title under "needs action" with "a Sonarr read the placement needs failed; will retry next run". Sonarr did not answer a read the grab-time placement needed, a parse of one of that release's file names or the episode list of a series the torrent is already downloading for, so part of the release could not be placed and the title was not cached. Nothing needs doing: the title is re-checked on the next run, and the row stops once Sonarr answers. A row that repeats every run means the same read fails every time. The debug log names the file or series.
+The run summary lists a title under "needs action" with "a Sonarr read the placement needs failed; will retry next run". Sonarr did not answer a read the grab-time placement needed, a parse of one of that release's file names or the episode list of a series the torrent is already downloading for, so part of the release could not be placed and the title was not cached. Nothing needs doing: the title is re-checked on the next run, and the row stops once Sonarr answers. A row that repeats every run means the same read fails every time. The debug log names the file, and the warning names the series.
 
 ## Tracker skips
 

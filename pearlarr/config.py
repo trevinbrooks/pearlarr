@@ -620,9 +620,9 @@ class AdvancedSettings(_ConfigBase):
     """Cap on torrents added per run. `0` removes the cap.
 
     Keeps a first run on a large library from flooding qBittorrent. Past the cap a
-    run still checks every title, so a torrent already downloading keeps its
-    mapping, and grabs the held titles on later runs. Preview runs ignore the cap,
-    so a preview always reports the whole library.
+    run still checks every title, so a torrent already downloading stays matched to
+    every entry that lists it, and the held titles are grabbed on later runs.
+    Preview runs ignore the cap, so a preview always reports the whole library.
     """
 
     detect_arr_activity: bool = True
