@@ -7,6 +7,15 @@ Pearlarr is a fork of [bbtufty/seadexarr](https://github.com/bbtufty/seadexarr).
 
 ## [Unreleased]
 
+### Changed
+
+- A torrent listed on several AniList entries is tracked by one pending record holding every entry's file map, so it is verified, removed from the queue, and moved to the post-import category once, after the last intended file lands. The wait rows and the queued, downloaded, and imported counts now count torrents, not entries, and a multi-entry row's label names every entry. An entry that lists a torrent it already claims re-judges the torrent's unmapped files and refreshes its claim. Pending records of the same torrent fold into one on the first start after upgrading (cache schema v5).
+- Past `advanced.max_torrents_to_add` a run keeps checking the remaining titles without grabbing, so a torrent already downloading for one entry still maps under the other entries listing it. The held titles are grabbed next run and counted in the summary. The title whose grab hit the cap exactly is cached like any other.
+
+### Fixed
+
+- A torrent listed on several AniList entries moves to the post-import category once every entry's files have imported, instead of staying in the grab category when its entries finished in the same pass.
+
 ## [1.4.0] - 2026-09-23
 
 ### Changed
