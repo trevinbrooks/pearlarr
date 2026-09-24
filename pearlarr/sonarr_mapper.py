@@ -148,10 +148,8 @@ class FileEpisodeMapper:
     ) -> FileAssignment:
         """Build the final `basename -> episode ids` map from OUR resolved set, never from Sonarr's parse alone.
 
-        Seeded files keep their grab-time ids. The on-disk leftover is placed under one window per claim, in
-        claim order (`indexes` holds each claim's series), and anything ambiguous comes back skipped for the
-        caller to warn about. The record is never mutated: fresh placements ride `placed` for the caller to
-        persist. A basename duplicated across folders carries one verdict.
+        Seeded files keep their ids, the on-disk leftover is placed under one window per claim in claim
+        order, and anything ambiguous comes back skipped. The record is never mutated: fresh placements ride `placed`.
         """
 
         on_disk = {

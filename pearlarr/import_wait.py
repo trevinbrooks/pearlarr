@@ -3,7 +3,7 @@
 import logging
 from collections.abc import Callable
 from dataclasses import dataclass, field, replace
-from typing import Any, NamedTuple
+from typing import NamedTuple
 
 import qbittorrentapi
 
@@ -560,15 +560,16 @@ class ImportWaitManager:
         """
 
         cutoff = pending_cutoff(self.imports.pending_max_age_days)
-        # The clocks are read off the raw rows: only an aged row rehydrates, for its note.
-        aged: dict[str, dict[str, Any]] = {}
-        for infohash, raw in self._records.rows().items():
-            newest = newest_claimed_at_of(raw)
+        rows = self._records.rows()
+        clocks = {infohash: newest_claimed_at_of(raw) for infohash, raw in rows.items()}
+        for infohash, newest in clocks.items():
             if newest is None:
                 self.logger.debug(f"Pending import {infohash} has no parseable timestamp; dropping as expired")
                 self._records.drop(infohash)
-            elif newest < cutoff:
-                aged[infohash] = raw
+        # The clocks are read off the raw rows: only an aged row rehydrates, for its note.
+        aged = {
+            infohash: rows[infohash] for infohash, newest in clocks.items() if newest is not None and newest < cutoff
+        }
         for pending in self._records.hydrate(aged).values():
             # A flagged record's import succeeded. Only the cleanup is being abandoned.
             goal = "its post-import cleanup" if pending.awaiting_cleanup else "it"
