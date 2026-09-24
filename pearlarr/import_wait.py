@@ -3,7 +3,7 @@
 import logging
 from collections.abc import Callable
 from dataclasses import dataclass, field, replace
-from typing import NamedTuple
+from typing import Any, NamedTuple
 
 import qbittorrentapi
 
@@ -28,6 +28,7 @@ from .manual_import import (
     WaitOutcome,
     classify_pending,
     is_awaiting_cleanup,
+    newest_claimed_at_of,
     sanitize_torrent_telemetry,
 )
 from .output import SPARK_SAMPLES, Phase, TorrentView, WaitKind, WaitSnapshot, hub_error, hub_note, hub_warn
@@ -560,20 +561,23 @@ class ImportWaitManager:
         """
 
         cutoff = pending_cutoff(self.imports.pending_max_age_days)
-        for pending in self._records.hydrate(self._records.rows()).values():
-            newest = pending.newest_claimed_at()
+        # The clocks are read off the raw rows: only an aged row rehydrates, for its note.
+        aged: dict[str, dict[str, Any]] = {}
+        for infohash, raw in self._records.rows().items():
+            newest = newest_claimed_at_of(raw)
             if newest is None:
-                self.logger.debug(f"Pending import {pending.infohash} has no parseable timestamp; dropping as expired")
-                self._records.drop(pending.infohash)
-                continue
-            if newest < cutoff:
-                # A flagged record's import succeeded. Only the cleanup is being abandoned.
-                goal = "its post-import cleanup" if pending.awaiting_cleanup else "it"
-                hub_note(
-                    f"Pending import {pending.display_label} is older than "
-                    f"{count_noun(self.imports.pending_max_age_days, 'day')} - giving up on {goal}",
-                )
-                self._records.drop(pending.infohash)
+                self.logger.debug(f"Pending import {infohash} has no parseable timestamp; dropping as expired")
+                self._records.drop(infohash)
+            elif newest < cutoff:
+                aged[infohash] = raw
+        for pending in self._records.hydrate(aged).values():
+            # A flagged record's import succeeded. Only the cleanup is being abandoned.
+            goal = "its post-import cleanup" if pending.awaiting_cleanup else "it"
+            hub_note(
+                f"Pending import {pending.display_label} is older than "
+                f"{count_noun(self.imports.pending_max_age_days, 'day')} - giving up on {goal}",
+            )
+            self._records.drop(pending.infohash)
 
 
 # Cap on deferral credit, in ready timeouts per row: Sonarr work wedged forever (a command in flight, a pass that

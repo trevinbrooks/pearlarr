@@ -924,8 +924,7 @@ class PendingImport:
     def newest_claimed_at(self) -> datetime | None:
         """The newest parseable claim stamp, the age the TTL drop reads (None when no claim stamp parses)."""
 
-        stamps = [moment for claim in self.claims if (moment := parse_stamp_or_none(claim.claimed_at)) is not None]
-        return max(stamps) if stamps else None
+        return _newest_stamp(claim.claimed_at for claim in self.claims)
 
     def to_json(self) -> dict[str, Any]:
         """Serialize to the plain dict persisted under `pending_imports`."""
@@ -972,6 +971,19 @@ def added_at_of(raw: dict[str, Any]) -> str:
 
     stamp = raw.get("added_at", "")
     return stamp if isinstance(stamp, str) else ""
+
+
+def newest_claimed_at_of(raw: dict[str, Any]) -> datetime | None:
+    """The newest parseable claim stamp off a stored row's raw dict: the TTL clock, read without a rehydration."""
+
+    return _newest_stamp(claim.get("claimed_at", "") for claim in raw.get("claims", []))
+
+
+def _newest_stamp(stamps: Iterable[str]) -> datetime | None:
+    """The newest of the stamps that parse, or None when none does."""
+
+    moments = [moment for stamp in stamps if (moment := parse_stamp_or_none(stamp)) is not None]
+    return max(moments) if moments else None
 
 
 def hydrate_pending(rows: Mapping[str, dict[str, Any]], guards: Mapping[int, GuardFacts]) -> dict[str, PendingImport]:
