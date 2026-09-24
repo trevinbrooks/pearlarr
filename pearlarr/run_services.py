@@ -508,7 +508,7 @@ class RunServices:
 
     @property
     def records(self) -> PendingRecords:
-        """The pending-record seam bound to the current run: the strategies read stored records through it."""
+        """The one pending-record seam bound to the current run, shared by the strategies and the wait manager."""
 
         return self._grab_pipeline.records
 

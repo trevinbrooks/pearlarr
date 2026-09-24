@@ -58,7 +58,6 @@ class RadarrSync(ArrSync[RadarrItem]):
         self._services = services
         self._config = deps.config
         self.logger = deps.logger
-        self.cache_store = deps.cache_store
         # The check's Radarr import history, memoized. Reset at run start (get_items) so it can't stale.
         self._evidence: _ImportEvidence | None = None
         # Two id sources for collect_anime_movies: the resolver's Anime-IDs candidate sets
@@ -301,7 +300,7 @@ class RadarrSync(ArrSync[RadarrItem]):
         floor = datetime.now(UTC) - timedelta(days=self._config.imports.pending_max_age_days)
         stamps = [
             moment.astimezone(UTC)
-            for raw in self.cache_store.get_pending(Arr.RADARR).values()
+            for raw in self._services.records.rows().values()
             if (moment := parse_stamp_or_none(added_at_of(raw))) is not None
         ]
         oldest = min(stamps) if stamps else floor

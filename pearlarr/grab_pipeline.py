@@ -95,7 +95,7 @@ class GrabPipeline:
 
     @property
     def records(self) -> PendingRecords:
-        """The pending-record seam, bound to the current run (the strategies read stored records through it)."""
+        """The pending-record seam, bound to the current run (the hub hands it to every other reader)."""
 
         return self._records
 

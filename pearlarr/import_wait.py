@@ -327,12 +327,13 @@ class ImportWaitManager:
     _ctx: RunContext
     """The current run's context. `__init__` seeds it through the first `begin_run`, which rebinds every run."""
 
-    def __init__(self, *, deps: RunDeps, ctx: RunContext) -> None:
+    def __init__(self, *, deps: RunDeps, ctx: RunContext, records: PendingRecords) -> None:
         self.imports = deps.config.imports
         self.clock = deps.clock
         self.logger = deps.logger
         self._reporter = deps.reporter
-        self._records = PendingRecords(deps.cache_store)
+        # The hub's seam, shared with the grab pipeline: one run list, one store binding.
+        self._records = records
         self.probes = ImportProbes(qbit=deps.qbit, logger=deps.logger)
         self._cleanup = PostImportCleanup(deps, self._records, self.probes)
         self.begin_run(ctx, None)
