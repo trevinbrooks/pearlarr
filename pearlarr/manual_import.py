@@ -908,12 +908,12 @@ class PendingImport:
         preowned ids: the window follows the newest plan, the TTL and the wait bar's net-out never restart.
         """
 
+        claims = (*self.claims, claim)
         for index, stored in enumerate(self.claims):
             if stored.al_id == claim.al_id:
                 kept = replace(claim, preowned_episode_ids=stored.preowned_episode_ids, claimed_at=stored.claimed_at)
                 claims = (*self.claims[:index], kept, *self.claims[index + 1 :])
                 break
-        claims = (*self.claims, claim)
         return replace(self, claims=claims, awaiting_cleanup=False)
 
     def restamped(self, stamp: str) -> "PendingImport":

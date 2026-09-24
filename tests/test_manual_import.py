@@ -296,7 +296,6 @@ class TestPendingImportClaims:
         assert flagged.with_claim(entry_claim(al_id=2, series_id=8)).awaiting_cleanup is False
         assert flagged.with_claim(entry_claim(ordered_episode_ids=[101])).awaiting_cleanup is False
 
-    def test_restamped_sets_the_birth_and_every_claims_clock(self) -> None:
     def test_claim_holding_is_the_first_claim_whose_window_names_the_id(self) -> None:
         # An unscoped claim names nothing, so an id outside every window holds no claim.
         first = entry_claim(al_id=1, ordered_episode_ids=[101, 102])
@@ -307,6 +306,7 @@ class TestPendingImportClaims:
         assert pending.claim_holding(201) is second
         assert pending.claim_holding(999) is None
 
+    def test_restamped_sets_the_birth_and_every_claims_clock(self) -> None:
         pending = pending_import(
             claims=(
                 entry_claim(al_id=1, claimed_at="2026-06-24 00:00:00"),
