@@ -76,7 +76,9 @@ _CANDIDATE_PATH = "/d/Show - 01 [1080p].mkv"
 def _bare_snapshot(pending: PendingImport) -> RecordSnapshot:
     """An empty same-poll index for every series the record claims (nothing on disk yet)."""
 
-    return RecordSnapshot({sid: EpisodeSnapshot(episodes=episode_index([]), trusted={}) for sid in pending.series_ids})
+    return RecordSnapshot(
+        pending, {sid: EpisodeSnapshot(episodes=episode_index([]), trusted={}) for sid in pending.series_ids}
+    )
 
 
 def _drive_manual_import(

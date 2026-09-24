@@ -1976,6 +1976,7 @@ class TestRecordSnapshot:
     def _snapshot() -> RecordSnapshot:
         # Series 7 holds 101 under the record's own group, series 8 a bare 201.
         return RecordSnapshot(
+            _two_series_record(),
             {
                 7: EpisodeSnapshot(
                     episodes=episode_index([sonarr_ep(1, 1, ep_id=101, release_group="SubGroup")]),
@@ -2218,6 +2219,28 @@ class TestMultiSeriesImport:
         assert store.get_guards_calls == 1
         assert sonarr.episodes_calls == [7, 8]
         assert progress == ImportProgress(0, 2, determinate=True)
+
+    def test_each_claimed_id_is_judged_under_its_own_claims_guards(self) -> None:
+        # One series, two claims on it: A's plan judged group G stale, B's picks carry G. G files sit on
+        # both windows' episodes, so A's id still needs importing while B's is done, where the series'
+        # merged evidence would have trusted G for both. One episode fetch serves both claims.
+        pending = pending_import(
+            file_episode_map={_SHOW_FILE: [101], _OTHER_FILE: [102]},
+            claims=(
+                entry_claim(al_id=1, ordered_episode_ids=(101,), guards=GuardFacts(stale_groups=("G",))),
+                entry_claim(al_id=2, ordered_episode_ids=(102,), guards=GuardFacts(entry_groups=("G",))),
+            ),
+        )
+        sonarr = _PerSeriesSonarr(
+            {7: [sonarr_ep(1, 1, ep_id=101, release_group="G"), sonarr_ep(1, 2, ep_id=102, release_group="G")]},
+            candidates=[],
+        )
+
+        seed = self._strat(sonarr)._reconciler._seed_statuses(pending, [101, 102])
+
+        assert seed.statuses.by_id == {101: EpisodeFileStatus.OTHER_GROUP, 102: EpisodeFileStatus.RECOMMENDED}
+        assert seed.snapshot.by_series[7].statuses([101]).by_id == {101: EpisodeFileStatus.RECOMMENDED}
+        assert sonarr.episodes_calls == [7]
 
 
 def _import_history(download_id: str, *, event: str = "movieFolderImported") -> HistoryRecord:

@@ -92,9 +92,9 @@ def test_services_read_selection_staleness_from_the_store_at_construction() -> N
 
 
 def test_sonarr_sync_init_shares_cache_store_for_staged_writes() -> None:
-    # The parse-cache writer (SonarrParseCache) and the seed reader (ImportReconciler)
-    # must share the strat's cache_store by identity, or a staged parse write would not
-    # be visible to build_pending_seeds.
+    # The parse-cache writer (SonarrParseCache) and the seed reader (ImportReconciler,
+    # through the hub's record seam) must share the strat's cache_store by identity, or
+    # a staged parse write would not be visible to build_pending_seeds.
     deps = make_run_deps()
     services = RunServices(deps, Arr.SONARR)
     # Inject a typed fake through the sonarr_client seam so the collaborator wiring
@@ -104,7 +104,8 @@ def test_sonarr_sync_init_shares_cache_store_for_staged_writes() -> None:
     strat = SonarrSync(deps, services, sonarr_client=FakeSonarrClient())
 
     assert strat._parse.cache_store is deps.cache_store
-    assert strat._reconciler.cache_store is deps.cache_store
+    assert strat._reconciler._records is services.records
+    assert services.records._store is deps.cache_store
 
 
 def test_radarr_sync_init_builds_without_network_via_client_seam() -> None:

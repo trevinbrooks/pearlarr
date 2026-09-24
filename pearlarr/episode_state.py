@@ -126,18 +126,28 @@ class EpisodeSnapshot(NamedTuple):
         return TargetStatuses(statuses)
 
 
+_NO_CLAIM_SNAPSHOTS: Mapping[int, EpisodeSnapshot] = MappingProxyType({})
+
+
 @dataclass(frozen=True, slots=True)
 class RecordSnapshot:
-    """One poll's coherent view of every series a record spans, keyed by series id."""
+    """One poll's coherent view of a record: each claimed series' snapshot, and each claim's own over that series."""
+
+    pending: PendingImport
+    """The record the poll judges, whose claims route each target."""
 
     by_series: Mapping[int, EpisodeSnapshot]
-    """Each series' same-poll snapshot."""
+    """Each claimed series' same-poll snapshot under the series' merged guard evidence (the routing fallback)."""
+
+    by_claim: Mapping[int, EpisodeSnapshot] = _NO_CLAIM_SNAPSHOTS
+    """Each claim's snapshot by AniList id: its series' same index under the claim's OWN guard evidence."""
 
     indexes: Mapping[int, EpisodeIndex] = field(init=False)
     """Each series' fresh episode index, the placement windows' inputs (a view over `by_series`)."""
 
     def __post_init__(self) -> None:
         object.__setattr__(self, "by_series", MappingProxyType(dict(self.by_series)))
+        object.__setattr__(self, "by_claim", MappingProxyType(dict(self.by_claim)))
         object.__setattr__(
             self,
             "indexes",
@@ -149,19 +159,23 @@ class RecordSnapshot:
 
         return next((sid for sid, snapshot in self.by_series.items() if ep_id in snapshot.episodes.by_id), None)
 
-    def statuses(self, target_ep_ids: Sequence[int]) -> TargetStatuses:
-        """Classify each target under its series' snapshot; an id no index holds is ABSENT."""
+    def snapshot_for(self, ep_id: int) -> EpisodeSnapshot | None:
+        """The snapshot that judges `ep_id`: its holding claim's, else the series' whose index holds it."""
 
-        grouped: dict[int | None, list[int]] = {}
-        for ep_id in dict.fromkeys(target_ep_ids):
-            grouped.setdefault(self.series_of(ep_id), []).append(ep_id)
+        claim = self.pending.claim_holding(ep_id)
+        if claim is not None and (own := self.by_claim.get(claim.al_id)) is not None:
+            return own
+        series_id = self.series_of(ep_id)
+        return None if series_id is None else self.by_series[series_id]
+
+    def statuses(self, target_ep_ids: Sequence[int]) -> TargetStatuses:
+        """Classify each target under the snapshot that judges it; an id none judges is ABSENT."""
+
         by_id: dict[int, EpisodeFileStatus] = {}
-        for series_id, ids in grouped.items():
-            if series_id is None:
-                by_id.update(dict.fromkeys(ids, EpisodeFileStatus.ABSENT))
-            else:
-                by_id.update(self.by_series[series_id].statuses(ids).by_id)
-        return TargetStatuses({ep_id: by_id[ep_id] for ep_id in dict.fromkeys(target_ep_ids)})
+        for ep_id in dict.fromkeys(target_ep_ids):
+            snapshot = self.snapshot_for(ep_id)
+            by_id[ep_id] = EpisodeFileStatus.ABSENT if snapshot is None else snapshot.statuses([ep_id]).by_id[ep_id]
+        return TargetStatuses(by_id)
 
 
 def trusted_groups(

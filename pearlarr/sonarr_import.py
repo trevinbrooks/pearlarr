@@ -1,13 +1,11 @@
 """Import-time subsystem: decide a download's state, then build/POST the import."""
 
 import logging
-from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, field, replace
 from typing import NamedTuple
 from urllib.parse import urlsplit
 
 from .arr_http import DeleteOutcome
-from .config import Arr
 from .episode_state import EpisodeFileStatus, EpisodeSnapshot, RecordSnapshot, TargetStatuses, trusted_groups
 from .import_files import CandidateFile, ImportAction, ImportDecision, plan_import_files
 from .import_quality import (
@@ -26,16 +24,15 @@ from .manual_import import (
     Deferral,
     EffectStatus,
     FileEpisodeMap,
-    GuardFacts,
     ImportProbe,
     ImportProgress,
     PendingImport,
-    hydrate_pending,
     normalized_leaf,
     path_leaf,
     translate_download_path,
 )
 from .output import hub_note, hub_warn
+from .pending_records import PendingRecords
 from .placement_types import episode_index
 from .probe_verdicts import (
     ContentPaths,
@@ -126,19 +123,16 @@ class _ImportContext:
     at_deadline: bool
     """Whether this is the readiness-deadline attempt, the one that warns."""
 
-    def series_of(self, episode_ids: Sequence[int]) -> int | None:
-        """The series a decision posts under: the claim whose window holds its first id, else the index's.
+    def posting_series(self, ep_id: int) -> int | None:
+        """The series a file posts under: its holding claim's, else the index's, else a one-series record's.
 
-        A one-series record always routes there (an index read failure must not strand its files).
+        The last arm keeps an index read failure from stranding a one-series record's files.
         """
 
-        if not episode_ids:
-            return None
-        first = episode_ids[0]
-        claim = next((c for c in self.pending.claims if first in c.ordered_episode_ids), None)
+        claim = self.pending.claim_holding(ep_id)
         if claim is not None:
             return claim.series_id
-        if (series_id := self.snapshot.series_of(first)) is not None:
+        if (series_id := self.snapshot.series_of(ep_id)) is not None:
             return series_id
         series_ids = self.pending.series_ids
         return series_ids[0] if len(series_ids) == 1 else None
@@ -483,7 +477,7 @@ class ImportExecutor:
                 case ImportAction.MISSING:
                     missing.append(decision.basename)
                 case ImportAction.IMPORT:
-                    series_id = context.series_of(decision.episode_ids)
+                    series_id = context.posting_series(decision.episode_ids[0]) if decision.episode_ids else None
                     if series_id is None:
                         unrouted.append(decision.basename)
                     else:
@@ -527,6 +521,7 @@ class ImportExecutor:
             # Untracked Execute with Auto resolves to MOVE (no DownloadClientItem to report CanMoveFiles),
             # ripping files from the seeding torrent. An explicitly configured move/copy is honored as set.
             import_mode = "copy"
+        # One command for every series the record spans: Sonarr's ManualImportCommand resolves the series per file.
         cmd_id = self.sonarr.manual_import_execute(
             files=files,
             import_mode=import_mode,
@@ -675,13 +670,13 @@ class _SeedStatuses(NamedTuple):
 class ImportReconciler:
     """Decides a completed download's state and builds the grab-time seeds."""
 
-    def __init__(self, deps: RunDeps, episodes: SonarrEpisodes, executor: ImportExecutor) -> None:
-        """Bind the cache/logger off the deps + the composed collaborators."""
+    def __init__(self, records: PendingRecords, episodes: SonarrEpisodes, executor: ImportExecutor) -> None:
+        """Bind the run's record seam and the composed collaborators (the logger is the executor's)."""
 
+        self._records = records
         self._episodes = episodes
         self._executor = executor
-        self.cache_store = deps.cache_store
-        self.logger = deps.logger
+        self.logger = executor.logger
 
     def import_completed(
         self,
@@ -772,21 +767,28 @@ class ImportReconciler:
         return ImportProgress(done, total, determinate=True)
 
     def _seed_statuses(self, pending: PendingImport, targets: list[int]) -> _SeedStatuses:
-        """Fetch every claimed series' episodes FRESH and classify `targets` against them.
+        """Fetch every claimed series' episodes FRESH and classify `targets`, each under its own claim's guards.
 
-        `[]` still builds the snapshot. One guards read serves every series' trust policy.
+        `[]` still builds the snapshot. One guards read and one episode fetch per series serve every policy.
         """
 
-        guards = self.cache_store.get_guards(Arr.SONARR)
+        guards = self._records.guards()
         by_series: dict[int, EpisodeSnapshot] = {}
+        by_claim: dict[int, EpisodeSnapshot] = {}
         for series_id in pending.series_ids:
-            own = pending.guards_for(series_id)
+            episodes = episode_index(self._episodes.fresh_episodes(series_id))
+            # Unfiltered: a cleanup-flagged sibling's files are on disk, so dropping it would loosen the guard.
+            siblings = self._records.for_series(series_id, guards)
+            merged = pending.guards_for(series_id)
             by_series[series_id] = EpisodeSnapshot(
-                episodes=episode_index(self._episodes.fresh_episodes(series_id)),
-                trusted=trusted_groups(own, pending.own_group, self._series_pending_records(series_id, guards)),
-                owned_episode_sizes=own.owned_sizes,
+                episodes, trusted_groups(merged, pending.own_group, siblings), merged.owned_sizes
             )
-        snapshot = RecordSnapshot(by_series)
+            for claim in pending.claims:
+                if claim.series_id == series_id:
+                    by_claim[claim.al_id] = EpisodeSnapshot(
+                        episodes, trusted_groups(claim.guards, pending.own_group, siblings), claim.guards.owned_sizes
+                    )
+        snapshot = RecordSnapshot(pending, by_series, by_claim)
         return _SeedStatuses(snapshot, snapshot.statuses(targets))
 
     @staticmethod
@@ -800,13 +802,3 @@ class ImportReconciler:
         preowned = len(set(pending.preowned_ids()) & set(targets))
         recommended = sum(1 for status in statuses.by_id.values() if status is EpisodeFileStatus.RECOMMENDED)
         return max(0, recommended - preowned), len(targets) - preowned
-
-    def _series_pending_records(self, series_id: int, guards: Mapping[int, GuardFacts]) -> list[PendingImport]:
-        """The records claiming the series (any release group), rehydrated UNFILTERED under `guards`.
-
-        This feeds `trusted_groups` (the overwrite guard), and a cleanup-flagged record's files are on
-        disk, so dropping it would loosen the guard. A fresh read already filtered in SQL, so a record
-        dropped earlier this run is absent.
-        """
-
-        return list(hydrate_pending(self.cache_store.get_pending_for_series(Arr.SONARR, series_id), guards).values())

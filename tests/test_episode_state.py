@@ -6,7 +6,7 @@ from pearlarr.manual_import import normalize_group
 from pearlarr.placement_types import episode_index
 from pearlarr.seadex_types import SonarrEpisode
 
-from .builders import sonarr_ep
+from .builders import entry_claim, pending_import, sonarr_ep
 
 
 class TestEpisodeFileStatuses:
@@ -117,7 +117,10 @@ class TestRecordSnapshot:
     """`RecordSnapshot`: one series snapshot per claim series, the window indexes derived, each target routed."""
 
     @staticmethod
-    def _snapshot() -> RecordSnapshot:
+    def _snapshot(by_claim: dict[int, EpisodeSnapshot] | None = None) -> RecordSnapshot:
+        pending = pending_import(
+            claims=(entry_claim(al_id=1, series_id=7, ordered_episode_ids=[1]), entry_claim(al_id=2, series_id=8)),
+        )
         first = EpisodeSnapshot(
             episode_index([sonarr_ep(1, 1, ep_id=1, episode_file_id=10, release_group="SubGroup")]),
             {"subgroup": None},
@@ -126,7 +129,7 @@ class TestRecordSnapshot:
             episode_index([sonarr_ep(1, 1, ep_id=2, episode_file_id=20, release_group="SubGroup")]),
             {},
         )
-        return RecordSnapshot({7: first, 8: second})
+        return RecordSnapshot(pending, {7: first, 8: second}, by_claim or {})
 
     def test_indexes_are_each_series_episode_index(self) -> None:
         snapshot = self._snapshot()
@@ -144,3 +147,19 @@ class TestRecordSnapshot:
             (3, EpisodeFileStatus.ABSENT),
             (1, EpisodeFileStatus.RECOMMENDED),
         ]
+
+    def test_a_claimed_id_is_judged_under_its_holding_claims_snapshot(self) -> None:
+        # Claim 1's window names id 1, so its own snapshot (the same index, the group untrusted) judges
+        # it ahead of the series' merged one. Id 2 holds no claim (claim 2 is unscoped) and reads the series'.
+        own = EpisodeSnapshot(
+            episode_index([sonarr_ep(1, 1, ep_id=1, episode_file_id=10, release_group="SubGroup")]),
+            {},
+        )
+        snapshot = self._snapshot(by_claim={1: own})
+
+        assert snapshot.snapshot_for(1) is snapshot.by_claim[1]
+        assert snapshot.snapshot_for(2) is snapshot.by_series[8]
+        assert snapshot.snapshot_for(3) is None
+        assert snapshot.statuses([1, 2]).by_id == {1: EpisodeFileStatus.OTHER_GROUP, 2: EpisodeFileStatus.OTHER_GROUP}
+        # Without a per-claim snapshot the holding claim's id falls back to the series' view.
+        assert self._snapshot().statuses([1]).by_id == {1: EpisodeFileStatus.RECOMMENDED}

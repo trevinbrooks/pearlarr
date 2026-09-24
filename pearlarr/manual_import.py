@@ -815,15 +815,20 @@ class PendingImport:
 
         return tuple(dict.fromkeys(claim.al_id for claim in self.claims))
 
-    def claim_for(self, series_id: int) -> "EntryClaim | None":
+    def claim_for(self, series_id: int) -> EntryClaim | None:
         """The first claim on `series_id`, if any."""
 
         return next((claim for claim in self.claims if claim.series_id == series_id), None)
 
-    def claim_of(self, al_id: int) -> "EntryClaim | None":
+    def claim_of(self, al_id: int) -> EntryClaim | None:
         """The entry's claim, if it holds one."""
 
         return next((claim for claim in self.claims if claim.al_id == al_id), None)
+
+    def claim_holding(self, ep_id: int) -> EntryClaim | None:
+        """The first claim whose window names `ep_id` (an unscoped claim names nothing), if any."""
+
+        return next((claim for claim in self.claims if ep_id in claim.ordered_episode_ids), None)
 
     @property
     def display_label(self) -> str:

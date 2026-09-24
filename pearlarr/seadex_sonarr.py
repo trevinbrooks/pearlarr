@@ -185,7 +185,7 @@ class SonarrSync(ArrSync[SonarrItem]):
         # Import-reconcile collaborator: the import_completed decision + the
         # grab-time pending-seed build. Composes the episode collaborator + the
         # executor. The import_completed / process_al_id hooks delegate to it.
-        self._reconciler = ImportReconciler(deps, self._episodes, self._executor)
+        self._reconciler = ImportReconciler(self._services.records, self._episodes, self._executor)
 
         self.ignore_movies_in_radarr = self._config.sonarr.ignore_movies_in_radarr
 
