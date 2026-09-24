@@ -27,7 +27,7 @@ from pearlarr.output.recording import RecordingHub
 from pearlarr.protocols import ImportCompleter
 from pearlarr.reporter import RunContext
 from pearlarr.run_loop import RunLoop
-from pearlarr.seadex_types import ProgressSink
+from pearlarr.seadex_types import HistoryRecord, ProgressSink
 from pearlarr.wait_view import WaitOutcomeRow, WaitResult
 
 from .builders import (
@@ -359,6 +359,25 @@ class TestScanItemContext:
         assert engine._ctx.arr_title == "A"
 
 
+class _CapFillingStrategy(FakeStrategy):
+    """A `FakeStrategy` whose processed id fills the engine's grab cap exactly, holding nothing past it."""
+
+    def __init__(self, *, items: list[FakeArrItem], anilist_ids: dict[int, MappingEntry], fills: RunLoop) -> None:
+        super().__init__(items=items, anilist_ids=anilist_ids, history=[_IMPORT_EVENT])
+        self._fills = fills
+
+    @override
+    def process_al_id(self, item: FakeArrItem, al_id: int, mapping: MappingEntry) -> None:
+        super().process_al_id(item, al_id, mapping)
+        self._fills._services.ctx.torrents_added = self._fills._config.advanced.max_torrents_to_add
+
+
+# One import event on the scanned item, so the activity scan has a checkpoint to commit.
+_IMPORT_EVENT = HistoryRecord(
+    id=1, date="2026-07-06T10:00:00Z", item_id=3, event_type="downloadFolderImported", download_id=None, reason=None
+)
+
+
 class TestSelectionRecheck:
     """The stale-selection announcement + the full-coverage vouch rule.
 
@@ -377,13 +396,21 @@ class TestSelectionRecheck:
         config: AppConfig | None = None,
         seadex: _FakeGateway | None = None,
         held: bool = False,
+        cap_filled: bool = False,
     ) -> tuple[RunLoop, RecordingHub]:
         recording = install_recording_hub()
         engine = _engine(_FinalizeRecorder(), logger, config=config, seadex=seadex)
-        strategy = FakeStrategy(
-            items=[FakeArrItem(item_id=3, title="A")],
-            anilist_ids={11: MappingEntry(anilist_id=11)},
-            holds_through=engine._services if held else None,
+        items = [FakeArrItem(item_id=3, title="A")]
+        anilist_ids = {11: MappingEntry(anilist_id=11)}
+        strategy = (
+            _CapFillingStrategy(items=items, anilist_ids=anilist_ids, fills=engine)
+            if cap_filled
+            else FakeStrategy(
+                items=items,
+                anilist_ids=anilist_ids,
+                holds_through=engine._services if held else None,
+                history=[_IMPORT_EVENT] if held else None,
+            )
         )
         engine._services._selection_stale = stale
         engine.run_sync(strategy, item_id=item_id, dry_run=True, boot=BootFlow())
@@ -432,10 +459,19 @@ class TestSelectionRecheck:
 
         assert self._vouched_any(engine) is False
 
-    def test_held_run_does_not_vouch(self, logger: logging.Logger) -> None:
+    def test_held_run_neither_vouches_nor_commits_the_checkpoint(self, logger: logging.Logger) -> None:
         engine, _ = self._run(logger, held=True)
 
         assert self._vouched_any(engine) is False
+        assert engine.cache_store.get_history_checkpoint(Arr.SONARR) is None
+
+    def test_exact_cap_run_with_nothing_held_vouches_and_commits_the_checkpoint(self, logger: logging.Logger) -> None:
+        # Reaching the cap is not a hold: only a title held PAST it leaves the pass partial.
+        engine, _ = self._run(logger, cap_filled=True)
+
+        assert engine._services.ctx.stats.held_by_cap == 0
+        assert self._vouched_any(engine) is True
+        assert engine.cache_store.get_history_checkpoint(Arr.SONARR) is not None
 
     def test_outage_run_does_not_vouch(self, logger: logging.Logger) -> None:
         outage = _FakeGateway()
