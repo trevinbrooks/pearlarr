@@ -202,13 +202,6 @@ class TestPendingImportClaims:
         assert pending.claim_for(8) is first
         assert pending.claim_for(9) is None
 
-    def test_claim_of_is_the_entrys_claim(self) -> None:
-        ours = entry_claim(al_id=2, series_id=8)
-        pending = pending_import(claims=(entry_claim(al_id=1), ours))
-
-        assert pending.claim_of(2) is ours
-        assert pending.claim_of(3) is None
-
     def test_guards_for_merges_the_series_claims_evidence(self) -> None:
         # Groups union in claim order, owned episodes concatenate, and the owned-size read is
         # last-wins per episode. Another series' claim contributes nothing.
@@ -254,16 +247,6 @@ class TestPendingImportClaims:
         assert pending.resolved_ids() == [5, 7]
         assert pending_import(file_episode_map={}).resolved_ids() == []
 
-    def test_preowned_ids_union_in_claim_order(self) -> None:
-        pending = pending_import(
-            claims=(
-                entry_claim(al_id=1, preowned_episode_ids=[12, 11]),
-                entry_claim(al_id=2, series_id=8, preowned_episode_ids=[11, 13]),
-            ),
-        )
-
-        assert pending.preowned_ids() == [12, 11, 13]
-
     def test_with_claim_appends_a_new_entry(self) -> None:
         pending = pending_import()
         added = entry_claim(al_id=2, series_id=8)
@@ -297,16 +280,6 @@ class TestPendingImportClaims:
         assert flagged.with_claim(entry_claim(al_id=2, series_id=8)).awaiting_cleanup is False
         assert flagged.with_claim(entry_claim(ordered_episode_ids=[101])).awaiting_cleanup is False
 
-    def test_claim_holding_is_the_first_claim_whose_window_names_the_id(self) -> None:
-        # An unscoped claim names nothing, so an id outside every window holds no claim.
-        first = entry_claim(al_id=1, ordered_episode_ids=[101, 102])
-        second = entry_claim(al_id=2, series_id=8, ordered_episode_ids=[102, 201])
-        pending = pending_import(claims=(entry_claim(al_id=3), first, second))
-
-        assert pending.claim_holding(102) is first
-        assert pending.claim_holding(201) is second
-        assert pending.claim_holding(999) is None
-
     def test_restamped_sets_the_birth_and_every_claims_clock(self) -> None:
         pending = pending_import(
             claims=(
@@ -320,23 +293,6 @@ class TestPendingImportClaims:
         assert stamped.added_at == "2026-07-01 12:00:00"
         assert [claim.claimed_at for claim in stamped.claims] == ["2026-07-01 12:00:00"] * 2
         assert pending.added_at == "2026-06-24 00:00:00"
-
-    def test_newest_claimed_at_is_the_newest_parseable_stamp(self) -> None:
-        pending = pending_import(
-            claims=(
-                entry_claim(al_id=1, claimed_at="2026-06-24 00:00:00"),
-                entry_claim(al_id=2, series_id=8, claimed_at="junk"),
-                entry_claim(al_id=3, claimed_at="2026-06-26 00:00:00"),
-            ),
-        )
-
-        assert pending.newest_claimed_at() == datetime(2026, 6, 26)
-
-    def test_newest_claimed_at_is_none_when_no_stamp_parses(self) -> None:
-        pending = pending_import(claims=(entry_claim(al_id=1, claimed_at="junk"), entry_claim(al_id=2, claimed_at="")))
-
-        assert pending.newest_claimed_at() is None
-        assert pending_import(claims=()).newest_claimed_at() is None
 
     def test_newest_claimed_at_of_reads_the_raw_row(self) -> None:
         # The prune's clock off the stored dict, no rehydration: junk and a missing key are skipped,
@@ -504,7 +460,6 @@ class TestPendingImportRoundTrip:
                 claimed_at="",
             ),
         )
-        assert rebuilt.claim_of(0) is rebuilt.claims[0]
 
     def test_old_record_with_unknown_keys_rehydrates(self) -> None:
         # Back-compat: a record persisted with since-removed keys still loads

@@ -712,7 +712,11 @@ class EntryClaim:
     """The plan's overwrite-guard evidence. Not serialized: hydrated from `guard_facts` by `al_id`."""
 
     def admits(self, ep_id: int) -> bool:
-        """Whether the claim's window holds `ep_id` (an unscoped claim admits every id)."""
+        """Whether the claim's window holds `ep_id`.
+
+        An unscoped claim admits every id, though `RecordSnapshot.route` judges an id under an
+        unscoped claim only when it is alone on its series.
+        """
 
         return not self.ordered_episode_ids or ep_id in self.ordered_episode_ids
 
@@ -820,16 +824,6 @@ class PendingImport:
 
         return next((claim for claim in self.claims if claim.series_id == series_id), None)
 
-    def claim_of(self, al_id: int) -> EntryClaim | None:
-        """The entry's claim, if it holds one."""
-
-        return next((claim for claim in self.claims if claim.al_id == al_id), None)
-
-    def claim_holding(self, ep_id: int) -> EntryClaim | None:
-        """The first claim whose window names `ep_id` (an unscoped claim names nothing), if any."""
-
-        return next((claim for claim in self.claims if ep_id in claim.ordered_episode_ids), None)
-
     @property
     def display_label(self) -> str:
         """The cockpit/ledger/report row label: `titles · group[ · episode slices]`, every claim named."""
@@ -856,11 +850,6 @@ class PendingImport:
 
         windows = list(dict.fromkeys(ep_id for claim in self.claims for ep_id in claim.ordered_episode_ids))
         return windows or sorted(self.target_ids())
-
-    def preowned_ids(self) -> list[int]:
-        """Every claim's preowned ids, claim order."""
-
-        return list(dict.fromkeys(ep_id for claim in self.claims for ep_id in claim.preowned_episode_ids))
 
     def guards_for(self, series_id: int) -> GuardFacts:
         """The guard evidence of every claim on `series_id`, merged."""
@@ -921,11 +910,6 @@ class PendingImport:
 
         return replace(self, added_at=stamp, claims=tuple(replace(c, claimed_at=stamp) for c in self.claims))
 
-    def newest_claimed_at(self) -> datetime | None:
-        """The newest parseable claim stamp, the age the TTL drop reads (None when no claim stamp parses)."""
-
-        return _newest_stamp(claim.claimed_at for claim in self.claims)
-
     def to_json(self) -> dict[str, Any]:
         """Serialize to the plain dict persisted under `pending_imports`."""
 
@@ -976,12 +960,7 @@ def added_at_of(raw: dict[str, Any]) -> str:
 def newest_claimed_at_of(raw: dict[str, Any]) -> datetime | None:
     """The newest parseable claim stamp off a stored row's raw dict: the TTL clock, read without a rehydration."""
 
-    return _newest_stamp(claim.get("claimed_at", "") for claim in raw.get("claims", []))
-
-
-def _newest_stamp(stamps: Iterable[str]) -> datetime | None:
-    """The newest of the stamps that parse, or None when none does."""
-
+    stamps = (claim.get("claimed_at", "") for claim in raw.get("claims", []))
     moments = [moment for stamp in stamps if (moment := parse_stamp_or_none(stamp)) is not None]
     return max(moments) if moments else None
 

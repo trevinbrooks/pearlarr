@@ -6,7 +6,14 @@ from typing import NamedTuple
 from urllib.parse import urlsplit
 
 from .arr_http import DeleteOutcome
-from .episode_state import EpisodeFileStatus, EpisodeSnapshot, RecordSnapshot, TargetStatuses, trusted_groups
+from .episode_state import (
+    EpisodeFileStatus,
+    EpisodeSnapshot,
+    RecordSnapshot,
+    TargetStatuses,
+    routable_claims,
+    trusted_groups,
+)
 from .import_files import CandidateFile, ImportAction, ImportDecision, plan_import_files
 from .import_quality import (
     ParsedQuality,
@@ -124,15 +131,12 @@ class _ImportContext:
     """Whether this is the readiness-deadline attempt, the one that warns."""
 
     def posting_series(self, ep_id: int) -> int | None:
-        """The series a file posts under: its holding claim's, else the index's, else a one-series record's.
+        """The series a file posts under: its route's, else a one-series record's.
 
         The last arm keeps an index read failure from stranding a one-series record's files.
         """
 
-        claim = self.pending.claim_holding(ep_id)
-        if claim is not None:
-            return claim.series_id
-        if (series_id := self.snapshot.series_of(ep_id)) is not None:
+        if (series_id := self.snapshot.route(ep_id).series_id) is not None:
             return series_id
         series_ids = self.pending.series_ids
         return series_ids[0] if len(series_ids) == 1 else None
@@ -700,7 +704,7 @@ class ImportReconciler:
         gated_targets = seeded_targets if accounted else []
         seed = self._seed_statuses(pending, gated_targets)
         # The done-check below still reads the raw statuses (a preowned target is done, just not ours to claim).
-        done, total = self._net_counts(pending, gated_targets, seed.statuses)
+        done, total = self._net_counts(seed, gated_targets)
 
         # Only a complete map makes the done-check trustworthy without a folder scan.
         if seed_complete and seed.statuses.all_done():
@@ -763,7 +767,7 @@ class ImportReconciler:
         if not seeded_targets or not pending.seed_coverage().mapped:
             return NO_PROGRESS
         seed = self._seed_statuses(pending, seeded_targets)
-        done, total = self._net_counts(pending, seeded_targets, seed.statuses)
+        done, total = self._net_counts(seed, seeded_targets)
         return ImportProgress(done, total, determinate=True)
 
     def _seed_statuses(self, pending: PendingImport, targets: list[int]) -> _SeedStatuses:
@@ -773,32 +777,37 @@ class ImportReconciler:
         """
 
         guards = self._records.guards()
+        own = pending.own_group
+        indexes = {
+            series_id: episode_index(self._episodes.fresh_episodes(series_id)) for series_id in pending.series_ids
+        }
+        # Unfiltered: a cleanup-flagged sibling's files are on disk, so dropping it would loosen the guard.
+        siblings = {
+            series_id: tuple(self._records.for_series(series_id, guards).values()) for series_id in pending.series_ids
+        }
         by_series: dict[int, EpisodeSnapshot] = {}
-        by_claim: dict[int, EpisodeSnapshot] = {}
         for series_id in pending.series_ids:
-            episodes = episode_index(self._episodes.fresh_episodes(series_id))
-            # Unfiltered: a cleanup-flagged sibling's files are on disk, so dropping it would loosen the guard.
-            siblings = self._records.for_series(series_id, guards)
             merged = pending.guards_for(series_id)
             by_series[series_id] = EpisodeSnapshot(
-                episodes, trusted_groups(merged, pending.own_group, siblings), merged.owned_sizes
+                episodes=indexes[series_id],
+                trusted=trusted_groups(merged, own, siblings[series_id]),
+                owned_episode_sizes=merged.owned_sizes,
             )
-            for claim in pending.claims:
-                if claim.series_id == series_id:
-                    by_claim[claim.al_id] = EpisodeSnapshot(
-                        episodes, trusted_groups(claim.guards, pending.own_group, siblings), claim.guards.owned_sizes
-                    )
+        by_claim = {
+            claim.al_id: EpisodeSnapshot(
+                episodes=indexes[claim.series_id],
+                trusted=trusted_groups(claim.guards, own, siblings[claim.series_id]),
+                owned_episode_sizes=claim.guards.owned_sizes,
+            )
+            for claim in routable_claims(pending.claims)
+        }
         snapshot = RecordSnapshot(pending, by_series, by_claim)
         return _SeedStatuses(snapshot, snapshot.statuses(targets))
 
     @staticmethod
-    def _net_counts(
-        pending: PendingImport,
-        targets: list[int],
-        statuses: TargetStatuses,
-    ) -> tuple[int, int]:
-        """The bar's `(done, total)`, net of the grab-time preowned targets (empty `targets` nets to 0/0)."""
+    def _net_counts(seed: _SeedStatuses, targets: list[int]) -> tuple[int, int]:
+        """The bar's `(done, total)`, net of the targets preowned under the claim judging each (`[]` nets to 0/0)."""
 
-        preowned = len(set(pending.preowned_ids()) & set(targets))
-        recommended = sum(1 for status in statuses.by_id.values() if status is EpisodeFileStatus.RECOMMENDED)
+        preowned = sum(1 for ep_id in targets if seed.snapshot.preowned(ep_id))
+        recommended = sum(1 for status in seed.statuses.by_id.values() if status is EpisodeFileStatus.RECOMMENDED)
         return max(0, recommended - preowned), len(targets) - preowned

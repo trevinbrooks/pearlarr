@@ -1,12 +1,13 @@
 """Pure episode-file statuses, the per-target snapshot an import checks, and the group trust its guard reads."""
 
+from collections import Counter
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, field
 from enum import Enum, auto
 from types import MappingProxyType
 from typing import NamedTuple
 
-from .manual_import import GuardFacts, OwnGroup, PendingImport, normalize_group, normalize_rg
+from .manual_import import EntryClaim, GuardFacts, OwnGroup, PendingImport, normalize_group, normalize_rg
 from .placement_types import EpisodeIndex
 
 type TrustPolicy = Mapping[str, frozenset[int] | None]
@@ -126,12 +127,23 @@ class EpisodeSnapshot(NamedTuple):
         return TargetStatuses(statuses)
 
 
-_NO_CLAIM_SNAPSHOTS: Mapping[int, EpisodeSnapshot] = MappingProxyType({})
+class Route(NamedTuple):
+    """Where an episode id is judged: the claim whose guards apply, if one, and the series whose index holds it."""
+
+    claim: EntryClaim | None
+    series_id: int | None
+
+
+def routable_claims(claims: Sequence[EntryClaim]) -> tuple[EntryClaim, ...]:
+    """The claims `RecordSnapshot.route` can name: every scoped claim, and an unscoped claim alone on its series."""
+
+    unscoped_on = Counter(claim.series_id for claim in claims if not claim.ordered_episode_ids)
+    return tuple(claim for claim in claims if claim.ordered_episode_ids or unscoped_on[claim.series_id] == 1)
 
 
 @dataclass(frozen=True, slots=True)
 class RecordSnapshot:
-    """One poll's coherent view of a record: each claimed series' snapshot, and each claim's own over that series."""
+    """One poll's coherent view of a record: each claimed series' snapshot, and each routable claim's own over it."""
 
     pending: PendingImport
     """The record the poll judges, whose claims route each target."""
@@ -139,8 +151,8 @@ class RecordSnapshot:
     by_series: Mapping[int, EpisodeSnapshot]
     """Each claimed series' same-poll snapshot under the series' merged guard evidence (the routing fallback)."""
 
-    by_claim: Mapping[int, EpisodeSnapshot] = _NO_CLAIM_SNAPSHOTS
-    """Each claim's snapshot by AniList id: its series' same index under the claim's OWN guard evidence."""
+    by_claim: Mapping[int, EpisodeSnapshot]
+    """Each routable claim's snapshot by AniList id: its series' same index under the claim's OWN guard evidence."""
 
     indexes: Mapping[int, EpisodeIndex] = field(init=False)
     """Each series' fresh episode index, the placement windows' inputs (a view over `by_series`)."""
@@ -159,17 +171,39 @@ class RecordSnapshot:
 
         return next((sid for sid, snapshot in self.by_series.items() if ep_id in snapshot.episodes.by_id), None)
 
-    def snapshot_for(self, ep_id: int) -> EpisodeSnapshot | None:
-        """The snapshot that judges `ep_id`: its holding claim's, else the series' whose index holds it."""
+    def route(self, ep_id: int) -> Route:
+        """The claim and series that judge `ep_id`.
 
-        claim = self.pending.claim_holding(ep_id)
-        if claim is not None and (own := self.by_claim.get(claim.al_id)) is not None:
-            return own
+        The first scoped claim naming it decides. Otherwise the series whose index holds it does, under its
+        unscoped claim when it has exactly one (two unscoped claims on a series merge), else under its merged evidence.
+        """
+
+        for claim in self.pending.claims:
+            if ep_id in claim.ordered_episode_ids:
+                return Route(claim, claim.series_id)
         series_id = self.series_of(ep_id)
-        return None if series_id is None else self.by_series[series_id]
+        if series_id is None:
+            return Route(None, None)
+        unscoped = (claim for claim in routable_claims(self.pending.claims) if not claim.ordered_episode_ids)
+        return Route(next((claim for claim in unscoped if claim.series_id == series_id), None), series_id)
+
+    def snapshot_for(self, ep_id: int) -> EpisodeSnapshot | None:
+        """The snapshot that judges `ep_id`: its route's claim's own, else its route's series' (None off every index)."""
+
+        route = self.route(ep_id)
+        if route.claim is not None and (own := self.by_claim.get(route.claim.al_id)) is not None:
+            return own
+        return None if route.series_id is None else self.by_series.get(route.series_id)
+
+    def preowned(self, ep_id: int) -> bool:
+        """Whether the grab judging `ep_id` found it owned: its route's claim says, else any claim (the merged fallback)."""
+
+        route = self.route(ep_id)
+        claims = (route.claim,) if route.claim is not None else self.pending.claims
+        return any(ep_id in claim.preowned_episode_ids for claim in claims)
 
     def statuses(self, target_ep_ids: Sequence[int]) -> TargetStatuses:
-        """Classify each target under the snapshot that judges it; an id none judges is ABSENT."""
+        """Classify each target under the snapshot that judges it. An id no snapshot judges is ABSENT."""
 
         by_id: dict[int, EpisodeFileStatus] = {}
         for ep_id in dict.fromkeys(target_ep_ids):

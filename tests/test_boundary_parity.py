@@ -77,7 +77,7 @@ def _bare_snapshot(pending: PendingImport) -> RecordSnapshot:
     """An empty same-poll index for every series the record claims (nothing on disk yet)."""
 
     return RecordSnapshot(
-        pending, {sid: EpisodeSnapshot(episodes=episode_index([]), trusted={}) for sid in pending.series_ids}
+        pending, {sid: EpisodeSnapshot(episodes=episode_index([]), trusted={}) for sid in pending.series_ids}, {}
     )
 
 

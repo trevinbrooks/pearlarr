@@ -1,7 +1,14 @@
 # pyright: strict
 """Episode-file statuses and the per-target snapshot (never-overwrite, the trust map it reads)."""
 
-from pearlarr.episode_state import EpisodeFileStatus, EpisodeSnapshot, RecordSnapshot, TargetStatuses
+from pearlarr.episode_state import (
+    EpisodeFileStatus,
+    EpisodeSnapshot,
+    RecordSnapshot,
+    Route,
+    TargetStatuses,
+    routable_claims,
+)
 from pearlarr.manual_import import normalize_group
 from pearlarr.placement_types import episode_index
 from pearlarr.seadex_types import SonarrEpisode
@@ -113,6 +120,18 @@ class TestEpisodeFileStatuses:
         assert statuses.needing_import() == {1, 3, 4}
 
 
+def _series(
+    *ep_ids: int, group: str = "SubGroup", trusted: dict[str, frozenset[int] | None] | None = None
+) -> EpisodeSnapshot:
+    """A one-series snapshot holding `ep_ids`, each with a `group` file, trusting `trusted` (nothing by default)."""
+
+    episodes = [
+        sonarr_ep(1, n, ep_id=ep_id, episode_file_id=10 * n, release_group=group)
+        for n, ep_id in enumerate(ep_ids, start=1)
+    ]
+    return EpisodeSnapshot(episode_index(episodes), trusted or {})
+
+
 class TestRecordSnapshot:
     """`RecordSnapshot`: one series snapshot per claim series, the window indexes derived, each target routed."""
 
@@ -150,7 +169,8 @@ class TestRecordSnapshot:
 
     def test_a_claimed_id_is_judged_under_its_holding_claims_snapshot(self) -> None:
         # Claim 1's window names id 1, so its own snapshot (the same index, the group untrusted) judges
-        # it ahead of the series' merged one. Id 2 holds no claim (claim 2 is unscoped) and reads the series'.
+        # it ahead of the series' merged one. Id 2 routes to the lone unscoped claim 2, whose own snapshot
+        # is absent here, so it reads the series'.
         own = EpisodeSnapshot(
             episode_index([sonarr_ep(1, 1, ep_id=1, episode_file_id=10, release_group="SubGroup")]),
             {},
@@ -163,3 +183,38 @@ class TestRecordSnapshot:
         assert snapshot.statuses([1, 2]).by_id == {1: EpisodeFileStatus.OTHER_GROUP, 2: EpisodeFileStatus.OTHER_GROUP}
         # Without a per-claim snapshot the holding claim's id falls back to the series' view.
         assert self._snapshot().statuses([1]).by_id == {1: EpisodeFileStatus.RECOMMENDED}
+
+    def test_route_names_the_first_scoped_claim_holding_the_id(self) -> None:
+        # Two windows hold id 2: the earlier claim judges it, as the placer's first window decides, so the
+        # later claim's preowned 2 does not read as preowned. Id 3 holds one claim, and 9 holds none.
+        first = entry_claim(al_id=1, ordered_episode_ids=[1, 2])
+        second = entry_claim(al_id=2, ordered_episode_ids=[2, 3], preowned_episode_ids=[2, 3])
+        snapshot = RecordSnapshot(pending_import(claims=(first, second)), {7: _series(1, 2, 3)}, {})
+
+        assert snapshot.route(2) == Route(first, 7)
+        assert snapshot.route(3) == Route(second, 7)
+        assert snapshot.route(9) == Route(None, None)
+        assert (snapshot.preowned(2), snapshot.preowned(3)) == (False, True)
+
+    def test_route_judges_a_series_under_its_lone_unscoped_claim(self) -> None:
+        # One unscoped claim on series 7 judges every id its index holds. Two unscoped claims on series 8
+        # merge: their ids route to the series alone, and preowned reads off either of them.
+        lone = entry_claim(al_id=1)
+        pair = (entry_claim(al_id=2, series_id=8), entry_claim(al_id=3, series_id=8, preowned_episode_ids=[5]))
+        snapshot = RecordSnapshot(pending_import(claims=(lone, *pair)), {7: _series(1), 8: _series(5)}, {})
+
+        assert snapshot.route(1) == Route(lone, 7)
+        assert snapshot.route(5) == Route(None, 8)
+        assert snapshot.preowned(5) is True
+        assert routable_claims(snapshot.pending.claims) == (lone,)
+
+    def test_an_overlapped_id_is_classified_under_the_first_claims_evidence(self) -> None:
+        # A's plan judged group G stale and B's picks carry it. Both windows hold id 2: judged under A, the
+        # G file on it still needs importing, where B's own snapshot calls its id 3 done.
+        first = entry_claim(al_id=1, ordered_episode_ids=[1, 2])
+        second = entry_claim(al_id=2, ordered_episode_ids=[2, 3])
+        by_claim = {1: _series(1, 2, 3, group="G"), 2: _series(1, 2, 3, group="G", trusted={"g": None})}
+        snapshot = RecordSnapshot(pending_import(claims=(first, second)), {7: _series(1, 2, 3, group="G")}, by_claim)
+
+        assert snapshot.snapshot_for(2) is by_claim[1]
+        assert snapshot.statuses([2, 3]).by_id == {2: EpisodeFileStatus.OTHER_GROUP, 3: EpisodeFileStatus.RECOMMENDED}

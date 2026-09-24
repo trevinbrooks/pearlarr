@@ -43,10 +43,10 @@ class PendingRecords:
 
         return self._store.get_pending_for_series(self._ctx.arr, series_id)
 
-    def for_series(self, series_id: int, guards: Mapping[int, GuardFacts]) -> list[PendingImport]:
-        """The records claiming `series_id`, rehydrated under `guards` (the rows the caller already read)."""
+    def for_series(self, series_id: int, guards: Mapping[int, GuardFacts]) -> dict[str, PendingImport]:
+        """The records claiming `series_id`, keyed by infohash, rehydrated under the guards the caller already read."""
 
-        return list(hydrate_pending(self.rows_for_series(series_id), guards).values())
+        return hydrate_pending(self.rows_for_series(series_id), guards)
 
     def flagged(self) -> dict[str, dict[str, Any]]:
         """The cleanup-flagged rows, raw (the heal pass's working set)."""

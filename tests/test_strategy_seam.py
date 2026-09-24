@@ -1985,6 +1985,7 @@ class TestRecordSnapshot:
                 ),
                 8: EpisodeSnapshot(episodes=episode_index([sonarr_ep(1, 1, ep_id=201, episode_file_id=0)]), trusted={}),
             },
+            {},
         )
 
     def test_series_of_reads_the_index_holding_the_id(self) -> None:
@@ -2222,8 +2223,8 @@ class TestMultiSeriesImport:
 
     def test_each_claimed_id_is_judged_under_its_own_claims_guards(self) -> None:
         # One series, two claims on it: A's plan judged group G stale, B's picks carry G. G files sit on
-        # both windows' episodes, so A's id still needs importing while B's is done, where the series'
-        # merged evidence would have trusted G for both. One episode fetch serves both claims.
+        # both windows' episodes, so A's id still needs importing while B's is done (one of two), where the
+        # series' merged evidence would have trusted G for both. One episode fetch serves both claims.
         pending = pending_import(
             file_episode_map={_SHOW_FILE: [101], _OTHER_FILE: [102]},
             claims=(
@@ -2236,11 +2237,33 @@ class TestMultiSeriesImport:
             candidates=[],
         )
 
-        seed = self._strat(sonarr)._reconciler._seed_statuses(pending, [101, 102])
+        progress = self._strat(sonarr).import_progress(pending)
 
-        assert seed.statuses.by_id == {101: EpisodeFileStatus.OTHER_GROUP, 102: EpisodeFileStatus.RECOMMENDED}
-        assert seed.snapshot.by_series[7].statuses([101]).by_id == {101: EpisodeFileStatus.RECOMMENDED}
+        assert progress == ImportProgress(1, 2, determinate=True)
         assert sonarr.episodes_calls == [7]
+
+    def test_an_id_two_windows_hold_is_judged_and_netted_under_the_first_claim(self) -> None:
+        # A's window (101-104) and B's (103-104) overlap on G files. 103 and 104 are judged under A, whose
+        # plan judged G stale, so they still need importing, and B's preowned 103 nets nothing out of the
+        # bar: every target the statuses judged is counted, where a union of preowned ids would drop one.
+        files = {f"show - {n:02d}.mkv": [100 + n] for n in range(1, 5)}
+        pending = pending_import(
+            file_episode_map=files,
+            seadex_files=list(files),
+            claims=(
+                entry_claim(al_id=1, ordered_episode_ids=(101, 102, 103, 104), guards=GuardFacts(stale_groups=("G",))),
+                entry_claim(
+                    al_id=2,
+                    ordered_episode_ids=(103, 104),
+                    preowned_episode_ids=(103,),
+                    guards=GuardFacts(entry_groups=("G",)),
+                ),
+            ),
+        )
+        episodes = [sonarr_ep(1, n, ep_id=100 + n, release_group="G") for n in range(1, 5)]
+        sonarr = _PerSeriesSonarr({7: episodes}, candidates=[])
+
+        assert self._strat(sonarr).import_progress(pending) == ImportProgress(0, 4, determinate=True)
 
 
 def _import_history(download_id: str, *, event: str = "movieFolderImported") -> HistoryRecord:
