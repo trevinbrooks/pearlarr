@@ -81,6 +81,7 @@ from .builders import (
     pending_import,
     pending_seed,
     sonarr_client_fields,
+    two_claim_record,
 )
 from .fakes import (
     CaptureHandler,
@@ -370,16 +371,12 @@ _FRESH = "2999-01-01 00:00:00"
 _EXPIRED = "2000-01-01 00:00:00"
 
 
-def _two_claim_record(**overrides: object) -> PendingImport:
-    """A fresh store record on hash "h" claimed by two entries (multi-cour), each titled by its cour."""
+def _two_claim_record(**overrides: Any) -> PendingImport:
+    """A fresh store record on hash "h" claimed by two unscoped entries (multi-cour), each titled by its cour."""
 
-    fields: dict[str, object] = {
-        "infohash": "h",
-        "added_at": _FRESH,
-        "claims": (entry_claim(al_id=11, title="Cour 1"), entry_claim(al_id=22, title="Cour 2")),
-    }
+    fields: dict[str, Any] = {"infohash": "h", "added_at": _FRESH}
     fields.update(overrides)
-    return pending_import(**fields)
+    return two_claim_record(al_ids=(11, 22), windows=((), ()), titles=("Cour 1", "Cour 2"), **fields)
 
 
 @dataclass(frozen=True)

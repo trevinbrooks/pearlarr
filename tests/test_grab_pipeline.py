@@ -13,6 +13,7 @@ login happens. The client `add` is faked by `FakeTorrents`.
 
 from collections.abc import Mapping
 from datetime import datetime, timedelta
+from typing import Any
 
 import httpx
 import pytest
@@ -81,7 +82,7 @@ def _pipeline(
     )
 
 
-def _pending(pipeline: GrabPipeline) -> Mapping[str, object]:
+def _pending(pipeline: GrabPipeline) -> Mapping[str, dict[str, Any]]:
     """The pipeline's durable per-arr pending store, keyed by infohash (what the engine reads back)."""
 
     return pipeline.cache_store.get_pending(Arr.SONARR)
@@ -110,16 +111,7 @@ class TestGrabAnnouncesTheCap:
 
     @staticmethod
     def _request() -> GrabRequest:
-        return GrabRequest(
-            al_id=1,
-            arr_title="Show",
-            entry_title="Show",
-            entry=make_entry_record(url="https://seadex.example/1"),
-            seadex_dict={},
-            torrent_hashes=[],
-            cache_details={},
-            replaced_groups=(),
-        )
+        return grab_request(entry=make_entry_record(url="https://seadex.example/1"))
 
     def test_the_title_crossing_the_cap_announces_it(self) -> None:
         # The stub reports one add without touching the counter, so the counter is advanced by hand to the cap.
@@ -765,15 +757,12 @@ class TestGrabAndCacheAtTheCap:
 
     @staticmethod
     def _request(al_id: int, seadex_dict: SeadexDict, hashes: list[str | None]) -> GrabRequest:
-        return GrabRequest(
+        return grab_request(
             al_id=al_id,
-            arr_title="Show",
-            entry_title="Show",
             entry=make_entry_record(url=f"https://seadex.example/{al_id}"),
             seadex_dict=seadex_dict,
             torrent_hashes=hashes,
             cache_details={"updated_at": "2026-01-01 00:00:00"},
-            replaced_groups=(),
         )
 
     def test_hitting_the_cap_exactly_caches_the_title(self) -> None:
@@ -829,17 +818,9 @@ class TestUpToDateTally:
         pipeline = _pipeline(torrents=FakeTorrents({}), sleep_time=0)
 
         for al_id in (1, 2):
-            req = GrabRequest(
-                al_id=al_id,
-                arr_title="Show",
-                entry_title="Show",
-                entry=make_entry_record(url=f"https://seadex.example/{al_id}"),
-                seadex_dict={},
-                torrent_hashes=[],
-                cache_details={},
-                replaced_groups=(),
+            pipeline.grab_and_cache(
+                grab_request(al_id=al_id, entry=make_entry_record(url=f"https://seadex.example/{al_id}"))
             )
-            pipeline.grab_and_cache(req)
 
         assert pipeline._ctx.stats.up_to_date == 2
 
@@ -1189,15 +1170,12 @@ class TestPlacementInputMissing:
 
     @staticmethod
     def _request(seadex_dict: SeadexDict, hashes: list[str | None]) -> GrabRequest:
-        return GrabRequest(
+        return grab_request(
             al_id=42,
-            arr_title="Show",
-            entry_title="Show",
             entry=make_entry_record(url="https://seadex.example/42"),
             seadex_dict=seadex_dict,
             torrent_hashes=hashes,
             cache_details={"updated_at": "2026-01-01 00:00:00"},
-            replaced_groups=(),
             input_missing_groups=("RG",),
         )
 

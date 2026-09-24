@@ -450,6 +450,8 @@ class TestSchemaVersionGate:
         # The release facts are the first row's, the maps union with the first
         # row winning a shared name, an exclusion another row mapped is dropped,
         # the birth is the oldest stamp, and the flag holds when every row had it.
+        # The union keeps distinct file-name keys byte-exact (an NFC and an NFD
+        # spelling stay two keys): `normalized_leaf` reconciles them at read time.
         db = tmp_path / "cache.db"
         first = _v4_blob("abcd", 11, excluded_files=["b.mkv", "y.mkv"], awaiting_cleanup=True)
         second = _v4_blob(

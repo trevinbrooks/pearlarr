@@ -96,6 +96,7 @@ from .builders import (
     queue_record,
     rg_group,
     sonarr_ep,
+    two_claim_record,
     url_item,
 )
 from .fakes import FakeRadarrClient, FakeSonarrClient, diagnostic_messages, install_recording_hub
@@ -2055,14 +2056,13 @@ def _two_series_record(
     """One torrent claimed on series 7 (window 101) and series 8 (`other_window`), its listing fully mapped."""
 
     mapped = {_SHOW_FILE: [101], _OTHER_FILE: [201]} if files is None else files
-    return pending_import(
+    return two_claim_record(
+        series_ids=(7, 8),
+        windows=((101,), other_window),
+        titles=("Show", "Other"),
         infohash="abc123",
         file_episode_map=mapped,
         seadex_files=list(mapped),
-        claims=(
-            entry_claim(al_id=1, series_id=7, title="Show", ordered_episode_ids=(101,)),
-            entry_claim(al_id=2, series_id=8, title="Other", ordered_episode_ids=other_window),
-        ),
     )
 
 

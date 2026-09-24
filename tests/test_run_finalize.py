@@ -151,7 +151,7 @@ class TestHeldTitleKeepsScanning:
         strategy = FakeStrategy(
             items=[FakeArrItem(item_id=1, title="A"), FakeArrItem(item_id=2, title="B")],
             anilist_ids={1: MappingEntry(anilist_id=1)},
-            holds_through=engine._services,
+            held_by_cap_through=engine._services,
         )
 
         engine.run_sync(strategy, item_id=None, dry_run=True, boot=BootFlow())
@@ -408,7 +408,7 @@ class TestSelectionRecheck:
             else FakeStrategy(
                 items=items,
                 anilist_ids=anilist_ids,
-                holds_through=engine._services if held else None,
+                held_by_cap_through=engine._services if held else None,
                 history=[_IMPORT_EVENT] if held else None,
             )
         )
