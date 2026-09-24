@@ -132,7 +132,6 @@ def _observe(store: AbstractCacheStore) -> dict[str, object]:
         "pending_series_missing": store.get_pending_for_series(Arr.SONARR, 4242),
         "has_pending_hasha": store.has_pending(Arr.SONARR, "hashA"),
         "has_pending_missing": store.has_pending(Arr.SONARR, "nope"),
-        # Hashes stay ASCII: SQLite's LOWER() folds ASCII only, the fake casefolds Unicode.
         "other_arr_sonarr": store.other_arr_holds(Arr.SONARR, "hashA"),
         "other_arr_radarr": store.other_arr_holds(Arr.RADARR, "hashA"),
         "other_arr_own_only": store.other_arr_holds(Arr.SONARR, "hashB"),

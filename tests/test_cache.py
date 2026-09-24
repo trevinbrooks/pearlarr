@@ -1054,14 +1054,14 @@ class TestPendingImports:
         assert store.get_pending(Arr.SONARR) == {}
         store.close()
 
-    def test_other_arr_holds_folds_case(self, tmp_path: Path) -> None:
-        # The other arr's record on the same torrent is found by fold, whichever
-        # side stored the upper-case form.
+    def test_other_arr_holds_matches_the_key_exactly(self, tmp_path: Path) -> None:
+        # Every record key is the lowercase infohash, so the other arr's row is
+        # found by exact key and never by case fold.
         store = _open(tmp_path)
-        store.put_pending(Arr.RADARR, "ABCD", {"infohash": "ABCD"})
+        store.put_pending(Arr.RADARR, "abcd", {"infohash": "abcd"})
 
         assert store.other_arr_holds(Arr.SONARR, "abcd") is True
-        assert store.other_arr_holds(Arr.SONARR, "ABCD") is True
+        assert store.other_arr_holds(Arr.SONARR, "ABCD") is False
         assert store.other_arr_holds(Arr.RADARR, "abcd") is False
         store.close()
 

@@ -405,15 +405,9 @@ class FakeCacheStore(AbstractCacheStore):
 
     @override
     def other_arr_holds(self, arr: Arr, infohash: str) -> bool:
-        """Whether the other arr holds a record on the torrent, case-folded (mirrors the SQL)."""
+        """Whether the other arr holds a record on the torrent, by exact key (mirrors the SQL)."""
 
-        target = infohash.casefold()
-        return any(
-            other.casefold() == target
-            for arr_key, recs in self._pending.items()
-            if arr_key != str(arr)
-            for other in recs
-        )
+        return any(infohash in recs for arr_key, recs in self._pending.items() if arr_key != str(arr))
 
     @override
     def put_guards(self, arr: Arr, al_id: int, guards: GuardFacts) -> None:

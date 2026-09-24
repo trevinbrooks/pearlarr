@@ -825,10 +825,10 @@ class CacheStore(AbstractCacheStore):
 
     @override
     def other_arr_holds(self, arr: Arr, infohash: str) -> bool:
-        """Whether the OTHER arr holds a record on the torrent (case-folded match)."""
+        """Whether the OTHER arr holds a record on the torrent (an exact key match: hashes are stored lowercase)."""
 
         row = self._conn.execute(
-            "SELECT 1 FROM pending_imports WHERE arr != ? AND LOWER(infohash) = LOWER(?) LIMIT 1",
+            "SELECT 1 FROM pending_imports WHERE arr != ? AND infohash = ? LIMIT 1",
             (_arr_key(arr), infohash),
         ).fetchone()
         return row is not None

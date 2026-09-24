@@ -2922,11 +2922,10 @@ class TestPostImportCategoryOtherArrGate:
     one arr every entry rides the ONE record, so no same-arr sibling exists to wait for.
     """
 
-    @pytest.mark.parametrize("radarr_key", ["h", "H"], ids=["same-spelling", "case-folded"])
-    def test_move_defers_while_the_other_arr_holds_the_hash(self, radarr_key: str) -> None:
+    def test_move_defers_while_the_other_arr_holds_the_hash(self) -> None:
         # The Sonarr import verifies and its record drops, but the Radarr record still
-        # claims the hash (matched case-folded): no move, while the close still runs.
-        radarr_record = pending_import(infohash=radarr_key, al_id=22, series_id=0, title="Movie", added_at=_FRESH)
+        # claims the hash (the one lowercase key both arrs store): no move, while the close still runs.
+        radarr_record = pending_import(infohash="h", al_id=22, series_id=0, title="Movie", added_at=_FRESH)
         strategy = _RecordingStrategy(progress=ImportProgress(1, 1, determinate=True))
         qbit = CategoryQbit({"h": [FakeTorrent(is_complete=True, content_path="/d")]})
         store = FakeCacheStore()
@@ -2937,7 +2936,7 @@ class TestPostImportCategoryOtherArrGate:
             store_records=[pending_import(infohash="h", series_id=7, added_at=_FRESH)],
             post_import_category="pearlarr-done",
         )
-        store.put_pending(Arr.RADARR, radarr_key, radarr_record.to_json())
+        store.put_pending(Arr.RADARR, "h", radarr_record.to_json())
 
         mgr.snapshot_pending_for_series(7)
 
@@ -2945,7 +2944,7 @@ class TestPostImportCategoryOtherArrGate:
         assert [c.infohash for c in strategy.close_calls] == ["h"]
         assert mgr._records.rows() == {}
         assert mgr._ctx.pending_states["h"] is PendingState.IMPORTED
-        assert set(store.get_pending(Arr.RADARR)) == {radarr_key}
+        assert set(store.get_pending(Arr.RADARR)) == {"h"}
 
     def test_several_claims_on_one_record_move_once(self) -> None:
         # Two AniList entries (multi-cour) ride the one Sonarr record and no other arr
