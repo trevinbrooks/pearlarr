@@ -613,6 +613,22 @@ class TestSchemaVersionGate:
         _assert_round_trips({"new": records["new"]})
         store.close()
 
+    def test_v4_unscoped_row_stays_unscoped_and_carries_its_names_verbatim(self, tmp_path: Path) -> None:
+        # An unscoped v4 claim (an empty window, no legacy list) claims nothing off
+        # its map, and the stored names dict rides as is, never re-encoded through
+        # the live class.
+        db = tmp_path / "cache.db"
+        unscoped = _v4_blob("u", 5, ordered_episode_ids=[], names={"series": "Series"})
+        _seed_v4_db(db, [("sonarr", "u", 5, json.dumps(unscoped))])
+
+        store = CacheStore.load(str(db), config_checksum=CHECKSUM)
+        records = store.get_pending(Arr.SONARR)
+        (claim,) = records["u"]["claims"]
+        assert claim["ordered_episode_ids"] == []
+        assert claim["names"] == {"series": "Series"}
+        assert PendingImport.from_json(records["u"], guards={}).claims[0].names == EntryNames(series="Series")
+        store.close()
+
     def test_v4_migration_is_a_no_op_on_reopen(self, tmp_path: Path) -> None:
         # The migrated db reopens as found: same records, no step announced, and
         # a v4 stamp over a table already in the v5 shape (no al_id column) is

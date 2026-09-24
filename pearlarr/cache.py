@@ -22,7 +22,7 @@ from . import __version__
 from .config import Arr
 from .json_narrow import is_json_obj
 from .log import LOG_NAME
-from .manual_import import EntryNames, GuardFacts
+from .manual_import import GuardFacts
 from .output import hub_note
 from .sqlite_util import connect as _sqlite_connect
 from .sqlite_util import open_or_quarantine, rollback_and_close
@@ -215,11 +215,16 @@ class _PendingV4:
         )
 
     def claim(self) -> dict[str, Any]:
-        """The v5 claim this row becomes: its clock, and its legacy ids folded into the ordered fallback."""
+        """The v5 claim this row becomes, its fields carried as stored (an unscoped window stays unscoped).
 
-        ordered = self.ordered_episode_ids or sorted(
-            {i for ids in self.file_episode_map.values() for i in ids if i} | {i for i in self.episode_ids if i}
-        )
+        Only a row from before the window (a legacy `episode_ids` list) derives one: its map's and the list's ids.
+        """
+
+        ordered = self.ordered_episode_ids
+        if not ordered and self.episode_ids:
+            ordered = sorted(
+                {i for ids in self.file_episode_map.values() for i in ids if i} | {i for i in self.episode_ids if i}
+            )
         return {
             "al_id": self.al_id,
             "series_id": self.series_id,
@@ -227,7 +232,7 @@ class _PendingV4:
             "coverage": self.coverage,
             "url": self.url,
             "ordered_episode_ids": ordered,
-            "names": EntryNames.from_json(self.names).to_json(),
+            "names": self.names,
             "preowned_episode_ids": self.preowned_episode_ids,
             "slice_coverage": self.slice_coverage,
             "claimed_at": self.added_at,
