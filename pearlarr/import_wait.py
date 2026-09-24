@@ -333,7 +333,7 @@ class ImportWaitManager:
         self.clock = deps.clock
         self.logger = deps.logger
         self._reporter = deps.reporter
-        # The hub's seam, shared with the grab pipeline: one run list, one store binding.
+        # The hub's seam, shared with the grab pipeline, which binds it each run: one run list, one store binding.
         self._records = records
         self.probes = ImportProbes(qbit=deps.qbit, logger=deps.logger)
         self._cleanup = PostImportCleanup(deps, self._records, self.probes)
@@ -343,11 +343,10 @@ class ImportWaitManager:
         """Bind the fresh run context to the manager and its sub-objects, the strategy to the probes alone.
 
         Rebound EVERY run (`reset_run_stats` mints a fresh ctx), so none of them can
-        operate on a dead context after the first run.
+        operate on a dead context after the first run. The record seam is the hub's to bind.
         """
 
         self._ctx = ctx
-        self._records.begin_run(ctx)
         self.probes.begin_run(strategy)
         self._cleanup.begin_run(ctx)
 

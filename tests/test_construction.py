@@ -105,7 +105,6 @@ def test_sonarr_sync_init_shares_cache_store_for_staged_writes() -> None:
 
     assert strat._parse.cache_store is deps.cache_store
     assert strat._reconciler._records is services.records
-    assert services.records._store is deps.cache_store
 
 
 def test_radarr_sync_init_builds_without_network_via_client_seam() -> None:

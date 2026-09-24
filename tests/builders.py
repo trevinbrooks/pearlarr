@@ -894,8 +894,8 @@ def make_grab_pipeline(**overrides: Any) -> GrabPipeline:
 def make_import_wait_manager(**overrides: Any) -> ImportWaitManager:
     """A bare `ImportWaitManager` over real sub-objects, config keys routed through `AppConfig`.
 
-    Constructs the records/probes/cleanup seams on the SAME store and ends with
-    `begin_run`, so every sub-object shares the one ctx (and strategy) a run would.
+    Constructs the records/probes/cleanup seams on the SAME store, binds the record seam as
+    the hub would, and ends with `begin_run`, so every sub-object shares the one ctx (and strategy) a run would.
     """
 
     config = overrides.pop("config", None) or _split_config(overrides)
@@ -915,6 +915,7 @@ def make_import_wait_manager(**overrides: Any) -> ImportWaitManager:
         raise TypeError(msg)
 
     records = PendingRecords(cache_store)
+    records.begin_run(ctx)
     probes = make_bare_instance(ImportProbes, _qbit=qbit, _logger=logger, strategy=None)
     cleanup = make_bare_instance(
         PostImportCleanup,
