@@ -1,7 +1,10 @@
 """The grab "produce" side: add torrents, register pending records, write cache."""
 
 import time
+from collections.abc import Mapping
 from dataclasses import dataclass
+from datetime import datetime
+from types import MappingProxyType
 from typing import TYPE_CHECKING, NamedTuple
 
 from seadex import EntryRecord
@@ -9,8 +12,9 @@ from seadex import EntryRecord
 from . import coverage as _coverage
 from .cache import CacheRecord
 from .config import PrivateReleaseAction
+from .grab_placement import PendingSeed
 from .log import count_noun
-from .manual_import import ImportWaitMode, PendingImport
+from .manual_import import ImportWaitMode
 from .notify import GrabNotice
 from .output import Accent, GrabFailed, ReleaseSkipped, SkipReason, StyledValue
 from .pending_records import PendingRecords
@@ -22,12 +26,16 @@ from .reporter import (
     is_preview,
 )
 from .seadex_types import SeadexDict, SeadexUrlItem
-from .stamps import pending_cutoff, stamp_of
+from .stamps import now_stamp, pending_cutoff, stamp_of
 from .torrents import GRAB_FAILURES, PARSEABLE_TRACKERS, AddOutcome, AddResult, ReleaseOutcome
 
 if TYPE_CHECKING:
     # Annotation-only: run_services imports this module at runtime (cycle).
     from .run_services import RunDeps
+
+
+NO_SEEDS: Mapping[str, PendingSeed] = MappingProxyType({})
+"""No seeds: the strategies build them only when a record can be persisted (the wait mode is on)."""
 
 
 class GrabResult(NamedTuple):
@@ -56,10 +64,11 @@ class GrabRequest:
     """The existing arr release groups this grab is replacing (the notifier's "Replacing" field)."""
     coverage: str = ""
     """Sonarr's episode coverage string ("" for Radarr)."""
-    pending_seeds: dict[str, PendingImport] | None = None
-    parse_failed_groups: tuple[str, ...] = ()
-    """Groups with a file whose Sonarr parse request failed this run, so the grab-time placement may have
-    held a run: the title is never cached as done and re-checks next run."""
+    pending_seeds: Mapping[str, PendingSeed] = NO_SEEDS
+    """One seed per flagged torrent with a video file, keyed by infohash (`NO_SEEDS` when the wait mode is off)."""
+    input_missing_groups: tuple[str, ...] = ()
+    """Groups with a url whose grab-time placement waited on a Sonarr read that failed this run, so a run
+    may have been held: the title is never cached as done and re-checks next run."""
 
 
 class GrabPipeline:
@@ -90,6 +99,12 @@ class GrabPipeline:
 
         self._ctx = ctx
         self._records.begin_run(ctx)
+
+    @property
+    def records(self) -> PendingRecords:
+        """The pending-record seam, bound to the current run (the strategies read stored records through it)."""
+
+        return self._records
 
     def _is_preview(self) -> bool:
         """A run is a no-op preview (nothing can be grabbed): explicit dry run, or qBittorrent not configured."""
@@ -201,44 +216,71 @@ class GrabPipeline:
 
         return None
 
-    def _register_pending_import(self, url_item: SeadexUrlItem, req: GrabRequest, result: AddResult) -> None:
-        """Finalize the durable `PendingImport` for a grabbed or already-present release.
+    def _seed_for(self, url_item: SeadexUrlItem, req: GrabRequest) -> PendingSeed | None:
+        """The url's seed, or None when nothing is persisted: the wait mode is off, a preview, or no hash.
 
-        A fresh `ADDED` inserts the seed as a this-run grab. An `ALREADY_ADDED` reacquire keeps a
-        store-resident record as is, whatever its age (`prune_expired_pending` is the sole TTL
-        authority for tracked records). A non-resident reacquire joins at qBittorrent's add time,
-        stamped now when that time is unknown, and dropped when it is already past
-        `imports.pending_max_age_days`.
+        A seed carries the store's current record for its hash (the strategies read the store while seeding,
+        and a staged write is visible to the next read), so a born seed's hash has no record to overwrite.
         """
 
-        seeds = req.pending_seeds
-        if (
-            self._ctx.import_wait_mode is ImportWaitMode.OFF
-            or self._is_preview()
-            or not url_item.infohash
-            or not seeds
-            or url_item.infohash not in seeds
-        ):
+        if self._ctx.import_wait_mode is ImportWaitMode.OFF or self._is_preview() or not url_item.infohash:
+            return None
+        return req.pending_seeds.get(url_item.infohash)
+
+    def _register_pending_import(self, url_item: SeadexUrlItem, req: GrabRequest, result: AddResult) -> None:
+        """Persist the durable record for a grabbed or already-present release, through one of three arms.
+
+        A fresh `ADDED` tracks the seed's record as a this-run grab. An `ALREADY_ADDED` accretes the seed
+        onto its stored record, or, with no record, reacquires the torrent at qBittorrent's add time.
+        """
+
+        seed = self._seed_for(url_item, req)
+        if seed is None:
             return
-        pending = seeds[url_item.infohash]
-        claim = pending.claims[0]
         if result.outcome is AddOutcome.ADDED:
-            self._records.insert_fresh(pending, claim)
-        elif self._records.has(pending.infohash):
-            self._ctx.reacquired_keys.add(pending.infohash)
+            self._track_fresh(seed)
+        elif seed.accreted:
+            self._accrete_resident(seed)
         else:
-            if result.added_on is not None:
-                max_age_days = self._config.imports.pending_max_age_days
-                if result.added_on < pending_cutoff(max_age_days):
-                    self.logger.debug(
-                        f"{pending.display_label} has been in qBittorrent longer than "
-                        f"{count_noun(max_age_days, 'day')}, not tracking it",
-                    )
-                    return
-                pending = pending.restamped(stamp_of(result.added_on))
-            # A reacquire, not a fresh grab: `save` refreshes without a run-list insert.
-            self._records.save(pending, pending.claims[0])
-            self._ctx.reacquired_keys.add(pending.infohash)
+            self._reacquire(seed, result.added_on)
+
+    def _track_fresh(self, seed: PendingSeed) -> None:
+        """A fresh add: the record enters the run list, its birth and every claim stamped now (a re-add too)."""
+
+        self._records.insert_fresh(seed.record_at(now_stamp(), fresh=True), seed.claim)
+
+    def _accrete_resident(self, seed: PendingSeed) -> None:
+        """A torrent already downloading under a stored record: the entry's claim and placements join it.
+
+        Reacquired only when the record is not this run's own grab (a torrent two entries list in one run).
+        """
+
+        record = seed.record_at(now_stamp(), fresh=False)
+        self._records.save(record, seed.claim)
+        if record.infohash not in self._ctx.pending_imports:
+            self._ctx.reacquired_keys.add(record.infohash)
+
+    def _reacquire(self, seed: PendingSeed, added_on: datetime | None) -> None:
+        """A torrent qBittorrent holds with no record: tracked from its add time.
+
+        Dropped when that time is already past `imports.pending_max_age_days`; stamped now when
+        qBittorrent reports no add time.
+        """
+
+        stamp = now_stamp()
+        if added_on is not None:
+            max_age_days = self._config.imports.pending_max_age_days
+            if added_on < pending_cutoff(max_age_days):
+                self.logger.debug(
+                    f"{seed.claim.title or seed.facts.infohash} has been in qBittorrent longer than "
+                    f"{count_noun(max_age_days, 'day')}, not tracking it",
+                )
+                return
+            stamp = stamp_of(added_on)
+        # A reacquire, not a fresh grab: `save` refreshes without a run-list insert.
+        record = seed.record_at(stamp, fresh=False)
+        self._records.save(record, seed.claim)
+        self._ctx.reacquired_keys.add(record.infohash)
 
     def _needs_action(self, groups: list[str], reason: str, kind: NeedsActionKind) -> NeedsActionRecord:
         """A needs-action record for the current title."""
@@ -256,7 +298,7 @@ class GrabPipeline:
         """Whether this title's outcome may be cached as done.
 
         Only if something was grabbed or nothing was skipped. The run cap, a fallback hold, a failed grab, or a
-        failed parse request vetoes it.
+        failed Sonarr read under a placement vetoes it.
         """
 
         # A non-interactive fallback-mode private hold means the fallback COULDN'T cover these files: never cache, so
@@ -270,7 +312,7 @@ class GrabPipeline:
             not cap_reached
             and not fallback_hold
             and not grab_failed
-            and not self._ctx.per_title.parse_failed_groups
+            and not self._ctx.per_title.input_missing_groups
             and (
                 added_this_title > 0
                 or not (self._ctx.per_title.private_only_skipped or self._ctx.per_title.unsupported_tracker_skipped)
@@ -280,7 +322,7 @@ class GrabPipeline:
     def _classify_needs_action(self, *, grab_failed: bool) -> NeedsActionRecord | None:
         """The single needs-action row for a title NOT cached as done, or None.
 
-        Flat guard-returns preserve the precedence private-only > unsupported-tracker > grab-failed > parse-missed.
+        Flat guard-returns preserve the precedence private-only > unsupported-tracker > grab-failed > read-missed.
         """
 
         if self._ctx.per_title.private_only_skipped:
@@ -303,12 +345,12 @@ class GrabPipeline:
                 NeedsActionKind.GRAB_FAILED,
             )
 
-        if self._ctx.per_title.parse_failed_groups:
-            # The placement may have held a run on the missing parse, so the grab was judged coarsely: re-check.
+        if self._ctx.per_title.input_missing_groups:
+            # The placement may have held a run on the missing read, so the grab was judged coarsely: re-check.
             return self._needs_action(
-                self._ctx.per_title.parse_failed_groups,
-                "a Sonarr parse request failed; will retry next run",
-                NeedsActionKind.PARSE_FAILED,
+                self._ctx.per_title.input_missing_groups,
+                "a Sonarr read the placement needs failed; will retry next run",
+                NeedsActionKind.PLACEMENT_INPUT_MISSING,
             )
 
         return None
@@ -344,15 +386,15 @@ class GrabPipeline:
 
         any_to_download = self._planner.get_any_to_download(req.seadex_dict)
         # The strategy's placement facts land on the title's flags beside the add loop's own.
-        self._ctx.per_title.parse_failed_groups.extend(req.parse_failed_groups)
+        self._ctx.per_title.input_missing_groups.extend(req.input_missing_groups)
 
         # The cap can stop the url loop mid-title, so a capped title is never cached as done, only classified below.
         cap_reached = False
         added_this_title = 0
 
         if not any_to_download:
-            # A failed parse request may have held a placement, so "already have it" is not claimed either.
-            if not (self._ctx.per_title.private_only_skipped or self._ctx.per_title.parse_failed_groups):
+            # A failed Sonarr read may have held a placement, so "already have it" is not claimed either.
+            if not (self._ctx.per_title.private_only_skipped or self._ctx.per_title.input_missing_groups):
                 self._ctx.stats.up_to_date += 1
                 self._reporter.detail(
                     "status",

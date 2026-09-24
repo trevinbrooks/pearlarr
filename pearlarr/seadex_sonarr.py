@@ -1,15 +1,23 @@
 """The Sonarr strategy: series/episode coverage and per-AniList-id processing over the services hub."""
 
 import time
-from collections.abc import Sequence
+from collections.abc import Iterable, Mapping, Sequence
 from dataclasses import replace
 from typing import override
 
 from . import coverage as _coverage
 from .arr_http import make_httpx_client
 from .config import Arr
-from .grab_pipeline import GrabRequest
-from .grab_placement import EntryPlacements, PendingSeedContext, SeedScope, build_pending_seeds
+from .grab_pipeline import NO_SEEDS, GrabRequest
+from .grab_placement import (
+    NO_RESIDENTS,
+    EntryPlacements,
+    PendingSeed,
+    PendingSeedContext,
+    SeedScope,
+    build_pending_seeds,
+    resident_scopes,
+)
 from .log import EntryState, pluralize
 from .manual_import import (
     AttemptKind,
@@ -21,7 +29,7 @@ from .manual_import import (
 )
 from .mappings import ExternalIds, MappingEntry, MappingSource
 from .output import hub_warn
-from .placement_types import episode_index
+from .placement_types import EpisodeIndex, episode_index
 from .planner import get_episode_keys
 from .protocols import ArrSync
 from .radarr_client import AbstractRadarrClient, RadarrClient, collect_anime_movies
@@ -38,7 +46,6 @@ from .sonarr_episodes import SonarrEpisodes
 from .sonarr_import import ImportExecutor, ImportReconciler
 from .sonarr_mapper import FileEpisodeMapper
 from .sonarr_parse import SonarrParseCache
-from .stamps import now_stamp
 
 
 def get_overlapping_results(seadex_dict: SeadexDict) -> bool:
@@ -412,13 +419,17 @@ class SonarrSync(ArrSync[SonarrItem]):
         self.logger.debug(f"SeaDex: {', '.join(seadex_dict)}")
 
         # Place every listed file where the import will put it, so the grab is judged by the map the import
-        # runs. The series map is the whole-series list the entry's own list was cut from (a per-run cache hit).
-        scope = SeedScope(
-            episode_index(ep_list),
-            episode_index(self._episodes.cached_episodes(sonarr_series_id) or []),
-            title.names,
+        # runs: a torrent already downloading under a stored record is placed as that record's leftover, under
+        # every claim's window. The series maps are the whole-series lists (a per-run cache hit each).
+        stored = self._stored_records(seadex_dict, run)
+        indexes = self._series_indexes(
+            {sonarr_series_id, *(sid for record in stored.values() for sid in record.series_ids)}
         )
-        placed = EntryPlacements.place(scope, self._parse.parsed_files(seadex_dict, series_fp=self._episodes.series_fp))
+        scope = SeedScope(al_id, episode_index(ep_list), indexes.get(sonarr_series_id, episode_index([])), title.names)
+        residents = resident_scopes(seadex_dict, stored, indexes) if stored else NO_RESIDENTS
+        placed = EntryPlacements.place(
+            scope, self._parse.parsed_files(seadex_dict, series_fp=self._episodes.series_fp), residents
+        )
         placed.attach_records(seadex_dict)
         self._log_placements(placed)
 
@@ -448,16 +459,11 @@ class SonarrSync(ArrSync[SonarrItem]):
         )
         torrent_hashes, seadex_dict = plan.torrent_hashes, plan.seadex_dict
 
-        # Build the authoritative per-torrent import seeds the engine will persist
-        # at the add site. Only the releases marked for download (download +
-        # hash) get a seed. Each carries our own (basename -> Sonarr episode ids)
-        # mapping so the later manual import never trusts Sonarr's blind parse.
-        # Skipped entirely when the feature is off, to avoid the per-file work.
-        # Gate on the engine's RESOLVED mode (cli > config), not the raw config,
-        # so a CLI override agrees with the engine's persist/reconcile/blocking
-        # gates - otherwise enabling via the CLI over an off config builds no
-        # seeds and the whole pass silently no-ops.
-        pending_seeds: dict[str, PendingImport] | None = None
+        # Build the per-torrent seeds the engine persists at the add site: one per release marked for download
+        # (download + hash), carrying our own (basename -> Sonarr episode ids) map so the later manual import never
+        # trusts Sonarr's blind parse. Gated on the engine's RESOLVED mode (cli > config), not the raw config, so
+        # a CLI override agrees with the engine's persist/reconcile/blocking gates.
+        pending_seeds: Mapping[str, PendingSeed] = NO_SEEDS
         if run.import_wait_mode is not ImportWaitMode.OFF:
             pending_seeds = build_pending_seeds(
                 seadex_dict,
@@ -466,7 +472,6 @@ class SonarrSync(ArrSync[SonarrItem]):
                     al_id=al_id,
                     series_id=sonarr_series_id,
                     title=title.display,
-                    added_at=now_stamp(),
                     coverage=coverage,
                     url=sd_url,
                     guards=plan.guards,
@@ -485,9 +490,30 @@ class SonarrSync(ArrSync[SonarrItem]):
                 replaced_groups=sonarr_releases.replaced_groups(),
                 coverage=coverage,
                 pending_seeds=pending_seeds,
-                parse_failed_groups=placed.parse_failed_groups(seadex_dict),
+                input_missing_groups=placed.input_missing_groups(seadex_dict),
             ),
         )
+
+    def _stored_records(self, seadex_dict: SeadexDict, run: RunServices) -> dict[str, PendingImport]:
+        """The stored records on the entry's listed torrents, by infohash (none when the wait mode is off)."""
+
+        if run.import_wait_mode is ImportWaitMode.OFF:
+            return {}
+        return run.records.stored_records(
+            url_item.infohash
+            for rg_item in seadex_dict.values()
+            for url_item in rg_item.urls.values()
+            if url_item.infohash is not None
+        )
+
+    def _series_indexes(self, series_ids: Iterable[int]) -> dict[int, EpisodeIndex]:
+        """One index per series whose whole list served this run (a cold read fetches once); an unread one is absent."""
+
+        return {
+            sid: episode_index(episodes)
+            for sid in series_ids
+            if (episodes := self._episodes.cached_episodes(sid)) is not None
+        }
 
     def _log_placements(self, placed: EntryPlacements) -> None:
         """One debug line per url with video files: what placed (the coverage the plan reads), what was set aside."""
@@ -498,7 +524,7 @@ class SonarrSync(ArrSync[SonarrItem]):
             aside = ", ".join(p.name for p in placement.assignment.excluded)
             self.logger.debug(
                 f"{url}: placed {_coverage.coverage_string(list(placement.records)) or 'nothing'}"
-                f"{'' if placement.parses_known else ' (a parse request failed)'}"
+                f"{'' if placement.inputs_known else ' (a Sonarr read failed)'}"
                 f"{f'; set aside (other slice / duplicate): {aside}' if aside else ''}"
             )
 

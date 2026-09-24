@@ -113,8 +113,8 @@ class NeedsActionKind(Enum):
     """A recommended release is on a tracker we have no parser for."""
     GRAB_FAILED = auto()
     """A contained transient failure (tracker/qBittorrent down)."""
-    PARSE_FAILED = auto()
-    """A Sonarr parse request failed, so the grab was judged without that file's placement."""
+    PLACEMENT_INPUT_MISSING = auto()
+    """A Sonarr read the grab-time placement needs failed, so the grab was judged without it."""
 
 
 @dataclass(frozen=True, slots=True)
@@ -176,8 +176,8 @@ class PerTitleState:
     """Hashes held out of the cached hash set, so the release is re-considered once a parser lands."""
     grab_failed_groups: list[str] = field(default_factory=list[str])
     """Groups whose release hit a contained grab failure (tracker or client down), so the title stays uncached."""
-    parse_failed_groups: list[str] = field(default_factory=list[str])
-    """Groups with a file whose Sonarr parse request failed, so the title stays uncached and re-checks."""
+    input_missing_groups: list[str] = field(default_factory=list[str])
+    """Groups with a url whose placement waited on a Sonarr read that failed, so the title stays uncached and re-checks."""
     current_title: str | None = None
     """Title of the entry currently being processed, so grabs and the summary can attribute what they grab."""
     current_url: str | None = None

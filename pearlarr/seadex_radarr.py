@@ -1,12 +1,14 @@
 """The Radarr strategy: movie matching and per-AniList-id processing over the services hub."""
 
+from collections.abc import Mapping
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 from typing import override
 
 from .arr_activity import IMPORT_EVENTS, format_history_date
 from .config import Arr
-from .grab_pipeline import GrabRequest
+from .grab_pipeline import NO_SEEDS, GrabRequest
+from .grab_placement import PendingSeed, TorrentFacts
 from .log import pluralize
 from .manual_import import (
     NO_PROGRESS,
@@ -25,7 +27,7 @@ from .protocols import ArrSync
 from .radarr_client import AbstractRadarrClient, RadarrClient, collect_anime_movies
 from .run_services import RunDeps, RunServices, bind_arr_http
 from .seadex_types import ArrReleases, HistoryRecord, ProgressSink, RadarrItem, flagged_urls
-from .stamps import now_stamp, parse_stamp_or_none
+from .stamps import parse_stamp_or_none
 
 # Clock-skew cushion subtracted from the oldest pending record's grab time before the history query.
 # The added_at stamps are converted to UTC first, so this absorbs only genuine NTP drift, never a timezone
@@ -186,34 +188,32 @@ class RadarrSync(ArrSync[RadarrItem]):
 
         # Seed a pending record per grabbed torrent so the engine's gate persists it: the category move then
         # defers until Radarr imports the movie, and for a torrent shared with a Sonarr grab until both arrs clear.
-        pending_seeds: dict[str, PendingImport] | None = None
+        # A torrent already downloading under a stored record takes this entry's claim (a re-flag replaces it).
+        pending_seeds: Mapping[str, PendingSeed] = NO_SEEDS
         if run.import_wait_mode is not ImportWaitMode.OFF:
-            added_at = now_stamp()
-            # No guard fields: Radarr's import path reads nothing but the infohash.
+            flagged = flagged_urls(seadex_dict)
+            stored = run.records.stored_records(f.infohash for f in flagged)
+            # No guard fields and no window: Radarr's import path reads nothing but the infohash.
             pending_seeds = {
-                flagged.infohash: PendingImport(
-                    infohash=flagged.infohash,
-                    release_group=flagged.group,
-                    is_dual_audio=False,
-                    seadex_files=(),
-                    added_at=added_at,
-                    file_episode_map={},
-                    claims=(
-                        EntryClaim(
-                            al_id=al_id,
-                            series_id=0,
-                            title=title.display,
-                            coverage=None,
-                            url=sd_url,
-                            ordered_episode_ids=(),
-                            names=EntryNames(),
-                            preowned_episode_ids=(),
-                            slice_coverage=None,
-                            claimed_at=added_at,
-                        ),
+                f.infohash: PendingSeed(
+                    facts=TorrentFacts(f.infohash, f.group, False, (), ()),
+                    placements={},
+                    excluded=(),
+                    claim=EntryClaim(
+                        al_id=al_id,
+                        series_id=0,
+                        title=title.display,
+                        coverage=None,
+                        url=sd_url,
+                        ordered_episode_ids=(),
+                        names=EntryNames(),
+                        preowned_episode_ids=(),
+                        slice_coverage=None,
+                        claimed_at="",
                     ),
+                    stored=stored.get(f.infohash),
                 )
-                for flagged in flagged_urls(seadex_dict)
+                for f in flagged
             }
 
         return run.grab_and_cache(

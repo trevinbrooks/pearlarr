@@ -152,9 +152,9 @@ SeaDex's preferred release for these titles exists only on a private tracker, an
 Your choices, via `seadex.private_releases` ([configuration.md](configuration.md#seadex)): grab the release yourself from the private tracker (the summary links the SeaDex entry), or set the policy to `fallback` so a public alternative is grabbed instead where one exists.
 Titles with no public alternative stay in the summary's "needs action" list and are re-checked every run until one appears.
 
-## A Sonarr parse request failed
+## A Sonarr read the placement needs failed
 
-The run summary lists a title under "needs action" with "a Sonarr parse request failed; will retry next run". Sonarr's parse endpoint did not answer for one of that release's file names, so part of the release could not be placed and the title was not cached. Nothing needs doing: the title is re-checked on the next run, and the row stops once Sonarr answers. A row that repeats every run means Sonarr's parse endpoint fails for that name every time. The debug log names the file.
+The run summary lists a title under "needs action" with "a Sonarr read the placement needs failed; will retry next run". Sonarr did not answer a read the grab-time placement needed, a parse of one of that release's file names or the episode list of a series the torrent is already downloading for, so part of the release could not be placed and the title was not cached. Nothing needs doing: the title is re-checked on the next run, and the row stops once Sonarr answers. A row that repeats every run means the same read fails every time. The debug log names the file or series.
 
 ## Tracker skips
 

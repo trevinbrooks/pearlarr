@@ -79,6 +79,7 @@ from .builders import (
     make_services,
     one_release_dict,
     pending_import,
+    pending_seed,
     sonarr_client_fields,
 )
 from .fakes import (
@@ -4057,7 +4058,7 @@ class TestRegisteredGrabSurvivesSnapshot:
         torrents = FakeTorrents({"h1": (AddOutcome.ALREADY_ADDED, "Show")})
         strategy = _RecordingStrategy()
         engine, pipeline = make_add_engine(torrents=torrents, strategy=strategy)
-        seeds = {"h1": pending_import(infohash="h1", series_id=7, added_at=_FRESH)}
+        seeds = {"h1": pending_seed("h1", series_id=7)}
 
         pipeline.add_torrent(
             grab_request(seadex_dict=one_release_dict(srg="NAN0", infohash="h1"), pending_seeds=seeds),

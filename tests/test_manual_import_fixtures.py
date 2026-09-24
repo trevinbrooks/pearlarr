@@ -2818,26 +2818,22 @@ class TestSeedEqualsMapper:
         return series_index({EpisodeKey(0, 1): 501, EpisodeKey(0, 2): 502})
 
     def test_seed_scope_targets_the_entrys_ids_over_the_series_map(self) -> None:
-        scope = SeedScope(self._index(), series_index(self._MAP), EntryNames())
+        scope = SeedScope(1, self._index(), series_index(self._MAP), EntryNames())
 
         assert scope.target() == TargetScope([501, 502], series_index(self._MAP))
 
     def test_the_seed_and_the_mapper_place_and_exclude_alike(self) -> None:
         parses = self._parses()
-        scope = SeedScope(self._index(), series_index(self._MAP), EntryNames())
+        scope = SeedScope(1, self._index(), series_index(self._MAP), EntryNames())
         index = scope.entry
         release = SeedRelease(
             release_group="grp",
             url_item=url_item(url="u", infohash="h"),
             infohash="h",
-            placed=place_release([SeedFile(name, 1000, parses[name]) for name in self._NAMES], scope),
+            placed=place_release([SeedFile(name, 1000, parses[name]) for name in self._NAMES], scope, None),
         )
 
-        seed = build_pending_seed(
-            release,
-            scope,
-            PendingSeedContext(al_id=1, series_id=2, title="t", added_at="2026-01-01 00:00:00"),
-        )
+        seed = build_pending_seed(release, scope, PendingSeedContext(al_id=1, series_id=2, title="t"))
         mapper = make_sonarr_mapper(sonarr=FakeSonarrClient(parse_fn=parses.get))
         pending = pending_import(file_episode_map={}, ordered_episode_ids=list(index.by_id), seadex_files=self._NAMES)
         live = mapper.assign(
@@ -2846,14 +2842,18 @@ class TestSeedEqualsMapper:
             indexes_for(pending, series_index(self._MAP)),
         )
 
-        assert dict(seed.file_episode_map) == {name: tuple(ids) for name, ids in live.assigned.items()}
-        assert seed.excluded_files == tuple(p.name for p in live.excluded)
+        assert seed.placements == live.assigned
+        assert seed.excluded == tuple(p.name for p in live.excluded)
         # And it is a real placement, not two empty maps agreeing.
-        assert dict(seed.file_episode_map) == {
-            normalize_basename(self._NAMES[0]): (501,),
-            normalize_basename(self._NAMES[1]): (502,),
+        assert seed.placements == {
+            normalize_basename(self._NAMES[0]): [501],
+            normalize_basename(self._NAMES[1]): [502],
         }
-        assert seed.excluded_files == (normalize_basename(self._NAMES[2]),)
+        assert seed.excluded == (normalize_basename(self._NAMES[2]),)
+        # The record the pipeline persists carries the same map and exclusions.
+        record = seed.record_at("2026-01-01 00:00:00", fresh=True)
+        assert dict(record.file_episode_map) == {name: tuple(ids) for name, ids in live.assigned.items()}
+        assert record.excluded_files == seed.excluded
 
 
 # --------------------------------------------------------------------------- #

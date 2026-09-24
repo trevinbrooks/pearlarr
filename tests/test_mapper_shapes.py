@@ -127,7 +127,7 @@ def _scope(case: ShapeCase) -> SeedScope:
     """The grab-time scope: the entry's slice of the whole-series index, and the names."""
 
     index = episode_index(case.episodes)
-    return SeedScope(episode_index([index.by_id[episode_id] for episode_id in case.entry_ids]), index, _names(case))
+    return SeedScope(1, episode_index([index.by_id[episode_id] for episode_id in case.entry_ids]), index, _names(case))
 
 
 def _parsed(case: ShapeCase) -> dict[str, ParsedFileInfo]:
@@ -162,7 +162,7 @@ def test_the_grab_records_the_placed_episodes(case: ShapeCase) -> None:
     parsed = _parsed(case)
     files = [SeedFile(name, size, parsed[name]) for size, name in enumerate(case.parses, start=1)]
 
-    placement = place_release(files, scope)
+    placement = place_release(files, scope, None)
 
     expected = [
         EpisodeRecord(scope.series.by_id[ep_id].season_number, scope.series.by_id[ep_id].episode_number, size)
@@ -170,7 +170,7 @@ def test_the_grab_records_the_placed_episodes(case: ShapeCase) -> None:
         for ep_id in case.expected.get(name, ())
     ]
     assert list(placement.records) == expected
-    assert placement.parses_known
+    assert placement.inputs_known
 
 
 @pytest.mark.parametrize("case", _PARAMS)

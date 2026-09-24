@@ -15,7 +15,7 @@ is a real `RunServices` subclass. The strategies are built bare
 
 import logging
 from collections.abc import Callable, MutableMapping
-from typing import NamedTuple, cast, override
+from typing import Any, NamedTuple, cast, override
 
 import pytest
 from seadex import EntryRecord
@@ -25,7 +25,7 @@ from pearlarr.arr_http import DeleteOutcome
 from pearlarr.cache import CacheRecord
 from pearlarr.config import Arr
 from pearlarr.episode_state import EpisodeFileStatus, EpisodeSnapshot, RecordSnapshot, trusted_groups
-from pearlarr.grab_pipeline import GrabRequest
+from pearlarr.grab_pipeline import NO_SEEDS, GrabRequest
 from pearlarr.grab_placement import SeedFile
 from pearlarr.import_quality import resolve_language_objects
 from pearlarr.log import EntryState
@@ -47,16 +47,18 @@ from pearlarr.manual_import import (
 from pearlarr.mappings import ExternalIds, MappingEntry, MappingSource
 from pearlarr.output import Severity
 from pearlarr.output.recording import RecordingHub
+from pearlarr.pending_records import PendingRecords
 from pearlarr.placement_types import episode_index
 from pearlarr.planner import PlanResult
 from pearlarr.probe_verdicts import DownloadHistoryVerdict, HistoryImport, placements_from_history
-from pearlarr.reporter import EntryTitle
+from pearlarr.reporter import EntryTitle, RunContext
 from pearlarr.run_services import RunServices
 from pearlarr.seadex_radarr import RadarrSync
 from pearlarr.seadex_sonarr import SonarrSync
 from pearlarr.seadex_types import (
     ArrReleases,
     CommandResource,
+    EpisodeRecord,
     HistoryPage,
     HistoryRecord,
     Language,
@@ -88,6 +90,7 @@ from .builders import (
     make_sonarr_episodes,
     make_sonarr_sync,
     manual_candidate,
+    parsed_info,
     pending_import,
     plan_result,
     queue_record,
@@ -171,8 +174,14 @@ class _FakeRunServices(RunServices):
         no_releases_result: bool = False,
         import_wait_mode: ImportWaitMode = ImportWaitMode.OFF,
         selection_stale: bool = False,
+        arr: Arr = Arr.SONARR,
+        cache_store: FakeCacheStore | None = None,
     ) -> None:
         self._selection_stale = selection_stale
+        # The record seam the strategies read stored records through, bound as a run would bind it.
+        self.cache_store = cache_store if cache_store is not None else FakeCacheStore()
+        self._records = PendingRecords(self.cache_store)
+        self._records.begin_run(RunContext(arr=arr, import_wait_mode=import_wait_mode))
         self._anilist_ids = anilist_ids or {}
         self._prologue_entry = prologue_entry
         self._anilist_title = anilist_title
@@ -278,6 +287,11 @@ class _FakeRunServices(RunServices):
     def import_wait_mode(self) -> ImportWaitMode:
         return self._import_wait_mode
 
+    @property
+    @override
+    def records(self) -> PendingRecords:
+        return self._records
+
     @override
     def no_releases_skip(self, al_id: int, cache_details: CacheRecord) -> bool:
         self.no_releases_calls.append((al_id, cache_details))
@@ -332,15 +346,20 @@ def test_fake_overrides_the_full_public_surface() -> None:
 
 
 class _FakeEpisodes:
-    """Minimal episode collaborator: scripts `get_ep_list`'s resolved episode list, doubling as the series list."""
+    """Minimal episode collaborator: scripts `get_ep_list`'s resolved episode list, doubling as the series list.
+
+    With `sonarr`, the whole-series read goes through that client's `episodes` instead (recorded there).
+    """
 
     series_fp = "fp"
 
-    def __init__(self, *, ep_list: list[SonarrEpisode] | None) -> None:
+    def __init__(self, *, ep_list: list[SonarrEpisode] | None, sonarr: FakeSonarrClient | None = None) -> None:
         self._ep_list = ep_list
+        self._sonarr = sonarr
 
     def cached_episodes(self, series_id: int) -> list[SonarrEpisode] | None:
-        del series_id
+        if self._sonarr is not None:
+            return self._sonarr.episodes(series_id)
         return self._ep_list
 
     def get_ep_list(
@@ -357,12 +376,15 @@ class _FakeEpisodes:
         return ArrReleases()
 
 
-class _PassThroughParse:
-    """Parse collaborator that reads no file for any url (no Sonarr round-trip)."""
+class _ScriptedParse:
+    """Parse collaborator serving scripted files per url (no Sonarr round-trip), none for an unscripted url."""
+
+    def __init__(self, files_by_url: dict[str, tuple[SeedFile, ...]] | None = None) -> None:
+        self._files = files_by_url or {}
 
     def parsed_files(self, seadex_dict: SeadexDict, *, series_fp: str) -> dict[str, tuple[SeedFile, ...]]:
         del series_fp
-        return {url: () for rg_item in seadex_dict.values() for url in rg_item.urls}
+        return {url: self._files.get(url, ()) for rg_item in seadex_dict.values() for url in rg_item.urls}
 
 
 class TestItemAnilistIdsDelegates:
@@ -554,7 +576,7 @@ class TestProcessAlIdThreadsServices:
             SonarrSync,
             _services=run,
             _episodes=_FakeEpisodes(ep_list=[sonarr_ep(1, 1)]),
-            _parse=_PassThroughParse(),
+            _parse=_ScriptedParse(),
             _config=make_config(interactive=True, sleep_time=0),
             ignore_movies_in_radarr=False,
             logger=make_logger(),
@@ -2019,16 +2041,22 @@ class _PerSeriesSonarr(FakeSonarrClient):
 
 
 class _CountingStore(FakeCacheStore):
-    """A `FakeCacheStore` counting its guard reads."""
+    """A `FakeCacheStore` counting its guard and pending-record reads."""
 
     def __init__(self) -> None:
         super().__init__()
         self.get_guards_calls = 0
+        self.get_pending_record_calls = 0
 
     @override
     def get_guards(self, arr: Arr) -> dict[int, GuardFacts]:
         self.get_guards_calls += 1
         return super().get_guards(arr)
+
+    @override
+    def get_pending_record(self, arr: Arr, infohash: str) -> dict[str, Any] | None:
+        self.get_pending_record_calls += 1
+        return super().get_pending_record(arr, infohash)
 
 
 def _two_series_record(
@@ -2294,11 +2322,98 @@ class TestRadarrImportCompletedHistory:
         assert strat.supports_blocking_monitor is False
 
 
+_SEED_URL = "https://nyaa.si/1"
+_SEED_FILES = ("Show - 01 [1080p].mkv", "Show - 02 [1080p].mkv")
+_EP1 = sonarr_ep(1, 1, ep_id=101, episode_file_id=0)
+_EP2 = sonarr_ep(1, 2, ep_id=102, episode_file_id=0)
+_STAMP = "2026-01-01 00:00:00"
+
+
+def _sonarr_seed_run(mode: ImportWaitMode, *, store: FakeCacheStore, sonarr: FakeSonarrClient) -> _FakeRunServices:
+    """Drive a Sonarr `process_al_id` for entry 5 (episode 102 of series 7) listing one two-file torrent."""
+
+    seadex: SeadexDict = {
+        "NAN0": rg_group({_SEED_URL: url_item(url=_SEED_URL, infohash="h1", download=True, files=list(_SEED_FILES))}),
+    }
+    run = _FakeRunServices(
+        prologue_entry=make_entry_record(url="https://releases.moe/5"),
+        anilist_title="Show Cour 2",
+        seadex_dict=seadex,
+        filter_downloads_result=plan_result(["h1"], seadex),
+        import_wait_mode=mode,
+        cache_store=store,
+    )
+    parses = {name: parsed_info(season=1, episodes=(n,)) for n, name in enumerate(_SEED_FILES, start=1)}
+    strat = make_bare_instance(
+        SonarrSync,
+        _services=run,
+        _episodes=_FakeEpisodes(ep_list=[_EP2], sonarr=sonarr),
+        _parse=_ScriptedParse({_SEED_URL: tuple(SeedFile(name, 1000, parses[name]) for name in _SEED_FILES)}),
+        _config=make_config(sleep_time=0),
+        ignore_movies_in_radarr=False,
+        logger=make_logger(),
+    )
+    strat.process_al_id(_Item(id=7, title="Show"), 5, MappingEntry(anilist_id=5))
+    return run
+
+
+class TestSonarrProcessAlIdSeeds:
+    """A Sonarr grab places each listed torrent under the entry's scope, a stored one as its record's leftover."""
+
+    def test_a_stored_torrent_is_placed_as_its_records_leftover(self) -> None:
+        # Cour 1's record already maps file 01. Cour 2 flags the same torrent: only file 02 is placed,
+        # under the stored claim's window and this entry's, and the seed accretes onto the record.
+        store = FakeCacheStore()
+        resident = pending_import(
+            infohash="h1",
+            al_id=22,
+            series_id=7,
+            title="Show Cour 1",
+            ordered_episode_ids=(101,),
+            file_episode_map={_SEED_FILES[0]: [101]},
+            seadex_files=list(_SEED_FILES),
+        )
+        store.put_pending(Arr.SONARR, "h1", resident.to_json())
+        sonarr = FakeSonarrClient(episodes=[_EP1, _EP2])
+
+        run = _sonarr_seed_run(ImportWaitMode.BLOCKING, store=store, sonarr=sonarr)
+
+        (req,) = run.grab_requests
+        (seed,) = req.pending_seeds.values()
+        assert seed.stored == resident
+        assert seed.accreted is True
+        assert seed.placements == {normalize_basename(_SEED_FILES[1]): [102]}
+        assert seed.claim.al_id == 5
+        assert seed.claim.ordered_episode_ids == (102,)
+        record = seed.record_at(_STAMP, fresh=False)
+        assert record.al_ids == (22, 5)
+        assert dict(record.file_episode_map) == {
+            normalize_basename(name): (ep,) for name, ep in zip(_SEED_FILES, (101, 102), strict=True)
+        }
+        # The planner judges the url by the whole map's episodes inside this entry.
+        assert req.seadex_dict["NAN0"].urls[_SEED_URL].episodes == [EpisodeRecord(season=1, episode=2, size=1000)]
+        assert req.input_missing_groups == ()
+        # The stored claim's window came off the per-run whole-series read.
+        assert sonarr.episodes_calls == [7]
+
+    def test_wait_mode_off_reads_no_record_and_seeds_nothing(self) -> None:
+        store = _CountingStore()
+        sonarr = FakeSonarrClient(episodes=[_EP1, _EP2])
+
+        run = _sonarr_seed_run(ImportWaitMode.OFF, store=store, sonarr=sonarr)
+
+        (req,) = run.grab_requests
+        assert req.pending_seeds == NO_SEEDS
+        assert store.get_pending_record_calls == 0
+        # The placement still runs: the planner's coverage never depends on the wait mode.
+        assert req.seadex_dict["NAN0"].urls[_SEED_URL].episodes == [EpisodeRecord(season=1, episode=2, size=1000)]
+
+
 class TestRadarrProcessAlIdSeeds:
-    """A Radarr grab seeds a `{infohash -> PendingImport}` per download+hash, gated on wait mode."""
+    """A Radarr grab seeds a `{infohash -> PendingSeed}` per download+hash, gated on wait mode."""
 
     @staticmethod
-    def _run_process(mode: ImportWaitMode) -> _FakeRunServices:
+    def _run_process(mode: ImportWaitMode, *, store: FakeCacheStore | None = None) -> _FakeRunServices:
         """Drive `process_al_id` to grab_and_cache and return the recording services hub."""
 
         seadex: SeadexDict = {
@@ -2310,6 +2425,8 @@ class TestRadarrProcessAlIdSeeds:
             seadex_dict=seadex,
             filter_downloads_result=plan_result(["h1"], seadex),
             import_wait_mode=mode,
+            arr=Arr.RADARR,
+            cache_store=store,
         )
         strat = make_bare_instance(
             RadarrSync,
@@ -2325,30 +2442,50 @@ class TestRadarrProcessAlIdSeeds:
         run = self._run_process(ImportWaitMode.BLOCKING)
 
         (req,) = run.grab_requests
-        assert req.pending_seeds is not None
         (seed,) = req.pending_seeds.values()
-        (claim,) = seed.claims
         # Carried fields: the real torrent identity + the one claim's anilist display context.
-        assert seed.infohash == "h1"
-        assert claim.al_id == 42
-        assert claim.title == "A Movie"
-        assert claim.url == "https://releases.moe/9"
-        assert seed.release_group == "NAN0"
-        # display_label renders sensibly from these (title · group).
-        assert seed.display_label == f"A Movie{SEP}NAN0"
+        assert seed.facts.infohash == "h1"
+        assert seed.facts.release_group == "NAN0"
+        assert seed.claim.al_id == 42
+        assert seed.claim.title == "A Movie"
+        assert seed.claim.url == "https://releases.moe/9"
+        # A torrent the store does not hold is born.
+        assert seed.stored is None
+        assert seed.accreted is False
         # Sonarr-domain fields deliberately stay empty for a Radarr record.
-        assert claim.series_id == 0
-        assert dict(seed.file_episode_map) == {}
-        assert seed.target_ids() == []
-        assert seed.seadex_files == ()
-        assert claim.ordered_episode_ids == ()
-        assert claim.coverage is None
+        assert seed.claim.series_id == 0
+        assert seed.placements == {}
+        assert seed.facts.seadex_files == ()
+        assert seed.claim.ordered_episode_ids == ()
+        assert seed.claim.coverage is None
+        record = seed.record_at(_STAMP, fresh=True)
+        # display_label renders sensibly from these (title · group).
+        assert record.display_label == f"A Movie{SEP}NAN0"
+        assert record.target_ids() == []
+        assert record.added_at == record.claims[0].claimed_at == _STAMP
 
-    def test_no_seeds_when_wait_mode_off(self) -> None:
-        run = self._run_process(ImportWaitMode.OFF)
+    def test_seed_carries_the_stored_record(self) -> None:
+        # A torrent another Radarr entry already holds: the seed accretes this entry's claim onto it.
+        store = FakeCacheStore()
+        resident = pending_import(infohash="h1", al_id=9, series_id=0, title="Other Movie", file_episode_map={})
+        store.put_pending(Arr.RADARR, "h1", resident.to_json())
+
+        run = self._run_process(ImportWaitMode.BLOCKING, store=store)
 
         (req,) = run.grab_requests
-        assert req.pending_seeds is None
+        (seed,) = req.pending_seeds.values()
+        assert seed.stored == resident
+        assert seed.accreted is True
+        assert seed.record_at(_STAMP, fresh=False).al_ids == (9, 42)
+
+    def test_no_seeds_when_wait_mode_off(self) -> None:
+        store = _CountingStore()
+
+        run = self._run_process(ImportWaitMode.OFF, store=store)
+
+        (req,) = run.grab_requests
+        assert req.pending_seeds == NO_SEEDS
+        assert store.get_pending_record_calls == 0
 
 
 class TestManualImportWarningGating:

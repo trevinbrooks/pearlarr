@@ -31,11 +31,13 @@ from pearlarr.cache import (
 from pearlarr.clock import Clock
 from pearlarr.config import AppConfig, Arr
 from pearlarr.grab_pipeline import GrabPipeline, GrabRequest
+from pearlarr.grab_placement import PendingSeed, TorrentFacts
 from pearlarr.import_wait import ImportProbes, ImportWaitManager, PostImportCleanup
 from pearlarr.manual_import import (
     Deferral,
     EntryClaim,
     EntryNames,
+    FileEpisodeMap,
     GuardFacts,
     ImportProbe,
     ImportWaitMode,
@@ -814,6 +816,24 @@ def one_release_dict(*, srg: str, infohash: str, url: str = "https://nyaa.si/vie
     item = url_item(url=url, infohash=infohash, download=True)
     item.tracker = Tracker.NYAA
     return {srg: rg_group({url: item})}
+
+
+def pending_seed(
+    infohash: str,
+    *,
+    stored: PendingImport | None = None,
+    placements: FileEpisodeMap | None = None,
+    **claim: Any,
+) -> PendingSeed:
+    """A seed on `infohash` (group NAN0, no files) claimed by `entry_claim(**claim)`, born unless `stored` is given."""
+
+    return PendingSeed(
+        facts=TorrentFacts(infohash, "NAN0", False, (), ()),
+        placements=placements or {},
+        excluded=(),
+        claim=entry_claim(claimed_at="", **claim),
+        stored=stored,
+    )
 
 
 def grab_request(**overrides: Any) -> GrabRequest:

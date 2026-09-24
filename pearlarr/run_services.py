@@ -33,6 +33,7 @@ from .mappings import ExternalIds, MappingEntry, MappingResolver
 from .notify import Notifier
 from .output import emit_to_hub, hub_counts
 from .parse_records import ParseRecords
+from .pending_records import PendingRecords
 from .planner import DownloadPlanner, PlanResult
 from .reporter import EntryTitle, PerTitleState, RunContext, RunReporter, is_preview, resolve_entry_title
 from .seadex_filter import SeadexReleaseFilter
@@ -503,6 +504,12 @@ class RunServices:
     def is_preview(self) -> bool:
         """A run is a no-op preview (nothing can be grabbed): explicit dry run, or qBittorrent not configured."""
         return is_preview(self._ctx, self.qbit)
+
+    @property
+    def records(self) -> PendingRecords:
+        """The pending-record seam bound to the current run: the strategies read stored records through it."""
+
+        return self._grab_pipeline.records
 
     @property
     def import_wait_mode(self) -> ImportWaitMode:
