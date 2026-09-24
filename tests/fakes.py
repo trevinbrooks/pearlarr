@@ -172,6 +172,7 @@ class FakeStrategy(ArrSync[FakeArrItem]):
         items: list[FakeArrItem],
         anilist_ids: dict[int, MappingEntry],
         held_by_cap_through: RunServices | None = None,
+        adds_through: RunServices | None = None,
         process_raises_on: int | None = None,
         history: list[HistoryRecord] | None = None,
         supports_blocking_monitor: bool = True,
@@ -181,6 +182,8 @@ class FakeStrategy(ArrSync[FakeArrItem]):
         # When set, every processed id is held by the run cap on this hub's run context, as the grab pipeline
         # holds a grabbable release past the cap.
         self._held_by_cap_through = held_by_cap_through
+        # When set, every processed id counts one torrent added on this hub's run context, the pipeline's own tally.
+        self._adds_through = adds_through
         self._process_raises_on = process_raises_on
         self._supports_blocking_monitor = supports_blocking_monitor
         self.process_calls: list[int] = []
@@ -222,6 +225,8 @@ class FakeStrategy(ArrSync[FakeArrItem]):
         if self._held_by_cap_through is not None:
             self._held_by_cap_through.ctx.per_title.held_by_cap = True
             self._held_by_cap_through.ctx.stats.held_by_cap += 1
+        if self._adds_through is not None:
+            self._adds_through.ctx.torrents_added += 1
 
     @override
     def pending_import_series_id(self, item: FakeArrItem) -> int | None:

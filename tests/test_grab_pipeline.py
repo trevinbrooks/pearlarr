@@ -1241,15 +1241,12 @@ class TestGrabFailureContainment:
     """
 
     def _request(self, al_id: int, seadex_dict: SeadexDict, hashes: list[str | None]) -> GrabRequest:
-        return GrabRequest(
+        return grab_request(
             al_id=al_id,
-            arr_title="Show",
-            entry_title="Show",
             entry=make_entry_record(url=f"https://seadex.example/{al_id}"),
             seadex_dict=seadex_dict,
             torrent_hashes=hashes,
             cache_details={"updated_at": "2026-01-01 00:00:00"},
-            replaced_groups=(),
         )
 
     @pytest.mark.parametrize(
@@ -1400,15 +1397,12 @@ class TestFallbackHoldNeverCaches:
         return {"Priv": rg_group({private.url: private}), "Pub": rg_group({nyaa.url: nyaa})}
 
     def _request(self, al_id: int) -> GrabRequest:
-        return GrabRequest(
+        return grab_request(
             al_id=al_id,
-            arr_title="Show",
-            entry_title="Show",
             entry=make_entry_record(url=f"https://seadex.example/{al_id}"),
             seadex_dict=self._mixed_seadex_dict(),
             torrent_hashes=["hn"],
             cache_details={"updated_at": "2026-01-01 00:00:00"},
-            replaced_groups=(),
         )
 
     def test_partial_grab_under_a_hold_stays_uncached_and_surfaces(self) -> None:

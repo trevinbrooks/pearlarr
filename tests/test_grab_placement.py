@@ -192,8 +192,8 @@ class TestPlaceOntoResident:
         assert placement.inputs_known
 
     def test_a_re_flag_places_the_leftover_under_its_fresh_window(self) -> None:
-        # The entry's stored claim covers two episodes; re-listed over the whole season, its fresh window
-        # replaces the stale one in place, so the third file lands where the stale window could not put it.
+        # The entry's stored claim covers two episodes. Re-listed over the whole season, its fresh window
+        # replaces the stale one, so the third file lands where the stale window could not put it.
         record = pending_import(
             infohash="h1",
             file_episode_map={"show - s01e01.mkv": [101]},
@@ -208,6 +208,20 @@ class TestPlaceOntoResident:
         assert stale.assignment.assigned == {"show - s01e02.mkv": [102]}
         assert fresh.assignment.assigned == {"show - s01e02.mkv": [102], "show - s01e03.mkv": [103]}
         assert fresh.claimed_ids == {101, 102, 103}
+
+    def test_a_re_flag_runs_the_fresh_window_in_the_stale_ones_place(self) -> None:
+        # The entry's stored claim is a stale two-episode slice, and the pair Sonarr read nothing of indexes
+        # whichever two-episode window runs. Re-listed over the two episodes before it, the fresh window runs
+        # in the stale one's place, never after it, so the pair lands on the fresh episodes.
+        record = pending_import(
+            infohash="h1", file_episode_map={}, seadex_files=_RUN[:2], ordered_episode_ids=(103, 104)
+        )
+        files = [SeedFile(name, 10 * n, _bare(n)) for n, name in enumerate(_RUN[:2], start=1)]
+
+        placement = place_release(files, _scope(_SEASON[:2]), ResidentScope(record, _INDEXES))
+
+        assert placement.assignment.assigned == {"show - 01.mkv": [101], "show - 02.mkv": [102]}
+        assert placement.claimed_ids == {101, 102}
 
     def test_an_unread_claim_series_places_nothing_and_its_inputs_are_not_known(self) -> None:
         # A stored claim on a series this run could not read: the leftover waits for the import poll.
