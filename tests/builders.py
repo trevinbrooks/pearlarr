@@ -396,10 +396,6 @@ class FakeCacheStore(AbstractCacheStore):
         self._pending.setdefault(str(arr), {})[infohash] = deepcopy(record)
 
     @override
-    def has_pending(self, arr: Arr, infohash: str) -> bool:
-        return infohash in self._pending.get(str(arr), {})
-
-    @override
     def drop_pending(self, arr: Arr, infohash: str) -> None:
         self._pending.get(str(arr), {}).pop(infohash, None)
 

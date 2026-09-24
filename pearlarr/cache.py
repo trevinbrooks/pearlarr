@@ -469,8 +469,6 @@ class AbstractCacheStore(ABC):
     @abstractmethod
     def put_pending(self, arr: Arr, infohash: str, record: dict[str, Any]) -> None: ...
     @abstractmethod
-    def has_pending(self, arr: Arr, infohash: str) -> bool: ...
-    @abstractmethod
     def drop_pending(self, arr: Arr, infohash: str) -> None: ...
     @abstractmethod
     def other_arr_holds(self, arr: Arr, infohash: str) -> bool: ...
@@ -811,16 +809,6 @@ class CacheStore(AbstractCacheStore):
         """Upsert one torrent's record (staged, persisted at a save point)."""
 
         self._json_put(_PENDING_IMPORTS, (_arr_key(arr), infohash), record)
-
-    @override
-    def has_pending(self, arr: Arr, infohash: str) -> bool:
-        """Whether the arr holds a record on the torrent (a keyed EXISTS, never a scan)."""
-
-        row = self._conn.execute(
-            "SELECT 1 FROM pending_imports WHERE arr = ? AND infohash = ? LIMIT 1",
-            (_arr_key(arr), infohash),
-        ).fetchone()
-        return row is not None
 
     @override
     def drop_pending(self, arr: Arr, infohash: str) -> None:

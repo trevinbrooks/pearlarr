@@ -1042,8 +1042,6 @@ class TestPendingImports:
         # The keyed reads see only their own arr's row.
         assert store.get_pending_record(Arr.SONARR, "h1") == rec
         assert store.get_pending_record(Arr.RADARR, "h1") is None
-        assert store.has_pending(Arr.SONARR, "h1") is True
-        assert store.has_pending(Arr.RADARR, "h1") is False
 
         store.drop_pending(Arr.SONARR, "h1")
         assert store.get_pending(Arr.SONARR) == {}
