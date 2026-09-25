@@ -17,9 +17,8 @@ import httpx
 import respx
 
 from pearlarr.arr_http import ArrHttp
-from pearlarr.episode_state import EpisodeSnapshot, RecordSnapshot
+from pearlarr.episode_state import RecordSnapshot
 from pearlarr.manual_import import PendingImport
-from pearlarr.placement_types import episode_index
 from pearlarr.probe_verdicts import QueueVerdict, classify_queue
 from pearlarr.radarr_client import RadarrClient
 from pearlarr.seadex_types import HistoryRecord, ImportRejection, QueueRecord
@@ -27,7 +26,7 @@ from pearlarr.sonarr_client import SonarrClient
 from pearlarr.sonarr_import import ImportExecutor
 from pearlarr.sonarr_mapper import FileEpisodeMapper
 
-from .builders import make_run_deps, pending_import
+from .builders import episode_snapshot, make_run_deps, pending_import
 
 _URL = "http://sonarr.test"
 _BASE = f"{_URL}/api/v3"
@@ -76,9 +75,7 @@ _CANDIDATE_PATH = "/d/Show - 01 [1080p].mkv"
 def _bare_snapshot(pending: PendingImport) -> RecordSnapshot:
     """An empty same-poll index for every series the record claims (nothing on disk yet)."""
 
-    return RecordSnapshot(
-        pending, {sid: EpisodeSnapshot(episodes=episode_index([]), trusted={}) for sid in pending.series_ids}, {}
-    )
+    return RecordSnapshot(pending, {sid: episode_snapshot() for sid in pending.series_ids}, {})
 
 
 def _drive_manual_import(

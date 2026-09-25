@@ -7,7 +7,15 @@ from enum import Enum, auto
 from types import MappingProxyType
 from typing import NamedTuple, Self
 
-from .manual_import import EntryClaim, GuardFacts, OwnGroup, PendingImport, normalize_group, normalize_rg
+from .manual_import import (
+    EntryClaim,
+    FileEpisodeMap,
+    GuardFacts,
+    OwnGroup,
+    PendingImport,
+    normalize_group,
+    normalize_rg,
+)
 from .placement_types import EpisodeIndex
 
 type TrustPolicy = Mapping[str, frozenset[int] | None]
@@ -36,6 +44,10 @@ class EpisodeFileStatus(Enum):
     """Holds a file with no parseable group that no recorded size identifies either. Import ours rather
     than trust an unidentifiable file as recommended."""
 
+    MISPLACED = auto()
+    """Holds a trusted file at one of this torrent's listed sizes that is not the file intended on this episode
+    (a batch imported under the wrong numbers). Import ours over it."""
+
 
 @dataclass(frozen=True, slots=True)
 class TargetStatuses:
@@ -45,9 +57,9 @@ class TargetStatuses:
     """One status per de-duplicated target id."""
 
     def all_done(self) -> bool:
-        """True only when EVERY intended target already holds a recommended file (the drop-the-record signal).
+        """True only when every intended target holds a recommended file (the drop-the-record signal).
 
-        An UNKNOWN_GROUP or OTHER_GROUP file is NOT done: an unidentifiable file never drops a record early.
+        An UNKNOWN_GROUP, OTHER_GROUP, or MISPLACED file is not done: only a recommended file drops a record.
         """
 
         return bool(self.by_id) and all(s is EpisodeFileStatus.RECOMMENDED for s in self.by_id.values())
@@ -78,6 +90,9 @@ class EpisodeSnapshot(NamedTuple):
     """The per-group trust policy (see `trusted_groups`). A group absent here is not recommended: its
     files are replaced."""
 
+    own: OwnGroup
+    """The torrent's own release: a trusted file at one of its listed sizes is judged against the intended size."""
+
     owned_episode_sizes: Mapping[int, int] = MappingProxyType({})
     """Episode id -> the untagged file size the grab-time identification recorded. The claim is honored
     only while the file still sits at that size. Anything else untagged classifies as unidentifiable."""
@@ -86,9 +101,19 @@ class EpisodeSnapshot(NamedTuple):
     def guarded(cls, episodes: EpisodeIndex, guards: GuardFacts, votes: GroupVotes) -> Self:
         """The snapshot under one claim's guard evidence: its trust policy and its recorded untagged sizes."""
 
-        return cls(episodes, trusted_groups(guards, votes), guards.owned_sizes)
+        return cls(
+            episodes=episodes,
+            trusted=trusted_groups(guards, votes),
+            own=votes.own,
+            owned_episode_sizes=guards.owned_sizes,
+        )
 
-    def status_of(self, ep_id: int) -> EpisodeFileStatus:
+    def _misplaced(self, size: int | None, intended_size: int | None) -> bool:
+        """Whether a file at `size` is a file of this torrent's listed sizes that is not the one intended here."""
+
+        return size in self.own.sizes and intended_size is not None and size != intended_size
+
+    def status_of(self, ep_id: int, intended_size: int | None) -> EpisodeFileStatus:
         """Classify one intended target by its current on-disk file, decided HERE and not from the queue.
 
         Sonarr drops an imported item from its queue almost immediately, so only the episode files tell.
@@ -100,10 +125,11 @@ class EpisodeSnapshot(NamedTuple):
         group = ep.episode_file.release_group if ep.episode_file else None
         size = ep.episode_file.size if ep.episode_file else None
         if not group:
-            # An untagged file still at the size the grab-time identification recorded is a recommended copy.
-            # Anything else untagged (a different file, or no readable file record) stays unidentifiable.
+            # An untagged file still at the size the grab-time identification recorded is ours, recommended unless
+            # it is another of our files. Anything else untagged (a different file, no file record) is unidentifiable.
             if size is not None and size == self.owned_episode_sizes.get(ep_id):
-                return EpisodeFileStatus.RECOMMENDED
+                misplaced = self._misplaced(size, intended_size)
+                return EpisodeFileStatus.MISPLACED if misplaced else EpisodeFileStatus.RECOMMENDED
             return EpisodeFileStatus.UNKNOWN_GROUP
         norm = normalize_group(group)
         if norm not in self.trusted:
@@ -112,12 +138,17 @@ class EpisodeSnapshot(NamedTuple):
         if verify_sizes is not None and size not in verify_sizes:
             # A trusted group at a size no current listing carries: the stale copy this grab replaces.
             return EpisodeFileStatus.OTHER_GROUP
+        if self._misplaced(size, intended_size):
+            # Byte-identical to another of our files (a same-files sibling's too): the episode still lacks its own.
+            return EpisodeFileStatus.MISPLACED
         return EpisodeFileStatus.RECOMMENDED
 
-    def statuses(self, target_ep_ids: Sequence[int]) -> TargetStatuses:
-        """Classify each de-duplicated intended target by its current on-disk file."""
+    def statuses(self, target_ep_ids: Sequence[int], intended_sizes: Mapping[int, int]) -> TargetStatuses:
+        """Classify each de-duplicated target by its current file, judged against its intended size."""
 
-        return TargetStatuses({ep_id: self.status_of(ep_id) for ep_id in dict.fromkeys(target_ep_ids)})
+        return TargetStatuses(
+            {ep_id: self.status_of(ep_id, intended_sizes.get(ep_id)) for ep_id in dict.fromkeys(target_ep_ids)}
+        )
 
 
 class Route(NamedTuple):
@@ -205,13 +236,19 @@ class RecordSnapshot:
         claims = (route.claim,) if route.claim is not None else self.pending.claims
         return any(ep_id in claim.preowned_episode_ids for claim in claims)
 
-    def statuses(self, target_ep_ids: Sequence[int]) -> TargetStatuses:
-        """Classify each target under the snapshot that judges it. An id no snapshot judges is ABSENT."""
+    def statuses(self, target_ep_ids: Sequence[int], file_map: FileEpisodeMap) -> TargetStatuses:
+        """Classify each target under the snapshot that judges it, against the size `file_map` intends on it.
 
+        An id no snapshot judges is ABSENT.
+        """
+
+        intended_sizes = self.pending.intended_sizes(file_map)
         by_id: dict[int, EpisodeFileStatus] = {}
         for ep_id in dict.fromkeys(target_ep_ids):
             snapshot = self.snapshot_for(ep_id)
-            by_id[ep_id] = EpisodeFileStatus.ABSENT if snapshot is None else snapshot.status_of(ep_id)
+            by_id[ep_id] = (
+                EpisodeFileStatus.ABSENT if snapshot is None else snapshot.status_of(ep_id, intended_sizes.get(ep_id))
+            )
         return TargetStatuses(by_id)
 
 

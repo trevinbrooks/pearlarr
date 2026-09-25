@@ -15,7 +15,7 @@ from .grab_placement import PendingSeed
 from .log import count_noun
 from .manual_import import ImportWaitMode
 from .notify import GrabNotice
-from .output import Accent, GrabFailed, ReleaseSkipped, SkipReason, StyledValue
+from .output import Accent, GrabFailed, ReleaseSkipped, SkipReason, StyledValue, hub_warn
 from .pending_records import PendingRecords
 from .reporter import (
     GrabRecord,
@@ -271,9 +271,9 @@ class GrabPipeline:
             return now_stamp()
         max_age_days = self._config.imports.pending_max_age_days
         if added_on < pending_cutoff(max_age_days):
-            self.logger.debug(
+            hub_warn(
                 f"{seed.claim.title or seed.facts.infohash} has been in qBittorrent longer than "
-                f"{count_noun(max_age_days, 'day')}, not tracking it",
+                f"{count_noun(max_age_days, 'day')}, not tracking it, remove it from the client or import it by hand",
             )
             return None
         return stamp_of(added_on)

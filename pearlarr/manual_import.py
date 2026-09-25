@@ -585,6 +585,19 @@ def unambiguous_sizes[K](pairs: Iterable[tuple[K, int]]) -> dict[K, int]:
     return {key: size for key, size in sizes.items() if key not in ambiguous}
 
 
+NO_SIZES_BY_NAME: Mapping[str, int] = MappingProxyType({})
+"""No listed sizes: a record written before they were kept, or a torrent whose files are never listed."""
+
+
+def sizes_by_episode(mapped: Mapping[str, Sequence[int]], listed: Mapping[str, int]) -> dict[int, int]:
+    """Each mapped episode id to its file's listed size.
+
+    An unlisted name sizes nothing, and an ambiguous id is dropped.
+    """
+
+    return unambiguous_sizes((ep_id, listed[name]) for name, ids in mapped.items() if name in listed for ep_id in ids)
+
+
 def _normalized_map(entries: FileEpisodeMap) -> dict[str, list[int]]:
     """The map with every key normalized and zero ids dropped, minus the entries that leaves empty."""
 
@@ -791,6 +804,10 @@ class PendingImport:
     awaiting_cleanup: bool = False
     """The import verified but a post-import effect (category move / queue close) still needs to run."""
 
+    sizes_by_name: Mapping[str, int] = NO_SIZES_BY_NAME
+    """Normalized listing name -> its listed size, so the import knows which file each episode should hold.
+    Empty on a row written before it was kept, which then never reads a file as misplaced."""
+
     def __post_init__(self) -> None:
         # Detach from the caller's map, then wrap read-only (the ids as tuples, so nothing inside mutates).
         object.__setattr__(
@@ -798,6 +815,7 @@ class PendingImport:
             "file_episode_map",
             MappingProxyType({name: tuple(ids) for name, ids in self.file_episode_map.items()}),
         )
+        object.__setattr__(self, "sizes_by_name", MappingProxyType(dict(self.sizes_by_name)))
 
     @property
     def own_group(self) -> OwnGroup:
@@ -834,6 +852,11 @@ class PendingImport:
         """The map as the placement reads it: keys normalized, zero ids dropped (see `_normalized_map`)."""
 
         return _normalized_map(self.file_episode_map)
+
+    def intended_sizes(self, file_map: FileEpisodeMap) -> dict[int, int]:
+        """Each episode id `file_map` places a file on to that file's listed size (see `sizes_by_episode`)."""
+
+        return sizes_by_episode(_normalized_map(file_map), self.sizes_by_name)
 
     def target_ids(self) -> list[int]:
         """Our intended episode ids: the map's values in first-claim order."""
@@ -899,6 +922,14 @@ class PendingImport:
         merged = dict.fromkeys(normalized_leaf(name) for name in (*self.excluded_files, *names))
         return replace(self, excluded_files=tuple(merged))
 
+    def with_sizes_by_name(self, sizes: Mapping[str, int]) -> "PendingImport":
+        """The record with `sizes` learned when it has none, else itself.
+
+        Only an empty map fills: an infohash's listing never changes, and an unscoped seed carries none.
+        """
+
+        return self if self.sizes_by_name else replace(self, sizes_by_name=sizes)
+
     def with_claim(self, claim: EntryClaim) -> "PendingImport":
         """The record with `claim` joined and its cleanup flag cleared (new files to import make it active again).
 
@@ -928,6 +959,7 @@ class PendingImport:
             "excluded_files": list(self.excluded_files),
             "release_sizes": list(self.release_sizes),
             "awaiting_cleanup": self.awaiting_cleanup,
+            "sizes_by_name": dict(self.sizes_by_name),
         }
 
     @classmethod
@@ -945,6 +977,7 @@ class PendingImport:
             excluded_files=tuple(raw.get("excluded_files", [])),
             release_sizes=tuple(raw.get("release_sizes", [])),
             awaiting_cleanup=is_awaiting_cleanup(raw),
+            sizes_by_name=raw.get("sizes_by_name", {}),
         )
 
 

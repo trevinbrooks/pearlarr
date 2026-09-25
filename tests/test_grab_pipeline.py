@@ -51,7 +51,7 @@ from .builders import (
     rg_group,
     url_item,
 )
-from .fakes import FakeClock, install_recording_hub
+from .fakes import FakeClock, diagnostic_messages, install_recording_hub
 
 
 def _stub_add_torrent(req: GrabRequest) -> tuple[int, list[ReleaseOutcome]]:
@@ -557,9 +557,15 @@ class TestReacquireRegistration:
         # Past the cutoff with nothing stored: never tracked, no guard row, but
         # the outcome still surfaces so the action block reads right.
         pipeline = _pipeline(torrents=self._reacquire(datetime.now() - timedelta(days=100)))
+        recording = install_recording_hub()
 
         results = self._add(pipeline, pending_seed("h1"))
 
+        warning = (
+            "Show has been in qBittorrent longer than 14 days, not tracking it, "
+            "remove it from the client or import it by hand"
+        )
+        assert diagnostic_messages(recording, Severity.WARNING) == [warning]
         assert _pending(pipeline) == {}
         assert pipeline._ctx.reacquired_keys == set()
         assert _guards(pipeline) == {}
