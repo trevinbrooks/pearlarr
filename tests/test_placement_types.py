@@ -1,19 +1,15 @@
 # pyright: strict
-"""The `(season, episode) -> id` index: both facets, the fetch order, zero ids dropped, the read-only detachment.
-
-The other placement types are exercised through `assign_episode_ids` in `test_placer` and
-`test_manual_import_fixtures`.
-"""
+"""The `(season, episode) -> id` index and the target scope's own rules; the rest rides `assign_episode_ids`."""
 
 from collections.abc import MutableMapping
 from typing import cast
 
 import pytest
 
-from pearlarr.placement_types import EpisodeIndex, episode_index
+from pearlarr.placement_types import EpisodeIndex, TargetScope, episode_index
 from pearlarr.seadex_types import SONARR_MISSING_KEY, EpisodeKey, SonarrEpisode
 
-from .builders import sonarr_ep
+from .builders import series_index, sonarr_ep
 
 
 class TestEpisodeIndex:
@@ -21,7 +17,7 @@ class TestEpisodeIndex:
 
     `id_by_key` maps `(season, episode)` to the first episode id, missing numbers
     folding to a sentinel key (no collision with real pairs). Zero-id episodes are
-    dropped from every facet before keying. `by_id` keeps the fetch order - the
+    dropped from every facet before keying. `by_id` keeps the fetch order: the
     resolved set the add flow persists rides `list(by_id)`.
     """
 
@@ -72,3 +68,23 @@ class TestEpisodeIndex:
         assert EpisodeKey(1, 2) not in index.id_by_key
         with pytest.raises(TypeError):
             cast("MutableMapping[EpisodeKey, int]", index.id_by_key)[EpisodeKey(1, 3)] = 13
+
+
+class TestTargetScope:
+    """The scope admits its resolved ids, or any when unscoped, and `using` takes only the ids it admits."""
+
+    _SERIES = series_index({EpisodeKey(1, 1): 11, EpisodeKey(1, 2): 12, EpisodeKey(2, 1): 21})
+
+    def test_using_takes_the_admitted_ids_and_detaches_the_resolved_list(self) -> None:
+        resolved = [11, 12, 0]
+        scope = TargetScope(resolved, self._SERIES, used=frozenset({11}))
+
+        resolved.append(21)
+        narrowed = scope.using([12, 21, 0])
+
+        assert scope.resolved == (11, 12, 0)
+        assert narrowed.used == {11, 12}
+        assert (narrowed.resolved, narrowed.real_ids) == (scope.resolved, scope.real_ids)
+
+    def test_an_unscoped_scope_uses_every_id(self) -> None:
+        assert TargetScope([], self._SERIES).using([12, 21]).used == {12, 21}
