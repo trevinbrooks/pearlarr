@@ -6,7 +6,7 @@ from types import MappingProxyType
 from typing import NamedTuple
 
 from .coverage import coverage_string, episodes_from_ep_list
-from .episode_state import EpisodeFileStatus, EpisodeSnapshot, trusted_groups
+from .episode_state import EpisodeFileStatus, EpisodeSnapshot, GroupVotes
 from .manual_import import EntryClaim, EntryNames, FileEpisodeMap, GuardFacts, OwnGroup, PendingImport, normalized_leaf
 from .placement_types import EpisodeAssignment, EpisodeIndex, PlacementBatch, TargetScope
 from .seadex_types import EpisodeRecord, FlaggedUrl, ParsedFileInfo, SeadexDict, SeadexUrlItem, flagged_urls
@@ -44,10 +44,10 @@ class SeedScope(NamedTuple):
 
     @property
     def can_place(self) -> bool:
-        """Whether the scope is real enough to place against: an entry index and a served series map.
+        """Whether there is an entry index and a served series map to place against.
 
-        An empty entry index must never read as "no scope" (the unscoped arm places against the live
-        map), and an unread map places nothing: a grab-time verdict is final where an import poll is retried.
+        An empty entry index never reads as "no scope" (the unscoped arm places against the live map), and an
+        unread map places nothing: a grab-time verdict is final where an import poll is retried.
         """
 
         return bool(self.entry.by_id and self.series.id_by_key)
@@ -166,7 +166,7 @@ def place_release(files: Sequence[SeedFile], scope: SeedScope, resident: Residen
     claimed: set[int] = set()
     for f in files:
         for ep_id in mapped.get(normalized_leaf(f.basename), []):
-            # A resident id on another series is not this entry's; one inside it counts for its coverage.
+            # A resident id on another series is not this entry's, and one inside it counts for its coverage.
             episode = scope.entry.by_id.get(ep_id)
             if episode is None:
                 continue
@@ -224,6 +224,19 @@ class EntryPlacements(NamedTuple):
         )
 
 
+class ClaimWindow(NamedTuple):
+    """What one claim reads of a torrent: its window, names, preowned ids and slice (all empty when unscoped)."""
+
+    ordered_episode_ids: tuple[int, ...] = ()
+    names: EntryNames = EntryNames()
+    preowned_episode_ids: tuple[int, ...] = ()
+    slice_coverage: str | None = None
+
+
+UNSCOPED = ClaimWindow()
+"""The window of a claim whose import reads nothing but the infohash (a Radarr grab)."""
+
+
 @dataclass(frozen=True, slots=True, kw_only=True)
 class EntryFacts:
     """What an entry is, independent of any torrent: the fields every claim it makes carries."""
@@ -240,6 +253,23 @@ class EntryFacts:
     """The SeaDex entry URL at grab time (logging only)."""
     guards: GuardFacts
     """The plan's overwrite-guard evidence, copied onto every claim unchanged (see `GuardFacts`)."""
+
+    def claim(self, window: ClaimWindow) -> EntryClaim:
+        """The entry's claim over `window`, its clock blank until the record is stamped."""
+
+        return EntryClaim(
+            al_id=self.al_id,
+            series_id=self.series_id,
+            title=self.title,
+            coverage=self.coverage,
+            url=self.url,
+            ordered_episode_ids=window.ordered_episode_ids,
+            names=window.names,
+            preowned_episode_ids=window.preowned_episode_ids,
+            slice_coverage=window.slice_coverage,
+            claimed_at="",
+            guards=self.guards,
+        )
 
 
 class TorrentFacts(NamedTuple):
@@ -333,14 +363,14 @@ class PendingSeed:
                 release_sizes=self.facts.release_sizes,
             )
         record = self.stored.with_placements(self.placements).with_exclusions(self.excluded).with_claim(claim)
-        return record.restamped(stamp) if fresh else record
+        if not fresh:
+            return record
+        # A fresh add starts every clock: the birth and each claim's.
+        return replace(record, added_at=stamp, claims=tuple(replace(c, claimed_at=stamp) for c in record.claims))
 
 
 def build_entry_claim(release: SeedRelease, scope: SeedScope, entry: EntryFacts) -> EntryClaim:
-    """The entry's claim on the release: the whole map's ids inside the entry, its window, slice, and preowned ids.
-
-    Pure. The claim's clock is blank: `PendingSeed.record_at` stamps it.
-    """
+    """The entry's claim on the release: its window, slice, and preowned ids. Pure, its clock blank."""
 
     claimed = release.placed.claimed_ids
     index = scope.entry
@@ -350,29 +380,14 @@ def build_entry_claim(release: SeedRelease, scope: SeedScope, entry: EntryFacts)
     # Targets that already hold a recommended file at grab time were never this torrent's to insert:
     # classify them against the claim's own trust slice (no sibling votes yet) so the wait's inserted
     # counts start at 0. A replaced claim keeps its first preowned ids (`PendingImport.with_claim`).
-    grab_snapshot = EpisodeSnapshot(
-        episodes=index,
-        trusted=trusted_groups(entry.guards, release.own_group),
-        owned_episode_sizes=entry.guards.owned_sizes,
-    )
+    grab_snapshot = EpisodeSnapshot.guarded(index, entry.guards, GroupVotes(release.own_group))
     preowned = tuple(
         ep_id
         for ep_id, status in grab_snapshot.statuses(sorted(claimed)).by_id.items()
         if status is EpisodeFileStatus.RECOMMENDED
     )
-    return EntryClaim(
-        al_id=entry.al_id,
-        series_id=entry.series_id,
-        title=entry.title,
-        coverage=entry.coverage,
-        url=entry.url,
-        ordered_episode_ids=tuple(index.by_id),
-        names=scope.names,
-        preowned_episode_ids=preowned,
-        slice_coverage=coverage_string(episodes_from_ep_list(slice_eps)) or None,
-        claimed_at="",
-        guards=entry.guards,
-    )
+    slice_coverage = coverage_string(episodes_from_ep_list(slice_eps)) or None
+    return entry.claim(ClaimWindow(tuple(index.by_id), scope.names, preowned, slice_coverage))
 
 
 def build_pending_seed(release: SeedRelease, scope: SeedScope, entry: EntryFacts) -> PendingSeed:
@@ -405,19 +420,7 @@ def build_unscoped_seed(flagged: FlaggedUrl, entry: EntryFacts, stored: PendingI
         ),
         placements={},
         excluded=(),
-        claim=EntryClaim(
-            al_id=entry.al_id,
-            series_id=entry.series_id,
-            title=entry.title,
-            coverage=entry.coverage,
-            url=entry.url,
-            ordered_episode_ids=(),
-            names=EntryNames(),
-            preowned_episode_ids=(),
-            slice_coverage=None,
-            claimed_at="",
-            guards=entry.guards,
-        ),
+        claim=entry.claim(UNSCOPED),
         stored=stored,
     )
 

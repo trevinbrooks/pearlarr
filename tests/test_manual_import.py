@@ -280,20 +280,6 @@ class TestPendingImportClaims:
         assert flagged.with_claim(entry_claim(al_id=2, series_id=8)).awaiting_cleanup is False
         assert flagged.with_claim(entry_claim(ordered_episode_ids=[101])).awaiting_cleanup is False
 
-    def test_restamped_sets_the_birth_and_every_claims_clock(self) -> None:
-        pending = pending_import(
-            claims=(
-                entry_claim(al_id=1, claimed_at="2026-06-24 00:00:00"),
-                entry_claim(al_id=2, series_id=8, claimed_at="2026-06-25 00:00:00"),
-            ),
-        )
-
-        stamped = pending.restamped("2026-07-01 12:00:00")
-
-        assert stamped.added_at == "2026-07-01 12:00:00"
-        assert [claim.claimed_at for claim in stamped.claims] == ["2026-07-01 12:00:00"] * 2
-        assert pending.added_at == "2026-06-24 00:00:00"
-
     def test_newest_claimed_at_of_reads_the_raw_row(self) -> None:
         # The prune's clock off the stored dict, no rehydration: junk and a missing key are skipped,
         # and a row with no parseable claim stamp reads None.

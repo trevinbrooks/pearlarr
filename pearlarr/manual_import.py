@@ -905,11 +905,6 @@ class PendingImport:
                 break
         return replace(self, claims=claims, awaiting_cleanup=False)
 
-    def restamped(self, stamp: str) -> "PendingImport":
-        """The record with its birth and every claim's clock set to `stamp` (a fresh add starts every clock)."""
-
-        return replace(self, added_at=stamp, claims=tuple(replace(c, claimed_at=stamp) for c in self.claims))
-
     def to_json(self) -> dict[str, Any]:
         """Serialize to the plain dict persisted under `pending_imports`."""
 
