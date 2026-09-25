@@ -66,6 +66,7 @@ from pearlarr.seadex_gateway import SeaDexMiss, SeaDexSource
 from pearlarr.seadex_radarr import RadarrSync
 from pearlarr.seadex_sonarr import SonarrSync
 from pearlarr.seadex_types import (
+    ArrReleases,
     EpisodeKey,
     EpisodeRecord,
     ManualImportCandidate,
@@ -1041,6 +1042,14 @@ def sonarr_ep(
     if episode_file_id:
         raw["episodeFile"] = {"size": size, "releaseGroup": release_group}
     return SonarrEpisode.model_validate(raw)
+
+
+def arr_releases(ep_list: Iterable[SonarrEpisode]) -> ArrReleases:
+    """The episodes' files folded per tagged group, as `get_sonarr_releases` reports them."""
+
+    return ArrReleases.from_files(
+        [f for ep in ep_list if ep.episode_file_id != 0 and (f := ep.episode_file) is not None], keep_untagged=False
+    )
 
 
 def indexes_for(pending: PendingImport, index: EpisodeIndex) -> dict[int, EpisodeIndex]:

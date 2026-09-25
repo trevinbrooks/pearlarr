@@ -7,6 +7,10 @@ Pearlarr is a fork of [bbtufty/seadexarr](https://github.com/bbtufty/seadexarr).
 
 ## [Unreleased]
 
+### Fixed
+
+- A release is grabbed again when Sonarr holds one of its files on more episodes than the release places it on, the shape a batch imported under the wrong numbers leaves behind. The first run after upgrading re-checks every cached title once and says so.
+
 ## [1.5.1] - 2026-09-25
 
 ### Changed

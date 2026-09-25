@@ -10,13 +10,13 @@ orchestrator's run state or its log formatter.
 
 import logging
 from collections import Counter
-from collections.abc import Iterable, Mapping
+from collections.abc import Collection, Iterable, Mapping
 from dataclasses import dataclass, field
 from itertools import compress
 from typing import NamedTuple
 
 from .config import Arr
-from .manual_import import GuardFacts, OwnedEpisode, normalize_rg
+from .manual_import import GuardFacts, OwnedEpisode, normalize_rg, unambiguous_sizes
 from .output import Severity
 from .seadex_types import (
     ArrReleases,
@@ -113,6 +113,19 @@ def _owns_untagged_copy(counter: Counter[int] | None, listed_sizes: Iterable[int
     """
 
     return counter is not None and counter <= Counter(listed_sizes)
+
+
+def _doubled_sizes(
+    listed: Mapping[EpisodeKey, int], held: Mapping[EpisodeKey, int], sizes: Collection[int]
+) -> list[int]:
+    """The listing's `sizes` held on more of the `listed` keys than the listing places them on (possibly none).
+
+    A held key absent from `listed` (an episode two listed files size differently) counts on neither side.
+    """
+
+    placed = Counter(listed.values())
+    held_counts = Counter(size for key, size in held.items() if key in listed)
+    return sorted(size for size, count in held_counts.items() if size in sizes and placed[size] < count)
 
 
 def get_episode_keys(
@@ -776,6 +789,12 @@ class DownloadPlanner:
         flips download on. An untagged on-disk file the entry's sizes
         identified (`_episode_identities`) matches by that group instead of by
         its missing tag.
+
+        A listed size our group holds on more episodes than the listing places
+        it on flags the url as an upgrade (held, not as listed), so a file
+        imported under the wrong numbers gets its missing files grabbed. Files
+        that only swapped episodes are not flagged by this check: a renumbering
+        looks the same.
         """
 
         # At this point, we need an episode list from Sonarr. Only an absent list
@@ -798,6 +817,9 @@ class DownloadPlanner:
         # Fixed per call - normalize once, not once per parsed episode (only
         # sonarr_rg_normalized varies in the loop).
         seadex_rg_normalized = normalize_rg(seadex_rg)
+        # Per matched episode: each size the listing places on it, and the size our group holds there.
+        listed_pairs: list[tuple[EpisodeKey, int]] = []
+        held_by_key: dict[EpisodeKey, int] = {}
 
         for seadex_idx, seadex_ep in enumerate(seadex_episodes):
             seadex_ep_season = seadex_ep.season
@@ -816,6 +838,7 @@ class DownloadPlanner:
             sonarr_ep = ctx.sonarr_by_key.get(episode_key)
             if sonarr_ep is None:
                 continue
+            listed_pairs.append((episode_key, seadex_ep_size))
 
             # Get the matched Sonarr episode's file size
             sonarr_ep_size = sonarr_ep.episode_file.size if sonarr_ep.episode_file else None
@@ -872,6 +895,13 @@ class DownloadPlanner:
                 if not size_identified:
                     rg_matches[seadex_idx] = True
 
+                if (
+                    seadex_rg_normalized is not None
+                    and sonarr_rg_normalized == seadex_rg_normalized
+                    and sonarr_ep_size is not None
+                ):
+                    held_by_key[episode_key] = sonarr_ep_size
+
             # Now check against file size
             if size_match:
                 size_matches[seadex_idx] = True
@@ -882,6 +912,14 @@ class DownloadPlanner:
         matched_sizes = list(compress(size_matches, rg_matches))
         if matched_sizes and not any(matched_sizes):
             self.logger.debug(f"File sizes all differ for release group {seadex_rg} - will download {url}")
+            url_item.flag(upgrade=True)
+
+        # An episode two listed files claim at different sizes is left out: the import cannot pick between them.
+        doubled = _doubled_sizes(unambiguous_sizes(listed_pairs), held_by_key, url_item.size)
+        if doubled:
+            self.logger.debug(
+                f"{url} lists size(s) {doubled} on fewer episodes than {seadex_rg} holds them, will download"
+            )
             url_item.flag(upgrade=True)
 
     def reduce_overlapping_downloads(
