@@ -410,7 +410,7 @@ class ImportExecutor:
             )
         placed = assignment.placed
         excluded = assignment.excluded
-        authoritative = {**assignment.seeded, **placed, **recovered}
+        authoritative = {**assignment.assigned, **recovered}
         on_record = set(pending.excluded_files)
         if new_exclusions := [p for p in excluded if p.name not in on_record]:
             verdicts = ", ".join(f"{p.name} ({p.verdict})" for p in new_exclusions)
