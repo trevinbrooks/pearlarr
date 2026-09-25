@@ -38,12 +38,14 @@ class Reading(NamedTuple):
     """At least one claim, and every claim resolved (a partial span is never half-placed)."""
 
     borrowed: bool
-    """The claims are Sonarr's matched pairs (the name carried no `(season, episode)` of its own)."""
+    """The claims are Sonarr's matched pairs: the name carried no `(season, episode)` of its own, or its keys
+    yielded to Sonarr's alias reading."""
 
     vetoed: bool
     """A full-season parse, a borrowed span past `_MATCHED_SPAN_CAP` or short of the name's own absolutes,
-    or a run's reads that dispute its count (a tie, or a covering run read into another season): the
-    claims are real but never placed on their own, and never prove the file foreign."""
+    a run's reads that dispute its count (a tie, or a covering run read into another season), a reading its
+    title refutes, or a span another file reads differently: the claims are real but never placed on their
+    own, and never prove the file foreign."""
 
     corroborated: bool
     """Sonarr's series match names every claimed pair (a borrowed reading always is). An own key Sonarr
@@ -136,16 +138,10 @@ def _claims_of(info: ParsedFileInfo, scope: TargetScope) -> _Claims:
 
 
 def read_parse(info: ParsedFileInfo | None, scope: TargetScope) -> Reading:
-    """Read one parse against the scope.
+    """Read one parse against the scope: the name's own keys are the claims (`_claims_of` has the alias shift).
 
-    The name's own `(season, episode)` keys are the claims. A name with none
-    borrows Sonarr's series-MATCHED pairs, but ONLY under scope enforcement:
-    membership in `scope.real_ids` is what keeps Sonarr's series match from
-    deciding identity on its own, so matched pairs never apply `unscoped`. A
-    borrowed pair's own episode id must AGREE with our map's id for the same
-    numbers, or a wrong-series title match whose numbers coincide with ours
-    would resolve. Junk duplicate pairs collapse to one claim. A missing
-    season collapses to `SONARR_MISSING_KEY`, matching `EpisodeIndex.id_by_key`.
+    A name with none borrows Sonarr's matched pairs, only where `scope.real_ids` admits them (never unscoped)
+    and only where the pair's own episode id agrees with our map's, so a wrong-series match never resolves.
     """
 
     if info is None:
@@ -182,10 +178,8 @@ def read_parse(info: ParsedFileInfo | None, scope: TargetScope) -> Reading:
 def parse_has_no_number(info: ParsedFileInfo | None) -> bool:
     """Whether a file's NAME carries no usable episode number at all (parse miss).
 
-    Deliberately blind to `matched_episodes`: the degenerate single-file
-    fallback keys on this, and an out-of-set Sonarr match must not veto the
-    placement OUR resolution intends (Sonarr informs identity, never decides -
-    in either direction). Cardinality is the placer's `spans_multiple` question.
+    Blind to `matched_episodes` on purpose: an out-of-set Sonarr match must not veto the placement our
+    resolution intends (Sonarr informs identity, never decides). Cardinality is `spans_multiple`'s question.
     """
 
     return info is None or (not info.episode_numbers and not info.absolute_episode_numbers)
@@ -194,12 +188,8 @@ def parse_has_no_number(info: ParsedFileInfo | None) -> bool:
 def numbers_miss_the_series(info: ParsedFileInfo, ep_id_map: Mapping[EpisodeKey, int]) -> bool:
     """Whether the name's numbers provably describe no episode of this series.
 
-    A movie year read as SxxEyy ("Title.2020" parsing S20E20) is a parse
-    artifact, not identity: when EVERY name-parsed key misses the WHOLE series
-    map and the name carries no absolutes, the signal is noise and the file
-    counts as numberless. A key that resolves anywhere in the series is real
-    evidence and is never downgraded. Only meaningful over a served map: an
-    empty map makes every key "miss", so the caller gates on `map_known`.
+    A movie year read as SxxEyy is a parse artifact: when every name-parsed key misses the whole series map
+    and the name carries no absolutes, the file counts as numberless. Only meaningful over a served map.
     """
 
     if not info.episode_numbers or info.absolute_episode_numbers:
@@ -210,9 +200,8 @@ def numbers_miss_the_series(info: ParsedFileInfo, ep_id_map: Mapping[EpisodeKey,
 def claims_several_episodes(info: ParsedFileInfo) -> bool:
     """Whether the NAME claims more than one episode, so placing the file as one would half-import.
 
-    Only the name's own numbers count. A multi-pair series match is a scene
-    map for another numbering, and a full-season read of a file name is a
-    missing episode token ("S2 - OVA", "S0101"), never a claim of several.
+    Only the name's own numbers count: a multi-pair series match is a scene map for another numbering, and a
+    full-season read of a name is a missing episode token, never a claim of several.
     """
 
     return len(set(info.episode_numbers)) > 1 or len(set(info.absolute_episode_numbers)) > 1

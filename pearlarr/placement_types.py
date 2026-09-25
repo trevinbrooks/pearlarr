@@ -1,10 +1,10 @@
 """Pure placement vocabulary: the episode index, verdicts, one file's placement, the assignment, batch, and scope."""
 
 from collections.abc import Iterable, Mapping, Sequence
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from enum import StrEnum
 from types import MappingProxyType
-from typing import NamedTuple
+from typing import NamedTuple, Self
 
 from .manual_import import EntryNames
 from .seadex_types import EpisodeKey, ParsedFileInfo, SonarrEpisode, index_episodes_by_key
@@ -149,8 +149,8 @@ class EpisodeAssignment(NamedTuple):
 class PlacementBatch(NamedTuple):
     """A torrent's leftover on-disk files to place, with the WHOLE batch's parses.
 
-    `parsed` may cover MORE files than `to_place`: seeded and gone files feed
-    the absolute leg's shared-absolute tell, but only `to_place` is ever placed.
+    `parsed` may cover MORE files than `to_place`: seeded and gone names are read as evidence (readings,
+    titles, the absolute tell) but never placed.
     """
 
     to_place: Sequence[str]
@@ -207,13 +207,15 @@ class TargetScope:
     """Ids a seed already owns, never handed to a leftover file."""
 
     names: EntryNames = field(default_factory=EntryNames)
-    """The series and AniList titles: when several runs or numberless files could take the window, the one
-    an AniList title names does."""
+    """The series and AniList titles: the ground episode titles and extras are read against, and the tie-break
+    when several runs or numberless files could take the window."""
 
     real_ids: frozenset[int] = field(init=False, repr=False, compare=False)
     """The resolved ids that can be placed. A stray zero keeps the scope real but is never one."""
 
     def __post_init__(self) -> None:
+        # Detached from the caller's list: `real_ids` is derived from it once.
+        object.__setattr__(self, "resolved", tuple(self.resolved))
         object.__setattr__(self, "real_ids", frozenset(i for i in self.resolved if i))
 
     @property
@@ -232,3 +234,8 @@ class TargetScope:
         """Whether a file may be placed on the episode: one of the resolved set, or any when unscoped."""
 
         return self.unscoped or ep_id in self.real_ids
+
+    def using(self, ids: Iterable[int]) -> Self:
+        """The scope with `ids` used too: the ones it admits (every one when unscoped)."""
+
+        return replace(self, used=self.used | frozenset(i for i in ids if self.admits(i)))

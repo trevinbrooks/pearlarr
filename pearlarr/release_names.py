@@ -14,15 +14,10 @@ _SXXEXX: re.Pattern[str] = re.compile(r"[Ss](\d{1,2})[\s._-]*[Ee](\d{1,3})")
 
 
 def parse_se_from_filename(name: str) -> ParsedFileInfo | None:
-    """Offline `SxxExx` fallback for when Sonarr's `/parse` is unreachable.
+    """Offline `SxxExx` fallback for when Sonarr's `/parse` is unreachable: one key pulled from the leaf, else None.
 
-    Pure + regex-only: pulls a single `SxxExx` out of a leaf and returns it as a
-    `ParsedFileInfo` (season + episode). Returns None when the name carries
-    no `SxxExx` (an absolute-numbered or unparseable leaf): those are left to
-    Sonarr's parse or the absolute-index leg, never guessed from a bare number.
-    Marked `offline` because the regex knows nothing about absolute numbers: a
-    dual-numbered name ("S01E12 - 12") parsed here would otherwise launder its
-    lost absolute into a "known" parse and blind the positional leg's tell.
+    Marked `offline` because the regex knows nothing about absolute numbers: a dual-numbered name parsed here
+    would otherwise launder its lost absolute into a "known" parse and blind the positional leg's tell.
     """
 
     m = _SXXEXX.search(name)
@@ -218,10 +213,8 @@ class NumberedRun(NamedTuple):
 def numbered_runs(members: Iterable[RunMember], parsed: Mapping[str, ParsedFileInfo | None]) -> list[NumberedRun]:
     """Every numbered run among the members, grouped by prefix.
 
-    A member whose parse carries exactly one absolute that disagrees with its
-    release number is dropped. Of several members sharing a number the
-    highest `vN` stays and the rest are superseded (equal versions all stay,
-    which breaks the run).
+    A member whose one parsed absolute disagrees with its release number is dropped. Of several members
+    sharing a number the highest `vN` stays and the rest are superseded (equal versions all stay).
     """
 
     by_prefix: dict[str, dict[int, list[RunMember]]] = {}
@@ -367,7 +360,7 @@ class _Leftover(NamedTuple):
     distinct: frozenset[str]
 
     @classmethod
-    def of(cls, title: str, ground: frozenset[str]) -> "_Leftover":
+    def of(cls, title: str, ground: frozenset[str]) -> Self:
         words = tuple(word for word in folded_words(title) if word not in ground)
         return cls(words, frozenset(words))
 
@@ -453,10 +446,8 @@ class Naming:
 def sole_title_match(candidates: Sequence[str], names: EntryNames) -> int | None:
     """The index of the one candidate an AniList title names, else None.
 
-    The unique best sharing at least `_MIN_TITLE_OVERLAP` of the combined
-    leftover words wins, unless it shares only the opening words of every
-    title it scores best against. The check refuses the winner and never
-    promotes a runner-up.
+    The unique best sharing at least `_MIN_TITLE_OVERLAP` of the combined leftover words wins, unless it
+    shares only the opening words of every title it scores best against. Refuses, never promotes a runner-up.
     """
 
     naming = Naming.of(candidates, names)
