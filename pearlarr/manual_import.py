@@ -574,6 +574,17 @@ def _normalized_names(names: Iterable[str]) -> set[str]:
     return {normalized_leaf(name) for name in names}
 
 
+def unambiguous_sizes[K](pairs: Iterable[tuple[K, int]]) -> dict[K, int]:
+    """Each key to its one size. A key paired with two different sizes is dropped: its file is ambiguous."""
+
+    sizes: dict[K, int] = {}
+    ambiguous: set[K] = set()
+    for key, size in pairs:
+        if sizes.setdefault(key, size) != size:
+            ambiguous.add(key)
+    return {key: size for key, size in sizes.items() if key not in ambiguous}
+
+
 def _normalized_map(entries: FileEpisodeMap) -> dict[str, list[int]]:
     """The map with every key normalized and zero ids dropped, minus the entries that leaves empty."""
 

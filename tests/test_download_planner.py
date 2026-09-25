@@ -33,10 +33,18 @@ import logging
 
 from pearlarr.config import Arr
 from pearlarr.output import Severity
-from pearlarr.planner import DownloadPlanner
-from pearlarr.seadex_types import ArrReleases, EpisodeRecord, FlaggedUrl, SeadexReleaseGroupItem, flagged_urls
+from pearlarr.planner import DownloadPlanner, PlanResult
+from pearlarr.seadex_types import (
+    ArrReleases,
+    EpisodeRecord,
+    FlaggedUrl,
+    SeadexReleaseGroupItem,
+    SeadexUrlItem,
+    SonarrEpisode,
+    flagged_urls,
+)
 
-from .builders import make_planner, rg_group, sonarr_ep, url_item
+from .builders import arr_releases, make_planner, rg_group, sonarr_ep, url_item
 
 
 class TestGetAnyToDownload:
@@ -1242,6 +1250,165 @@ class TestFilterByReleaseGroup:
         assert result.torrent_hashes == ["h1"]
         # Reset so a later test doesn't inherit DEBUG from the shared logger
         planner.logger.setLevel(logging.WARNING)
+
+
+class TestListedSizeOnTooManyEpisodes:
+    """A listed size our group holds on more episodes than the listing places it on flags the url as an upgrade."""
+
+    @staticmethod
+    def _listing(*sizes: int, is_public: bool = True) -> dict[str, SeadexReleaseGroupItem]:
+        """One Era-Raws listing of season 1 episodes 1..n at `sizes`, one placement per size given."""
+
+        episodes = [EpisodeRecord(season=1, episode=n, size=size) for n, size in enumerate(sizes, 1)]
+        item = url_item(size=list(sizes), episodes=episodes, infohash="h1", is_public=is_public)
+        return {"Era-Raws": rg_group({"u1": item})}
+
+    @staticmethod
+    def _plan(seadex: dict[str, SeadexReleaseGroupItem], ep_list: list[SonarrEpisode]) -> PlanResult:
+        """The planner's result for `seadex` against `ep_list`, every tagged file reported to the arr."""
+
+        return make_planner().filter_by_release_group(seadex, arr_releases(ep_list), ep_list)
+
+    @classmethod
+    def _decide(cls, seadex: dict[str, SeadexReleaseGroupItem], ep_list: list[SonarrEpisode]) -> SeadexUrlItem:
+        """The Era-Raws url after the planner judges it against `ep_list`."""
+
+        return cls._plan(seadex, ep_list).seadex_dict["Era-Raws"].urls["u1"]
+
+    @staticmethod
+    def _ours(episode: int, size: int, file_id: int) -> SonarrEpisode:
+        """Season 1 `episode` holding Era-Raws' file `file_id` at `size`."""
+
+        return sonarr_ep(1, episode, size=size, release_group="Era-Raws", episode_file_id=file_id)
+
+    def test_one_listed_file_on_two_episode_files_downloads(self) -> None:
+        # File 2 imported onto both episodes: episode 1 lacks its own file.
+        item = self._decide(self._listing(100, 200), [self._ours(1, 200, 11), self._ours(2, 200, 12)])
+
+        assert (item.download, item.upgrade) == (True, True)
+
+    def test_one_episode_file_covering_two_episodes_at_a_size_listed_once_downloads(self) -> None:
+        item = self._decide(self._listing(100, 200), [self._ours(1, 200, 11), self._ours(2, 200, 11)])
+
+        assert (item.download, item.upgrade) == (True, True)
+
+    def test_a_twelve_file_batch_with_one_file_on_two_episodes_downloads(self) -> None:
+        held = [self._ours(n, 700 if n == 2 else 100 * n, 10 + n) for n in range(1, 13)]
+
+        item = self._decide(self._listing(*range(100, 1300, 100)), held)
+
+        assert (item.download, item.upgrade) == (True, True)
+
+    def test_a_listed_size_placed_on_no_episode_but_held_downloads(self) -> None:
+        # File 999 is listed but placed nowhere, so holding it on E02 is one hold too many.
+        episodes = [EpisodeRecord(season=1, episode=1, size=100), EpisodeRecord(season=1, episode=2, size=200)]
+        seadex = {"Era-Raws": rg_group({"u1": url_item(size=[100, 200, 999], episodes=episodes, infohash="h1")})}
+
+        item = self._decide(seadex, [self._ours(1, 100, 11), self._ours(2, 999, 12)])
+
+        assert (item.download, item.upgrade) == (True, True)
+
+    def test_an_episode_two_listed_files_claim_at_different_sizes_is_left_out(self) -> None:
+        # E01 is ambiguous, so size 200 counts once held against its one placement on E02.
+        episodes = [
+            EpisodeRecord(season=1, episode=1, size=100),
+            EpisodeRecord(season=1, episode=1, size=150),
+            EpisodeRecord(season=1, episode=2, size=200),
+        ]
+        seadex = {"Era-Raws": rg_group({"u1": url_item(size=[100, 150, 200], episodes=episodes, infohash="h1")})}
+
+        item = self._decide(seadex, [self._ours(1, 200, 11), self._ours(2, 200, 12)])
+
+        assert item.download is False
+
+    def test_a_two_episode_listed_file_held_once_under_both_keys_does_not_download(self) -> None:
+        item = self._decide(self._listing(300, 300), [self._ours(1, 300, 11), self._ours(2, 300, 11)])
+
+        assert item.download is False
+
+    def test_a_size_listed_twice_held_twice_does_not_download(self) -> None:
+        item = self._decide(self._listing(300, 300), [self._ours(1, 300, 11), self._ours(2, 300, 12)])
+
+        assert item.download is False
+
+    def test_a_blanket_covered_group_at_a_listed_size_is_not_counted(self) -> None:
+        # Other's url placed nowhere, so it blankets both episodes: its files are not ours to count.
+        seadex = {
+            **self._listing(100, 200),
+            "Other": rg_group({"u2": url_item(url="https://nyaa.si/view/2", infohash="h2")}),
+        }
+        item = self._decide(
+            seadex,
+            [
+                sonarr_ep(1, 1, size=200, release_group="Other", episode_file_id=11),
+                sonarr_ep(1, 2, size=200, release_group="Other", episode_file_id=12),
+            ],
+        )
+
+        assert item.download is False
+
+    def test_a_size_identified_episode_counts(self) -> None:
+        # E02's untagged file is ours by its listed size, so size 200 sits on two episodes.
+        untagged = sonarr_ep(1, 2, size=200, release_group=None, episode_file_id=12)
+
+        item = self._decide(self._listing(100, 200, 300), [self._ours(1, 200, 11), untagged, self._ours(3, 300, 13)])
+
+        assert (item.download, item.upgrade) == (True, True)
+
+    def test_a_partial_swap_does_not_download(self) -> None:
+        # Episode 3 in place keeps the all-sizes-differ fold out of it, and a swap doubles no size.
+        held = [self._ours(1, 200, 11), self._ours(2, 100, 12), self._ours(3, 300, 13)]
+
+        item = self._decide(self._listing(100, 200, 300), held)
+
+        assert item.download is False
+
+    def test_a_full_swap_flags_an_upgrade_not_a_plain_download(self) -> None:
+        # Every size differs from its placement, so the existing fold flags an upgrade. No size is doubled,
+        # and this rule would flag an upgrade too: the two agree.
+        item = self._decide(self._listing(100, 200), [self._ours(1, 200, 11), self._ours(2, 100, 12)])
+
+        assert (item.download, item.upgrade) == (True, True)
+
+    def test_a_doubled_unlisted_size_does_not_download(self) -> None:
+        # A doubled unlisted size is the stale-copy fold's business, which one listed match holds off.
+        held = [self._ours(1, 100, 11), self._ours(2, 999, 12), self._ours(3, 999, 13)]
+
+        item = self._decide(self._listing(100, 200, 300), held)
+
+        assert item.download is False
+
+    def test_a_private_groups_doubled_size_reports_private_only(self) -> None:
+        result = self._plan(self._listing(100, 200, is_public=False), [self._ours(1, 200, 11), self._ours(2, 200, 12)])
+
+        assert (result.skips.skipped, result.torrent_hashes) == (True, [])
+
+    @staticmethod
+    def _beside_public(*, is_fallback: bool) -> dict[str, SeadexReleaseGroupItem]:
+        """The private Era-Raws listing of 100 and 200 beside a public group listing the same files."""
+
+        episodes = [EpisodeRecord(season=1, episode=1, size=100), EpisodeRecord(season=1, episode=2, size=200)]
+        public = url_item(
+            url="https://nyaa.si/view/2", size=[100, 200], episodes=episodes, infohash="h2", is_fallback=is_fallback
+        )
+        return {
+            **TestListedSizeOnTooManyEpisodes._listing(100, 200, is_public=False),
+            "Pub": rg_group({"u2": public}),
+        }
+
+    def test_a_private_doubled_pick_promotes_a_public_group_listing_the_same_files(self) -> None:
+        result = self._plan(self._beside_public(is_fallback=False), [self._ours(1, 200, 11), self._ours(2, 200, 12)])
+
+        assert result.seadex_dict["Pub"].urls["u2"].download is True
+        assert result.seadex_dict["Era-Raws"].urls["u1"].download is False
+        assert result.skips.skipped is False
+
+    def test_a_private_doubled_pick_is_held_rather_than_replaced_by_a_fallback(self) -> None:
+        # A fallback never replaces an owned copy of the preferred pick: the doubled hold warns instead.
+        result = self._plan(self._beside_public(is_fallback=True), [self._ours(1, 200, 11), self._ours(2, 200, 12)])
+
+        assert result.seadex_dict["Pub"].urls["u2"].download is False
+        assert (result.skips.skipped, result.skips.stale_held) == (True, True)
 
 
 class TestGroupVerdicts:
