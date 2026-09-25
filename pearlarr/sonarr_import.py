@@ -6,14 +6,7 @@ from typing import NamedTuple
 from urllib.parse import urlsplit
 
 from .arr_http import DeleteOutcome
-from .episode_state import (
-    EpisodeFileStatus,
-    EpisodeSnapshot,
-    RecordSnapshot,
-    TargetStatuses,
-    routable_claims,
-    trusted_groups,
-)
+from .episode_state import EpisodeFileStatus, EpisodeSnapshot, GroupVotes, RecordSnapshot, TargetStatuses
 from .import_files import CandidateFile, ImportAction, ImportDecision, plan_import_files
 from .import_quality import (
     ParsedQuality,
@@ -777,29 +770,19 @@ class ImportReconciler:
         """
 
         guards = self._records.guards()
-        own = pending.own_group
-        indexes = {
-            series_id: episode_index(self._episodes.fresh_episodes(series_id)) for series_id in pending.series_ids
-        }
-        # Unfiltered: a cleanup-flagged sibling's files are on disk, so dropping it would loosen the guard.
-        siblings = {
-            series_id: tuple(self._records.for_series(series_id, guards).values()) for series_id in pending.series_ids
-        }
+        votes: dict[int, GroupVotes] = {}
         by_series: dict[int, EpisodeSnapshot] = {}
         for series_id in pending.series_ids:
-            merged = pending.guards_for(series_id)
-            by_series[series_id] = EpisodeSnapshot(
-                episodes=indexes[series_id],
-                trusted=trusted_groups(merged, own, siblings[series_id]),
-                owned_episode_sizes=merged.owned_sizes,
-            )
+            index = episode_index(self._episodes.fresh_episodes(series_id))
+            # Unfiltered: a cleanup-flagged sibling's files are on disk, so dropping it would loosen the guard.
+            siblings = self._records.for_series(series_id, guards).values()
+            votes[series_id] = GroupVotes(pending.own_group, tuple(record.own_group for record in siblings))
+            by_series[series_id] = EpisodeSnapshot.guarded(index, pending.guards_for(series_id), votes[series_id])
         by_claim = {
-            claim.al_id: EpisodeSnapshot(
-                episodes=indexes[claim.series_id],
-                trusted=trusted_groups(claim.guards, own, siblings[claim.series_id]),
-                owned_episode_sizes=claim.guards.owned_sizes,
+            claim.al_id: EpisodeSnapshot.guarded(
+                by_series[claim.series_id].episodes, claim.guards, votes[claim.series_id]
             )
-            for claim in routable_claims(pending.claims)
+            for claim in pending.claims
         }
         snapshot = RecordSnapshot(pending, by_series, by_claim)
         return _SeedStatuses(snapshot, snapshot.statuses(targets))

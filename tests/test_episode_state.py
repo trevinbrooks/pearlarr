@@ -7,7 +7,6 @@ from pearlarr.episode_state import (
     RecordSnapshot,
     Route,
     TargetStatuses,
-    routable_claims,
 )
 from pearlarr.manual_import import normalize_group
 from pearlarr.placement_types import episode_index
@@ -206,7 +205,6 @@ class TestRecordSnapshot:
         assert snapshot.route(1) == Route(lone, 7)
         assert snapshot.route(5) == Route(None, 8)
         assert snapshot.preowned(5) is True
-        assert routable_claims(snapshot.pending.claims) == (lone,)
 
     def test_an_overlapped_id_is_classified_under_the_first_claims_evidence(self) -> None:
         # A's plan judged group G stale and B's picks carry it. Both windows hold id 2: judged under A, the

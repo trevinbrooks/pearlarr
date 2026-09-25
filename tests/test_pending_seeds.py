@@ -102,7 +102,7 @@ def _scope(ep_list: list[SonarrEpisode], series: list[SonarrEpisode], names: Ent
 def _trust(own: PendingImport, siblings: Sequence[PendingImport] = ()) -> TrustPolicy:
     """The trust policy of `own`'s one claim: its plan's guards, the record's own group, the series' siblings."""
 
-    return trusted_groups(own.claims[0].guards, own.own_group, siblings)
+    return trusted_groups(own.claims[0].guards, own.own_group, [s.own_group for s in siblings])
 
 
 class TestBuildPendingSeeds:
