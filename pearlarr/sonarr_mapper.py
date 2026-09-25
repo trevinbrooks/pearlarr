@@ -1,6 +1,6 @@
-"""Import-time file -> episode mapping: a completed download's on-disk leaves placed into OUR resolved set.
+"""Import-time file -> episode mapping: a finished download's on-disk files placed onto OUR episode ids.
 
-The grab-time map is taken as-is and every other leaf is parsed and placed (Sonarr's parse informs, never decides).
+The grab-time map is taken as is, and every other file is parsed and placed (Sonarr's parse informs, never decides).
 """
 
 from collections.abc import Mapping
@@ -40,9 +40,9 @@ class FileAssignment(NamedTuple):
     """One poll's file -> episode map: the seeded entries plus this poll's verdict on every other leaf."""
 
     result: EpisodeAssignment
-    """This poll's verdicts on the unseeded on-disk video leaves, SeaDex order."""
+    """This poll's verdicts on the on-disk video files the stored map (`seeded`) does not cover, SeaDex order."""
     seeded: dict[str, list[int]]
-    """The grab-time map's entries, keyed by normalized basename."""
+    """The stored map's entries (the grab-time placements plus earlier polls'), keyed by normalized basename."""
     settled: bool
     """Whether the skips are a verdict against real inputs: every parse known (`PlacementBatch.all_parses_known`)
     and the episode index served. False makes a skip tentative, re-asked next poll."""
@@ -141,7 +141,7 @@ class FileEpisodeMapper:
             if is_video_candidate(path_leaf(candidate.path))
         }
 
-        # SeaDex order first (stable output, a deterministic absolute leg), then any leaf the list didn't name.
+        # SeaDex order first (stable output, a deterministic absolute zip), then any file the list didn't name.
         ordered = [norm for norm in (normalized_leaf(name) for name in pending.seadex_files) if norm in on_disk]
         listed = set(ordered)
         ordered += [norm_base for norm_base in on_disk if norm_base not in listed]
@@ -150,7 +150,7 @@ class FileEpisodeMapper:
         # Only the on-disk leftover the seed doesn't cover is placed from its parse.
         seeded = pending.seeded_map()
         leftover = [norm for norm in ordered if norm not in seeded]
-        # Parse the WHOLE batch when anything is left: the shared-absolute tell scans seeded files too, and
+        # Parse the WHOLE batch when anything is left: the shared-absolute check reads seeded files too, and
         # mapped names are parsed BY NAME even once moved out, so a placed or gone v1 never hides its v2.
         parsed_by_file: dict[str, ParsedFileInfo | None] = {}
         if leftover:
@@ -164,7 +164,7 @@ class FileEpisodeMapper:
         # The leftovers assign into each claim's window in turn, the seeded ids already used there.
         batch = PlacementBatch(leftover, parsed_by_file)
         windowed = place_leftover(seeded, batch, windows_of(pending.claims, indexes))
-        # An empty index means the exact leg could not have matched a numbered name this poll.
+        # An empty index means the exact pass could not have matched a numbered name this poll.
         settled = batch.all_parses_known and all(indexes[sid].id_by_key for sid in pending.series_ids)
         return FileAssignment(windowed.merged, seeded, settled=settled)
 

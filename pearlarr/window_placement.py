@@ -1,11 +1,11 @@
-"""A torrent's files placed under several windows: one `TargetScope` per entry the torrent is listed on.
+"""A torrent's files placed under several windows. A window is the `TargetScope` of one entry the torrent is listed on.
 
-Every window judges the WHOLE torrent, exactly as its own record does under one window, so a run
-keeps its shape under every window (a remainder re-read as a fresh run could index a window the whole
-run never could). The verdicts merge by window order: the first window that places or holds a name
-decides it, so an earlier window's held name outranks a later window's exact placement (window order
-outranks pass order across windows), and the ids an earlier window placed are `used` under a later
-window that resolves them. A name no window placed or held carries its most specific claim.
+Every window judges the WHOLE torrent, exactly as a record with one window does, so a numbered run keeps
+its shape under every window (the remainder re-read as a fresh run could place onto a window the whole
+run never fits). The verdicts merge in window order: the first window that places or holds a file decides
+it, so an earlier window's `HELD` outranks a later window's exact placement (window order beats pass
+order). Ids an earlier window placed count as used under each later window that admits them. A file no
+window placed or held takes the highest-ranked verdict the windows gave it (`_CLAIM_RANK`).
 """
 
 from collections.abc import Iterable, Mapping, Sequence
@@ -40,8 +40,9 @@ class WindowedAssignment(NamedTuple):
         return {v.placement.name: list(v.placement.ids) for v in self.verdicts if v.window_index == index}
 
 
-# A file no window placed or held merges to its most specific claim: excluded only when every window excluded
-# it, a refused duplicate over a file placed nowhere, and an extra (one only against its window's titles) under all.
+# Highest wins. SKIPPED outranks FOREIGN and EXTRA, so a file skipped under any window is never excluded as another
+# slice's or as an extra. DUPLICATE outranks SKIPPED (a refused duplicate beats a file placed nowhere).
+# EXTRA depends on each window's titles: lowest.
 _CLAIM_RANK: Mapping[PlacementVerdict, int] = {
     PlacementVerdict.EXTRA: 0,
     PlacementVerdict.FOREIGN: 1,
@@ -61,7 +62,7 @@ def assign_across_windows(batch: PlacementBatch, windows: Sequence[TargetScope])
     decided: dict[str, WindowVerdict] = {}
     claims: dict[str, list[Placement]] = {name: [] for name in names}
     for index, window in enumerate(windows):
-        # Every earlier placement is a seed under the window (any of them under an unscoped one).
+        # Ids earlier windows placed count as used here: the ones this window admits, all of them when unscoped.
         scope = window.using(i for v in decided.values() for i in v.placement.ids)
         for placement in assign_episode_ids(batch, scope).placements:
             if placement.name in decided:
@@ -84,7 +85,7 @@ def _merged_claim(name: str, claims: Sequence[Placement]) -> WindowVerdict:
 
 
 def windows_of(claims: Iterable[EntryClaim], indexes: Mapping[int, EpisodeIndex]) -> tuple[TargetScope, ...]:
-    """One placement window per claim in order, over its series' index (`indexes` holds every claim's series)."""
+    """One window per claim, in claim order, over its series' index (`indexes` holds every claim's series)."""
 
     return tuple(
         TargetScope(list(claim.ordered_episode_ids), indexes[claim.series_id], names=claim.names) for claim in claims
@@ -94,8 +95,8 @@ def windows_of(claims: Iterable[EntryClaim], indexes: Mapping[int, EpisodeIndex]
 def place_leftover(seeded: FileEpisodeMap, batch: PlacementBatch, windows: Sequence[TargetScope]) -> WindowedAssignment:
     """The names of `batch` the map does not cover, placed under `windows` with the mapped ids already used.
 
-    Each window uses only the mapped ids it admits, as the cross-window seeds do, so one series' placements
-    never close another series' count legs.
+    Each window marks used only the mapped ids it admits, as with ids an earlier window placed, so one
+    series' placements never turn off another series' count-based passes.
     """
 
     leftover = [name for name in batch.to_place if name not in seeded]
