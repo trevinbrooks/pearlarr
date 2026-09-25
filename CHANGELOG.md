@@ -7,6 +7,8 @@ Pearlarr is a fork of [bbtufty/seadexarr](https://github.com/bbtufty/seadexarr).
 
 ## [Unreleased]
 
+## [1.5.1] - 2026-09-25
+
 ### Changed
 
 - A file named with an episode's title imports onto that episode, whatever its number or Sonarr's match said.
