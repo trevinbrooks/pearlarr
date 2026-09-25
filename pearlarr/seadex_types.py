@@ -54,7 +54,7 @@ class SeadexUrlItem:
     is_fallback: bool = False
     """A public alternative added because the preferred release is private-only."""
     upgrade: bool = False
-    """A size upgrade over a copy the Arr already holds. Never set without `download`."""
+    """A grab over files the Arr holds at a stale size or on too many episodes. Never set without `download`."""
     episodes: list[EpisodeRecord] = field(default_factory=list[EpisodeRecord])
 
     def __post_init__(self) -> None:
@@ -64,7 +64,7 @@ class SeadexUrlItem:
             self.infohash = self.infohash.strip().lower() or None
 
     def flag(self, *, upgrade: bool = False) -> None:
-        """Mark the url to grab, `upgrade` also marking a size upgrade. Never clears an upgrade already set."""
+        """Mark the url to grab, `upgrade` marking a replacement of held files. Never clears an upgrade already set."""
 
         self.download = True
         if upgrade:

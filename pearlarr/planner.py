@@ -938,8 +938,8 @@ class DownloadPlanner:
         `private_releases: fallback` stand-in or a preferred public pick).
         Then the private groups are dropped with an INFO notice instead: a
         *preferred* public group is promoted (grabbed) when a private flag was
-        a size-mismatch upgrade, and left alone when the Arr genuinely already
-        owns its files. A fallback is never promoted over an owned copy of the
+        an upgrade over held files (a stale size, or a file on too many
+        episodes), and left alone when the Arr genuinely already owns its files. A fallback is never promoted over an owned copy of the
         preferred private release - those sets warn and hold (`stale_held`).
 
         After each set resolves, just-dropped public urls whose coverage no
@@ -1006,10 +1006,10 @@ class DownloadPlanner:
 
         flagged = same_files.flagged
         public_flagged = [rg for rg in flagged if _is_public_group(seadex_dict[rg])]
-        # The held-stale-not-owned marker: a size-mismatch flag means the Arr
-        # holds the release at a STALE size (upgrade pending), so an unflagged
-        # public group in this set is NOT owned and may be promoted in its
-        # place. Without it, promotion would re-download owned content.
+        # The held-not-owned marker: an upgrade flag means the Arr holds the
+        # release wrong (a stale size, or a file on too many episodes), so an
+        # unflagged public group in this set is NOT owned and may be promoted in
+        # its place. Without it, promotion would re-download owned content.
         upgrade_pending = any(u.upgrade for rg in flagged for u in seadex_dict[rg].urls.values())
 
         if len(public_flagged) == 0:
@@ -1042,9 +1042,9 @@ class DownloadPlanner:
             # and no promotable public url covers the same files. Don't grab a
             # private release, just record a skip notice and skip. Flag the skip
             # so the caller doesn't cache the title as done. A riding fallback
-            # here means an owned-at-stale-size preferred pick it must not
-            # replace (only reachable upgrade-pending, the soft-skip consumed
-            # the other case): mark the stale hold for the summary row.
+            # here means a held preferred pick (a stale size, or misplaced files)
+            # it must not replace (only reachable upgrade-pending, the soft-skip
+            # consumed the other case): mark the stale hold for the summary row.
             # Invariant: a fallback substitute never replaces an owned copy of the
             # preferred private release - those sets hold and warn every run.
             if fallback_rides:
@@ -1073,9 +1073,9 @@ class DownloadPlanner:
         # over it.
         keeper = next((rg for rg in public_flagged if _flagged_all_addable(seadex_dict[rg])), None)
         if keeper is None:
-            # No fully-addable group: when the private flags are stale-size
-            # upgrades, an unflagged public group covering this set still grabs
-            # cleanly - promote it rather than degrading to an add-time refusal.
+            # No fully-addable group: when the private flags are upgrades over
+            # held files, an unflagged public group covering this set still grabs
+            # cleanly, so promote it rather than degrading to an add-time refusal.
             if upgrade_pending:
                 promoted = self._promote_public_alternative(seadex_dict, same_files)
                 if promoted is not None:

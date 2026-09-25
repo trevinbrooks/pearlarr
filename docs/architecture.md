@@ -62,7 +62,7 @@ Notes are appended, not rewritten, so the reasoning trail survives.
 ### Planner: flag mutation over same-files groups
 
 The planner mutates download flags on the SeaDex release dictionary in place, resolving conflicts per *same-files group* (release groups covering identical files).
-Private-only sets are resolved by promotion: when the arr's copy is stale (a size mismatch shows an upgrade is pending), the best public alternative covering the same files is promoted. When the arr genuinely owns the files, nothing is grabbed. When only a fallback could replace an *owned* copy of the preferred private release, the title holds and warns instead: re-downloading owned content is never correct.
+Private-only sets are resolved by promotion: when the arr's copy is stale (a size mismatch, or one file held on too many episodes, shows an upgrade is pending), the best public alternative covering the same files is promoted. When the arr genuinely owns the files, nothing is grabbed. When only a fallback could replace an *owned* copy of the preferred private release, the title holds and warns instead: re-downloading owned content is never correct.
 Dropped groups re-flag any public URL whose episode coverage no survivor carries (group-atomic drops must not lose episodes).
 A full per-URL planner redesign was prototyped and rejected: it re-derives the same same-files groups with more state and no behavioral win.
 
