@@ -333,7 +333,7 @@ class ImportWaitManager:
         self.clock = deps.clock
         self.logger = deps.logger
         self._reporter = deps.reporter
-        # The hub's seam, shared with the grab pipeline, which binds it each run: one run list, one store binding.
+        # The hub's seam, shared with the grab pipeline and bound by the hub each run: one run list, one binding.
         self._records = records
         self.probes = ImportProbes(qbit=deps.qbit, logger=deps.logger)
         self._cleanup = PostImportCleanup(deps, self._records, self.probes)

@@ -124,6 +124,7 @@ def _engine(
         qbit=None,
         _filter=_FakeBound(),
         _grab_pipeline=_FakeBound(),
+        records=_FakeBound(),
     )
     return make_bare_instance(
         RunLoop,

@@ -71,6 +71,7 @@ class GrabPipeline:
         *,
         deps: "RunDeps",
         ctx: RunContext,
+        records: PendingRecords,
     ) -> None:
         self._config = deps.config
         self._planner = deps.planner
@@ -82,22 +83,15 @@ class GrabPipeline:
         self.logger = deps.logger
         self.qbit = deps.qbit
         self._clock = deps.clock
-        self._records = PendingRecords(deps.cache_store)
+        # The hub's record seam, which the hub binds each run.
+        self._records = records
         # Rebound each run by begin_run to the same ctx the engine holds, so the grab bookkeeping stays in sync.
         self._ctx = ctx
-        self._records.begin_run(ctx)
 
     def begin_run(self, ctx: RunContext) -> None:
         """Bind the run context the grab bookkeeping reads/writes."""
 
         self._ctx = ctx
-        self._records.begin_run(ctx)
-
-    @property
-    def records(self) -> PendingRecords:
-        """The pending-record seam, bound to the current run (the hub hands it to every other reader)."""
-
-        return self._records
 
     def _is_preview(self) -> bool:
         """A run is a no-op preview (nothing can be grabbed): explicit dry run, or qBittorrent not configured."""

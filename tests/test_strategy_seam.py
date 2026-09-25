@@ -179,8 +179,8 @@ class _FakeRunServices(RunServices):
         self._selection_stale = selection_stale
         # The record seam the strategies read stored records through, bound as a run would bind it.
         self.cache_store = cache_store if cache_store is not None else FakeCacheStore()
-        self._records = PendingRecords(self.cache_store)
-        self._records.begin_run(RunContext(arr=arr, import_wait_mode=import_wait_mode))
+        self.records = PendingRecords(self.cache_store)
+        self.records.begin_run(RunContext(arr=arr, import_wait_mode=import_wait_mode))
         self._anilist_ids = anilist_ids or {}
         self._prologue_entry = prologue_entry
         self._anilist_title = anilist_title
@@ -283,11 +283,6 @@ class _FakeRunServices(RunServices):
     @override
     def import_wait_mode(self) -> ImportWaitMode:
         return self._import_wait_mode
-
-    @property
-    @override
-    def records(self) -> PendingRecords:
-        return self._records
 
     @override
     def no_releases_skip(self, al_id: int, cache_details: CacheRecord) -> None:

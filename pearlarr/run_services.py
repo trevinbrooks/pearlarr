@@ -345,7 +345,10 @@ class RunServices:
         # The shared per-id collaborators, built from the deps hub + the
         # placeholder ctx. begin_run rebinds their ctx at the top of each run.
         self._filter = SeadexReleaseFilter(deps=deps, ctx=self._ctx)
-        self._grab_pipeline = GrabPipeline(deps=deps, ctx=self._ctx)
+        # The one pending-record seam, shared by the grab pipeline, the strategies, and the wait manager.
+        self.records = PendingRecords(deps.cache_store)
+        self.records.begin_run(self._ctx)
+        self._grab_pipeline = GrabPipeline(deps=deps, ctx=self._ctx, records=self.records)
 
     @property
     def ctx(self) -> RunContext:
@@ -381,6 +384,7 @@ class RunServices:
         self._dirty_al_ids.clear()
         self._filter.begin_run(ctx)
         self._grab_pipeline.begin_run(ctx)
+        self.records.begin_run(ctx)
 
     def check_al_id_in_cache(
         self,
@@ -505,12 +509,6 @@ class RunServices:
     def is_preview(self) -> bool:
         """A run is a no-op preview (nothing can be grabbed): explicit dry run, or qBittorrent not configured."""
         return is_preview(self._ctx, self.qbit)
-
-    @property
-    def records(self) -> PendingRecords:
-        """The one pending-record seam bound to the current run, shared by the strategies and the wait manager."""
-
-        return self._grab_pipeline.records
 
     @property
     def import_wait_mode(self) -> ImportWaitMode:

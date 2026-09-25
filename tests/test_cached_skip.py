@@ -234,6 +234,7 @@ class TestCachedEntrySkip:
             _anilist=make_anilist_gateway(ScriptedAniListClient(None)),
             _filter=_CtxBind(),
             _grab_pipeline=_CtxBind(),
+            records=_CtxBind(),
         )
         run.mark_dirty([7])
         run.begin_run(run.ctx)
