@@ -1,6 +1,6 @@
 """Pure reading of one Sonarr parse against the target scope: the claims a name makes and how far to trust them."""
 
-from collections.abc import Mapping
+from collections.abc import Iterable, Mapping, Sequence
 from typing import NamedTuple
 
 from .placement_types import TargetScope
@@ -55,6 +55,12 @@ class Reading(NamedTuple):
     none."""
 
     @property
+    def keyed(self) -> bool:
+        """The name's own key resolved in the series and Sonarr's match named it: an episode, whatever else it says."""
+
+        return bool(self.resolved) and not self.borrowed and self.corroborated
+
+    @property
     def outside(self) -> bool:
         """A trusted reading that resolves wholly outside the scope: the file is another slice's."""
 
@@ -68,6 +74,65 @@ class Reading(NamedTuple):
 
 
 _NO_READING = Reading((), (), complete=False, borrowed=False, vetoed=False, corroborated=False)
+
+
+class _Claims(NamedTuple):
+    """The claims a parse makes, and whether they are Sonarr's matched pairs rather than the name's own keys."""
+
+    claims: tuple[_EpisodeClaim, ...]
+    borrowed: bool
+
+
+def _matched_claims(info: ParsedFileInfo) -> tuple[_EpisodeClaim, ...]:
+    """Sonarr's series-matched pairs as claims, junk repeats collapsed."""
+
+    return tuple(
+        dict.fromkeys(
+            _EpisodeClaim(matched.season_number, matched.episode_number, matched.id)
+            for matched in info.matched_episodes
+        )
+    )
+
+
+def _resolve(claim: _EpisodeClaim, scope: TargetScope) -> int | None:
+    """Our map's id for the claim's numbers, when Sonarr's own id (if any) agrees."""
+
+    ep_id = scope.id_by_key.get(season_episode_key(claim.season, claim.episode))
+    return ep_id if ep_id and claim.claimed_id in (None, ep_id) else None
+
+
+def _all_inside(claims: Iterable[_EpisodeClaim], scope: TargetScope) -> bool:
+    """Whether every claim resolves to an episode of the scope."""
+
+    return all(_resolve(claim, scope) in scope.real_ids for claim in claims)
+
+
+def _is_alias_shift(own: Sequence[_EpisodeClaim], matched: Sequence[_EpisodeClaim]) -> bool:
+    """Whether Sonarr moved the name's own episodes, numbers intact, into one real season: its alias reading."""
+
+    seasons = {claim.season for claim in matched}
+    return (
+        len(seasons) == 1
+        and seasons.isdisjoint({None, 0})
+        and [claim.episode for claim in own] == [claim.episode for claim in matched]
+    )
+
+
+def _claims_of(info: ParsedFileInfo, scope: TargetScope) -> _Claims:
+    """The name's own keys, else Sonarr's matched pairs when scoped and no season pack.
+
+    Own keys yield to Sonarr's alias reading (the same numbers moved into one real season) when they resolve
+    outside the scope and the pairs inside it: a sequel titled as its own first season, which the scope vouches for.
+    """
+
+    own = tuple(dict.fromkeys(_EpisodeClaim(info.season_number, episode, None) for episode in info.episode_numbers))
+    if not own:
+        borrows = not scope.unscoped and not info.full_season
+        return _Claims(_matched_claims(info) if borrows else (), borrowed=borrows)
+    matched = _matched_claims(info)
+    if _is_alias_shift(own, matched) and not _all_inside(own, scope) and _all_inside(matched, scope):
+        return _Claims(matched, borrowed=True)
+    return _Claims(own, borrowed=False)
 
 
 def read_parse(info: ParsedFileInfo | None, scope: TargetScope) -> Reading:
@@ -85,15 +150,7 @@ def read_parse(info: ParsedFileInfo | None, scope: TargetScope) -> Reading:
 
     if info is None:
         return _NO_READING
-    claims: list[_EpisodeClaim] = [_EpisodeClaim(info.season_number, episode, None) for episode in info.episode_numbers]
-    borrowed = False
-    if not claims and not scope.unscoped and not info.full_season:
-        claims = [
-            _EpisodeClaim(matched.season_number, matched.episode_number, matched.id)
-            for matched in info.matched_episodes
-        ]
-        borrowed = True
-    claims = list(dict.fromkeys(claims))
+    claims, borrowed = _claims_of(info, scope)
     if not claims:
         return _NO_READING
     # Only a borrowed span is capped (DISTINCT pairs): Sonarr matches a bare
@@ -111,15 +168,14 @@ def read_parse(info: ParsedFileInfo | None, scope: TargetScope) -> Reading:
     resolved: list[int] = []
     complete = True
     for claim in claims:
-        ep_id = scope.id_by_key.get(season_episode_key(claim.season, claim.episode))
-        if ep_id and claim.claimed_id in (None, ep_id):
+        if (ep_id := _resolve(claim, scope)) is not None:
             resolved.append(ep_id)
         else:
             complete = False
     # The triple dedup keeps (s,e,None) and (s,e,id) apart. Collapse the
     # resolved ids so one episode never reaches the wire twice.
     ids = tuple(dict.fromkeys(resolved))
-    inside = ids if scope.unscoped else tuple(i for i in ids if i in scope.real_ids)
+    inside = tuple(i for i in ids if scope.admits(i))
     return Reading(ids, inside, complete=complete, borrowed=borrowed, vetoed=vetoed, corroborated=corroborated)
 
 
