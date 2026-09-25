@@ -12,6 +12,8 @@ Terms used across the placement modules:
   place against the whole series.
 - Window (`window_placement`): the scope of one entry a torrent is listed on. A torrent listed on several
   entries is placed under each window in turn.
+- Listing (`TargetScope.listed`): the ids of every window of every entry of the series that lists the torrent.
+  A specials pack's numbering is judged against it. Empty at import time, which stands that judgment down.
 - Open ids: the scope's ids that no file holds yet.
 - Seeded file: a file of the torrent that the grab-time placement or an earlier import poll already mapped.
   Its ids start out used, as do ids an earlier window placed. Seeded files, and files since moved off disk
@@ -62,33 +64,36 @@ The passes run in this order. Each places files only onto the ids that earlier p
 4. Season re-read: a run numbered `1..N` without own keys, which Sonarr matched into one season of exactly
    N episodes with a few members shifted onto specials, is read as that season's episodes 1 to N. When the
    specials season fits just as well, it is a tie: the readings are rejected and both candidates recorded.
-5. Release run: when the open ids form a run window and the tie-breaks leave one numbered run that fits it
+5. Misnumbered pack: a pack of specials, one file per number, as wide as the listing, with a number that is no
+   listed special, is numbered by another TVDB state. Every file of the run is set aside as `MISNUMBERED` for
+   a hand import, and no later pass places any of it. `_sole_specials_run` lists what stands the pass down.
+6. Release run: when the open ids form a run window and the tie-breaks leave one numbered run that fits it
    (a `_Tier`), the run's own numbers place its members onto the window, unless Sonarr's reading already
    puts each member on its own window episode. While any parse is unknown the members are `HELD` instead.
    `_pass_release_run` lists the tie-breaks and the refusals.
-6. Exact: a file whose complete, unrejected reading lies wholly inside the scope, on open ids, is placed
+7. Exact: a file whose complete, unrejected reading lies wholly inside the scope, on open ids, is placed
    there. Unscoped, a name's own keys place against the whole series.
-7. Episode title: a file titled as an open scope episode, whose parse covers one episode, is placed there,
+8. Episode title: a file titled as an open scope episode, whose parse covers one episode, is placed there,
    whatever its number said. Each such placement turns the count-based passes off.
-8. Absolute zip: the remaining files pair with the open ids in absolute-number order, only when every file
+9. Absolute zip: the remaining files pair with the open ids in absolute-number order, only when every file
    carries exactly one absolute number, the counts match, every parse is known, and no two files of the
    torrent share an absolute number.
-9. Single file: with one open id left, the only remaining file takes it if its parse has no usable episode
-   number. Otherwise, the numberless file an AniList title names takes it (`TITLED`).
-10. Ordered zip: when every file of the torrent but the extras is unplaced, numberless, and not read
+10. Single file: with one open id left, the only remaining file takes it if its parse has no usable episode
+    number. Otherwise, the numberless file an AniList title names takes it (`TITLED`).
+11. Ordered zip: when every file of the torrent but the extras is unplaced, numberless, and not read
     outside the scope, no id was used from the start (by a seeded file or an earlier window), and the counts
     match, the files pair with the open ids in natural name order.
-11. Numbered run: among the files Sonarr resolved no episode for, the one run numbered `1..N` places onto
+12. Numbered run: among the files Sonarr resolved no episode for, the one run numbered `1..N` places onto
     a run window of N ids.
-12. Classify: every file still unplaced becomes `DUPLICATE` (it reads inside the scope onto episodes other
+13. Classify: every file still unplaced becomes `DUPLICATE` (it reads inside the scope onto episodes other
     files provably hold, or a version of the same file holds its titled episode), `FOREIGN` (its reading lies
     wholly outside the scope, or it is titled as an episode outside it and confirmed by its reading or by no
     open id being left), or `SKIPPED`. The caller warns about skipped files and records the exclusions. It
     never guesses.
 
-At most one of passes 8 to 10 is tried: the absolute zip when its conditions hold, else the single-file
-pass when one id is open, else the ordered zip. They consider only open files. Every zip (passes 5, 8,
-10, and 11) places nothing when a file is titled as an episode other than its pair, and that turns the
+At most one of passes 9 to 11 is tried: the absolute zip when its conditions hold, else the single-file
+pass when one id is open, else the ordered zip. They consider only open files. Every zip (passes 6, 9,
+11, and 12) places nothing when a file is titled as an episode other than its pair, and that turns the
 count-based passes off.
 """
 
@@ -137,6 +142,7 @@ def assign_episode_ids(
     _pass_refuse_refuted(state)
     _pass_refuse_overlaps(state)
     _pass_reread_season_runs(state)
+    _pass_refuse_misnumbered(state)
     _pass_release_run(state)
     _pass_exact(state)
     _pass_episode_title(state)
@@ -523,6 +529,12 @@ class _Placer:
 
         return bool(self.scope.id_by_key)
 
+    @property
+    def untouched(self) -> bool:
+        """Whether nothing has spoken for the batch: no verdict but an extra's, and nothing seeded."""
+
+        return self.verdicts.keys() <= self.torrent.extras and not self.scope.used
+
     def season_fit(self, run: NumberedRun) -> _SeasonFit | None:
         """The season a `1..N` run without own keys belongs to: Sonarr matched it into one season of exactly N episodes.
 
@@ -862,6 +874,59 @@ def _pass_reread_season_runs(state: _Placer) -> None:
             state.reread(run, fit.season)
 
 
+def _pass_refuse_misnumbered(state: _Placer) -> None:
+    """Set a specials pack numbered by another TVDB state aside whole (`_misnumbered_pack`).
+
+    Its numbers would land some files on the wrong specials and prove the rest foreign, and only the content
+    tells which: nothing places it, and the caller lists it for a hand import.
+    """
+
+    run = _misnumbered_pack(state)
+    if run is not None:
+        state.set_aside_each(run.whole, PlacementVerdict.MISNUMBERED)
+
+
+def _misnumbered_pack(state: _Placer) -> NumberedRun | None:
+    """The batch as one listing-wide specials pack with a number no listed special has, else None.
+
+    Specials are the numbering TVDB inserts into and shifts, so the curated listing (`TargetScope.listed`)
+    outweighs the names there. A season's numbering is stable: a number outside it is a mislisting, foreign as ever.
+    """
+
+    listed = state.scope.specials_listing()
+    if listed is None or (run := _sole_specials_run(state, len(listed))) is None:
+        return None
+    return None if all(state.scope.id_by_key.get(EpisodeKey(0, n)) in listed for n in run.numbers) else run
+
+
+def _sole_specials_run(state: _Placer, width: int) -> NumberedRun | None:
+    """The batch as one run of `width` distinct `S00Exx` names, each Sonarr read as its own number's special.
+
+    None once anything else spoke for the batch (an unknown parse, a barred count, a seed, a verdict, another
+    run or name, a duplicate or multi-episode number), or a title on every member confirms its number.
+    """
+
+    if not state.batch.all_parses_known or state.count_legs_barred or not state.untouched:
+        return None
+    counted = state.torrent.counted
+    runs = state.runs(counted)
+    if len(runs) != 1 or {member.name for member in runs[0].whole} != set(counted):
+        return None
+    run = runs[0]
+    if len(run.numbers) != width or len(set(run.numbers)) != width:
+        return None
+    confirmed = 0
+    for member in run.whole:
+        info = state.batch.parsed.get(member.name)
+        if info is None or info.season_number != 0 or info.episode_numbers != (member.number,):
+            return None
+        if state.spans_multiple(info):
+            return None
+        # One title vouches for its own file alone: a pack it does not cover whole stays judged by the listing.
+        confirmed += state.torrent.confirms(member.name, state.readings[member.name].resolved)
+    return None if confirmed == len(run.whole) else run
+
+
 def _pass_release_run(state: _Placer) -> None:
     """Place one numbered run onto the run window by its own numbers when Sonarr's reading of it does not add up.
 
@@ -1048,8 +1113,7 @@ def _natural_order(state: _Placer, open_names: Sequence[str], open_ids: Sequence
         not state.count_legs_barred
         and len(open_names) == len(open_ids)
         and set(parsed) == {*open_names, *state.torrent.extras}
-        and state.verdicts.keys() <= state.torrent.extras
-        and not state.scope.used
+        and state.untouched
         and all(
             (info := parsed.get(name)) is not None
             and not info.offline

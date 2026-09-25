@@ -27,7 +27,7 @@ from pearlarr.seadex_types import (
 )
 from pearlarr.sonarr_mapper import FileEpisodeMapper
 
-from .builders import indexes_for, pending_import, place
+from .builders import indexes_for, known_torrent, pending_import, place
 from .fakes import FakeSonarrClient
 
 _CATALOG = Path(__file__).parent / "fixtures" / "sonarr" / "mapper_shapes.json"
@@ -160,7 +160,7 @@ def test_the_grab_records_the_placed_episodes(case: ShapeCase) -> None:
     parsed = _parsed(case)
     files = [SeedFile(name, size, parsed[name]) for size, name in enumerate(case.parses, start=1)]
 
-    placement = place_release(files, scope, None)
+    placement = place_release(files, scope, known_torrent())
 
     expected = [
         EpisodeRecord(scope.series.by_id[ep_id].season_number, scope.series.by_id[ep_id].episode_number, size)

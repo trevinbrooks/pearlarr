@@ -5,12 +5,13 @@ The grab-time path through `place_release` is pinned by `test_grab_placement` an
 """
 
 from collections.abc import Mapping, Sequence
+from dataclasses import replace
 from typing import ClassVar
 
 import pytest
 
 from pearlarr.manual_import import EntryNames
-from pearlarr.placement_types import EpisodeAssignment, Placement, PlacementVerdict, TargetScope
+from pearlarr.placement_types import EpisodeAssignment, EpisodeIndex, Placement, PlacementVerdict, TargetScope
 from pearlarr.seadex_types import EpisodeKey, MatchedEpisode, ParsedFileInfo
 
 from .builders import blind, by_name, numbered_names, parsed_info, place, series_index
@@ -2364,6 +2365,208 @@ class TestRereadSeasonRun:
 
         assert result.assigned == {}
         assert {p.verdict for p in result.placements} == {verdict}
+
+
+class TestRefuseMisnumbered:
+    """A specials pack numbered by another TVDB state than the windows listing it is set aside whole, never reordered.
+
+    The pack is one `S00Exx` run, each file read as its own number's special, as wide as the listing, and some
+    number is no listed special's. Every shape the pass cannot judge places by number as before.
+    """
+
+    _MAP: ClassVar[dict[EpisodeKey, int]] = {
+        **{EpisodeKey(0, n): 500 + n for n in range(1, 26)},
+        EpisodeKey(1, 1): 601,
+    }
+    _INDEX: ClassVar[EpisodeIndex] = series_index(_MAP)
+    _TITLED: ClassVar[EpisodeIndex] = series_index(
+        _MAP, titles={501: "Pilot Flight", 502: "Distress Call", 503: "Final Bell"}
+    )
+
+    @staticmethod
+    def _pack(*numbers: int) -> dict[str, ParsedFileInfo | None]:
+        """`Show.S00Exx.mkv` per number, each read by Sonarr as that special."""
+
+        return {f"Show.S00E{n:02d}.mkv": parsed_info(season=0, episodes=(n,), matched=((0, n),)) for n in numbers}
+
+    def _scope(
+        self, resolved: Sequence[int], listed: Sequence[int], *, index: EpisodeIndex | None = None
+    ) -> TargetScope:
+        return TargetScope(list(resolved), index or self._INDEX, names=EntryNames("Show"), listed=frozenset(listed))
+
+    @staticmethod
+    def _verdicts(result: EpisodeAssignment) -> set[PlacementVerdict]:
+        return {p.verdict for p in result.placements}
+
+    def test_a_pack_the_listing_contradicts_is_set_aside_whole(self) -> None:
+        # Eight specials the entries list as 7, 12, 13, 15, 17, 20, 22 and 23: the pack's 14, 16, 18 and 19 are
+        # none of them, so its count is another TVDB state's. Its 7, 13 and 15 are not placed either.
+        pack = self._pack(7, 13, 14, 15, 16, 17, 18, 19)
+        listed = [507, 512, 513, 515, 517, 520, 522, 523]
+
+        result = place(pack, self._scope([507, 512, 513], listed))
+
+        assert self._verdicts(result) == {PlacementVerdict.MISNUMBERED}
+        assert result.assigned == {}
+        assert sorted(result.skipped) == sorted(pack)
+
+    def test_one_stray_number_refuses_the_pack_and_never_reorders_it(self) -> None:
+        # Seven of eight numbers are listed: placing them and the eighth by its position would be a guess that the
+        # listing's order is the pack's. The whole pack is a human's.
+        result = place(self._pack(*range(1, 9)), self._scope([501, 502, 503], [*range(501, 508), 520]))
+
+        assert self._verdicts(result) == {PlacementVerdict.MISNUMBERED}
+
+    def test_an_extra_beside_the_pack_is_set_aside_on_its_own(self) -> None:
+        pack = {**self._pack(1, 2, 3), "Show.S00.Trailer.mkv": parsed_info()}
+
+        placed = by_name(place(pack, self._scope([502, 504], [502, 504, 506])))
+
+        assert placed["Show.S00.Trailer.mkv"] == ((), PlacementVerdict.EXTRA)
+        assert {placed[name][1] for name in self._pack(1, 2, 3)} == {PlacementVerdict.MISNUMBERED}
+
+    def test_a_pack_the_listing_agrees_with_places_by_number(self) -> None:
+        placed = by_name(place(self._pack(1, 2, 3), self._scope([501, 502, 503], [501, 502, 503])))
+
+        assert placed == {
+            "Show.S00E01.mkv": ((501,), PlacementVerdict.EXACT),
+            "Show.S00E02.mkv": ((502,), PlacementVerdict.EXACT),
+            "Show.S00E03.mkv": ((503,), PlacementVerdict.EXACT),
+        }
+
+    def test_a_listing_with_a_seasoned_episode_is_no_specials_listing(self) -> None:
+        # A season's numbering is stable: a number outside it is a mislisting, never a shifted count.
+        placed = by_name(place(self._pack(1, 2, 3), self._scope([501, 502], [501, 502, 601])))
+
+        assert placed == {
+            "Show.S00E01.mkv": ((501,), PlacementVerdict.EXACT),
+            "Show.S00E02.mkv": ((502,), PlacementVerdict.EXACT),
+            "Show.S00E03.mkv": ((), PlacementVerdict.FOREIGN),
+        }
+
+    def test_a_listing_of_another_width_stands_down(self) -> None:
+        placed = by_name(place(self._pack(1, 2, 3), self._scope([501, 502], [501, 502, 504, 505])))
+
+        assert placed["Show.S00E01.mkv"] == ((501,), PlacementVerdict.EXACT)
+        assert placed["Show.S00E03.mkv"] == ((), PlacementVerdict.FOREIGN)
+
+    def test_a_window_outside_the_listing_stands_down(self) -> None:
+        result = place(self._pack(1, 2, 3), self._scope([501, 509], [502, 504, 506]))
+
+        assert PlacementVerdict.MISNUMBERED not in self._verdicts(result)
+
+    def test_an_unscoped_window_stands_down(self) -> None:
+        result = place(self._pack(1, 2, 3), self._scope([], [502, 504, 506]))
+
+        assert result.assigned == {"Show.S00E01.mkv": [501], "Show.S00E02.mkv": [502], "Show.S00E03.mkv": [503]}
+
+    def test_a_seeded_window_stands_down(self) -> None:
+        # A stored record already mapped a file: the pack was judged when it was grabbed.
+        result = place(self._pack(1, 2, 3), replace(self._scope([504], [502, 504, 506]), used=frozenset({502})))
+
+        assert PlacementVerdict.MISNUMBERED not in self._verdicts(result)
+
+    def test_a_title_refuting_the_numbering_places_by_title(self) -> None:
+        # The first file is titled as special 2: the titled pass has the pack, so the listing never judges it.
+        pack = {
+            **self._pack(2, 3),
+            "Show.S00E01 - Distress Call.mkv": parsed_info(season=0, episodes=(1,), matched=((0, 1),)),
+        }
+
+        placed = by_name(place(pack, self._scope([502, 504], [502, 504, 506], index=self._TITLED)))
+
+        assert placed["Show.S00E01 - Distress Call.mkv"] == ((502,), PlacementVerdict.EPISODE_TITLE)
+        assert PlacementVerdict.MISNUMBERED not in {verdict for _ids, verdict in placed.values()}
+
+    def test_a_duplicate_number_stands_down(self) -> None:
+        pack = {**self._pack(1, 3), "Show.S00E01.BluRay.mkv": parsed_info(season=0, episodes=(1,), matched=((0, 1),))}
+
+        result = place(pack, self._scope([501, 503], [501, 503, 505]))
+
+        assert PlacementVerdict.MISNUMBERED not in self._verdicts(result)
+        assert result.assigned["Show.S00E03.mkv"] == [503]
+
+    def test_a_multi_episode_special_stands_down(self) -> None:
+        pack = {
+            **self._pack(1),
+            "Show.S00E02-E03.mkv": parsed_info(season=0, episodes=(2, 3), matched=((0, 2), (0, 3))),
+        }
+
+        result = place(pack, self._scope([502, 504], [502, 504]))
+
+        assert PlacementVerdict.MISNUMBERED not in self._verdicts(result)
+
+    def test_an_unread_parse_stands_down(self) -> None:
+        pack = {**self._pack(1, 3), "Show.S00E02.mkv": None}
+
+        result = place(pack, self._scope([502, 504], [502, 504, 506]))
+
+        assert PlacementVerdict.MISNUMBERED not in self._verdicts(result)
+
+    def test_a_second_prefix_stands_down(self) -> None:
+        pack = {**self._pack(1, 3), "Other.S00E02.mkv": parsed_info(season=0, episodes=(2,), matched=((0, 2),))}
+
+        result = place(pack, self._scope([502, 504], [502, 504, 506]))
+
+        assert PlacementVerdict.MISNUMBERED not in self._verdicts(result)
+
+    def test_a_numberless_file_beside_the_pack_stands_down(self) -> None:
+        # The torrent is not one pack: a file no count reads is beside it, and the listing judges packs alone.
+        pack = {**self._pack(1, 2, 3), "Show - Bonus.mkv": parsed_info()}
+
+        result = place(pack, self._scope([502, 504], [502, 504, 506]))
+
+        assert PlacementVerdict.MISNUMBERED not in self._verdicts(result)
+
+    def test_one_title_confirming_its_number_keeps_the_pack_refused(self) -> None:
+        # The first file is titled as special 1, the number it carries. That vouches for one file: a special
+        # inserted after it would still shift the rest, so the listing keeps judging the pack.
+        pack = {
+            **self._pack(2, 3),
+            "Show.S00E01 - Pilot Flight.mkv": parsed_info(season=0, episodes=(1,), matched=((0, 1),)),
+        }
+
+        result = place(pack, self._scope([502, 504], [502, 504, 506], index=self._TITLED))
+
+        assert self._verdicts(result) == {PlacementVerdict.MISNUMBERED}
+
+    def test_a_title_on_every_member_confirming_its_number_stands_down(self) -> None:
+        # Every file is titled as the special it is numbered: the pack is numbered by this TVDB state.
+        titles = {1: "Pilot Flight", 2: "Distress Call", 3: "Final Bell"}
+        pack = {
+            f"Show.S00E{n:02d} - {title}.mkv": parsed_info(season=0, episodes=(n,), matched=((0, n),))
+            for n, title in titles.items()
+        }
+
+        placed = by_name(place(pack, self._scope([502, 504], [502, 504, 506], index=self._TITLED)))
+
+        assert placed["Show.S00E02 - Distress Call.mkv"][0] == (502,)
+        assert PlacementVerdict.MISNUMBERED not in {verdict for _ids, verdict in placed.values()}
+
+    def test_a_superseded_version_is_refused_with_its_pack(self) -> None:
+        pack = {
+            **self._pack(1, 2, 3),
+            "Show.S00E01v2.mkv": parsed_info(season=0, episodes=(1,), matched=((0, 1),)),
+        }
+
+        result = place(pack, self._scope([502, 504], [502, 504, 506]))
+
+        assert self._verdicts(result) == {PlacementVerdict.MISNUMBERED}
+        assert sorted(result.skipped) == sorted(pack)
+
+    def test_a_number_the_series_lacks_refuses_the_pack(self) -> None:
+        result = place(self._pack(1, 2, 26), self._scope([501, 502], [501, 502, 503]))
+
+        assert self._verdicts(result) == {PlacementVerdict.MISNUMBERED}
+
+    def test_no_listing_places_by_number(self) -> None:
+        placed = by_name(place(self._pack(1, 2, 3), self._scope([501, 502], [])))
+
+        assert placed == {
+            "Show.S00E01.mkv": ((501,), PlacementVerdict.EXACT),
+            "Show.S00E02.mkv": ((502,), PlacementVerdict.EXACT),
+            "Show.S00E03.mkv": ((), PlacementVerdict.FOREIGN),
+        }
 
 
 class TestAssignNumberedRun:

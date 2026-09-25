@@ -38,6 +38,7 @@ from pearlarr.seadex_types import (
     ArrReleases,
     EpisodeRecord,
     FlaggedUrl,
+    GrabHold,
     SeadexReleaseGroupItem,
     SeadexUrlItem,
     SonarrEpisode,
@@ -1705,3 +1706,105 @@ class TestReduceDropRescue:
         assert seadex["A"].urls["a_pub"].download is True
         assert seadex["B"].urls["b_owned"].download is False
         assert seadex["B"].urls["b_priv"].download is False
+
+
+class TestRefusedPack:
+    """A specials pack the placement refused is judged by what its window holds, never by its numbers."""
+
+    _SIZES = (100, 200, 300)
+
+    @classmethod
+    def _seadex(cls, **siblings: SeadexReleaseGroupItem) -> dict[str, SeadexReleaseGroupItem]:
+        """The refused pack, three files at `_SIZES` placed nowhere, beside `siblings`."""
+
+        item = url_item(size=list(cls._SIZES), episodes=[], infohash="h1")
+        item.hold = GrabHold.MISNUMBERED
+        return {"Pack": rg_group({"u1": item}), **siblings}
+
+    @staticmethod
+    def _decide(seadex: dict[str, SeadexReleaseGroupItem], ep_list: list[SonarrEpisode]) -> SeadexUrlItem:
+        """The pack's url after the planner judges it against the window `ep_list`."""
+
+        return (
+            make_planner()
+            .filter_by_release_group(seadex, arr_releases(ep_list), ep_list)
+            .seadex_dict["Pack"]
+            .urls["u1"]
+        )
+
+    @staticmethod
+    def _ours(episode: int, size: int, file_id: int) -> SonarrEpisode:
+        """Special `episode` holding the pack's file `file_id` at `size`."""
+
+        return sonarr_ep(0, episode, size=size, release_group="Pack", episode_file_id=file_id)
+
+    def test_every_special_holding_a_pack_file_is_in_place(self) -> None:
+        held = [self._ours(n, size, 10 + n) for n, size in enumerate(self._SIZES, 1)]
+
+        item = self._decide(self._seadex(), held)
+
+        assert item.download is False
+
+    def test_an_empty_special_flags_the_pack_as_an_upgrade(self) -> None:
+        held = [self._ours(1, 100, 11), self._ours(2, 200, 12), sonarr_ep(0, 3, episode_file_id=0)]
+
+        item = self._decide(self._seadex(), held)
+
+        assert (item.download, item.upgrade) == (True, True)
+
+    def test_files_of_an_unlisted_group_flag_the_pack(self) -> None:
+        held = [
+            sonarr_ep(0, n, size=size, release_group="Other", episode_file_id=10 + n)
+            for n, size in enumerate(self._SIZES, 1)
+        ]
+
+        item = self._decide(self._seadex(), held)
+
+        assert (item.download, item.upgrade) == (True, False)
+
+    def test_a_special_a_sibling_pick_covers_is_in_place(self) -> None:
+        covered = EpisodeRecord(season=0, episode=3, size=999)
+        sibling = rg_group({"u2": url_item(url="u2", infohash="h2", episodes=[covered])}, all_episodes=[covered])
+        held = [
+            self._ours(1, 100, 11),
+            self._ours(2, 200, 12),
+            sonarr_ep(0, 3, size=999, release_group="Sib", episode_file_id=13),
+        ]
+
+        item = self._decide(self._seadex(Sib=sibling), held)
+
+        assert item.download is False
+
+    def test_an_untagged_file_at_a_listed_size_is_the_packs(self) -> None:
+        # A hand import whose names carry no group tag: the listed size still says whose file each special holds.
+        held = [sonarr_ep(0, n, size=size, episode_file_id=10 + n) for n, size in enumerate(self._SIZES, 1)]
+
+        item = self._decide(self._seadex(), held)
+
+        assert item.download is False
+
+    def test_a_special_another_url_of_the_group_placed_is_in_place(self) -> None:
+        # The group's single-file release covers the third special, so the pack has nothing left to fill there.
+        covered = EpisodeRecord(season=0, episode=3, size=999)
+        seadex = self._seadex()
+        seadex["Pack"] = rg_group(
+            {**seadex["Pack"].urls, "u2": url_item(url="u2", infohash="h2", episodes=[covered])},
+            all_episodes=[covered],
+        )
+        held = [self._ours(1, 100, 11), self._ours(2, 200, 12), self._ours(3, 999, 13)]
+
+        item = self._decide(seadex, held)
+
+        assert item.download is False
+
+    def test_a_pack_file_at_an_unlisted_size_flags_the_pack(self) -> None:
+        held = [self._ours(1, 150, 11), self._ours(2, 200, 12), self._ours(3, 300, 13)]
+
+        item = self._decide(self._seadex(), held)
+
+        assert (item.download, item.upgrade) == (True, True)
+
+    def test_no_episode_list_leaves_the_pack_unflagged(self) -> None:
+        result = make_planner().filter_by_release_group(self._seadex(), ArrReleases(), None)
+
+        assert result.seadex_dict["Pack"].urls["u1"].download is False

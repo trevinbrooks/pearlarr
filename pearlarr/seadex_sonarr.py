@@ -13,8 +13,9 @@ from .grab_placement import (
     EntryPlacements,
     PendingSeed,
     SeedScope,
+    TorrentReads,
     build_pending_seeds,
-    resident_scopes,
+    entry_hashes,
 )
 from .log import EntryState, pluralize
 from .manual_import import (
@@ -44,6 +45,7 @@ from .sonarr_episodes import SonarrEpisodes
 from .sonarr_import import ImportExecutor, ImportReconciler
 from .sonarr_mapper import FileEpisodeMapper
 from .sonarr_parse import SonarrParseCache
+from .torrent_listings import SeriesListings
 
 
 def get_overlapping_results(seadex_dict: SeadexDict) -> bool:
@@ -162,6 +164,10 @@ class SonarrSync(ArrSync[SonarrItem]):
         # from the shared deps + this client. The strategy delegates get_items /
         # prefetch_episodes to it and reads its series_fp for the parse cache.
         self._episodes = SonarrEpisodes(deps, self.sonarr, self._services)
+
+        # Listing collaborator: the specials every entry of the series lists a torrent under, what a
+        # numbered specials pack is judged against at grab time.
+        self._listings = SeriesListings(deps.seadex, self._episodes)
 
         # Parse-cache collaborator: grab-time `/parse` of SeaDex filenames + the
         # durable, freshness-checked parse cache (read-through the shared cache_store).
@@ -420,19 +426,22 @@ class SonarrSync(ArrSync[SonarrItem]):
 
         # Place every listed file where the import will put it, so the grab is judged by the map the import
         # runs: a torrent already downloading under a stored record is placed as that record's leftover, under
-        # every claim's window. The series maps are the whole-series lists (a per-run cache hit each).
+        # every claim's window, and a specials pack against the windows of every entry listing it. The series
+        # maps are the whole-series lists (a per-run cache hit each).
         waits_on_imports = run.import_wait_mode is not ImportWaitMode.OFF
-        stored: dict[str, PendingImport] = self._stored_records(seadex_dict) if waits_on_imports else {}
+        hashes = entry_hashes(seadex_dict)
+        stored: dict[str, PendingImport] = run.records.stored_records(hashes) if waits_on_imports else {}
         indexes = self._series_indexes(
             {sonarr_series_id, *(sid for record in stored.values() for sid in record.series_ids)}
         )
+        listings = self._listings.read(sonarr_series_id, self.item_anilist_ids(item, log_ignored=False), hashes)
         scope = SeedScope(al_id, episode_index(ep_list), indexes.get(sonarr_series_id, episode_index([])), title.names)
         placed = EntryPlacements.place(
             scope,
             self._parse.parsed_files(seadex_dict, series_fp=self._episodes.series_fp),
-            resident_scopes(seadex_dict, stored, indexes),
+            TorrentReads(stored, indexes, listings).known(seadex_dict),
         )
-        placed.attach_records(seadex_dict)
+        placed.attach_placements(seadex_dict)
         self._log_placements(placed)
 
         # If we're in interactive mode and there are multiple equivalent options here, then select
@@ -497,16 +506,6 @@ class SonarrSync(ArrSync[SonarrItem]):
             ),
         )
 
-    def _stored_records(self, seadex_dict: SeadexDict) -> dict[str, PendingImport]:
-        """The stored records on the entry's listed torrents, by infohash."""
-
-        return self._services.records.stored_records(
-            url_item.infohash
-            for rg_item in seadex_dict.values()
-            for url_item in rg_item.urls.values()
-            if url_item.infohash is not None
-        )
-
     def _series_indexes(self, series_ids: Iterable[int]) -> dict[int, EpisodeIndex]:
         """One index per series whose whole list served this run (a cold read fetches once); an unread one is absent."""
 
@@ -522,10 +521,12 @@ class SonarrSync(ArrSync[SonarrItem]):
         for url, placement in placed.by_url.items():
             if not placement.files:
                 continue
+            # The hold and the failed read explain an empty coverage on a listed release.
             aside = ", ".join(p.name for p in placement.assignment.excluded)
+            hold = "" if placement.hold is None else f" (not grabbed: {placement.hold})"
             self.logger.debug(
                 f"{url}: placed {_coverage.coverage_string(list(placement.records)) or 'nothing'}"
-                f"{'' if placement.inputs_known else ' (a Sonarr read failed)'}"
+                f"{'' if placement.inputs_known else ' (a read failed)'}{hold}"
                 f"{f'; set aside (other slice / duplicate): {aside}' if aside else ''}"
             )
 

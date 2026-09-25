@@ -592,6 +592,10 @@ class TestPrivateOnlyTip:
         messages = _summary_messages(self._needs_ctx(NeedsActionKind.UNSUPPORTED_TRACKER))
         assert not any("private_releases" in m for m in messages)
 
+    def test_misnumbered_kind_renders_no_tip(self) -> None:
+        messages = _summary_messages(self._needs_ctx(NeedsActionKind.MISNUMBERED))
+        assert not any("private_releases" in m for m in messages)
+
 
 def _action_messages(
     results: list[ReleaseOutcome],

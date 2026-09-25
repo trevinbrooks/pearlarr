@@ -14,7 +14,7 @@ is a real `RunServices` subclass. The strategies are built bare
 """
 
 import logging
-from collections.abc import Callable, MutableMapping
+from collections.abc import Callable, Iterable, Mapping, MutableMapping
 from typing import Any, NamedTuple, cast, override
 
 import pytest
@@ -59,6 +59,7 @@ from pearlarr.seadex_types import (
     ArrReleases,
     CommandResource,
     EpisodeRecord,
+    GrabHold,
     HistoryPage,
     HistoryRecord,
     Language,
@@ -101,7 +102,7 @@ from .builders import (
     two_claim_record,
     url_item,
 )
-from .fakes import FakeRadarrClient, FakeSonarrClient, diagnostic_messages, install_recording_hub
+from .fakes import FakeRadarrClient, FakeSonarrClient, ScriptedEpisodes, diagnostic_messages, install_recording_hub
 
 
 class _Item:
@@ -341,35 +342,17 @@ def test_fake_overrides_the_full_public_surface() -> None:
     assert surface - lifecycle <= overridden
 
 
-class _FakeEpisodes:
-    """Minimal episode collaborator: scripts `get_ep_list`'s resolved episode list, doubling as the series list.
+class _ScriptedListings:
+    """Listing collaborator scripted per infohash: the specials the series' entries list a torrent under."""
 
-    With `sonarr`, the whole-series read goes through that client's `episodes` instead (recorded there).
-    """
+    def __init__(self, listed: Mapping[str, frozenset[int] | None] | None = None) -> None:
+        self._listed = listed or {}
 
-    series_fp = "fp"
-
-    def __init__(self, *, ep_list: list[SonarrEpisode] | None, sonarr: FakeSonarrClient | None = None) -> None:
-        self._ep_list = ep_list
-        self._sonarr = sonarr
-
-    def cached_episodes(self, series_id: int) -> list[SonarrEpisode] | None:
-        if self._sonarr is not None:
-            return self._sonarr.episodes(series_id)
-        return self._ep_list
-
-    def get_ep_list(
-        self,
-        sonarr_series_id: int,
-        al_id: int,
-        mapping: MappingEntry,
-    ) -> list[SonarrEpisode] | None:
-        del sonarr_series_id, al_id, mapping
-        return self._ep_list
-
-    def get_sonarr_releases(self, ep_list: list[SonarrEpisode]) -> ArrReleases:
-        del ep_list
-        return ArrReleases()
+    def read(
+        self, series_id: int, entries: Mapping[int, MappingEntry], hashes: Iterable[str]
+    ) -> dict[str, frozenset[int] | None]:
+        del series_id, entries
+        return {infohash: self._listed.get(infohash, frozenset()) for infohash in hashes}
 
 
 class _ScriptedParse:
@@ -504,7 +487,7 @@ class TestProcessAlIdThreadsServices:
         # the end): skip with the NO_EPISODES status, never mislabeled "unmonitored"
         # and never falling through to grab orphans - and NO AniBridge warning.
         run = _FakeRunServices(prologue_entry=make_entry_record(), anilist_title="Title")
-        episodes = _FakeEpisodes(ep_list=[])
+        episodes = ScriptedEpisodes(FakeSonarrClient(episodes=[]))
         recording = install_recording_hub()
         strat = make_bare_instance(
             SonarrSync,
@@ -529,7 +512,7 @@ class TestProcessAlIdThreadsServices:
         # degraded imdb/tmdb case), so the entry must carry source=ANIBRIDGE as a
         # real one does. Fails on the unfixed path, which silently grabbed nothing.
         run = _FakeRunServices(prologue_entry=make_entry_record(), anilist_title="Title")
-        episodes = _FakeEpisodes(ep_list=[])
+        episodes = ScriptedEpisodes(FakeSonarrClient(episodes=[]))
         recording = install_recording_hub()
         strat = make_bare_instance(
             SonarrSync,
@@ -569,14 +552,15 @@ class TestProcessAlIdThreadsServices:
         strat = make_bare_instance(
             SonarrSync,
             _services=run,
-            _episodes=_FakeEpisodes(ep_list=[sonarr_ep(1, 1)]),
+            _episodes=ScriptedEpisodes(FakeSonarrClient(episodes=[sonarr_ep(1, 1)])),
             _parse=_ScriptedParse(),
+            _listings=_ScriptedListings(),
             _config=make_config(interactive=True, sleep_time=0),
             ignore_movies_in_radarr=False,
             logger=make_logger(),
         )
 
-        strat.process_al_id(_Item(id=1, title="Title"), 5, MappingEntry(anilist_id=5))
+        strat.process_al_id(_Item(id=1, title="Title", tvdbId=10, imdbId=None), 5, MappingEntry(anilist_id=5))
         assert run.invalid_selection_skips == 1
         assert run.grab_requests == []
         assert run.no_releases_calls == []
@@ -590,7 +574,7 @@ class TestProcessAlIdThreadsServices:
         strat = make_bare_instance(
             SonarrSync,
             _services=run,
-            _episodes=_FakeEpisodes(ep_list=[]),
+            _episodes=ScriptedEpisodes(FakeSonarrClient(episodes=[])),
             _config=make_config(sleep_time=0),
             _clock=FakeClock(),
             ignore_movies_in_radarr=True,
@@ -610,7 +594,7 @@ class TestProcessAlIdThreadsServices:
         strat = make_bare_instance(
             SonarrSync,
             _services=run,
-            _episodes=_FakeEpisodes(ep_list=[]),
+            _episodes=ScriptedEpisodes(FakeSonarrClient(episodes=[])),
             _config=make_config(sleep_time=0),
             _clock=FakeClock(),
             ignore_movies_in_radarr=True,
@@ -2465,13 +2449,14 @@ def _sonarr_seed_run(mode: ImportWaitMode, *, store: FakeCacheStore, sonarr: Fak
     strat = make_bare_instance(
         SonarrSync,
         _services=run,
-        _episodes=_FakeEpisodes(ep_list=[_EP2], sonarr=sonarr),
+        _episodes=ScriptedEpisodes(sonarr, windows={5: [_EP2]}),
         _parse=_ScriptedParse({_SEED_URL: tuple(SeedFile(name, 1000, parses[name]) for name in _SEED_FILES)}),
+        _listings=_ScriptedListings(),
         _config=make_config(sleep_time=0),
         ignore_movies_in_radarr=False,
         logger=make_logger(),
     )
-    strat.process_al_id(_Item(id=7, title="Show"), 5, MappingEntry(anilist_id=5))
+    strat.process_al_id(_Item(id=7, title="Show", tvdbId=70, imdbId=None), 5, MappingEntry(anilist_id=5))
     return run
 
 
@@ -2513,6 +2498,42 @@ class TestSonarrProcessAlIdSeeds:
         assert req.input_missing_groups == ()
         # The stored claim's window came off the per-run whole-series read.
         assert sonarr.episodes_calls == [7]
+
+    def test_a_specials_pack_the_listing_contradicts_is_held(self) -> None:
+        # The series' entries list the pack over specials 2, 4 and 6, three as it is wide, and its `1` is none of
+        # them: the pack counts by another TVDB state. Nothing is placed for the planner, and the url is held.
+        specials = [sonarr_ep(0, n, ep_id=500 + n, episode_file_id=0) for n in range(1, 7)]
+        files = tuple(f"Show.S00E{n:02d}.mkv" for n in range(1, 4))
+        seadex: SeadexDict = {
+            "NAN0": rg_group({_SEED_URL: url_item(url=_SEED_URL, infohash="h1", download=True, files=list(files))}),
+        }
+        run = _FakeRunServices(
+            prologue_entry=make_entry_record(url="https://releases.moe/5"),
+            anilist_title="Show Specials",
+            seadex_dict=seadex,
+            filter_downloads_result=plan_result(["h1"], seadex),
+            import_wait_mode=ImportWaitMode.BLOCKING,
+            cache_store=FakeCacheStore(),
+        )
+        parses = {name: parsed_info(season=0, episodes=(n,), matched=((0, n),)) for n, name in enumerate(files, 1)}
+        strat = make_bare_instance(
+            SonarrSync,
+            _services=run,
+            _episodes=ScriptedEpisodes(FakeSonarrClient(episodes=specials), windows={5: [specials[1], specials[3]]}),
+            _parse=_ScriptedParse({_SEED_URL: tuple(SeedFile(name, 1000, parses[name]) for name in files)}),
+            _listings=_ScriptedListings({"h1": frozenset({502, 504, 506})}),
+            _config=make_config(sleep_time=0),
+            ignore_movies_in_radarr=False,
+            logger=make_logger(),
+        )
+
+        strat.process_al_id(_Item(id=7, title="Show", tvdbId=70, imdbId=None), 5, MappingEntry(anilist_id=5))
+
+        (req,) = run.grab_requests
+        assert req.seadex_dict["NAN0"].urls[_SEED_URL].hold is GrabHold.MISNUMBERED
+        assert req.seadex_dict["NAN0"].urls[_SEED_URL].episodes == []
+        assert req.pending_seeds["h1"].placements == {}
+        assert req.input_missing_groups == ()
 
     def test_wait_mode_off_reads_no_record_and_seeds_nothing(self) -> None:
         store = _CountingStore()

@@ -228,6 +228,8 @@ class SkipReason(Enum):
     PRIVATE_ONLY = auto()
     UNSUPPORTED_TRACKER = auto()
     TRACKER_NOT_SELECTED = auto()
+    MISNUMBERED = auto()
+    INPUT_UNREAD = auto()
 
     @property
     def severity(self) -> Severity:
@@ -343,6 +345,7 @@ class NeedsActionCause(Enum):
     UNSUPPORTED_TRACKER = auto()
     GRAB_FAILED = auto()
     PLACEMENT_INPUT_MISSING = auto()
+    MISNUMBERED = auto()
 
 
 @dataclass(frozen=True, slots=True)

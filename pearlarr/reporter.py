@@ -114,7 +114,9 @@ class NeedsActionKind(Enum):
     GRAB_FAILED = auto()
     """A contained transient failure (tracker/qBittorrent down)."""
     PLACEMENT_INPUT_MISSING = auto()
-    """A Sonarr read the grab-time placement needs failed, so the grab was judged without it."""
+    """A read the grab-time placement needs failed: the grab was judged without it, or held until it answers."""
+    MISNUMBERED = auto()
+    """A recommended release is a specials pack numbered by another TVDB state than its listing: a hand import."""
 
 
 @dataclass(frozen=True, slots=True)
@@ -181,8 +183,11 @@ class PerTitleState:
     grab_failed_groups: list[str] = field(default_factory=list[str])
     """Groups whose release hit a contained grab failure (tracker or client down), so the title stays uncached."""
     input_missing_groups: list[str] = field(default_factory=list[str])
-    """Groups with a url whose placement waited on a Sonarr read that failed, so the title stays uncached and
+    """Groups with a url whose placement waited on a read that failed, so the title stays uncached and
     re-checks."""
+    misnumbered_groups: list[str] = field(default_factory=list[str])
+    """Groups with a release the placement refused as misnumbered, never grabbed, so the title stays uncached and
+    re-warns until a hand import covers it."""
     current_title: str | None = None
     """Title of the entry currently being processed, so grabs and the summary can attribute what they grab."""
     current_url: str | None = None

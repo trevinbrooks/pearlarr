@@ -229,6 +229,10 @@ def _skip_text(event: ReleaseSkipped) -> str:
             return f"{event.url or event.group} (tracker {event.tracker} not in your selected list)"
         case SkipReason.UNSUPPORTED_TRACKER:
             return f"{event.url or event.group} (tracker {event.tracker} not yet supported)"
+        case SkipReason.MISNUMBERED:
+            return f"{event.url or event.group} (numbering does not match its SeaDex listing)"
+        case SkipReason.INPUT_UNREAD:
+            return f"{event.url or event.group} (a read the placement needs failed)"
     assert_never(event.reason)
 
 

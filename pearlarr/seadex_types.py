@@ -38,6 +38,29 @@ class EpisodeRecord:
     size: int = 0
 
 
+def normalized_infohash(raw: str | None) -> str | None:
+    """The one spelling of an infohash: stripped and lowercase, a blank one None.
+
+    An empty `hashes` filter matches every torrent in the qBittorrent dedup, "" collides with the cache's no-hash
+    marker, and the pending store keys on the hash byte-exact.
+    """
+
+    if raw is None:
+        return None
+    return raw.strip().lower() or None
+
+
+class GrabHold(StrEnum):
+    """Why the placement refuses to grab a flagged url this run."""
+
+    MISNUMBERED = "misnumbered"
+    """A specials pack numbered by another TVDB state than its listing (`PlacementVerdict.MISNUMBERED`): grabbed,
+    it would import under the wrong specials, so a human imports it."""
+    INPUT_UNREAD = "a read failed"
+    """The pack's numbering could not be judged: its listing, or a parse the judgment needs, was not read this
+    run. Held until it is, next run."""
+
+
 @dataclass
 class SeadexUrlItem:
     """One SeaDex url record within a release group."""
@@ -56,12 +79,11 @@ class SeadexUrlItem:
     upgrade: bool = False
     """A grab over files the Arr holds at a stale size or on too many episodes. Never set without `download`."""
     episodes: list[EpisodeRecord] = field(default_factory=list[EpisodeRecord])
+    hold: GrabHold | None = None
+    """Why the placement refuses to grab the url this run (`attach_placements` sets it), None when it may be."""
 
     def __post_init__(self) -> None:
-        # Blank -> None: an empty `hashes` filter matches every torrent in the qbit dedup, and "" collides
-        # with the cache's _NO_HASH. Lowercase: the pending store keys on the hash byte-exact.
-        if self.infohash is not None:
-            self.infohash = self.infohash.strip().lower() or None
+        self.infohash = normalized_infohash(self.infohash)
 
     def flag(self, *, upgrade: bool = False) -> None:
         """Mark the url to grab, `upgrade` marking a replacement of held files. Never clears an upgrade already set."""
@@ -117,7 +139,7 @@ def flagged_urls(seadex_dict: SeadexDict) -> list[FlaggedUrl]:
 
 # Folded into the config's selection digest: bump when the release-selection
 # rules change in code so every cached verdict re-checks once after an upgrade.
-SELECTION_RULES_VERSION: int = 6
+SELECTION_RULES_VERSION: int = 7
 
 SONARR_MISSING_KEY: int = 999
 """Out-of-range stand-in for a missing Sonarr `seasonNumber`/`episodeNumber`, never colliding with a real one."""
