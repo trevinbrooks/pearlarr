@@ -36,7 +36,7 @@ from pearlarr.seadex_types import ParsedFileInfo
 from pearlarr.sqlite_util import is_corruption
 from pearlarr.stamps import parse_stamp_or_none
 
-from .builders import entry_claim, make_entry_record, pending_import
+from .builders import claim_al_ids, entry_claim, make_entry_record, pending_import
 
 # Stand-in for a config-file checksum. `CacheStore` only stamps and compares the
 # value it is handed. It never computes one, so any string works here.
@@ -60,6 +60,12 @@ def _raise_locked(*_args: object, **_kwargs: object) -> sqlite3.Connection:
     """A drop-in for `_connect` that simulates a transient open-time lock."""
 
     raise sqlite3.OperationalError("database is locked")
+
+
+def _row(record: PendingImport) -> dict[str, Any]:
+    """The record as the store's JSON column reads it back (tuples as lists)."""
+
+    return json.loads(json.dumps(record.to_json()))
 
 
 def _open(tmp_path: Path) -> CacheStore:
@@ -329,10 +335,10 @@ class TestSchemaVersionGate:
         assert set(pending) == {"legacy", "tagged"}
         # The sentinel-keyed legacy row rehydrates as a claim with al_id 0.
         legacy = PendingImport.from_json(pending["legacy"], guards={})
-        assert legacy.al_ids == (0,)
+        assert claim_al_ids(legacy) == (0,)
         assert legacy.claims[0].title == "Old Show"
         tagged = PendingImport.from_json(pending["tagged"], guards={})
-        assert tagged.al_ids == (9,)
+        assert claim_al_ids(tagged) == (9,)
         assert tagged.series_ids == (6,)
         # The folded rows behave exactly like modern records: keyed by hash, dropped by hash.
         store.drop_pending(Arr.SONARR, "legacy")
@@ -545,9 +551,9 @@ class TestSchemaVersionGate:
         sonarr = store.get_pending(Arr.SONARR)
         radarr = store.get_pending(Arr.RADARR)
         assert PendingImport.from_json(sonarr["h"], guards={}).awaiting_cleanup is False
-        assert PendingImport.from_json(sonarr["h"], guards={}).al_ids == (11, 22)
+        assert claim_al_ids(PendingImport.from_json(sonarr["h"], guards={})) == (11, 22)
         assert PendingImport.from_json(radarr["h"], guards={}).awaiting_cleanup is True
-        assert PendingImport.from_json(radarr["h"], guards={}).al_ids == (0,)
+        assert claim_al_ids(PendingImport.from_json(radarr["h"], guards={})) == (0,)
         assert store.other_arr_holds(Arr.SONARR, "h") is True
         assert store.get_guards(Arr.SONARR) == {
             11: GuardFacts(entry_groups=("A",)),
@@ -1036,7 +1042,7 @@ class TestPendingImports:
 
     def test_roundtrip_drop_and_arr_isolation(self, tmp_path: Path) -> None:
         store = _open(tmp_path)
-        rec = pending_import(infohash="h1", al_id=3, series_id=5).to_json()
+        rec = _row(pending_import(infohash="h1", al_id=3, series_id=5))
         store.put_pending(Arr.SONARR, "h1", rec)
         store.put_pending(Arr.RADARR, "h2", {"infohash": "h2"})
         assert store.get_pending(Arr.SONARR) == {"h1": rec}
@@ -1057,11 +1063,13 @@ class TestPendingImports:
         # claims: a re-put under the hash replaces the record whole (never a
         # second row), and the drop takes every claim with it.
         store = _open(tmp_path)
-        store.put_pending(Arr.SONARR, "h", pending_import(infohash="h", al_id=11, series_id=5).to_json())
-        both = pending_import(
-            infohash="h",
-            claims=(entry_claim(al_id=11, series_id=5), entry_claim(al_id=22, series_id=5)),
-        ).to_json()
+        store.put_pending(Arr.SONARR, "h", _row(pending_import(infohash="h", al_id=11, series_id=5)))
+        both = _row(
+            pending_import(
+                infohash="h",
+                claims=(entry_claim(al_id=11, series_id=5), entry_claim(al_id=22, series_id=5)),
+            )
+        )
         store.put_pending(Arr.SONARR, "h", both)
         assert store.get_pending(Arr.SONARR) == {"h": both}
         assert store.stats().pending_imports == 1
@@ -1100,14 +1108,16 @@ class TestPendingImports:
 
     def test_get_pending_for_series_matches_any_claim_in_sql(self, tmp_path: Path) -> None:
         store = _open(tmp_path)
-        a = pending_import(infohash="a", al_id=1, series_id=5).to_json()
-        b = pending_import(infohash="b", al_id=2, series_id=5).to_json()
-        c = pending_import(infohash="c", al_id=3, series_id=9).to_json()
+        a = _row(pending_import(infohash="a", al_id=1, series_id=5))
+        b = _row(pending_import(infohash="b", al_id=2, series_id=5))
+        c = _row(pending_import(infohash="c", al_id=3, series_id=9))
         # A two-claim record spanning both series answers to either.
-        both = pending_import(
-            infohash="t",
-            claims=(entry_claim(al_id=6, series_id=5), entry_claim(al_id=7, series_id=9)),
-        ).to_json()
+        both = _row(
+            pending_import(
+                infohash="t",
+                claims=(entry_claim(al_id=6, series_id=5), entry_claim(al_id=7, series_id=9)),
+            )
+        )
         store.put_pending(Arr.SONARR, "a", a)
         store.put_pending(Arr.SONARR, "b", b)
         store.put_pending(Arr.SONARR, "c", c)
@@ -1298,7 +1308,7 @@ class TestRunLifecycle:
             },
         )
         store.put_anilist_meta(7, {"fetched_at": "2026-06-26 12:00:00", "data": {"id": 7}})
-        carried = pending_import(infohash="aaa", al_id=7, series_id=5).to_json()
+        carried = _row(pending_import(infohash="aaa", al_id=7, series_id=5))
         store.put_pending(Arr.SONARR, "aaa", carried)
         store.save(preview=False)  # mid/end-of-run commit
         store.close()  # finally: rollback is a no-op (already committed)

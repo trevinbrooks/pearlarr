@@ -80,6 +80,7 @@ from .builders import (
     SEP,
     FakeCacheStore,
     FakeClock,
+    claim_al_ids,
     entry_claim,
     make_bare_instance,
     make_config,
@@ -2435,7 +2436,7 @@ class TestSonarrProcessAlIdSeeds:
         assert seed.claim.al_id == 5
         assert seed.claim.ordered_episode_ids == (102,)
         record = seed.record_at(_STAMP, fresh=False)
-        assert record.al_ids == (22, 5)
+        assert claim_al_ids(record) == (22, 5)
         assert dict(record.file_episode_map) == {
             normalize_basename(name): (ep,) for name, ep in zip(_SEED_FILES, (101, 102), strict=True)
         }
@@ -2525,7 +2526,7 @@ class TestRadarrProcessAlIdSeeds:
         (seed,) = req.pending_seeds.values()
         assert seed.stored == resident
         assert seed.accreted is True
-        assert seed.record_at(_STAMP, fresh=False).al_ids == (9, 42)
+        assert claim_al_ids(seed.record_at(_STAMP, fresh=False)) == (9, 42)
 
     def test_no_seeds_when_wait_mode_off(self) -> None:
         store = _CountingStore()

@@ -38,7 +38,7 @@ from pearlarr.manual_import import (
 )
 from pearlarr.seadex_types import RemotePathMapping
 
-from .builders import SEP, entry_claim, pending_import
+from .builders import SEP, claim_al_ids, entry_claim, pending_import
 
 
 class TestNormalize:
@@ -183,7 +183,7 @@ class TestPendingImportPlacements:
 class TestPendingImportClaims:
     """The claim reads over a record: every entry's series, window, guards, and ids, in claim order."""
 
-    def test_series_ids_and_al_ids_are_distinct_in_claim_order(self) -> None:
+    def test_series_ids_are_distinct_in_claim_order(self) -> None:
         pending = pending_import(
             claims=(
                 entry_claim(al_id=3, series_id=8),
@@ -193,14 +193,14 @@ class TestPendingImportClaims:
         )
 
         assert pending.series_ids == (8, 7)
-        assert pending.al_ids == (3, 1, 2)
 
     def test_claim_for_is_the_first_claim_on_the_series(self) -> None:
         first, second = entry_claim(al_id=1, series_id=8), entry_claim(al_id=2, series_id=8)
         pending = pending_import(claims=(first, second))
 
         assert pending.claim_for(8) is first
-        assert pending.claim_for(9) is None
+        with pytest.raises(LookupError, match="series 9"):
+            pending.claim_for(9)
 
     def test_guards_for_merges_the_series_claims_evidence(self) -> None:
         # Groups union in claim order, owned episodes concatenate, and the owned-size read is
@@ -462,7 +462,7 @@ class TestPendingImportRoundTrip:
         rebuilt = PendingImport.from_json(raw, guards={})
 
         assert rebuilt.infohash == "h"
-        assert rebuilt.al_ids == (1,)
+        assert claim_al_ids(rebuilt) == (1,)
 
     def test_added_at_of_reads_the_raw_row(self) -> None:
         # The keys-only readers age a row without rehydrating it: a missing or non-string stamp is unset.

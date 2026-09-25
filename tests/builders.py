@@ -4,6 +4,7 @@
 """Builders and a bare-instance factory for the characterization tests."""
 
 import dataclasses
+import json
 import logging
 from collections.abc import Iterable, Iterator, Mapping, Sequence
 from copy import deepcopy
@@ -393,7 +394,8 @@ class FakeCacheStore(AbstractCacheStore):
 
     @override
     def put_pending(self, arr: Arr, infohash: str, record: dict[str, Any]) -> None:
-        self._pending.setdefault(str(arr), {})[infohash] = deepcopy(record)
+        # Stored as the real store's JSON column reads it back (tuples come back as lists).
+        self._pending.setdefault(str(arr), {})[infohash] = json.loads(json.dumps(record))
 
     @override
     def drop_pending(self, arr: Arr, infohash: str) -> None:
@@ -1279,3 +1281,9 @@ def make_sonarr_parse(**attrs: Any) -> SonarrParseCache:
     """A bare `SonarrParseCache` with `__init__` bypassed and only `attrs` set."""
 
     return make_bare_instance(SonarrParseCache, **attrs)
+
+
+def claim_al_ids(record: PendingImport) -> tuple[int, ...]:
+    """The record's claiming entries, claim order."""
+
+    return tuple(claim.al_id for claim in record.claims)
