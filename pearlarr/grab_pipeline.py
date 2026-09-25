@@ -247,55 +247,42 @@ class GrabPipeline:
         return req.pending_seeds.get(url_item.infohash)
 
     def _register_pending_import(self, url_item: SeadexUrlItem, req: GrabRequest, result: AddResult) -> None:
-        """Persist a grabbed or already-present release: a fresh `ADDED` tracks, an `ALREADY_ADDED` accretes or reacquires."""
+        """Persist a grabbed or already-present release: `ADDED` tracks, `ALREADY_ADDED` accretes or reacquires.
+
+        A fresh add enters the run list with every clock stamped now. Any other is refreshed and reacquired
+        unless the record is this run's own grab (a torrent two entries list in one run).
+        """
 
         seed = self._seed_for(url_item, req)
         if seed is None:
             return
         if result.outcome is AddOutcome.ADDED:
-            self._track_fresh(seed)
-        elif seed.accreted:
-            self._accrete_resident(seed)
-        else:
-            self._reacquire(seed, result.added_on)
-
-    def _track_fresh(self, seed: PendingSeed) -> None:
-        """A fresh add: the record enters the run list, its birth and every claim stamped now (a re-add too)."""
-
-        self._records.insert_fresh(seed.record_at(now_stamp(), fresh=True), seed.claim)
-
-    def _accrete_resident(self, seed: PendingSeed) -> None:
-        """A torrent already downloading under a stored record: the entry's claim and placements join it.
-
-        Reacquired only when the record is not this run's own grab (a torrent two entries list in one run).
-        """
-
-        record = seed.record_at(now_stamp(), fresh=False)
+            self._records.insert_fresh(seed.record_at(now_stamp(), fresh=True), seed.claim)
+            return
+        stamp = now_stamp() if seed.accreted else self._reacquire_stamp(seed, result.added_on)
+        if stamp is None:
+            return
+        record = seed.record_at(stamp, fresh=False)
         self._records.save_with_claim(record, seed.claim)
         if record.infohash not in self._ctx.pending_imports:
             self._ctx.reacquired_keys.add(record.infohash)
 
-    def _reacquire(self, seed: PendingSeed, added_on: datetime | None) -> None:
-        """A torrent qBittorrent holds with no record: tracked from its add time.
+    def _reacquire_stamp(self, seed: PendingSeed, added_on: datetime | None) -> str | None:
+        """A record-less torrent's stamp: its qBittorrent add time, or now when it reports none.
 
-        Dropped when that time is already past `imports.pending_max_age_days`; stamped now when
-        qBittorrent reports no add time.
+        None when that time is already past `imports.pending_max_age_days` (the torrent is not tracked).
         """
 
-        stamp = now_stamp()
-        if added_on is not None:
-            max_age_days = self._config.imports.pending_max_age_days
-            if added_on < pending_cutoff(max_age_days):
-                self.logger.debug(
-                    f"{seed.claim.title or seed.facts.infohash} has been in qBittorrent longer than "
-                    f"{count_noun(max_age_days, 'day')}, not tracking it",
-                )
-                return
-            stamp = stamp_of(added_on)
-        # A reacquire, not a fresh grab: `save_with_claim` refreshes without a run-list insert.
-        record = seed.record_at(stamp, fresh=False)
-        self._records.save_with_claim(record, seed.claim)
-        self._ctx.reacquired_keys.add(record.infohash)
+        if added_on is None:
+            return now_stamp()
+        max_age_days = self._config.imports.pending_max_age_days
+        if added_on < pending_cutoff(max_age_days):
+            self.logger.debug(
+                f"{seed.claim.title or seed.facts.infohash} has been in qBittorrent longer than "
+                f"{count_noun(max_age_days, 'day')}, not tracking it",
+            )
+            return None
+        return stamp_of(added_on)
 
     def _needs_action(self, groups: list[str], reason: str, kind: NeedsActionKind) -> NeedsActionRecord:
         """A needs-action record for the current title."""
