@@ -24,7 +24,7 @@ from pearlarr import sonarr_import as sonarr_import_module
 from pearlarr.arr_http import DeleteOutcome
 from pearlarr.cache import CacheRecord
 from pearlarr.config import Arr
-from pearlarr.episode_state import EpisodeFileStatus, EpisodeSnapshot, RecordSnapshot, trusted_groups
+from pearlarr.episode_state import EpisodeFileStatus, EpisodeSnapshot, GroupVotes, RecordSnapshot, trusted_groups
 from pearlarr.grab_pipeline import NO_SEEDS, GrabRequest
 from pearlarr.grab_placement import SeedFile
 from pearlarr.import_quality import resolve_language_objects
@@ -180,8 +180,8 @@ class _FakeRunServices(RunServices):
         self._selection_stale = selection_stale
         # The record seam the strategies read stored records through, bound as a run would bind it.
         self.cache_store = cache_store if cache_store is not None else FakeCacheStore()
-        self.records = PendingRecords(self.cache_store)
-        self.records.begin_run(RunContext(arr=arr, import_wait_mode=import_wait_mode))
+        self._records = PendingRecords(self.cache_store)
+        self._records.begin_run(RunContext(arr=arr, import_wait_mode=import_wait_mode))
         self._anilist_ids = anilist_ids or {}
         self._prologue_entry = prologue_entry
         self._anilist_title = anilist_title
@@ -210,6 +210,11 @@ class _FakeRunServices(RunServices):
     @override
     def selection_stale(self) -> bool:
         return self._selection_stale
+
+    @property
+    @override
+    def records(self) -> PendingRecords:
+        return self._records
 
     @override
     def check_al_id_in_cache(self, arr: Arr, al_id: int, seadex_entry: EntryRecord) -> bool:
@@ -1977,7 +1982,7 @@ class TestRecordSnapshot:
             {
                 7: EpisodeSnapshot(
                     episodes=episode_index([sonarr_ep(1, 1, ep_id=101, release_group="SubGroup")]),
-                    trusted=trusted_groups(GuardFacts(), OwnGroup("SubGroup", ())),
+                    trusted=trusted_groups(GuardFacts(), GroupVotes(OwnGroup("SubGroup", ()))),
                 ),
                 8: EpisodeSnapshot(episodes=episode_index([sonarr_ep(1, 1, ep_id=201, episode_file_id=0)]), trusted={}),
             },

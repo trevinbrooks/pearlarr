@@ -795,19 +795,22 @@ class TestAssignMatchedPairs:
         assert [p.verdict for p in result.excluded] == [PlacementVerdict.FOREIGN]
 
     @pytest.mark.parametrize(
-        ("matched_id", "assigned"),
+        ("matched_id", "expected"),
         [
-            pytest.param(999, {}, id="another series' id is refused"),
-            pytest.param(501, {"x.mkv": [501]}, id="an agreeing id places"),
+            # A disagreeing id is refused as possibly ours, never proven another slice's.
+            pytest.param(999, ((), PlacementVerdict.SKIPPED), id="another series' id is refused"),
+            pytest.param(501, ((501,), PlacementVerdict.EXACT), id="an agreeing id places"),
         ],
     )
-    def test_sonarr_s_matched_id_must_agree_with_the_map(self, matched_id: int, assigned: dict[str, list[int]]) -> None:
+    def test_sonarr_s_matched_id_must_agree_with_the_map(
+        self, matched_id: int, expected: tuple[tuple[int, ...], PlacementVerdict]
+    ) -> None:
         # Sonarr may match another series whose numbers coincide with ours: its episode id then disagrees.
         info = ParsedFileInfo(matched_episodes=(MatchedEpisode(season_number=1, episode_number=1, id=matched_id),))
 
         result = place({"x.mkv": info}, TargetScope([501, 502], series_index({EpisodeKey(1, 1): 501})))
 
-        assert result.assigned == assigned
+        assert by_name(result) == {"x.mkv": expected}
 
     def test_mixed_id_duplicate_claims_place_once(self) -> None:
         # (s,e,None) and (s,e,id) survive the triple dedup as two claims, yet name the episode once.
@@ -1318,7 +1321,6 @@ class TestAssignNumberlessZip:
         result = place(parsed, TargetScope([901, 902, 903], series_index({})))
 
         assert result.assigned == {}
-        assert sorted(result.skipped) == ["movie.mkv", "sp1.mkv", "sp2.mkv"]
         assert sorted(result.skipped) == ["movie.mkv", "sp1.mkv", "sp2.mkv"]
 
 

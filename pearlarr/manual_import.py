@@ -19,7 +19,7 @@ import math
 import os
 import unicodedata
 from collections.abc import Iterable, Mapping, Sequence
-from dataclasses import asdict, dataclass, field, fields, replace
+from dataclasses import dataclass, field, replace
 from datetime import datetime
 from enum import Enum, StrEnum, auto
 from types import MappingProxyType
@@ -619,6 +619,11 @@ class EntryNames:
     series: str = ""
     anilist: tuple[str, ...] = ()
 
+    def to_json(self) -> dict[str, Any]:
+        """The plain dict persisted inside a claim."""
+
+        return {"series": self.series, "anilist": list(self.anilist)}
+
     @classmethod
     def from_json(cls, raw: dict[str, Any]) -> "EntryNames":
         """Rebuild from the persisted dict (a record written before the names were kept reads empty)."""
@@ -703,10 +708,20 @@ class EntryClaim:
         return not self.ordered_episode_ids or ep_id in self.ordered_episode_ids
 
     def to_json(self) -> dict[str, Any]:
-        """The plain dict persisted inside the record, in field order (the guards ride their own row)."""
+        """The plain dict persisted inside the record (the guards ride their own row): the schema, spelled out."""
 
-        raw = {f.name: getattr(self, f.name) for f in fields(self) if f.name != "guards"}
-        return raw | {"names": asdict(self.names)}
+        return {
+            "al_id": self.al_id,
+            "series_id": self.series_id,
+            "title": self.title,
+            "coverage": self.coverage,
+            "url": self.url,
+            "ordered_episode_ids": list(self.ordered_episode_ids),
+            "names": self.names.to_json(),
+            "preowned_episode_ids": list(self.preowned_episode_ids),
+            "slice_coverage": self.slice_coverage,
+            "claimed_at": self.claimed_at,
+        }
 
     @classmethod
     def from_json(cls, raw: dict[str, Any], *, guards: Mapping[int, GuardFacts]) -> "EntryClaim":

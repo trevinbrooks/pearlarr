@@ -15,7 +15,7 @@ from collections.abc import Mapping, Sequence
 from dataclasses import replace
 
 from pearlarr.config import Arr
-from pearlarr.episode_state import EpisodeFileStatus, TrustPolicy, trusted_groups
+from pearlarr.episode_state import EpisodeFileStatus, GroupVotes, TrustPolicy, trusted_groups
 from pearlarr.grab_placement import (
     NO_RESIDENTS,
     EntryFacts,
@@ -102,7 +102,7 @@ def _scope(ep_list: list[SonarrEpisode], series: list[SonarrEpisode], names: Ent
 def _trust(own: PendingImport, siblings: Sequence[PendingImport] = ()) -> TrustPolicy:
     """The trust policy of `own`'s one claim: its plan's guards, the record's own group, the series' siblings."""
 
-    return trusted_groups(own.claims[0].guards, own.own_group, [s.own_group for s in siblings])
+    return trusted_groups(own.claims[0].guards, GroupVotes(own.own_group, [s.own_group for s in siblings]))
 
 
 class TestBuildPendingSeeds:

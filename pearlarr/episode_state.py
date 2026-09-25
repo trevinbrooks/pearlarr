@@ -5,7 +5,7 @@ from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, field
 from enum import Enum, auto
 from types import MappingProxyType
-from typing import NamedTuple
+from typing import NamedTuple, Self
 
 from .manual_import import EntryClaim, GuardFacts, OwnGroup, PendingImport, normalize_group, normalize_rg
 from .placement_types import EpisodeIndex
@@ -58,6 +58,13 @@ class TargetStatuses:
         return {ep_id for ep_id, status in self.by_id.items() if status is not EpisodeFileStatus.RECOMMENDED}
 
 
+class GroupVotes(NamedTuple):
+    """The groups a trust policy trusts beyond its guards: the torrent's own, then the series' other grabs."""
+
+    own: OwnGroup
+    siblings: Sequence[OwnGroup] = ()
+
+
 class EpisodeSnapshot(NamedTuple):
     """One poll's coherent view of a series: the fresh episode index plus what counts as already ours.
 
@@ -76,10 +83,10 @@ class EpisodeSnapshot(NamedTuple):
     only while the file still sits at that size. Anything else untagged classifies as unidentifiable."""
 
     @classmethod
-    def guarded(cls, episodes: EpisodeIndex, guards: GuardFacts, votes: "GroupVotes") -> "EpisodeSnapshot":
+    def guarded(cls, episodes: EpisodeIndex, guards: GuardFacts, votes: GroupVotes) -> Self:
         """The snapshot under one claim's guard evidence: its trust policy and its recorded untagged sizes."""
 
-        return cls(episodes, trusted_groups(guards, votes.own, votes.siblings), guards.owned_sizes)
+        return cls(episodes, trusted_groups(guards, votes), guards.owned_sizes)
 
     def status_of(self, ep_id: int) -> EpisodeFileStatus:
         """Classify one intended target by its current on-disk file, decided HERE and not from the queue.
@@ -208,14 +215,7 @@ class RecordSnapshot:
         return TargetStatuses(by_id)
 
 
-class GroupVotes(NamedTuple):
-    """The groups a trust policy trusts beyond its guards: the torrent's own, then the series' other grabs."""
-
-    own: OwnGroup
-    siblings: Sequence[OwnGroup] = ()
-
-
-def trusted_groups(guards: GuardFacts, own: OwnGroup, siblings: Sequence[OwnGroup] = ()) -> TrustPolicy:
+def trusted_groups(guards: GuardFacts, votes: GroupVotes) -> TrustPolicy:
     """One claim's trust policy: entry picks and non-stale siblings by name, the own group last at its listed sizes.
 
     Same-group siblings union their sizes into the own group's (None = no size gate), so a stale copy is replaced.
@@ -223,9 +223,9 @@ def trusted_groups(guards: GuardFacts, own: OwnGroup, siblings: Sequence[OwnGrou
 
     stale = {norm for g in guards.stale_groups if (norm := normalize_rg(g))}
     trusted: dict[str, frozenset[int] | None] = {norm: None for g in guards.entry_groups if (norm := normalize_rg(g))}
-    own_norm = normalize_rg(own.release_group)
-    own_sizes = set(own.sizes)
-    for sibling in siblings:
+    own_norm = normalize_rg(votes.own.release_group)
+    own_sizes = set(votes.own.sizes)
+    for sibling in votes.siblings:
         norm = normalize_rg(sibling.release_group)
         if norm is None:
             continue

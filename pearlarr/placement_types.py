@@ -194,7 +194,7 @@ class TargetScope:
     """
 
     resolved: Sequence[int]
-    """The entry's resolved episode ids, season order, seeded included. A stray
+    """The entry's resolved episode ids, season order, seeded included, held as a tuple. A stray
     zero id still makes the scope real. It is never placed."""
 
     series: EpisodeIndex

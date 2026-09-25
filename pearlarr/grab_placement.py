@@ -387,7 +387,14 @@ def build_entry_claim(release: SeedRelease, scope: SeedScope, entry: EntryFacts)
         if status is EpisodeFileStatus.RECOMMENDED
     )
     slice_coverage = coverage_string(episodes_from_ep_list(slice_eps)) or None
-    return entry.claim(ClaimWindow(tuple(index.by_id), scope.names, preowned, slice_coverage))
+    return entry.claim(
+        ClaimWindow(
+            ordered_episode_ids=tuple(index.by_id),
+            names=scope.names,
+            preowned_episode_ids=preowned,
+            slice_coverage=slice_coverage,
+        )
+    )
 
 
 def build_pending_seed(release: SeedRelease, scope: SeedScope, entry: EntryFacts) -> PendingSeed:

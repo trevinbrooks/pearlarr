@@ -213,13 +213,13 @@ class SonarrParseCache:
             self.logger.debug(f"Evicted {count_noun(evicted, 'stale Sonarr parse record')}")
 
         # Each url's video files (creditless OP/ED, subs, fonts, audio dropped) with their listed sizes.
-        listed = [
-            (url, [(f, url_item.size[idx]) for idx, f in video_file_entries(url_item.files)])
+        listed = {
+            url: [(f, url_item.size[idx]) for idx, f in video_file_entries(url_item.files)]
             for release_group_item in seadex_dict.values()
             for url, url_item in release_group_item.urls.items()
-        ]
-        self._warm_parse_cache(list(dict.fromkeys(f for _, files in listed for f, _ in files)), window=window)
+        }
+        self._warm_parse_cache(list(dict.fromkeys(f for files in listed.values() for f, _ in files)), window=window)
         return {
             url: tuple(SeedFile(f, size, self._parse_for(f, window=window)) for f, size in files)
-            for url, files in listed
+            for url, files in listed.items()
         }

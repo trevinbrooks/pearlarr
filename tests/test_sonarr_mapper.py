@@ -18,7 +18,7 @@ from .builders import entry_facts, indexes_for, parsed_info, pending_import, ser
 from .fakes import FakeSonarrClient
 
 
-@dataclass(frozen=True)
+@dataclass(frozen=True, slots=True)
 class _Disk:
     """What the mapper finds on disk: Sonarr's parse of each leaf, and the leaves (the record's files when None)."""
 

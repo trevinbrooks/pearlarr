@@ -124,12 +124,19 @@ class _TitledEpisode(NamedTuple):
     """Whether the form is the head or the subtitle alone rather than the title as written."""
 
 
-def _title_forms(title: str) -> tuple[tuple[str, bool], ...]:
+class _TitleForm(NamedTuple):
+    """One form of an episode title: as written, or one part of it around a colon."""
+
+    text: str
+    part: bool
+
+
+def _title_forms(title: str) -> tuple[_TitleForm, ...]:
     """A title as written and, around a colon, its head and its subtitle alone (a name often carries just one)."""
 
     head, colon, subtitle = title.rpartition(":")
-    parts = ((head, True), (subtitle, True)) if colon and head.strip() and subtitle.strip() else ()
-    return ((title, False), *parts)
+    parts = (_TitleForm(head, True), _TitleForm(subtitle, True)) if colon and head.strip() and subtitle.strip() else ()
+    return (_TitleForm(title, False), *parts)
 
 
 def _sole(hits: Iterable[_TitledEpisode]) -> _TitledEpisode | None:
@@ -143,6 +150,15 @@ def _sole(hits: Iterable[_TitledEpisode]) -> _TitledEpisode | None:
         by_rank[hit.part].setdefault(hit.ep_id, hit)
     named = by_rank[False] or by_rank[True]
     return next(iter(named.values())) if len(named) == 1 else None
+
+
+class _TitleLead(NamedTuple):
+    """What the episode titles say of one run member's tail."""
+
+    titled: _TitledEpisode | None
+    """The one episode whose distinct title opens the tail, shared with other files or not."""
+    leaders: frozenset[int]
+    """The episodes whose title, distinct or not, leads the tail: the run's evidence."""
 
 
 class _EpisodeTitles(NamedTuple):
@@ -159,16 +175,16 @@ class _EpisodeTitles(NamedTuple):
 
         titled: list[_TitledEpisode] = []
         for ep_id, ep in series.by_id.items():
-            for form, is_part in _title_forms(ep.title):
-                words = folded_words(form)
+            for form in _title_forms(ep.title):
+                words = folded_words(form.text)
                 beyond = tuple(word for word in words if word not in ground.series_words)
                 distinct = is_distinct_title(beyond)
                 # A part too short to place a file ("Chapter 4: Home") is no run evidence either.
-                if words and (distinct or not is_part):
-                    titled.append(_TitledEpisode(ep_id, words, beyond, distinct, is_part))
+                if words and (distinct or not form.part):
+                    titled.append(_TitledEpisode(ep_id, words, beyond, distinct, form.part))
         return cls(ground.series_words, tuple(titled))
 
-    def leading(self, words: tuple[str, ...]) -> tuple[_TitledEpisode | None, frozenset[int]]:
+    def leading(self, words: tuple[str, ...]) -> _TitleLead:
         """The one episode whose distinct title opens a run member's tail, and every episode whose title leads it.
 
         Quality junk may follow the opening title. The led set, distinct or not, is the run's evidence.
@@ -176,7 +192,7 @@ class _EpisodeTitles(NamedTuple):
 
         led = [ep for ep in self.titled if words[: len(ep.words)] == ep.words]
         titled = _sole(ep for ep in led if ep.distinct and opens_title(words, ep.words))
-        return titled, frozenset(ep.ep_id for ep in led)
+        return _TitleLead(titled, frozenset(ep.ep_id for ep in led))
 
     def exactly(self, words: tuple[str, ...]) -> _TitledEpisode | None:
         """The one episode whose distinct title IS the words (a numberless name), both shed of the series title's."""
@@ -237,10 +253,12 @@ class _TorrentNames(NamedTuple):
         for name, read in reads.items():
             words = read.title_words
             if read.member is not None:
-                titled, leaders = episodes.leading(words)
+                lead = episodes.leading(words)
             else:
-                titled, leaders = episodes.exactly(words), frozenset[int]()
-            titles[name] = _NameTitle(titled.ep_id if titled is not None and carriers[words] == 1 else None, leaders)
+                lead = _TitleLead(episodes.exactly(words), frozenset())
+            titled = lead.titled
+            episode = titled.ep_id if titled is not None and carriers[words] == 1 else None
+            titles[name] = _NameTitle(episode, lead.leaders)
             # An extras word inside the episode title the name carries is title, not extra.
             shield = ground.entry_words | frozenset(titled.words if titled is not None else ())
             if not readings[name].keyed and is_extras_name(name, shield):

@@ -346,9 +346,9 @@ class RunServices:
         # placeholder ctx. begin_run rebinds their ctx at the top of each run.
         self._filter = SeadexReleaseFilter(deps=deps, ctx=self._ctx)
         # The one pending-record seam, shared by the grab pipeline, the strategies, and the wait manager.
-        self.records = PendingRecords(deps.cache_store)
-        self.records.begin_run(self._ctx)
-        self._grab_pipeline = GrabPipeline(deps=deps, ctx=self._ctx, records=self.records)
+        self._records = PendingRecords(deps.cache_store)
+        self._records.begin_run(self._ctx)
+        self._grab_pipeline = GrabPipeline(deps=deps, ctx=self._ctx, records=self._records)
 
     @property
     def ctx(self) -> RunContext:
@@ -384,7 +384,13 @@ class RunServices:
         self._dirty_al_ids.clear()
         self._filter.begin_run(ctx)
         self._grab_pipeline.begin_run(ctx)
-        self.records.begin_run(ctx)
+        self._records.begin_run(ctx)
+
+    @property
+    def records(self) -> PendingRecords:
+        """The one pending-record seam bound to the current run, shared by the strategies and the wait manager."""
+
+        return self._records
 
     def check_al_id_in_cache(
         self,

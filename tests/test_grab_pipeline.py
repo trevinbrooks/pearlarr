@@ -459,6 +459,16 @@ class TestReacquireRegistration:
         assert pipeline._ctx.reacquired_keys == {"h1"}
         assert pipeline._ctx.pending_imports == {}
 
+    def test_this_runs_own_grab_is_never_a_reacquire(self) -> None:
+        # One entry listing a torrent twice: the second add meets this run's fresh record, and the
+        # torrent stays the run's grab.
+        pipeline = _pipeline(torrents=self._reacquire(None))
+        pipeline._ctx.pending_imports["h1"] = pending_import(infohash="h1")
+
+        self._add(pipeline, pending_seed("h1"))
+
+        assert pipeline._ctx.reacquired_keys == set()
+
     def test_accretion_never_reads_the_add_time(self) -> None:
         # qBittorrent's add time past the cutoff drops only a born seed: a stored
         # record accretes regardless, prune_expired_pending staying the sole TTL

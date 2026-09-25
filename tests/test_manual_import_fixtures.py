@@ -360,20 +360,19 @@ class TestCapturedSpecialsEndToEnd:
     """Drive `import_completed` with the real fixtures for a specials download Sonarr couldn't match."""
 
     @pytest.mark.parametrize(
-        ("ordered_episode_ids", "title"),
+        "ordered_episode_ids",
         [
             # The torrent carries only E01/E02 of the entry's three specials, so only those two place.
-            pytest.param([8030, 8031, 8032], "Yamada-kun and the Seven Witches", id="the resolved set"),
+            pytest.param([8030, 8031, 8032], id="the resolved set"),
             # No resolved set: the exact pass falls back to the live series map, so the record imports
             # rather than retrying forever.
-            pytest.param([], "Yamada and the Seven Witches (OVA)", id="an empty set"),
+            pytest.param([], id="an empty set"),
         ],
     )
-    def test_specials_import_to_their_episode_ids(self, ordered_episode_ids: list[int], title: str) -> None:
+    def test_specials_import_to_their_episode_ids(self, ordered_episode_ids: list[int]) -> None:
         specials = _specials()
         pending = specials.pending(
             infohash="1111111111111111111111111111111111111111",
-            title=title,
             file_episode_map={},
             ordered_episode_ids=ordered_episode_ids,
         )

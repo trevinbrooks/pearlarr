@@ -5,6 +5,7 @@ The planning modules' tests sit beside this file, one per module: `test_placemen
 `test_episode_state`, `test_import_files`, `test_probe_verdicts`, `test_import_quality`.
 """
 
+import json
 from collections.abc import Sequence
 from dataclasses import replace
 from datetime import datetime
@@ -193,6 +194,24 @@ class TestPendingImportClaims:
         )
 
         assert pending.series_ids == (8, 7)
+
+    def test_a_claim_persists_as_the_spelled_out_schema(self) -> None:
+        # The persisted shape is pinned: a new field never enters a row without a migration.
+        claim = entry_claim(
+            coverage="S1",
+            url="https://example.invalid/1",
+            ordered_episode_ids=(101, 102),
+            names=EntryNames("Show", ("Show!",)),
+            preowned_episode_ids=(101,),
+            slice_coverage="S1 E1-2",
+        )
+
+        assert json.dumps(claim.to_json()) == (
+            '{"al_id": 1, "series_id": 7, "title": "Show", "coverage": "S1", "url": "https://example.invalid/1", '
+            '"ordered_episode_ids": [101, 102], "names": {"series": "Show", "anilist": ["Show!"]}, '
+            '"preowned_episode_ids": [101], "slice_coverage": "S1 E1-2", "claimed_at": "2026-06-24 00:00:00"}'
+        )
+        assert EntryClaim.from_json(claim.to_json(), guards={}) == claim
 
     def test_claim_for_is_the_first_claim_on_the_series(self) -> None:
         first, second = entry_claim(al_id=1, series_id=8), entry_claim(al_id=2, series_id=8)

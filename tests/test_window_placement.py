@@ -307,10 +307,12 @@ class TestPlaceLeftover:
         }
         windows = (_window(_FIRST_COUR), _window([201, 202, 203], series=_OTHER_SERIES))
 
-        result = place_leftover({"s.mkv": [601]}, _batch(parsed), windows)
+        held = place_leftover({"s.mkv": [601]}, _batch(parsed), windows)
+        free = place_leftover({"s.mkv": [602]}, _batch(parsed), windows)
 
-        assert _placed_under(result) == {"b.mkv": ((201,), 1)}
-        assert by_name(result.merged)["a.mkv"] == ((), PlacementVerdict.SKIPPED)
+        assert _placed_under(held) == {"b.mkv": ((201,), 1)}
+        assert by_name(held.merged)["a.mkv"] == ((), PlacementVerdict.SKIPPED)
+        assert _placed_under(free) == {"a.mkv": ((601,), 0), "b.mkv": ((201,), 1)}
 
     def test_one_window_and_an_empty_map_is_the_cross_window_placement(self) -> None:
         run = numbered_names("sp", 3)
