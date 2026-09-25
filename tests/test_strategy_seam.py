@@ -24,7 +24,7 @@ from pearlarr import sonarr_import as sonarr_import_module
 from pearlarr.arr_http import DeleteOutcome
 from pearlarr.cache import CacheRecord
 from pearlarr.config import Arr
-from pearlarr.episode_state import EpisodeFileStatus, EpisodeSnapshot, RecordSnapshot, trusted_groups
+from pearlarr.episode_state import EpisodeFileStatus, EpisodeSnapshot, GroupVotes, RecordSnapshot, trusted_groups
 from pearlarr.grab_pipeline import NO_SEEDS, GrabRequest
 from pearlarr.grab_placement import SeedFile
 from pearlarr.import_quality import resolve_language_objects
@@ -80,6 +80,7 @@ from .builders import (
     SEP,
     FakeCacheStore,
     FakeClock,
+    claim_al_ids,
     entry_claim,
     make_bare_instance,
     make_config,
@@ -210,6 +211,11 @@ class _FakeRunServices(RunServices):
     def selection_stale(self) -> bool:
         return self._selection_stale
 
+    @property
+    @override
+    def records(self) -> PendingRecords:
+        return self._records
+
     @override
     def check_al_id_in_cache(self, arr: Arr, al_id: int, seadex_entry: EntryRecord) -> bool:
         self.check_al_id_in_cache_calls.append(CheckAlIdInCacheCall(arr, al_id, seadex_entry))
@@ -283,11 +289,6 @@ class _FakeRunServices(RunServices):
     @override
     def import_wait_mode(self) -> ImportWaitMode:
         return self._import_wait_mode
-
-    @property
-    @override
-    def records(self) -> PendingRecords:
-        return self._records
 
     @override
     def no_releases_skip(self, al_id: int, cache_details: CacheRecord) -> None:
@@ -1981,7 +1982,7 @@ class TestRecordSnapshot:
             {
                 7: EpisodeSnapshot(
                     episodes=episode_index([sonarr_ep(1, 1, ep_id=101, release_group="SubGroup")]),
-                    trusted=trusted_groups(GuardFacts(), OwnGroup("SubGroup", ())),
+                    trusted=trusted_groups(GuardFacts(), GroupVotes(OwnGroup("SubGroup", ()))),
                 ),
                 8: EpisodeSnapshot(episodes=episode_index([sonarr_ep(1, 1, ep_id=201, episode_file_id=0)]), trusted={}),
             },
@@ -2440,7 +2441,7 @@ class TestSonarrProcessAlIdSeeds:
         assert seed.claim.al_id == 5
         assert seed.claim.ordered_episode_ids == (102,)
         record = seed.record_at(_STAMP, fresh=False)
-        assert record.al_ids == (22, 5)
+        assert claim_al_ids(record) == (22, 5)
         assert dict(record.file_episode_map) == {
             normalize_basename(name): (ep,) for name, ep in zip(_SEED_FILES, (101, 102), strict=True)
         }
@@ -2530,7 +2531,7 @@ class TestRadarrProcessAlIdSeeds:
         (seed,) = req.pending_seeds.values()
         assert seed.stored == resident
         assert seed.accreted is True
-        assert seed.record_at(_STAMP, fresh=False).al_ids == (9, 42)
+        assert claim_al_ids(seed.record_at(_STAMP, fresh=False)) == (9, 42)
 
     def test_no_seeds_when_wait_mode_off(self) -> None:
         store = _CountingStore()

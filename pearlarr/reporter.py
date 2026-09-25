@@ -181,7 +181,8 @@ class PerTitleState:
     grab_failed_groups: list[str] = field(default_factory=list[str])
     """Groups whose release hit a contained grab failure (tracker or client down), so the title stays uncached."""
     input_missing_groups: list[str] = field(default_factory=list[str])
-    """Groups with a url whose placement waited on a Sonarr read that failed, so the title stays uncached and re-checks."""
+    """Groups with a url whose placement waited on a Sonarr read that failed, so the title stays uncached and
+    re-checks."""
     current_title: str | None = None
     """Title of the entry currently being processed, so grabs and the summary can attribute what they grab."""
     current_url: str | None = None
@@ -494,8 +495,8 @@ class RunReporter:
             EntryHeader(
                 entry_state,
                 pending.display_label,
-                coverage=claim.coverage if claim else None,
-                url=claim.url if claim else None,
+                coverage=claim.coverage,
+                url=claim.url,
             ),
         )
 

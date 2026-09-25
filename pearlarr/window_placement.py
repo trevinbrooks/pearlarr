@@ -9,7 +9,6 @@ window that resolves them. A name no window placed or held carries its most spec
 """
 
 from collections.abc import Iterable, Mapping, Sequence
-from dataclasses import replace
 from typing import NamedTuple
 
 from .manual_import import EntryClaim, FileEpisodeMap
@@ -41,9 +40,10 @@ class WindowedAssignment(NamedTuple):
         return {v.placement.name: list(v.placement.ids) for v in self.verdicts if v.window_index == index}
 
 
-# A file no window placed or held merges to its most specific claim: excluded only when every window
-# excluded it, and a refused duplicate over a file placed nowhere.
+# A file no window placed or held merges to its most specific claim: excluded only when every window excluded
+# it, a refused duplicate over a file placed nowhere, and an extra (one only against its window's titles) under all.
 _CLAIM_RANK: Mapping[PlacementVerdict, int] = {
+    PlacementVerdict.EXTRA: 0,
     PlacementVerdict.FOREIGN: 1,
     PlacementVerdict.SKIPPED: 2,
     PlacementVerdict.DUPLICATE: 3,
@@ -61,10 +61,8 @@ def assign_across_windows(batch: PlacementBatch, windows: Sequence[TargetScope])
     decided: dict[str, WindowVerdict] = {}
     claims: dict[str, list[Placement]] = {name: [] for name in names}
     for index, window in enumerate(windows):
-        placed_ids = frozenset(i for v in decided.values() for i in v.placement.ids)
-        # An unscoped window can place onto any id, so every earlier placement is a seed there.
-        seeds = placed_ids if window.unscoped else placed_ids & window.real_ids
-        scope = replace(window, used=window.used | seeds)
+        # Every earlier placement is a seed under the window (any of them under an unscoped one).
+        scope = window.using(i for v in decided.values() for i in v.placement.ids)
         for placement in assign_episode_ids(batch, scope).placements:
             if placement.name in decided:
                 continue
@@ -96,15 +94,11 @@ def windows_of(claims: Iterable[EntryClaim], indexes: Mapping[int, EpisodeIndex]
 def place_leftover(seeded: FileEpisodeMap, batch: PlacementBatch, windows: Sequence[TargetScope]) -> WindowedAssignment:
     """The names of `batch` the map does not cover, placed under `windows` with the mapped ids already used.
 
-    The mapped ids ride each window as `used` narrowed to the window's own ids (every id under an
-    unscoped window), the same rule the cross-window seeds follow, so one series' placements never
-    close another series' count legs.
+    Each window uses only the mapped ids it admits, as the cross-window seeds do, so one series' placements
+    never close another series' count legs.
     """
 
     leftover = [name for name in batch.to_place if name not in seeded]
-    mapped = frozenset(ep_id for ids in seeded.values() for ep_id in ids)
-    narrowed = tuple(
-        replace(window, used=window.used | (mapped if window.unscoped else mapped & window.real_ids))
-        for window in windows
-    )
+    mapped = [ep_id for ids in seeded.values() for ep_id in ids]
+    narrowed = tuple(window.using(mapped) for window in windows)
     return assign_across_windows(PlacementBatch(leftover, batch.parsed), narrowed)

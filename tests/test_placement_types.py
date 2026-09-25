@@ -1,19 +1,15 @@
 # pyright: strict
-"""The `(season, episode) -> id` index: both facets, the fetch order, zero ids dropped, the read-only detachment.
-
-The other placement types are exercised through `assign_episode_ids` in `test_placer` and
-`test_manual_import_fixtures`.
-"""
+"""The `(season, episode) -> id` index, a batch's parse hinge, and the target scope's own rules."""
 
 from collections.abc import MutableMapping
 from typing import cast
 
 import pytest
 
-from pearlarr.placement_types import EpisodeIndex, episode_index
-from pearlarr.seadex_types import SONARR_MISSING_KEY, EpisodeKey, SonarrEpisode
+from pearlarr.placement_types import EpisodeIndex, PlacementBatch, TargetScope, episode_index
+from pearlarr.seadex_types import SONARR_MISSING_KEY, EpisodeKey, ParsedFileInfo, SonarrEpisode
 
-from .builders import sonarr_ep
+from .builders import parsed_info, series_index, sonarr_ep
 
 
 class TestEpisodeIndex:
@@ -21,7 +17,7 @@ class TestEpisodeIndex:
 
     `id_by_key` maps `(season, episode)` to the first episode id, missing numbers
     folding to a sentinel key (no collision with real pairs). Zero-id episodes are
-    dropped from every facet before keying. `by_id` keeps the fetch order - the
+    dropped from every facet before keying. `by_id` keeps the fetch order: the
     resolved set the add flow persists rides `list(by_id)`.
     """
 
@@ -72,3 +68,47 @@ class TestEpisodeIndex:
         assert EpisodeKey(1, 2) not in index.id_by_key
         with pytest.raises(TypeError):
             cast("MutableMapping[EpisodeKey, int]", index.id_by_key)[EpisodeKey(1, 3)] = 13
+
+
+class TestPlacementBatchParsesKnown:
+    """`all_parses_known`: the settled hinge on the parses. Any miss, transport or offline, unsettles the batch."""
+
+    def test_a_transport_miss_is_unknown(self) -> None:
+        parsed: dict[str, ParsedFileInfo | None] = {"a.mkv": parsed_info(), "b.mkv": None}
+        assert PlacementBatch(["a.mkv", "b.mkv"], parsed).all_parses_known is False
+
+    def test_an_offline_stand_in_is_unknown(self) -> None:
+        parsed: dict[str, ParsedFileInfo | None] = {"a.mkv": parsed_info(season=1, episodes=(1,), offline=True)}
+        assert PlacementBatch(["a.mkv"], parsed).all_parses_known is False
+
+    def test_served_parses_are_known(self) -> None:
+        # A numberless answer from Sonarr is a real answer: known, even though it places nothing.
+        parsed: dict[str, ParsedFileInfo | None] = {
+            "a.mkv": parsed_info(),
+            "b.mkv": parsed_info(season=1, episodes=(1,)),
+        }
+        assert PlacementBatch(["a.mkv", "b.mkv"], parsed).all_parses_known is True
+
+    def test_an_empty_batch_is_known(self) -> None:
+        # A fully seeded record parses nothing, and nothing is missing.
+        assert PlacementBatch([], {}).all_parses_known is True
+
+
+class TestTargetScope:
+    """The scope admits its resolved ids, or any when unscoped, and `using` takes only the ids it admits."""
+
+    _SERIES = series_index({EpisodeKey(1, 1): 11, EpisodeKey(1, 2): 12, EpisodeKey(2, 1): 21})
+
+    def test_using_takes_the_admitted_ids_and_detaches_the_resolved_list(self) -> None:
+        resolved = [11, 12, 0]
+        scope = TargetScope(resolved, self._SERIES, used=frozenset({11}))
+
+        resolved.append(21)
+        narrowed = scope.using([12, 21, 0])
+
+        assert scope.resolved == (11, 12, 0)
+        assert narrowed.used == {11, 12}
+        assert (narrowed.resolved, narrowed.real_ids) == (scope.resolved, scope.real_ids)
+
+    def test_an_unscoped_scope_uses_every_id(self) -> None:
+        assert TargetScope([], self._SERIES).using([12, 21]).used == {12, 21}

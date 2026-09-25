@@ -41,6 +41,7 @@ from .builders import (
     AddOutcome,
     FakeCacheStore,
     FakeTorrents,
+    claim_al_ids,
     grab_request,
     make_entry_record,
     make_grab_pipeline,
@@ -261,7 +262,7 @@ class TestAddOneUrlRegistersPending:
             grab_request(seadex_dict=one_release_dict(srg="NAN0", infohash="h1"), pending_seeds=seeds),
         )
 
-        assert _stored(pipeline, "h1").al_ids == (PENDING_AL_ID,)
+        assert claim_al_ids(_stored(pipeline, "h1")) == (PENDING_AL_ID,)
         # A registration writes the entry's guard row too: evidence follows the
         # newest plan, never a frozen per-record copy.
         assert _guards(pipeline) == {PENDING_AL_ID: facts}
@@ -326,7 +327,7 @@ class TestAddOneUrlRegistersPending:
 
         assert set(_pending(pipeline)) == {"h1"}
         assert pipeline._ctx.reacquired_keys == {"h1"}
-        assert _stored(pipeline, "h1").al_ids == (22,)
+        assert claim_al_ids(_stored(pipeline, "h1")) == (22,)
 
     def test_a_second_seed_carrying_the_first_record_accretes_its_claim(self) -> None:
         # Two entries share one torrent in one run: A's add tracks the record fresh, B's dedups to
@@ -352,8 +353,8 @@ class TestAddOneUrlRegistersPending:
             grab_request(seadex_dict=one_release_dict(srg="NAN0", infohash="h1"), pending_seeds={"h1": seed})
         )
 
-        assert _stored(second, "h1").al_ids == (11, 22)
-        assert ctx.pending_imports["h1"].al_ids == (11, 22)
+        assert claim_al_ids(_stored(second, "h1")) == (11, 22)
+        assert claim_al_ids(ctx.pending_imports["h1"]) == (11, 22)
         assert ctx.reacquired_keys == set()
         assert _guards(second).keys() == {11, 22}
 
@@ -457,6 +458,16 @@ class TestReacquireRegistration:
         assert before <= record.claims[1].claimed_at <= now_stamp()
         assert pipeline._ctx.reacquired_keys == {"h1"}
         assert pipeline._ctx.pending_imports == {}
+
+    def test_this_runs_own_grab_is_never_a_reacquire(self) -> None:
+        # One entry listing a torrent twice: the second add meets this run's fresh record, and the
+        # torrent stays the run's grab.
+        pipeline = _pipeline(torrents=self._reacquire(None))
+        pipeline._ctx.pending_imports["h1"] = pending_import(infohash="h1")
+
+        self._add(pipeline, pending_seed("h1"))
+
+        assert pipeline._ctx.reacquired_keys == set()
 
     def test_accretion_never_reads_the_add_time(self) -> None:
         # qBittorrent's add time past the cutoff drops only a born seed: a stored
@@ -687,7 +698,7 @@ class TestAddTorrentCap:
         pipeline.add_torrent(grab_request(seadex_dict=seadex_dict, pending_seeds=seeds))
 
         assert torrents.calls == []
-        assert _stored(pipeline, "h1").al_ids == (11, 22)
+        assert claim_al_ids(_stored(pipeline, "h1")) == (11, 22)
         assert pipeline._ctx.reacquired_keys == set()
         assert pipeline._ctx.pending_imports == {}
 

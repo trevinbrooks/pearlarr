@@ -6,7 +6,7 @@ builder read one `ParsedFileInfo` per file under one freshness rule.
 
 from collections.abc import Mapping
 from datetime import datetime, timedelta
-from typing import Any, NamedTuple, NotRequired, TypedDict, cast
+from typing import Any, NamedTuple, NotRequired, Self, TypedDict, cast
 
 from pydantic import ValidationError
 
@@ -48,7 +48,7 @@ class ParseWindow(NamedTuple):
     """Pins unmatched records to the current series-id set (so a newly-added series self-heals)."""
 
     @classmethod
-    def open(cls, series_fp: str) -> "ParseWindow":
+    def open(cls, series_fp: str) -> Self:
         """The window anchored to one instant (never per file)."""
 
         now = datetime.now()

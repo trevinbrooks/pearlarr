@@ -1,10 +1,10 @@
 """Pure placement vocabulary: the episode index, verdicts, one file's placement, the assignment, batch, and scope."""
 
 from collections.abc import Iterable, Mapping, Sequence
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from enum import StrEnum
 from types import MappingProxyType
-from typing import NamedTuple
+from typing import NamedTuple, Self
 
 from .manual_import import EntryNames
 from .seadex_types import EpisodeKey, ParsedFileInfo, SonarrEpisode, index_episodes_by_key
@@ -62,11 +62,15 @@ class PlacementVerdict(StrEnum):
     NUMBERED_RUN = "numbered run"
     """A `1..N` run among the files Sonarr could not read at all."""
     TITLED = "titled"
-    """The one numberless leftover an entry title names, onto one leftover episode."""
+    """The one numberless leftover an entry's AniList title names, onto one leftover episode."""
+    EPISODE_TITLE = "episode title"
+    """Onto the one episode its name is titled as, whatever its number said."""
     FOREIGN = "other slice"
     """Resolves cleanly, entirely outside this record's set: never this record's to import."""
     DUPLICATE = "duplicate"
     """Resolves inside the set onto an episode another file already holds."""
+    EXTRA = "extra"
+    """An opening, an ending, a preview, a menu, a commercial, a trailer, a teaser, or a promo: never an episode."""
     HELD = "held"
     """A release-run member whose batch has an unknown parse: no other pass may place it (re-asked)."""
     SKIPPED = "skipped"
@@ -94,9 +98,10 @@ _PLACED = frozenset(
         PlacementVerdict.ORDERED,
         PlacementVerdict.NUMBERED_RUN,
         PlacementVerdict.TITLED,
+        PlacementVerdict.EPISODE_TITLE,
     }
 )
-_EXCLUDED = frozenset({PlacementVerdict.FOREIGN, PlacementVerdict.DUPLICATE})
+_EXCLUDED = frozenset({PlacementVerdict.FOREIGN, PlacementVerdict.DUPLICATE, PlacementVerdict.EXTRA})
 
 
 class Placement(NamedTuple):
@@ -130,7 +135,7 @@ class EpisodeAssignment(NamedTuple):
 
     @property
     def excluded(self) -> tuple[Placement, ...]:
-        """The files this record knowably never imports (another slice's, a refused duplicate), with their verdicts."""
+        """The files this record knowably never imports (another slice's, a duplicate, an extra), and how."""
 
         return tuple(p for p in self.placements if p.verdict.excluded)
 
@@ -144,8 +149,8 @@ class EpisodeAssignment(NamedTuple):
 class PlacementBatch(NamedTuple):
     """A torrent's leftover on-disk files to place, with the WHOLE batch's parses.
 
-    `parsed` may cover MORE files than `to_place`: seeded and gone files feed
-    the absolute leg's shared-absolute tell, but only `to_place` is ever placed.
+    `parsed` may cover MORE files than `to_place`: seeded and gone names are read as evidence (readings,
+    titles, the absolute tell) but never placed.
     """
 
     to_place: Sequence[str]
@@ -162,6 +167,12 @@ class PlacementBatch(NamedTuple):
         return tuple(dict.fromkeys(self.to_place))
 
     @property
+    def torrent_names(self) -> tuple[str, ...]:
+        """Every distinct name of the torrent: the names to place, then those only `parsed` covers (seeded, gone)."""
+
+        return tuple(dict.fromkeys([*self.to_place, *self.parsed]))
+
+    @property
     def all_parses_known(self) -> bool:
         """Every parse came from Sonarr this run: no transport miss (None) and no offline `SxxExx` stand-in.
 
@@ -169,8 +180,7 @@ class PlacementBatch(NamedTuple):
         does a name to place the parses never covered.
         """
 
-        names = dict.fromkeys([*self.to_place, *self.parsed])
-        return all((info := self.parsed.get(name)) is not None and not info.offline for name in names)
+        return all((info := self.parsed.get(name)) is not None and not info.offline for name in self.torrent_names)
 
 
 @dataclass(frozen=True, slots=True)
@@ -184,7 +194,7 @@ class TargetScope:
     """
 
     resolved: Sequence[int]
-    """The entry's resolved episode ids, season order, seeded included. A stray
+    """The entry's resolved episode ids, season order, seeded included, held as a tuple. A stray
     zero id still makes the scope real. It is never placed."""
 
     series: EpisodeIndex
@@ -197,13 +207,15 @@ class TargetScope:
     """Ids a seed already owns, never handed to a leftover file."""
 
     names: EntryNames = field(default_factory=EntryNames)
-    """The series and AniList titles: when several runs or numberless files could take the window, the one
-    an AniList title names does."""
+    """The series and AniList titles: the ground episode titles and extras are read against, and the tie-break
+    when several runs or numberless files could take the window."""
 
     real_ids: frozenset[int] = field(init=False, repr=False, compare=False)
     """The resolved ids that can be placed. A stray zero keeps the scope real but is never one."""
 
     def __post_init__(self) -> None:
+        # Detached from the caller's list: `real_ids` is derived from it once.
+        object.__setattr__(self, "resolved", tuple(self.resolved))
         object.__setattr__(self, "real_ids", frozenset(i for i in self.resolved if i))
 
     @property
@@ -217,3 +229,13 @@ class TargetScope:
         """No resolved set to scope against at all (never just fully seeded)."""
 
         return not self.resolved
+
+    def admits(self, ep_id: int) -> bool:
+        """Whether a file may be placed on the episode: one of the resolved set, or any when unscoped."""
+
+        return self.unscoped or ep_id in self.real_ids
+
+    def using(self, ids: Iterable[int]) -> Self:
+        """The scope with `ids` used too: the ones it admits (every one when unscoped)."""
+
+        return replace(self, used=self.used | frozenset(i for i in ids if self.admits(i)))

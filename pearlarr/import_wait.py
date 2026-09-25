@@ -3,7 +3,7 @@
 import logging
 from collections.abc import Callable
 from dataclasses import dataclass, field, replace
-from typing import NamedTuple
+from typing import Any, NamedTuple
 
 import qbittorrentapi
 
@@ -333,7 +333,7 @@ class ImportWaitManager:
         self.clock = deps.clock
         self.logger = deps.logger
         self._reporter = deps.reporter
-        # The hub's seam, shared with the grab pipeline, which binds it each run: one run list, one store binding.
+        # The hub's seam, shared with the grab pipeline and bound by the hub each run: one run list, one binding.
         self._records = records
         self.probes = ImportProbes(qbit=deps.qbit, logger=deps.logger)
         self._cleanup = PostImportCleanup(deps, self._records, self.probes)
@@ -560,16 +560,15 @@ class ImportWaitManager:
         """
 
         cutoff = pending_cutoff(self.imports.pending_max_age_days)
-        rows = self._records.rows()
-        # The clocks are read off the raw rows, so only an aged row rehydrates, for its note.
-        clocks = {infohash: newest_claimed_at_of(raw) for infohash, raw in rows.items()}
-        for infohash, newest in clocks.items():
+        # The clocks are read off the raw rows (a store snapshot), so only an aged row rehydrates, for its note.
+        aged: dict[str, dict[str, Any]] = {}
+        for infohash, raw in self._records.rows().items():
+            newest = newest_claimed_at_of(raw)
             if newest is None:
                 self.logger.debug(f"Pending import {infohash} has no parseable timestamp; dropping as expired")
                 self._records.drop(infohash)
-        aged = {
-            infohash: rows[infohash] for infohash, newest in clocks.items() if newest is not None and newest < cutoff
-        }
+            elif newest < cutoff:
+                aged[infohash] = raw
         for pending in self._records.hydrate(aged).values():
             # A flagged record's import succeeded. Only the cleanup is being abandoned.
             goal = "its post-import cleanup" if pending.awaiting_cleanup else "it"
@@ -806,8 +805,6 @@ class MonitorPass:
             r.infohash: _MonitorRow(record=r, dl_start=self._start, carried_over=r.infohash not in fresh)
             for r in records
         }
-        # Per-cycle heavy-poll memo: sibling records share ONE qBittorrent read per cycle.
-        self._cycle_polls: dict[str, TorrentProbe] = {}
         self.results = []
 
     @property
@@ -817,9 +814,8 @@ class MonitorPass:
         return sum(1 for row in self.rows.values() if row.active)
 
     def run_cycle(self) -> None:
-        """Run one heavy-poll cycle: clear the per-hash memo, then advance every active row."""
+        """Run one heavy-poll cycle: advance every active row."""
 
-        self._cycle_polls.clear()
         for row in self.rows.values():
             if row.active:
                 self._advance(row)
@@ -830,15 +826,6 @@ class MonitorPass:
         self.run_cycle()
         self.refresh_progress()
         self._retire_active()
-
-    def _poll(self, infohash: str) -> TorrentProbe:
-        """The hash's heavy poll for this cycle, read once and shared by siblings."""
-
-        probe = self._cycle_polls.get(infohash)
-        if probe is None:
-            probe = self._mgr.probes.poll_torrent(infohash)
-            self._cycle_polls[infohash] = probe
-        return probe
 
     def elapsed(self) -> float:
         """Seconds since the pass started (off the injected clock)."""
@@ -887,7 +874,7 @@ class MonitorPass:
 
         record = row.record
 
-        poll = self._poll(record.infohash)
+        poll = self._mgr.probes.poll_torrent(record.infohash)
 
         if poll.outcome is None:
             # Monitor-only: `dl_start` is this pass's construction, so a check-pass timeout would
@@ -982,8 +969,8 @@ class MonitorPass:
         """
 
         downloading = [row for row in self.rows.values() if row.active and row.view.phase is Phase.DOWNLOADING]
-        # One batch read per underlying torrent (sibling rows share the reading).
-        hashes = list(dict.fromkeys(row.record.infohash for row in downloading))
+        # One batch read for every downloading row (one row per torrent).
+        hashes = [row.record.infohash for row in downloading]
         by_hash = self._mgr.probes.poll_telemetry(hashes)
         changed = False
         for row in downloading:

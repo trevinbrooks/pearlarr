@@ -9269,10 +9269,11 @@
   "expected_excluded": []
  },
  {
-  "name": "vexations-duplicate-ed",
+  "name": "vexations-op-ed-extras",
   "provenance": "disk agrees",
   "tags": [
-   "exact"
+   "exact",
+   "extra"
   ],
   "episodes": [
    {
@@ -9714,7 +9715,8 @@
    ]
   },
   "expected_excluded": [
-   "[Chihiro] Hikikomari Kyuuketsuki no Monmon - ED [Blu-ray 1080p HEVC FLAC][E8F03223].mkv"
+   "[Chihiro] Hikikomari Kyuuketsuki no Monmon - ED [Blu-ray 1080p HEVC FLAC][E8F03223].mkv",
+   "[Chihiro] Hikikomari Kyuuketsuki no Monmon - OP [Blu-ray 1080p HEVC FLAC][FADE19D8].mkv"
   ]
  },
  {
@@ -17117,7 +17119,9 @@
   "name": "bungo-second-season-titled-members",
   "provenance": "title",
   "tags": [
-   "run titled members"
+   "run titled members",
+   "extra",
+   "named outside"
   ],
   "episodes": [
    {
@@ -18356,6 +18360,7 @@
    ]
   },
   "expected_excluded": [
+   "[KH] Bungo Stray Dogs - Movie - 01 - Dead Apple.mkv",
    "[KH] Bungo Stray Dogs - 02 - A Certain Bomb.mkv",
    "[KH] Bungo Stray Dogs - 03 - Yokohama Gangster Paradise.mkv",
    "[KH] Bungo Stray Dogs - 04 - The Tragedy of the Fatalist.mkv",
@@ -18367,6 +18372,14 @@
    "[KH] Bungo Stray Dogs - 10 - Rashōmon and the Tiger.mkv",
    "[KH] Bungo Stray Dogs - 11 - First, an Unsuitable Profession for Her. Second, an Ecstatic Detective Agency.mkv",
    "[KH] Bungo Stray Dogs - 12 - Borne Back Ceaselessly into the Past.mkv",
+   "OP [EP-14].mkv",
+   "OP[EP-15].mkv",
+   "[KH] Bungo Stray Dogs S3 - 03 [28] - Only a Diamond Can Polish a Diamond.mkv",
+   "[KH] Bungo Stray Dogs S3 - 04 [29] - My Ill Deeds are The Work of God.mkv",
+   "[KH] Bungo Stray Dogs S3 - 05 [30] - Slap the Stick & Addict.mkv",
+   "[KH] Bungo Stray Dogs S3 - 06 [31] - Herurisu - Portrait of a Father.mkv",
+   "[KH] Bungo Stray Dogs S3 - 07 [32] - Fitzgerald Rising.mkv",
+   "[KH] Bungo Stray Dogs S3 - 08 [33] - The Masked Assassin.mkv",
    "[KH] Bungo Stray Dogs - 01 - Fortune Is Unpredictable and Mutable.mkv"
   ]
  },
@@ -18374,7 +18387,8 @@
   "name": "tokyo-revengers-episode-word",
   "provenance": "title",
   "tags": [
-   "run titled members"
+   "run titled members",
+   "extra"
   ],
   "episodes": [
    {
@@ -20070,7 +20084,10 @@
     18559
    ]
   },
-  "expected_excluded": []
+  "expected_excluded": [
+   "[BD Menu 01] Tokyo 卍 Revengers - Season 01 [2021].mkv",
+   "[BD Menu 02] Tokyo 卍 Revengers - Season 01 [2021].mkv"
+  ]
  },
  {
   "name": "monogatari-named-run-refused",
@@ -23659,7 +23676,8 @@
   "provenance": "count",
   "tags": [
    "season run reread",
-   "exact"
+   "exact",
+   "extra"
   ],
   "episodes": [
    {
@@ -24597,6 +24615,10 @@
    ]
   },
   "expected_excluded": [
+   "[FFF] Accel World - ED01 [BD][1080p-FLAC][51BACCA2].mkv",
+   "[FFF] Accel World - ED02 [BD][1080p-FLAC][7D9D7127].mkv",
+   "[FFF] Accel World - OP01 [BD][1080p-FLAC][6400DC9C].mkv",
+   "[FFF] Accel World - OP02 [BD][1080p-FLAC][4D0CE664].mkv",
    "[FFF] Accel World - SP02 [BD][1080p-FLAC][E06FFAF9].mkv"
   ]
  },

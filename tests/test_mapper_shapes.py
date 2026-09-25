@@ -3,7 +3,7 @@
 
 Two tiers: this catalog holds real captures (whole-series episode lists and raw
 `/parse` payloads) with expectations taken from independent truth, never from the
-old placement; the synthetic edge cases live in `test_manual_import_fixtures.py`.
+placer's own output. The synthetic edge cases live in `test_placer.py` and `test_sonarr_mapper.py`.
 Each case runs twice, through the grab-time scope and through the import-time
 mapper, so a seed and its import wait can never disagree.
 """
@@ -17,8 +17,7 @@ from pydantic import BaseModel, RootModel
 
 from pearlarr.grab_placement import SeedFile, SeedScope, place_release
 from pearlarr.manual_import import EntryNames, normalize_basename
-from pearlarr.placement_types import Placement, PlacementBatch, episode_index
-from pearlarr.placer import assign_episode_ids
+from pearlarr.placement_types import episode_index
 from pearlarr.seadex_types import (
     EpisodeRecord,
     Json,
@@ -26,8 +25,9 @@ from pearlarr.seadex_types import (
     ParsedFileInfo,
     SonarrEpisode,
 )
+from pearlarr.sonarr_mapper import FileEpisodeMapper
 
-from .builders import indexes_for, make_sonarr_mapper, pending_import
+from .builders import indexes_for, pending_import, place
 from .fakes import FakeSonarrClient
 
 _CATALOG = Path(__file__).parent / "fixtures" / "sonarr" / "mapper_shapes.json"
@@ -76,6 +76,10 @@ class ShapeTag(StrEnum):
     """Members come in two versions: the later one is the member, the earlier its duplicate."""
     SEASON_COUNTED = "season counted"
     """The entry's title and the release count the season differently ("3" against "III")."""
+    EXTRA = "extra"
+    """An opening, an ending, a preview, a menu, a commercial, a trailer, a teaser, or a promo: set aside first."""
+    NAMED_OUTSIDE = "named outside"
+    """A file titled as another season's episode, another slice's once the window is full."""
 
 
 class Provenance(StrEnum):
@@ -136,22 +140,16 @@ def _parsed(case: ShapeCase) -> dict[str, ParsedFileInfo]:
     return {name: ParsedFileInfo.model_validate(payload) for name, payload in case.parses.items()}
 
 
-def _excluded_names(placements: tuple[Placement, ...]) -> set[str]:
-    """The names a run knowably never imports."""
-
-    return {placement.name for placement in placements if placement.verdict.excluded}
-
-
 @pytest.mark.parametrize("case", _PARAMS)
 def test_seed_places_captured_shape(case: ShapeCase) -> None:
     """The grab-time scope places every captured file where independent truth puts it."""
 
     scope = _scope(case)
 
-    result = assign_episode_ids(PlacementBatch(list(case.parses), _parsed(case)), scope.target())
+    result = place(_parsed(case), scope.target())
 
     assert result.assigned == {name: list(ids) for name, ids in case.expected.items()}
-    assert _excluded_names(result.placements) == set(case.expected_excluded)
+    assert {placement.name for placement in result.excluded} == set(case.expected_excluded)
 
 
 @pytest.mark.parametrize("case", _PARAMS)
@@ -178,7 +176,7 @@ def test_mapper_matches_the_seed(case: ShapeCase) -> None:
     """The import-time mapper reaches the same verdicts from the same capture."""
 
     parsed = _parsed(case)
-    mapper = make_sonarr_mapper(sonarr=FakeSonarrClient(parse_fn=parsed.get))
+    mapper = FileEpisodeMapper(FakeSonarrClient(parse_fn=parsed.get))
     pending = pending_import(
         file_episode_map={},
         ordered_episode_ids=list(case.entry_ids),

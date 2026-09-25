@@ -1,10 +1,6 @@
-"""Import-time file -> episode mapping: the gnarliest Sonarr logic.
+"""Import-time file -> episode mapping: a completed download's on-disk leaves placed into OUR resolved set.
 
-`FileEpisodeMapper` turns the on-disk manual-import candidates for a completed
-download into the authoritative `basename -> episode ids` map, honoring OUR
-resolved set (Sonarr's parse informs, never decides): the grab-time map is
-taken as-is, every other on-disk leaf is parsed and placed into our resolved
-set via the pure `assign_episode_ids`. Owns the per-run on-disk parse cache.
+The grab-time map is taken as-is and every other leaf is parsed and placed (Sonarr's parse informs, never decides).
 """
 
 from collections.abc import Mapping
@@ -19,22 +15,16 @@ from .sonarr_client import AbstractSonarrClient
 from .sonarr_parse import is_video_candidate
 from .window_placement import place_leftover, windows_of
 
-# Rejection-reason substrings, matched case-insensitively against each
-# rejection's reason/message text. `ALREADY_IMPORTED` means Sonarr already has
-# the file (it imported it itself, or it exists) - seeing only these means the
-# download is effectively done. `SAMPLE` is just a file to skip, not a sign the
-# real episode imported, so the two are kept apart.
+# Rejection-reason substrings, matched case-insensitively. Only ALREADY_IMPORTED means Sonarr holds the file:
+# a SAMPLE is just a file to skip, never a sign the episode imported, so the two stay apart.
 _ALREADY_IMPORTED_TOKENS = ("already", "exist")
 _SAMPLE_TOKENS = ("sample",)
 
 
 def _rejection_matches(candidate: ManualImportCandidate, tokens: tuple[str, ...]) -> bool:
-    """True if any of a candidate's rejections contains one of `tokens`.
+    """True if any of a candidate's rejection reasons contains one of `tokens` (lowercase), case-insensitively.
 
-    Best-effort and case-insensitive (`tokens` must be lowercase). Each
-    rejection is an `ImportRejection` view whose `reason` carries the
-    human text (a bare-string rejection from an older Sonarr is folded into the
-    same `reason` field at the client boundary).
+    A bare-string rejection from an older Sonarr is folded into `reason` at the client boundary.
     """
 
     for rejection in candidate.rejections:
@@ -89,12 +79,9 @@ class FileAssignment(NamedTuple):
 
 
 class FileEpisodeMapper:
-    """Owns import-time file -> episode assignment + the per-run on-disk parse cache.
+    """Owns import-time file -> episode assignment and the per-run on-disk parse cache.
 
-    Constructed once per run in `SonarrSync` from the
-    strategy's Sonarr client. The import executor calls `candidate_files` then
-    `assign` for each completed download. `assign` returns the unplaceable
-    basenames for the executor to warn about (producer/consumer split).
+    The executor calls `candidate_files` then `assign` per completed download, and reads the `FileAssignment`.
     """
 
     def __init__(self, sonarr: AbstractSonarrClient) -> None:
@@ -102,11 +89,8 @@ class FileEpisodeMapper:
 
         self.sonarr = sonarr
 
-        # Per-run, in-memory cache of the `/parse` of an on-disk
-        # leaf (raw basename -> ParsedFileInfo), so the import poll loop sends a
-        # given filename to Sonarr's parser at most once a run rather than every
-        # poll. A /parse miss (None) is treated as transient and deliberately NOT
-        # cached, so a hiccup doesn't strand a correctly-named file for the run.
+        # Raw leaf -> its `/parse`, so a name reaches Sonarr once a run, not once a poll. A miss (None) is
+        # transient and deliberately NOT cached, so a hiccup never strands a correctly named file for the run.
         self._parse_info_cache: dict[str, ParsedFileInfo] = {}
 
     def reset(self) -> None:
@@ -157,24 +141,17 @@ class FileEpisodeMapper:
             if is_video_candidate(path_leaf(candidate.path))
         }
 
-        # SeaDex order first (so output is stable and the absolute leg's input is
-        # deterministic), then any on-disk leaf the SeaDex list didn't name.
+        # SeaDex order first (stable output, a deterministic absolute leg), then any leaf the list didn't name.
         ordered = [norm for norm in (normalized_leaf(name) for name in pending.seadex_files) if norm in on_disk]
-        placed = set(ordered)
-        ordered += [norm_base for norm_base in on_disk if norm_base not in placed]
+        listed = set(ordered)
+        ordered += [norm_base for norm_base in on_disk if norm_base not in listed]
 
-        # Honor our grab-time map (OUR add-time assignment) - seeded ids are
-        # taken as-is. Intended files not yet on disk stay in the map so the
-        # planner detects them missing and retries (never silent-drops). Only
-        # the on-disk leftovers the seed doesn't cover (e.g. a specials pack
-        # whose grab-time parse found nothing) are resolved from their parse.
+        # Seeded ids are taken as-is, an intended file not yet on disk kept so the planner retries it.
+        # Only the on-disk leftover the seed doesn't cover is placed from its parse.
         seeded = pending.seeded_map()
         leftover = [norm for norm in ordered if norm not in seeded]
-        # Parse the WHOLE batch when anything is left to place: the positional
-        # leg's shared-absolute tell scans seeded files too, or a v1 placed on
-        # an earlier poll would hide its v2 (parses are cached per run).
-        # Mapped names are parsed BY NAME even when their files have moved out
-        # (a completed move-mode import) - a gone v1 must not blind the tell.
+        # Parse the WHOLE batch when anything is left: the shared-absolute tell scans seeded files too, and
+        # mapped names are parsed BY NAME even once moved out, so a placed or gone v1 never hides its v2.
         parsed_by_file: dict[str, ParsedFileInfo | None] = {}
         if leftover:
             for norm_base in ordered:
@@ -192,12 +169,9 @@ class FileEpisodeMapper:
         return FileAssignment(windowed.merged, seeded, settled=settled)
 
     def _parsed_file_info(self, raw_base: str) -> ParsedFileInfo | None:
-        """Sonarr `/parse` of one on-disk leaf, cached per run.
+        """Sonarr `/parse` of one on-disk leaf (name numbers and series-matched pairs), cached per run.
 
-        Carries the name-parsed numbers plus Sonarr's series-matched pairs.
-        on a transient parse failure (None) falls back to an offline
-        `SxxExx` regex - without caching - so a momentary Sonarr hiccup neither
-        strands a correctly-named file nor sticks for the rest of the run.
+        A transient failure (None) falls back to the offline `SxxExx` reading, uncached, so a hiccup never sticks.
         """
 
         if raw_base in self._parse_info_cache:

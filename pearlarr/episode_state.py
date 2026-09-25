@@ -5,7 +5,7 @@ from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, field
 from enum import Enum, auto
 from types import MappingProxyType
-from typing import NamedTuple
+from typing import NamedTuple, Self
 
 from .manual_import import EntryClaim, GuardFacts, OwnGroup, PendingImport, normalize_group, normalize_rg
 from .placement_types import EpisodeIndex
@@ -17,8 +17,7 @@ type TrustPolicy = Mapping[str, frozenset[int] | None]
 class EpisodeFileStatus(Enum):
     """How an intended target episode's CURRENT Sonarr file relates to ours.
 
-    One read of the episode list drives both invariants: never overwrite a
-    recommended file, never skip an episode we intended to import.
+    One read drives both invariants: never overwrite a recommended file, never skip an intended episode.
     """
 
     ABSENT = auto()
@@ -46,30 +45,30 @@ class TargetStatuses:
     """One status per de-duplicated target id."""
 
     def all_done(self) -> bool:
-        """True only when EVERY intended target already holds a recommended file.
+        """True only when EVERY intended target already holds a recommended file (the drop-the-record signal).
 
-        The "already imported / drop the record" signal. An UNKNOWN_GROUP or
-        OTHER_GROUP file is NOT done (we still intend to import ours), so a
-        present-but-unidentifiable file never makes us drop a record prematurely.
+        An UNKNOWN_GROUP or OTHER_GROUP file is NOT done: an unidentifiable file never drops a record early.
         """
 
         return bool(self.by_id) and all(s is EpisodeFileStatus.RECOMMENDED for s in self.by_id.values())
 
     def needing_import(self) -> set[int]:
-        """The never-skip set: every intended id NOT already a recommended file.
-
-        ABSENT / OTHER_GROUP / UNKNOWN_GROUP all need our import. Only
-        RECOMMENDED is excluded (it is done and must not be overwritten).
-        """
+        """The never-skip set: every intended id NOT already a recommended file (which must not be overwritten)."""
 
         return {ep_id for ep_id, status in self.by_id.items() if status is not EpisodeFileStatus.RECOMMENDED}
+
+
+class GroupVotes(NamedTuple):
+    """The groups a trust policy trusts beyond its guards: the torrent's own, then the series' other grabs."""
+
+    own: OwnGroup
+    siblings: Sequence[OwnGroup] = ()
 
 
 class EpisodeSnapshot(NamedTuple):
     """One poll's coherent view of a series: the fresh episode index plus what counts as already ours.
 
-    The episode index and the trust policy are gathered together, so consumers never mix state from two
-    different polls.
+    The index and the trust policy are gathered together, so consumers never mix state from two polls.
     """
 
     episodes: EpisodeIndex
@@ -83,48 +82,42 @@ class EpisodeSnapshot(NamedTuple):
     """Episode id -> the untagged file size the grab-time identification recorded. The claim is honored
     only while the file still sits at that size. Anything else untagged classifies as unidentifiable."""
 
-    def statuses(self, target_ep_ids: list[int]) -> TargetStatuses:
-        """Classify each intended target episode by its current on-disk file.
+    @classmethod
+    def guarded(cls, episodes: EpisodeIndex, guards: GuardFacts, votes: GroupVotes) -> Self:
+        """The snapshot under one claim's guard evidence: its trust policy and its recorded untagged sizes."""
 
-        Pure: reads only this snapshot's episode index and per-group trust
-        policy (keyed via `normalize_group`). "Already imported" is decided
-        HERE from the episode files, not from the queue, since Sonarr drops
-        an imported item from its queue almost immediately.
+        return cls(episodes, trusted_groups(guards, votes), guards.owned_sizes)
+
+    def status_of(self, ep_id: int) -> EpisodeFileStatus:
+        """Classify one intended target by its current on-disk file, decided HERE and not from the queue.
+
+        Sonarr drops an imported item from its queue almost immediately, so only the episode files tell.
         """
 
-        statuses: dict[int, EpisodeFileStatus] = {}
-        for ep_id in target_ep_ids:
-            if ep_id in statuses:
-                continue
-            ep = self.episodes.by_id.get(ep_id)
-            if ep is None or not ep.episode_file_id:
-                statuses[ep_id] = EpisodeFileStatus.ABSENT
-                continue
-            group = ep.episode_file.release_group if ep.episode_file else None
-            size = ep.episode_file.size if ep.episode_file else None
-            if not group:
-                # An untagged file still at the exact size the grab-time
-                # identification recorded is a recommended copy. Anything else
-                # untagged (a different file landed meanwhile, or no readable
-                # file record at all) stays unidentifiable.
-                statuses[ep_id] = (
-                    EpisodeFileStatus.RECOMMENDED
-                    if size is not None and size == self.owned_episode_sizes.get(ep_id)
-                    else EpisodeFileStatus.UNKNOWN_GROUP
-                )
-                continue
-            norm = normalize_group(group)
-            if norm not in self.trusted:
-                statuses[ep_id] = EpisodeFileStatus.OTHER_GROUP
-                continue
-            verify_sizes = self.trusted[norm]
-            if verify_sizes is not None and size not in verify_sizes:
-                # A trusted group at a size no current listing carries: the stale
-                # copy this grab replaces, not our just-imported file.
-                statuses[ep_id] = EpisodeFileStatus.OTHER_GROUP
-            else:
-                statuses[ep_id] = EpisodeFileStatus.RECOMMENDED
-        return TargetStatuses(statuses)
+        ep = self.episodes.by_id.get(ep_id)
+        if ep is None or not ep.episode_file_id:
+            return EpisodeFileStatus.ABSENT
+        group = ep.episode_file.release_group if ep.episode_file else None
+        size = ep.episode_file.size if ep.episode_file else None
+        if not group:
+            # An untagged file still at the size the grab-time identification recorded is a recommended copy.
+            # Anything else untagged (a different file, or no readable file record) stays unidentifiable.
+            if size is not None and size == self.owned_episode_sizes.get(ep_id):
+                return EpisodeFileStatus.RECOMMENDED
+            return EpisodeFileStatus.UNKNOWN_GROUP
+        norm = normalize_group(group)
+        if norm not in self.trusted:
+            return EpisodeFileStatus.OTHER_GROUP
+        verify_sizes = self.trusted[norm]
+        if verify_sizes is not None and size not in verify_sizes:
+            # A trusted group at a size no current listing carries: the stale copy this grab replaces.
+            return EpisodeFileStatus.OTHER_GROUP
+        return EpisodeFileStatus.RECOMMENDED
+
+    def statuses(self, target_ep_ids: Sequence[int]) -> TargetStatuses:
+        """Classify each de-duplicated intended target by its current on-disk file."""
+
+        return TargetStatuses({ep_id: self.status_of(ep_id) for ep_id in dict.fromkeys(target_ep_ids)})
 
 
 class Route(NamedTuple):
@@ -145,16 +138,9 @@ def lone_unscoped_claims(claims: Sequence[EntryClaim]) -> dict[int, EntryClaim]:
     }
 
 
-def routable_claims(claims: Sequence[EntryClaim]) -> tuple[EntryClaim, ...]:
-    """The claims `RecordSnapshot.route` can name: every scoped claim, and an unscoped claim alone on its series."""
-
-    lone = lone_unscoped_claims(claims)
-    return tuple(claim for claim in claims if claim.ordered_episode_ids or lone.get(claim.series_id) is claim)
-
-
 @dataclass(frozen=True, slots=True)
 class RecordSnapshot:
-    """One poll's coherent view of a record: each claimed series' snapshot, and each routable claim's own over it."""
+    """One poll's coherent view of a record: each claimed series' snapshot, and each claim's own over it."""
 
     pending: PendingImport
     """The record the poll judges, whose claims route each target."""
@@ -163,7 +149,7 @@ class RecordSnapshot:
     """Each claimed series' same-poll snapshot under the series' merged guard evidence (the routing fallback)."""
 
     by_claim: Mapping[int, EpisodeSnapshot]
-    """Each routable claim's snapshot by AniList id: its series' same index under the claim's OWN guard evidence."""
+    """Each claim's snapshot by AniList id: its series' same index under the claim's OWN guard evidence."""
 
     indexes: Mapping[int, EpisodeIndex] = field(init=False)
     """Each series' fresh episode index, the placement windows' inputs (a view over `by_series`)."""
@@ -213,7 +199,7 @@ class RecordSnapshot:
         return None if route.series_id is None else self.by_series.get(route.series_id)
 
     def preowned(self, ep_id: int) -> bool:
-        """Whether the grab judging `ep_id` found it owned: its route's claim says, else any claim (the merged fallback)."""
+        """Whether the grab judging `ep_id` found it owned: its route's claim says, else any claim (merged fallback)."""
 
         route = self.route(ep_id)
         claims = (route.claim,) if route.claim is not None else self.pending.claims
@@ -225,40 +211,26 @@ class RecordSnapshot:
         by_id: dict[int, EpisodeFileStatus] = {}
         for ep_id in dict.fromkeys(target_ep_ids):
             snapshot = self.snapshot_for(ep_id)
-            by_id[ep_id] = EpisodeFileStatus.ABSENT if snapshot is None else snapshot.statuses([ep_id]).by_id[ep_id]
+            by_id[ep_id] = EpisodeFileStatus.ABSENT if snapshot is None else snapshot.status_of(ep_id)
         return TargetStatuses(by_id)
 
 
-def trusted_groups(
-    guards: GuardFacts,
-    own: OwnGroup,
-    series_records: Sequence[PendingImport] = (),
-) -> TrustPolicy:
-    """One claim's per-group trust policy: group -> verifying sizes, or None for trust-by-name.
+def trusted_groups(guards: GuardFacts, votes: GroupVotes) -> TrustPolicy:
+    """One claim's trust policy: entry picks and non-stale siblings by name, the own group last at its listed sizes.
 
-    The one home of the overwrite-guard composition, for grab time (no
-    `series_records`) and import time (the series' pending records, which may
-    include this record's own row, whose votes are no-ops) alike. The entry's
-    verified-current pick groups and the series' other grabbed groups are
-    trusted by name. A sibling's group is refused when THIS claim's plan
-    judged it stale on disk (the copies being replaced must not ride back into
-    protection on a sibling's vote). The record's OWN group joins last and
-    unconditionally (it is the identity of the files being imported), but at
-    the sizes its current listings carry (unioned across same-group records),
-    so a stale same-group copy is told apart by size and replaced. No listed
-    sizes means no size gate (the legacy trust-by-name behavior).
+    Same-group siblings union their sizes into the own group's (None = no size gate), so a stale copy is replaced.
     """
 
     stale = {norm for g in guards.stale_groups if (norm := normalize_rg(g))}
     trusted: dict[str, frozenset[int] | None] = {norm: None for g in guards.entry_groups if (norm := normalize_rg(g))}
-    own_norm = normalize_rg(own.release_group)
-    own_sizes = set(own.sizes)
-    for record in series_records:
-        norm = normalize_rg(record.release_group)
+    own_norm = normalize_rg(votes.own.release_group)
+    own_sizes = set(votes.own.sizes)
+    for sibling in votes.siblings:
+        norm = normalize_rg(sibling.release_group)
         if norm is None:
             continue
         if norm == own_norm:
-            own_sizes.update(record.release_sizes)
+            own_sizes.update(sibling.sizes)
         if norm not in stale:
             trusted.setdefault(norm, None)
     if own_norm:

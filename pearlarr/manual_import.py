@@ -651,19 +651,6 @@ class GuardFacts:
         return dict(self.owned_episodes)
 
     @classmethod
-    def merged(cls, parts: Iterable["GuardFacts"]) -> "GuardFacts":
-        """Several entries' evidence as one: the groups unioned in order, the owned episodes concatenated."""
-
-        entry_groups: dict[str, None] = {}
-        stale_groups: dict[str, None] = {}
-        owned: list[OwnedEpisode] = []
-        for part in parts:
-            entry_groups.update(dict.fromkeys(part.entry_groups))
-            stale_groups.update(dict.fromkeys(part.stale_groups))
-            owned.extend(part.owned_episodes)
-        return cls(tuple(entry_groups), tuple(stale_groups), tuple(owned))
-
-    @classmethod
     def from_json(cls, raw: dict[str, Any]) -> "GuardFacts":
         """Rebuild from the persisted dict (missing keys fall back empty)."""
 
@@ -721,7 +708,7 @@ class EntryClaim:
         return not self.ordered_episode_ids or ep_id in self.ordered_episode_ids
 
     def to_json(self) -> dict[str, Any]:
-        """The plain dict persisted inside the record (the guards ride their own row)."""
+        """The plain dict persisted inside the record (the guards ride their own row): the schema, spelled out."""
 
         return {
             "al_id": self.al_id,
@@ -813,16 +800,13 @@ class PendingImport:
 
         return tuple(dict.fromkeys(claim.series_id for claim in self.claims))
 
-    @property
-    def al_ids(self) -> tuple[int, ...]:
-        """The distinct entries claiming the torrent, claim order."""
+    def claim_for(self, series_id: int) -> EntryClaim:
+        """The first claim on `series_id` (the caller reads a record stored under that series)."""
 
-        return tuple(dict.fromkeys(claim.al_id for claim in self.claims))
-
-    def claim_for(self, series_id: int) -> EntryClaim | None:
-        """The first claim on `series_id`, if any."""
-
-        return next((claim for claim in self.claims if claim.series_id == series_id), None)
+        claim = next((claim for claim in self.claims if claim.series_id == series_id), None)
+        if claim is None:
+            raise LookupError(f"record {self.infohash} has no claim on series {series_id}")
+        return claim
 
     @property
     def display_label(self) -> str:
@@ -852,9 +836,20 @@ class PendingImport:
         return windows or sorted(self.target_ids())
 
     def guards_for(self, series_id: int) -> GuardFacts:
-        """The guard evidence of every claim on `series_id`, merged."""
+        """The guard evidence of every claim on `series_id` as one.
 
-        return GuardFacts.merged(claim.guards for claim in self.claims if claim.series_id == series_id)
+        The groups are unioned in claim order and the owned episodes concatenated.
+        """
+
+        entry_groups: dict[str, None] = {}
+        stale_groups: dict[str, None] = {}
+        owned: list[OwnedEpisode] = []
+        for claim in self.claims:
+            if claim.series_id == series_id:
+                entry_groups.update(dict.fromkeys(claim.guards.entry_groups))
+                stale_groups.update(dict.fromkeys(claim.guards.stale_groups))
+                owned.extend(claim.guards.owned_episodes)
+        return GuardFacts(tuple(entry_groups), tuple(stale_groups), tuple(owned))
 
     def seed_coverage(self) -> SeedCoverage:
         """Coverage from normalized-name SUPERSETS (never lengths): a healed extra can't fake it."""
@@ -878,7 +873,10 @@ class PendingImport:
         )
 
     def with_placements(self, placements: FileEpisodeMap) -> "PendingImport":
-        """The record with placements folded into its map (normalized, zero ids dropped), their names no longer excluded."""
+        """The record with placements folded into its map, their names no longer excluded.
+
+        The map is normalized and its zero ids dropped.
+        """
 
         merged = {**_normalized_map(self.file_episode_map), **_normalized_map(placements)}
         excluded = tuple(name for name in self.excluded_files if name not in merged)
@@ -904,11 +902,6 @@ class PendingImport:
                 claims = (*self.claims[:index], kept, *self.claims[index + 1 :])
                 break
         return replace(self, claims=claims, awaiting_cleanup=False)
-
-    def restamped(self, stamp: str) -> "PendingImport":
-        """The record with its birth and every claim's clock set to `stamp` (a fresh add starts every clock)."""
-
-        return replace(self, added_at=stamp, claims=tuple(replace(c, claimed_at=stamp) for c in self.claims))
 
     def to_json(self) -> dict[str, Any]:
         """Serialize to the plain dict persisted under `pending_imports`."""

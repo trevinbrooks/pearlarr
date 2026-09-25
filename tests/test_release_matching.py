@@ -1,9 +1,7 @@
 # pyright: strict
-"""Characterization tests for the pure release-matching helpers.
+"""The pure release-matching helpers the planner uses."""
 
-These functions move to `planner.py` in Phase 1. Pinning them here proves the
-relocation is behavior-preserving.
-"""
+import pytest
 
 from pearlarr.coverage import format_episode_ranges
 from pearlarr.planner import (
@@ -34,27 +32,22 @@ class TestNormalizeRg:
         assert normalize_rg("  Era-Raws-  ") == "era-raws"
         assert normalize_rg("-SubsPlease-") == "subsplease"
 
-    def test_internal_dashes_preserved(self) -> None:
-        assert normalize_rg("Era-Raws") == "era-raws"
-
 
 class TestFormatEpisodeRanges:
     """`format_episode_ranges` renders sorted, deduped episode numbers as comma-joined contiguous `E`-ranges."""
 
-    def test_empty(self) -> None:
-        assert format_episode_ranges([]) == ""
-
-    def test_single(self) -> None:
-        assert format_episode_ranges([5]) == "E05"
-
-    def test_contiguous_run(self) -> None:
-        assert format_episode_ranges([1, 2, 3]) == "E01-E03"
-
-    def test_gaps_split(self) -> None:
-        assert format_episode_ranges([1, 2, 3, 7, 8]) == "E01-E03, E07-E08"
-
-    def test_unsorted_and_duplicates(self) -> None:
-        assert format_episode_ranges([3, 1, 2, 2]) == "E01-E03"
+    @pytest.mark.parametrize(
+        ("numbers", "rendered"),
+        [
+            pytest.param([], "", id="empty"),
+            pytest.param([5], "E05", id="single"),
+            pytest.param([1, 2, 3], "E01-E03", id="contiguous run"),
+            pytest.param([1, 2, 3, 7, 8], "E01-E03, E07-E08", id="gaps split"),
+            pytest.param([3, 1, 2, 2], "E01-E03", id="unsorted and duplicates"),
+        ],
+    )
+    def test_renders_the_ranges(self, numbers: list[int], rendered: str) -> None:
+        assert format_episode_ranges(numbers) == rendered
 
 
 class TestGetEpisodeKeys:
@@ -77,12 +70,10 @@ class TestGetSameFilesGroups:
     """
 
     def test_no_episode_parsing_groups_together(self) -> None:
-        # No all_episodes (None) -> no-parsing branch -> all collapse to one group
         seadex = {"A": SeadexReleaseGroupItem(), "B": SeadexReleaseGroupItem()}
         assert get_same_files_groups(seadex) == [["A", "B"]]
 
     def test_unparsed_each_on_its_own(self) -> None:
-        # Empty list -> "couldn't verify" -> each group kept separately
         seadex = {
             "A": SeadexReleaseGroupItem(all_episodes=[]),
             "B": SeadexReleaseGroupItem(all_episodes=[]),

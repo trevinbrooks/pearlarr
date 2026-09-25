@@ -4,6 +4,7 @@
 """Builders and a bare-instance factory for the characterization tests."""
 
 import dataclasses
+import json
 import logging
 from collections.abc import Iterable, Iterator, Mapping, Sequence
 from copy import deepcopy
@@ -47,7 +48,15 @@ from pearlarr.notify import Notifier
 from pearlarr.output import SeverityCounts, emit_to_hub
 from pearlarr.parse_records import ParseRecords
 from pearlarr.pending_records import PendingRecords
-from pearlarr.placement_types import EpisodeAssignment, EpisodeIndex, PlacementVerdict, episode_index
+from pearlarr.placement_types import (
+    EpisodeAssignment,
+    EpisodeIndex,
+    PlacementBatch,
+    PlacementVerdict,
+    TargetScope,
+    episode_index,
+)
+from pearlarr.placer import assign_episode_ids
 from pearlarr.planner import DownloadPlanner, PlanResult, PrivateOnlySkips
 from pearlarr.radarr_client import AbstractRadarrClient
 from pearlarr.reporter import RunContext, RunReporter
@@ -71,7 +80,6 @@ from pearlarr.seadex_types import (
 )
 from pearlarr.sonarr_client import AbstractSonarrClient
 from pearlarr.sonarr_episodes import SonarrEpisodes
-from pearlarr.sonarr_mapper import FileEpisodeMapper
 from pearlarr.sonarr_parse import SonarrParseCache
 from pearlarr.stamps import UPDATED_AT_STR_FORMAT
 from pearlarr.torrents import AddOutcome, AddResult, TorrentService
@@ -393,7 +401,8 @@ class FakeCacheStore(AbstractCacheStore):
 
     @override
     def put_pending(self, arr: Arr, infohash: str, record: dict[str, Any]) -> None:
-        self._pending.setdefault(str(arr), {})[infohash] = deepcopy(record)
+        # Stored as the real store's JSON column reads it back (tuples come back as lists).
+        self._pending.setdefault(str(arr), {})[infohash] = json.loads(json.dumps(record))
 
     @override
     def drop_pending(self, arr: Arr, infohash: str) -> None:
@@ -1089,6 +1098,20 @@ def by_name(result: EpisodeAssignment) -> dict[str, tuple[tuple[int, ...], Place
     return {p.name: (p.ids, p.verdict) for p in result.placements}
 
 
+def blind(names: Iterable[str]) -> dict[str, ParsedFileInfo | None]:
+    """Every name parsed with no numbers (Sonarr read nothing)."""
+
+    return dict.fromkeys(names, parsed_info())
+
+
+def place(
+    parsed: Mapping[str, ParsedFileInfo | None], scope: TargetScope, to_place: Sequence[str] | None = None
+) -> EpisodeAssignment:
+    """Place `to_place` (every parsed name when None) under `scope`, over the whole batch's parses."""
+
+    return assign_episode_ids(PlacementBatch(list(parsed) if to_place is None else list(to_place), parsed), scope)
+
+
 def numbered_names(prefix: str, count: int, tails: Sequence[str] = ()) -> list[str]:
     """`prefix - 01 [grp].mkv` names for `1..count`, each with its tail (a title after the number) when given."""
 
@@ -1267,15 +1290,13 @@ def make_radarr_sync(
     return RadarrSync(deps, services, radarr if radarr is not None else FakeRadarrClient())
 
 
-def make_sonarr_mapper(**attrs: Any) -> FileEpisodeMapper:
-    """A bare `FileEpisodeMapper` with `__init__` bypassed, its parse-info cache defaulted empty."""
-
-    defaults: dict[str, Any] = {"_parse_info_cache": {}}
-    defaults.update(attrs)
-    return make_bare_instance(FileEpisodeMapper, **defaults)
-
-
 def make_sonarr_parse(**attrs: Any) -> SonarrParseCache:
     """A bare `SonarrParseCache` with `__init__` bypassed and only `attrs` set."""
 
     return make_bare_instance(SonarrParseCache, **attrs)
+
+
+def claim_al_ids(record: PendingImport) -> tuple[int, ...]:
+    """The record's claiming entries, claim order."""
+
+    return tuple(claim.al_id for claim in record.claims)

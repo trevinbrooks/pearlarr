@@ -64,6 +64,7 @@ from .builders import (
     SEP,
     FakeCacheStore,
     FakeTorrents,
+    claim_al_ids,
     download_client_json,
     entry_claim,
     grab_request,
@@ -492,9 +493,7 @@ class _RecordingReporter:
 
     def log_pending_snapshot(self, state: PendingState, pending: PendingImport, series_id: int) -> None:
         claim = pending.claim_for(series_id)
-        coverage = claim.coverage if claim else None
-        url = claim.url if claim else None
-        self.snapshot_calls.append(_SnapshotCall(state, pending.display_label, coverage, url))
+        self.snapshot_calls.append(_SnapshotCall(state, pending.display_label, claim.coverage, claim.url))
 
 
 def make_orchestration_manager(
@@ -1284,7 +1283,7 @@ class TestMonitorWorkingSet:
         assert [p.display_label for p in records] == [f"Cour 1 & Cour 2{SEP}SubGroup"]
         # The store round-trip keeps both claims on the one row.
         rehydrated = mgr._records.hydrate(mgr._records.rows())
-        assert {key: p.al_ids for key, p in rehydrated.items()} == {"h": (11, 22)}
+        assert {key: claim_al_ids(p) for key, p in rehydrated.items()} == {"h": (11, 22)}
 
 
 def _run_single_monitor(
@@ -2980,7 +2979,7 @@ class TestPostImportCategoryOtherArrGate:
         final = view.final("h")
         assert final.outcome is Outcome.IMPORTED
         assert final.label == f"Cour 1 & Cour 2{SEP}SubGroup"
-        assert [c.al_ids for c in strategy.close_calls] == [(11, 22)]
+        assert [claim_al_ids(c) for c in strategy.close_calls] == [(11, 22)]
 
     def test_other_arr_missing_drop_releases_the_gate(self) -> None:
         # Run 1 (Radarr): only its record exists and the torrent is gone from
@@ -3154,7 +3153,7 @@ class TestCloseTrackedDownload:
 
         mgr.snapshot_pending_for_series(7)
 
-        assert [c.al_ids for c in strategy.close_calls] == [(11, 22)]
+        assert [claim_al_ids(c) for c in strategy.close_calls] == [(11, 22)]
         assert mgr._records.rows() == {}
 
     def test_remove_from_queue_off_never_closes(self) -> None:

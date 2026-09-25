@@ -5,6 +5,7 @@ The planning modules' tests sit beside this file, one per module: `test_placemen
 `test_episode_state`, `test_import_files`, `test_probe_verdicts`, `test_import_quality`.
 """
 
+import json
 from collections.abc import Sequence
 from dataclasses import replace
 from datetime import datetime
@@ -38,7 +39,7 @@ from pearlarr.manual_import import (
 )
 from pearlarr.seadex_types import RemotePathMapping
 
-from .builders import SEP, entry_claim, pending_import
+from .builders import SEP, claim_al_ids, entry_claim, pending_import
 
 
 class TestNormalize:
@@ -183,7 +184,7 @@ class TestPendingImportPlacements:
 class TestPendingImportClaims:
     """The claim reads over a record: every entry's series, window, guards, and ids, in claim order."""
 
-    def test_series_ids_and_al_ids_are_distinct_in_claim_order(self) -> None:
+    def test_series_ids_are_distinct_in_claim_order(self) -> None:
         pending = pending_import(
             claims=(
                 entry_claim(al_id=3, series_id=8),
@@ -193,14 +194,32 @@ class TestPendingImportClaims:
         )
 
         assert pending.series_ids == (8, 7)
-        assert pending.al_ids == (3, 1, 2)
+
+    def test_a_claim_persists_as_the_spelled_out_schema(self) -> None:
+        # The persisted shape is pinned: a new field never enters a row without a migration.
+        claim = entry_claim(
+            coverage="S1",
+            url="https://example.invalid/1",
+            ordered_episode_ids=(101, 102),
+            names=EntryNames("Show", ("Show!",)),
+            preowned_episode_ids=(101,),
+            slice_coverage="S1 E1-2",
+        )
+
+        assert json.dumps(claim.to_json()) == (
+            '{"al_id": 1, "series_id": 7, "title": "Show", "coverage": "S1", "url": "https://example.invalid/1", '
+            '"ordered_episode_ids": [101, 102], "names": {"series": "Show", "anilist": ["Show!"]}, '
+            '"preowned_episode_ids": [101], "slice_coverage": "S1 E1-2", "claimed_at": "2026-06-24 00:00:00"}'
+        )
+        assert EntryClaim.from_json(claim.to_json(), guards={}) == claim
 
     def test_claim_for_is_the_first_claim_on_the_series(self) -> None:
         first, second = entry_claim(al_id=1, series_id=8), entry_claim(al_id=2, series_id=8)
         pending = pending_import(claims=(first, second))
 
         assert pending.claim_for(8) is first
-        assert pending.claim_for(9) is None
+        with pytest.raises(LookupError, match="series 9"):
+            pending.claim_for(9)
 
     def test_guards_for_merges_the_series_claims_evidence(self) -> None:
         # Groups union in claim order, owned episodes concatenate, and the owned-size read is
@@ -279,20 +298,6 @@ class TestPendingImportClaims:
 
         assert flagged.with_claim(entry_claim(al_id=2, series_id=8)).awaiting_cleanup is False
         assert flagged.with_claim(entry_claim(ordered_episode_ids=[101])).awaiting_cleanup is False
-
-    def test_restamped_sets_the_birth_and_every_claims_clock(self) -> None:
-        pending = pending_import(
-            claims=(
-                entry_claim(al_id=1, claimed_at="2026-06-24 00:00:00"),
-                entry_claim(al_id=2, series_id=8, claimed_at="2026-06-25 00:00:00"),
-            ),
-        )
-
-        stamped = pending.restamped("2026-07-01 12:00:00")
-
-        assert stamped.added_at == "2026-07-01 12:00:00"
-        assert [claim.claimed_at for claim in stamped.claims] == ["2026-07-01 12:00:00"] * 2
-        assert pending.added_at == "2026-06-24 00:00:00"
 
     def test_newest_claimed_at_of_reads_the_raw_row(self) -> None:
         # The prune's clock off the stored dict, no rehydration: junk and a missing key are skipped,
@@ -476,7 +481,7 @@ class TestPendingImportRoundTrip:
         rebuilt = PendingImport.from_json(raw, guards={})
 
         assert rebuilt.infohash == "h"
-        assert rebuilt.al_ids == (1,)
+        assert claim_al_ids(rebuilt) == (1,)
 
     def test_added_at_of_reads_the_raw_row(self) -> None:
         # The keys-only readers age a row without rehydrating it: a missing or non-string stamp is unset.
