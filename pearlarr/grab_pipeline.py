@@ -4,7 +4,7 @@ from collections.abc import Mapping
 from dataclasses import dataclass
 from datetime import datetime
 from types import MappingProxyType
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, assert_never
 
 from seadex import EntryRecord
 
@@ -24,7 +24,7 @@ from .reporter import (
     RunContext,
     is_preview,
 )
-from .seadex_types import SeadexDict, SeadexUrlItem
+from .seadex_types import GrabHold, SeadexDict, SeadexUrlItem
 from .stamps import now_stamp, pending_cutoff, stamp_of
 from .torrents import GRAB_FAILURES, PARSEABLE_TRACKERS, AddOutcome, AddResult, ReleaseOutcome
 
@@ -59,8 +59,8 @@ class GrabRequest:
     pending_seeds: Mapping[str, PendingSeed] = NO_SEEDS
     """One seed per flagged torrent with a video file, keyed by infohash (`NO_SEEDS` when the wait mode is off)."""
     input_missing_groups: tuple[str, ...] = ()
-    """Groups with a url whose grab-time placement waited on a Sonarr read that failed this run, so a run
-    may have been held: the title is never cached as done and re-checks next run."""
+    """Groups with a url whose grab-time placement waited on a read that failed this run, so a run may have
+    been held: the title is never cached as done and re-checks next run."""
 
 
 class GrabPipeline:
@@ -139,7 +139,7 @@ class GrabPipeline:
         return n_torrents_added, results
 
     def _screen_url(self, srg: str, url_item: SeadexUrlItem) -> bool:
-        """Whether a SeaDex url may be grabbed: flagged for download, public, on a selected tracker with a parser.
+        """Whether a SeaDex url may be grabbed: flagged, public, on a selected tracker with a parser, and not held.
 
         A refused url posts its skip line and flags the title.
         """
@@ -174,7 +174,22 @@ class GrabPipeline:
                 self._ctx.per_title.unsupported_tracker_hashes.append(url_item.infohash)
             return False
 
-        return True
+        hold = url_item.hold
+        if hold is None:
+            return True
+        # Never added: a misnumbered pack would import under the wrong specials, and one the placement could not
+        # judge might. The title stays uncached, so the next run re-checks it.
+        match hold:
+            case GrabHold.MISNUMBERED:
+                reason = SkipReason.MISNUMBERED
+                self._ctx.per_title.misnumbered_groups.append(srg)
+            case GrabHold.INPUT_UNREAD:
+                reason = SkipReason.INPUT_UNREAD
+                self._ctx.per_title.input_missing_groups.append(srg)
+            case _:
+                assert_never(hold)
+        self._reporter.post(ReleaseSkipped(group=srg, tracker=tracker, reason=reason, url=url))
+        return False
 
     def _hold_capped(self, url_item: SeadexUrlItem, req: GrabRequest) -> None:
         """Hold a grabbable url past the cap: the title stays uncached, and a resident torrent keeps its claim.
@@ -294,7 +309,7 @@ class GrabPipeline:
         """Whether this title's outcome may be cached as done.
 
         Only if something was grabbed or nothing was skipped. A url held by the run cap, a fallback hold, a failed
-        grab, or a failed Sonarr read under a placement vetoes it.
+        grab, a failed read under a placement, or a pack the placement refused vetoes it.
         """
 
         per_title = self._ctx.per_title
@@ -312,13 +327,15 @@ class GrabPipeline:
             and not fallback_hold
             and not per_title.grab_failed_groups
             and not per_title.input_missing_groups
+            and not per_title.misnumbered_groups
             and (added_this_title > 0 or not (per_title.private_only_skipped or per_title.unsupported_tracker_skipped))
         )
 
     def _classify_needs_action(self) -> NeedsActionRecord | None:
         """The single needs-action row for a title NOT cached as done, or None.
 
-        Flat guard-returns preserve the precedence private-only > unsupported-tracker > grab-failed > read-missed.
+        Flat guard-returns preserve the precedence private-only > unsupported-tracker > misnumbered > grab-failed >
+        read-missed.
         """
 
         if self._ctx.per_title.private_only_skipped:
@@ -330,6 +347,13 @@ class GrabPipeline:
                 self._ctx.per_title.unsupported_tracker_groups,
                 "tracker not yet supported; grab manually",
                 NeedsActionKind.UNSUPPORTED_TRACKER,
+            )
+
+        if self._ctx.per_title.misnumbered_groups:
+            return self._needs_action(
+                self._ctx.per_title.misnumbered_groups,
+                "numbering does not match its SeaDex listing; import it by hand",
+                NeedsActionKind.MISNUMBERED,
             )
 
         if self._ctx.per_title.grab_failed_groups:
@@ -345,7 +369,7 @@ class GrabPipeline:
             # The placement may have held a run on the missing read, so the grab was judged coarsely: re-check.
             return self._needs_action(
                 self._ctx.per_title.input_missing_groups,
-                "a Sonarr read the placement needs failed; will retry next run",
+                "a read the placement needs failed; will retry next run",
                 NeedsActionKind.PLACEMENT_INPUT_MISSING,
             )
 

@@ -32,7 +32,7 @@ from pearlarr.clock import Clock
 from pearlarr.config import AppConfig, Arr
 from pearlarr.episode_state import EpisodeSnapshot, TrustPolicy
 from pearlarr.grab_pipeline import GrabPipeline, GrabRequest
-from pearlarr.grab_placement import EntryFacts, PendingSeed, TorrentFacts
+from pearlarr.grab_placement import EntryFacts, KnownTorrent, PendingSeed, TorrentFacts
 from pearlarr.import_wait import ImportProbes, ImportWaitManager, PostImportCleanup
 from pearlarr.manual_import import (
     NO_SIZES_BY_NAME,
@@ -474,6 +474,7 @@ class FakeSeaDexSource(SeaDexSource):
         self._entries: dict[int, EntryRecord] = dict(entries or {})
         self._outage = outage
         self.prefetch_calls: list[list[int]] = []
+        self.entry_calls: list[int] = []
 
     @override
     def prefetch(self, al_ids: Iterable[int], *, progress: ProgressSink | None = None) -> int:
@@ -484,6 +485,7 @@ class FakeSeaDexSource(SeaDexSource):
 
     @override
     def entry(self, al_id: int) -> EntryRecord | SeaDexMiss:
+        self.entry_calls.append(al_id)
         found = self._entries.get(al_id)
         if found is not None:
             return found
@@ -1089,6 +1091,17 @@ def episode_snapshot(
         own=own,
         owned_episode_sizes=owned_episode_sizes or {},
     )
+
+
+def known_torrent(
+    record: PendingImport | None = None,
+    *,
+    indexes: Mapping[int, EpisodeIndex] | None = None,
+    listed: frozenset[int] | None = frozenset(),
+) -> KnownTorrent:
+    """What the run knows of one torrent: nothing (a new torrent nothing lists, no series read) unless given."""
+
+    return KnownTorrent(record, indexes or {}, listed)
 
 
 def indexes_for(pending: PendingImport, index: EpisodeIndex) -> dict[int, EpisodeIndex]:

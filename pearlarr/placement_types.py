@@ -46,6 +46,12 @@ def episode_index(ep_list: Iterable[SonarrEpisode]) -> EpisodeIndex:
     )
 
 
+def all_specials(series: EpisodeIndex, ids: Iterable[int]) -> bool:
+    """Whether every id is one of the series' specials (season 0)."""
+
+    return all((ep := series.by_id.get(ep_id)) is not None and ep.season_number == 0 for ep_id in ids)
+
+
 class PlacementVerdict(StrEnum):
     """How one file left `assign_episode_ids`: placed by which pass, excluded, or unplaced."""
 
@@ -75,6 +81,9 @@ class PlacementVerdict(StrEnum):
     """An opening, an ending, a preview, a menu, a commercial, a trailer, a teaser, or a promo: never an episode."""
     HELD = "held"
     """A file of the picked release run while a parse is unknown: no other pass may place it, and it is re-checked."""
+    MISNUMBERED = "misnumbered"
+    """A file of a specials pack numbered by another TVDB state than the windows listing it: never placed by its
+    numbers, left to a hand import."""
     SKIPPED = "skipped"
     """Nothing placed it and nothing proved it foreign."""
 
@@ -90,6 +99,12 @@ class PlacementVerdict(StrEnum):
 
         return self in _EXCLUDED
 
+    @property
+    def refused(self) -> bool:
+        """Whether the verdict settles the file with no ids: held for a re-ask, or misnumbered for a hand import."""
+
+        return self in _REFUSED
+
 
 _PLACED = frozenset(
     {
@@ -104,6 +119,7 @@ _PLACED = frozenset(
     }
 )
 _EXCLUDED = frozenset({PlacementVerdict.FOREIGN, PlacementVerdict.DUPLICATE, PlacementVerdict.EXTRA})
+_REFUSED = frozenset({PlacementVerdict.HELD, PlacementVerdict.MISNUMBERED})
 
 
 class Placement(NamedTuple):
@@ -212,6 +228,11 @@ class TargetScope:
     """The series and AniList titles. Episode titles and extras words are read against them, and they break
     ties when several runs or numberless files could fill the open ids."""
 
+    listed: frozenset[int] = frozenset()
+    """The ids of every window of every entry of the series listing the torrent, this one's included: what a
+    specials pack's numbering is judged against. Empty when no listing was read (import time), which stands
+    that judgment down."""
+
     real_ids: frozenset[int] = field(init=False, repr=False, compare=False)
     """The resolved ids that can be placed. A stray zero keeps the scope real but is never one."""
 
@@ -241,3 +262,21 @@ class TargetScope:
         """The scope with `ids` used too: the ones it admits (every one when unscoped)."""
 
         return replace(self, used=self.used | frozenset(i for i in ids if self.admits(i)))
+
+    @property
+    def specials_window(self) -> bool:
+        """A scoped window of specials only, the one shape a listing judges."""
+
+        return not self.unscoped and all_specials(self.series, self.real_ids)
+
+    def specials_listing(self) -> frozenset[int] | None:
+        """The listing a numbered pack is judged by: read, all specials, covering the window. None stands it down."""
+
+        if not (self.specials_window and self.listed and self.real_ids <= self.listed):
+            return None
+        return self.listed if all_specials(self.series, self.listed) else None
+
+
+type TorrentListings = Mapping[str, frozenset[int] | None]
+"""Per infohash, the ids of every window of the series' entries listing the torrent, None when one of those
+entries' record or window could not be read."""

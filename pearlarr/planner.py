@@ -22,6 +22,7 @@ from .seadex_types import (
     ArrReleases,
     EpisodeKey,
     EpisodeRecord,
+    GrabHold,
     SeadexDict,
     SeadexReleaseGroupItem,
     SeadexUrlItem,
@@ -265,12 +266,9 @@ def episode_coverage(
     The records are the grab-time placement's, so every key is one of the
     entry's own episodes. `sonarr_by_key` is that index, built once by the
     caller and shared with the per-episode match loop in
-    filter_by_release_group. A single-group entry skips the build: coverage
-    only ever excuses a mismatch against a SIBLING pick.
+    filter_by_release_group. Built for a single group too: a refused pack
+    reads its own group's placed episodes here.
     """
-
-    if len(seadex_dict) < 2:
-        return EpisodeCoverage(frozenset(), {})
 
     blanket: set[str] = set()
     by_key: dict[EpisodeKey, set[str]] = {}
@@ -369,6 +367,12 @@ def _episode_identities(
         if normalized is None:
             continue
         for url_item in rg_item.urls.values():
+            # A refused pack placed nothing: an untagged file at one of its listed sizes is its, wherever it sits.
+            if url_item.hold is GrabHold.MISNUMBERED:
+                for key, size in untagged.items():
+                    if key not in identities and size > 0 and size in url_item.size:
+                        identities[key] = _EpisodeIdentity(normalized, by_size=True, size=size)
+                continue
             for seadex_ep in url_item.episodes:
                 if seadex_ep.season is None or seadex_ep.episode is None:
                     continue
@@ -408,6 +412,24 @@ class _MatchContext:
     """Which sibling picks cover each episode (see `episode_coverage`)."""
     has_ep_list: bool
     debug_on: bool
+
+
+def _window_in_place(ctx: _MatchContext, seadex_norm: str | None, listed_sizes: Collection[int]) -> bool:
+    """Whether every episode of the window holds the group's file at a listed size, or a covering pick's file."""
+
+    for key in ctx.sonarr_by_key:
+        identity = ctx.episode_identities.get(key)
+        if identity is None or identity.group is None:
+            return False
+        covering = ctx.coverage.by_key.get(key, ())
+        if identity.group == seadex_norm:
+            # The group's own file at a listed size, or on an episode another url of the group placed.
+            if identity.size not in listed_sizes and seadex_norm not in covering:
+                return False
+        # A sibling that placed nothing here covers every episode, as the ordinary match reads it.
+        elif identity.group not in ctx.coverage.blanket and identity.group not in covering:
+            return False
+    return True
 
 
 class _GroupVerdicts(NamedTuple):
@@ -671,6 +693,11 @@ class DownloadPlanner:
             self.logger.debug(f"Filtering for release group {seadex_rg}")
 
             for url_item in seadex_rg_item.urls.values():
+                # A pack the placement refused is judged by what its window holds, never by its numbers.
+                if url_item.hold is GrabHold.MISNUMBERED:
+                    self._match_url_refused(ctx, seadex_rg, url_item)
+                    continue
+
                 # A url none of whose files placed on this entry (numberless names, a
                 # held run, another season's pack) is judged by release group and size.
                 if not url_item.episodes:
@@ -921,6 +948,34 @@ class DownloadPlanner:
                 f"{url} lists size(s) {doubled} on fewer episodes than {seadex_rg} holds them, will download"
             )
             url_item.flag(upgrade=True)
+
+    def _match_url_refused(
+        self,
+        ctx: _MatchContext,
+        seadex_rg: str,
+        url_item: SeadexUrlItem,
+    ) -> None:
+        """Decide a specials pack the placement refused (`GrabHold.MISNUMBERED`), by what its window holds.
+
+        Flips `url_item.download` in place. The pack is in place once every window episode holds its file at a
+        listed size or a covering release's (`_window_in_place`), the shape a hand import leaves. Otherwise it is
+        flagged (an upgrade where the group holds files), and the grab refuses it and lists it for a hand import.
+        """
+
+        if not ctx.has_ep_list:
+            self.logger.debug("Skipping the refused-pack check: no Sonarr episode list available")
+            return
+
+        url = url_item.url
+        seadex_norm = normalize_rg(seadex_rg)
+        if _window_in_place(ctx, seadex_norm, url_item.size):
+            if ctx.debug_on:
+                self.logger.debug(
+                    f"Every episode of the window holds {seadex_rg}'s file or a covering release's: not flagging {url}"
+                )
+            return
+        self.logger.debug(f"{seadex_rg} was refused by the placement and is not in place: will download {url}")
+        url_item.flag(upgrade=seadex_norm in ctx.arr_sizes_by_norm)
 
     def reduce_overlapping_downloads(
         self,

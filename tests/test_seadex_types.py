@@ -24,6 +24,7 @@ from pearlarr.seadex_types import (
     QueueRecord,
     SonarrHistoryRecord,
     SonarrSeries,
+    normalized_infohash,
     validate_each,
 )
 
@@ -181,3 +182,20 @@ def test_history_page_reads_total_records() -> None:
 
     assert HistoryPage.model_validate({"records": [], "totalRecords": 250}).total_records == 250
     assert HistoryPage.model_validate({"records": []}).total_records == 0
+
+
+# --- normalized_infohash ------------------------------------------------------
+
+
+@pytest.mark.parametrize(
+    ("raw", "expected"),
+    [
+        ("  ABCDEF0123  ", "abcdef0123"),
+        ("abcdef0123", "abcdef0123"),
+        ("   ", None),
+        ("", None),
+        (None, None),
+    ],
+)
+def test_normalized_infohash_is_stripped_lowercase_or_none(raw: str | None, expected: str | None) -> None:
+    assert normalized_infohash(raw) == expected

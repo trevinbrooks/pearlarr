@@ -5,7 +5,6 @@ import pytest
 
 from pearlarr.coverage import format_episode_ranges
 from pearlarr.planner import (
-    EpisodeCoverage,
     episode_coverage,
     get_episode_keys,
     get_same_files_groups,
@@ -103,14 +102,16 @@ class TestEpisodeCoverage:
     instead of a per-episode key.
     """
 
-    def test_single_group_short_circuits(self) -> None:
-        # A single group has no sibling coverage to consult
+    def test_a_single_group_indexes_its_own_placed_episodes(self) -> None:
+        # No sibling to excuse a mismatch, but a refused pack of the group reads its placed episodes here.
         seadex = {
             "A": SeadexReleaseGroupItem(
                 urls={"u": SeadexUrlItem(episodes=[EpisodeRecord(season=1, episode=1)])},
             ),
         }
-        assert episode_coverage(seadex, {EpisodeKey(1, 1): sonarr_ep(1, 1)}) == EpisodeCoverage(frozenset(), {})
+        result = episode_coverage(seadex, {EpisodeKey(1, 1): sonarr_ep(1, 1)})
+        assert result.blanket == frozenset()
+        assert result.by_key == {EpisodeKey(1, 1): {"a"}}
 
     def test_records_episodes_sonarr_has(self) -> None:
         seadex = {

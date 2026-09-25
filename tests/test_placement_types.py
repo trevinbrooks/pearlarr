@@ -6,7 +6,14 @@ from typing import cast
 
 import pytest
 
-from pearlarr.placement_types import EpisodeIndex, PlacementBatch, TargetScope, episode_index
+from pearlarr.placement_types import (
+    EpisodeIndex,
+    PlacementBatch,
+    PlacementVerdict,
+    TargetScope,
+    all_specials,
+    episode_index,
+)
 from pearlarr.seadex_types import SONARR_MISSING_KEY, EpisodeKey, ParsedFileInfo, SonarrEpisode
 
 from .builders import parsed_info, series_index, sonarr_ep
@@ -112,3 +119,70 @@ class TestTargetScope:
 
     def test_an_unscoped_scope_uses_every_id(self) -> None:
         assert TargetScope([], self._SERIES).using([12, 21]).used == {12, 21}
+
+    def test_using_keeps_the_listing(self) -> None:
+        scope = TargetScope([11], self._SERIES, listed=frozenset({11, 12}))
+
+        assert scope.using([12]).listed == {11, 12}
+
+
+class TestPlacementVerdict:
+    """A misnumbered file is neither placed nor excluded: it stays a leftover the summary lists for a hand import."""
+
+    def test_misnumbered_is_an_open_leftover(self) -> None:
+        verdict = PlacementVerdict.MISNUMBERED
+
+        assert not verdict.placed
+        assert not verdict.excluded
+        assert verdict.refused
+
+    def test_refused_is_held_or_misnumbered(self) -> None:
+        # Both decide a name without ids: no later window may place it by its numbers.
+        assert {v for v in PlacementVerdict if v.refused} == {PlacementVerdict.HELD, PlacementVerdict.MISNUMBERED}
+
+
+class TestAllSpecials:
+    """Whether every id is one of the series' specials: the shape a listing must have to judge a specials pack."""
+
+    _SERIES = series_index({EpisodeKey(0, 1): 501, EpisodeKey(0, 2): 502, EpisodeKey(1, 1): 11})
+
+    def test_specials_only(self) -> None:
+        assert all_specials(self._SERIES, [501, 502])
+
+    def test_a_seasoned_id_is_no_special(self) -> None:
+        assert not all_specials(self._SERIES, [501, 11])
+
+    def test_an_unknown_id_is_no_special(self) -> None:
+        assert not all_specials(self._SERIES, [501, 999])
+
+    def test_no_ids_vacuously(self) -> None:
+        assert all_specials(self._SERIES, [])
+
+
+class TestSpecialsListing:
+    """The listing a numbered pack is judged by: read, all specials, covering a scoped window of specials."""
+
+    _SERIES = series_index({EpisodeKey(0, n): 500 + n for n in range(1, 5)} | {EpisodeKey(1, 1): 11})
+
+    def _scope(self, resolved: list[int], listed: frozenset[int] = frozenset()) -> TargetScope:
+        return TargetScope(resolved, self._SERIES, listed=listed)
+
+    def test_a_listing_covering_a_window_of_specials_judges(self) -> None:
+        assert self._scope([502, 504], frozenset({502, 503, 504})).specials_listing() == {502, 503, 504}
+
+    def test_a_listing_leaving_a_window_special_out_stands_down(self) -> None:
+        assert self._scope([501, 502], frozenset({502, 504})).specials_listing() is None
+
+    def test_a_listing_with_a_seasoned_id_stands_down(self) -> None:
+        assert self._scope([501], frozenset({501, 11})).specials_listing() is None
+
+    def test_no_listing_stands_down(self) -> None:
+        assert self._scope([501]).specials_listing() is None
+
+    def test_an_unscoped_window_stands_down(self) -> None:
+        assert self._scope([], frozenset({501})).specials_listing() is None
+
+    def test_a_specials_window_is_scoped_and_specials_only(self) -> None:
+        assert self._scope([501, 502]).specials_window
+        assert not self._scope([501, 11]).specials_window
+        assert not self._scope([]).specials_window

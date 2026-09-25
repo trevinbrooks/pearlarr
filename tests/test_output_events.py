@@ -103,6 +103,8 @@ def test_diagnostic_and_entry_detail_carry_their_own_severity() -> None:
 def test_skip_reason_severity_marks_the_users_own_choice_info() -> None:
     assert SkipReason.PRIVATE_ONLY.severity is Severity.WARNING
     assert SkipReason.UNSUPPORTED_TRACKER.severity is Severity.WARNING
+    assert SkipReason.MISNUMBERED.severity is Severity.WARNING
+    assert SkipReason.INPUT_UNREAD.severity is Severity.WARNING
     assert SkipReason.TRACKER_NOT_SELECTED.severity is Severity.INFO
     skipped = ReleaseSkipped(group="G", tracker="Nyaa", reason=SkipReason.TRACKER_NOT_SELECTED)
     assert severity_of(skipped) is Severity.INFO

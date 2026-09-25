@@ -152,9 +152,13 @@ SeaDex's preferred release for these titles exists only on a private tracker, an
 Your choices, via `seadex.private_releases` ([configuration.md](configuration.md#seadex)): grab the release yourself from the private tracker (the summary links the SeaDex entry), or set the policy to `fallback` so a public alternative is grabbed instead where one exists.
 Titles with no public alternative stay in the summary's "needs action" list and are re-checked every run until one appears.
 
-## A Sonarr read the placement needs failed
+## A read the placement needs failed
 
-The run summary lists a title under "needs action" with "a Sonarr read the placement needs failed; will retry next run". Sonarr did not answer a read the grab-time placement needed, a parse of one of that release's file names or the episode list of a series the torrent is already downloading for, so part of the release could not be placed and the title was not cached. Nothing needs doing: the title is re-checked on the next run, and the row stops once Sonarr answers. A row that repeats every run means the same read fails every time. The debug log names the file, and the warning names the series.
+The run summary lists a title under "needs action" with "a read the placement needs failed; will retry next run". A read the grab-time placement needed did not answer: Sonarr's parse of one of that release's file names, the episode list of a series the torrent is already downloading for, or the SeaDex record of another entry of the series that lists the torrent. Part of the release could not be placed, or the release was not grabbed, and the title was not cached. Nothing needs doing: the title is re-checked on the next run, and the row stops once the read answers. A row that repeats every run means the same read fails every time. The debug log names the release the read held.
+
+## A specials pack whose numbers do not match its SeaDex listing
+
+The run summary lists a title under "needs action" with "numbering does not match its SeaDex listing; import it by hand", and the release's "skipped" line names the mismatch. The release is a specials pack whose `S00Exx` numbers follow an older TVDB numbering than the specials SeaDex lists it for: it holds as many files as the listed specials, and at least one of its numbers is not a listed special. Importing it by its numbers would put files on the wrong episodes, so Pearlarr never grabs it. Download it and import it by hand, matching each file to its episode by content. The row stops once the pack is in place: every special of the title holds one of the pack's files at its listed size, or a file of another recommended release covering that special. A special the pack has no file for keeps the row.
 
 ## Tracker skips
 

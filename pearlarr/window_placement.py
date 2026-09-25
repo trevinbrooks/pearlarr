@@ -2,10 +2,10 @@
 
 Every window judges the WHOLE torrent, exactly as a record with one window does, so a numbered run keeps
 its shape under every window (the remainder re-read as a fresh run could place onto a window the whole
-run never fits). The verdicts merge in window order: the first window that places or holds a file decides
-it, so an earlier window's `HELD` outranks a later window's exact placement (window order beats pass
-order). Ids an earlier window placed count as used under each later window that admits them. A file no
-window placed or held takes the highest-ranked verdict the windows gave it (`_CLAIM_RANK`).
+run never fits). The verdicts merge in window order: the first window that places or refuses a file decides
+it, so an earlier window's `HELD` or `MISNUMBERED` outranks a later window's exact placement (window order
+beats pass order). Ids an earlier window placed count as used under each later window that admits them. A
+file no window placed or refused takes the highest-ranked verdict the windows gave it (`_CLAIM_RANK`).
 """
 
 from collections.abc import Iterable, Mapping, Sequence
@@ -69,7 +69,8 @@ def assign_across_windows(batch: PlacementBatch, windows: Sequence[TargetScope])
                 continue
             if placement.verdict.placed:
                 decided[placement.name] = WindowVerdict(placement, index)
-            elif placement.verdict is PlacementVerdict.HELD:
+            elif placement.verdict.refused:
+                # A refusal decides a name as a placement does: no later window may place it by its numbers.
                 decided[placement.name] = WindowVerdict(placement, None)
             else:
                 claims[placement.name].append(placement)
@@ -77,7 +78,7 @@ def assign_across_windows(batch: PlacementBatch, windows: Sequence[TargetScope])
 
 
 def _merged_claim(name: str, claims: Sequence[Placement]) -> WindowVerdict:
-    """The most specific claim the windows made on a file none placed or held (`_CLAIM_RANK`)."""
+    """The most specific claim the windows made on a file none placed or refused (`_CLAIM_RANK`)."""
 
     if not claims:
         return WindowVerdict(Placement(name, (), PlacementVerdict.SKIPPED), None)

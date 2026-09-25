@@ -2,7 +2,6 @@
 
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, replace
-from types import MappingProxyType
 from typing import NamedTuple
 
 from .coverage import coverage_string, episodes_from_ep_list
@@ -19,8 +18,15 @@ from .manual_import import (
     sizes_by_episode,
     unambiguous_sizes,
 )
-from .placement_types import EpisodeAssignment, EpisodeIndex, PlacementBatch, TargetScope
-from .seadex_types import EpisodeRecord, FlaggedUrl, ParsedFileInfo, SeadexDict, SeadexUrlItem, flagged_urls
+from .placement_types import (
+    EpisodeAssignment,
+    EpisodeIndex,
+    PlacementBatch,
+    PlacementVerdict,
+    TargetScope,
+    TorrentListings,
+)
+from .seadex_types import EpisodeRecord, FlaggedUrl, GrabHold, ParsedFileInfo, SeadexDict, SeadexUrlItem, flagged_urls
 from .window_placement import place_leftover, windows_of
 
 
@@ -70,53 +76,80 @@ class SeedScope(NamedTuple):
 
 
 @dataclass(frozen=True, slots=True)
-class ResidentScope:
-    """A listed torrent's stored pending record, which this entry's claim joins, with the indexes its claims need."""
+class KnownTorrent:
+    """What the run knows of one listed torrent beyond the entry: its stored record and the windows listing it."""
 
-    record: PendingImport
-    """The store-resident record on the torrent."""
+    record: PendingImport | None
+    """The store-resident record the torrent accretes onto, None when the torrent is new."""
 
     indexes: Mapping[int, EpisodeIndex]
     """The series indexes read this run. A claim's series left out was not read, which places nothing."""
 
-    @property
-    def can_place(self) -> bool:
-        """Whether every stored claim's window can be built (its series index was read this run)."""
+    listed: frozenset[int] | None
+    """The ids of every window of the entry's series listing the torrent (`TargetScope.listed`), None when a
+    listing entry's record or window could not be read: a window of specials is then held, any other placed as
+    if listed nowhere."""
 
-        return all(series_id in self.indexes for series_id in self.record.series_ids)
+    def windows(self, al_id: int, own: TargetScope) -> tuple[TargetScope, ...] | None:
+        """The windows the torrent is placed under, None when a claim's series is unread.
 
-    def windows(self, al_id: int, own: TargetScope) -> tuple[TargetScope, ...]:
-        """One window per stored claim, in claim order, with `own` replacing this entry's claim or appended last.
-
-        A re-flagged torrent is placed under exactly the windows the import poll will use once the claim is replaced.
+        One per stored claim in claim order, `own` replacing this entry's or appended last, each carrying the
+        listing (an unread one as empty): exactly the windows the import poll runs once the claim is replaced.
         """
 
-        stored = windows_of(self.record.claims, self.indexes)
-        position = next((i for i, claim in enumerate(self.record.claims) if claim.al_id == al_id), None)
-        if position is None:
-            return (*stored, own)
-        return (*stored[:position], own, *stored[position + 1 :])
+        claims = () if self.record is None else self.record.claims
+        if any(claim.series_id not in self.indexes for claim in claims):
+            return None
+        stored = windows_of(claims, self.indexes)
+        position = next((i for i, claim in enumerate(claims) if claim.al_id == al_id), None)
+        windows = (*stored, own) if position is None else (*stored[:position], own, *stored[position + 1 :])
+        return tuple(replace(window, listed=self.listed or frozenset()) for window in windows)
 
 
-type ResidentScopes = Mapping[str, ResidentScope]
-"""The stored records among an entry's urls, keyed by url as `SeadexReleaseGroupItem.urls` keys them."""
-
-NO_RESIDENTS: ResidentScopes = MappingProxyType({})
+type KnownTorrents = Mapping[str, KnownTorrent]
+"""One per url of the entry, keyed by url as `SeadexReleaseGroupItem.urls` keys them."""
 
 
-def resident_scopes(
-    seadex_dict: SeadexDict,
-    stored: Mapping[str, PendingImport],
-    indexes: Mapping[int, EpisodeIndex],
-) -> ResidentScopes:
-    """One `ResidentScope` per url whose torrent `stored` holds (keyed by infohash), by url."""
+def entry_hashes(seadex_dict: SeadexDict) -> frozenset[str]:
+    """The infohashes among the entry's urls (a hash-less url has none)."""
 
-    return {
-        url_item.url: ResidentScope(stored[url_item.infohash], indexes)
+    return frozenset(
+        url_item.infohash
         for rg_item in seadex_dict.values()
         for url_item in rg_item.urls.values()
-        if url_item.infohash is not None and url_item.infohash in stored
-    }
+        if url_item.infohash is not None
+    )
+
+
+@dataclass(frozen=True, slots=True)
+class TorrentReads:
+    """The run's reads of the entry's torrents, each folded once: the store, the series indexes, the listings."""
+
+    stored: Mapping[str, PendingImport]
+    """The store-resident records among the entry's hashes."""
+
+    indexes: Mapping[int, EpisodeIndex]
+    """The series indexes read this run. A claim's series left out was not read, which places nothing."""
+
+    listings: TorrentListings
+    """Each hash to the windows of the series' entries listing it, None where one of them could not be read."""
+
+    def known(self, seadex_dict: SeadexDict) -> KnownTorrents:
+        """What the run knows of each url's torrent, keyed by url.
+
+        A hash-less url is a new torrent nothing lists: placed by its numbers alone, and no record tracks its
+        import.
+        """
+
+        return {
+            url_item.url: KnownTorrent(
+                None if url_item.infohash is None else self.stored.get(url_item.infohash),
+                self.indexes,
+                frozenset() if url_item.infohash is None else self.listings[url_item.infohash],
+            )
+            for rg_item in seadex_dict.values()
+            for url_item in rg_item.urls.values()
+        }
 
 
 class UrlPlacement(NamedTuple):
@@ -139,7 +172,11 @@ class UrlPlacement(NamedTuple):
 
     inputs_known: bool
     """Every parse came from Sonarr this run (`PlacementBatch.all_parses_known`) and every window the
-    placement needed was readable. False means some files may have been held, so the title is re-checked next run."""
+    placement needed could be built. False means some files may have been held, so the title is re-checked
+    next run."""
+
+    hold: GrabHold | None
+    """Why the url is not grabbed this run, None when it may be."""
 
     stored: PendingImport | None
     """The record the url was placed against, None when the torrent is new."""
@@ -174,19 +211,21 @@ def seed_batch(files: Sequence[SeedFile]) -> PlacementBatch:
     return PlacementBatch(to_place, parsed)
 
 
-def place_release(files: Sequence[SeedFile], scope: SeedScope, resident: ResidentScope | None) -> UrlPlacement:
+def place_release(files: Sequence[SeedFile], scope: SeedScope, torrent: KnownTorrent) -> UrlPlacement:
     """Place one url's files ONCE, with the same `place_leftover` the import wait runs. Pure.
 
-    For a torrent with a stored record, the files its map does not cover are placed under every claim's window,
-    and only when each window's series was read: a grab-time verdict under an unread map would be final where
-    the import poll retries.
+    Every window is built or none is: a claim's series unread, or the listing unread where it judges a window of
+    specials, places nothing and holds a pack of specials (`GrabHold`), since import time would place it by number.
     """
 
     batch = seed_batch(files)
-    seeded: dict[str, list[int]] = {} if resident is None else resident.record.seeded_map()
-    placeable = scope.can_place and (resident is None or resident.can_place)
-    if placeable:
-        windows = (scope.target(),) if resident is None else resident.windows(scope.al_id, scope.target())
+    seeded: dict[str, list[int]] = {} if torrent.record is None else torrent.record.seeded_map()
+    own = scope.target()
+    listed = torrent.listed
+    # A read the listing's judgment needs holds the url only where it judges (`TargetScope.specials_listing`).
+    judged = own.specials_window if listed is None else replace(own, listed=listed).specials_listing() is not None
+    windows = None if judged and listed is None else torrent.windows(scope.al_id, own)
+    if scope.can_place and windows is not None:
         assignment = place_leftover(seeded, batch, windows).merged
     else:
         assignment = EpisodeAssignment(())
@@ -204,16 +243,28 @@ def place_release(files: Sequence[SeedFile], scope: SeedScope, resident: Residen
             if episode.season_number is None or episode.episode_number is None:
                 continue
             records.append(EpisodeRecord(season=episode.season_number, episode=episode.episode_number, size=f.size))
-    inputs_known = batch.all_parses_known and (resident is None or placeable)
+    # A new torrent under an unread map is judged coarsely, as before the placement existed. A stored one's
+    # verdict would be final where the import poll retries, so its title is re-checked instead.
+    known = windows is not None and (torrent.record is None or scope.can_place)
+    # A url with no video file (subs, fonts) places nothing and waits on nothing.
     return UrlPlacement(
-        tuple(files),
-        assignment,
-        tuple(records),
-        frozenset(claimed),
-        inputs_known,
-        None if resident is None else resident.record,
-        sizes_by_episode(mapped, _sizes_by_name(files)),
+        files=tuple(files),
+        assignment=assignment,
+        records=tuple(records),
+        claimed_ids=frozenset(claimed),
+        inputs_known=not files or (batch.all_parses_known and known),
+        hold=_hold_of(assignment, unread=judged and (listed is None or not batch.all_parses_known)) if files else None,
+        stored=torrent.record,
+        intended_sizes=sizes_by_episode(mapped, _sizes_by_name(files)),
     )
+
+
+def _hold_of(assignment: EpisodeAssignment, *, unread: bool) -> GrabHold | None:
+    """Why the url is not grabbed: a misnumbered verdict, else a read the listing's judgment needed that failed."""
+
+    if any(p.verdict is PlacementVerdict.MISNUMBERED for p in assignment.placements):
+        return GrabHold.MISNUMBERED
+    return GrabHold.INPUT_UNREAD if unread else None
 
 
 class EntryPlacements(NamedTuple):
@@ -230,24 +281,26 @@ class EntryPlacements(NamedTuple):
         cls,
         scope: SeedScope,
         files_by_url: Mapping[str, Sequence[SeedFile]],
-        residents: ResidentScopes,
+        torrents: KnownTorrents,
     ) -> "EntryPlacements":
-        """Place each url's files under the entry's scope, and against its stored record when there is one."""
+        """Place each url's files under the entry's scope, against what the run knows of its torrent."""
 
-        return cls(scope, {url: place_release(files, scope, residents.get(url)) for url, files in files_by_url.items()})
+        return cls(scope, {url: place_release(files, scope, torrents[url]) for url, files in files_by_url.items()})
 
-    def attach_records(self, seadex_dict: SeadexDict) -> None:
-        """Write each url's placed records onto its item, and their union onto its group, for the planner."""
+    def attach_placements(self, seadex_dict: SeadexDict) -> None:
+        """Write each url's placed records and hold onto its item, and the records' union onto its group."""
 
         for rg_item in seadex_dict.values():
             all_episodes: list[EpisodeRecord] = []
             for url, url_item in rg_item.urls.items():
-                url_item.episodes = list(self.by_url[url].records)
+                placement = self.by_url[url]
+                url_item.episodes = list(placement.records)
+                url_item.hold = placement.hold
                 all_episodes.extend(url_item.episodes)
             rg_item.all_episodes = all_episodes
 
     def input_missing_groups(self, seadex_dict: SeadexDict) -> tuple[str, ...]:
-        """The groups with a url whose placement waits on a Sonarr read that failed."""
+        """The groups with a url whose placement waits on a read that failed."""
 
         return tuple(
             group for group, item in seadex_dict.items() if not all(self.by_url[url].inputs_known for url in item.urls)

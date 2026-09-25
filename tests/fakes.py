@@ -4,7 +4,7 @@
 import io
 import logging
 import re
-from collections.abc import Callable, Iterable
+from collections.abc import Callable, Iterable, Mapping
 from enum import Enum, auto
 from typing import override
 
@@ -36,6 +36,7 @@ from pearlarr.protocols import ArrSync
 from pearlarr.radarr_client import AbstractRadarrClient
 from pearlarr.run_services import RunServices
 from pearlarr.seadex_types import (
+    ArrReleases,
     CommandResource,
     DownloadClientConfig,
     HistoryPage,
@@ -461,6 +462,49 @@ class FakeRadarrClient(AbstractRadarrClient):
     def history_since(self, date: str) -> list[HistoryRecord] | None:
         self.history_calls.append(date)
         return self.history_since_return
+
+
+class ScriptedEpisodes:
+    """A `SonarrEpisodes` stand-in scripted by hand: the series list off `sonarr`, one window per AniList id.
+
+    `get_ep_list` records its calls, raises for an `ambiguous` id, and serves `windows[al_id]` when windows are
+    given, else the whole series list. Without a client every read is None, a failed fetch.
+    """
+
+    series_fp = "fp"
+
+    def __init__(
+        self,
+        sonarr: FakeSonarrClient | None = None,
+        *,
+        windows: Mapping[int, list[SonarrEpisode] | None] | None = None,
+        ambiguous: frozenset[int] = frozenset(),
+    ) -> None:
+        self._sonarr = sonarr
+        self._windows = windows
+        self._ambiguous = ambiguous
+        self.calls: list[tuple[int, int]] = []
+        """Each `get_ep_list` call's (series id, AniList id), in call order."""
+
+    def cached_episodes(self, series_id: int) -> list[SonarrEpisode] | None:
+        """The whole-series list off the client, None without one."""
+
+        return None if self._sonarr is None else self._sonarr.episodes(series_id)
+
+    def get_ep_list(self, sonarr_series_id: int, al_id: int, mapping: MappingEntry) -> list[SonarrEpisode] | None:
+        """The entry's window, recorded. Raises for an `ambiguous` id as the real resolver does."""
+
+        del mapping
+        self.calls.append((sonarr_series_id, al_id))
+        if al_id in self._ambiguous:
+            raise ValueError("ambiguous")
+        return self.cached_episodes(sonarr_series_id) if self._windows is None else self._windows.get(al_id)
+
+    def get_sonarr_releases(self, ep_list: list[SonarrEpisode]) -> ArrReleases:
+        """No release is on disk."""
+
+        del ep_list
+        return ArrReleases()
 
 
 class CaptureHandler(logging.Handler):

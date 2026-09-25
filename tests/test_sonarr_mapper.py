@@ -14,7 +14,7 @@ from pearlarr.placement_types import EpisodeIndex, Placement, PlacementVerdict, 
 from pearlarr.seadex_types import EpisodeKey, ManualImportCandidate, ParsedFileInfo
 from pearlarr.sonarr_mapper import FileAssignment, FileEpisodeMapper
 
-from .builders import entry_facts, indexes_for, parsed_info, pending_import, series_index, url_item
+from .builders import entry_facts, indexes_for, known_torrent, parsed_info, pending_import, series_index, url_item
 from .fakes import FakeSonarrClient
 
 
@@ -269,7 +269,7 @@ class TestSeedEqualsMapper:
             release_group="grp",
             url_item=url_item(url="u", infohash="h"),
             infohash="h",
-            placed=place_release([SeedFile(name, 1000, parses[name]) for name in self._NAMES], scope, None),
+            placed=place_release([SeedFile(name, 1000, parses[name]) for name in self._NAMES], scope, known_torrent()),
         )
 
         seed = build_pending_seed(release, scope, entry_facts(al_id=1, series_id=2, title="t"))

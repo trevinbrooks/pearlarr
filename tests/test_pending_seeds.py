@@ -17,7 +17,6 @@ from dataclasses import replace
 from pearlarr.config import Arr
 from pearlarr.episode_state import EpisodeFileStatus, GroupVotes, TrustPolicy, trusted_groups
 from pearlarr.grab_placement import (
-    NO_RESIDENTS,
     EntryFacts,
     EntryPlacements,
     PendingSeed,
@@ -35,6 +34,7 @@ from .builders import (
     SEP,
     FakeCacheStore,
     entry_facts,
+    known_torrent,
     make_sonarr_sync,
     parsed_info,
     pending_import,
@@ -83,7 +83,8 @@ def _build(
 
     series = strat._episodes.cached_episodes(entry.series_id) or []
     scope = scope or _scope(series, series)
-    placed = EntryPlacements.place(scope, strat._parse.parsed_files(seadex_dict, series_fp=""), NO_RESIDENTS)
+    files = strat._parse.parsed_files(seadex_dict, series_fp="")
+    placed = EntryPlacements.place(scope, files, dict.fromkeys(files, known_torrent()))
     return build_pending_seeds(seadex_dict, placed, entry)
 
 

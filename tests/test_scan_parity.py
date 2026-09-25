@@ -1025,6 +1025,28 @@ class TestExternalDetailParity:
                 "yellow",
             ),
         ),
+        # grab_pipeline._screen_url: a specials pack numbered by another TVDB state than its listing.
+        _FactSite(
+            ReleaseSkipped(group="GroupA", tracker="Nyaa", reason=SkipReason.MISNUMBERED, url="https://x/1"),
+            _xdetail(
+                _W,
+                "    skipped   https://x/1 (numbering does not match its SeaDex listing)",
+                "skipped",
+                "https://x/1 (numbering does not match its SeaDex listing)",
+                "yellow",
+            ),
+        ),
+        # grab_pipeline._screen_url: the listing the placement judges a pack by could not be read.
+        _FactSite(
+            ReleaseSkipped(group="GroupA", tracker="Nyaa", reason=SkipReason.INPUT_UNREAD, url="https://x/1"),
+            _xdetail(
+                _W,
+                "    skipped   https://x/1 (a read the placement needs failed)",
+                "skipped",
+                "https://x/1 (a read the placement needs failed)",
+                "yellow",
+            ),
+        ),
         # grab_pipeline._add_one_url: a contained grab failure.
         _FactSite(
             GrabFailed(group="GroupA", url="https://x/1", error="tracker down"),
@@ -1108,7 +1130,7 @@ class TestExternalDetailParity:
         harness.reporter.log_al_title(ctx, "Show", make_entry_record(url="https://releases.moe/1"))
         harness.reporter.post(self.FACT_SITES[0].fact)
         harness.reporter.log_arr_item_start(Arr.SONARR, "Next", 1, 1)  # closes the entry
-        harness.reporter.post(self.FACT_SITES[3].fact)
+        harness.reporter.post(next(site.fact for site in self.FACT_SITES if isinstance(site.fact, GrabFailed)))
 
         opened = next(e for e in harness.events if isinstance(e, ScopeOpened))
         skipped = next(e for e in harness.events if isinstance(e, ReleaseSkipped))

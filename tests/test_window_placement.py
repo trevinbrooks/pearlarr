@@ -2,6 +2,7 @@
 """A torrent placed under several windows: each judges the whole torrent, the verdicts merge by window order."""
 
 from collections.abc import Iterable, Mapping
+from dataclasses import replace
 
 import pytest
 
@@ -24,6 +25,8 @@ _FIRST_COUR = [601, 602, 603]
 _SECOND_COUR = [604, 605, 606]
 # A series numbering its one season 2, so a first-season key resolves to nothing under it.
 _OTHER_SERIES = series_index({EpisodeKey(2, n): 200 + n for n in (1, 2, 3)})
+# A series of six specials, room for a listing a three-wide pack's numbers miss.
+_MANY_SPECIALS = series_index({EpisodeKey(0, n): 500 + n for n in range(1, 7)})
 
 
 def _window(resolved: list[int], *titles: str, used: Iterable[int] = (), series: EpisodeIndex = _SERIES) -> TargetScope:
@@ -209,6 +212,17 @@ class TestSeveralWindows:
 
         assert _placed_under(result) == {}
         assert {by_name(result.merged)[name] for name in run} == {((), PlacementVerdict.HELD)}
+
+    def test_an_earlier_windows_misnumbered_pack_outranks_a_later_windows_placement(self) -> None:
+        # Under the first window's listing (specials 2, 4 and 6, three as the pack is wide) the pack's `1` is
+        # no listed special: misnumbered, a human's. The second window, unlisted, would place it by number.
+        pack = {f"Show.S00E{n:02d}.mkv": parsed_info(season=0, episodes=(n,), matched=((0, n),)) for n in (1, 2, 3)}
+        listed = replace(_window([502, 504], series=_MANY_SPECIALS), listed=frozenset({502, 504, 506}))
+
+        result = assign_across_windows(_batch(pack), (listed, _window([501, 502, 503], series=_MANY_SPECIALS)))
+
+        assert _placed_under(result) == {}
+        assert {verdict for _ids, verdict in by_name(result.merged).values()} == {PlacementVerdict.MISNUMBERED}
 
     def test_the_parse_flag_is_the_torrents(self) -> None:
         # An unknown parse the first window never held (its window is one slot) still holds the run
