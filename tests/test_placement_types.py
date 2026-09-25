@@ -1,15 +1,15 @@
 # pyright: strict
-"""The `(season, episode) -> id` index and the target scope's own rules; the rest rides `assign_episode_ids`."""
+"""The `(season, episode) -> id` index, a batch's parse hinge, and the target scope's own rules."""
 
 from collections.abc import MutableMapping
 from typing import cast
 
 import pytest
 
-from pearlarr.placement_types import EpisodeIndex, TargetScope, episode_index
-from pearlarr.seadex_types import SONARR_MISSING_KEY, EpisodeKey, SonarrEpisode
+from pearlarr.placement_types import EpisodeIndex, PlacementBatch, TargetScope, episode_index
+from pearlarr.seadex_types import SONARR_MISSING_KEY, EpisodeKey, ParsedFileInfo, SonarrEpisode
 
-from .builders import series_index, sonarr_ep
+from .builders import parsed_info, series_index, sonarr_ep
 
 
 class TestEpisodeIndex:
@@ -68,6 +68,30 @@ class TestEpisodeIndex:
         assert EpisodeKey(1, 2) not in index.id_by_key
         with pytest.raises(TypeError):
             cast("MutableMapping[EpisodeKey, int]", index.id_by_key)[EpisodeKey(1, 3)] = 13
+
+
+class TestPlacementBatchParsesKnown:
+    """`all_parses_known`: the settled hinge on the parses. Any miss, transport or offline, unsettles the batch."""
+
+    def test_a_transport_miss_is_unknown(self) -> None:
+        parsed: dict[str, ParsedFileInfo | None] = {"a.mkv": parsed_info(), "b.mkv": None}
+        assert PlacementBatch(["a.mkv", "b.mkv"], parsed).all_parses_known is False
+
+    def test_an_offline_stand_in_is_unknown(self) -> None:
+        parsed: dict[str, ParsedFileInfo | None] = {"a.mkv": parsed_info(season=1, episodes=(1,), offline=True)}
+        assert PlacementBatch(["a.mkv"], parsed).all_parses_known is False
+
+    def test_served_parses_are_known(self) -> None:
+        # A numberless answer from Sonarr is a real answer: known, even though it places nothing.
+        parsed: dict[str, ParsedFileInfo | None] = {
+            "a.mkv": parsed_info(),
+            "b.mkv": parsed_info(season=1, episodes=(1,)),
+        }
+        assert PlacementBatch(["a.mkv", "b.mkv"], parsed).all_parses_known is True
+
+    def test_an_empty_batch_is_known(self) -> None:
+        # A fully seeded record parses nothing, and nothing is missing.
+        assert PlacementBatch([], {}).all_parses_known is True
 
 
 class TestTargetScope:
