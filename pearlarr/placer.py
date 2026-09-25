@@ -1,4 +1,96 @@
-"""Pure placement: `assign_episode_ids` runs the ordered passes that map a batch's files onto the scope's episodes."""
+"""Place a torrent's files onto an entry's Sonarr episodes: `assign_episode_ids` and the passes it runs. No I/O.
+
+Our episode ids for the entry are authoritative. Sonarr's parse of a file name, and the number the name
+carries, only ever choose among them.
+
+Terms used across the placement modules:
+
+- Own key: the `SxxExx` a file name carries. Matched pair: an episode Sonarr's series match points at.
+  A name without an own key borrows Sonarr's matched pairs.
+- Scope (`TargetScope`): the entry's episode ids a file may be placed on, plus the whole series' episode
+  map every key is looked up in. An empty id list means no scope ("unscoped"): a file's own keys then
+  place against the whole series.
+- Window (`window_placement`): the scope of one entry a torrent is listed on. A torrent listed on several
+  entries is placed under each window in turn.
+- Open ids: the scope's ids that no file holds yet.
+- Seeded file: a file of the torrent that the grab-time placement or an earlier import poll already mapped.
+  Its ids start out used, as do ids an earlier window placed. Seeded files, and files since moved off disk
+  ("gone"), are never placed again, but their parses and names still count as evidence.
+- Alias match: Sonarr moved a name's episode numbers, unchanged, into one regular season (a sequel as season 1).
+- Reading (`Reading`): the episode ids a file's parse resolves to in our series map, with flags saying how
+  far to trust them. A rejected reading (`Reading.vetoed`) is kept as evidence, but no pass places the file
+  by it.
+- Complete reading: every episode the parse names resolved in our series map (a partial span is never placed).
+- Trusted reading: a complete reading that was not rejected.
+- Unknown parse: a missing parse, or the offline `SxxExx` stand-in. `PlacementBatch.all_parses_known` is False
+  while any file of the torrent has one.
+- Numberless: the file name carries no episode or absolute number (a key the series lacks may count as none).
+- Release number: the episode number read from the file name's text alone ("Show - 07"), without Sonarr.
+- Numbered run (`NumberedRun`): the files whose names share the text before their release number, in number
+  order. Of two versions of one number, the higher `vN` is the member and the lower is superseded.
+- Tail: the words of a run member's name after its release number.
+- Run window (`_RunWindow`): the open ids, when they are consecutive episodes, in airing order.
+- Covering run: a run numbered `1..N` for a whole season when the run window holds only part of that season.
+- Tied file: a run file the season re-read (pass 4) fits to a season and the specials equally well (`Reading.tied`).
+- Open file: a file with no verdict yet whose trusted reading does not lie wholly outside the scope.
+- Specific title: an episode title with enough words beyond the series title to place a file by.
+- Titled as: the file name carries the specific title of exactly one episode, and no other file of the torrent
+  carries that title (versions of one file count once).
+- Run evidence: every episode title (a colon part only when specific) that starts a run member's tail.
+  It can pick or veto a run.
+- Zip: pair files with ids one to one, in order. A zip places nothing when a file is titled as an
+  episode other than its pair.
+- Count-based passes: the absolute zip, the ordered zip, and the numbered-run pass. They place files by
+  position, not by what each file says, so any sign that the batch's count is off turns them off
+  (`_Placer.count_legs_barred`).
+- Slice: the part of a series one entry covers when a season is split across several entries. A file of
+  another slice is `FOREIGN`.
+- Stored record: the pending import record already saved for a torrent, one per infohash.
+- Claim: one entry's part of a stored record (`EntryClaim`). In `parse_reading`: a `(season, episode)` a parse names.
+
+The passes run in this order. Each places files only onto the ids that earlier passes left open:
+
+1. Extras: a file whose name carries an extras word (an opening, an ending, a preview, a menu, and so on)
+   is set aside as `EXTRA` and left out of every count below. A file whose own key Sonarr matched is never
+   an extra.
+2. Title contradictions: when a file's name carries the title of an episode other than the one its reading
+   points at, that reading is rejected. If the file belongs to a numbered run, the in-scope readings of the
+   other members are rejected too, except where a member's own title confirms its episode. The count-based
+   passes are turned off.
+3. Overlapping spans: a multi-episode reading that shares an episode with a different reading of another
+   file is rejected.
+4. Season re-read: a run numbered `1..N` without own keys, which Sonarr matched into one season of exactly
+   N episodes with a few members shifted onto specials, is read as that season's episodes 1 to N. When the
+   specials season fits just as well, it is a tie: the readings are rejected and both candidates recorded.
+5. Release run: when the open ids form a run window and the tie-breaks leave one numbered run that fits it
+   (a `_Tier`), the run's own numbers place its members onto the window, unless Sonarr's reading already
+   puts each member on its own window episode. While any parse is unknown the members are `HELD` instead.
+   `_pass_release_run` lists the tie-breaks and the refusals.
+6. Exact: a file whose complete, unrejected reading lies wholly inside the scope, on open ids, is placed
+   there. Unscoped, a name's own keys place against the whole series.
+7. Episode title: a file titled as an open scope episode, whose parse covers one episode, is placed there,
+   whatever its number said. Each such placement turns the count-based passes off.
+8. Absolute zip: the remaining files pair with the open ids in absolute-number order, only when every file
+   carries exactly one absolute number, the counts match, every parse is known, and no two files of the
+   torrent share an absolute number.
+9. Single file: with one open id left, the only remaining file takes it if its parse has no usable episode
+   number. Otherwise, the numberless file an AniList title names takes it (`TITLED`).
+10. Ordered zip: when every file of the torrent but the extras is unplaced, numberless, and not read
+    outside the scope, no id was used from the start (by a seeded file or an earlier window), and the counts
+    match, the files pair with the open ids in natural name order.
+11. Numbered run: among the files Sonarr resolved no episode for, the one run numbered `1..N` places onto
+    a run window of N ids.
+12. Classify: every file still unplaced becomes `DUPLICATE` (it reads inside the scope onto episodes other
+    files provably hold, or a version of the same file holds its titled episode), `FOREIGN` (its reading lies
+    wholly outside the scope, or it is titled as an episode outside it and confirmed by its reading or by no
+    open id being left), or `SKIPPED`. The caller warns about skipped files and records the exclusions. It
+    never guesses.
+
+At most one of passes 8 to 10 is tried: the absolute zip when its conditions hold, else the single-file
+pass when one id is open, else the ordered zip. They consider only open files. Every zip (passes 5, 8,
+10, and 11) places nothing when a file is titled as an episode other than its pair, and that turns the
+count-based passes off.
+"""
 
 from collections import Counter, defaultdict
 from collections.abc import Iterable, Mapping, Sequence
@@ -34,35 +126,10 @@ def assign_episode_ids(
     batch: PlacementBatch,
     scope: TargetScope,
 ) -> EpisodeAssignment:
-    """Map a torrent's files to OUR resolved episode ids. Names never override.
+    """Place the files of `batch` onto the ids of `scope` by running the passes the module docstring lists, in order.
 
-    The resolved set (`scope.resolved`, season order) is authoritative: a release's own numbering only ever
-    indexes into it. One reading per file (`read_parse`) and one read of its name, then passes in strict
-    precedence over one state, each placing into the ids the earlier ones left:
-
-    1. **Extras:** a file named as one (`PlacementVerdict.EXTRA`) is set aside, no part of any count below.
-    2. **Refuted readings:** a reading the file's own episode title contradicts is vetoed, with its run's
-       readings inside the scope that no title confirms, and the count legs stand down.
-    3. **Overlapping spans:** a span holding an episode another file reads differently is vetoed.
-    4. **Season re-read:** a `1..N` run Sonarr matched into the one season of exactly N episodes, a few
-       members shifted onto its specials, is re-read as that season's own numbering.
-    5. **Release run:** the one run fitting a consecutive window (a `_Tier`) indexes it when Sonarr's reading
-       of the members is incoherent (`_pass_release_run`). Members are HELD while any parse is unknown.
-    6. **Exact:** a reading resolving cleanly inside the resolved set is placed there. With NO resolved set
-       (`scope.unscoped`) the name's keys place against the live series map.
-    7. **Episode title:** a file onto the one scope episode its name is titled as, whatever its number said.
-       Every zip below refuses a pair a title contradicts.
-    8. **Absolute index:** the leftovers zip onto the leftover ids by absolute number, only when every leftover
-       carries one, the counts match, every parse is known, and no two files of the batch share an absolute.
-    9. **Single file:** one numberless leftover onto one leftover id.
-    10. **Ordered zip:** a pristine numberless batch zips natural name order onto the leftover ids.
-    11. **Numbered run:** the one `1..N` run among the files Sonarr read nothing from indexes the window.
-    12. **Classify:** what is left is `DUPLICATE` (inside the set onto a taken episode, a version of the file
-        titled as one), `FOREIGN` (cleanly outside it, or titled as another slice's episode), or `SKIPPED`.
-        The caller warns on skips and records exclusions, never guesses.
-
-    `PlacementBatch` and `TargetScope` say what rides in. An empty series map refuses every map-dependent
-    verdict. One `Placement` per distinct file, batch order.
+    One file name never overrides the scope. With an empty series map, every verdict that needs the map is
+    refused. The result holds one `Placement` per distinct file, in batch order.
     """
 
     state = _Placer.start(batch, scope)
@@ -78,34 +145,34 @@ def assign_episode_ids(
     return state.finish()
 
 
-# Episode titles decide between runs, or against one, from this many members on.
+# Episode titles pick a run, or refuse one, only when at least this many members carry them.
 _MIN_TITLE_HITS = 2
 
 
 @dataclass(frozen=True, slots=True)
 class _RunWindow:
-    """The leftover ids as consecutive episodes in airing order."""
+    """The open ids as consecutive episodes, in airing order: the run window."""
 
     season: int | None
-    """The one season the ids belong to, or None when the series' absolute numbering orders several."""
+    """The season every id belongs to, or None when the ids span seasons and absolute numbers order them."""
     ids: tuple[int, ...]
-    """The leftover ids, airing order."""
+    """The open ids, in airing order."""
     numbers: tuple[int, ...]
-    """The ids' episode numbers (absolute numbers across seasons), the same order."""
+    """The ids' episode numbers (absolute numbers when `season` is None), in the same order."""
     id_set: frozenset[int] = field(init=False, repr=False, compare=False)
-    """The ids as a set, built once for the per-candidate reads."""
+    """The ids as a set, built once for membership checks."""
 
     def __post_init__(self) -> None:
         object.__setattr__(self, "id_set", frozenset(self.ids))
 
     @property
     def specials(self) -> bool:
-        """The specials season's window."""
+        """Whether the window lies in the specials season (season 0)."""
 
         return self.season == 0
 
     def slice_of(self, run: NumberedRun) -> tuple[RunMember, ...]:
-        """The run's members numbered as the window's episodes (a whole-season run over a slice window)."""
+        """The run members whose numbers are the window's episode numbers (a whole-season run over part of it)."""
 
         return tuple(member for member in run.members if member.number in self.numbers)
 
@@ -117,22 +184,25 @@ class _TitledEpisode(NamedTuple):
     words: tuple[str, ...]
     """The title's folded words."""
     beyond: tuple[str, ...]
-    """The words past the series title's."""
+    """The title's words that are not words of the series title."""
     distinct: bool
-    """Whether `beyond` says enough to place a file. A run's title evidence counts every title."""
+    """Whether `beyond` is specific enough to place a file by. Run evidence counts every title, specific or not."""
     part: bool
-    """Whether the form is the head or the subtitle alone rather than the title as written."""
+    """Whether this form is only the part before or after a colon, not the whole title."""
 
 
 class _TitleForm(NamedTuple):
-    """One form of an episode title: as written, or one part of it around a colon."""
+    """One form of an episode title: the whole title, or the part before or after its last colon."""
 
     text: str
     part: bool
 
 
 def _title_forms(title: str) -> tuple[_TitleForm, ...]:
-    """A title as written and, around a colon, its head and its subtitle alone (a name often carries just one)."""
+    """The whole title, plus the parts before and after its last colon when both have text.
+
+    A name often carries only one part.
+    """
 
     head, colon, subtitle = title.rpartition(":")
     parts = (_TitleForm(head, True), _TitleForm(subtitle, True)) if colon and head.strip() and subtitle.strip() else ()
@@ -140,9 +210,10 @@ def _title_forms(title: str) -> tuple[_TitleForm, ...]:
 
 
 def _sole(hits: Iterable[_TitledEpisode]) -> _TitledEpisode | None:
-    """The one episode named by a title as written, else by a part, else None.
+    """The one episode a whole title matches. When no whole title matches, the one a title part matches. Else None.
 
-    Two is none: a recap repeating a title, a two-part title, a head that is another episode's subtitle.
+    Two matches count as none: a recap repeating a title, a two-part title, or a title's text before the colon
+    that is another episode's subtitle.
     """
 
     by_rank: dict[bool, dict[int, _TitledEpisode]] = {False: {}, True: {}}
@@ -153,16 +224,17 @@ def _sole(hits: Iterable[_TitledEpisode]) -> _TitledEpisode | None:
 
 
 class _TitleLead(NamedTuple):
-    """What the episode titles say of one run member's tail."""
+    """What the episode titles say about one run member's tail (the words after its release number)."""
 
     titled: _TitledEpisode | None
-    """The one episode whose distinct title opens the tail, shared with other files or not."""
+    """The one episode whose specific title starts the tail and ends it or meets a quality tag, whether or not other
+    files carry it."""
     leaders: frozenset[int]
-    """The episodes whose title, distinct or not, leads the tail: the run's evidence."""
+    """Every episode whose title, specific or not, starts the tail: the evidence a run is judged by."""
 
 
 class _EpisodeTitles(NamedTuple):
-    """The series' episode titles, as words: the distinct ones name a file, every one is a run's evidence."""
+    """The series' episode titles as words: specific titles can place a file, and every title is run evidence."""
 
     series_words: frozenset[str]
     """The series title's words."""
@@ -171,7 +243,7 @@ class _EpisodeTitles(NamedTuple):
 
     @classmethod
     def of(cls, series: EpisodeIndex, ground: TitleGround) -> Self:
-        """Read every episode's title forms past the series title's words."""
+        """Fold every form of every episode title into words, noting the words beyond the series title."""
 
         titled: list[_TitledEpisode] = []
         for ep_id, ep in series.by_id.items():
@@ -179,15 +251,15 @@ class _EpisodeTitles(NamedTuple):
                 words = folded_words(form.text)
                 beyond = tuple(word for word in words if word not in ground.series_words)
                 distinct = is_distinct_title(beyond)
-                # A part too short to place a file ("Chapter 4: Home") is no run evidence either.
+                # A title part too short to place a file ("Chapter 4: Home") is not run evidence either.
                 if words and (distinct or not form.part):
                     titled.append(_TitledEpisode(ep_id, words, beyond, distinct, form.part))
         return cls(ground.series_words, tuple(titled))
 
     def leading(self, words: tuple[str, ...]) -> _TitleLead:
-        """The one episode whose distinct title opens a run member's tail, and every episode whose title leads it.
+        """Match a run member's tail: the one specific title that starts it, and every title that starts it.
 
-        Quality junk may follow the opening title. The led set, distinct or not, is the run's evidence.
+        Quality tags may follow the specific title. The full set of matches, specific or not, is run evidence.
         """
 
         led = [ep for ep in self.titled if words[: len(ep.words)] == ep.words]
@@ -195,27 +267,27 @@ class _EpisodeTitles(NamedTuple):
         return _TitleLead(titled, frozenset(ep.ep_id for ep in led))
 
     def exactly(self, words: tuple[str, ...]) -> _TitledEpisode | None:
-        """The one episode whose distinct title IS the words (a numberless name), both shed of the series title's."""
+        """The one episode whose specific title equals a name's words, with series title words dropped from both."""
 
         beyond = tuple(word for word in words if word not in self.series_words)
         return _sole(ep for ep in self.titled if ep.distinct and ep.beyond == beyond)
 
 
 class _TitleEvidence(NamedTuple):
-    """How many of a run's members are titled as an episode inside the window, and how many as one outside it."""
+    """How many run members' tails start with only window titles, and how many with only titles outside it."""
 
     inside: int
     outside: int
 
     @property
     def selects(self) -> bool:
-        """Enough members are titled as the window's episodes, and more than as anything else."""
+        """Whether at least `_MIN_TITLE_HITS` members carry window titles, and more than carry outside titles."""
 
         return self.inside >= _MIN_TITLE_HITS and self.inside > self.outside
 
     @property
     def vetoes(self) -> bool:
-        """The members are titled as other episodes and as none of the window's."""
+        """Whether at least `_MIN_TITLE_HITS` members carry outside titles and none carries a window title."""
 
         return self.outside >= _MIN_TITLE_HITS and not self.inside
 
@@ -224,24 +296,25 @@ class _NameTitle(NamedTuple):
     """One name read against the episode titles."""
 
     episode: int | None
-    """The episode the name is titled as: one episode's distinct title, carried by no other file of the torrent."""
+    """The episode the name is titled as: its specific title, carried by no other file of the torrent."""
     leaders: frozenset[int]
-    """The episodes whose title leads a run member's tail, distinct or not: the run's evidence."""
+    """For a run member, every episode whose title starts its tail (run evidence). Empty for other names."""
 
 
 class _TorrentNames(NamedTuple):
-    """Every name of the torrent read once: its stem and run membership, its title, and whether it is an extra."""
+    """Every file name of the torrent, read once: stem, run membership, episode title, and whether it is an extra."""
 
     reads: Mapping[str, NameRead]
     titles: Mapping[str, _NameTitle]
     extras: frozenset[str]
-    """The names that are extras: set aside, and no part of any count."""
+    """The extras: set aside, and left out of every count."""
 
     @classmethod
     def of(cls, batch: PlacementBatch, scope: TargetScope, readings: Mapping[str, Reading]) -> Self:
-        """Read every name, seeded and gone ones included. Versions of one file share its title without dispute.
+        """Read every name, seeded and gone ones included.
 
-        A file Sonarr matched by its own key is an episode, whatever extras word its title carries.
+        Two versions of one file carrying the same title still count as titled as it. A file whose own key Sonarr
+        matched (`Reading.keyed`) is an episode, whatever extras word its name carries.
         """
 
         ground = TitleGround.of(scope.names)
@@ -259,7 +332,7 @@ class _TorrentNames(NamedTuple):
             titled = lead.titled
             episode = titled.ep_id if titled is not None and carriers[words] == 1 else None
             titles[name] = _NameTitle(episode, lead.leaders)
-            # An extras word inside the episode title the name carries is title, not extra.
+            # An extras word that belongs to the entry's titles or the name's episode title marks no extra.
             shield = ground.entry_words | frozenset(titled.words if titled is not None else ())
             if not readings[name].keyed and is_extras_name(name, shield):
                 extras.add(name)
@@ -267,7 +340,7 @@ class _TorrentNames(NamedTuple):
 
     @property
     def counted(self) -> tuple[str, ...]:
-        """Every name but the extras: the names whose readings count."""
+        """Every name except the extras: the names the evidence checks read."""
 
         return tuple(name for name in self.reads if name not in self.extras)
 
@@ -277,7 +350,7 @@ class _TorrentNames(NamedTuple):
         return self.titles[name].episode
 
     def contradicts(self, name: str, ids: Sequence[int]) -> bool:
-        """Whether placing the name on `ids` contradicts the episode it is titled as."""
+        """Whether the name is titled as an episode that is not among `ids`."""
 
         return (ep_id := self.episode(name)) is not None and ep_id not in ids
 
@@ -287,9 +360,9 @@ class _TorrentNames(NamedTuple):
         return (ep_id := self.episode(name)) is not None and ep_id in ids
 
     def evidence(self, run: NumberedRun, window: _RunWindow) -> _TitleEvidence:
-        """Count the members whose tail a window episode's title leads against those another's does.
+        """Count the members whose tail starts with only window titles, and those with only outside titles.
 
-        A tail led on both sides counts for neither.
+        A tail matching titles on both sides counts for neither.
         """
 
         inside = outside = 0
@@ -303,20 +376,21 @@ class _TorrentNames(NamedTuple):
 
 
 class _Tier(IntEnum):
-    """The release-run pass's candidate tiers, best first."""
+    """How well a numbered run fits the run window, best first. The release-run pass ranks candidates by it."""
 
     WHOLE = 1
-    """Numbered `1..N` for the window's width N."""
+    """Numbered `1..N`, where N is the window's width."""
     NUMBERED = 2
-    """Numbered exactly as the window's episodes."""
+    """Numbered exactly as the window's episode numbers."""
     COVERING = 3
-    """Numbered `1..N` for the whole season a slice window belongs to."""
+    """Numbered `1..N` for the whole season, when the window holds only part of that season."""
     ANYWHERE = 4
-    """N consecutive numbers from anywhere, no member read completely, nothing seeded."""
+    """Any N consecutive numbers, when no member has a complete reading and no id is used yet (by a seeded file, an
+    earlier window, or an earlier pass)."""
 
 
 class _Candidate(NamedTuple):
-    """One run that could index the window: its position among the runs, the first tier it fits, its title evidence."""
+    """A run that could place onto the window: its position among the runs, its best tier, and its title evidence."""
 
     position: int
     run: NumberedRun
@@ -325,7 +399,7 @@ class _Candidate(NamedTuple):
 
 
 class _SeasonFit(NamedTuple):
-    """The one season a `1..N` run counts as, and whether the specials count it too."""
+    """The season a `1..N` run matches, and whether the specials season matches it just as well (a tie)."""
 
     season: int
     tied: bool
@@ -336,7 +410,7 @@ class _SeriesFacts:
     """What the series map says on its own, read once per call and never changed by a pass."""
 
     key_by_id: Mapping[int, EpisodeKey]
-    """The series map inverted."""
+    """Episode id -> `(season, episode)` key: the series map inverted."""
     season_counts: Mapping[int, int]
     """Episodes per season."""
     absolute_of: Mapping[int, int]
@@ -359,17 +433,17 @@ class _SeriesFacts:
 
 
 class _DuplicateProof(NamedTuple):
-    """What proves a leftover a duplicate, gathered once before the leftovers are classified."""
+    """The evidence that an unplaced file is a duplicate, gathered once before classification."""
 
     proven: frozenset[int]
-    """The ids whose holder reads or is titled there: placed this batch, or a seeded or gone name's own evidence."""
+    """Ids held for a reason: placed by this call, or a seeded or gone file's reading or title points there."""
     held_by_file: Mapping[FileIdentity, frozenset[int]]
-    """The episodes each file's versions hold: placed this batch, or seeded (gone) and titled as one."""
+    """The episodes each file's versions hold: placed by this call, or a seeded or gone version titled as one."""
 
 
 @dataclass(slots=True)
 class _Placer:
-    """One `assign_episode_ids` call's state: the readings, the verdicts so far, and the ids they used."""
+    """One `assign_episode_ids` call's state: the readings, the verdicts so far, and the ids used so far."""
 
     batch: PlacementBatch
     scope: TargetScope
@@ -382,9 +456,10 @@ class _Placer:
     verdicts: dict[str, Placement] = field(default_factory=dict[str, Placement])
     used: set[int] = field(default_factory=set[int])
     count_legs_barred: bool = False
-    """The release-run pass found several runs or refused its pick, or a title refuted a reading, placed a file
-    its number did not, or contradicted a zip pair: no count leg (the numbered run, the absolute and ordered
-    zips) places what it would not."""
+    """Whether the count-based passes (the absolute zip, the ordered zip, the numbered run) are turned off.
+
+    Set when a title rejects a reading, when the release-run pass sees several candidate runs or refuses its
+    pick, when a title places a file, and when a title contradicts a zip pair."""
 
     @classmethod
     def start(cls, batch: PlacementBatch, scope: TargetScope) -> Self:
@@ -395,13 +470,19 @@ class _Placer:
         return cls(batch, scope, readings, torrent, _SeriesFacts.of(scope.series), used=set(scope.used))
 
     def single_parse(self, name: str) -> ParsedFileInfo | None:
-        """The name's parse, when Sonarr served one and it spans one episode (several placed as one half-import)."""
+        """The name's parse when there is one and it covers one episode, else None.
+
+        A multi-episode file placed as one episode would import half.
+        """
 
         info = self.batch.parsed.get(name)
         return None if info is None or self.spans_multiple(info) else info
 
     def title_placement(self, name: str) -> int | None:
-        """The open episode of the scope the name is titled as, else None (a span, an unread parse, a tie's file)."""
+        """The open scope episode the name is titled as, else None.
+
+        Also None for a missing or multi-episode parse, and for a tied file titled as neither of its candidates.
+        """
 
         ep_id = self.torrent.episode(name)
         if ep_id is None or ep_id in self.used or not self.scope.admits(ep_id) or self.single_parse(name) is None:
@@ -410,8 +491,9 @@ class _Placer:
         return None if tied is not None and ep_id not in tied else ep_id
 
     def titled_outside(self, name: str, nothing_left: bool) -> bool:
-        """Whether the name is titled as another slice's episode, and Sonarr read it outside too or nothing is left.
+        """Whether the name is titled as an episode outside the scope, confirmed another way.
 
+        Confirmed when the file has a complete reading wholly outside the scope, or when no open id is left.
         A title alone never excludes a file the entry may still need.
         """
 
@@ -422,9 +504,9 @@ class _Placer:
         return (reading.complete and not reading.inside) or nothing_left
 
     def reads_no_number(self, name: str) -> bool:
-        """Whether Sonarr saw the file and found no episode in it: no number, or only a key the whole series lacks.
+        """Whether the file's single-episode parse has no usable number: none at all, or only keys the series lacks.
 
-        Never a tie's file (the season's or the specials'), or a titled one (that episode is not here).
+        False for a tied file, and for a titled file (its titled episode is taken or outside the scope).
         """
 
         info = self.single_parse(name)
@@ -437,16 +519,16 @@ class _Placer:
 
     @property
     def map_known(self) -> bool:
-        """Whether the series map was served (every map-dependent verdict refuses on an empty one)."""
+        """Whether the series map is non-empty. With an empty map, every verdict that needs it is refused."""
 
         return bool(self.scope.id_by_key)
 
     def season_fit(self, run: NumberedRun) -> _SeasonFit | None:
-        """The season a keyless `1..N` run counts as: Sonarr read it into that one season of exactly N episodes.
+        """The season a `1..N` run without own keys belongs to: Sonarr matched it into one season of exactly N episodes.
 
-        Some members read onto the specials instead (never more than into
-        the season), and the fit is tied when as many did and the specials
-        count N too. None when the run is not that shape.
+        Every member needs a parse and at most one resolved id. At least one member must be matched onto the
+        specials, but no more than into the season. It is a tie when as many went to each and the specials season
+        also has N episodes. None for any other shape.
         """
 
         width = len(run.members)
@@ -472,7 +554,7 @@ class _Placer:
         return _SeasonFit(season, into_season == onto_specials and self.facts.season_counts.get(0) == width)
 
     def tie(self, run: NumberedRun, season: int) -> None:
-        """Veto the run's reads and record the episodes each name may be under either numbering."""
+        """Reject the run's readings and record each file's episode under the season's and the specials' numbering."""
 
         for numbered in run.whole:
             keys = (EpisodeKey(season, numbered.number), EpisodeKey(0, numbered.number))
@@ -480,7 +562,7 @@ class _Placer:
             self.readings[numbered.name] = self.readings[numbered.name]._replace(vetoed=True, tied=ids)
 
     def reread(self, run: NumberedRun, season: int) -> None:
-        """Read every name of the run as the season's episode of its number, vetoed where its title says otherwise."""
+        """Read each run file as the season's episode of its release number, rejected where its title disagrees."""
 
         for numbered in run.whole:
             ep_id = self.scope.id_by_key.get(EpisodeKey(season, numbered.number))
@@ -492,26 +574,26 @@ class _Placer:
                 )
 
     def veto(self, run: NumberedRun) -> None:
-        """Veto every reading of the run, its displaced versions included."""
+        """Reject the reading of every file of the run, superseded versions included."""
 
         self.veto_names(numbered.name for numbered in run.whole)
 
     def veto_names(self, names: Iterable[str]) -> None:
-        """Veto each name's reading: its claims stay real but never place on their own."""
+        """Reject each name's reading: it still counts as evidence, but no pass places the file by it."""
 
         for name in names:
             self.readings[name] = self.readings[name]._replace(vetoed=True)
 
     def open_ids(self) -> list[int]:
-        """The leftover ids: the scope's resolved set minus every id used so far, scope order."""
+        """The open ids: the scope's nonzero ids minus every id used so far, in scope order."""
 
         return [i for i in self.scope.resolved if i and i not in self.used]
 
     def run_window(self) -> _RunWindow | None:
-        """The open ids as consecutive episodes in airing order, else None.
+        """The open ids as a run window, else None. It needs at least two open ids.
 
-        One season's episode numbers, else the series' absolutes when every slot carries one (a special
-        interleaved, two seasons' cours). The ids are re-sorted by their keys, never trusted in scope order.
+        The ids must be consecutive episodes of one season, or else all carry consecutive absolute numbers (a
+        special in between, or two seasons' cours). The ids are sorted by their numbers, never taken in scope order.
         """
 
         open_ids = self.open_ids()
@@ -537,11 +619,10 @@ class _Placer:
         return [name for name in self.batch.names if name not in self.verdicts]
 
     def spans_multiple(self, info: ParsedFileInfo) -> bool:
-        """Whether the file plausibly holds more than one episode: the name's claim, or a multi-pair series match.
+        """Whether the file likely holds more than one episode: its name claims several, or Sonarr matched several.
 
-        Cardinality, not identity: a file Sonarr matched to two episodes, placed as one, is a structural
-        half-import. A full-season read (a name with no episode token) counts only when that season
-        reaches into the entry, never when it names another season.
+        This asks how many episodes, not which: a file matched to two episodes but placed as one imports half.
+        A full-season match (a name with no episode number) counts only when one of its episodes is in the scope.
         """
 
         if claims_several_episodes(info):
@@ -557,9 +638,9 @@ class _Placer:
         )
 
     def settled_elsewhere(self, run: NumberedRun) -> bool:
-        """Whether Sonarr read the run whole into distinct episodes outside the scope: another season's, or the other cour's.
+        """Whether Sonarr matched every member to its own distinct episode outside the scope (another season or cour).
 
-        A tie's run is elsewhere when neither numbering reaches the scope.
+        A tied run counts as elsewhere when none of its candidate episodes is in the scope.
         """
 
         readings = [self.readings[name] for name in run.names]
@@ -570,7 +651,7 @@ class _Placer:
         return len({r.resolved[0] for r in readings}) == len(readings)
 
     def covering(self, runs: Iterable[NumberedRun], window: _RunWindow) -> list[NumberedRun]:
-        """The `1..N` runs for the whole season a strict slice window belongs to: N members over fewer slots."""
+        """The runs numbered `1..N` for the window's whole season, when the window holds fewer than N ids."""
 
         season = window.season
         if season is None:
@@ -579,11 +660,10 @@ class _Placer:
         return runs_from_one(runs, count) if count > len(window.ids) else []
 
     def covering_refused(self, window: _RunWindow) -> bool:
-        """Whether a season run's count says nothing about the window.
+        """Whether a whole-season run cannot be trusted to number this window.
 
-        A specials window (a season run as wide as the specials count is a
-        coincidence), or a season whose numbering has a gap (the run counts
-        on past it).
+        True for a window spanning seasons, for a specials window (a run as long as the specials season is a
+        coincidence), and for a season whose numbering has a gap (the run would count on past it).
         """
 
         season = window.season
@@ -598,20 +678,20 @@ class _Placer:
         return {self.facts.key_by_id[ep_id].season for name in run.names for ep_id in self.readings[name].resolved}
 
     def read_elsewhere(self, run: NumberedRun, season: int | None) -> bool:
-        """Whether Sonarr read a member into another season than the window's: the reads dispute the run's count."""
+        """Whether a member's reading lands in a season other than the window's, which disputes the run's numbers."""
 
         return any(read != season for read in self.seasons_read(run))
 
     def place(self, name: str, ids: Sequence[int], verdict: PlacementVerdict) -> None:
-        """Record a placement and take its ids out of the window."""
+        """Record a placement and mark its ids used."""
 
         self.verdicts[name] = Placement(name, tuple(ids), verdict)
         self.used.update(ids)
 
     def place_zip(self, names: Sequence[str], ids: Sequence[int], verdict: PlacementVerdict) -> bool:
-        """Place the names onto the ids pairwise, or none when a title says a pair is wrong (so the count was).
+        """Place the names onto the ids pairwise, or none when a name is titled as an episode other than its pair.
 
-        A refused zip bars every count leg.
+        A refused zip turns the count-based passes off: the count that paired them was wrong.
         """
 
         pairs = list(zip(names, ids, strict=True))
@@ -634,15 +714,16 @@ class _Placer:
             self.set_aside(member.name, verdict)
 
     def runs(self, names: Iterable[str]) -> list[NumberedRun]:
-        """The numbered runs among `names`, by their reads."""
+        """The numbered runs among `names`, formed from their release numbers."""
 
         members = (member for name in names if (member := self.torrent.reads[name].member) is not None)
         return numbered_runs(members, self.batch.parsed)
 
     def runs_from_anywhere(self, runs: Iterable[NumberedRun], width: int) -> list[NumberedRun]:
-        """The runs of `width` consecutive numbers wherever they start, no member of which Sonarr read completely.
+        """The runs of `width` consecutive numbers, from any start, where no member has a complete reading.
 
-        None once a seed owns part of the scope: such a run fits what is left by chance, never by count.
+        Empty once any id is used (by a seeded file, an earlier window, or an earlier pass): a run fitting the
+        remaining ids would fit by chance, not by count.
         """
 
         if self.used:
@@ -650,7 +731,7 @@ class _Placer:
         return [run for run in runs if run.consecutive(width) and not any(self.readings[n].complete for n in run.names)]
 
     def release_candidates(self, runs: Sequence[NumberedRun], window: _RunWindow) -> list[_Candidate]:
-        """Every run that could index the window, at the first tier it fits, tier order then run order."""
+        """Every run that could place onto the window, at the best tier it fits, sorted by tier then by run order."""
 
         width = len(window.ids)
         tiers = {
@@ -669,7 +750,10 @@ class _Placer:
         ]
 
     def duplicate_proof(self) -> _DuplicateProof:
-        """What proves a leftover a duplicate. A seed that landed a file positionally proves nothing."""
+        """Gather the duplicate evidence.
+
+        An id held from the start (a seeded file's or an earlier window's) proves nothing alone.
+        """
 
         placing = frozenset(self.batch.names)
         evidenced: set[int] = set()
@@ -686,7 +770,7 @@ class _Placer:
         return _DuplicateProof(frozenset(proven), {file: frozenset(ids) for file, ids in held.items()})
 
     def finish(self) -> EpisodeAssignment:
-        """Classify what is still open, then fold the verdicts in batch order."""
+        """Classify every unplaced file, then return all verdicts in batch order."""
 
         proof = self.duplicate_proof()
         nothing_left = not self.open_ids()
@@ -694,8 +778,8 @@ class _Placer:
             reading = self.readings[name]
             titled = self.torrent.episode(name)
             if reading.complete and not reading.vetoed and reading.inside == reading.resolved:
-                # Inside the set, so the exact pass left it because its episodes are taken. A span only partly
-                # taken still holds an episode nothing has, so it stays loud.
+                # Inside the scope, so the exact pass skipped it because an episode is taken. A span only partly
+                # taken still covers a free episode, so it stays SKIPPED and gets reported.
                 proven = all(ep_id in self.used and ep_id in proof.proven for ep_id in reading.inside)
                 self.set_aside(name, PlacementVerdict.DUPLICATE if proven else PlacementVerdict.SKIPPED)
             elif titled is not None and titled in self.used:
@@ -710,7 +794,7 @@ class _Placer:
 
 
 def _pass_extras(state: _Placer) -> None:
-    """Set the extras aside (`PlacementVerdict.EXTRA`): never an episode, and no part of any count."""
+    """Set the extras aside as `PlacementVerdict.EXTRA`: never an episode, and left out of every count."""
 
     for name in state.remaining():
         if name in state.torrent.extras:
@@ -718,11 +802,11 @@ def _pass_extras(state: _Placer) -> None:
 
 
 def _pass_refuse_refuted(state: _Placer) -> None:
-    """Veto the readings a title refutes and, inside the scope, their runs' unconfirmed readings. Bar the count legs.
+    """Reject each reading its file's title contradicts, and the in-scope readings of that file's run no title confirms.
 
-    The run's count, its own or Sonarr's, was wrong about the titled name, so about every member it numbered by
-    the same shifted count, seeded members included: an import poll judges the leftover as the grab did. A member
-    its own title confirms keeps its reading.
+    The run's numbering, its own or Sonarr's, was wrong about the titled file, so it is wrong by the same shift
+    about every member. Seeded members count too, so an import poll judges the leftovers as the grab did. A
+    member whose own title confirms its reading keeps it. Any rejection turns the count-based passes off.
     """
 
     readings, torrent = state.readings, state.torrent
@@ -737,10 +821,10 @@ def _pass_refuse_refuted(state: _Placer) -> None:
 
 
 def _pass_refuse_overlaps(state: _Placer) -> None:
-    """Veto every open span holding an episode another name of the torrent reads differently.
+    """Reject each unplaced multi-episode reading that shares an episode with a different reading of another file.
 
-    One of the two is wrong, and a span placed wrong half-imports. Seeded names count, so an import poll
-    refuses the span the grab did.
+    One of the two is wrong, and a wrongly placed span imports half. Seeded files count as the other file,
+    so an import poll rejects the same span the grab did.
     """
 
     spans_by_ep: defaultdict[int, set[tuple[int, ...]]] = defaultdict(set)
@@ -757,12 +841,13 @@ def _pass_refuse_overlaps(state: _Placer) -> None:
 
 
 def _pass_reread_season_runs(state: _Placer) -> None:
-    """Re-read a `1..N` run Sonarr matched into one season of exactly N episodes as that season's own numbering.
+    """Read a `1..N` run Sonarr matched into one N-episode season as that season's episodes 1 to N (`season_fit`).
 
-    TVDB interleaves specials into the absolute numbering, so Sonarr's match of a season-only release drifts
-    onto a special after each one, and a release carrying the special would number N + 1. Only a run without
-    keys of its own is re-read. As many onto the specials when they count N too is a tie: the reads are
-    vetoed and the episodes either numbering gives are `tied`, so only the run's count over a window places it.
+    TVDB interleaves specials into the absolute numbering, so in Sonarr's match of a release without the specials,
+    every episode after a special lands one number off, the first on the special. A release with the special
+    would number N + 1. Only a run without own keys qualifies. In a tie (as many members matched onto an
+    N-episode specials season), the readings are rejected and each file records both candidates in
+    `Reading.tied`: the release-run pass can still place them, and the episode-title pass only onto one of the two.
     """
 
     if not state.map_known:
@@ -778,16 +863,13 @@ def _pass_reread_season_runs(state: _Placer) -> None:
 
 
 def _pass_release_run(state: _Placer) -> None:
-    """Judge the release's own numbering against Sonarr's reading of its members.
+    """Place one numbered run onto the run window by its own numbers when Sonarr's reading of it does not add up.
 
-    Stands down unless the window is consecutive episodes and one run is left to index it. Candidates are
-    the runs fitting a `_Tier`. A disputed covering run Sonarr did not read whole into one other season is
-    vetoed before any pick. Tie-breaks, in order: a run Sonarr read whole elsewhere stands aside, then the
-    episode titles the members carry name one, then an AniList title does, then the highest tier holds.
-    Several left is none, and the other count legs stand down too. With any parse unknown the members are
-    HELD. A refusal bars the count legs and lets the exact pass proceed. A coherent reading (every member
-    one distinct id inside the window) stands. Otherwise the run indexes the window, and a whole-season
-    run's members past a slice window are the other slice's.
+    Candidates are the unplaced runs that fit a `_Tier`. Tie-breaks, in order: drop runs Sonarr matched whole
+    outside the scope (unless all are), then keep the one run the titles select, the one an AniList title names,
+    or the best tier. With any parse unknown, the pick is `HELD`. It is refused by `_run_refused`,
+    `covering_refused` for a covering pick, a dispute, a title veto (`_TitleEvidence.vetoes`), or an AniList
+    title naming another run.
     """
 
     if not state.map_known:
@@ -797,14 +879,15 @@ def _pass_release_run(state: _Placer) -> None:
         return
     runs = state.runs(state.remaining())
     candidates = state.release_candidates(runs, window)
-    # Reads into another season dispute a covering run's count, pick or not: read whole into one other
-    # season, it is that season's (its members foreign), else its files are nowhere.
+    # A covering run read into another season is disputed, picked or not. Read whole into one other season, it
+    # belongs there (its files end up FOREIGN). Otherwise its readings are rejected.
     disputed = [c.run for c in candidates if c.tier is _Tier.COVERING and state.read_elsewhere(c.run, window.season)]
     for run in disputed:
         if not (state.settled_elsewhere(run) and len(state.seasons_read(run)) == 1):
             state.veto(run)
     open_positions = frozenset(index for index, run in enumerate(runs) if not state.settled_elsewhere(run))
     naming = Naming.of([run.prefix for run in runs], state.scope.names)
+    # Several candidates turn the count-based passes off, even when a tie-break picks one.
     state.count_legs_barred |= len(candidates) > 1
     pick = _sole_candidate(candidates, open_positions, naming)
     if pick is None:
@@ -824,12 +907,13 @@ def _pass_release_run(state: _Placer) -> None:
     if refused:
         state.count_legs_barred = True
         return
-    # A whole-season run over a slice window places the slice's numbers. The rest is the other slice's.
+    # A whole-season run over a partial window places only the window's numbers. Its other members are FOREIGN.
     members = window.slice_of(run) if covers else run.members
     readings = [state.readings[member.name] for member in members]
     coherent = all(
         r.complete and not r.vetoed and len(r.resolved) == 1 and r.resolved[0] in window.id_set for r in readings
     ) and len({r.resolved[0] for r in readings}) == len(readings)
+    # Sonarr already reads each member onto its own window episode: the exact pass places them.
     if coherent:
         return
     if not state.place_zip([member.name for member in members], window.ids, PlacementVerdict.RELEASE_RUN):
@@ -862,13 +946,11 @@ def _sole_candidate(
 
 
 def _pass_exact(state: _Placer) -> None:
-    """Place every open file whose reading resolves cleanly inside the scope onto unused ids.
+    """Place each unplaced file whose complete, unrejected reading lies wholly inside the scope on unused ids.
 
-    Two files resolving to one episode are judged by `Reading.rank`, batch
-    order within a rank: a "17.5 (S00E01)" beats the "- 17" whose match
-    Sonarr shifted onto the same special, while a "- 08" beats a "- Bonus"
-    whose CRC tag parsed as its key. Within that, a "- 09v2" beats its
-    "- 09". The loser is left over (a duplicate).
+    When two files resolve to one episode, `Reading.rank` decides, then the higher `vN`, then batch order.
+    So a "17.5 (S00E01)" beats a "- 17" whose match Sonarr shifted onto the same special, a "- 08" beats a
+    "- Bonus" whose CRC tag parsed as its key, and a "- 09v2" beats its "- 09". The loser stays unplaced.
     """
 
     for name in sorted(state.remaining(), key=lambda n: (state.readings[n].rank, -state.torrent.reads[n].version)):
@@ -881,10 +963,11 @@ def _pass_exact(state: _Placer) -> None:
 
 
 def _pass_episode_title(state: _Placer) -> None:
-    """Place every open file onto the one open episode of the scope its name is titled as, the highest version first.
+    """Place each unplaced file on the open scope episode its name is titled as, highest `vN` first.
 
-    Positive evidence per file, so it runs past the count legs' bar and bars them itself: a file its number
-    placed wrong (a shifted absolute match, a bogus key) says the batch's count is off.
+    A title speaks for one file, so this pass runs even when the count-based passes are off. Each placement
+    turns them off: a file its number failed to place (a shifted absolute match, a bogus key) shows the
+    batch's count is off.
     """
 
     for name in sorted(state.remaining(), key=lambda n: state.torrent.reads[n].version, reverse=True):
@@ -894,10 +977,10 @@ def _pass_episode_title(state: _Placer) -> None:
 
 
 def _pass_counted(state: _Placer) -> None:
-    """The count legs over the open files and the window: absolute zip, else single file, else ordered zip."""
+    """Try the absolute zip, else the single-file pass when one id is open, else the ordered zip."""
 
-    # A file reading wholly outside the scope is another slice's: it neither
-    # takes a leftover id nor blocks the count for the files that could.
+    # A file whose trusted reading lies wholly outside the scope belongs to another slice.
+    # It takes no open id and does not spoil the count for the other files.
     open_names = [name for name in state.remaining() if not state.readings[name].outside]
     open_ids = state.open_ids()
     if not open_names or not open_ids:
@@ -911,7 +994,7 @@ def _pass_counted(state: _Placer) -> None:
 
 
 def _absolute_order(state: _Placer, open_names: Sequence[str], open_ids: Sequence[int]) -> list[str] | None:
-    """The open files by absolute number when each carries one, 1:1 with the window, and no tell refuses, else None."""
+    """The open files in absolute-number order when the absolute zip applies (see the module), else None."""
 
     parsed = state.batch.parsed
     abs_by_file: dict[str, int] = {}
@@ -919,29 +1002,32 @@ def _absolute_order(state: _Placer, open_names: Sequence[str], open_ids: Sequenc
         info = parsed.get(name)
         if info is not None and len(info.absolute_episode_numbers) == 1:
             abs_by_file[name] = info.absolute_episode_numbers[0]
-    # The restart-numbering tell counts every absolute of every parse supplied, seeded files included (a v1
-    # placed on an earlier poll would hide its v2), deduped per parse: two FILES sharing one, not junk repeats.
+    # The shared-absolute check (a sign of restarted numbering) reads every non-extra parse, seeded files included,
+    # so a v2 still collides with the v1 an earlier poll placed. Repeats inside one parse are junk and collapse.
     batch_absolutes = [
         number
         for name in state.torrent.counted
         if (parse := parsed.get(name)) is not None
         for number in dict.fromkeys(parse.absolute_episode_numbers)
     ]
-    # An unknown parse (None, or the offline stand-in blind to absolutes) may hide a duplicate: the tell's
-    # input is incomplete, so the leg fails CLOSED.
+    # An unknown parse (missing, or the offline fallback that cannot see absolutes) may hide a shared
+    # absolute, so the check's input is incomplete and the zip refuses.
     applies = (
         bool(abs_by_file)
         and not state.count_legs_barred
         and state.batch.all_parses_known
-        and len(abs_by_file) == len(open_names)  # every leftover has one absolute
-        and len(abs_by_file) == len(open_ids)  # 1:1 with the leftover ids
-        and len(set(batch_absolutes)) == len(batch_absolutes)  # no shared absolute (restart numbering)
+        and len(abs_by_file) == len(open_names)  # every open file has one absolute
+        and len(abs_by_file) == len(open_ids)  # as many files as open ids
+        and len(set(batch_absolutes)) == len(batch_absolutes)  # no shared absolute (restarted numbering)
     )
     return sorted(abs_by_file, key=abs_by_file.__getitem__) if applies else None
 
 
 def _place_single(state: _Placer, open_names: Sequence[str], ep_id: int) -> None:
-    """One leftover episode: the sole numberless file is it, else among several the one an AniList title names."""
+    """Fill the one open id: with the only open file if it is numberless, else the numberless file a title names.
+
+    The title is an AniList title of the entry, and that match runs only when every parse is known.
+    """
 
     unnumbered = [name for name in open_names if state.reads_no_number(name)]
     if len(open_names) == 1 and unnumbered:
@@ -953,11 +1039,11 @@ def _place_single(state: _Placer, open_names: Sequence[str], ep_id: int) -> None
 
 
 def _natural_order(state: _Placer, open_names: Sequence[str], open_ids: Sequence[int]) -> list[str] | None:
-    """A pristine numberless batch in natural name order (the "Special 1..N" shape), else None."""
+    """The open files in natural name order when the ordered zip applies (the "Special 1..N" shape), else None."""
 
     parsed = state.batch.parsed
     # Pristine: the parse map holds the open files and the extras and nothing else, and nothing but an extra
-    # has a verdict, so nothing was placed, held, or seeded (an unread extra could fill a missing episode's slot).
+    # has a verdict, so nothing was placed, held, or seeded.
     pristine = (
         not state.count_legs_barred
         and len(open_names) == len(open_ids)
@@ -976,11 +1062,12 @@ def _natural_order(state: _Placer, open_names: Sequence[str], open_ids: Sequence
 
 
 def _pass_numbered_run(state: _Placer) -> None:
-    """Index a consecutive window by the one `1..N` run among the files Sonarr could not read at all.
+    """Zip the one `1..N` run among the files Sonarr found no episode for onto a run window of N ids.
 
-    Unlike the ordered zip this survives a mixed batch. Blind means the reading resolved nothing, the name
-    carries no key, and the match spans no episodes: a file Sonarr placed elsewhere in the series is never
-    re-homed by position.
+    Unlike the ordered zip, this works beside files that other passes placed. A file qualifies when its reading
+    resolved nothing, its parse is known, its name carries no `SxxExx` key, and it is not multi-episode, so a
+    file Sonarr matched elsewhere in the series is never moved by position. Skipped without a series map,
+    with any parse unknown, or with the count-based passes off.
     """
 
     if not state.map_known or not state.batch.all_parses_known or state.count_legs_barred:
@@ -1007,19 +1094,19 @@ def _pass_numbered_run(state: _Placer) -> None:
 
 
 def _run_refused(state: _Placer, run: NumberedRun, window: _RunWindow) -> bool:
-    """Whether the batch proves the run does not own the window whole."""
+    """Whether the batch shows the run cannot own the whole window."""
 
     window_set = window.id_set
     for name in run.names:
         info = state.batch.parsed.get(name)
-        # Sonarr matching a member to several episodes is the incoherence the
-        # run overrides, and the listing's count backs the run.
+        # A missing parse, or a name that itself claims several episodes, refuses the run. A multi-episode
+        # Sonarr match does not: the run's own numbering and file count override it.
         if info is None or claims_several_episodes(info):
             return True
         reading = state.readings[name]
         keyed_outside = not reading.borrowed and reading.complete and not any(i in window_set for i in reading.resolved)
-        # A member named for another season of the series overrides only a
-        # specials window: a torrent mislisted on a sequel entry never imports onto it.
+        # A member whose own key lies outside the window refuses the run, so a torrent listed on the wrong
+        # sequel entry never imports onto it. A specials window is exempt.
         if keyed_outside and not window.specials:
             return True
     members_set = {numbered.name for numbered in run.whole}

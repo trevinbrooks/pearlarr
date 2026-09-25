@@ -1,4 +1,4 @@
-"""Pure name reading: the offline SxxExx parse, sort keys, stems and versions, numbered runs, the title tie-break."""
+"""Read file names without Sonarr: the offline SxxExx parse, sort keys, stems, versions, runs, and title matching."""
 
 import re
 import unicodedata
@@ -17,7 +17,7 @@ def parse_se_from_filename(name: str) -> ParsedFileInfo | None:
     """Offline `SxxExx` fallback for when Sonarr's `/parse` is unreachable: one key pulled from the leaf, else None.
 
     Marked `offline` because the regex knows nothing about absolute numbers: a dual-numbered name parsed here
-    would otherwise launder its lost absolute into a "known" parse and blind the positional leg's tell.
+    would otherwise pass as a known parse and hide a shared absolute from the absolute zip's check.
     """
 
     m = _SXXEXX.search(name)
@@ -59,7 +59,7 @@ _EXTRAS_WORD = re.compile(
 
 
 class Stem(NamedTuple):
-    """A name shed of its extension, trailing tags and `vN`s (to a fixpoint), and the highest `vN` shed (1 when none)."""
+    """A name stripped of its extension, trailing tags, and `vN`s (repeatedly), and its highest `vN` (1 if none)."""
 
     text: str
     version: int
@@ -71,7 +71,7 @@ class RunMember:
 
     name: str
     prefix: str
-    """The text before the release number: the grouping key."""
+    """The text before the release number: files sharing it form one run."""
     number: int
     tail_words: tuple[str, ...]
     """The folded words after the release number, its separator stripped (empty when nothing follows)."""
@@ -134,7 +134,7 @@ def _stem_version(name: str) -> Stem:
 
 
 def _member_of(name: str, stem: Stem) -> RunMember | None:
-    """The release's own number in a name, read purely from the text.
+    """A name's run membership: the release's own number, read from the text alone, and what surrounds it.
 
     The stem's separators around the number are dropped, so
     "show_-_07v2_[bd 1080p].mkv" reads as ("show", 7). None when no form fits.
@@ -182,13 +182,13 @@ def is_consecutive(numbers: Sequence[int]) -> bool:
 
 
 class NumberedRun(NamedTuple):
-    """One prefix's numbered members, number order."""
+    """The files sharing one prefix, in release-number order."""
 
     prefix: str
-    """The text before the number every member shares: the grouping key."""
+    """The text before the number that every member shares."""
     members: tuple[RunMember, ...]
     superseded: tuple[RunMember, ...]
-    """The lower versions a member's higher `vN` displaced: duplicates once the run is placed."""
+    """The lower versions a member's higher `vN` replaced: duplicates once the run is placed."""
 
     @property
     def names(self) -> tuple[str, ...]:
@@ -196,7 +196,7 @@ class NumberedRun(NamedTuple):
 
     @property
     def whole(self) -> tuple[RunMember, ...]:
-        """The members and the lower versions they displaced."""
+        """The members plus the lower versions they superseded."""
 
         return (*self.members, *self.superseded)
 
@@ -258,7 +258,7 @@ def runs_from_one(runs: Iterable[NumberedRun], width: int) -> list[NumberedRun]:
     return runs_with_numbers(runs, range(1, width + 1))
 
 
-# A title names a candidate when they share at least half their leftover words.
+# A title names a candidate when they share at least half of their combined words beyond the series title.
 _MIN_TITLE_OVERLAP = 0.5
 # An episode title names a file from this many words past the series title and the labels below.
 _MIN_TITLE_WORDS = 2
@@ -389,7 +389,7 @@ class _Scored(NamedTuple):
 
 @dataclass(frozen=True, slots=True)
 class Naming:
-    """Every candidate scored against the entry's AniList titles, both sides shed of the series title's words.
+    """Every candidate scored against the entry's AniList titles, with the series title's words dropped from both.
 
     Built once over every candidate. The questions take index subsets, and each answer depends only on
     the subset's own scores, so one naming serves every tie-break and refusal over the same candidates.
@@ -446,8 +446,9 @@ class Naming:
 def sole_title_match(candidates: Sequence[str], names: EntryNames) -> int | None:
     """The index of the one candidate an AniList title names, else None.
 
-    The unique best sharing at least `_MIN_TITLE_OVERLAP` of the combined leftover words wins, unless it
-    shares only the opening words of every title it scores best against. Refuses, never promotes a runner-up.
+    The unique best sharing at least `_MIN_TITLE_OVERLAP` of the combined words beyond the series title wins,
+    unless it shares only the opening words of every title it scores best against. A refused winner never
+    lets the runner-up win.
     """
 
     naming = Naming.of(candidates, names)

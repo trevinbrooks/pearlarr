@@ -1,4 +1,4 @@
-"""Grab-time placement: urls placed under the entry's scope, the records `attach_records` writes onto it, the seeds."""
+"""Grab-time placement: each url's files placed under the entry's scope, the planner's records, and the seeds."""
 
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, replace
@@ -23,8 +23,8 @@ class SeedFile(NamedTuple):
     """The listed size, carried onto the records the planner compares by size."""
 
     parse: ParsedFileInfo | None
-    """Sonarr's parse of the name, or None when no fresh parse record exists (an unknown parse holds
-    every count leg closed, exactly as it does at import time)."""
+    """Sonarr's parse of the name, or None when no fresh parse record exists (an unknown parse keeps
+    the count-based passes from placing, exactly as it does at import time)."""
 
 
 class SeedScope(NamedTuple):
@@ -46,8 +46,8 @@ class SeedScope(NamedTuple):
     def can_place(self) -> bool:
         """Whether there is an entry index and a served series map to place against.
 
-        An empty entry index never reads as "no scope" (the unscoped arm places against the live map), and an
-        unread map places nothing: a grab-time verdict is final where an import poll is retried.
+        An empty entry index must not pass as "no scope" (which places against the whole series map), and an
+        unread map places nothing: a grab-time verdict is final, while an import poll is retried.
         """
 
         return bool(self.entry.by_id and self.series.id_by_key)
@@ -60,7 +60,7 @@ class SeedScope(NamedTuple):
 
 @dataclass(frozen=True, slots=True)
 class ResidentScope:
-    """A stored record a listed torrent accretes onto, with the indexes its claims' windows read."""
+    """A listed torrent's stored pending record, which this entry's claim joins, with the indexes its claims need."""
 
     record: PendingImport
     """The store-resident record on the torrent."""
@@ -75,9 +75,9 @@ class ResidentScope:
         return all(series_id in self.indexes for series_id in self.record.series_ids)
 
     def windows(self, al_id: int, own: TargetScope) -> tuple[TargetScope, ...]:
-        """The claims' windows in claim order, `own` in place of the entry's stored claim, else appended last.
+        """One window per stored claim, in claim order, with `own` replacing this entry's claim or appended last.
 
-        A re-flag runs exactly the windows the import poll will run once the claim is replaced.
+        A re-flagged torrent is placed under exactly the windows the import poll will use once the claim is replaced.
         """
 
         stored = windows_of(self.record.claims, self.indexes)
@@ -115,28 +115,29 @@ class UrlPlacement(NamedTuple):
     """The importable video files in SeaDex order (subs / fonts / NCED already dropped)."""
 
     assignment: EpisodeAssignment
-    """This placement's verdicts: the whole batch when the torrent is new, the stored map's leftover
-    when it accretes onto a record, one per distinct normalized leaf."""
+    """This placement's verdicts, one per distinct normalized file name: the whole batch when the torrent
+    is new, else the files the stored record's map does not cover."""
 
     records: tuple[EpisodeRecord, ...]
     """One `(season, episode, size)` per file and episode of the whole map inside the entry, in file order.
-    A file nothing placed leaves none, so a url whose files place nowhere blankets the planner's coverage."""
+    A file nothing placed adds none. A url with no records makes the planner count its release group as
+    covering every episode."""
 
     claimed_ids: frozenset[int]
-    """The entry's episode ids the whole map covers (a stored placement onto another series is none)."""
+    """The entry's episode ids the whole map covers (a stored placement on another series adds none)."""
 
     inputs_known: bool
     """Every parse came from Sonarr this run (`PlacementBatch.all_parses_known`) and every window the
-    placement needed was readable. False means a run may have been held, so the title re-checks next run."""
+    placement needed was readable. False means some files may have been held, so the title is re-checked next run."""
 
     stored: PendingImport | None
     """The record the url was placed against, None when the torrent is new."""
 
 
 def seed_batch(files: Sequence[SeedFile]) -> PlacementBatch:
-    """One url's files as a placement batch keyed by NORMALIZED leaf, as the on-disk leaves are at import time.
+    """One url's files as a placement batch keyed by NORMALIZED file name, as the on-disk names are at import time.
 
-    NFC/NFD-safe: two raw files sharing a leaf share its verdict (the first parse read) and keep their own sizes.
+    NFC/NFD-safe: two listed files with one normalized name share its verdict (the first parse) and keep their sizes.
     """
 
     to_place = list(dict.fromkeys(normalized_leaf(f.basename) for f in files))
@@ -147,10 +148,11 @@ def seed_batch(files: Sequence[SeedFile]) -> PlacementBatch:
 
 
 def place_release(files: Sequence[SeedFile], scope: SeedScope, resident: ResidentScope | None) -> UrlPlacement:
-    """Place one url's files ONCE, by the `place_leftover` the import wait runs. Pure.
+    """Place one url's files ONCE, with the same `place_leftover` the import wait runs. Pure.
 
-    A stored record's leftover is placed under every claim's window, and only when each window's series
-    was read: a grab-time verdict under an unread map would be final where the import poll retries.
+    For a torrent with a stored record, the files its map does not cover are placed under every claim's window,
+    and only when each window's series was read: a grab-time verdict under an unread map would be final where
+    the import poll retries.
     """
 
     batch = seed_batch(files)
@@ -166,12 +168,12 @@ def place_release(files: Sequence[SeedFile], scope: SeedScope, resident: Residen
     claimed: set[int] = set()
     for f in files:
         for ep_id in mapped.get(normalized_leaf(f.basename), []):
-            # A resident id on another series is not this entry's, and one inside it counts for its coverage.
+            # A stored id on another series is not this entry's. One inside the entry counts toward its coverage.
             episode = scope.entry.by_id.get(ep_id)
             if episode is None:
                 continue
             claimed.add(ep_id)
-            # An episode Sonarr sent unnumbered keys into no coverage, so it records nothing (a blanket).
+            # An episode Sonarr sent without numbers fits no coverage key, so it adds no record.
             if episode.season_number is None or episode.episode_number is None:
                 continue
             records.append(EpisodeRecord(season=episode.season_number, episode=episode.episode_number, size=f.size))
@@ -202,7 +204,7 @@ class EntryPlacements(NamedTuple):
         files_by_url: Mapping[str, Sequence[SeedFile]],
         residents: ResidentScopes,
     ) -> "EntryPlacements":
-        """Place each url's gathered files under one scope, a url with a stored record against it."""
+        """Place each url's files under the entry's scope, and against its stored record when there is one."""
 
         return cls(scope, {url: place_release(files, scope, residents.get(url)) for url, files in files_by_url.items()})
 
@@ -225,7 +227,7 @@ class EntryPlacements(NamedTuple):
 
 
 class ClaimWindow(NamedTuple):
-    """What one claim reads of a torrent: its window, names, preowned ids and slice (all empty when unscoped)."""
+    """What one claim records about a torrent: episode ids, titles, preowned ids, and slice (empty when unscoped)."""
 
     ordered_episode_ids: tuple[int, ...] = ()
     names: EntryNames = EntryNames()
@@ -326,10 +328,10 @@ class PendingSeed:
     """One entry's contribution to a torrent's record. Only `record_at` builds the record, with the pipeline's stamp."""
 
     facts: TorrentFacts
-    """The torrent's identity fields (a new record's; an accreted record keeps its own)."""
+    """The torrent's identity fields for a new record. A stored record keeps its own."""
 
     placements: FileEpisodeMap
-    """This placement's fresh map: the whole batch when the torrent is new, the stored map's leftover otherwise."""
+    """This placement's fresh map: the whole batch when the torrent is new, else the files the stored map lacks."""
 
     excluded: tuple[str, ...]
     """The names this placement proved never the record's to import."""
@@ -338,16 +340,16 @@ class PendingSeed:
     """This entry's fresh claim, its `claimed_at` blank until `record_at` stamps it."""
 
     stored: PendingImport | None
-    """The record the torrent accretes onto, None when it is new."""
+    """The stored record this seed joins, None when the torrent is new."""
 
     @property
     def accreted(self) -> bool:
-        """Whether the seed folds into a store-resident record."""
+        """Whether the seed joins a stored record."""
 
         return self.stored is not None
 
     def record_at(self, stamp: str, *, fresh: bool) -> PendingImport:
-        """The record to persist, stamped: born at `stamp`, or accreted, every clock restarted when `fresh`."""
+        """The record to persist: new at `stamp`, or the stored one updated, with every clock reset when `fresh`."""
 
         claim = replace(self.claim, claimed_at=stamp)
         if self.stored is None:

@@ -1,4 +1,4 @@
-"""Pure placement vocabulary: the episode index, verdicts, one file's placement, the assignment, batch, and scope."""
+"""Types the placement modules share: the episode index, verdicts, one file's placement, the batch, and the scope."""
 
 from collections.abc import Iterable, Mapping, Sequence
 from dataclasses import dataclass, field, replace
@@ -14,7 +14,7 @@ from .seadex_types import EpisodeKey, ParsedFileInfo, SonarrEpisode, index_episo
 class EpisodeIndex:
     """The import family's one episode index, built once per episode fetch.
 
-    Both facets detach and wrap read-only at construction. `episode_index` is
+    Both mappings are copied and made read-only at construction. `episode_index` is
     the one builder. Episodes with a falsy id (0) are dropped from EVERY facet
     before keying: a 0 id can never be POSTed to Sonarr, and a real-id twin
     behind one must still win its `(season, episode)` key. The planner's
@@ -24,7 +24,7 @@ class EpisodeIndex:
 
     by_id: Mapping[int, SonarrEpisode]
     """Episode id -> episode, in the fetch's (season) order. `list(by_id)` is
-    the resolved set the add flow persists onto each seed."""
+    the scope id list the grab stores on each entry's claim."""
 
     id_by_key: Mapping[EpisodeKey, int]
     """`(season, episode)` -> episode id (missing numbers collapse to
@@ -52,27 +52,29 @@ class PlacementVerdict(StrEnum):
     EXACT = "exact"
     """Its own `(season, episode)`, or Sonarr's matched pair, resolved inside the scope."""
     RELEASE_RUN = "release run"
-    """A `1..N` run's own numbering indexed the window over Sonarr's incoherent reading."""
+    """A numbered run's own numbers placed it onto the run window, overriding Sonarr's inconsistent reading."""
     ABSOLUTE = "absolute"
-    """The clean absolute zip."""
+    """Paired with an open id in absolute-number order (the absolute zip)."""
     SINGLE = "single file"
-    """One numberless leftover onto one leftover episode."""
+    """The only open file, with no episode number, onto the only open id."""
     ORDERED = "ordered"
-    """The pristine numberless batch, zipped in natural name order."""
+    """A batch of numberless files no earlier pass touched, paired with the open ids in natural name order."""
     NUMBERED_RUN = "numbered run"
-    """A `1..N` run among the files Sonarr could not read at all."""
+    """A `1..N` run among the files Sonarr found no episode for, paired with the run window."""
     TITLED = "titled"
-    """The one numberless leftover an entry's AniList title names, onto one leftover episode."""
+    """The numberless file an entry's AniList title names, onto the only open id."""
     EPISODE_TITLE = "episode title"
-    """Onto the one episode its name is titled as, whatever its number said."""
+    """Onto the one episode whose title its name carries, whatever its number said."""
     FOREIGN = "other slice"
-    """Resolves cleanly, entirely outside this record's set: never this record's to import."""
+    """Reads wholly outside the scope, or is titled as an episode outside it and confirmed by its reading or by no
+    open id being left: never this record's to import."""
     DUPLICATE = "duplicate"
-    """Resolves inside the set onto an episode another file already holds."""
+    """Reads inside the scope onto episodes other files provably hold, or is titled as an episode a version of the
+    same file holds."""
     EXTRA = "extra"
     """An opening, an ending, a preview, a menu, a commercial, a trailer, a teaser, or a promo: never an episode."""
     HELD = "held"
-    """A release-run member whose batch has an unknown parse: no other pass may place it (re-asked)."""
+    """A file of the picked release run while a parse is unknown: no other pass may place it, and it is re-checked."""
     SKIPPED = "skipped"
     """Nothing placed it and nothing proved it foreign."""
 
@@ -147,10 +149,10 @@ class EpisodeAssignment(NamedTuple):
 
 
 class PlacementBatch(NamedTuple):
-    """A torrent's leftover on-disk files to place, with the WHOLE batch's parses.
+    """A torrent's files still to place, with the parses of the WHOLE torrent.
 
-    `parsed` may cover MORE files than `to_place`: seeded and gone names are read as evidence (readings,
-    titles, the absolute tell) but never placed.
+    `parsed` may cover MORE files than `to_place`: seeded and gone files count as evidence (readings,
+    titles, the shared-absolute check) but are never placed.
     """
 
     to_place: Sequence[str]
@@ -176,8 +178,8 @@ class PlacementBatch(NamedTuple):
     def all_parses_known(self) -> bool:
         """Every parse came from Sonarr this run: no transport miss (None) and no offline `SxxExx` stand-in.
 
-        Seeded and gone names ride the batch parsed by name, so a miss on any of them counts, as
-        does a name to place the parses never covered.
+        Seeded and gone files are parsed by name too, so a miss on any of them counts, as
+        does a file to place that has no parse entry.
         """
 
         return all((info := self.parsed.get(name)) is not None and not info.offline for name in self.torrent_names)
@@ -187,10 +189,10 @@ class PlacementBatch(NamedTuple):
 class TargetScope:
     """The episode set a placement batch may assign into.
 
-    `resolved` is the FULL resolved set and `used` the ids seeds already own,
-    kept separate so a fully seeded record stays scope-enforced while an EMPTY
-    `resolved` means no scope at all (`unscoped`): the exact leg then places
-    name-parsed pairs against the live series map instead of sticking forever.
+    `resolved` is the FULL id list and `used` the ids already held, by seeded files or an earlier window.
+    They stay separate so a fully seeded record still enforces its scope, while an
+    EMPTY `resolved` means no scope at all (`unscoped`): the exact pass then places
+    a name's own keys against the whole series map instead of placing nothing forever.
     """
 
     resolved: Sequence[int]
@@ -204,11 +206,11 @@ class TargetScope:
     run evidence reads."""
 
     used: frozenset[int] = frozenset()
-    """Ids a seed already owns, never handed to a leftover file."""
+    """Ids already held, by seeded files or by an earlier window's placements. Never placed again."""
 
     names: EntryNames = field(default_factory=EntryNames)
-    """The series and AniList titles: the ground episode titles and extras are read against, and the tie-break
-    when several runs or numberless files could take the window."""
+    """The series and AniList titles. Episode titles and extras words are read against them, and they break
+    ties when several runs or numberless files could fill the open ids."""
 
     real_ids: frozenset[int] = field(init=False, repr=False, compare=False)
     """The resolved ids that can be placed. A stray zero keeps the scope real but is never one."""
