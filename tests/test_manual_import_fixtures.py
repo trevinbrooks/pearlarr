@@ -357,15 +357,29 @@ class TestAssignAbsolute:
         parsed: dict[str, ParsedFileInfo | None] = {
             "a.mkv": parsed_info(absolutes=(1,)),
             "b.mkv": parsed_info(absolutes=(2,)),
-            "menu.mkv": parsed_info(),  # a 200 /parse with null parsedEpisodeInfo
+            "c.mkv": parsed_info(),  # a 200 /parse with null parsedEpisodeInfo
+        }
+
+        result = assign_episode_ids(
+            PlacementBatch(["a.mkv", "b.mkv", "c.mkv"], parsed), TargetScope([501, 502], series_index({}))
+        )
+
+        assert result.assigned == {}
+        assert sorted(result.skipped) == ["a.mkv", "b.mkv", "c.mkv"]
+
+    def test_a_menu_file_neither_takes_a_slot_nor_refuses_the_zip(self) -> None:
+        # A menu is never an episode: set aside by name before the count legs run.
+        parsed: dict[str, ParsedFileInfo | None] = {
+            "a.mkv": parsed_info(absolutes=(1,)),
+            "b.mkv": parsed_info(absolutes=(2,)),
+            "menu.mkv": parsed_info(),
         }
 
         result = assign_episode_ids(
             PlacementBatch(["a.mkv", "b.mkv", "menu.mkv"], parsed), TargetScope([501, 502], series_index({}))
         )
 
-        assert result.assigned == {}
-        assert sorted(result.skipped) == ["a.mkv", "b.mkv", "menu.mkv"]
+        assert result.assigned == {"a.mkv": [501], "b.mkv": [502]}
 
     def test_absolute_ova_pack_maps_onto_resolved_set(self) -> None:
         # releases.moe/101083: 13 OVA files
@@ -677,10 +691,10 @@ class TestAssignExactPrecedence:
         assert _verdicts(result)["ep - 17.mkv"] == PlacementVerdict.DUPLICATE
 
     def test_a_borrowed_pair_beats_an_own_key_sonarr_never_matched(self) -> None:
-        # An "- ED" whose CRC tag parsed as E8 carries a key Sonarr could not
+        # A "- Bonus" whose CRC tag parsed as E8 carries a key Sonarr could not
         # match to the series. The "- 08" it collides with is the episode.
         parsed: dict[str, ParsedFileInfo | None] = {
-            "ep - ED [E8F03223].mkv": parsed_info(season=1, episodes=(8,)),
+            "ep - Bonus [E8F03223].mkv": parsed_info(season=1, episodes=(8,)),
             "ep - 08.mkv": parsed_info(season=0, absolutes=(8,), matched=((1, 8),)),
         }
         ep_id_map = {EpisodeKey(1, 8): 508}
@@ -688,7 +702,7 @@ class TestAssignExactPrecedence:
         result = assign_episode_ids(PlacementBatch(list(parsed), parsed), TargetScope([508], series_index(ep_id_map)))
 
         assert result.assigned == {"ep - 08.mkv": [508]}
-        assert _verdicts(result)["ep - ED [E8F03223].mkv"] == PlacementVerdict.DUPLICATE
+        assert _verdicts(result)["ep - Bonus [E8F03223].mkv"] == PlacementVerdict.DUPLICATE
 
     def test_batch_order_breaks_a_tie_within_a_rank(self) -> None:
         # Two corroborated own keys for one episode: the first stays, the second is a duplicate.
@@ -1478,18 +1492,18 @@ class TestAssignNumberlessZip:
         # leftovers: the numberless extras must not fill episode slots.
         parsed = {
             "e01.mkv": parsed_info(season=1, episodes=(1,)),
-            "op.mkv": parsed_info(),
-            "ed.mkv": parsed_info(),
+            "interview.mkv": parsed_info(),
+            "making of.mkv": parsed_info(),
         }
         ep_id_map = {EpisodeKey(1, 1): 501}
 
         result = assign_episode_ids(
-            PlacementBatch(["e01.mkv", "op.mkv", "ed.mkv"], parsed),
+            PlacementBatch(["e01.mkv", "interview.mkv", "making of.mkv"], parsed),
             TargetScope([501, 502, 503], series_index(ep_id_map)),
         )
 
         assert result.assigned == {"e01.mkv": [501]}
-        assert sorted(result.skipped) == ["ed.mkv", "op.mkv"]
+        assert sorted(result.skipped) == ["interview.mkv", "making of.mkv"]
 
     def test_seeded_sibling_parse_kills_the_zip(self) -> None:
         # A parse for a file NOT in the batch (seeded or moved out) proves a
@@ -1588,17 +1602,25 @@ class TestAssignTitledSingle:
         return assign_episode_ids(PlacementBatch(list(parsed), parsed), scope)
 
     def test_the_leftover_a_title_names_is_the_episode(self) -> None:
-        movie, trailer = "show - the movie [grp].mkv", "show - trailer [grp].mkv"
+        movie, live = "show - the movie [grp].mkv", "show - live [grp].mkv"
 
-        result = self._place({movie: parsed_info(), trailer: parsed_info()}, "Show: The Movie")
+        result = self._place({movie: parsed_info(), live: parsed_info()}, "Show: The Movie")
 
         assert result.assigned == {movie: [901]}
-        assert _verdicts(result) == {movie: PlacementVerdict.TITLED, trailer: PlacementVerdict.SKIPPED}
+        assert _verdicts(result) == {movie: PlacementVerdict.TITLED, live: PlacementVerdict.SKIPPED}
+
+    def test_an_extras_file_set_aside_leaves_the_other_the_single_file(self) -> None:
+        # A trailer is never an episode, so the movie is the batch's one file for the one episode.
+        movie, trailer = "show - the movie [grp].mkv", "show - trailer [grp].mkv"
+
+        result = self._place({movie: parsed_info(), trailer: parsed_info()})
+
+        assert _verdicts(result) == {movie: PlacementVerdict.SINGLE, trailer: PlacementVerdict.EXTRA}
 
     def test_case_and_accents_fold_away(self) -> None:
-        deja, trailer = "Show - Deja Vu [grp].mkv", "show - trailer [grp].mkv"
+        deja, live = "Show - Deja Vu [grp].mkv", "show - live [grp].mkv"
 
-        result = self._place({deja: parsed_info(), trailer: parsed_info()}, "Show: D\u00e9j\u00e0 Vu")
+        result = self._place({deja: parsed_info(), live: parsed_info()}, "Show: D\u00e9j\u00e0 Vu")
 
         assert result.assigned == {deja: [901]}
 
@@ -1616,7 +1638,7 @@ class TestAssignTitledSingle:
     def test_a_descriptor_in_a_tag_never_names_the_series_title(self) -> None:
         # Tags drop away, leaving the bare series name, which the title's own leftover words never match.
         parsed: dict[str, ParsedFileInfo | None] = {
-            "[grp] show (director's cut) (show II PV) [bd].mkv": parsed_info(),
+            "[grp] show (director's cut) (show II date to date) [bd].mkv": parsed_info(),
             "[grp] show - live [bd].mkv": parsed_info(),
         }
 
@@ -1633,15 +1655,18 @@ class TestAssignTitledSingle:
         assert result.assigned == {sunny: [901]}
 
     def test_an_extras_file_is_never_the_titled_one(self) -> None:
-        # The opening's words match the title best, but a preview or an opening is never the episode.
+        # The opening's words match the title best, but an opening is never the episode.
+        opening = "show II - picture in picture OP [grp].mkv"
         parsed: dict[str, ParsedFileInfo | None] = {
-            "show II - picture in picture OP [grp].mkv": parsed_info(),
+            opening: parsed_info(),
             "show II - live [grp].mkv": parsed_info(),
+            "show II - making of [grp].mkv": parsed_info(),
         }
 
         result = self._place(parsed, "Show II: Picture in Picture")
 
         assert result.assigned == {}
+        assert _verdicts(result)[opening] == PlacementVerdict.EXTRA
 
     def test_a_file_sharing_only_a_title_s_opening_words_is_not_named(self) -> None:
         # The romaji title opens with the franchise name, which the English series title never sheds.
@@ -1689,7 +1714,7 @@ class TestAssignTitledSingle:
         assert result.assigned == {}
 
     def test_without_titles_several_leftovers_stay(self) -> None:
-        result = self._place({"show - the movie [grp].mkv": parsed_info(), "show - trailer [grp].mkv": parsed_info()})
+        result = self._place({"show - the movie [grp].mkv": parsed_info(), "show - live [grp].mkv": parsed_info()})
 
         assert result.assigned == {}
 
@@ -1826,11 +1851,14 @@ class TestReleaseNumberForms:
 
         assert sorted(self._place(names, blocked=True).skipped) == sorted(names)
 
-    def test_a_numbered_extras_run_is_no_run(self) -> None:
-        # Previews count previews: a "PV 01..03" beside three unreadable specials must not take their window.
+    def test_a_numbered_extras_run_is_set_aside(self) -> None:
+        # Previews count previews: a "PV 01..03" beside three unreadable specials never takes their window.
         names = self._numbered("show - PV 0{n} [tag].mkv")
 
-        assert sorted(self._place(names, blocked=True).skipped) == sorted(names)
+        result = self._place(names, blocked=True)
+
+        assert result.assigned == {}
+        assert {_verdicts(result)[name] for name in names} == {PlacementVerdict.EXTRA}
 
     @pytest.mark.parametrize(
         "template",
@@ -2423,7 +2451,7 @@ class TestAssignRunTitleEvidence:
         501: "Beach Day",
         502: "Hot Springs",
         503: "Festival Night",
-        601: "Pilot",
+        601: "Pilot Flight",
         602: "The Return",
     }
 
@@ -2434,6 +2462,12 @@ class TestAssignRunTitleEvidence:
         EpisodeKey(1, 1): 601,
         EpisodeKey(1, 2): 602,
     }
+    # Two 1..3 runs fitting a franchise pack's specials window: one titled as the window's episodes, one as
+    # another season's.
+    _INSIDE: ClassVar[list[str]] = numbered_names(
+        "show a", 3, ("Beach Day 1080p", "Hot Springs 1080p", "Festival Night 1080p")
+    )
+    _OUTSIDE: ClassVar[list[str]] = numbered_names("show b", 3, ("Pilot Flight 1080p", "The Return 1080p", "Bonus"))
 
     @classmethod
     def _place(
@@ -2446,26 +2480,49 @@ class TestAssignRunTitleEvidence:
         return assign_episode_ids(batch, TargetScope(cls._WINDOW, series))
 
     def test_the_run_whose_members_name_the_window_is_picked(self) -> None:
-        # Two 1..3 runs fit a franchise pack's specials window: the one titled as the window's episodes places.
-        inside = numbered_names("show a", 3, ("Beach Day 1080p", "Hot Springs 1080p", "Festival Night 1080p"))
-        outside = numbered_names("show b", 3, ("Pilot 1080p", "The Return 1080p", "Bonus"))
+        result = self._place(self._INSIDE, self._OUTSIDE)
 
-        result = self._place(inside, outside)
+        assert result.assigned == {name: [501 + i] for i, name in enumerate(self._INSIDE)}
 
-        assert result.assigned == {name: [501 + i] for i, name in enumerate(inside)}
-        assert {_verdicts(result)[name] for name in outside} == {PlacementVerdict.SKIPPED}
+    def test_the_other_runs_titled_members_are_foreign_once_the_window_is_full(self) -> None:
+        result = self._place(self._INSIDE, self._OUTSIDE)
 
-    def test_one_titled_member_picks_nothing(self) -> None:
+        assert [_verdicts(result)[name] for name in self._OUTSIDE] == [
+            PlacementVerdict.FOREIGN,
+            PlacementVerdict.FOREIGN,
+            PlacementVerdict.SKIPPED,
+        ]
+
+    def test_one_titled_member_places_only_itself(self) -> None:
+        # One title is too little to pick a run among two, and enough to place its own file.
         inside = numbered_names("show a", 3, ("Beach Day", "", ""))
-        other = numbered_names("show b", 3)
 
-        assert self._place(inside, other).assigned == {}
+        result = self._place(inside, numbered_names("show b", 3))
+
+        assert result.assigned == {inside[0]: [501]}
+        assert _verdicts(result)[inside[0]] == PlacementVerdict.EPISODE_TITLE
 
     @pytest.mark.parametrize("blocked", [True, False], ids=["mixed batch", "pristine batch"])
     def test_members_naming_only_other_episodes_refuse_the_run(self, blocked: bool) -> None:
         # The one fitting run is titled as another season's episodes: nothing places, and neither the
         # numbered run nor the ordered zip of a pristine batch fills the window behind the refusal.
-        result = self._place(numbered_names("show", 3, ("Pilot", "The Return", "Bonus")), blocked=blocked)
+        result = self._place(numbered_names("show", 3, ("Pilot Flight", "The Return", "Bonus")), blocked=blocked)
+
+        assert result.assigned == {}
+
+    def test_a_short_subtitle_is_no_run_evidence(self) -> None:
+        # The word past the colon leads two members' tails, and says too little to count against the run.
+        run = numbered_names("show", 3, ("Home Alone", "Home Again", ""))
+
+        result = self._place(run, retitled={601: "Chapter 4: Home"})
+
+        assert result.assigned == {name: [501 + i] for i, name in enumerate(run)}
+
+    def test_one_word_titles_still_refuse_the_run(self) -> None:
+        # A title too short to place a file is still evidence against a run titled as another season's.
+        run = numbered_names("show", 3, ("Pilot", "Return", "Bonus"))
+
+        result = self._place(run, retitled={601: "Pilot", 602: "Return"}, blocked=True)
 
         assert result.assigned == {}
 

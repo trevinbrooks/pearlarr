@@ -38,6 +38,7 @@ def parse_se_from_filename(name: str) -> ParsedFileInfo | None:
 _BRACKETED = re.compile(r"[\[(][^\[\]()]*[\])]")
 _TRAILING_TAG = re.compile(rf"\s*{_BRACKETED.pattern}$")
 _NON_WORD = re.compile(r"[^0-9a-z]+")
+_GROUP_TAG = re.compile(r"^\[([0-9a-z]+(?:[-_.][0-9a-z]+)*)\]", re.IGNORECASE)
 _TRAILING_VERSION = re.compile(r"v(\d+)$")
 # The episode of an "S02E01" key (a keyed run is judged by its keys), else
 # the LAST " - NN - " (an "Episode" word may lead the number, a "vN" and
@@ -45,18 +46,21 @@ _TRAILING_VERSION = re.compile(r"v(\d+)$")
 # episode of a packed "S0101" (a season the series lacks, read as the
 # release's count), else a trailing 1-3 digit integer not glued to more
 # digits (a year or CRC tail is no release number).
-_KEYED_NUMBER = re.compile(r"^(.*?[Ss]\d{1,2}[Ee])(\d{1,3})(?!\d)")
+_KEYED_NUMBER = re.compile(r"^(.*?[Ss]\d{1,2}[Ee])(\d{1,3})(?:v(?P<version>\d+))?(?!\d)")
 _MIDDLE_NUMBER = re.compile(
     r"^(.*) - (?:[Ee]pisode |[Ee]p\.? )?(\d{1,3})(?:v(?P<version>\d+))?(?: \[\d{1,3}\])?(?= - )"
 )
 _PACKED_NUMBER = re.compile(r"^(.*?(?:^|[\s._-])[Ss]\d{2})(\d{2})(?=[\s._-]|$)")
 _TRAILING_NUMBER = re.compile(r"^(.*?)(?<!\d)(\d{1,3})$")
 _NUMBER_FORMS = (_KEYED_NUMBER, _MIDDLE_NUMBER, _PACKED_NUMBER, _TRAILING_NUMBER)
-# The text after a release number is the episode's title when this separates them.
-_TITLE_SEPARATOR = " - "
-# A numbered extras run (menus, previews, commercials) never indexes an
-# episode window, however well its width fits.
-_EXTRAS_RUN_TOKENS = frozenset({"pv", "cm", "menu", "trailer", "preview", "teaser", "promo", "op", "ed"})
+# The separators between a release number and the title after it.
+_LEADING_SEPARATOR = re.compile(r"^[\s._-]+")
+# A word that marks an extra, numbered or not ("PV 01", "NCOP2", "ED1a", "menus"):
+# an opening or ending (creditless too), a preview, a menu, a commercial, a trailer, a teaser, a promo.
+_EXTRAS_WORD = re.compile(
+    r"^(?:nc(?:op|ed)|menu|preview|trailer|teaser|promo)(?:s|\d{1,2}[a-z]?)?$"
+    r"|^(?:op|ed|pv|cm)(?:\d{1,2}[a-z]?)?$|^creditless$|^commercials?$"
+)
 
 
 class Stem(NamedTuple):
@@ -75,16 +79,27 @@ class RunMember:
     """The text before the release number: the grouping key."""
     number: int
     tail_words: tuple[str, ...]
-    """The folded words of the title after the number when a title separator follows it, else empty."""
+    """The folded words after the release number, its separator stripped (empty when nothing follows)."""
     version: int
     """The `vN` after the number or trailing (1 when none): of two names sharing a number, the higher is the member."""
 
 
+class FileIdentity(NamedTuple):
+    """What a name is a version of: a member's prefix and release number, else its stem alone."""
+
+    text: str
+    """A member's prefix before its release number, else the whole stem."""
+    number: int | None
+    """A member's release number, else None."""
+
+
 class NameRead(NamedTuple):
-    """One name read once: its stem, and its run membership when it carries a release number."""
+    """One name read once: its stem, its run membership when it carries a release number, and its title words."""
 
     stem: Stem
     member: RunMember | None
+    title_words: tuple[str, ...]
+    """The words an episode title is read from: a member's tail, else the whole stem."""
 
     @property
     def version(self) -> int:
@@ -92,12 +107,20 @@ class NameRead(NamedTuple):
 
         return self.member.version if self.member is not None else self.stem.version
 
+    @property
+    def file(self) -> FileIdentity:
+        """The file the name is a version of."""
+
+        member = self.member
+        return FileIdentity(member.prefix, member.number) if member is not None else FileIdentity(self.stem.text, None)
+
 
 def read_name(name: str) -> NameRead:
-    """Read a name once: its stem and version, and its run membership."""
+    """Read a name once: its stem and version, its run membership, and its title words."""
 
     stem = _stem_version(name)
-    return NameRead(stem, _member_of(name, stem))
+    member = _member_of(name, stem)
+    return NameRead(stem, member, member.tail_words if member is not None else folded_words(stem.text))
 
 
 def _stem_version(name: str) -> Stem:
@@ -118,20 +141,15 @@ def _stem_version(name: str) -> Stem:
 def _member_of(name: str, stem: Stem) -> RunMember | None:
     """The release's own number in a name, read purely from the text.
 
-    The stem's separator before the number is dropped, so
-    "show_-_07v2_[bd 1080p].mkv" reads as ("show", 7). None when no form fits
-    or the number counts extras ("show - PV 01").
+    The stem's separators around the number are dropped, so
+    "show_-_07v2_[bd 1080p].mkv" reads as ("show", 7). None when no form fits.
     """
 
     match = next((found for form in _NUMBER_FORMS if (found := form.match(stem.text)) is not None), None)
     if match is None:
         return None
     prefix = match.group(1).rstrip(" .-")
-    words = [word for word in _NON_WORD.split(prefix.casefold()) if word]
-    if words and words[-1] in _EXTRAS_RUN_TOKENS:
-        return None
-    rest = stem.text[match.end() :]
-    tail = rest.removeprefix(_TITLE_SEPARATOR) if rest.startswith(_TITLE_SEPARATOR) else ""
+    tail = _LEADING_SEPARATOR.sub("", stem.text[match.end() :])
     version = stem.version
     if (middle := match.groupdict().get("version")) is not None:
         version = max(version, int(middle))
@@ -144,10 +162,22 @@ def natural_key(name: str) -> str:
     return re.sub(r"\d+", lambda match: match.group().zfill(12), name)
 
 
-def is_extras_name(name: str) -> bool:
-    """Whether the name carries an extras token anywhere: a preview or an opening is never the episode."""
+def _raw_words(text: str) -> list[str]:
+    """The lowercase words of a name as written: bracket groups kept, nothing folded."""
 
-    return not _EXTRAS_RUN_TOKENS.isdisjoint(_NON_WORD.split(name.casefold()))
+    return [word for word in _NON_WORD.split(text.casefold()) if word]
+
+
+def is_extras_name(name: str, shielded: frozenset[str]) -> bool:
+    """Whether the name carries an extras word outside `shielded` (the entry's and its episode title's words).
+
+    A leading one-token bracket ("[CMS]", "[Ed-Subs]") is the release group's tag, unless the token is an
+    extras word itself ("[NCOP]").
+    """
+
+    tag = _GROUP_TAG.match(name)
+    body = name if tag is None or _EXTRAS_WORD.match(tag.group(1).casefold()) is not None else name[tag.end() :]
+    return any(word not in shielded and _EXTRAS_WORD.match(word) is not None for word in _raw_words(body))
 
 
 def is_consecutive(numbers: Sequence[int]) -> bool:
@@ -237,6 +267,15 @@ def runs_from_one(runs: Iterable[NumberedRun], width: int) -> list[NumberedRun]:
 
 # A title names a candidate when they share at least half their leftover words.
 _MIN_TITLE_OVERLAP = 0.5
+# An episode title names a file from this many words past the series title and the labels below.
+_MIN_TITLE_WORDS = 2
+# The words that label a title without being one: "Part 2" and "OVA 1" name nothing.
+_TITLE_LABELS = frozenset({"part", "episode", "ep", "special", "sp", "ova", "oad", "movie", "recap", "vol", "chapter"})
+# A title read from a name's tail ends where a quality word begins: one holding a letter and
+# a digit ("1080p", "x265") or one of these. A bare number does not end it ("... Man 1").
+_QUALITY_WORDS = frozenset({"bluray", "bdrip", "webrip", "remux", "repack", "proper"})
+# A count label beside its number says nothing the number does not.
+_COUNT_LABELS = frozenset({"season", "episode", "ep"})
 
 # The words that count a season, folded to its plain number so "2nd Season",
 # "Season 2", "S2" and "II" agree. Lone "I", "V" and "X" stay words.
@@ -270,13 +309,12 @@ def _count_word(word: str) -> str | None:
 def folded_words(text: str) -> tuple[str, ...]:
     """The words of a title or name in order: case and accents folded, bracketed groups dropped, seasons counted plainly."""
 
-    folded = unicodedata.normalize("NFKD", _BRACKETED.sub(" ", text)).encode("ascii", "ignore").decode().casefold()
-    words = [_count_word(word) or word for word in _NON_WORD.split(folded) if word]
-    # "Season" beside its number says nothing the number does not.
+    folded = unicodedata.normalize("NFKD", _BRACKETED.sub(" ", text)).encode("ascii", "ignore").decode()
+    words = [_count_word(word) or word for word in _raw_words(folded)]
     return tuple(
         word
         for index, word in enumerate(words)
-        if word != "season"
+        if word not in _COUNT_LABELS
         or not any(words[near].isdigit() for near in (index - 1, index + 1) if 0 <= near < len(words))
     )
 
@@ -285,6 +323,41 @@ def _word_set(text: str) -> frozenset[str]:
     """The distinct words of a title or name."""
 
     return frozenset(folded_words(text))
+
+
+class TitleGround(NamedTuple):
+    """The title words an entry's names are read against."""
+
+    series_words: frozenset[str]
+    """The series title's words: an episode title names a file past them."""
+    entry_words: frozenset[str]
+    """The series and AniList titles' words: an extras word among them is a title word, not an extra."""
+
+    @classmethod
+    def of(cls, names: EntryNames) -> Self:
+        """The series title's words, and those plus every AniList title's."""
+
+        series = _word_set(names.series)
+        return cls(series, series.union(*(_word_set(title) for title in names.anilist)))
+
+
+def is_distinct_title(words: Iterable[str]) -> bool:
+    """Whether the words say enough to name an episode: `_MIN_TITLE_WORDS` that are neither a number nor a label."""
+
+    return sum(not word.isdigit() and word not in _TITLE_LABELS for word in words) >= _MIN_TITLE_WORDS
+
+
+def _is_quality_word(word: str) -> bool:
+    """Whether the word is quality junk: one of `_QUALITY_WORDS`, or letters and digits mixed ("1080p", "x265")."""
+
+    return word in _QUALITY_WORDS or (any(c.isalpha() for c in word) and any(c.isdigit() for c in word))
+
+
+def opens_title(words: tuple[str, ...], title: tuple[str, ...]) -> bool:
+    """Whether the title's words open the words, and the words end there or go on with quality junk."""
+
+    count = len(title)
+    return words[:count] == title and (len(words) == count or _is_quality_word(words[count]))
 
 
 class _Leftover(NamedTuple):

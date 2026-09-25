@@ -41,9 +41,10 @@ class WindowedAssignment(NamedTuple):
         return {v.placement.name: list(v.placement.ids) for v in self.verdicts if v.window_index == index}
 
 
-# A file no window placed or held merges to its most specific claim: excluded only when every window
-# excluded it, and a refused duplicate over a file placed nowhere.
+# A file no window placed or held merges to its most specific claim: excluded only when every window excluded
+# it, a refused duplicate over a file placed nowhere, and an extra (one only against its window's titles) under all.
 _CLAIM_RANK: Mapping[PlacementVerdict, int] = {
+    PlacementVerdict.EXTRA: 0,
     PlacementVerdict.FOREIGN: 1,
     PlacementVerdict.SKIPPED: 2,
     PlacementVerdict.DUPLICATE: 3,

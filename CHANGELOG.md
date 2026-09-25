@@ -7,6 +7,19 @@ Pearlarr is a fork of [bbtufty/seadexarr](https://github.com/bbtufty/seadexarr).
 
 ## [Unreleased]
 
+### Changed
+
+- A file named with an episode's title imports onto that episode, whatever its number or Sonarr's match said.
+- A release whose file titles contradict its numbering is no longer imported by count: its titled files import and the rest are listed as skipped, or as another entry's when the title is another season's episode.
+- Openings, endings, previews, menus, commercials, trailers, teasers, and promos are set aside as extras: never imported, and no longer counted among a release's episodes. A file Sonarr matched by its own numbering is never one.
+- A sequel's files numbered as its own first season import where Sonarr matched them.
+- The first run after upgrading re-checks every cached title once and says so.
+
+### Fixed
+
+- A release Sonarr matched one episode off (a special TVDB counts in the absolute numbering) now imports each titled file onto its own episode instead of the neighboring one.
+- Files skipped at grab time no longer import by count once the rest of the release is in.
+
 ## [1.5.0] - 2026-09-24
 
 ### Changed

@@ -76,6 +76,10 @@ class ShapeTag(StrEnum):
     """Members come in two versions: the later one is the member, the earlier its duplicate."""
     SEASON_COUNTED = "season counted"
     """The entry's title and the release count the season differently ("3" against "III")."""
+    EXTRA = "extra"
+    """An opening, an ending, a preview, a menu, a commercial, a trailer, a teaser, or a promo: set aside first."""
+    NAMED_OUTSIDE = "named outside"
+    """A file titled as another season's episode, another slice's once the window is full."""
 
 
 class Provenance(StrEnum):

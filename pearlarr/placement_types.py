@@ -62,11 +62,15 @@ class PlacementVerdict(StrEnum):
     NUMBERED_RUN = "numbered run"
     """A `1..N` run among the files Sonarr could not read at all."""
     TITLED = "titled"
-    """The one numberless leftover an entry title names, onto one leftover episode."""
+    """The one numberless leftover an entry's AniList title names, onto one leftover episode."""
+    EPISODE_TITLE = "episode title"
+    """Onto the one episode its name is titled as, whatever its number said."""
     FOREIGN = "other slice"
     """Resolves cleanly, entirely outside this record's set: never this record's to import."""
     DUPLICATE = "duplicate"
     """Resolves inside the set onto an episode another file already holds."""
+    EXTRA = "extra"
+    """An opening, an ending, a preview, a menu, a commercial, a trailer, a teaser, or a promo: never an episode."""
     HELD = "held"
     """A release-run member whose batch has an unknown parse: no other pass may place it (re-asked)."""
     SKIPPED = "skipped"
@@ -94,9 +98,10 @@ _PLACED = frozenset(
         PlacementVerdict.ORDERED,
         PlacementVerdict.NUMBERED_RUN,
         PlacementVerdict.TITLED,
+        PlacementVerdict.EPISODE_TITLE,
     }
 )
-_EXCLUDED = frozenset({PlacementVerdict.FOREIGN, PlacementVerdict.DUPLICATE})
+_EXCLUDED = frozenset({PlacementVerdict.FOREIGN, PlacementVerdict.DUPLICATE, PlacementVerdict.EXTRA})
 
 
 class Placement(NamedTuple):
@@ -130,7 +135,7 @@ class EpisodeAssignment(NamedTuple):
 
     @property
     def excluded(self) -> tuple[Placement, ...]:
-        """The files this record knowably never imports (another slice's, a refused duplicate), with their verdicts."""
+        """The files this record knowably never imports (another slice's, a duplicate, an extra), and how."""
 
         return tuple(p for p in self.placements if p.verdict.excluded)
 
@@ -162,6 +167,12 @@ class PlacementBatch(NamedTuple):
         return tuple(dict.fromkeys(self.to_place))
 
     @property
+    def torrent_names(self) -> tuple[str, ...]:
+        """Every distinct name of the torrent: the names to place, then those only `parsed` covers (seeded, gone)."""
+
+        return tuple(dict.fromkeys([*self.to_place, *self.parsed]))
+
+    @property
     def all_parses_known(self) -> bool:
         """Every parse came from Sonarr this run: no transport miss (None) and no offline `SxxExx` stand-in.
 
@@ -169,8 +180,7 @@ class PlacementBatch(NamedTuple):
         does a name to place the parses never covered.
         """
 
-        names = dict.fromkeys([*self.to_place, *self.parsed])
-        return all((info := self.parsed.get(name)) is not None and not info.offline for name in names)
+        return all((info := self.parsed.get(name)) is not None and not info.offline for name in self.torrent_names)
 
 
 @dataclass(frozen=True, slots=True)
@@ -217,3 +227,8 @@ class TargetScope:
         """No resolved set to scope against at all (never just fully seeded)."""
 
         return not self.resolved
+
+    def admits(self, ep_id: int) -> bool:
+        """Whether a file may be placed on the episode: one of the resolved set, or any when unscoped."""
+
+        return self.unscoped or ep_id in self.real_ids

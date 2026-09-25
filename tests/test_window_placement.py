@@ -185,6 +185,15 @@ class TestSeveralWindows:
 
         assert by_name(result.merged)["d.mkv"] == ((), verdict)
 
+    def test_an_extra_under_one_window_yields_to_another_windows_claim(self) -> None:
+        # The opening's word is a title word of the second entry, which reads the file as possibly its own.
+        parsed = {"show op.mkv": parsed_info()}
+        windows = (_window([501]), _window([601], "Show Op", used=[601]))
+
+        result = assign_across_windows(_batch(parsed), windows)
+
+        assert by_name(result.merged)["show op.mkv"] == ((), PlacementVerdict.SKIPPED)
+
     def test_an_unscoped_window_seeds_every_earlier_placement(self) -> None:
         # The unscoped window resolves any key against the whole series: an id another window placed
         # is used there too, so the keyed file cannot take it a second time.
