@@ -45,7 +45,7 @@ NON_VIDEO_EXTENSIONS = {
     ".idx",
     ".sup",
     ".vtt",
-    # Matroska SUBTITLES (often SxxExx-named, so they'd parse) - .mkv is kept.
+    # Matroska SUBTITLES (often SxxExx-named, so they'd parse). The video .mkv is kept.
     ".mks",
     ".nfo",
     ".txt",
@@ -104,11 +104,9 @@ NON_VIDEO_EXTENSIONS = {
 
 
 def is_video_candidate(basename: str) -> bool:
-    """Whether a filename is an importable video (not a sub/font/NCED/sample).
+    """Whether a filename is an importable video (not a sub, font, or creditless OP/ED).
 
-    The single source of the skip rules, so the seed, the import-time repair,
-    and the parse all agree on which files are even candidates for an episode.
-    Module-level (owned by none) since several collaborators share it.
+    The one home of the skip rules, so the seed, the import and the parse agree on what can be an episode.
     """
 
     if any(skip in basename for skip in TORRENT_FILENAMES_TO_SKIP):
@@ -117,11 +115,7 @@ def is_video_candidate(basename: str) -> bool:
 
 
 def video_file_entries(files: Sequence[str]) -> Iterator[tuple[int, str]]:
-    """Yield `(index, basename)` for each importable video file in `files`.
-
-    The one basename+skip iteration the warm pass and the gather share. The
-    index survives so an index-aligned size list stays usable.
-    """
+    """Yield `(index, basename)` for each importable video file in `files`, the index keying a size list."""
 
     for idx, name in enumerate(files):
         base = path_leaf(name)
@@ -130,21 +124,13 @@ def video_file_entries(files: Sequence[str]) -> Iterator[tuple[int, str]]:
 
 
 class SonarrParseCache:
-    """Owns the grab-time `/parse` + the durable, freshness-checked parse cache.
+    """Owns the grab-time `/parse` and the durable, freshness-checked parse cache, built once per run.
 
-    Constructed once per run in `SonarrSync` from the shared `RunDeps` and the
-    strategy's Sonarr client. The cache is read-through `cache_store`, so a
-    write staged by `gather` is visible to a later same-run read.
+    Reads go through `records`, so a write staged by `parsed_files` is visible to a later same-run read.
     """
 
     def __init__(self, deps: RunDeps, sonarr: AbstractSonarrClient) -> None:
-        """Bind the shared collaborators the parse cache reads.
-
-        Args:
-            deps: The shared collaborators (config/cache/logger unpacked
-                off it).
-            sonarr: The strategy's Sonarr client (its `/parse`).
-        """
+        """Bind the shared collaborators and the strategy's Sonarr client, whose `/parse` the cache fills from."""
 
         self.sonarr = sonarr
         self._config = deps.config
@@ -171,35 +157,17 @@ class SonarrParseCache:
             self.logger.debug(f"Sonarr could not parse episode for {f}")
         return info
 
-    def _warm_parse_cache(
-        self,
-        seadex_dict: SeadexDict,
-        *,
-        window: ParseWindow,
-    ) -> None:
-        """Concurrently parse the not-yet-cached files for one release.
+    def _warm_parse_cache(self, names: Sequence[str], *, window: ParseWindow) -> None:
+        """Concurrently parse the distinct `names` not yet cached, so the gather reads them as hits.
 
-        Cold-cache pre-pass: collapses the per-file `/parse` latency the same
-        way `prefetch_episodes` does for episodes, deduping repeats across
-        overlapping release groups. The mapping loop then reads from the warm
-        cache. Only `sonarr.parse` runs in the pool. Cache reads/writes stay on
-        the main thread. No-op when sequential (`sleep_time > 0`) or warm.
+        Only `sonarr.parse` runs in the pool (cache reads and writes stay on this thread). No-op when sequential.
         """
 
         workers = fetch_workers(self._config)
         if workers <= 1:
             return
 
-        pending: list[str] = []
-        seen: set[str] = set()
-        for srg_item in seadex_dict.values():
-            for url_item in srg_item.urls.values():
-                for _, f in video_file_entries(url_item.files):
-                    if f in seen:
-                        continue
-                    seen.add(f)
-                    if not self.records.is_fresh(f, window=window):
-                        pending.append(f)
+        pending = [f for f in names if not self.records.is_fresh(f, window=window)]
 
         if len(pending) <= 1:
             return
@@ -244,18 +212,14 @@ class SonarrParseCache:
         if evicted:
             self.logger.debug(f"Evicted {count_noun(evicted, 'stale Sonarr parse record')}")
 
-        # Concurrently warm the cache for any not-yet-cached files so the loop
-        # below reads them as hits (no-op when sequential or already warm).
-        self._warm_parse_cache(seadex_dict, window=window)
-
-        gathered: dict[str, tuple[SeedFile, ...]] = {}
-        for release_group_item in seadex_dict.values():
-            for url, url_item in release_group_item.urls.items():
-                sizes = url_item.size
-                # Video files only (NCED/NCOP, subs, fonts, audio dropped), the
-                # same rule the warm pass uses. The index keys the size list.
-                gathered[url] = tuple(
-                    SeedFile(f, sizes[sd_file_idx], self._parse_for(f, window=window))
-                    for sd_file_idx, f in video_file_entries(url_item.files)
-                )
-        return gathered
+        # Each url's video files (creditless OP/ED, subs, fonts, audio dropped) with their listed sizes.
+        listed = [
+            (url, [(f, url_item.size[idx]) for idx, f in video_file_entries(url_item.files)])
+            for release_group_item in seadex_dict.values()
+            for url, url_item in release_group_item.urls.items()
+        ]
+        self._warm_parse_cache(list(dict.fromkeys(f for _, files in listed for f, _ in files)), window=window)
+        return {
+            url: tuple(SeedFile(f, size, self._parse_for(f, window=window)) for f, size in files)
+            for url, files in listed
+        }
