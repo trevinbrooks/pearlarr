@@ -11,7 +11,6 @@ from pearlarr.grab_placement import (
     SeedFile,
     SeedRelease,
     SeedScope,
-    TorrentFacts,
     UrlPlacement,
     build_entry_claim,
     build_pending_seeds,
@@ -23,7 +22,16 @@ from pearlarr.manual_import import EntryNames, PendingImport, normalize_basename
 from pearlarr.placement_types import EpisodeAssignment, PlacementVerdict, episode_index
 from pearlarr.seadex_types import EpisodeRecord, FlaggedUrl, MatchedEpisode, ParsedFileInfo, SeadexDict, SonarrEpisode
 
-from .builders import entry_claim, entry_facts, pending_import, rg_group, sonarr_ep, two_claim_record, url_item
+from .builders import (
+    entry_claim,
+    entry_facts,
+    pending_import,
+    rg_group,
+    sonarr_ep,
+    torrent_facts,
+    two_claim_record,
+    url_item,
+)
 
 _SEASON = [sonarr_ep(1, n, ep_id=100 + n, episode_file_id=0) for n in range(1, 5)]
 _SPECIAL = sonarr_ep(0, 1, ep_id=501, episode_file_id=0)
@@ -37,7 +45,9 @@ _RUN = [f"Show - {n:02d}.mkv" for n in range(1, 5)]
 _PACK = [f"Show - S01E{n:02d}.mkv" for n in range(1, 5)]
 _INDEXES = {7: episode_index(_SERIES)}
 _STAMP = "2026-06-24 00:00:00"
-_FACTS = TorrentFacts("h1", "RG", True, ("Show - 01.mkv",), (10,))
+_FACTS = torrent_facts(
+    is_dual_audio=True, seadex_files=("Show - 01.mkv",), release_sizes=(10,), sizes_by_name={"show - 01.mkv": 10}
+)
 
 
 def _scope(entry: list[SonarrEpisode], names: EntryNames | None = None, *, al_id: int = 1) -> SeedScope:
@@ -94,6 +104,13 @@ class TestPlaceRelease:
         assert placement.inputs_known
         assert placement.stored is None
 
+    def test_each_placed_episode_intends_its_files_listed_size(self) -> None:
+        files = [SeedFile(name, 10 * n, _bare(n)) for n, name in enumerate(_RUN, start=1)]
+
+        placement = place_release(files, _scope(_SEASON), None)
+
+        assert placement.intended_sizes == {100 + n: 10 * n for n in range(1, 5)}
+
     def test_a_whole_series_pack_records_only_the_entrys_slice(self) -> None:
         names = [f"Show - S01E{n:02d}.mkv" for n in range(1, 5)] + ["Show - S02E01.mkv", "Show - S02E02.mkv"]
         parses = [_matched(1, n) for n in range(1, 5)] + [_matched(2, 1), _matched(2, 2)]
@@ -141,6 +158,14 @@ class TestPlaceRelease:
         assert placement.records == (EpisodeRecord(1, 1, 10), EpisodeRecord(1, 1, 20))
         assert placement.assignment.assigned == {"show - s01e01.mkv": [101]}
 
+    def test_an_episode_two_listed_sizes_share_intends_no_size(self) -> None:
+        # Either could be the file intended on E01.
+        files = [SeedFile("Show - S01E01.mkv", 10, _matched(1, 1)), SeedFile("Show - S01E01.mkv", 20, _matched(1, 1))]
+
+        placement = place_release(files, _scope(_SEASON), None)
+
+        assert placement.intended_sizes == {}
+
     def test_a_scope_that_cannot_place_records_nothing(self) -> None:
         # An unread series map: the seed waits for import time, and the planner judges by group and size.
         files = [SeedFile(name, 1, _bare(n)) for n, name in enumerate(_RUN, start=1)]
@@ -156,7 +181,7 @@ class TestPlaceRelease:
     def test_no_files_is_an_empty_placement_with_its_inputs_known(self) -> None:
         placement = place_release([], _scope(_SEASON), None)
 
-        assert placement == UrlPlacement((), EpisodeAssignment(()), (), frozenset(), True, None)
+        assert placement == UrlPlacement((), EpisodeAssignment(()), (), frozenset(), True, None, {})
 
 
 class TestPlaceOntoResident:
@@ -330,7 +355,10 @@ class TestEntryPlacements:
         # The subs-only url seeds nothing; the held one is seeded with an empty map for import time.
         assert set(seeds) == {"h1", "h2"}
         assert dict(seeds["h1"].placements) == {normalize_basename(name): [100 + n] for n, name in enumerate(_RUN, 1)}
-        assert seeds["h1"].facts == TorrentFacts("h1", "RG", False, tuple(_RUN), (10, 20, 30, 40))
+        listed = {normalize_basename(name): 10 * n for n, name in enumerate(_RUN, 1)}
+        assert seeds["h1"].facts == torrent_facts(
+            seadex_files=tuple(_RUN), release_sizes=(10, 20, 30, 40), sizes_by_name=listed
+        )
         assert seeds["h1"].claim.names == names
         assert not seeds["h1"].accreted
         assert dict(seeds["h2"].placements) == {}
@@ -373,6 +401,7 @@ class TestPendingSeedRecordAt:
             claims=(replace(claim, claimed_at=_STAMP),),
             excluded_files=("show - 02.mkv",),
             release_sizes=(10,),
+            sizes_by_name={"show - 01.mkv": 10},
         )
         # A birth is stamped whether or not the add was fresh.
         assert seed.record_at(_STAMP, fresh=False) == record
@@ -413,6 +442,18 @@ class TestPendingSeedRecordAt:
         assert record.claims == (*stored.claims, replace(claim, claimed_at=_STAMP))
         assert [c.claimed_at for c in record.claims] == ["2026-01-01 00:00:00", _STAMP]
 
+    def test_accreted_onto_a_record_without_sizes_by_name_learns_them(self) -> None:
+        stored = pending_import(infohash="h1")
+        seed = PendingSeed(facts=_FACTS, placements={}, excluded=(), claim=entry_claim(claimed_at=""), stored=stored)
+
+        assert seed.record_at(_STAMP, fresh=False).sizes_by_name == {"show - 01.mkv": 10}
+
+    def test_accreted_keeps_the_stored_sizes_by_name(self) -> None:
+        stored = pending_import(infohash="h1", sizes_by_name={"show - 01.mkv": 99})
+        seed = PendingSeed(facts=_FACTS, placements={}, excluded=(), claim=entry_claim(claimed_at=""), stored=stored)
+
+        assert seed.record_at(_STAMP, fresh=False).sizes_by_name == {"show - 01.mkv": 99}
+
     def test_fresh_restamps_every_clock(self) -> None:
         stored = pending_import(infohash="h1", added_at="2026-01-01 00:00:00")
         seed = PendingSeed(
@@ -438,9 +479,7 @@ class TestBuildUnscopedSeed:
         seed = build_unscoped_seed(self._flagged(), facts, None)
 
         assert not seed.accreted
-        assert seed.facts == TorrentFacts(
-            infohash="h1", release_group="RG", is_dual_audio=True, seadex_files=(), release_sizes=()
-        )
+        assert seed.facts == torrent_facts(is_dual_audio=True)
         assert seed.placements == {} and seed.excluded == ()
         assert seed.claim == entry_claim(
             al_id=9, series_id=0, title="Movie", url="https://releases.moe/9", claimed_at="", guards=facts.guards
@@ -489,3 +528,13 @@ class TestEntryClaim:
         claim = build_entry_claim(self._release(files, placed), _scope(entry), entry_facts())
 
         assert claim.preowned_episode_ids == (101,)
+
+    def test_a_misplaced_own_file_is_not_preowned(self) -> None:
+        # E01 holds the own group's E02 file (a listed size, not E01's): the grab still owes E01 its file.
+        entry = [sonarr_ep(1, 1, ep_id=101, size=20, release_group="RG"), *_SEASON[1:]]
+        files = _pack(3)
+        placed = place_release(files, _scope(entry), None)
+
+        claim = build_entry_claim(self._release(files, placed), _scope(entry), entry_facts())
+
+        assert claim.preowned_episode_ids == ()

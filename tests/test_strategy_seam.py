@@ -24,7 +24,7 @@ from pearlarr import sonarr_import as sonarr_import_module
 from pearlarr.arr_http import DeleteOutcome
 from pearlarr.cache import CacheRecord
 from pearlarr.config import Arr
-from pearlarr.episode_state import EpisodeFileStatus, EpisodeSnapshot, GroupVotes, RecordSnapshot, trusted_groups
+from pearlarr.episode_state import EpisodeFileStatus, GroupVotes, RecordSnapshot, trusted_groups
 from pearlarr.grab_pipeline import NO_SEEDS, GrabRequest
 from pearlarr.grab_placement import SeedFile
 from pearlarr.import_quality import resolve_language_objects
@@ -82,6 +82,7 @@ from .builders import (
     FakeClock,
     claim_al_ids,
     entry_claim,
+    episode_snapshot,
     make_bare_instance,
     make_config,
     make_entry_record,
@@ -1208,6 +1209,47 @@ class TestImportCompletedQueueState:
         assert probe.files_present is True
         assert sonarr.candidate_calls == []
 
+    @staticmethod
+    def _misfiled() -> tuple[PendingImport, SonarrSync, FakeSonarrClient]:
+        """Our E02 file (200) filed on E01 as well: both hold our group at a listed size, E01 not its own."""
+
+        pending = pending_import(
+            infohash="abc123",
+            release_group="SubGroup",
+            file_episode_map={"Show - 01 [1080p].mkv": [101], "Show - 02 [1080p].mkv": [102]},
+            seadex_files=["Show - 01 [1080p].mkv", "Show - 02 [1080p].mkv"],
+            release_sizes=[100, 200],
+            sizes_by_name={"show - 01 [1080p].mkv": 100, "show - 02 [1080p].mkv": 200},
+        )
+        strat, sonarr = _make_sonarr_for_import(
+            candidates=[manual_candidate("/d/Show - 01 [1080p].mkv"), manual_candidate("/d/Show - 02 [1080p].mkv")],
+            episodes=[
+                sonarr_ep(1, 1, ep_id=101, episode_file_id=12, release_group="SubGroup", size=200),
+                sonarr_ep(1, 2, ep_id=102, episode_file_id=12, release_group="SubGroup", size=200),
+            ],
+        )
+        return pending, strat, sonarr
+
+    def test_a_misfiled_target_is_imported_over_then_its_sibling_then_verifies(self) -> None:
+        pending, strat, sonarr = self._misfiled()
+        first = strat.import_completed(pending, "/d", AttemptKind.POLL)
+        # Importing file 01 onto 101 deletes the shared episode file, so 102 is left with none.
+        sonarr.episodes_return = [
+            sonarr_ep(1, 1, ep_id=101, episode_file_id=11, release_group="SubGroup", size=100),
+            sonarr_ep(1, 2, ep_id=102, episode_file_id=0),
+        ]
+        second = strat.import_completed(pending, "/d", AttemptKind.POLL)
+        sonarr.episodes_return = [
+            sonarr_ep(1, 1, ep_id=101, episode_file_id=11, release_group="SubGroup", size=100),
+            sonarr_ep(1, 2, ep_id=102, episode_file_id=13, release_group="SubGroup", size=200),
+        ]
+
+        third = strat.import_completed(pending, "/d", AttemptKind.POLL)
+
+        posted = [[(f.path, f.episodeIds) for f in files] for files, _mode in sonarr.execute_calls]
+        assert posted == [[("/d/Show - 01 [1080p].mkv", [101])], [("/d/Show - 02 [1080p].mkv", [102])]]
+        assert (first.command_issued, second.command_issued, third.files_present) == (True, True, True)
+
     def test_target_holding_an_untagged_file_we_identified_is_protected(self) -> None:
         # The grab-time size identification rides the record through to the
         # import: an untagged file the planner named reads RECOMMENDED, so the
@@ -1980,11 +2022,11 @@ class TestRecordSnapshot:
         return RecordSnapshot(
             _two_series_record(),
             {
-                7: EpisodeSnapshot(
+                7: episode_snapshot(
                     episodes=episode_index([sonarr_ep(1, 1, ep_id=101, release_group="SubGroup")]),
                     trusted=trusted_groups(GuardFacts(), GroupVotes(OwnGroup("SubGroup", ()))),
                 ),
-                8: EpisodeSnapshot(episodes=episode_index([sonarr_ep(1, 1, ep_id=201, episode_file_id=0)]), trusted={}),
+                8: episode_snapshot(episodes=episode_index([sonarr_ep(1, 1, ep_id=201, episode_file_id=0)])),
             },
             {},
         )
@@ -1998,7 +2040,7 @@ class TestRecordSnapshot:
     def test_statuses_classify_under_each_series_in_the_asked_order(self) -> None:
         # The grouping by series never reorders the answer, a repeat collapses, and an id no index
         # holds reads ABSENT rather than raising.
-        statuses = self._snapshot().statuses([201, 999, 101, 201])
+        statuses = self._snapshot().statuses([201, 999, 101, 201], {})
 
         assert list(statuses.by_id) == [201, 999, 101]
         assert statuses.by_id == {
@@ -2242,6 +2284,27 @@ class TestMultiSeriesImport:
 
         assert progress == ImportProgress(1, 2, determinate=True)
         assert sonarr.episodes_calls == [7]
+
+    def test_a_misplaced_episode_still_counts_as_owed(self) -> None:
+        # Our 200 file sits on both episodes: 102 holds its own file, 101 still lacks the 100 one.
+        pending = pending_import(
+            file_episode_map={_SHOW_FILE: [101], _OTHER_FILE: [102]},
+            release_sizes=[100, 200],
+            sizes_by_name={normalize_basename(_SHOW_FILE): 100, normalize_basename(_OTHER_FILE): 200},
+        )
+        sonarr = _PerSeriesSonarr(
+            {
+                7: [
+                    sonarr_ep(1, 1, ep_id=101, size=200, release_group="SubGroup"),
+                    sonarr_ep(1, 2, ep_id=102, size=200, release_group="SubGroup"),
+                ]
+            },
+            candidates=[],
+        )
+
+        progress = self._strat(sonarr).import_progress(pending)
+
+        assert progress == ImportProgress(1, 2, determinate=True)
 
     def test_an_id_outside_every_window_is_judged_under_the_lone_unscoped_claim(self) -> None:
         # One series: A's window holds 101 and its picks carry G, B is unscoped and its plan judged G stale.

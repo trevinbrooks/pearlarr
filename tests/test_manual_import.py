@@ -35,6 +35,7 @@ from pearlarr.manual_import import (
     normalized_leaf,
     path_leaf,
     sanitize_torrent_telemetry,
+    sizes_by_episode,
     translate_download_path,
 )
 from pearlarr.seadex_types import RemotePathMapping
@@ -179,6 +180,53 @@ class TestPendingImportPlacements:
             excluded_files=excluded_files,
         )
         assert pending.seed_coverage().accounted == (not pending.unplaced_names())
+
+
+class TestIntendedSizes:
+    """`intended_sizes` and `sizes_by_episode`: each mapped episode id to its file's listed size."""
+
+    @staticmethod
+    def _pending() -> PendingImport:
+        return pending_import(
+            file_episode_map={"A.mkv": [1], "b.mkv": [2, 3], "c.mkv": [0, 4]},
+            sizes_by_name={"a.mkv": 100, "b.mkv": 200},
+        )
+
+    def test_sizes_each_episode_a_listed_file_is_mapped_to(self) -> None:
+        pending = self._pending()
+
+        assert pending.intended_sizes(pending.file_episode_map) == {1: 100, 2: 200, 3: 200}
+
+    def test_reads_the_map_it_is_given(self) -> None:
+        assert self._pending().intended_sizes({"B.mkv": [1]}) == {1: 200}
+
+    def test_an_id_two_files_size_differently_is_dropped(self) -> None:
+        assert sizes_by_episode({"a.mkv": [1, 2], "b.mkv": [2]}, {"a.mkv": 100, "b.mkv": 200}) == {1: 100}
+
+
+class TestListedSizes:
+    """`sizes_by_name`: detached and read-only, learned once by `with_sizes_by_name`."""
+
+    def test_detached_from_the_callers_map(self) -> None:
+        sizes = {"a.mkv": 100}
+        pending = pending_import(sizes_by_name=sizes)
+        sizes["a.mkv"] = 1
+
+        assert pending.sizes_by_name == {"a.mkv": 100}
+
+    def test_read_only(self) -> None:
+        sizes = cast("dict[str, int]", pending_import(sizes_by_name={"a.mkv": 100}).sizes_by_name)
+
+        with pytest.raises(TypeError):
+            sizes["a.mkv"] = 1
+
+    def test_with_sizes_by_name_fills_an_empty_record(self) -> None:
+        assert pending_import().with_sizes_by_name({"a.mkv": 100}).sizes_by_name == {"a.mkv": 100}
+
+    def test_with_sizes_by_name_keeps_a_recorded_map(self) -> None:
+        pending = pending_import(sizes_by_name={"a.mkv": 100})
+
+        assert pending.with_sizes_by_name({"a.mkv": 1}) is pending
 
 
 class TestPendingImportClaims:
@@ -389,6 +437,7 @@ class TestPendingImportRoundTrip:
             excluded_files=("other-slice.mkv",),
             release_sizes=(700, 710),
             awaiting_cleanup=True,
+            sizes_by_name={"ep1.mkv": 700, "ep2.mkv": 710},
         )
 
         raw = pending.to_json()
@@ -445,6 +494,12 @@ class TestPendingImportRoundTrip:
         assert rebuilt.release_sizes == ()
         # A record predating the cleanup flag owes nothing.
         assert rebuilt.awaiting_cleanup is False
+
+    def test_a_record_predating_sizes_by_name_intends_no_size(self) -> None:
+        # Its own group is then judged by listed size alone.
+        rebuilt = PendingImport.from_json({"infohash": "h", "file_episode_map": {"a.mkv": [1]}}, guards={})
+
+        assert rebuilt.intended_sizes(rebuilt.file_episode_map) == {}
 
     def test_a_claim_tolerates_missing_keys(self) -> None:
         # A claim missing every optional key rehydrates unscoped, unnamed, unstamped, guard-empty,

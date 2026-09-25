@@ -417,7 +417,7 @@ class ImportExecutor:
             self.logger.debug(f"{pending.display_label}: never this record's to import: {verdicts}")
         unplaced = assignment.unplaced
         if unplaced and assignment.settled and not authoritative:
-            if context.snapshot.statuses(pending.resolved_ids()).all_done():
+            if context.snapshot.statuses(pending.resolved_ids(), pending.file_episode_map).all_done():
                 # A hand import placed what no poll could: every intended episode holds a recommended file.
                 self.logger.debug(f"{content_path}: already imported (recommended files present)")
                 probe = ImportProbe.imported()
@@ -453,7 +453,7 @@ class ImportExecutor:
         # Done-check against the intended set: the seeded map plus what the mapper placed this poll, or what
         # Sonarr's history says it imported when no scan saw the files. `all_done()` needs a non-empty `by_id`.
         target_ids = sorted({i for ids in authoritative_map.values() for i in ids})
-        statuses = context.snapshot.statuses(target_ids)
+        statuses = context.snapshot.statuses(target_ids, authoritative_map)
         if statuses.all_done():
             self.logger.debug(f"{content_path}: already imported (recommended files present)")
             return ImportProbe.imported()
@@ -785,7 +785,7 @@ class ImportReconciler:
             for claim in pending.claims
         }
         snapshot = RecordSnapshot(pending, by_series, by_claim)
-        return _SeedStatuses(snapshot, snapshot.statuses(targets))
+        return _SeedStatuses(snapshot, snapshot.statuses(targets, pending.file_episode_map))
 
     @staticmethod
     def _net_counts(seed: _SeedStatuses, targets: list[int]) -> tuple[int, int]:

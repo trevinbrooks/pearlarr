@@ -7,7 +7,18 @@ from typing import NamedTuple
 
 from .coverage import coverage_string, episodes_from_ep_list
 from .episode_state import EpisodeFileStatus, EpisodeSnapshot, GroupVotes
-from .manual_import import EntryClaim, EntryNames, FileEpisodeMap, GuardFacts, OwnGroup, PendingImport, normalized_leaf
+from .manual_import import (
+    NO_SIZES_BY_NAME,
+    EntryClaim,
+    EntryNames,
+    FileEpisodeMap,
+    GuardFacts,
+    OwnGroup,
+    PendingImport,
+    normalized_leaf,
+    sizes_by_episode,
+    unambiguous_sizes,
+)
 from .placement_types import EpisodeAssignment, EpisodeIndex, PlacementBatch, TargetScope
 from .seadex_types import EpisodeRecord, FlaggedUrl, ParsedFileInfo, SeadexDict, SeadexUrlItem, flagged_urls
 from .window_placement import place_leftover, windows_of
@@ -133,6 +144,22 @@ class UrlPlacement(NamedTuple):
     stored: PendingImport | None
     """The record the url was placed against, None when the torrent is new."""
 
+    intended_sizes: Mapping[int, int]
+    """Each mapped episode id to the listed size of the file placed on it.
+    An id two files size differently is left out."""
+
+    @property
+    def sizes_by_name(self) -> dict[str, int]:
+        """Normalized listing name -> its listed size (see `_sizes_by_name`)."""
+
+        return _sizes_by_name(self.files)
+
+
+def _sizes_by_name(files: Sequence[SeedFile]) -> dict[str, int]:
+    """Normalized listing name -> its listed size, a name listed at two sizes left out."""
+
+    return unambiguous_sizes((normalized_leaf(f.basename), f.size) for f in files)
+
 
 def seed_batch(files: Sequence[SeedFile]) -> PlacementBatch:
     """One url's files as a placement batch keyed by NORMALIZED file name, as the on-disk names are at import time.
@@ -185,6 +212,7 @@ def place_release(files: Sequence[SeedFile], scope: SeedScope, resident: Residen
         frozenset(claimed),
         inputs_known,
         None if resident is None else resident.record,
+        sizes_by_episode(mapped, _sizes_by_name(files)),
     )
 
 
@@ -287,6 +315,9 @@ class TorrentFacts(NamedTuple):
     """The listing's video file names, the import's progress denominator."""
     release_sizes: tuple[int, ...]
     """The listing's file sizes, the trust policy's own-group vote."""
+    sizes_by_name: Mapping[str, int]
+    """Normalized listing name -> its listed size, the file each placed episode should hold (a name listed at two
+    sizes is left out)."""
 
 
 class SeedRelease(NamedTuple):
@@ -320,6 +351,7 @@ class SeedRelease(NamedTuple):
             self.url_item.is_dual_audio,
             tuple(f.basename for f in self.placed.files),
             self.own_group.sizes,
+            self.placed.sizes_by_name,
         )
 
 
@@ -363,8 +395,14 @@ class PendingSeed:
                 claims=(claim,),
                 excluded_files=self.excluded,
                 release_sizes=self.facts.release_sizes,
+                sizes_by_name=self.facts.sizes_by_name,
             )
-        record = self.stored.with_placements(self.placements).with_exclusions(self.excluded).with_claim(claim)
+        record = (
+            self.stored.with_placements(self.placements)
+            .with_exclusions(self.excluded)
+            .with_claim(claim)
+            .with_sizes_by_name(self.facts.sizes_by_name)
+        )
         if not fresh:
             return record
         # A fresh add starts every clock: the birth and each claim's.
@@ -385,7 +423,7 @@ def build_entry_claim(release: SeedRelease, scope: SeedScope, entry: EntryFacts)
     grab_snapshot = EpisodeSnapshot.guarded(index, entry.guards, GroupVotes(release.own_group))
     preowned = tuple(
         ep_id
-        for ep_id, status in grab_snapshot.statuses(sorted(claimed)).by_id.items()
+        for ep_id, status in grab_snapshot.statuses(sorted(claimed), release.placed.intended_sizes).by_id.items()
         if status is EpisodeFileStatus.RECOMMENDED
     )
     slice_coverage = coverage_string(episodes_from_ep_list(slice_eps)) or None
@@ -426,6 +464,7 @@ def build_unscoped_seed(flagged: FlaggedUrl, entry: EntryFacts, stored: PendingI
             is_dual_audio=flagged.item.is_dual_audio,
             seadex_files=(),
             release_sizes=(),
+            sizes_by_name=NO_SIZES_BY_NAME,
         ),
         placements={},
         excluded=(),

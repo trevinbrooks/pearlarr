@@ -30,10 +30,12 @@ from pearlarr.cache import (
 )
 from pearlarr.clock import Clock
 from pearlarr.config import AppConfig, Arr
+from pearlarr.episode_state import EpisodeSnapshot, TrustPolicy
 from pearlarr.grab_pipeline import GrabPipeline, GrabRequest
 from pearlarr.grab_placement import EntryFacts, PendingSeed, TorrentFacts
 from pearlarr.import_wait import ImportProbes, ImportWaitManager, PostImportCleanup
 from pearlarr.manual_import import (
+    NO_SIZES_BY_NAME,
     Deferral,
     EntryClaim,
     EntryNames,
@@ -41,6 +43,7 @@ from pearlarr.manual_import import (
     GuardFacts,
     ImportProbe,
     ImportWaitMode,
+    OwnGroup,
     PendingImport,
 )
 from pearlarr.mappings import MappingResolver, MappingSources
@@ -819,6 +822,20 @@ def one_release_dict(*, srg: str, infohash: str, url: str = "https://nyaa.si/vie
     return {srg: rg_group({url: item})}
 
 
+def torrent_facts(
+    *,
+    infohash: str = "h1",
+    release_group: str = "RG",
+    is_dual_audio: bool = False,
+    seadex_files: tuple[str, ...] = (),
+    release_sizes: tuple[int, ...] = (),
+    sizes_by_name: Mapping[str, int] = NO_SIZES_BY_NAME,
+) -> TorrentFacts:
+    """Torrent h1 by group RG, single-audio, with no listed files or sizes unless given."""
+
+    return TorrentFacts(infohash, release_group, is_dual_audio, seadex_files, release_sizes, sizes_by_name)
+
+
 def pending_seed(
     infohash: str,
     *,
@@ -829,9 +846,7 @@ def pending_seed(
     """A seed on `infohash` (group NAN0, no files) claimed by `entry_claim(**claim)`, born unless `stored` is given."""
 
     return PendingSeed(
-        facts=TorrentFacts(
-            infohash=infohash, release_group="NAN0", is_dual_audio=False, seadex_files=(), release_sizes=()
-        ),
+        facts=torrent_facts(infohash=infohash, release_group="NAN0"),
         placements=placements or {},
         excluded=(),
         claim=entry_claim(claimed_at="", **claim),
@@ -1049,6 +1064,30 @@ def arr_releases(ep_list: Iterable[SonarrEpisode]) -> ArrReleases:
 
     return ArrReleases.from_files(
         [f for ep in ep_list if ep.episode_file_id != 0 and (f := ep.episode_file) is not None], keep_untagged=False
+    )
+
+
+_NO_OWN_RELEASE = OwnGroup("", ())
+"""An own release listing no sizes: no file is judged misplaced against it."""
+
+
+def episode_snapshot(
+    *,
+    episodes: EpisodeIndex | None = None,
+    trusted: TrustPolicy | None = None,
+    own: OwnGroup = _NO_OWN_RELEASE,
+    owned_episode_sizes: Mapping[int, int] | None = None,
+) -> EpisodeSnapshot:
+    """An empty series index trusting no group, with no owned sizes unless given.
+
+    The default own release lists no sizes, so no file is ever judged misplaced unless `own` is given.
+    """
+
+    return EpisodeSnapshot(
+        episodes=episode_index([]) if episodes is None else episodes,
+        trusted=trusted or {},
+        own=own,
+        owned_episode_sizes=owned_episode_sizes or {},
     )
 
 

@@ -218,6 +218,8 @@ class TestBuildPendingSeeds:
         )
 
         assert seeds["h1"].facts.release_sizes == (1000, 50)
+        assert seeds["h1"].facts.sizes_by_name == {"show - 01.mkv": 1000}
+        assert _record(seeds["h1"]).sizes_by_name == {"show - 01.mkv": 1000}
 
     def test_seed_marks_targets_already_holding_a_pick(self) -> None:
         # A target already holding another pick's file at grab time was never
