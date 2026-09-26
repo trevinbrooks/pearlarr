@@ -26,6 +26,7 @@ from collections.abc import Set as AbstractSet
 from dataclasses import dataclass
 from datetime import datetime
 from enum import Enum
+from types import MappingProxyType
 from typing import Any, NamedTuple, cast, override
 from xml.etree import ElementTree
 
@@ -44,7 +45,7 @@ from .mapping_store import (
 )
 from .output import hub_warn
 from .paths import resolve_paths
-from .seadex_types import ProgressSink, TvdbMappings
+from .seadex_types import ProgressSink, SpecialAliasing, TvdbMappings
 
 type AnimeIdsRecord = dict[str, Any]
 """One Kometa Anime-IDs record (`{field: value}`).
@@ -108,6 +109,15 @@ class MappingEntry:
     imdb_id: str | None = None
     anidb_id: int | None = None
     source: MappingSource = MappingSource.ANIME_IDS
+    special_aliasing: SpecialAliasing | None = None
+    """Which TMDB specials numbers stand for which TVDB specials, and the TMDB show they count in. Only an AniBridge
+    TVDB lookup sets it, when the entry's specials pair for that show. Otherwise None."""
+
+    def __post_init__(self) -> None:
+        # Detach from the producer's dict, then wrap read-only.
+        if self.special_aliasing is not None:
+            tmdb_id, aliases = self.special_aliasing
+            object.__setattr__(self, "special_aliasing", SpecialAliasing(tmdb_id, MappingProxyType(dict(aliases))))
 
     @property
     def mode(self) -> MappingMode:
@@ -160,6 +170,7 @@ def _entry_from_raw(anilist_id: int, raw: AnimeIdsRecord | AniBridgeEntry) -> Ma
         imdb_id=raw.get("imdb_id"),
         anidb_id=raw.get("anidb_id"),
         source=source,
+        special_aliasing=raw.get("special_aliasing"),
     )
 
 

@@ -11,6 +11,7 @@ Pearlarr is a fork of [bbtufty/seadexarr](https://github.com/bbtufty/seadexarr).
 
 - A title is re-checked on the next run after Sonarr or Radarr imports its Pearlarr grab, so a grab the arr imported only in part no longer stays cached as done.
 - A file the same size as a single-file release SeaDex lists for one episode of the series imports onto that episode, whatever its name says, and the grab judges which episodes a release covers the same way. A warning names the file when its name disagrees. When SeaDex or the episode list of one of the series' entries cannot be read, the series' releases are held for the next run instead of grabbed. The first run after upgrading re-checks every cached title once and says so.
+- A specials pack numbered in TMDB's specials order is now grabbed and imported onto the TVDB specials SeaDex lists it for, using the AniBridge mappings to pair the two numberings, instead of being skipped for a hand import. A pack still needs a hand import when anything casts doubt on that pairing, for example a number with no pair or a file whose title or size points at another special.
 
 ## [1.5.2] - 2026-09-25
 

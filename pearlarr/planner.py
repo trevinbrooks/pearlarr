@@ -16,7 +16,7 @@ from itertools import compress
 from typing import NamedTuple
 
 from .config import Arr
-from .manual_import import GuardFacts, OwnedEpisode, normalize_rg, unambiguous
+from .manual_import import GuardFacts, OwnedEpisode, normalize_rg
 from .output import Severity
 from .seadex_types import (
     ArrReleases,
@@ -30,6 +30,7 @@ from .seadex_types import (
     flagged_urls,
     index_episodes_by_key,
     season_episode_key,
+    unambiguous,
 )
 
 

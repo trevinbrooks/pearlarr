@@ -40,7 +40,7 @@ class SeriesListings:
         return self._reads[series_id]
 
     def _read(self, series_id: int, entries: Mapping[int, MappingEntry]) -> ListingsRead | None:
-        """Read each entry's record and window, then fold them."""
+        """Read each entry's record, window, and special aliases, then fold them."""
 
         listed: list[EntryListing] = []
         for al_id, mapping in entries.items():
@@ -53,7 +53,6 @@ class SeriesListings:
                 ep_list = self._episodes.get_ep_list(series_id, al_id, mapping)
             except ValueError:
                 continue
-            listed.append(
-                EntryListing(record, None if ep_list is None else frozenset(ep.id for ep in ep_list if ep.id))
-            )
+            window = None if ep_list is None else frozenset(ep.id for ep in ep_list if ep.id)
+            listed.append(EntryListing(record, window, mapping.special_aliasing))
         return fold_listings(listed, self._ignore_tags)

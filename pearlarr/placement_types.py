@@ -7,7 +7,7 @@ from types import MappingProxyType
 from typing import NamedTuple, Self
 
 from .manual_import import NO_IDENTIFIED, EntryNames, IdentifiedNames
-from .seadex_types import EpisodeKey, ParsedFileInfo, SonarrEpisode, index_episodes_by_key
+from .seadex_types import NO_ALIASES, EpisodeKey, ParsedFileInfo, SonarrEpisode, SpecialAliases, index_episodes_by_key
 
 
 @dataclass(frozen=True, slots=True)
@@ -76,6 +76,11 @@ class PlacementVerdict(StrEnum):
     has no number."""
     OVERRIDDEN = "listed size over its name"
     """Placed by file size even though the name's number points at a different episode. The caller logs a warning."""
+    ALTERNATE = "alternate numbering"
+    """A file of a misnumbered specials pack, placed on the special its number's alias points at."""
+    ALIASED_ELSEWHERE = "aliased special outside the window"
+    """Not placed here: a file of a misnumbered specials pack whose alias points at a special outside this window.
+    A claim, not a refusal, so the window that holds that special may still place it."""
     FOREIGN = "other slice"
     """Reads wholly outside the scope, or is titled as an episode outside it and confirmed by its reading or by no
     open id being left: never this record's to import."""
@@ -87,8 +92,8 @@ class PlacementVerdict(StrEnum):
     HELD = "held"
     """A file of the picked release run while a parse is unknown: no other pass may place it, and it is re-checked."""
     MISNUMBERED = "misnumbered"
-    """A file of a specials pack numbered by another TVDB state than the windows listing it: never placed by its
-    numbers, left to a hand import."""
+    """A file of a specials pack whose numbers don't match the windows listing it, when its special aliases can't
+    place it either or another window places it elsewhere. Never placed by its numbers, left for a hand import."""
     SKIPPED = "skipped"
     """Nothing placed it and nothing proved it foreign."""
 
@@ -123,6 +128,7 @@ _PLACED = frozenset(
         PlacementVerdict.EPISODE_TITLE,
         PlacementVerdict.IDENTIFIED,
         PlacementVerdict.OVERRIDDEN,
+        PlacementVerdict.ALTERNATE,
     }
 )
 _EXCLUDED = frozenset({PlacementVerdict.FOREIGN, PlacementVerdict.DUPLICATE, PlacementVerdict.EXTRA})
@@ -208,6 +214,31 @@ class PlacementBatch(NamedTuple):
         return all((info := self.parsed.get(name)) is not None and not info.offline for name in self.torrent_names)
 
 
+type SizeIdentities = Mapping[int, int]
+"""File size -> episode id, from SeaDex releases with a single video file listed under an entry that covers one
+episode. A file with that exact size is that episode."""
+
+
+@dataclass(frozen=True, slots=True)
+class TorrentListing:
+    """The episodes covered by the SeaDex entries that list one torrent, and those entries' special aliases."""
+
+    ids: frozenset[int]
+    """Union of the episode windows of every entry in the series that lists the torrent."""
+
+    special_aliases: SpecialAliases = NO_ALIASES
+    """The union of those entries' special aliases, minus any TMDB number two entries pair differently. Empty when
+    the entries pair against different TMDB shows."""
+
+    def __post_init__(self) -> None:
+        # Detach from the caller's dict, then wrap read-only.
+        object.__setattr__(self, "special_aliases", MappingProxyType(dict(self.special_aliases)))
+
+
+EMPTY_LISTING = TorrentListing(frozenset())
+"""A torrent no entry lists. Listings match by infohash, so a url without one always gets this."""
+
+
 @dataclass(frozen=True, slots=True)
 class ListingEvidence:
     """What SeaDex's listings for the series tell the placer about one torrent.
@@ -215,21 +246,39 @@ class ListingEvidence:
     Import time only fills in `identified`.
     """
 
-    ids: frozenset[int]
-    """Every episode id covered by the entries that list this torrent, this entry included. A numbered specials
-    pack is checked against these. Empty at import time, which turns that check off."""
+    listing: TorrentListing = EMPTY_LISTING
+    """The torrent's listing: the ids a numbered specials pack is checked against, and the special aliases that
+    can place a misnumbered one. Empty at import time, which turns the pack check off."""
 
     identified: IdentifiedNames = NO_IDENTIFIED
     """File name -> episode id, for the files whose size matched an episode (see `SizeIdentities`)."""
 
     def __post_init__(self) -> None:
-        # Detach from the caller's map, then wrap read-only.
+        # Detach from the caller's dict, then wrap read-only.
         object.__setattr__(self, "identified", MappingProxyType(dict(self.identified)))
 
+    @property
+    def ids(self) -> frozenset[int]:
+        """Every episode id covered by the entries that list this torrent, this entry included."""
 
-NO_EVIDENCE = ListingEvidence(frozenset())
+        return self.listing.ids
+
+    @property
+    def special_aliases(self) -> SpecialAliases:
+        """The listing's TMDB -> TVDB specials numbers (`TorrentListing.special_aliases`)."""
+
+        return self.listing.special_aliases
+
+
+NO_EVIDENCE = ListingEvidence()
 """Nothing from the listings: no ids and no size matches, so the size placement and the specials pack check do
 nothing."""
+
+type SeededNames = Mapping[str, tuple[int, ...]]
+"""Normalized file name -> the episode ids the stored record already holds it on."""
+
+NO_SEEDED: SeededNames = MappingProxyType({})
+"""No seeded files: a torrent with no stored record, or a scope `place_leftover` hasn't filled in yet."""
 
 
 @dataclass(frozen=True, slots=True)
@@ -262,13 +311,18 @@ class TargetScope:
     listing: ListingEvidence = NO_EVIDENCE
     """What SeaDex's listings tell us about this torrent. At import time only `identified` is filled in."""
 
+    seeded: SeededNames = NO_SEEDED
+    """The stored record's map, name -> ids, the same on every window (`place_leftover` fills it in). Seeded files
+    are never placed again, but the misnumbered pack pass checks each seeded member sits on its aliased special."""
+
     real_ids: frozenset[int] = field(init=False, repr=False, compare=False)
     """The resolved ids that can be placed. A stray zero keeps the scope real but is never one."""
 
     def __post_init__(self) -> None:
-        # Detached from the caller's list: `real_ids` is derived from it once.
+        # Detached from the caller's list and dict: `real_ids` is derived from the list once.
         object.__setattr__(self, "resolved", tuple(self.resolved))
         object.__setattr__(self, "real_ids", frozenset(i for i in self.resolved if i))
+        object.__setattr__(self, "seeded", MappingProxyType(dict(self.seeded)))
 
     @property
     def id_by_key(self) -> Mapping[EpisodeKey, int]:
@@ -305,23 +359,6 @@ class TargetScope:
         if not (self.specials_window and listed and self.real_ids <= listed):
             return None
         return listed if all_specials(self.series, listed) else None
-
-
-type SizeIdentities = Mapping[int, int]
-"""File size -> episode id, from SeaDex releases with a single video file listed under an entry that covers one
-episode. A file with that exact size is that episode."""
-
-
-@dataclass(frozen=True, slots=True)
-class TorrentListing:
-    """The episodes covered by the SeaDex entries that list one torrent."""
-
-    ids: frozenset[int]
-    """Union of the episode windows of every entry in the series that lists the torrent."""
-
-
-EMPTY_LISTING = TorrentListing(frozenset())
-"""A torrent no entry lists. Listings match by infohash, so a url without one always gets this."""
 
 
 @dataclass(frozen=True, slots=True)

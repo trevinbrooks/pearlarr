@@ -66,8 +66,9 @@ class GrabHold(StrEnum):
     """Why the placement refuses to grab a flagged url this run."""
 
     MISNUMBERED = "misnumbered"
-    """A specials pack numbered by another TVDB state than its listing (`PlacementVerdict.MISNUMBERED`): grabbed,
-    it would import under the wrong specials, so a human imports it."""
+    """A specials pack whose numbers don't match its listing and whose special aliases can't place it
+    (`PlacementVerdict.MISNUMBERED`). Grabbed, it would import onto the wrong specials, so it's left for a hand
+    import."""
     INPUT_UNREAD = "a read failed"
     """A SeaDex listing for the series, or a parse the specials pack check needs, couldn't be read this run.
     Grabbing now could seed a file onto the wrong episode for good, so the url waits for the next run."""
@@ -151,7 +152,7 @@ def flagged_urls(seadex_dict: SeadexDict) -> list[FlaggedUrl]:
 
 # Folded into the config's selection digest: bump when the release-selection
 # rules change in code so every cached verdict re-checks once after an upgrade.
-SELECTION_RULES_VERSION: int = 8
+SELECTION_RULES_VERSION: int = 9
 
 SONARR_MISSING_KEY: int = 999
 """Out-of-range stand-in for a missing Sonarr `seasonNumber`/`episodeNumber`, never colliding with a real one."""
@@ -204,6 +205,17 @@ def coerce_int(value: object) -> int | None:
         except ValueError:
             return None
     return None
+
+
+def unambiguous[K, V](pairs: Iterable[tuple[K, V]]) -> dict[K, V]:
+    """Map each key to its value, dropping any key that shows up with two different values."""
+
+    values: dict[K, V] = {}
+    ambiguous: set[K] = set()
+    for key, value in pairs:
+        if values.setdefault(key, value) != value:
+            ambiguous.add(key)
+    return {key: value for key, value in values.items() if key not in ambiguous}
 
 
 # --- pydantic boundary plumbing ----------------------------------------------
@@ -511,6 +523,30 @@ class ArrReleases:
 
 type TvdbMappings = dict[int, list[tuple[int, int | None]]]
 """AniBridge TVDB season -> inclusive `(start, end)` episode ranges."""
+
+
+def season_holds(ranges: Sequence[tuple[int, int | None]], number: int) -> bool:
+    """Whether `number` falls in a season's ranges: an empty list is the whole season, an end of None is open."""
+
+    return not ranges or any(start <= number and (end is None or number <= end) for start, end in ranges)
+
+
+type SpecialAliases = Mapping[int, int]
+"""TMDB specials number -> the TVDB specials number it stands for."""
+
+NO_ALIASES: SpecialAliases = MappingProxyType({})
+"""No specials pairs: AniBridge pairs none, nothing was read, or the entries listing a torrent pair against different
+TMDB shows."""
+
+
+class SpecialAliasing(NamedTuple):
+    """An entry's specials aliases and the TMDB show their TMDB numbers count in. An entry without any holds None."""
+
+    tmdb_id: int
+    """The TMDB show the aliases' TMDB numbers count in."""
+
+    aliases: SpecialAliases
+    """TMDB specials number -> the TVDB specials number it stands for."""
 
 
 # --- AniList GraphQL errors (the `errors` array of a response body) --------

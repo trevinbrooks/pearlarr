@@ -25,7 +25,7 @@ from enum import Enum, StrEnum, auto
 from types import MappingProxyType
 from typing import Any, NamedTuple
 
-from .seadex_types import RemotePathMapping, coerce_int
+from .seadex_types import RemotePathMapping, coerce_int, unambiguous
 from .stamps import parse_stamp_or_none
 
 
@@ -572,17 +572,6 @@ def _normalized_names(names: Iterable[str]) -> set[str]:
     """Normalized-leaf SET, deliberately not a multiset."""
 
     return {normalized_leaf(name) for name in names}
-
-
-def unambiguous[K, V](pairs: Iterable[tuple[K, V]]) -> dict[K, V]:
-    """Map each key to its value, dropping any key that shows up with two different values."""
-
-    values: dict[K, V] = {}
-    ambiguous: set[K] = set()
-    for key, value in pairs:
-        if values.setdefault(key, value) != value:
-            ambiguous.add(key)
-    return {key: value for key, value in values.items() if key not in ambiguous}
 
 
 NO_SIZES_BY_NAME: Mapping[str, int] = MappingProxyType({})

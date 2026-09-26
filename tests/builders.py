@@ -74,6 +74,7 @@ from pearlarr.seadex_gateway import SeaDexMiss, SeaDexSource
 from pearlarr.seadex_radarr import RadarrSync
 from pearlarr.seadex_sonarr import SonarrSync
 from pearlarr.seadex_types import (
+    NO_ALIASES,
     ArrReleases,
     EpisodeKey,
     EpisodeRecord,
@@ -86,6 +87,7 @@ from pearlarr.seadex_types import (
     SeadexReleaseGroupItem,
     SeadexUrlItem,
     SonarrEpisode,
+    SpecialAliases,
 )
 from pearlarr.sonarr_client import AbstractSonarrClient
 from pearlarr.sonarr_episodes import SonarrEpisodes
@@ -1101,11 +1103,16 @@ UNLISTED = TorrentEvidence(EMPTY_LISTING, _NO_SIZES)
 UNREAD_EVIDENCE = TorrentEvidence(None, None)
 """SeaDex couldn't be read: no listing and no size identities."""
 
+ALIASED_PACK = TorrentListing(frozenset({502, 504, 506}), {1: 2, 2: 4, 3: 6})
+"""A listing of specials 2, 4 and 6 whose aliases map a pack's 1, 2 and 3 onto them."""
 
-def torrent_evidence(listed: frozenset[int], identities: SizeIdentities = _NO_SIZES) -> TorrentEvidence:
-    """Evidence after a good read: the torrent listed over `listed`, with size `identities` (none by default)."""
 
-    return TorrentEvidence(TorrentListing(listed), identities)
+def torrent_evidence(
+    listed: frozenset[int], identities: SizeIdentities = _NO_SIZES, aliases: SpecialAliases = NO_ALIASES
+) -> TorrentEvidence:
+    """Evidence after a good read: a listing of `listed` with `aliases`, and size `identities`. Both default to none."""
+
+    return TorrentEvidence(TorrentListing(listed, aliases), identities)
 
 
 def known_torrent(
@@ -1174,10 +1181,22 @@ def by_name(result: EpisodeAssignment) -> dict[str, tuple[tuple[int, ...], Place
     return {p.name: (p.ids, p.verdict) for p in result.placements}
 
 
+def verdicts_of(result: EpisodeAssignment) -> set[PlacementVerdict]:
+    """The distinct verdicts an assignment gave, for the tests that pin what kind of verdict a batch got."""
+
+    return {p.verdict for p in result.placements}
+
+
 def blind(names: Iterable[str]) -> dict[str, ParsedFileInfo | None]:
     """Every name parsed with no numbers (Sonarr read nothing)."""
 
     return dict.fromkeys(names, parsed_info())
+
+
+def specials_pack(*numbers: int) -> dict[str, ParsedFileInfo | None]:
+    """`Show.S00Exx.mkv` per number, each read by Sonarr as that special."""
+
+    return {f"Show.S00E{n:02d}.mkv": parsed_info(season=0, episodes=(n,), matched=((0, n),)) for n in numbers}
 
 
 def place(
