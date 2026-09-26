@@ -142,8 +142,6 @@ def _observe(store: AbstractCacheStore) -> dict[str, object]:
         "selection_current": store.selection_stale(Arr.SONARR, "digest-new"),
         "selection_moved": store.selection_stale(Arr.SONARR, "digest-old"),
         "selection_unvouched": store.selection_stale(Arr.RADARR, "digest-new"),
-        "own_ids_sonarr": store.own_download_ids(Arr.SONARR),
-        "own_ids_radarr": store.own_download_ids(Arr.RADARR),
         "stats_no_size": stats._replace(size_bytes=0),
         "integrity": store.integrity_check(),
     }

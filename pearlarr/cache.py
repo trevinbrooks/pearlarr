@@ -481,8 +481,6 @@ class AbstractCacheStore(ABC):
     @abstractmethod
     def put_history_checkpoint(self, arr: Arr, checkpoint: HistoryCheckpoint) -> None: ...
     @abstractmethod
-    def own_download_ids(self, arr: Arr) -> frozenset[str]: ...
-    @abstractmethod
     def stats(self) -> CacheStats: ...
     @abstractmethod
     def integrity_check(self) -> str: ...
@@ -866,17 +864,6 @@ class CacheStore(AbstractCacheStore):
             "ON CONFLICT (arr) DO UPDATE SET since_date = excluded.since_date, last_id = excluded.last_id",
             (_arr_key(arr), checkpoint.since_date, checkpoint.last_id),
         )
-
-    @override
-    def own_download_ids(self, arr: Arr) -> frozenset[str]:
-        """Casefolded infohashes of our own grabs (remembered + pending) for an arr."""
-
-        rows = self._conn.execute(
-            "SELECT infohash FROM torrent_hashes WHERE arr = ? AND infohash != ? "
-            "UNION SELECT infohash FROM pending_imports WHERE arr = ?",
-            (_arr_key(arr), _NO_HASH, _arr_key(arr)),
-        ).fetchall()
-        return frozenset(str(row[0]).casefold() for row in rows)
 
     # -- maintenance: eviction, stats, integrity -----------------------------
 
