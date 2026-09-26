@@ -1,18 +1,18 @@
 """Pure functions that turn a series' SeaDex entries into per-torrent listings and size identities."""
 
-from collections.abc import Iterable, Iterator
+from collections.abc import Iterator, Sequence
 from typing import NamedTuple
 
 from seadex import EntryRecord
 
-from .manual_import import path_leaf, unambiguous
-from .placement_types import EMPTY_LISTING, ListingsRead, TorrentListing
-from .seadex_types import carries_ignored_tag, normalized_infohash
+from .manual_import import path_leaf
+from .placement_types import ListingsRead, SizeIdentities, TorrentListing
+from .seadex_types import NO_ALIASES, SpecialAliasing, carries_ignored_tag, normalized_infohash, unambiguous
 from .video_files import is_video_candidate
 
 
 class EntryListing(NamedTuple):
-    """One entry of the series: its SeaDex record and its episode window."""
+    """One entry of the series: its SeaDex record, its episode window, and its special aliases."""
 
     record: EntryRecord
     """The entry's SeaDex record."""
@@ -20,29 +20,55 @@ class EntryListing(NamedTuple):
     window: frozenset[int] | None
     """The window's episode ids, None if its episodes couldn't be read."""
 
+    special_aliasing: SpecialAliasing | None
+    """The entry's specials aliases and their TMDB show (`MappingEntry.special_aliasing`), None when it has none."""
 
-def fold_listings(entries: Iterable[EntryListing], ignore_tags: frozenset[str]) -> ListingsRead:
+
+def fold_listings(entries: Sequence[EntryListing], ignore_tags: frozenset[str]) -> ListingsRead:
     """Build the series' `ListingsRead` from its entries.
 
-    Each infohash gets the union of the windows that list it, and the size identities come from
-    `size_identities`. If any window couldn't be read, the hashes it lists and the identities are marked unread.
-    A size that two entries give to different episodes is dropped.
+    Each infohash gets the union of the windows and special aliases of the entries that list it
+    (`_torrent_listing`), and the size identities come from `size_identities`. An unread window marks its hashes
+    and the identities unread. A size or a TMDB number that two entries map differently is dropped.
     """
 
-    by_hash: dict[str, TorrentListing | None] = {}
+    by_hash: dict[str, list[EntryListing]] = {}
+    for entry in entries:
+        for torrent in entry.record.torrents:
+            if (infohash := normalized_infohash(torrent.infohash)) is not None:
+                by_hash.setdefault(infohash, []).append(entry)
+    listings = {infohash: _torrent_listing(listed) for infohash, listed in by_hash.items()}
+    return ListingsRead(listings, _series_identities(entries, ignore_tags))
+
+
+def _torrent_listing(entries: Sequence[EntryListing]) -> TorrentListing | None:
+    """The union of the entries' windows and special aliases, or None if any window is unread.
+
+    When the entries pair against different TMDB shows, the hash gets no aliases.
+    """
+
+    ids: frozenset[int] = frozenset()
     pairs: list[tuple[int, int]] = []
-    unread = False
-    for record, window in entries:
-        for torrent in record.torrents:
-            if (infohash := normalized_infohash(torrent.infohash)) is None:
-                continue
-            union = by_hash.get(infohash, EMPTY_LISTING)
-            by_hash[infohash] = None if window is None or union is None else TorrentListing(union.ids | window)
-        if window is None:
-            unread = True
-        else:
-            pairs.extend(size_identities(record, window, ignore_tags))
-    return ListingsRead(by_hash, None if unread else unambiguous(pairs))
+    shows: set[int] = set()
+    for entry in entries:
+        if entry.window is None:
+            return None
+        ids |= entry.window
+        if entry.special_aliasing is not None:
+            shows.add(entry.special_aliasing.tmdb_id)
+            pairs.extend(entry.special_aliasing.aliases.items())
+    return TorrentListing(ids, unambiguous(pairs) if len(shows) == 1 else NO_ALIASES)
+
+
+def _series_identities(entries: Sequence[EntryListing], ignore_tags: frozenset[str]) -> SizeIdentities | None:
+    """The size identities of every entry, or None if any window is unread."""
+
+    pairs: list[tuple[int, int]] = []
+    for entry in entries:
+        if entry.window is None:
+            return None
+        pairs.extend(size_identities(entry.record, entry.window, ignore_tags))
+    return unambiguous(pairs)
 
 
 def size_identities(

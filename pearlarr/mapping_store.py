@@ -42,7 +42,7 @@ from .sqlite_util import connect, open_or_quarantine, rollback_and_close
 
 # Bump when the table layout below changes. A stored `user_version` that differs
 # triggers a DROP+rebuild (the data is a pure cache, re-derived from the sources).
-SCHEMA_VERSION = 2
+SCHEMA_VERSION = 3
 
 # Source names used as `meta` keys and to select which tables a `replace_*`
 # clears. Kept as constants so the resolver and the store agree on the spelling.
@@ -119,6 +119,17 @@ CREATE TABLE IF NOT EXISTS anibridge_tvdb_range (
 );
 CREATE INDEX IF NOT EXISTS ix_anibridge_range ON anibridge_tvdb_range (anilist_id, tvdb_id);
 
+-- One row per special alias of an AniList record: a specials number of TMDB show `tmdb_id` and the special
+-- of TVDB show `tvdb_id` it stands for (`AniBridgeRecord.special_aliasing` in anibridge.py, already filtered).
+CREATE TABLE IF NOT EXISTS anibridge_special_alias (
+    anilist_id  INTEGER NOT NULL,
+    tvdb_id     INTEGER NOT NULL,
+    tmdb_id     INTEGER NOT NULL,
+    tmdb_number INTEGER NOT NULL,
+    tvdb_number INTEGER NOT NULL
+);
+CREATE INDEX IF NOT EXISTS ix_anibridge_alias ON anibridge_special_alias (anilist_id, tvdb_id);
+
 CREATE TABLE IF NOT EXISTS anidb_mapping (
     anidb_id    INTEGER NOT NULL,
     tvdb_season INTEGER NOT NULL,
@@ -135,7 +146,7 @@ CREATE TABLE IF NOT EXISTS anidb_ambiguous (
 # Which tables a source owns, so `replace_<source>` clears exactly its own rows.
 _SOURCE_TABLES: dict[str, tuple[str, ...]] = {
     SOURCE_ANIME_IDS: ("anime_ids",),
-    SOURCE_ANIBRIDGE: ("anibridge_entry", "anibridge_xref", "anibridge_tvdb_range"),
+    SOURCE_ANIBRIDGE: ("anibridge_entry", "anibridge_xref", "anibridge_tvdb_range", "anibridge_special_alias"),
     SOURCE_ANIDB: ("anidb_mapping", "anidb_ambiguous"),
 }
 
@@ -220,12 +231,24 @@ class AniBridgeRangeRow(NamedTuple):
     end_ep: int | None
 
 
+class AniBridgeAliasRow(NamedTuple):
+    """One `anibridge_special_alias` row: a TMDB specials number and the TVDB one it stands for."""
+
+    anilist_id: int
+    tvdb_id: int
+    tmdb_id: int
+    """The TMDB show `tmdb_number` counts in."""
+    tmdb_number: int
+    tvdb_number: int
+
+
 class AniBridgeRows(NamedTuple):
-    """The three anibridge row tables one graph flattens to (`AniBridge.to_rows`)."""
+    """The anibridge row tables one graph flattens to (`AniBridge.to_rows`)."""
 
     entries: list[AniBridgeEntryRow]
     xrefs: list[AniBridgeXrefRow]
     ranges: list[AniBridgeRangeRow]
+    aliases: list[AniBridgeAliasRow]
 
 
 class AniBridgeRangeHit(NamedTuple):
@@ -235,6 +258,16 @@ class AniBridgeRangeHit(NamedTuple):
     season: int
     start_ep: int | None
     end_ep: int | None
+
+
+class AniBridgeAliasHit(NamedTuple):
+    """One `MappingStore.anibridge_aliases_for` result row (tvdb-scoped)."""
+
+    anilist_id: int
+    tmdb_id: int
+    """The TMDB show `tmdb_number` counts in."""
+    tmdb_number: int
+    tvdb_number: int
 
 
 class AnidbMappingRow(NamedTuple):
@@ -354,7 +387,7 @@ class MappingStore:
 
         Args:
             digest: sha256 of the source file (or `INLINE_DIGEST`).
-            rows: The three row tables one graph flattens to
+            rows: The row tables one graph flattens to
                 (a `range` row's `start_ep` NULL marks a present-but-empty
                 season).
         """
@@ -372,6 +405,11 @@ class MappingStore:
                 "INSERT INTO anibridge_tvdb_range (anilist_id, tvdb_id, season, start_ep, end_ep) "
                 "VALUES (?, ?, ?, ?, ?)",
                 rows.ranges,
+            )
+            conn.executemany(
+                "INSERT INTO anibridge_special_alias (anilist_id, tvdb_id, tmdb_id, tmdb_number, tvdb_number) "
+                "VALUES (?, ?, ?, ?, ?)",
+                rows.aliases,
             )
 
         self._replace(SOURCE_ANIBRIDGE, digest, write)
@@ -488,6 +526,21 @@ class MappingStore:
             (axis, ext_id, tvdb_id),
         ).fetchall()
         return [AniBridgeRangeHit(*row) for row in rows]
+
+    def anibridge_aliases_for(self, axis: str, ext_id: int | str, tvdb_id: int) -> list[AniBridgeAliasHit]:
+        """The special aliases onto TVDB show `tvdb_id` of every AniList id the xref maps (axis, ext_id) to.
+
+        One batched xref->alias JOIN like `anibridge_ranges_for`, ordered by `anilist_id` then write order.
+        """
+
+        rows = self._conn.execute(
+            "SELECT x.anilist_id, a.tmdb_id, a.tmdb_number, a.tvdb_number "
+            "FROM anibridge_xref x JOIN anibridge_special_alias a ON a.anilist_id = x.anilist_id "
+            "WHERE x.axis = ? AND x.ext_id = ? AND a.tvdb_id = ? "
+            "ORDER BY x.anilist_id, a.rowid",
+            (axis, ext_id, tvdb_id),
+        ).fetchall()
+        return [AniBridgeAliasHit(*row) for row in rows]
 
     @overload
     def anibridge_distinct(self, axis: Literal["tvdb", "tmdb_movie"]) -> set[int]: ...

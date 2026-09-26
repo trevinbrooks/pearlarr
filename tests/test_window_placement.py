@@ -14,11 +14,23 @@ from pearlarr.placement_types import (
     PlacementBatch,
     PlacementVerdict,
     TargetScope,
+    TorrentListing,
 )
 from pearlarr.seadex_types import EpisodeKey, ParsedFileInfo
 from pearlarr.window_placement import WindowedAssignment, assign_across_windows, place_leftover, windows_of
 
-from .builders import blind, by_name, entry_claim, numbered_names, parsed_info, place, series_index
+from .builders import (
+    ALIASED_PACK,
+    blind,
+    by_name,
+    entry_claim,
+    numbered_names,
+    parsed_info,
+    place,
+    series_index,
+    specials_pack,
+    verdicts_of,
+)
 
 _SERIES = series_index(
     {
@@ -34,10 +46,26 @@ _SECOND_COUR = [604, 605, 606]
 _OTHER_SERIES = series_index({EpisodeKey(2, n): 200 + n for n in (1, 2, 3)})
 # A series of six specials, room for a listing a three-wide pack's numbers miss.
 _MANY_SPECIALS = series_index({EpisodeKey(0, n): 500 + n for n in range(1, 7)})
+# Another series of three specials, whose window the aliased pack's listing never covers.
+_OTHER_SPECIALS = series_index({EpisodeKey(0, n): 900 + n for n in (1, 2, 3)})
+# `ALIASED_PACK` as the evidence every window carries: the pack's 1, 2 and 3 aliased onto specials 2, 4 and 6.
+_ALIASED = ListingEvidence(ALIASED_PACK)
 
 
 def _window(resolved: list[int], *titles: str, used: Iterable[int] = (), series: EpisodeIndex = _SERIES) -> TargetScope:
     return TargetScope(resolved, series, used=frozenset(used), names=EntryNames("Show", titles))
+
+
+def _listed_window(listing: ListingEvidence, ids: list[int], series: EpisodeIndex = _MANY_SPECIALS) -> TargetScope:
+    """One window of `ids` over `series`, carrying `listing`."""
+
+    return replace(_window(ids, series=series), listing=listing)
+
+
+def _listed_windows(listing: ListingEvidence, *windows: list[int]) -> tuple[TargetScope, ...]:
+    """One window per id list over the many-specials series, each carrying `listing`."""
+
+    return tuple(_listed_window(listing, ids) for ids in windows)
 
 
 def _batch(parsed: Mapping[str, ParsedFileInfo | None]) -> PlacementBatch:
@@ -63,7 +91,7 @@ class TestOneWindow:
         result = assign_across_windows(_batch(parsed), (window,))
 
         assert result.merged == alone
-        assert {p.verdict for p in alone.placements} == {
+        assert verdicts_of(alone) == {
             PlacementVerdict.RELEASE_RUN,
             PlacementVerdict.FOREIGN,
             PlacementVerdict.SKIPPED,
@@ -223,14 +251,82 @@ class TestSeveralWindows:
     def test_an_earlier_windows_misnumbered_pack_outranks_a_later_windows_placement(self) -> None:
         # Under the first window's listing (specials 2, 4 and 6, three as the pack is wide) the pack's `1` is
         # no listed special: misnumbered, a human's. The second window, unlisted, would place it by number.
-        pack = {f"Show.S00E{n:02d}.mkv": parsed_info(season=0, episodes=(n,), matched=((0, n),)) for n in (1, 2, 3)}
-        listing = ListingEvidence(frozenset({502, 504, 506}))
-        listed = replace(_window([502, 504], series=_MANY_SPECIALS), listing=listing)
+        pack = specials_pack(1, 2, 3)
+        listed = _listed_window(ListingEvidence(TorrentListing(ALIASED_PACK.ids)), [502, 504])
 
         result = assign_across_windows(_batch(pack), (listed, _window([501, 502, 503], series=_MANY_SPECIALS)))
 
         assert _placed_under(result) == {}
-        assert {verdict for _ids, verdict in by_name(result.merged).values()} == {PlacementVerdict.MISNUMBERED}
+        assert verdicts_of(result.merged) == {PlacementVerdict.MISNUMBERED}
+
+    def test_an_aliased_pack_places_each_member_under_the_window_holding_its_special(self) -> None:
+        # Each window maps the whole pack. The member outside the first window is `ALIASED_ELSEWHERE` there and
+        # placed under the second.
+        windows = _listed_windows(_ALIASED, [502, 504], [506])
+
+        result = assign_across_windows(_batch(specials_pack(1, 2, 3)), windows)
+
+        assert _placed_under(result) == {
+            "Show.S00E01.mkv": ((502,), 0),
+            "Show.S00E02.mkv": ((504,), 0),
+            "Show.S00E03.mkv": ((506,), 1),
+        }
+        assert verdicts_of(result.merged) == {PlacementVerdict.ALTERNATE}
+
+    def test_a_window_sharing_a_special_the_first_placed_still_maps_the_pack_through_its_aliases(self) -> None:
+        # The second window also admits special 2, which the first window placed. It still maps the whole pack,
+        # skips that member, and places the other two by their aliases rather than their own numbers.
+        listing = ListingEvidence(TorrentListing(frozenset({502, 505, 506}), {1: 2, 5: 6, 6: 5}))
+        windows = _listed_windows(listing, [502], [502, 505, 506])
+
+        result = assign_across_windows(_batch(specials_pack(1, 5, 6)), windows)
+
+        assert _placed_under(result) == {
+            "Show.S00E01.mkv": ((502,), 0),
+            "Show.S00E05.mkv": ((506,), 1),
+            "Show.S00E06.mkv": ((505,), 1),
+        }
+        assert verdicts_of(result.merged) == {PlacementVerdict.ALTERNATE}
+
+    @pytest.mark.parametrize("judged_first", [True, False], ids=["judged then unjudged", "unjudged then judged"])
+    def test_a_member_the_aliases_and_another_windows_numbers_place_differently_is_misnumbered(
+        self, judged_first: bool
+    ) -> None:
+        # The first series' window maps the pack through its aliases (one member's special lies outside it). The
+        # other series' window, which the listing doesn't cover, places every member by its own number. The two
+        # disagree on every member, and neither may win by coming first.
+        judged = _listed_window(_ALIASED, [502, 504])
+        unjudged = _listed_window(_ALIASED, [901, 902, 903], series=_OTHER_SPECIALS)
+        windows = (judged, unjudged) if judged_first else (unjudged, judged)
+
+        result = assign_across_windows(_batch(specials_pack(1, 2, 3)), windows)
+
+        assert _placed_under(result) == {}
+        assert verdicts_of(result.merged) == {PlacementVerdict.MISNUMBERED}
+
+    def test_a_member_whose_aliased_special_no_window_holds_stays_aliased_elsewhere_and_skipped(self) -> None:
+        # No window admits special 6, so the third member is left as the aliases' claim, never placed by number.
+        window = _listed_window(_ALIASED, [502, 504])
+
+        result = assign_across_windows(_batch(specials_pack(1, 2, 3)), (window,))
+
+        assert by_name(result.merged)["Show.S00E03.mkv"] == ((), PlacementVerdict.ALIASED_ELSEWHERE)
+        assert result.merged.skipped == ("Show.S00E03.mkv",)
+
+    @pytest.mark.parametrize("judged_first", [True, False], ids=["judged then foreign", "foreign then judged"])
+    def test_a_member_aliased_in_one_window_and_foreign_in_another_stays_aliased_elsewhere(
+        self, judged_first: bool
+    ) -> None:
+        # The other series' window holds two of its specials, so the third member reads as foreign there. The
+        # aliases' claim outranks that whichever window comes first: the file is skipped, never excluded.
+        judged = _listed_window(_ALIASED, [502, 504])
+        other = _listed_window(_ALIASED, [901, 902], series=_OTHER_SPECIALS)
+        windows = (judged, other) if judged_first else (other, judged)
+
+        result = assign_across_windows(_batch(specials_pack(1, 2, 3)), windows)
+
+        assert by_name(result.merged)["Show.S00E03.mkv"] == ((), PlacementVerdict.ALIASED_ELSEWHERE)
+        assert result.merged.excluded == ()
 
     def test_the_parse_flag_is_the_torrents(self) -> None:
         # An unknown parse the first window never held (its window is one slot) still holds the run
@@ -259,7 +355,7 @@ class TestWindowsOf:
             entry_claim(al_id=2, series_id=8, ordered_episode_ids=[201]),
         )
 
-        listing = ListingEvidence(frozenset({601}), {"a.mkv": 601})
+        listing = ListingEvidence(TorrentListing(frozenset({601})), {"a.mkv": 601})
 
         windows = windows_of(claims, {7: _SERIES, 8: _OTHER_SERIES}, listing)
 
@@ -337,6 +433,28 @@ class TestPlaceLeftover:
         assert _placed_under(held) == {"b.mkv": ((201,), 1)}
         assert by_name(held.merged)["a.mkv"] == ((), PlacementVerdict.SKIPPED)
         assert _placed_under(free) == {"a.mkv": ((601,), 0), "b.mkv": ((201,), 1)}
+
+    def test_a_later_entry_places_the_rest_of_a_pack_an_earlier_entry_partly_mapped(self) -> None:
+        # The already-mapped files still count as part of the pack, so the new window maps the whole pack through
+        # its aliases.
+        seeded = {"Show.S00E01.mkv": [502], "Show.S00E02.mkv": [504]}
+        stored, own = _listed_windows(_ALIASED, [502, 504], [506])
+
+        result = place_leftover(seeded, _batch(specials_pack(1, 2, 3)), (stored, own))
+
+        assert _placed_under(result) == {"Show.S00E03.mkv": ((506,), 1)}
+        assert by_name(result.merged)["Show.S00E03.mkv"][1] is PlacementVerdict.ALTERNATE
+
+    def test_a_pack_an_earlier_entry_mapped_by_its_own_numbers_is_not_placed_by_the_aliases(self) -> None:
+        # The stored record holds file 2 on special 2, its own number, where its alias says special 4. Every window
+        # sees that seed, so none places the rest of the pack by the aliases.
+        seeded = {"Show.S00E02.mkv": [502]}
+        stored, own = _listed_windows(_ALIASED, [502, 504], [506])
+
+        result = place_leftover(seeded, _batch(specials_pack(1, 2, 3)), (stored, own))
+
+        assert _placed_under(result) == {}
+        assert PlacementVerdict.ALTERNATE not in verdicts_of(result.merged)
 
     def test_one_window_and_an_empty_map_is_the_cross_window_placement(self) -> None:
         run = numbered_names("sp", 3)

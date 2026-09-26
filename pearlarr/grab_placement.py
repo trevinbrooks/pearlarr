@@ -18,7 +18,6 @@ from .manual_import import (
     PendingImport,
     normalized_leaf,
     sizes_by_episode,
-    unambiguous,
 )
 from .placement_types import (
     EMPTY_LISTING,
@@ -42,6 +41,7 @@ from .seadex_types import (
     SeadexUrlItem,
     flagged_urls,
     season_episode_key,
+    unambiguous,
 )
 from .window_placement import place_leftover, windows_of
 
@@ -120,13 +120,14 @@ class KnownTorrent:
 
         Size matches from this run are merged with the ones already on the stored record (the same merge
         `PendingImport.with_identified` does), so the grab places with the same names the import poll uses later.
+        The listing's ids and special aliases pass through as read.
         """
 
         listing, identities = self.evidence
         pairs = [] if self.record is None else list(self.record.identified.items())
         if identities is not None:
             pairs.extend((name, identities[size]) for name, size in sizes.items() if size in identities)
-        return ListingEvidence(frozenset() if listing is None else listing.ids, unambiguous(pairs))
+        return ListingEvidence(EMPTY_LISTING if listing is None else listing, unambiguous(pairs))
 
     def windows(self, al_id: int, own: TargetScope) -> tuple[TargetScope, ...] | None:
         """The windows the torrent is placed under, None when a claim's series is unread.

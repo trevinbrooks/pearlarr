@@ -9,6 +9,7 @@ from typing import NamedTuple
 from .import_files import CandidateFile
 from .manual_import import PendingImport, normalized_leaf, path_leaf
 from .placement_types import (
+    EMPTY_LISTING,
     EpisodeAssignment,
     EpisodeIndex,
     ListingEvidence,
@@ -177,7 +178,7 @@ class FileEpisodeMapper:
         # The leftovers go into each claim's window in turn, with the seeded ids already used there. Import doesn't
         # read SeaDex: files the grab placed by size are placed the same way from the record.
         batch = PlacementBatch(leftover, parsed_by_file)
-        listing = ListingEvidence(frozenset(), pending.identified)
+        listing = ListingEvidence(EMPTY_LISTING, pending.identified)
         windowed = place_leftover(seeded, batch, windows_of(pending.claims, indexes, listing))
         # An empty index means the exact pass could not have matched a numbered name this poll.
         settled = batch.all_parses_known and all(indexes[sid].id_by_key for sid in pending.series_ids)

@@ -5,6 +5,7 @@ from seadex import EntryRecord, Tag, TorrentRecord, Tracker
 
 from pearlarr.listing_fold import EntryListing, fold_listings, size_identities
 from pearlarr.placement_types import TorrentListing
+from pearlarr.seadex_types import SpecialAliasing
 
 from .builders import make_entry_record, make_torrent_record
 
@@ -24,11 +25,17 @@ def _entry(*torrents: TorrentRecord) -> EntryRecord:
 
 
 def _listed(record: EntryRecord, *ids: int) -> EntryListing:
-    return EntryListing(record, frozenset(ids))
+    return EntryListing(record, frozenset(ids), None)
+
+
+def _aliased(record: EntryRecord, ids: frozenset[int], aliases: dict[int, int], tmdb_id: int = 900) -> EntryListing:
+    """An entry over `ids` whose `aliases` count in TMDB show `tmdb_id`."""
+
+    return EntryListing(record, ids, SpecialAliasing(tmdb_id, aliases))
 
 
 class TestFoldListings:
-    """Each hash maps to the union of the windows that list it, or None if any of those windows wasn't read."""
+    """Each hash gets its entries' windows and special aliases, unioned, or None if any of those windows is unread."""
 
     def test_the_union_over_every_entry_listing_the_torrent(self) -> None:
         one, both, two = _entry(_torrent(_H1)), _entry(_torrent(_H1), _torrent(_H2)), _entry(_torrent(_H2))
@@ -41,7 +48,10 @@ class TestFoldListings:
         }
 
     def test_an_unread_window_marks_its_hashes_unread(self) -> None:
-        entries = [EntryListing(_entry(_torrent(_H1)), None), _listed(_entry(_torrent(_H1), _torrent(_H2)), 503)]
+        entries = [
+            EntryListing(_entry(_torrent(_H1)), None, None),
+            _listed(_entry(_torrent(_H1), _torrent(_H2)), 503),
+        ]
 
         read = fold_listings(entries, _NO_TAGS)
 
@@ -56,6 +66,51 @@ class TestFoldListings:
         read = fold_listings([_listed(_entry(_torrent(_H1)), 501)], _NO_TAGS)
 
         assert read.listing(_H2) == TorrentListing(frozenset())
+
+    def test_each_hash_unions_the_aliases_of_every_entry_listing_it(self) -> None:
+        one, both = _entry(_torrent(_H1)), _entry(_torrent(_H1), _torrent(_H2))
+        entries = [
+            _aliased(one, frozenset({501}), {7: 7, 13: 12}),
+            _aliased(both, frozenset({502}), {15: 15, 16: 17}),
+        ]
+
+        read = fold_listings(entries, _NO_TAGS)
+
+        assert dict(read.by_hash) == {
+            _H1: TorrentListing(frozenset({501, 502}), {7: 7, 13: 12, 15: 15, 16: 17}),
+            _H2: TorrentListing(frozenset({502}), {15: 15, 16: 17}),
+        }
+
+    def test_a_tmdb_number_two_entries_pair_differently_is_dropped(self) -> None:
+        pack = _torrent(_H1)
+        entries = [
+            _aliased(_entry(pack), frozenset({501}), {13: 12}),
+            _aliased(_entry(pack), frozenset({502}), {13: 14, 7: 7}),
+        ]
+
+        read = fold_listings(entries, _NO_TAGS)
+
+        assert read.listing(_H1) == TorrentListing(frozenset({501, 502}), {7: 7})
+
+    def test_entries_whose_aliases_count_in_different_tmdb_shows_leave_the_hash_without_aliases(self) -> None:
+        # Each entry's TMDB numbers count in its own show, so the two alias maps aren't one numbering.
+        pack = _torrent(_H1)
+        entries = [
+            _aliased(_entry(pack), frozenset({501}), {7: 7}, tmdb_id=900),
+            _aliased(_entry(pack), frozenset({502}), {8: 8}, tmdb_id=901),
+        ]
+
+        read = fold_listings(entries, _NO_TAGS)
+
+        assert read.listing(_H1) == TorrentListing(frozenset({501, 502}))
+
+    def test_an_entry_without_aliases_leaves_the_other_entrys_aliases_on_the_hash(self) -> None:
+        pack = _torrent(_H1)
+        entries = [_aliased(_entry(pack), frozenset({501}), {7: 7}), _listed(_entry(pack), 502)]
+
+        read = fold_listings(entries, _NO_TAGS)
+
+        assert read.listing(_H1) == TorrentListing(frozenset({501, 502}), {7: 7})
 
     def test_single_file_copies_identify_a_packs_specials(self) -> None:
         # One pack listed under three entries, and a hash-less single-file copy of each special under its own.
@@ -85,7 +140,7 @@ class TestFoldListings:
         # The unread entry's sizes are unknown, and one of them might clash with another entry's size.
         entries = [
             _listed(_entry(_torrent(None, ("Show - Special.mkv", 700))), 7897),
-            EntryListing(_entry(_torrent(None, ("Show - Special.mkv", 700))), None),
+            EntryListing(_entry(_torrent(None, ("Show - Special.mkv", 700))), None, None),
         ]
 
         assert fold_listings(entries, _NO_TAGS).identities is None

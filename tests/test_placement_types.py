@@ -7,11 +7,13 @@ from typing import cast
 import pytest
 
 from pearlarr.placement_types import (
+    EMPTY_LISTING,
     EpisodeIndex,
     ListingEvidence,
     PlacementBatch,
     PlacementVerdict,
     TargetScope,
+    TorrentListing,
     all_specials,
     episode_index,
 )
@@ -122,7 +124,7 @@ class TestTargetScope:
         assert TargetScope([], self._SERIES).using([12, 21]).used == {12, 21}
 
     def test_using_keeps_the_listing(self) -> None:
-        listing = ListingEvidence(frozenset({11, 12}), {"a.mkv": 11})
+        listing = ListingEvidence(TorrentListing(frozenset({11, 12})), {"a.mkv": 11})
         scope = TargetScope([11], self._SERIES, listing=listing)
 
         assert scope.using([12]).listing == listing
@@ -133,12 +135,31 @@ class TestListingEvidence:
 
     def test_the_identified_names_are_copied_and_read_only(self) -> None:
         identified = {"a.mkv": 11}
-        evidence = ListingEvidence(frozenset(), identified)
+        evidence = ListingEvidence(EMPTY_LISTING, identified)
         identified["b.mkv"] = 12
 
         assert evidence.identified == {"a.mkv": 11}
         with pytest.raises(TypeError):
             cast("dict[str, int]", evidence.identified)["c.mkv"] = 13
+
+    def test_the_ids_and_aliases_come_from_the_listing(self) -> None:
+        listing = TorrentListing(frozenset({501}), {13: 12})
+
+        evidence = ListingEvidence(listing)
+
+        assert (evidence.listing, evidence.ids, dict(evidence.special_aliases)) == (listing, {501}, {13: 12})
+
+
+class TestListingSpecialAliases:
+    """The torrent listing keeps its own copy of the caller's special aliases."""
+
+    def test_a_change_to_the_callers_dict_leaves_the_listing_as_it_was(self) -> None:
+        aliases = {13: 12}
+        torrent = TorrentListing(frozenset({501}), aliases)
+
+        aliases[14] = 13
+
+        assert dict(torrent.special_aliases) == {13: 12}
 
 
 class TestPlacementVerdict:
@@ -155,9 +176,9 @@ class TestPlacementVerdict:
         # Both decide a name without ids: no later window may place it by its numbers.
         assert {v for v in PlacementVerdict if v.refused} == {PlacementVerdict.HELD, PlacementVerdict.MISNUMBERED}
 
-    def test_a_size_identity_places(self) -> None:
-        # Whether or not it overrides the name, a file placed by size carries its ids like any other placement.
-        for verdict in (PlacementVerdict.IDENTIFIED, PlacementVerdict.OVERRIDDEN):
+    def test_a_size_match_or_a_special_alias_places(self) -> None:
+        # A file placed by size, or through a specials pack's aliases, carries ids like any other placement.
+        for verdict in (PlacementVerdict.IDENTIFIED, PlacementVerdict.OVERRIDDEN, PlacementVerdict.ALTERNATE):
             assert verdict.placed
             assert not verdict.excluded
             assert not verdict.refused
@@ -187,7 +208,7 @@ class TestSpecialsListing:
     _SERIES = series_index({EpisodeKey(0, n): 500 + n for n in range(1, 5)} | {EpisodeKey(1, 1): 11})
 
     def _scope(self, resolved: list[int], listed: frozenset[int] = frozenset()) -> TargetScope:
-        return TargetScope(resolved, self._SERIES, listing=ListingEvidence(listed))
+        return TargetScope(resolved, self._SERIES, listing=ListingEvidence(TorrentListing(listed)))
 
     def test_a_listing_covering_a_window_of_specials_judges(self) -> None:
         assert self._scope([502, 504], frozenset({502, 503, 504})).specials_listing() == {502, 503, 504}

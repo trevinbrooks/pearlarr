@@ -16,6 +16,8 @@ from pearlarr.mapping_store import (
     SCHEMA_VERSION,
     SOURCE_ANIDB,
     SOURCE_ANIME_IDS,
+    AniBridgeAliasHit,
+    AniBridgeAliasRow,
     AniBridgeRows,
     AniBridgeXrefRow,
     AnimeIdRow,
@@ -153,7 +155,7 @@ class TestDistinctTyping:
         path = str(tmp_path / "mappings.db")
         store = MappingStore.open(path)
         xref = AniBridgeXrefRow("tvdb", 74796, 100)
-        store.replace_anibridge("d", AniBridgeRows(entries=[], xrefs=[xref], ranges=[]))
+        store.replace_anibridge("d", AniBridgeRows(entries=[], xrefs=[xref], ranges=[], aliases=[]))
         store.close()
 
         conn = sqlite3.connect(path)
@@ -166,6 +168,30 @@ class TestDistinctTyping:
             store.anibridge_distinct("tvdb")
         assert store.anibridge_distinct("imdb") == set()
         store.close()
+
+
+class TestAniBridgeAliases:
+    """Alias rows come back through the lookup's xref for one TVDB show, grouped by AniList id in write order."""
+
+    def test_only_the_shows_alias_rows_come_back_grouped_by_anilist_id(self) -> None:
+        store = MappingStore.open(":memory:")
+        xrefs = [AniBridgeXrefRow("tvdb", 500, 1), AniBridgeXrefRow("tvdb", 500, 2)]
+        aliases = [
+            AniBridgeAliasRow(2, 500, 901, 3, 4),
+            AniBridgeAliasRow(1, 500, 900, 13, 12),
+            AniBridgeAliasRow(1, 600, 900, 5, 6),
+            AniBridgeAliasRow(1, 500, 900, 7, 7),
+        ]
+        store.replace_anibridge("d", AniBridgeRows(entries=[], xrefs=xrefs, ranges=[], aliases=aliases))
+
+        hits = store.anibridge_aliases_for("tvdb", 500, 500)
+        store.close()
+
+        assert hits == [
+            AniBridgeAliasHit(1, 900, 13, 12),
+            AniBridgeAliasHit(1, 900, 7, 7),
+            AniBridgeAliasHit(2, 901, 3, 4),
+        ]
 
 
 class TestDurability:

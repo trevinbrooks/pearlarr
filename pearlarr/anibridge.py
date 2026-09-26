@@ -13,14 +13,24 @@ Episode ranges are kept in TVDB/TMDB numbering: for "anilist:269" ->
 "tvdb_show:74796:s2" with value "{"21-41": "1-21"}" the *target* side
 (`1-21`) is the season-2 TVDB episode range, which is exactly what episode
 filtering in Sonarr needs.
+
+When a record maps its specials onto one TVDB show and one TMDB show,
+`_special_aliasing` pairs the two numberings by position within each source
+range, so a specials pack numbered in TMDB's order can be placed on the TVDB
+specials. `AniBridge._unshared_aliasing` then drops any alias onto a TVDB
+special another entry of the show also maps.
 """
 
 import logging
 from collections import defaultdict
+from collections.abc import Iterable, Mapping
 from dataclasses import dataclass, field
-from typing import Any
+from itertools import chain
+from typing import Any, NamedTuple
 
 from .mapping_store import (
+    AniBridgeAliasHit,
+    AniBridgeAliasRow,
     AniBridgeEntryRow,
     AniBridgeRangeRow,
     AniBridgeRows,
@@ -28,7 +38,7 @@ from .mapping_store import (
     AnimeIdColumn,
     MappingStore,
 )
-from .seadex_types import TvdbMappings, coerce_int
+from .seadex_types import SpecialAliasing, TvdbMappings, coerce_int, season_holds, unambiguous
 
 type AniBridgeGraph = dict[str, dict[str, dict[str, str]]]
 """Raw anibridge-mappings JSON: descriptor -> {target_descriptor -> {src: tgt}}."""
@@ -40,6 +50,14 @@ not the typed domain."""
 
 type AniBridgeLookup = dict[int, AniBridgeEntry]
 """A `lookup_by_*` result: AniList id -> its consumer entry."""
+
+
+class TvdbShowMaps(NamedTuple):
+    """The per-show fields a TVDB lookup adds to an entry, named as the entry dict keys them."""
+
+    tvdb_mappings: TvdbMappings
+    special_aliasing: SpecialAliasing | None
+    """None when the record's specials don't pair for this show, and then the entry leaves the key out."""
 
 
 @dataclass
@@ -59,6 +77,9 @@ class AniBridgeRecord:
     `(start, end)` ranges) per id."""
     tmdb_movie_ids: list[int] = field(default_factory=list[int])
     imdb_ids: list[str] = field(default_factory=list[str])
+    special_aliasing: dict[int, SpecialAliasing] = field(default_factory=dict[int, SpecialAliasing])
+    """TVDB show id -> the record's specials aliasing for that show. `AniBridge._parse` fills it per record, then
+    runs it through `_unshared_aliasing` once every record exists."""
 
 
 def _parse_descriptor(descriptor: str) -> tuple[str, str | None, str | None]:
@@ -107,35 +128,101 @@ def _parse_ranges(target: str) -> list[tuple[int, int | None]]:
         The `(start, end)` pairs. The end is None for an open-ended range
     """
 
-    ranges: list[tuple[int, int | None]] = []
-    target = str(target).split("|")[0]
+    pieces = (_parse_piece(piece) for piece in str(target).split("|")[0].split(","))
+    return [piece for piece in pieces if piece is not None]
 
-    for raw_piece in target.split(","):
-        piece = raw_piece.strip()
-        if not piece:
-            continue
 
-        if "-" in piece:
-            start_str, _, end_str = piece.partition("-")
-            try:
-                start = int(start_str)
-            except ValueError:
-                continue
-            end = None
-            if end_str:
-                try:
-                    end = int(end_str)
-                except ValueError:
-                    continue
+def _parse_piece(piece: str) -> tuple[int, int | None] | None:
+    """One range piece as inclusive `(start, end)`: `n`, `a-b`, or `a-` with an end of None. None for anything else."""
+
+    start_text, dash, end_text = piece.strip().partition("-")
+    try:
+        start = int(start_text)
+        if not dash:
+            end = start
+        elif end_text:
+            end = int(end_text)
         else:
-            try:
-                start = end = int(piece)
-            except ValueError:
-                continue
+            end = None
+    except ValueError:
+        return None
+    return start, end
 
-        ranges.append((start, end))
 
+def _plain_ranges(text: str) -> list[range] | None:
+    """Each comma piece of `text` as a `range`, or None unless every piece is `n` or `a-b` with a <= b.
+
+    So a ratio suffix (`3-4|2`), an open end (`5-`), or a junk piece anywhere gives None.
+    """
+
+    if "|" in text:
+        return None
+    ranges: list[range] = []
+    for piece in text.split(","):
+        parsed = _parse_piece(piece)
+        if parsed is None:
+            return None
+        first, last = parsed
+        if last is None or last < first:
+            return None
+        ranges.append(range(first, last + 1))
     return ranges
+
+
+class SpecialsTarget(NamedTuple):
+    """One season-0 target of a record: its show id (None if not a number) and its source -> target range map."""
+
+    show_id: int | None
+    ep_map: Mapping[str, str]
+
+
+def _specials_maps(targets: Mapping[str, Mapping[str, str]], provider: str) -> list[SpecialsTarget]:
+    """The record's season-0 targets on `provider` (`tvdb_show` or `tmdb_show`)."""
+
+    found: list[SpecialsTarget] = []
+    for target, ep_map in targets.items():
+        kind, pid, scope = _parse_descriptor(target)
+        if kind == provider and _parse_season(scope) == 0:
+            found.append(SpecialsTarget(coerce_int(pid), ep_map or {}))
+    return found
+
+
+def _special_aliasing(targets: Mapping[str, Mapping[str, str]]) -> dict[int, SpecialAliasing]:
+    """A record's TMDB specials numbers paired with its TVDB ones, keyed by the TVDB show. Empty if nothing pairs.
+
+    Needs exactly one TVDB and one TMDB specials target, each with a show id. In each source range both map,
+    the numbers pair by position when the source and both targets are plain ranges of the same width
+    (`_plain_ranges`). A TMDB number that pairs two ways is dropped.
+    """
+
+    tvdb, tmdb = _specials_maps(targets, "tvdb_show"), _specials_maps(targets, "tmdb_show")
+    if len(tvdb) != 1 or len(tmdb) != 1:
+        return {}
+    (tvdb_id, tvdb_map), (tmdb_id, tmdb_map) = tvdb[0], tmdb[0]
+    if tvdb_id is None or tmdb_id is None:
+        return {}
+    pairs: list[tuple[int, int]] = []
+    for source, tvdb_range in tvdb_map.items():
+        if (tmdb_range := tmdb_map.get(source)) is None:
+            continue
+        source_ranges, tvdb_ranges, tmdb_ranges = (_plain_ranges(text) for text in (source, tvdb_range, tmdb_range))
+        if source_ranges is None or tvdb_ranges is None or tmdb_ranges is None:
+            continue
+        if len({sum(map(len, ranges)) for ranges in (source_ranges, tvdb_ranges, tmdb_ranges)}) != 1:
+            continue
+        pairs.extend(zip(chain.from_iterable(tmdb_ranges), chain.from_iterable(tvdb_ranges), strict=True))
+    aliases = unambiguous(pairs)
+    return {tvdb_id: SpecialAliasing(tmdb_id, aliases)} if aliases else {}
+
+
+def _aliasing_by_anilist(hits: Iterable[AniBridgeAliasHit]) -> dict[int, SpecialAliasing]:
+    """The stored alias rows of one TVDB show regrouped per AniList id, in row order."""
+
+    found: dict[int, tuple[int, dict[int, int]]] = {}
+    for hit in hits:
+        _, aliases = found.setdefault(hit.anilist_id, (hit.tmdb_id, {}))
+        aliases[hit.tmdb_number] = hit.tvdb_number
+    return {anilist_id: SpecialAliasing(tmdb_id, aliases) for anilist_id, (tmdb_id, aliases) in found.items()}
 
 
 def _first[T](values: list[T]) -> T | None:
@@ -221,8 +308,9 @@ class AniBridge:
     def to_rows(self) -> AniBridgeRows:
         """Flatten this (graph-backed) view into store row tuples.
 
-        Persists the *computed* consumer-entry picks (`_first`) so the SQL
-        backing reproduces `_consumer_entry` with zero re-derivation.
+        Persists the *computed* consumer-entry picks (`_first`) and the already
+        filtered specials aliases, so the SQL backing reproduces `_consumer_entry`
+        with zero re-derivation.
 
         Returns:
             The `AniBridgeRows` row lists for `MappingStore.replace_anibridge`.
@@ -230,6 +318,7 @@ class AniBridge:
 
         entries: list[AniBridgeEntryRow] = []
         ranges: list[AniBridgeRangeRow] = []
+        alias_rows: list[AniBridgeAliasRow] = []
         for anilist_id, record in self.by_anilist.items():
             entries.append(
                 AniBridgeEntryRow(
@@ -248,6 +337,11 @@ class AniBridge:
                         continue
                     for start, end in range_list:
                         ranges.append(AniBridgeRangeRow(anilist_id, tvdb_id, season, start, end))
+            for tvdb_id, (tmdb_id, aliases) in record.special_aliasing.items():
+                alias_rows.extend(
+                    AniBridgeAliasRow(anilist_id, tvdb_id, tmdb_id, tmdb_number, tvdb_number)
+                    for tmdb_number, tvdb_number in aliases.items()
+                )
 
         xrefs: list[AniBridgeXrefRow] = []
         for axis, index in (
@@ -259,7 +353,7 @@ class AniBridge:
                 for anilist_id in anilist_ids:
                     xrefs.append(AniBridgeXrefRow(axis, ext_id, anilist_id))
 
-        return AniBridgeRows(entries, xrefs, ranges)
+        return AniBridgeRows(entries, xrefs, ranges, alias_rows)
 
     def __bool__(self) -> bool:
         return self._len > 0
@@ -303,8 +397,36 @@ class AniBridge:
 
             for target, ep_map in targets.items():
                 self._add_target(record, anilist_id, target, ep_map)
+            record.special_aliasing = _special_aliasing(targets)
 
             self.by_anilist[anilist_id] = record
+
+        # Filter only now that the loop is done: `_unshared_aliasing` reads every other record of the show.
+        for anilist_id, record in self.by_anilist.items():
+            if record.special_aliasing:
+                record.special_aliasing = self._unshared_aliasing(anilist_id, record.special_aliasing)
+
+    def _unshared_aliasing(
+        self, anilist_id: int, aliasing: Mapping[int, SpecialAliasing]
+    ) -> dict[int, SpecialAliasing]:
+        """The aliasing minus every alias onto a TVDB special another entry of the show maps in its own season 0.
+
+        AniBridge sometimes has a stale specials range on one entry and the right one on another, and an alias
+        built from the stale range would put a file on the wrong special. A show left with no alias is dropped.
+        """
+
+        unshared: dict[int, SpecialAliasing] = {}
+        for tvdb_id, (tmdb_id, aliases) in aliasing.items():
+            others = (self.by_anilist[other] for other in self.tvdb_index.get(tvdb_id, ()) if other != anilist_id)
+            claimed = [ranges for other in others if (ranges := other.tvdb_shows.get(tvdb_id, {}).get(0)) is not None]
+            kept = {
+                tmdb_number: tvdb_number
+                for tmdb_number, tvdb_number in aliases.items()
+                if not any(season_holds(ranges, tvdb_number) for ranges in claimed)
+            }
+            if kept:
+                unshared[tvdb_id] = SpecialAliasing(tmdb_id, kept)
+        return unshared
 
     def _add_target(
         self,
@@ -365,13 +487,14 @@ class AniBridge:
         anidb_id: int | None,
         imdb_id: str | None,
         tmdb_movie_id: int | None,
-        tvdb_mappings: TvdbMappings | None = None,
+        tvdb: TvdbShowMaps | None = None,
     ) -> AniBridgeEntry:
-        """The consumer-facing mapping dict - the single shape both backings build.
+        """The consumer-facing mapping dict, the single shape both backings build.
 
-        "tvdb_mappings" attaches ONLY on `is not None` (never truthiness): an
-        empty {} still attaches, doubling as the "this is an anibridge series"
-        marker. Stays a loose dict - the raw->typed boundary, not the typed domain.
+        "tvdb_mappings" attaches ONLY when `tvdb` is given (never by truthiness): an empty {}
+        still attaches, doubling as the "this is an anibridge series" marker. "special_aliasing"
+        attaches only when `tvdb` carries one. Stays a loose dict: the raw->typed boundary, not
+        the typed domain.
         """
 
         entry: dict[str, Any] = {
@@ -380,8 +503,10 @@ class AniBridge:
             "tmdb_movie_id": tmdb_movie_id,
             "source": "anibridge",
         }
-        if tvdb_mappings is not None:
-            entry["tvdb_mappings"] = tvdb_mappings
+        if tvdb is not None:
+            entry["tvdb_mappings"] = tvdb.tvdb_mappings
+            if tvdb.special_aliasing is not None:
+                entry["special_aliasing"] = tvdb.special_aliasing
         return entry
 
     def _consumer_entry(
@@ -393,17 +518,20 @@ class AniBridge:
 
         The entry mirrors the field names the rest of the code already reads.
         "tvdb_mappings" (season -> ranges) is only attached when the lookup is
-        scoped to a tvdb id that has season data, so it doubles as the
-        "this is an anibridge series" marker used by "get_ep_list".
+        scoped to a tvdb id that has season data, so it doubles as the "this is an
+        anibridge series" marker used by "get_ep_list". "special_aliasing" comes
+        along only when the record's specials also pair for that show.
         """
 
         record = self.by_anilist[anilist_id]
-        tvdb_mappings = record.tvdb_shows[tvdb_id] if (tvdb_id is not None and tvdb_id in record.tvdb_shows) else None
+        tvdb = None
+        if tvdb_id is not None and tvdb_id in record.tvdb_shows:
+            tvdb = TvdbShowMaps(record.tvdb_shows[tvdb_id], record.special_aliasing.get(tvdb_id))
         return self._entry_dict(
             anidb_id=record.anidb_id,
             imdb_id=_first(record.imdb_ids),
             tmdb_movie_id=_first(record.tmdb_movie_ids),
-            tvdb_mappings=tvdb_mappings,
+            tvdb=tvdb,
         )
 
     @staticmethod
@@ -434,11 +562,12 @@ class AniBridge:
         """Batched SQL twin of the graph `lookup_by_*` (on a stored view).
 
         One xref->entry JOIN fetches every entry mapped to `ext_id` on `axis`.
-        For a tvdb-scoped lookup a second xref->range JOIN fetches all their range
-        rows at once (grouped here by AniList id), so resolving k ids costs 2
-        queries rather than the 1 + 2k point queries a per-id approach needs.
-        Reproduces `_consumer_entry` exactly: `tvdb_mappings` is attached
-        whenever `tvdb_id` is supplied - the only such caller (`lookup_by_tvdb`)
+        For a tvdb-scoped lookup, an xref->range JOIN and an xref->alias JOIN fetch
+        all their range and alias rows at once (grouped here by AniList id), so
+        resolving k ids costs 3 queries rather than the 1 + 3k point queries a per-id
+        approach needs. Reproduces `_consumer_entry` exactly: `tvdb_mappings` attaches
+        whenever `tvdb_id` is supplied, and `special_aliasing` whenever the id also has
+        alias rows. The only such caller (`lookup_by_tvdb`)
         iterates the tvdb xref, so every resolved id is guaranteed to carry that
         tvdb (matching the in-memory `tvdb_id in record.tvdb_shows` guard).
         """
@@ -447,20 +576,23 @@ class AniBridge:
         assert store is not None  # only reached on a SQL-backed view
 
         ranges_by_anilist: dict[int, list[tuple[int, int | None, int | None]]] = {}
+        aliasing_by_anilist: dict[int, SpecialAliasing] = {}
         if tvdb_id is not None:
             for hit in store.anibridge_ranges_for(axis, ext_id, tvdb_id):
                 ranges_by_anilist.setdefault(hit.anilist_id, []).append((hit.season, hit.start_ep, hit.end_ep))
+            aliasing_by_anilist = _aliasing_by_anilist(store.anibridge_aliases_for(axis, ext_id, tvdb_id))
 
         result: AniBridgeLookup = {}
         for row in store.anibridge_entries_for(axis, ext_id):
-            tvdb_mappings = (
-                self._ranges_to_mappings(ranges_by_anilist.get(row.anilist_id, [])) if tvdb_id is not None else None
-            )
+            tvdb = None
+            if tvdb_id is not None:
+                tvdb_mappings = self._ranges_to_mappings(ranges_by_anilist.get(row.anilist_id, []))
+                tvdb = TvdbShowMaps(tvdb_mappings, aliasing_by_anilist.get(row.anilist_id))
             result[row.anilist_id] = self._entry_dict(
                 anidb_id=row.anidb_id,
                 imdb_id=row.imdb_id,
                 tmdb_movie_id=row.tmdb_movie_id,
-                tvdb_mappings=tvdb_mappings,
+                tvdb=tvdb,
             )
         return result
 

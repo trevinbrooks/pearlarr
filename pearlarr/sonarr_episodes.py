@@ -23,6 +23,7 @@ from .seadex_types import (
     SonarrEpisode,
     SonarrItem,
     TvdbMappings,
+    season_holds,
 )
 from .sonarr_client import AbstractSonarrClient
 
@@ -84,7 +85,7 @@ def check_ep_by_anibridge(
     """Check whether a Sonarr episode is covered by an AniBridge mapping.
 
     `tvdb_mappings` maps a season to its inclusive `(start, end)` TVDB episode
-    ranges: an empty list matches the whole season, an end of None is open-ended.
+    ranges, and `season_holds` checks the episode against its season's.
     """
 
     ep_season = ep.season_number if ep.season_number is not None else -1
@@ -96,18 +97,7 @@ def check_ep_by_anibridge(
     if ranges is None:
         return False
 
-    # No explicit episode ranges -> the whole season is covered
-    if not ranges:
-        return True
-
-    for start, end in ranges:
-        if end is None:
-            if ep_episode >= start:
-                return True
-        elif start <= ep_episode <= end:
-            return True
-
-    return False
+    return season_holds(ranges, ep_episode)
 
 
 class SonarrEpisodes:

@@ -7,7 +7,7 @@ from seadex import EntryRecord
 
 from pearlarr.mappings import MappingEntry
 from pearlarr.placement_types import TorrentListing
-from pearlarr.seadex_types import SonarrEpisode
+from pearlarr.seadex_types import SonarrEpisode, SpecialAliasing
 from pearlarr.torrent_listings import SeriesListings
 
 from .builders import (
@@ -72,6 +72,19 @@ class TestRead:
         # Entries 2 and 3 list lone files (sized 2 and 3) under one-episode windows. Entry 1's window holds two.
         assert read.identities == {2: 503, 3: 504}
         assert episodes.calls == [(7, 1), (7, 2), (7, 3)]
+
+    def test_each_entrys_aliases_reach_the_hashes_it_lists(self) -> None:
+        seadex = FakeSeaDexSource({1: _entry(1, _H1), 2: _entry(2, _H1, _H2)})
+        mappings = {
+            1: MappingEntry(anilist_id=1, special_aliasing=SpecialAliasing(900, {2: 1})),
+            2: MappingEntry(anilist_id=2, special_aliasing=SpecialAliasing(900, {4: 3})),
+        }
+
+        read = _reader(seadex, _windows({1: _window(1), 2: _window(3)})).read(7, mappings)
+
+        assert read is not None
+        assert read.listing(_H1) == TorrentListing(frozenset({501, 503}), {2: 1, 4: 3})
+        assert read.listing(_H2) == TorrentListing(frozenset({503}), {4: 3})
 
     def test_a_series_is_read_once_a_run(self) -> None:
         episodes = _windows({1: _window(1)})

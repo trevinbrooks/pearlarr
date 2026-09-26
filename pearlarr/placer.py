@@ -15,6 +15,7 @@ Terms used across the placement modules:
 - Listing (`TargetScope.listing`): what SeaDex's listings tell us about the torrent. `ids` are the episodes of
   every entry that lists it, which a numbered specials pack is checked against (empty at import time, so the
   check is skipped). `identified` maps files to the episode whose single-file release has the same size.
+  `special_aliases` maps a TMDB specials number to the TVDB special it stands for.
 - Open ids: the scope's ids that no file holds yet.
 - Seeded file: a file of the torrent that the grab-time placement or an earlier import poll already mapped.
   Its ids start out used, as do ids an earlier window placed. Seeded files, and files since moved off disk
@@ -66,14 +67,21 @@ The passes run in this order. Each places files only onto the ids that earlier p
    N episodes with a few members shifted onto specials, is read as that season's episodes 1 to N. When the
    specials season fits just as well, it is a tie: the readings are rejected and both candidates recorded.
 5. Misnumbered pack: a pack of specials, one file per number, as wide as the listing, with a number that is no
-   listed special, is numbered by another TVDB state. Every file of the run is set aside as `MISNUMBERED` for
-   a hand import, and no later pass places any of it. `_sole_specials_run` lists what stands the pass down.
+   listed special, is numbered some other way (an older TVDB state, or TMDB's order). If the listing's
+   `special_aliases` map its numbers one to one onto the listed specials, and no title, size match, or seeded
+   file puts a member anywhere else, each file goes on its aliased special (`ALTERNATE`, or `SKIPPED` when
+   taken) and a superseded version is `DUPLICATE`. A file whose special is outside the window is
+   `ALIASED_ELSEWHERE`, a claim `window_placement` settles across the windows. Otherwise every file of the run is
+   `MISNUMBERED` for a hand import and no later pass places any of it, unless the window already has used ids.
+   Then the later passes take the pack by its numbers, so a pack the stored record partly holds off its aliases
+   keeps its own numbers. `_sole_specials_run` lists what else turns the pass off.
 6. Size identity: a file with the same size as a single-file release SeaDex lists for one episode goes on that
    episode (`IDENTIFIED`). If the file's reading already agrees, or its title names a different episode, it's
    left for the later passes. If the file's numbers point at a different episode, it's `OVERRIDDEN` and the
    caller warns. That means the batch's numbering is off, so the count-based passes are turned off and pass 7
    skips the file's numbered run. If the episode is already taken the file is `SKIPPED`, and if it's outside the
-   scope it's `FOREIGN`. This runs after pass 5, so it never pulls a file out of a pack that was refused whole.
+   scope it's `FOREIGN`. This runs after pass 5, so it never pulls a file out of a pack that pass refused or
+   placed through its aliases.
 7. Release run: when the open ids form a run window and the tie-breaks leave one numbered run that fits it
    (a `_Tier`), the run's own numbers place its members onto the window, unless Sonarr's reading already
    puts each member on its own window episode. While any parse is unknown the members are `HELD` instead.
@@ -149,7 +157,7 @@ def assign_episode_ids(
     _pass_refuse_refuted(state)
     _pass_refuse_overlaps(state)
     _pass_reread_season_runs(state)
-    _pass_refuse_misnumbered(state)
+    _pass_misnumbered_pack(state)
     _pass_identity(state)
     _pass_release_run(state)
     _pass_exact(state)
@@ -576,10 +584,16 @@ class _Placer:
         return bool(self.scope.id_by_key)
 
     @property
-    def untouched(self) -> bool:
-        """Whether nothing has spoken for the batch: no verdict but an extra's, and nothing seeded."""
+    def unjudged(self) -> bool:
+        """Whether no file other than an extra has a verdict yet."""
 
-        return self.verdicts.keys() <= self.torrent.extras and not self.scope.used
+        return self.verdicts.keys() <= self.torrent.extras
+
+    @property
+    def untouched(self) -> bool:
+        """Whether nothing has spoken for the batch: `unjudged`, and the scope started with no used ids."""
+
+        return self.unjudged and not self.scope.used
 
     def season_fit(self, run: NumberedRun) -> _SeasonFit | None:
         """The season a `1..N` run without own keys belongs to: Sonarr matched it into one season of exactly N episodes.
@@ -676,6 +690,12 @@ class _Placer:
 
         return [name for name in self.batch.names if name not in self.verdicts]
 
+    def remaining_members(self, members: Iterable[RunMember]) -> list[RunMember]:
+        """The members still to place, in the order given. Seeded, gone, and already judged ones drop out."""
+
+        remaining = frozenset(self.remaining())
+        return [member for member in members if member.name in remaining]
+
     def spans_multiple(self, info: ParsedFileInfo) -> bool:
         """Whether the file likely holds more than one episode: its name claims several, or Sonarr matched several.
 
@@ -745,6 +765,14 @@ class _Placer:
 
         self.verdicts[name] = Placement(name, tuple(ids), verdict)
         self.used.update(ids)
+
+    def place_or_skip(self, name: str, ep_id: int, verdict: PlacementVerdict) -> None:
+        """Place the file on the episode, or set it aside as `SKIPPED` when the episode is already used."""
+
+        if ep_id in self.used:
+            self.set_aside(name, PlacementVerdict.SKIPPED)
+        else:
+            self.place(name, (ep_id,), verdict)
 
     def place_zip(self, names: Sequence[str], ids: Sequence[int], verdict: PlacementVerdict) -> bool:
         """Place the names onto the ids pairwise, or none when a name is titled as an episode other than its pair.
@@ -922,39 +950,88 @@ def _pass_reread_season_runs(state: _Placer) -> None:
             state.reread(run, fit.season)
 
 
-def _pass_refuse_misnumbered(state: _Placer) -> None:
-    """Set a specials pack numbered by another TVDB state aside whole (`_misnumbered_pack`).
+class _ListedPack(NamedTuple):
+    """A misnumbered specials pack and the listed specials it is as wide as."""
 
-    Its numbers would land some files on the wrong specials and prove the rest foreign, and only the content
-    tells which: nothing places it, and the caller lists it for a hand import.
+    run: NumberedRun
+    listed: frozenset[int]
+
+
+def _pass_misnumbered_pack(state: _Placer) -> None:
+    """Place a misnumbered specials pack through the listing's special aliases, or refuse it whole.
+
+    The pack's own numbers would put some files on the wrong specials, so only the aliases can place it
+    (`_aliased_specials`). When they can't, the pack is `MISNUMBERED` for a hand import, unless some of the
+    window's ids are already used (by the stored record's map or an earlier window). Then the pass stands down,
+    so on the window holding a seed off its aliased special the rest of the pack places by its numbers too.
     """
 
-    run = _misnumbered_pack(state)
-    if run is not None:
-        state.set_aside_each(run.whole, PlacementVerdict.MISNUMBERED)
+    pack = _misnumbered_pack(state)
+    if pack is None:
+        return
+    specials = _aliased_specials(state, pack)
+    if specials is None:
+        if state.untouched:
+            state.set_aside_each(state.remaining_members(pack.run.whole), PlacementVerdict.MISNUMBERED)
+        return
+    for member in state.remaining_members(pack.run.members):
+        ep_id = specials[member.name]
+        if state.scope.admits(ep_id):
+            state.place_or_skip(member.name, ep_id, PlacementVerdict.ALTERNATE)
+        else:
+            state.set_aside(member.name, PlacementVerdict.ALIASED_ELSEWHERE)
+    state.set_aside_each(state.remaining_members(pack.run.superseded), PlacementVerdict.DUPLICATE)
 
 
-def _misnumbered_pack(state: _Placer) -> NumberedRun | None:
-    """The batch as one listing-wide specials pack with a number no listed special has, else None.
+def _aliased_specials(state: _Placer, pack: _ListedPack) -> dict[str, int] | None:
+    """Each member -> its aliased special, or None if the aliases don't map the pack one to one onto the listing.
 
-    Specials are the numbering TVDB inserts into and shifts, so the curated listing (`TargetScope.listing`)
-    outweighs the names there. A season's numbering is stable: a number outside it is a mislisting, foreign as ever.
+    Also None when a member's title, size match, or seed puts it anywhere but its aliased special.
+    """
+
+    listing = state.scope.listing
+    seeded = state.scope.seeded
+    members = frozenset(member.name for member in pack.run.members)
+    specials: dict[str, int] = {}
+    # Every version is checked: a superseded lower version's title, size, or seed speaks for its number too.
+    for member in pack.run.whole:
+        tvdb_number = listing.special_aliases.get(member.number)
+        ep_id = None if tvdb_number is None else state.scope.id_by_key.get(EpisodeKey(0, tvdb_number))
+        if ep_id is None or state.torrent.contradicts(member.name, (ep_id,)):
+            return None
+        if listing.identified.get(member.name, ep_id) != ep_id or seeded.get(member.name, (ep_id,)) != (ep_id,):
+            return None
+        if member.name in members:
+            specials[member.name] = ep_id
+    # The pack is as wide as the listing, so hitting every listed special means the map is one to one.
+    return specials if frozenset(specials.values()) == pack.listed else None
+
+
+def _misnumbered_pack(state: _Placer) -> _ListedPack | None:
+    """The batch as one listing-wide specials pack with a number that isn't a listed special, else None.
+
+    TVDB inserts and renumbers specials, so for specials the curated listing (`TargetScope.listing`) beats the file
+    names. A regular season's numbering is stable, so a number outside the listing there is a mislisting and the
+    file is foreign as usual.
     """
 
     listed = state.scope.specials_listing()
     if listed is None or (run := _sole_specials_run(state, len(listed))) is None:
         return None
-    return None if all(state.scope.id_by_key.get(EpisodeKey(0, n)) in listed for n in run.numbers) else run
+    if all(state.scope.id_by_key.get(EpisodeKey(0, n)) in listed for n in run.numbers):
+        return None
+    return _ListedPack(run, listed)
 
 
 def _sole_specials_run(state: _Placer, width: int) -> NumberedRun | None:
-    """The batch as one run of `width` distinct `S00Exx` names, each Sonarr read as its own number's special.
+    """The batch as one run of `width` distinct `S00Exx` names, each read by Sonarr as its own number's special.
 
-    None once anything else spoke for the batch (an unknown parse, a barred count, a seed, a verdict, another
-    run or name, a duplicate or multi-episode number), or a title on every member confirms its number.
+    Seeded and gone files count as members. None if a parse is unknown, the count-based passes are off, a file
+    other than an extra already has a verdict, the batch holds another run or a file outside the run, a number
+    repeats or spans several episodes, or every member's title confirms its number.
     """
 
-    if not state.batch.all_parses_known or state.count_legs_barred or not state.untouched:
+    if not state.batch.all_parses_known or state.count_legs_barred or not state.unjudged:
         return None
     counted = state.torrent.counted
     runs = state.runs(counted)
@@ -1001,10 +1078,7 @@ def _pass_identity(state: _Placer) -> None:
             state.count_legs_barred = True
             if (member := state.torrent.reads[name].member) is not None:
                 state.size_refuted_runs.add(member.prefix)
-        if ep_id in state.used:
-            state.set_aside(name, PlacementVerdict.SKIPPED)
-        else:
-            state.place(name, (ep_id,), PlacementVerdict.OVERRIDDEN if overrides else PlacementVerdict.IDENTIFIED)
+        state.place_or_skip(name, ep_id, PlacementVerdict.OVERRIDDEN if overrides else PlacementVerdict.IDENTIFIED)
 
 
 def _pass_release_run(state: _Placer) -> None:

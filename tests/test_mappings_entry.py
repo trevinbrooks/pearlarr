@@ -10,6 +10,7 @@ former dict reads produced.
 """
 
 import dataclasses
+from types import MappingProxyType
 
 import httpx
 import pytest
@@ -23,6 +24,7 @@ from pearlarr.mappings import (
     MappingResolver,
     MappingSources,
 )
+from pearlarr.seadex_types import SpecialAliasing
 
 
 def _resolver(
@@ -111,6 +113,33 @@ class TestAniBridgePath:
         # AniBridge entries carry no flat season/offset -> the dataclass defaults.
         assert entry.tvdb_season == -1
         assert entry.tvdb_epoffset == 0
+
+
+class TestSpecialAliasing:
+    """An entry's `special_aliasing` defaults to None and holds a read-only copy of the producer's aliases."""
+
+    def test_an_entry_defaults_to_no_aliasing(self) -> None:
+        assert MappingEntry(anilist_id=1).special_aliasing is None
+
+    def test_the_aliases_are_a_read_only_copy_of_the_producers_dict(self) -> None:
+        aliases = {13: 12}
+        entry = MappingEntry(anilist_id=1, special_aliasing=SpecialAliasing(900, aliases))
+
+        aliases[14] = 13
+
+        assert entry.special_aliasing is not None
+        assert entry.special_aliasing == SpecialAliasing(900, {13: 12})
+        assert isinstance(entry.special_aliasing.aliases, MappingProxyType)
+
+    def test_tvdb_lookup_attaches_the_paired_specials(self) -> None:
+        graph: AniBridgeGraph = {
+            "anilist:1": {"tvdb_show:500:s0": {"1-2": "7,12"}, "tmdb_show:900:s0": {"1-2": "7,13"}},
+        }
+        resolver = _resolver(anibridge=graph)
+
+        mappings, _ = resolver.get_anilist_ids(ExternalIds(tvdb=500))
+
+        assert mappings[1].special_aliasing == SpecialAliasing(900, {7: 7, 13: 12})
 
 
 class TestModeDiscriminant:
