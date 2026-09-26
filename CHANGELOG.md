@@ -7,6 +7,8 @@ Pearlarr is a fork of [bbtufty/seadexarr](https://github.com/bbtufty/seadexarr).
 
 ## [Unreleased]
 
+## [1.5.3] - 2026-09-26
+
 ### Fixed
 
 - A title is re-checked on the next run after Sonarr or Radarr imports its Pearlarr grab, so a grab the arr imported only in part no longer stays cached as done.
