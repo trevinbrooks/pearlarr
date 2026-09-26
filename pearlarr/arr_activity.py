@@ -1,11 +1,12 @@
 """Arr-side activity detection between SeaDex passes.
 
 The cached-entry skip keys only on SeaDex's `updated_at`, so a file the arr
-replaced under an *unchanged* SeaDex entry (quality upgrade, manual grab,
+changed under an *unchanged* SeaDex entry (quality upgrade, manual grab,
 re-download after delete) would never be re-detected. Each run therefore polls
 the arr's `/api/v3/history/since` once, maps the file-state-changing records
-to touched item ids, and the run loop marks their AniList ids dirty - bypassing
-the skip for exactly those ids.
+to touched item ids, and the run loop marks their AniList ids dirty, bypassing
+the skip for exactly those ids. An import of our own grab counts too: the arr
+may import only part of it.
 
 Pure scan logic: no imports from the run machinery (the loop injects the fetch
 callable), so the module stays cycle-free.
@@ -42,8 +43,8 @@ class ActivityScan:
 
     touched: frozenset[int]
     rescan_all: bool
-    """Set when history coverage is broken - a checkpoint older than the lookback
-    window, or an unreadable stored date - so the id cursor may have skipped file
+    """Set when history coverage is broken (a checkpoint older than the lookback
+    window, or an unreadable stored date), so the id cursor may have skipped file
     changes. The caller must treat every entry as dirty once (`touched` is empty
     then)."""
 
@@ -80,8 +81,8 @@ class ArrActivityMonitor:
 
     `scan` reads the stored checkpoint, queries the overlapped window, dedups
     on the id cursor and stashes the advanced checkpoint.
-    `commit_checkpoint` stages it through the cache store - only called by the
-    run loop when the pass covered the whole library, and only persisted at a
+    `commit_checkpoint` stages it through the cache store. The run loop calls it
+    only when the pass covered the whole library, and it persists only at a
     non-preview save point (so a dry run never advances the cursor).
     """
 
@@ -99,14 +100,9 @@ class ArrActivityMonitor:
     ) -> ActivityScan:
         """Scan the window since the checkpoint for arr-side file changes.
 
-        Fetch failure (None) fails open: mark nothing dirty, leave the
-        checkpoint untouched (a coverage gap is then re-detected next pass). The
-        fetch helper owns the operator-facing warning, so only a debug line lands
-        here. An empty window stashes no checkpoint either (the bootstrap
-        retries next pass). Own grabs - records whose `downloadId` matches a
-        remembered or pending infohash - are suppressed. Broken coverage
-        (checkpoint beyond the lookback, or an unreadable stored date) returns
-        `rescan_all` instead of a touched set.
+        A fetch failure (None) fails open: nothing dirty, the checkpoint untouched
+        so a coverage gap is re-detected next pass. An empty window stashes no
+        checkpoint either. Broken coverage returns `rescan_all`, not a touched set.
 
         Args:
             fetch: The strategy's `history_since` (takes the ISO8601 query date).
@@ -138,17 +134,8 @@ class ArrActivityMonitor:
         if window.rescan_all or not fresh:
             return ActivityScan(touched=frozenset(), rescan_all=window.rescan_all)
 
-        own = self._cache_store.own_download_ids(self._arr)
-        touched: set[int] = set()
-        for record in fresh:
-            if not _is_file_change(record):
-                continue
-            if record.download_id is not None and record.download_id.casefold() in own:
-                continue
-            if record.item_id <= 0:
-                continue
-            touched.add(record.item_id)
-        return ActivityScan(touched=frozenset(touched), rescan_all=False)
+        touched = frozenset(record.item_id for record in fresh if record.item_id > 0 and _is_file_change(record))
+        return ActivityScan(touched=touched, rescan_all=False)
 
     def _resolve_window(self, checkpoint: HistoryCheckpoint | None, now: datetime) -> _QueryWindow:
         """Derive the history query cursor from the stored checkpoint."""
@@ -159,7 +146,7 @@ class ArrActivityMonitor:
             return _QueryWindow(floor, False)
         parsed = parse_history_date(checkpoint.since_date)
         if parsed is None:
-            # Unreadable cursor date: coverage unknown - replay the full
+            # Unreadable cursor date: coverage unknown, so replay the full
             # lookback and re-check everything once.
             return _QueryWindow(floor, True)
         query_date = min(parsed, now) - timedelta(hours=HISTORY_QUERY_OVERLAP_HOURS)

@@ -6,8 +6,8 @@
 
 Unit half: the checkpoint window math (lookback bootstrap / overlap / clamp),
 the id-cursor dedup, the coverage-gap rescan signal, the event + upgrade-reason
-+ own-hash + item-id filters, and the fail-open contract. Run-loop half (reusing
-`test_run_finalize`'s `_engine` harness): touched items flow into
++ item-id filters (no own-grab exemption), and the fail-open contract. Run-loop
+half (reusing `test_run_finalize`'s `_engine` harness): touched items flow into
 `RunServices._dirty_al_ids` (all items on a gap), the checkpoint is staged
 only on full-library, non-capped, non-outage runs (held drift signals replay
 on the next healthy run), and either config toggle disables the fetch
@@ -16,6 +16,8 @@ entirely.
 
 import logging
 from datetime import UTC, datetime, timedelta
+
+import pytest
 
 from pearlarr.arr_activity import (
     HISTORY_MAX_LOOKBACK_DAYS,
@@ -210,21 +212,36 @@ class TestScan:
         assert checkpoint is not None
         assert checkpoint.last_id == 2
 
-    def test_own_hash_suppression_is_case_insensitive(self) -> None:
+    @pytest.mark.parametrize(
+        ("arr", "event"),
+        [(Arr.SONARR, "downloadFolderImported"), (Arr.RADARR, "movieFolderImported")],
+    )
+    def test_own_grab_import_touches_its_item(self, arr: Arr, event: str) -> None:
+        # Own hashes are seeded so a re-added own-grab filter fails here: the arr may import only part of a grab.
         cache = FakeCacheStore()
-        cache.update_cache(Arr.SONARR, 7, {"torrent_hashes": ["ABCDEF", None]})
-        cache.put_pending(Arr.SONARR, "beef01", {"infohash": "beef01"})
-        monitor, _ = _monitor(cache)
+        cache.update_cache(arr, 7, {"torrent_hashes": ["ABCDEF"]})
+        cache.put_pending(arr, "beef01", {"infohash": "beef01"})
+        monitor = ArrActivityMonitor(arr, cache, make_logger())
         fetch = _Fetch(
             [
-                _rec(1, item_id=1, download_id="abcdef"),  # remembered grab
-                _rec(2, item_id=2, download_id="BEEF01"),  # pending-imports-only hash
-                _rec(3, item_id=3, download_id="cafe00"),  # someone else's grab
-                _rec(4, item_id=4, download_id=None),  # no hash: kept
+                _rec(1, item_id=1, event=event, download_id="ABCDEF"),  # remembered grab
+                _rec(2, item_id=2, event=event, download_id="BEEF01"),  # pending grab
+                _rec(3, item_id=3, event=event, download_id="cafe00"),  # someone else's grab
             ],
         )
 
-        assert monitor.scan(fetch, now=_NOW).touched == frozenset({3, 4})
+        assert monitor.scan(fetch, now=_NOW).touched == frozenset({1, 2, 3})
+
+    def test_committed_own_grab_import_is_not_touched_again(self) -> None:
+        # The committed cursor dedups the overlap's replay, so the next run re-checks nothing.
+        monitor, cache = _monitor()
+        cache.put_pending(Arr.SONARR, "beef01", {"infohash": "beef01"})
+        records = [_rec(1, item_id=2, download_id="BEEF01")]
+
+        assert monitor.scan(_Fetch(records), now=_NOW).touched == frozenset({2})
+        monitor.commit_checkpoint()
+        next_run, _ = _monitor(cache)
+        assert next_run.scan(_Fetch(records), now=_NOW).touched == frozenset()
 
     def test_item_id_zero_dropped(self) -> None:
         monitor, _ = _monitor()
@@ -334,6 +351,15 @@ class TestRunLoopActivityWiring:
 
         assert engine._services._dirty_al_ids == {11}
         assert len(strategy.history_calls) == 1
+
+    def test_own_grab_import_marks_its_anilist_ids_dirty(self, logger: logging.Logger) -> None:
+        cache = FakeCacheStore()
+        cache.put_pending(Arr.SONARR, "beef01", {"infohash": "beef01"})
+        engine = _engine(_FinalizeRecorder(), logger, cache_store=cache)
+        strategy = self._strategy(history=[_rec(1, item_id=3, download_id="BEEF01")])
+        engine.run_sync(strategy, item_id=None, dry_run=True, boot=BootFlow())
+
+        assert engine._services._dirty_al_ids == {11}
 
     def test_untouched_items_stay_clean(self, logger: logging.Logger) -> None:
         strategy = self._strategy(history=[_rec(1, item_id=99)])  # not in the library

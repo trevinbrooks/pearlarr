@@ -440,15 +440,6 @@ class FakeCacheStore(AbstractCacheStore):
     def put_history_checkpoint(self, arr: Arr, checkpoint: HistoryCheckpoint) -> None:
         self._history_checkpoints[str(arr)] = checkpoint
 
-    @override
-    def own_download_ids(self, arr: Arr) -> frozenset[str]:
-        """Casefolded union of remembered + pending hashes (None/"" excluded)."""
-
-        key = str(arr)
-        hashes = {h.casefold() for k, hs in self._entry_hashes.items() if k[0] == key for h in hs if h}
-        hashes |= {infohash.casefold() for infohash in self._pending.get(key, {})}
-        return frozenset(hashes)
-
     # -- maintenance: stats, integrity --
     @override
     def stats(self) -> CacheStats:

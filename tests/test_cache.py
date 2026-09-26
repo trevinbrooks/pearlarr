@@ -1209,10 +1209,7 @@ class TestGuardFacts:
 
 
 class TestHistoryCheckpoints:
-    """History checkpoints upsert per arr and respect the preview gate.
-
-    `own_download_ids` unions casefolded hashes across cached torrents and pending imports.
-    """
+    """History checkpoints upsert per arr and respect the preview gate."""
 
     def test_roundtrip_upsert_and_arr_isolation(self, tmp_path: Path) -> None:
         store = _open(tmp_path)
@@ -1241,17 +1238,6 @@ class TestHistoryCheckpoints:
         reopened = _open(tmp_path)
         assert reopened.get_history_checkpoint(Arr.SONARR) is None
         reopened.close()
-
-    def test_own_download_ids_unions_and_casefolds(self, tmp_path: Path) -> None:
-        store = _open(tmp_path)
-        # Remembered hashes incl. a None marker (stored as the "" sentinel, excluded).
-        store.update_cache(Arr.SONARR, 7, {"torrent_hashes": ["ABCDEF", None]})
-        store.put_pending(Arr.SONARR, "FEDCBA", {"infohash": "FEDCBA"})
-        store.put_pending(Arr.RADARR, "other", {})
-
-        assert store.own_download_ids(Arr.SONARR) == frozenset({"abcdef", "fedcba"})
-        assert store.own_download_ids(Arr.RADARR) == frozenset({"other"})
-        store.close()
 
 
 class TestPromoteFailure:
