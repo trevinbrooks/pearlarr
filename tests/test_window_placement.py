@@ -7,7 +7,14 @@ from dataclasses import replace
 import pytest
 
 from pearlarr.manual_import import EntryNames
-from pearlarr.placement_types import EpisodeIndex, PlacementBatch, PlacementVerdict, TargetScope
+from pearlarr.placement_types import (
+    NO_EVIDENCE,
+    EpisodeIndex,
+    ListingEvidence,
+    PlacementBatch,
+    PlacementVerdict,
+    TargetScope,
+)
 from pearlarr.seadex_types import EpisodeKey, ParsedFileInfo
 from pearlarr.window_placement import WindowedAssignment, assign_across_windows, place_leftover, windows_of
 
@@ -217,7 +224,8 @@ class TestSeveralWindows:
         # Under the first window's listing (specials 2, 4 and 6, three as the pack is wide) the pack's `1` is
         # no listed special: misnumbered, a human's. The second window, unlisted, would place it by number.
         pack = {f"Show.S00E{n:02d}.mkv": parsed_info(season=0, episodes=(n,), matched=((0, n),)) for n in (1, 2, 3)}
-        listed = replace(_window([502, 504], series=_MANY_SPECIALS), listed=frozenset({502, 504, 506}))
+        listing = ListingEvidence(frozenset({502, 504, 506}))
+        listed = replace(_window([502, 504], series=_MANY_SPECIALS), listing=listing)
 
         result = assign_across_windows(_batch(pack), (listed, _window([501, 502, 503], series=_MANY_SPECIALS)))
 
@@ -242,7 +250,7 @@ class TestSeveralWindows:
 
 
 class TestWindowsOf:
-    """`windows_of`: one window per claim in order, over its series' index, carrying the claim's names."""
+    """`windows_of`: one window per claim in order, over its series' index, with the claim's names and the listing."""
 
     def test_one_window_per_claim_over_its_series_index(self) -> None:
         names = EntryNames("Show", ("Show Alpha",))
@@ -251,15 +259,17 @@ class TestWindowsOf:
             entry_claim(al_id=2, series_id=8, ordered_episode_ids=[201]),
         )
 
-        windows = windows_of(claims, {7: _SERIES, 8: _OTHER_SERIES})
+        listing = ListingEvidence(frozenset({601}), {"a.mkv": 601})
+
+        windows = windows_of(claims, {7: _SERIES, 8: _OTHER_SERIES}, listing)
 
         assert windows == (
-            TargetScope([601, 602], _SERIES, names=names),
-            TargetScope([201], _OTHER_SERIES, names=EntryNames()),
+            TargetScope([601, 602], _SERIES, names=names, listing=listing),
+            TargetScope([201], _OTHER_SERIES, names=EntryNames(), listing=listing),
         )
 
     def test_an_unscoped_claim_gives_an_unscoped_window(self) -> None:
-        (window,) = windows_of((entry_claim(series_id=7),), {7: _SERIES})
+        (window,) = windows_of((entry_claim(series_id=7),), {7: _SERIES}, NO_EVIDENCE)
 
         assert window == TargetScope([], _SERIES)
         assert window.unscoped

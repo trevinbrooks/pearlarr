@@ -8,11 +8,18 @@ from typing import NamedTuple
 
 from .import_files import CandidateFile
 from .manual_import import PendingImport, normalized_leaf, path_leaf
-from .placement_types import EpisodeAssignment, EpisodeIndex, Placement, PlacementBatch
+from .placement_types import (
+    EpisodeAssignment,
+    EpisodeIndex,
+    ListingEvidence,
+    Placement,
+    PlacementBatch,
+    PlacementVerdict,
+)
 from .release_names import parse_se_from_filename
 from .seadex_types import ManualImportCandidate, ParsedFileInfo
 from .sonarr_client import AbstractSonarrClient
-from .sonarr_parse import is_video_candidate
+from .video_files import is_video_candidate
 from .window_placement import place_leftover, windows_of
 
 # Rejection-reason substrings, matched case-insensitively. Only ALREADY_IMPORTED means Sonarr holds the file:
@@ -64,6 +71,12 @@ class FileAssignment(NamedTuple):
         """Unplaceable on-disk video leaves nothing proved foreign, for the executor to warn about."""
 
         return self.result.skipped
+
+    @property
+    def overridden(self) -> tuple[str, ...]:
+        """Leftover files this poll placed by size over their names, for the executor to warn about."""
+
+        return tuple(p.name for p in self.result.placements if p.verdict is PlacementVerdict.OVERRIDDEN)
 
     @property
     def excluded(self) -> tuple[Placement, ...]:
@@ -161,9 +174,11 @@ class FileEpisodeMapper:
                 if norm_base not in parsed_by_file:
                     parsed_by_file[norm_base] = self._parsed_file_info(path_leaf(name))
 
-        # The leftovers assign into each claim's window in turn, the seeded ids already used there.
+        # The leftovers go into each claim's window in turn, with the seeded ids already used there. Import doesn't
+        # read SeaDex: files the grab placed by size are placed the same way from the record.
         batch = PlacementBatch(leftover, parsed_by_file)
-        windowed = place_leftover(seeded, batch, windows_of(pending.claims, indexes))
+        listing = ListingEvidence(frozenset(), pending.identified)
+        windowed = place_leftover(seeded, batch, windows_of(pending.claims, indexes, listing))
         # An empty index means the exact pass could not have matched a numbered name this poll.
         settled = batch.all_parses_known and all(indexes[sid].id_by_key for sid in pending.series_ids)
         return FileAssignment(windowed.merged, seeded, settled=settled)

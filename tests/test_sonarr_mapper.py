@@ -10,11 +10,20 @@ import pytest
 from pearlarr.grab_placement import SeedFile, SeedRelease, SeedScope, build_pending_seed, place_release
 from pearlarr.import_files import CandidateFile
 from pearlarr.manual_import import EntryNames, PendingImport, normalize_basename
-from pearlarr.placement_types import EpisodeIndex, Placement, PlacementVerdict, TargetScope
+from pearlarr.placement_types import NO_EVIDENCE, EpisodeIndex, Placement, PlacementVerdict, TargetScope
 from pearlarr.seadex_types import EpisodeKey, ManualImportCandidate, ParsedFileInfo
 from pearlarr.sonarr_mapper import FileAssignment, FileEpisodeMapper
 
-from .builders import entry_facts, indexes_for, known_torrent, parsed_info, pending_import, series_index, url_item
+from .builders import (
+    entry_claim,
+    entry_facts,
+    indexes_for,
+    known_torrent,
+    parsed_info,
+    pending_import,
+    series_index,
+    url_item,
+)
 from .fakes import FakeSonarrClient
 
 
@@ -85,6 +94,49 @@ class TestMapperSeam:
 
         assert result.placed == {normalize_basename(leftover_name): [102]}
         assert result.assigned == {normalize_basename(seed_name): [101], normalize_basename(leftover_name): [102]}
+
+
+class TestIdentifiedAtImport:
+    """Import places the files the grab placed by size the same way, from the record, without reading SeaDex."""
+
+    _SECOND: ClassVar[str] = "Show - S00E02 [1080p].mkv"
+    _THIRD: ClassVar[str] = "Show - S00E03 [1080p].mkv"
+    _MAP: ClassVar[dict[EpisodeKey, int]] = {EpisodeKey(0, 2): 7897, EpisodeKey(0, 3): 7898}
+
+    def _pending(self, identified: Mapping[str, int]) -> PendingImport:
+        """Two specials, one window each, nothing seeded."""
+
+        return pending_import(
+            file_episode_map={},
+            seadex_files=[self._SECOND, self._THIRD],
+            claims=(
+                entry_claim(al_id=1, ordered_episode_ids=(7897,)),
+                entry_claim(al_id=2, ordered_episode_ids=(7898,)),
+            ),
+            identified=identified,
+        )
+
+    def _disk(self) -> _Disk:
+        parses = {
+            self._SECOND: parsed_info(season=0, episodes=(2,), matched=((0, 2),)),
+            self._THIRD: parsed_info(season=0, episodes=(3,), matched=((0, 3),)),
+        }
+        return _Disk(parses.get)
+
+    def test_each_window_places_the_file_its_size_identifies(self) -> None:
+        # The specials are named as each other. Each window sets aside the file whose size belongs to the other
+        # window, so the import keeps the grab's swap.
+        second, third = normalize_basename(self._SECOND), normalize_basename(self._THIRD)
+
+        result = _assign_on_disk(self._pending({second: 7898, third: 7897}), self._disk(), self._MAP)
+
+        assert result.assigned == {second: [7898], third: [7897]}
+        assert result.excluded == ()
+
+    def test_a_record_without_identities_places_by_name(self) -> None:
+        result = _assign_on_disk(self._pending({}), self._disk(), self._MAP)
+
+        assert result.assigned == {normalize_basename(self._SECOND): [7897], normalize_basename(self._THIRD): [7898]}
 
 
 class TestSeededSharerTell:
@@ -260,7 +312,7 @@ class TestSeedEqualsMapper:
     def test_seed_scope_targets_the_entrys_ids_over_the_series_map(self) -> None:
         scope = SeedScope(1, self._index(), series_index(self._MAP), EntryNames())
 
-        assert scope.target() == TargetScope([501, 502], series_index(self._MAP))
+        assert scope.target(NO_EVIDENCE) == TargetScope([501, 502], series_index(self._MAP))
 
     def test_the_seed_and_the_mapper_place_and_exclude_alike(self) -> None:
         parses = self._parses()

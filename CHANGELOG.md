@@ -10,6 +10,7 @@ Pearlarr is a fork of [bbtufty/seadexarr](https://github.com/bbtufty/seadexarr).
 ### Fixed
 
 - A title is re-checked on the next run after Sonarr or Radarr imports its Pearlarr grab, so a grab the arr imported only in part no longer stays cached as done.
+- A file the same size as a single-file release SeaDex lists for one episode of the series imports onto that episode, whatever its name says, and the grab judges which episodes a release covers the same way. A warning names the file when its name disagrees. When SeaDex or the episode list of one of the series' entries cannot be read, the series' releases are held for the next run instead of grabbed. The first run after upgrading re-checks every cached title once and says so.
 
 ## [1.5.2] - 2026-09-25
 

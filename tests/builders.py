@@ -9,6 +9,7 @@ import logging
 from collections.abc import Iterable, Iterator, Mapping, Sequence
 from copy import deepcopy
 from datetime import datetime
+from types import MappingProxyType
 from typing import Any, override
 
 import httpx
@@ -32,9 +33,10 @@ from pearlarr.clock import Clock
 from pearlarr.config import AppConfig, Arr
 from pearlarr.episode_state import EpisodeSnapshot, TrustPolicy
 from pearlarr.grab_pipeline import GrabPipeline, GrabRequest
-from pearlarr.grab_placement import EntryFacts, KnownTorrent, PendingSeed, TorrentFacts
+from pearlarr.grab_placement import EntryFacts, KnownTorrent, PendingSeed, TorrentEvidence, TorrentFacts
 from pearlarr.import_wait import ImportProbes, ImportWaitManager, PostImportCleanup
 from pearlarr.manual_import import (
+    NO_IDENTIFIED,
     NO_SIZES_BY_NAME,
     Deferral,
     EntryClaim,
@@ -52,11 +54,14 @@ from pearlarr.output import SeverityCounts, emit_to_hub
 from pearlarr.parse_records import ParseRecords
 from pearlarr.pending_records import PendingRecords
 from pearlarr.placement_types import (
+    EMPTY_LISTING,
     EpisodeAssignment,
     EpisodeIndex,
     PlacementBatch,
     PlacementVerdict,
+    SizeIdentities,
     TargetScope,
+    TorrentListing,
     episode_index,
 )
 from pearlarr.placer import assign_episode_ids
@@ -570,6 +575,7 @@ def make_torrent_record(
     is_dual_audio: bool = False,
     is_best: bool = True,
     size: int = 1000,
+    tags: frozenset[Tag] = frozenset(),
 ) -> TorrentRecord:
     """A real `seadex.TorrentRecord` (frozen msgspec) whose `file_names` become sized `File` entries."""
 
@@ -585,7 +591,7 @@ def make_torrent_record(
         infohash=infohash,
         is_best=is_best,
         release_group=release_group,
-        tags=frozenset[Tag](),
+        tags=tags,
         tracker=tracker,
         updated_at=stamp,
         url=url,
@@ -842,6 +848,7 @@ def pending_seed(
         facts=torrent_facts(infohash=infohash, release_group="NAN0"),
         placements=placements or {},
         excluded=(),
+        identified=NO_IDENTIFIED,
         claim=entry_claim(claimed_at="", **claim),
         stored=stored,
     )
@@ -1084,15 +1091,32 @@ def episode_snapshot(
     )
 
 
+_NO_SIZES: SizeIdentities = MappingProxyType({})
+"""No size identities, so nothing gets placed by size."""
+
+UNLISTED = TorrentEvidence(EMPTY_LISTING, _NO_SIZES)
+"""A torrent no entry lists, with the listings read and no size identities."""
+
+
+UNREAD_EVIDENCE = TorrentEvidence(None, None)
+"""SeaDex couldn't be read: no listing and no size identities."""
+
+
+def torrent_evidence(listed: frozenset[int], identities: SizeIdentities = _NO_SIZES) -> TorrentEvidence:
+    """Evidence after a good read: the torrent listed over `listed`, with size `identities` (none by default)."""
+
+    return TorrentEvidence(TorrentListing(listed), identities)
+
+
 def known_torrent(
     record: PendingImport | None = None,
     *,
     indexes: Mapping[int, EpisodeIndex] | None = None,
-    listed: frozenset[int] | None = frozenset(),
+    evidence: TorrentEvidence = UNLISTED,
 ) -> KnownTorrent:
-    """What the run knows of one torrent: nothing (a new torrent nothing lists, no series read) unless given."""
+    """A `KnownTorrent`, by default a new torrent that nothing lists, with no series read."""
 
-    return KnownTorrent(record, indexes or {}, listed)
+    return KnownTorrent(record, indexes or {}, evidence)
 
 
 def indexes_for(pending: PendingImport, index: EpisodeIndex) -> dict[int, EpisodeIndex]:

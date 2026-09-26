@@ -11,7 +11,14 @@ from typing import ClassVar
 import pytest
 
 from pearlarr.manual_import import EntryNames
-from pearlarr.placement_types import EpisodeAssignment, EpisodeIndex, Placement, PlacementVerdict, TargetScope
+from pearlarr.placement_types import (
+    EpisodeAssignment,
+    EpisodeIndex,
+    ListingEvidence,
+    Placement,
+    PlacementVerdict,
+    TargetScope,
+)
 from pearlarr.seadex_types import EpisodeKey, MatchedEpisode, ParsedFileInfo
 
 from .builders import blind, by_name, numbered_names, parsed_info, place, series_index
@@ -2392,7 +2399,8 @@ class TestRefuseMisnumbered:
     def _scope(
         self, resolved: Sequence[int], listed: Sequence[int], *, index: EpisodeIndex | None = None
     ) -> TargetScope:
-        return TargetScope(list(resolved), index or self._INDEX, names=EntryNames("Show"), listed=frozenset(listed))
+        listing = ListingEvidence(frozenset(listed))
+        return TargetScope(list(resolved), index or self._INDEX, names=EntryNames("Show"), listing=listing)
 
     @staticmethod
     def _verdicts(result: EpisodeAssignment) -> set[PlacementVerdict]:
@@ -2567,6 +2575,175 @@ class TestRefuseMisnumbered:
             "Show.S00E02.mkv": ((502,), PlacementVerdict.EXACT),
             "Show.S00E03.mkv": ((), PlacementVerdict.FOREIGN),
         }
+
+    def test_a_member_its_size_identifies_stays_in_the_refused_pack(self) -> None:
+        # The refusal runs first, so a size match never pulls one special out of a pack that was refused whole.
+        pack = self._pack(7, 13, 14, 15, 16, 17, 18, 19)
+        listing = ListingEvidence(frozenset({507, 512, 513, 515, 517, 520, 522, 523}), {"Show.S00E14.mkv": 512})
+        scope = TargetScope([507, 512, 513], self._INDEX, names=EntryNames("Show"), listing=listing)
+
+        assert self._verdicts(place(pack, scope)) == {PlacementVerdict.MISNUMBERED}
+
+
+class TestSizeIdentity:
+    """A file the same size as a single-file SeaDex release for one episode goes on that episode, over its name."""
+
+    _SPECIALS: ClassVar[dict[str, ParsedFileInfo | None]] = {
+        "Show.S00E01.mkv": parsed_info(season=0, episodes=(1,), matched=((0, 1),)),
+        "Show.S00E02.mkv": parsed_info(season=0, episodes=(2,), matched=((0, 2),)),
+    }
+    _SWAPPED: ClassVar[dict[str, int]] = {"Show.S00E01.mkv": 502, "Show.S00E02.mkv": 501}
+    _PACK: ClassVar[dict[str, ParsedFileInfo | None]] = {
+        f"Show.S01E{n:02d}.mkv": parsed_info(season=1, episodes=(n,), matched=((1, n),)) for n in range(1, 5)
+    }
+    _SEASON: ClassVar[list[int]] = [601, 602, 603, 604]
+
+    @staticmethod
+    def _scope(resolved: Sequence[int], identified: Mapping[str, int], *, used: Sequence[int] = ()) -> TargetScope:
+        listing = ListingEvidence(frozenset(), identified)
+        return TargetScope(list(resolved), _SERIES, used=frozenset(used), names=EntryNames("Show"), listing=listing)
+
+    def test_a_numberless_file_is_placed_by_its_size(self) -> None:
+        name = "Show - Special [grp].mkv"
+
+        placed = by_name(place({name: parsed_info()}, self._scope([501, 502], {name: 502})))
+
+        assert placed == {name: ((502,), PlacementVerdict.IDENTIFIED)}
+
+    def test_the_size_outranks_the_name(self) -> None:
+        # Each special is named as the other. Both are placed by size, and the caller warns for each.
+        placed = by_name(place(self._SPECIALS, self._scope([501, 502], self._SWAPPED)))
+
+        assert placed == {
+            "Show.S00E01.mkv": ((502,), PlacementVerdict.OVERRIDDEN),
+            "Show.S00E02.mkv": ((501,), PlacementVerdict.OVERRIDDEN),
+        }
+
+    def test_a_keyed_name_is_overridden_though_its_release_number_matches_the_special(self) -> None:
+        # Its size says S00E02 and its key says S01E02. The release number 2 is just the key's episode again, so
+        # it doesn't count as agreeing.
+        name = "Show.S01E02.mkv"
+
+        placed = by_name(place({name: self._PACK[name]}, self._scope([501, 502], {name: 502})))
+
+        assert placed == {name: ((502,), PlacementVerdict.OVERRIDDEN)}
+
+    def test_a_size_matching_the_other_window_is_foreign(self) -> None:
+        # One special per window. The file named as this window's special belongs to the other window by size, so
+        # it isn't placed here.
+        placed = by_name(place(self._SPECIALS, self._scope([502], self._SWAPPED)))
+
+        assert placed == {
+            "Show.S00E01.mkv": ((502,), PlacementVerdict.OVERRIDDEN),
+            "Show.S00E02.mkv": ((), PlacementVerdict.FOREIGN),
+        }
+
+    def test_a_size_matching_another_series_leaves_the_file_to_its_name(self) -> None:
+        name = "Show.S01E01.mkv"
+
+        placed = by_name(place({name: self._PACK[name]}, self._scope([601], {name: 999})))
+
+        assert placed == {name: ((601,), PlacementVerdict.EXACT)}
+
+    def test_an_agreeing_size_leaves_a_placing_pack_as_it_was(self) -> None:
+        placed = by_name(place(self._PACK, self._scope(self._SEASON, {"Show.S01E02.mkv": 602})))
+
+        assert placed == {f"Show.S01E{n:02d}.mkv": ((600 + n,), PlacementVerdict.EXACT) for n in range(1, 5)}
+
+    def test_a_size_one_pack_member_disagrees_with_moves_that_member_alone(self) -> None:
+        # The second file's size puts it on episode 3, which the third file also reads as. Being placed by size
+        # doesn't make the third file a duplicate, so it's skipped and reported, and episode 2 stays open.
+        placed = by_name(place(self._PACK, self._scope(self._SEASON, {"Show.S01E02.mkv": 603})))
+
+        assert placed == {
+            "Show.S01E01.mkv": ((601,), PlacementVerdict.EXACT),
+            "Show.S01E02.mkv": ((603,), PlacementVerdict.OVERRIDDEN),
+            "Show.S01E03.mkv": ((), PlacementVerdict.SKIPPED),
+            "Show.S01E04.mkv": ((604,), PlacementVerdict.EXACT),
+        }
+
+    def test_a_size_disagreeing_with_a_runs_number_bars_the_run(self) -> None:
+        # The last member's size puts it on episode 1, so the run's numbering is off. Nothing places the rest by
+        # count or by run, so each one is skipped for a hand check.
+        run = numbered_names("show", 4)
+        parsed: dict[str, ParsedFileInfo | None] = {name: parsed_info(absolutes=(n,)) for n, name in enumerate(run, 1)}
+
+        placed = by_name(place(parsed, self._scope(self._SEASON, {run[3]: 601})))
+
+        assert placed == {
+            run[0]: ((), PlacementVerdict.SKIPPED),
+            run[1]: ((), PlacementVerdict.SKIPPED),
+            run[2]: ((), PlacementVerdict.SKIPPED),
+            run[3]: ((601,), PlacementVerdict.OVERRIDDEN),
+        }
+
+    def test_a_size_disagreeing_with_a_matched_number_bars_the_count_only(self) -> None:
+        # Sonarr matched each member, so the others keep their matches. The first member is skipped, since the
+        # last one took its episode by size.
+        run = numbered_names("show", 4)
+        parsed: dict[str, ParsedFileInfo | None] = {
+            name: parsed_info(absolutes=(n,), matched=((1, n),)) for n, name in enumerate(run, 1)
+        }
+
+        placed = by_name(place(parsed, self._scope(self._SEASON, {run[3]: 601})))
+
+        assert placed == {
+            run[0]: ((), PlacementVerdict.SKIPPED),
+            run[1]: ((602,), PlacementVerdict.EXACT),
+            run[2]: ((603,), PlacementVerdict.EXACT),
+            run[3]: ((601,), PlacementVerdict.OVERRIDDEN),
+        }
+
+    def test_a_size_agreeing_with_an_unresolved_number_leaves_the_run_to_place(self) -> None:
+        # Sonarr resolved nothing, and the last member's size matches the episode its number counts to. Nothing
+        # disagrees, so the run places by its numbers and the last member by size.
+        run = numbered_names("show", 4)
+        parsed: dict[str, ParsedFileInfo | None] = {name: parsed_info(absolutes=(n,)) for n, name in enumerate(run, 1)}
+
+        placed = by_name(place(parsed, self._scope(self._SEASON, {run[3]: 604})))
+
+        assert placed == {
+            run[0]: ((601,), PlacementVerdict.RELEASE_RUN),
+            run[1]: ((602,), PlacementVerdict.RELEASE_RUN),
+            run[2]: ((603,), PlacementVerdict.RELEASE_RUN),
+            run[3]: ((604,), PlacementVerdict.IDENTIFIED),
+        }
+
+    def test_unscoped_a_size_matching_another_series_leaves_the_file_to_its_name(self) -> None:
+        # An unscoped window admits any id: only the series check keeps the file off another series' episode.
+        name = "Show.S01E01.mkv"
+        scope = TargetScope([], _SERIES, names=EntryNames("Show"), listing=ListingEvidence(frozenset(), {name: 999}))
+
+        assert by_name(place({name: self._PACK[name]}, scope)) == {name: ((601,), PlacementVerdict.EXACT)}
+
+    def test_a_size_agreeing_with_a_rejected_reading_places_it(self) -> None:
+        # The titles reject the run's numbering, so the last member's reading is rejected. Its size points at the
+        # same episode, though, and the veto was only against the numbers, so it's placed.
+        run = numbered_names("show", 4, ("The Return", "Festival Night", "", ""))
+        parsed: dict[str, ParsedFileInfo | None] = {
+            name: parsed_info(absolutes=(n,), matched=((1, n),)) for n, name in enumerate(run, start=1)
+        }
+
+        placed = by_name(place(parsed, self._scope(self._SEASON, {run[3]: 604})))
+
+        assert placed[run[3]] == ((604,), PlacementVerdict.IDENTIFIED)
+
+    def test_a_title_naming_another_episode_keeps_the_file_for_the_later_passes(self) -> None:
+        name = "show - 01 - Festival Night [grp].mkv"
+
+        placed = by_name(
+            place({name: parsed_info(absolutes=(1,), matched=((1, 1),))}, self._scope(_FIRST_THREE, {name: 601}))
+        )
+
+        assert placed == {name: ((603,), PlacementVerdict.EPISODE_TITLE)}
+
+    def test_a_size_matching_a_taken_episode_sets_the_file_aside(self) -> None:
+        # The numberless file would otherwise take the one open id, but its size says it's the taken episode.
+        name = "Show - Special [grp].mkv"
+
+        placed = by_name(place({name: parsed_info()}, self._scope([501, 502], {name: 502}, used=[502])))
+
+        assert placed == {name: ((), PlacementVerdict.SKIPPED)}
 
 
 class TestAssignNumberedRun:

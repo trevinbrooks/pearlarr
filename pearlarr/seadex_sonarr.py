@@ -11,13 +11,15 @@ from .grab_pipeline import NO_SEEDS, GrabRequest
 from .grab_placement import (
     EntryFacts,
     EntryPlacements,
+    IdentityOverride,
     PendingSeed,
     SeedScope,
     TorrentReads,
     build_pending_seeds,
     entry_hashes,
+    identity_overrides,
 )
-from .log import EntryState, pluralize
+from .log import EntryState, count_noun, pluralize
 from .manual_import import (
     AttemptKind,
     EffectStatus,
@@ -39,6 +41,8 @@ from .seadex_types import (
     RadarrItem,
     SeadexDict,
     SonarrItem,
+    flagged_urls,
+    ignore_tag_set,
 )
 from .sonarr_client import AbstractSonarrClient, SonarrClient
 from .sonarr_episodes import SonarrEpisodes
@@ -104,6 +108,16 @@ def radarr_movies_matching(
     return radarr_movies
 
 
+def _override_line(url: str, override: IdentityOverride) -> str:
+    """The warning for one file placed by size over its name."""
+
+    label = override.named.label
+    return (
+        f"{url}: {override.name} goes on {label} because its size matches SeaDex's {label} release "
+        f"(its name reads as {override.read_as})"
+    )
+
+
 class SonarrSync(ArrSync[SonarrItem]):
     """Sonarr sync strategy: owns the Sonarr REST client + episode domain logic.
 
@@ -165,9 +179,9 @@ class SonarrSync(ArrSync[SonarrItem]):
         # prefetch_episodes to it and reads its series_fp for the parse cache.
         self._episodes = SonarrEpisodes(deps, self.sonarr, self._services)
 
-        # Listing collaborator: the specials every entry of the series lists a torrent under, what a
-        # numbered specials pack is judged against at grab time.
-        self._listings = SeriesListings(deps.seadex, self._episodes)
+        # Listing collaborator: reads every SeaDex entry of the series once per run. That gives the windows a
+        # specials pack is checked against, and the size identities used to place files.
+        self._listings = SeriesListings(deps.seadex, self._episodes, ignore_tag_set(self._config.seadex.ignore_tags))
 
         # Parse-cache collaborator: grab-time `/parse` of SeaDex filenames + the
         # durable, freshness-checked parse cache (read-through the shared cache_store).
@@ -233,6 +247,7 @@ class SonarrSync(ArrSync[SonarrItem]):
 
         self._mapper.reset()
         self._executor.reset()
+        self._listings.reset()
         return self._episodes.collect_series()
 
     @override
@@ -434,7 +449,7 @@ class SonarrSync(ArrSync[SonarrItem]):
         indexes = self._series_indexes(
             {sonarr_series_id, *(sid for record in stored.values() for sid in record.series_ids)}
         )
-        listings = self._listings.read(sonarr_series_id, self.item_anilist_ids(item, log_ignored=False), hashes)
+        listings = self._listings.read(sonarr_series_id, self.item_anilist_ids(item, log_ignored=False))
         scope = SeedScope(al_id, episode_index(ep_list), indexes.get(sonarr_series_id, episode_index([])), title.names)
         placed = EntryPlacements.place(
             scope,
@@ -470,6 +485,7 @@ class SonarrSync(ArrSync[SonarrItem]):
             ep_list=ep_list,
         )
         torrent_hashes, seadex_dict = plan.torrent_hashes, plan.seadex_dict
+        self._warn_overrides(placed, seadex_dict)
 
         # Build the per-torrent seeds the engine persists at the add site: one per release marked for download
         # (download + hash), carrying our own (basename -> Sonarr episode ids) map so the later manual import never
@@ -514,6 +530,21 @@ class SonarrSync(ArrSync[SonarrItem]):
             for sid in series_ids
             if (episodes := self._episodes.cached_episodes(sid)) is not None
         }
+
+    def _warn_overrides(self, placed: EntryPlacements, seadex_dict: SeadexDict) -> None:
+        """Warn once per url this run grabs if any of its files were placed by size over their names.
+
+        The warning shows the first such file, and the rest go to the debug log. `seadex_dict` must be the
+        download plan's, so urls the run doesn't grab never warn.
+        """
+
+        for flagged in flagged_urls(seadex_dict):
+            if overrides := identity_overrides(placed.by_url[flagged.url], placed.scope.series):
+                first, *rest = overrides
+                more = f" ({count_noun(len(rest), 'more file')} in the debug log)" if rest else ""
+                hub_warn(f"{_override_line(flagged.url, first)}{more}")
+                for override in rest:
+                    self.logger.debug(_override_line(flagged.url, override))
 
     def _log_placements(self, placed: EntryPlacements) -> None:
         """One debug line per url with video files: what placed (the coverage the plan reads), what was set aside."""

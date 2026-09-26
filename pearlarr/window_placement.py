@@ -12,7 +12,15 @@ from collections.abc import Iterable, Mapping, Sequence
 from typing import NamedTuple
 
 from .manual_import import EntryClaim, FileEpisodeMap
-from .placement_types import EpisodeAssignment, EpisodeIndex, Placement, PlacementBatch, PlacementVerdict, TargetScope
+from .placement_types import (
+    EpisodeAssignment,
+    EpisodeIndex,
+    ListingEvidence,
+    Placement,
+    PlacementBatch,
+    PlacementVerdict,
+    TargetScope,
+)
 from .placer import assign_episode_ids
 
 
@@ -85,11 +93,17 @@ def _merged_claim(name: str, claims: Sequence[Placement]) -> WindowVerdict:
     return WindowVerdict(max(claims, key=lambda claim: _CLAIM_RANK[claim.verdict]), None)
 
 
-def windows_of(claims: Iterable[EntryClaim], indexes: Mapping[int, EpisodeIndex]) -> tuple[TargetScope, ...]:
-    """One window per claim, in claim order, over its series' index (`indexes` holds every claim's series)."""
+def windows_of(
+    claims: Iterable[EntryClaim], indexes: Mapping[int, EpisodeIndex], listing: ListingEvidence
+) -> tuple[TargetScope, ...]:
+    """One window per claim, in claim order, over its series' index (`indexes` holds every claim's series).
+
+    Every window gets the same `listing`. A file's size match only counts in windows of that episode's series.
+    """
 
     return tuple(
-        TargetScope(list(claim.ordered_episode_ids), indexes[claim.series_id], names=claim.names) for claim in claims
+        TargetScope(list(claim.ordered_episode_ids), indexes[claim.series_id], names=claim.names, listing=listing)
+        for claim in claims
     )
 
 

@@ -12,8 +12,9 @@ Terms used across the placement modules:
   place against the whole series.
 - Window (`window_placement`): the scope of one entry a torrent is listed on. A torrent listed on several
   entries is placed under each window in turn.
-- Listing (`TargetScope.listed`): the ids of every window of every entry of the series that lists the torrent.
-  A specials pack's numbering is judged against it. Empty at import time, which stands that judgment down.
+- Listing (`TargetScope.listing`): what SeaDex's listings tell us about the torrent. `ids` are the episodes of
+  every entry that lists it, which a numbered specials pack is checked against (empty at import time, so the
+  check is skipped). `identified` maps files to the episode whose single-file release has the same size.
 - Open ids: the scope's ids that no file holds yet.
 - Seeded file: a file of the torrent that the grab-time placement or an earlier import poll already mapped.
   Its ids start out used, as do ids an earlier window placed. Seeded files, and files since moved off disk
@@ -67,33 +68,39 @@ The passes run in this order. Each places files only onto the ids that earlier p
 5. Misnumbered pack: a pack of specials, one file per number, as wide as the listing, with a number that is no
    listed special, is numbered by another TVDB state. Every file of the run is set aside as `MISNUMBERED` for
    a hand import, and no later pass places any of it. `_sole_specials_run` lists what stands the pass down.
-6. Release run: when the open ids form a run window and the tie-breaks leave one numbered run that fits it
+6. Size identity: a file with the same size as a single-file release SeaDex lists for one episode goes on that
+   episode (`IDENTIFIED`). If the file's reading already agrees, or its title names a different episode, it's
+   left for the later passes. If the file's numbers point at a different episode, it's `OVERRIDDEN` and the
+   caller warns. That means the batch's numbering is off, so the count-based passes are turned off and pass 7
+   skips the file's numbered run. If the episode is already taken the file is `SKIPPED`, and if it's outside the
+   scope it's `FOREIGN`. This runs after pass 5, so it never pulls a file out of a pack that was refused whole.
+7. Release run: when the open ids form a run window and the tie-breaks leave one numbered run that fits it
    (a `_Tier`), the run's own numbers place its members onto the window, unless Sonarr's reading already
    puts each member on its own window episode. While any parse is unknown the members are `HELD` instead.
    `_pass_release_run` lists the tie-breaks and the refusals.
-7. Exact: a file whose complete, unrejected reading lies wholly inside the scope, on open ids, is placed
+8. Exact: a file whose complete, unrejected reading lies wholly inside the scope, on open ids, is placed
    there. Unscoped, a name's own keys place against the whole series.
-8. Episode title: a file titled as an open scope episode, whose parse covers one episode, is placed there,
+9. Episode title: a file titled as an open scope episode, whose parse covers one episode, is placed there,
    whatever its number said. Each such placement turns the count-based passes off.
-9. Absolute zip: the remaining files pair with the open ids in absolute-number order, only when every file
-   carries exactly one absolute number, the counts match, every parse is known, and no two files of the
-   torrent share an absolute number.
-10. Single file: with one open id left, the only remaining file takes it if its parse has no usable episode
+10. Absolute zip: the remaining files pair with the open ids in absolute-number order, only when every file
+    carries exactly one absolute number, the counts match, every parse is known, and no two files of the
+    torrent share an absolute number.
+11. Single file: with one open id left, the only remaining file takes it if its parse has no usable episode
     number. Otherwise, the numberless file an AniList title names takes it (`TITLED`).
-11. Ordered zip: when every file of the torrent but the extras is unplaced, numberless, and not read
+12. Ordered zip: when every file of the torrent but the extras is unplaced, numberless, and not read
     outside the scope, no id was used from the start (by a seeded file or an earlier window), and the counts
     match, the files pair with the open ids in natural name order.
-12. Numbered run: among the files Sonarr resolved no episode for, the one run numbered `1..N` places onto
+13. Numbered run: among the files Sonarr resolved no episode for, the one run numbered `1..N` places onto
     a run window of N ids.
-13. Classify: every file still unplaced becomes `DUPLICATE` (it reads inside the scope onto episodes other
+14. Classify: every file still unplaced becomes `DUPLICATE` (it reads inside the scope onto episodes other
     files provably hold, or a version of the same file holds its titled episode), `FOREIGN` (its reading lies
     wholly outside the scope, or it is titled as an episode outside it and confirmed by its reading or by no
     open id being left), or `SKIPPED`. The caller warns about skipped files and records the exclusions. It
     never guesses.
 
-At most one of passes 9 to 11 is tried: the absolute zip when its conditions hold, else the single-file
-pass when one id is open, else the ordered zip. They consider only open files. Every zip (passes 6, 9,
-11, and 12) places nothing when a file is titled as an episode other than its pair, and that turns the
+At most one of passes 10 to 12 is tried: the absolute zip when its conditions hold, else the single-file
+pass when one id is open, else the ordered zip. They consider only open files. Every zip (passes 7, 10,
+12, and 13) places nothing when a file is titled as an episode other than its pair, and that turns the
 count-based passes off.
 """
 
@@ -143,6 +150,7 @@ def assign_episode_ids(
     _pass_refuse_overlaps(state)
     _pass_reread_season_runs(state)
     _pass_refuse_misnumbered(state)
+    _pass_identity(state)
     _pass_release_run(state)
     _pass_exact(state)
     _pass_episode_title(state)
@@ -153,6 +161,9 @@ def assign_episode_ids(
 
 # Episode titles pick a run, or refuse one, only when at least this many members carry them.
 _MIN_TITLE_HITS = 2
+
+# Verdicts for files placed by size.
+_BY_SIZE = frozenset({PlacementVerdict.IDENTIFIED, PlacementVerdict.OVERRIDDEN})
 
 
 @dataclass(frozen=True, slots=True)
@@ -442,7 +453,8 @@ class _DuplicateProof(NamedTuple):
     """The evidence that an unplaced file is a duplicate, gathered once before classification."""
 
     proven: frozenset[int]
-    """Ids held for a reason: placed by this call, or a seeded or gone file's reading or title points there."""
+    """Ids we have a reason to think are held: placed by this call (except by size), or pointed at by a seeded or
+    gone file's reading or title."""
     held_by_file: Mapping[FileIdentity, frozenset[int]]
     """The episodes each file's versions hold: placed by this call, or a seeded or gone version titled as one."""
 
@@ -464,8 +476,12 @@ class _Placer:
     count_legs_barred: bool = False
     """Whether the count-based passes (the absolute zip, the ordered zip, the numbered run) are turned off.
 
-    Set when a title rejects a reading, when the release-run pass sees several candidate runs or refuses its
-    pick, when a title places a file, and when a title contradicts a zip pair."""
+    Set when a title rejects a reading, when a file's size contradicts its numbers, when the release-run
+    pass sees several candidate runs or refuses its pick, when a title places a file, and when a title
+    contradicts a zip pair."""
+    size_refuted_runs: set[str] = field(default_factory=set[str])
+    """Prefixes of runs where a member was placed by size against its own numbers. `_pass_release_run` won't
+    place these runs."""
 
     @classmethod
     def start(cls, batch: PlacementBatch, scope: TargetScope) -> Self:
@@ -508,6 +524,36 @@ class _Placer:
             return False
         reading = self.readings[name]
         return (reading.complete and not reading.inside) or nothing_left
+
+    def numbers_another(self, name: str, ep_id: int) -> bool:
+        """True if the name has a number and none of its numbers point at `ep_id`.
+
+        Numbers here means its reading, its own keys (ignored if none of them exist in the series), and its
+        absolute numbers. A name with no keys also counts its release number, as an episode or an absolute.
+        """
+
+        resolved = self.readings[name].resolved
+        if ep_id in resolved:
+            return False
+        info = self.batch.parsed.get(name)
+        member = self.torrent.reads[name].member
+        keys: set[EpisodeKey] = set()
+        absolutes: set[int] = set()
+        if info is not None:
+            absolutes.update(info.absolute_episode_numbers)
+            bogus = self.map_known and numbers_miss_the_series(info, self.scope.id_by_key)
+            if info.season_number is not None and not bogus:
+                keys.update(EpisodeKey(info.season_number, number) for number in info.episode_numbers)
+        if not (resolved or keys or absolutes or member):
+            return False
+        key = self.facts.key_by_id.get(ep_id)
+        absolute = self.facts.absolute_of.get(ep_id)
+        if key in keys or absolute in absolutes:
+            return False
+        # In a keyed name the release number is just the key's episode again, so it isn't separate evidence.
+        if keys:
+            return True
+        return member is None or member.number not in {absolute, None if key is None else key.episode}
 
     def reads_no_number(self, name: str) -> bool:
         """Whether the file's single-episode parse has no usable number: none at all, or only keys the series lacks.
@@ -768,6 +814,8 @@ class _Placer:
         """
 
         placing = frozenset(self.batch.names)
+        # A file placed by size only proves its own episode. It doesn't make another file on that episode a copy.
+        by_size = {ep_id for p in self.verdicts.values() if p.verdict in _BY_SIZE for ep_id in p.ids}
         evidenced: set[int] = set()
         held: defaultdict[FileIdentity, set[int]] = defaultdict(set)
         for name, read in self.torrent.reads.items():
@@ -778,7 +826,7 @@ class _Placer:
                 if (titled := self.torrent.episode(name)) is not None:
                     evidenced.add(titled)
                     held[read.file].add(titled)
-        proven = (self.used - self.scope.used) | evidenced
+        proven = (self.used - self.scope.used - by_size) | evidenced
         return _DuplicateProof(frozenset(proven), {file: frozenset(ids) for file, ids in held.items()})
 
     def finish(self) -> EpisodeAssignment:
@@ -889,7 +937,7 @@ def _pass_refuse_misnumbered(state: _Placer) -> None:
 def _misnumbered_pack(state: _Placer) -> NumberedRun | None:
     """The batch as one listing-wide specials pack with a number no listed special has, else None.
 
-    Specials are the numbering TVDB inserts into and shifts, so the curated listing (`TargetScope.listed`)
+    Specials are the numbering TVDB inserts into and shifts, so the curated listing (`TargetScope.listing`)
     outweighs the names there. A season's numbering is stable: a number outside it is a mislisting, foreign as ever.
     """
 
@@ -927,14 +975,46 @@ def _sole_specials_run(state: _Placer, width: int) -> NumberedRun | None:
     return None if confirmed == len(run.whole) else run
 
 
+def _pass_identity(state: _Placer) -> None:
+    """Place files on the episode their size matched (`ListingEvidence.identified`), even over their names.
+
+    A file is left for later passes if its reading already agrees, its title names another episode, or the
+    matched episode belongs to another series. See step 6 in the module docstring.
+    """
+
+    identified = state.scope.listing.identified
+    for name in state.remaining():
+        ep_id = identified.get(name)
+        if ep_id is None or ep_id not in state.scope.series.by_id:
+            continue
+        reading = state.readings[name]
+        agrees = reading.complete and reading.resolved == (ep_id,)
+        if (agrees and not reading.vetoed) or state.torrent.contradicts(name, (ep_id,)):
+            continue
+        if not state.scope.admits(ep_id):
+            state.set_aside(name, PlacementVerdict.FOREIGN)
+            continue
+        overrides = state.numbers_another(name, ep_id)
+        if overrides:
+            # The batch's numbering is off, so no count-based pass may place the rest, and the release run skips
+            # this file's run.
+            state.count_legs_barred = True
+            if (member := state.torrent.reads[name].member) is not None:
+                state.size_refuted_runs.add(member.prefix)
+        if ep_id in state.used:
+            state.set_aside(name, PlacementVerdict.SKIPPED)
+        else:
+            state.place(name, (ep_id,), PlacementVerdict.OVERRIDDEN if overrides else PlacementVerdict.IDENTIFIED)
+
+
 def _pass_release_run(state: _Placer) -> None:
     """Place one numbered run onto the run window by its own numbers when Sonarr's reading of it does not add up.
 
     Candidates are the unplaced runs that fit a `_Tier`. Tie-breaks, in order: drop runs Sonarr matched whole
     outside the scope (unless all are), then keep the one run the titles select, the one an AniList title names,
-    or the best tier. With any parse unknown, the pick is `HELD`. It is refused by `_run_refused`,
-    `covering_refused` for a covering pick, a dispute, a title veto (`_TitleEvidence.vetoes`), or an AniList
-    title naming another run.
+    or the best tier. A run with a member placed by size against its numbers (`_Placer.size_refuted_runs`) isn't
+    placed. With any parse unknown, the pick is `HELD`. It is refused by `_run_refused`, `covering_refused` for a
+    covering pick, a dispute, a title veto (`_TitleEvidence.vetoes`), or an AniList title naming another run.
     """
 
     if not state.map_known:
@@ -958,6 +1038,8 @@ def _pass_release_run(state: _Placer) -> None:
     if pick is None:
         return
     run = pick.run
+    if run.prefix in state.size_refuted_runs:
+        return
     if not state.batch.all_parses_known:
         state.set_aside_each(run.whole, PlacementVerdict.HELD)
         return

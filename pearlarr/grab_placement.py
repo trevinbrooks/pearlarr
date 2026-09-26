@@ -7,26 +7,42 @@ from typing import NamedTuple
 from .coverage import coverage_string, episodes_from_ep_list
 from .episode_state import EpisodeFileStatus, EpisodeSnapshot, GroupVotes
 from .manual_import import (
+    NO_IDENTIFIED,
     NO_SIZES_BY_NAME,
     EntryClaim,
     EntryNames,
     FileEpisodeMap,
     GuardFacts,
+    IdentifiedNames,
     OwnGroup,
     PendingImport,
     normalized_leaf,
     sizes_by_episode,
-    unambiguous_sizes,
+    unambiguous,
 )
 from .placement_types import (
+    EMPTY_LISTING,
     EpisodeAssignment,
     EpisodeIndex,
+    ListingEvidence,
+    ListingsRead,
     PlacementBatch,
     PlacementVerdict,
+    SizeIdentities,
     TargetScope,
-    TorrentListings,
+    TorrentListing,
 )
-from .seadex_types import EpisodeRecord, FlaggedUrl, GrabHold, ParsedFileInfo, SeadexDict, SeadexUrlItem, flagged_urls
+from .seadex_types import (
+    EpisodeKey,
+    EpisodeRecord,
+    FlaggedUrl,
+    GrabHold,
+    ParsedFileInfo,
+    SeadexDict,
+    SeadexUrlItem,
+    flagged_urls,
+    season_episode_key,
+)
 from .window_placement import place_leftover, windows_of
 
 
@@ -69,15 +85,26 @@ class SeedScope(NamedTuple):
 
         return bool(self.entry.by_id and self.series.id_by_key)
 
-    def target(self) -> TargetScope:
-        """The placement scope the grab shares with import time: the entry's ids, nothing used yet."""
+    def target(self, listing: ListingEvidence) -> TargetScope:
+        """The entry's placement scope, the same one import time builds, with `listing` attached."""
 
-        return TargetScope(list(self.entry.by_id), self.series, names=self.names)
+        return TargetScope(list(self.entry.by_id), self.series, names=self.names, listing=listing)
+
+
+class TorrentEvidence(NamedTuple):
+    """What this run read from SeaDex about one torrent: its listing and the series' size identities."""
+
+    listing: TorrentListing | None
+    """None if an entry listing the torrent couldn't be read. A specials window then places nothing, and other
+    windows place as if the torrent were unlisted."""
+
+    identities: SizeIdentities | None
+    """None if a listing couldn't be read. The url is then held and the title re-checked next run."""
 
 
 @dataclass(frozen=True, slots=True)
 class KnownTorrent:
-    """What the run knows of one listed torrent beyond the entry: its stored record and the windows listing it."""
+    """Everything the run knows about one torrent: its stored record, the series indexes, and the SeaDex evidence."""
 
     record: PendingImport | None
     """The store-resident record the torrent accretes onto, None when the torrent is new."""
@@ -85,25 +112,35 @@ class KnownTorrent:
     indexes: Mapping[int, EpisodeIndex]
     """The series indexes read this run. A claim's series left out was not read, which places nothing."""
 
-    listed: frozenset[int] | None
-    """The ids of every window of the entry's series listing the torrent (`TargetScope.listed`), None when a
-    listing entry's record or window could not be read: a window of specials is then held, any other placed as
-    if listed nowhere."""
+    evidence: TorrentEvidence
+    """The torrent's listing and the series' size identities."""
+
+    def listing_evidence(self, sizes: Mapping[str, int]) -> ListingEvidence:
+        """The `ListingEvidence` every window of this torrent is placed with.
+
+        Size matches from this run are merged with the ones already on the stored record (the same merge
+        `PendingImport.with_identified` does), so the grab places with the same names the import poll uses later.
+        """
+
+        listing, identities = self.evidence
+        pairs = [] if self.record is None else list(self.record.identified.items())
+        if identities is not None:
+            pairs.extend((name, identities[size]) for name, size in sizes.items() if size in identities)
+        return ListingEvidence(frozenset() if listing is None else listing.ids, unambiguous(pairs))
 
     def windows(self, al_id: int, own: TargetScope) -> tuple[TargetScope, ...] | None:
         """The windows the torrent is placed under, None when a claim's series is unread.
 
-        One per stored claim in claim order, `own` replacing this entry's or appended last, each carrying the
-        listing (an unread one as empty): exactly the windows the import poll runs once the claim is replaced.
+        One per stored claim, in claim order, with `own` replacing this entry's claim or added at the end. Every
+        window uses `own`'s listing. These are the same windows the import poll runs once the claim is replaced.
         """
 
         claims = () if self.record is None else self.record.claims
         if any(claim.series_id not in self.indexes for claim in claims):
             return None
-        stored = windows_of(claims, self.indexes)
+        stored = windows_of(claims, self.indexes, own.listing)
         position = next((i for i, claim in enumerate(claims) if claim.al_id == al_id), None)
-        windows = (*stored, own) if position is None else (*stored[:position], own, *stored[position + 1 :])
-        return tuple(replace(window, listed=self.listed or frozenset()) for window in windows)
+        return (*stored, own) if position is None else (*stored[:position], own, *stored[position + 1 :])
 
 
 type KnownTorrents = Mapping[str, KnownTorrent]
@@ -131,25 +168,33 @@ class TorrentReads:
     indexes: Mapping[int, EpisodeIndex]
     """The series indexes read this run. A claim's series left out was not read, which places nothing."""
 
-    listings: TorrentListings
-    """Each hash to the windows of the series' entries listing it, None where one of them could not be read."""
+    listings: ListingsRead | None
+    """The series' SeaDex listings, None when SeaDex was unreachable."""
 
     def known(self, seadex_dict: SeadexDict) -> KnownTorrents:
-        """What the run knows of each url's torrent, keyed by url.
-
-        A hash-less url is a new torrent nothing lists: placed by its numbers alone, and no record tracks its
-        import.
-        """
+        """What the run knows about each url's torrent, keyed by url."""
 
         return {
             url_item.url: KnownTorrent(
                 None if url_item.infohash is None else self.stored.get(url_item.infohash),
                 self.indexes,
-                frozenset() if url_item.infohash is None else self.listings[url_item.infohash],
+                self._evidence(url_item.infohash),
             )
             for rg_item in seadex_dict.values()
             for url_item in rg_item.urls.values()
         }
+
+    def _evidence(self, infohash: str | None) -> TorrentEvidence:
+        """The evidence for one url's torrent.
+
+        A url with no infohash always gets `EMPTY_LISTING`, even when SeaDex is down, since no listing could match
+        it anyway.
+        """
+
+        if self.listings is None:
+            return TorrentEvidence(EMPTY_LISTING if infohash is None else None, None)
+        listing = EMPTY_LISTING if infohash is None else self.listings.listing(infohash)
+        return TorrentEvidence(listing, self.listings.identities)
 
 
 class UrlPlacement(NamedTuple):
@@ -171,9 +216,9 @@ class UrlPlacement(NamedTuple):
     """The entry's episode ids the whole map covers (a stored placement on another series adds none)."""
 
     inputs_known: bool
-    """Every parse came from Sonarr this run (`PlacementBatch.all_parses_known`) and every window the
-    placement needed could be built. False means some files may have been held, so the title is re-checked
-    next run."""
+    """True when the placement had everything it needed this run: every parse came from Sonarr
+    (`PlacementBatch.all_parses_known`), every window was built, and the size identities were read. When False, a
+    file may have been held or placed without its size, so the title gets re-checked next run."""
 
     hold: GrabHold | None
     """Why the url is not grabbed this run, None when it may be."""
@@ -185,6 +230,9 @@ class UrlPlacement(NamedTuple):
     """Each mapped episode id to the listed size of the file placed on it.
     An id two files size differently is left out."""
 
+    identified: IdentifiedNames
+    """Files placed by size, name -> episode id, as the windows used them."""
+
     @property
     def sizes_by_name(self) -> dict[str, int]:
         """Normalized listing name -> its listed size (see `_sizes_by_name`)."""
@@ -195,7 +243,7 @@ class UrlPlacement(NamedTuple):
 def _sizes_by_name(files: Sequence[SeedFile]) -> dict[str, int]:
     """Normalized listing name -> its listed size, a name listed at two sizes left out."""
 
-    return unambiguous_sizes((normalized_leaf(f.basename), f.size) for f in files)
+    return unambiguous((normalized_leaf(f.basename), f.size) for f in files)
 
 
 def seed_batch(files: Sequence[SeedFile]) -> PlacementBatch:
@@ -214,17 +262,19 @@ def seed_batch(files: Sequence[SeedFile]) -> PlacementBatch:
 def place_release(files: Sequence[SeedFile], scope: SeedScope, torrent: KnownTorrent) -> UrlPlacement:
     """Place one url's files ONCE, with the same `place_leftover` the import wait runs. Pure.
 
-    Every window is built or none is: a claim's series unread, or the listing unread where it judges a window of
-    specials, places nothing and holds a pack of specials (`GrabHold`), since import time would place it by number.
+    Nothing gets placed if a claim's series wasn't read, or if this is a specials window and its listing wasn't
+    read. The url is held (`GrabHold`) for a misnumbered pack, when the size identities weren't read, or when a
+    parse is unknown under a specials listing, because a file the grab seeds is never placed again.
     """
 
     batch = seed_batch(files)
     seeded: dict[str, list[int]] = {} if torrent.record is None else torrent.record.seeded_map()
-    own = scope.target()
-    listed = torrent.listed
-    # A read the listing's judgment needs holds the url only where it judges (`TargetScope.specials_listing`).
-    judged = own.specials_window if listed is None else replace(own, listed=listed).specials_listing() is not None
-    windows = None if judged and listed is None else torrent.windows(scope.al_id, own)
+    sizes = _sizes_by_name(files)
+    own = scope.target(torrent.listing_evidence(sizes))
+    identities_unread = torrent.evidence.identities is None
+    windows = None if torrent.evidence.listing is None and own.specials_window else torrent.windows(scope.al_id, own)
+    # An unknown parse only holds the url when a specials listing is checking the pack (`specials_listing`).
+    parse_unread = own.specials_listing() is not None and not batch.all_parses_known
     if scope.can_place and windows is not None:
         assignment = place_leftover(seeded, batch, windows).merged
     else:
@@ -252,19 +302,61 @@ def place_release(files: Sequence[SeedFile], scope: SeedScope, torrent: KnownTor
         assignment=assignment,
         records=tuple(records),
         claimed_ids=frozenset(claimed),
-        inputs_known=not files or (batch.all_parses_known and known),
-        hold=_hold_of(assignment, unread=judged and (listed is None or not batch.all_parses_known)) if files else None,
+        inputs_known=not files or (batch.all_parses_known and known and not identities_unread),
+        hold=_hold_of(assignment, unread=identities_unread or parse_unread) if files else None,
         stored=torrent.record,
-        intended_sizes=sizes_by_episode(mapped, _sizes_by_name(files)),
+        intended_sizes=sizes_by_episode(mapped, sizes),
+        identified=own.listing.identified,
     )
 
 
 def _hold_of(assignment: EpisodeAssignment, *, unread: bool) -> GrabHold | None:
-    """Why the url is not grabbed: a misnumbered verdict, else a read the listing's judgment needed that failed."""
+    """Why the url isn't grabbed: a misnumbered pack first, then a missing input (`unread`)."""
 
     if any(p.verdict is PlacementVerdict.MISNUMBERED for p in assignment.placements):
         return GrabHold.MISNUMBERED
     return GrabHold.INPUT_UNREAD if unread else None
+
+
+class IdentityOverride(NamedTuple):
+    """A file placed by size on an episode its name doesn't point at."""
+
+    name: str
+    """The normalized file name."""
+
+    read_as: str
+    """What the name reads as, for the warning: its own keys, else Sonarr's matched episodes, else its absolute
+    numbers."""
+
+    named: EpisodeKey
+    """The episode its size matched, where it was placed."""
+
+
+def identity_overrides(placed: UrlPlacement, series: EpisodeIndex) -> tuple[IdentityOverride, ...]:
+    """One per file placed by size over its name (`PlacementVerdict.OVERRIDDEN`)."""
+
+    parses = seed_batch(placed.files).parsed
+    overrides: list[IdentityOverride] = []
+    for placement in placed.assignment.placements:
+        if placement.verdict is not PlacementVerdict.OVERRIDDEN:
+            continue
+        if (episode := series.by_id.get(placement.ids[0])) is not None:
+            named = season_episode_key(episode.season_number, episode.episode_number)
+            overrides.append(IdentityOverride(placement.name, _read_as(parses.get(placement.name)), named))
+    return tuple(overrides)
+
+
+def _read_as(info: ParsedFileInfo | None) -> str:
+    """How the warning shows a parse: its own keys, else Sonarr's matched episodes, else its absolute numbers."""
+
+    if info is None:
+        return "nothing"
+    if info.season_number is not None and info.episode_numbers:
+        keys = [EpisodeKey(info.season_number, episode) for episode in info.episode_numbers]
+    else:
+        keys = [EpisodeKey(matched.season_number, matched.episode_number) for matched in info.matched_episodes]
+    labels = [key.label for key in keys] or [f"absolute {number}" for number in info.absolute_episode_numbers]
+    return ", ".join(labels) or "nothing"
 
 
 class EntryPlacements(NamedTuple):
@@ -421,6 +513,9 @@ class PendingSeed:
     excluded: tuple[str, ...]
     """The names this placement proved never the record's to import."""
 
+    identified: IdentifiedNames
+    """Files this placement placed by size (`UrlPlacement.identified`)."""
+
     claim: EntryClaim
     """This entry's fresh claim, its `claimed_at` blank until `record_at` stamps it."""
 
@@ -449,12 +544,14 @@ class PendingSeed:
                 excluded_files=self.excluded,
                 release_sizes=self.facts.release_sizes,
                 sizes_by_name=self.facts.sizes_by_name,
+                identified=self.identified,
             )
         record = (
             self.stored.with_placements(self.placements)
             .with_exclusions(self.excluded)
             .with_claim(claim)
             .with_sizes_by_name(self.facts.sizes_by_name)
+            .with_identified(self.identified)
         )
         if not fresh:
             return record
@@ -502,6 +599,7 @@ def build_pending_seed(release: SeedRelease, scope: SeedScope, entry: EntryFacts
         facts=release.facts,
         placements=placed.assignment.assigned,
         excluded=tuple(placement.name for placement in placed.assignment.excluded),
+        identified=placed.identified,
         claim=build_entry_claim(release, scope, entry),
         stored=placed.stored,
     )
@@ -521,6 +619,7 @@ def build_unscoped_seed(flagged: FlaggedUrl, entry: EntryFacts, stored: PendingI
         ),
         placements={},
         excluded=(),
+        identified=NO_IDENTIFIED,
         claim=entry.claim(UNSCOPED),
         stored=stored,
     )

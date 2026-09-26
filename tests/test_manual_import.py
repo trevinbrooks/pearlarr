@@ -16,6 +16,7 @@ import pytest
 
 from pearlarr.manual_import import (
     LEAVE_PROBE,
+    NO_IDENTIFIED,
     Deferral,
     EntryClaim,
     EntryNames,
@@ -229,6 +230,39 @@ class TestListedSizes:
         assert pending.with_sizes_by_name({"a.mkv": 1}) is pending
 
 
+class TestIdentifiedNames:
+    """`identified`: files the grab placed by size, merged across grabs, with conflicting names dropped."""
+
+    def test_a_record_predating_them_identifies_nothing(self) -> None:
+        rebuilt = PendingImport.from_json({"infohash": "h", "file_episode_map": {}}, guards={})
+
+        assert rebuilt.identified == NO_IDENTIFIED
+
+    def test_detached_and_read_only(self) -> None:
+        names = {"a.mkv": 1}
+        identified = cast("dict[str, int]", pending_import(identified=names).identified)
+        names["a.mkv"] = 2
+
+        assert identified == {"a.mkv": 1}
+        with pytest.raises(TypeError):
+            identified["a.mkv"] = 2
+
+    def test_with_identified_merges_the_names(self) -> None:
+        joined = pending_import(identified={"a.mkv": 1}).with_identified({"b.mkv": 2})
+
+        assert joined.identified == {"a.mkv": 1, "b.mkv": 2}
+
+    def test_a_name_two_grabs_identify_differently_is_dropped(self) -> None:
+        pending = pending_import(identified={"a.mkv": 1, "b.mkv": 2})
+
+        assert pending.with_identified({"a.mkv": 3}).identified == {"b.mkv": 2}
+
+    def test_nothing_new_keeps_the_record(self) -> None:
+        pending = pending_import(identified={"a.mkv": 1})
+
+        assert pending.with_identified({"a.mkv": 1}) is pending
+
+
 class TestPendingImportClaims:
     """The claim reads over a record: every entry's series, window, guards, and ids, in claim order."""
 
@@ -438,6 +472,7 @@ class TestPendingImportRoundTrip:
             release_sizes=(700, 710),
             awaiting_cleanup=True,
             sizes_by_name={"ep1.mkv": 700, "ep2.mkv": 710},
+            identified={"ep2.mkv": 12},
         )
 
         raw = pending.to_json()

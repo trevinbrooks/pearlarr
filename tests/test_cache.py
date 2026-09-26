@@ -229,11 +229,11 @@ def _v4_blob(infohash: str, al_id: int, **fields: Any) -> dict[str, Any]:
 
 
 def _assert_round_trips(records: dict[str, dict[str, Any]]) -> None:
-    """Every migrated blob re-serializes byte-for-byte through the record class, gaining only an empty `sizes_by_name`."""
+    """Every migrated blob re-serializes byte-for-byte through the record class, gaining only its empty size maps."""
 
     for infohash, blob in records.items():
         rebuilt = PendingImport.from_json(blob, guards={}).to_json()
-        assert json.dumps(rebuilt) == json.dumps({**blob, "sizes_by_name": {}}), infohash
+        assert json.dumps(rebuilt) == json.dumps({**blob, "sizes_by_name": {}, "identified": {}}), infohash
 
 
 def _pending_columns(db: Path) -> list[str]:

@@ -1,11 +1,12 @@
 # pyright: strict
-"""The listing a numbered specials pack is judged by: the specials union over every entry of a series listing it."""
+"""SeriesListings: reads every entry's record and window, and folds them once per series per run."""
 
 from collections.abc import Mapping
 
 from seadex import EntryRecord
 
 from pearlarr.mappings import MappingEntry
+from pearlarr.placement_types import TorrentListing
 from pearlarr.seadex_types import SonarrEpisode
 from pearlarr.torrent_listings import SeriesListings
 
@@ -25,9 +26,12 @@ _H2 = "b" * 40
 
 
 def _entry(al_id: int, *hashes: str | None) -> EntryRecord:
-    """Entry `al_id` listing one torrent per hash."""
+    """Entry `al_id` listing one single-file torrent per hash, sized `al_id`."""
 
-    torrents = tuple(make_torrent_record(url=f"https://nyaa.si/{al_id}{i}", infohash=h) for i, h in enumerate(hashes))
+    torrents = tuple(
+        make_torrent_record(url=f"https://nyaa.si/{al_id}{i}", infohash=h, file_names=("Show.mkv",), file_size=al_id)
+        for i, h in enumerate(hashes)
+    )
     return make_entry_record(anilist_id=al_id, url=f"https://releases.moe/{al_id}", torrents=torrents)
 
 
@@ -47,80 +51,92 @@ def _windows(
     return ScriptedEpisodes(windows=windows, ambiguous=ambiguous)
 
 
-def _listings(
-    entries: Mapping[int, EntryRecord], episodes: ScriptedEpisodes, *, outage: bool = False
-) -> SeriesListings:
-    """The reader over the entries served and the scripted windows."""
+def _reader(seadex: FakeSeaDexSource, episodes: ScriptedEpisodes) -> SeriesListings:
+    """A reader over the given entries and scripted windows, with no ignored tags."""
 
-    seadex = FakeSeaDexSource(dict(entries), outage=outage)
-    return make_bare_instance(SeriesListings, _seadex=seadex, _episodes=episodes)
+    return make_bare_instance(SeriesListings, _seadex=seadex, _episodes=episodes, _ignore_tags=frozenset(), _reads={})
 
 
 class TestRead:
-    """One union per hash asked: every listing entry's window folded, None once any of them could not be read."""
+    """Reads every entry's record and window and folds them into per-hash listings and size identities."""
 
-    def test_the_union_over_every_entry_listing_the_torrent(self) -> None:
+    def test_every_entry_is_read_and_folded(self) -> None:
         episodes = _windows({1: _window(1, 2), 2: _window(3), 3: _window(4)})
-        reader = _listings({1: _entry(1, _H1), 2: _entry(2, _H1, _H2), 3: _entry(3, _H2)}, episodes)
+        seadex = FakeSeaDexSource({1: _entry(1, _H1), 2: _entry(2, _H1, _H2), 3: _entry(3, _H2)})
 
-        unions = reader.read(7, _mappings(1, 2, 3), [_H1, _H2])
+        read = _reader(seadex, episodes).read(7, _mappings(1, 2, 3))
 
-        assert unions == {_H1: {501, 502, 503}, _H2: {503, 504}}
+        assert read is not None
+        assert read.listing(_H1) == TorrentListing(frozenset({501, 502, 503}))
+        assert read.listing(_H2) == TorrentListing(frozenset({503, 504}))
+        # Entries 2 and 3 list lone files (sized 2 and 3) under one-episode windows. Entry 1's window holds two.
+        assert read.identities == {2: 503, 3: 504}
         assert episodes.calls == [(7, 1), (7, 2), (7, 3)]
 
-    def test_a_hash_no_entry_lists_is_listed_nowhere(self) -> None:
+    def test_a_series_is_read_once_a_run(self) -> None:
         episodes = _windows({1: _window(1)})
-        reader = _listings({1: _entry(1, "c" * 40)}, episodes)
+        seadex = FakeSeaDexSource({1: _entry(1, _H1)})
+        reader = _reader(seadex, episodes)
 
-        assert reader.read(7, _mappings(1), [_H1]) == {_H1: frozenset()}
-        # An entry listing none of the hashes asked reads no window.
-        assert episodes.calls == []
+        first = reader.read(7, _mappings(1))
+        again = reader.read(7, _mappings(1))
+
+        assert again is first
+        assert (seadex.entry_calls, episodes.calls) == ([1], [(7, 1)])
+        reader.reset()
+        assert reader.read(7, _mappings(1)) == first
+        assert seadex.entry_calls == [1, 1]
 
     def test_a_mapped_id_without_an_entry_is_skipped(self) -> None:
-        reader = _listings({1: _entry(1, _H1)}, _windows({1: _window(1)}))
+        read = _reader(FakeSeaDexSource({1: _entry(1, _H1)}), _windows({1: _window(1)})).read(7, _mappings(1, 2))
 
-        assert reader.read(7, _mappings(1, 2), [_H1]) == {_H1: {501}}
+        assert read is not None
+        assert read.listing(_H1) == TorrentListing(frozenset({501}))
 
-    def test_an_outage_reads_every_hash_unread(self) -> None:
-        reader = _listings({1: _entry(1, _H1)}, _windows({1: _window(1)}), outage=True)
+    def test_an_outage_reads_nothing_and_is_not_asked_again_this_run(self) -> None:
+        seadex = FakeSeaDexSource({1: _entry(1, _H1)}, outage=True)
+        reader = _reader(seadex, _windows({1: _window(1)}))
 
-        assert reader.read(7, _mappings(1, 2), [_H1, _H2]) == {_H1: None, _H2: None}
+        assert reader.read(7, _mappings(1, 2)) is None
+        assert reader.read(7, _mappings(1, 2)) is None
+        assert seadex.entry_calls == [1, 2]
 
-    def test_an_unread_window_marks_its_hashes_unread(self) -> None:
-        reader = _listings({1: _entry(1, _H1), 2: _entry(2, _H1, _H2)}, _windows({1: None, 2: _window(3)}))
+    def test_an_unread_window_marks_its_hashes_and_the_identities_unread(self) -> None:
+        seadex = FakeSeaDexSource({1: _entry(1, _H1), 2: _entry(2, _H1, _H2)})
 
-        assert reader.read(7, _mappings(1, 2), [_H1, _H2]) == {_H1: None, _H2: {503}}
+        read = _reader(seadex, _windows({1: None, 2: _window(3)})).read(7, _mappings(1, 2))
+
+        assert read is not None
+        assert (read.listing(_H1), read.listing(_H2)) == (None, TorrentListing(frozenset({503})))
+        assert read.identities is None
 
     def test_an_ambiguous_mapping_lists_nothing(self) -> None:
         # The entry's own run already errors on it: its window is no part of the listing, which stays read.
         episodes = _windows({1: _window(1), 2: _window(3)}, ambiguous=frozenset({1}))
-        reader = _listings({1: _entry(1, _H1), 2: _entry(2, _H1, _H2)}, episodes)
+        seadex = FakeSeaDexSource({1: _entry(1, _H1), 2: _entry(2, _H1, _H2)})
 
-        assert reader.read(7, _mappings(1, 2), [_H1, _H2]) == {_H1: {503}, _H2: {503}}
+        read = _reader(seadex, episodes).read(7, _mappings(1, 2))
 
-    def test_hashes_match_by_their_one_spelling(self) -> None:
-        # The listing spells the hash upper-case, and a torrent without a hash lists nothing.
-        reader = _listings({1: _entry(1, _H1.upper(), None)}, _windows({1: _window(1)}))
-
-        assert reader.read(7, _mappings(1), [_H1]) == {_H1: {501}}
+        assert read is not None
+        assert (read.listing(_H1), read.listing(_H2)) == (
+            TorrentListing(frozenset({503})),
+            TorrentListing(frozenset({503})),
+        )
+        assert read.identities == {2: 503}
 
     def test_a_zero_id_episode_is_no_window_id(self) -> None:
-        reader = _listings({1: _entry(1, _H1)}, _windows({1: [_SPECIALS[1], sonarr_ep(0, 9, ep_id=0)]}))
-
-        assert reader.read(7, _mappings(1), [_H1]) == {_H1: {501}}
-
-    def test_nothing_asked_reads_nothing(self) -> None:
-        episodes = _windows({1: _window(1)})
         seadex = FakeSeaDexSource({1: _entry(1, _H1)})
-        reader = make_bare_instance(SeriesListings, _seadex=seadex, _episodes=episodes)
 
-        assert reader.read(7, _mappings(1), []) == {}
-        assert (seadex.entry_calls, episodes.calls) == ([], [])
+        read = _reader(seadex, _windows({1: [_SPECIALS[1], sonarr_ep(0, 9, ep_id=0)]})).read(7, _mappings(1))
+
+        assert read is not None
+        assert read.listing(_H1) == TorrentListing(frozenset({501}))
 
 
 def test_no_entry_asks_nothing_of_the_real_resolver() -> None:
     # Built over the real collaborator types: with no entry resolved, every hash is listed nowhere and the
     # resolver (bare, no Sonarr behind it) is never asked.
-    reader = SeriesListings(FakeSeaDexSource(), make_sonarr_episodes())
+    read = SeriesListings(FakeSeaDexSource(), make_sonarr_episodes(), frozenset()).read(7, {})
 
-    assert reader.read(7, {}, [_H1]) == {_H1: frozenset()}
+    assert read is not None
+    assert read.listing(_H1) == TorrentListing(frozenset())

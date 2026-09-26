@@ -6,7 +6,7 @@ from enum import StrEnum
 from types import MappingProxyType
 from typing import NamedTuple, Self
 
-from .manual_import import EntryNames
+from .manual_import import NO_IDENTIFIED, EntryNames, IdentifiedNames
 from .seadex_types import EpisodeKey, ParsedFileInfo, SonarrEpisode, index_episodes_by_key
 
 
@@ -71,6 +71,11 @@ class PlacementVerdict(StrEnum):
     """The numberless file an entry's AniList title names, onto the only open id."""
     EPISODE_TITLE = "episode title"
     """Onto the one episode whose title its name carries, whatever its number said."""
+    IDENTIFIED = "listed size"
+    """Placed by file size: SeaDex lists a single-file release of this size for the episode, and the name agrees or
+    has no number."""
+    OVERRIDDEN = "listed size over its name"
+    """Placed by file size even though the name's number points at a different episode. The caller logs a warning."""
     FOREIGN = "other slice"
     """Reads wholly outside the scope, or is titled as an episode outside it and confirmed by its reading or by no
     open id being left: never this record's to import."""
@@ -116,6 +121,8 @@ _PLACED = frozenset(
         PlacementVerdict.NUMBERED_RUN,
         PlacementVerdict.TITLED,
         PlacementVerdict.EPISODE_TITLE,
+        PlacementVerdict.IDENTIFIED,
+        PlacementVerdict.OVERRIDDEN,
     }
 )
 _EXCLUDED = frozenset({PlacementVerdict.FOREIGN, PlacementVerdict.DUPLICATE, PlacementVerdict.EXTRA})
@@ -202,6 +209,30 @@ class PlacementBatch(NamedTuple):
 
 
 @dataclass(frozen=True, slots=True)
+class ListingEvidence:
+    """What SeaDex's listings for the series tell the placer about one torrent.
+
+    Import time only fills in `identified`.
+    """
+
+    ids: frozenset[int]
+    """Every episode id covered by the entries that list this torrent, this entry included. A numbered specials
+    pack is checked against these. Empty at import time, which turns that check off."""
+
+    identified: IdentifiedNames = NO_IDENTIFIED
+    """File name -> episode id, for the files whose size matched an episode (see `SizeIdentities`)."""
+
+    def __post_init__(self) -> None:
+        # Detach from the caller's map, then wrap read-only.
+        object.__setattr__(self, "identified", MappingProxyType(dict(self.identified)))
+
+
+NO_EVIDENCE = ListingEvidence(frozenset())
+"""Nothing from the listings: no ids and no size matches, so the size placement and the specials pack check do
+nothing."""
+
+
+@dataclass(frozen=True, slots=True)
 class TargetScope:
     """The episode set a placement batch may assign into.
 
@@ -228,10 +259,8 @@ class TargetScope:
     """The series and AniList titles. Episode titles and extras words are read against them, and they break
     ties when several runs or numberless files could fill the open ids."""
 
-    listed: frozenset[int] = frozenset()
-    """The ids of every window of every entry of the series listing the torrent, this one's included: what a
-    specials pack's numbering is judged against. Empty when no listing was read (import time), which stands
-    that judgment down."""
+    listing: ListingEvidence = NO_EVIDENCE
+    """What SeaDex's listings tell us about this torrent. At import time only `identified` is filled in."""
 
     real_ids: frozenset[int] = field(init=False, repr=False, compare=False)
     """The resolved ids that can be placed. A stray zero keeps the scope real but is never one."""
@@ -272,11 +301,47 @@ class TargetScope:
     def specials_listing(self) -> frozenset[int] | None:
         """The listing a numbered pack is judged by: read, all specials, covering the window. None stands it down."""
 
-        if not (self.specials_window and self.listed and self.real_ids <= self.listed):
+        listed = self.listing.ids
+        if not (self.specials_window and listed and self.real_ids <= listed):
             return None
-        return self.listed if all_specials(self.series, self.listed) else None
+        return listed if all_specials(self.series, listed) else None
 
 
-type TorrentListings = Mapping[str, frozenset[int] | None]
-"""Per infohash, the ids of every window of the series' entries listing the torrent, None when one of those
-entries' record or window could not be read."""
+type SizeIdentities = Mapping[int, int]
+"""File size -> episode id, from SeaDex releases with a single video file listed under an entry that covers one
+episode. A file with that exact size is that episode."""
+
+
+@dataclass(frozen=True, slots=True)
+class TorrentListing:
+    """The episodes covered by the SeaDex entries that list one torrent."""
+
+    ids: frozenset[int]
+    """Union of the episode windows of every entry in the series that lists the torrent."""
+
+
+EMPTY_LISTING = TorrentListing(frozenset())
+"""A torrent no entry lists. Listings match by infohash, so a url without one always gets this."""
+
+
+@dataclass(frozen=True, slots=True)
+class ListingsRead:
+    """What this run read from one series' SeaDex entries: listings by infohash, plus the size identities."""
+
+    by_hash: Mapping[str, TorrentListing | None]
+    """Infohash -> listing, or None if an entry listing that torrent couldn't be read."""
+
+    identities: SizeIdentities | None
+    """The series' size identities, minus any size that two entries give to different episodes. None if any
+    entry's episodes couldn't be read, since that entry's sizes would be missing."""
+
+    def __post_init__(self) -> None:
+        # Detach from the caller's dicts, then wrap read-only.
+        object.__setattr__(self, "by_hash", MappingProxyType(dict(self.by_hash)))
+        if self.identities is not None:
+            object.__setattr__(self, "identities", MappingProxyType(dict(self.identities)))
+
+    def listing(self, infohash: str) -> TorrentListing | None:
+        """The torrent's listing: None if it couldn't be read, `EMPTY_LISTING` if no entry lists it."""
+
+        return self.by_hash.get(infohash, EMPTY_LISTING)
