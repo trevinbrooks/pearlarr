@@ -31,7 +31,7 @@ from pearlarr.cache import (
 )
 from pearlarr.clock import Clock
 from pearlarr.config import AppConfig, Arr
-from pearlarr.episode_state import EpisodeSnapshot, TrustPolicy
+from pearlarr.episode_state import EpisodeFileStatus, EpisodeSnapshot, TargetStatuses, TrustPolicy
 from pearlarr.grab_pipeline import GrabPipeline, GrabRequest
 from pearlarr.grab_placement import EntryFacts, KnownTorrent, PendingSeed, TorrentEvidence, TorrentFacts
 from pearlarr.import_wait import ImportProbes, ImportWaitManager, PostImportCleanup
@@ -1071,6 +1071,14 @@ def arr_releases(ep_list: Iterable[SonarrEpisode]) -> ArrReleases:
 
 _NO_OWN_RELEASE = OwnGroup("", ())
 """An own release listing no sizes: no file is judged misplaced against it."""
+
+
+def target_statuses(
+    by_id: Mapping[int, EpisodeFileStatus], holding_own_copy: frozenset[int] = frozenset()
+) -> TargetStatuses:
+    """`TargetStatuses` over `by_id`, where `holding_own_copy` are the targets holding a copy of our own file."""
+
+    return TargetStatuses(by_id, holding_own_copy)
 
 
 def episode_snapshot(

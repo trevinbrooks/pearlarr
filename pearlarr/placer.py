@@ -7,6 +7,8 @@ Terms used across the placement modules:
 
 - Own key: the `SxxExx` a file name carries. Matched pair: an episode Sonarr's series match points at.
   A name without an own key borrows Sonarr's matched pairs.
+- Range key: an own key spelled as a tight range ("S01E05-06"). When Sonarr read only its first episode, the
+  parse is widened to the whole range before any pass runs (`widen_range_key` says when it isn't).
 - Scope (`TargetScope`): the entry's episode ids a file may be placed on, plus the whole series' episode
   map every key is looked up in. An empty id list means no scope ("unscoped"): a file's own keys then
   place against the whole series.
@@ -118,8 +120,23 @@ from dataclasses import dataclass, field
 from enum import IntEnum
 from typing import NamedTuple, Self
 
-from .parse_reading import Reading, claims_several_episodes, numbers_miss_the_series, parse_has_no_number, read_parse
-from .placement_types import EpisodeAssignment, EpisodeIndex, Placement, PlacementBatch, PlacementVerdict, TargetScope
+from .parse_reading import (
+    Reading,
+    claims_several_episodes,
+    numbers_miss_the_series,
+    parse_has_no_number,
+    read_parse,
+    widen_range_key,
+)
+from .placement_types import (
+    EpisodeAssignment,
+    EpisodeIndex,
+    Placement,
+    PlacementBatch,
+    PlacementVerdict,
+    SeriesFacts,
+    TargetScope,
+)
 from .release_names import (
     FileIdentity,
     NameRead,
@@ -430,33 +447,6 @@ class _SeasonFit(NamedTuple):
     tied: bool
 
 
-@dataclass(frozen=True, slots=True)
-class _SeriesFacts:
-    """What the series map says on its own, read once per call and never changed by a pass."""
-
-    key_by_id: Mapping[int, EpisodeKey]
-    """Episode id -> `(season, episode)` key: the series map inverted."""
-    season_counts: Mapping[int, int]
-    """Episodes per season."""
-    absolute_of: Mapping[int, int]
-    """Episode id -> the series' absolute number, for the ids that carry one."""
-
-    @classmethod
-    def of(cls, series: EpisodeIndex) -> Self:
-        """Read once from the series index."""
-
-        episodes = series.by_id
-        return cls(
-            key_by_id={ep_id: key for key, ep_id in series.id_by_key.items()},
-            season_counts=Counter(key.season for key in series.id_by_key),
-            absolute_of={
-                ep_id: ep.absolute_episode_number
-                for ep_id, ep in episodes.items()
-                if ep.absolute_episode_number is not None
-            },
-        )
-
-
 class _DuplicateProof(NamedTuple):
     """The evidence that an unplaced file is a duplicate, gathered once before classification."""
 
@@ -478,7 +468,7 @@ class _Placer:
     only `batch.names` are placed."""
     torrent: _TorrentNames
     """Every name of the torrent read once, seeded and gone names included."""
-    facts: _SeriesFacts
+    facts: SeriesFacts
     verdicts: dict[str, Placement] = field(default_factory=dict[str, Placement])
     used: set[int] = field(default_factory=set[int])
     count_legs_barred: bool = False
@@ -493,11 +483,17 @@ class _Placer:
 
     @classmethod
     def start(cls, batch: PlacementBatch, scope: TargetScope) -> Self:
-        """Read every name and every parse of the torrent once."""
+        """Read every name and every parse of the torrent once, after widening each range key Sonarr read short."""
 
+        facts = SeriesFacts(scope.series)
+        widened = {
+            name: None if info is None else widen_range_key(name, info, facts) for name, info in batch.parsed.items()
+        }
+        # Swap the widened parses into the batch, so the readings and every pass see the same parse of a file.
+        batch = batch._replace(parsed=widened)
         readings = {name: read_parse(batch.parsed.get(name), scope) for name in batch.torrent_names}
         torrent = _TorrentNames.of(batch, scope, readings)
-        return cls(batch, scope, readings, torrent, _SeriesFacts.of(scope.series), used=set(scope.used))
+        return cls(batch, scope, readings, torrent, facts, used=set(scope.used))
 
     def single_parse(self, name: str) -> ParsedFileInfo | None:
         """The name's parse when there is one and it covers one episode, else None.

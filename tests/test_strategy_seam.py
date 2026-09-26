@@ -687,6 +687,20 @@ def _make_sonarr_for_import(
     return strat, sonarr
 
 
+def _posted(sonarr: FakeSonarrClient) -> list[list[tuple[str, list[int]]]]:
+    """The `(path, episode ids)` of every file in each manual import sent to Sonarr, one list per import."""
+
+    return [[(f.path, f.episodeIds) for f in files] for files, _mode in sonarr.execute_calls]
+
+
+class _RangeFile(NamedTuple):
+    """The pending record of one range file, the strategy that imports it, and the Sonarr fake it talks to."""
+
+    pending: PendingImport
+    strat: SonarrSync
+    sonarr: FakeSonarrClient
+
+
 class TestImportCompletedQueueState:
     """import_completed reads the queue + episode files before stepping in."""
 
@@ -1235,9 +1249,50 @@ class TestImportCompletedQueueState:
 
         third = strat.import_completed(pending, "/d", AttemptKind.POLL)
 
-        posted = [[(f.path, f.episodeIds) for f in files] for files, _mode in sonarr.execute_calls]
-        assert posted == [[("/d/Show - 01 [1080p].mkv", [101])], [("/d/Show - 02 [1080p].mkv", [102])]]
+        assert _posted(sonarr) == [[("/d/Show - 01 [1080p].mkv", [101])], [("/d/Show - 02 [1080p].mkv", [102])]]
         assert (first.command_issued, second.command_issued, third.files_present) == (True, True, True)
+
+    @staticmethod
+    def _range_file(held: SonarrEpisode, guards: GuardFacts) -> _RangeFile:
+        """A record whose one E01-02 file (size 300) is placed on both episodes, E01 holding `held` and E02 empty."""
+
+        name = "Show - S01E01-02 [1080p].mkv"
+        pending = pending_import(
+            infohash="abc123",
+            release_group="SubGroup",
+            file_episode_map={name: [101, 102]},
+            release_sizes=[300],
+            sizes_by_name={name.casefold(): 300},
+            guards=guards,
+        )
+        strat, sonarr = _make_sonarr_for_import(
+            candidates=[manual_candidate(f"/d/{name}")],
+            episodes=[held, sonarr_ep(1, 2, ep_id=102, episode_file_id=0)],
+        )
+        return _RangeFile(pending, strat, sonarr)
+
+    def test_a_range_file_replaces_our_own_copy_beside_its_open_episode(self) -> None:
+        # E01 already holds our file at its listed size, so the import posts both episodes and replaces that copy.
+        own = sonarr_ep(1, 1, ep_id=101, episode_file_id=11, release_group="SubGroup", size=300)
+        pending, strat, sonarr = self._range_file(own, GuardFacts())
+        first = strat.import_completed(pending, "/d", AttemptKind.POLL)
+        sonarr.episodes_return = [
+            sonarr_ep(1, 1, ep_id=101, episode_file_id=12, release_group="SubGroup", size=300),
+            sonarr_ep(1, 2, ep_id=102, episode_file_id=12, release_group="SubGroup", size=300),
+        ]
+
+        second = strat.import_completed(pending, "/d", AttemptKind.POLL)
+
+        assert _posted(sonarr) == [[("/d/Show - S01E01-02 [1080p].mkv", [101, 102])]]
+        assert (first.command_issued, second.files_present) == (True, True)
+
+    def test_a_range_file_leaves_another_releases_recommended_file_alone(self) -> None:
+        other = sonarr_ep(1, 1, ep_id=101, episode_file_id=11, release_group="OtherPick", size=900)
+        pending, strat, sonarr = self._range_file(other, GuardFacts(entry_groups=("SubGroup", "OtherPick")))
+
+        strat.import_completed(pending, "/d", AttemptKind.POLL)
+
+        assert _posted(sonarr) == [[("/d/Show - S01E01-02 [1080p].mkv", [102])]]
 
     def test_target_holding_an_untagged_file_we_identified_is_protected(self) -> None:
         # The grab-time size identification rides the record through to the

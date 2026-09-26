@@ -12,6 +12,7 @@ from pearlarr.placement_types import (
     ListingEvidence,
     PlacementBatch,
     PlacementVerdict,
+    SeriesFacts,
     TargetScope,
     TorrentListing,
     all_specials,
@@ -229,3 +230,16 @@ class TestSpecialsListing:
         assert self._scope([501, 502]).specials_window
         assert not self._scope([501, 11]).specials_window
         assert not self._scope([]).specials_window
+
+
+class TestSeriesFacts:
+    """`SeriesFacts` builds its lookups once from the episode index."""
+
+    def test_the_lookups_are_derived_from_the_index(self) -> None:
+        keys = {EpisodeKey(0, 1): 501, EpisodeKey(1, 1): 601, EpisodeKey(1, 2): 602}
+        facts = SeriesFacts(series_index(keys, absolutes={601: 1, 602: 2}))
+
+        assert facts.id_by_key == keys
+        assert facts.key_by_id == {501: EpisodeKey(0, 1), 601: EpisodeKey(1, 1), 602: EpisodeKey(1, 2)}
+        assert facts.season_counts == {0: 1, 1: 2}
+        assert facts.absolute_of == {601: 1, 602: 2}

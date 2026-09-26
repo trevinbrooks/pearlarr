@@ -1,4 +1,7 @@
-"""Read file names without Sonarr: the offline SxxExx parse, sort keys, stems, versions, runs, and title matching."""
+"""Read file names without Sonarr.
+
+The offline SxxExx parse, range keys, sort keys, stems, versions, runs, and title matching.
+"""
 
 import re
 import unicodedata
@@ -11,6 +14,19 @@ from .manual_import import EntryNames
 from .seadex_types import ParsedFileInfo
 
 _SXXEXX: re.Pattern[str] = re.compile(r"[Ss](\d{1,2})[\s._-]*[Ee](\d{1,3})")
+# "S01E05-06" or "S01E05-E06" with no spaces, maybe a "v2" after it. A letter or digit touching either end, as in
+# "S01E05-720p", or a one-digit last number, as in a version-like "S01E01-2.0", means the name says something else.
+_RANGE_KEY = re.compile(
+    r"(?<![a-z\d])s(?P<season>\d{1,2})e(?P<first>\d{1,3})-e?(?P<last>\d{2,3})(?:v\d+)?(?![a-z\d])", re.I
+)
+
+
+class RangeKey(NamedTuple):
+    """The season and the first and last episode numbers of a name's `SxxEyy-zz` range."""
+
+    season: int
+    first: int
+    last: int
 
 
 def parse_se_from_filename(name: str) -> ParsedFileInfo | None:
@@ -28,6 +44,15 @@ def parse_se_from_filename(name: str) -> ParsedFileInfo | None:
         episode_numbers=(int(m.group(2)),),
         offline=True,
     )
+
+
+def range_key(name: str) -> RangeKey | None:
+    """The tight `SxxEyy-zz` range in `name`, or None. It doesn't check the order, so `S01E07-05` reads too."""
+
+    found = _RANGE_KEY.search(name)
+    if found is None:
+        return None
+    return RangeKey(int(found["season"]), int(found["first"]), int(found["last"]))
 
 
 _BRACKETED = re.compile(r"[\[(][^\[\]()]*[\])]")
