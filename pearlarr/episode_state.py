@@ -1,7 +1,7 @@
 """Pure episode-file statuses, the per-target snapshot an import checks, and the group trust its guard reads."""
 
 from collections import Counter
-from collections.abc import Mapping, Sequence
+from collections.abc import Callable, Iterable, Mapping, Sequence
 from dataclasses import dataclass, field
 from enum import Enum, auto
 from types import MappingProxyType
@@ -17,6 +17,7 @@ from .manual_import import (
     normalize_rg,
 )
 from .placement_types import EpisodeIndex
+from .seadex_types import SonarrEpisodeFile
 
 type TrustPolicy = Mapping[str, frozenset[int] | None]
 """Normalized group -> the sizes that verify its files, or None to trust the group by name alone."""
@@ -25,16 +26,17 @@ type TrustPolicy = Mapping[str, frozenset[int] | None]
 class EpisodeFileStatus(Enum):
     """How an intended target episode's CURRENT Sonarr file relates to ours.
 
-    One read drives both invariants: never overwrite a recommended file, never skip an intended episode.
+    One read drives both invariants: never skip an intended episode, and never overwrite a recommended file that
+    isn't a copy of our own.
     """
 
     ABSENT = auto()
     """No file yet. Import ours."""
 
     RECOMMENDED = auto()
-    """Already holds a file from a recommended group (ours, another torrent we grabbed for this series, or
-    a group the entry's SeaDex picks carried at grab time), or an untagged file still at the exact size
-    the grab-time identification recorded. It is done: do NOT overwrite it."""
+    """Holds a file from a recommended group (ours, another torrent we grabbed for this series, or a group the entry's
+    SeaDex picks carried at grab time), or an untagged file still at the size the grab recorded for it. It's done:
+    never imported over, except a copy of our own beside an episode that needs the file (`import_ids`)."""
 
     OTHER_GROUP = auto()
     """Holds a file from a non-recommended group, or our own group at a size no current listing carries
@@ -49,12 +51,42 @@ class EpisodeFileStatus(Enum):
     (a batch imported under the wrong numbers). Import ours over it."""
 
 
+class TargetJudgment(NamedTuple):
+    """A target's current file, read once: its status, and whether it's a copy of one of this torrent's files."""
+
+    status: EpisodeFileStatus
+    own_copy: bool
+    """The file is at one of this torrent's listed sizes. Size alone decides, not the group or the status."""
+
+
+# How a target with no file reads. `RecordSnapshot.judge` also gives it for an id no snapshot covers.
+_NO_FILE = TargetJudgment(EpisodeFileStatus.ABSENT, own_copy=False)
+
+
 @dataclass(frozen=True, slots=True)
 class TargetStatuses:
-    """Each intended target episode's file status, with the two folds every consumer reads."""
+    """Each intended target's file status, plus the targets holding a copy of one of this torrent's files."""
 
     by_id: Mapping[int, EpisodeFileStatus]
     """One status per de-duplicated target id."""
+
+    holding_own_copy: frozenset[int]
+    """The targets whose current file is at one of this torrent's listed sizes (`TargetJudgment.own_copy`)."""
+
+    @classmethod
+    def judged(
+        cls,
+        targets: Iterable[int],
+        intended_sizes: Mapping[int, int],
+        judge: Callable[[int, int | None], TargetJudgment],
+    ) -> Self:
+        """Judge each distinct target against the size `intended_sizes` puts on it."""
+
+        by_target = {ep_id: judge(ep_id, intended_sizes.get(ep_id)) for ep_id in dict.fromkeys(targets)}
+        return cls(
+            {ep_id: judgment.status for ep_id, judgment in by_target.items()},
+            frozenset(ep_id for ep_id, judgment in by_target.items() if judgment.own_copy),
+        )
 
     def all_done(self) -> bool:
         """True only when every intended target holds a recommended file (the drop-the-record signal).
@@ -65,9 +97,21 @@ class TargetStatuses:
         return bool(self.by_id) and all(s is EpisodeFileStatus.RECOMMENDED for s in self.by_id.values())
 
     def needing_import(self) -> set[int]:
-        """The never-skip set: every intended id NOT already a recommended file (which must not be overwritten)."""
+        """The never-skip set: every intended id NOT already holding a recommended file."""
 
         return {ep_id for ep_id, status in self.by_id.items() if status is not EpisodeFileStatus.RECOMMENDED}
+
+    def import_ids(self, ep_ids: Sequence[int]) -> tuple[int, ...]:
+        """Which of a file's episodes `ep_ids` to post it onto, in order, or none when no episode needs it.
+
+        An episode holding a copy of our own goes along with a needing one, so Sonarr replaces the copy with the
+        file instead of keeping both.
+        """
+
+        needing = self.needing_import()
+        if not any(ep_id in needing for ep_id in ep_ids):
+            return ()
+        return tuple(ep_id for ep_id in ep_ids if ep_id in needing or ep_id in self.holding_own_copy)
 
 
 class GroupVotes(NamedTuple):
@@ -108,22 +152,34 @@ class EpisodeSnapshot(NamedTuple):
             owned_episode_sizes=guards.owned_sizes,
         )
 
+    def _own_size(self, size: int | None) -> bool:
+        """Whether a file at `size` is one of this torrent's files, going by size alone."""
+
+        return size in self.own.sizes
+
     def _misplaced(self, size: int | None, intended_size: int | None) -> bool:
         """Whether a file at `size` is a file of this torrent's listed sizes that is not the one intended here."""
 
-        return size in self.own.sizes and intended_size is not None and size != intended_size
+        return self._own_size(size) and intended_size is not None and size != intended_size
 
-    def status_of(self, ep_id: int, intended_size: int | None) -> EpisodeFileStatus:
-        """Classify one intended target by its current on-disk file, decided HERE and not from the queue.
+    def judge(self, ep_id: int, intended_size: int | None) -> TargetJudgment:
+        """Judge one intended target by its current on-disk file: its status, and whether it's a copy of our own.
 
-        Sonarr drops an imported item from its queue almost immediately, so only the episode files tell.
+        Read from the episode files, never the queue: Sonarr drops an imported item from its queue almost at once.
         """
 
         ep = self.episodes.by_id.get(ep_id)
         if ep is None or not ep.episode_file_id:
-            return EpisodeFileStatus.ABSENT
-        group = ep.episode_file.release_group if ep.episode_file else None
-        size = ep.episode_file.size if ep.episode_file else None
+            return _NO_FILE
+        file = ep.episode_file
+        own_copy = file is not None and self._own_size(file.size)
+        return TargetJudgment(self._status(ep_id, file, intended_size), own_copy)
+
+    def _status(self, ep_id: int, file: SonarrEpisodeFile | None, intended_size: int | None) -> EpisodeFileStatus:
+        """Classify a target's current file. `file` is None when Sonarr gives the episode a file id but no record."""
+
+        group = file.release_group if file else None
+        size = file.size if file else None
         if not group:
             # An untagged file still at the size the grab-time identification recorded is ours, recommended unless
             # it is another of our files. Anything else untagged (a different file, no file record) is unidentifiable.
@@ -146,9 +202,7 @@ class EpisodeSnapshot(NamedTuple):
     def statuses(self, target_ep_ids: Sequence[int], intended_sizes: Mapping[int, int]) -> TargetStatuses:
         """Classify each de-duplicated target by its current file, judged against its intended size."""
 
-        return TargetStatuses(
-            {ep_id: self.status_of(ep_id, intended_sizes.get(ep_id)) for ep_id in dict.fromkeys(target_ep_ids)}
-        )
+        return TargetStatuses.judged(target_ep_ids, intended_sizes, self.judge)
 
 
 class Route(NamedTuple):
@@ -236,20 +290,16 @@ class RecordSnapshot:
         claims = (route.claim,) if route.claim is not None else self.pending.claims
         return any(ep_id in claim.preowned_episode_ids for claim in claims)
 
+    def judge(self, ep_id: int, intended_size: int | None) -> TargetJudgment:
+        """Judge `ep_id` under the snapshot its route picks, or as ABSENT when no snapshot holds it."""
+
+        snapshot = self.snapshot_for(ep_id)
+        return _NO_FILE if snapshot is None else snapshot.judge(ep_id, intended_size)
+
     def statuses(self, target_ep_ids: Sequence[int], file_map: FileEpisodeMap) -> TargetStatuses:
-        """Classify each target under the snapshot that judges it, against the size `file_map` intends on it.
+        """Judge each de-duplicated target as `judge` does, against the size `file_map` intends on it."""
 
-        An id no snapshot judges is ABSENT.
-        """
-
-        intended_sizes = self.pending.intended_sizes(file_map)
-        by_id: dict[int, EpisodeFileStatus] = {}
-        for ep_id in dict.fromkeys(target_ep_ids):
-            snapshot = self.snapshot_for(ep_id)
-            by_id[ep_id] = (
-                EpisodeFileStatus.ABSENT if snapshot is None else snapshot.status_of(ep_id, intended_sizes.get(ep_id))
-            )
-        return TargetStatuses(by_id)
+        return TargetStatuses.judged(target_ep_ids, self.pending.intended_sizes(file_map), self.judge)
 
 
 def trusted_groups(guards: GuardFacts, votes: GroupVotes) -> TrustPolicy:

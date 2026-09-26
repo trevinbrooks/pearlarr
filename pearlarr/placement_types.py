@@ -1,5 +1,6 @@
 """Types the placement modules share: the episode index, verdicts, one file's placement, the batch, and the scope."""
 
+from collections import Counter
 from collections.abc import Iterable, Mapping, Sequence
 from dataclasses import dataclass, field, replace
 from enum import StrEnum
@@ -50,6 +51,37 @@ def all_specials(series: EpisodeIndex, ids: Iterable[int]) -> bool:
     """Whether every id is one of the series' specials (season 0)."""
 
     return all((ep := series.by_id.get(ep_id)) is not None and ep.season_number == 0 for ep_id in ids)
+
+
+@dataclass(frozen=True, slots=True)
+class SeriesFacts:
+    """Lookups built once from a series' episode index, for placement to read. Nothing changes them after."""
+
+    series: EpisodeIndex
+
+    key_by_id: Mapping[int, EpisodeKey] = field(init=False, repr=False, compare=False)
+    """Episode id -> `(season, episode)`."""
+    season_counts: Mapping[int, int] = field(init=False, repr=False, compare=False)
+    """Season -> how many episodes it has."""
+    absolute_of: Mapping[int, int] = field(init=False, repr=False, compare=False)
+    """Episode id -> absolute number, for the episodes that have one."""
+
+    def __post_init__(self) -> None:
+        keys = self.series.id_by_key
+        object.__setattr__(self, "key_by_id", MappingProxyType({ep_id: key for key, ep_id in keys.items()}))
+        object.__setattr__(self, "season_counts", MappingProxyType(Counter(key.season for key in keys)))
+        absolute_of = {
+            ep_id: ep.absolute_episode_number
+            for ep_id, ep in self.series.by_id.items()
+            if ep.absolute_episode_number is not None
+        }
+        object.__setattr__(self, "absolute_of", MappingProxyType(absolute_of))
+
+    @property
+    def id_by_key(self) -> Mapping[EpisodeKey, int]:
+        """`(season, episode)` -> episode id, straight from the index."""
+
+        return self.series.id_by_key
 
 
 class PlacementVerdict(StrEnum):

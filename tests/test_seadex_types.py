@@ -19,6 +19,7 @@ from pearlarr.seadex_types import (
     CommandResource,
     HistoryPage,
     HistoryRecord,
+    MatchedEpisode,
     MovieFile,
     ParsedFileInfo,
     QueueRecord,
@@ -140,6 +141,31 @@ def test_parsed_file_info_null_number_arrays_fold_to_empty() -> None:
         {"parsedEpisodeInfo": {"seasonNumber": 1, "episodeNumbers": None, "absoluteEpisodeNumbers": None}},
     )
     assert info == ParsedFileInfo(season_number=1)
+
+
+def test_parsed_file_info_with_numbers_replaces_only_the_numbers() -> None:
+    """`with_numbers` swaps the episode numbers, absolute numbers, and matched pairs and keeps every other field."""
+
+    info = ParsedFileInfo(
+        season_number=1,
+        episode_numbers=(5,),
+        absolute_episode_numbers=(30,),
+        matched_episodes=(MatchedEpisode(season_number=1, episode_number=5, id=105),),
+        special=True,
+        offline=True,
+    )
+    matched = (
+        MatchedEpisode(season_number=1, episode_number=5, id=105),
+        MatchedEpisode(season_number=1, episode_number=6),
+    )
+
+    assert info.with_numbers(episodes=(5, 6), absolutes=(), matched=matched) == ParsedFileInfo(
+        season_number=1,
+        episode_numbers=(5, 6),
+        matched_episodes=matched,
+        special=True,
+        offline=True,
+    )
 
 
 def test_history_record_field_name_construction_matches_alias_parse() -> None:

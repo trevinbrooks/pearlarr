@@ -1,10 +1,10 @@
 """Pure per-file import plan: which of our intended files import onto which episodes, and which are left."""
 
 from collections.abc import Mapping
-from collections.abc import Set as AbstractSet
 from dataclasses import dataclass
 from enum import StrEnum
 
+from .episode_state import TargetStatuses
 from .manual_import import FileEpisodeMap
 from .seadex_types import QualityModel
 
@@ -78,33 +78,12 @@ class ImportDecision:
 def plan_import_files(
     authoritative_map: FileEpisodeMap,
     candidates_by_basename: Mapping[str, CandidateFile],
-    needing_import: AbstractSet[int],
+    statuses: TargetStatuses,
 ) -> list[ImportDecision]:
-    """Decide, per intended file, whether/how to import it, strictly from our map.
+    """Decide, for each file in OUR map (never the candidates), whether to import it and onto which episodes.
 
-    The map is normalized basename -> our episode ids, and the candidates are
-    keyed the same way. Iterates OUR map (never the candidates): a file Sonarr
-    found that isn't in our map is never imported, and a file our map intends
-    that isn't on disk is surfaced as `missing` (never silently skipped). For a
-    present file both invariants are honored via `needing_import` (the
-    non-recommended target set): a file whose every episode already holds a
-    recommended release is `skip_done` (not overwritten). Otherwise it is
-    imported for exactly its needing-import episodes.
-
-    `needing_import` (derived from the EPISODE FILES via
-    `EpisodeSnapshot.statuses` and `TargetStatuses.needing_import`) is
-    authoritative for whether we still want a file, not Sonarr's per-candidate
-    already-imported rejection. Sonarr raises that rejection whenever the
-    episode already holds *any* file on disk, including a non-recommended or
-    unidentifiable-group one we flagged as still-needing replacement. Honoring
-    it as a skip there is the grab-then-skip bug (we grab a missing-group
-    replacement, then Sonarr's "already imported" makes us skip importing it).
-    So `is_already_imported` only yields `already` when NONE of the file's
-    episodes still need us (every target already holds a recommended file,
-    Sonarr and our episode-file check agree). When a target still needs us we
-    import over it, as the never-skip invariant requires. `is_sample` still
-    wins (a sample is never our intended file). One decision per map entry,
-    in map order.
+    A mapped file Sonarr didn't find is `missing`, one no episode needs is `skip_done` or `already`, and a needed
+    one goes onto the episodes `TargetStatuses.import_ids` picks. One decision per map entry, in map order.
     """
 
     decisions: list[ImportDecision] = []
@@ -116,19 +95,17 @@ def plan_import_files(
         if candidate.is_sample:
             decisions.append(ImportDecision(basename, ImportAction.SAMPLE, candidate.path, None, ()))
             continue
-        import_ids = tuple(i for i in ep_ids if i in needing_import)
+        import_ids = statuses.import_ids(ep_ids)
         if not import_ids:
-            # Nothing of ours still needs this file. Sonarr's already-imported
-            # rejection and our episode-file done-check agree here, so report the
-            # more specific `ALREADY` when Sonarr flagged it, else `SKIP_DONE`.
+            # No episode needs this file, so Sonarr's already-imported rejection agrees with us. Report `ALREADY`
+            # when Sonarr raised it, else `SKIP_DONE`.
             action = ImportAction.ALREADY if candidate.is_already_imported else ImportAction.SKIP_DONE
             decisions.append(
                 ImportDecision(basename, action, candidate.path, None, tuple(ep_ids)),
             )
             continue
-        # A target still needs our file: import it over whatever is there, even
-        # when Sonarr raised an already-imported rejection (that on-disk file is
-        # the non-recommended / unidentifiable one we grabbed to replace).
+        # An episode still needs this file, so import it even when Sonarr says it's already imported. Sonarr says
+        # that about any file already on the episode, including the one we're replacing.
         decisions.append(
             ImportDecision(
                 basename,

@@ -152,7 +152,7 @@ def flagged_urls(seadex_dict: SeadexDict) -> list[FlaggedUrl]:
 
 # Folded into the config's selection digest: bump when the release-selection
 # rules change in code so every cached verdict re-checks once after an upgrade.
-SELECTION_RULES_VERSION: int = 9
+SELECTION_RULES_VERSION: int = 10
 
 SONARR_MISSING_KEY: int = 999
 """Out-of-range stand-in for a missing Sonarr `seasonNumber`/`episodeNumber`, never colliding with a real one."""
@@ -967,8 +967,8 @@ class MatchedEpisode(_ApiModel):
     season_number: int = Field(validation_alias="seasonNumber")
     episode_number: int = Field(validation_alias="episodeNumber")
     id: int | None = None
-    """Sonarr's episode id, cross-checked against OUR map so a wrong-series title match is refused (None only
-    from an offline stand-in)."""
+    """Sonarr's episode id, checked against OUR map so a wrong-series title match is refused. None for an offline
+    stand-in, or for a pair `widen_range_key` added."""
 
 
 class ParsedFileInfo(_ApiModel):
@@ -1026,3 +1026,12 @@ class ParsedFileInfo(_ApiModel):
             except ValidationError:
                 return ()
         return kept
+
+    def with_numbers(
+        self, *, episodes: tuple[int, ...], absolutes: tuple[int, ...], matched: tuple[MatchedEpisode, ...]
+    ) -> Self:
+        """A copy of this parse with new episode numbers, absolute numbers, and matched pairs."""
+
+        return self.model_copy(
+            update={"episode_numbers": episodes, "absolute_episode_numbers": absolutes, "matched_episodes": matched}
+        )

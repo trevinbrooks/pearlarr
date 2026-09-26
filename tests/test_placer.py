@@ -2904,6 +2904,50 @@ class TestSizeIdentity:
         assert placed == {name: ((), PlacementVerdict.SKIPPED)}
 
 
+class TestRangeKey:
+    """A `SxxEyy-zz` range Sonarr read as its first episode is the whole range to every pass."""
+
+    _NAME = "show s01e02-03 [grp].mkv"
+    # Sonarr reads the range's end as an absolute.
+    _SHORT: ClassVar[dict[str, ParsedFileInfo | None]] = {
+        _NAME: parsed_info(season=1, episodes=(2,), absolutes=(3,), matched=((1, 2),))
+    }
+
+    def test_a_range_read_short_places_on_the_whole_range(self) -> None:
+        placed = by_name(place(self._SHORT, _scope([602, 603])))
+
+        assert placed == {self._NAME: ((602, 603), PlacementVerdict.EXACT)}
+
+    def test_a_range_partly_held_never_zips_onto_its_open_episode(self) -> None:
+        # The absolute zip sees the widened parse, which no longer reads the range's end as an absolute.
+        placed = by_name(place(self._SHORT, _scope([602, 603], used=[603])))
+
+        assert placed == {self._NAME: ((), PlacementVerdict.SKIPPED)}
+
+    def test_a_range_reaching_past_the_window_is_skipped(self) -> None:
+        # The window holds only the range's first episode: the file is never placed on that episode alone.
+        placed = by_name(place(self._SHORT, _scope([602])))
+
+        assert placed == {self._NAME: ((), PlacementVerdict.SKIPPED)}
+
+    def test_a_range_sonarr_matched_places_whole_despite_an_extras_word(self) -> None:
+        # Sonarr matched the range's first episode, so "preview" in the name doesn't make the file an extra.
+        name = "show s01e02-03 preview [grp].mkv"
+        parsed = {name: parsed_info(season=1, episodes=(2,), absolutes=(3,), matched=((1, 2),))}
+
+        placed = by_name(place(parsed, _scope([602, 603])))
+
+        assert placed == {name: ((602, 603), PlacementVerdict.EXACT)}
+
+    def test_a_widened_range_keeps_sonarrs_alias_shift(self) -> None:
+        # A sequel numbered as its own season 1 that Sonarr matched into season 2: the whole range follows the shift.
+        parsed = {self._NAME: parsed_info(season=1, episodes=(2,), absolutes=(3,), matched=((2, 2),))}
+
+        placed = by_name(place(parsed, _scope([702, 703])))
+
+        assert placed == {self._NAME: ((702, 703), PlacementVerdict.EXACT)}
+
+
 class TestAssignNumberedRun:
     """The numbered-run pass: one `1..N` run indexes a contiguous one-season window among files Sonarr read blind."""
 

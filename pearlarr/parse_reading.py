@@ -3,11 +3,12 @@
 from collections.abc import Iterable, Mapping, Sequence
 from typing import NamedTuple
 
-from .placement_types import TargetScope
-from .seadex_types import EpisodeKey, ParsedFileInfo, season_episode_key
+from .placement_types import SeriesFacts, TargetScope
+from .release_names import range_key
+from .seadex_types import EpisodeKey, MatchedEpisode, ParsedFileInfo, season_episode_key
 
-# A borrowed span (Sonarr's matched pairs) plausibly covers a double or triple
-# episode, never more. A range the name spells out itself is trusted at any width.
+# Sonarr's matched pairs plausibly cover a double or triple episode, never more, and a range key Sonarr read short
+# is widened only that far. A range Sonarr read whole from the name is trusted at any width.
 _MATCHED_SPAN_CAP = 3
 
 
@@ -175,6 +176,70 @@ def read_parse(info: ParsedFileInfo | None, scope: TargetScope) -> Reading:
     ids = tuple(dict.fromkeys(resolved))
     inside = tuple(i for i in ids if scope.admits(i))
     return Reading(ids, inside, complete=complete, borrowed=borrowed, vetoed=vetoed, corroborated=corroborated)
+
+
+def widen_range_key(name: str, info: ParsedFileInfo, facts: SeriesFacts) -> ParsedFileInfo:
+    """Widen a parse Sonarr read as just the first episode of the name's `SxxEyy-zz` range to the whole range.
+
+    It stays as read if the range doesn't count up, is wider than a triple, ends on its first episode's absolute
+    (dual numbering), or fits neither the name's season nor the one Sonarr matched its first episode into.
+    """
+
+    key = range_key(name)
+    if key is None or info.season_number != key.season or info.episode_numbers != (key.first,):
+        return info
+    episodes = tuple(range(key.first, key.last + 1))
+    if not 1 < len(episodes) <= _MATCHED_SPAN_CAP:
+        return info
+    first_id = facts.id_by_key.get(EpisodeKey(key.season, key.first))
+    if first_id is not None and facts.absolute_of.get(first_id) == key.last:
+        return info
+    matched_season = _matched_season(key.first, info.matched_episodes)
+    seasons = (key.season,) if matched_season is None else (key.season, matched_season)
+    if not any(_range_fits(episodes, season, facts) for season in seasons):
+        return info
+    # Sonarr often reads the range's last number as an absolute. It isn't one, so drop it.
+    absolutes = () if info.absolute_episode_numbers == (key.last,) else info.absolute_episode_numbers
+    matched = _widened_matches(info.matched_episodes, episodes)
+    return info.with_numbers(episodes=episodes, absolutes=absolutes, matched=matched)
+
+
+def _matched_season(first: int, matched: Iterable[MatchedEpisode]) -> int | None:
+    """The one regular season Sonarr matched the range's first episode into, else None.
+
+    As in `_is_alias_shift`, a match into the specials or spread over several seasons isn't a shift.
+    """
+
+    seasons = {pair.season_number for pair in matched if pair.episode_number == first}
+    return seasons.pop() if len(seasons) == 1 and 0 not in seasons else None
+
+
+def _range_fits(episodes: Sequence[int], season: int, facts: SeriesFacts) -> bool:
+    """Whether the season has every episode of the range plus at least one more."""
+
+    return all(EpisodeKey(season, episode) in facts.id_by_key for episode in episodes) and (
+        len(episodes) < facts.season_counts[season]
+    )
+
+
+def _widened_matches(matched: Iterable[MatchedEpisode], episodes: Sequence[int]) -> tuple[MatchedEpisode, ...]:
+    """Sonarr's matched pairs, each pair on the range's first episode followed by the rest of the range.
+
+    The added pairs keep that pair's season and have no Sonarr id, since Sonarr never matched them. Our map
+    resolves them like a name's own key. A pair Sonarr already matched isn't added a second time.
+    """
+
+    present = {(pair.season_number, pair.episode_number) for pair in matched}
+    widened: list[MatchedEpisode] = []
+    for pair in matched:
+        widened.append(pair)
+        if pair.episode_number == episodes[0]:
+            widened.extend(
+                MatchedEpisode(season_number=pair.season_number, episode_number=episode)
+                for episode in episodes[1:]
+                if (pair.season_number, episode) not in present
+            )
+    return tuple(widened)
 
 
 def parse_has_no_number(info: ParsedFileInfo | None) -> bool:

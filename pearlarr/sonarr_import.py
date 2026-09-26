@@ -381,7 +381,7 @@ class ImportExecutor:
         snapshot: RecordSnapshot,
         at_deadline: bool = False,
     ) -> ImportProbe:
-        """Import EXACTLY the files our map intends, never over an episode already holding a recommended file.
+        """Import EXACTLY the files our map intends, never over a recommended file that isn't a copy of our own.
 
         The probe carries this poll's fresh placements for the record seam to persist.
         """
@@ -467,7 +467,7 @@ class ImportExecutor:
             self.logger.debug(f"{content_path}: no mappable files for {pending.display_label} yet")
             return ImportProbe.waiting()
 
-        decisions = plan_import_files(authoritative_map, context.candidates_by_basename, statuses.needing_import())
+        decisions = plan_import_files(authoritative_map, context.candidates_by_basename, statuses)
 
         files: list[ManualImportFile] = []
         missing: list[str] = []
