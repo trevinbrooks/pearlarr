@@ -16,7 +16,7 @@ from itertools import compress
 from typing import NamedTuple
 
 from .config import Arr
-from .manual_import import GuardFacts, OwnedEpisode, normalize_rg, unambiguous_sizes
+from .manual_import import GuardFacts, OwnedEpisode, normalize_rg, unambiguous
 from .output import Severity
 from .seadex_types import (
     ArrReleases,
@@ -942,7 +942,7 @@ class DownloadPlanner:
             url_item.flag(upgrade=True)
 
         # An episode two listed files claim at different sizes is left out: the import cannot pick between them.
-        doubled = _doubled_sizes(unambiguous_sizes(listed_pairs), held_by_key, url_item.size)
+        doubled = _doubled_sizes(unambiguous(listed_pairs), held_by_key, url_item.size)
         if doubled:
             self.logger.debug(
                 f"{url} lists size(s) {doubled} on fewer episodes than {seadex_rg} holds them, will download"

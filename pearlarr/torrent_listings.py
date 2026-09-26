@@ -1,51 +1,59 @@
-"""The listing a numbered specials pack is judged by: the specials every entry of one series lists it under."""
+"""Reads every SeaDex entry of a series once per run and folds them into torrent listings and size identities."""
 
-from collections.abc import Iterable, Mapping
+from collections.abc import Mapping
 
+from .listing_fold import EntryListing, fold_listings
 from .mappings import MappingEntry
-from .placement_types import TorrentListings
+from .placement_types import ListingsRead
 from .seadex_gateway import SeaDexMiss, SeaDexSource
-from .seadex_types import normalized_infohash
 from .sonarr_episodes import SonarrEpisodes
 
 
 class SeriesListings:
-    """Reads, per torrent, the ids of every window of every entry of a series listing it (`TargetScope.listed`).
+    """Reads every SeaDex entry of a series into a `ListingsRead`, once per series per run.
 
-    The entries are the series' resolved ids as the run resolves them everywhere (the ignore list applied). A
-    prefetched id is served from the gateway's cache, and one the run never prefetched costs a request.
+    The caller passes the series' AniList ids, with the ignore list already applied. Prefetched entries come from
+    the gateway's cache, and anything else costs a request.
     """
 
-    def __init__(self, seadex: SeaDexSource, episodes: SonarrEpisodes) -> None:
+    def __init__(self, seadex: SeaDexSource, episodes: SonarrEpisodes, ignore_tags: frozenset[str]) -> None:
         self._seadex = seadex
         self._episodes = episodes
+        self._ignore_tags = ignore_tags
+        self._reads: dict[int, ListingsRead | None] = {}
 
-    def read(self, series_id: int, entries: Mapping[int, MappingEntry], hashes: Iterable[str]) -> TorrentListings:
-        """Each hash to the union of the windows listing it, None where a listing entry's record or window is unread.
+    def reset(self) -> None:
+        """Forget this run's reads. Called at run start, alongside the episode cache reset."""
 
-        A SeaDex outage leaves every hash unread, an unread series list the hashes that entry lists. An entry
-        whose window cannot be resolved (an ambiguous AniDB id) lists nothing, as one listing none of the hashes does.
+        self._reads = {}
+
+    def read(self, series_id: int, entries: Mapping[int, MappingEntry]) -> ListingsRead | None:
+        """The series' listings (see `fold_listings`), or None when SeaDex is unreachable.
+
+        Only the first call in a run reads anything. Later calls return the same result, whatever `entries` they
+        pass. An entry with an ambiguous AniDB id is skipped (its own run reports the error), and the identities
+        still count as read.
         """
 
-        wanted = frozenset(hashes)
-        if not wanted:
-            return {}
-        listed: dict[str, frozenset[int] | None] = {infohash: frozenset() for infohash in wanted}
+        if series_id not in self._reads:
+            self._reads[series_id] = self._read(series_id, entries)
+        return self._reads[series_id]
+
+    def _read(self, series_id: int, entries: Mapping[int, MappingEntry]) -> ListingsRead | None:
+        """Read each entry's record and window, then fold them."""
+
+        listed: list[EntryListing] = []
         for al_id, mapping in entries.items():
             record = self._seadex.entry(al_id)
             if isinstance(record, SeaDexMiss):
                 if record is SeaDexMiss.OUTAGE:
-                    return dict.fromkeys(wanted)
-                continue
-            here = wanted & {normalized_infohash(torrent.infohash) for torrent in record.torrents}
-            if not here:
+                    return None
                 continue
             try:
                 ep_list = self._episodes.get_ep_list(series_id, al_id, mapping)
             except ValueError:
                 continue
-            window = None if ep_list is None else frozenset(ep.id for ep in ep_list if ep.id)
-            for infohash in here:
-                union = listed[infohash]
-                listed[infohash] = None if window is None or union is None else union | window
-        return listed
+            listed.append(
+                EntryListing(record, None if ep_list is None else frozenset(ep.id for ep in ep_list if ep.id))
+            )
+        return fold_listings(listed, self._ignore_tags)

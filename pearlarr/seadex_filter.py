@@ -20,6 +20,8 @@ from .seadex_types import (
     SeadexReleaseGroupItem,
     SeadexUrlItem,
     SonarrEpisode,
+    carries_ignored_tag,
+    ignore_tag_set,
 )
 
 if TYPE_CHECKING:
@@ -95,10 +97,9 @@ class SeadexReleaseFilter:
         # release group below), so iterate them directly rather than deep-copying
         # the whole list of model objects on every entry.
 
-        # Filter out any tags. Casefold both sides (config strings vs the seadex Tag
-        # str-enum's canonical case) so a natural-case rule like "dolby vision" matches.
-        ignore_tags = {tag.casefold() for tag in self._config.seadex.ignore_tags}
-        final_torrent_list = [t for t in sd_entry.torrents if ignore_tags.isdisjoint(tag.casefold() for tag in t.tags)]
+        # Filter out any tags, casefolded on both sides so a natural-case rule like "dolby vision" matches.
+        ignore_tags = ignore_tag_set(self._config.seadex.ignore_tags)
+        final_torrent_list = [t for t in sd_entry.torrents if not carries_ignored_tag(t, ignore_tags)]
 
         # Filter down by allowed trackers
         final_torrent_list = [t for t in final_torrent_list if t.tracker.casefold() in self._config.seadex.trackers]

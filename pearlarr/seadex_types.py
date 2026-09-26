@@ -26,7 +26,7 @@ from pydantic import (
     field_validator,
     model_validator,
 )
-from seadex import Tag, Tracker
+from seadex import Tag, TorrentRecord, Tracker
 
 
 @dataclass
@@ -50,6 +50,18 @@ def normalized_infohash(raw: str | None) -> str | None:
     return raw.strip().lower() or None
 
 
+def ignore_tag_set(tags: Iterable[str]) -> frozenset[str]:
+    """The configured ignore tags, casefolded the way `carries_ignored_tag` compares them."""
+
+    return frozenset(tag.casefold() for tag in tags)
+
+
+def carries_ignored_tag(torrent: TorrentRecord, ignore_tags: frozenset[str]) -> bool:
+    """Whether the torrent has any of the `ignore_tags`, compared casefolded on both sides."""
+
+    return not ignore_tags.isdisjoint(tag.casefold() for tag in torrent.tags)
+
+
 class GrabHold(StrEnum):
     """Why the placement refuses to grab a flagged url this run."""
 
@@ -57,8 +69,8 @@ class GrabHold(StrEnum):
     """A specials pack numbered by another TVDB state than its listing (`PlacementVerdict.MISNUMBERED`): grabbed,
     it would import under the wrong specials, so a human imports it."""
     INPUT_UNREAD = "a read failed"
-    """The pack's numbering could not be judged: its listing, or a parse the judgment needs, was not read this
-    run. Held until it is, next run."""
+    """A SeaDex listing for the series, or a parse the specials pack check needs, couldn't be read this run.
+    Grabbing now could seed a file onto the wrong episode for good, so the url waits for the next run."""
 
 
 @dataclass
@@ -139,7 +151,7 @@ def flagged_urls(seadex_dict: SeadexDict) -> list[FlaggedUrl]:
 
 # Folded into the config's selection digest: bump when the release-selection
 # rules change in code so every cached verdict re-checks once after an upgrade.
-SELECTION_RULES_VERSION: int = 7
+SELECTION_RULES_VERSION: int = 8
 
 SONARR_MISSING_KEY: int = 999
 """Out-of-range stand-in for a missing Sonarr `seasonNumber`/`episodeNumber`, never colliding with a real one."""
@@ -150,6 +162,12 @@ class EpisodeKey(NamedTuple):
 
     season: int
     episode: int
+
+    @property
+    def label(self) -> str:
+        """The key as `S01E02`."""
+
+        return f"S{self.season:02d}E{self.episode:02d}"
 
 
 def season_episode_key(season: int | None, episode: int | None) -> EpisodeKey:

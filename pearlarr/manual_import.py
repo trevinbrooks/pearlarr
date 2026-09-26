@@ -574,19 +574,25 @@ def _normalized_names(names: Iterable[str]) -> set[str]:
     return {normalized_leaf(name) for name in names}
 
 
-def unambiguous_sizes[K](pairs: Iterable[tuple[K, int]]) -> dict[K, int]:
-    """Each key to its one size. A key paired with two different sizes is dropped: its file is ambiguous."""
+def unambiguous[K, V](pairs: Iterable[tuple[K, V]]) -> dict[K, V]:
+    """Map each key to its value, dropping any key that shows up with two different values."""
 
-    sizes: dict[K, int] = {}
+    values: dict[K, V] = {}
     ambiguous: set[K] = set()
-    for key, size in pairs:
-        if sizes.setdefault(key, size) != size:
+    for key, value in pairs:
+        if values.setdefault(key, value) != value:
             ambiguous.add(key)
-    return {key: size for key, size in sizes.items() if key not in ambiguous}
+    return {key: value for key, value in values.items() if key not in ambiguous}
 
 
 NO_SIZES_BY_NAME: Mapping[str, int] = MappingProxyType({})
 """No listed sizes: a record written before they were kept, or a torrent whose files are never listed."""
+
+type IdentifiedNames = Mapping[str, int]
+"""Normalized file name -> the episode id its size matched."""
+
+NO_IDENTIFIED: IdentifiedNames = MappingProxyType({})
+"""No files placed by size: a record written before this field existed, or no size matched."""
 
 
 def sizes_by_episode(mapped: Mapping[str, Sequence[int]], listed: Mapping[str, int]) -> dict[int, int]:
@@ -595,7 +601,7 @@ def sizes_by_episode(mapped: Mapping[str, Sequence[int]], listed: Mapping[str, i
     An unlisted name sizes nothing, and an ambiguous id is dropped.
     """
 
-    return unambiguous_sizes((ep_id, listed[name]) for name, ids in mapped.items() if name in listed for ep_id in ids)
+    return unambiguous((ep_id, listed[name]) for name, ids in mapped.items() if name in listed for ep_id in ids)
 
 
 def _normalized_map(entries: FileEpisodeMap) -> dict[str, list[int]]:
@@ -808,6 +814,10 @@ class PendingImport:
     """Normalized listing name -> its listed size, so the import knows which file each episode should hold.
     Empty on a row written before it was kept, which then never reads a file as misplaced."""
 
+    identified: IdentifiedNames = NO_IDENTIFIED
+    """Files the grab placed by size, name -> episode id, so the import places them the same way without reading
+    SeaDex. Empty on rows written before this field existed."""
+
     def __post_init__(self) -> None:
         # Detach from the caller's map, then wrap read-only (the ids as tuples, so nothing inside mutates).
         object.__setattr__(
@@ -816,6 +826,7 @@ class PendingImport:
             MappingProxyType({name: tuple(ids) for name, ids in self.file_episode_map.items()}),
         )
         object.__setattr__(self, "sizes_by_name", MappingProxyType(dict(self.sizes_by_name)))
+        object.__setattr__(self, "identified", MappingProxyType(dict(self.identified)))
 
     @property
     def own_group(self) -> OwnGroup:
@@ -930,6 +941,12 @@ class PendingImport:
 
         return self if self.sizes_by_name else replace(self, sizes_by_name=sizes)
 
+    def with_identified(self, names: IdentifiedNames) -> "PendingImport":
+        """The record with `names` merged in, dropping any name the two map to different episodes."""
+
+        joined = unambiguous([*self.identified.items(), *names.items()])
+        return self if joined == self.identified else replace(self, identified=joined)
+
     def with_claim(self, claim: EntryClaim) -> "PendingImport":
         """The record with `claim` joined and its cleanup flag cleared (new files to import make it active again).
 
@@ -960,6 +977,7 @@ class PendingImport:
             "release_sizes": list(self.release_sizes),
             "awaiting_cleanup": self.awaiting_cleanup,
             "sizes_by_name": dict(self.sizes_by_name),
+            "identified": dict(self.identified),
         }
 
     @classmethod
@@ -978,6 +996,7 @@ class PendingImport:
             release_sizes=tuple(raw.get("release_sizes", [])),
             awaiting_cleanup=is_awaiting_cleanup(raw),
             sizes_by_name=raw.get("sizes_by_name", {}),
+            identified=raw.get("identified", {}),
         )
 
 

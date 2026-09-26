@@ -14,7 +14,7 @@ is a real `RunServices` subclass. The strategies are built bare
 """
 
 import logging
-from collections.abc import Callable, Iterable, Mapping, MutableMapping
+from collections.abc import Callable, Mapping, MutableMapping
 from typing import Any, NamedTuple, cast, override
 
 import pytest
@@ -48,7 +48,7 @@ from pearlarr.mappings import ExternalIds, MappingEntry, MappingSource
 from pearlarr.output import Severity
 from pearlarr.output.recording import RecordingHub
 from pearlarr.pending_records import PendingRecords
-from pearlarr.placement_types import episode_index
+from pearlarr.placement_types import ListingsRead, TorrentListing, episode_index
 from pearlarr.planner import PlanResult
 from pearlarr.probe_verdicts import DownloadHistoryVerdict, HistoryImport, placements_from_history
 from pearlarr.reporter import EntryTitle, RunContext
@@ -343,16 +343,21 @@ def test_fake_overrides_the_full_public_surface() -> None:
 
 
 class _ScriptedListings:
-    """Listing collaborator scripted per infohash: the specials the series' entries list a torrent under."""
+    """A scripted listings collaborator: per-infohash listings and size identities, or a SeaDex outage."""
 
-    def __init__(self, listed: Mapping[str, frozenset[int] | None] | None = None) -> None:
-        self._listed = listed or {}
+    def __init__(
+        self,
+        listed: Mapping[str, frozenset[int]] | None = None,
+        identities: Mapping[int, int] | None = None,
+        *,
+        outage: bool = False,
+    ) -> None:
+        by_hash = {infohash: TorrentListing(ids) for infohash, ids in (listed or {}).items()}
+        self._read = None if outage else ListingsRead(by_hash, identities or {})
 
-    def read(
-        self, series_id: int, entries: Mapping[int, MappingEntry], hashes: Iterable[str]
-    ) -> dict[str, frozenset[int] | None]:
+    def read(self, series_id: int, entries: Mapping[int, MappingEntry]) -> ListingsRead | None:
         del series_id, entries
-        return {infohash: self._listed.get(infohash, frozenset()) for infohash in hashes}
+        return self._read
 
 
 class _ScriptedParse:
@@ -2460,6 +2465,38 @@ def _sonarr_seed_run(mode: ImportWaitMode, *, store: FakeCacheStore, sonarr: Fak
     return run
 
 
+def _entry_run(
+    files: tuple[SeedFile, ...], window: list[SonarrEpisode], listings: _ScriptedListings
+) -> _FakeRunServices:
+    """Drive a Sonarr `process_al_id` for entry 5 over `window` (all of series 7), listing one torrent of `files`."""
+
+    seadex: SeadexDict = {
+        "NAN0": rg_group(
+            {_SEED_URL: url_item(url=_SEED_URL, infohash="h1", download=True, files=[f.basename for f in files])}
+        ),
+    }
+    run = _FakeRunServices(
+        prologue_entry=make_entry_record(url="https://releases.moe/5"),
+        anilist_title="Show",
+        seadex_dict=seadex,
+        filter_downloads_result=plan_result(["h1"], seadex),
+        import_wait_mode=ImportWaitMode.BLOCKING,
+        cache_store=FakeCacheStore(),
+    )
+    strat = make_bare_instance(
+        SonarrSync,
+        _services=run,
+        _episodes=ScriptedEpisodes(FakeSonarrClient(episodes=window), windows={5: window}),
+        _parse=_ScriptedParse({_SEED_URL: files}),
+        _listings=listings,
+        _config=make_config(sleep_time=0),
+        ignore_movies_in_radarr=False,
+        logger=make_logger(),
+    )
+    strat.process_al_id(_Item(id=7, title="Show", tvdbId=70, imdbId=None), 5, MappingEntry(anilist_id=5))
+    return run
+
+
 class TestSonarrProcessAlIdSeeds:
     """A Sonarr grab places each listed torrent under the entry's scope, a stored one as its record's leftover."""
 
@@ -2534,6 +2571,46 @@ class TestSonarrProcessAlIdSeeds:
         assert req.seadex_dict["NAN0"].urls[_SEED_URL].episodes == []
         assert req.pending_seeds["h1"].placements == {}
         assert req.input_missing_groups == ()
+
+    def test_a_file_placed_by_size_over_its_name_warns_once_per_url(self) -> None:
+        # Two specials named as each other. Each goes where its size matches, and the record keeps the size
+        # matches for the import.
+        specials = [sonarr_ep(0, n, ep_id=500 + n, episode_file_id=0) for n in (1, 2)]
+        files = tuple(
+            SeedFile(f"Show.S00E0{n}.mkv", 1000 * n, parsed_info(season=0, episodes=(n,), matched=((0, n),)))
+            for n in (1, 2)
+        )
+        recording = install_recording_hub()
+
+        run = _entry_run(files, specials, _ScriptedListings(identities={1000: 502, 2000: 501}))
+
+        (req,) = run.grab_requests
+        seed = req.pending_seeds["h1"]
+        assert seed.placements == {"show.s00e01.mkv": [502], "show.s00e02.mkv": [501]}
+        assert seed.identified == {"show.s00e01.mkv": 502, "show.s00e02.mkv": 501}
+        assert diagnostic_messages(recording, Severity.WARNING) == [
+            (
+                f"{_SEED_URL}: show.s00e01.mkv goes on S00E02 because its size matches SeaDex's S00E02 release "
+                "(its name reads as S00E01)"
+                " (1 more file in the debug log)"
+            )
+        ]
+
+    def test_an_unread_listing_places_by_number_and_holds_the_url(self) -> None:
+        # SeaDex is down, so there are no size identities. The pack is placed by its numbers but held, and the
+        # title isn't cached as done since its inputs weren't all read.
+        files = tuple(
+            SeedFile(name, 1000, parsed_info(season=1, episodes=(n,))) for n, name in enumerate(_SEED_FILES, 1)
+        )
+
+        run = _entry_run(files, [_EP1, _EP2], _ScriptedListings(outage=True))
+
+        (req,) = run.grab_requests
+        assert req.seadex_dict["NAN0"].urls[_SEED_URL].hold is GrabHold.INPUT_UNREAD
+        assert req.pending_seeds["h1"].placements == {
+            normalize_basename(n): [100 + i] for i, n in enumerate(_SEED_FILES, 1)
+        }
+        assert req.input_missing_groups == ("NAN0",)
 
     def test_wait_mode_off_reads_no_record_and_seeds_nothing(self) -> None:
         store = _CountingStore()
@@ -2695,6 +2772,31 @@ class TestManualImportWarningGating:
         logger.setLevel(logging.DEBUG)
         strat._executor.logger = logger
         return strat, sonarr
+
+    def test_a_file_placed_by_size_over_its_name_warns_once(self) -> None:
+        # The record's size match puts the file on the second episode, over its own number.
+        name = "Show - 01 [1080p].mkv"
+        pending = pending_import(
+            file_episode_map={},
+            seadex_files=[name],
+            ordered_episode_ids=(101, 102),
+            identified={normalize_basename(name): 102},
+        )
+        strat, sonarr = _make_sonarr_for_import(
+            candidates=[manual_candidate(f"/d/{name}")],
+            episodes=[sonarr_ep(1, n, ep_id=100 + n, episode_file_id=0) for n in (1, 2)],
+        )
+        sonarr.parse_fn = lambda _n: parsed_info(season=1, episodes=(1,), matched=((1, 1),))
+        recording = install_recording_hub()
+
+        probe = strat.import_completed(pending, "/d", AttemptKind.POLL)
+        strat.import_completed(pending, "/d", AttemptKind.POLL)
+
+        assert probe.placements == {normalize_basename(name): [102]}
+        warnings = [m for m in diagnostic_messages(recording, Severity.WARNING) if "placed by file size" in m]
+        assert warnings == [
+            f"{pending.display_label}: {normalize_basename(name)} placed by file size instead of by its name"
+        ]
 
     def test_grab_time_excluded_unplaceable_file_never_warns(self, caplog: pytest.LogCaptureFixture) -> None:
         # A sibling record's slice of a shared torrent was decided at grab time:

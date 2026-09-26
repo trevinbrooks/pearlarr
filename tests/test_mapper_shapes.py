@@ -17,7 +17,7 @@ from pydantic import BaseModel, RootModel
 
 from pearlarr.grab_placement import SeedFile, SeedScope, place_release
 from pearlarr.manual_import import EntryNames, normalize_basename
-from pearlarr.placement_types import episode_index
+from pearlarr.placement_types import NO_EVIDENCE, episode_index
 from pearlarr.seadex_types import (
     EpisodeRecord,
     Json,
@@ -146,7 +146,7 @@ def test_seed_places_captured_shape(case: ShapeCase) -> None:
 
     scope = _scope(case)
 
-    result = place(_parsed(case), scope.target())
+    result = place(_parsed(case), scope.target(NO_EVIDENCE))
 
     assert result.assigned == {name: list(ids) for name, ids in case.expected.items()}
     assert {placement.name for placement in result.excluded} == set(case.expected_excluded)

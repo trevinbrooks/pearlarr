@@ -249,6 +249,7 @@ class _ImportScratch:
     quality_defs: list[QualityDefinition] | None = None
     languages: list[Language] | None = None
     warned_unplaceable: set[str] = field(default_factory=set[str])
+    warned_overridden: set[str] = field(default_factory=set[str])
     warned_empty_folder: set[str] = field(default_factory=set[str])
     warned_default_quality: bool = False
     last_refresh_monotonic: float | None = None
@@ -437,6 +438,8 @@ class ImportExecutor:
             elif skips := self._reportable_skips(pending, assignment.skipped):
                 # From the deadline on a miss that never healed is reported like any other skip.
                 self._warn_unplaceable_files(pending, skips)
+            if overridden := assignment.overridden:
+                self._warn_overridden_files(pending, overridden)
             for name, ids in {**placed, **recovered}.items():
                 self.logger.debug(f"{pending.display_label}: placed {name} -> {ids}")
             probe = self._verify_or_import(context, authoritative)
@@ -581,6 +584,17 @@ class ImportExecutor:
         hub_warn(
             f"{pending.display_label}: {count_noun(len(reportable), 'file')} could not be matched "
             f"to an episode and {pluralize(len(reportable), 'was', 'were')} not imported"
+        )
+
+    def _warn_overridden_files(self, pending: PendingImport, names: tuple[str, ...]) -> None:
+        """Warn once per run per download about files placed by size over their names."""
+
+        if pending.infohash in self._scratch.warned_overridden:
+            return
+        self._scratch.warned_overridden.add(pending.infohash)
+        hub_warn(
+            f"{pending.display_label}: {', '.join(names)} placed by file size instead of by "
+            f"{pluralize(len(names), 'its name', 'their names')}"
         )
 
     def _import_language_objects(self, pending: PendingImport) -> list[Language]:

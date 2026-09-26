@@ -8,6 +8,7 @@ import pytest
 
 from pearlarr.placement_types import (
     EpisodeIndex,
+    ListingEvidence,
     PlacementBatch,
     PlacementVerdict,
     TargetScope,
@@ -121,9 +122,23 @@ class TestTargetScope:
         assert TargetScope([], self._SERIES).using([12, 21]).used == {12, 21}
 
     def test_using_keeps_the_listing(self) -> None:
-        scope = TargetScope([11], self._SERIES, listed=frozenset({11, 12}))
+        listing = ListingEvidence(frozenset({11, 12}), {"a.mkv": 11})
+        scope = TargetScope([11], self._SERIES, listing=listing)
 
-        assert scope.using([12]).listed == {11, 12}
+        assert scope.using([12]).listing == listing
+
+
+class TestListingEvidence:
+    """The identified names are copied from the caller's map and wrapped read-only."""
+
+    def test_the_identified_names_are_copied_and_read_only(self) -> None:
+        identified = {"a.mkv": 11}
+        evidence = ListingEvidence(frozenset(), identified)
+        identified["b.mkv"] = 12
+
+        assert evidence.identified == {"a.mkv": 11}
+        with pytest.raises(TypeError):
+            cast("dict[str, int]", evidence.identified)["c.mkv"] = 13
 
 
 class TestPlacementVerdict:
@@ -139,6 +154,13 @@ class TestPlacementVerdict:
     def test_refused_is_held_or_misnumbered(self) -> None:
         # Both decide a name without ids: no later window may place it by its numbers.
         assert {v for v in PlacementVerdict if v.refused} == {PlacementVerdict.HELD, PlacementVerdict.MISNUMBERED}
+
+    def test_a_size_identity_places(self) -> None:
+        # Whether or not it overrides the name, a file placed by size carries its ids like any other placement.
+        for verdict in (PlacementVerdict.IDENTIFIED, PlacementVerdict.OVERRIDDEN):
+            assert verdict.placed
+            assert not verdict.excluded
+            assert not verdict.refused
 
 
 class TestAllSpecials:
@@ -165,7 +187,7 @@ class TestSpecialsListing:
     _SERIES = series_index({EpisodeKey(0, n): 500 + n for n in range(1, 5)} | {EpisodeKey(1, 1): 11})
 
     def _scope(self, resolved: list[int], listed: frozenset[int] = frozenset()) -> TargetScope:
-        return TargetScope(resolved, self._SERIES, listed=listed)
+        return TargetScope(resolved, self._SERIES, listing=ListingEvidence(listed))
 
     def test_a_listing_covering_a_window_of_specials_judges(self) -> None:
         assert self._scope([502, 504], frozenset({502, 503, 504})).specials_listing() == {502, 503, 504}

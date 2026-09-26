@@ -36,11 +36,9 @@ from pearlarr.sonarr_episodes import (
     fetch_workers,
     sonarr_series_fingerprint,
 )
-from pearlarr.sonarr_parse import (
-    SonarrParseCache,
-    is_video_candidate,
-)
+from pearlarr.sonarr_parse import SonarrParseCache
 from pearlarr.stamps import UPDATED_AT_STR_FORMAT
+from pearlarr.video_files import is_video_candidate
 
 from .builders import (
     FakeCacheStore,
