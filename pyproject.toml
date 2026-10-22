@@ -61,7 +61,7 @@ dependencies = [
     "PyYAML == 6.0.3",
     "qbittorrent-api==2026.8.0",
     "rich == 15.0.0",
-    "seadex == 0.7.2",
+    "seadex == 0.7.3",
     "truststore == 0.10.4",
     "typer==0.27.1",
     # Transitive (qbittorrent-api -> requests -> urllib3). Floored for CVE currency.

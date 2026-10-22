@@ -30,6 +30,20 @@ RETRY_AFTER_CAP_S = 60
 USER_AGENT = f"pearlarr/{__version__}"
 
 
+def failure_detail(e: httpx.HTTPError) -> str:
+    """The HTTP status (plus a redirect's target host) or the exception type name.
+
+    Never the exception's str: it embeds the request URL, and a webhook URL is a secret.
+    """
+
+    if not isinstance(e, httpx.HTTPStatusError):
+        return type(e).__name__
+    detail = f"HTTP {e.response.status_code}"
+    if e.response.next_request is not None and e.response.next_request.url.host:
+        detail += f" redirect to {e.response.next_request.url.host}"
+    return detail
+
+
 def make_web_client() -> httpx.Client:
     """The pinned httpx client all non-arr web traffic shares (one per run).
 

@@ -30,6 +30,7 @@ from .output import hub_warn
 from .seadex_types import SeadexDict, SeadexUrlItem
 from .torrents import AddOutcome, ReleaseOutcome
 from .wait_view import WaitOutcomeRow, WaitResult
+from .web_client import failure_detail
 
 # Cap how many titles a single notification field lists before collapsing the
 # remainder into a "… +N more" line, keeping a big carried-over backlog readable.
@@ -67,19 +68,6 @@ def _retry_after_seconds(exc: httpx.HTTPError) -> float:
         return max(float(header), 0.0)
     except ValueError:
         return 1.0
-
-
-def _failure_detail(exc: httpx.HTTPError) -> str:
-    """Describe a request failure WITHOUT interpolating the exception.
-
-    An httpx exception's str embeds the request URL - for a webhook that URL
-    IS the credential - so only the HTTP status (a status error is the one
-    kind carrying a response) or the exception type name is reported.
-    """
-
-    if isinstance(exc, httpx.HTTPStatusError):
-        return f"HTTP {exc.response.status_code}"
-    return type(exc).__name__
 
 
 def _wait_color(result: WaitResult) -> int:
@@ -409,7 +397,7 @@ class Notifier:
         try:
             self.web.post(url, json=payload, timeout=10)
         except httpx.HTTPError as exc:
-            hub_warn(f"Wait-report webhook POST failed ({_failure_detail(exc)}) - check notifications.wait_webhook_url")
+            hub_warn(f"Wait-report webhook POST failed ({failure_detail(exc)}) - check notifications.wait_webhook_url")
             return False
         return True
 
@@ -448,7 +436,7 @@ class Notifier:
         try:
             discord_push(url=self.discord_url, embed=embed, client=self.web)
         except httpx.HTTPError as exc:
-            detail = _failure_detail(exc)
+            detail = failure_detail(exc)
             status = exc.response.status_code if isinstance(exc, httpx.HTTPStatusError) else None
             if status == 429:
                 return self._retry_rate_limited(url=self.discord_url, embed=embed, exc=exc)
@@ -482,7 +470,7 @@ class Notifier:
             else:
                 return True
         hub_warn(
-            f"Discord notification failed ({_failure_detail(exc)}) - rate limited by Discord - "
+            f"Discord notification failed ({failure_detail(exc)}) - rate limited by Discord - "
             f"this notification was dropped"
         )
         return False

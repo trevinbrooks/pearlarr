@@ -2,6 +2,7 @@
 """Tests for SeaDexGateway bulk prefetch + by-id serving."""
 
 import httpx
+import pytest
 from seadex import EntryNotFoundError, EntryRecord
 
 from pearlarr.output import Severity
@@ -18,8 +19,8 @@ def _rec(al_id: int) -> EntryRecord:
 class FakeSeaDex:
     """Stands in for `SeaDexEntry`: `from_filter` (batch) + `from_id` (single).
 
-    `fail_filter` / `fail_from_id` fail every call (a full outage).
-    `filter_blips` / `from_id_blips` fail just the first N calls then
+    `filter_error` / `from_id_error` fail every call with that error (a full
+    outage). `filter_blips` / `from_id_blips` fail just the first N calls then
     recover (a transient blip the retry absorbs).
     """
 
@@ -27,23 +28,23 @@ class FakeSeaDex:
         self,
         entries: dict[int, EntryRecord],
         *,
-        fail_filter: bool = False,
+        filter_error: httpx.HTTPError | None = None,
         filter_blips: int = 0,
-        fail_from_id: bool = False,
+        from_id_error: httpx.HTTPError | None = None,
         from_id_blips: int = 0,
     ) -> None:
         self.entries = entries
-        self.fail_filter = fail_filter
+        self.filter_error = filter_error
         self.filter_blips = filter_blips
-        self.fail_from_id = fail_from_id
+        self.from_id_error = from_id_error
         self.from_id_blips = from_id_blips
         self.filter_calls: list[str] = []
         self.from_id_calls: list[int] = []
 
     def from_filter(self, filter_str: str) -> list[EntryRecord]:
         self.filter_calls.append(filter_str)
-        if self.fail_filter:
-            raise httpx.ConnectError("down")
+        if self.filter_error is not None:
+            raise self.filter_error
         if self.filter_blips > 0:
             self.filter_blips -= 1
             raise httpx.ConnectError("blip")
@@ -52,8 +53,8 @@ class FakeSeaDex:
 
     def from_id(self, al_id: int) -> EntryRecord:
         self.from_id_calls.append(al_id)
-        if self.fail_from_id:
-            raise httpx.ReadTimeout("slow")
+        if self.from_id_error is not None:
+            raise self.from_id_error
         if self.from_id_blips > 0:
             self.from_id_blips -= 1
             raise httpx.ConnectError("blip")
@@ -75,6 +76,17 @@ class _Recorder:
 def _gateway(fake: FakeSeaDex) -> SeaDexGateway:
     # The fake satisfies SeaDexEntryApi structurally, so the real ctor applies.
     return SeaDexGateway(client=fake)
+
+
+def _status_error(status: int, location: str | None = None) -> httpx.HTTPStatusError:
+    """An `HTTPStatusError` for a SeaDex records query, redirecting to `location` if given."""
+
+    url = "https://releases.moe/api/collections/entries/records"
+    request = httpx.Request("GET", url)
+    response = httpx.Response(status, request=request)
+    if location is not None:
+        response.next_request = httpx.Request("GET", location)
+    return httpx.HTTPStatusError(f"error '{status}' for url '{url}'", request=request, response=response)
 
 
 class TestSeaDexPrefetch:
@@ -153,7 +165,7 @@ class TestSeaDexPrefetch:
         # once, later batches never hit the network, and every entry() degrades
         # straight to an OUTAGE miss with zero from_id calls.
         ids = list(range(1, SEADEX_BATCH_SIZE * 2 + 6))  # three batches
-        fake = FakeSeaDex({i: _rec(i) for i in ids}, fail_filter=True)
+        fake = FakeSeaDex({i: _rec(i) for i in ids}, filter_error=httpx.ConnectError("down"))
         gateway = _gateway(fake)
         recording = install_recording_hub()
 
@@ -169,11 +181,30 @@ class TestSeaDexPrefetch:
         assert fake.from_id_calls == []
         assert len(diagnostic_messages(recording, Severity.WARNING)) == 1  # still just the one
 
+    @pytest.mark.parametrize(
+        ("error", "cause"),
+        [
+            (
+                _status_error(301, "https://seadex.moe/api/collections/entries/records"),
+                "HTTP 301 redirect to seadex.moe",
+            ),
+            (_status_error(503), "HTTP 503"),
+        ],
+    )
+    def test_outage_warning_names_the_failure(self, error: httpx.HTTPError, cause: str) -> None:
+        fake = FakeSeaDex({1: _rec(1)}, filter_error=error)
+        recording = install_recording_hub()
+
+        _gateway(fake).prefetch([1])
+
+        [warning] = diagnostic_messages(recording, Severity.WARNING)
+        assert f"SeaDex request failed ({cause})" in warning
+
     def test_outage_prefetch_still_drives_progress_to_completion(self) -> None:
         # The cockpit sink must not hang on a mid-prefetch outage: every chunk
         # still reports, ending at 1.0.
         ids = list(range(1, SEADEX_BATCH_SIZE + 6))  # two batches
-        fake = FakeSeaDex({}, fail_filter=True)
+        fake = FakeSeaDex({}, filter_error=httpx.ConnectError("down"))
         gateway = _gateway(fake)
         rec = _Recorder()
 
@@ -184,7 +215,7 @@ class TestSeaDexPrefetch:
         # An id in a failed chunk is a transient skip, never a remembered
         # "no entry": a later prefetch still counts it as missing work (it
         # stays out of the prefetched set) rather than returning 0.
-        fake = FakeSeaDex({1: _rec(1)}, fail_filter=True)
+        fake = FakeSeaDex({1: _rec(1)}, filter_error=httpx.ConnectError("down"))
         gateway = _gateway(fake)
         gateway.prefetch([1])
         assert gateway.prefetch([1]) == 1
@@ -194,7 +225,7 @@ class TestSeaDexPrefetch:
         # ReadTimeout on the per-id fallback (httpx.HTTPError, not just
         # ConnectError) must not unwind the run - and a SECOND lookup
         # short-circuits without another network attempt or warning.
-        fake = FakeSeaDex({1: _rec(1), 2: _rec(2)}, fail_from_id=True)
+        fake = FakeSeaDex({1: _rec(1), 2: _rec(2)}, from_id_error=httpx.ReadTimeout("slow"))
         gateway = _gateway(fake)
         recording = install_recording_hub()
 

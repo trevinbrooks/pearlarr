@@ -738,7 +738,7 @@ def _specimen_stream() -> tuple[ev.Event, ...]:
             ev.GrabFact(
                 title="Sousou no Frieren",
                 coverage="S01",
-                url="https://releases.moe/154587/",
+                url="https://seadex.moe/154587/",
                 name="[SubsPlease] Sousou no Frieren",
                 group="SubsPlease",
             ),
@@ -754,7 +754,7 @@ def _specimen_stream() -> tuple[ev.Event, ...]:
                 title="Made in Abyss",
                 coverage="S02",
                 group="Vodes",
-                url="https://releases.moe/108/",
+                url="https://seadex.moe/108/",
                 reason="private-only release; no public alternative covers these files",
                 cause=ev.NeedsActionCause.PRIVATE_ONLY_NO_FALLBACK,
             ),
@@ -807,7 +807,7 @@ def _specimen_stream() -> tuple[ev.Event, ...]:
             title="Sousou no Frieren",
             al_id=154587,
             coverage="S01",
-            url="https://releases.moe/154587/",
+            url="https://seadex.moe/154587/",
             scope=_ENTRY_SCOPE,
         ),
         ev.EntryDetail(
@@ -821,7 +821,7 @@ def _specimen_stream() -> tuple[ev.Event, ...]:
             group="Vodes",
             tracker="AnimeBytes",
             reason=ev.SkipReason.PRIVATE_ONLY,
-            url="https://releases.moe/108/",
+            url="https://seadex.moe/108/",
             scope=_ENTRY_SCOPE,
         ),
         ev.GrabFailed(
