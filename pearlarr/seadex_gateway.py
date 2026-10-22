@@ -23,11 +23,10 @@ from seadex import EntryNotFoundError, EntryRecord
 
 from .output import hub_warn
 from .seadex_types import ProgressSink
+from .web_client import failure_detail
 
 # Ids per batched `from_filter` query. Mirrors ANILIST_BATCH_SIZE. ~50
-# `alID=NNNNNN` clauses stay well under the GET URL length limit (the spike
-# confirmed the OR-filter form and that perPage=500 means a 50-id batch never
-# paginates).
+# `alID=NNNNNN` clauses stay well under the GET URL length limit.
 SEADEX_BATCH_SIZE = 50
 
 
@@ -109,7 +108,7 @@ class SeaDexGateway(SeaDexSource):
         """Warn ONCE that SeaDex is unreachable, muting every later call via the flag."""
 
         if not self._outage:
-            hub_warn(f"SeaDex request failed ({type(e).__name__}) - affected titles will be skipped this run")
+            hub_warn(f"SeaDex request failed ({failure_detail(e)}) - affected titles will be skipped this run")
         self._outage = True
 
     @override

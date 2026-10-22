@@ -5,7 +5,7 @@
 [![Actions](https://img.shields.io/github/actions/workflow/status/trevinbrooks/pearlarr/build.yaml?branch=main&style=flat-square)](https://github.com/trevinbrooks/pearlarr/actions)
 [![License](https://img.shields.io/badge/license-GPL--3.0--or--later-blue.svg?label=License&style=flat-square)](LICENSE)
 
-Pearlarr automatically grabs the releases [SeaDex](https://releases.moe) recommends for the anime in your [Sonarr](https://sonarr.tv) and [Radarr](https://radarr.video) libraries.
+Pearlarr automatically grabs the releases [SeaDex](https://seadex.moe) recommends for the anime in your [Sonarr](https://sonarr.tv) and [Radarr](https://radarr.video) libraries.
 
 SeaDex is a community index of the best available release for each anime.
 On a schedule, Pearlarr maps your library to SeaDex's entries and grabs anything missing or outdated through qBittorrent.
@@ -151,7 +151,7 @@ The config is validated on load: an unknown or misspelled key fails with an erro
 ## Acknowledgements
 
 Pearlarr began as a fork of [SeaDexArr](https://github.com/bbtufty/seadexarr) by [bbtufty](https://github.com/bbtufty).
-Release data comes from the [SeaDex](https://releases.moe) project, which Pearlarr is not affiliated with.
+Release data comes from the [SeaDex](https://seadex.moe) project, which Pearlarr is not affiliated with.
 ID mappings come from [AniBridge Mappings](https://github.com/anibridge/anibridge-mappings), [Kometa Anime-IDs](https://github.com/Kometa-Team/Anime-IDs), and [Anime-Lists](https://github.com/Anime-Lists/anime-lists).
 
 Pearlarr is licensed under [GPL-3.0-or-later](LICENSE).

@@ -7,6 +7,14 @@ Pearlarr is a fork of [bbtufty/seadexarr](https://github.com/bbtufty/seadexarr).
 
 ## [Unreleased]
 
+### Fixed
+
+- Pearlarr reaches SeaDex again at its new address, `seadex.moe`. Since SeaDex moved off `releases.moe`, every run had skipped every title.
+
+### Changed
+
+- When a SeaDex request fails, the warning now names the HTTP status SeaDex answered with and, for a redirect, the host it points to.
+
 ## [1.5.3] - 2026-09-26
 
 ### Fixed

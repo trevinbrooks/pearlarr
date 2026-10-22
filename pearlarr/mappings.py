@@ -46,6 +46,7 @@ from .mapping_store import (
 from .output import hub_warn
 from .paths import resolve_paths
 from .seadex_types import ProgressSink, SpecialAliasing, TvdbMappings
+from .web_client import failure_detail
 
 type AnimeIdsRecord = dict[str, Any]
 """One Kometa Anime-IDs record (`{field: value}`).
@@ -594,12 +595,10 @@ class MappingResolver(AnimeIdSets):
                                     )
                                     self.logger.debug(f"Download progress for {label}: {suffix}")
                                 next_mark = got + (1 << 20)
-            except httpx.HTTPStatusError as e:
-                # Callers contain OSError. Translate at this boundary keeping the
-                # status but never the message (it embeds the URL).
-                raise OSError(f"download failed: HTTP {e.response.status_code}") from e
             except httpx.HTTPError as e:
-                raise OSError(f"download failed: {type(e).__name__}") from e
+                # Callers contain OSError. Translate at this boundary without the
+                # exception message (it embeds the URL).
+                raise OSError(f"download failed: {failure_detail(e)}") from e
             os.replace(tmp, dest)
         finally:
             with contextlib.suppress(OSError):

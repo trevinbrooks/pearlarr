@@ -242,7 +242,7 @@ A SeaDex entry block opened for the current title. `message` is the entry state 
   "title": "Sousou no Frieren",
   "al_id": 154587,
   "files": "S01",
-  "link": "https://releases.moe/154587/"
+  "link": "https://seadex.moe/154587/"
 }
 ```
 
@@ -296,7 +296,7 @@ A release was skipped at add time. `reason` is `private_only`, `unsupported_trac
   "group": "Vodes",
   "tracker": "AnimeBytes",
   "reason": "private_only",
-  "link": "https://releases.moe/108/"
+  "link": "https://seadex.moe/108/"
 }
 ```
 
@@ -420,7 +420,7 @@ The end-of-run scoreboard: the tally counters (`held_by_cap` only when the run h
       "group": "Vodes",
       "reason": "private-only release; no public alternative covers these files",
       "kind": "private_only_no_fallback",
-      "link": "https://releases.moe/108/"
+      "link": "https://seadex.moe/108/"
     }
   ],
   "added_records": [
@@ -429,7 +429,7 @@ The end-of-run scoreboard: the tally counters (`held_by_cap` only when the run h
       "files": "S01",
       "group": "SubsPlease",
       "torrent": "[SubsPlease] Sousou no Frieren",
-      "link": "https://releases.moe/154587/"
+      "link": "https://seadex.moe/154587/"
     }
   ]
 }

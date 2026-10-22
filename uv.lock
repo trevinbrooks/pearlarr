@@ -748,7 +748,7 @@ requires-dist = [
     { name = "pyyaml", specifier = "==6.0.3" },
     { name = "qbittorrent-api", specifier = "==2026.8.0" },
     { name = "rich", specifier = "==15.0.0" },
-    { name = "seadex", specifier = "==0.7.2" },
+    { name = "seadex", specifier = "==0.7.3" },
     { name = "truststore", specifier = "==0.10.4" },
     { name = "typer", specifier = "==0.27.1" },
     { name = "urllib3", specifier = ">=2.7.0" },
@@ -1148,16 +1148,16 @@ wheels = [
 
 [[package]]
 name = "seadex"
-version = "0.7.2"
+version = "0.7.3"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "atomicwriter" },
     { name = "httpx" },
     { name = "msgspec" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/1f/1e/4d7c38c7b3fed295e6169a483c0876d7b868ad0efafc0a7f3ffcae0f0b4a/seadex-0.7.2.tar.gz", hash = "sha256:6cb3a07a06a7bea21d8e5a30046d0c058fe4b6328666a1523bd92a423cffde71", size = 1220123, upload-time = "2025-08-05T20:32:10.941Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/c8/67/3b3b173c7827c30bfe14aa34c73063a8f17e1b1883b63bcefdb3125d13aa/seadex-0.7.3.tar.gz", hash = "sha256:4da6b9a853a2cd5ff6ce1e20a364bebd20b0ecbf96cdef4c118fe0cd364c1e6d", size = 1219997, upload-time = "2026-10-15T19:37:16.194Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/59/98/97f0f8da8c7ab5a40302adf0549ea200fbbc94af41dc8c04f51fc0fab9cf/seadex-0.7.2-py3-none-any.whl", hash = "sha256:cc0882403519c4f9739d5a9771b35d18c1eb504fea9bcfb29c74107b6aa2ba07", size = 21364, upload-time = "2025-08-05T20:32:09.722Z" },
+    { url = "https://files.pythonhosted.org/packages/61/09/749a2d82891ff0c839c877cf809c69b86b7695e6e56fc6ce3bf6a47b7fde/seadex-0.7.3-py3-none-any.whl", hash = "sha256:594340020b5a985bed554008e7cc33fd7c443b6ca570fe4feadaf114864f268f", size = 21142, upload-time = "2026-10-15T19:37:14.995Z" },
 ]
 
 [[package]]
