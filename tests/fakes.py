@@ -5,6 +5,7 @@ import io
 import logging
 import re
 from collections.abc import Callable, Iterable, Mapping
+from datetime import datetime
 from enum import Enum, auto
 from typing import override
 
@@ -315,6 +316,8 @@ class FakeSonarrClient(AbstractSonarrClient):
             enable_completed_download_handling=completed_download_handling,
         )
         self.queue_delete_return: DeleteOutcome = DeleteOutcome.OK
+        # When the running Sonarr started (None = the status read failed).
+        self.started_at_return: datetime | None = None
         self.candidate_calls: list[PendingImport] = []
         self.parse_calls: list[str] = []
         self.execute_calls: list[tuple[list[ManualImportFile], str]] = []
@@ -431,6 +434,10 @@ class FakeSonarrClient(AbstractSonarrClient):
     def download_client_config(self) -> DownloadClientConfig:
         self.download_client_config_calls += 1
         return self.download_client_config_return
+
+    @override
+    def started_at(self) -> datetime | None:
+        return self.started_at_return
 
 
 class FakeRadarrClient(AbstractRadarrClient):

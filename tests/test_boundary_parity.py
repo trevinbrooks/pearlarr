@@ -23,7 +23,7 @@ from pearlarr.probe_verdicts import QueueVerdict, classify_queue
 from pearlarr.radarr_client import RadarrClient
 from pearlarr.seadex_types import HistoryRecord, ImportRejection, QueueRecord
 from pearlarr.sonarr_client import SonarrClient
-from pearlarr.sonarr_import import ImportExecutor
+from pearlarr.sonarr_import import ImportExecutor, PollReading
 from pearlarr.sonarr_mapper import FileEpisodeMapper
 
 from .builders import episode_snapshot, make_run_deps, pending_import
@@ -94,7 +94,9 @@ def _drive_manual_import(
     client = _make_sonarr_client()
     executor = ImportExecutor(make_run_deps(), client, FileEpisodeMapper(client))
     pending = pending_import()
-    probe = executor.run_manual_import(pending, "/d", snapshot=_bare_snapshot(pending))
+    probe = executor.run_manual_import(
+        pending, "/d", PollReading(_bare_snapshot(pending), in_queue=True, at_deadline=False)
+    )
 
     assert probe.files_present is False
     assert probe.command_issued is True
@@ -163,7 +165,9 @@ def test_golden_body_dead_tracked_folder_import_omits_download_id() -> None:
     client = _make_sonarr_client()
     executor = ImportExecutor(make_run_deps(), client, FileEpisodeMapper(client))
     pending = pending_import()
-    probe = executor.run_manual_import(pending, "/d", snapshot=_bare_snapshot(pending))
+    probe = executor.run_manual_import(
+        pending, "/d", PollReading(_bare_snapshot(pending), in_queue=False, at_deadline=False)
+    )
 
     assert probe.files_present is False
     assert probe.command_issued is True
