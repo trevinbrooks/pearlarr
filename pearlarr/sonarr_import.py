@@ -151,7 +151,7 @@ class _ScanScratch:
     folder_pinned: dict[str, bool] = field(default_factory=dict[str, bool])
     """The downloads pinned to their folder -> whether the downloadId scan before the pin failed."""
     history_verdicts: dict[str, DownloadHistoryVerdict] = field(default_factory=dict[str, DownloadHistoryVerdict])
-    """The verdicts, with their import rows. A probe failure re-probes next activation."""
+    """The dead verdicts, with their import rows. A clean verdict or a probe failure re-probes next activation."""
     path_mappings: list[RemotePathMapping] | None = None
     """Sonarr's remote path mappings. None = unfetched."""
     translated_paths: dict[str, str] = field(default_factory=dict[str, str])
@@ -214,7 +214,7 @@ class CandidateScanner:
         return translated
 
     def _probe_history(self, pending: PendingImport) -> DownloadHistoryVerdict | None:
-        """Classify a download's Sonarr history (memoized), or None on probe failure."""
+        """Classify a download's Sonarr history (a dead verdict memoized), or None on probe failure."""
 
         verdict = self._scratch.history_verdicts.get(pending.infohash)
         if verdict is not None:
@@ -223,8 +223,8 @@ class CandidateScanner:
         if page is None:
             return None
         verdict = classify_download_history(page)
-        self._scratch.history_verdicts[pending.infohash] = verdict
         if verdict.dead_tracked:
+            self._scratch.history_verdicts[pending.infohash] = verdict
             when = f" on {verdict.date.split('T')[0]}" if verdict.date else ""
             self.logger.debug(
                 f"{pending.display_label}: Sonarr recorded this download as {verdict.event}{when} "

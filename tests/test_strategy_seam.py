@@ -3370,6 +3370,21 @@ class TestFolderScanFallback:
         # A FAILED probe is never memoized: the second activation re-probed.
         assert sonarr.history_probe_calls == ["abc123", "abc123"]
 
+    def test_clean_verdict_is_read_again_next_poll(self) -> None:
+        strat, sonarr = self._strat(
+            history=_clean_history(),
+            folder_candidates=[manual_candidate("/d/Show/Show - 01 [1080p].mkv")],
+        )
+        pending = pending_import()
+        strat.import_completed(pending, "/d/Show", AttemptKind.POLL)
+        sonarr.history_page_return = _dead_history()
+
+        strat.import_completed(pending, "/d/Show", AttemptKind.POLL)
+
+        [_, (files, mode)] = sonarr.execute_calls
+        assert mode == "copy"
+        assert files[0].downloadId is None
+
     def test_dead_verdict_memoized_and_noted_once_per_run(self, caplog: pytest.LogCaptureFixture) -> None:
         strat, sonarr = self._strat(
             history=_dead_history(),
