@@ -315,9 +315,15 @@ class ImportExecutor:
 
         for _ in range(_REFRESH_COMMAND_MAX_POLLS):
             command = self.sonarr.command_status(cmd_id)
-            state = command.status or ""
-            if state.casefold() in _COMMAND_TERMINAL_STATES:
+            state = (command.status or "").casefold()
+            if state in _COMMAND_TERMINAL_STATES:
                 break
+            if state == "orphaned":
+                # A Sonarr restart cut the rescan short, and Sonarr's queue reads empty until it rescans again.
+                cmd_id = self.sonarr.refresh_monitored_downloads()
+                if cmd_id is None:
+                    return
+                self.logger.debug("Sonarr restarted during the rescan - asked it to rescan again")
             self._clock.sleep(_REFRESH_COMMAND_POLL_S)
         else:
             return

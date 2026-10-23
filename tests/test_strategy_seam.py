@@ -1057,6 +1057,21 @@ class TestImportCompletedQueueState:
         assert probe.command_issued is True
         assert len(sonarr.execute_calls) == 1
 
+    def test_rescan_asks_again_when_a_restart_orphans_it(self) -> None:
+        # A Sonarr restart leaves the rescan orphaned, and the queue reads empty until Sonarr rescans again.
+        pending = pending_import(
+            infohash="abc123",
+            file_episode_map={"Show - 01 [1080p].mkv": [101]},
+        )
+        strat, sonarr = _make_sonarr_for_import(
+            candidates=[manual_candidate("/d/Show - 01 [1080p].mkv")],
+            command_status_script=[CommandResource(status="orphaned")],
+        )
+
+        strat.import_completed(pending, "/d", AttemptKind.POLL)
+
+        assert sonarr.refresh_calls == 2
+
     def test_rescan_settle_is_bounded_under_a_long_pass(self) -> None:
         # Sonarr copies files INSIDE its pass, so a pass that keeps running is
         # an import, not a settle to wait out: the rescan stops after its bound
