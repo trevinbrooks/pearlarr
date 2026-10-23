@@ -7,6 +7,8 @@ Pearlarr is a fork of [bbtufty/seadexarr](https://github.com/bbtufty/seadexarr).
 
 ## [Unreleased]
 
+## [1.5.4] - 2026-10-23
+
 ### Fixed
 
 - Pearlarr reaches SeaDex again at its new address, `seadex.moe`. Since SeaDex moved off `releases.moe`, every run had skipped every title.
