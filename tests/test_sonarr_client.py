@@ -14,6 +14,7 @@ inline body. POST bodies are asserted by decoding the captured request content
 
 import json
 import logging
+from datetime import UTC, datetime
 from typing import cast
 
 import httpx
@@ -897,12 +898,15 @@ def test_refresh_monitored_downloads_posts_command_name() -> None:
 def test_command_status_decodes() -> None:
     """A single-command GET narrows to a `CommandResource` with status/result."""
 
-    respx.get(f"{_BASE}/command/55").respond(json={"id": 55, "status": "completed", "result": "successful"})
+    respx.get(f"{_BASE}/command/55").respond(
+        json={"id": 55, "status": "completed", "result": "successful", "started": "2026-10-23T03:57:47Z"},
+    )
     status = _make_client().command_status(55)
 
     assert status.id == 55
     assert status.status == "completed"
     assert status.result == "successful"
+    assert status.started == datetime(2026, 10, 23, 3, 57, 47, tzinfo=UTC)
 
 
 @respx.mock
@@ -1133,6 +1137,37 @@ def test_languages_non_200_returns_empty() -> None:
 
     respx.get(f"{_BASE}/language").respond(status_code=500)
     assert _make_client().languages() == []
+
+
+# --- started_at() (GET /system/status) ----------------------------------------
+
+
+@respx.mock
+def test_started_at_decodes_the_start_time() -> None:
+    """A healthy read carries when the running Sonarr started."""
+
+    respx.get(f"{_BASE}/system/status").respond(json={"version": "5.0.0.2742", "startTime": "2026-10-23T03:57:40Z"})
+
+    assert _make_client().started_at() == datetime(2026, 10, 23, 3, 57, 40, tzinfo=UTC)
+
+
+@respx.mock
+def test_started_at_non_200_returns_none() -> None:
+    """A failed read reads as unknown."""
+
+    respx.get(f"{_BASE}/system/status").respond(status_code=500)
+
+    assert _make_client().started_at() is None
+
+
+@pytest.mark.parametrize("value", [1729655860, "not a time", "2026-10-23T03:57:40"])
+@respx.mock
+def test_started_at_without_a_zoned_timestamp_returns_none(value: object) -> None:
+    """A start time that isn't a zoned ISO 8601 timestamp reads as unknown."""
+
+    respx.get(f"{_BASE}/system/status").respond(json={"startTime": value})
+
+    assert _make_client().started_at() is None
 
 
 # --- download_client_config() --------------------------------------------------

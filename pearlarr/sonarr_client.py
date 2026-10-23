@@ -3,6 +3,7 @@
 import logging
 from abc import ABC, abstractmethod
 from dataclasses import replace
+from datetime import datetime
 from typing import cast, override
 
 from pydantic import ValidationError
@@ -26,6 +27,7 @@ from .seadex_types import (
     SonarrEpisode,
     SonarrItem,
     SonarrSeries,
+    SystemStatus,
     validate_each,
     validation_summary,
 )
@@ -99,6 +101,9 @@ class AbstractSonarrClient(ABC):
 
     @abstractmethod
     def download_client_config(self) -> DownloadClientConfig: ...
+
+    @abstractmethod
+    def started_at(self) -> datetime | None: ...
 
     @abstractmethod
     def history_since(self, date: str) -> list[HistoryRecord] | None: ...
@@ -218,8 +223,8 @@ class SonarrClient(AbstractSonarrClient):
     ) -> list[ManualImportCandidate] | None:
         """List manual-import candidates by scanning `folder` directly, which may be a single file path.
 
-        Never send `downloadId` (the tracked scan 500s forever once history marks the download
-        Imported/Failed/Ignored) or `seriesId` (it routes to a library-folder scan instead).
+        Never send `downloadId` (the tracked scan never serves a download history marks Imported/Failed/Ignored:
+        a 500 on v4, `[]` on v5) or `seriesId` (it routes to a library-folder scan instead).
         """
 
         raw = self._poll_http.get_json_list(
@@ -450,6 +455,18 @@ class SonarrClient(AbstractSonarrClient):
         except ValidationError as e:
             hub_warn(warn.format(detail=f"malformed response: {validation_summary(e)}"))
             return DownloadClientConfig()
+
+    @override
+    def started_at(self) -> datetime | None:
+        """When the running Sonarr started (`/api/v3/system/status`), or None on failure."""
+
+        payload = self._poll_http.get_json_dict(
+            "/api/v3/system/status",
+            warn="Could not read Sonarr's status ({detail}) - assuming it restarted",
+        )
+        if payload is None:
+            return None
+        return SystemStatus.model_validate(payload).start_time
 
     @override
     def history_since(self, date: str) -> list[HistoryRecord] | None:

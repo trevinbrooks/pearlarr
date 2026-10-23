@@ -15,6 +15,7 @@ is a real `RunServices` subclass. The strategies are built bare
 
 import logging
 from collections.abc import Callable, Mapping, MutableMapping
+from datetime import UTC, datetime
 from typing import Any, NamedTuple, cast, override
 
 import pytest
@@ -1058,7 +1059,6 @@ class TestImportCompletedQueueState:
         assert len(sonarr.execute_calls) == 1
 
     def test_rescan_asks_again_when_a_restart_orphans_it(self) -> None:
-        # A Sonarr restart leaves the rescan orphaned, and the queue reads empty until Sonarr rescans again.
         pending = pending_import(
             infohash="abc123",
             file_episode_map={"Show - 01 [1080p].mkv": [101]},
@@ -1652,10 +1652,11 @@ class TestScratchResetParity:
         scratch.issued_command_ids.add(42)
         scratch.completed_download_handling = False
         scan = executor.scanner._scratch
-        scan.folder_pinned.add("h")
+        scan.folder_pinned["h"] = True
         scan.history_verdicts["h"] = DownloadHistoryVerdict(dead_tracked=True)
         scan.path_mappings = []
         scan.translated_paths["/a"] = "/b"
+        scan.rescan_started = _RESCAN_STARTED
 
         executor.reset()
 
@@ -3240,6 +3241,12 @@ def _clean_history() -> HistoryPage:
     )
 
 
+_RESCAN_STARTED = datetime(2026, 1, 1, 12, 0, tzinfo=UTC)
+_COMPLETED_RESCAN = CommandResource(status="completed", started=_RESCAN_STARTED)
+_STARTED_BEFORE_RESCAN = datetime(2026, 1, 1, 11, 0, tzinfo=UTC)
+_STARTED_AFTER_RESCAN = datetime(2026, 1, 1, 12, 0, 5, tzinfo=UTC)
+
+
 def _tv_mapping() -> RemotePathMapping:
     """The incident-shaped mapping: qBittorrent's `/d` is Sonarr's `/remote/tv`."""
 
@@ -3247,11 +3254,12 @@ def _tv_mapping() -> RemotePathMapping:
 
 
 class TestFolderScanFallback:
-    """The dead-loop cure: a failed downloadId scan probes history and scans the folder.
+    """The dead-loop cure: a downloadId scan that can't serve the download probes history and scans the folder.
 
     A download Sonarr's history maps to Imported/Failed/Ignored is queue-hidden
-    and its `downloadId=` scan 500s forever. Without the fallback every poll
-    deferred "for a later run" until the pending TTL silently dropped it.
+    and its `downloadId=` scan never serves it (a 500 on v4, `[]` on v5). Without
+    the fallback every poll deferred "for a later run" until the pending TTL
+    silently dropped it.
     """
 
     @staticmethod
@@ -3268,6 +3276,32 @@ class TestFolderScanFallback:
         sonarr.folder_candidates_return = folder_candidates
         sonarr.path_mappings_return = mappings if mappings is not None else []
         return strat, sonarr
+
+    @staticmethod
+    def _answer_empty_by_id(
+        sonarr: FakeSonarrClient,
+        *,
+        started: datetime | None = _STARTED_BEFORE_RESCAN,
+        rescan: CommandResource = _COMPLETED_RESCAN,
+    ) -> None:
+        """Script the downloadId scan to answer `[]`, after a rescan that ruled out a restart by default."""
+
+        sonarr.candidates_return = []
+        sonarr.started_at_return = started
+        sonarr.command_status_return = rescan
+
+    @staticmethod
+    def _poll_then_empty_the_folder(strat: SonarrSync, sonarr: FakeSonarrClient, pending: PendingImport) -> ImportProbe:
+        """Poll with the episode index unread, then again once the folder scans empty and only 101 holds a file."""
+
+        sonarr.episodes_return = []
+        strat.import_completed(pending, "/d/Show", AttemptKind.POLL)
+        sonarr.folder_candidates_return = []
+        sonarr.episodes_return = [
+            sonarr_ep(1, 1, ep_id=101, release_group="SubGroup"),
+            sonarr_ep(1, 2, ep_id=102, episode_file_id=0),
+        ]
+        return strat.import_completed(pending, "/d/Show", AttemptKind.POLL)
 
     def test_dead_tracked_imports_from_translated_folder_without_download_id(self) -> None:
         strat, sonarr = self._strat(
@@ -3583,16 +3617,126 @@ class TestFolderScanFallback:
         strat.import_completed(pending, "/d/Show", AttemptKind.POLL)
         assert len(sonarr.candidate_calls) == 2
 
-    def test_empty_download_id_scan_is_not_a_trigger(self) -> None:
-        # [] (not None) means Sonarr ANSWERED "no files visible yet" - the
-        # existing retry semantics apply and the fallback stays out of it.
-        strat, sonarr = _make_sonarr_for_import(candidates=[])
+    @pytest.mark.parametrize("sonarr_started", [_STARTED_BEFORE_RESCAN, _RESCAN_STARTED], ids=["before", "same-second"])
+    def test_empty_download_id_scan_of_a_dead_tracked_download_imports_from_its_folder(
+        self,
+        sonarr_started: datetime,
+    ) -> None:
+        strat, sonarr = self._strat(
+            history=_dead_history(),
+            folder_candidates=[manual_candidate("/d/Show/Show - 01 [1080p].mkv")],
+        )
+        self._answer_empty_by_id(sonarr, started=sonarr_started)
 
-        probe = strat.import_completed(pending_import(), "/d/Show", AttemptKind.POLL)
+        strat.import_completed(pending_import(), "/d/Show", AttemptKind.POLL)
+
+        [(files, mode)] = sonarr.execute_calls
+        assert mode == "copy"
+        assert files[0].downloadId is None
+
+    @pytest.mark.parametrize(
+        ("sonarr_started", "rescan"),
+        [
+            (_STARTED_AFTER_RESCAN, _COMPLETED_RESCAN),
+            (None, _COMPLETED_RESCAN),
+            (_STARTED_BEFORE_RESCAN, CommandResource(status="failed", started=_RESCAN_STARTED)),
+        ],
+        ids=["restarted", "status-unreadable", "rescan-failed"],
+    )
+    def test_empty_download_id_scan_waits_unless_a_restart_is_ruled_out(
+        self,
+        sonarr_started: datetime | None,
+        rescan: CommandResource,
+    ) -> None:
+        strat, sonarr = self._strat(
+            history=_dead_history(),
+            folder_candidates=[manual_candidate("/d/Show/Show - 01 [1080p].mkv")],
+        )
+        self._answer_empty_by_id(sonarr, started=sonarr_started, rescan=rescan)
+
+        strat.import_completed(pending_import(), "/d/Show", AttemptKind.POLL)
+
+        assert sonarr.execute_calls == []
+        assert sonarr.history_probe_calls == []
+
+    @pytest.mark.parametrize("history", [_clean_history(), None], ids=["clean", "unreadable"])
+    def test_empty_download_id_scan_waits_unless_history_reads_dead(self, history: HistoryPage | None) -> None:
+        strat, sonarr = self._strat(
+            history=history,
+            folder_candidates=[manual_candidate("/d/Show/Show - 01 [1080p].mkv")],
+        )
+        self._answer_empty_by_id(sonarr)
+
+        strat.import_completed(pending_import(), "/d/Show", AttemptKind.POLL)
+
+        assert sonarr.execute_calls == []
+
+    def test_empty_download_id_scan_of_a_queued_download_waits(self) -> None:
+        strat, sonarr = self._strat(
+            history=_dead_history(),
+            folder_candidates=[manual_candidate("/d/Show/Show - 01 [1080p].mkv")],
+        )
+        self._answer_empty_by_id(sonarr)
+        sonarr.queue_return = [queue_record("ABC123", "importPending", status="warning")]
+
+        strat.import_completed(pending_import(), "/d/Show", AttemptKind.POLL)
+
+        assert sonarr.execute_calls == []
+
+    def test_empty_download_id_scan_with_an_empty_folder_waits_and_warns_at_the_deadline(self) -> None:
+        recording = install_recording_hub()
+        first, second = "Show - 01 [1080p].mkv", "Show - 02 [1080p].mkv"
+        strat, sonarr = self._strat(history=_imported_history((101, f"/d/Show/{first}")), folder_candidates=[])
+        self._answer_empty_by_id(sonarr)
+        sonarr.episodes_return = [sonarr_ep(1, 1, ep_id=101, release_group="SubGroup")]
+        pending = pending_import(file_episode_map={}, ordered_episode_ids=[101, 102], seadex_files=[first, second])
+
+        probe = strat.import_completed(pending, "/d/Show", AttemptKind.DEADLINE)
 
         assert probe.files_present is False
-        assert sonarr.history_probe_calls == []
-        assert sonarr.folder_candidate_calls == []
+        [warning] = diagnostic_messages(recording, Severity.WARNING)
+        assert "found no files" in warning
+
+    @pytest.mark.parametrize(
+        ("by_id", "rebuilt"),
+        [(None, {normalize_basename("Show - 01 [1080p].mkv"): [101]}), ([], {})],
+        ids=["failed", "empty"],
+    )
+    def test_folder_pinned_record_rebuilds_from_history_only_after_a_failed_download_id_scan(
+        self,
+        by_id: list[ManualImportCandidate] | None,
+        rebuilt: dict[str, list[int]],
+    ) -> None:
+        first, second = "Show - 01 [1080p].mkv", "Show - 02 [1080p].mkv"
+        strat, sonarr = self._strat(
+            history=_imported_history((101, f"/d/Show/{first}")),
+            folder_candidates=[manual_candidate(f"/d/Show/{first}"), manual_candidate(f"/d/Show/{second}")],
+        )
+        self._answer_empty_by_id(sonarr)
+        sonarr.candidates_return = by_id
+        pending = pending_import(file_episode_map={}, ordered_episode_ids=[101, 102], seadex_files=[first, second])
+
+        probe = self._poll_then_empty_the_folder(strat, sonarr, pending)
+
+        assert probe.placements == rebuilt
+
+    def test_failed_download_id_scan_then_an_empty_answer_never_rebuilds_from_history(self) -> None:
+        first, second = "Show - 01 [1080p].mkv", "Show - 02 [1080p].mkv"
+        strat, sonarr = self._strat(history=_imported_history((101, f"/d/Show/{first}")), folder_candidates=None)
+        self._answer_empty_by_id(sonarr)
+        sonarr.candidates_return = None
+        sonarr.episodes_return = [
+            sonarr_ep(1, 1, ep_id=101, release_group="SubGroup"),
+            sonarr_ep(1, 2, ep_id=102, episode_file_id=0),
+        ]
+        pending = pending_import(file_episode_map={}, ordered_episode_ids=[101, 102], seadex_files=[first, second])
+        strat.import_completed(pending, "/d/Show", AttemptKind.POLL)
+        sonarr.candidates_return = []
+        sonarr.folder_candidates_return = []
+
+        probe = strat.import_completed(pending, "/d/Show", AttemptKind.POLL)
+
+        assert probe.files_present is False
 
     def test_translated_in_flight_command_suppresses_reissue(self) -> None:
         # A dead-tracked import POSTs translated paths and no downloadId.

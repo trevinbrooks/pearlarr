@@ -2,6 +2,7 @@
 
 import logging
 from dataclasses import dataclass, field, replace
+from datetime import datetime
 from typing import NamedTuple
 from urllib.parse import urlsplit
 
@@ -86,6 +87,8 @@ class _CandidateScan(NamedTuple):
     candidates: list[ManualImportCandidate]
     history: DownloadHistoryVerdict | None
     """The fallback's history verdict. None when the by-id scan served or the probe failed, and both read clean."""
+    import_rows: tuple[HistoryImport, ...] = ()
+    """The dead-tracking import's rows that stand in for an empty folder scan."""
 
     @property
     def omit_download_id(self) -> bool:
@@ -99,11 +102,17 @@ class _CandidateScan(NamedTuple):
 
         return self.omit_download_id and not self.candidates
 
-    @property
-    def import_rows(self) -> tuple[HistoryImport, ...]:
-        """The dead-tracking import's rows, for a never-scanned record's rebuild."""
 
-        return self.history.import_rows if self.history is not None else ()
+@dataclass(frozen=True, slots=True)
+class PollReading:
+    """What the reconciler knows about a record this poll, handed to its import."""
+
+    snapshot: RecordSnapshot
+    """The snapshot of every series the record spans."""
+    in_queue: bool
+    """Whether the queue read showed the download."""
+    at_deadline: bool
+    """Whether this is the readiness-deadline attempt."""
 
 
 @dataclass(frozen=True, slots=True)
@@ -137,16 +146,18 @@ class _ImportContext:
 
 @dataclass
 class _ScanScratch:
-    """The scanner's per-run fallback scratch, reassigned wholesale by `reset`.
+    """The scanner's per-run fallback scratch, reassigned wholesale by `reset`."""
 
-    `path_mappings` None = unfetched, and `history_verdicts` memoizes verdicts (with
-    their import rows), never a page, so a probe failure re-probes on the next activation.
-    """
-
-    folder_pinned: set[str] = field(default_factory=set[str])
+    folder_pinned: dict[str, bool] = field(default_factory=dict[str, bool])
+    """The downloads pinned to their folder -> whether the downloadId scan before the pin failed."""
     history_verdicts: dict[str, DownloadHistoryVerdict] = field(default_factory=dict[str, DownloadHistoryVerdict])
+    """The verdicts, with their import rows. A probe failure re-probes next activation."""
     path_mappings: list[RemotePathMapping] | None = None
+    """Sonarr's remote path mappings. None = unfetched."""
     translated_paths: dict[str, str] = field(default_factory=dict[str, str])
+    """Download path -> its Sonarr-visible path."""
+    rescan_started: datetime | None = None
+    """When the latest completed rescan started. None = none completed yet."""
 
 
 class CandidateScanner:
@@ -162,6 +173,11 @@ class CandidateScanner:
         """Drop the per-run fallback scratch (run-start, via the executor)."""
 
         self._scratch = _ScanScratch()
+
+    def note_rescan(self, started: datetime) -> None:
+        """Remember when Sonarr's latest completed rescan started."""
+
+        self._scratch.rescan_started = started
 
     def content_paths(self, content_path: str) -> ContentPaths:
         """The raw + Sonarr-visible path pair the in-flight guard matches against.
@@ -216,16 +232,36 @@ class CandidateScanner:
             )
         return verdict
 
-    def scan(self, pending: PendingImport, content_path: str) -> _CandidateScan | None:
+    def _restart_ruled_out(self) -> bool:
+        """Whether Sonarr provably hasn't restarted since its latest completed rescan."""
+
+        rescanned = self._scratch.rescan_started
+        if rescanned is None:
+            return False
+        started = self.sonarr.started_at()
+        return started is not None and started <= rescanned
+
+    def _wont_serve_by_id(self, pending: PendingImport) -> bool:
+        """Whether an empty downloadId answer means Sonarr won't serve the download by id."""
+
+        if not self._restart_ruled_out():
+            return False
+        verdict = self._probe_history(pending)
+        return verdict is not None and verdict.dead_tracked
+
+    def scan(self, pending: PendingImport, content_path: str, *, in_queue: bool) -> _CandidateScan | None:
         """The candidates for one poll: the downloadId scan, with the folder fallback. None when the scan failed."""
 
-        if pending.infohash not in self._scratch.folder_pinned:
+        by_id_failed = self._scratch.folder_pinned.get(pending.infohash)
+        if by_id_failed is None:
             candidates = self.sonarr.manual_import_candidates(pending=pending)
-            if candidates is not None:
+            by_id_failed = candidates is None
+            if candidates is None:
+                self.logger.debug(
+                    f"{content_path}: downloadId scan failed for {pending.display_label} - trying the folder fallback"
+                )
+            elif candidates or in_queue or not self._wont_serve_by_id(pending):
                 return _CandidateScan(candidates, history=None)
-            self.logger.debug(
-                f"{content_path}: downloadId scan failed for {pending.display_label} - trying the folder fallback"
-            )
 
         verdict = self._probe_history(pending)
         folder = self._sonarr_visible_path(content_path)
@@ -238,8 +274,11 @@ class CandidateScanner:
         if folder_candidates:
             # INVARIANT: pin folder mode on NONEMPTY success only. A 200 `[]` is exactly what an invisible or
             # untranslated folder returns, and pinning on it wedges the record blind to files, downloadId unretried.
-            self._scratch.folder_pinned.add(pending.infohash)
-        return _CandidateScan(folder_candidates, history=verdict)
+            self._scratch.folder_pinned[pending.infohash] = by_id_failed
+            return _CandidateScan(folder_candidates, history=verdict)
+        # History stands in for an empty folder only after a failed downloadId scan.
+        rows = verdict.import_rows if verdict is not None and by_id_failed else ()
+        return _CandidateScan([], history=verdict, import_rows=rows)
 
 
 @dataclass
@@ -317,9 +356,11 @@ class ImportExecutor:
             command = self.sonarr.command_status(cmd_id)
             state = (command.status or "").casefold()
             if state in _COMMAND_TERMINAL_STATES:
+                if state == "completed" and command.started is not None:
+                    self.scanner.note_rescan(command.started)
                 break
             if state == "orphaned":
-                # A Sonarr restart cut the rescan short, and Sonarr's queue reads empty until it rescans again.
+                # A Sonarr restart cut the rescan short.
                 cmd_id = self.sonarr.refresh_monitored_downloads()
                 if cmd_id is None:
                     return
@@ -379,20 +420,13 @@ class ImportExecutor:
 
         return self.sonarr.list_commands()
 
-    def run_manual_import(
-        self,
-        pending: PendingImport,
-        content_path: str,
-        *,
-        snapshot: RecordSnapshot,
-        at_deadline: bool = False,
-    ) -> ImportProbe:
+    def run_manual_import(self, pending: PendingImport, content_path: str, reading: PollReading) -> ImportProbe:
         """Import EXACTLY the files our map intends, never over a recommended file that isn't a copy of our own.
 
         The probe carries this poll's fresh placements for the record seam to persist.
         """
 
-        scan = self.scanner.scan(pending, content_path)
+        scan = self.scanner.scan(pending, content_path, in_queue=reading.in_queue)
         if scan is None:
             # Transient (timeout or non-200). The folder-scan client already warned. Ask again.
             return ImportProbe.waiting()
@@ -401,14 +435,13 @@ class ImportExecutor:
             pending=pending,
             content_path=content_path,
             scan=scan,
-            snapshot=snapshot,
+            snapshot=reading.snapshot,
             candidates_by_basename=self._mapper.candidate_files(scan.candidates),
-            at_deadline=at_deadline,
+            at_deadline=reading.at_deadline,
         )
-        assignment = self._mapper.assign(pending, context.candidates_by_basename, snapshot.indexes)
+        assignment = self._mapper.assign(pending, context.candidates_by_basename, context.snapshot.indexes)
         recovered: FileEpisodeMap = {}
-        if scan.dead_tracked_empty and not pending.seed_coverage().mapped:
-            # Sonarr moved the files before any scan saw them, so its import rows stand in for the scan.
+        if scan.import_rows and not pending.seed_coverage().mapped:
             # An empty scan means the mapper placed nothing, so the record's own map is the assignment.
             recovered = placements_from_history(scan.import_rows, pending)
             self.logger.debug(
@@ -768,8 +801,7 @@ class ImportReconciler:
         result = self._executor.run_manual_import(
             pending,
             content_path,
-            snapshot=seed.snapshot,
-            at_deadline=attempt.at_deadline,
+            PollReading(seed.snapshot, in_queue=bool(queue_rows), at_deadline=attempt.at_deadline),
         )
         return replace(result, imported_count=done, target_count=total)
 

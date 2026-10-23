@@ -140,8 +140,8 @@ class _Scenario:
 
     heal_download_scan: bool
     """Whether the downloadId scan heals (200 + candidates) once the folder
-    scan has been consulted - the transient-blip timeline. False keeps it a
-    permanent 500 (the dead-tracked NRE)."""
+    scan has been consulted - the transient-blip timeline. False keeps it
+    unhealed."""
 
     folder_scan: Literal["candidates", "empty", "error"]
     """What the folder scan serves: real candidates, a 200 `[]` (folder not
@@ -150,6 +150,9 @@ class _Scenario:
     history_event: str
     """The newest relevant `/api/v3/history` eventType (decides the probe
     verdict: `downloadFolderImported` -> dead-tracked, `grabbed` -> clean)."""
+
+    unhealed_download_scan: Literal["error", "empty"] = "error"
+    """What an unhealed downloadId scan serves: a 500 (v4) or a 200 `[]` (v5)."""
 
     ready_timeout: int = 30
     """The run's `imports.ready_timeout`. Small for the deadline scenario."""
@@ -174,6 +177,12 @@ class _Scenario:
 
 
 _DEAD_TRACKED = _Scenario(heal_download_scan=False, folder_scan="candidates", history_event="downloadFolderImported")
+_DEAD_TRACKED_V5 = _Scenario(
+    heal_download_scan=False,
+    unhealed_download_scan="empty",
+    folder_scan="candidates",
+    history_event="downloadFolderImported",
+)
 _TRANSIENT = _Scenario(heal_download_scan=True, folder_scan="empty", history_event="grabbed")
 _UNSCANNABLE = _Scenario(
     heal_download_scan=False,
@@ -271,8 +280,10 @@ class _World:
 
         with self.lock:
             healed = self.scenario.heal_download_scan and self.folder_scans > 0
-            self.download_scan_statuses.append(200 if healed else 500)
-            return _candidates(self.scenario.listing) if healed else None
+            unhealed: list[Json] | None = [] if self.scenario.unhealed_download_scan == "empty" else None
+            body = _candidates(self.scenario.listing) if healed else unhealed
+            self.download_scan_statuses.append(500 if body is None else 200)
+            return body
 
     def folder_scan_response(self) -> list[Json] | None:
         """The next folder-scan body (None = serve a 500) - and count the activation."""
@@ -532,7 +543,9 @@ class _SonarrHandler(_JsonHandler):
         elif (match := _COMMAND_ID.fullmatch(route)) is not None:
             cid = int(match.group(1))
             status = "failed" if cid in self.world.manual_command_ids() else "completed"
-            self._send_json({"id": cid, "name": "ManualImport", "status": status})
+            self._send_json({"id": cid, "name": "ManualImport", "status": status, "started": "2026-01-01T00:01:00Z"})
+        elif route == "/api/v3/system/status":
+            self._send_json({"startTime": "2026-01-01T00:00:00Z"})
         else:
             self._send_json({}, 404)
 
@@ -782,15 +795,17 @@ def _assert_converged_imported(outcome: _RunOutcome, out: str) -> None:
     assert outcome.world.category_moves == [(_INFOHASH, _IMPORTED_CATEGORY)]
 
 
+@pytest.mark.parametrize("scenario", [_DEAD_TRACKED, _DEAD_TRACKED_V5], ids=["v4-500", "v5-empty"])
 def test_dead_tracked_download_imports_via_folder_scan(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
     capsys: pytest.CaptureFixture[str],
+    scenario: _Scenario,
 ) -> None:
-    outcome = _drive(tmp_path, monkeypatch, _DEAD_TRACKED)
+    outcome = _drive(tmp_path, monkeypatch, scenario)
     out = _flat(capsys.readouterr().out)
 
-    # Converged to IMPORTED although every downloadId scan 500'd AND the
+    # Converged to IMPORTED although no downloadId scan served a file AND the
     # ManualImport command reported `failed`: the episode FILES decided.
     _assert_converged_imported(outcome, out)
 

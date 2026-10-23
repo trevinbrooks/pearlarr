@@ -3,6 +3,7 @@
 import math
 from collections.abc import Iterable, Mapping, Sequence
 from dataclasses import dataclass, field
+from datetime import datetime
 from enum import StrEnum
 from types import MappingProxyType
 from typing import (
@@ -295,6 +296,18 @@ def _str_or_blank(value: object) -> str:
     return value if isinstance(value, str) else ""
 
 
+def _datetime_or_none(value: object) -> datetime | None:
+    """Per-field lenient fold: a zoned datetime or zoned ISO 8601 string parses, anything else folds to None."""
+
+    parsed = value
+    if isinstance(value, str):
+        try:
+            parsed = datetime.fromisoformat(value)
+        except ValueError:
+            return None
+    return parsed if isinstance(parsed, datetime) and parsed.tzinfo is not None else None
+
+
 def _int_or_zero(value: object) -> int:
     """Per-field lenient fold: best-effort int, folding junk/None to 0."""
 
@@ -329,6 +342,7 @@ def _lax_bool(value: object) -> bool:
 type _LenientStr = Annotated[str | None, BeforeValidator(_str_or_none)]
 type _BlankStr = Annotated[str, BeforeValidator(_str_or_blank)]
 type _ZeroInt = Annotated[int, BeforeValidator(_int_or_zero)]
+type _LenientTime = Annotated[datetime | None, BeforeValidator(_datetime_or_none)]
 type _LaxBool = Annotated[bool, BeforeValidator(_lax_bool)]
 
 
@@ -872,6 +886,15 @@ class DownloadClientConfig(_ApiModel):
     enable_completed_download_handling: bool = Field(default=True, validation_alias="enableCompletedDownloadHandling")
 
 
+# --- Sonarr system status (`/api/v3/system/status`) ------------------------
+
+
+class SystemStatus(_ApiModel):
+    """Sonarr's `SystemResource`, reduced to when the running Sonarr started."""
+
+    start_time: _LenientTime = Field(default=None, validation_alias="startTime")
+
+
 # --- Sonarr quality definitions (`/api/v3/qualitydefinition`) --------------
 
 
@@ -931,6 +954,8 @@ class CommandResource(_ApiModel):
     """The command name, e.g. `ManualImport`."""
     message: _LenientStr = None
     """The progress text, e.g. `"Processing file 4 of 8"`."""
+    started: _LenientTime = None
+    """When Sonarr began running it. None until it starts."""
     files: tuple[CommandFile, ...] = Field(default=(), validation_alias=AliasPath("body", "files"))
     """The rows of the nested `body` Sonarr echoes back. The POST and status responses omit it."""
 

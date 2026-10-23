@@ -310,9 +310,9 @@ def _started(commands: Sequence[CommandResource], names: frozenset[str]) -> list
 
 # The episode-history events that map a re-appeared download to a queue-hidden
 # tracked state (Imported / Failed / Ignored), states Sonarr never runs its
-# completed-download Check on, so `manualimport?downloadId=` NREs (HTTP 500)
-# forever. Keyed by casefolded eventType, valued by the human label the hub
-# note renders. `grabbed` (or none of the four) means genuinely Downloading.
+# completed-download Check on, so `manualimport?downloadId=` never serves them
+# (a 500 on v4, `[]` on v5). Keyed by casefolded eventType, valued by the label
+# the debug note renders. `grabbed` (or none of the four) means genuinely Downloading.
 _DEAD_TRACKED_HISTORY_EVENTS = {
     "downloadfolderimported": "imported",
     "downloadfailed": "failed",
@@ -368,8 +368,9 @@ def classify_download_history(page: HistoryPage) -> DownloadHistoryVerdict:
     Imported/failed/ignored -> dead-tracked. `grabbed` -> clean (a hash Sonarr
     itself re-grabbed after an old failure is genuinely Downloading). None of
     the four found -> clean. Probing only for prior imports would misroute
-    re-grabs of previously-FAILED/IGNORED hashes: the same NREs apply there.
-    An imported verdict carries its cycle's import rows.
+    re-grabs of previously-FAILED/IGNORED hashes, which the by-id scan can't
+    serve either. A partly imported download reads dead too. An imported
+    verdict carries its cycle's import rows.
     """
 
     for index, record in enumerate(page.records):
