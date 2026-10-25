@@ -7,6 +7,8 @@ Pearlarr is a fork of [bbtufty/seadexarr](https://github.com/bbtufty/seadexarr).
 
 ## [Unreleased]
 
+## [1.5.5] - 2026-10-25
+
 ### Fixed
 
 - When a Sonarr restart cuts short the rescan Pearlarr asked for, Pearlarr asks again right away instead of waiting 30 seconds on it and putting the import off to the next poll.
