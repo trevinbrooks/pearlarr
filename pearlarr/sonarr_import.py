@@ -2,8 +2,6 @@
 
 import logging
 from dataclasses import dataclass, field, replace
-from datetime import datetime
-from typing import NamedTuple
 from urllib.parse import urlsplit
 
 from .arr_http import DeleteOutcome
@@ -36,6 +34,7 @@ from .output import hub_note, hub_warn
 from .pending_records import PendingRecords
 from .placement_types import episode_index
 from .probe_verdicts import (
+    CommandBlock,
     ContentPaths,
     DownloadHistoryVerdict,
     DownloadMatch,
@@ -44,8 +43,10 @@ from .probe_verdicts import (
     classify_commands,
     classify_download_history,
     classify_queue,
+    disk_commands_changed_since,
     placements_from_history,
-    sonarr_process_pass_running,
+    rescanned_since_add,
+    sonarr_restarted,
 )
 from .run_services import RunDeps
 from .seadex_types import (
@@ -57,20 +58,18 @@ from .seadex_types import (
     QualitySource,
     QueueRecord,
     RemotePathMapping,
+    SonarrEpisode,
 )
 from .sonarr_client import AbstractSonarrClient
 from .sonarr_episodes import SonarrEpisodes
 from .sonarr_mapper import FileEpisodeMapper
 
-# RefreshMonitoredDownloads is quick. Poll its status this many times (sleeping between) so the queue we read
-# next reflects the rescan, then proceed regardless so a stuck command never blocks the run.
-_REFRESH_COMMAND_MAX_POLLS = 30
-_REFRESH_COMMAND_POLL_S = 1
-# The follow-up ProcessMonitoredDownloads pass settles in under a second when idle and runs for the whole copy
-# when it imports, so wait only for the idle case: parking on a copy froze the cockpit, and a stale queue read
-# lands one poll later. A slower idle pass trips the disk guard every poll, a credited wait bounded by the cap.
-_PROCESS_PASS_SETTLE_MAX_POLLS = 10
+# How many times the rescan's status is polled, `_RESCAN_COMMAND_POLL_S` apart.
+_RESCAN_COMMAND_MAX_POLLS = 30
+_RESCAN_COMMAND_POLL_S = 1
 _COMMAND_TERMINAL_STATES = frozenset({"completed", "failed", "aborted", "cancelled"})
+# A kept by-id scan expires after this many poll intervals.
+_KEPT_SCAN_POLLS = 2
 
 
 def _hostname(url: str | None) -> str | None:
@@ -81,7 +80,8 @@ def _hostname(url: str | None) -> str | None:
     return urlsplit(url).hostname or urlsplit(f"//{url}").hostname
 
 
-class _CandidateScan(NamedTuple):
+@dataclass(frozen=True, slots=True)
+class _CandidateScan:
     """One poll's candidate fetch plus the history verdict behind the entry shape it implies."""
 
     candidates: list[ManualImportCandidate]
@@ -89,6 +89,8 @@ class _CandidateScan(NamedTuple):
     """The fallback's history verdict. None when the by-id scan served or the probe failed, and both read clean."""
     import_rows: tuple[HistoryImport, ...] = ()
     """The dead-tracking import's rows that stand in for an empty folder scan."""
+    by_id: bool = False
+    """Whether the by-id scan answered with files."""
 
     @property
     def omit_download_id(self) -> bool:
@@ -105,12 +107,14 @@ class _CandidateScan(NamedTuple):
 
 @dataclass(frozen=True, slots=True)
 class PollReading:
-    """What the reconciler knows about a record this poll, handed to its import."""
+    """What a step-in poll read after its guard reads cleared, handed to the import."""
 
+    scan: _CandidateScan
+    """The by-id scan, or the folder fallback behind it."""
     snapshot: RecordSnapshot
-    """The snapshot of every series the record spans."""
-    in_queue: bool
-    """Whether the queue read showed the download."""
+    """The snapshot of every series the record spans, read after the baseline."""
+    baseline: list[CommandResource]
+    """The command list read once the poll's candidates were in hand."""
     at_deadline: bool
     """Whether this is the readiness-deadline attempt."""
 
@@ -127,16 +131,15 @@ class _ImportContext:
     """This poll's candidate fetch plus the history verdict behind it."""
     snapshot: RecordSnapshot
     """The same-poll snapshot of every series the record spans, which the done-check reads."""
+    baseline: list[CommandResource]
+    """The command list read once the poll's candidates were in hand."""
     candidates_by_basename: dict[str, CandidateFile]
     """The scan's candidates keyed by normalized basename, built once for the planner and the file entries."""
     at_deadline: bool
     """Whether this is the readiness-deadline attempt, the one that warns."""
 
     def posting_series(self, ep_id: int) -> int | None:
-        """The series a file posts under: its route's, else a one-series record's.
-
-        The last arm keeps an index read failure from stranding a one-series record's files.
-        """
+        """The series a file posts under: its route's, else a one-series record's."""
 
         if (series_id := self.snapshot.route(ep_id).series_id) is not None:
             return series_id
@@ -156,8 +159,6 @@ class _ScanScratch:
     """Sonarr's remote path mappings. None = unfetched."""
     translated_paths: dict[str, str] = field(default_factory=dict[str, str])
     """Download path -> its Sonarr-visible path."""
-    rescan_started: datetime | None = None
-    """When the latest completed rescan started. None = none completed yet."""
 
 
 class CandidateScanner:
@@ -173,11 +174,6 @@ class CandidateScanner:
         """Drop the per-run fallback scratch (run-start, via the executor)."""
 
         self._scratch = _ScanScratch()
-
-    def note_rescan(self, started: datetime) -> None:
-        """Remember when Sonarr's latest completed rescan started."""
-
-        self._scratch.rescan_started = started
 
     def content_paths(self, content_path: str) -> ContentPaths:
         """The raw + Sonarr-visible path pair the in-flight guard matches against.
@@ -232,24 +228,13 @@ class CandidateScanner:
             )
         return verdict
 
-    def _restart_ruled_out(self) -> bool:
-        """Whether Sonarr provably hasn't restarted since its latest completed rescan."""
+    def _dead_tracked(self, pending: PendingImport) -> bool:
+        """Whether Sonarr's history says it won't serve the download by id."""
 
-        rescanned = self._scratch.rescan_started
-        if rescanned is None:
-            return False
-        started = self.sonarr.started_at()
-        return started is not None and started <= rescanned
-
-    def _wont_serve_by_id(self, pending: PendingImport) -> bool:
-        """Whether an empty downloadId answer means Sonarr won't serve the download by id."""
-
-        if not self._restart_ruled_out():
-            return False
         verdict = self._probe_history(pending)
         return verdict is not None and verdict.dead_tracked
 
-    def scan(self, pending: PendingImport, content_path: str, *, in_queue: bool) -> _CandidateScan | None:
+    def scan(self, pending: PendingImport, content_path: str, *, untracked: bool) -> _CandidateScan | None:
         """The candidates for one poll: the downloadId scan, with the folder fallback. None when the scan failed."""
 
         by_id_failed = self._scratch.folder_pinned.get(pending.infohash)
@@ -260,8 +245,8 @@ class CandidateScanner:
                 self.logger.debug(
                     f"{content_path}: downloadId scan failed for {pending.display_label} - trying the folder fallback"
                 )
-            elif candidates or in_queue or not self._wont_serve_by_id(pending):
-                return _CandidateScan(candidates, history=None)
+            elif candidates or not (untracked and self._dead_tracked(pending)):
+                return _CandidateScan(candidates, history=None, by_id=bool(candidates))
 
         verdict = self._probe_history(pending)
         folder = self._sonarr_visible_path(content_path)
@@ -281,6 +266,18 @@ class CandidateScanner:
         return _CandidateScan([], history=verdict, import_rows=rows)
 
 
+@dataclass(frozen=True, slots=True)
+class _KeptScan:
+    """A by-id scan kept from a blocked poll for the record's next one."""
+
+    content_path: str
+    """The content path the scan was taken under."""
+    scan: _CandidateScan
+    """The scan itself."""
+    kept_at_monotonic: float
+    """The executor clock's reading when the scan was kept."""
+
+
 @dataclass
 class _ImportScratch:
     """The executor's per-run import scratch, reassigned wholesale by `reset`. A None cache = not yet fetched."""
@@ -291,7 +288,11 @@ class _ImportScratch:
     warned_overridden: set[str] = field(default_factory=set[str])
     warned_empty_folder: set[str] = field(default_factory=set[str])
     warned_default_quality: bool = False
-    last_refresh_monotonic: float | None = None
+    last_rescan_monotonic: float | None = None
+    rescanned: set[str] = field(default_factory=set[str])
+    """Infohashes whose rescan completed this run."""
+    kept_scans: dict[str, _KeptScan] = field(default_factory=dict[str, _KeptScan])
+    """By-id scans kept from a blocked poll, by infohash."""
     issued_command_ids: set[int] = field(default_factory=set[int])
     completed_download_handling: bool | None = None
 
@@ -325,54 +326,72 @@ class ImportExecutor:
             )
         return self._scratch.completed_download_handling
 
-    def is_own_command(self, command_id: int) -> bool:
+    def _is_own_command(self, command_id: int) -> bool:
         """Whether we POSTed this ManualImport command id this run."""
 
         return command_id in self._scratch.issued_command_ids
 
-    def refresh_downloads(self) -> None:
-        """Queue RefreshMonitoredDownloads at most once per poll interval, settling the pass it starts."""
+    def rescan_once(self, infohash: str) -> bool:
+        """Rescan Sonarr's downloads for a record with no completed rescan on file, never within a poll interval.
 
-        # The rescan is GLOBAL, so it is re-issued at most once per poll interval, measured from the refresh's
-        # END: back-to-back records in one pass share one refresh however long Sonarr's pass ran.
-        now = self._clock.now()
-        interval = self._config.imports.poll_interval
-        if self._scratch.last_refresh_monotonic is not None and now - self._scratch.last_refresh_monotonic < interval:
-            return
+        The interval runs from the last rescan's end. True when the rescan completed.
+        """
+
+        if infohash in self._scratch.rescanned:
+            return False
+        last = self._scratch.last_rescan_monotonic
+        if last is not None and self._clock.now() - last < self._config.imports.poll_interval:
+            return False
         try:
-            self._refresh_and_settle()
+            completed = self._rescan()
         finally:
-            self._scratch.last_refresh_monotonic = self._clock.now()
+            self._scratch.last_rescan_monotonic = self._clock.now()
+        if completed:
+            self._scratch.rescanned.add(infohash)
+        return completed
 
-    def _refresh_and_settle(self) -> None:
-        """POST the rescan, wait for it, then briefly for the ProcessMonitoredDownloads pass it starts."""
+    def forget_rescans(self) -> None:
+        """Drop this run's rescan markers."""
+
+        self._scratch.rescanned.clear()
+
+    def keep_scan(self, infohash: str, content_path: str, scan: _CandidateScan) -> None:
+        """Keep a by-id scan for the record's next poll."""
+
+        if scan.by_id:
+            self._scratch.kept_scans[infohash] = _KeptScan(content_path, scan, self._clock.now())
+
+    def take_kept_scan(self, infohash: str, content_path: str) -> _CandidateScan | None:
+        """The by-id scan kept for this poll, taken once. None when there is none, it expired, or the path moved."""
+
+        kept = self._scratch.kept_scans.pop(infohash, None)
+        if kept is None or kept.content_path != content_path:
+            return None
+        if self._clock.now() - kept.kept_at_monotonic > _KEPT_SCAN_POLLS * self._config.imports.poll_interval:
+            return None
+        return kept.scan
+
+    def _rescan(self) -> bool:
+        """POST the rescan and wait for it. True when Sonarr reported it complete."""
 
         cmd_id = self.sonarr.refresh_monitored_downloads()
         if cmd_id is None:
-            return
+            return False
         self.logger.debug("Asked Sonarr to rescan its downloads")
 
-        for _ in range(_REFRESH_COMMAND_MAX_POLLS):
+        for _ in range(_RESCAN_COMMAND_MAX_POLLS):
             command = self.sonarr.command_status(cmd_id)
             state = (command.status or "").casefold()
             if state in _COMMAND_TERMINAL_STATES:
-                if state == "completed" and command.started is not None:
-                    self.scanner.note_rescan(command.started)
-                break
+                return state == "completed"
             if state == "orphaned":
                 # A Sonarr restart cut the rescan short.
                 cmd_id = self.sonarr.refresh_monitored_downloads()
                 if cmd_id is None:
-                    return
+                    return False
                 self.logger.debug("Sonarr restarted during the rescan - asked it to rescan again")
-            self._clock.sleep(_REFRESH_COMMAND_POLL_S)
-        else:
-            return
-
-        for _ in range(_PROCESS_PASS_SETTLE_MAX_POLLS):
-            if not sonarr_process_pass_running(self.list_commands()):
-                return
-            self._clock.sleep(_REFRESH_COMMAND_POLL_S)
+            self._clock.sleep(_RESCAN_COMMAND_POLL_S)
+        return False
 
     def queue_records(self, infohash: str) -> list[QueueRecord] | None:
         """This download's queue records, matched case-insensitively (Sonarr stores the hash uppercased).
@@ -415,10 +434,21 @@ class ImportExecutor:
                 self.logger.debug(f"{pending.display_label}: queue entry {queue_id} not removed - will retry")
                 return EffectStatus.RETRY
 
-    def list_commands(self) -> list[CommandResource]:
-        """The current Sonarr command list, never cached (an in-flight command's status changes)."""
+    def list_commands(self) -> list[CommandResource] | None:
+        """The current Sonarr command list, never cached. None when the read failed."""
 
         return self.sonarr.list_commands()
+
+    def command_block(
+        self, commands: list[CommandResource], pending: PendingImport, content_path: str
+    ) -> CommandBlock | None:
+        """The command block that stops a step-in for the download now, logged, else None."""
+
+        match = DownloadMatch(pending.infohash, self.scanner.content_paths(content_path), set(pending.target_ids()))
+        block = classify_commands(commands, match, self._is_own_command)
+        if block is not None:
+            self.logger.debug(f"{pending.display_label}: {block.value}; waiting")
+        return block
 
     def run_manual_import(self, pending: PendingImport, content_path: str, reading: PollReading) -> ImportProbe:
         """Import EXACTLY the files our map intends, never over a recommended file that isn't a copy of our own.
@@ -426,16 +456,13 @@ class ImportExecutor:
         The probe carries this poll's fresh placements for the record seam to persist.
         """
 
-        scan = self.scanner.scan(pending, content_path, in_queue=reading.in_queue)
-        if scan is None:
-            # Transient (timeout or non-200). The folder-scan client already warned. Ask again.
-            return ImportProbe.waiting()
-
+        scan = reading.scan
         context = _ImportContext(
             pending=pending,
             content_path=content_path,
             scan=scan,
             snapshot=reading.snapshot,
+            baseline=reading.baseline,
             candidates_by_basename=self._mapper.candidate_files(scan.candidates),
             at_deadline=reading.at_deadline,
         )
@@ -560,6 +587,8 @@ class ImportExecutor:
             # Untracked Execute with Auto resolves to MOVE (no DownloadClientItem to report CanMoveFiles),
             # ripping files from the seeding torrent. An explicitly configured move/copy is honored as set.
             import_mode = "copy"
+        if blocked := self._guard_before_post(context):
+            return blocked
         # One command for every series the record spans: Sonarr's ManualImportCommand resolves the series per file.
         cmd_id = self.sonarr.manual_import_execute(
             files=files,
@@ -573,6 +602,23 @@ class ImportExecutor:
         self._scratch.issued_command_ids.add(cmd_id)
         self.logger.debug(f"{content_path}: queued {count_noun(len(files), 'file')} for import (command {cmd_id})")
         return ImportProbe.waiting(command_issued=True, deferral=Deferral.ISSUED)
+
+    def _guard_before_post(self, context: _ImportContext) -> ImportProbe | None:
+        """The wait when the command list read now blocks the POST, else None."""
+
+        commands = self.list_commands()
+        if commands is None:
+            self.logger.debug(f"{context.pending.display_label}: command list read failed; retrying")
+            return ImportProbe.waiting()
+        block = self.command_block(commands, context.pending, context.content_path)
+        if block is None:
+            if sonarr_restarted(commands):
+                block = CommandBlock.SONARR_RESTARTED
+            elif disk_commands_changed_since(context.baseline, commands):
+                block = CommandBlock.DISK_COMMAND_CHANGED
+            if block is not None:
+                self.logger.debug(f"{context.pending.display_label}: {block.value}; waiting")
+        return None if block is None else block.waiting()
 
     def _note_dead_tracked_empty(self, context: _ImportContext) -> None:
         """Surface a dead-tracked, empty-folder poll for an unmapped record.
@@ -710,11 +756,74 @@ class ImportExecutor:
         return entry.model_copy(update={"downloadId": pending.infohash.upper()})
 
 
-class _SeedStatuses(NamedTuple):
-    """A same-poll record snapshot plus the per-target file statuses pinned to the seed set."""
+@dataclass(frozen=True, slots=True)
+class _SeedStatuses:
+    """A record snapshot, the per-target file statuses over the seed set, and the bar counts."""
 
     snapshot: RecordSnapshot
+    """The snapshot of every series the record spans that the statuses were judged over."""
     statuses: TargetStatuses
+    """The file status of every seeded target under its claim's guards."""
+    done: int
+    """Recommended files present, net of the preowned targets."""
+    total: int
+    """Seeded targets, net of the preowned ones."""
+
+    def with_counts(self, probe: ImportProbe) -> ImportProbe:
+        """`probe` carrying this seed's bar counts."""
+
+        return replace(probe, imported_count=self.done, target_count=self.total)
+
+
+@dataclass(frozen=True, slots=True)
+class _SonarrView:
+    """Sonarr's view of a download this poll: its queue verdict and the command list read with it."""
+
+    verdict: QueueVerdict
+    """The queue verdict over the download's rows."""
+    commands: list[CommandResource]
+    """The command list read just before the queue."""
+    untracked: bool
+    """Whether the download has no queue row and Sonarr lists a completed rescan from after its add."""
+
+    @property
+    def needs_rescan(self) -> bool:
+        """A download with no row or a row in motion, without the untracked proof."""
+
+        return self.verdict in (QueueVerdict.WAIT, QueueVerdict.NOT_IN_QUEUE) and not self.untracked
+
+
+@dataclass(frozen=True, slots=True)
+class _Poll:
+    """One import poll's inputs and its seed set."""
+
+    pending: PendingImport
+    """The record this poll imports."""
+    content_path: str
+    """The download's content path as qBittorrent reports it."""
+    at_deadline: bool
+    """Whether this is the readiness-deadline attempt."""
+    targets: list[int]
+    """The seeded target ids when the seed accounts for the record, else empty."""
+    complete: bool
+    """Whether the seed map covers every intended file."""
+
+    @classmethod
+    def of(cls, pending: PendingImport, content_path: str, attempt: AttemptKind) -> "_Poll":
+        """The poll record for `pending`, its seed set gated by the record's coverage."""
+
+        targets = pending.target_ids()
+        coverage = pending.seed_coverage()
+        accounted = bool(targets) and coverage.accounted
+        return cls(
+            pending, content_path, attempt.at_deadline, targets if accounted else [], accounted and coverage.mapped
+        )
+
+    @property
+    def label(self) -> str:
+        """The record's display label."""
+
+        return self.pending.display_label
 
 
 class ImportReconciler:
@@ -728,82 +837,52 @@ class ImportReconciler:
         self._executor = executor
         self.logger = executor.logger
 
-    def import_completed(
-        self,
-        pending: PendingImport,
-        content_path: str,
-        attempt: AttemptKind,
-    ) -> ImportProbe:
-        """One import poll. Episode files and Sonarr's refreshed queue are the truth, never the cache."""
+    def import_completed(self, pending: PendingImport, content_path: str, attempt: AttemptKind) -> ImportProbe:
+        """One import poll. Episode files and Sonarr's queue are the truth, never the cache."""
 
-        label = pending.display_label
+        poll = _Poll.of(pending, content_path, attempt)
+        # Bar counts over the seed set. An unaccounted record reports 0/0 (indeterminate).
+        fresh = self._read_seed(poll.pending, poll.targets)
+        if fresh is not None and (imported := self._already_imported(poll, fresh)):
+            return imported
+        seed = fresh if fresh is not None else self._last_known_seed(poll.pending, poll.targets)
 
-        # Rescan first so the queue read below reflects the finished torrent.
-        self._executor.refresh_downloads()
+        view = self._sonarr_view(poll)
+        if view is None:
+            # Fail closed: an unreadable read waits, never reads as idle or untracked.
+            self.logger.debug(f"{poll.label}: Sonarr read failed; retrying")
+            return seed.with_counts(ImportProbe.waiting())
+        if view.verdict is QueueVerdict.WAIT:
+            self.logger.debug(f"{poll.label}: Sonarr still has it in motion; waiting")
+            return seed.with_counts(ImportProbe.waiting())
+        if view.verdict is QueueVerdict.IMPORTING:
+            self.logger.debug(f"{poll.label}: Sonarr is importing it; waiting")
+            return seed.with_counts(ImportProbe.waiting(deferral=Deferral.IMPORT))
 
-        # Bar counts, pinned to the seed set so the denominator never rescales mid-import. An unaccounted
-        # record reports 0/0 (indeterminate): a partial seed must never show a misleading bar.
-        seeded_targets = pending.target_ids()
-        coverage = pending.seed_coverage()
-        accounted = bool(seeded_targets) and coverage.accounted
-        seed_complete = accounted and coverage.mapped
-        gated_targets = seeded_targets if accounted else []
-        seed = self._seed_statuses(pending, gated_targets)
-        # The done-check below still reads the raw statuses (a preowned target is done, just not ours to claim).
-        done, total = self._net_counts(seed, gated_targets)
-
-        # Only a complete map makes the done-check trustworthy without a folder scan.
-        if seed_complete and seed.statuses.all_done():
-            self.logger.debug(f"{label}: already imported (recommended files present)")
-            return ImportProbe.imported(imported_count=done, target_count=total)
-
-        queue_rows = self._executor.queue_records(pending.infohash)
-        if queue_rows is None:
-            # Fail closed: an unreadable queue must never read as untracked (stepping in races Sonarr's
-            # import). Waiting defers via the poll loop until the ready deadline graduates the record.
-            self.logger.debug(f"{label}: queue read failed; retrying")
-            return ImportProbe.waiting(imported_count=done, target_count=total)
-        verdict = classify_queue(queue_rows)
-        if verdict is QueueVerdict.WAIT:
-            self.logger.debug(f"{label}: Sonarr still has it in motion; waiting")
-            return ImportProbe.waiting(imported_count=done, target_count=total)
-        if verdict is QueueVerdict.IMPORTING:
-            self.logger.debug(f"{label}: Sonarr is importing it; waiting")
-            return ImportProbe.waiting(deferral=Deferral.IMPORT, imported_count=done, target_count=total)
-
-        # Never gated on the attempt kind: an import in flight is never raced, and a busy Sonarr ahead of a
-        # clean pending row is a credited wait (the row burns its clock only while Sonarr is idle).
-        block = classify_commands(
-            self._executor.list_commands(),
-            DownloadMatch(
-                pending.infohash,
-                self._executor.scanner.content_paths(content_path),
-                set(seeded_targets),
-            ),
-            self._executor.is_own_command,
-        )
-        if block is not None:
-            self.logger.debug(f"{label}: {block.value}; waiting")
-            return ImportProbe.waiting(
-                command_issued=block.claims_import,
-                deferral=block.deferral,
-                imported_count=done,
-                target_count=total,
-            )
+        # The guard holds every attempt kind, the deadline one included.
+        if block := self._executor.command_block(view.commands, poll.pending, poll.content_path):
+            return seed.with_counts(block.waiting())
         if (
-            verdict is QueueVerdict.PENDING_CLEAN
-            and not attempt.at_deadline
+            view.verdict is QueueVerdict.PENDING_CLEAN
+            and not poll.at_deadline
             and self._executor.completed_download_handling_enabled()
         ):
-            self.logger.debug(f"{label}: Sonarr has it pending and will import it; waiting")
-            return ImportProbe.waiting(imported_count=done, target_count=total)
+            self.logger.debug(f"{poll.label}: Sonarr has it pending and will import it; waiting")
+            return seed.with_counts(ImportProbe.waiting())
 
-        result = self._executor.run_manual_import(
-            pending,
-            content_path,
-            PollReading(seed.snapshot, in_queue=bool(queue_rows), at_deadline=attempt.at_deadline),
+        taken = self._executor.take_kept_scan(poll.pending.infohash, poll.content_path)
+        kept = None if view.verdict is QueueVerdict.NOT_IN_QUEUE else taken
+        scan = (
+            kept
+            if kept is not None
+            else self._executor.scanner.scan(poll.pending, poll.content_path, untracked=view.untracked)
         )
-        return replace(result, imported_count=done, target_count=total)
+        if scan is None:
+            return seed.with_counts(ImportProbe.waiting())
+        probe = self._step_in(poll, scan, seed)
+        if kept is None and probe.deferral is Deferral.BUSY:
+            self._executor.keep_scan(poll.pending.infohash, poll.content_path, scan)
+        return probe
 
     def import_progress(self, pending: PendingImport) -> ImportProgress:
         """Read-only "files inserted" count: this path can promote, so it never trusts exclusions."""
@@ -811,21 +890,87 @@ class ImportReconciler:
         seeded_targets = pending.target_ids()
         if not seeded_targets or not pending.seed_coverage().mapped:
             return NO_PROGRESS
-        seed = self._seed_statuses(pending, seeded_targets)
-        done, total = self._net_counts(seed, seeded_targets)
-        return ImportProgress(done, total, determinate=True)
+        seed = self._read_seed(pending, seeded_targets)
+        return NO_PROGRESS if seed is None else ImportProgress(seed.done, seed.total, determinate=True)
 
-    def _seed_statuses(self, pending: PendingImport, targets: list[int]) -> _SeedStatuses:
-        """Fetch every claimed series' episodes FRESH and classify `targets`, each under its own claim's guards.
+    def _sonarr_view(self, poll: _Poll) -> _SonarrView | None:
+        """Sonarr's view this poll, read again after the rescan a lagging view may get. None when unreadable."""
 
-        `[]` still builds the snapshot. One guards read and one episode fetch per series serve every policy.
-        """
+        view = self._read_sonarr(poll.pending)
+        if view is None or not view.needs_rescan:
+            return view
+        if sonarr_restarted(view.commands):
+            self._executor.forget_rescans()
+        if self._executor.rescan_once(poll.pending.infohash):
+            view = self._read_sonarr(poll.pending)
+        return view
+
+    def _read_sonarr(self, pending: PendingImport) -> _SonarrView | None:
+        """One read of the command list, then the queue. None when either read failed."""
+
+        commands = self._executor.list_commands()
+        if commands is None:
+            return None
+        rows = self._executor.queue_records(pending.infohash)
+        if rows is None:
+            return None
+        verdict = classify_queue(rows)
+        untracked = verdict is QueueVerdict.NOT_IN_QUEUE and rescanned_since_add(commands, pending.added_at)
+        return _SonarrView(verdict, commands, untracked)
+
+    def _step_in(self, poll: _Poll, scan: _CandidateScan, seed: _SeedStatuses) -> ImportProbe:
+        """The poll past the scan: the guard baseline, the files read again, the hand-off to the import."""
+
+        baseline = self._executor.list_commands()
+        if baseline is None:
+            self.logger.debug(f"{poll.label}: command list read failed; retrying")
+            return seed.with_counts(ImportProbe.waiting())
+        fresh = self._read_seed(poll.pending, poll.targets)
+        if fresh is None:
+            self.logger.debug(f"{poll.label}: episode read failed; retrying")
+            return seed.with_counts(ImportProbe.waiting())
+        if imported := self._already_imported(poll, fresh):
+            return imported
+        if block := self._executor.command_block(baseline, poll.pending, poll.content_path):
+            return fresh.with_counts(block.waiting())
+        reading = PollReading(scan, fresh.snapshot, baseline, at_deadline=poll.at_deadline)
+        return fresh.with_counts(self._executor.run_manual_import(poll.pending, poll.content_path, reading))
+
+    def _already_imported(self, poll: _Poll, seed: _SeedStatuses) -> ImportProbe | None:
+        """The IMPORTED probe when the seed map is whole and every recommended file is present, else None."""
+
+        if not poll.complete or not seed.statuses.all_done():
+            return None
+        self.logger.debug(f"{poll.label}: already imported (recommended files present)")
+        return seed.with_counts(ImportProbe.imported())
+
+    def _read_seed(self, pending: PendingImport, targets: list[int]) -> _SeedStatuses | None:
+        """The seed from each claimed series' episodes read now. None when any read failed."""
+
+        lists: dict[int, list[SonarrEpisode]] = {}
+        for series_id in pending.series_ids:
+            ep_list = self._episodes.read_episodes(series_id)
+            if ep_list is None:
+                return None
+            lists[series_id] = ep_list
+        return self._seed_from(pending, targets, lists)
+
+    def _last_known_seed(self, pending: PendingImport, targets: list[int]) -> _SeedStatuses:
+        """The seed from each claimed series' last successfully read episodes."""
+
+        lists = {sid: self._episodes.last_known_episodes(sid) for sid in pending.series_ids}
+        return self._seed_from(pending, targets, lists)
+
+    def _seed_from(
+        self, pending: PendingImport, targets: list[int], lists: dict[int, list[SonarrEpisode]]
+    ) -> _SeedStatuses:
+        """Classify `targets` under each claim's guards over the given episode lists, with the bar counts."""
 
         guards = self._records.guards()
         votes: dict[int, GroupVotes] = {}
         by_series: dict[int, EpisodeSnapshot] = {}
         for series_id in pending.series_ids:
-            index = episode_index(self._episodes.fresh_episodes(series_id))
+            index = episode_index(lists[series_id])
             # Unfiltered: a cleanup-flagged sibling's files are on disk, so dropping it would loosen the guard.
             siblings = self._records.for_series(series_id, guards).values()
             votes[series_id] = GroupVotes(pending.own_group, tuple(record.own_group for record in siblings))
@@ -837,12 +982,7 @@ class ImportReconciler:
             for claim in pending.claims
         }
         snapshot = RecordSnapshot(pending, by_series, by_claim)
-        return _SeedStatuses(snapshot, snapshot.statuses(targets, pending.file_episode_map))
-
-    @staticmethod
-    def _net_counts(seed: _SeedStatuses, targets: list[int]) -> tuple[int, int]:
-        """The bar's `(done, total)`, net of the targets preowned under the claim judging each (`[]` nets to 0/0)."""
-
-        preowned = sum(1 for ep_id in targets if seed.snapshot.preowned(ep_id))
-        recommended = sum(1 for status in seed.statuses.by_id.values() if status is EpisodeFileStatus.RECOMMENDED)
-        return max(0, recommended - preowned), len(targets) - preowned
+        statuses = snapshot.statuses(targets, pending.file_episode_map)
+        preowned = sum(1 for ep_id in targets if snapshot.preowned(ep_id))
+        recommended = sum(1 for status in statuses.by_id.values() if status is EpisodeFileStatus.RECOMMENDED)
+        return _SeedStatuses(snapshot, statuses, max(0, recommended - preowned), len(targets) - preowned)

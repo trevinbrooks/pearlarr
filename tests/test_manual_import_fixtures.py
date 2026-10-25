@@ -19,8 +19,8 @@ from pearlarr.probe_verdicts import (
     DownloadMatch,
     QueueVerdict,
     classify_queue,
+    in_flight_disk_commands,
     manual_import_in_flight,
-    started_disk_commands,
 )
 from pearlarr.release_names import parse_se_from_filename
 from pearlarr.seadex_sonarr import SonarrSync
@@ -303,13 +303,11 @@ class TestManualImportInFlightFixture:
             DownloadMatch("no-such-hash", ContentPaths(raw="/nowhere", sonarr_visible="/nowhere"), {5645}),
         )
 
-    def test_disk_guard_defers_only_on_the_started_command(self) -> None:
-        # The capture's one STARTED command (a ManualImport) defers. The queued remainder,
-        # the parked ProcessMonitoredDownloads included, never does.
+    def test_disk_guard_defers_on_a_queued_disk_command(self) -> None:
         commands = _commands()
-        assert started_disk_commands(commands)
-        queued_only = [c for c in commands if c.status != "started"]
-        assert not started_disk_commands(queued_only)
+        queued_remainder = [c for c in commands if c.status != "started"]
+        assert {c.id for c in in_flight_disk_commands(queued_remainder)} == {3732166, 3732185, 3732187}
+        assert not in_flight_disk_commands([c for c in commands if c.status == "completed"])
 
 
 def _replay_specials_parse(raw_base: str) -> ParsedFileInfo | None:

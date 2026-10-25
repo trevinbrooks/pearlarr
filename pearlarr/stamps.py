@@ -33,6 +33,13 @@ def parse_stamp_or_none(stamp: str) -> datetime | None:
         return None
 
 
+def parse_stamp_aware(stamp: str) -> datetime | None:
+    """`stamp` as an aware datetime in the host's zone, or None for junk."""
+
+    moment = parse_stamp_or_none(stamp)
+    return None if moment is None else moment.astimezone()
+
+
 def pending_cutoff(max_age_days: int) -> datetime:
     """The oldest clock still inside `imports.pending_max_age_days`: a record's newest claim ages against it."""
 

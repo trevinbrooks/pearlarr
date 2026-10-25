@@ -314,34 +314,16 @@ class ImportProbe:
         return self.deferral is not Deferral.NONE
 
     @classmethod
-    def imported(cls, *, imported_count: int = 0, target_count: int = 0) -> "ImportProbe":
+    def imported(cls) -> "ImportProbe":
         """The intended files are verified present, with no import command of ours in flight."""
 
-        return cls(
-            files_present=True,
-            command_issued=False,
-            imported_count=imported_count,
-            target_count=target_count,
-        )
+        return cls(files_present=True, command_issued=False)
 
     @classmethod
-    def waiting(
-        cls,
-        *,
-        command_issued: bool = False,
-        deferral: Deferral = Deferral.NONE,
-        imported_count: int = 0,
-        target_count: int = 0,
-    ) -> "ImportProbe":
+    def waiting(cls, *, command_issued: bool = False, deferral: Deferral = Deferral.NONE) -> "ImportProbe":
         """Not imported yet: poll again until the readiness deadline."""
 
-        return cls(
-            files_present=False,
-            command_issued=command_issued,
-            imported_count=imported_count,
-            target_count=target_count,
-            deferral=deferral,
-        )
+        return cls(files_present=False, command_issued=command_issued, deferral=deferral)
 
     @classmethod
     def unmatched(cls, names: tuple[str, ...]) -> "ImportProbe":
@@ -779,7 +761,7 @@ class PendingImport:
     """SeaDex filenames, for our regex quality parse."""
 
     added_at: str
-    """The torrent's birth in `UPDATED_AT_STR_FORMAT`: the pipeline's stamp at the add (Radarr's history floor)."""
+    """The torrent's birth in `UPDATED_AT_STR_FORMAT`: the pipeline's stamp at the add."""
 
     file_episode_map: FileEpisodeMap
     """Normalized basename -> Sonarr episode ids over the WHOLE torrent: the grab-time seeds plus the placements

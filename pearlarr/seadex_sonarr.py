@@ -196,7 +196,7 @@ class SonarrSync(ArrSync[SonarrItem]):
 
         # Import-execution collaborator: builds + POSTs the authoritative manual
         # import from the mapper's resolved map, owns the per-run quality/language
-        # caches + the throttled rescan, and exposes the queue/command reads
+        # caches + the once-per-record rescan, and exposes the queue/command reads
         # import_completed consults. Built from the shared deps + this client + the
         # mapper. Its caches reset in get_items, the run-start hook.
         self._executor = ImportExecutor(deps, self.sonarr, self._mapper)

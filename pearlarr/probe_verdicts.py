@@ -2,83 +2,58 @@
 
 from collections.abc import Callable, Sequence
 from dataclasses import dataclass
+from datetime import timedelta
 from enum import Enum, auto
 from typing import NamedTuple
 
-from .manual_import import Deferral, PendingImport, fold_path_separators, normalized_leaf
+from .manual_import import Deferral, ImportProbe, PendingImport, fold_path_separators, normalized_leaf
 from .seadex_types import CommandResource, HistoryPage, QueueRecord
+from .stamps import parse_stamp_aware
 
 
 class QueueVerdict(Enum):
-    """What Sonarr's queue says to do with a tracked download THIS poll.
-
-    Derived purely from the queue records sharing a `downloadId` (a season pack
-    has one record per episode), reading `trackedDownloadState` plus (for
-    pending records) `trackedDownloadStatus`. "Already imported" is NOT decided
-    here (a successful import is removed from the queue). The caller reads the
-    episode files.
-    """
+    """What Sonarr's queue says to do with a download THIS poll."""
 
     WAIT = auto()
-    """Something is in motion (downloading / queued / ...). Let Sonarr finish so we never race it. The wait
-    is this record's own: Sonarr's view lags the finished torrent, so the clock keeps running."""
+    """A record in motion (downloading, queued, delay, paused)."""
 
     IMPORTING = auto()
-    """Sonarr is copying this download's files right now. Wait, and the wait is Sonarr's, not this record
-    stalling (the monitor credits it)."""
+    """An `importing` record: Sonarr's pass has the download in hand, copying it or re-checking it."""
 
     PENDING_CLEAN = auto()
-    """A clean (status `ok`) `importPending` record: Sonarr parsed it and is about to import it. See
-    `classify_queue` rule 3."""
+    """A clean (status `ok`) `importPending` record."""
 
     STEP_IN = auto()
-    """Sonarr can't / won't progress it (`importBlocked` / `failed` / `failedPending` / `ignored`, or an
-    `importPending` record flagged warning/error), or it isn't tracking the download at all (empty). Drive
-    our authoritative manual import."""
+    """A record Sonarr won't progress: `importBlocked`, `failed`, `failedPending`, `ignored`, or `importPending`
+    flagged warning or error."""
+
+    NOT_IN_QUEUE = auto()
+    """No queue record: Sonarr isn't tracking the download, or hasn't rescanned since it appeared."""
 
 
-# trackedDownloadState values (camelCase from Sonarr, compared case-folded) that
-# mean Sonarr is genuinely working the download right now: wait rather than race
-# it. `importing` is the copy itself (a credited wait). `queued`/`delay`/`paused`
-# are QueueStatus-ish transients Sonarr may surface in the same field. Treat
-# them as "still working" too.
+# trackedDownloadState values compared case-folded: `importing`, and the transients Sonarr surfaces in the same field.
 _QUEUE_IMPORTING_STATES = frozenset({"importing"})
 _QUEUE_IN_MOTION_STATES = _QUEUE_IMPORTING_STATES | {"downloading", "queued", "delay", "paused"}
 _QUEUE_STEP_IN_STATES = frozenset(
     {"importblocked", "failed", "failedpending", "ignored"},
 )
-# trackedDownloadStatus values marking a pending record Sonarr tried and failed
-# to import (e.g. the file wasn't visible on its mount yet). It does not
-# reliably retry those, so deferring would just burn the readiness deadline.
+# The `status` values that mark an importPending record as a failed Sonarr attempt.
 _QUEUE_FLAGGED_STATUSES = frozenset({"warning", "error"})
 
 
 def classify_queue(records: Sequence[QueueRecord]) -> QueueVerdict:
-    """Reduce a download's queue records to a single verdict for this poll.
+    """Reduce a download's queue records to one verdict.
 
-    Side-effect free so the decision can be unit-tested without any HTTP.
-    Priority, highest first:
-
-      1. anything in motion, never raced: an `importing` record -> `IMPORTING`
-         (Sonarr is copying its files, a credited wait), any other in-motion
-         state (downloading / queued / ...) -> `WAIT` (re-evaluate next poll).
-      2. any troubled record -> `STEP_IN`: `importBlocked` / `failed` /
-         `failedPending` / `ignored`, or an `importPending` record whose
-         `trackedDownloadStatus` is warning/error (Sonarr's own import attempt
-         failed and it does not reliably retry, so it is Sonarr's flag for
-         "handle this yourself").
-      3. a CLEAN `importPending` (status `ok`, or none reported) ->
-         `PENDING_CLEAN`: Sonarr is about to import it, so let it settle rather
-         than step in. Stepping in would race Sonarr's own import.
-      4. otherwise (empty because Sonarr isn't tracking it, all `imported`, or an
-         unknown state) -> `STEP_IN`.
-
-    `records` are every queue record matching the download (matched by the
-    caller). A record with no tracked state contributes nothing. The verdict is
-    the action this poll, BEFORE the episode-file "already imported" check the
-    caller layers on top.
+    1. no records -> `NOT_IN_QUEUE`
+    2. any record `importing` -> `IMPORTING`
+    3. else any record in motion -> `WAIT`
+    4. else any record `importBlocked`, `failed`, `failedPending`, `ignored`, or `importPending` with a
+       warning or error status -> `STEP_IN`
+    5. else a clean `importPending` -> `PENDING_CLEAN`, otherwise -> `STEP_IN`
     """
 
+    if not records:
+        return QueueVerdict.NOT_IN_QUEUE
     importing = False
     in_motion = False
     troubled = False
@@ -115,7 +90,7 @@ def classify_queue(records: Sequence[QueueRecord]) -> QueueVerdict:
 # `name`, compared case-folded), and only these statuses mean it is still
 # running. A terminal command (completed / failed / aborted / cancelled /
 # orphaned) is no longer in flight, so it never wedges a re-import.
-_MANUAL_IMPORT_COMMAND_NAME = "manualimport"
+_MANUAL_IMPORT_COMMAND_NAMES = frozenset({"manualimport"})
 _COMMAND_IN_FLIGHT_STATES = frozenset({"queued", "started"})
 
 
@@ -169,33 +144,21 @@ class DownloadMatch(NamedTuple):
 
 
 def manual_import_in_flight(commands: Sequence[CommandResource], match: DownloadMatch) -> InFlightImport | None:
-    """The queued/started ManualImport covering THIS download, or None.
+    """The queued or started ManualImport covering this download, or None.
 
-    Pure (mirrors `classify_queue`). Sonarr copies asynchronously and drops the
-    torrent from the queue meanwhile, so the queue alone reads "empty -> step
-    in" and we'd stack a duplicate every poll. Matching the durable infohash
-    (case-insensitive) closes that loop and survives a process restart. A
-    no-download-id folder import falls back to a `content_paths`-prefix or
-    `target_ep_ids` overlap, deliberately broad, since a false positive only
-    makes us wait (deadline-bounded, never credited) while a miss re-opens the
-    duplicate-import loop.
+    Matched by its files' download id (case-insensitive), or, for a command whose files carry no download id, by a
+    `content_paths` prefix or a `target_ep_ids` overlap.
     """
 
     target_hash = match.infohash.casefold()
     paths = match.content_paths
     target_ep_ids = match.target_ep_ids
     content_prefixes = {_norm_path(paths.raw), _norm_path(paths.sonarr_visible)}
-    for command in commands:
-        name = (command.name or "").casefold()
-        status = (command.status or "").casefold()
-        if name != _MANUAL_IMPORT_COMMAND_NAME or status not in _COMMAND_IN_FLIGHT_STATES:
-            continue
+    for command in _with_status(commands, _MANUAL_IMPORT_COMMAND_NAMES, _COMMAND_IN_FLIGHT_STATES):
         file_hashes = {f.download_id.casefold() for f in command.files if f.download_id is not None}
         if target_hash in file_hashes:
             return InFlightImport(command, by_download_id=True)
-        # Fallback only for a command whose files carry no download id at all (a
-        # folder / season-pack import). A command that DOES carry download ids but
-        # for a different torrent must not be swept up by a path/episode overlap.
+        # A command whose files carry download ids for another torrent is not this download's.
         if file_hashes:
             continue
         for file in command.files:
@@ -206,48 +169,86 @@ def manual_import_in_flight(commands: Sequence[CommandResource], match: Download
     return None
 
 
-# The monitored-download pass a completed RefreshMonitoredDownloads immediately
-# starts, the one the rescan settles (see `sonarr_process_pass_running`).
-_SONARR_PROCESS_PASS_NAMES = frozenset({"processmonitoreddownloads"})
+_RESCAN_COMMAND_NAMES = frozenset({"refreshmonitoreddownloads"})
+_SONARR_DISK_COMMAND_NAMES = frozenset(
+    {
+        "processmonitoreddownloads",
+        "downloadedepisodesscan",
+        "manualimport",
+        "renamefiles",
+        "renameseries",
+        "moveseries",
+        "bulkmoveseries",
+        "deleteseriesfiles",
+    }
+)
+_COMPLETED = frozenset({"completed"})
+# A completed rescan counts as after the add only when it started this much later.
+_RESCAN_PROOF_MARGIN = timedelta(seconds=60)
 
-# Sonarr's disk-access commands (its RequiresDiskAccess scheduling class),
-# compared case-folded like the command names above: the import passes
-# (completed-download handling, the legacy folder scan), the rename/move/delete
-# sweeps, and ManualImport itself. A started one blocks every queued one.
-_SONARR_DISK_COMMAND_NAMES = _SONARR_PROCESS_PASS_NAMES | {
-    "downloadedepisodesscan",
-    "manualimport",
-    "renamefiles",
-    "renameseries",
-    "moveseries",
-    "bulkmoveseries",
-    "deleteseriesfiles",
-}
+
+def in_flight_disk_commands(commands: Sequence[CommandResource]) -> list[CommandResource]:
+    """The Sonarr disk-access commands queued or executing now."""
+
+    return _with_status(commands, _SONARR_DISK_COMMAND_NAMES, _COMMAND_IN_FLIGHT_STATES)
 
 
-def started_disk_commands(commands: Sequence[CommandResource]) -> list[CommandResource]:
-    """The Sonarr disk-access commands executing right now.
+def disk_commands_changed_since(
+    before: Sequence[CommandResource], after: Sequence[CommandResource]
+) -> list[CommandResource]:
+    """The disk-access commands in `after` whose `(id, status)` pair `before` did not list."""
 
-    A ManualImport POSTed while one is `started` queues behind it and replays
-    minutes stale, re-copying files an intervening pass already placed. Only
-    `started` blocks: a queued pass is near-permanently present during a wait,
-    so blocking on it would starve the step-in entirely. The list form lets
-    `classify_commands` tell an own running command from a foreign one.
-    """
+    listed = {(command.id, (command.status or "").casefold()) for command in before}
+    return [
+        command
+        for command in after
+        if (command.name or "").casefold() in _SONARR_DISK_COMMAND_NAMES
+        and (command.id, (command.status or "").casefold()) not in listed
+    ]
 
-    return _started(commands, _SONARR_DISK_COMMAND_NAMES)
+
+def _completed_rescans(commands: Sequence[CommandResource]) -> list[CommandResource]:
+    """The completed RefreshMonitoredDownloads commands Sonarr lists."""
+
+    return _with_status(commands, _RESCAN_COMMAND_NAMES, _COMPLETED)
+
+
+def sonarr_restarted(commands: Sequence[CommandResource]) -> bool:
+    """Whether the list holds no completed rescan at all."""
+
+    return not _completed_rescans(commands)
+
+
+def rescanned_since_add(commands: Sequence[CommandResource], added_at: str) -> bool:
+    """Whether a completed rescan started at least the margin after the `added_at` stamp."""
+
+    added = parse_stamp_aware(added_at)
+    if added is None:
+        return False
+    floor = added + _RESCAN_PROOF_MARGIN
+    return any(command.started is not None and command.started >= floor for command in _completed_rescans(commands))
+
+
+def _with_status(
+    commands: Sequence[CommandResource], names: frozenset[str], statuses: frozenset[str]
+) -> list[CommandResource]:
+    """The named commands in one of `statuses`, casefolded on both axes."""
+
+    return [
+        command
+        for command in commands
+        if (command.name or "").casefold() in names and (command.status or "").casefold() in statuses
+    ]
 
 
 class CommandBlock(Enum):
-    """Why the running-command snapshot blocks a step-in this poll (values = log phrases).
-
-    Every block is a credited wait (the monitor pauses the ready clock). Only
-    `OWN_IMPORT` also claims the import as this record's.
-    """
+    """Why the command list blocks a step-in this poll (values are the log phrases)."""
 
     OWN_IMPORT = "our ManualImport is in flight"
     IN_FLIGHT_IMPORT = "a ManualImport is already in flight"
-    DISK_COMMAND = "Sonarr is running a disk command"
+    DISK_COMMAND = "Sonarr has a disk command queued or running"
+    DISK_COMMAND_CHANGED = "a Sonarr disk command ran during the step-in"
+    SONARR_RESTARTED = "Sonarr lists no completed rescan (just restarted)"
 
     @property
     def claims_import(self) -> bool:
@@ -257,9 +258,19 @@ class CommandBlock(Enum):
 
     @property
     def deferral(self) -> Deferral:
-        """The wait's reason for the probe: an import in flight, or a busy Sonarr."""
+        """The wait's reason for the probe: an import in flight, a busy Sonarr, or none after a restart."""
 
-        return Deferral.BUSY if self is CommandBlock.DISK_COMMAND else Deferral.IMPORT
+        if self in _IMPORT_BLOCKS:
+            return Deferral.IMPORT
+        return Deferral.NONE if self is CommandBlock.SONARR_RESTARTED else Deferral.BUSY
+
+    def waiting(self) -> ImportProbe:
+        """The wait this block calls for."""
+
+        return ImportProbe.waiting(command_issued=self.claims_import, deferral=self.deferral)
+
+
+_IMPORT_BLOCKS = frozenset({CommandBlock.OWN_IMPORT, CommandBlock.IN_FLIGHT_IMPORT})
 
 
 def classify_commands(
@@ -269,43 +280,16 @@ def classify_commands(
 ) -> CommandBlock | None:
     """Reduce one `/api/v3/command` snapshot to the block holding a step-in, or None when clear.
 
-    Pure (mirrors `classify_queue`). `is_own` is the executor's this-run
-    issued-id memory. An in-flight import covering this download outranks the
-    broad disk guard, and it is ours by the download-id match (survives
-    restarts) or an issued id. An unproven or foreign command still blocks
-    (never race it) and the wait is credited either way, so ownership only
-    decides whether the probe claims the import.
+    `is_own` says whether a command id is one this run POSTed.
     """
 
     in_flight = manual_import_in_flight(commands, match)
     if in_flight:
         owned = in_flight.by_download_id or is_own(in_flight.command.id)
         return CommandBlock.OWN_IMPORT if owned else CommandBlock.IN_FLIGHT_IMPORT
-    if started_disk_commands(commands):
+    if in_flight_disk_commands(commands):
         return CommandBlock.DISK_COMMAND
     return None
-
-
-def sonarr_process_pass_running(commands: Sequence[CommandResource]) -> bool:
-    """Whether Sonarr's monitored-download pass is executing right now.
-
-    A completed RefreshMonitoredDownloads immediately starts one, so the rescan
-    settles it briefly (see `ImportExecutor.refresh_downloads`). Checked apart
-    from the broader disk-command set because only this pass is self-inflicted
-    every poll.
-    """
-
-    return bool(_started(commands, _SONARR_PROCESS_PASS_NAMES))
-
-
-def _started(commands: Sequence[CommandResource], names: frozenset[str]) -> list[CommandResource]:
-    """The named commands currently `started`, casefolded on both axes."""
-
-    return [
-        command
-        for command in commands
-        if (command.name or "").casefold() in names and (command.status or "").casefold() == "started"
-    ]
 
 
 # The episode-history events that map a re-appeared download to a queue-hidden

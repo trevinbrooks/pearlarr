@@ -15,7 +15,8 @@ is a real `RunServices` subclass. The strategies are built bare
 
 import logging
 from collections.abc import Callable, Mapping, MutableMapping
-from datetime import UTC, datetime
+from dataclasses import replace
+from datetime import timedelta
 from typing import Any, NamedTuple, cast, override
 
 import pytest
@@ -79,6 +80,7 @@ from pearlarr.seadex_types import (
 from pearlarr.sonarr_episodes import sonarr_series_fingerprint
 
 from .builders import (
+    PENDING_ADDED,
     SEP,
     FakeCacheStore,
     FakeClock,
@@ -103,7 +105,15 @@ from .builders import (
     two_claim_record,
     url_item,
 )
-from .fakes import FakeRadarrClient, FakeSonarrClient, ScriptedEpisodes, diagnostic_messages, install_recording_hub
+from .fakes import (
+    NEUTRAL_RESCAN,
+    FakeRadarrClient,
+    FakeSonarrClient,
+    HookedSonarrClient,
+    ScriptedEpisodes,
+    diagnostic_messages,
+    install_recording_hub,
+)
 
 
 class _Item:
@@ -638,6 +648,11 @@ class _CompletedQbit:
         return [self._row]
 
 
+_RESCAN_NAME = "RefreshMonitoredDownloads"
+_RESCAN_AFTER_ADD = CommandResource(name=_RESCAN_NAME, status="completed", started=PENDING_ADDED + timedelta(days=1))
+_RESCAN_BEFORE_ADD = CommandResource(name=_RESCAN_NAME, status="completed", started=PENDING_ADDED - timedelta(days=1))
+
+
 def _make_sonarr_for_import(
     *,
     candidates: list[ManualImportCandidate] | None,
@@ -646,14 +661,14 @@ def _make_sonarr_for_import(
     quality_defs: list[QualityDefinition] | None = None,
     languages: list[Language] | None = None,
     commands: list[CommandResource] | None = None,
-    commands_script: list[list[CommandResource]] | None = None,
     command_status: CommandResource | None = None,
     command_status_script: list[CommandResource] | None = None,
     cmd_id: int | None = 42,
     config_overrides: dict[str, list[str] | str] | None = None,
     cache_store: FakeCacheStore | None = None,
-) -> tuple[SonarrSync, FakeSonarrClient]:
-    """A bare `SonarrSync` plus its scripted `self.sonarr` `FakeSonarrClient`.
+    clock: FakeClock | None = None,
+) -> tuple[SonarrSync, HookedSonarrClient]:
+    """A bare `SonarrSync` plus its scripted `self.sonarr` `HookedSonarrClient`.
 
     The fake returns the given queue records, current episodes, manual-import
     candidates, quality definitions, languages and an execute command id -
@@ -662,16 +677,16 @@ def _make_sonarr_for_import(
     empty, so the target episodes have NO file yet (they need importing) and the
     done-check never short-circuits. Pass episodes carrying a file to exercise the
     "already imported" / never-overwrite paths. `queue` defaults to empty (Sonarr
-    isn't tracking the download, so the strategy steps in). `commands` defaults to
-    empty (no in-flight ManualImport, so the dedup guard never trips). The fake's
-    refresh / command-status defaults resolve immediately so the rescan never waits.
+    isn't tracking the download, so the strategy steps in). `commands` lists the
+    commands beside the fake's neutral rescan, so no list given here reads as a
+    restart. The fake's refresh / command-status defaults resolve immediately so
+    the rescan never waits.
     """
 
-    sonarr = FakeSonarrClient(
+    sonarr = HookedSonarrClient(
         queue=queue,
         episodes=episodes,
-        commands=commands,
-        commands_script=commands_script,
+        commands=None if commands is None else [NEUTRAL_RESCAN, *commands],
         command_status=command_status,
         command_status_script=command_status_script,
         candidates=candidates,
@@ -684,6 +699,7 @@ def _make_sonarr_for_import(
         sonarr=sonarr,
         config=make_config(**overrides),
         cache_store=cache_store or FakeCacheStore(),
+        clock=clock,
     )
     return strat, sonarr
 
@@ -784,7 +800,7 @@ class TestImportCompletedQueueState:
         )
 
         busy = strat.import_completed(pending, "/d", AttemptKind.POLL)
-        sonarr.commands_return = []
+        sonarr.commands_return = [_RESCAN_BEFORE_ADD]
         idle = strat.import_completed(pending, "/d", AttemptKind.POLL)
 
         assert busy.deferral is Deferral.BUSY
@@ -832,9 +848,6 @@ class TestImportCompletedQueueState:
         assert len(sonarr.execute_calls) == 1
 
     def test_running_disk_command_defers_even_forced(self) -> None:
-        # A disk command outliving the rescan's bounded settle: a ManualImport
-        # POSTed now would queue behind it for a stale replay, so it waits (force
-        # must not override) with the determinate bar counts kept.
         pending = pending_import(infohash="abc123")
         strat, sonarr = _make_sonarr_for_import(
             candidates=[manual_candidate("/d/Show - 01 [1080p].mkv")],
@@ -980,9 +993,9 @@ class TestImportCompletedQueueState:
         strat.import_completed(pending, "/d", AttemptKind.POLL)
         executor = strat._reconciler._executor
 
-        assert executor.is_own_command(42) is True
+        assert executor._is_own_command(42) is True
         executor.reset()
-        assert executor.is_own_command(42) is False
+        assert executor._is_own_command(42) is False
 
     def test_wrongly_excluded_file_is_still_imported_via_repair(self) -> None:
         # THE under-import guard: accounting is complete via excluded_files and
@@ -1018,45 +1031,39 @@ class TestImportCompletedQueueState:
         files, _mode = sonarr.execute_calls[0]
         assert [f.path for f in files] == [f"/d/{wrong_file}"]
 
-    def test_rescan_settles_own_disk_pass_then_steps_in(self) -> None:
-        # A completed rescan immediately starts Sonarr's own import pass. The
-        # rescan waits an idle pass out; checking the disk guard right away
-        # tripped it in phase on EVERY poll and starved the step-in until the
-        # ready deadline.
-        running = _started_process_pass()
-        pending = pending_import(
-            infohash="abc123",
-            file_episode_map={"Show - 01 [1080p].mkv": [101]},
-        )
+    @pytest.mark.parametrize(
+        ("command_status", "command_status_script", "refresh_calls"),
+        [
+            pytest.param(
+                None,
+                [CommandResource(status="started"), CommandResource(status="completed")],
+                1,
+                id="slow-completes",
+            ),
+            pytest.param(CommandResource(status="started"), None, 2, id="never-completes"),
+        ],
+    )
+    def test_rescan_marker_lands_only_on_a_completed_rescan(
+        self,
+        command_status: CommandResource | None,
+        command_status_script: list[CommandResource] | None,
+        refresh_calls: int,
+    ) -> None:
+        clock = FakeClock()
         strat, sonarr = _make_sonarr_for_import(
             candidates=[manual_candidate("/d/Show - 01 [1080p].mkv")],
-            queue=[queue_record("ABC123", "importBlocked", status="warning")],
-            commands_script=[[running], [running]],
+            queue=[],
+            command_status=command_status,
+            command_status_script=command_status_script,
+            clock=clock,
         )
+        pending = pending_import(infohash="abc123")
 
-        probe = strat.import_completed(pending, "/d", AttemptKind.POLL)
+        strat.import_completed(pending, "/d", AttemptKind.POLL)
+        clock.tick(30)
+        strat.import_completed(pending, "/d", AttemptKind.POLL)
 
-        assert probe.files_present is False
-        assert probe.command_issued is True
-        assert len(sonarr.execute_calls) == 1
-        assert sonarr.list_commands_calls >= 3
-
-    def test_rescan_waits_for_slow_refresh_then_proceeds(self) -> None:
-        # The refresh command reads `started` on the first poll and terminal on
-        # the next: the rescan keeps polling instead of giving up on one reading.
-        pending = pending_import(
-            infohash="abc123",
-            file_episode_map={"Show - 01 [1080p].mkv": [101]},
-        )
-        strat, sonarr = _make_sonarr_for_import(
-            candidates=[manual_candidate("/d/Show - 01 [1080p].mkv")],
-            command_status_script=[CommandResource(status="started")],
-        )
-
-        probe = strat.import_completed(pending, "/d", AttemptKind.POLL)
-
-        assert probe.command_issued is True
-        assert len(sonarr.execute_calls) == 1
+        assert sonarr.refresh_calls == refresh_calls
 
     def test_rescan_asks_again_when_a_restart_orphans_it(self) -> None:
         pending = pending_import(
@@ -1072,32 +1079,10 @@ class TestImportCompletedQueueState:
 
         assert sonarr.refresh_calls == 2
 
-    def test_rescan_settle_is_bounded_under_a_long_pass(self) -> None:
-        # Sonarr copies files INSIDE its pass, so a pass that keeps running is
-        # an import, not a settle to wait out: the rescan stops after its bound
-        # (parking on it froze the cockpit) and the disk guard credits the poll.
-        pending = pending_import(infohash="abc123")
-        strat, sonarr = _make_sonarr_for_import(
-            candidates=[manual_candidate("/d/Show - 01 [1080p].mkv")],
-            commands=[_started_process_pass()],
-        )
-
-        probe = strat.import_completed(pending, "/d", AttemptKind.POLL)
-
-        # The settle reads plus the disk guard's one read.
-        assert sonarr.list_commands_calls == sonarr_import_module._PROCESS_PASS_SETTLE_MAX_POLLS + 1
-        assert probe.deferral is Deferral.BUSY
-        assert probe.command_issued is False
-        assert (probe.imported_count, probe.target_count) == (0, 1)
-        assert sonarr.execute_calls == []
-
-    def test_refresh_throttle_measures_from_the_refresh_end(self) -> None:
-        # Back-to-back records in one pass share one rescan however long the
-        # settle ran: stamped before the settle, every record's wait exceeded
-        # the window and each re-issued the rescan (queueing another pass).
+    def test_rescan_throttle_measures_from_the_rescan_end(self) -> None:
         sonarr = FakeSonarrClient(
             candidates=[manual_candidate("/d/Show - 01 [1080p].mkv")],
-            commands=[_started_process_pass()],
+            command_status_script=[CommandResource(status="started")] * 3,
             execute_command_id=42,
         )
         strat = make_sonarr_sync(
@@ -1112,7 +1097,7 @@ class TestImportCompletedQueueState:
 
         assert sonarr.refresh_calls == 1
 
-    def test_refresh_throttle_holds_after_a_rejected_post(self) -> None:
+    def test_rescan_throttle_holds_after_a_rejected_post(self) -> None:
         # The stamp lands on every exit, a rejected rescan included, so the
         # next record in the pass never retries it inside the window.
         sonarr = FakeSonarrClient(
@@ -1131,25 +1116,6 @@ class TestImportCompletedQueueState:
         strat.import_completed(pending_import(infohash="def456"), "/e", AttemptKind.POLL)
 
         assert sonarr.refresh_calls == 1
-
-    def test_rescan_skips_settle_when_refresh_never_confirms(self) -> None:
-        # The refresh never reads terminal within the bound: give up on it AND
-        # skip the settle (an unconfirmed rescan has no follow-up pass to wait
-        # for). The disk guard's read is then the only list_commands call.
-        pending = pending_import(
-            infohash="abc123",
-            file_episode_map={"Show - 01 [1080p].mkv": [101]},
-        )
-        strat, sonarr = _make_sonarr_for_import(
-            candidates=[manual_candidate("/d/Show - 01 [1080p].mkv")],
-            command_status=CommandResource(status="started"),
-        )
-
-        probe = strat.import_completed(pending, "/d", AttemptKind.POLL)
-
-        assert probe.command_issued is True
-        assert len(sonarr.execute_calls) == 1
-        assert sonarr.list_commands_calls == 1
 
     def test_clean_pending_forced_steps_in(self) -> None:
         # force=True (snapshot / final monitor poll): stop deferring, issue the
@@ -1433,9 +1399,6 @@ class TestImportCompletedQueueState:
 
         second = strat.import_completed(pending, "/d", AttemptKind.POLL)
         assert second.files_present is True
-        # Episodes were re-read fresh each poll (not cached), and the landed import
-        # was detected before any second execute.
-        assert len(sonarr.episodes_calls) == 2
         assert len(sonarr.execute_calls) == 1
 
     def test_self_heal_on_one_poll_unlocks_the_fast_path_on_the_next(self) -> None:
@@ -1492,8 +1455,6 @@ class TestImportCompletedQueueState:
         assert (fast.files_present, fast.placements) == (True, {})
 
     def test_not_in_queue_steps_in(self) -> None:
-        # Sonarr isn't tracking the download (our holding category) -> step in,
-        # issuing the import command (command_issued until the copy lands).
         pending = pending_import(
             infohash="abc123",
             file_episode_map={"Show - 01 [1080p].mkv": [101]},
@@ -1508,7 +1469,6 @@ class TestImportCompletedQueueState:
         assert probe.files_present is False
         assert probe.command_issued is True
         assert len(sonarr.candidate_calls) == 1
-        # Stepping in must ISSUE the import, not just scan candidates.
         assert len(sonarr.execute_calls) == 1
 
 
@@ -1648,7 +1608,11 @@ class TestScratchResetParity:
         scratch.warned_unplaceable.add("h")
         scratch.warned_empty_folder.add("h")
         scratch.warned_default_quality = True
-        scratch.last_refresh_monotonic = 1.0
+        scratch.last_rescan_monotonic = 1.0
+        scratch.rescanned.add("h")
+        scratch.kept_scans["h"] = sonarr_import_module._KeptScan(
+            "/d", sonarr_import_module._CandidateScan([], history=None), 1.0
+        )
         scratch.issued_command_ids.add(42)
         scratch.completed_download_handling = False
         scan = executor.scanner._scratch
@@ -1656,7 +1620,6 @@ class TestScratchResetParity:
         scan.history_verdicts["h"] = DownloadHistoryVerdict(dead_tracked=True)
         scan.path_mappings = []
         scan.translated_paths["/a"] = "/b"
-        scan.rescan_started = _RESCAN_STARTED
 
         executor.reset()
 
@@ -1732,11 +1695,7 @@ class TestInFlightManualImportGuard:
         assert probe.command_issued is True
         assert len(sonarr.execute_calls) == 1
 
-    def test_queued_import_for_other_download_does_not_suppress(self) -> None:
-        # A QUEUED ManualImport for a DIFFERENT torrent must not block ours: the
-        # disk guard ignores queued commands and the in-flight hash match misses.
-        # (A STARTED foreign one now defers via the disk guard - it queue-blocks
-        # our POST just like Sonarr's own passes.)
+    def test_queued_import_for_other_download_defers(self) -> None:
         pending = pending_import(
             infohash="abc123",
             file_episode_map={"Show - 01 [1080p].mkv": [101]},
@@ -1749,9 +1708,9 @@ class TestInFlightManualImportGuard:
 
         probe = strat.import_completed(pending, "/d", AttemptKind.POLL)
 
-        assert probe.files_present is False
-        assert probe.command_issued is True
-        assert len(sonarr.execute_calls) == 1
+        assert probe.deferral is Deferral.BUSY
+        assert probe.command_issued is False
+        assert sonarr.execute_calls == []
 
 
 class TestImportCompletedPayload:
@@ -2197,7 +2156,6 @@ class TestMultiSeriesImport:
 
         assert probe.command_issued is True
         assert _posted_series(sonarr) == {f"/d/{_SHOW_FILE}": 7, f"/d/{_OTHER_FILE}": 8}
-        assert sonarr.episodes_calls == [7, 8]
 
     def test_an_unscoped_claims_file_posts_under_the_index_holding_its_id(self) -> None:
         # The series-8 claim is unscoped, so no window holds 201: the same-poll index of series 8 does.
@@ -2221,22 +2179,22 @@ class TestMultiSeriesImport:
         strat, sonarr = _make_sonarr_for_import(candidates=self._candidates(stray))
 
         polled = strat.import_completed(pending, "/d", AttemptKind.POLL)
-        assert polled == ImportProbe.waiting(target_count=1)
+        assert polled == replace(ImportProbe.waiting(), target_count=1)
         assert diagnostic_messages(recording, Severity.WARNING) == []
 
         deadline = strat.import_completed(pending, "/d", AttemptKind.DEADLINE)
 
-        assert deadline == ImportProbe.waiting(target_count=1)
+        assert deadline == replace(ImportProbe.waiting(), target_count=1)
         assert sonarr.execute_calls == []
         [warning] = diagnostic_messages(recording, Severity.WARNING)
         assert "resolve to no series" in warning
         assert normalize_basename(stray) in warning
 
-    def test_a_failed_index_read_still_posts_under_the_claims_series(self) -> None:
-        # Series 8's episode read fails (an empty list stands in): the claim's window still routes 201 there.
+    def test_an_empty_index_still_posts_under_the_claims_series(self) -> None:
+        # Series 8's index is empty: the claim's window still routes 201 there.
         pending = _two_series_record()
         sonarr = _PerSeriesSonarr(
-            {7: [sonarr_ep(1, 1, ep_id=101, episode_file_id=0)]},
+            {7: [sonarr_ep(1, 1, ep_id=101, episode_file_id=0)], 8: []},
             candidates=self._candidates(_SHOW_FILE, _OTHER_FILE),
         )
 
@@ -2246,11 +2204,11 @@ class TestMultiSeriesImport:
         assert _posted_series(sonarr) == {f"/d/{_SHOW_FILE}": 7, f"/d/{_OTHER_FILE}": 8}
 
     def test_a_one_series_record_posts_under_its_only_series_without_an_index(self) -> None:
-        # An unscoped claim and a failed episode read leave no window and no index to route by: the
-        # record's one series is where its files go, never a stranded wait.
+        # An unscoped claim and an empty index leave no window and no index to route by: the record's
+        # one series is where its files go.
         pending = pending_import()
         strat, sonarr = _make_sonarr_for_import(candidates=self._candidates(_SHOW_FILE))
-        sonarr.episodes_return = None
+        sonarr.episodes_return = []
 
         probe = strat.import_completed(pending, "/d", AttemptKind.POLL)
 
@@ -3241,12 +3199,6 @@ def _clean_history() -> HistoryPage:
     )
 
 
-_RESCAN_STARTED = datetime(2026, 1, 1, 12, 0, tzinfo=UTC)
-_COMPLETED_RESCAN = CommandResource(status="completed", started=_RESCAN_STARTED)
-_STARTED_BEFORE_RESCAN = datetime(2026, 1, 1, 11, 0, tzinfo=UTC)
-_STARTED_AFTER_RESCAN = datetime(2026, 1, 1, 12, 0, 5, tzinfo=UTC)
-
-
 def _tv_mapping() -> RemotePathMapping:
     """The incident-shaped mapping: qBittorrent's `/d` is Sonarr's `/remote/tv`."""
 
@@ -3269,7 +3221,7 @@ class TestFolderScanFallback:
         folder_candidates: list[ManualImportCandidate] | None,
         mappings: list[RemotePathMapping] | None = None,
         config_overrides: dict[str, list[str] | str] | None = None,
-    ) -> tuple[SonarrSync, FakeSonarrClient]:
+    ) -> tuple[SonarrSync, HookedSonarrClient]:
         # candidates=None: the downloadId scan fails (the 500 shape) -> fallback.
         strat, sonarr = _make_sonarr_for_import(candidates=None, config_overrides=config_overrides)
         sonarr.history_page_return = history
@@ -3281,14 +3233,12 @@ class TestFolderScanFallback:
     def _answer_empty_by_id(
         sonarr: FakeSonarrClient,
         *,
-        started: datetime | None = _STARTED_BEFORE_RESCAN,
-        rescan: CommandResource = _COMPLETED_RESCAN,
+        commands: tuple[CommandResource, ...] = (_RESCAN_AFTER_ADD,),
     ) -> None:
-        """Script the downloadId scan to answer `[]`, after a rescan that ruled out a restart by default."""
+        """Script the downloadId scan to answer `[]` under the given command list."""
 
         sonarr.candidates_return = []
-        sonarr.started_at_return = started
-        sonarr.command_status_return = rescan
+        sonarr.commands_return = list(commands)
 
     @staticmethod
     def _poll_then_empty_the_folder(strat: SonarrSync, sonarr: FakeSonarrClient, pending: PendingImport) -> ImportProbe:
@@ -3632,16 +3582,12 @@ class TestFolderScanFallback:
         strat.import_completed(pending, "/d/Show", AttemptKind.POLL)
         assert len(sonarr.candidate_calls) == 2
 
-    @pytest.mark.parametrize("sonarr_started", [_STARTED_BEFORE_RESCAN, _RESCAN_STARTED], ids=["before", "same-second"])
-    def test_empty_download_id_scan_of_a_dead_tracked_download_imports_from_its_folder(
-        self,
-        sonarr_started: datetime,
-    ) -> None:
+    def test_empty_download_id_scan_of_a_dead_tracked_download_imports_from_its_folder(self) -> None:
         strat, sonarr = self._strat(
             history=_dead_history(),
             folder_candidates=[manual_candidate("/d/Show/Show - 01 [1080p].mkv")],
         )
-        self._answer_empty_by_id(sonarr, started=sonarr_started)
+        self._answer_empty_by_id(sonarr)
 
         strat.import_completed(pending_import(), "/d/Show", AttemptKind.POLL)
 
@@ -3649,30 +3595,57 @@ class TestFolderScanFallback:
         assert mode == "copy"
         assert files[0].downloadId is None
 
-    @pytest.mark.parametrize(
-        ("sonarr_started", "rescan"),
-        [
-            (_STARTED_AFTER_RESCAN, _COMPLETED_RESCAN),
-            (None, _COMPLETED_RESCAN),
-            (_STARTED_BEFORE_RESCAN, CommandResource(status="failed", started=_RESCAN_STARTED)),
-        ],
-        ids=["restarted", "status-unreadable", "rescan-failed"],
-    )
-    def test_empty_download_id_scan_waits_unless_a_restart_is_ruled_out(
-        self,
-        sonarr_started: datetime | None,
-        rescan: CommandResource,
-    ) -> None:
+    def test_empty_download_id_scan_waits_without_the_proof(self) -> None:
         strat, sonarr = self._strat(
             history=_dead_history(),
             folder_candidates=[manual_candidate("/d/Show/Show - 01 [1080p].mkv")],
         )
-        self._answer_empty_by_id(sonarr, started=sonarr_started, rescan=rescan)
+        self._answer_empty_by_id(sonarr, commands=(_RESCAN_BEFORE_ADD,))
 
         strat.import_completed(pending_import(), "/d/Show", AttemptKind.POLL)
 
         assert sonarr.execute_calls == []
-        assert sonarr.history_probe_calls == []
+
+    def test_dead_tracked_record_without_the_proof_rescans_then_imports_from_its_folder(self) -> None:
+        strat, sonarr = self._strat(
+            history=_dead_history(),
+            folder_candidates=[manual_candidate("/d/Show/Show - 01 [1080p].mkv")],
+        )
+        self._answer_empty_by_id(sonarr, commands=(_RESCAN_BEFORE_ADD,))
+
+        def prove() -> None:
+            sonarr.commands_return = [_RESCAN_AFTER_ADD]
+
+        sonarr.on_rescan = prove
+
+        strat.import_completed(pending_import(), "/d/Show", AttemptKind.POLL)
+
+        assert sonarr.refresh_calls == 1
+        [(files, _mode)] = sonarr.execute_calls
+        assert files[0].downloadId is None
+
+    @pytest.mark.parametrize("history", [_clean_history(), None], ids=["clean", "unreadable"])
+    def test_folder_scan_is_never_kept(self, history: HistoryPage | None) -> None:
+        strat, sonarr = self._strat(
+            history=history,
+            folder_candidates=[manual_candidate("/d/Show/Show - 01 [1080p].mkv")],
+        )
+        sonarr.queue_return = [queue_record("ABC123", "importBlocked", status="warning")]
+
+        def start_a_pass() -> None:
+            sonarr.commands_return = [_RESCAN_BEFORE_ADD, _started_process_pass()]
+
+        sonarr.on_scan = start_a_pass
+        pending = pending_import()
+
+        blocked = strat.import_completed(pending, "/d/Show", AttemptKind.POLL)
+        sonarr.on_scan = None
+        sonarr.folder_candidates_return = None
+        sonarr.commands_return = [_RESCAN_BEFORE_ADD]
+        strat.import_completed(pending, "/d/Show", AttemptKind.POLL)
+
+        assert blocked.deferral is Deferral.BUSY
+        assert sonarr.execute_calls == []
 
     @pytest.mark.parametrize("history", [_clean_history(), None], ids=["clean", "unreadable"])
     def test_empty_download_id_scan_waits_unless_history_reads_dead(self, history: HistoryPage | None) -> None:

@@ -597,10 +597,9 @@ class TestPendingStateAndProbe:
         assert PendingState.QUEUED == "queued"
 
     def test_imported_probe_claims_the_files_without_a_command(self) -> None:
-        probe = ImportProbe.imported(imported_count=2, target_count=2)
+        probe = ImportProbe.imported()
         assert probe.files_present is True
         assert probe.command_issued is False
-        assert (probe.imported_count, probe.target_count) == (2, 2)
 
     def test_waiting_probe_carries_the_attempt_flags(self) -> None:
         probe = ImportProbe.waiting(command_issued=True, deferral=Deferral.IMPORT)

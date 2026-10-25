@@ -26,7 +26,7 @@ from .protocols import ArrSync
 from .radarr_client import AbstractRadarrClient, RadarrClient, collect_anime_movies
 from .run_services import RunDeps, RunServices, bind_arr_http
 from .seadex_types import ArrReleases, HistoryRecord, ProgressSink, RadarrItem, flagged_urls
-from .stamps import parse_stamp_or_none
+from .stamps import parse_stamp_aware
 
 # Clock-skew cushion subtracted from the oldest pending record's grab time before the history query.
 # The added_at stamps are converted to UTC first, so this absorbs only genuine NTP drift, never a timezone
@@ -273,16 +273,13 @@ class RadarrSync(ArrSync[RadarrItem]):
         return _ImportEvidence(imported, readable=True)
 
     def _history_query_start(self) -> datetime:
-        """Aware-UTC lower bound for the import-history query: oldest pending grab, minus skew.
-
-        The `added_at` stamps are local-naive, so `.astimezone(UTC)` reads them as local and converts.
-        """
+        """Aware-UTC lower bound for the import-history query: oldest pending grab, minus skew."""
 
         floor = datetime.now(UTC) - timedelta(days=self._config.imports.pending_max_age_days)
         stamps = [
             moment.astimezone(UTC)
             for raw in self._services.records.rows().values()
-            if (moment := parse_stamp_or_none(added_at_of(raw))) is not None
+            if (moment := parse_stamp_aware(added_at_of(raw))) is not None
         ]
         oldest = min(stamps) if stamps else floor
         return oldest - timedelta(hours=_HISTORY_SKEW_HOURS)

@@ -452,7 +452,7 @@ class SonarrHandler(QuietHandler):
                 self._send_json({"id": cmd_id, "name": "RefreshMonitoredDownloads", "status": "completed"})
         elif route == "/api/v3/command":
             cmd = _world.state.manual_command()
-            body: list[Json] = []
+            body: list[Json] = [{"id": 1, "name": "RefreshMonitoredDownloads", "status": "completed"}]
             if cmd and now() - cmd[1] < CMD_RUN_S:
                 body.append({"id": cmd[0], "name": "ManualImport", "status": "started"})
             self._send_json(body)
