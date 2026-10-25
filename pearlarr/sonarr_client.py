@@ -3,7 +3,6 @@
 import logging
 from abc import ABC, abstractmethod
 from dataclasses import replace
-from datetime import datetime
 from typing import cast, override
 
 from pydantic import ValidationError
@@ -27,7 +26,6 @@ from .seadex_types import (
     SonarrEpisode,
     SonarrItem,
     SonarrSeries,
-    SystemStatus,
     validate_each,
     validation_summary,
 )
@@ -97,13 +95,10 @@ class AbstractSonarrClient(ABC):
     def command_status(self, command_id: int) -> CommandResource: ...
 
     @abstractmethod
-    def list_commands(self) -> list[CommandResource]: ...
+    def list_commands(self) -> list[CommandResource] | None: ...
 
     @abstractmethod
     def download_client_config(self) -> DownloadClientConfig: ...
-
-    @abstractmethod
-    def started_at(self) -> datetime | None: ...
 
     @abstractmethod
     def history_since(self, date: str) -> list[HistoryRecord] | None: ...
@@ -431,15 +426,15 @@ class SonarrClient(AbstractSonarrClient):
             return CommandResource()
 
     @override
-    def list_commands(self) -> list[CommandResource]:
-        """All Sonarr commands (`/api/v3/command`), or an empty list on failure."""
+    def list_commands(self) -> list[CommandResource] | None:
+        """All Sonarr commands (`/api/v3/command`). None when the read failed."""
 
         raw = self._http.get_json_list(
             "/api/v3/command",
-            warn="Could not fetch the Sonarr command list ({detail}) - assuming nothing is in flight",
+            warn="Could not fetch the Sonarr command list ({detail}) - will retry",
         )
         if raw is None:
-            return []
+            return None
         return validate_each(CommandResource, raw)
 
     @override
@@ -455,18 +450,6 @@ class SonarrClient(AbstractSonarrClient):
         except ValidationError as e:
             hub_warn(warn.format(detail=f"malformed response: {validation_summary(e)}"))
             return DownloadClientConfig()
-
-    @override
-    def started_at(self) -> datetime | None:
-        """When the running Sonarr started (`/api/v3/system/status`), or None on failure."""
-
-        payload = self._poll_http.get_json_dict(
-            "/api/v3/system/status",
-            warn="Could not read Sonarr's status ({detail}) - assuming it restarted",
-        )
-        if payload is None:
-            return None
-        return SystemStatus.model_validate(payload).start_time
 
     @override
     def history_since(self, date: str) -> list[HistoryRecord] | None:

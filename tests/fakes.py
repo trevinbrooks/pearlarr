@@ -5,7 +5,7 @@ import io
 import logging
 import re
 from collections.abc import Callable, Iterable, Mapping
-from datetime import datetime
+from datetime import UTC, datetime
 from enum import Enum, auto
 from typing import override
 
@@ -265,6 +265,12 @@ class FakeStrategy(ArrSync[FakeArrItem]):
         return self._supports_blocking_monitor
 
 
+NEUTRAL_RESCAN = CommandResource(
+    name="RefreshMonitoredDownloads", status="completed", started=datetime(2000, 1, 1, tzinfo=UTC)
+)
+"""A completed rescan from long before any add: an idle Sonarr's command list."""
+
+
 class FakeSonarrClient(AbstractSonarrClient):
     """A typed, scriptable stand-in for `AbstractSonarrClient`."""
 
@@ -287,15 +293,14 @@ class FakeSonarrClient(AbstractSonarrClient):
         folder_candidates: list[ManualImportCandidate] | None = None,
         history_page: HistoryPage | None = None,
         path_mappings: list[RemotePathMapping] | None = None,
-        commands_script: list[list[CommandResource]] | None = None,
         completed_download_handling: bool = True,
     ) -> None:
         self.all_series_return: list[SonarrItem] = all_series or []
         # Reassign to None after construction to script a failed queue read.
         self.queue_return: list[QueueRecord] | None = queue or []
         self.episodes_return: list[SonarrEpisode] | None = [] if episodes is None else episodes
-        self.commands_return: list[CommandResource] = commands or []
-        self.commands_script: list[list[CommandResource]] = commands_script or []
+        # Reassign to None after construction to script a failed command-list read.
+        self.commands_return: list[CommandResource] | None = [NEUTRAL_RESCAN] if commands is None else commands
         self.candidates_return: list[ManualImportCandidate] | None = candidates
         self.quality_defs_return: list[QualityDefinition] = quality_defs or []
         self.languages_return: list[Language] = languages or []
@@ -316,8 +321,6 @@ class FakeSonarrClient(AbstractSonarrClient):
             enable_completed_download_handling=completed_download_handling,
         )
         self.queue_delete_return: DeleteOutcome = DeleteOutcome.OK
-        # When the running Sonarr started (None = the status read failed).
-        self.started_at_return: datetime | None = None
         self.candidate_calls: list[PendingImport] = []
         self.parse_calls: list[str] = []
         self.execute_calls: list[tuple[list[ManualImportFile], str]] = []
@@ -326,7 +329,6 @@ class FakeSonarrClient(AbstractSonarrClient):
         self.queue_delete_calls: list[int] = []
         self.episodes_calls: list[int] = []
         self.refresh_calls: int = 0
-        self.list_commands_calls: int = 0
         self.history_calls: list[str] = []
         self.folder_candidate_calls: list[tuple[str, str]] = []
         self.history_probe_calls: list[str] = []
@@ -349,11 +351,8 @@ class FakeSonarrClient(AbstractSonarrClient):
         return self.queue_delete_return
 
     @override
-    def list_commands(self) -> list[CommandResource]:
-        self.list_commands_calls += 1
-        if self.commands_script:
-            return self.commands_script.pop(0)
-        return self.commands_return
+    def list_commands(self) -> list[CommandResource] | None:
+        return None if self.commands_return is None else list(self.commands_return)
 
     @override
     def episodes(self, series_id: int, *, quiet: bool = False) -> list[SonarrEpisode] | None:
@@ -435,9 +434,54 @@ class FakeSonarrClient(AbstractSonarrClient):
         self.download_client_config_calls += 1
         return self.download_client_config_return
 
+
+class HookedSonarrClient(FakeSonarrClient):
+    """A fake whose state a test changes at a chosen read. Each hook runs after its read's answer is taken."""
+
+    on_queue: Callable[[], None] | None = None
+    on_rescan: Callable[[], None] | None = None
+    on_scan: Callable[[], None] | None = None
+    on_episodes: Callable[[], None] | None = None
+    on_languages: Callable[[], None] | None = None
+
     @override
-    def started_at(self) -> datetime | None:
-        return self.started_at_return
+    def queue(self) -> list[QueueRecord] | None:
+        answer = super().queue()
+        if self.on_queue is not None:
+            self.on_queue()
+        return answer
+
+    @override
+    def refresh_monitored_downloads(self) -> int | None:
+        answer = super().refresh_monitored_downloads()
+        if self.on_rescan is not None:
+            self.on_rescan()
+        return answer
+
+    @override
+    def manual_import_candidates(
+        self,
+        *,
+        pending: PendingImport,
+    ) -> list[ManualImportCandidate] | None:
+        answer = super().manual_import_candidates(pending=pending)
+        if self.on_scan is not None:
+            self.on_scan()
+        return answer
+
+    @override
+    def episodes(self, series_id: int, *, quiet: bool = False) -> list[SonarrEpisode] | None:
+        answer = super().episodes(series_id, quiet=quiet)
+        if self.on_episodes is not None:
+            self.on_episodes()
+        return answer
+
+    @override
+    def languages(self) -> list[Language]:
+        answer = super().languages()
+        if self.on_languages is not None:
+            self.on_languages()
+        return answer
 
 
 class FakeRadarrClient(AbstractRadarrClient):

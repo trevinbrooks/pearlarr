@@ -7,6 +7,11 @@ Pearlarr is a fork of [bbtufty/seadexarr](https://github.com/bbtufty/seadexarr).
 
 ## [Unreleased]
 
+### Fixed
+
+- Imports no longer stall as "Sonarr busy" while a blocked download sits in Sonarr's queue. Pearlarr asks Sonarr to rescan once per finished torrent instead of on every poll.
+- A failed read of Sonarr's command list or episode list during an import poll now waits for the next poll instead of stepping in as if Sonarr were idle.
+
 ## [1.5.5] - 2026-10-25
 
 ### Fixed

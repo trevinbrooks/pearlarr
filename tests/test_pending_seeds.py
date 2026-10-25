@@ -925,6 +925,7 @@ class TestTrustedGroups:
         strat = make_sonarr_sync(sonarr=sonarr, cache_store=store)
         own = pending_import(release_group="Ours", file_episode_map={"Show - 01.mkv": [101]})
 
-        seed = strat._reconciler._seed_statuses(own, [101])
+        seed = strat._reconciler._read_seed(own, [101])
 
+        assert seed is not None
         assert seed.statuses.by_id == {101: EpisodeFileStatus.RECOMMENDED}

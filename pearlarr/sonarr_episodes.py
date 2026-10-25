@@ -263,25 +263,18 @@ class SonarrEpisodes:
             self._ep_list_cache[series_id] = ep_list
         return ep_list
 
-    def fresh_episodes(self, series_id: int) -> list[SonarrEpisode]:
-        """Fetch the series' episodes FRESH for each import poll.
-
-        Import verification reads the episode files as the source of truth for
-        "already imported", and that state changes as Sonarr (or our own manual
-        import) places files. A per-run cache would go stale across the monitor's
-        repeated polls and never observe the import landing - the record would time
-        out as "still importing" (or, in `move` mode where the file leaves the
-        download folder, never be confirmed at all). So this fetches fresh every
-        call and refreshes the per-run cache for any later reader. A transient
-        fetch failure falls back to the last-known list (or empty) so a later poll
-        simply retries.
-        """
+    def read_episodes(self, series_id: int) -> list[SonarrEpisode] | None:
+        """The series' episodes read now, refreshing the per-run cache. None when the read failed."""
 
         fetched = self.sonarr.episodes(series_id)
-        if fetched is None:
-            return self._ep_list_cache.get(series_id, [])
-        self._ep_list_cache[series_id] = fetched
+        if fetched is not None:
+            self._ep_list_cache[series_id] = fetched
         return fetched
+
+    def last_known_episodes(self, series_id: int) -> list[SonarrEpisode]:
+        """The series' last successfully read episodes this run, or empty."""
+
+        return self._ep_list_cache.get(series_id, [])
 
     def get_ep_list(
         self,

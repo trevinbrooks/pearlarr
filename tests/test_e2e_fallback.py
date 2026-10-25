@@ -46,6 +46,7 @@ import threading
 from collections.abc import Generator
 from contextlib import contextmanager
 from dataclasses import dataclass, field
+from datetime import UTC, datetime, timedelta
 from enum import StrEnum
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
@@ -64,7 +65,7 @@ from pearlarr.manual_import import EntryClaim, EntryNames, PendingImport, normal
 from pearlarr.output import current_hub
 from pearlarr.paths import DATA_DIR_ENV
 from pearlarr.seadex_types import Json
-from pearlarr.stamps import now_stamp
+from pearlarr.stamps import stamp_of
 
 from .builders import make_config
 from .http_mock import sonarr_fixture
@@ -239,6 +240,8 @@ class _World:
     files_landed: bool = False
     cmd_seq: int = 100
     manual_commands: list[tuple[int, dict[str, Json]]] = field(default_factory=list[tuple[int, dict[str, Json]]])
+    rescans: dict[int, datetime] = field(default_factory=dict[int, datetime])
+    """Each RefreshMonitoredDownloads POSTed, by command id, with its POST time."""
 
     def record(self, request: _Request) -> None:
         with self.lock:
@@ -251,7 +254,7 @@ class _World:
             return [r for r in self.requests if r.path == path]
 
     def next_command(self, name: str, body: dict[str, Json]) -> int:
-        """Allocate a command id. A ManualImport also lands the files.
+        """Allocate a command id, landing a ManualImport's files and stamping a rescan.
 
         Landing on POST is the real timeline the dead-tracked pin relies on:
         Sonarr's per-file imports land BEFORE the poisoned Execute tail fails
@@ -263,6 +266,8 @@ class _World:
             if name.casefold() == "manualimport":
                 self.manual_commands.append((self.cmd_seq, body))
                 self.files_landed = True
+            elif name.casefold() == "refreshmonitoreddownloads":
+                self.rescans[self.cmd_seq] = datetime.now(UTC)
             return self.cmd_seq
 
     def manual_command_ids(self) -> set[int]:
@@ -381,13 +386,21 @@ class _World:
         }
 
     def command_list_payload(self) -> list[Json]:
-        """Every issued ManualImport, reported `failed` (the poisoned Execute tail)."""
+        """A neutral old rescan, every rescan POSTed, completed at its POST time, and every ManualImport, `failed`."""
 
         with self.lock:
-            return [
+            neutral: list[Json] = [
+                {"id": 1, "name": "RefreshMonitoredDownloads", "status": "completed", "started": "2000-01-01T00:00:00Z"}
+            ]
+            rescans: list[Json] = [
+                {"id": cid, "name": "RefreshMonitoredDownloads", "status": "completed", "started": at.isoformat()}
+                for cid, at in self.rescans.items()
+            ]
+            imports: list[Json] = [
                 {"id": cid, "name": "ManualImport", "status": "failed", "body": {"files": body.get("files")}}
                 for cid, body in self.manual_commands
             ]
+            return neutral + rescans + imports
 
 
 def _parse_payload(title: str) -> Json:
@@ -543,9 +556,7 @@ class _SonarrHandler(_JsonHandler):
         elif (match := _COMMAND_ID.fullmatch(route)) is not None:
             cid = int(match.group(1))
             status = "failed" if cid in self.world.manual_command_ids() else "completed"
-            self._send_json({"id": cid, "name": "ManualImport", "status": status, "started": "2026-01-01T00:01:00Z"})
-        elif route == "/api/v3/system/status":
-            self._send_json({"startTime": "2026-01-01T00:00:00Z"})
+            self._send_json({"id": cid, "name": "ManualImport", "status": status})
         else:
             self._send_json({}, 404)
 
@@ -674,7 +685,7 @@ def _seed_pending(cache_path: Path, checksum: str, scenario: _Scenario) -> None:
 
     named = _ABS_FILES if scenario.listing is _Listing.ABSOLUTE else _EPISODES
     mapped = scenario.listing is _Listing.EPISODES and not scenario.imported_unseen
-    stamp = now_stamp()
+    stamp = stamp_of(datetime.now() - timedelta(minutes=5))
     claim = EntryClaim(
         al_id=_AL_ID,
         series_id=_SERIES_ID,

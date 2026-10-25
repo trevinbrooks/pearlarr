@@ -70,6 +70,8 @@ def _make_radarr() -> RadarrClient:
 # shapes the port replaces.
 
 _CANDIDATE_PATH = "/d/Show - 01 [1080p].mkv"
+# One completed rescan: the command list of a Sonarr that is neither busy nor freshly restarted.
+_NEUTRAL_RESCAN: dict[str, object] = {"id": 1, "name": "RefreshMonitoredDownloads", "status": "completed"}
 
 
 def _bare_snapshot(pending: PendingImport) -> RecordSnapshot:
@@ -89,14 +91,15 @@ def _drive_manual_import(
     respx.get(f"{_BASE}/manualimport").respond(json=[candidate])
     respx.get(f"{_BASE}/qualitydefinition").respond(json=quality_defs)
     respx.get(f"{_BASE}/language").respond(json=languages)
+    respx.get(f"{_BASE}/command").respond(json=[_NEUTRAL_RESCAN])
     post_route = respx.post(f"{_BASE}/command").respond(json={"id": 55})
 
     client = _make_sonarr_client()
     executor = ImportExecutor(make_run_deps(), client, FileEpisodeMapper(client))
     pending = pending_import()
-    probe = executor.run_manual_import(
-        pending, "/d", PollReading(_bare_snapshot(pending), in_queue=True, at_deadline=False)
-    )
+    scan = executor.scanner.scan(pending, "/d", untracked=False)
+    assert scan is not None
+    probe = executor.run_manual_import(pending, "/d", PollReading(scan, _bare_snapshot(pending), [], at_deadline=False))
 
     assert probe.files_present is False
     assert probe.command_issued is True
@@ -160,14 +163,15 @@ def test_golden_body_dead_tracked_folder_import_omits_download_id() -> None:
     respx.get(f"{_BASE}/remotepathmapping").respond(json=[])
     respx.get(f"{_BASE}/qualitydefinition").respond(json=[])
     respx.get(f"{_BASE}/language").respond(json=[{"id": 8, "name": "Japanese"}])
+    respx.get(f"{_BASE}/command").respond(json=[_NEUTRAL_RESCAN])
     post_route = respx.post(f"{_BASE}/command").respond(json={"id": 55})
 
     client = _make_sonarr_client()
     executor = ImportExecutor(make_run_deps(), client, FileEpisodeMapper(client))
     pending = pending_import()
-    probe = executor.run_manual_import(
-        pending, "/d", PollReading(_bare_snapshot(pending), in_queue=False, at_deadline=False)
-    )
+    scan = executor.scanner.scan(pending, "/d", untracked=True)
+    assert scan is not None
+    probe = executor.run_manual_import(pending, "/d", PollReading(scan, _bare_snapshot(pending), [], at_deadline=False))
 
     assert probe.files_present is False
     assert probe.command_issued is True

@@ -92,7 +92,7 @@ from pearlarr.seadex_types import (
 from pearlarr.sonarr_client import AbstractSonarrClient
 from pearlarr.sonarr_episodes import SonarrEpisodes
 from pearlarr.sonarr_parse import SonarrParseCache
-from pearlarr.stamps import UPDATED_AT_STR_FORMAT
+from pearlarr.stamps import UPDATED_AT_STR_FORMAT, parse_stamp
 from pearlarr.torrents import AddOutcome, AddResult, TorrentService
 
 from .fakes import FakeClock, FakeRadarrClient, FakeSonarrClient
@@ -1229,7 +1229,8 @@ def numbered_names(prefix: str, count: int, tails: Sequence[str] = ()) -> list[s
 PENDING_AL_ID = 1
 
 _CLAIM_KEYS = frozenset(EntryClaim.__dataclass_fields__)
-_STAMP = "2026-06-24 00:00:00"
+PENDING_STAMP = "2026-06-24 00:00:00"
+PENDING_ADDED = parse_stamp(PENDING_STAMP).astimezone()
 
 
 def entry_claim(**overrides: Any) -> EntryClaim:
@@ -1245,7 +1246,7 @@ def entry_claim(**overrides: Any) -> EntryClaim:
         "names": EntryNames(),
         "preowned_episode_ids": (),
         "slice_coverage": None,
-        "claimed_at": _STAMP,
+        "claimed_at": PENDING_STAMP,
     }
     defaults.update(overrides)
     for key in ("ordered_episode_ids", "preowned_episode_ids"):
@@ -1284,7 +1285,7 @@ def pending_import(**overrides: Any) -> PendingImport:
         "release_group": "SubGroup",
         "is_dual_audio": False,
         "seadex_files": ("Show - 01 [1080p].mkv",),
-        "added_at": _STAMP,
+        "added_at": PENDING_STAMP,
     }
     defaults.update(overrides)
     if "claims" not in defaults:

@@ -1,6 +1,10 @@
 # pyright: strict
 """The pure verdicts over the import probes' Sonarr reads: queue, in-flight import, commands, history."""
 
+from datetime import datetime, timedelta
+
+import pytest
+
 from pearlarr.manual_import import Deferral, PendingImport
 from pearlarr.probe_verdicts import (
     CommandBlock,
@@ -11,21 +15,23 @@ from pearlarr.probe_verdicts import (
     classify_commands,
     classify_download_history,
     classify_queue,
+    disk_commands_changed_since,
+    in_flight_disk_commands,
     manual_import_in_flight,
     placements_from_history,
-    sonarr_process_pass_running,
-    started_disk_commands,
+    rescanned_since_add,
+    sonarr_restarted,
 )
 from pearlarr.seadex_types import CommandResource, HistoryPage
 
-from .builders import entry_claim, pending_import, queue_record
+from .builders import PENDING_ADDED, PENDING_STAMP, entry_claim, pending_import, queue_record
 
 
 class TestClassifyQueue:
     """`classify_queue` buckets queue records (state + pending status) into one verdict."""
 
-    def test_empty_steps_in(self) -> None:
-        assert classify_queue([]) is QueueVerdict.STEP_IN
+    def test_empty_is_not_in_queue(self) -> None:
+        assert classify_queue([]) is QueueVerdict.NOT_IN_QUEUE
 
     def test_import_blocked_steps_in(self) -> None:
         assert classify_queue([queue_record("A", "importBlocked")]) is QueueVerdict.STEP_IN
@@ -79,12 +85,14 @@ def _command(
     status: str = "started",
     files: list[dict[str, object]] | None = None,
     command_id: int = 0,
+    started: datetime | None = None,
 ) -> CommandResource:
     """A `CommandResource` from the raw command fields the guards read."""
 
-    return CommandResource.model_validate(
-        {"id": command_id, "name": name, "status": status, "body": {"files": files or []}},
-    )
+    raw: dict[str, object] = {"id": command_id, "name": name, "status": status, "body": {"files": files or []}}
+    if started is not None:
+        raw["started"] = started.isoformat()
+    return CommandResource.model_validate(raw)
 
 
 def _paths(raw: str, sonarr_visible: str | None = None) -> ContentPaths:
@@ -184,68 +192,127 @@ class TestClassifyCommands:
         block = classify_commands(cmds, DownloadMatch("abc", _paths("/d"), set()), lambda _: False)
         assert block is CommandBlock.DISK_COMMAND
 
-    def test_block_properties(self) -> None:
-        # Only our own import claims `command_issued`; every import blocks as an
-        # IMPORT deferral, a disk command as BUSY.
-        assert [block.claims_import for block in CommandBlock] == [True, False, False]
-        assert CommandBlock.OWN_IMPORT.deferral is Deferral.IMPORT
-        assert CommandBlock.IN_FLIGHT_IMPORT.deferral is Deferral.IMPORT
-        assert CommandBlock.DISK_COMMAND.deferral is Deferral.BUSY
+
+_BLOCK_WAITS = {
+    CommandBlock.OWN_IMPORT: (True, Deferral.IMPORT),
+    CommandBlock.IN_FLIGHT_IMPORT: (False, Deferral.IMPORT),
+    CommandBlock.DISK_COMMAND: (False, Deferral.BUSY),
+    CommandBlock.DISK_COMMAND_CHANGED: (False, Deferral.BUSY),
+    CommandBlock.SONARR_RESTARTED: (False, Deferral.NONE),
+}
 
 
-class TestStartedDiskCommands:
+class TestCommandBlock:
+    """The wait each command block calls for."""
+
+    @pytest.mark.parametrize("block", list(CommandBlock))
+    def test_waiting(self, block: CommandBlock) -> None:
+        probe = block.waiting()
+
+        assert (probe.command_issued, probe.deferral) == _BLOCK_WAITS[block]
+
+
+class TestInFlightDiskCommands:
     """The pure disk-command guard over the same /api/v3/command list."""
 
     def test_started_process_monitored_downloads_defers(self) -> None:
-        assert started_disk_commands([_command(name="ProcessMonitoredDownloads")])
+        assert in_flight_disk_commands([_command(name="ProcessMonitoredDownloads")])
 
-    def test_queued_pass_never_defers(self) -> None:
-        # A queued pass is near-permanently present during a wait (Sonarr pushes
-        # one after every rescan, including ours), so deferring on it would
-        # starve the step-in entirely.
-        assert not started_disk_commands([_command(name="ProcessMonitoredDownloads", status="queued")])
+    def test_queued_pass_defers(self) -> None:
+        assert in_flight_disk_commands([_command(name="ProcessMonitoredDownloads", status="queued")])
 
     def test_completed_pass_never_defers(self) -> None:
-        assert not started_disk_commands([_command(name="ProcessMonitoredDownloads", status="completed")])
+        assert not in_flight_disk_commands([_command(name="ProcessMonitoredDownloads", status="completed")])
 
     def test_legacy_folder_scan_defers(self) -> None:
-        assert started_disk_commands([_command(name="DownloadedEpisodesScan")])
+        assert in_flight_disk_commands([_command(name="DownloadedEpisodesScan")])
 
     def test_rename_sweep_defers(self) -> None:
-        # Any started RequiresDiskAccess command queue-blocks a fresh
-        # ManualImport, opening the stale-replay window - not just the passes.
-        assert started_disk_commands([_command(name="RenameFiles")])
+        # Any RequiresDiskAccess command blocks, not just the passes.
+        assert in_flight_disk_commands([_command(name="RenameFiles")])
 
     def test_running_manual_import_defers(self) -> None:
         # A foreign ManualImport blocks ours the same way (our own is also
         # caught by manual_import_in_flight; this guard needs no file match).
-        assert started_disk_commands([_command(name="ManualImport")])
+        assert in_flight_disk_commands([_command(name="ManualImport")])
 
     def test_case_folded_match(self) -> None:
-        assert started_disk_commands([_command(name="processMONITOREDdownloads", status="Started")])
+        assert in_flight_disk_commands([_command(name="processMONITOREDdownloads", status="Started")])
 
     def test_non_disk_commands_ignored(self) -> None:
         cmds = [_command(name="RefreshMonitoredDownloads"), _command(name="RssSync")]
-        assert not started_disk_commands(cmds)
+        assert not in_flight_disk_commands(cmds)
 
     def test_empty_command_list(self) -> None:
-        assert not started_disk_commands([])
+        assert not in_flight_disk_commands([])
 
 
-class TestSonarrProcessPassRunning:
-    """The narrower rescan-absorb predicate: only the self-inflicted pass."""
+def _rescan(*, started: datetime | None, status: str = "completed") -> CommandResource:
+    """A RefreshMonitoredDownloads command with the given start time."""
 
-    def test_started_pass_matches(self) -> None:
-        assert sonarr_process_pass_running([_command(name="processMonitoredDownloads", status="Started")])
+    return _command(name="RefreshMonitoredDownloads", status=status, started=started)
 
-    def test_queued_pass_ignored(self) -> None:
-        assert not sonarr_process_pass_running([_command(name="ProcessMonitoredDownloads", status="queued")])
 
-    def test_foreign_disk_commands_ignored(self) -> None:
-        # A started rename/import is the disk-command guard's job to defer on -
-        # absorbing it in the rescan would stall the whole poll for its bound.
-        cmds = [_command(name="RenameFiles"), _command(name="ManualImport")]
-        assert not sonarr_process_pass_running(cmds)
+class TestRescannedSinceAdd:
+    """The untracked proof: a completed rescan that started a minute or more after the add."""
+
+    def test_a_minute_after_the_add_proves(self) -> None:
+        assert rescanned_since_add([_rescan(started=PENDING_ADDED + timedelta(seconds=60))], PENDING_STAMP)
+
+    def test_under_a_minute_after_the_add_does_not_prove(self) -> None:
+        assert not rescanned_since_add([_rescan(started=PENDING_ADDED + timedelta(seconds=59))], PENDING_STAMP)
+
+    def test_a_junk_stamp_does_not_prove(self) -> None:
+        assert not rescanned_since_add([_rescan(started=PENDING_ADDED + timedelta(days=1))], "junk")
+
+    def test_a_rescan_without_a_start_does_not_prove(self) -> None:
+        assert not rescanned_since_add([_rescan(started=None)], PENDING_STAMP)
+
+    def test_a_running_rescan_does_not_prove(self) -> None:
+        assert not rescanned_since_add(
+            [_rescan(started=PENDING_ADDED + timedelta(days=1), status="started")], PENDING_STAMP
+        )
+
+    def test_another_completed_command_does_not_prove(self) -> None:
+        rss = _command(name="RssSync", status="completed", started=PENDING_ADDED + timedelta(days=1))
+        assert not rescanned_since_add([rss], PENDING_STAMP)
+
+
+@pytest.mark.parametrize(
+    ("commands", "restarted"),
+    [
+        ([], True),
+        ([_rescan(started=PENDING_ADDED, status="started")], True),
+        ([_rescan(started=PENDING_ADDED)], False),
+    ],
+    ids=["empty", "started-only", "completed"],
+)
+def test_sonarr_restarted(commands: list[CommandResource], restarted: bool) -> None:
+    assert sonarr_restarted(commands) is restarted
+
+
+class TestDiskCommandsChangedSince:
+    """The pre-POST check: disk commands whose `(id, status)` pair the baseline did not list."""
+
+    def test_a_pass_with_a_new_id_is_listed(self) -> None:
+        new_pass = _command(name="ProcessMonitoredDownloads", command_id=9)
+        assert disk_commands_changed_since([], [new_pass]) == [new_pass]
+
+    def test_the_same_pass_in_both_is_not_listed(self) -> None:
+        listed = [_command(name="ProcessMonitoredDownloads", command_id=9)]
+        assert disk_commands_changed_since(listed, listed) == []
+
+    def test_a_pass_that_moved_from_queued_to_completed_is_listed(self) -> None:
+        before = [_command(name="ProcessMonitoredDownloads", status="queued", command_id=9)]
+        after = [_command(name="ProcessMonitoredDownloads", status="completed", command_id=9)]
+        assert disk_commands_changed_since(before, after) == after
+
+    def test_a_new_non_disk_command_is_not_listed(self) -> None:
+        assert disk_commands_changed_since([], [_command(name="RssSync", command_id=9)]) == []
+
+    def test_an_id_less_pass_new_since_the_baseline_is_listed(self) -> None:
+        new_pass = _command(name="ProcessMonitoredDownloads")
+        assert disk_commands_changed_since([], [new_pass]) == [new_pass]
 
 
 def _event_row(event: str, date: str) -> dict[str, object]:

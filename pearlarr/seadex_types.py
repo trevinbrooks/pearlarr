@@ -886,15 +886,6 @@ class DownloadClientConfig(_ApiModel):
     enable_completed_download_handling: bool = Field(default=True, validation_alias="enableCompletedDownloadHandling")
 
 
-# --- Sonarr system status (`/api/v3/system/status`) ------------------------
-
-
-class SystemStatus(_ApiModel):
-    """Sonarr's `SystemResource`, reduced to when the running Sonarr started."""
-
-    start_time: _LenientTime = Field(default=None, validation_alias="startTime")
-
-
 # --- Sonarr quality definitions (`/api/v3/qualitydefinition`) --------------
 
 

@@ -939,6 +939,7 @@ def test_list_commands_decodes_with_nested_files() -> None:
     respx.get(f"{_BASE}/command").respond(json=sonarr_fixture("command_list.json"))
     commands = _make_client().list_commands()
 
+    assert commands is not None
     assert len(commands) == 5
     first = commands[0]
     assert first.name == "ManualImport"
@@ -950,11 +951,25 @@ def test_list_commands_decodes_with_nested_files() -> None:
 
 
 @respx.mock
-def test_list_commands_non_200_returns_empty() -> None:
-    """A non-200 command list reads as "nothing in flight" (empty list)."""
+def test_list_commands_non_200_returns_none() -> None:
+    """A non-200 command list reads as unreadable (None)."""
 
     respx.get(f"{_BASE}/command").respond(status_code=503)
-    assert _make_client().list_commands() == []
+    assert _make_client().list_commands() is None
+
+
+@pytest.mark.parametrize("value", [1729655860, "not a time", "2026-10-23T03:57:40"])
+@respx.mock
+def test_list_commands_decodes_an_unzoned_started_as_none(value: object) -> None:
+    """A command start time that isn't a zoned ISO 8601 timestamp decodes as None."""
+
+    respx.get(f"{_BASE}/command").respond(
+        json=[{"id": 1, "name": "RefreshMonitoredDownloads", "status": "completed", "started": value}]
+    )
+    commands = _make_client().list_commands()
+
+    assert commands is not None
+    assert commands[0].started is None
 
 
 # --- history_since() ----------------------------------------------------------
@@ -1137,37 +1152,6 @@ def test_languages_non_200_returns_empty() -> None:
 
     respx.get(f"{_BASE}/language").respond(status_code=500)
     assert _make_client().languages() == []
-
-
-# --- started_at() (GET /system/status) ----------------------------------------
-
-
-@respx.mock
-def test_started_at_decodes_the_start_time() -> None:
-    """A healthy read carries when the running Sonarr started."""
-
-    respx.get(f"{_BASE}/system/status").respond(json={"version": "5.0.0.2742", "startTime": "2026-10-23T03:57:40Z"})
-
-    assert _make_client().started_at() == datetime(2026, 10, 23, 3, 57, 40, tzinfo=UTC)
-
-
-@respx.mock
-def test_started_at_non_200_returns_none() -> None:
-    """A failed read reads as unknown."""
-
-    respx.get(f"{_BASE}/system/status").respond(status_code=500)
-
-    assert _make_client().started_at() is None
-
-
-@pytest.mark.parametrize("value", [1729655860, "not a time", "2026-10-23T03:57:40"])
-@respx.mock
-def test_started_at_without_a_zoned_timestamp_returns_none(value: object) -> None:
-    """A start time that isn't a zoned ISO 8601 timestamp reads as unknown."""
-
-    respx.get(f"{_BASE}/system/status").respond(json={"startTime": value})
-
-    assert _make_client().started_at() is None
 
 
 # --- download_client_config() --------------------------------------------------
