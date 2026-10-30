@@ -427,14 +427,14 @@ class TestRunStartHook:
     This stays at strategy level to pin that get_items actually routes through it.
     """
 
-    def test_sonarr_get_items_clears_ep_list_cache(self) -> None:
+    def test_sonarr_get_items_clears_ep_list_cache(self, monkeypatch: pytest.MonkeyPatch) -> None:
         series: list[SonarrItem] = [_Item(id=5), _Item(id=7)]
         strat = make_sonarr_sync(ep_list_cache={5: [sonarr_ep(1, 1)]})
 
         def _all_series() -> list[SonarrItem]:
             return series
 
-        strat._episodes.get_all_sonarr_series = _all_series
+        monkeypatch.setattr(strat._episodes, "get_all_sonarr_series", _all_series)
 
         result = strat.get_items()
 
@@ -447,7 +447,7 @@ class TestRunStartHook:
 class TestSonarrPrefetchDelegates:
     """prefetch_episodes is a thin hook over the episode collaborator's warm."""
 
-    def test_sonarr_prefetch_routes_to_episodes(self) -> None:
+    def test_sonarr_prefetch_routes_to_episodes(self, monkeypatch: pytest.MonkeyPatch) -> None:
         strat = make_sonarr_sync()
         prefetch_calls: list[tuple[list[SonarrItem], ProgressSink | None]] = []
 
@@ -455,7 +455,7 @@ class TestSonarrPrefetchDelegates:
             prefetch_calls.append((items, progress))
             return 3
 
-        strat._episodes.prefetch = _prefetch
+        monkeypatch.setattr(strat._episodes, "prefetch", _prefetch)
         items: list[SonarrItem] = [_Item(id=1)]
 
         assert strat.prefetch_episodes(items, progress=None) == 3

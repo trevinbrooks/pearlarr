@@ -1,5 +1,5 @@
 [build-system]
-requires = ["hatchling>=1.27.0", "hatch-fancy-pypi-readme>=25.1.0"]
+requires = ["hatchling>=1.33.0", "hatch-fancy-pypi-readme>=25.1.0"]
 build-backend = "hatchling.build"
 
 [project]
@@ -53,18 +53,18 @@ classifiers = [
 
 dependencies = [
     "beautifulsoup4 == 4.15.0",
-    "filelock==3.32.3",
+    "filelock==4.2.4",
     "httpx == 0.28.1",
-    "platformdirs==4.11.3",
-    "pydantic == 2.13.4",
+    "platformdirs==4.14.0",
+    "pydantic == 2.14.2",
     "PyYAML == 6.0.3",
-    "qbittorrent-api==2026.8.0",
+    "qbittorrent-api==2026.10.1",
     "rich == 15.0.0",
     "seadex == 0.7.3",
-    "truststore == 0.10.4",
-    "typer==0.27.1",
+    "truststore == 0.10.5",
+    "typer==0.27.3",
     # Transitive (qbittorrent-api -> requests -> urllib3). Floored for CVE currency.
-    "urllib3>=2.7.0",
+    "urllib3>=2.8.0",
 ]
 
 [project.scripts]
@@ -83,21 +83,21 @@ Changelog = "https://github.com/trevinbrooks/pearlarr/blob/main/CHANGELOG.md"
 build = [
     "build",
     "hatch-fancy-pypi-readme>=25.1.0",
-    "hatchling>=1.27.0",
+    "hatchling>=1.33.0",
 ]
 static-analysis = [
-    "basedpyright>=1.39.8",
-    "pyrefly>=1.1.1",
-    "ruff~=0.16.0",
+    "basedpyright>=1.40.2",
+    "pyrefly>=1.4.0",
+    "ruff~=0.17.3",
     # PyYAML ships no inline types, so the checkers read `yaml` as untyped without these.
-    "types-PyYAML>=6.0.12",
+    "types-PyYAML>=6.0.12.20260906",
 ]
 test = [
-    "diff-cover>=10.3.0",
-    "hypothesis>=6.155.7",
-    "pytest~=9.0",
+    "diff-cover>=11.0.0",
+    "hypothesis>=6.170.13",
+    "pytest~=9.2",
     "pytest-cov>=7.1.0",
-    "pytest-randomly>=4.1.0",
+    "pytest-randomly>=5.0.0",
     "respx>=0.23.1",
 ]
 # Maintainer asset tooling (scripts/sample_grab_post.py renders the README
@@ -105,7 +105,7 @@ test = [
 # `uv run playwright install chromium`. In dev so the type gates over scripts/
 # resolve the import.
 assets = [
-    "playwright>=1.61.0",
+    "playwright>=1.64.1",
 ]
 dev = [
     "pre-commit",

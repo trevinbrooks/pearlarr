@@ -943,11 +943,8 @@ def _overlay_path(name: str) -> list[str]:
         path.append(lowered)
         field = model.model_fields.get(lowered) if model is not None else None
         annotation = field.annotation if field is not None else None
-        if isinstance(annotation, type) and issubclass(annotation, BaseModel):
-            model = annotation
-        else:
-            model = None
-            freeform = _mapping_annotation(annotation)
+        freeform = _mapping_annotation(annotation)
+        model = annotation if isinstance(annotation, type) and issubclass(annotation, BaseModel) else None
     return path
 
 

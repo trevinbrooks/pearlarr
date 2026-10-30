@@ -126,16 +126,15 @@ class TestGrabAnnouncesTheCap:
     def test_the_title_crossing_the_cap_announces_it(self) -> None:
         # The stub reports one add without touching the counter, so the counter is advanced by hand to the cap.
         recording = install_recording_hub()
-        pipeline = make_grab_pipeline(max_torrents_to_add=1, add_torrent=_stub_add_torrent)
-        # Warm the gateway cache so the embed's thumb lookup never hits AniList.
-        pipeline._anilist.al_cache.update({1: {}})
-        pipeline._ctx.torrents_added = 0
+        ctx = RunContext(arr=Arr.SONARR, import_wait_mode=ImportWaitMode.BLOCKING)
 
         def add_and_count(req: GrabRequest) -> tuple[int, list[ReleaseOutcome]]:
-            pipeline._ctx.torrents_added += 1
+            ctx.torrents_added += 1
             return _stub_add_torrent(req)
 
-        pipeline.add_torrent = add_and_count
+        pipeline = make_grab_pipeline(max_torrents_to_add=1, add_torrent=add_and_count, _ctx=ctx)
+        # Warm the gateway cache so the embed's thumb lookup never hits AniList.
+        pipeline._anilist.al_cache.update({1: {}})
 
         assert pipeline._grab(self._request()) == 1
         assert [e.cap for e in recording.of_type(CapReached)] == [1]
@@ -155,15 +154,14 @@ class TestGrabAnnouncesTheCap:
         # MUTATION PIN: reading the raw config cap instead of _effective_cap would announce a cap a preview
         # never enforces.
         recording = install_recording_hub()
-        pipeline = make_grab_pipeline(qbit=None, max_torrents_to_add=1, add_torrent=_stub_add_torrent)
-        pipeline._anilist.al_cache.update({1: {}})
-        pipeline._ctx.torrents_added = 0
+        ctx = RunContext(arr=Arr.SONARR, import_wait_mode=ImportWaitMode.BLOCKING)
 
         def add_and_count(req: GrabRequest) -> tuple[int, list[ReleaseOutcome]]:
-            pipeline._ctx.torrents_added += 1
+            ctx.torrents_added += 1
             return _stub_add_torrent(req)
 
-        pipeline.add_torrent = add_and_count
+        pipeline = make_grab_pipeline(qbit=None, max_torrents_to_add=1, add_torrent=add_and_count, _ctx=ctx)
+        pipeline._anilist.al_cache.update({1: {}})
 
         pipeline._grab(self._request())
 
