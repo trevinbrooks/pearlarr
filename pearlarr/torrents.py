@@ -75,7 +75,7 @@ class AddResult(NamedTuple):
 
     outcome: AddOutcome
     name: str | None
-    """The qBittorrent-reported name, falling back to the scraped release title. None when neither exists."""
+    """The qBittorrent-reported name. A new add falls back to the scraped release title. None when neither exists."""
     added_on: datetime | None = None
     """qBittorrent's own add time for an `ALREADY_ADDED` torrent (local-naive, like `now_stamp`), else None."""
 
@@ -131,19 +131,33 @@ class TorrentService:
         item: SeadexUrlItem,
         preview: bool,
     ) -> AddResult:
-        """Parse a release URL by tracker and add it to qBittorrent."""
+        """Add a release to qBittorrent, parsing its tracker page only when qBittorrent doesn't have it yet."""
 
         parser = _PARSERS.get(item.tracker)
         if parser is None:
             raise ValueError(f"Unable to parse torrent links from {item.tracker}")
+        if (present := self._already_added(item)) is not None:
+            return present
         parsed_url, source_name = parser(item.url, item.infohash, self.web)
 
         if parsed_url is None:
             raise TorrentParseError(f"Could not extract a torrent download link from {item.url}")
 
-        added = self._add_to_qbit(item=item, torrent_url=parsed_url, preview=preview)
+        name = self._add_to_qbit(item=item, torrent_url=parsed_url, preview=preview)
 
-        return AddResult(added.outcome, added.name or source_name, added.added_on)
+        return AddResult(AddOutcome.ADDED, name or source_name)
+
+    def _already_added(self, item: SeadexUrlItem) -> AddResult | None:
+        """The `ALREADY_ADDED` result when qBittorrent has the release's hash, else None."""
+
+        # A private torrent has no info hash to dedup by, so qBittorrent dedups it internally.
+        if item.infohash is None or self.qbit is None:
+            return None
+        torr_info = self.qbit.torrents_info(torrent_hashes=item.infohash)
+        if not torr_info:
+            return None
+        self.logger.debug(f"Torrent {item.url} already in qBittorrent")
+        return AddResult(AddOutcome.ALREADY_ADDED, torr_info[0].name, _row_added_on(torr_info[0]))
 
     def _add_to_qbit(
         self,
@@ -151,20 +165,13 @@ class TorrentService:
         item: SeadexUrlItem,
         torrent_url: str,
         preview: bool,
-    ) -> AddResult:
-        """Add a torrent to qBittorrent (dedup by hash, read the name back)."""
+    ) -> str | None:
+        """Add a new torrent to qBittorrent and read back its name, None in preview or without a hash to read by."""
 
         infohash = item.infohash
 
-        # A private torrent has no info hash to dedup by, so qBittorrent dedups it internally.
-        if infohash is not None and self.qbit is not None:
-            torr_info = self.qbit.torrents_info(torrent_hashes=infohash)
-            if torr_info:
-                self.logger.debug(f"Torrent {item.url} already in qBittorrent")
-                return AddResult(AddOutcome.ALREADY_ADDED, torr_info[0].name, _row_added_on(torr_info[0]))
-
         if preview:
-            return AddResult(AddOutcome.ADDED, None)
+            return None
 
         # Past the preview gate there is always a client, so this raise is defensive.
         if self.qbit is None:
@@ -178,9 +185,7 @@ class TorrentService:
         if result != "Ok.":
             raise TorrentAddError(f"qBittorrent rejected the torrent from {item.url} (response: {result!r})")
 
-        torrent_name = None
-        if infohash is not None:
-            added_info = self.qbit.torrents_info(torrent_hashes=infohash)
-            torrent_name = added_info[0].name if added_info else None
-
-        return AddResult(AddOutcome.ADDED, torrent_name)
+        if infohash is None:
+            return None
+        added_info = self.qbit.torrents_info(torrent_hashes=infohash)
+        return added_info[0].name if added_info else None

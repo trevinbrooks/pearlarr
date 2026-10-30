@@ -1,7 +1,7 @@
 # pyright: strict
 """Tests for `TorrentService` (the qBittorrent add path) and the `APIConnectionError` -> `QbitConnectionError` mapping.
 
-`TorrentService.add` always runs the tracker parser then `_add_to_qbit`.
+`TorrentService.add` asks qBittorrent for the hash, then runs the tracker parser and `_add_to_qbit`.
 These tests monkeypatch the tracker parsers (the HTML/feed scrapers, covered in
 `test_torrent_parsers`) so each test drives only the qbit side, against a typed
 recording fake qBittorrent client built inline here. `qbittorrentapi.Client` is
@@ -152,9 +152,12 @@ def test_add_new_torrent_with_hash_prefers_qbit_name(monkeypatch: pytest.MonkeyP
 
 
 def test_add_already_present_dedups_by_hash(monkeypatch: pytest.MonkeyPatch) -> None:
-    """When the hash is already in qBittorrent, the add is skipped and reported as ALREADY_ADDED with the existing name."""
+    """A hash already in qBittorrent is ALREADY_ADDED with the existing name, and its tracker page is never fetched."""
 
-    _patch_nyaa_parser(monkeypatch)
+    def _page_gone(url: str) -> tuple[str, str]:
+        raise TorrentParseError(f"page gone: {url}")
+
+    monkeypatch.setattr(torrents, "get_nyaa_torrent", _page_gone)
     qbit = _FakeQbit(present={_HASH: "Existing Name"})
     service = _service(qbit)
 

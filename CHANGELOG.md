@@ -7,6 +7,10 @@ Pearlarr is a fork of [bbtufty/seadexarr](https://github.com/bbtufty/seadexarr).
 
 ## [Unreleased]
 
+### Changed
+
+- Pearlarr no longer fetches the tracker page of a release qBittorrent already has. A torrent SeaDex lists under two entries is fetched once instead of twice, and one whose tracker page is down or gone no longer fails the grab.
+
 ## [1.5.6] - 2026-10-25
 
 ### Fixed
