@@ -19,7 +19,6 @@ from datetime import datetime
 from typing import cast
 
 import httpx
-import pynyaa
 import pytest
 import qbittorrentapi
 from seadex import Tracker
@@ -123,8 +122,8 @@ def _service(qbit: _FakeQbit, *, category: str | None = "anime", tags: list[str]
 def _patch_nyaa_parser(monkeypatch: pytest.MonkeyPatch) -> None:
     """Drive only the qbit side: the Nyaa parser returns a fixed (url, title)."""
 
-    def _fixed_nyaa(url: str) -> tuple[str, str]:
-        del url
+    def _fixed_nyaa(url: str, client: httpx.Client) -> tuple[str, str]:
+        del url, client
         return (_PARSED_URL, _SOURCE_TITLE)
 
     monkeypatch.setattr(torrents, "get_nyaa_torrent", _fixed_nyaa)
@@ -154,7 +153,8 @@ def test_add_new_torrent_with_hash_prefers_qbit_name(monkeypatch: pytest.MonkeyP
 def test_add_already_present_dedups_by_hash(monkeypatch: pytest.MonkeyPatch) -> None:
     """A hash already in qBittorrent is ALREADY_ADDED with the existing name, and its tracker page is never fetched."""
 
-    def _page_gone(url: str) -> tuple[str, str]:
+    def _page_gone(url: str, client: httpx.Client) -> tuple[str, str]:
+        del client
         raise TorrentParseError(f"page gone: {url}")
 
     monkeypatch.setattr(torrents, "get_nyaa_torrent", _page_gone)
@@ -254,8 +254,8 @@ def test_add_unparseable_url_raises(monkeypatch: pytest.MonkeyPatch) -> None:
 def _patch_all_parsers(monkeypatch: pytest.MonkeyPatch) -> None:
     """Stub all three tracker parsers to a fixed (url, title), so the parseable branch of `add` reaches the qbit path without a real scrape."""
 
-    def _nyaa(url: str) -> tuple[str | None, str]:
-        del url
+    def _nyaa(url: str, client: httpx.Client) -> tuple[str | None, str]:
+        del url, client
         return (_PARSED_URL, _SOURCE_TITLE)
 
     def _animetosho(url: str, client: httpx.Client) -> tuple[str | None, str]:
@@ -296,15 +296,13 @@ def test_grab_failures_covers_every_expected_boundary_error() -> None:
     """Drift guard: the containment tuple catches each boundary's failure mode.
 
     The modes are the parse/add raises, an httpx blip (the tracker scrapes and
-    pynyaa / seadex transport all ride httpx), a pynyaa error, and any
-    qbittorrentapi error.
+    the seadex transport all ride httpx), and any qbittorrentapi error.
     """
 
     expected = (
         TorrentParseError("x"),
         TorrentAddError("x"),
         httpx.ConnectError("x"),
-        pynyaa.PyNyaaError("x"),
         qbittorrentapi.APIConnectionError("x"),
     )
     for exc in expected:

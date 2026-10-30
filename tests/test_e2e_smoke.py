@@ -10,8 +10,7 @@ external network leaves faked:
 * qBittorrent, left unconfigured so the whole run is a perpetual preview.
 * the Arr HTTP (every raw endpoint rides the httpx-based `ArrHttp`) and the
   AniList POST (on the shared web client), both mocked via `respx`.
-* the Nyaa source (`pynyaa`'s own httpx client), faked at
-  `torrents.get_nyaa_torrent`.
+* the Nyaa lookup, faked at `torrents.get_nyaa_torrent`.
 
 Everything in between is the real wiring. The id flows by hand-wired three-way
 agreement: the Arr item's external id (the `series` fixture's `tvdbId`, the
@@ -24,6 +23,7 @@ still return True - the recorded calls are what make this non-hollow).
 from pathlib import Path
 from typing import cast
 
+import httpx
 import pytest
 import respx
 import yaml
@@ -102,7 +102,8 @@ def test_sonarr_run_drives_real_composition_root(
             del al_id
             return entry
 
-    def _fake_get_nyaa_torrent(url: str) -> tuple[str, str]:
+    def _fake_get_nyaa_torrent(url: str, client: httpx.Client) -> tuple[str, str]:
+        del client
         nyaa_calls.append(url)
         return ("magnet:?xt=urn:btih:" + "a" * 40, "Undefeated Bahamut Chronicle - S01E01 [1080p]")
 
@@ -236,7 +237,8 @@ def test_radarr_run_drives_real_composition_root(
             del al_id
             return entry
 
-    def _fake_get_nyaa_torrent(url: str) -> tuple[str, str]:
+    def _fake_get_nyaa_torrent(url: str, client: httpx.Client) -> tuple[str, str]:
+        del client
         nyaa_calls.append(url)
         return ("magnet:?xt=urn:btih:" + "b" * 40, "Your Name (2016) [BD 1080p]")
 

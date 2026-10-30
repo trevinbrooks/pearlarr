@@ -26,7 +26,7 @@ import respx
 
 from pearlarr import __version__
 from pearlarr.arr_http import GET_RETRIES
-from pearlarr.web_client import RETRY_AFTER_CAP_S, USER_AGENT, get_with_retries, make_web_client
+from pearlarr.web_client import RETRY_AFTER_CAP_S, USER_AGENT, get_with_retries, head_with_retries, make_web_client
 
 _URL = "https://web.test/page"
 
@@ -169,3 +169,17 @@ def test_get_with_retries_terminal_status_returns_immediately() -> None:
     assert response.status_code == 404
     assert route.call_count == 1  # 404 is not transient: no retries
     assert sleeps == []
+
+
+@respx.mock
+def test_head_with_retries_sends_a_head_under_the_same_policy() -> None:
+    route = respx.head(_URL)
+    route.side_effect = [httpx.Response(503), httpx.Response(200)]
+    sleeps: list[float] = []
+
+    with httpx.Client() as client:
+        response = head_with_retries(client, _URL, sleep=sleeps.append)
+
+    assert response.status_code == 200
+    assert route.call_count == 2  # the route matches HEAD only, so a GET would fail the mock
+    assert len(sleeps) == 1

@@ -4,9 +4,9 @@
 `arr_http.make_httpx_client`: the arr client stays pinned to
 no-redirects and the per-arr `verify_ssl` knob (the `X-Api-Key`
 invariants), while external hosts - tracker pages, AniList, webhooks, the
-mapping-source downloads - ride this one. `get_with_retries` carries the
-transient-retry policy (retry count, jittered backoff, retryable-status set)
-for those scrapes.
+mapping-source downloads - ride this one. `get_with_retries` (and its
+`head_with_retries` twin) carries the transient-retry policy (retry count,
+jittered backoff, retryable-status set) for those scrapes.
 """
 
 import contextlib
@@ -85,10 +85,27 @@ def get_with_retries(
     out - the call site's `raise_for_status` surfaces a bad status.
     """
 
+    return _send_with_retries(client, client.build_request("GET", url), sleep)
+
+
+def head_with_retries(
+    client: httpx.Client,
+    url: str,
+    *,
+    sleep: Callable[[float], None] = time.sleep,  # injectable backoff sleep (bypassed in tests)
+) -> httpx.Response:
+    """HEAD `url` under `get_with_retries`' retry policy: the status and headers of a GET, without the body."""
+
+    return _send_with_retries(client, client.build_request("HEAD", url), sleep)
+
+
+def _send_with_retries(client: httpx.Client, request: httpx.Request, sleep: Callable[[float], None]) -> httpx.Response:
+    """Send a bodiless idempotent request, retrying transient failures (`get_with_retries` has the policy)."""
+
     for attempt in range(GET_RETRIES):
         retry_after = None
         try:
-            response = client.get(url)
+            response = client.send(request)
         except httpx.TransportError:
             pass  # transient by definition - the next attempt may recover
         else:
@@ -103,4 +120,4 @@ def get_with_retries(
         sleep(wait)
     # The last attempt: a transport error now propagates (retries exhausted,
     # matching the urllib3 Retry policy raising) and any status returns.
-    return client.get(url)
+    return client.send(request)

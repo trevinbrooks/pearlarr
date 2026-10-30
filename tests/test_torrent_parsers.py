@@ -1,17 +1,17 @@
 # pyright: strict
 """Direct tests for the tracker HTML/feed parsers in `torrent`.
 
-The three `get_*_torrent` helpers scrape a release page (and, for AnimeTosho,
-a JSON feed) into `(download_url, title)`. AnimeTosho and RuTracker take an
-`httpx.Client`, so they are driven with saved HTML fixtures over a
-`respx`-mocked boundary. Nyaa uses `pynyaa` (its own httpx client), so its
-module-level session is swapped for a typed stub. The documented error raises
+The three `get_*_torrent` helpers turn a release URL into `(download_url, title)`:
+Nyaa from one HEAD on its .torrent, AnimeTosho from its page and JSON feed,
+RuTracker from its page. Each takes an `httpx.Client`, so they are driven over a
+`respx`-mocked boundary, the pages with saved HTML fixtures. The documented error raises
 are exercised alongside the success paths. The 5xx paths stub the retry
 helper's backoff sleep so retry exhaustion doesn't wait for real.
 """
 
 import re
 from pathlib import Path
+from urllib.parse import quote
 
 import httpx
 import pytest
@@ -30,6 +30,8 @@ from pearlarr.web_client import get_with_retries
 _TORRENT_FIXTURES = Path(__file__).parent / "fixtures" / "torrent"
 
 # The titles the saved HTML fixtures carry (so a test asserts the exact scrape).
+_NYAA_TITLE = "[Group] Cool Anime - 01 [1080p]"
+_NYAA_LINK = "https://nyaa.si/download/1234567.torrent"
 _ANIMETOSHO_TITLE = "[Erai-raws] Cool Anime - 01 [1080p][Multiple Subtitle]"
 _RUTRACKER_TITLE = "[BDRemux 1080p] Cool Anime / クールアニメ [RUS+JAP] (12/12)"
 
@@ -54,50 +56,66 @@ def _stub_retry_sleep(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(torrent, "get_with_retries", _no_sleep_get)
 
 
-# --- Nyaa (pynyaa session swapped for a typed stub) -------------------------
+# --- Nyaa (build the .torrent link, read the title off its download header) ---
 
 
-class _StubNyaaTorrent:
-    """The `.torrent` sub-object pynyaa exposes (only `.url` is read)."""
+def _nyaa_disposition(filename: str) -> dict[str, str]:
+    """The download header Nyaa sends: the name twice, percent-encoded, the second as RFC 6266 `filename*`."""
 
-    def __init__(self, url: str) -> None:
-        self.url = url
-
-
-class _StubNyaaRelease:
-    """A pynyaa release: `.torrent.url` (download link) + `.title`."""
-
-    def __init__(self, torrent_url: str, title: str) -> None:
-        self.torrent = _StubNyaaTorrent(torrent_url)
-        self.title = title
+    encoded = quote(filename)
+    return {"content-disposition": f"inline; filename=\"{encoded}\"; filename*=UTF-8''{encoded}"}
 
 
-class _StubNyaa:
-    """Stand-in for `pynyaa.Nyaa` recording the URL it was asked to fetch."""
+@respx.mock
+def test_get_nyaa_torrent_reads_the_title_off_one_head() -> None:
+    """The link is built from the release number and the title is its download filename, from one HEAD."""
 
-    def __init__(self, release: _StubNyaaRelease) -> None:
-        self._release = release
-        self.calls: list[str] = []
+    head = respx.head(_NYAA_LINK).respond(headers=_nyaa_disposition(f"{_NYAA_TITLE}.torrent"))
 
-    def get(self, url: str) -> _StubNyaaRelease:
-        self.calls.append(url)
-        return self._release
+    result = get_nyaa_torrent("https://nyaa.si/view/1234567", client=httpx.Client())
+
+    assert result == (_NYAA_LINK, _NYAA_TITLE)
+    # Any other request (the page, or a GET of the file) would fail the routeless mock.
+    assert head.call_count == 1
 
 
-def test_get_nyaa_torrent_returns_download_and_title(monkeypatch: pytest.MonkeyPatch) -> None:
-    """The Nyaa parser returns `(release.torrent.url, release.title)` verbatim."""
+@respx.mock
+def test_get_nyaa_torrent_decodes_a_non_ascii_title() -> None:
+    """The title comes from the header's UTF-8 `filename*` form, so a non-ASCII name survives."""
 
-    release = _StubNyaaRelease(
-        torrent_url="https://nyaa.si/download/1.torrent",
-        title="[Group] Cool Anime - 01 [1080p]",
-    )
-    stub = _StubNyaa(release)
-    monkeypatch.setattr(torrent, "_NYAA_SESSION", stub)
+    respx.head(_NYAA_LINK).respond(headers=_nyaa_disposition("[Group] クールアニメ - 01.torrent"))
 
-    result = get_nyaa_torrent("https://nyaa.si/view/1")
+    _, title = get_nyaa_torrent("https://nyaa.si/view/1234567", client=httpx.Client())
 
-    assert result == ("https://nyaa.si/download/1.torrent", "[Group] Cool Anime - 01 [1080p]")
-    assert stub.calls == ["https://nyaa.si/view/1"]
+    assert title == "[Group] クールアニメ - 01"
+
+
+@respx.mock
+def test_get_nyaa_torrent_without_a_release_number_raises() -> None:
+    """A URL with no `/view/<number>` raises before any fetch (the routeless mock proves nothing was requested)."""
+
+    url = "https://nyaa.si/user/x"
+
+    with pytest.raises(TorrentParseError, match=f"Could not read a Nyaa release number from {re.escape(url)}"):
+        get_nyaa_torrent(url, client=httpx.Client())
+
+
+@respx.mock
+def test_get_nyaa_torrent_without_a_filename_raises() -> None:
+    """A download header with no `filename*` raises."""
+
+    respx.head(_NYAA_LINK).respond(headers={"content-disposition": "inline"})
+    with pytest.raises(TorrentParseError, match=f"Could not read the torrent name from {re.escape(_NYAA_LINK)}"):
+        get_nyaa_torrent("https://nyaa.si/view/1234567", client=httpx.Client())
+
+
+@respx.mock
+def test_get_nyaa_torrent_deleted_release_raises_http_error() -> None:
+    """A 404 on the .torrent (a deleted release) raises `HTTPStatusError`, a contained grab failure."""
+
+    respx.head(_NYAA_LINK).respond(status_code=404)
+    with pytest.raises(httpx.HTTPStatusError):
+        get_nyaa_torrent("https://nyaa.si/view/1234567", client=httpx.Client())
 
 
 # --- AnimeTosho (scrape the page title, then look it up in the JSON feed) ----

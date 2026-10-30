@@ -1399,10 +1399,9 @@ class TestGrabFailureContainment:
             TorrentParseError("Could not find the torrent title on https://nyaa.si/view/1"),
             TorrentAddError("qBittorrent rejected the torrent"),
             httpx.ConnectError("tracker down"),
-            httpx.ConnectError("nyaa down"),
             qbittorrentapi.APIConnectionError("qbit died mid-run"),
         ],
-        ids=["parse", "add", "tracker", "pynyaa", "qbit"],
+        ids=["parse", "add", "tracker", "qbit"],
     )
     def test_failure_is_one_clean_warning_no_traceback(self, error: Exception) -> None:
         # Every boundary failure mode lands as ONE typed GrabFailed event (the

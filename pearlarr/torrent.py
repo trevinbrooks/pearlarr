@@ -1,22 +1,19 @@
 """Per-tracker parsers: turn a tracker page/feed URL into a download link and release title."""
 
+import re
 from typing import NamedTuple
-from urllib.parse import urlencode, urljoin
+from urllib.parse import unquote, urlencode, urljoin, urlsplit
 
 import httpx
-import pynyaa
 from bs4 import BeautifulSoup
 
 from .json_narrow import is_json_list, is_json_obj
-from .web_client import get_with_retries
+from .web_client import get_with_retries, head_with_retries
 
 ANIMETOSHO_FEED_URL = "https://animetosho.org/feed/json"
 RUTRACKER_MAGNET_ANNOUNCE = "http://bt2.t-ru.org/ann?magnet"
 
-# (connect, read) timeout for the tracker page/feed scrapes, so a hung tracker
-# surfaces as a transient miss instead of blocking the run. The shared web
-# client bakes the same bounds in, so only the pynyaa client below reads this.
-TRACKER_REQUEST_TIMEOUT_S = (5, 30)
+_NYAA_VIEW_PATH = re.compile(r"/view/(\d+)/?")
 
 
 class TorrentParseError(Exception):
@@ -32,22 +29,25 @@ class ParsedTorrent(NamedTuple):
     title: str
 
 
-# pynyaa rides httpx: give its client the same bounds (and keep pynyaa's own
-# User-Agent, which its default client would otherwise set).
-_NYAA_SESSION = pynyaa.Nyaa(
-    client=httpx.Client(
-        headers={"User-Agent": f"pynyaa/{pynyaa.__version__} (https://pypi.org/project/pynyaa/)"},
-        timeout=httpx.Timeout(TRACKER_REQUEST_TIMEOUT_S[1], connect=TRACKER_REQUEST_TIMEOUT_S[0]),
-    ),
-)
+def get_nyaa_torrent(url: str, client: httpx.Client) -> ParsedTorrent:
+    """Get the Nyaa download link and release title from a Nyaa release URL.
 
+    The link is built from the release number in the URL, the way Nyaa serves every .torrent. One HEAD request on
+    it checks the file is there and reads the title from its download filename, so neither the page nor the file is
+    downloaded.
+    """
 
-def get_nyaa_torrent(url: str) -> ParsedTorrent:
-    """Get the Nyaa download link and release title from a Nyaa URL."""
-
-    release = _NYAA_SESSION.get(url)
-
-    return ParsedTorrent(release.torrent.url, release.title)
+    match = _NYAA_VIEW_PATH.fullmatch(urlsplit(url).path)
+    if match is None:
+        raise TorrentParseError(f"Could not read a Nyaa release number from {url}")
+    link = urljoin(url, f"/download/{match[1]}.torrent")
+    r = head_with_retries(client, link)
+    r.raise_for_status()
+    # `filename*` is the header's UTF-8 form of the name (RFC 6266).
+    encoded = r.headers.get("content-disposition", "").partition("filename*=UTF-8''")[2].split(";", 1)[0].strip()
+    if not encoded:
+        raise TorrentParseError(f"Could not read the torrent name from {link}")
+    return ParsedTorrent(link, unquote(encoded).removesuffix(".torrent"))
 
 
 def get_animetosho_torrent(

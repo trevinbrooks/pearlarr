@@ -8,7 +8,6 @@ from enum import Enum, auto
 from typing import NamedTuple
 
 import httpx
-import pynyaa
 import qbittorrentapi
 from seadex import Tracker
 
@@ -32,7 +31,6 @@ GRAB_FAILURES: tuple[type[Exception], ...] = (
     TorrentParseError,
     TorrentAddError,
     httpx.HTTPError,
-    pynyaa.PyNyaaError,
     qbittorrentapi.APIError,
 )
 
@@ -41,8 +39,8 @@ type _Parser = Callable[[str, str | None, httpx.Client], ParsedTorrent]
 
 
 def _parse_nyaa(url: str, infohash: str | None, client: httpx.Client) -> ParsedTorrent:
-    del infohash, client
-    return get_nyaa_torrent(url=url)
+    del infohash
+    return get_nyaa_torrent(url=url, client=client)
 
 
 def _parse_animetosho(url: str, infohash: str | None, client: httpx.Client) -> ParsedTorrent:
