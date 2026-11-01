@@ -41,8 +41,8 @@ class StoredOrders:
     sent no usable rows for it, and the map is empty when SkyHook doesn't have the series."""
 
     sonarr_counts: Mapping[str, int] | None
-    """Sonarr v5's episode count per order it listed at fetch time, every listed order kept, SkyHook's or not. None
-    on v4."""
+    """Sonarr's episode count per order it listed at fetch time, every listed order kept, SkyHook's or not. None
+    when Sonarr listed no orders (always on v4)."""
 
     def __post_init__(self) -> None:
         object.__setattr__(self, "orders", MappingProxyType(dict(self.orders)))
@@ -85,7 +85,7 @@ class SeriesOrderFacts:
     """The order Sonarr numbers the series by (`seasonType`)."""
 
     counts: Mapping[str, int] | None
-    """Sonarr v5's episode count per listed order. None on v4, which doesn't list them."""
+    """Sonarr's episode count per listed order. None when Sonarr lists no orders (always on v4)."""
 
 
 class OrderTranslation(NamedTuple):

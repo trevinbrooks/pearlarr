@@ -55,13 +55,24 @@ def test_a_reply_reads_with_its_rows_and_absolutes() -> None:
 
 
 @pytest.mark.parametrize(
-    ("asked", "order_type"),
+    ("asked", "order_type", "warning"),
     [
-        pytest.param(299502, "dvd", id="another-series"),
-        pytest.param(_SERIES, "alternate", id="unlisted-order"),
+        pytest.param(
+            299502,
+            "dvd",
+            f"SkyHook answered TVDB 299502 with TVDB {_SERIES}'s dvd order - storing it empty",
+            id="another-series",
+        ),
+        pytest.param(
+            _SERIES,
+            "alternate",
+            f"SkyHook sent a malformed alternate order for TVDB {_SERIES} (the reply doesn't list that order) - "
+            "storing it empty",
+            id="unlisted-order",
+        ),
     ],
 )
-def test_a_reply_that_does_not_match_the_request_comes_back_empty(asked: int, order_type: str) -> None:
+def test_a_reply_that_does_not_match_the_request_comes_back_empty(asked: int, order_type: str, warning: str) -> None:
     recording = install_recording_hub()
     # The dvd reply of 112961, served for a request it doesn't answer.
     body = skyhook_fixture("tvdb_112961_dvd.json")
@@ -70,10 +81,7 @@ def test_a_reply_that_does_not_match_the_request_comes_back_empty(asked: int, or
 
     assert isinstance(reply, SkyHookReply)
     assert reply.episodes == ()
-    detail = "the reply is for another series or order"
-    assert _warnings(recording) == [
-        f"SkyHook sent a malformed {order_type} order for TVDB {asked} ({detail}) - storing it empty"
-    ]
+    assert _warnings(recording) == [warning]
 
 
 def test_a_reply_that_fails_validation_comes_back_empty_with_a_warning() -> None:
@@ -130,6 +138,8 @@ def test_one_bad_row_empties_the_order_and_keeps_the_header() -> None:
         pytest.param(httpx.Response(403, text="<html>Attention Required</html>"), "HTTP 403", id="edge-block"),
         # A route SkyHook doesn't serve 404s with no body, unlike its own not-found.
         pytest.param(httpx.Response(404), "HTTP 404", id="moved-route"),
+        # Only a 404 says the series is missing, whatever the body.
+        pytest.param(httpx.Response(500, json=_NOT_FOUND), "HTTP 500", id="not-found-body-on-a-5xx"),
         pytest.param(httpx.ConnectTimeout("timed out"), "ConnectTimeout", id="timeout"),
     ],
 )
@@ -152,7 +162,7 @@ def test_an_outage_latches_and_later_fetches_send_nothing(answer: httpx.Response
     assert first is second is SkyHookMiss.OUTAGE
     assert client.outage is True
     assert _warnings(recording) == [
-        f"SkyHook request failed ({detail}) - skipping TVDB order fetches this run. Until it answers, runs re-check titles they would otherwise skip"
+        f"SkyHook failed ({detail} for TVDB {_SERIES} official) - re-checking cached titles until it answers"
     ]
 
 

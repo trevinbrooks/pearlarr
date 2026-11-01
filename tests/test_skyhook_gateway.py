@@ -128,6 +128,14 @@ def test_a_fresh_record_refetches_when_sonarr_counts_move(counts: dict[str, int]
     assert _fetches(_gateway(cache=cache), counts) == fetched
 
 
+def test_a_record_stored_without_counts_refetches_once_sonarr_lists_them() -> None:
+    cache = FakeCacheStore()
+    cache.put_tvdb_orders(_SERIES, stored_orders(_STORED, sonarr_counts=None))
+    gateway = _gateway(cache=cache)
+
+    assert [_fetches(gateway, {"official": 4, "dvd": 4}) for _ in range(2)] == [1, 0]
+
+
 def test_an_order_only_sonarr_lists_is_kept_in_the_counts_and_refetches_nothing() -> None:
     # Sonarr's last refresh still lists an alternate order SkyHook no longer sends.
     gateway = _gateway()
@@ -151,6 +159,24 @@ def test_a_series_skyhook_does_not_have_is_stored_without_orders_for_a_week() ->
     assert stored.orders == {}
     assert gateway.has_record(_SERIES) is True
     assert _fresh_days(gateway) == 7
+
+
+def test_a_listed_order_skyhook_does_not_have_is_stored_empty() -> None:
+    gateway = _gateway({(_SERIES, "official"): _OFFICIAL})
+
+    _fetches(gateway)
+
+    stored = gateway.orders(_SERIES)
+    assert stored is not None
+    assert stored.orders["dvd"] == ()
+    assert set(stored.orders) == {"official", "dvd"}
+
+
+def test_a_series_the_outage_cut_off_still_has_no_record() -> None:
+    gateway = _gateway({}, failing=frozenset({(_SERIES, OFFICIAL_ORDER)}))
+
+    assert _fetches(gateway) == 0
+    assert gateway.has_record(_SERIES) is False
 
 
 def test_an_outage_mid_series_keeps_the_stale_record_and_serves_it() -> None:
