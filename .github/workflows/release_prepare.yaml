@@ -51,7 +51,7 @@ jobs:
           scripts/changelog.sh section Unreleased | grep -q '[^[:space:]]' \
             || { echo "CHANGELOG '## [Unreleased]' is empty; land release notes first" >&2; exit 1; }
       - name: Install uv
-        uses: astral-sh/setup-uv@20cfd1bf945f4377ade1205e4dbc17946fc9a30d # v10.0.1
+        uses: astral-sh/setup-uv@c18668ad3cf93ea998bef934396af7bb5c839dc7 # v10.2.0
         with:
           enable-cache: true
       - name: Bump, re-lock, regenerate docs, roll the CHANGELOG
