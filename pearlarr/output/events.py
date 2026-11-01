@@ -724,6 +724,7 @@ class CacheStatsReported:
     sonarr_parse: int
     pending_imports: int
     guard_facts: int
+    tvdb_orders: int
     size_bytes: int
 
 

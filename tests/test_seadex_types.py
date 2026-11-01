@@ -23,6 +23,7 @@ from pearlarr.seadex_types import (
     MovieFile,
     ParsedFileInfo,
     QueueRecord,
+    SeasonTypeCount,
     SonarrHistoryRecord,
     SonarrSeries,
     normalized_infohash,
@@ -132,6 +133,30 @@ def test_command_resource_junk_file_entry_skips_without_dropping_the_command() -
     [file] = command.files
     assert file.download_id == "ABC"
     assert file.episode_ids == (1, 2)
+
+
+def test_sonarr_series_reads_its_orders_and_drops_a_junk_one_alone() -> None:
+    """v4 sends no order fields and numbers by the official order. A junk v5 `seasonTypes[]` entry drops alone."""
+
+    assert SonarrSeries.model_validate({"id": 1, "title": "Show"}).seasonType == "official"
+
+    series = SonarrSeries.model_validate(
+        {
+            "id": 1,
+            "title": "Show",
+            "seasonType": "dvd",
+            "seasonTypes": [
+                {"type": "official", "episodeCount": 4},
+                {"type": "dvd"},
+                {"type": "dvd", "episodeCount": 2},
+            ],
+        },
+    )
+    assert series.seasonType == "dvd"
+    assert series.seasonTypes == (
+        SeasonTypeCount(type="official", episode_count=4),
+        SeasonTypeCount(type="dvd", episode_count=2),
+    )
 
 
 def test_parsed_file_info_null_number_arrays_fold_to_empty() -> None:

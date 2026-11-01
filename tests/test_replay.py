@@ -103,6 +103,7 @@ def test_golden_round_trip_reproduces_the_text_grammar(
             sonarr_parse=1,
             pending_imports=0,
             guard_facts=0,
+            tvdb_orders=0,
             size_bytes=4096,
         ),
     ]
@@ -115,7 +116,7 @@ def test_golden_round_trip_reproduces_the_text_grammar(
     assert f"{_TS} INFO [run] Pearlarr started version=v1.0.0 data_dir=/data" in out
     assert (
         f"{_TS} INFO [cli] cache stats entries=1 torrent_hashes=1 anilist_meta=1 "
-        f"sonarr_parse=1 pending_imports=0 guard_facts=0 size_bytes=4096"
+        f"sonarr_parse=1 pending_imports=0 guard_facts=0 tvdb_orders=0 size_bytes=4096"
     ) in out
     # path wins over component for a scoped event.
     assert f"{_TS} INFO [sonarr › [3/182] Frieren › entry] checking title=Frieren" in out

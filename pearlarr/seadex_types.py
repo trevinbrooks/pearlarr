@@ -29,6 +29,8 @@ from pydantic import (
 )
 from seadex import Tag, TorrentRecord, Tracker
 
+from .tvdb_orders import OFFICIAL_ORDER
+
 
 @dataclass
 class EpisodeRecord:
@@ -398,10 +400,16 @@ class ArrItem(Protocol):
 
 @runtime_checkable
 class SonarrItem(ArrItem, Protocol):
-    """An `ArrItem` keyed on `tvdbId`."""
+    """An `ArrItem` keyed on `tvdbId`, with the TVDB orders Sonarr lists for it."""
 
     @property
     def tvdbId(self) -> int: ...
+
+    @property
+    def seasonType(self) -> str: ...
+
+    @property
+    def seasonTypes(self) -> "tuple[SeasonTypeCount, ...]": ...
 
 
 @runtime_checkable
@@ -410,6 +418,17 @@ class RadarrItem(ArrItem, Protocol):
 
     @property
     def tmdbId(self) -> int: ...
+
+
+class SeasonTypeCount(_ApiModel):
+    """One `seasonTypes[]` element: a TVDB order a series lists and its episode count.
+
+    Sonarr v5's series record and SkyHook's reply send the same shape.
+    """
+
+    type: str
+    """The order's type name (`official`, `dvd`, `alternate`, ...)."""
+    episode_count: int = Field(validation_alias="episodeCount")
 
 
 class SonarrSeries(_ApiModel):
@@ -423,6 +442,17 @@ class SonarrSeries(_ApiModel):
     monitored: bool = True
     tvdbId: int = 0
     imdbId: str | None = None
+    seasonType: str = OFFICIAL_ORDER
+    """The TVDB order Sonarr numbers the series by. Sonarr v4 sends no field and numbers by the official order."""
+    seasonTypes: tuple[SeasonTypeCount, ...] = ()
+    """The orders TVDB lists for the series, with counts. Sonarr v5 only."""
+
+    @field_validator("seasonTypes", mode="before")
+    @classmethod
+    def _lenient_season_types(cls, value: object) -> object:
+        """Skip junk `seasonTypes[]` entries, never failing the series over one."""
+
+        return _validate_skipping_junk(SeasonTypeCount, value)
 
 
 class RadarrMovie(_ApiModel):
@@ -454,6 +484,8 @@ class SonarrEpisode(_ApiModel):
     absolute_episode_number: int | None = Field(default=None, validation_alias="absoluteEpisodeNumber")
     """The series-wide number TVDB gives the episode (specials interleaved), when it has one."""
     title: str = ""
+    tvdb_id: int | None = Field(default=None, validation_alias="tvdbId")
+    """TVDB's episode id, the key a TVDB order's rows join on."""
     episode_file_id: int = Field(default=0, validation_alias="episodeFileId")
     monitored: bool = True
     episode_file: Annotated[SonarrEpisodeFile | None, BeforeValidator(_none_if_falsy)] = Field(
@@ -966,6 +998,58 @@ class MovieFile(_ApiModel):
 
     release_group: str | None = Field(default=None, validation_alias="releaseGroup")
     size: int | None = None
+
+
+# --- SkyHook (`skyhook.sonarr.tv` TVDB shows) -------------------------------
+
+
+def _rows_or_none(value: object) -> object:
+    """Fold `episodes[]` all-or-nothing: None when it isn't a list or ANY row fails validation. A null is no rows."""
+
+    if value is None:
+        return ()
+    # tuple included: direct construction passes the field's own type.
+    if not isinstance(value, (list, tuple)):
+        return None
+    try:
+        return [SkyHookEpisode.model_validate(row) for row in cast("Sequence[object]", value)]
+    except ValidationError:
+        return None
+
+
+class SkyHookEpisode(_ApiModel):
+    """One `episodes[]` row of a SkyHook show reply, numbered by the order the reply was asked for."""
+
+    tvdb_id: int = Field(validation_alias="tvdbId")
+    season_number: int = Field(validation_alias="seasonNumber")
+    episode_number: int = Field(validation_alias="episodeNumber")
+    air_date_utc: _LenientTime = Field(default=None, validation_alias="airDateUtc")
+    absolute_episode_number: int | None = Field(default=None, validation_alias="absoluteEpisodeNumber")
+    """Sent on official rows only."""
+
+
+class SkyHookReply(_ApiModel):
+    """One SkyHook show reply for one TVDB order (`/v2/tvdb/shows/eng/<tvdbId>/<type>`)."""
+
+    tvdb_id: int = Field(validation_alias="tvdbId")
+    status: _LenientStr = None
+    """TVDB's series status (`Ended`, `Continuing`, ...)."""
+    season_types: tuple[SeasonTypeCount, ...] = Field(default=(), validation_alias="seasonTypes")
+    """Every order TVDB lists for the series, whichever order was asked for."""
+    episodes: Annotated[tuple[SkyHookEpisode, ...] | None, BeforeValidator(_rows_or_none)] = ()
+    """The asked order's rows. Empty when the reply sends none, None when any row failed validation."""
+
+    @field_validator("season_types", mode="before")
+    @classmethod
+    def _lenient_season_types(cls, value: object) -> object:
+        """Skip junk `seasonTypes[]` entries, never failing the reply over one."""
+
+        return _validate_skipping_junk(SeasonTypeCount, value)
+
+    def lists(self, order_type: str) -> bool:
+        """Whether the reply's `seasonTypes` names `order_type`."""
+
+        return any(season_type.type == order_type for season_type in self.season_types)
 
 
 # --- Sonarr parse (`/api/v3/parse` `parsedEpisodeInfo`) -------------------

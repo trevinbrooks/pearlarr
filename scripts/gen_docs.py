@@ -890,6 +890,7 @@ def _specimen_stream() -> tuple[ev.Event, ...]:
             sonarr_parse=412,
             pending_imports=0,
             guard_facts=0,
+            tvdb_orders=90,
             size_bytes=1179648,
         ),
         ev.CacheIntegrityReported(result="ok"),

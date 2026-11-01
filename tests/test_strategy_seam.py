@@ -74,10 +74,12 @@ from pearlarr.seadex_types import (
     RadarrItem,
     RemotePathMapping,
     SeadexDict,
+    SeasonTypeCount,
     SonarrEpisode,
     SonarrItem,
 )
 from pearlarr.sonarr_episodes import sonarr_series_fingerprint
+from pearlarr.tvdb_orders import OFFICIAL_ORDER
 
 from .builders import (
     PENDING_ADDED,
@@ -130,6 +132,8 @@ class _Item:
     monitored: bool
     tvdbId: int
     tmdbId: int
+    seasonType: str = OFFICIAL_ORDER
+    seasonTypes: tuple[SeasonTypeCount, ...] = ()
 
     def __init__(self, **kw: object) -> None:
         self.__dict__.update(kw)
