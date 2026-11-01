@@ -151,7 +151,9 @@ def test_an_outage_latches_and_later_fetches_send_nothing(answer: httpx.Response
 
     assert first is second is SkyHookMiss.OUTAGE
     assert client.outage is True
-    assert _warnings(recording) == [f"SkyHook request failed ({detail}) - skipping TVDB order fetches this run"]
+    assert _warnings(recording) == [
+        f"SkyHook request failed ({detail}) - skipping TVDB order fetches this run. Until it answers, runs re-check titles they would otherwise skip"
+    ]
 
 
 def test_skyhooks_own_not_found_is_a_miss_for_that_series_only() -> None:

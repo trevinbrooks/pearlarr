@@ -62,7 +62,10 @@ class SkyHookClient(AbstractSkyHookClient):
         """Warn ONCE that SkyHook is unreachable, muting every later call via the flag."""
 
         if not self._outage:
-            hub_warn(f"SkyHook request failed ({detail}) - skipping TVDB order fetches this run")
+            hub_warn(
+                f"SkyHook request failed ({detail}) - skipping TVDB order fetches this run. "
+                "Until it answers, runs re-check titles they would otherwise skip"
+            )
         self._outage = True
 
     @override
