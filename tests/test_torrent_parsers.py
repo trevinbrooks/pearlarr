@@ -126,6 +126,8 @@ def test_get_nyaa_torrent_reads_the_utf8_name_in_any_case() -> None:
         pytest.param('filename="{name}.torrent"', id="quoted"),
         pytest.param("filename={name}.torrent", id="bare"),
         pytest.param("filename=\"{name}.torrent\"; filename*=UTF-8''", id="empty utf-8 form"),
+        pytest.param('FILENAME="{name}.torrent"', id="any case"),
+        pytest.param('origfilename="other.torrent"; filename="{name}.torrent"', id="past a longer parameter name"),
     ],
 )
 @respx.mock

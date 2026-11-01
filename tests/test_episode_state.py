@@ -194,6 +194,10 @@ class TestEpisodeFileStatuses:
         assert mixed.all_done() is False
         assert target_statuses({}).all_done() is False
 
+    def test_filled_by_hand_needs_a_target(self) -> None:
+        assert target_statuses({1: EpisodeFileStatus.RECOMMENDED}).filled_by_hand() is True
+        assert target_statuses({}).filled_by_hand() is False
+
     def test_needing_import_excludes_only_recommended(self) -> None:
         statuses = target_statuses(
             {

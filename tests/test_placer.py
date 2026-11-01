@@ -549,6 +549,14 @@ class TestRefuseCountedByTitle:
 
         assert placed == {name: ((), PlacementVerdict.MISNUMBERED)}
 
+    def test_a_count_glued_onto_season_0_that_no_title_confirms_is_held(self) -> None:
+        # Sonarr glues "0002" into S00E02, and no title confirms it.
+        name = "show 0002 Days of Summer [grp].mkv"
+
+        placed = by_name(place({name: parsed_info(season=0, episodes=(2,), matched=((0, 2),))}, _scope([501, 502])))
+
+        assert placed == {name: ((), PlacementVerdict.MISNUMBERED)}
+
     def test_a_leftover_counted_by_its_title_is_not_zipped_onto_the_last_episode(self) -> None:
         # Two files are matched; the third's 100 counts nothing of the series, and its words name no episode.
         parsed = {

@@ -3,6 +3,8 @@
 
 from dataclasses import replace
 
+import pytest
+
 from pearlarr.grab_placement import (
     EntryPlacements,
     IdentityOverride,
@@ -552,22 +554,39 @@ class TestPlaceHeld:
         assert verdicts_of(placement.assignment) == {PlacementVerdict.ALTERNATE, PlacementVerdict.ALIASED_ELSEWHERE}
         assert placement.claimed_ids == {502, 504}
 
-    def test_a_pack_another_series_places_by_its_numbers_against_the_aliases_holds_the_url(self) -> None:
-        # The stored record also claims the pack for another series, whose window the listing doesn't cover: there
-        # every member places by its own number, against what the aliases say, so the pack waits for a hand import.
-        other = episode_index([sonarr_ep(0, n, ep_id=900 + n, episode_file_id=0) for n in (1, 2, 3)])
-        record = two_claim_record(series_ids=(7, 8), windows=((502, 504), (901, 902, 903)))
-        torrent = known_torrent(
-            record,
-            indexes={7: episode_index(_SPECIALS), 8: other},
+    _OTHER = episode_index([sonarr_ep(0, n, ep_id=900 + n, episode_file_id=0) for n in (1, 2, 3)])
+    """Another series' three specials, which the listing doesn't cover."""
+
+    @classmethod
+    def _aliased_against(cls, numbered: tuple[int, ...]) -> KnownTorrent:
+        """The aliased pack, claimed for entry 1 over specials 2 and 4 and for entry 2 over `numbered` of `_OTHER`."""
+
+        return known_torrent(
+            two_claim_record(series_ids=(7, 8), windows=((502, 504), numbered)),
+            indexes={7: episode_index(_SPECIALS), 8: cls._OTHER},
             evidence=torrent_evidence(ALIASED_PACK.ids, aliases=ALIASED_PACK.special_aliases),
         )
 
-        placement = place_release(self._specials(), self._specials_scope(2, 4), torrent)
+    @pytest.mark.parametrize("al_id", [1, 2])
+    def test_a_pack_another_series_places_by_its_numbers_against_the_aliases_holds_the_url(self, al_id: int) -> None:
+        # The stored record also claims the pack for another series: there every member places by its own number,
+        # against what the aliases say, so the pack waits for a hand import. Either entry holds it: the aliases
+        # placed or claimed its files under the first, the second placed them.
+        scope = self._specials_scope(2, 4) if al_id == 1 else SeedScope(2, self._OTHER, self._OTHER, EntryNames())
+
+        placement = place_release(self._specials(), scope, self._aliased_against((901, 902, 903)))
 
         assert verdicts_of(placement.assignment) == {PlacementVerdict.MISNUMBERED}
         assert placement.hold is GrabHold.MISNUMBERED
         assert placement.claimed_ids == frozenset()
+
+    def test_a_file_the_aliases_claim_that_another_series_places_holds_the_url(self) -> None:
+        # The aliases claim the third file for special 6, outside this window, and the other series places it by
+        # its number. The first two still place.
+        placement = place_release(self._specials(), self._specials_scope(2, 4), self._aliased_against((903,)))
+
+        assert placement.hold is GrabHold.MISNUMBERED
+        assert placement.assignment.assigned == {"show.s00e01.mkv": [502], "show.s00e02.mkv": [504]}
 
     def test_a_file_misnumbered_under_another_entrys_window_holds_nothing(self) -> None:
         # The stored record claims season 1 for entry 1, where the first file's key and count disagree. Entry 2's

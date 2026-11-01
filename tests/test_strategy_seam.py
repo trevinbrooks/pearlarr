@@ -2987,6 +2987,19 @@ class TestUnmatchedProbe:
         assert sonarr.execute_calls == []
         assert diagnostic_messages(recording, Severity.WARNING) == []
 
+    def test_an_untagged_hand_import_at_a_listed_size_reads_imported(self) -> None:
+        # Sonarr reads no group off a name that carries none. The file's size says it is one of the torrent's.
+        pending = pending_import(
+            file_episode_map={}, ordered_episode_ids=[101], seadex_files=list(self._NAMES), release_sizes=(1000,)
+        )
+        strat, sonarr = self._strat()
+        sonarr.episodes_return = [sonarr_ep(1, 1, ep_id=101, size=1000)]
+
+        probe = strat.import_completed(pending, "/d", AttemptKind.POLL)
+
+        assert probe == ImportProbe.imported()
+        assert sonarr.execute_calls == []
+
     def test_another_groups_copy_on_the_target_keeps_the_verdict_unmatched(self) -> None:
         # The stale copy this grab replaces is not ours: the human still has the import to do.
         pending = self._numberless_pair()
