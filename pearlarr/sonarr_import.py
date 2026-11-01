@@ -626,7 +626,7 @@ class ImportExecutor:
 
         if not context.snapshot.statuses(context.pending.resolved_ids(), file_map).filled_by_hand():
             return None
-        self.logger.debug(f"{context.content_path}: already imported (recommended files present)")
+        self.logger.debug(f"{context.content_path}: already imported (recommended files or untagged copies present)")
         return ImportProbe.imported()
 
     def _guard_before_post(self, context: _ImportContext) -> ImportProbe | None:

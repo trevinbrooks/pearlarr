@@ -23,7 +23,7 @@ Pearlarr is a fork of [bbtufty/seadexarr](https://github.com/bbtufty/seadexarr).
 - A file named with an episode's title now also matches it when the subtitle is set off by dashes instead of a colon, when the name spells the title's "&" as "and", when the title opens with a number Sonarr took for the episode, or when the title is just the season and episode the name carries (`Show 2 - 05` for an episode titled "2.5").
 - When one file of a numbered pack carries the title of the episode another file is numbered for, both are left for a hand import instead of the titled file taking that episode.
 - A pack SeaDex lists under two entries is now grabbed for an entry whose own files it numbers right, even when a file it holds for the other entry is misnumbered there. That file is still left for a hand import.
-- A download whose files you imported by hand, under names Sonarr reads no group from, now finishes once every episode holds one of its files at a listed size, instead of warning every run until `pending_max_age_days`.
+- A download with files pearlarr couldn't place, named with no group, now finishes once every episode holds one of its files at a listed size, whether Sonarr imported them or you did by hand, instead of warning every run until `pending_max_age_days`.
 
 ## [1.5.6] - 2026-10-25
 
