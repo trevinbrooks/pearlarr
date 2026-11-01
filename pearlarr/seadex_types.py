@@ -79,9 +79,12 @@ class GrabHold(StrEnum):
 
     @property
     def hand_import(self) -> bool:
-        """Whether the pack is left for a hand import, so the planner judges it by what its window holds."""
+        """Whether the pack is left for a hand import."""
 
-        return self in (GrabHold.MISNUMBERED, GrabHold.TITLE_REFUTED)
+        return self in _HAND_IMPORT_HOLDS
+
+
+_HAND_IMPORT_HOLDS = frozenset({GrabHold.MISNUMBERED, GrabHold.TITLE_REFUTED})
 
 
 @dataclass

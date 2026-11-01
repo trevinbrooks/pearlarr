@@ -269,10 +269,9 @@ def seed_batch(files: Sequence[SeedFile]) -> PlacementBatch:
 def place_release(files: Sequence[SeedFile], scope: SeedScope, torrent: KnownTorrent) -> UrlPlacement:
     """Place one url's files ONCE, with the same `place_leftover` the import wait runs. Pure.
 
-    Nothing gets placed if a claim's series wasn't read, or if this is a specials window and its listing wasn't
-    read. The url is held (`GrabHold`) for a misnumbered pack, for one whose titles refute its numbers under the
-    entry's own window when nothing of the whole map lands on the entry, or, because a file the grab seeds is never
-    placed again, when the size identities weren't read or a parse is unknown under a specials listing.
+    Nothing is placed when a claim's series, or a specials window's listing, wasn't read. The url is held
+    (`GrabHold`) when a file of the entry's own window is misnumbered, when a read the placement needs failed, or
+    when its titles refute its numbers and nothing of it lands on the entry.
     """
 
     batch = seed_batch(files)
@@ -285,9 +284,11 @@ def place_release(files: Sequence[SeedFile], scope: SeedScope, torrent: KnownTor
     parse_unread = own.specials_listing() is not None and not batch.all_parses_known
     if scope.can_place and windows is not None:
         placed = place_leftover(seeded, batch, windows)
-        assignment, refuted = placed.merged, placed.refuted_under(torrent.own_index(scope.al_id))
+        own_index = torrent.own_index(scope.al_id)
+        assignment = placed.merged
+        misnumbered, refuted = placed.misnumbered_under(own_index), placed.refuted_under(own_index)
     else:
-        assignment, refuted = EpisodeAssignment(()), False
+        assignment, misnumbered, refuted = EpisodeAssignment(()), False, False
     mapped = {**seeded, **assignment.assigned}
     records: list[EpisodeRecord] = []
     claimed: set[int] = set()
@@ -307,13 +308,12 @@ def place_release(files: Sequence[SeedFile], scope: SeedScope, torrent: KnownTor
     known = windows is not None and (torrent.record is None or scope.can_place)
     # A url with no video file (subs, fonts) places nothing and waits on nothing.
     unread = identities_unread or parse_unread
-    hold = _hold_of(assignment, refuted=refuted and not claimed, unread=unread) if files else None
+    hold = _hold_of(misnumbered=misnumbered, refuted=refuted and not claimed, unread=unread) if files else None
     return UrlPlacement(
         files=tuple(files),
         assignment=assignment,
-        # A misnumbered pack adds no records: the planner blankets its group by name and size, as for one that
-        # placed nothing.
-        records=() if hold is GrabHold.MISNUMBERED else tuple(records),
+        # A pack left for a hand import adds no records: the planner judges it by what its window holds.
+        records=() if hold is not None and hold.hand_import else tuple(records),
         claimed_ids=frozenset(claimed),
         inputs_known=not files or (batch.all_parses_known and known and not identities_unread),
         hold=hold,
@@ -323,14 +323,15 @@ def place_release(files: Sequence[SeedFile], scope: SeedScope, torrent: KnownTor
     )
 
 
-def _hold_of(assignment: EpisodeAssignment, *, refuted: bool, unread: bool) -> GrabHold | None:
+def _hold_of(*, misnumbered: bool, refuted: bool, unread: bool) -> GrabHold | None:
     """Why the url isn't grabbed: a misnumbered pack first, then a missing input (`unread`), then a refuted pack.
 
+    `misnumbered`: a file of the entry's own window is misnumbered (`WindowedAssignment.misnumbered_under`).
     `refuted`: the entry's own window refuted a file no window placed, and nothing of the whole map lands on the
     entry.
     """
 
-    if any(p.verdict is PlacementVerdict.MISNUMBERED for p in assignment.placements):
+    if misnumbered:
         return GrabHold.MISNUMBERED
     if unread:
         return GrabHold.INPUT_UNREAD

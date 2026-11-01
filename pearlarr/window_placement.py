@@ -60,6 +60,19 @@ class WindowedAssignment(NamedTuple):
         own = {p.name for p in self.windows[index].placements if p.verdict is refuted}
         return any(v.placement.verdict is refuted and v.placement.name in own for v in self.verdicts)
 
+    def misnumbered_under(self, index: int) -> bool:
+        """Whether the merge left `MISNUMBERED` a file the window at `index` placed, refused, or claimed by alias.
+
+        A file that window wrote off (another slice's, an extra, a skip) is no misnumbered file of its own.
+        """
+
+        own = {
+            p.name for p in self.windows[index].placements if p.verdict.placed or p.verdict.refused or p.verdict in _BY_ALIAS
+        }
+        return any(
+            v.placement.verdict is PlacementVerdict.MISNUMBERED and v.placement.name in own for v in self.verdicts
+        )
+
 
 # Highest wins. SKIPPED outranks FOREIGN and EXTRA, so a file skipped under any window is never excluded as another
 # slice's or as an extra. ALIASED_ELSEWHERE sits between them: the aliases name the file as this series' special,

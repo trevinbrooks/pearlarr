@@ -570,6 +570,28 @@ class TestPlaceHeld:
         assert placement.hold is GrabHold.MISNUMBERED
         assert placement.claimed_ids == frozenset()
 
+    def test_a_file_misnumbered_under_another_entrys_window_holds_nothing(self) -> None:
+        # The stored record claims season 1 for entry 1, where the first file's key and count disagree. Entry 2's
+        # window reads that file as another season's, and places its own.
+        first = [sonarr_ep(1, n, ep_id=100 + n, episode_file_id=0, absolute=n) for n in (1, 2, 3)]
+        second = [sonarr_ep(2, n, ep_id=200 + n, episode_file_id=0, absolute=3 + n) for n in (1, 2)]
+        series = episode_index([*first, *second])
+        files = [
+            SeedFile("Show - S01E02 (0003).mkv", 10, _matched(1, 2)),
+            SeedFile("Show - S02E01 (0004).mkv", 20, _matched(2, 1)),
+            SeedFile("Show - S02E02 (0005).mkv", 30, _matched(2, 2)),
+        ]
+        record = pending_import(
+            infohash="h1", seadex_files=[f.basename for f in files], ordered_episode_ids=(101, 102, 103)
+        )
+        scope = SeedScope(2, episode_index(second), series, EntryNames())
+
+        placement = place_release(files, scope, known_torrent(record, indexes={7: series}))
+
+        assert PlacementVerdict.MISNUMBERED in verdicts_of(placement.assignment)
+        assert placement.hold is None
+        assert placement.records == (EpisodeRecord(2, 1, 20), EpisodeRecord(2, 2, 30))
+
     def test_an_unread_listing_holds_the_url_and_places_nothing(self) -> None:
         # No verdict could judge the pack, and import time (no listing) would place it by its numbers.
         placement = place_release(self._specials(), self._specials_scope(1, 2), self._listing(None))
