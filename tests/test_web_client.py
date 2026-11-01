@@ -183,3 +183,22 @@ def test_head_with_retries_sends_a_head_under_the_same_policy() -> None:
     assert response.status_code == 200
     assert route.call_count == 2  # the route matches HEAD only, so a GET would fail the mock
     assert len(sleeps) == 1
+
+
+@respx.mock
+def test_a_cookie_set_by_a_retryable_response_rides_the_retry() -> None:
+    cookies_sent: list[str | None] = []
+
+    def _challenge(request: httpx.Request) -> httpx.Response:
+        cookies_sent.append(request.headers.get("cookie"))
+        if len(cookies_sent) == 1:
+            return httpx.Response(503, headers={"Set-Cookie": "challenge=ok"})
+        return httpx.Response(200)
+
+    respx.get(_URL).mock(side_effect=_challenge)
+
+    with httpx.Client() as client:
+        response = get_with_retries(client, _URL, sleep=lambda _s: None)
+
+    assert response.status_code == 200
+    assert cookies_sent == [None, "challenge=ok"]

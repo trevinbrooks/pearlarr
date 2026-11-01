@@ -366,3 +366,48 @@ def test_add_already_present_reads_the_add_time(
 
     assert outcome is AddOutcome.ALREADY_ADDED
     assert when == expected
+
+
+def test_add_preview_with_the_torrent_in_qbit_reports_it_without_fetching(monkeypatch: pytest.MonkeyPatch) -> None:
+    """A dry run checks qBittorrent first too: a torrent it has is ALREADY_ADDED and its page is never fetched."""
+
+    fetched: list[str] = []
+
+    def _recording_nyaa(url: str, client: httpx.Client) -> tuple[str, str]:
+        del client
+        fetched.append(url)
+        return (_PARSED_URL, _SOURCE_TITLE)
+
+    monkeypatch.setattr(torrents, "get_nyaa_torrent", _recording_nyaa)
+    qbit = _FakeQbit(present={_HASH: "Existing Name"})
+    service = _service(qbit)
+
+    result = service.add(
+        item=SeadexUrlItem(url="https://nyaa.si/view/1", tracker=Tracker.NYAA, infohash=_HASH), preview=True
+    )
+
+    assert (result.outcome, result.name) == (AddOutcome.ALREADY_ADDED, "Existing Name")
+    assert fetched == []
+    assert qbit.add_calls == []
+
+
+def test_add_a_torrent_two_entries_list_is_fetched_once(monkeypatch: pytest.MonkeyPatch) -> None:
+    """The second entry listing a torrent finds it in qBittorrent, so its page is fetched once in all."""
+
+    fetched: list[str] = []
+
+    def _recording_nyaa(url: str, client: httpx.Client) -> tuple[str, str]:
+        del client
+        fetched.append(url)
+        return (_PARSED_URL, _SOURCE_TITLE)
+
+    monkeypatch.setattr(torrents, "get_nyaa_torrent", _recording_nyaa)
+    qbit = _FakeQbit(register_on_add=(_HASH, "Qbit Reported Name"))
+    service = _service(qbit)
+    item = SeadexUrlItem(url="https://nyaa.si/view/1", tracker=Tracker.NYAA, infohash=_HASH)
+
+    first = service.add(item=item, preview=False)
+    second = service.add(item=item, preview=False)
+
+    assert (first.outcome, second.outcome) == (AddOutcome.ADDED, AddOutcome.ALREADY_ADDED)
+    assert fetched == ["https://nyaa.si/view/1"]

@@ -20,12 +20,13 @@ import respx
 import pearlarr.torrent as torrent
 from pearlarr.torrent import (
     ANIMETOSHO_FEED_URL,
+    ParsedTorrent,
     TorrentParseError,
     get_animetosho_torrent,
     get_nyaa_torrent,
     get_rutracker_torrent,
 )
-from pearlarr.web_client import get_with_retries
+from pearlarr.web_client import get_with_retries, head_with_retries
 
 _TORRENT_FIXTURES = Path(__file__).parent / "fixtures" / "torrent"
 
@@ -88,6 +89,60 @@ def test_get_nyaa_torrent_decodes_a_non_ascii_title() -> None:
     _, title = get_nyaa_torrent("https://nyaa.si/view/1234567", client=httpx.Client())
 
     assert title == "[Group] クールアニメ - 01"
+
+
+@pytest.mark.parametrize(
+    "url", ["https://nyaa.si/view/1234567/", "https://nyaa.si/view/1234567#com", "https://nyaa.si/view/1234567?page=2"]
+)
+@respx.mock
+def test_get_nyaa_torrent_finds_the_release_number_past_a_slash_fragment_or_query(url: str) -> None:
+    respx.head(_NYAA_LINK).respond(headers=_nyaa_disposition(f"{_NYAA_TITLE}.torrent"))
+
+    assert get_nyaa_torrent(url, client=httpx.Client()) == ParsedTorrent(_NYAA_LINK, _NYAA_TITLE)
+
+
+@respx.mock
+def test_get_nyaa_torrent_refuses_a_download_url_without_a_request() -> None:
+    head = respx.head(_NYAA_LINK).respond(headers=_nyaa_disposition(f"{_NYAA_TITLE}.torrent"))
+
+    with pytest.raises(TorrentParseError, match="Could not read a Nyaa release number"):
+        get_nyaa_torrent(_NYAA_LINK, client=httpx.Client())
+
+    assert not head.called
+
+
+@respx.mock
+def test_get_nyaa_torrent_reads_the_utf8_name_in_any_case() -> None:
+    # RFC 6266 makes the parameter name and the charset tag case-insensitive.
+    respx.head(_NYAA_LINK).respond(
+        headers={"content-disposition": f"attachment; FILENAME*=utf-8''{_NYAA_TITLE}.torrent"}
+    )
+
+    assert get_nyaa_torrent("https://nyaa.si/view/1234567", client=httpx.Client()).title == _NYAA_TITLE
+
+
+@pytest.mark.parametrize("template", ['"{name}.torrent"', "{name}.torrent"])
+@respx.mock
+def test_get_nyaa_torrent_falls_back_to_the_plain_filename(template: str) -> None:
+    value = template.format(name=quote(_NYAA_TITLE))
+    respx.head(_NYAA_LINK).respond(headers={"content-disposition": f"inline; filename={value}"})
+
+    assert get_nyaa_torrent("https://nyaa.si/view/1234567", client=httpx.Client()).title == _NYAA_TITLE
+
+
+@respx.mock
+def test_get_nyaa_torrent_retries_a_429(monkeypatch: pytest.MonkeyPatch) -> None:
+    def _no_sleep_head(client: httpx.Client, url: str) -> httpx.Response:
+        return head_with_retries(client, url, sleep=lambda _s: None)
+
+    monkeypatch.setattr(torrent, "head_with_retries", _no_sleep_head)
+    route = respx.head(_NYAA_LINK)
+    route.side_effect = [httpx.Response(429), httpx.Response(200, headers=_nyaa_disposition(f"{_NYAA_TITLE}.torrent"))]
+
+    _, title = get_nyaa_torrent("https://nyaa.si/view/1234567", client=httpx.Client())
+
+    assert title == _NYAA_TITLE
+    assert route.call_count == 2
 
 
 @respx.mock

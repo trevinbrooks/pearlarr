@@ -73,7 +73,7 @@ class AddResult(NamedTuple):
 
     outcome: AddOutcome
     name: str | None
-    """The qBittorrent-reported name. A new add falls back to the scraped release title. None when neither exists."""
+    """The qBittorrent-reported name. A new add falls back to the tracker's release title. None when neither exists."""
     added_on: datetime | None = None
     """qBittorrent's own add time for an `ALREADY_ADDED` torrent (local-naive, like `now_stamp`), else None."""
 
@@ -164,7 +164,7 @@ class TorrentService:
         torrent_url: str,
         preview: bool,
     ) -> str | None:
-        """Add a new torrent to qBittorrent and read back its name, None in preview or without a hash to read by."""
+        """Add `torrent_url` to qBittorrent and return the name it reports, None in preview, without a hash, or when unlisted."""
 
         infohash = item.infohash
 
