@@ -10,9 +10,9 @@ Pearlarr is a fork of [bbtufty/seadexarr](https://github.com/bbtufty/seadexarr).
 ### Changed
 
 - Pearlarr no longer fetches the tracker page of a release qBittorrent already has. A torrent SeaDex lists under two entries is fetched once instead of twice, and one whose tracker page is down or gone no longer fails the grab.
-- A Nyaa grab now makes one small request instead of downloading the release page and the .torrent file. The grab's name in the summary and Discord, when qBittorrent hasn't named the torrent yet, is now the .torrent's own file name instead of the page title.
+- A Nyaa grab now makes one small request instead of downloading the release page and the .torrent file. When qBittorrent hasn't named the torrent yet, the grab's name in the console and the log is now the .torrent's own file name instead of the page title.
 - A pack whose file titles contradict its numbering, with none of its files placed, is no longer grabbed. The title is listed under "needs action" with "file titles contradict its numbering; import it by hand" until a hand import fills its episodes.
-- When only some of such a pack's files are placed, the pack is grabbed and those import. The rest keep the download pending in its grab category: the import line counts them, the log and the wait notification name them, and every run names them again until a hand import fills their episodes or the download reaches `pending_max_age_days`.
+- When only some of such a pack's files are placed, the pack is grabbed and those import. The rest keep the download pending in its grab category: the import line counts them, the log and the Discord wait notification name them, and every run names them again until a hand import fills their episodes or the download reaches `pending_max_age_days`.
 - The first run after upgrading re-checks every cached title once and says so.
 
 ### Fixed
