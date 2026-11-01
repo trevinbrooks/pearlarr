@@ -65,6 +65,8 @@ class SeriesFacts:
     """Season -> how many episodes it has."""
     absolute_of: Mapping[int, int] = field(init=False, repr=False, compare=False)
     """Episode id -> absolute number, for the episodes that have one."""
+    id_by_absolute: Mapping[int, int] = field(init=False, repr=False, compare=False)
+    """Absolute number -> episode id, the inverse of `absolute_of` (the last id wins a repeated number)."""
 
     def __post_init__(self) -> None:
         keys = self.series.id_by_key
@@ -76,6 +78,9 @@ class SeriesFacts:
             if ep.absolute_episode_number is not None
         }
         object.__setattr__(self, "absolute_of", MappingProxyType(absolute_of))
+        object.__setattr__(
+            self, "id_by_absolute", MappingProxyType({number: ep_id for ep_id, number in absolute_of.items()})
+        )
 
     @property
     def id_by_key(self) -> Mapping[EpisodeKey, int]:
@@ -114,8 +119,9 @@ class PlacementVerdict(StrEnum):
     """Not placed here: a file of a misnumbered specials pack whose alias points at a special outside this window.
     A claim, not a refusal, so the window that holds that special may still place it."""
     FOREIGN = "other slice"
-    """Reads wholly outside the scope, or is titled as an episode outside it and confirmed by its reading or by no
-    open id being left: never this record's to import."""
+    """Reads wholly outside the scope, or is titled as an episode outside it and confirmed by its reading, by that
+    reading's rejection while other files hold its episodes, or by no open id being left: never this record's to
+    import."""
     DUPLICATE = "duplicate"
     """Reads inside the scope onto episodes other files provably hold, or is titled as an episode a version of the
     same file holds."""
@@ -126,6 +132,9 @@ class PlacementVerdict(StrEnum):
     MISNUMBERED = "misnumbered"
     """A file of a specials pack whose numbers don't match the windows listing it, when its special aliases can't
     place it either or another window places it elsewhere. Never placed by its numbers, left for a hand import."""
+    TITLE_REFUTED = "refuted by its run's titles"
+    """A plain member of a numbered run whose titled members contradict the run's numbers, when nothing else placed
+    it. A claim, not a refusal: another window may still place it. Left for a hand import when none does."""
     SKIPPED = "skipped"
     """Nothing placed it and nothing proved it foreign."""
 
@@ -147,6 +156,12 @@ class PlacementVerdict(StrEnum):
 
         return self in _REFUSED
 
+    @property
+    def hand_import(self) -> bool:
+        """Whether the verdict leaves the file for a hand import: misnumbered, or refuted by its run's titles."""
+
+        return self in _HAND_IMPORT
+
 
 _PLACED = frozenset(
     {
@@ -164,6 +179,7 @@ _PLACED = frozenset(
     }
 )
 _EXCLUDED = frozenset({PlacementVerdict.FOREIGN, PlacementVerdict.DUPLICATE, PlacementVerdict.EXTRA})
+_HAND_IMPORT = frozenset({PlacementVerdict.MISNUMBERED, PlacementVerdict.TITLE_REFUTED})
 _REFUSED = frozenset({PlacementVerdict.HELD, PlacementVerdict.MISNUMBERED})
 
 
@@ -201,6 +217,12 @@ class EpisodeAssignment(NamedTuple):
         """The files this record knowably never imports (another slice's, a duplicate, an extra), and how."""
 
         return tuple(p for p in self.placements if p.verdict.excluded)
+
+    @property
+    def hand_import(self) -> tuple[str, ...]:
+        """The skipped files left for a hand import (`PlacementVerdict.hand_import`)."""
+
+        return tuple(p.name for p in self.placements if p.verdict.hand_import)
 
     @property
     def unplaced(self) -> tuple[str, ...]:

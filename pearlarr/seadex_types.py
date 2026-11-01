@@ -73,6 +73,15 @@ class GrabHold(StrEnum):
     INPUT_UNREAD = "a read failed"
     """A SeaDex listing for the series, or a parse the specials pack check needs, couldn't be read this run.
     Grabbing now could seed a file onto the wrong episode for good, so the url waits for the next run."""
+    TITLE_REFUTED = "titles refute its numbers"
+    """A pack whose file titles contradict its numbers, with nothing of it placed on the entry
+    (`PlacementVerdict.TITLE_REFUTED`): left for a hand import."""
+
+    @property
+    def hand_import(self) -> bool:
+        """Whether the pack is left for a hand import, so the planner judges it by what its window holds."""
+
+        return self in (GrabHold.MISNUMBERED, GrabHold.TITLE_REFUTED)
 
 
 @dataclass
@@ -98,6 +107,12 @@ class SeadexUrlItem:
 
     def __post_init__(self) -> None:
         self.infohash = normalized_infohash(self.infohash)
+
+    @property
+    def hand_import(self) -> bool:
+        """Whether the placement left the url's pack for a hand import (`GrabHold.hand_import`)."""
+
+        return self.hold is not None and self.hold.hand_import
 
     def flag(self, *, upgrade: bool = False) -> None:
         """Mark the url to grab, `upgrade` marking a replacement of held files. Never clears an upgrade already set."""
@@ -153,7 +168,7 @@ def flagged_urls(seadex_dict: SeadexDict) -> list[FlaggedUrl]:
 
 # Folded into the config's selection digest: bump when the release-selection
 # rules change in code so every cached verdict re-checks once after an upgrade.
-SELECTION_RULES_VERSION: int = 10
+SELECTION_RULES_VERSION: int = 11
 
 SONARR_MISSING_KEY: int = 999
 """Out-of-range stand-in for a missing Sonarr `seasonNumber`/`episodeNumber`, never colliding with a real one."""

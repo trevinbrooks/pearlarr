@@ -36,9 +36,11 @@ class WindowVerdict(NamedTuple):
 
 
 class WindowedAssignment(NamedTuple):
-    """One merged verdict per distinct name in `PlacementBatch.to_place`, batch order."""
+    """One merged verdict per distinct name in `PlacementBatch.to_place`, batch order, and each window's own."""
 
     verdicts: tuple[WindowVerdict, ...]
+    windows: tuple[EpisodeAssignment, ...]
+    """Each window's `assign_episode_ids` result, in window order."""
 
     @property
     def merged(self) -> EpisodeAssignment:
@@ -51,17 +53,26 @@ class WindowedAssignment(NamedTuple):
 
         return {v.placement.name: list(v.placement.ids) for v in self.verdicts if v.window_index == index}
 
+    def refuted_under(self, index: int) -> bool:
+        """Whether the window at `index` gave `TITLE_REFUTED` to a file the merge left `TITLE_REFUTED`."""
+
+        refuted = PlacementVerdict.TITLE_REFUTED
+        own = {p.name for p in self.windows[index].placements if p.verdict is refuted}
+        return any(v.placement.verdict is refuted and v.placement.name in own for v in self.verdicts)
+
 
 # Highest wins. SKIPPED outranks FOREIGN and EXTRA, so a file skipped under any window is never excluded as another
 # slice's or as an extra. ALIASED_ELSEWHERE sits between them: the aliases name the file as this series' special,
 # so a window that reads it as foreign doesn't write it off. DUPLICATE outranks SKIPPED (a refused duplicate beats a
-# file placed nowhere). EXTRA depends on each window's titles: lowest.
+# file placed nowhere). EXTRA depends on each window's titles: lowest. TITLE_REFUTED rejects only its own window's
+# reading: the top claim, so a file no window places stays a hand import.
 _CLAIM_RANK: Mapping[PlacementVerdict, int] = {
     PlacementVerdict.EXTRA: 0,
     PlacementVerdict.FOREIGN: 1,
     PlacementVerdict.ALIASED_ELSEWHERE: 2,
     PlacementVerdict.SKIPPED: 3,
     PlacementVerdict.DUPLICATE: 4,
+    PlacementVerdict.TITLE_REFUTED: 5,
 }
 _BY_ALIAS = frozenset({PlacementVerdict.ALTERNATE, PlacementVerdict.ALIASED_ELSEWHERE})
 """The verdicts the special aliases give: placed on the aliased special, or claimed for the window that holds it."""
@@ -77,10 +88,12 @@ def assign_across_windows(batch: PlacementBatch, windows: Sequence[TargetScope])
     names = batch.names
     decided: dict[str, WindowVerdict] = {}
     judged: dict[str, list[Placement]] = {name: [] for name in names}
+    assignments: list[EpisodeAssignment] = []
     for index, window in enumerate(windows):
         # Ids earlier windows placed count as used here: the ones this window admits, all of them when unscoped.
         scope = window.using(i for v in decided.values() for i in v.placement.ids)
-        for placement in assign_episode_ids(batch, scope).placements:
+        assignments.append(assignment := assign_episode_ids(batch, scope))
+        for placement in assignment.placements:
             judged[placement.name].append(placement)
             if placement.name in decided:
                 continue
@@ -89,7 +102,8 @@ def assign_across_windows(batch: PlacementBatch, windows: Sequence[TargetScope])
             elif placement.verdict.refused:
                 # A refusal decides a name as a placement does: no later window may place it by its numbers.
                 decided[placement.name] = WindowVerdict(placement, None)
-    return WindowedAssignment(tuple(_merged(name, judged[name], decided.get(name)) for name in names))
+    merged = tuple(_merged(name, judged[name], decided.get(name)) for name in names)
+    return WindowedAssignment(merged, tuple(assignments))
 
 
 def _merged(name: str, judged: Sequence[Placement], decided: WindowVerdict | None) -> WindowVerdict:

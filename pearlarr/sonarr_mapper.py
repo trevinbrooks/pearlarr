@@ -74,6 +74,12 @@ class FileAssignment(NamedTuple):
         return self.result.skipped
 
     @property
+    def hand_import(self) -> tuple[str, ...]:
+        """The skipped leaves the placement left for a hand import, which keep the record pending."""
+
+        return self.result.hand_import
+
+    @property
     def overridden(self) -> tuple[str, ...]:
         """Leftover files this poll placed by size over their names, for the executor to warn about."""
 

@@ -697,7 +697,7 @@ EVENT_DESCRIPTIONS: dict[str, str] = {
     "wait_started": "The end-of-run pass opened, watching `total` torrents. `kind` is `monitor` (waits for "
     "downloads to finish, then imports) or `check` (one non-blocking poll of earlier runs' downloads).",
     "torrent_graduated": "One watched torrent reached a terminal outcome. `message` is the outcome word. "
-    "`unmatched_files` names the files no episode claimed, only on the `unmatched` outcome.",
+    "`unmatched_files` names the files left for a hand import, only on the `unmatched` and `partial` outcomes.",
     "wait_finished": "The pass closed, with its imported/pending/deferred/failed tally (`pending` counts the "
     "check's rows left for the next run on purpose).",
     "run_finished": "The per-arr run closed (a boundary event).",

@@ -177,12 +177,14 @@ class GrabPipeline:
         hold = url_item.hold
         if hold is None:
             return True
-        # Never added: a misnumbered pack would import under the wrong specials, and one the placement could not
-        # judge might. The title stays uncached, so the next run re-checks it.
+        # Never added, and the title stays uncached for the next run.
         match hold:
             case GrabHold.MISNUMBERED:
                 reason = SkipReason.MISNUMBERED
                 self._ctx.per_title.misnumbered_groups.append(srg)
+            case GrabHold.TITLE_REFUTED:
+                reason = SkipReason.TITLE_REFUTED
+                self._ctx.per_title.title_refuted_groups.append(srg)
             case GrabHold.INPUT_UNREAD:
                 reason = SkipReason.INPUT_UNREAD
                 self._ctx.per_title.input_missing_groups.append(srg)
@@ -328,14 +330,15 @@ class GrabPipeline:
             and not per_title.grab_failed_groups
             and not per_title.input_missing_groups
             and not per_title.misnumbered_groups
+            and not per_title.title_refuted_groups
             and (added_this_title > 0 or not (per_title.private_only_skipped or per_title.unsupported_tracker_skipped))
         )
 
     def _classify_needs_action(self) -> NeedsActionRecord | None:
         """The single needs-action row for a title NOT cached as done, or None.
 
-        Flat guard-returns preserve the precedence private-only > unsupported-tracker > misnumbered > grab-failed >
-        read-missed.
+        Flat guard-returns preserve the precedence private-only > unsupported-tracker > misnumbered > title-refuted >
+        grab-failed > read-missed.
         """
 
         if self._ctx.per_title.private_only_skipped:
@@ -354,6 +357,13 @@ class GrabPipeline:
                 self._ctx.per_title.misnumbered_groups,
                 "numbering does not match its SeaDex listing; import it by hand",
                 NeedsActionKind.MISNUMBERED,
+            )
+
+        if self._ctx.per_title.title_refuted_groups:
+            return self._needs_action(
+                self._ctx.per_title.title_refuted_groups,
+                "file titles contradict its numbering; import it by hand",
+                NeedsActionKind.TITLE_REFUTED,
             )
 
         if self._ctx.per_title.grab_failed_groups:

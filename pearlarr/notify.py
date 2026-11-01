@@ -81,7 +81,7 @@ def _wait_color(result: WaitResult) -> int:
 
 
 def _wait_row_text(row: WaitOutcomeRow) -> str:
-    """One summary row: the title alone for an import, else with its detail and any file no episode claimed."""
+    """One summary row: the title alone for an import, else with its detail and any file left for a hand import."""
 
     if row.outcome.category is OutcomeCategory.SUCCESS:
         return row.label

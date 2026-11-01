@@ -248,6 +248,28 @@ class TestSeveralWindows:
         assert _placed_under(result) == {}
         assert {by_name(result.merged)[name] for name in run} == {((), PlacementVerdict.HELD)}
 
+    def test_a_run_disputed_past_the_cour_boundary_places_under_the_first_cour_and_is_refused_under_the_second(
+        self,
+    ) -> None:
+        # The special's absolute sits between the cours, and the pack is keyed on past the season's end: the first
+        # cour's window has no stake in the dispute and places its three, the second cour's refuses the rest.
+        series = series_index(
+            {**{EpisodeKey(1, n): 600 + n for n in range(1, 7)}, EpisodeKey(0, 1): 501},
+            absolutes={601: 1, 602: 2, 603: 3, 501: 4, 604: 5, 605: 6, 606: 7},
+        )
+        pack = [f"Show - S01E{n:02d}.mkv" for n in range(1, 8)]
+        parsed = {
+            name: parsed_info(season=1, episodes=(n,), matched=((1, n),) if n < 7 else ())
+            for n, name in enumerate(pack, 1)
+        }
+
+        result = assign_across_windows(
+            _batch(parsed), (_window(_FIRST_COUR, series=series), _window(_SECOND_COUR, series=series))
+        )
+
+        assert _placed_under(result) == {name: ((600 + n,), 0) for n, name in enumerate(pack[:3], 1)}
+        assert {by_name(result.merged)[name][1] for name in pack[3:]} == {PlacementVerdict.MISNUMBERED}
+
     def test_an_earlier_windows_misnumbered_pack_outranks_a_later_windows_placement(self) -> None:
         # Under the first window's listing (specials 2, 4 and 6, three as the pack is wide) the pack's `1` is
         # no listed special: misnumbered, a human's. The second window, unlisted, would place it by number.
@@ -258,6 +280,24 @@ class TestSeveralWindows:
 
         assert _placed_under(result) == {}
         assert verdicts_of(result.merged) == {PlacementVerdict.MISNUMBERED}
+
+    def test_an_earlier_windows_title_refutal_yields_to_a_later_windows_placement(self) -> None:
+        # Sonarr read the second season's bare numbers as first-season absolutes, and its titled member names a
+        # second-season episode: the first window refutes the plain members, the second places the run.
+        titles = ("Alpha Start", "Bravo Turn", "Charlie Rise", "Echo Dawn", "Foxtrot Fall", "Golf Night")
+        series = series_index(
+            {**{EpisodeKey(1, n): 600 + n for n in (1, 2, 3)}, **{EpisodeKey(2, n): 700 + n for n in (1, 2, 3)}},
+            absolutes={601: 1, 602: 2, 603: 3, 701: 4, 702: 5, 703: 6},
+            titles=dict(zip((601, 602, 603, 701, 702, 703), titles, strict=True)),
+        )
+        sequel = ["show s2 - 01 - echo dawn.mkv", "show s2 - 02.mkv", "show s2 - 03.mkv"]
+        parsed = {name: parsed_info(absolutes=(n,), matched=((1, n),)) for n, name in enumerate(sequel, 1)}
+
+        result = assign_across_windows(
+            _batch(parsed), (_window([601, 602, 603], series=series), _window([701, 702, 703], series=series))
+        )
+
+        assert _placed_under(result) == {name: ((700 + n,), 1) for n, name in enumerate(sequel, 1)}
 
     def test_an_aliased_pack_places_each_member_under_the_window_holding_its_special(self) -> None:
         # Each window maps the whole pack. The member outside the first window is `ALIASED_ELSEWHERE` there and

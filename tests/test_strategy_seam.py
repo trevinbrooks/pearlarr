@@ -17,7 +17,7 @@ import logging
 from collections.abc import Callable, Mapping, MutableMapping
 from dataclasses import replace
 from datetime import timedelta
-from typing import Any, NamedTuple, cast, override
+from typing import Any, ClassVar, NamedTuple, cast, override
 
 import pytest
 from seadex import EntryRecord
@@ -3014,6 +3014,109 @@ class TestUnmatchedProbe:
         assert sonarr.execute_calls[0][0][0].path == "/d/Show - 01 [1080p].mkv"
         warnings = [m for m in diagnostic_messages(recording, Severity.WARNING) if "could not be matched" in m]
         assert len(warnings) == 1
+
+
+class TestHeldBackFiles:
+    """A file the placement left for a hand import keeps the record pending once every placed file is in."""
+
+    # Each key is one episode early, as the titles show. The plain file belongs on 601.
+    _NAMES = ("show - 01 - The Return [grp].mkv", "show - 02 - Festival Night [grp].mkv", "show - 03 [grp].mkv")
+    _TITLES = ("Pilot Flight", "The Return", "Festival Night")
+    _SIZE_ON: ClassVar[dict[int, int]] = {601: 1003, 602: 1001, 603: 1002}
+    _PARSES: ClassVar[dict[str, ParsedFileInfo]] = {
+        name: parsed_info(season=1, episodes=(n,), matched=((1, n),)) for n, name in enumerate(_NAMES, 1)
+    }
+
+    @classmethod
+    def _record(cls) -> PendingImport:
+        return pending_import(
+            file_episode_map={normalize_basename(cls._NAMES[0]): [602], normalize_basename(cls._NAMES[1]): [603]},
+            seadex_files=list(cls._NAMES),
+            release_sizes=tuple(sorted(cls._SIZE_ON.values())),
+            ordered_episode_ids=(601, 602, 603),
+        )
+
+    @classmethod
+    def _episodes(cls, *filled: int) -> list[SonarrEpisode]:
+        """The window, each episode of `filled` holding the record's file at its listed size."""
+
+        return [
+            sonarr_ep(1, n, ep_id=ep_id, title=title, size=cls._SIZE_ON[ep_id], release_group="SubGroup")
+            if ep_id in filled
+            else sonarr_ep(1, n, ep_id=ep_id, title=title, episode_file_id=0)
+            for n, (ep_id, title) in enumerate(zip(cls._SIZE_ON, cls._TITLES, strict=True), start=1)
+        ]
+
+    @classmethod
+    def _strat(cls, *extras: str) -> tuple[SonarrSync, FakeSonarrClient]:
+        """The download's files plus `extras` on disk, the placed two in. Sonarr reads no number off an extra."""
+
+        strat, sonarr = _make_sonarr_for_import(
+            candidates=[manual_candidate(f"/d/{name}") for name in (*cls._NAMES, *extras)],
+            episodes=cls._episodes(602, 603),
+        )
+        sonarr.parse_fn = lambda name: cls._PARSES.get(name, ParsedFileInfo())
+        return strat, sonarr
+
+    def test_the_held_back_file_keeps_the_record_and_is_named_every_poll(self) -> None:
+        strat, sonarr = self._strat()
+        recording = install_recording_hub()
+
+        first = strat.import_completed(self._record(), "/d", AttemptKind.POLL)
+        second = strat.import_completed(self._record(), "/d", AttemptKind.POLL)
+
+        assert first.hand_import_files == (self._NAMES[2],)
+        assert first.files_present is False
+        assert second == first
+        assert sonarr.execute_calls == []
+        assert not any("could not be matched" in m for m in diagnostic_messages(recording, Severity.WARNING))
+
+    def test_the_record_retires_once_a_hand_import_fills_its_window(self) -> None:
+        strat, sonarr = self._strat()
+        held = strat.import_completed(self._record(), "/d", AttemptKind.POLL)
+        sonarr.episodes_return = self._episodes(601, 602, 603)
+
+        done = strat.import_completed(self._record(), "/d", AttemptKind.POLL)
+
+        assert held.hand_import_files == (self._NAMES[2],)
+        assert done.files_present is True
+        assert done.hand_import_files == ()
+
+    def test_a_plain_skip_beside_the_held_back_file_warns_once_for_itself_alone(self) -> None:
+        # The warning counts the extra, not the hand-import file.
+        strat, _ = self._strat("Extras.mkv")
+        recording = install_recording_hub()
+
+        probe = strat.import_completed(self._record(), "/d", AttemptKind.POLL)
+        strat.import_completed(self._record(), "/d", AttemptKind.POLL)
+
+        assert probe.hand_import_files == (self._NAMES[2],)
+        warnings = [m for m in diagnostic_messages(recording, Severity.WARNING) if "could not be matched" in m]
+        assert len(warnings) == 1
+        assert ": 1 file could not be matched" in warnings[0]
+
+    def test_a_parse_miss_waits_until_the_deadline(self) -> None:
+        strat, sonarr = self._strat("Extras.mkv")
+        sonarr.parse_fn = self._PARSES.get
+
+        polled = strat.import_completed(self._record(), "/d", AttemptKind.POLL)
+        final = strat.import_completed(self._record(), "/d", AttemptKind.DEADLINE)
+
+        assert polled == ImportProbe.waiting()
+        assert final.hand_import_files == (self._NAMES[2],)
+
+    def test_a_plain_skip_alone_retires(self) -> None:
+        strat, sonarr = _make_sonarr_for_import(
+            candidates=[manual_candidate("/d/Show - 01 [1080p].mkv"), manual_candidate("/d/Extras.mkv")],
+            episodes=[sonarr_ep(1, 1, ep_id=101, release_group="SubGroup")],
+        )
+        sonarr.parse_fn = lambda _n: ParsedFileInfo()
+        pending = pending_import(seadex_files=["Show - 01 [1080p].mkv", "Extras.mkv"])
+
+        probe = strat.import_completed(pending, "/d", AttemptKind.POLL)
+
+        assert probe.files_present is True
+        assert probe.hand_import_files == ()
 
 
 class TestProbeExclusions:

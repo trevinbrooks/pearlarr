@@ -184,6 +184,18 @@ def test_push_wait_summary_lists_the_unmatched_files_under_their_row(pushes: lis
     assert pushes[0].color == COLOR_DEFERRED
 
 
+def test_push_wait_summary_lists_the_held_back_files_under_their_row(pushes: list[DiscordEmbed]) -> None:
+    notifier = Notifier(discord_url="https://discord.example", web=httpx.Client())
+    row = WaitOutcomeRow("Demo Batch", Outcome.PARTIAL, unmatched_files=("show - 03 [grp].mkv",))
+
+    assert notifier.push_wait_summary(arr=Arr.SONARR, result=WaitResult((row,), elapsed_s=15)) is True
+    [field] = pushes[0].fields
+    assert field.name == "Left pending (1)"
+    assert field.value == (
+        "Demo Batch - imported in part; import the held-back files by hand in Sonarr\n`show - 03 [grp].mkv`"
+    )
+
+
 def test_push_wait_summary_unmatched_names_stay_inside_the_value_clamp(pushes: list[DiscordEmbed]) -> None:
     # A full section of three-name rows overflows a field value. The payload clamp is the backstop.
     notifier = Notifier(discord_url="https://discord.example", web=httpx.Client())

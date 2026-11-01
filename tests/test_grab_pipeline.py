@@ -13,7 +13,7 @@ login happens. The client `add` is faked by `FakeTorrents`.
 
 from collections.abc import Mapping
 from datetime import datetime, timedelta
-from typing import Any
+from typing import Any, NamedTuple
 
 import httpx
 import pytest
@@ -1261,6 +1261,16 @@ class TestPlacementInputMissing:
         assert [r.kind for r in pipeline._ctx.stats.needs_action] == [NeedsActionKind.GRAB_FAILED]
 
 
+class _HandImportHold(NamedTuple):
+    """A hold that leaves the url for a hand import, and what the run reports for it."""
+
+    hold: GrabHold
+    skip: SkipReason
+    kind: NeedsActionKind
+    reason: str
+    """The needs-action row's reason."""
+
+
 class TestPlacementHolds:
     """A url the placement refused is never added: the title stays uncached, and the summary says why."""
 
@@ -1272,9 +1282,27 @@ class TestPlacementHolds:
         item.hold = hold
         return item
 
-    def test_a_misnumbered_pack_is_never_added_and_the_title_is_listed_for_a_hand_import(self) -> None:
+    @pytest.mark.parametrize(
+        "case",
+        [
+            _HandImportHold(
+                GrabHold.MISNUMBERED,
+                SkipReason.MISNUMBERED,
+                NeedsActionKind.MISNUMBERED,
+                "numbering does not match its SeaDex listing; import it by hand",
+            ),
+            _HandImportHold(
+                GrabHold.TITLE_REFUTED,
+                SkipReason.TITLE_REFUTED,
+                NeedsActionKind.TITLE_REFUTED,
+                "file titles contradict its numbering; import it by hand",
+            ),
+        ],
+        ids=["misnumbered", "titles-refute"],
+    )
+    def test_a_pack_left_for_a_hand_import_is_never_added_and_the_title_is_listed(self, case: _HandImportHold) -> None:
         recording = install_recording_hub()
-        nyaa = self._held(url="https://nyaa.si/view/1", infohash="h1", hold=GrabHold.MISNUMBERED)
+        nyaa = self._held(url="https://nyaa.si/view/1", infohash="h1", hold=case.hold)
         seadex_dict: SeadexDict = {"RG": rg_group({nyaa.url: nyaa})}
         torrents = FakeTorrents({"h1": (AddOutcome.ADDED, "Show-RG")})
         pipeline = _on_entry(_pipeline(torrents=torrents, sleep_time=0))
@@ -1284,11 +1312,27 @@ class TestPlacementHolds:
         assert torrents.calls == []
         assert pipeline._ctx.torrents_added == 0
         assert pipeline.cache_store.get_entry(Arr.SONARR, 42) is None
-        assert pipeline._ctx.per_title.misnumbered_groups == ["RG"]
-        assert [e.reason for e in recording.of_type(ReleaseSkipped)] == [SkipReason.MISNUMBERED]
+        per_title = pipeline._ctx.per_title
+        assert per_title.misnumbered_groups + per_title.title_refuted_groups == ["RG"]
+        assert [e.reason for e in recording.of_type(ReleaseSkipped)] == [case.skip]
         (row,) = pipeline._ctx.stats.needs_action
-        assert (row.kind, row.group) == (NeedsActionKind.MISNUMBERED, "RG")
-        assert row.reason == "numbering does not match its SeaDex listing; import it by hand"
+        assert (row.kind, row.group, row.reason) == (case.kind, "RG", case.reason)
+
+    def test_a_held_url_of_a_resident_torrent_never_joins_its_record(self) -> None:
+        # Another entry's record holds the torrent.
+        resident = pending_import(infohash="h1")
+        seadex_dict = one_release_dict(srg="RG", infohash="h1")
+        seadex_dict["RG"].urls["https://nyaa.si/view/1"].hold = GrabHold.TITLE_REFUTED
+        torrents = FakeTorrents({"h1": AddResult(AddOutcome.ALREADY_ADDED, "Show", None)})
+        pipeline = _pipeline(torrents=torrents, sleep_time=0)
+        pipeline.cache_store.put_pending(Arr.SONARR, resident.infohash, resident.to_json())
+
+        pipeline.add_torrent(
+            grab_request(seadex_dict=seadex_dict, pending_seeds={"h1": pending_seed("h1", al_id=22, stored=resident)})
+        )
+
+        assert torrents.calls == []
+        assert [c.al_id for c in _stored(pipeline, "h1").claims] == [PENDING_AL_ID]
 
     def test_an_unread_listing_holds_the_url_until_the_next_run(self) -> None:
         # The url names its group among the reads that failed: the row is the retry row, not a hand import.
