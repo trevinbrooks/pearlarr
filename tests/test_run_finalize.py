@@ -15,12 +15,16 @@ pinned by asserting recorded state.
 """
 
 import logging
+from pathlib import Path
 from typing import override
+
+import pytest
 
 from pearlarr.anilist_gateway import AniListGateway
 from pearlarr.boot_flow import BootFlow
+from pearlarr.cache import AbstractCacheStore, CacheStore
 from pearlarr.config import AppConfig, Arr
-from pearlarr.manual_import import Outcome, OutcomeCategory
+from pearlarr.manual_import import ImportWaitMode, Outcome, OutcomeCategory
 from pearlarr.mappings import MappingEntry
 from pearlarr.output import BootStepFinished, CountsMark, Diagnostic, Severity, SeverityCounts
 from pearlarr.output.recording import RecordingHub
@@ -31,6 +35,7 @@ from pearlarr.seadex_types import HistoryRecord, ProgressSink
 from pearlarr.wait_view import WaitOutcomeRow, WaitResult
 
 from .builders import (
+    CLIENT_SENTINEL,
     FakeCacheStore,
     ScriptedAniListClient,
     make_anilist_gateway,
@@ -103,8 +108,9 @@ def _engine(
     *,
     config: AppConfig | None = None,
     seadex: _FakeGateway | None = None,
-    cache_store: FakeCacheStore | None = None,
+    cache_store: AbstractCacheStore | None = None,
     anilist: AniListGateway | None = None,
+    qbit: object = None,
 ) -> RunLoop:
     """A bare `RunLoop` wired with typed fakes for the run-loop collaborators.
 
@@ -117,18 +123,19 @@ def _engine(
     `config` overrides the loop's config (the activity-scan toggle tests).
     `cache_store` shares one store across engines (the checkpoint replay tests).
     `anilist` swaps in a real gateway (the AniList boot-note tests).
+    `qbit` set makes the run real instead of a preview (the commit tests).
     """
 
     config = config if config is not None else make_config()
     services = make_services(
-        qbit=None,
+        qbit=qbit,
         _filter=_FakeBound(),
         _grab_pipeline=_FakeBound(),
         _records=_FakeBound(),
     )
     return make_bare_instance(
         RunLoop,
-        qbit=None,
+        qbit=qbit,
         logger=logger,
         _config=config,
         _arr_config=config.for_arr(Arr.SONARR),
@@ -247,6 +254,73 @@ class TestPerItemErrorContainment:
         assert error.trace is not None
         # The run still reached the single post-loop finalize site.
         assert finalize.calls == 1
+
+
+class _StagingStrategy(FakeStrategy):
+    """A `FakeStrategy` that stages an entry row per title and raises `SystemExit` inside `stop_on_item`.
+
+    The raise stands in for the SIGTERM handler's. `None` never stops.
+    """
+
+    def __init__(self, *, items: list[FakeArrItem], store: CacheStore, stop_on_item: int | None) -> None:
+        super().__init__(items=items, anilist_ids={1: MappingEntry(anilist_id=1)})
+        self._store = store
+        self._stop_on_item = stop_on_item
+
+    @override
+    def process_al_id(self, item: FakeArrItem, al_id: int, mapping: MappingEntry) -> None:
+        self._store.update_cache(Arr.SONARR, item.id, {"name": item.title})
+        if item.id == self._stop_on_item:
+            raise SystemExit(0)
+
+
+class TestPerTitleCommit:
+    """A real run commits between titles, so a stop keeps what finished and rolls back the title in flight.
+
+    A preview run commits nothing.
+    """
+
+    def test_a_stop_mid_title_keeps_the_finished_titles(self, logger: logging.Logger, tmp_path: Path) -> None:
+        path = str(tmp_path / "cache.db")
+        store = CacheStore.load(path, config_checksum="")
+        strategy = _StagingStrategy(
+            items=[FakeArrItem(item_id=1, title="A"), FakeArrItem(item_id=2, title="B")],
+            store=store,
+            stop_on_item=2,
+        )
+        engine = _engine(_FinalizeRecorder(), logger, cache_store=store, qbit=CLIENT_SENTINEL)
+
+        with pytest.raises(SystemExit):
+            engine.run_sync(
+                strategy,
+                item_id=None,
+                dry_run=False,
+                import_wait_mode=ImportWaitMode.OFF,
+                boot=BootFlow(),
+            )
+        store.close()
+
+        reopened = CacheStore.load(path, config_checksum="")
+        try:
+            assert reopened.get_entry(Arr.SONARR, 1) is not None
+            assert reopened.get_entry(Arr.SONARR, 2) is None
+        finally:
+            reopened.close()
+
+    def test_a_preview_run_keeps_nothing(self, logger: logging.Logger, tmp_path: Path) -> None:
+        path = str(tmp_path / "cache.db")
+        store = CacheStore.load(path, config_checksum="")
+        strategy = _StagingStrategy(items=[FakeArrItem(item_id=1, title="A")], store=store, stop_on_item=None)
+        engine = _engine(_FinalizeRecorder(), logger, cache_store=store)
+
+        engine.run_sync(strategy, item_id=None, dry_run=False, import_wait_mode=ImportWaitMode.OFF, boot=BootFlow())
+        store.close()
+
+        reopened = CacheStore.load(path, config_checksum="")
+        try:
+            assert reopened.get_entry(Arr.SONARR, 1) is None
+        finally:
+            reopened.close()
 
 
 class _RaisingNotifier:

@@ -22,11 +22,22 @@ if [ ! -f "${PEARLARR_DATA_DIR}/config.yml" ]; then
     exit 1
 fi
 
+# docker stop signals PID 1 only, and a PID 1 shell drops SIGTERM unless it traps it.
+# A stop during the catch-up run lets it finish, as supercronic does for a cron run,
+# then exits instead of starting the schedule.
+stopping=false
+trap 'stopping=true' TERM INT
+
 # Catch-up pass on boot. A failure must not flap the container.
 if [ "${PEARLARR_RUN_ON_START:-true}" = "true" ]; then
     code=0
     pearlarr run single || code=$?
     echo "run-on-start exited with ${code}"
+fi
+
+if [ "${stopping}" = "true" ]; then
+    echo "Stopped during run-on-start - not starting the schedule"
+    exit 0
 fi
 
 # Cron owns the container cadence (config's schedule.interval_hours only drives

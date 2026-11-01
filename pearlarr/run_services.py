@@ -277,7 +277,7 @@ class RunDeps:
 
         Called once per arr run from `bootstrap.py`'s `finally` (each arr owns its
         own `CacheStore` - no sharing - so this never double-closes). The cache
-        `close` rolls back anything not flushed by the end-of-run save point.
+        `close` rolls back anything not flushed by a save point.
         `web` is NOT closed here: the CLI owns it across the whole cycle.
         """
         self.http.close()

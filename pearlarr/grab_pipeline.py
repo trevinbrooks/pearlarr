@@ -448,7 +448,7 @@ class GrabPipeline:
         """Add this title's torrents and notify, returning the added count.
 
         The cap notice is logged here, once, by the title whose adds crossed it. The cache save belongs to the
-        engine's finalize site.
+        run loop.
         """
 
         # Fetched up front to keep the network calls in the run's request ordering.

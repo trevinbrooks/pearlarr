@@ -9,7 +9,7 @@ Exit codes, for scripts and schedulers:
 
 | Code | Meaning |
 | --- | --- |
-| `0` | Success. A scheduled loop stopped with SIGTERM also exits 0 (a clean stop). |
+| `0` | Success. A run stopped with SIGTERM also exits 0 (a clean stop). |
 | `1` | Failure: invalid or missing configuration, a refused selection, a failed run, or a failed command. |
 | `2` | Usage error: an unknown command, option, or option value. |
 | `130` | Interrupted with Ctrl-C. |

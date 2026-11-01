@@ -181,13 +181,16 @@ class RunLoop:
         if item_id is None and self._services.selection_stale and not self._config.seadex.ignore_seadex_update_times:
             hub_note("Matching settings changed - rechecking cached entries")
 
+        preview = self._services.is_preview()
         for item_idx, item in enumerate(all_items):
             try:
                 self._scan_item(strategy, item, item_idx, n_items)
             except Exception as e:
                 title = getattr(item, "title", "unknown title")
                 hub_error(f"{title}: unexpected error ({e}) - skipping this title", exc=e)
-                continue
+            # Commit after each title, not inside one: a title's writes (an entry and its hashes, a record and its
+            # guard row) only agree once it's done. A stop or kill then loses only the title in flight.
+            self.cache_store.save(preview=preview)
 
         # ONE full-coverage predicate for both gates below. They drifted apart once: an outage run committed the
         # checkpoint, consuming drift events it never acted on. A held title's old cache row may read done and its
@@ -204,7 +207,7 @@ class RunLoop:
         if full_pass:
             self.cache_store.vouch_selection(arr, self._config.selection_digest())
 
-        # Per-title update_cache calls only mutate memory, so this finalize is what actually saves.
+        # Its save persists the checkpoint and vouch with the tail's own writes.
         self._finalize_run()
 
     def _scan_item[ItemT: ArrItem](

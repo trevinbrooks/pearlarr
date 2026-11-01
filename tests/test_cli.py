@@ -31,7 +31,7 @@ Pins the behaviors the commands must guarantee:
   and `--log-level` overrides it (cli > config).
 * A missing config exits 1 with the starter template written (no silent
   skip-and-retry). An invalid config keeps the skip+retry contract in scheduled
-  mode. SIGTERM stops the scheduled loop with exit code 0.
+  mode. SIGTERM stops either run command with exit code 0.
 
 Each test points `resolve_paths()` at its own `tmp_path` via `PEARLARR_DATA_DIR`
 and calls the command functions directly (they return `bool`). The exit-code
@@ -1108,11 +1108,14 @@ def _stop_loop(*args: object, **kwargs: object) -> NoReturn:
     raise _StopScheduledLoop
 
 
-def _swallow_signal(signum: int, handler: object) -> None:
-    """A no-op `signal.signal`: a test must never re-point the pytest process's real SIGTERM disposition.
+class _SignalRecorder:
+    """A `signal.signal` stand-in that records each registration."""
 
-    The registration itself is pinned separately.
-    """
+    def __init__(self) -> None:
+        self.registered: list[tuple[int, object]] = []
+
+    def __call__(self, signum: int, handler: object) -> None:
+        self.registered.append((signum, handler))
 
 
 class _CycleStampingRenderer(Renderer):
@@ -1198,7 +1201,6 @@ class TestLogFormatWiring:
         monkeypatch: pytest.MonkeyPatch,
     ) -> None:
         monkeypatch.delenv("SCHEDULE_TIME", raising=False)
-        monkeypatch.setattr(signal, "signal", _swallow_signal)
         monkeypatch.setattr("pearlarr.bootstrap.run_arrs", _stop_loop)
         self._write_config_with_format()
         with pytest.raises(_StopScheduledLoop):
@@ -1694,7 +1696,7 @@ class TestDataDirLine:
 
 
 class TestScheduledLifecycle:
-    """Scheduled mode: invalid configs retry, SIGTERM exits 0, help names the fallback."""
+    """Scheduled mode: invalid configs retry, SIGTERM exits 0 (run single too), help names the fallback."""
 
     @staticmethod
     def _stub_resolver(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -1815,7 +1817,6 @@ class TestScheduledLifecycle:
 
     def test_cycle_started_is_emitted_after_begin_cycle(self, monkeypatch: pytest.MonkeyPatch) -> None:
         # Post-begin (rotation): the boundary must land in the FRESH cycle's file.
-        monkeypatch.setattr(signal, "signal", _swallow_signal)
         monkeypatch.setattr("pearlarr.cli.setup_logger", _SetupLoggerRecorder())
         monkeypatch.setattr("pearlarr.bootstrap.run_arrs", _stop_loop)
         monkeypatch.delenv("SCHEDULE_TIME", raising=False)
@@ -1830,7 +1831,6 @@ class TestScheduledLifecycle:
     def test_next_run_scheduled_is_emitted_with_the_cadence_ahead(self, monkeypatch: pytest.MonkeyPatch) -> None:
         # After a completed cycle the loop states the next run as a typed event
         # (default cadence: 6h out on a missing config), then sleeps.
-        monkeypatch.setattr(signal, "signal", _swallow_signal)
         monkeypatch.setattr("pearlarr.cli.setup_logger", _SetupLoggerRecorder())
         monkeypatch.setattr("pearlarr.bootstrap.run_arrs", _RunArrsRecorder())
         monkeypatch.setattr("pearlarr.cli.time.sleep", _stop_loop)
@@ -1846,12 +1846,8 @@ class TestScheduledLifecycle:
         assert abs((scheduled.at - (before + timedelta(hours=6))).total_seconds()) < 60
 
     def test_run_scheduled_registers_the_sigterm_handler(self, monkeypatch: pytest.MonkeyPatch) -> None:
-        registered: list[tuple[int, object]] = []
-
-        def record_signal(signum: int, handler: object) -> None:
-            registered.append((signum, handler))
-
-        monkeypatch.setattr(signal, "signal", record_signal)
+        recorder = _SignalRecorder()
+        monkeypatch.setattr(signal, "signal", recorder)
         monkeypatch.setattr("pearlarr.cli.setup_logger", _SetupLoggerRecorder())
         monkeypatch.setattr("pearlarr.bootstrap.run_arrs", _stop_loop)
         monkeypatch.delenv("SCHEDULE_TIME", raising=False)
@@ -1859,7 +1855,16 @@ class TestScheduledLifecycle:
         with pytest.raises(_StopScheduledLoop):
             run_scheduled()
 
-        assert registered == [(signal.SIGTERM, _handle_sigterm)]
+        assert recorder.registered == [(signal.SIGTERM, _handle_sigterm)]
+
+    def test_run_single_registers_the_sigterm_handler(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        recorder = _SignalRecorder()
+        monkeypatch.setattr(signal, "signal", recorder)
+        monkeypatch.setattr("pearlarr.bootstrap.run_arrs", _RunArrsRecorder())
+
+        assert run_single() is True
+
+        assert recorder.registered == [(signal.SIGTERM, _handle_sigterm)]
 
     def test_scheduled_help_names_the_bare_metal_fallback(self) -> None:
         result = CliRunner().invoke(pearlarr_cli, ["run", "scheduled", "--help"])

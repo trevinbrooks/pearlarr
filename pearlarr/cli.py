@@ -455,10 +455,9 @@ def _schedule_hours(config_path: str) -> float:
 
 
 def _handle_sigterm(signum: int, frame: FrameType | None) -> NoReturn:
-    """Scheduled mode's SIGTERM handler: announce, then exit 0 (a clean stop).
+    """The run commands' SIGTERM handler: announce, then exit 0 (a clean stop).
 
-    Docker stop / systemd deliver SIGTERM. The raise interrupts even the
-    inter-cycle `time.sleep`, so shutdown is prompt at any point in the loop.
+    The raise interrupts even a sleep, so shutdown is prompt at any point.
     """
 
     hub_note("Received SIGTERM - exiting")
@@ -598,6 +597,9 @@ def run_single(
     # + run lock both need it).
     paths = resolve_paths()
     _prepare_data_dir(paths)
+
+    # Unwind on SIGTERM instead of dying with no exit line, so the run tail's finally still saves.
+    signal.signal(signal.SIGTERM, _handle_sigterm)
 
     # Install the hub before the logger - see _install_output_hub.
     console_format = _resolved_format(paths.config)

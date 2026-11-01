@@ -76,6 +76,7 @@ Rejected alternatives, after a five-proposal design debate: pure logging with fo
 ### Cache: SQLite with staged writes and a preview gate
 
 Decisions persist in `cache.db` behind a `CacheStore` with one commit chokepoint: writes stage in a transaction and `save(preview=...)` commits only for real runs. Preview mode discards everything.
+A run saves after each title and once more at the end, never mid-title, since a title's writes only agree once it's done.
 A fresh store starts in memory and is promoted to disk via the SQLite backup API plus an atomic rename, so a half-written `cache.db` cannot exist.
 Reads fail open (a corrupt cache re-evaluates titles instead of aborting), and a file lock keeps concurrent runs from interleaving.
 The predecessor `cache.json` was rejected for having no atomicity, no partial-failure story, and no queryable schema.
