@@ -5,7 +5,7 @@ No I/O. Reading a name's own numbers belongs in `release_names`, and placing fil
 
 import re
 from collections import Counter
-from collections.abc import Iterable, Mapping, Sequence
+from collections.abc import Collection, Iterable, Mapping, Sequence
 from typing import NamedTuple, Self
 
 from .parse_reading import Reading
@@ -21,6 +21,7 @@ from .release_names import (
     read_names,
     whole_words,
 )
+from .seadex_types import EpisodeKey
 
 # Episode titles pick a run, or refuse one, only when at least this many members carry them.
 MIN_TITLE_HITS = 2
@@ -77,6 +78,8 @@ class _TitledEpisode(NamedTuple):
     """Whether `beyond` names the episode when a name carries nothing else ("15 Minutes"): a number counts then."""
     part: bool
     """Whether this form is only a part a colon or a dash sets off, not the whole title."""
+    spells: int | None
+    """The episode whose season and number `beyond` is, when it is those two numbers alone ("1.2" is S01E02)."""
 
 
 class _TitleForm(NamedTuple):
@@ -175,7 +178,10 @@ class EpisodeTitles(NamedTuple):
                 distinct = is_distinct_title(beyond)
                 # A title part too short to place a file ("Chapter 4: Home") is not run evidence either.
                 if words and (distinct or not form.part):
-                    titled.append(_TitledEpisode(ep_id, words, beyond, distinct, names_alone(beyond), form.part))
+                    alone = names_alone(beyond)
+                    titled.append(
+                        _TitledEpisode(ep_id, words, beyond, distinct, alone, form.part, _spelled(series, beyond))
+                    )
         return cls(
             ground.series_words,
             _grouped((ep.words[:1], ep) for ep in titled),
@@ -193,11 +199,16 @@ class EpisodeTitles(NamedTuple):
         titled = _sole(ep for ep in led if ep.distinct and opens_title(words, ep.words))
         return _TitleLead(titled, frozenset(ep.ep_id for ep in led), words)
 
-    def exactly(self, words: tuple[str, ...]) -> _TitledEpisode | None:
-        """The one episode whose title names it alone and equals a name's words, the series words dropped from both."""
+    def exactly(self, words: tuple[str, ...], claims: Collection[int]) -> _TitledEpisode | None:
+        """The one episode whose title names it alone and equals a name's words, the series words dropped from both.
+
+        `claims` are the episodes Sonarr read for the file. A title that is just the season and number of one of them
+        ("1.2" against S01E02) is Sonarr's key over again, not a title: it names nothing.
+        """
 
         beyond = tuple(word for word in words if word not in self.series_words)
-        return _sole(self.alone_by_beyond.get(beyond, ()))
+        equal = _sole(self.alone_by_beyond.get(beyond, ()))
+        return None if equal is not None and equal.spells in claims else equal
 
     def nearly(self, ep_id: int, words: tuple[str, ...]) -> bool:
         """Whether the words open with the episode's title a word off at most: one swapped, added or dropped.
@@ -215,6 +226,14 @@ class EpisodeTitles(NamedTuple):
                     if shared is not None and spells_title(shared):
                         return True
         return False
+
+
+def _spelled(series: EpisodeIndex, beyond: tuple[str, ...]) -> int | None:
+    """The episode whose season and number the words are, when they are two numbers alone, else None."""
+
+    if len(beyond) != 2 or not all(word.isdigit() for word in beyond):
+        return None
+    return series.id_by_key.get(EpisodeKey(int(beyond[0]), int(beyond[1])))
 
 
 def _one_word_apart(words: tuple[str, ...], title: tuple[str, ...]) -> tuple[str, ...] | None:
@@ -260,23 +279,24 @@ class _NameTitle(NamedTuple):
     """Every episode whose title starts the name's tail: run evidence, read for run members only."""
 
 
-def _title_lead(episodes: EpisodeTitles, read: NameRead) -> _TitleLead:
+def _title_lead(episodes: EpisodeTitles, read: NameRead, claims: Collection[int]) -> _TitleLead:
     """Read one name against the episode titles: the tail behind its count, else the whole name.
 
     A counted name is read whole too, its season tag left out: "Show - 17 Steps 2" is titled "17 Steps 2". One with
     a bare season of its own is not, since the season and the count can spell a title: "Show 1 - 02" is no "1.2".
-    A name that each reading titles as a different episode is titled as neither.
+    A name that each reading titles as a different episode is titled as neither. `claims` are the episodes Sonarr
+    read for the file (`EpisodeTitles.exactly`).
     """
 
     words = read.title_words
     if read.member is None and read.titled_count is None:
-        return _TitleLead(episodes.exactly(words), frozenset(), words)
+        return _TitleLead(episodes.exactly(words, claims), frozenset(), words)
     lead = episodes.leading(words)
     season = bare_season(read)
     reads_whole = season is None or season in episodes.series_words
     if reads_whole and (lead.titled is None or read.titled_count is not None):
         whole = whole_words(read.stem.text)
-        if (equal := episodes.exactly(whole)) is not None:
+        if (equal := episodes.exactly(whole, claims)) is not None:
             if lead.titled is None:
                 return _TitleLead(equal, lead.leaders, whole)
             if lead.titled.ep_id != equal.ep_id:
@@ -307,7 +327,7 @@ class TorrentNames(NamedTuple):
         ground = TitleGround.of(scope.names)
         episodes = EpisodeTitles.of(scope.series, ground)
         reads = read_names(batch.torrent_names, ground)
-        leads = {name: _title_lead(episodes, read) for name, read in reads.items()}
+        leads = {name: _title_lead(episodes, read, readings[name].resolved) for name, read in reads.items()}
         carriers = Counter(words for _file, words in {(reads[name].file, lead.words) for name, lead in leads.items()})
         titles: dict[str, _NameTitle] = {}
         extras: set[str] = set()

@@ -474,6 +474,34 @@ class TestAssignEpisodeTitle:
 
         assert placed == {name: ((602,), PlacementVerdict.EXACT)}
 
+    def test_a_bare_season_spells_no_title_without_sonarrs_key(self) -> None:
+        # The third episode is titled "1.2". Sonarr reads nothing, and the season and the count still spell no title.
+        name = "show 1 - 02 [grp].mkv"
+
+        placed = by_name(place({name: parsed_info()}, _scope(_FIRST_THREE, titles={**_TITLES, 603: "1.2"})))
+
+        assert placed == {name: ((), PlacementVerdict.SKIPPED)}
+
+    @pytest.mark.parametrize(
+        ("name", "title", "expected"),
+        [
+            ("show - 1 - 02 [grp].mkv", "1.2", ((602,), PlacementVerdict.EXACT)),
+            ("show.1.02 [grp].mkv", "1.2", ((602,), PlacementVerdict.EXACT)),
+            ("show - 2 - 1 = [grp].mkv", "2 - 1 =", ((603,), PlacementVerdict.EPISODE_TITLE)),
+            ("show - 1 2 3 [grp].mkv", "1 2 3", ((603,), PlacementVerdict.EPISODE_TITLE)),
+        ],
+    )
+    def test_a_title_of_numbers_spelling_sonarrs_key_is_no_title(
+        self, name: str, title: str, expected: tuple[tuple[int, ...], PlacementVerdict]
+    ) -> None:
+        # Sonarr reads S01E02, the key "1.2" spells, so those numbers are the key's. "2 - 1 =" and "1 2 3" spell no
+        # key Sonarr read.
+        parsed = {name: parsed_info(absolutes=(2,), matched=((1, 2),))}
+
+        placed = by_name(place(parsed, _scope(_FIRST_THREE, titles={**_TITLES, 603: title})))
+
+        assert placed == {name: expected}
+
     def test_a_name_titled_both_ways_as_different_episodes_names_neither(self) -> None:
         # Count then title, or a title opening with a number.
         name = "show - 02 Lost Girls [grp].mkv"
