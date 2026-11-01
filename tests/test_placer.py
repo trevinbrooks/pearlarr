@@ -260,8 +260,8 @@ class TestAssignEpisodeTitle:
     @pytest.mark.parametrize("names", [EntryNames("Show"), EntryNames("Show", ("Show",))])
     def test_a_title_opening_with_a_number_names_the_episode(self, names: EntryNames) -> None:
         # The number is the title's first word, no count: read as one, the title match would never see it.
-        name = "show - 20 Years Worth of Prayers [grp].mkv"
-        index = series_index(_MAP, titles={603: "20 Years' Worth of Prayers"})
+        name = "show - 20 Years Worth of Wishes [grp].mkv"
+        index = series_index(_MAP, titles={603: "20 Years' Worth of Wishes"})
 
         placed = by_name(place({name: parsed_info()}, TargetScope(_FIRST_THREE, index, names=names)))
 
@@ -1836,7 +1836,7 @@ class TestAssignReleaseRun:
         return parsed
 
     def test_a_packs_lone_s_set_counts_the_specials_window(self) -> None:
-        # Pog42 numbers specials "S1".."S3" beside "- 01".."- 06": the set is the specials' own 1..N.
+        # Zog42 numbers specials "S1".."S3" beside "- 01".."- 06": the set is the specials' own 1..N.
         scope = TargetScope(self._WINDOW, series_index(self._SEASONED))
         placed = by_name(place(self._beside_the_season(self._LONE_S), scope))
 
@@ -1852,15 +1852,15 @@ class TestAssignReleaseRun:
         assert placed[self._LONE_S[0]][0] == ()
 
     _TITLED: ClassVar[list[str]] = [
-        f"Zom.100.Bucket.List.of.the.Dead.{n:02d}.1080p.WEB.H264-grp.mkv" for n in (1, 2, 3)
+        f"Gho.100.Basket.Roster.of.the.Dead.{n:02d}.1080p.WEB.H264-grp.mkv" for n in (1, 2, 3)
     ]
 
     @pytest.mark.parametrize(
         "names",
         [
-            EntryNames("Zom 100: Bucket List of the Dead"),
-            EntryNames("", ("Zom 100: Bucket List of the Dead",)),
-            EntryNames("Zom 100: Bucket List of the Dead", ("Zom 100: Bucket List of the Dead",)),
+            EntryNames("Gho 100: Basket Roster of the Dead"),
+            EntryNames("", ("Gho 100: Basket Roster of the Dead",)),
+            EntryNames("Gho 100: Basket Roster of the Dead", ("Gho 100: Basket Roster of the Dead",)),
         ],
     )
     def test_the_entrys_title_lets_its_numbered_pack_count(self, names: EntryNames) -> None:
@@ -1882,7 +1882,7 @@ class TestAssignReleaseRun:
             name: ((501 + i,), PlacementVerdict.RELEASE_RUN) for i, name in enumerate(run)
         }
 
-    @pytest.mark.parametrize("names", [EntryNames(), EntryNames("Zom 100"), EntryNames("", ("Zombie 100",))])
+    @pytest.mark.parametrize("names", [EntryNames(), EntryNames("Gho 100"), EntryNames("", ("Ghoulish 100",))])
     def test_without_the_title_the_numbered_pack_stays_unread(self, names: EntryNames) -> None:
         scope = TargetScope(self._WINDOW, series_index(self._MAP), names=names)
 
@@ -1894,7 +1894,7 @@ class TestAssignReleaseRun:
         # absolute disagrees with every count and the pack stays unread, as before.
         parsed = {name: parsed_info(season=0, absolutes=(100,)) for name in self._TITLED}
         titled = TargetScope(
-            self._WINDOW, series_index(self._MAP), names=EntryNames("Zom 100: Bucket List of the Dead")
+            self._WINDOW, series_index(self._MAP), names=EntryNames("Gho 100: Basket Roster of the Dead")
         )
 
         assert by_name(place(parsed, titled)) == {
