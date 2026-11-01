@@ -527,7 +527,7 @@ class TestPlaceHeld:
             normalize_basename(names[0]): [102],
             normalize_basename(names[1]): [103],
         }
-        assert placement.assignment.hand_import == (normalize_basename(names[2]),)
+        assert placement.assignment.hand_import_files == (normalize_basename(names[2]),)
         assert len(placement.records) == 2
 
     def test_a_pack_the_listing_agrees_with_places_and_is_not_held(self) -> None:

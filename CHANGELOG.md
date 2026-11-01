@@ -22,6 +22,7 @@ Pearlarr is a fork of [bbtufty/seadexarr](https://github.com/bbtufty/seadexarr).
 - A pack whose names carry another number before the episode's, such as the show's year or a number in its title (`Show 2003 EP 03`, `Show.100.01`), now imports by the episode number instead of being skipped.
 - A file named with an episode's title now also matches it when the subtitle is set off by dashes instead of a colon, when the name spells the title's "&" as "and", or when the title opens with a number Sonarr took for the episode.
 - When one file of a numbered pack carries the title of the episode another file is numbered for, both are left for a hand import instead of the titled file taking that episode.
+- A download whose files you imported by hand, under names Sonarr reads no group from, now finishes once every episode holds one of its files at a listed size, instead of warning every run until `pending_max_age_days`.
 
 ## [1.5.6] - 2026-10-25
 

@@ -220,7 +220,7 @@ class EpisodeAssignment(NamedTuple):
         return tuple(p for p in self.placements if p.verdict.excluded)
 
     @property
-    def hand_import(self) -> tuple[str, ...]:
+    def hand_import_files(self) -> tuple[str, ...]:
         """The skipped files left for a hand import (`PlacementVerdict.hand_import`)."""
 
         return tuple(p.name for p in self.placements if p.verdict.hand_import)
