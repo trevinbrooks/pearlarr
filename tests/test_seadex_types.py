@@ -136,9 +136,10 @@ def test_command_resource_junk_file_entry_skips_without_dropping_the_command() -
 
 
 def test_sonarr_series_reads_its_orders_and_drops_a_junk_one_alone() -> None:
-    """v4 sends no order fields and numbers by the official order. A junk v5 `seasonTypes[]` entry drops alone."""
+    """v4 sends no order fields. A null `seasonType` names no order, and a junk `seasonTypes[]` entry drops alone."""
 
     assert SonarrSeries.model_validate({"id": 1, "title": "Show"}).seasonType == "official"
+    assert SonarrSeries.model_validate({"id": 1, "title": "Show", "seasonType": None}).seasonType == ""
 
     series = SonarrSeries.model_validate(
         {

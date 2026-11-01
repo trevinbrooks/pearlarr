@@ -9,7 +9,7 @@ OFFICIAL_ORDER = "official"
 """SkyHook's and Sonarr's name for TVDB's aired order, the order Sonarr numbers a series by default."""
 
 
-class OrderEpisode(NamedTuple):
+class OrderRow(NamedTuple):
     """One episode as one TVDB order numbers it."""
 
     season: int
@@ -20,22 +20,10 @@ class OrderEpisode(NamedTuple):
     """TVDB's absolute number. Only the official order carries one."""
 
 
-type SeriesOrders = Mapping[str, Sequence[OrderEpisode]]
-"""Order type name -> that order's episodes."""
+type SeriesOrders = Mapping[str, Sequence[OrderRow]]
+"""Order type name -> that order's rows."""
 
 NO_ORDERS: SeriesOrders = MappingProxyType({})
-
-
-@dataclass(frozen=True, slots=True)
-class StoredOrder:
-    """One order as stored: its episodes and the count Sonarr listed for it when it was fetched."""
-
-    episodes: tuple[OrderEpisode, ...]
-    """Empty when SkyHook lists the order but sent no rows for it, or sent rows that failed validation."""
-
-    sonarr_count: int | None
-    """Sonarr v5's `seasonTypes[].episodeCount` for this order at fetch time. None on v4, or when Sonarr didn't list
-    the order."""
 
 
 @dataclass(frozen=True, slots=True)
@@ -48,29 +36,27 @@ class StoredOrders:
     fresh_until: str
     """When the record is due for a refetch, in `stamps.UPDATED_AT_STR_FORMAT`."""
 
-    orders: Mapping[str, StoredOrder]
-    """Order type name (`official`, `dvd`, `alternate`, ...) -> the order. Empty when SkyHook doesn't know the
-    series."""
+    orders: Mapping[str, tuple[OrderRow, ...]]
+    """Order type name (`official`, `dvd`, `alternate`, ...) -> its rows. An order is empty when SkyHook lists it but
+    sent no usable rows for it, and the map is empty when SkyHook doesn't have the series."""
+
+    sonarr_counts: Mapping[str, int] | None
+    """Sonarr v5's episode count per order it listed at fetch time, every listed order kept, SkyHook's or not. None
+    on v4."""
 
     def __post_init__(self) -> None:
         object.__setattr__(self, "orders", MappingProxyType(dict(self.orders)))
-
-    @property
-    def sonarr_counts(self) -> dict[str, int]:
-        """The counts Sonarr listed at fetch time, by order type (the orders it didn't list are left out)."""
-
-        return {name: order.sonarr_count for name, order in self.orders.items() if order.sonarr_count is not None}
+        if self.sonarr_counts is not None:
+            object.__setattr__(self, "sonarr_counts", MappingProxyType(dict(self.sonarr_counts)))
 
     def to_json(self) -> dict[str, Any]:
-        """The record as the cache stores it, each episode a `[season, episode, tvdb_id, absolute]` array."""
+        """The record as the cache stores it, each row a `[season, episode, tvdb_id, absolute]` array."""
 
         return {
             "fetched_at": self.fetched_at,
             "fresh_until": self.fresh_until,
-            "orders": {
-                name: {"sonarr_count": order.sonarr_count, "episodes": [list(ep) for ep in order.episodes]}
-                for name, order in self.orders.items()
-            },
+            "orders": {name: [list(row) for row in rows] for name, rows in self.orders.items()},
+            "sonarr_counts": None if self.sonarr_counts is None else dict(self.sonarr_counts),
         }
 
     @classmethod
@@ -78,15 +64,15 @@ class StoredOrders:
         """Rebuild a stored record, or None when it doesn't have the stored shape (the series then refetches)."""
 
         try:
-            orders = {
-                name: StoredOrder(
-                    episodes=tuple(OrderEpisode(*row) for row in order["episodes"]),
-                    sonarr_count=order["sonarr_count"],
-                )
-                for name, order in raw["orders"].items()
-            }
-            return cls(fetched_at=raw["fetched_at"], fresh_until=raw["fresh_until"], orders=orders)
-        except (KeyError, TypeError, AttributeError):
+            orders = {name: tuple(OrderRow(*row) for row in rows) for name, rows in raw["orders"].items()}
+            counts = raw["sonarr_counts"]
+            return cls(
+                fetched_at=raw["fetched_at"],
+                fresh_until=raw["fresh_until"],
+                orders=orders,
+                sonarr_counts=None if counts is None else dict(counts),
+            )
+        except (KeyError, TypeError, ValueError, AttributeError):
             return None
 
 
@@ -108,7 +94,7 @@ class OrderTranslation(NamedTuple):
     order_name: str
     """The order the series is set to."""
 
-    aired: tuple[OrderEpisode, ...]
+    aired: tuple[OrderRow, ...]
     """The stored official order (empty when it isn't stored)."""
 
 

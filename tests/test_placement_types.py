@@ -19,7 +19,7 @@ from pearlarr.placement_types import (
     episode_index,
 )
 from pearlarr.seadex_types import SONARR_MISSING_KEY, EpisodeKey, ParsedFileInfo, SonarrEpisode
-from pearlarr.tvdb_orders import OrderEpisode, SeriesOrdering
+from pearlarr.tvdb_orders import OrderRow, SeriesOrdering
 
 from .builders import parsed_info, series_index, sonarr_ep
 
@@ -76,9 +76,9 @@ class TestEpisodeIndex:
         # The dvd order splits S01E01 in two and has an episode Sonarr lacks. The repeated key takes its first row.
         eps = [sonarr_ep(1, 1, ep_id=11, tvdb_id=901), sonarr_ep(1, 2, ep_id=12, tvdb_id=902)]
         dvd = (
-            OrderEpisode(1, 1, 902, None),
-            OrderEpisode(1, 1, 901, None),
-            OrderEpisode(1, 2, 903, None),
+            OrderRow(1, 1, 902, None),
+            OrderRow(1, 1, 901, None),
+            OrderRow(1, 2, 903, None),
         )
 
         index = episode_index(eps, SeriesOrdering({"dvd": dvd}, None))

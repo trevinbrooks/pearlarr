@@ -68,7 +68,7 @@ class ArrSync[ItemT: ArrItem](ImportCompleter):
     @property
     @abstractmethod
     def warms_episodes(self) -> bool:
-        """Whether `prefetch_episodes` does real work."""
+        """Whether `prefetch_episodes` does real work. The run calls `prefetch_orders` only when it does."""
 
     @abstractmethod
     def prefetch_episodes(self, items: list[ItemT], *, progress: ProgressSink | None = None) -> int:

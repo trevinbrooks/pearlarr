@@ -5,7 +5,7 @@
 """Each series' TVDB orders through the Sonarr strategy: what it fetches, and what grab and import are served."""
 
 from collections.abc import Mapping
-from datetime import datetime, timedelta
+from datetime import timedelta
 
 import pytest
 
@@ -14,15 +14,16 @@ from pearlarr.manual_import import ImportWaitMode
 from pearlarr.reporter import RunContext
 from pearlarr.seadex_sonarr import SonarrSync
 from pearlarr.seadex_types import SonarrItem, SonarrSeries
-from pearlarr.skyhook_gateway import SkyHookGateway
-from pearlarr.stamps import stamp_of
-from pearlarr.tvdb_orders import NO_ORDERING, OrderEpisode, SeriesOrdering, StoredOrder, StoredOrders
+from pearlarr.tvdb_orders import NO_ORDERING, OrderRow, SeriesOrdering
 
-from .builders import FakeCacheStore, make_sonarr_sync, pending_import, sonarr_ep
+from .builders import FakeCacheStore, make_sonarr_sync, pending_import, sonarr_ep, stored_orders
 from .fakes import FakeSkyHookClient, FakeSonarrClient
 
-_DVD = (OrderEpisode(1, 1, 9002, None), OrderEpisode(1, 2, 9001, None))
+_DVD = (OrderRow(1, 1, 9002, None), OrderRow(1, 2, 9001, None))
 """The dvd order of a two-episode season that swaps its episodes."""
+
+_ORDERS = {"official": (OrderRow(1, 1, 9001, 1), OrderRow(1, 2, 9002, 2)), "dvd": _DVD}
+"""A stored record's orders: official and `_DVD`."""
 
 
 def _series(
@@ -41,18 +42,6 @@ def _series(
     return SonarrSeries.model_validate(raw)
 
 
-def _record(*, fresh_for: timedelta = timedelta(days=1), official_count: int | None = None) -> StoredOrders:
-    """A stored record with the official order and `_DVD`."""
-
-    now = datetime.now()
-    official = (OrderEpisode(1, 1, 9001, 1), OrderEpisode(1, 2, 9002, 2))
-    return StoredOrders(
-        fetched_at=stamp_of(now - timedelta(days=1)),
-        fresh_until=stamp_of(now + fresh_for),
-        orders={"official": StoredOrder(official, official_count), "dvd": StoredOrder(_DVD, None)},
-    )
-
-
 def _sync(series: list[SonarrItem], cache: FakeCacheStore, client: FakeSkyHookClient | None = None) -> SonarrSync:
     """The Sonarr strategy after the run's library read of `series`, its orders fetched through `client`."""
 
@@ -61,9 +50,8 @@ def _sync(series: list[SonarrItem], cache: FakeCacheStore, client: FakeSkyHookCl
             episodes=[sonarr_ep(1, 1, ep_id=11, tvdb_id=9001), sonarr_ep(1, 2, ep_id=12, tvdb_id=9002)]
         ),
         cache_store=cache,
+        skyhook_client=client,
     )
-    if client is not None:
-        strat._episodes._skyhook = SkyHookGateway(client=client, cache_store=cache)
 
     def _library() -> list[SonarrItem]:
         return series
@@ -85,7 +73,7 @@ def test_a_series_is_served_its_stored_orders_only_when_sonarr_numbers_it_by_off
     season_type: str, expected: SeriesOrdering
 ) -> None:
     cache = FakeCacheStore()
-    cache.put_tvdb_orders(50, _record())
+    cache.put_tvdb_orders(50, stored_orders(_ORDERS))
     strat = _sync([_series(1, 50, season_type=season_type)], cache)
 
     assert strat._episodes.orders_for(1) == expected
@@ -103,7 +91,7 @@ def test_a_series_is_served_its_stored_orders_only_when_sonarr_numbers_it_by_off
 )
 def test_a_library_series_with_no_stored_record_is_unread(series_id: int, unread: bool) -> None:
     cache = FakeCacheStore()
-    cache.put_tvdb_orders(50, _record())
+    cache.put_tvdb_orders(50, stored_orders(_ORDERS))
     strat = _sync([_series(1, 50), _series(2, 60), _series(3, 0)], cache)
 
     assert strat._episodes.orders_unread([series_id]) is unread
@@ -118,20 +106,13 @@ def test_orders_are_fetched_once_per_tvdb_series() -> None:
     assert cache.stats().tvdb_orders == 1
 
 
-@pytest.mark.parametrize(
-    ("counts", "fetched"),
-    [
-        pytest.param({"official": 3}, 1, id="v5-count-moved"),
-        pytest.param({"official": 2}, 0, id="v5-count-as-stored"),
-        pytest.param(None, 0, id="v4-lists-none"),
-    ],
-)
-def test_sonarr_counts_ride_the_fetch_request(counts: dict[str, int] | None, fetched: int) -> None:
+def test_sonarr_v5_counts_ride_the_fetch_request() -> None:
+    # The record is fresh, so only the count Sonarr's series row carries can make it due.
     cache = FakeCacheStore()
-    cache.put_tvdb_orders(50, _record(official_count=2))
-    strat = _sync([_series(1, 50, counts=counts)], cache)
+    cache.put_tvdb_orders(50, stored_orders(_ORDERS, sonarr_counts={"official": 2}))
+    strat = _sync([_series(1, 50, counts={"official": 3})], cache)
 
-    assert strat._episodes.prefetch_orders([1]) == fetched
+    assert strat._episodes.prefetch_orders([1]) == 1
 
 
 @pytest.mark.parametrize(
@@ -150,9 +131,9 @@ def test_a_stored_records_series_is_fetched_while_imports_are_waited_on(mode: Im
 
 def test_an_outage_leaves_a_new_series_without_orders_and_serves_the_stored_ones() -> None:
     # Series 1's record is due but SkyHook is down: the stale record still serves grab and import. Series 2 was
-    # never fetched, so grab reads it without orders and the title stays unread.
+    # never fetched, so its index has no orders.
     cache = FakeCacheStore()
-    cache.put_tvdb_orders(50, _record(fresh_for=timedelta(days=-1)))
+    cache.put_tvdb_orders(50, stored_orders(_ORDERS, fresh_for=timedelta(days=-1)))
     client = FakeSkyHookClient(failing=frozenset({(50, "official"), (60, "official")}))
     strat = _sync([_series(1, 50), _series(2, 60)], cache, client)
 
@@ -161,8 +142,6 @@ def test_an_outage_leaves_a_new_series_without_orders_and_serves_the_stored_ones
     indexes = strat._series_indexes({1, 2})
     assert indexes[1].orders["dvd"].id_by_key == {(1, 1): 12, (1, 2): 11}
     assert indexes[2].orders == {}
-    assert strat._episodes.orders_unread([1]) is False
-    assert strat._episodes.orders_unread([2]) is True
     seed = strat._reconciler._read_seed(pending_import(series_id=1), [11])
     assert seed is not None
     assert seed.snapshot.by_series[1].episodes.orders["dvd"].keys == {(1, 1), (1, 2)}

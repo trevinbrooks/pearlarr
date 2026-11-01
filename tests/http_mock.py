@@ -26,7 +26,7 @@ def sonarr_fixture(name: str) -> object:
 
 
 def skyhook_fixture(name: str) -> object:
-    """Decode a captured SkyHook reply by file name, trimmed to the keys pearlarr reads."""
+    """Decode a captured SkyHook reply by file name, cut down to a few rows and keys."""
 
     return json.loads((_SKYHOOK_FIXTURES / name).read_text())
 

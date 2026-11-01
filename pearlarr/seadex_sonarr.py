@@ -176,7 +176,8 @@ class SonarrSync(ArrSync[SonarrItem]):
         # Episode-domain collaborator: owns the per-run episode cache + series-id
         # fingerprint and the (series, al_id, mapping) -> episodes resolution. Built
         # from the shared deps + this client. The strategy delegates get_items /
-        # prefetch_episodes to it and reads its series_fp for the parse cache.
+        # prefetch_episodes / prefetch_orders to it, reads its series_fp for the parse
+        # cache, and builds every episode index with its orders_for.
         self._episodes = SonarrEpisodes(deps, self.sonarr, self._services)
 
         # Listing collaborator: reads every SeaDex entry of the series once per run. That gives the windows a

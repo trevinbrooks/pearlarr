@@ -525,8 +525,9 @@ class FakeRadarrClient(AbstractRadarrClient):
 class FakeSkyHookClient(AbstractSkyHookClient):
     """SkyHook scripted per (TVDB id, order type).
 
-    An unscripted pair answers `SkyHookMiss.UNKNOWN`, as SkyHook's 4xx does. A fetch of a `failing` pair trips the
-    outage, and every fetch after it is `SkyHookMiss.OUTAGE`, as the real client's latch makes it.
+    An unscripted pair answers `SkyHookMiss.NOT_FOUND`, as SkyHook does for a series TVDB lacks. A fetch of a
+    `failing` pair trips the outage, and every fetch after it is `SkyHookMiss.OUTAGE`, as the real client's latch
+    makes it.
     """
 
     def __init__(
@@ -549,14 +550,15 @@ class FakeSkyHookClient(AbstractSkyHookClient):
         if self._outage or (tvdb_id, order_type) in self._failing:
             self._outage = True
             return SkyHookMiss.OUTAGE
-        return self._replies.get((tvdb_id, order_type), SkyHookMiss.UNKNOWN)
+        return self._replies.get((tvdb_id, order_type), SkyHookMiss.NOT_FOUND)
 
 
 class ScriptedEpisodes:
     """A `SonarrEpisodes` stand-in scripted by hand: the series list off `sonarr`, one window per AniList id.
 
     `get_ep_list` records its calls, raises for an `ambiguous` id, and serves `windows[al_id]` when windows are
-    given, else the whole series list. Without a client every read is None, a failed fetch.
+    given, else the whole series list. Without a client every read is None, a failed fetch. The `unread` series have
+    no stored order record.
     """
 
     series_fp = "fp"
@@ -567,10 +569,12 @@ class ScriptedEpisodes:
         *,
         windows: Mapping[int, list[SonarrEpisode] | None] | None = None,
         ambiguous: frozenset[int] = frozenset(),
+        unread: frozenset[int] = frozenset(),
     ) -> None:
         self._sonarr = sonarr
         self._windows = windows
         self._ambiguous = ambiguous
+        self._unread = unread
         self.calls: list[tuple[int, int]] = []
         """Each `get_ep_list` call's (series id, AniList id), in call order."""
 
@@ -601,10 +605,9 @@ class ScriptedEpisodes:
         return NO_ORDERING
 
     def orders_unread(self, series_ids: Iterable[int]) -> bool:
-        """Every series' orders were read."""
+        """Whether any of the series is one of the `unread`."""
 
-        del series_ids
-        return False
+        return any(sid in self._unread for sid in series_ids)
 
 
 class CaptureHandler(logging.Handler):

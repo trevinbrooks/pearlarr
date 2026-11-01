@@ -30,7 +30,8 @@ from pearlarr.protocols import ImportCompleter
 from pearlarr.reporter import RunContext
 from pearlarr.run_loop import RunLoop
 from pearlarr.seadex_types import HistoryRecord, ProgressSink
-from pearlarr.skyhook_gateway import OrderRequest, SkyHookGateway
+from pearlarr.skyhook_gateway import SkyHookGateway
+from pearlarr.tvdb_orders import OFFICIAL_ORDER, SeriesOrderFacts
 from pearlarr.wait_view import WaitOutcomeRow, WaitResult
 
 from .builders import (
@@ -490,8 +491,8 @@ class _OrderFetchingStrategy(FakeStrategy):
 
     @override
     def prefetch_orders(self, items: list[FakeArrItem], *, progress: ProgressSink | None = None) -> int:
-        requests = [OrderRequest(item.id, None) for item in items]
-        return self._skyhook.prefetch(requests, preview=True, progress=progress)
+        series = [SeriesOrderFacts(item.id, OFFICIAL_ORDER, None) for item in items]
+        return self._skyhook.prefetch(series, preview=True, progress=progress)
 
 
 @pytest.mark.parametrize(

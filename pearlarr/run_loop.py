@@ -169,7 +169,8 @@ class RunLoop:
             with boot.step("Fetching Sonarr episodes") as step:
                 warmed = strategy.prefetch_episodes(all_items, progress=step)
                 step.note("cached" if warmed == 0 else count_noun(warmed, "series", "series"))
-            # After the library read, which carries each series' TVDB id and Sonarr's order counts.
+            # Like the episode step, after the SeaDex warm and the activity scan's dirty marks: both pick their
+            # series through `al_id_needs_scan`, which reads them.
             with boot.step("Fetching TVDB orders") as step:
                 fetched = strategy.prefetch_orders(all_items, progress=step)
                 if self._skyhook.outage:

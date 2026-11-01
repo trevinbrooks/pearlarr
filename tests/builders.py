@@ -8,7 +8,7 @@ import json
 import logging
 from collections.abc import Iterable, Iterator, Mapping, Sequence
 from copy import deepcopy
-from datetime import datetime
+from datetime import datetime, timedelta
 from types import MappingProxyType
 from typing import Any, override
 
@@ -89,13 +89,14 @@ from pearlarr.seadex_types import (
     SonarrEpisode,
     SpecialAliases,
 )
+from pearlarr.skyhook_client import AbstractSkyHookClient
 from pearlarr.skyhook_gateway import SkyHookGateway
 from pearlarr.sonarr_client import AbstractSonarrClient
 from pearlarr.sonarr_episodes import SonarrEpisodes
 from pearlarr.sonarr_parse import SonarrParseCache
-from pearlarr.stamps import UPDATED_AT_STR_FORMAT, parse_stamp
+from pearlarr.stamps import UPDATED_AT_STR_FORMAT, parse_stamp, stamp_of
 from pearlarr.torrents import AddOutcome, AddResult, TorrentService
-from pearlarr.tvdb_orders import StoredOrders
+from pearlarr.tvdb_orders import OrderRow, StoredOrders
 
 from .fakes import FakeClock, FakeRadarrClient, FakeSkyHookClient, FakeSonarrClient
 
@@ -735,6 +736,7 @@ def make_run_deps(
     seadex: SeaDexSource | None = None,
     logger: logging.Logger | None = None,
     clock: Clock | None = None,
+    skyhook_client: AbstractSkyHookClient | None = None,
 ) -> RunDeps:
     """A real `RunDeps` over typed fakes, with a Sonarr url and api_key set and `qbit` None (preview)."""
 
@@ -770,7 +772,7 @@ def make_run_deps(
         seadex=seadex or FakeSeaDexSource(),
         cache_store=cache_store,
         anilist=AniListGateway(cache_store=cache_store, logger=logger, client=AniListClient(client=http)),
-        skyhook=SkyHookGateway(client=FakeSkyHookClient(), cache_store=cache_store),
+        skyhook=SkyHookGateway(client=skyhook_client or FakeSkyHookClient(), cache_store=cache_store),
         torrents=_real_torrents(logger, http, categories),
         notifier=Notifier(discord_url=None, webhook_url=None, web=http),
         planner=make_planner(),
@@ -1379,6 +1381,23 @@ def make_sonarr_episodes(**attrs: Any) -> SonarrEpisodes:
     return make_bare_instance(SonarrEpisodes, **defaults)
 
 
+def stored_orders(
+    orders: Mapping[str, tuple[OrderRow, ...]],
+    *,
+    fresh_for: timedelta = timedelta(days=1),
+    sonarr_counts: Mapping[str, int] | None = None,
+) -> StoredOrders:
+    """A series' order record fetched a day ago, fresh for `fresh_for` from now (past it when negative)."""
+
+    now = datetime.now()
+    return StoredOrders(
+        fetched_at=stamp_of(now - timedelta(days=1)),
+        fresh_until=stamp_of(now + fresh_for),
+        orders=orders,
+        sonarr_counts=sonarr_counts,
+    )
+
+
 def make_sonarr_sync(
     *,
     sonarr: AbstractSonarrClient | None = None,
@@ -1386,10 +1405,11 @@ def make_sonarr_sync(
     cache_store: AbstractCacheStore | None = None,
     ep_list_cache: dict[int, list[SonarrEpisode]] | None = None,
     clock: Clock | None = None,
+    skyhook_client: AbstractSkyHookClient | None = None,
 ) -> SonarrSync:
-    """A `SonarrSync` built through its real `__init__`, injecting a typed client and seeding `ep_list_cache`."""
+    """A `SonarrSync` built through its real `__init__`, injecting typed clients and seeding `ep_list_cache`."""
 
-    deps = make_run_deps(config=config, cache_store=cache_store, clock=clock)
+    deps = make_run_deps(config=config, cache_store=cache_store, clock=clock, skyhook_client=skyhook_client)
     services = RunServices(deps, Arr.SONARR)
     strat = SonarrSync(
         deps,

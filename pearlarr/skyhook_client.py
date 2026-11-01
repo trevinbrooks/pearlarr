@@ -3,15 +3,14 @@
 import time
 from abc import ABC, abstractmethod
 from collections.abc import Callable
-from enum import Enum
+from enum import Enum, auto
 from typing import override
 
 import httpx
 from pydantic import ValidationError
 
-from .arr_http import RETRYABLE_STATUS
 from .output import Severity, hub_note, hub_warn
-from .seadex_types import SkyHookReply, validation_summary
+from .seadex_types import SkyHookError, SkyHookReply, validation_summary
 from .web_client import failure_detail, get_with_retries
 
 SKYHOOK_URL = "https://skyhook.sonarr.tv/v2/tvdb/shows/eng"
@@ -20,11 +19,11 @@ SKYHOOK_URL = "https://skyhook.sonarr.tv/v2/tvdb/shows/eng"
 class SkyHookMiss(Enum):
     """Why a fetch has no reply."""
 
-    OUTAGE = "outage"
-    """SkyHook is unreachable this run."""
+    OUTAGE = auto()
+    """SkyHook is unreachable this run, or answered with a status that says nothing about the series."""
 
-    UNKNOWN = "unknown"
-    """SkyHook answered the request with a client error (4xx): it has no such series or order."""
+    NOT_FOUND = auto()
+    """SkyHook says TVDB has no such series."""
 
 
 class AbstractSkyHookClient(ABC):
@@ -75,31 +74,41 @@ class SkyHookClient(AbstractSkyHookClient):
         except httpx.RequestError as e:
             self._note_outage(failure_detail(e))
             return SkyHookMiss.OUTAGE
-        status = response.status_code
-        if status in RETRYABLE_STATUS or status >= 500:
-            self._note_outage(f"HTTP {status}")
-            return SkyHookMiss.OUTAGE
-        if status >= 400:
-            hub_note(f"SkyHook has no {order_type} order for TVDB {tvdb_id} (HTTP {status})", severity=Severity.DEBUG)
-            return SkyHookMiss.UNKNOWN
-        return _read_reply(response, tvdb_id, order_type)
+        if response.is_success:
+            return _read_reply(response, tvdb_id, order_type)
+        if _says_not_found(response):
+            hub_note(f"SkyHook has no TVDB series {tvdb_id} ({order_type} order)", severity=Severity.DEBUG)
+            return SkyHookMiss.NOT_FOUND
+        # Any other status is about the host, not the series: an edge block (403), a moved route (a bare 404), a
+        # rate limit. Read as a miss, it would store every series empty for a week.
+        self._note_outage(f"HTTP {response.status_code}")
+        return SkyHookMiss.OUTAGE
+
+
+def _says_not_found(response: httpx.Response) -> bool:
+    """Whether the response is SkyHook's own 404 for a series TVDB doesn't have."""
+
+    if response.status_code != 404:
+        return False
+    try:
+        return SkyHookError.model_validate_json(response.content).not_found
+    except ValidationError:
+        return False
 
 
 def _read_reply(response: httpx.Response, tvdb_id: int, order_type: str) -> SkyHookReply:
     """The validated reply, or an empty one (warned) when it doesn't validate or doesn't match the request."""
 
-    empty = SkyHookReply(tvdb_id=tvdb_id)
     try:
         reply = SkyHookReply.model_validate_json(response.content)
     except ValidationError as e:
         _warn_malformed(tvdb_id, order_type, validation_summary(e))
-        return empty
+        return SkyHookReply(tvdb_id=tvdb_id)
     if reply.tvdb_id != tvdb_id or not reply.lists(order_type):
         _warn_malformed(tvdb_id, order_type, "the reply is for another series or order")
-        return empty
-    if reply.episodes is None:
+        return SkyHookReply(tvdb_id=tvdb_id)
+    if reply.rows_failed:
         _warn_malformed(tvdb_id, order_type, "an episode row failed validation")
-        return reply.model_copy(update={"episodes": ()})
     return reply
 
 

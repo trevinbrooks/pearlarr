@@ -112,7 +112,7 @@ class RunDeps:
     """The Sonarr parse-cache leaf over `cache_store`, read by the sweep's parse step."""
     anilist: AniListGateway
     skyhook: SkyHookGateway
-    """The TVDB order cache. Only the Sonarr strategy reads it."""
+    """The TVDB order cache. The Sonarr strategy reads its records, and the run loop its outage."""
     torrents: TorrentService
     notifier: Notifier
     planner: DownloadPlanner

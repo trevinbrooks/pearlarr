@@ -1,5 +1,5 @@
 # pyright: strict
-"""The SkyHook wire client over `respx`: reply validation, the 4xx miss, and the outage latch."""
+"""The SkyHook wire client over `respx`: reply validation, the not-found miss, and the outage latch."""
 
 import httpx
 import pytest
@@ -10,10 +10,15 @@ from pearlarr.output.recording import RecordingHub
 from pearlarr.seadex_types import SkyHookReply
 from pearlarr.skyhook_client import SKYHOOK_URL, SkyHookClient, SkyHookMiss
 
-from .fakes import install_recording_hub
+from .fakes import FakeSkyHookClient, install_recording_hub
 from .http_mock import skyhook_fixture
 
 _SERIES = 112961
+_NOT_FOUND = {
+    "message": "NotFound",
+    "description": "thetvdb.com does not have a series with the tvdbid 1 and the language eng",
+}
+"""SkyHook's 404 body for a series TVDB doesn't have."""
 
 
 def _client() -> SkyHookClient:
@@ -40,7 +45,6 @@ def test_a_reply_reads_with_its_rows_and_absolutes() -> None:
     assert isinstance(reply, SkyHookReply)
     assert reply.status == "Ended"
     assert [t.type for t in reply.season_types] == ["official", "dvd"]
-    assert reply.episodes is not None
     assert [(e.season_number, e.episode_number, e.absolute_episode_number) for e in reply.episodes] == [
         (0, 1, None),
         (1, 1, 1),
@@ -121,6 +125,11 @@ def test_one_bad_row_empties_the_order_and_keeps_the_header() -> None:
     ("answer", "detail"),
     [
         pytest.param(httpx.Response(503), "HTTP 503", id="5xx"),
+        pytest.param(httpx.Response(429), "HTTP 429", id="rate-limited"),
+        # SkyHook sits behind Cloudflare, whose edge block is a host-wide 403 page.
+        pytest.param(httpx.Response(403, text="<html>Attention Required</html>"), "HTTP 403", id="edge-block"),
+        # A route SkyHook doesn't serve 404s with no body, unlike its own not-found.
+        pytest.param(httpx.Response(404), "HTTP 404", id="moved-route"),
         pytest.param(httpx.ConnectTimeout("timed out"), "ConnectTimeout", id="timeout"),
     ],
 )
@@ -131,7 +140,7 @@ def test_an_outage_latches_and_later_fetches_send_nothing(answer: httpx.Response
     with respx.mock:
         route = respx.get(url__startswith=SKYHOOK_URL)
         if isinstance(answer, httpx.Response):
-            route.respond(answer.status_code)
+            route.respond(answer.status_code, content=answer.content)
         else:
             route.side_effect = answer
         first = client.fetch(_SERIES, "official")
@@ -145,15 +154,34 @@ def test_an_outage_latches_and_later_fetches_send_nothing(answer: httpx.Response
     assert _warnings(recording) == [f"SkyHook request failed ({detail}) - skipping TVDB order fetches this run"]
 
 
-def test_a_client_error_is_a_miss_for_that_series_only() -> None:
+def test_skyhooks_own_not_found_is_a_miss_for_that_series_only() -> None:
     client = _client()
 
     with respx.mock:
-        respx.get(f"{SKYHOOK_URL}/1/official").respond(404)
+        respx.get(f"{SKYHOOK_URL}/1/official").respond(404, json=_NOT_FOUND)
         respx.get(f"{SKYHOOK_URL}/{_SERIES}/official").respond(json=skyhook_fixture("tvdb_112961_official.json"))
         missed = client.fetch(1, "official")
         served = client.fetch(_SERIES, "official")
 
-    assert missed is SkyHookMiss.UNKNOWN
+    assert missed is SkyHookMiss.NOT_FOUND
     assert isinstance(served, SkyHookReply)
     assert client.outage is False
+
+
+def test_the_fake_answers_one_fetch_sequence_as_the_real_client_does() -> None:
+    install_recording_hub()
+    official = skyhook_fixture("tvdb_112961_official.json")
+    # Served, not found, the outage, then a pair that would be served if the latch let it through.
+    fetches = [(_SERIES, "official"), (1, "official"), (71776, "official"), (_SERIES, "official")]
+    fake = FakeSkyHookClient(
+        {(_SERIES, "official"): SkyHookReply.model_validate(official)}, failing=frozenset({(71776, "official")})
+    )
+    real = _client()
+
+    with respx.mock:
+        respx.get(f"{SKYHOOK_URL}/{_SERIES}/official").respond(json=official)
+        respx.get(f"{SKYHOOK_URL}/1/official").respond(404, json=_NOT_FOUND)
+        respx.get(f"{SKYHOOK_URL}/71776/official").respond(503)
+        from_real = [(real.fetch(*pair), real.outage) for pair in fetches]
+
+    assert [(fake.fetch(*pair), fake.outage) for pair in fetches] == from_real

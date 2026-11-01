@@ -26,7 +26,6 @@ from .seadex_types import (
     TvdbMappings,
     season_holds,
 )
-from .skyhook_gateway import OrderRequest
 from .sonarr_client import AbstractSonarrClient
 from .tvdb_orders import NO_ORDERING, OFFICIAL_ORDER, SeriesOrderFacts, SeriesOrdering
 
@@ -104,11 +103,12 @@ def check_ep_by_anibridge(
 
 
 class SonarrEpisodes:
-    """Owns the per-run episode cache + the (series, al_id, mapping) -> episodes logic.
+    """Owns the per-run episode cache + the (series, al_id, mapping) -> episodes logic, and each series' orders.
 
     Constructed once per run in `SonarrSync` from the shared
     `RunDeps`, the strategy's Sonarr client, and the services
     hub (held as `self._services` for the prefetch needs-scan gate).
+    The TVDB orders come off `deps.skyhook`, read once per series per run.
     """
 
     def __init__(self, deps: RunDeps, sonarr: AbstractSonarrClient, services: RunServices) -> None:
@@ -116,7 +116,7 @@ class SonarrEpisodes:
 
         Args:
             deps: The shared collaborators (config/mappings/AniList
-                gateway/reporter are unpacked off it).
+                gateway/reporter/SkyHook order gateway are unpacked off it).
             sonarr: The strategy's Sonarr client (built once,
                 reused so a multi-season series fetches its episodes once).
             services: The services hub. `prefetch` calls into it to
@@ -284,12 +284,12 @@ class SonarrEpisodes:
         A series missing from this run's library read is skipped: there is no TVDB id to ask for.
         """
 
-        requests = {
-            facts.tvdb_id: OrderRequest(facts.tvdb_id, facts.counts)
+        by_tvdb = {
+            facts.tvdb_id: facts
             for sid in series_ids
             if (facts := self._order_facts.get(sid)) is not None and facts.tvdb_id > 0
         }
-        return self._skyhook.prefetch(list(requests.values()), preview=self._services.is_preview(), progress=progress)
+        return self._skyhook.prefetch(list(by_tvdb.values()), preview=self._services.is_preview(), progress=progress)
 
     def orders_for(self, series_id: int) -> SeriesOrdering:
         """The orders the series' episode indexes are built with, read once per run.
@@ -318,7 +318,7 @@ class SonarrEpisodes:
         return any(
             (facts := self._order_facts.get(sid)) is not None
             and facts.tvdb_id > 0
-            and not self._skyhook.known(facts.tvdb_id)
+            and not self._skyhook.has_record(facts.tvdb_id)
             for sid in series_ids
         )
 

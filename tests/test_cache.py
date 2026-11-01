@@ -35,7 +35,7 @@ from pearlarr.parse_records import parsed_info, to_parse_record
 from pearlarr.seadex_types import ParsedFileInfo
 from pearlarr.sqlite_util import is_corruption
 from pearlarr.stamps import parse_stamp_or_none
-from pearlarr.tvdb_orders import OrderEpisode, StoredOrder, StoredOrders
+from pearlarr.tvdb_orders import OrderRow, StoredOrders
 
 from .builders import claim_al_ids, entry_claim, make_entry_record, pending_import
 
@@ -1232,10 +1232,8 @@ class TestGuardFacts:
 _ORDERS = StoredOrders(
     fetched_at="2026-07-01 10:00:00",
     fresh_until="2026-07-08 10:00:00",
-    orders={
-        "official": StoredOrder((OrderEpisode(1, 1, 101, 1), OrderEpisode(1, 2, 102, 2)), 2),
-        "dvd": StoredOrder((), None),
-    },
+    orders={"official": (OrderRow(1, 1, 101, 1), OrderRow(1, 2, 102, 2)), "dvd": ()},
+    sonarr_counts={"official": 2, "alternate": 2},
 )
 
 
@@ -1246,7 +1244,7 @@ class TestTvdbOrders:
         store = _open(tmp_path)
         assert store.get_tvdb_orders(1) is None
 
-        store.put_tvdb_orders(1, StoredOrders(fetched_at="x", fresh_until="x", orders={}))
+        store.put_tvdb_orders(1, StoredOrders(fetched_at="x", fresh_until="x", orders={}, sonarr_counts=None))
         store.put_tvdb_orders(1, _ORDERS)
 
         assert store.get_tvdb_orders(1) == _ORDERS

@@ -9,7 +9,7 @@ from typing import NamedTuple, Self
 
 from .manual_import import NO_IDENTIFIED, EntryNames, IdentifiedNames
 from .seadex_types import NO_ALIASES, EpisodeKey, ParsedFileInfo, SonarrEpisode, SpecialAliases, index_episodes_by_key
-from .tvdb_orders import NO_ORDERING, OrderEpisode, SeriesOrdering
+from .tvdb_orders import NO_ORDERING, OrderRow, SeriesOrdering
 
 
 @dataclass(frozen=True, slots=True)
@@ -67,19 +67,19 @@ def episode_index(ep_list: Iterable[SonarrEpisode], ordering: SeriesOrdering = N
     return EpisodeIndex(
         by_id={ep.id: ep for ep in with_ids},
         id_by_key={key: ep.id for key, ep in index_episodes_by_key(with_ids).items()},
-        orders={name: _read_order(episodes, id_by_tvdb) for name, episodes in ordering.others.items()},
+        orders={name: _read_order(rows, id_by_tvdb) for name, rows in ordering.others.items()},
     )
 
 
-def _read_order(episodes: Iterable[OrderEpisode], id_by_tvdb: Mapping[int, int]) -> EpisodeOrder:
-    """The order read onto Sonarr's episodes: the first episode of a repeated key wins."""
+def _read_order(rows: Iterable[OrderRow], id_by_tvdb: Mapping[int, int]) -> EpisodeOrder:
+    """The order read onto Sonarr's episodes: the first row of a repeated key wins."""
 
     id_by_key: dict[EpisodeKey, int] = {}
     keys: set[EpisodeKey] = set()
-    for episode in episodes:
-        key = EpisodeKey(episode.season, episode.episode)
+    for row in rows:
+        key = EpisodeKey(row.season, row.episode)
         keys.add(key)
-        if (ep_id := id_by_tvdb.get(episode.tvdb_id)) is not None:
+        if (ep_id := id_by_tvdb.get(row.tvdb_id)) is not None:
             id_by_key.setdefault(key, ep_id)
     return EpisodeOrder(id_by_key, frozenset(keys))
 

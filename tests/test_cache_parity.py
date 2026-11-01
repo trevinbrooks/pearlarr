@@ -19,7 +19,7 @@ from typing import Any
 from pearlarr.cache import AbstractCacheStore, CacheRecord, CacheStore, HistoryCheckpoint
 from pearlarr.config import Arr
 from pearlarr.manual_import import GuardFacts
-from pearlarr.tvdb_orders import OrderEpisode, StoredOrder, StoredOrders
+from pearlarr.tvdb_orders import OrderRow, StoredOrders
 
 from .builders import FakeCacheStore, entry_claim, make_entry_record, pending_import
 
@@ -108,10 +108,10 @@ def _apply_ops(store: AbstractCacheStore) -> None:
     store.vouch_selection(Arr.SONARR, "digest-new")
 
     # TVDB orders: a record replaced whole (the dvd order goes), an empty listed order, a series with no orders.
-    row = (OrderEpisode(1, 1, 101, 1),)
-    store.put_tvdb_orders(5, StoredOrders(_OLD, _OLD, {"official": StoredOrder(row, 1), "dvd": StoredOrder(row, 1)}))
-    store.put_tvdb_orders(5, StoredOrders(_NEW, _NEW, {"official": StoredOrder(row, 1), "alt": StoredOrder((), None)}))
-    store.put_tvdb_orders(6, StoredOrders(_NEW, _NEW, {}))
+    row = (OrderRow(1, 1, 101, 1),)
+    store.put_tvdb_orders(5, StoredOrders(_OLD, _OLD, {"official": row, "dvd": row}, {"official": 1, "dvd": 1}))
+    store.put_tvdb_orders(5, StoredOrders(_NEW, _NEW, {"official": row, "alt": ()}, {"official": 1}))
+    store.put_tvdb_orders(6, StoredOrders(_NEW, _NEW, {}, None))
 
 
 def _observe(store: AbstractCacheStore) -> dict[str, object]:

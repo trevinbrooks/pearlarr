@@ -362,6 +362,18 @@ def _validate_skipping_junk[ModelT: _ApiModel](model: type[ModelT], value: objec
     return kept
 
 
+def _validate_all_or_none[ModelT: _ApiModel](model: type[ModelT], value: object) -> list[ModelT] | None:
+    """Validate every entry into `model`, or None when the value isn't a list or ANY entry fails."""
+
+    # tuple included: direct construction passes the field's own type.
+    if not isinstance(value, (list, tuple)):
+        return None
+    try:
+        return [model.model_validate(entry) for entry in cast("Sequence[object]", value)]
+    except ValidationError:
+        return None
+
+
 # --- shared progress sink ----------------------------------------------------
 
 
@@ -398,6 +410,17 @@ class ArrItem(Protocol):
     def monitored(self) -> bool: ...
 
 
+class SeasonTypeCount(_ApiModel):
+    """One `seasonTypes[]` element: a TVDB order a series lists and its episode count.
+
+    Sonarr v5's series record and SkyHook's reply send the same shape.
+    """
+
+    type: str
+    """The order's type name (`official`, `dvd`, `alternate`, ...)."""
+    episode_count: int = Field(validation_alias="episodeCount")
+
+
 @runtime_checkable
 class SonarrItem(ArrItem, Protocol):
     """An `ArrItem` keyed on `tvdbId`, with the TVDB orders Sonarr lists for it."""
@@ -409,7 +432,7 @@ class SonarrItem(ArrItem, Protocol):
     def seasonType(self) -> str: ...
 
     @property
-    def seasonTypes(self) -> "tuple[SeasonTypeCount, ...]": ...
+    def seasonTypes(self) -> tuple[SeasonTypeCount, ...]: ...
 
 
 @runtime_checkable
@@ -418,17 +441,6 @@ class RadarrItem(ArrItem, Protocol):
 
     @property
     def tmdbId(self) -> int: ...
-
-
-class SeasonTypeCount(_ApiModel):
-    """One `seasonTypes[]` element: a TVDB order a series lists and its episode count.
-
-    Sonarr v5's series record and SkyHook's reply send the same shape.
-    """
-
-    type: str
-    """The order's type name (`official`, `dvd`, `alternate`, ...)."""
-    episode_count: int = Field(validation_alias="episodeCount")
 
 
 class SonarrSeries(_ApiModel):
@@ -442,8 +454,9 @@ class SonarrSeries(_ApiModel):
     monitored: bool = True
     tvdbId: int = 0
     imdbId: str | None = None
-    seasonType: str = OFFICIAL_ORDER
-    """The TVDB order Sonarr numbers the series by. Sonarr v4 sends no field and numbers by the official order."""
+    seasonType: _BlankStr = OFFICIAL_ORDER
+    """The TVDB order Sonarr numbers the series by. Sonarr v4 sends no field and numbers by the official order. A
+    null or junk value folds to "", which names no order, so the series is read without its other orders."""
     seasonTypes: tuple[SeasonTypeCount, ...] = ()
     """The orders TVDB lists for the series, with counts. Sonarr v5 only."""
 
@@ -1003,18 +1016,8 @@ class MovieFile(_ApiModel):
 # --- SkyHook (`skyhook.sonarr.tv` TVDB shows) -------------------------------
 
 
-def _rows_or_none(value: object) -> object:
-    """Fold `episodes[]` all-or-nothing: None when it isn't a list or ANY row fails validation. A null is no rows."""
-
-    if value is None:
-        return ()
-    # tuple included: direct construction passes the field's own type.
-    if not isinstance(value, (list, tuple)):
-        return None
-    try:
-        return [SkyHookEpisode.model_validate(row) for row in cast("Sequence[object]", value)]
-    except ValidationError:
-        return None
+ENDED_STATUS = "Ended"
+"""TVDB's status for a series that has finished airing."""
 
 
 class SkyHookEpisode(_ApiModel):
@@ -1036,8 +1039,22 @@ class SkyHookReply(_ApiModel):
     """TVDB's series status (`Ended`, `Continuing`, ...)."""
     season_types: tuple[SeasonTypeCount, ...] = Field(default=(), validation_alias="seasonTypes")
     """Every order TVDB lists for the series, whichever order was asked for."""
-    episodes: Annotated[tuple[SkyHookEpisode, ...] | None, BeforeValidator(_rows_or_none)] = ()
-    """The asked order's rows. Empty when the reply sends none, None when any row failed validation."""
+    episodes: tuple[SkyHookEpisode, ...] = ()
+    """The asked order's rows. Empty when the reply sends none, or when any row failed validation."""
+    rows_failed: bool = False
+    """Whether a row failed validation and emptied `episodes`. Set by the validator, never read off the wire."""
+
+    @model_validator(mode="before")
+    @classmethod
+    def _fold_bad_rows(cls, data: object) -> object:
+        """Read `episodes[]` all-or-nothing: one bad row empties it and sets `rows_failed`. A null is no rows."""
+
+        if not isinstance(data, dict):
+            return data
+        record = cast("dict[str, Any]", data)
+        raw = record.get("episodes")
+        rows: list[SkyHookEpisode] | None = [] if raw is None else _validate_all_or_none(SkyHookEpisode, raw)
+        return {**record, "episodes": rows or (), "rows_failed": rows is None}
 
     @field_validator("season_types", mode="before")
     @classmethod
@@ -1046,10 +1063,28 @@ class SkyHookReply(_ApiModel):
 
         return _validate_skipping_junk(SeasonTypeCount, value)
 
+    @property
+    def ended(self) -> bool:
+        """Whether TVDB lists the series as finished airing."""
+
+        return self.status == ENDED_STATUS
+
     def lists(self, order_type: str) -> bool:
         """Whether the reply's `seasonTypes` names `order_type`."""
 
         return any(season_type.type == order_type for season_type in self.season_types)
+
+
+class SkyHookError(_ApiModel):
+    """SkyHook's error body, as `{"message": "NotFound", "description": ...}` on a series TVDB doesn't have."""
+
+    message: _LenientStr = None
+
+    @property
+    def not_found(self) -> bool:
+        """Whether SkyHook itself says it has no such series."""
+
+        return self.message == "NotFound"
 
 
 # --- Sonarr parse (`/api/v3/parse` `parsedEpisodeInfo`) -------------------
@@ -1116,16 +1151,7 @@ class ParsedFileInfo(_ApiModel):
         All-or-nothing on purpose: dropping one entry would shorten a span and slip the every-pair check.
         """
 
-        # tuple included: direct construction passes the field's own type.
-        if not isinstance(value, (list, tuple)):
-            return ()
-        kept: list[MatchedEpisode] = []
-        for entry in cast("Sequence[object]", value):
-            try:
-                kept.append(MatchedEpisode.model_validate(entry))
-            except ValidationError:
-                return ()
-        return kept
+        return _validate_all_or_none(MatchedEpisode, value) or ()
 
     def with_numbers(
         self, *, episodes: tuple[int, ...], absolutes: tuple[int, ...], matched: tuple[MatchedEpisode, ...]
