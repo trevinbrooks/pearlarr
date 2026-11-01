@@ -218,11 +218,12 @@ class EpisodeTitles(NamedTuple):
     def keyed_by(self, read: NameRead, resolved: Collection[int]) -> frozenset[int]:
         """The episodes a name's numbers are a key for: Sonarr's read of it (`resolved`), and its bare season and count.
 
-        "Show 2 - 05" is a key for S02E05. A bare number the series title holds is no season ("Show No. 8 - 05").
+        "Show 2 - 05" is a key for S02E05. "Show No. 8 - 05" counts as a key for S08E05 too, which is harmless: no
+        title can spell it, since a title's series words are dropped before it spells a key.
         """
 
         season = bare_season(read)
-        if read.member is None or season is None or season in self.series_words:
+        if read.member is None or season is None:
             return frozenset(resolved)
         own = self.id_by_key.get(EpisodeKey(int(season), read.member.number))
         return frozenset(resolved if own is None else (*resolved, own))
