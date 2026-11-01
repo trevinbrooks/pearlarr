@@ -11,7 +11,7 @@ placed on other ids without them, is `MISNUMBERED` (`_disputed`). The ids its de
 count as used under the later windows, which can only leave another file unplaced, never misfile one.
 """
 
-from collections.abc import Iterable, Mapping, Sequence
+from collections.abc import Collection, Iterable, Mapping, Sequence
 from dataclasses import replace
 from typing import NamedTuple
 
@@ -57,8 +57,7 @@ class WindowedAssignment(NamedTuple):
         """Whether the window at `index` gave `TITLE_REFUTED` to a file the merge left `TITLE_REFUTED`."""
 
         refuted = PlacementVerdict.TITLE_REFUTED
-        own = {p.name for p in self.windows[index].placements if p.verdict is refuted}
-        return any(v.placement.verdict is refuted and v.placement.name in own for v in self.verdicts)
+        return self._left_as(refuted, {p.name for p in self.windows[index].placements if p.verdict is refuted})
 
     def misnumbered_under(self, index: int) -> bool:
         """Whether the merge left `MISNUMBERED` a file the window at `index` placed, refused, or claimed by alias.
@@ -71,9 +70,12 @@ class WindowedAssignment(NamedTuple):
             for p in self.windows[index].placements
             if p.verdict.placed or p.verdict.refused or p.verdict in _BY_ALIAS
         }
-        return any(
-            v.placement.verdict is PlacementVerdict.MISNUMBERED and v.placement.name in own for v in self.verdicts
-        )
+        return self._left_as(PlacementVerdict.MISNUMBERED, own)
+
+    def _left_as(self, verdict: PlacementVerdict, names: Collection[str]) -> bool:
+        """Whether the merge left any of `names` with `verdict`."""
+
+        return any(v.placement.verdict is verdict and v.placement.name in names for v in self.verdicts)
 
 
 # Highest wins. SKIPPED outranks FOREIGN and EXTRA, so a file skipped under any window is never excluded as another
