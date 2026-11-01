@@ -121,11 +121,18 @@ def test_get_nyaa_torrent_reads_the_utf8_name_in_any_case() -> None:
     assert get_nyaa_torrent("https://nyaa.si/view/1234567", client=httpx.Client()).title == _NYAA_TITLE
 
 
-@pytest.mark.parametrize("template", ['"{name}.torrent"', "{name}.torrent"])
+@pytest.mark.parametrize(
+    "template",
+    [
+        pytest.param('filename="{name}.torrent"', id="quoted"),
+        pytest.param("filename={name}.torrent", id="bare"),
+        pytest.param("filename=\"{name}.torrent\"; filename*=UTF-8''", id="empty utf-8 form"),
+    ],
+)
 @respx.mock
 def test_get_nyaa_torrent_falls_back_to_the_plain_filename(template: str) -> None:
     value = template.format(name=quote(_NYAA_TITLE))
-    respx.head(_NYAA_LINK).respond(headers={"content-disposition": f"inline; filename={value}"})
+    respx.head(_NYAA_LINK).respond(headers={"content-disposition": f"inline; {value}"})
 
     assert get_nyaa_torrent("https://nyaa.si/view/1234567", client=httpx.Client()).title == _NYAA_TITLE
 
@@ -157,7 +164,7 @@ def test_get_nyaa_torrent_without_a_release_number_raises() -> None:
 
 @respx.mock
 def test_get_nyaa_torrent_without_a_filename_raises() -> None:
-    """A download header with no `filename*` raises."""
+    """A download header with no file name raises."""
 
     respx.head(_NYAA_LINK).respond(headers={"content-disposition": "inline"})
     with pytest.raises(TorrentParseError, match=f"Could not read the torrent name from {re.escape(_NYAA_LINK)}"):

@@ -164,7 +164,10 @@ class TorrentService:
         torrent_url: str,
         preview: bool,
     ) -> str | None:
-        """Add `torrent_url` to qBittorrent and return the name it reports, None in preview, without a hash, or when unlisted."""
+        """Add `torrent_url` to qBittorrent and return the name it reports.
+
+        None in preview, without a hash to read it by, or when qBittorrent doesn't list the torrent yet.
+        """
 
         infohash = item.infohash
 

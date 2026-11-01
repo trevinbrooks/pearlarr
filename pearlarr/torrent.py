@@ -16,7 +16,7 @@ RUTRACKER_MAGNET_ANNOUNCE = "http://bt2.t-ru.org/ann?magnet"
 _NYAA_VIEW_PATH = re.compile(r"/view/(\d+)/?")
 # RFC 6266 makes parameter names and the charset tag case-insensitive.
 _DISPOSITION_NAME_UTF8 = re.compile(r"filename\*\s*=\s*utf-8''([^;]*)", re.IGNORECASE)
-_DISPOSITION_NAME_PLAIN = re.compile(r'(?<![\w*])filename\s*=\s*(?:"([^"]*)"|([^;"]*))', re.IGNORECASE)
+_DISPOSITION_NAME_PLAIN = re.compile(r'(?<![\w*])filename\s*=\s*("[^"]*"|[^;]*)', re.IGNORECASE)
 
 
 class TorrentParseError(Exception):
@@ -46,11 +46,11 @@ def get_nyaa_torrent(url: str, client: httpx.Client) -> ParsedTorrent:
     link = urljoin(url, f"/download/{match[1]}.torrent")
     r = head_with_retries(client, link)
     r.raise_for_status()
-    # Nyaa percent-encodes both forms of the name; prefer the UTF-8 `filename*`.
+    # Nyaa percent-encodes both forms of the name. The UTF-8 `filename*` wins unless it is missing or empty.
     disposition = r.headers.get("content-disposition", "")
-    if (m := _DISPOSITION_NAME_UTF8.search(disposition)) is None:
-        m = _DISPOSITION_NAME_PLAIN.search(disposition)
-    encoded = ((m[1] or m[2] or "") if m else "").strip()
+    forms = (_DISPOSITION_NAME_UTF8, _DISPOSITION_NAME_PLAIN)
+    names = (m[1].strip().strip('"') for pattern in forms if (m := pattern.search(disposition)))
+    encoded = next(filter(None, names), "")
     if not encoded:
         raise TorrentParseError(f"Could not read the torrent name from {link}")
     return ParsedTorrent(link, unquote(encoded).removesuffix(".torrent"))
