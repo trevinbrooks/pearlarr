@@ -25,6 +25,7 @@ from pearlarr.anilist_gateway import AniListGateway
 from pearlarr.boot_flow import BootFlow
 from pearlarr.cache import AbstractCacheStore, CacheStore
 from pearlarr.config import AppConfig, Arr
+from pearlarr.grab_pipeline import GrabRequest
 from pearlarr.manual_import import ImportWaitMode, Outcome, OutcomeCategory
 from pearlarr.mappings import MappingEntry
 from pearlarr.output import BootStepFinished, CountsMark, Diagnostic, Severity, SeverityCounts
@@ -40,6 +41,7 @@ from .builders import (
     CLIENT_SENTINEL,
     FakeCacheStore,
     ScriptedAniListClient,
+    grab_request,
     make_anilist_gateway,
     make_bare_instance,
     make_config,
@@ -417,6 +419,33 @@ class TestPerTitleCommit:
         store.close()
 
         assert _kept(tmp_path / "cache.db", [1]) == kept
+
+
+class _GrabRecorder(_FakeBound):
+    """A grab pipeline stand-in that counts its `grab_and_cache` calls."""
+
+    def __init__(self) -> None:
+        self.calls = 0
+
+    def grab_and_cache(self, req: GrabRequest) -> None:
+        del req
+        self.calls += 1
+
+
+class TestGrabPacing:
+    """A grab's queries owe the pacing pause, slept before the next id."""
+
+    def test_a_grab_owes_the_pause_the_next_id_sleeps(self) -> None:
+        clock = FakeClock()
+        pipeline = _GrabRecorder()
+        services = make_services(_grab_pipeline=pipeline, _clock=clock, sleep_time=3)
+
+        services.grab_and_cache(grab_request())
+        services.pay_pause()
+        services.pay_pause()
+
+        assert pipeline.calls == 1
+        assert clock.sleeps == [3]
 
 
 class _RaisingNotifier:

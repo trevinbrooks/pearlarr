@@ -189,8 +189,8 @@ class RunLoop:
                 title = getattr(item, "title", "unknown title")
                 hub_error(f"{title}: unexpected error ({e}) - skipping this title", exc=e)
             # Commit after each title, not inside one, where paired writes (an entry and its hashes, a record and its
-            # guard row) may be half done. A stop or kill loses only the title in flight. One that raised commits
-            # whatever it staged.
+            # guard row) may be half done. A stop or kill loses only the title in flight. A title that raised still
+            # commits what it staged, as the end save always did.
             self.cache_store.save(preview=preview)
 
         # ONE full-coverage predicate for both gates below. They drifted apart once: an outage run committed the

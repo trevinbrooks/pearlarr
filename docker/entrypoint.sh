@@ -38,14 +38,16 @@ on_stop() {
 trap on_stop TERM INT
 
 # Catch-up pass on boot. A failure must not flap the container.
-if [ "${PEARLARR_RUN_ON_START:-true}" = "true" ]; then
-    # In the background so the trap runs during the run. A stop that came before
-    # run_pid was set is passed on here.
-    pearlarr run single &
+# A stop that already came skips the run: a TERM sent before the run becomes
+# pearlarr is lost to the trap the forked shell inherits.
+if [ "${PEARLARR_RUN_ON_START:-true}" = "true" ] && [ "${stopping}" = "false" ]; then
+    # In the background so the trap runs during the run. sh gives a background job
+    # /dev/null for stdin, so the run gets this shell's stdin through fd 3 instead
+    # (an interactive pick reads it).
+    exec 3<&0
+    pearlarr run single <&3 3<&- &
     run_pid=$!
-    if [ "${stopping}" = "true" ]; then
-        kill -TERM "${run_pid}" 2>/dev/null || true
-    fi
+    exec 3<&-
     while :; do
         seen=${signals}
         code=0
