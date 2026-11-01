@@ -218,6 +218,7 @@ class _FakeRunServices(RunServices):
         self.grab_requests: list[GrabRequest] = []
         self.no_releases_calls: list[tuple[int, CacheRecord]] = []
         self.invalid_selection_skips = 0
+        self.pauses_owed = 0
 
     @property
     @override
@@ -312,6 +313,10 @@ class _FakeRunServices(RunServices):
         self.invalid_selection_skips += 1
 
     @override
+    def owe_pause(self) -> None:
+        self.pauses_owed += 1
+
+    @override
     def grab_and_cache(self, req: GrabRequest) -> None:
         self.grab_requests.append(req)
 
@@ -343,7 +348,7 @@ def test_fake_overrides_the_full_public_surface() -> None:
 
     # Loop-driven members (the runner calls these, strategies never do), so the
     # fake doesn't script them.
-    lifecycle = {"begin_run", "ctx", "is_preview", "mark_dirty"}
+    lifecycle = {"begin_run", "ctx", "is_preview", "mark_dirty", "pay_pause"}
     surface = {
         name
         for name, member in vars(RunServices).items()
@@ -510,7 +515,6 @@ class TestProcessAlIdThreadsServices:
             _services=run,
             _episodes=episodes,
             _config=make_config(sleep_time=0),
-            _clock=FakeClock(),
             ignore_movies_in_radarr=False,
             logger=make_logger(),
         )
@@ -518,6 +522,7 @@ class TestProcessAlIdThreadsServices:
         strat.process_al_id(_Item(id=1, title="Title"), 5, MappingEntry(anilist_id=5))
         assert run.log_entry_status_calls == [(EntryState.NO_EPISODES, "Title")]
         assert run.log_al_title_calls == []
+        assert run.pauses_owed == 1
         # anime-id empty is NOT the AniBridge case -> no warning surfaced.
         assert diagnostic_messages(recording, Severity.WARNING) == []
 
@@ -535,7 +540,6 @@ class TestProcessAlIdThreadsServices:
             _services=run,
             _episodes=episodes,
             _config=make_config(sleep_time=0),
-            _clock=FakeClock(),
             ignore_movies_in_radarr=False,
             logger=make_logger(),
         )
@@ -592,7 +596,6 @@ class TestProcessAlIdThreadsServices:
             _services=run,
             _episodes=ScriptedEpisodes(FakeSonarrClient(episodes=[])),
             _config=make_config(sleep_time=0),
-            _clock=FakeClock(),
             ignore_movies_in_radarr=True,
             logger=make_logger(),
         )
@@ -612,7 +615,6 @@ class TestProcessAlIdThreadsServices:
             _services=run,
             _episodes=ScriptedEpisodes(FakeSonarrClient(episodes=[])),
             _config=make_config(sleep_time=0),
-            _clock=FakeClock(),
             ignore_movies_in_radarr=True,
             all_radarr_movies=None,
             logger=make_logger(),

@@ -907,7 +907,6 @@ def make_grab_pipeline(**overrides: Any) -> GrabPipeline:
         "logger": logger,
         "qbit": CLIENT_SENTINEL,
         "_ctx": RunContext(arr=Arr.SONARR, import_wait_mode=ImportWaitMode.BLOCKING),
-        "_clock": FakeClock(),
     }
     defaults.update(overrides)
     if "_records" not in defaults:

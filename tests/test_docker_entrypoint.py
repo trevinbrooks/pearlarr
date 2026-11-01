@@ -11,16 +11,24 @@ import pytest
 
 ENTRYPOINT = Path(__file__).resolve().parent.parent / "docker" / "entrypoint.sh"
 
-# Holds `run single` open until the test creates `release`, so the SIGTERM lands mid-run.
-_PEARLARR_STUB = """#!/bin/sh
+# Runs about 10s unless a SIGTERM stops it first, which it records.
+_STOPPABLE_RUN_STUB = """#!/bin/sh
+trap 'touch "$STUB/got_term"; exit 0' TERM
 touch "$STUB/started"
-while [ ! -f "$STUB/release" ]; do sleep 0.05; done
-touch "$STUB/finished"
+i=0
+while [ "$i" -lt 200 ]; do sleep 0.05; i=$((i + 1)); done
+exit 3
+"""
+
+_FAILING_RUN_STUB = """#!/bin/sh
+exit 2
 """
 
 _SUPERCRONIC_STUB = """#!/bin/sh
-touch "$STUB/supercronic"
+printf '%s\\n' "$@" > "$STUB/supercronic"
 """
+
+pytestmark = pytest.mark.skipif(os.name != "posix", reason="the entrypoint is a POSIX shell script")
 
 
 def _write_stub(bin_dir: Path, name: str, body: str) -> None:
@@ -36,27 +44,49 @@ def _wait_for(path: Path) -> None:
         time.sleep(0.02)
 
 
-@pytest.mark.skipif(os.name != "posix", reason="the entrypoint is a POSIX shell script")
-def test_a_stop_during_run_on_start_lets_it_finish_and_skips_the_schedule(tmp_path: Path) -> None:
+def _start(tmp_path: Path, run_stub: str) -> subprocess.Popen[str]:
+    """Start the entrypoint with `run_stub` as `pearlarr`, a recording `supercronic`, and a ready data dir."""
     bin_dir = tmp_path / "bin"
     bin_dir.mkdir()
-    _write_stub(bin_dir, "pearlarr", _PEARLARR_STUB)
+    _write_stub(bin_dir, "pearlarr", run_stub)
     _write_stub(bin_dir, "supercronic", _SUPERCRONIC_STUB)
     data_dir = tmp_path / "data"
     data_dir.mkdir()
     (data_dir / "config.yml").write_text("", encoding="utf-8")
-    env = {"PATH": f"{bin_dir}:/usr/bin:/bin", "STUB": str(tmp_path), "PEARLARR_DATA_DIR": str(data_dir)}
+    env = {
+        "PATH": f"{bin_dir}:/usr/bin:/bin",
+        "STUB": str(tmp_path),
+        "PEARLARR_DATA_DIR": str(data_dir),
+        "TMPDIR": str(tmp_path),
+    }
+    return subprocess.Popen(["/bin/sh", str(ENTRYPOINT)], env=env, stdout=subprocess.PIPE, encoding="utf-8")
 
-    with subprocess.Popen(["/bin/sh", str(ENTRYPOINT)], env=env, stdout=subprocess.PIPE, encoding="utf-8") as shell:
+
+def test_a_stop_during_run_on_start_is_passed_on_and_skips_the_schedule(tmp_path: Path) -> None:
+    with _start(tmp_path, _STOPPABLE_RUN_STUB) as shell:
         try:
             _wait_for(tmp_path / "started")
             shell.send_signal(signal.SIGTERM)
-            (tmp_path / "release").touch()
             stdout, _ = shell.communicate(timeout=30.0)
         finally:
             shell.kill()
 
     assert shell.returncode == 0
-    assert (tmp_path / "finished").exists()
+    assert (tmp_path / "got_term").exists()
+    assert "run-on-start exited with 0" in stdout
+    assert "Stopped before the schedule started" in stdout
     assert not (tmp_path / "supercronic").exists()
-    assert "Stopped during run-on-start" in stdout
+
+
+def test_without_a_stop_the_schedule_starts_even_after_a_failed_run(tmp_path: Path) -> None:
+    with _start(tmp_path, _FAILING_RUN_STUB) as shell:
+        try:
+            stdout, _ = shell.communicate(timeout=30.0)
+        finally:
+            shell.kill()
+
+    assert shell.returncode == 0
+    assert "run-on-start exited with 2" in stdout
+    crontab = tmp_path / "crontab"
+    assert (tmp_path / "supercronic").read_text(encoding="utf-8").splitlines() == ["-passthrough-logs", str(crontab)]
+    assert crontab.read_text(encoding="utf-8") == "0 */6 * * * pearlarr run single\n"

@@ -549,25 +549,37 @@ class RunServices:
         """Shared no-suitable-releases tail both Arr strategies fall into.
 
         When SeaDex yields no usable releases for an id, every strategy does the same three things: log the
-        outcome, persist what it knows into the cache, and throttle. Hoisted here so the two strategies share one
-        definition instead of a byte-for-byte duplicated block.
+        outcome, persist what it knows into the cache, and owe the pacing pause. Hoisted here so the two strategies
+        share one definition instead of a byte-for-byte duplicated block.
         """
 
         self._log_no_seadex_releases()
         # Never fallback-satisfied: overwrite any stale True from a prior fallback run.
         cache_details["fallback_satisfied"] = False
         self._update_cache(al_id=al_id, cache_details=cache_details)
-        self._clock.sleep(self._config.advanced.sleep_time)
+        self.owe_pause()
 
     def invalid_selection_skip(self) -> None:
         """Shared tail for an interactive pick that left zero valid selections.
 
         Unlike `no_releases_skip` this deliberately persists NOTHING: caching the title as done would suppress it
         forever, when the input was only fumbled, so it must re-prompt on the next run. The picker already warned
-        about the empty selection. This just throttles.
+        about the empty selection. This only owes the pacing pause.
         """
 
-        self._clock.sleep(self._config.advanced.sleep_time)
+        self.owe_pause()
+
+    def owe_pause(self) -> None:
+        """Owe the `advanced.sleep_time` pause for this id's queries. `pay_pause` sleeps it before the next id."""
+
+        self._ctx.pause_owed = True
+
+    def pay_pause(self) -> None:
+        """Sleep the owed pacing pause, if any, and clear it."""
+
+        if self._ctx.pause_owed:
+            self._ctx.pause_owed = False
+            self._clock.sleep(self._config.advanced.sleep_time)
 
     def al_id_prologue(self, al_id: int) -> EntryRecord | None:
         """Shared per-AniList-id head: reset skip flags, tally, fetch SeaDex entry.
@@ -621,14 +633,14 @@ class RunServices:
         return True
 
     def grab_and_cache(self, req: GrabRequest) -> None:
-        """Shared per-id tail: add torrents, notify, cache the outcome (delegates).
+        """Shared per-id tail: add torrents, notify, cache the outcome, owe the pacing pause.
 
         Both strategies build a `GrabRequest` and call this through their
-        services. The produce mechanics live on `GrabPipeline`. Returns True
-        only when max_torrents_to_add was reached (the caller stops the whole run).
+        services. The produce mechanics live on `GrabPipeline`.
         """
 
-        return self._grab_pipeline.grab_and_cache(req)
+        self._grab_pipeline.grab_and_cache(req)
+        self.owe_pause()
 
     # --- Presentation seam (strategy-facing) ---------------------------------
     #

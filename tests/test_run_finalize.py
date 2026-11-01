@@ -2,15 +2,16 @@
 # pyright: reportPrivateUsage=false
 # Drives RunLoop._notify_wait_complete directly (the containment arm has no public
 # seam). The repo disables reportPrivateUsage for tests, strict re-flags it.
-"""Guards the single end-of-run finalize site.
+"""Guards the run loop's commit points and its single end-of-run finalize site.
 
 A title held past `max_torrents_to_add` never stops the scan, and the ONE
 post-loop `_finalize_run` site runs once on every path. These pin that hoist so
 a future change can't silently double-finalize or skip the blocking/import pass.
+A real run also commits after each title, so a stop keeps the titles it finished.
 
 The strategy is the shared typed `FakeStrategy` (an `ArrSync` recording
 its `process_al_id` calls), the engine's collaborators are small typed fakes,
-and `_finalize_run` is replaced by a typed recorder - so the contracts are
+and `_finalize_run` is mostly replaced by a typed recorder - so the contracts are
 pinned by asserting recorded state.
 """
 
@@ -31,6 +32,7 @@ from pearlarr.output.recording import RecordingHub
 from pearlarr.protocols import ImportCompleter
 from pearlarr.reporter import RunContext
 from pearlarr.run_loop import RunLoop
+from pearlarr.run_services import RunServices
 from pearlarr.seadex_types import HistoryRecord, ProgressSink
 from pearlarr.wait_view import WaitOutcomeRow, WaitResult
 
@@ -43,7 +45,7 @@ from .builders import (
     make_config,
     make_services,
 )
-from .fakes import CapMeeting, FakeArrItem, FakeStrategy, install_recording_hub
+from .fakes import CapMeeting, FakeArrItem, FakeClock, FakeStrategy, install_recording_hub
 
 
 class _FakeGateway:
@@ -67,7 +69,7 @@ class _FakeGateway:
 
 
 class _FakeReporter:
-    """The run-loop log hooks the scan drives (each just acknowledges)."""
+    """The run-loop log hooks the scan and the run tail drive (each just acknowledges)."""
 
     def counts_mark(self) -> CountsMark:
         return SeverityCounts().bound_mark()
@@ -82,6 +84,18 @@ class _FakeReporter:
         return True
 
     def log_no_anilist_mappings(self, ctx: RunContext, title: str) -> bool:
+        return True
+
+    def log_no_seadex_releases(self, ctx: RunContext) -> bool:
+        return True
+
+    def scan_finished(self, arr: Arr) -> bool:
+        return True
+
+    def log_run_summary(self, ctx: RunContext, *, preview: bool, has_client: bool) -> bool:
+        return True
+
+    def run_finished(self, arr: Arr) -> bool:
         return True
 
 
@@ -102,40 +116,51 @@ class _FinalizeRecorder:
         self.calls += 1
 
 
+def _services(*, qbit: object = None, **overrides: object) -> RunServices:
+    """A bare real `RunServices` whose per-id collaborators are ctx-bind fakes. `qbit` set makes the run real."""
+
+    return make_services(
+        qbit=qbit,
+        _filter=_FakeBound(),
+        _grab_pipeline=_FakeBound(),
+        _records=_FakeBound(),
+        _reporter=_FakeReporter(),
+        **overrides,
+    )
+
+
 def _engine(
-    finalize: _FinalizeRecorder,
+    finalize: _FinalizeRecorder | None,
     logger: logging.Logger,
     *,
     config: AppConfig | None = None,
     seadex: _FakeGateway | None = None,
     cache_store: AbstractCacheStore | None = None,
     anilist: AniListGateway | None = None,
-    qbit: object = None,
+    services: RunServices | None = None,
+    wait_manager: _FakeBound | None = None,
 ) -> RunLoop:
     """A bare `RunLoop` wired with typed fakes for the run-loop collaborators.
 
     The strategy reaches `run_sync` typed (it's an `ArrSync`). The rest are
     injected as bare attributes (the methods only read them), and `_finalize_run`
-    is shadowed by the recorder so the single finalize site is observable. The
-    `_services` hub is a bare real `RunServices` (the loop reads its `arr`,
-    `begin_run`, `mark_dirty` and `is_preview`) whose per-id collaborators are
-    ctx-bind fakes. The `cache_store` backs the activity scan's checkpoint.
+    is shadowed by the recorder so the single finalize site is observable
+    (`None` keeps the real one). The `_services` hub defaults to a preview
+    `_services()` (the loop reads its `arr`, `begin_run`, `mark_dirty`,
+    `is_preview` and `pay_pause`). The `cache_store` backs the activity scan's checkpoint.
     `config` overrides the loop's config (the activity-scan toggle tests).
     `cache_store` shares one store across engines (the checkpoint replay tests).
     `anilist` swaps in a real gateway (the AniList boot-note tests).
-    `qbit` set makes the run real instead of a preview (the commit tests).
+    `services` swaps the hub (the commit tests make it real and share its store).
+    `wait_manager` swaps the ctx-bind wait manager (the contained-error commit test).
     """
 
     config = config if config is not None else make_config()
-    services = make_services(
-        qbit=qbit,
-        _filter=_FakeBound(),
-        _grab_pipeline=_FakeBound(),
-        _records=_FakeBound(),
-    )
+    services = services if services is not None else _services()
+    shadowed = {} if finalize is None else {"_finalize_run": finalize}
     return make_bare_instance(
         RunLoop,
-        qbit=qbit,
+        qbit=services.qbit,
         logger=logger,
         _config=config,
         _arr_config=config.for_arr(Arr.SONARR),
@@ -143,9 +168,9 @@ def _engine(
         _seadex=seadex if seadex is not None else _FakeGateway(),
         _reporter=_FakeReporter(),
         _services=services,
-        _wait_manager=_FakeBound(),
-        _finalize_run=finalize,
+        _wait_manager=wait_manager if wait_manager is not None else _FakeBound(),
         cache_store=cache_store if cache_store is not None else FakeCacheStore(),
+        **shadowed,
     )
 
 
@@ -257,21 +282,69 @@ class TestPerItemErrorContainment:
 
 
 class _StagingStrategy(FakeStrategy):
-    """A `FakeStrategy` that stages an entry row per title and raises `SystemExit` inside `stop_on_item`.
+    """A `FakeStrategy` whose items each map ids 1 and 2, every id staging a row through `no_releases_skip`.
 
-    The raise stands in for the SIGTERM handler's. `None` never stops.
+    A row is keyed `item.id * 10 + al_id`. `stop_at` (item id, AniList id) raises `SystemExit` after that id's
+    row, standing in for the SIGTERM handler. `None` never stops.
     """
 
-    def __init__(self, *, items: list[FakeArrItem], store: CacheStore, stop_on_item: int | None) -> None:
-        super().__init__(items=items, anilist_ids={1: MappingEntry(anilist_id=1)})
-        self._store = store
-        self._stop_on_item = stop_on_item
+    def __init__(self, *, items: list[FakeArrItem], services: RunServices, stop_at: tuple[int, int] | None) -> None:
+        super().__init__(items=items, anilist_ids={1: MappingEntry(anilist_id=1), 2: MappingEntry(anilist_id=2)})
+        self._services = services
+        self._stop_at = stop_at
 
     @override
     def process_al_id(self, item: FakeArrItem, al_id: int, mapping: MappingEntry) -> None:
-        self._store.update_cache(Arr.SONARR, item.id, {"name": item.title})
-        if item.id == self._stop_on_item:
+        self._services.no_releases_skip(item.id * 10 + al_id, {"name": item.title})
+        if (item.id, al_id) == self._stop_at:
             raise SystemExit(0)
+
+    @override
+    def pending_import_series_id(self, item: FakeArrItem) -> int | None:
+        return item.id
+
+
+class _RaisingSnapshots(_FakeBound):
+    """A wait manager whose per-item pending snapshot raises, after that item's ids staged their rows."""
+
+    def prune_expired_pending(self) -> None:
+        pass
+
+    def snapshot_pending_for_series(self, series_id: int) -> None:
+        raise RuntimeError(f"snapshot failed for series {series_id}")
+
+
+class _StopOnSleepClock(FakeClock):
+    """A `FakeClock` whose `stop_on`-th sleep raises `SystemExit`, as the SIGTERM handler would mid-pause."""
+
+    def __init__(self, stop_on: int) -> None:
+        super().__init__()
+        self._stop_on = stop_on
+
+    @override
+    def sleep(self, seconds: float) -> None:
+        super().sleep(seconds)
+        if len(self.sleeps) == self._stop_on:
+            raise SystemExit(0)
+
+
+_TITLES = [FakeArrItem(item_id=1, title="A"), FakeArrItem(item_id=2, title="B")]
+
+
+def _kept(path: Path, keys: list[int]) -> list[int]:
+    """The `keys` whose entry rows the cache at `path` holds once reopened."""
+
+    reopened = CacheStore.load(str(path), config_checksum="")
+    try:
+        return [key for key in keys if reopened.get_entry(Arr.SONARR, key) is not None]
+    finally:
+        reopened.close()
+
+
+def _run(engine: RunLoop, strategy: _StagingStrategy, mode: ImportWaitMode = ImportWaitMode.OFF) -> None:
+    """One full-library `run_sync` of `strategy` with wait mode `mode`."""
+
+    engine.run_sync(strategy, item_id=None, dry_run=False, import_wait_mode=mode, boot=BootFlow())
 
 
 class TestPerTitleCommit:
@@ -281,46 +354,69 @@ class TestPerTitleCommit:
     """
 
     def test_a_stop_mid_title_keeps_the_finished_titles(self, logger: logging.Logger, tmp_path: Path) -> None:
-        path = str(tmp_path / "cache.db")
-        store = CacheStore.load(path, config_checksum="")
-        strategy = _StagingStrategy(
-            items=[FakeArrItem(item_id=1, title="A"), FakeArrItem(item_id=2, title="B")],
-            store=store,
-            stop_on_item=2,
+        store = CacheStore.load(str(tmp_path / "cache.db"), config_checksum="")
+        services = _services(qbit=CLIENT_SENTINEL, cache_store=store)
+        engine = _engine(_FinalizeRecorder(), logger, cache_store=store, services=services)
+
+        # Stopped on title B's second id, after its first id's row was staged.
+        with pytest.raises(SystemExit):
+            _run(engine, _StagingStrategy(items=_TITLES, services=services, stop_at=(2, 2)))
+        store.close()
+
+        assert _kept(tmp_path / "cache.db", [11, 12, 21, 22]) == [11, 12]
+
+    def test_a_title_that_raised_still_commits_what_it_staged(self, logger: logging.Logger, tmp_path: Path) -> None:
+        store = CacheStore.load(str(tmp_path / "cache.db"), config_checksum="")
+        services = _services(qbit=CLIENT_SENTINEL, cache_store=store)
+        engine = _engine(
+            _FinalizeRecorder(), logger, cache_store=store, services=services, wait_manager=_RaisingSnapshots()
         )
-        engine = _engine(_FinalizeRecorder(), logger, cache_store=store, qbit=CLIENT_SENTINEL)
+
+        # Title A's snapshot raises after its ids, a contained title-level error. B stops before reaching its own.
+        with pytest.raises(SystemExit):
+            _run(engine, _StagingStrategy(items=_TITLES, services=services, stop_at=(2, 1)), ImportWaitMode.BLOCKING)
+        store.close()
+
+        assert _kept(tmp_path / "cache.db", [11, 12, 21]) == [11, 12]
+
+    def test_a_stop_in_the_pacing_pause_keeps_the_title_before_it(self, logger: logging.Logger, tmp_path: Path) -> None:
+        store = CacheStore.load(str(tmp_path / "cache.db"), config_checksum="")
+        # Every id owes a pause. The second one slept is the one after title A's last id.
+        clock = _StopOnSleepClock(stop_on=2)
+        services = _services(qbit=CLIENT_SENTINEL, cache_store=store, _clock=clock, sleep_time=1)
+        engine = _engine(_FinalizeRecorder(), logger, cache_store=store, services=services)
 
         with pytest.raises(SystemExit):
-            engine.run_sync(
-                strategy,
-                item_id=None,
-                dry_run=False,
-                import_wait_mode=ImportWaitMode.OFF,
-                boot=BootFlow(),
-            )
+            _run(engine, _StagingStrategy(items=_TITLES, services=services, stop_at=None))
         store.close()
 
-        reopened = CacheStore.load(path, config_checksum="")
-        try:
-            assert reopened.get_entry(Arr.SONARR, 1) is not None
-            assert reopened.get_entry(Arr.SONARR, 2) is None
-        finally:
-            reopened.close()
+        assert clock.sleeps == [1, 1]
+        assert _kept(tmp_path / "cache.db", [11, 12, 21]) == [11, 12]
 
     def test_a_preview_run_keeps_nothing(self, logger: logging.Logger, tmp_path: Path) -> None:
-        path = str(tmp_path / "cache.db")
-        store = CacheStore.load(path, config_checksum="")
-        strategy = _StagingStrategy(items=[FakeArrItem(item_id=1, title="A")], store=store, stop_on_item=None)
-        engine = _engine(_FinalizeRecorder(), logger, cache_store=store)
+        store = CacheStore.load(str(tmp_path / "cache.db"), config_checksum="")
+        services = _services(cache_store=store)
+        engine = _engine(_FinalizeRecorder(), logger, cache_store=store, services=services)
 
-        engine.run_sync(strategy, item_id=None, dry_run=False, import_wait_mode=ImportWaitMode.OFF, boot=BootFlow())
+        _run(engine, _StagingStrategy(items=_TITLES[:1], services=services, stop_at=None))
         store.close()
 
-        reopened = CacheStore.load(path, config_checksum="")
-        try:
-            assert reopened.get_entry(Arr.SONARR, 1) is None
-        finally:
-            reopened.close()
+        assert _kept(tmp_path / "cache.db", [11, 12]) == []
+
+    @pytest.mark.parametrize(("qbit", "kept"), [(CLIENT_SENTINEL, [1]), (None, [])], ids=["real", "preview"])
+    def test_the_finalize_save_commits_only_a_real_run(
+        self, logger: logging.Logger, tmp_path: Path, qbit: object, kept: list[int]
+    ) -> None:
+        store = CacheStore.load(str(tmp_path / "cache.db"), config_checksum="")
+        services = _services(qbit=qbit, cache_store=store)
+        engine = _engine(None, logger, cache_store=store, services=services)
+        # With no titles, the run tail's save is the run's only commit.
+        store.update_cache(Arr.SONARR, 1, {"name": "A"})
+
+        _run(engine, _StagingStrategy(items=[], services=services, stop_at=None))
+        store.close()
+
+        assert _kept(tmp_path / "cache.db", [1]) == kept
 
 
 class _RaisingNotifier:

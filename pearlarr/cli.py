@@ -455,11 +455,16 @@ def _schedule_hours(config_path: str) -> float:
 
 
 def _handle_sigterm(signum: int, frame: FrameType | None) -> NoReturn:
-    """The run commands' SIGTERM handler: announce, then exit 0 (a clean stop).
+    """The run commands' SIGTERM handler: announce, ignore further SIGTERMs, then exit 0 (a clean stop).
 
-    The raise interrupts even a sleep, so shutdown is prompt at any point.
+    The raise lands in the main thread even mid-sleep. Worker threads (episode prefetch, release parsing)
+    finish the request in hand and drop the rest of their queue.
+    A stop mid-scan keeps the titles already saved and rolls back the one in flight. A stop in the run tail
+    saves what the tail recorded.
     """
 
+    # A repeat signal would raise again inside the unwind and could skip the run tail's save.
+    signal.signal(signal.SIGTERM, signal.SIG_IGN)
     hub_note("Received SIGTERM - exiting")
     raise SystemExit(0)
 
@@ -482,8 +487,7 @@ def run_scheduled(
     paths = resolve_paths()
     _prepare_data_dir(paths)
 
-    # A stopping container/service must exit promptly and cleanly (code 0), not
-    # die mid-sleep with SIGTERM's default nonzero status.
+    # SIGTERM stops the run cleanly with exit 0 (see _handle_sigterm).
     signal.signal(signal.SIGTERM, _handle_sigterm)
 
     # The hub is per-process: installed once, BEFORE the loop - install the hub
@@ -598,7 +602,7 @@ def run_single(
     paths = resolve_paths()
     _prepare_data_dir(paths)
 
-    # Unwind on SIGTERM instead of dying with no exit line, so the run tail's finally still saves.
+    # SIGTERM stops the run cleanly with exit 0 (see _handle_sigterm).
     signal.signal(signal.SIGTERM, _handle_sigterm)
 
     # Install the hub before the logger - see _install_output_hub.

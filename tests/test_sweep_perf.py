@@ -11,7 +11,9 @@ series-id fingerprint, worker gating, and concurrent fresh episode prefetch.
 
 from __future__ import annotations
 
+import threading
 from datetime import datetime, timedelta
+from typing import override
 
 import pytest
 from seadex import EntryRecord
@@ -283,6 +285,32 @@ class _Sonarr:
         return _eps_for(series_id)
 
 
+class _GatedSonarr(_Sonarr):
+    """A `_Sonarr` whose fetches after the first block until `gate` is set, so a single worker can't run ahead."""
+
+    def __init__(self) -> None:
+        super().__init__()
+        self.gate = threading.Event()
+
+    @override
+    def episodes(self, series_id: int, *, quiet: bool = False) -> list[SonarrEpisode] | None:
+        if self.calls:
+            assert self.gate.wait(30.0), "gate never opened"
+        return super().episodes(series_id, quiet=quiet)
+
+
+class _StopOnFirstProgress:
+    """A `ProgressSink` that opens the fetch gate, then raises `SystemExit` as the SIGTERM handler would."""
+
+    def __init__(self, gate: threading.Event) -> None:
+        self._gate = gate
+
+    def progress(self, fraction: float, detail: str | None = None) -> None:
+        del fraction, detail
+        self._gate.set()
+        raise SystemExit(0)
+
+
 class _Services:
     """A stand-in for the run machinery the prefetch consults.
 
@@ -392,6 +420,21 @@ class TestPrefetchEpisodes:
         # intermediate sequence.
         assert len(rec.calls) == 2
         assert rec.calls[-1] == (1.0, "2/2")
+
+    def test_a_stop_mid_sweep_drops_the_queued_fetches(self) -> None:
+        sonarr = _GatedSonarr()
+        series = range(1, 21)
+        eps = make_sonarr_episodes(
+            sonarr=sonarr,
+            _services=_Services(mapping={sid: _ids(1) for sid in series}),
+            _config=make_config(sleep_time=2),  # one worker
+        )
+
+        with pytest.raises(SystemExit):
+            eps.prefetch([_item(sid) for sid in series], progress=_StopOnFirstProgress(sonarr.gate))
+
+        # The first fetch, plus at most the one the worker had in hand.
+        assert len(sonarr.calls) <= 2
 
     def test_count_is_attempted_not_cached(self) -> None:
         # series 9 is a candidate (resolves a mapping) but episodes() returns None.

@@ -69,7 +69,7 @@ environment:
 ### Stopping, and `stop_grace_period`
 
 `docker stop` sends SIGTERM to supercronic, which stops scheduling and waits for an in-flight run to finish. Docker escalates to SIGKILL after `stop_grace_period`, default ten seconds.
-A stop during the catch-up run at start works the same way: the entrypoint lets the run finish, then exits without starting the schedule.
+A stop during the catch-up run at start is passed on to that run instead. It stops cleanly, keeping every title it finished, and the container exits without starting the schedule.
 Ten seconds is not enough once a wait pass is in flight: the default `hybrid` `imports.wait_mode` can legitimately hold a run for up to `imports.wait_timeout`. Raise the grace period past it so a routine `docker stop` does not SIGKILL a mid-import run:
 
 ```yaml

@@ -10,8 +10,9 @@ Pearlarr is a fork of [bbtufty/seadexarr](https://github.com/bbtufty/seadexarr).
 ### Fixed
 
 - `pearlarr run single` now stops cleanly on SIGTERM and exits 0, like `run scheduled`.
+- A SIGTERM during the Sonarr episode fetch stops right away instead of finishing every queued request. One during the import wait notes how many records were left pending, as Ctrl-C does.
 - A stopped or killed run keeps every title it finished. Before, it lost all of that arr's decisions and the next run redid them.
-- `docker stop` during the container's catch-up run at start no longer hangs until Docker kills it. The run finishes and the container exits without starting the schedule.
+- `docker stop` during the container's catch-up run at start no longer hangs until Docker kills it. The run stops cleanly and the container exits without starting the schedule.
 
 ## [1.5.6] - 2026-10-25
 

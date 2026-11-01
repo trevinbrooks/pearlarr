@@ -188,8 +188,9 @@ class RunLoop:
             except Exception as e:
                 title = getattr(item, "title", "unknown title")
                 hub_error(f"{title}: unexpected error ({e}) - skipping this title", exc=e)
-            # Commit after each title, not inside one: a title's writes (an entry and its hashes, a record and its
-            # guard row) only agree once it's done. A stop or kill then loses only the title in flight.
+            # Commit after each title, not inside one, where paired writes (an entry and its hashes, a record and its
+            # guard row) may be half done. A stop or kill loses only the title in flight. One that raised commits
+            # whatever it staged.
             self.cache_store.save(preview=preview)
 
         # ONE full-coverage predicate for both gates below. They drifted apart once: an outage run committed the
@@ -207,7 +208,7 @@ class RunLoop:
         if full_pass:
             self.cache_store.vouch_selection(arr, self._config.selection_digest())
 
-        # Its save persists the checkpoint and vouch with the tail's own writes.
+        # The finalize save persists the checkpoint and vouch with the tail's own writes.
         self._finalize_run()
 
     def _scan_item[ItemT: ArrItem](
@@ -242,6 +243,9 @@ class RunLoop:
             return
 
         for al_id, mapping in al_mappings.items():
+            # The previous id's pause is slept here, not at the end of that id, so a stop during it never rolls back
+            # a title that finished.
+            self._services.pay_pause()
             # Past the run cap a title is still checked (a torrent already downloading keeps its mapping), its grab
             # held for the next run.
             try:

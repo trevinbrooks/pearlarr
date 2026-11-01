@@ -1696,7 +1696,7 @@ class TestDataDirLine:
 
 
 class TestScheduledLifecycle:
-    """Scheduled mode: invalid configs retry, SIGTERM exits 0 (run single too), help names the fallback."""
+    """The run commands' lifecycle: config handling, the SIGTERM handler both install, cycle events, the help text."""
 
     @staticmethod
     def _stub_resolver(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -1815,6 +1815,15 @@ class TestScheduledLifecycle:
         assert note.message == "Received SIGTERM - exiting"
         assert note.origin == LOG_NAME
 
+    def test_sigterm_handler_ignores_a_repeat_signal(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        recorder = _SignalRecorder()
+        monkeypatch.setattr(signal, "signal", recorder)
+
+        with pytest.raises(SystemExit):
+            _handle_sigterm(signal.SIGTERM, None)
+
+        assert recorder.registered == [(signal.SIGTERM, signal.SIG_IGN)]
+
     def test_cycle_started_is_emitted_after_begin_cycle(self, monkeypatch: pytest.MonkeyPatch) -> None:
         # Post-begin (rotation): the boundary must land in the FRESH cycle's file.
         monkeypatch.setattr("pearlarr.cli.setup_logger", _SetupLoggerRecorder())
@@ -1860,11 +1869,17 @@ class TestScheduledLifecycle:
     def test_run_single_registers_the_sigterm_handler(self, monkeypatch: pytest.MonkeyPatch) -> None:
         recorder = _SignalRecorder()
         monkeypatch.setattr(signal, "signal", recorder)
-        monkeypatch.setattr("pearlarr.bootstrap.run_arrs", _RunArrsRecorder())
+        during_run: list[tuple[int, object]] = []
+
+        def run_arrs(*args: object, **kwargs: object) -> bool:
+            del args, kwargs
+            during_run.extend(recorder.registered)
+            return True
+
+        monkeypatch.setattr("pearlarr.bootstrap.run_arrs", run_arrs)
 
         assert run_single() is True
-
-        assert recorder.registered == [(signal.SIGTERM, _handle_sigterm)]
+        assert during_run == [(signal.SIGTERM, _handle_sigterm)]
 
     def test_scheduled_help_names_the_bare_metal_fallback(self) -> None:
         result = CliRunner().invoke(pearlarr_cli, ["run", "scheduled", "--help"])

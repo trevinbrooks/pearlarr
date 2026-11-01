@@ -23,24 +23,50 @@ if [ ! -f "${PEARLARR_DATA_DIR}/config.yml" ]; then
 fi
 
 # docker stop signals PID 1 only, and a PID 1 shell drops SIGTERM unless it traps it.
-# A stop during the catch-up run lets it finish, as supercronic does for a cron run,
-# then exits instead of starting the schedule.
+# A stop is passed on to the catch-up run as SIGTERM, which stops it cleanly, and the
+# schedule never starts after one.
 stopping=false
-trap 'stopping=true' TERM INT
+signals=0
+run_pid=
+on_stop() {
+    stopping=true
+    signals=$((signals + 1))
+    if [ -n "${run_pid}" ]; then
+        kill -TERM "${run_pid}" 2>/dev/null || true
+    fi
+}
+trap on_stop TERM INT
 
 # Catch-up pass on boot. A failure must not flap the container.
 if [ "${PEARLARR_RUN_ON_START:-true}" = "true" ]; then
-    code=0
-    pearlarr run single || code=$?
+    # In the background so the trap runs during the run. A stop that came before
+    # run_pid was set is passed on here.
+    pearlarr run single &
+    run_pid=$!
+    if [ "${stopping}" = "true" ]; then
+        kill -TERM "${run_pid}" 2>/dev/null || true
+    fi
+    while :; do
+        seen=${signals}
+        code=0
+        wait "${run_pid}" || code=$?
+        # A trapped signal cuts wait short with a status above 128, so wait again for the run's own.
+        if [ "${code}" -le 128 ] || [ "${signals}" -eq "${seen}" ]; then
+            break
+        fi
+    done
+    run_pid=
     echo "run-on-start exited with ${code}"
-fi
-
-if [ "${stopping}" = "true" ]; then
-    echo "Stopped during run-on-start - not starting the schedule"
-    exit 0
 fi
 
 # Cron owns the container cadence (config's schedule.interval_hours only drives
 # the bare-metal `run scheduled`). Passthrough because pearlarr already timestamps.
-echo "${PEARLARR_CRON:-0 */6 * * *} pearlarr run single" > /tmp/crontab
-exec supercronic -passthrough-logs /tmp/crontab
+crontab="${TMPDIR:-/tmp}/crontab"
+echo "${PEARLARR_CRON:-0 */6 * * *} pearlarr run single" > "${crontab}"
+
+# Checked right before exec, so a stop at any earlier point keeps the schedule from starting.
+if [ "${stopping}" = "true" ]; then
+    echo "Stopped before the schedule started - exiting"
+    exit 0
+fi
+exec supercronic -passthrough-logs "${crontab}"
