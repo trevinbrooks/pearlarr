@@ -507,6 +507,8 @@ class TestTitledRead:
             # the title's number alone, or its words past the number alone, open nothing
             ("0083.10.1080p.BluRay.x264-GRP.mkv", "Steel Armor Titan 0083: Comet Archive", ()),
             ("Comet.Archive.10.1080p.BluRay.x264-GRP.mkv", "Steel Armor Titan 0083: Comet Archive", ()),
+            # a name with no word opens no title
+            ("&.mkv", "Steel Armor Titan", ()),
         ],
     )
     def test_a_title_the_name_does_not_open_with_leaves_the_read_alone(
