@@ -254,6 +254,18 @@ def parse_has_no_number(info: ParsedFileInfo | None) -> bool:
     return info is None or (not info.episode_numbers and not info.absolute_episode_numbers)
 
 
+def glued_counts(info: ParsedFileInfo) -> frozenset[int]:
+    """The counts Sonarr glues the parse's key from: season, then two-digit episode ("Show.101": S01E01).
+
+    Season 0 glues too ("Show.0013": S00E13). Empty without a season.
+    """
+
+    season = info.season_number
+    if season is None:
+        return frozenset()
+    return frozenset(season * 100 + episode for episode in info.episode_numbers)
+
+
 def numbers_miss_the_series(info: ParsedFileInfo, ep_id_map: Mapping[EpisodeKey, int]) -> bool:
     """Whether every key the name parsed misses the series map and the name has no absolutes: a year read as SxxEyy.
 

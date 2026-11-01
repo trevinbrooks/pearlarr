@@ -10,7 +10,7 @@ from dataclasses import dataclass, field
 from typing import Self
 
 from ..episode_titles import TorrentNames, spells_title
-from ..parse_reading import Reading, read_parse, spans_multiple, widen_range_key
+from ..parse_reading import Reading, glued_counts, read_parse, spans_multiple, widen_range_key
 from ..placement_types import Placement, PlacementBatch, PlacementVerdict, SeriesFacts, TargetScope
 from ..release_names import NumberedRun, RunMember, is_consecutive, numbered_runs
 from ..seadex_types import ParsedFileInfo
@@ -106,20 +106,16 @@ class Placer:
     def counted_by_title(self, name: str) -> bool:
         """Whether Sonarr counted the file by its own title's number (`NameRead.titled_count`) and nothing confirms it.
 
-        Every number Sonarr parsed is that count, and the words behind it spell a title (`spells_title`) that
-        names no episode. Read as an episode, the count stands when those words are an episode's title: the
-        file's own, its own a word off at most (`EpisodeTitles.nearly`), or another's that refutes it.
-        "Show - 13 Rainy Days" is held when no title says either. Read as no episode, it stands when an episode of
-        the series carries the count: "Show - 100 Days Later" in a 13-episode series is no absolute. A spelled-out
-        key stands, and a one-word tail ("07 MHz") says too little.
+        Only a parse whose every number is that count is held. The count stands beside a spelled-out key, behind
+        words too few to be a title (`spells_title`) or that name an episode, when they nearly name the one episode it
+        reads as (`EpisodeTitles.nearly`), or, read as no episode, when it is an episode's absolute number.
         """
 
         read = self.torrent.reads[name]
         info = self.batch.parsed.get(name)
         if read.titled_count is None or info is None or read.explicit_key or not spells_title(read.title_words):
             return False
-        season = info.season_number
-        numbers = {*info.absolute_episode_numbers, *(season * 100 + ep for ep in info.episode_numbers if season)}
+        numbers = {*info.absolute_episode_numbers, *glued_counts(info)}
         if numbers != {read.titled_count} or self.torrent.episode(name) is not None:
             return False
         if resolved := self.readings[name].resolved:

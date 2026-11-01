@@ -134,7 +134,7 @@ from typing import NamedTuple
 from ._run_passes import pass_misnumbered_pack, pass_numbered_run, pass_release_run, pass_reread_season_runs
 from ._state import Placer
 from ..episode_titles import MIN_TITLE_HITS
-from ..parse_reading import numbers_miss_the_series, parse_has_no_number
+from ..parse_reading import glued_counts, numbers_miss_the_series, parse_has_no_number
 from ..placement_types import EpisodeAssignment, PlacementBatch, PlacementVerdict, TargetScope
 from ..release_names import FileIdentity, NumberedRun, natural_key, sole_title_match
 from ..seadex_types import EpisodeKey
@@ -223,13 +223,9 @@ def _pass_refuse_disputed(state: Placer) -> None:
 def _disputes(state: Placer, name: str) -> frozenset[int] | None:
     """The episodes the name's own counts spread it over: its key's and the other count's. None when they agree.
 
-    Beside a spelled-out key, a bracketed count that is another episode's absolute number ("S10E01 (0337)": episode
-    337 is not S10E01); the same beside a reading borrowed from Sonarr's match of the name's absolute
-    ("[1075] Show - 20 Years Later" matched by its 20). A key the name never spells out is Sonarr's guess from a
-    glued count, a year or a resolution: disputed by a count in the name that is another episode's absolute number,
-    any count when Sonarr's series match does not back the key, else the count the key was glued from
-    ("Show.101": S01E01 or episode 101). A count no episode carries (a year, a title's number) says nothing. A key
-    that resolves nowhere and gets no dispute stays as it was (numberless when the whole series lacks it).
+    Only a count that is another episode's absolute number disputes. Beside a spelled-out key or a reading borrowed
+    from Sonarr's match, that is a bracketed count ("S10E01 (0337)"). Beside a key Sonarr guessed, it is any count
+    when Sonarr's series match doesn't back the key, else the one the key was glued from (`glued_counts`).
     """
 
     info = state.batch.parsed.get(name)
@@ -248,8 +244,7 @@ def _disputes(state: Placer, name: str) -> frozenset[int] | None:
     elif resolved and not reading.corroborated:
         counts = read.bare_numbers
     else:
-        glued = {info.season_number * 100 + episode for episode in info.episode_numbers}
-        counts = glued & set(read.bare_numbers)
+        counts = glued_counts(info).intersection(read.bare_numbers)
     others = {ep_id for count in counts if (ep_id := by_absolute.get(count)) is not None} - resolved
     return resolved | others if others else None
 
