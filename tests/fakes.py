@@ -52,10 +52,13 @@ from pearlarr.seadex_types import (
     QueueRecord,
     RadarrItem,
     RemotePathMapping,
+    SkyHookReply,
     SonarrEpisode,
     SonarrItem,
 )
+from pearlarr.skyhook_client import AbstractSkyHookClient, SkyHookMiss
 from pearlarr.sonarr_client import AbstractSonarrClient
+from pearlarr.tvdb_orders import NO_ORDERING, SeriesOrdering
 
 _ANSI = re.compile(r"\x1b\[[0-9;?]*[a-zA-Z]")
 
@@ -222,6 +225,10 @@ class FakeStrategy(ArrSync[FakeArrItem]):
 
     @override
     def prefetch_episodes(self, items: list[FakeArrItem], *, progress: ProgressSink | None = None) -> int:
+        return 0
+
+    @override
+    def prefetch_orders(self, items: list[FakeArrItem], *, progress: ProgressSink | None = None) -> int:
         return 0
 
     @override
@@ -515,6 +522,36 @@ class FakeRadarrClient(AbstractRadarrClient):
         return self.history_since_return
 
 
+class FakeSkyHookClient(AbstractSkyHookClient):
+    """SkyHook scripted per (TVDB id, order type).
+
+    An unscripted pair answers `SkyHookMiss.UNKNOWN`, as SkyHook's 4xx does. A fetch of a `failing` pair trips the
+    outage, and every fetch after it is `SkyHookMiss.OUTAGE`, as the real client's latch makes it.
+    """
+
+    def __init__(
+        self,
+        replies: Mapping[tuple[int, str], SkyHookReply] | None = None,
+        *,
+        failing: frozenset[tuple[int, str]] = frozenset(),
+    ) -> None:
+        self._replies = dict(replies or {})
+        self._failing = failing
+        self._outage = False
+
+    @property
+    @override
+    def outage(self) -> bool:
+        return self._outage
+
+    @override
+    def fetch(self, tvdb_id: int, order_type: str) -> SkyHookReply | SkyHookMiss:
+        if self._outage or (tvdb_id, order_type) in self._failing:
+            self._outage = True
+            return SkyHookMiss.OUTAGE
+        return self._replies.get((tvdb_id, order_type), SkyHookMiss.UNKNOWN)
+
+
 class ScriptedEpisodes:
     """A `SonarrEpisodes` stand-in scripted by hand: the series list off `sonarr`, one window per AniList id.
 
@@ -556,6 +593,18 @@ class ScriptedEpisodes:
 
         del ep_list
         return ArrReleases()
+
+    def orders_for(self, series_id: int) -> SeriesOrdering:
+        """No series has another order."""
+
+        del series_id
+        return NO_ORDERING
+
+    def orders_unread(self, series_ids: Iterable[int]) -> bool:
+        """Every series' orders were read."""
+
+        del series_ids
+        return False
 
 
 class CaptureHandler(logging.Handler):

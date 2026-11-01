@@ -89,6 +89,7 @@ from pearlarr.seadex_types import (
     SonarrEpisode,
     SpecialAliases,
 )
+from pearlarr.skyhook_gateway import SkyHookGateway
 from pearlarr.sonarr_client import AbstractSonarrClient
 from pearlarr.sonarr_episodes import SonarrEpisodes
 from pearlarr.sonarr_parse import SonarrParseCache
@@ -96,7 +97,7 @@ from pearlarr.stamps import UPDATED_AT_STR_FORMAT, parse_stamp
 from pearlarr.torrents import AddOutcome, AddResult, TorrentService
 from pearlarr.tvdb_orders import StoredOrders
 
-from .fakes import FakeClock, FakeRadarrClient, FakeSonarrClient
+from .fakes import FakeClock, FakeRadarrClient, FakeSkyHookClient, FakeSonarrClient
 
 # The display separator the cockpit/ledger/report rows join parts with. Assertions build expected
 # strings from this so a separator change is one edit.
@@ -769,6 +770,7 @@ def make_run_deps(
         seadex=seadex or FakeSeaDexSource(),
         cache_store=cache_store,
         anilist=AniListGateway(cache_store=cache_store, logger=logger, client=AniListClient(client=http)),
+        skyhook=SkyHookGateway(client=FakeSkyHookClient(), cache_store=cache_store),
         torrents=_real_torrents(logger, http, categories),
         notifier=Notifier(discord_url=None, webhook_url=None, web=http),
         planner=make_planner(),
@@ -1372,7 +1374,7 @@ def queue_record(
 def make_sonarr_episodes(**attrs: Any) -> SonarrEpisodes:
     """A bare `SonarrEpisodes` with `__init__` bypassed, its per-run caches defaulted empty."""
 
-    defaults: dict[str, Any] = {"_ep_list_cache": {}, "_series_fp": ""}
+    defaults: dict[str, Any] = {"_ep_list_cache": {}, "_series_fp": "", "_order_facts": {}, "_orderings": {}}
     defaults.update(attrs)
     return make_bare_instance(SonarrEpisodes, **defaults)
 

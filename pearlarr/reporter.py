@@ -188,6 +188,9 @@ class PerTitleState:
     misnumbered_groups: list[str] = field(default_factory=list[str])
     """Groups with a release the placement refused as misnumbered, never grabbed, so the title stays uncached and
     re-warns until a hand import covers it."""
+    orders_unread: bool = False
+    """A series the placement read has no stored TVDB orders, so the title stays uncached and re-checks. Nothing
+    for the user to do."""
     current_title: str | None = None
     """Title of the entry currently being processed, so grabs and the summary can attribute what they grab."""
     current_url: str | None = None

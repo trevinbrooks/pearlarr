@@ -4,7 +4,8 @@
 that pins unmatched `/parse` records) and the logic that turns a (series,
 AniList id, mapping) into the relevant episode list: season / AniBridge
 filtering, AniDB remaps, offset slicing, the existing-file release dict, and
-the concurrent prefetch warm.
+the concurrent prefetch warm. It also keeps each series' TVDB order facts and
+serves the orders its episode indexes are built with.
 """
 
 import concurrent.futures
@@ -25,7 +26,9 @@ from .seadex_types import (
     TvdbMappings,
     season_holds,
 )
+from .skyhook_gateway import OrderRequest
 from .sonarr_client import AbstractSonarrClient
+from .tvdb_orders import NO_ORDERING, OFFICIAL_ORDER, SeriesOrderFacts, SeriesOrdering
 
 # Bounded concurrency for the episode/parse network fan-out. Only used when
 # advanced.sleep_time == 0. Must stay <= the session's pool_maxsize (RunDeps.build).
@@ -129,6 +132,7 @@ class SonarrEpisodes:
         # engine), so its warm cache and retry narration apply here too.
         self._anilist = deps.anilist
         self._reporter = deps.reporter
+        self._skyhook = deps.skyhook
 
         # Per-run cache of the raw Sonarr episode fetch, keyed by series id. A
         # multi-season series maps to several AniList ids, each of which would
@@ -141,6 +145,11 @@ class SonarrEpisodes:
         # collect_series. Pins unmatched `/parse` cache records to the library
         # state so they self-heal when a missing series is added.
         self._series_fp: str = ""
+
+        # Each series row's order facts, and the orderings built from them and the order cache. Both reset in
+        # collect_series, so a run reads each series' orders once.
+        self._order_facts: dict[int, SeriesOrderFacts] = {}
+        self._orderings: dict[int, SeriesOrdering] = {}
 
     @property
     def series_fp(self) -> str:
@@ -157,10 +166,19 @@ class SonarrEpisodes:
         """
 
         self._ep_list_cache = {}
+        self._orderings = {}
         series = self.get_all_sonarr_series()
         # Fingerprint the current series-id set once per run for unmatched-parse
         # cache invalidation (see sonarr_series_fingerprint).
         self._series_fp = sonarr_series_fingerprint(s.id for s in series)
+        self._order_facts = {
+            s.id: SeriesOrderFacts(
+                tvdb_id=s.tvdbId,
+                season_type=s.seasonType,
+                counts={listed.type: listed.episode_count for listed in s.seasonTypes} if s.seasonTypes else None,
+            )
+            for s in series
+        }
         return series
 
     def get_all_sonarr_series(self) -> list[SonarrItem]:
@@ -204,23 +222,7 @@ class SonarrEpisodes:
             still counts.
         """
 
-        # Build the needs-scan subset (see docstring): skip series the per-id loop would short-circuit on.
-        run = self._services
-        series_ids: list[int] = []
-        seen: set[int] = set()
-        for item in items:
-            if item.id in seen:
-                continue
-            if not item.monitored and self._config.sonarr.ignore_unmonitored:
-                continue
-            al_ids = run.get_anilist_ids(ExternalIds(tvdb=item.tvdbId, imdb=item.imdbId), log_ignored=False)
-            if not al_ids:
-                continue
-            if not any(run.al_id_needs_scan(aid) for aid in al_ids):
-                continue
-            seen.add(item.id)
-            series_ids.append(item.id)
-
+        series_ids = self.needs_scan_ids(items)
         if not series_ids:
             return 0
 
@@ -251,6 +253,74 @@ class SonarrEpisodes:
                 if progress is not None:
                     progress.progress(done / total, f"{done}/{total}")
         return total
+
+    def needs_scan_ids(self, items: Iterable[SonarrItem]) -> list[int]:
+        """The ids of the series the per-id loop will process, in item order, each once.
+
+        Skips a series whose every AniList id the loop short-circuits on (`al_id_needs_scan`), and an unmonitored
+        one under `ignore_unmonitored`.
+        """
+
+        run = self._services
+        series_ids: list[int] = []
+        seen: set[int] = set()
+        for item in items:
+            if item.id in seen:
+                continue
+            if not item.monitored and self._config.sonarr.ignore_unmonitored:
+                continue
+            al_ids = run.get_anilist_ids(ExternalIds(tvdb=item.tvdbId, imdb=item.imdbId), log_ignored=False)
+            if not al_ids:
+                continue
+            if not any(run.al_id_needs_scan(aid) for aid in al_ids):
+                continue
+            seen.add(item.id)
+            series_ids.append(item.id)
+        return series_ids
+
+    def prefetch_orders(self, series_ids: Iterable[int], *, progress: ProgressSink | None = None) -> int:
+        """Refetch the due TVDB orders of the series (see `SkyHookGateway.prefetch`). Returns how many were written.
+
+        A series missing from this run's library read is skipped: there is no TVDB id to ask for.
+        """
+
+        requests = {
+            facts.tvdb_id: OrderRequest(facts.tvdb_id, facts.counts)
+            for sid in series_ids
+            if (facts := self._order_facts.get(sid)) is not None and facts.tvdb_id > 0
+        }
+        return self._skyhook.prefetch(list(requests.values()), preview=self._services.is_preview(), progress=progress)
+
+    def orders_for(self, series_id: int) -> SeriesOrdering:
+        """The orders the series' episode indexes are built with, read once per run.
+
+        `NO_ORDERING` for a series Sonarr numbers by another order than official, and for one this run didn't read.
+        """
+
+        ordering = self._orderings.get(series_id)
+        if ordering is None:
+            facts = self._order_facts.get(series_id)
+            # Every index reads Sonarr's rows as aired, so another order can't be read onto a series numbered by
+            # one of them yet.
+            if facts is None or facts.season_type != OFFICIAL_ORDER:
+                ordering = NO_ORDERING
+            else:
+                ordering = SeriesOrdering(self._skyhook.other_orders(facts.tvdb_id), None)
+            self._orderings[series_id] = ordering
+        return ordering
+
+    def orders_unread(self, series_ids: Iterable[int]) -> bool:
+        """Whether any of the series has no stored order record, as when SkyHook was down before its first fetch.
+
+        A series this run's library read doesn't have is never unread: nothing could fetch it.
+        """
+
+        return any(
+            (facts := self._order_facts.get(sid)) is not None
+            and facts.tvdb_id > 0
+            and not self._skyhook.known(facts.tvdb_id)
+            for sid in series_ids
+        )
 
     def cached_episodes(self, series_id: int) -> list[SonarrEpisode] | None:
         """The series' whole episode list, cached per run (fetched when cold, None when the fetch failed)."""

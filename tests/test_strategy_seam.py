@@ -79,7 +79,7 @@ from pearlarr.seadex_types import (
     SonarrItem,
 )
 from pearlarr.sonarr_episodes import sonarr_series_fingerprint
-from pearlarr.tvdb_orders import OFFICIAL_ORDER
+from pearlarr.tvdb_orders import NO_ORDERING, OFFICIAL_ORDER
 
 from .builders import (
     PENDING_ADDED,
@@ -432,8 +432,9 @@ class TestRunStartHook:
     """
 
     def test_sonarr_get_items_clears_ep_list_cache(self) -> None:
-        series: list[SonarrItem] = [_Item(id=5), _Item(id=7)]
+        series: list[SonarrItem] = [_Item(id=5, tvdbId=50), _Item(id=7, tvdbId=70)]
         strat = make_sonarr_sync(ep_list_cache={5: [sonarr_ep(1, 1)]})
+        strat._episodes._orderings = {5: NO_ORDERING}
 
         def _all_series() -> list[SonarrItem]:
             return series
@@ -443,8 +444,9 @@ class TestRunStartHook:
         result = strat.get_items()
 
         assert result == series
-        # The episode collaborator drops its cache + re-fingerprints as it enumerates.
+        # The episode collaborator drops its caches + re-fingerprints as it enumerates.
         assert strat._episodes._ep_list_cache == {}
+        assert strat._episodes._orderings == {}
         assert strat._episodes._series_fp == sonarr_series_fingerprint([5, 7])
 
 

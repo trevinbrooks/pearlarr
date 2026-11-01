@@ -17,6 +17,8 @@ pinned by asserting recorded state.
 import logging
 from typing import override
 
+import pytest
+
 from pearlarr.anilist_gateway import AniListGateway
 from pearlarr.boot_flow import BootFlow
 from pearlarr.config import AppConfig, Arr
@@ -28,6 +30,7 @@ from pearlarr.protocols import ImportCompleter
 from pearlarr.reporter import RunContext
 from pearlarr.run_loop import RunLoop
 from pearlarr.seadex_types import HistoryRecord, ProgressSink
+from pearlarr.skyhook_gateway import OrderRequest, SkyHookGateway
 from pearlarr.wait_view import WaitOutcomeRow, WaitResult
 
 from .builders import (
@@ -38,7 +41,7 @@ from .builders import (
     make_config,
     make_services,
 )
-from .fakes import CapMeeting, FakeArrItem, FakeStrategy, install_recording_hub
+from .fakes import CapMeeting, FakeArrItem, FakeSkyHookClient, FakeStrategy, install_recording_hub
 
 
 class _FakeGateway:
@@ -105,6 +108,7 @@ def _engine(
     seadex: _FakeGateway | None = None,
     cache_store: FakeCacheStore | None = None,
     anilist: AniListGateway | None = None,
+    skyhook: SkyHookGateway | None = None,
 ) -> RunLoop:
     """A bare `RunLoop` wired with typed fakes for the run-loop collaborators.
 
@@ -117,9 +121,11 @@ def _engine(
     `config` overrides the loop's config (the activity-scan toggle tests).
     `cache_store` shares one store across engines (the checkpoint replay tests).
     `anilist` swaps in a real gateway (the AniList boot-note tests).
+    `skyhook` swaps in a gateway over a failing client (the SkyHook outage tests).
     """
 
     config = config if config is not None else make_config()
+    store = cache_store if cache_store is not None else FakeCacheStore()
     services = make_services(
         qbit=None,
         _filter=_FakeBound(),
@@ -134,11 +140,12 @@ def _engine(
         _arr_config=config.for_arr(Arr.SONARR),
         _anilist=anilist if anilist is not None else _FakeGateway(),
         _seadex=seadex if seadex is not None else _FakeGateway(),
+        _skyhook=skyhook if skyhook is not None else SkyHookGateway(client=FakeSkyHookClient(), cache_store=store),
         _reporter=_FakeReporter(),
         _services=services,
         _wait_manager=_FakeBound(),
         _finalize_run=finalize,
-        cache_store=cache_store if cache_store is not None else FakeCacheStore(),
+        cache_store=store,
     )
 
 
@@ -463,3 +470,49 @@ class TestSelectionRecheck:
         engine, _ = self._run(logger, seadex=outage)
 
         assert self._vouched_any(engine) is False
+
+
+class _OrderFetchingStrategy(FakeStrategy):
+    """Warms episodes as the Sonarr strategy does, its order fetch asking `skyhook` for item 3 on a v4 Sonarr."""
+
+    def __init__(self, skyhook: SkyHookGateway) -> None:
+        super().__init__(
+            items=[FakeArrItem(item_id=3, title="A")],
+            anilist_ids={11: MappingEntry(anilist_id=11)},
+            history=[_IMPORT_EVENT],
+        )
+        self._skyhook = skyhook
+
+    @property
+    @override
+    def warms_episodes(self) -> bool:
+        return True
+
+    @override
+    def prefetch_orders(self, items: list[FakeArrItem], *, progress: ProgressSink | None = None) -> int:
+        requests = [OrderRequest(item.id, None) for item in items]
+        return self._skyhook.prefetch(requests, preview=True, progress=progress)
+
+
+@pytest.mark.parametrize(
+    ("failing", "note", "full_pass"),
+    [
+        pytest.param(frozenset({(3, "official")}), "unreachable", False, id="outage"),
+        pytest.param(frozenset[tuple[int, str]](), "1 series", True, id="healthy"),
+    ],
+)
+def test_a_skyhook_outage_notes_unreachable_and_the_run_neither_vouches_nor_commits(
+    logger: logging.Logger, failing: frozenset[tuple[int, str]], note: str, full_pass: bool
+) -> None:
+    # An entry re-checked without its orders may keep a current cache row, so a vouch would skip it for good.
+    recording = install_recording_hub()
+    store = FakeCacheStore()
+    skyhook = SkyHookGateway(client=FakeSkyHookClient(failing=failing), cache_store=store)
+    engine = _engine(_FinalizeRecorder(), logger, cache_store=store, skyhook=skyhook)
+
+    engine.run_sync(_OrderFetchingStrategy(skyhook), item_id=None, dry_run=True, boot=BootFlow())
+
+    [step] = [e for e in recording.of_type(BootStepFinished) if e.label == "Fetching TVDB orders"]
+    assert step.detail == note
+    assert store.selection_stale(Arr.SONARR, "some-other-digest") is full_pass
+    assert (store.get_history_checkpoint(Arr.SONARR) is not None) is full_pass
