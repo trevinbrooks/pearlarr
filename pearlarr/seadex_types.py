@@ -67,9 +67,9 @@ class GrabHold(StrEnum):
     """Why the placement refuses to grab a flagged url this run."""
 
     MISNUMBERED = "misnumbered"
-    """A specials pack whose numbers don't match its listing and whose special aliases can't place it
-    (`PlacementVerdict.MISNUMBERED`). Grabbed, it would import onto the wrong specials, so it's left for a hand
-    import."""
+    """A pack holding a `PlacementVerdict.MISNUMBERED` file: a file whose own numbers disagree, or a specials pack
+    numbered another way than its listing. Grabbed, it would import onto the wrong episodes, so it's left for a
+    hand import."""
     INPUT_UNREAD = "a read failed"
     """A SeaDex listing for the series, or a parse the specials pack check needs, couldn't be read this run.
     Grabbing now could seed a file onto the wrong episode for good, so the url waits for the next run."""

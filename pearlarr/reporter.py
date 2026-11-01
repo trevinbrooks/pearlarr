@@ -116,7 +116,8 @@ class NeedsActionKind(Enum):
     PLACEMENT_INPUT_MISSING = auto()
     """A read the grab-time placement needs failed: the grab was judged without it, or held until it answers."""
     MISNUMBERED = auto()
-    """A recommended release is a specials pack numbered by another TVDB state than its listing: a hand import."""
+    """A recommended release's file numbers disagree, or it's a specials pack numbered another way than its
+    listing: a hand import."""
     TITLE_REFUTED = auto()
     """A recommended release's file titles contradict its numbering and none of it places on the entry."""
 

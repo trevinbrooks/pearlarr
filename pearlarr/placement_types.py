@@ -130,8 +130,9 @@ class PlacementVerdict(StrEnum):
     HELD = "held"
     """A file of the picked release run while a parse is unknown: no other pass may place it, and it is re-checked."""
     MISNUMBERED = "misnumbered"
-    """A file of a specials pack whose numbers don't match the windows listing it, when its special aliases can't
-    place it either or another window places it elsewhere. Never placed by its numbers, left for a hand import."""
+    """A file whose own numbers disagree, or whose count no title confirms, that no run places. Or a file of a
+    specials pack whose numbers don't match the windows listing it, when its special aliases can't place it either
+    or another window places it elsewhere. Never placed by its numbers, left for a hand import."""
     TITLE_REFUTED = "refuted by its run's titles"
     """A plain member of a numbered run whose titled members contradict the run's numbers, when nothing else placed
     it. A claim, not a refusal: another window may still place it. Left for a hand import when none does."""

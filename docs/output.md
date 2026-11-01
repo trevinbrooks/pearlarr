@@ -282,7 +282,7 @@ A self-contained one-line result for a title: `message` is the state word, `titl
 
 ### `release_skipped`
 
-A release was skipped at add time. `reason` is `private_only`, `unsupported_tracker`, or `tracker_not_selected`.
+A release was skipped at add time. `reason` is `private_only`, `unsupported_tracker`, `tracker_not_selected`, `misnumbered`, `title_refuted`, or `input_unread`.
 
 ```json
 {

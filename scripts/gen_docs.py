@@ -683,7 +683,7 @@ EVENT_DESCRIPTIONS: dict[str, str] = {
     "ledger_row": "A self-contained one-line result for a title: `message` is the state word, "
     "`title` the library title.",
     "release_skipped": "A release was skipped at add time. `reason` is `private_only`, "
-    "`unsupported_tracker`, or `tracker_not_selected`.",
+    "`unsupported_tracker`, `tracker_not_selected`, `misnumbered`, `title_refuted`, or `input_unread`.",
     "grab_failed": "Adding a release to qBittorrent failed. The title is retried next run.",
     "grab_action": "The grab decision for a title. `message` distinguishes a real add, a dry-run "
     "would-add, and already in qBittorrent.",
