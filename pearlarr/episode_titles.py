@@ -44,7 +44,7 @@ def spells_title(words: Iterable[str]) -> bool:
 
 
 def names_alone(words: Iterable[str]) -> bool:
-    """Whether the words name an episode when a name carries nothing else ("15 Minutes", "15 x 15").
+    """Whether the words name an episode when a name carries nothing else ("Room 12", "12 x 12").
 
     `_MIN_TITLE_WORDS` that are no label, numbers among them: "Part 2" names nothing.
     """
@@ -75,7 +75,7 @@ class _TitledEpisode(NamedTuple):
     distinct: bool
     """Whether `beyond` is specific enough to place a file by."""
     alone: bool
-    """Whether `beyond` names the episode when a name carries nothing else ("15 Minutes"): a number counts then."""
+    """Whether `beyond` names the episode when a name carries nothing else ("Room 12"): a number counts then."""
     part: bool
     """Whether this form is only a part a colon or a dash sets off, not the whole title."""
     spelled_id: int | None

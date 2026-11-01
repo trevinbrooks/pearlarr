@@ -451,11 +451,11 @@ class TestAssignEpisodeTitle:
     @pytest.mark.parametrize(
         ("series", "name", "title"),
         [
-            ("Show", "show - 10 - 1 = [grp].mkv", "10 - 1 ="),
-            ("Show", "show Season 2 - 10 - 1 = [grp].mkv", "10 - 1 ="),
+            ("Show", "show - 11 - 1 = [grp].mkv", "11 - 1 ="),
+            ("Show", "show Season 2 - 11 - 1 = [grp].mkv", "11 - 1 ="),
             ("Show", "show - 1 2 3 [grp].mkv", "1 2 3"),
-            ("Cat x Dog", "cat x dog - 15 x 15 [grp].mkv", "15 x 15"),
-            ("Show No. 8", "show no 08 - 10 - 1 = [grp].mkv", "10 - 1 ="),
+            ("Fox x Owl", "fox x owl - 12 x 12 [grp].mkv", "12 x 12"),
+            ("Show No. 8", "show no 08 - 11 - 1 = [grp].mkv", "11 - 1 ="),
         ],
     )
     def test_a_title_of_numbers_read_whole_names_the_episode(self, series: str, name: str, title: str) -> None:
@@ -1892,15 +1892,15 @@ class TestAssignReleaseRun:
         assert placed[self._LONE_S[0]][0] == ()
 
     _TITLED: ClassVar[list[str]] = [
-        f"Gho.100.Basket.Roster.of.the.Dead.{n:02d}.1080p.WEB.H264-grp.mkv" for n in (1, 2, 3)
+        f"Wisp.100.Lantern.Keepers.of.the.Moor.{n:02d}.1080p.WEB.H264-grp.mkv" for n in (1, 2, 3)
     ]
 
     @pytest.mark.parametrize(
         "names",
         [
-            EntryNames("Gho 100: Basket Roster of the Dead"),
-            EntryNames("", ("Gho 100: Basket Roster of the Dead",)),
-            EntryNames("Gho 100: Basket Roster of the Dead", ("Gho 100: Basket Roster of the Dead",)),
+            EntryNames("Wisp 100: Lantern Keepers of the Moor"),
+            EntryNames("", ("Wisp 100: Lantern Keepers of the Moor",)),
+            EntryNames("Wisp 100: Lantern Keepers of the Moor", ("Wisp 100: Lantern Keepers of the Moor",)),
         ],
     )
     def test_the_entrys_title_lets_its_numbered_pack_count(self, names: EntryNames) -> None:
@@ -1921,7 +1921,7 @@ class TestAssignReleaseRun:
             name: ((501 + i,), PlacementVerdict.RELEASE_RUN) for i, name in enumerate(run)
         }
 
-    @pytest.mark.parametrize("names", [EntryNames(), EntryNames("Gho 100"), EntryNames("", ("Ghoulish 100",))])
+    @pytest.mark.parametrize("names", [EntryNames(), EntryNames("Wisp 100"), EntryNames("", ("Wispish 100",))])
     def test_without_the_title_the_numbered_pack_stays_unread(self, names: EntryNames) -> None:
         scope = TargetScope(self._WINDOW, series_index(self._MAP), names=names)
 
@@ -1931,7 +1931,7 @@ class TestAssignReleaseRun:
         # Sonarr read the title's 100 as each file's absolute, an episode the series lacks.
         parsed = {name: parsed_info(season=0, absolutes=(100,)) for name in self._TITLED}
         titled = TargetScope(
-            self._WINDOW, series_index(self._MAP), names=EntryNames("Gho 100: Basket Roster of the Dead")
+            self._WINDOW, series_index(self._MAP), names=EntryNames("Wisp 100: Lantern Keepers of the Moor")
         )
 
         assert by_name(place(parsed, titled)) == {

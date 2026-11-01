@@ -27,7 +27,7 @@ class TestDottedNumber:
         "name",
         [
             "Zap.Pilot.100.01.1080p.BluRay.x264-grp.mkv",
-            "Gho.100.Basket.Roster.of.the.Dead.01.1080p.WEB.H264-grp.mkv",
+            "Wisp.100.Lantern.Keepers.of.the.Moor.01.1080p.WEB.H264-grp.mkv",
             "Steel.Armor.Titan.0083.Comet.Archive.01.1080p.BluRay.x264-grp.mkv",
             "Steel.Armor.Titan.0080.Duel.in.the.Valley.E01.1080p.BluRay.mkv",
             "Tinman.009.01.DVDRip.x264-grp.mkv",
@@ -176,7 +176,7 @@ class TestDottedNumber:
         [
             "Solid.Steel.Alarm.036.Episode.000.1080p.WEB-grp.mkv",
             "Rubi.ga.Hunt.025.RubiHunt.Theater.01.Taro.and.Hana.1080p.WEB-grp.mkv",
-            "Gho.100.Basket.Roster.of.the.Dead.05.1080p.WEB-grp.mkv",
+            "Wisp.100.Lantern.Keepers.of.the.Moor.05.1080p.WEB-grp.mkv",
             "Dark.Thistle.123.Vol.26.1080p.WEB.H.264-grp.mkv",
         ],
     )
@@ -393,8 +393,8 @@ class TestTitledRead:
         ("name", "series", "anilist", "number", "bare"),
         [
             (
-                "Gho.100.Basket.Roster.of.the.Dead.12.1080p.WEB.H264-grp.mkv",
-                "Gho 100: Basket Roster of the Dead",
+                "Wisp.100.Lantern.Keepers.of.the.Moor.12.1080p.WEB.H264-grp.mkv",
+                "Wisp 100: Lantern Keepers of the Moor",
                 (),
                 12,
                 (),
@@ -493,8 +493,8 @@ class TestTitledRead:
     @pytest.mark.parametrize(
         ("name", "series", "anilist"),
         [
-            ("Gho.100.Basket.Roster.of.the.Dead.12.1080p.WEB.H264-grp.mkv", "", ()),
-            ("Gho.100.Basket.Roster.of.the.Dead.12.1080p.WEB.H264-grp.mkv", "Ghoulish 100", ()),
+            ("Wisp.100.Lantern.Keepers.of.the.Moor.12.1080p.WEB.H264-grp.mkv", "", ()),
+            ("Wisp.100.Lantern.Keepers.of.the.Moor.12.1080p.WEB.H264-grp.mkv", "Wispish 100", ()),
             ("Steel Armor Titan - 05 - Title.mkv", "Steel Armor Titan 0083: Comet Archive", ()),
             ("74 - 05 (OVA) - Title.mkv", "74: Seventy Four", ("74 SEVENTY-FOUR",)),
             (
@@ -525,8 +525,8 @@ class TestTitledRead:
             ("Steel.Armor.Titan.0083.Comet.10.1080p.mkv", "Steel Armor Titan 0083: Comet Archive", 10, (83,)),
             # shortened in front too, through a number and a word
             ("Titan.0083.10.1080p.BluRay.x264-GRP.mkv", "Steel Armor Titan 0083: Comet Archive", 10, (83,)),
-            ("Gho.100.05.1080p.WEB.H264-grp.mkv", "Gho 100: Basket Roster of the Dead", 5, (100,)),
-            ("[grp] Gho 100 - 05 (OVA) - Title.mkv", "Gho 100: Basket Roster of the Dead", 5, (100,)),
+            ("Wisp.100.05.1080p.WEB.H264-grp.mkv", "Wisp 100: Lantern Keepers of the Moor", 5, (100,)),
+            ("[grp] Wisp 100 - 05 (OVA) - Title.mkv", "Wisp 100: Lantern Keepers of the Moor", 5, (100,)),
         ],
     )
     def test_a_title_shortened_behind_its_number_still_opens_the_name(
@@ -594,7 +594,12 @@ class TestTitledRead:
             ("[grp] Show - 12 MULTi [1080p].mkv", "Show", (), 12),
             ("Show - 12 Dual-Audio.mkv", "Show", (), 12),
             ("Sea Atlas - 1075 HEVC.mkv", "Sea Atlas", ("Sea Atlas",), 1075),
-            ("Gho.100.Basket.Roster.of.the.Dead.12.MULTi.1080p.mkv", "Gho 100: Basket Roster of the Dead", (), 12),
+            (
+                "Wisp.100.Lantern.Keepers.of.the.Moor.12.MULTi.1080p.mkv",
+                "Wisp 100: Lantern Keepers of the Moor",
+                (),
+                12,
+            ),
             ("Zap.Pilot.100.01.HEVC.1080p.mkv", "Zap Pilot 100", (), 1),
             (
                 "[A-D] Q Dawn of Queens 13 Director's Cut [BDRip 1920x1080 x264 FLAC] [2E7B90C1].mkv",
@@ -662,8 +667,8 @@ class TestTitledRead:
         ("name", "series", "numbers"),
         [
             (
-                "Gho.100.Basket.Roster.of.the.Dead.12.1080p.WEB.H264-grp.mkv",
-                "Gho 100: Basket Roster of the Dead",
+                "Wisp.100.Lantern.Keepers.of.the.Moor.12.1080p.WEB.H264-grp.mkv",
+                "Wisp 100: Lantern Keepers of the Moor",
                 (100,),
             ),
             ("[grp] Zap Pilot 100 - 05 (BD 1080p).mkv", "Zap Pilot 100", (100,)),
@@ -695,7 +700,7 @@ class TestTitledRead:
         # a group tag's number ("[XYZ-2223]") counts nothing: the count behind a season word stays the member's
         assert _read("[XYZ-2223] Hana to Kaze S2 - 05 [1080p].mkv", "Hana to Kaze") == (5, ())
         # a title read short, with words between it and the count
-        assert _read("Gho.100.Basket.Roster.of.the.Dead.12.1080p.WEB.H264-grp.mkv", "Gho 100") == (None, ())
+        assert _read("Wisp.100.Lantern.Keepers.of.the.Moor.12.1080p.WEB.H264-grp.mkv", "Wisp 100") == (None, ())
 
     @pytest.mark.parametrize(
         ("name", "number"),
