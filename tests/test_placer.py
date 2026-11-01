@@ -452,9 +452,9 @@ class TestAssignEpisodeTitle:
 
         assert placed == {name: ((603,), PlacementVerdict.EPISODE_TITLE)}
 
-    @pytest.mark.parametrize("tag", ["S1", "Season 1", "1st Season"])
+    @pytest.mark.parametrize("tag", ["S1", "Season 1", "1st Season", "1", "I"])
     def test_a_names_season_tag_and_count_spell_no_title(self, tag: str) -> None:
-        # "1.2" is the third episode's title and the season tag with the count spells it: the count stands.
+        # "1.2" is the third episode's title and the season with the count spells it: the count stands.
         name = f"show {tag} - 02 [grp].mkv"
         parsed = {name: parsed_info(absolutes=(2,), matched=((1, 2),))}
 

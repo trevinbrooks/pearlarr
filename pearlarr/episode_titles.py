@@ -256,13 +256,11 @@ class _NameTitle(NamedTuple):
 
 
 def _title_lead(episodes: EpisodeTitles, read: NameRead) -> _TitleLead:
-    """Read one name against the episode titles: the tail behind its count they lead, else the whole name one equals.
+    """Read one name against the episode titles: the tail behind its count, else the whole name.
 
-    The tail is a member's, or the one behind a count a word follows (`NameRead.titled_count`); a name with neither
-    is read whole. A member's whole name is read when its tail names nothing, its own season tag left out:
-    "Show - 17 Steps 2" counts 2, and "17 Steps 2" is an episode's title; "Show S1 - 28" is no "1.28". A titled
-    count reads both ways, "Show.206.The.Road.Back" counted and "Show - 20 Years Later" titled whole; a name each
-    way titles as another episode is titled as neither.
+    A counted name is read whole too, without its season tag ("Show - 17 Steps 2" is titled "17 Steps 2"), and
+    only by a title with a word that is not a number. A name that each reading titles as a different episode is
+    titled as neither.
     """
 
     words = read.title_words
@@ -271,7 +269,8 @@ def _title_lead(episodes: EpisodeTitles, read: NameRead) -> _TitleLead:
     lead = episodes.leading(words)
     if lead.titled is None or read.titled_count is not None:
         whole = whole_words(read.stem.text)
-        if (equal := episodes.exactly(whole)) is not None:
+        # A counted name's own numbers are its count and season: "Show 1 - 02" is no "1.2".
+        if (equal := episodes.exactly(whole)) is not None and not all(word.isdigit() for word in equal.beyond):
             if lead.titled is None:
                 return _TitleLead(equal, lead.leaders, whole)
             if lead.titled.ep_id != equal.ep_id:
