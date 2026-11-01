@@ -53,8 +53,13 @@ def names_alone(words: Iterable[str]) -> bool:
 def opens_title(words: tuple[str, ...], title: tuple[str, ...]) -> bool:
     """Whether the title's words open the words, and the words end there or go on with quality junk."""
 
-    count = len(title)
-    return words[:count] == title and (len(words) == count or is_quality_word(words[count]))
+    return words[: len(title)] == title and _ends_title(words, len(title))
+
+
+def _ends_title(words: tuple[str, ...], count: int) -> bool:
+    """Whether the words end after the first `count`, or go on with quality junk."""
+
+    return len(words) == count or (len(words) > count and is_quality_word(words[count]))
 
 
 class _TitledEpisode(NamedTuple):
@@ -204,9 +209,8 @@ class EpisodeTitles(NamedTuple):
             if ep.ep_id != ep_id or not ep.distinct:
                 continue
             for count in (len(ep.words) - 1, len(ep.words), len(ep.words) + 1):
-                head = words[:count]
-                if len(head) == count and opens_title(words, head):
-                    shared = _one_word_apart(head, ep.words)
+                if _ends_title(words, count):
+                    shared = _one_word_apart(words[:count], ep.words)
                     if shared is not None and spells_title(shared):
                         return True
         return False

@@ -1,6 +1,7 @@
 """Read file names without Sonarr.
 
-The offline SxxExx parse, range keys, sort keys, stems, versions, runs, and title matching.
+The offline SxxExx parse, range keys, sort keys, stems, versions, runs, the entry's title told apart from a name's
+numbers (`TitleGround`, `read_names`), and title matching.
 """
 
 import re
@@ -269,7 +270,7 @@ def _head_of(text: str) -> str:
 
 
 def _group_blanked(text: str) -> str:
-    """The text with its leading group tag blanked: a number inside the tag ("[SCP-2223]") is the group's, no count.
+    """The text with its leading group tag blanked: a number inside the tag ("[ABC-1234]") is the group's, no count.
 
     A leading bracket holding a number alone ("[0802]") counts the file, and stays.
     """
@@ -789,15 +790,10 @@ def _tails_a_title(text: str, member: RunMember, end: int) -> bool:
 def _titled(name: str, read: NameRead, ground: TitleGround) -> NameRead:
     """The read with the entry's title told apart, when the name opens with one of `TitleGround.titles`.
 
-    The numbers inside the title are the title's: they leave `bare_numbers` and ride on the member as its
-    `title_numbers`. A name no form counted counts by the first count behind the title ("Show 100 Again 12",
-    `_span_member`); a word behind that count makes it an episode title's number, kept as the `titled_count`. A
-    form that counted by one of the title's own digits ("Show.009.10" read 9, "Show 2" read 2) counted nothing:
-    the count behind the title counts instead when there is one ("Show.009.10" reads 10), else a number the name
-    sets off from the title stands as the count ("Show - 2" under "Show 2" is its second episode), else the name
-    has no count. A trailing number behind words past the title, in a name that counts before the title already
-    ("[0802] Show - Squad 66"), is an episode title's number. Without a title, or with a number read past the title
-    already, the read stands as it was.
+    The title's numbers leave `bare_numbers` for the member's `title_numbers`. A name counted by none of its numbers,
+    or by one of the title's own, counts by the first count behind the title ("Show.009.10" reads 10), unless words
+    follow it (then it is the `titled_count`). Without one, a title digit set off by a dash or a label still counts
+    ("Show - 2" under "Show 2"). A number trailing words past the title, in a name counted before it, is no count.
     """
 
     text = read.stem.text

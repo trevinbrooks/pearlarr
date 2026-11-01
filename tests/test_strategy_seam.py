@@ -3083,7 +3083,6 @@ class TestHeldBackFiles:
         assert done.hand_import_files == ()
 
     def test_an_untagged_hand_import_at_a_listed_size_retires_the_record(self) -> None:
-        # Sonarr reads no group off a name that carries none. The file's size says it is one of the torrent's.
         strat, sonarr = self._strat()
         untagged = sonarr_ep(1, 1, ep_id=601, title=self._TITLES[0], size=self._SIZE_ON[601], release_group=None)
         sonarr.episodes_return = [untagged, *self._episodes(602, 603)[1:]]
@@ -3094,7 +3093,6 @@ class TestHeldBackFiles:
         assert done.hand_import_files == ()
 
     def test_a_plain_skip_beside_the_held_back_file_warns_once_for_itself_alone(self) -> None:
-        # The warning counts the extra, not the hand-import file.
         strat, _ = self._strat("Extras.mkv")
         recording = install_recording_hub()
 

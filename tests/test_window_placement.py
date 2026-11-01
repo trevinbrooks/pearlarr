@@ -251,8 +251,7 @@ class TestSeveralWindows:
     def test_a_run_disputed_past_the_cour_boundary_places_under_the_first_cour_and_is_refused_under_the_second(
         self,
     ) -> None:
-        # The special's absolute sits between the cours, and the pack is keyed on past the season's end: the first
-        # cour's window has no stake in the dispute and places its three, the second cour's refuses the rest.
+        # The special's absolute sits between the cours, and the pack is keyed on past the season's end.
         series = series_index(
             {**{EpisodeKey(1, n): 600 + n for n in range(1, 7)}, EpisodeKey(0, 1): 501},
             absolutes={601: 1, 602: 2, 603: 3, 501: 4, 604: 5, 605: 6, 606: 7},
@@ -283,7 +282,7 @@ class TestSeveralWindows:
 
     def test_an_earlier_windows_title_refutal_yields_to_a_later_windows_placement(self) -> None:
         # Sonarr read the second season's bare numbers as first-season absolutes, and its titled member names a
-        # second-season episode: the first window refutes the plain members, the second places the run.
+        # second-season episode.
         titles = ("Alpha Start", "Bravo Turn", "Charlie Rise", "Echo Dawn", "Foxtrot Fall", "Golf Night")
         series = series_index(
             {**{EpisodeKey(1, n): 600 + n for n in (1, 2, 3)}, **{EpisodeKey(2, n): 700 + n for n in (1, 2, 3)}},

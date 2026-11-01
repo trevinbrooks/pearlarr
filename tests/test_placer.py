@@ -259,7 +259,6 @@ class TestAssignEpisodeTitle:
 
     @pytest.mark.parametrize("names", [EntryNames("Show"), EntryNames("Show", ("Show",))])
     def test_a_title_opening_with_a_number_names_the_episode(self, names: EntryNames) -> None:
-        # The number is the title's first word, no count: read as one, the title match would never see it.
         name = "show - 20 Years Worth of Wishes [grp].mkv"
         index = series_index(_MAP, titles={603: "20 Years' Worth of Wishes"})
 
@@ -378,8 +377,7 @@ class TestAssignEpisodeTitle:
         assert placed == {name: ((), PlacementVerdict.FOREIGN)}
 
     def test_a_file_titled_outside_stays_skipped_while_its_episode_is_open(self) -> None:
-        # Sonarr read it onto the open special and its title is another slice's episode: the title refuted the
-        # reading, but nothing else holds the special, so the entry may still need the file.
+        # Sonarr read it onto the open special, and its title is another slice's episode.
         name = "show - pilot flight [grp].mkv"
 
         placed = by_name(place({name: parsed_info(matched=((0, 1),))}, _scope([501])))
@@ -387,8 +385,7 @@ class TestAssignEpisodeTitle:
         assert placed == {name: ((), PlacementVerdict.SKIPPED)}
 
     def test_a_file_titled_outside_is_another_slices_once_its_episode_is_held(self) -> None:
-        # The same file beside the plain one Sonarr read onto the special: the title refuted the reading, the
-        # plain file holds the special, and the title is what stands.
+        # The same file beside the plain one Sonarr read onto the special.
         plain, titled = "show - 01 [grp].mkv", "show - pilot flight [grp].mkv"
         parsed: dict[str, ParsedFileInfo | None] = {
             plain: parsed_info(matched=((0, 1),)),
@@ -436,8 +433,7 @@ class TestAssignEpisodeTitle:
         assert placed == {v1: ((), PlacementVerdict.DUPLICATE)}
 
     def test_a_count_a_title_word_follows_yields_to_the_title(self) -> None:
-        # No dash between the count and the title, so the 3 reads as a title's number; the words behind it still
-        # name the third episode, and Sonarr's absolute match landed one early.
+        # No dash between the count and the title, and Sonarr's absolute match landed one early.
         name = "show - 03 Festival Night [grp].mkv"
 
         placed = by_name(place({name: parsed_info(absolutes=(3,), matched=((1, 2),))}, _scope(_FIRST_THREE)))
@@ -454,7 +450,7 @@ class TestAssignEpisodeTitle:
 
     @pytest.mark.parametrize("tag", ["S1", "Season 1", "1st Season", "1", "I"])
     def test_a_names_season_tag_and_count_spell_no_title(self, tag: str) -> None:
-        # "1.2" is the third episode's title and the season with the count spells it: the count stands.
+        # The third episode is titled "1.2", which the season and the count spell.
         name = f"show {tag} - 02 [grp].mkv"
         parsed = {name: parsed_info(absolutes=(2,), matched=((1, 2),))}
 
@@ -463,7 +459,7 @@ class TestAssignEpisodeTitle:
         assert placed == {name: ((602,), PlacementVerdict.EXACT)}
 
     def test_a_name_titled_both_ways_as_different_episodes_names_neither(self) -> None:
-        # Count then title, or a title opening with a number: each reading is an episode, and nothing says which.
+        # Count then title, or a title opening with a number.
         name = "show - 02 Lost Girls [grp].mkv"
         titles = {602: "Lost Girls", 603: "02 Lost Girls"}
 
@@ -490,7 +486,7 @@ class TestRefuseCountedByTitle:
         assert placed == {name: ((603,), PlacementVerdict.EXACT)}
 
     def test_a_count_its_own_title_nearly_confirms_stands(self) -> None:
-        # The name carries episode 3's title a word off ("on" for "of"): the words they share still spell it.
+        # The name carries episode 3's title a word off ("on" for "of").
         name = "show - 03 Festival on the Night [grp].mkv"
         scope = _scope(_FIRST_THREE, titles={**_TITLES, 603: "Festival of the Night"})
 
@@ -499,7 +495,7 @@ class TestRefuseCountedByTitle:
         assert placed == {name: ((603,), PlacementVerdict.EXACT)}
 
     def test_a_count_sonarr_matched_that_no_title_confirms_is_held(self) -> None:
-        # Episode 3 under a title Sonarr lacks, or an extra: the name cannot tell, so neither is guessed.
+        # Episode 3 under a title Sonarr lacks, or an extra.
         name = "show - 03 Days of Summer [grp].mkv"
 
         placed = by_name(place({name: parsed_info(absolutes=(3,), matched=((1, 3),))}, _scope(_FIRST_THREE)))
@@ -523,7 +519,7 @@ class TestRefuseCountedByTitle:
         }
 
     def test_an_unmatched_pack_titled_its_own_way_still_zips(self) -> None:
-        # Sonarr matched nothing; every count is an episode of the series, whatever the titles say.
+        # Sonarr matched nothing, and every count is an episode of the series.
         names = [
             "show - 01 First Flight [grp].mkv",
             "show - 02 Coming Back [grp].mkv",
@@ -1864,8 +1860,7 @@ class TestAssignReleaseRun:
         ],
     )
     def test_the_entrys_title_lets_its_numbered_pack_count(self, names: EntryNames) -> None:
-        # Sonarr read nothing from the dotted names; the title tells its own 100 from the count behind it. The grab
-        # and the import carry the same `EntryNames`, so whichever title source filled it, they place alike.
+        # Sonarr read nothing from the dotted names.
         scope = TargetScope(self._WINDOW, series_index(self._MAP), names=names)
 
         assert by_name(place(blind(self._TITLED), scope)) == {
@@ -1874,7 +1869,7 @@ class TestAssignReleaseRun:
 
     @pytest.mark.parametrize("names", [EntryNames("Show 2"), EntryNames("Show", ("Show Season 2", "Show 2"))])
     def test_a_count_equal_to_the_titles_season_digit_keeps_the_run(self, names: EntryNames) -> None:
-        # A second season's pack counts "- 1".."- 3" unpadded: its "- 2" is the second episode, not the title.
+        # A second season's pack counts "- 1".."- 3" unpadded.
         run = [f"[grp] Show - {n} (1080p).mkv" for n in (1, 2, 3)]
         scope = TargetScope(self._WINDOW, series_index(self._MAP), names=names)
 
@@ -1889,9 +1884,7 @@ class TestAssignReleaseRun:
         assert PlacementVerdict.RELEASE_RUN not in verdicts_of(place(blind(self._TITLED), scope))
 
     def test_sonarr_counting_by_the_title_does_not_refute_the_pack(self) -> None:
-        # Sonarr read the title's 100 as each file's absolute, an episode the series lacks. With the title in
-        # the scope that reading is the title's number, and the pack places by its own count; without it the
-        # absolute disagrees with every count and the pack stays unread, as before.
+        # Sonarr read the title's 100 as each file's absolute, an episode the series lacks.
         parsed = {name: parsed_info(season=0, absolutes=(100,)) for name in self._TITLED}
         titled = TargetScope(
             self._WINDOW, series_index(self._MAP), names=EntryNames("Gho 100: Basket Roster of the Dead")
@@ -2746,8 +2739,7 @@ class TestRefuseMisnumbered:
         assert PlacementVerdict.MISNUMBERED not in verdicts_of(result)
 
     def test_a_title_refuting_the_numbering_keeps_the_listing_out(self) -> None:
-        # The first file is titled as special 2, which the second reads by number: the title refutes the pack and
-        # holds its own file, so the listing never judges it.
+        # The first file is titled as special 2, which the second reads by number.
         pack = {
             **specials_pack(2, 3),
             "Show.S00E01 - Distress Call.mkv": parsed_info(season=0, episodes=(1,), matched=((0, 1),)),
@@ -3359,7 +3351,7 @@ class TestRefuseDisputed:
         return TargetScope(list(resolved), index, names=EntryNames("Show"))
 
     def test_a_bracketed_count_naming_another_episode_refuses_the_key(self) -> None:
-        # "(0003)" is episode 3's absolute number, and the key says episode 2. One of them is wrong.
+        # "(0003)" is episode 3's absolute number, and the key says episode 2.
         name = "[grp] Show S01E02 (0003) (WEB 1080p) [ABCD1234].mkv"
 
         result = place({name: parsed_info(season=1, episodes=(2,), matched=((1, 2),))}, self._scope(601, 602, 603))
@@ -3374,7 +3366,7 @@ class TestRefuseDisputed:
         assert by_name(result) == {name: ((602,), PlacementVerdict.EXACT)}
 
     def test_a_bracketed_count_no_episode_carries_leaves_the_key_alone(self) -> None:
-        # A bracketed number that is no absolute of the series (a bitrate, a year) says nothing about the episode.
+        # A bracketed number that is no absolute of the series (a bitrate, a year).
         name = "[grp] Show S01E02 (2019) [ABCD1234].mkv"
 
         result = place({name: parsed_info(season=1, episodes=(2,), matched=((1, 2),))}, self._scope(601, 602, 603))
@@ -3397,8 +3389,7 @@ class TestRefuseDisputed:
         assert by_name(result) == {name: ((602,), PlacementVerdict.EXACT)}
 
     def test_a_glued_count_that_is_another_episodes_absolute_refuses_the_guessed_key(self) -> None:
-        # Sonarr read "102" as S01E02 and matched it, but the series has an episode 102 too. The name's digits
-        # count one way or the other, and nothing in the name says which.
+        # Sonarr read "102" as S01E02 and matched it, and the series has an episode 102 too.
         name = "Show.102.v4.480p.DVD.FLAC2.0.x264-grp.mkv"
 
         result = place({name: parsed_info(season=1, episodes=(2,), matched=((1, 2),))}, self._scope(601, 602, 603))
@@ -3406,7 +3397,7 @@ class TestRefuseDisputed:
         assert by_name(result) == {name: ((), PlacementVerdict.MISNUMBERED)}
 
     def test_a_glued_count_of_a_short_series_is_the_key(self) -> None:
-        # No episode 102 exists, so "102" can only be S01E02.
+        # No episode 102 exists.
         name = "Show.102.v4.480p.DVD.FLAC2.0.x264-grp.mkv"
         absolutes = {601: 1, 602: 2, 603: 3}
 
@@ -3418,8 +3409,7 @@ class TestRefuseDisputed:
         assert by_name(result) == {name: ((602,), PlacementVerdict.EXACT)}
 
     def test_a_guessed_key_sonarr_never_matched_is_refused(self) -> None:
-        # "0102 v2" read as S01E03 with no series match behind it: a guess from digits, and the series has an
-        # episode 102.
+        # "0102 v2" read as S01E03 with no series match behind it, and the series has an episode 102.
         name = "Show - 0102 v2 (WEB 1080p) [grp][ABCD1234].mkv"
 
         result = place({name: parsed_info(season=1, episodes=(3,))}, self._scope(601, 602, 603))
@@ -3427,7 +3417,7 @@ class TestRefuseDisputed:
         assert by_name(result) == {name: ((), PlacementVerdict.MISNUMBERED)}
 
     def test_a_guessed_key_beside_a_count_no_episode_carries_stands(self) -> None:
-        # No episode 536 exists, so the count disputes nothing: Sonarr's unmatched guess is all there is.
+        # No episode 536 exists, and Sonarr matched no series.
         name = "Show - 0536 v2 (WEB 1080p) [grp][ABCD1234].mkv"
 
         result = place({name: parsed_info(season=1, episodes=(3,))}, self._scope(601, 602, 603))
@@ -3435,7 +3425,7 @@ class TestRefuseDisputed:
         assert by_name(result) == {name: ((603,), PlacementVerdict.EXACT)}
 
     def test_a_title_number_behind_a_glued_count_still_disputes_the_key(self) -> None:
-        # Sonarr read "102" as S01E02 and matched it; the title's "100" behind it does not make 102 a title's number.
+        # Sonarr read "102" as S01E02 and matched it, with the title's "100" ahead of it.
         name = "Show.102.The.100.Year.Plan.1080p.WEB-grp.mkv"
 
         result = place({name: parsed_info(season=1, episodes=(2,), matched=((1, 2),))}, self._scope(601, 602, 603))
@@ -3443,7 +3433,7 @@ class TestRefuseDisputed:
         assert by_name(result) == {name: ((), PlacementVerdict.MISNUMBERED)}
 
     def test_a_spelled_out_key_sonarr_never_matched_still_places(self) -> None:
-        # The name says S01E03 itself: Sonarr failing to match the series is no dispute.
+        # The name says S01E03 itself, and Sonarr matched no series.
         name = "Show - S01E03 (WEB 1080p) [grp][ABCD1234].mkv"
 
         result = place({name: parsed_info(season=1, episodes=(3,))}, self._scope(601, 602, 603))
@@ -3458,7 +3448,7 @@ class TestRefuseDisputed:
         ],
     )
     def test_a_codec_or_title_number_beside_an_unmatched_key_is_no_dispute(self, name: str) -> None:
-        # "264" and the title's "100" count nothing: the key stands alone, and alone it is believed.
+        # The only other numbers are "264" and the title's "100".
         result = place({name: parsed_info(season=1, episodes=(3,))}, self._scope(601, 602, 603))
 
         assert by_name(result) == {name: ((603,), PlacementVerdict.EXACT)}
@@ -3478,7 +3468,7 @@ class TestRefuseDisputed:
         assert by_name(result) == {name: (ids, PlacementVerdict.EXACT)}
 
     def test_a_dispute_over_episodes_the_window_lacks_is_left_to_their_window(self) -> None:
-        # S01E02 or episode 102: neither is the specials window's, so under it the file reads as its key says.
+        # S01E02 or episode 102, and neither is in the specials window.
         name = "Show.102.v4.480p.DVD.FLAC2.0.x264-grp.mkv"
 
         result = place({name: parsed_info(season=1, episodes=(2,), matched=((1, 2),))}, self._scope(501))
@@ -3486,7 +3476,7 @@ class TestRefuseDisputed:
         assert by_name(result) == {name: ((), PlacementVerdict.FOREIGN)}
 
     def test_a_dispute_over_an_episode_the_window_holds_by_the_other_count_is_refused(self) -> None:
-        # The key says S01E02, outside the window; the count says episode 102, inside it. The window has a stake.
+        # The key says S01E02, outside the window; the count says episode 102, inside it.
         name = "Show.102.v4.480p.DVD.FLAC2.0.x264-grp.mkv"
 
         result = place({name: parsed_info(season=1, episodes=(2,), matched=((1, 2),))}, self._scope(702))
@@ -3494,8 +3484,7 @@ class TestRefuseDisputed:
         assert by_name(result) == {name: ((), PlacementVerdict.MISNUMBERED)}
 
     def test_a_lower_version_of_a_disputed_number_is_a_copy(self) -> None:
-        # The top version at 102 is disputed (S01E02 or episode 102). The other cut of 102 is a copy of it either
-        # way: never this record's to import, and no second hand import to list.
+        # The top version at 102 is disputed (S01E02 or episode 102), and the other cut of 102 is a copy of it.
         top = "Show.102.v4.480p.DVD.FLAC2.0.x264-grp.mkv"
         copy = "Show.102.Canon.Cut.v2.480p.DVD.FLAC2.0.x264-grp.mkv"
         parsed = {name: parsed_info(season=1, episodes=(2,), matched=((1, 2),)) for name in (top, copy)}
@@ -3505,8 +3494,7 @@ class TestRefuseDisputed:
         assert by_name(result) == {top: ((), PlacementVerdict.MISNUMBERED), copy: ((), PlacementVerdict.DUPLICATE)}
 
     def test_a_disputed_member_is_still_placed_by_its_run(self) -> None:
-        # Sonarr read "0003" as S00E03 (a key the series lacks) and the first two as absolutes. The run of three on
-        # the three-wide window places every member by its count, the disputed one included.
+        # Sonarr read "0003" as S00E03 (a key the series lacks) and the first two as absolutes.
         names = [f"Show - 000{n} (BD 1080p) [grp][ABCD123{n}].mkv" for n in (1, 2, 3)]
         parsed = {
             names[0]: parsed_info(absolutes=(1,), matched=((1, 1),)),
@@ -3538,8 +3526,7 @@ class TestRunnerUps:
         return TargetScope([601, 602, 603], index, names=EntryNames("Show"))
 
     def test_a_runner_up_never_takes_the_episode_the_refused_file_would_have_won(self) -> None:
-        # The key would have taken S01E02 ahead of the OVA Sonarr matched there by its absolute number. Refusing
-        # the key leaves the OVA where it was: second, and unplaced.
+        # Sonarr matched the OVA to S01E02 by its absolute number, the episode the key names.
         ova = "Show - 02 (OVA) [grp].mkv"
         parsed = {
             self._DISPUTED: parsed_info(season=1, episodes=(2,), matched=((1, 2),)),
@@ -3584,8 +3571,7 @@ class TestRunnerUps:
         }
 
     def test_a_file_ranked_ahead_of_the_refused_one_keeps_its_episode(self) -> None:
-        # Equal rank and version, so batch order decides: the spelled-out key came first and S01E02 was never the
-        # glued count's to lose.
+        # Equal rank and version, and the spelled-out key comes first in the batch.
         keyed = "[grp] Show S01E02.mkv"
         disputed = "Show.102.480p.DVD.FLAC2.0.x264-grp.mkv"
         parsed = {
@@ -3601,9 +3587,8 @@ class TestRunnerUps:
         }
 
     def test_a_runner_up_neither_refuses_the_refused_files_run_nor_outlives_it(self) -> None:
-        # The first key's bracketed count names episode 102, so the key is refused, but the keyed run of three
-        # fits the window and places every member on its key. The OVA lost S01E01 to that key before the run was
-        # asked: its claim does not refuse the run, and once the run holds the episode the OVA is a copy.
+        # The first key's bracketed count names episode 102, the keyed run of three fits the window, and the OVA
+        # is matched to S01E01.
         pack = ["[grp] Show S01E01 (0102).mkv", "[grp] Show S01E02 (0002).mkv", "[grp] Show S01E03 (0003).mkv"]
         ova = "Show - 01 (OVA) [grp].mkv"
         parsed = {
@@ -3619,9 +3604,7 @@ class TestRunnerUps:
         }
 
     def test_a_runner_up_inside_the_refused_files_run_is_still_placed_by_its_count(self) -> None:
-        # A pack numbered 001 to 103: Sonarr read the first hundred as absolutes and the rest as glued keys, so
-        # "Show.101" would have taken S01E01 ahead of "Show.001". The keys are refused, and the run places every
-        # member by its count, the runner-ups included.
+        # A pack numbered 001 to 103: Sonarr read the first hundred as absolutes and the rest as glued keys.
         names = {n: f"Show.{n:03d}.v4.480p.DVD.FLAC2.0.x264-grp.mkv" for n in range(1, 104)}
         parsed = {
             name: parsed_info(absolutes=(n,), matched=((1, n),))
@@ -3652,14 +3635,14 @@ class TestRefuseInterleavedSpecial:
     _RUN: ClassVar[list[str]] = [f"[grp] Show - S01E0{n}.mkv" for n in (1, 2, 3, 4)]
 
     @classmethod
-    def _place(cls, absolutes: Mapping[int, int]) -> EpisodeAssignment:
+    def _place(cls, absolutes: Mapping[int, int], ids: Sequence[int] = (601, 602, 603)) -> EpisodeAssignment:
         parsed = {
             cls._RUN[0]: parsed_info(season=1, episodes=(1,), matched=((1, 1),)),
             cls._RUN[1]: parsed_info(season=1, episodes=(2,), matched=((1, 2),)),
             cls._RUN[2]: parsed_info(season=1, episodes=(3,), matched=((1, 3),)),
             cls._RUN[3]: parsed_info(season=1, episodes=(4,)),
         }
-        scope = TargetScope([601, 602, 603], series_index(cls._MAP, absolutes=absolutes), names=EntryNames("Show"))
+        scope = TargetScope(list(ids), series_index(cls._MAP, absolutes=absolutes), names=EntryNames("Show"))
         return place(parsed, scope)
 
     def test_the_members_from_the_special_on_are_refused(self) -> None:
@@ -3675,17 +3658,8 @@ class TestRefuseInterleavedSpecial:
         }
 
     def test_a_window_holding_the_special_places_no_member_from_the_special_on_by_position(self) -> None:
-        # The run fits the window in absolute order, where its third member lands on the special: a count of the
-        # special's or an appended extra's, the members from the special on stay disputed.
-        parsed = {
-            self._RUN[0]: parsed_info(season=1, episodes=(1,), matched=((1, 1),)),
-            self._RUN[1]: parsed_info(season=1, episodes=(2,), matched=((1, 2),)),
-            self._RUN[2]: parsed_info(season=1, episodes=(3,), matched=((1, 3),)),
-            self._RUN[3]: parsed_info(season=1, episodes=(4,)),
-        }
-        index = series_index(self._MAP, absolutes={601: 1, 602: 2, 501: 3, 603: 4})
-
-        result = place(parsed, TargetScope([601, 602, 501, 603], index, names=EntryNames("Show")))
+        # The run fits the window in absolute order, its third member on the special.
+        result = self._place({601: 1, 602: 2, 501: 3, 603: 4}, (601, 602, 501, 603))
 
         assert by_name(result) == {
             self._RUN[0]: ((601,), PlacementVerdict.EXACT),
@@ -3695,7 +3669,7 @@ class TestRefuseInterleavedSpecial:
         }
 
     def test_a_special_outside_the_seasons_count_leaves_the_run_alone(self) -> None:
-        # The special has no absolute number: the fourth file is an appended extra, and the season places as read.
+        # The special has no absolute number.
         result = self._place({601: 1, 602: 2, 603: 3})
 
         assert by_name(result) == {
@@ -3707,7 +3681,7 @@ class TestRefuseInterleavedSpecial:
 
     def test_a_run_keyed_on_past_a_double_length_special_is_refused_from_the_special_on(self) -> None:
         # The release keys the special between S01E02 and S01E03 as "S01E03-E04" and the aired third episode as
-        # "S01E05": the keys run past the season's end, and from the special on they are the release's own count.
+        # "S01E05".
         names = [f"[grp] Show - S01E{key}.mkv" for key in ("01", "02", "03-E04", "05")]
         parsed = {
             names[0]: parsed_info(season=1, episodes=(1,), matched=((1, 1),)),
@@ -3727,8 +3701,7 @@ class TestRefuseInterleavedSpecial:
         }
 
     def test_a_run_keyed_within_its_season_is_placed_as_read(self) -> None:
-        # Two of three episodes, keyed past the special's position but not past the season's end: nothing in the
-        # keys says the release counted the special, so the aired keys stand.
+        # Two of three episodes, keyed past the special's position but not past the season's end.
         names = [f"[grp] Show - S01E0{n}.mkv" for n in (2, 3)]
         parsed = {
             names[0]: parsed_info(season=1, episodes=(2,), matched=((1, 2),)),
@@ -3745,8 +3718,7 @@ class TestRefuseInterleavedSpecial:
 
     def test_the_windows_the_run_spreads_over_refuse_it_and_another_seasons_reads_it_as_it_was(self) -> None:
         # From the special on, the members are S01E03 and the special, or the special and nothing. The season's
-        # window and the special's window each hold one of those; the second season's window holds none, and
-        # under it the keys read as they did, with the count-based passes still off.
+        # window and the special's window each hold one of those, and the second season's window holds none.
         parsed = {
             self._RUN[0]: parsed_info(season=1, episodes=(1,), matched=((1, 1),)),
             self._RUN[1]: parsed_info(season=1, episodes=(2,), matched=((1, 2),)),

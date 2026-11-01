@@ -476,8 +476,7 @@ class TestPlaceHeld:
         assert placement.inputs_known
 
     def test_a_pack_held_for_a_disputed_run_records_none_of_its_placed_files(self) -> None:
-        # The season's absolutes count the special between E02 and E03, and the pack is keyed on past the end: the
-        # last two keys are refused, and the two that placed count for nothing while the pack waits on a hand import.
+        # The season's absolutes count the special between E02 and E03, and the pack is keyed on past the end.
         season = [
             sonarr_ep(1, 1, ep_id=101, episode_file_id=0, absolute=1),
             sonarr_ep(1, 2, ep_id=102, episode_file_id=0, absolute=2),

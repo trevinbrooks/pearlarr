@@ -97,7 +97,6 @@ class TestDottedNumber:
         ],
     )
     def test_a_number_a_joiner_ties_to_the_one_before_is_no_count(self, name: str) -> None:
-        # A double episode's second number ends the name; counting by it places the file one episode late.
         assert read_name(name).member is None
         assert _read(name, "Star Drums!")[0] is None
 
@@ -531,7 +530,6 @@ class TestTitledRead:
     def test_a_title_shortened_behind_its_number_still_opens_the_name(
         self, name: str, series: str, number: int, numbers: tuple[int, ...]
     ) -> None:
-        # A name drops a subtitle behind the title's number, never the number: the count follows what it kept.
         member = read_names([name], TitleGround.of(EntryNames(series)))[name].member
 
         assert member is not None
@@ -557,8 +555,6 @@ class TestTitledRead:
     def test_a_count_equal_to_the_titles_season_digit_stands_when_set_off(
         self, name: str, series: str, anilist: tuple[str, ...], number: int | None
     ) -> None:
-        # Under the second season's entry "Show - 2" and "Show Episode 2" count its second episode, as they
-        # would under any other title; "Show 2" alone is the title.
         assert _read(name, series, anilist)[0] == number
 
     @pytest.mark.parametrize(
@@ -574,8 +570,6 @@ class TestTitledRead:
         ],
     )
     def test_a_word_behind_the_count_makes_it_an_episode_titles_number(self, name: str, series: str) -> None:
-        # The episode title opens with the number; the placer's title match needs the name unnumbered. Any word
-        # refuses that is no release tag, and a tag only passes the count on to the word behind it.
         for anilist in ((), (series,), (series.upper(), series)):
             assert _read(name, series, anilist)[0] is None
         assert _read(name)[0] is None
@@ -619,7 +613,6 @@ class TestTitledRead:
     def test_a_release_tag_behind_the_count_is_no_titles_word(
         self, name: str, series: str, anilist: tuple[str, ...], number: int | None
     ) -> None:
-        # "TV (1978)", "MULTi", "Director's Cut" say what the file is, not which episode: the count stands.
         assert _read(name, series, anilist)[0] == number
 
     @pytest.mark.parametrize(
@@ -631,7 +624,6 @@ class TestTitledRead:
         ],
     )
     def test_an_ova_tag_behind_the_count_marks_an_extra_with_no_count(self, name: str) -> None:
-        # The OVA after twelve plain files joins no run of theirs, and the tag is no title's word.
         read = read_names([name], TitleGround.of(EntryNames("Magic Boy Lyrical Pip", ("SoLid Charge!",))))[name]
 
         assert (read.member, read.titled_count) == (None, None)
@@ -656,7 +648,7 @@ class TestTitledRead:
         assert _read(name, "Show", ("Silvertail", "Comet X"))[0] is None
 
     def test_a_read_with_a_number_already_keeps_it(self) -> None:
-        # "002" is the count and no "Pixie Saga 2": a digit word matches a title's only as written.
+        # "002" is the count, and no "Pixie Saga 2".
         assert _read("[Fenwick] Pixie Saga - 002.mkv", "Pixie Saga", ("Pixie Saga 2",)) == (2, (2,))
         assert _read("Show 12 - 05.mkv", "Show") == (5, ())
         # the count past the title equals the title's number: counted past it, it stands
@@ -682,7 +674,6 @@ class TestTitledRead:
     def test_the_titles_numbers_in_the_name_ride_on_the_member(
         self, name: str, series: str, numbers: tuple[int, ...]
     ) -> None:
-        # Bracketed digits are no title's, neither a group tag's ("[Zog42]") nor the name's own "(2011)".
         member = read_names([name], TitleGround.of(EntryNames(series)))[name].member
 
         assert member is not None
@@ -701,7 +692,7 @@ class TestTitledRead:
         assert _read("[101] Quillfox - Title.mkv", "Quillfox") == (None, (101,))
         # a group tag's number ("[XYZ-2223]") counts nothing: the count behind a season word stays the member's
         assert _read("[XYZ-2223] Hana to Kaze S2 - 05 [1080p].mkv", "Hana to Kaze") == (5, ())
-        # The title confirms its 100 without reading the count: no form counts ".Bucket" and the check adds none.
+        # a title read short, with words between it and the count
         assert _read("Gho.100.Basket.Roster.of.the.Dead.12.1080p.WEB.H264-grp.mkv", "Gho 100") == (None, ())
 
     @pytest.mark.parametrize(
@@ -718,18 +709,15 @@ class TestTitledRead:
     def test_a_trailing_number_behind_words_past_the_title_is_the_titles_when_a_count_leads(
         self, name: str, number: int | None
     ) -> None:
-        # "[0802]" counted the file already: the 66 ending "Garmo 66" is the episode title's.
         assert _read(name, "Sea Atlas")[0] == number
 
     def test_a_number_ending_the_members_tail_leaves_the_member(self) -> None:
-        # Only the member's own number ending the name tails a title; the "2" here ends its episode title.
         assert _read("[0802] Show Film - 05 - Red 2.mkv", "Show") == (5, (802,))
 
     def test_a_quality_tail_ahead_of_the_title_drops_just_the_titles_number(self) -> None:
         assert _read("[Grp][1080p][x.264] Show 100 - 05.mkv", "Show 100") == (5, ())
 
     def test_a_quality_words_second_half_behind_the_count_opens_no_quality_tail(self) -> None:
-        # "Ray" ends "Blu-Ray" as the words split it, never a tag of its own: the count opens an episode title.
         name = "[grp] Show - 05 Ray of Hope [1080p].mkv"
         read = read_names([name], TitleGround.of(EntryNames("Show")))[name]
 
@@ -777,7 +765,6 @@ class TestTitledRead:
     def test_a_count_a_word_follows_is_kept_as_the_titled_count_with_the_words_behind_it(
         self, name: str, series: str, count: int | None, words: tuple[str, ...]
     ) -> None:
-        # The placer reads the words both ways: behind the count, and the whole name as a title.
         read = read_names([name], TitleGround.of(EntryNames(series)))[name]
 
         assert (read.titled_count, read.title_words) == (count, words)

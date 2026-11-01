@@ -67,7 +67,9 @@ class WindowedAssignment(NamedTuple):
         """
 
         own = {
-            p.name for p in self.windows[index].placements if p.verdict.placed or p.verdict.refused or p.verdict in _BY_ALIAS
+            p.name
+            for p in self.windows[index].placements
+            if p.verdict.placed or p.verdict.refused or p.verdict in _BY_ALIAS
         }
         return any(
             v.placement.verdict is PlacementVerdict.MISNUMBERED and v.placement.name in own for v in self.verdicts

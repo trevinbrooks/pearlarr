@@ -113,7 +113,6 @@ def test_get_nyaa_torrent_refuses_a_download_url_without_a_request() -> None:
 
 @respx.mock
 def test_get_nyaa_torrent_reads_the_utf8_name_in_any_case() -> None:
-    # RFC 6266 makes the parameter name and the charset tag case-insensitive.
     respx.head(_NYAA_LINK).respond(
         headers={"content-disposition": f"attachment; FILENAME*=utf-8''{_NYAA_TITLE}.torrent"}
     )
