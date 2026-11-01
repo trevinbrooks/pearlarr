@@ -165,6 +165,8 @@ class EpisodeTitles(NamedTuple):
     """The forms that name their episode alone, by their words beyond the series title, in series order."""
     forms: tuple[_TitledEpisode, ...]
     """Every title form, in series order."""
+    id_by_key: Mapping[EpisodeKey, int]
+    """Each series episode by its season and number."""
 
     @classmethod
     def of(cls, series: EpisodeIndex, ground: TitleGround) -> Self:
@@ -187,6 +189,7 @@ class EpisodeTitles(NamedTuple):
             _grouped((ep.words[:1], ep) for ep in titled),
             _grouped((ep.beyond, ep) for ep in titled if ep.alone),
             tuple(titled),
+            series.id_by_key,
         )
 
     def leading(self, words: tuple[str, ...]) -> _TitleLead:
@@ -199,16 +202,30 @@ class EpisodeTitles(NamedTuple):
         titled = _sole(ep for ep in led if ep.distinct and opens_title(words, ep.words))
         return _TitleLead(titled, frozenset(ep.ep_id for ep in led), words)
 
-    def exactly(self, words: tuple[str, ...], resolved: Collection[int]) -> _TitledEpisode | None:
+    def exactly(self, words: tuple[str, ...], keyed: Collection[int]) -> _TitledEpisode | None:
         """The one episode whose title names it alone and equals a name's words, the series words dropped from both.
 
-        `resolved` are the episodes Sonarr read for the file. A title that is just the season and number of one of
-        them ("1.2" against S01E02) is Sonarr's key over again, not a title: it names nothing.
+        `keyed` are the episodes the name's numbers are a key for (`keyed_by`). A title that is just the season and
+        number of another of them ("1.2" against S01E02) is that key over again, not a title: it names nothing.
         """
 
         beyond = tuple(word for word in words if word not in self.series_words)
         equal = _sole(self.alone_by_beyond.get(beyond, ()))
-        return None if equal is not None and equal.spelled_id in resolved else equal
+        if equal is not None and equal.spelled_id != equal.ep_id and equal.spelled_id in keyed:
+            return None
+        return equal
+
+    def keyed_by(self, read: NameRead, resolved: Collection[int]) -> frozenset[int]:
+        """The episodes a name's numbers are a key for: Sonarr's read of it (`resolved`), and its bare season and count.
+
+        "Show 2 - 05" is a key for S02E05. A bare number the series title holds is no season ("Show No. 8 - 05").
+        """
+
+        season = bare_season(read)
+        if read.member is None or season is None or season in self.series_words:
+            return frozenset(resolved)
+        own = self.id_by_key.get(EpisodeKey(int(season), read.member.number))
+        return frozenset(resolved if own is None else (*resolved, own))
 
     def nearly(self, ep_id: int, words: tuple[str, ...]) -> bool:
         """Whether the words open with the episode's title a word off at most: one swapped, added or dropped.
@@ -282,21 +299,19 @@ class _NameTitle(NamedTuple):
 def _title_lead(episodes: EpisodeTitles, read: NameRead, resolved: Collection[int]) -> _TitleLead:
     """Read one name against the episode titles: the tail behind its count, else the whole name.
 
-    A counted name is read whole too, its season tag left out: "Show - 17 Steps 2" is titled "17 Steps 2". One with
-    a bare season of its own is not, since the season and the count can spell a title: "Show 1 - 02" is no "1.2".
-    A name that each reading titles as a different episode is titled as neither. `resolved` are the episodes Sonarr
-    read for the file (`EpisodeTitles.exactly`).
+    A counted name is read whole too, its season tag left out: "Show - 17 Steps 2" is titled "17 Steps 2". A name
+    that each reading titles as a different episode is titled as neither. `resolved` are the episodes Sonarr read
+    for the file (`EpisodeTitles.keyed_by`).
     """
 
     words = read.title_words
+    keyed = episodes.keyed_by(read, resolved)
     if read.member is None and read.titled_count is None:
-        return _TitleLead(episodes.exactly(words, resolved), frozenset(), words)
+        return _TitleLead(episodes.exactly(words, keyed), frozenset(), words)
     lead = episodes.leading(words)
-    season = bare_season(read)
-    reads_whole = season is None or season in episodes.series_words
-    if reads_whole and (lead.titled is None or read.titled_count is not None):
+    if lead.titled is None or read.titled_count is not None:
         whole = whole_words(read.stem.text)
-        if (equal := episodes.exactly(whole, resolved)) is not None:
+        if (equal := episodes.exactly(whole, keyed)) is not None:
             if lead.titled is None:
                 return _TitleLead(equal, lead.leaders, whole)
             if lead.titled.ep_id != equal.ep_id:
