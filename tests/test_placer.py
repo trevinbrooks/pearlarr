@@ -448,6 +448,22 @@ class TestAssignEpisodeTitle:
 
         assert placed == {name: ((603,), PlacementVerdict.EPISODE_TITLE)}
 
+    @pytest.mark.parametrize(
+        ("series", "name", "title"),
+        [
+            ("Show", "show - 10 - 1 = [grp].mkv", "10 - 1 ="),
+            ("Show", "show Season 2 - 10 - 1 = [grp].mkv", "10 - 1 ="),
+            ("Show", "show - 1 2 3 [grp].mkv", "1 2 3"),
+            ("Cat x Dog", "cat x dog - 15 x 15 [grp].mkv", "15 x 15"),
+            ("Show No. 8", "show no 08 - 10 - 1 = [grp].mkv", "10 - 1 ="),
+        ],
+    )
+    def test_a_title_of_numbers_read_whole_names_the_episode(self, series: str, name: str, title: str) -> None:
+        # The count is one of the title's numbers. A season tag, or the series title's own number, is no part of it.
+        placed = by_name(place({name: parsed_info()}, _scope(_FIRST_THREE, series=series, titles={603: title})))
+
+        assert placed == {name: ((603,), PlacementVerdict.EPISODE_TITLE)}
+
     @pytest.mark.parametrize("tag", ["S1", "Season 1", "1st Season", "1", "I"])
     def test_a_names_season_tag_and_count_spell_no_title(self, tag: str) -> None:
         # The third episode is titled "1.2", which the season and the count spell.

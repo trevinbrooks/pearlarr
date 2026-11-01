@@ -606,6 +606,22 @@ def whole_words(text: str) -> tuple[str, ...]:
     return folded_words(_SEASON_TAG.sub(" ", text))
 
 
+# A bare number closing the text before a name's count, right behind a word: "Show 2 - 05".
+_BARE_SEASON = re.compile(r"(?<=[^\W\d_])[\s.]+(\d{1,2})$")
+
+
+def bare_season(read: NameRead) -> str | None:
+    """A member's bare number right behind a word, just before its count, folded: "2" of "Show 2 - 05". Else None.
+
+    It is the name's own season unless the series title holds it ("Show No. 8 - 05"). A season tag's number is not
+    bare ("Show Season 2 - 05").
+    """
+
+    if read.member is None or (found := _BARE_SEASON.search(_SEASON_TAG.sub(" ", read.member.prefix))) is None:
+        return None
+    return folded_words(found.group(1))[0]
+
+
 def _blanked(text: str) -> str:
     """The text with each bracketed group (a group's tag, a CRC) blanked out in place: no part of a title."""
 
