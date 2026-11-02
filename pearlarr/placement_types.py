@@ -9,6 +9,24 @@ from typing import NamedTuple, Self
 
 from .manual_import import NO_IDENTIFIED, EntryNames, IdentifiedNames
 from .seadex_types import NO_ALIASES, EpisodeKey, ParsedFileInfo, SonarrEpisode, SpecialAliases, index_episodes_by_key
+from .tvdb_orders import NO_ORDERING, OrderRow, SeriesOrdering
+
+
+@dataclass(frozen=True, slots=True)
+class EpisodeOrder:
+    """Another TVDB order of the series, read onto Sonarr's episodes through the TVDB episode ids.
+
+    An episode only that order has (a split or a merged one) has a key but no id.
+    """
+
+    id_by_key: Mapping[EpisodeKey, int]
+    """`(season, episode)` in the order -> Sonarr's episode id, for the episodes Sonarr has."""
+
+    keys: frozenset[EpisodeKey]
+    """Every `(season, episode)` the order numbers, Sonarr episode or not."""
+
+    def __post_init__(self) -> None:
+        object.__setattr__(self, "id_by_key", MappingProxyType(dict(self.id_by_key)))
 
 
 @dataclass(frozen=True, slots=True)
@@ -31,20 +49,39 @@ class EpisodeIndex:
     """`(season, episode)` -> episode id (missing numbers collapse to
     `SONARR_MISSING_KEY`, first record wins, via `index_episodes_by_key`)."""
 
+    orders: Mapping[str, EpisodeOrder] = field(default_factory=dict[str, EpisodeOrder])
+    """The series' other TVDB orders, by name, each read onto these episodes. Never the official order."""
+
     def __post_init__(self) -> None:
         # Detach from the caller's dicts, then wrap read-only.
         object.__setattr__(self, "by_id", MappingProxyType(dict(self.by_id)))
         object.__setattr__(self, "id_by_key", MappingProxyType(dict(self.id_by_key)))
+        object.__setattr__(self, "orders", MappingProxyType(dict(self.orders)))
 
 
-def episode_index(ep_list: Iterable[SonarrEpisode]) -> EpisodeIndex:
-    """Fold one `/api/v3/episode` fetch into the `EpisodeIndex` facets."""
+def episode_index(ep_list: Iterable[SonarrEpisode], ordering: SeriesOrdering = NO_ORDERING) -> EpisodeIndex:
+    """Fold one `/api/v3/episode` fetch into the `EpisodeIndex` facets, with `ordering.others` read onto it."""
 
     with_ids = [ep for ep in ep_list if ep.id]
+    id_by_tvdb = {ep.tvdb_id: ep.id for ep in with_ids if ep.tvdb_id}
     return EpisodeIndex(
         by_id={ep.id: ep for ep in with_ids},
         id_by_key={key: ep.id for key, ep in index_episodes_by_key(with_ids).items()},
+        orders={name: _read_order(rows, id_by_tvdb) for name, rows in ordering.others.items()},
     )
+
+
+def _read_order(rows: Iterable[OrderRow], id_by_tvdb: Mapping[int, int]) -> EpisodeOrder:
+    """The order read onto Sonarr's episodes: the first row of a repeated key wins."""
+
+    id_by_key: dict[EpisodeKey, int] = {}
+    keys: set[EpisodeKey] = set()
+    for row in rows:
+        key = EpisodeKey(row.season, row.episode)
+        keys.add(key)
+        if (ep_id := id_by_tvdb.get(row.tvdb_id)) is not None:
+            id_by_key.setdefault(key, ep_id)
+    return EpisodeOrder(id_by_key, frozenset(keys))
 
 
 def all_specials(series: EpisodeIndex, ids: Iterable[int]) -> bool:

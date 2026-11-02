@@ -74,10 +74,12 @@ from pearlarr.seadex_types import (
     RadarrItem,
     RemotePathMapping,
     SeadexDict,
+    SeasonTypeCount,
     SonarrEpisode,
     SonarrItem,
 )
 from pearlarr.sonarr_episodes import sonarr_series_fingerprint
+from pearlarr.tvdb_orders import NO_ORDERING, OFFICIAL_ORDER
 
 from .builders import (
     PENDING_ADDED,
@@ -130,6 +132,8 @@ class _Item:
     monitored: bool
     tvdbId: int
     tmdbId: int
+    seasonType: str = OFFICIAL_ORDER
+    seasonTypes: tuple[SeasonTypeCount, ...] = ()
 
     def __init__(self, **kw: object) -> None:
         self.__dict__.update(kw)
@@ -218,6 +222,7 @@ class _FakeRunServices(RunServices):
         self.grab_requests: list[GrabRequest] = []
         self.no_releases_calls: list[tuple[int, CacheRecord]] = []
         self.invalid_selection_skips = 0
+        self.pauses_owed = 0
 
     @property
     @override
@@ -312,6 +317,10 @@ class _FakeRunServices(RunServices):
         self.invalid_selection_skips += 1
 
     @override
+    def owe_pause(self) -> None:
+        self.pauses_owed += 1
+
+    @override
     def grab_and_cache(self, req: GrabRequest) -> None:
         self.grab_requests.append(req)
 
@@ -343,7 +352,7 @@ def test_fake_overrides_the_full_public_surface() -> None:
 
     # Loop-driven members (the runner calls these, strategies never do), so the
     # fake doesn't script them.
-    lifecycle = {"begin_run", "ctx", "is_preview", "mark_dirty"}
+    lifecycle = {"begin_run", "ctx", "is_preview", "mark_dirty", "pay_pause"}
     surface = {
         name
         for name, member in vars(RunServices).items()
@@ -428,8 +437,9 @@ class TestRunStartHook:
     """
 
     def test_sonarr_get_items_clears_ep_list_cache(self, monkeypatch: pytest.MonkeyPatch) -> None:
-        series: list[SonarrItem] = [_Item(id=5), _Item(id=7)]
+        series: list[SonarrItem] = [_Item(id=5, tvdbId=50), _Item(id=7, tvdbId=70)]
         strat = make_sonarr_sync(ep_list_cache={5: [sonarr_ep(1, 1)]})
+        strat._episodes._orderings = {5: NO_ORDERING}
 
         def _all_series() -> list[SonarrItem]:
             return series
@@ -439,8 +449,9 @@ class TestRunStartHook:
         result = strat.get_items()
 
         assert result == series
-        # The episode collaborator drops its cache + re-fingerprints as it enumerates.
+        # The episode collaborator drops its caches + re-fingerprints as it enumerates.
         assert strat._episodes._ep_list_cache == {}
+        assert strat._episodes._orderings == {}
         assert strat._episodes._series_fp == sonarr_series_fingerprint([5, 7])
 
 
@@ -510,7 +521,6 @@ class TestProcessAlIdThreadsServices:
             _services=run,
             _episodes=episodes,
             _config=make_config(sleep_time=0),
-            _clock=FakeClock(),
             ignore_movies_in_radarr=False,
             logger=make_logger(),
         )
@@ -518,6 +528,7 @@ class TestProcessAlIdThreadsServices:
         strat.process_al_id(_Item(id=1, title="Title"), 5, MappingEntry(anilist_id=5))
         assert run.log_entry_status_calls == [(EntryState.NO_EPISODES, "Title")]
         assert run.log_al_title_calls == []
+        assert run.pauses_owed == 1
         # anime-id empty is NOT the AniBridge case -> no warning surfaced.
         assert diagnostic_messages(recording, Severity.WARNING) == []
 
@@ -535,7 +546,6 @@ class TestProcessAlIdThreadsServices:
             _services=run,
             _episodes=episodes,
             _config=make_config(sleep_time=0),
-            _clock=FakeClock(),
             ignore_movies_in_radarr=False,
             logger=make_logger(),
         )
@@ -592,7 +602,6 @@ class TestProcessAlIdThreadsServices:
             _services=run,
             _episodes=ScriptedEpisodes(FakeSonarrClient(episodes=[])),
             _config=make_config(sleep_time=0),
-            _clock=FakeClock(),
             ignore_movies_in_radarr=True,
             logger=make_logger(),
         )
@@ -612,7 +621,6 @@ class TestProcessAlIdThreadsServices:
             _services=run,
             _episodes=ScriptedEpisodes(FakeSonarrClient(episodes=[])),
             _config=make_config(sleep_time=0),
-            _clock=FakeClock(),
             ignore_movies_in_radarr=True,
             all_radarr_movies=None,
             logger=make_logger(),
@@ -2465,8 +2473,14 @@ _EP2 = sonarr_ep(1, 2, ep_id=102, episode_file_id=0)
 _STAMP = "2026-01-01 00:00:00"
 
 
-def _sonarr_seed_run(mode: ImportWaitMode, *, store: FakeCacheStore, sonarr: FakeSonarrClient) -> _FakeRunServices:
-    """Drive a Sonarr `process_al_id` for entry 5 (episode 102 of series 7) listing one two-file torrent."""
+def _seed_episodes(sonarr: FakeSonarrClient, *, unread: frozenset[int] = frozenset()) -> ScriptedEpisodes:
+    """Entry 5's window is episode 102 of `sonarr`'s series, and the `unread` series have no order record."""
+
+    return ScriptedEpisodes(sonarr, windows={5: [_EP2]}, unread=unread)
+
+
+def _sonarr_seed_run(mode: ImportWaitMode, *, store: FakeCacheStore, episodes: ScriptedEpisodes) -> _FakeRunServices:
+    """Drive a Sonarr `process_al_id` for entry 5 (series 7) listing one two-file torrent."""
 
     seadex: SeadexDict = {
         "NAN0": rg_group({_SEED_URL: url_item(url=_SEED_URL, infohash="h1", download=True, files=list(_SEED_FILES))}),
@@ -2483,7 +2497,7 @@ def _sonarr_seed_run(mode: ImportWaitMode, *, store: FakeCacheStore, sonarr: Fak
     strat = make_bare_instance(
         SonarrSync,
         _services=run,
-        _episodes=ScriptedEpisodes(sonarr, windows={5: [_EP2]}),
+        _episodes=episodes,
         _parse=_ScriptedParse({_SEED_URL: tuple(SeedFile(name, 1000, parses[name]) for name in _SEED_FILES)}),
         _listings=_ScriptedListings(),
         _config=make_config(sleep_time=0),
@@ -2545,7 +2559,7 @@ class TestSonarrProcessAlIdSeeds:
         store.put_pending(Arr.SONARR, "h1", resident.to_json())
         sonarr = FakeSonarrClient(episodes=[_EP1, _EP2])
 
-        run = _sonarr_seed_run(ImportWaitMode.BLOCKING, store=store, sonarr=sonarr)
+        run = _sonarr_seed_run(ImportWaitMode.BLOCKING, store=store, episodes=_seed_episodes(sonarr))
 
         (req,) = run.grab_requests
         (seed,) = req.pending_seeds.values()
@@ -2645,13 +2659,39 @@ class TestSonarrProcessAlIdSeeds:
         store = _CountingStore()
         sonarr = FakeSonarrClient(episodes=[_EP1, _EP2])
 
-        run = _sonarr_seed_run(ImportWaitMode.OFF, store=store, sonarr=sonarr)
+        run = _sonarr_seed_run(ImportWaitMode.OFF, store=store, episodes=_seed_episodes(sonarr))
 
         (req,) = run.grab_requests
         assert req.pending_seeds == NO_SEEDS
         assert store.get_pending_record_calls == 0
         # The placement still runs: the planner's coverage never depends on the wait mode.
         assert req.seadex_dict["NAN0"].urls[_SEED_URL].episodes == [EpisodeRecord(season=1, episode=2, size=1000)]
+
+
+class TestSonarrProcessAlIdOrdersUnread:
+    """A grab reads the title's series and every stored record's series, and asks whether any has no order record."""
+
+    @pytest.mark.parametrize(
+        ("unread", "expected"),
+        [
+            pytest.param(frozenset[int](), False, id="all-read"),
+            pytest.param(frozenset({7}), True, id="its-own-series"),
+            pytest.param(frozenset({8}), True, id="a-stored-records-series"),
+        ],
+    )
+    def test_the_grab_request_carries_whether_any_series_is_unread(
+        self, unread: frozenset[int], expected: bool
+    ) -> None:
+        # Series 8's record already holds the torrent entry 5 lists, so the grab places it under that record too.
+        store = FakeCacheStore()
+        resident = pending_import(infohash="h1", al_id=22, series_id=8, seadex_files=list(_SEED_FILES))
+        store.put_pending(Arr.SONARR, "h1", resident.to_json())
+        episodes = _seed_episodes(FakeSonarrClient(episodes=[_EP1, _EP2]), unread=unread)
+
+        run = _sonarr_seed_run(ImportWaitMode.BLOCKING, store=store, episodes=episodes)
+
+        (req,) = run.grab_requests
+        assert req.orders_unread is expected
 
 
 class TestRadarrProcessAlIdSeeds:

@@ -68,11 +68,18 @@ class ArrSync[ItemT: ArrItem](ImportCompleter):
     @property
     @abstractmethod
     def warms_episodes(self) -> bool:
-        """Whether `prefetch_episodes` does real work."""
+        """Whether `prefetch_episodes` does real work. The run calls `prefetch_orders` only when it does."""
 
     @abstractmethod
     def prefetch_episodes(self, items: list[ItemT], *, progress: ProgressSink | None = None) -> int:
         """Warm per-item network caches concurrently before the scan loop, returning how many were attempted."""
+
+    @abstractmethod
+    def prefetch_orders(self, items: list[ItemT], *, progress: ProgressSink | None = None) -> int:
+        """Refetch the due TVDB episode orders of the series the run reads, returning how many were written.
+
+        Runs after `prefetch_episodes`, only when `warms_episodes`.
+        """
 
     @abstractmethod
     def history_since(self, date: str) -> list[HistoryRecord] | None:

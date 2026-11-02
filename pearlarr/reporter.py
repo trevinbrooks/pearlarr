@@ -194,6 +194,9 @@ class PerTitleState:
     title_refuted_groups: list[str] = field(default_factory=list[str])
     """Groups with a release whose titles refute its numbers and that placed nothing, never grabbed, so the title
     stays uncached and re-warns until a hand import covers it."""
+    orders_unread: bool = False
+    """A series the placement read has no stored TVDB orders, so the title stays uncached and re-checks. Nothing
+    for the user to do."""
     current_title: str | None = None
     """Title of the entry currently being processed, so grabs and the summary can attribute what they grab."""
     current_url: str | None = None
@@ -237,6 +240,8 @@ class RunContext:
     pending_states: dict[str, PendingState] = field(default_factory=dict[str, PendingState])
     """Observed status of each carried-over record, keyed by infohash. Never a this-run grab, which stays
     `added`."""
+    pause_owed: bool = False
+    """An id's queries owe the `advanced.sleep_time` pause. The run loop sleeps it before the next id."""
 
 
 def is_preview(ctx: RunContext, qbit: qbittorrentapi.Client | None) -> bool:

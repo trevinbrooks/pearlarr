@@ -69,6 +69,7 @@ environment:
 ### Stopping, and `stop_grace_period`
 
 `docker stop` sends SIGTERM to supercronic, which stops scheduling and waits for an in-flight run to finish. Docker escalates to SIGKILL after `stop_grace_period`, default ten seconds.
+A stop during the catch-up run at start is passed on to that run instead. It stops cleanly, keeping every title it finished, and the container exits without starting the schedule.
 Ten seconds is not enough once a wait pass is in flight: the default `hybrid` `imports.wait_mode` can legitimately hold a run for up to `imports.wait_timeout`. Raise the grace period past it so a routine `docker stop` does not SIGKILL a mid-import run:
 
 ```yaml
@@ -89,7 +90,7 @@ Two options:
 - **The built-in loop**: `pearlarr run scheduled` (or bare `pearlarr`) runs every configured arr each `schedule.interval_hours`, re-reading the config each cycle so edits take effect without a restart.
   Run it under a process supervisor (systemd service, launchd, etc.). It exits 0 on SIGTERM, so ordinary service stops are clean.
 - **Your own scheduler**: cron or a systemd timer invoking `pearlarr run single`.
-  Failed runs exit non-zero, so cron mail and `OnFailure=` hooks work as expected.
+  Failed runs exit non-zero, so cron mail and `OnFailure=` hooks work as expected. A run stopped with SIGTERM exits 0.
 
 If two invocations pointing at the same data directory ever overlap, the second warns `Another Pearlarr run is active in <data_dir> - skipping this run` and exits non-zero (in scheduled mode, the loop retries next cycle).
 Running multiple instances *intentionally* is fine: give each its own data directory (`--data-dir` or `PEARLARR_DATA_DIR`), which also gives each its own lock.
@@ -143,8 +144,9 @@ To roll back anyway, reinstall the older version and restore the cache backup ta
 
 Pearlarr is safe to interrupt (Ctrl-C, `docker stop`, a crash, a power cut):
 
-- **Decisions commit once per arr, when that arr finishes.**
-  A kill mid-run rolls the staged writes back, so nothing is half-recorded. The next run re-evaluates that arr from the last completed state.
+- **Decisions commit after each title.**
+  A stop or kill mid-run keeps every finished title and rolls back the one in flight, so nothing is half-recorded. The next run re-evaluates that title.
+  SIGTERM (`docker compose run` one-offs, a service stop, `kill`) ends the run cleanly with exit 0.
 - **Torrents already handed to qBittorrent stay there.**
   The next run recognizes them by hash ("already in qBittorrent") and does not add duplicates.
 - **`cache.db` cannot be half-written.**
@@ -152,7 +154,7 @@ Pearlarr is safe to interrupt (Ctrl-C, `docker stop`, a crash, a power cut):
 - **The run lock cannot wedge.**
   It is an OS-level advisory lock, released by the kernel when the process dies, so a crash never blocks future runs.
 
-An interrupted wait pass strands nothing either: downloads keep going in qBittorrent, and the next run (re-evaluating the title, since its outcome was never committed) recognizes the torrent as already added and, with a non-`off` `imports.wait_mode`, re-registers it for the wait pass.
+An interrupted wait pass strands nothing either: downloads keep going in qBittorrent, and each grab's pending import was committed with its title, so a later run picks it up.
 
 ## Uninstalling
 

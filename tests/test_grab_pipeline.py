@@ -12,6 +12,7 @@ login happens. The client `add` is faked by `FakeTorrents`.
 """
 
 from collections.abc import Mapping
+from dataclasses import replace
 from datetime import datetime, timedelta
 from typing import Any, NamedTuple
 
@@ -60,7 +61,7 @@ from .builders import (
     rg_group,
     url_item,
 )
-from .fakes import FakeClock, diagnostic_messages, install_recording_hub
+from .fakes import diagnostic_messages, install_recording_hub
 
 
 def _stub_add_torrent(req: GrabRequest) -> tuple[int, list[ReleaseOutcome]]:
@@ -817,11 +818,9 @@ class TestGrabAndCacheAtTheCap:
         assert pipeline._ctx.stats.needs_action == []
 
     def test_a_held_title_is_neither_cached_nor_a_needs_action_row(self) -> None:
-        # Held is not a problem to act on: the title stays uncached so the next run grabs it, and the run keeps
-        # pacing through the clock.
-        clock = FakeClock()
+        # Held is not a problem to act on: the title stays uncached so the next run grabs it.
         torrents = FakeTorrents({"h1": (AddOutcome.ADDED, "Show-RG")})
-        pipeline = _pipeline(torrents=torrents, max_torrents_to_add=1, sleep_time=3, _clock=clock)
+        pipeline = _pipeline(torrents=torrents, max_torrents_to_add=1)
         pipeline._anilist.al_cache.update({42: {}})
         pipeline._ctx.per_title.current_title = "Show S1"
         pipeline._ctx.torrents_added = 1
@@ -832,7 +831,6 @@ class TestGrabAndCacheAtTheCap:
         assert pipeline.cache_store.get_entry(Arr.SONARR, 42) is None
         assert pipeline._ctx.stats.needs_action == []
         assert pipeline._ctx.stats.held_by_cap == 1
-        assert clock.sleeps == [3]
 
     def test_a_held_title_posts_the_held_status(self) -> None:
         recording = install_recording_hub()
@@ -1259,6 +1257,17 @@ class TestPlacementInputMissing:
         pipeline.grab_and_cache(_entry_request(seadex_dict, input_missing=True, hashes=["h1"]))
 
         assert [r.kind for r in pipeline._ctx.stats.needs_action] == [NeedsActionKind.GRAB_FAILED]
+
+
+def test_a_title_read_without_its_tvdb_orders_stays_uncached_with_nothing_to_do() -> None:
+    # SkyHook was down before the series' first fetch: the title re-checks next run, and no row asks for a hand.
+    seadex_dict: SeadexDict = {"RG": rg_group({"u1": url_item(url="u1", infohash="h1", download=False)})}
+    pipeline = _on_entry(_pipeline(torrents=FakeTorrents({}), sleep_time=0))
+
+    pipeline.grab_and_cache(replace(_entry_request(seadex_dict, hashes=[]), orders_unread=True))
+
+    assert pipeline.cache_store.get_entry(Arr.SONARR, 42) is None
+    assert pipeline._ctx.stats.needs_action == []
 
 
 class _HandImportHold(NamedTuple):

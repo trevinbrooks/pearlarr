@@ -152,7 +152,6 @@ class SonarrSync(ArrSync[SonarrItem]):
 
         self._services = services
         self._config = deps.config
-        self._clock = deps.clock
         self.logger = deps.logger
         self._mappings = deps.mappings
         self.anibridge = deps.mappings.anibridge
@@ -176,7 +175,8 @@ class SonarrSync(ArrSync[SonarrItem]):
         # Episode-domain collaborator: owns the per-run episode cache + series-id
         # fingerprint and the (series, al_id, mapping) -> episodes resolution. Built
         # from the shared deps + this client. The strategy delegates get_items /
-        # prefetch_episodes to it and reads its series_fp for the parse cache.
+        # prefetch_episodes / prefetch_orders to it, reads its series_fp for the parse
+        # cache, and builds every episode index with its orders_for.
         self._episodes = SonarrEpisodes(deps, self.sonarr, self._services)
 
         # Listing collaborator: reads every SeaDex entry of the series once per run. That gives the windows a
@@ -288,6 +288,19 @@ class SonarrSync(ArrSync[SonarrItem]):
         return self._episodes.prefetch(items, progress=progress)
 
     @override
+    def prefetch_orders(self, items: list[SonarrItem], *, progress: ProgressSink | None = None) -> int:
+        """Refetch the due TVDB orders of the series the scan reads and of every stored record's series.
+
+        A record's series is read at grab and import whether or not its own item needs a scan.
+        """
+
+        series_ids = self._episodes.needs_scan_ids(items)
+        if self._services.import_wait_mode is not ImportWaitMode.OFF:
+            records = self._services.records
+            series_ids.extend(sid for record in records.hydrate(records.rows()).values() for sid in record.series_ids)
+        return self._episodes.prefetch_orders(series_ids, progress=progress)
+
+    @override
     def history_since(self, date: str) -> list[HistoryRecord] | None:
         """Sonarr history since `date` (delegates to the client)."""
 
@@ -375,7 +388,7 @@ class SonarrSync(ArrSync[SonarrItem]):
                         movie.title,
                     )
 
-                self._clock.sleep(self._config.advanced.sleep_time)
+                run.owe_pause()
                 return
 
         # Get the episode list for all relevant episodes
@@ -399,7 +412,7 @@ class SonarrSync(ArrSync[SonarrItem]):
                 # ANIBRIDGE) and a degraded imdb/tmdb-resolved entry (mode ANIME_IDS),
                 # while a legit Kometa whole-series entry (source ANIME_IDS) stays quiet.
                 hub_warn(f"AniBridge has no usable season ranges for {title.display} - skipping")
-            self._clock.sleep(self._config.advanced.sleep_time)
+            run.owe_pause()
             return
 
         # If all episodes are unmonitored, then skip if ignore_unmonitored is switched on
@@ -407,7 +420,7 @@ class SonarrSync(ArrSync[SonarrItem]):
             run.log_anilist_item_unmonitored(
                 item_title=title.display,
             )
-            self._clock.sleep(self._config.advanced.sleep_time)
+            run.owe_pause()
             return
 
         # Now that we have the episodes, log the active entry with its
@@ -446,11 +459,15 @@ class SonarrSync(ArrSync[SonarrItem]):
         waits_on_imports = run.import_wait_mode is not ImportWaitMode.OFF
         hashes = entry_hashes(seadex_dict)
         stored: dict[str, PendingImport] = run.records.stored_records(hashes) if waits_on_imports else {}
-        indexes = self._series_indexes(
-            {sonarr_series_id, *(sid for record in stored.values() for sid in record.series_ids)}
-        )
+        series_ids = {sonarr_series_id, *(sid for record in stored.values() for sid in record.series_ids)}
+        indexes = self._series_indexes(series_ids)
         listings = self._listings.read(sonarr_series_id, self.item_anilist_ids(item, log_ignored=False))
-        scope = SeedScope(al_id, episode_index(ep_list), indexes.get(sonarr_series_id, episode_index([])), title.names)
+        scope = SeedScope(
+            al_id,
+            episode_index(ep_list, self._episodes.orders_for(sonarr_series_id)),
+            indexes.get(sonarr_series_id, episode_index([])),
+            title.names,
+        )
         placed = EntryPlacements.place(
             scope,
             self._parse.parsed_files(seadex_dict, series_fp=self._episodes.series_fp),
@@ -519,6 +536,7 @@ class SonarrSync(ArrSync[SonarrItem]):
                 coverage=coverage,
                 pending_seeds=pending_seeds,
                 input_missing_groups=placed.input_missing_groups(seadex_dict),
+                orders_unread=self._episodes.orders_unread(series_ids),
             ),
         )
 
@@ -526,7 +544,7 @@ class SonarrSync(ArrSync[SonarrItem]):
         """One index per series whose whole list served this run (a cold read fetches once); an unread one is absent."""
 
         return {
-            sid: episode_index(episodes)
+            sid: episode_index(episodes, self._episodes.orders_for(sid))
             for sid in series_ids
             if (episodes := self._episodes.cached_episodes(sid)) is not None
         }

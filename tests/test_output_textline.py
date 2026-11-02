@@ -1155,6 +1155,7 @@ def _exemplars() -> list[Event]:
             sonarr_parse=1,
             pending_imports=0,
             guard_facts=0,
+            tvdb_orders=0,
             size_bytes=4096,
         ),
         CacheIntegrityReported(result="ok"),

@@ -7,6 +7,10 @@ Pearlarr is a fork of [bbtufty/seadexarr](https://github.com/bbtufty/seadexarr).
 
 ## [Unreleased]
 
+### Added
+
+- Sonarr runs fetch the TVDB episode orders (aired, DVD, and the others TVDB lists) of each series they check or a pending import waits on, from Sonarr's metadata service at `skyhook.sonarr.tv`, in a new "Fetching TVDB orders" boot step, and keep them in the cache (cache schema v6). A series is refetched after a week, or a month once it has ended and gone quiet. `pearlarr cache stats` counts the stored series. While SkyHook is unreachable, a title whose series has no stored orders yet stays unchecked and is retried next run.
+
 ### Changed
 
 - Pearlarr no longer fetches the tracker page of a release qBittorrent already has. A torrent SeaDex lists under two entries is fetched once instead of twice, and one whose tracker page is down or gone no longer fails the grab.
@@ -24,6 +28,10 @@ Pearlarr is a fork of [bbtufty/seadexarr](https://github.com/bbtufty/seadexarr).
 - When one file of a numbered pack carries the title of the episode another file is numbered for, both are left for a hand import instead of the titled file taking that episode.
 - A pack already downloading for one SeaDex entry now also imports for a second entry whose files it numbers right, even when a file it holds for the first is misnumbered there. That file still isn't placed.
 - A download with files pearlarr couldn't place, named with no group, now finishes once every episode holds one of its files at a listed size, whether Sonarr imported them or you did by hand, instead of warning every run until `pending_max_age_days`.
+- `pearlarr run single` now stops cleanly on SIGTERM and exits 0, like `run scheduled`.
+- A SIGTERM during the Sonarr episode fetch stops right away instead of finishing every queued request. One during the import wait notes how many records were left pending, as Ctrl-C does.
+- A stopped or killed run keeps every title it finished. Before, it lost all of that arr's decisions and the next run redid them.
+- `docker stop` during the container's catch-up run at start no longer hangs until Docker kills it. The run stops cleanly and the container exits without starting the schedule.
 
 ## [1.5.6] - 2026-10-25
 

@@ -708,6 +708,7 @@ The `paths` command: the resolved data directory and the files within it.
   "sonarr_parse": 412,
   "pending_imports": 0,
   "guard_facts": 0,
+  "tvdb_orders": 90,
   "size_bytes": 1179648
 }
 ```

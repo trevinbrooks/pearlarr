@@ -996,7 +996,7 @@ class ImportReconciler:
         votes: dict[int, GroupVotes] = {}
         by_series: dict[int, EpisodeSnapshot] = {}
         for series_id in pending.series_ids:
-            index = episode_index(lists[series_id])
+            index = episode_index(lists[series_id], self._episodes.orders_for(series_id))
             # Unfiltered: a cleanup-flagged sibling's files are on disk, so dropping it would loosen the guard.
             siblings = self._records.for_series(series_id, guards).values()
             votes[series_id] = GroupVotes(pending.own_group, tuple(record.own_group for record in siblings))

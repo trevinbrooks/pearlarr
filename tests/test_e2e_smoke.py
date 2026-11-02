@@ -8,8 +8,8 @@ external network leaves faked:
 
 * the SeaDex library, faked at the composition root's `SeaDexEntry` leaf.
 * qBittorrent, left unconfigured so the whole run is a perpetual preview.
-* the Arr HTTP (every raw endpoint rides the httpx-based `ArrHttp`) and the
-  AniList POST (on the shared web client), both mocked via `respx`.
+* the Arr HTTP (every raw endpoint rides the httpx-based `ArrHttp`), and the
+  AniList POST and SkyHook GET (on the shared web client), all mocked via `respx`.
 * the Nyaa lookup, faked at `torrents.get_nyaa_torrent`.
 
 Everything in between is the real wiring. The id flows by hand-wired three-way
@@ -35,9 +35,10 @@ import pearlarr.torrents as torrents
 from pearlarr.cli import run_single
 from pearlarr.manual_import import ImportWaitMode
 from pearlarr.output import current_hub
+from pearlarr.skyhook_client import SKYHOOK_URL
 
 from .builders import make_config, make_entry_record, make_torrent_record
-from .http_mock import register_sonarr_reads, sonarr_fixture
+from .http_mock import register_sonarr_reads, skyhook_fixture, sonarr_fixture
 
 # Three-way id agreement: series fixture id 228 carries tvdbId 299502. The inline
 # mapping ties it to AniList 20920. The faked SeaDex entry answers for 20920.
@@ -123,9 +124,9 @@ def test_sonarr_run_drives_real_composition_root(
     )
     (tmp_path / "config.yml").write_text(yaml.safe_dump(config.model_dump(mode="json")))
 
-    # The Sonarr + AniList HTTP boundary. respx covers every endpoint: the
-    # Sonarr reads ride the httpx-based ArrHttp, the AniList POST the shared
-    # web client.
+    # The Sonarr + AniList + SkyHook HTTP boundary. respx covers every endpoint: the
+    # Sonarr reads ride the httpx-based ArrHttp, the AniList POST and SkyHook GET the
+    # shared web client.
     with respx.mock:
         series_route = respx.get(f"{_BASE}/series").respond(json=sonarr_fixture("series_subset.json"))
         register_sonarr_reads(
@@ -134,6 +135,10 @@ def test_sonarr_run_drives_real_composition_root(
             parse=sonarr_fixture("parse_bahamut_s01e01.json"),
         )
         respx.post(_ANILIST_URL).respond(json=_ANILIST_BODY)
+        # The series lists only the official order, so the fill asks for nothing else.
+        orders_route = respx.get(f"{SKYHOOK_URL}/{_TVDB}/official").respond(
+            json=skyhook_fixture("tvdb_299502_official.json")
+        )
 
         result = run_single(sonarr=True, import_wait_mode=ImportWaitMode.OFF)
 
@@ -151,6 +156,8 @@ def test_sonarr_run_drives_real_composition_root(
     assert series_route.call_count == 1
     assert f"GET {_BASE}/episode" in respx_fired
     assert f"GET {_BASE}/parse" in respx_fired
+    # The series' TVDB orders were fetched at boot.
+    assert orders_route.call_count == 1
     # The resolved entry's release reached the (preview) grab at the torrent source.
     assert nyaa_calls == [_NYAA_RELEASE_URL]
     # ...and the whole pass logged no error (a swallowed failure would tally on

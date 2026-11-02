@@ -366,6 +366,14 @@ class _InterruptSleepClock(FakeClock):
         raise KeyboardInterrupt
 
 
+class _StopSleepClock(FakeClock):
+    """A clock whose sleep raises `SystemExit` (a SIGTERM stop mid-wait)."""
+
+    @override
+    def sleep(self, seconds: float) -> None:
+        raise SystemExit(0)
+
+
 # A timestamp far enough in the past/future that the TTL verdict is fixed no
 # matter when the suite runs (cutoff = now - imports.pending_max_age_days).
 _FRESH = "2999-01-01 00:00:00"
@@ -1890,6 +1898,28 @@ class TestRunMonitor:
         assert note.severity is Severity.INFO
         assert "1 left pending" in note.message
         assert note.origin == LOG_NAME
+
+    def test_a_sigterm_stop_notes_what_is_left_and_propagates(self) -> None:
+        pending = pending_import(infohash="h", added_at=_FRESH)
+        mgr = make_orchestration_manager(
+            qbit=FakeQbit({"h": [FakeTorrent(progress=0.3)]}),
+            strategy=_RecordingStrategy(),
+            store_records=[pending],
+            pending=[pending],
+            import_wait_timeout=3600,
+            import_ready_timeout=600,
+            import_poll_interval=30,
+            clock=_StopSleepClock(),
+        )
+        view = RecordingWaitView()
+        recording = install_recording_hub()
+
+        with pytest.raises(SystemExit):
+            mgr.run_monitor(view=view)
+
+        assert set(mgr._records.rows()) == {"h"}
+        (note,) = recording.of_type(Diagnostic)
+        assert "1 left pending" in note.message
 
     def test_interrupt_mid_cycle_still_graduates_that_cycles_terminals(self) -> None:
         # A torrent that turned terminal in the SAME cycle the interrupt lands in

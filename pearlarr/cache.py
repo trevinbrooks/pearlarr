@@ -1,7 +1,8 @@
 """Persistent run cache: `CacheStore` owns `cache.db`, its schema, freshness checks, and writes.
 
-Writes stage in one deferred transaction and commit only at a non-preview `save`. Do NOT set
-`isolation_level=None` in `_connect`: real autocommit commits staged writes and breaks that gate.
+Writes stage in a deferred transaction until the next non-preview `save` commits them (a run saves
+after each title). Do NOT set `isolation_level=None` in `_connect`: real autocommit commits staged
+writes and breaks that gate.
 One `CacheStore` per arr, never shared across arrs or threads.
 """
 
@@ -27,6 +28,7 @@ from .output import hub_note
 from .sqlite_util import connect as _sqlite_connect
 from .sqlite_util import open_or_quarantine, rollback_and_close
 from .stamps import parse_stamp, parse_stamp_or_none, stamp_of
+from .tvdb_orders import StoredOrders
 
 # `CREATE TABLE IF NOT EXISTS` never alters an existing table: shape changes need a SCHEMA_VERSION bump + migration.
 # anilist_meta / sonarr_parse expose `fetched_at` as a VIRTUAL generated column, indexed for the TTL sweep's DELETE.
@@ -44,6 +46,8 @@ CREATE TABLE IF NOT EXISTS entries (
     coverage   TEXT,
     updated_at TEXT,
     fallback_satisfied INTEGER NOT NULL DEFAULT 0,
+    -- The TVDB order the entry's Sonarr series was numbered by when it was checked, NULL when none was recorded.
+    season_type TEXT,
     PRIMARY KEY (arr, al_id)
 );
 
@@ -92,10 +96,16 @@ CREATE TABLE IF NOT EXISTS history_checkpoints (
     since_date TEXT    NOT NULL,
     last_id    INTEGER NOT NULL
 );
+
+CREATE TABLE IF NOT EXISTS tvdb_orders (
+    -- One record per series, every TVDB order SkyHook lists for it, replaced whole on each fetch. Never evicted.
+    tvdb_id INTEGER PRIMARY KEY,
+    record  BLOB    NOT NULL
+);
 """
 
 # Current cache.db schema version, stored in `PRAGMA user_version`.
-SCHEMA_VERSION = 5
+SCHEMA_VERSION = 6
 
 _LOG = logging.getLogger(f"{LOG_NAME}.cache")
 
@@ -288,12 +298,20 @@ def _migrate_4_to_5(conn: sqlite3.Connection) -> None:
     conn.execute("ALTER TABLE pending_imports_v5 RENAME TO pending_imports")
 
 
+def _migrate_5_to_6(conn: sqlite3.Connection) -> None:
+    """Add `entries.season_type` (`_SCHEMA` already created the `tvdb_orders` table)."""
+
+    if not _has_column(conn, "entries", "season_type"):
+        conn.execute("ALTER TABLE entries ADD COLUMN season_type TEXT")
+
+
 _MIGRATIONS: dict[int, Callable[[sqlite3.Connection], None]] = {
     0: _migrate_0_to_1,
     1: _migrate_1_to_2,
     2: _migrate_2_to_3,
     3: _migrate_3_to_4,
     4: _migrate_4_to_5,
+    5: _migrate_5_to_6,
 }
 
 
@@ -353,6 +371,8 @@ class CacheRecord(TypedDict, total=False):
     updated_at: "str | datetime"
     fallback_satisfied: bool
     """Whether a public fallback satisfied the title."""
+    season_type: str
+    """The TVDB order the entry's Sonarr series was numbered by when it was checked."""
     torrent_hashes: list[str | None]
     """A remembered list can carry `None` (a hashless release), which the store preserves."""
 
@@ -366,6 +386,7 @@ class CachedEntry:
     url: str | None
     coverage: str | None
     fallback_satisfied: bool
+    season_type: str | None
 
 
 @dataclass(frozen=True, slots=True)
@@ -378,7 +399,7 @@ class HistoryCheckpoint:
     """The per-arr autoincrement id, for strict `record.id > last_id` dedup across the re-query overlap."""
 
 
-_ENTRY_SCALAR_COLUMNS = ("name", "url", "coverage", "updated_at", "fallback_satisfied")
+_ENTRY_SCALAR_COLUMNS = ("name", "url", "coverage", "updated_at", "fallback_satisfied", "season_type")
 
 # Sentinel stored in `torrent_hashes.infohash` (NOT NULL) for a remembered `None`. A real infohash is never empty.
 _NO_HASH = ""
@@ -395,6 +416,7 @@ _ANILIST_META = _JsonBlock("anilist_meta", ("al_id",))
 _SONARR_PARSE = _JsonBlock("sonarr_parse", ("filename",))
 _PENDING_IMPORTS = _JsonBlock("pending_imports", ("arr", "infohash"))
 _GUARD_FACTS = _JsonBlock("guard_facts", ("arr", "al_id"))
+_TVDB_ORDERS = _JsonBlock("tvdb_orders", ("tvdb_id",))
 
 
 class CacheStats(NamedTuple):
@@ -406,6 +428,7 @@ class CacheStats(NamedTuple):
     sonarr_parse: int
     pending_imports: int
     guard_facts: int
+    tvdb_orders: int
     size_bytes: int
 
 
@@ -476,6 +499,10 @@ class AbstractCacheStore(ABC):
     def put_guards(self, arr: Arr, al_id: int, guards: GuardFacts) -> None: ...
     @abstractmethod
     def get_guards(self, arr: Arr) -> dict[int, GuardFacts]: ...
+    @abstractmethod
+    def get_tvdb_orders(self, tvdb_id: int) -> StoredOrders | None: ...
+    @abstractmethod
+    def put_tvdb_orders(self, tvdb_id: int, record: StoredOrders) -> None: ...
     @abstractmethod
     def get_history_checkpoint(self, arr: Arr) -> HistoryCheckpoint | None: ...
     @abstractmethod
@@ -634,10 +661,11 @@ class CacheStore(AbstractCacheStore):
         """The scalar columns of an entry's row in one query, or None (the `torrent_hashes` child set is excluded)."""
 
         row = self._conn.execute(
-            "SELECT updated_at, name, url, coverage, fallback_satisfied FROM entries WHERE arr = ? AND al_id = ?",
+            "SELECT updated_at, name, url, coverage, fallback_satisfied, season_type FROM entries "
+            "WHERE arr = ? AND al_id = ?",
             (_arr_key(arr), al_id),
         ).fetchone()
-        return None if row is None else CachedEntry(row[0], row[1], row[2], row[3], bool(row[4]))
+        return None if row is None else CachedEntry(row[0], row[1], row[2], row[3], bool(row[4]), row[5])
 
     @override
     def torrent_hashes(self, arr: Arr, al_id: int) -> list[str | None]:
@@ -843,6 +871,21 @@ class CacheStore(AbstractCacheStore):
             )
         }
 
+    # -- TVDB orders -----------------------------------------------------------
+
+    @override
+    def get_tvdb_orders(self, tvdb_id: int) -> StoredOrders | None:
+        """The series' stored orders at any age, or None (also for a record that no longer reads)."""
+
+        raw = self._json_get(_TVDB_ORDERS, (tvdb_id,))
+        return None if raw is None else StoredOrders.from_json(raw)
+
+    @override
+    def put_tvdb_orders(self, tvdb_id: int, record: StoredOrders) -> None:
+        """Replace the series' stored orders (staged, persisted at a save point)."""
+
+        self._json_put(_TVDB_ORDERS, (tvdb_id,), record.to_json())
+
     # -- history checkpoints --------------------------------------------------
 
     @override
@@ -880,8 +923,14 @@ class CacheStore(AbstractCacheStore):
         return self._evict_stale_json(_SONARR_PARSE, cutoff)
 
     def _count(self, table: str) -> int:
-        """Row count of one table (the name comes from `stats`'s closed literals)."""
+        """Row count of one table (the name comes from `stats`'s closed literals).
 
+        0 for a table the file predates: `stats` opens the file read-only, before any run has migrated it.
+        """
+
+        listed = self._conn.execute("SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = ?", (table,))
+        if listed.fetchone() is None:
+            return 0
         row = self._conn.execute(f"SELECT count(*) FROM {table}").fetchone()
         return int(row[0]) if row else 0
 
@@ -901,6 +950,7 @@ class CacheStore(AbstractCacheStore):
             sonarr_parse=self._count("sonarr_parse"),
             pending_imports=self._count("pending_imports"),
             guard_facts=self._count("guard_facts"),
+            tvdb_orders=self._count("tvdb_orders"),
             size_bytes=size,
         )
 

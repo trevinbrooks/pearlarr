@@ -61,6 +61,9 @@ class GrabRequest:
     input_missing_groups: tuple[str, ...] = ()
     """Groups with a url whose grab-time placement waited on a read that failed this run, so a run may have
     been held: the title is never cached as done and re-checks next run."""
+    orders_unread: bool = False
+    """A series the placement read has no stored TVDB orders (SkyHook was down before its first fetch): the title
+    is never cached as done and re-checks next run."""
 
 
 class GrabPipeline:
@@ -82,7 +85,6 @@ class GrabPipeline:
         self._reporter = deps.reporter
         self.logger = deps.logger
         self.qbit = deps.qbit
-        self._clock = deps.clock
         # The hub's record seam, which the hub binds each run.
         self._records = records
         # Rebound each run by begin_run to the same ctx the engine holds, so the grab bookkeeping stays in sync.
@@ -311,7 +313,8 @@ class GrabPipeline:
         """Whether this title's outcome may be cached as done.
 
         Only if something was grabbed or nothing was skipped. A url held by the run cap, a fallback hold, a failed
-        grab, a failed read under a placement, or a pack the placement refused vetoes it.
+        grab, a failed read under a placement, a pack the placement refused, or a series without its TVDB orders
+        vetoes it.
         """
 
         per_title = self._ctx.per_title
@@ -331,6 +334,7 @@ class GrabPipeline:
             and not per_title.input_missing_groups
             and not per_title.misnumbered_groups
             and not per_title.title_refuted_groups
+            and not per_title.orders_unread
             and (added_this_title > 0 or not (per_title.private_only_skipped or per_title.unsupported_tracker_skipped))
         )
 
@@ -412,11 +416,12 @@ class GrabPipeline:
         )
 
     def grab_and_cache(self, req: GrabRequest) -> None:
-        """Shared per-id tail: add torrents, notify, cache the outcome, pace the run."""
+        """Shared per-id tail: add torrents, notify, cache the outcome."""
 
         any_to_download = self._planner.get_any_to_download(req.seadex_dict)
         # The strategy's placement facts land on the title's flags beside the add loop's own.
         self._ctx.per_title.input_missing_groups.extend(req.input_missing_groups)
+        self._ctx.per_title.orders_unread |= req.orders_unread
 
         added_this_title = 0
 
@@ -452,13 +457,11 @@ class GrabPipeline:
             if rec is not None:
                 self._ctx.stats.needs_action.append(rec)
 
-        self._clock.sleep(self._config.advanced.sleep_time)
-
     def _grab(self, req: GrabRequest) -> int:
         """Add this title's torrents and notify, returning the added count.
 
         The cap notice is logged here, once, by the title whose adds crossed it. The cache save belongs to the
-        engine's finalize site.
+        run loop.
         """
 
         # Fetched up front to keep the network calls in the run's request ordering.
