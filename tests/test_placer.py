@@ -2099,6 +2099,23 @@ class TestAssignReleaseRun:
             run[2]: ((), PlacementVerdict.SKIPPED),
         }
 
+    def test_a_covering_run_read_across_two_seasons_still_blocks_a_run_from_anywhere(self) -> None:
+        # Sonarr matched the 1..4 run onto two other seasons, so it settles nowhere: refused, it still outranks the
+        # run from anywhere, and nothing places. Read whole into one other season, it would be FOREIGN and the run
+        # from anywhere would place.
+        index = series_index({EpisodeKey(s, e): s * 100 + e for s in (1, 2, 3) for e in range(1, 5)})
+        covering = numbered_names("A", 4)
+        anywhere = [f"B - {n:02d} [grp].mkv" for n in (5, 6)]
+        reads = ((1, 1), (1, 2), (3, 1), (3, 2))
+        parsed = {
+            **{name: parsed_info(matched=(pair,)) for name, pair in zip(covering, reads, strict=True)},
+            **blind(anywhere),
+        }
+
+        result = place(parsed, TargetScope([201, 202], index))
+
+        assert by_name(result) == dict.fromkeys((*covering, *anywhere), ((), PlacementVerdict.SKIPPED))
+
     def test_a_one_to_n_run_outranks_a_run_from_anywhere(self) -> None:
         # Both fit the width. The release's own 1..N is the count, the other run is extras.
         offset = [f"extra - {n} [grp].mkv" for n in (14, 15, 16)]
@@ -3710,6 +3727,24 @@ class TestRunnerUps:
         result = place(parsed, TargetScope(list(range(1001, 1104)), index, names=EntryNames("Show")))
 
         assert by_name(result) == {name: ((1000 + n,), PlacementVerdict.RELEASE_RUN) for n, name in names.items()}
+
+    def test_a_refused_lower_copy_still_keeps_the_top_version_off_its_episode(self) -> None:
+        # Only the lower copy carries the disputed key, and its own key outranks the top version's borrowed pair.
+        # It is still in the running when the runner-ups are read, so the top version loses the episode to it
+        # before the copy is set aside.
+        top = "Show.102.v4.480p.DVD.FLAC2.0.x264-grp.mkv"
+        copy = "Show.102.Canon.Cut.v2.480p.DVD.FLAC2.0.x264-grp.mkv"
+        parsed = {
+            top: parsed_info(matched=((1, 2),)),
+            copy: parsed_info(season=1, episodes=(2,), matched=((1, 2),)),
+        }
+
+        result = place(parsed, self._scope())
+
+        assert by_name(result) == {
+            top: ((), PlacementVerdict.SKIPPED),
+            copy: ((), PlacementVerdict.DUPLICATE),
+        }
 
 
 class TestRefuseInterleavedSpecial:

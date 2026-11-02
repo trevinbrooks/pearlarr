@@ -5,14 +5,13 @@ No I/O. Reading a name's own numbers belongs in `release_names`, and placing fil
 
 import re
 from collections import Counter
-from collections.abc import Collection, Iterable, Mapping, Sequence
+from collections.abc import Collection, Iterable, Mapping
 from typing import NamedTuple, Self
 
 from .parse_reading import Reading
 from .placement_types import EpisodeIndex, PlacementBatch, TargetScope
 from .release_names import (
     NameRead,
-    NumberedRun,
     TitleGround,
     folded_words,
     is_extras_name,
@@ -286,13 +285,17 @@ class TitleEvidence(NamedTuple):
         return self.outside >= MIN_TITLE_HITS and not self.inside
 
 
-class _NameTitle(NamedTuple):
-    """One name read against the episode titles."""
+class NameTitle(NamedTuple):
+    """One name read on its own and against the episode titles."""
 
-    episode: int | None
-    """The episode the name is titled as: its specific title, carried by no other file of the torrent."""
+    read: NameRead
+    """The name read on its own: stem, run membership, title words, numbers."""
+    titled_as: int | None
+    """The episode the name is titled as: its specific title, carried by no other file of the torrent, else None."""
     leaders: frozenset[int]
     """Every episode whose title starts the name's tail: run evidence, read for run members only."""
+    extra: bool
+    """Whether the name is an extra: set aside, and left out of every count."""
 
 
 def _title_lead(episodes: EpisodeTitles, read: NameRead, resolved: Collection[int]) -> _TitleLead:
@@ -321,13 +324,9 @@ def _title_lead(episodes: EpisodeTitles, read: NameRead, resolved: Collection[in
 class TorrentNames(NamedTuple):
     """Every file name of the torrent, read once: stem, run membership, episode title, and whether it is an extra."""
 
-    reads: Mapping[str, NameRead]
-    """Each name's read."""
-    titles: Mapping[str, _NameTitle]
-    """Each name read against the episode titles."""
-    extras: frozenset[str]
-    """The extras: set aside, and left out of every count."""
-    episodes: EpisodeTitles
+    by_name: Mapping[str, NameTitle]
+    """Each name read on its own and against the episode titles, in `PlacementBatch.torrent_names` order."""
+    episode_titles: EpisodeTitles
     """The episode titles the names were read against."""
 
     @classmethod
@@ -339,54 +338,16 @@ class TorrentNames(NamedTuple):
         """
 
         ground = TitleGround.of(scope.names)
-        episodes = EpisodeTitles.of(scope.series, ground)
+        episode_titles = EpisodeTitles.of(scope.series, ground)
         reads = read_names(batch.torrent_names, ground)
-        leads = {name: _title_lead(episodes, read, readings[name].resolved) for name, read in reads.items()}
+        leads = {name: _title_lead(episode_titles, read, readings[name].resolved) for name, read in reads.items()}
         carriers = Counter(words for _file, words in {(reads[name].file, lead.words) for name, lead in leads.items()})
-        titles: dict[str, _NameTitle] = {}
-        extras: set[str] = set()
+        by_name: dict[str, NameTitle] = {}
         for name, lead in leads.items():
             titled = lead.titled
-            episode = titled.ep_id if titled is not None and carriers[lead.words] == 1 else None
-            titles[name] = _NameTitle(episode, lead.leaders)
+            titled_as = titled.ep_id if titled is not None and carriers[lead.words] == 1 else None
             # An extras word that belongs to the entry's titles or the name's episode title marks no extra.
             shield = ground.entry_words | frozenset(titled.words if titled is not None else ())
-            if not readings[name].keyed and is_extras_name(name, shield):
-                extras.add(name)
-        return cls(reads, titles, frozenset(extras), episodes)
-
-    @property
-    def counted(self) -> tuple[str, ...]:
-        """Every name except the extras: the names the evidence checks read."""
-
-        return tuple(name for name in self.reads if name not in self.extras)
-
-    def episode(self, name: str) -> int | None:
-        """The episode the name is titled as, else None."""
-
-        return self.titles[name].episode
-
-    def contradicts(self, name: str, ids: Sequence[int]) -> bool:
-        """Whether the name is titled as an episode that is not among `ids`."""
-
-        return (ep_id := self.episode(name)) is not None and ep_id not in ids
-
-    def confirms(self, name: str, ids: Sequence[int]) -> bool:
-        """Whether the episode the name is titled as is among `ids`."""
-
-        return (ep_id := self.episode(name)) is not None and ep_id in ids
-
-    def evidence(self, run: NumberedRun, window_ids: frozenset[int]) -> TitleEvidence:
-        """Count the members whose tail starts with only window titles, and those with only outside titles.
-
-        A tail matching titles on both sides counts for neither.
-        """
-
-        inside = outside = 0
-        for member in run.members:
-            sides = {ep_id in window_ids for ep_id in self.titles[member.name].leaders}
-            if sides == {True}:
-                inside += 1
-            elif sides == {False}:
-                outside += 1
-        return TitleEvidence(inside, outside)
+            extra = not readings[name].keyed and is_extras_name(name, shield)
+            by_name[name] = NameTitle(reads[name], titled_as, lead.leaders, extra)
+        return cls(by_name, episode_titles)

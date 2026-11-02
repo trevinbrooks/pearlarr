@@ -132,7 +132,7 @@ from collections.abc import Iterable, Mapping, Sequence
 from typing import NamedTuple
 
 from ._run_passes import pass_misnumbered_pack, pass_numbered_run, pass_release_run, pass_reread_season_runs
-from ._state import Placer
+from ._state import Placer, TorrentFile
 from ..episode_titles import MIN_TITLE_HITS
 from ..parse_reading import glued_counts, numbers_miss_the_series, parse_has_no_number
 from ..placement_types import EpisodeAssignment, PlacementBatch, PlacementVerdict, TargetScope
@@ -161,38 +161,41 @@ def assign_episode_ids(batch: PlacementBatch, scope: TargetScope) -> EpisodeAssi
     _pass_counted(state)
     pass_numbered_run(state)
     _pass_classify(state)
-    return EpisodeAssignment(tuple(state.verdicts[name] for name in state.batch.names))
+    return EpisodeAssignment(state.placements())
 
 
 def _pass_extras(state: Placer) -> None:
     """Set the extras aside as `PlacementVerdict.EXTRA`: never an episode, and left out of every count."""
 
-    for name in state.remaining():
-        if name in state.torrent.extras:
-            state.set_aside(name, PlacementVerdict.EXTRA)
+    for file in state.remaining():
+        if file.extra:
+            state.set_aside(file, PlacementVerdict.EXTRA)
 
 
 def _pass_refuse_refuted(state: Placer) -> None:
     """Reject each reading a file's title contradicts, its run's unconfirmed readings too, and hold unconfirmed counts.
 
     A seeded member's title refutes its run like any mate's. A member whose own title confirms its reading keeps
-    it, and one rejected for a mate's title is noted (`Placer.run_refuted`). A count no title confirms
+    it, and one rejected for a mate's title is noted (`TorrentFile.run_refuted`). A count no title confirms
     (`Placer.counted_by_title`) is held for a hand import, like a disputed one. Any rejection turns the count-based
     passes off.
     """
 
-    readings, torrent = state.readings, state.torrent
-    names = torrent.counted
-    titled = {name for name in names if (ids := readings[name].resolved) and torrent.contradicts(name, ids)}
-    unconfirmed = {name for name in names if readings[name].resolved and state.counted_by_title(name)}
+    files = state.counted
+    titled = {file for file in files if (ids := file.reading.resolved) and file.contradicts(ids)}
+    unconfirmed = {file for file in files if file.reading.resolved and state.counted_by_title(file)}
     refuted = set(titled)
     for run in state.counted_runs:
-        members = {member.name for member in run.whole}
-        if titled & members:
-            refuted |= {n for n in members if readings[n].inside and not torrent.confirms(n, readings[n].resolved)}
-    state.veto_names(refuted | unconfirmed)
-    state.run_refuted |= refuted - titled
-    state.disputed |= unconfirmed
+        member_files = set(state.files_of(run.whole))
+        if titled & member_files:
+            refuted |= {
+                file for file in member_files if file.reading.inside and not file.confirms(file.reading.resolved)
+            }
+    state.veto_each(refuted | unconfirmed)
+    for file in refuted - titled:
+        file.run_refuted = True
+    for file in unconfirmed:
+        file.disputed = True
     state.count_legs_barred |= bool(refuted or unconfirmed)
 
 
@@ -203,24 +206,29 @@ def _pass_refuse_disputed(state: Placer) -> None:
     """
 
     runs = state.counted_runs
-    candidates = {name: ids for name in state.torrent.counted if (ids := _disputes(state, name)) is not None}
-    by_position: set[str] = set()
+    candidates = {file: ids for file in state.counted if (ids := _disputes(state, file)) is not None}
+    by_position: set[TorrentFile] = set()
     for run in runs:
-        for name, ids in _positions_disputed(state, run).items():
-            candidates[name] = candidates.get(name, frozenset()) | ids
-            by_position.add(name)
-    disputed = {name for name, ids in candidates.items() if any(state.scope.admits(ep_id) for ep_id in ids)}
-    copies = [member for run in runs for member in run.superseded if member.name in disputed]
-    state.runner_ups.update(_runner_ups(state, disputed))
-    state.veto_names(disputed)
-    state.set_aside_each(state.remaining_members(copies), PlacementVerdict.DUPLICATE)
-    state.disputed |= disputed.difference(member.name for member in copies)
-    state.disputed_by_position |= by_position & disputed
-    state.disputed_elsewhere |= candidates.keys() - disputed
+        for file, ids in _positions_disputed(state, run).items():
+            candidates[file] = candidates.get(file, frozenset()) | ids
+            by_position.add(file)
+    disputed = {file for file, ids in candidates.items() if any(state.scope.admits(ep_id) for ep_id in ids)}
+    copies = [file for run in runs for file in state.files_of(run.superseded) if file in disputed]
+    # Runner-ups first: a rejected reading wins nothing, and a set-aside copy is out of the running.
+    for file, lost in _runner_ups(state, disputed).items():
+        file.runner_up_for = lost
+    state.veto_each(disputed)
+    state.set_aside_each([file for file in copies if file.remaining], PlacementVerdict.DUPLICATE)
+    for file in disputed.difference(copies):
+        file.disputed = True
+    for file in by_position & disputed:
+        file.disputed_by_position = True
+    for file in candidates.keys() - disputed:
+        file.disputed_elsewhere = True
     state.count_legs_barred |= bool(candidates)
 
 
-def _disputes(state: Placer, name: str) -> frozenset[int] | None:
+def _disputes(state: Placer, file: TorrentFile) -> frozenset[int] | None:
     """The episodes the name's own counts spread it over: its key's and the other count's. None when they agree.
 
     Only a count that is another episode's absolute number disputes. Beside a spelled-out key or a reading borrowed
@@ -228,63 +236,60 @@ def _disputes(state: Placer, name: str) -> frozenset[int] | None:
     when Sonarr's series match doesn't back the key, else the one the key was glued from (`glued_counts`).
     """
 
-    info = state.batch.parsed.get(name)
+    info = file.parsed
     if info is None:
         return None
-    reading = state.readings[name]
-    read = state.torrent.reads[name]
+    reading = file.reading
+    name_read = file.name_read
     by_absolute = state.facts.id_by_absolute
     resolved = frozenset(reading.resolved)
     if reading.borrowed or not info.episode_numbers or info.season_number is None:
         if not resolved:
             return None
-        counts: Iterable[int] = read.tagged_numbers
-    elif read.explicit_key:
-        counts = read.tagged_numbers
+        counts: Iterable[int] = name_read.tagged_numbers
+    elif name_read.explicit_key:
+        counts = name_read.tagged_numbers
     elif resolved and not reading.corroborated:
-        counts = read.bare_numbers
+        counts = name_read.bare_numbers
     else:
-        counts = glued_counts(info).intersection(read.bare_numbers)
+        counts = glued_counts(info).intersection(name_read.bare_numbers)
     others = {ep_id for count in counts if (ep_id := by_absolute.get(count)) is not None} - resolved
     return resolved | others if others else None
 
 
-def _runner_ups(state: Placer, disputed: set[str]) -> dict[str, frozenset[int]]:
+def _runner_ups(state: Placer, disputed: set[TorrentFile]) -> dict[TorrentFile, frozenset[int]]:
     """Each unplaced file's episodes a disputed reading takes first when the exact pass runs on the current readings.
 
     Those files are the runner-ups the refusal must not hand the episodes to.
     """
 
-    winner = {ep_id: name for name, ids in state.exact_picks().items() for ep_id in ids}
-    runner_ups: dict[str, frozenset[int]] = {}
-    for name in state.remaining():
+    winner = {ep_id: file for file, ids in state.exact_picks().items() for ep_id in ids}
+    runner_ups: dict[TorrentFile, frozenset[int]] = {}
+    for file in state.remaining():
         lost = frozenset(
-            ep_id for ep_id in state.exact_ids(name) if (won := winner.get(ep_id)) in disputed and won != name
+            ep_id for ep_id in file.reading.exact_ids if (won := winner.get(ep_id)) in disputed and won is not file
         )
         if lost:
-            runner_ups[name] = lost
+            runner_ups[file] = lost
     return runner_ups
 
 
-def _positions_disputed(state: Placer, run: NumberedRun) -> dict[str, frozenset[int]]:
+def _positions_disputed(state: Placer, run: NumberedRun) -> dict[TorrentFile, frozenset[int]]:
     """The members of a keyed run numbered past its season's end, from the first special the season interleaves on.
 
     Such a run (`1..N+k` for an N-episode season with k interleaved specials) counted the specials or appended
     extras. From the first special's position on, the two counts put a member on different episodes. A run keyed
-    within its season is left alone. Each disputed member maps to the episodes the two counts spread those members
-    over: the season's episodes from the special's position on, and the interleaved specials the run numbers.
+    within its season is left alone. Each disputed member's file maps to the episodes the two counts spread those
+    members over: the season's episodes from the special's position on, and the interleaved specials the run numbers.
     """
 
-    infos = [state.batch.parsed.get(member.name) for member in run.members]
-    seasons = {info.season_number for info in infos if info is not None}
+    pairs = list(zip(run.members, state.files_of(run.members), strict=True))
+    seasons = {info.season_number for _member, file in pairs if (info := file.parsed) is not None}
     if len(seasons) != 1 or (season := seasons.pop()) in (None, 0):
         return {}
-    if any(
-        info is None or info.episode_numbers[:1] != (member.number,)
-        for info, member in zip(infos, run.members, strict=True)
-    ):
+    if any((info := file.parsed) is None or info.episode_numbers[:1] != (member.number,) for member, file in pairs):
         return {}
-    if not all(state.torrent.reads[member.name].explicit_key for member in run.members):
+    if not all(file.name_read.explicit_key for _member, file in pairs):
         return {}
     count = state.facts.season_counts.get(season, 0)
     # A season the map lacks is no season to count against (the keys miss, and the file reads numberless).
@@ -308,7 +313,7 @@ def _positions_disputed(state: Placer, run: NumberedRun) -> dict[str, frozenset[
     spread = frozenset(
         ep_id for ep_id, key in key_by_id.items() if key.season == season and key.episode >= position
     ) | frozenset(ep_id for ep_id, number in interleaved.items() if number - first + 1 in run.numbers)
-    return {member.name: spread for member in run.members if member.number >= position}
+    return {file: spread for member, file in pairs if member.number >= position}
 
 
 def _pass_refuse_overlaps(state: Placer) -> None:
@@ -318,16 +323,16 @@ def _pass_refuse_overlaps(state: Placer) -> None:
     """
 
     spans_by_ep: defaultdict[int, set[tuple[int, ...]]] = defaultdict(set)
-    for name in state.torrent.counted:
-        if not (reading := state.readings[name]).vetoed:
+    for file in state.counted:
+        if not (reading := file.reading).vetoed:
             for ep_id in reading.resolved:
                 spans_by_ep[ep_id].add(reading.resolved)
     overlapping = [
-        name
-        for name in state.remaining()
-        if len(ids := state.readings[name].resolved) > 1 and any(len(spans_by_ep[ep_id]) > 1 for ep_id in ids)
+        file
+        for file in state.remaining()
+        if len(ids := file.reading.resolved) > 1 and any(len(spans_by_ep[ep_id]) > 1 for ep_id in ids)
     ]
-    state.veto_names(overlapping)
+    state.veto_each(overlapping)
 
 
 def _pass_identity(state: Placer) -> None:
@@ -337,38 +342,37 @@ def _pass_identity(state: Placer) -> None:
     matched episode belongs to another series. See pass 7 in the module docstring.
     """
 
-    identified = state.scope.listing.identified
-    for name in state.remaining():
-        ep_id = identified.get(name)
+    for file in state.remaining():
+        ep_id = file.identified_as
         if ep_id is None or ep_id not in state.scope.series.by_id:
             continue
-        reading = state.readings[name]
-        if (reading.trusted and reading.resolved == (ep_id,)) or state.torrent.contradicts(name, (ep_id,)):
+        reading = file.reading
+        if (reading.trusted and reading.resolved == (ep_id,)) or file.contradicts((ep_id,)):
             continue
         if not state.scope.admits(ep_id):
-            state.set_aside(name, PlacementVerdict.FOREIGN)
+            state.set_aside(file, PlacementVerdict.FOREIGN)
             continue
-        overrides = _numbers_another(state, name, ep_id)
+        overrides = _numbers_another(state, file, ep_id)
         if overrides:
             # No count-based pass may place the rest, and the release run skips this file's run.
             state.count_legs_barred = True
-            if (member := state.torrent.reads[name].member) is not None:
+            if (member := file.name_read.member) is not None:
                 state.size_refuted_runs.add(member.prefix)
-        state.place_or_skip(name, ep_id, PlacementVerdict.OVERRIDDEN if overrides else PlacementVerdict.IDENTIFIED)
+        state.place_or_skip(file, ep_id, PlacementVerdict.OVERRIDDEN if overrides else PlacementVerdict.IDENTIFIED)
 
 
-def _numbers_another(state: Placer, name: str, ep_id: int) -> bool:
+def _numbers_another(state: Placer, file: TorrentFile, ep_id: int) -> bool:
     """True if the name has a number and none of its numbers point at `ep_id`.
 
     Numbers here means its reading, its own keys (ignored if none of them exist in the series), and its
     absolute numbers. A name with no keys also counts its release number, as an episode or an absolute.
     """
 
-    resolved = state.readings[name].resolved
+    resolved = file.reading.resolved
     if ep_id in resolved:
         return False
-    info = state.batch.parsed.get(name)
-    member = state.torrent.reads[name].member
+    info = file.parsed
+    member = file.name_read.member
     keys: set[EpisodeKey] = set()
     absolutes: set[int] = set()
     if info is not None:
@@ -395,8 +399,8 @@ def _pass_exact(state: Placer) -> None:
     "- Bonus" whose CRC tag parsed as its key, and a "- 09v2" beats its "- 09". The loser stays unplaced.
     """
 
-    for name, ids in state.exact_picks().items():
-        state.place(name, ids, PlacementVerdict.EXACT)
+    for file, ids in state.exact_picks().items():
+        state.place(file, ids, PlacementVerdict.EXACT)
 
 
 def _pass_episode_title(state: Placer) -> None:
@@ -405,39 +409,39 @@ def _pass_episode_title(state: Placer) -> None:
     It runs even when the count-based passes are off, and each placement turns them off.
     """
 
-    for name in sorted(state.remaining(), key=lambda n: state.torrent.reads[n].version, reverse=True):
-        if (ep_id := _title_placement(state, name)) is not None:
-            state.place(name, (ep_id,), PlacementVerdict.EPISODE_TITLE)
+    for file in sorted(state.remaining(), key=lambda f: f.name_read.version, reverse=True):
+        if (ep_id := _title_placement(state, file)) is not None:
+            state.place(file, (ep_id,), PlacementVerdict.EPISODE_TITLE)
             state.count_legs_barred = True
 
 
-def _title_placement(state: Placer, name: str) -> int | None:
+def _title_placement(state: Placer, file: TorrentFile) -> int | None:
     """The open scope episode the name is titled as, else None.
 
     Also None for a runner-up on that episode, for a missing or multi-episode parse, for a tied file titled as
     neither of its candidates, and for a run's lone title whose episode a mate reads by number (`_outnumbered`).
     """
 
-    ep_id = state.torrent.episode(name)
-    if ep_id is None or ep_id in state.used or not state.scope.admits(ep_id) or state.single_parse(name) is None:
+    ep_id = file.titled_as
+    if ep_id is None or ep_id in state.used or not state.scope.admits(ep_id) or state.single_parse(file) is None:
         return None
-    if state.runner_up(name, (ep_id,)) or _outnumbered(state, name, ep_id):
+    if file.runner_up((ep_id,)) or _outnumbered(state, file, ep_id):
         return None
-    tied = state.readings[name].tied
+    tied = file.reading.tied
     return None if tied is not None and ep_id not in tied else ep_id
 
 
-def _outnumbered(state: Placer, name: str, ep_id: int) -> bool:
+def _outnumbered(state: Placer, file: TorrentFile, ep_id: int) -> bool:
     """Whether another file of the name's run reads `ep_id`, the run's count standing.
 
     The count stands when fewer than `MIN_TITLE_HITS` files of the run are titled against their readings.
     """
 
     for run in state.counted_runs:
-        mates = [member.name for member in run.whole]
-        if name in mates:
-            against = sum(state.torrent.contradicts(mate, state.readings[mate].resolved) for mate in mates)
-            reads_it = any(mate != name and ep_id in state.readings[mate].resolved for mate in mates)
+        mates = state.files_of(run.whole)
+        if file in mates:
+            against = sum(mate.contradicts(mate.reading.resolved) for mate in mates)
+            reads_it = any(mate is not file and ep_id in mate.reading.resolved for mate in mates)
             return against < MIN_TITLE_HITS and reads_it
     return False
 
@@ -447,100 +451,104 @@ def _pass_counted(state: Placer) -> None:
 
     # A file whose trusted reading lies wholly outside the scope belongs to another slice.
     # It takes no open id and does not spoil the count for the other files.
-    open_names = [name for name in state.remaining() if not state.readings[name].outside]
+    open_files = [file for file in state.remaining() if not file.reading.outside]
     open_ids = state.open_ids()
-    if not open_names or not open_ids:
+    if not open_files or not open_ids:
         return
-    if (order := _absolute_order(state, open_names, open_ids)) is not None:
+    if (order := _absolute_order(state, open_files, open_ids)) is not None:
         state.place_zip(order, open_ids, PlacementVerdict.ABSOLUTE)
     elif len(open_ids) == 1:
-        _place_single(state, open_names, open_ids[0])
-    elif (order := _natural_order(state, open_names, open_ids)) is not None:
+        _place_single(state, open_files, open_ids[0])
+    elif (order := _natural_order(state, open_files, open_ids)) is not None:
         state.place_zip(order, open_ids, PlacementVerdict.ORDERED)
 
 
-def _absolute_order(state: Placer, open_names: Sequence[str], open_ids: Sequence[int]) -> list[str] | None:
+def _absolute_order(
+    state: Placer, open_files: Sequence[TorrentFile], open_ids: Sequence[int]
+) -> list[TorrentFile] | None:
     """The open files in absolute-number order when the absolute zip applies (see the module), else None.
 
     An absolute Sonarr counted from the file's own title's number (`Placer.counted_by_title`) is no absolute.
     """
 
-    parsed = state.batch.parsed
-    abs_by_file: dict[str, int] = {}
-    for name in open_names:
-        info = parsed.get(name)
-        if info is not None and len(info.absolute_episode_numbers) == 1 and not state.counted_by_title(name):
-            abs_by_file[name] = info.absolute_episode_numbers[0]
+    abs_by_file: dict[TorrentFile, int] = {}
+    for file in open_files:
+        info = file.parsed
+        if info is not None and len(info.absolute_episode_numbers) == 1 and not state.counted_by_title(file):
+            abs_by_file[file] = info.absolute_episode_numbers[0]
     # The shared-absolute check reads every non-extra parse, seeded files included. Repeats inside one parse collapse.
     batch_absolutes = [
         number
-        for name in state.torrent.counted
-        if (parse := parsed.get(name)) is not None
+        for file in state.counted
+        if (parse := file.parsed) is not None
         for number in dict.fromkeys(parse.absolute_episode_numbers)
     ]
     applies = (
         bool(abs_by_file)
         and not state.count_legs_barred
-        and state.batch.all_parses_known
-        and len(abs_by_file) == len(open_names)  # every open file has one absolute
+        and state.all_parses_known
+        and len(abs_by_file) == len(open_files)  # every open file has one absolute
         and len(abs_by_file) == len(open_ids)  # as many files as open ids
         and len(set(batch_absolutes)) == len(batch_absolutes)  # no shared absolute (restarted numbering)
     )
     return sorted(abs_by_file, key=abs_by_file.__getitem__) if applies else None
 
 
-def _place_single(state: Placer, open_names: Sequence[str], ep_id: int) -> None:
+def _place_single(state: Placer, open_files: Sequence[TorrentFile], ep_id: int) -> None:
     """Fill the one open id: with the only open file if it is numberless, else the numberless file a title names.
 
     The title is an AniList title of the entry, and that match runs only when every parse is known. A runner-up for
     the id takes it neither way, and no other file takes it in its place.
     """
 
-    unnumbered = [name for name in open_names if _reads_no_number(state, name)]
-    if len(open_names) == 1 and unnumbered:
+    unnumbered = [file for file in open_files if _reads_no_number(state, file)]
+    if len(open_files) == 1 and unnumbered:
         pick, verdict = 0, PlacementVerdict.SINGLE
-    elif state.batch.all_parses_known:
-        stems = [state.torrent.reads[name].stem.text for name in unnumbered]
+    elif state.all_parses_known:
+        stems = [file.name_read.stem.text for file in unnumbered]
         pick, verdict = sole_title_match(stems, state.scope.names), PlacementVerdict.TITLED
     else:
         return
-    if pick is not None and not state.runner_up(unnumbered[pick], (ep_id,)):
+    if pick is not None and not unnumbered[pick].runner_up((ep_id,)):
         state.place(unnumbered[pick], (ep_id,), verdict)
 
 
-def _reads_no_number(state: Placer, name: str) -> bool:
+def _reads_no_number(state: Placer, file: TorrentFile) -> bool:
     """Whether the file's single-episode parse has no usable number: none at all, or only keys the series lacks.
 
     False for a disputed file (its numbers name episodes, they just disagree), for a tied file, and for a
     titled file (its titled episode is taken or outside the scope).
     """
 
-    if name in state.disputed or name in state.disputed_elsewhere:
+    if file.disputed or file.disputed_elsewhere:
         return False
-    info = state.single_parse(name)
+    info = state.single_parse(file)
     if info is None:
         return False
     if not (parse_has_no_number(info) or numbers_miss_the_series(info, state.scope.id_by_key)):
         return False
-    return state.readings[name].tied is None and state.torrent.episode(name) is None
+    return file.reading.tied is None and file.titled_as is None
 
 
-def _natural_order(state: Placer, open_names: Sequence[str], open_ids: Sequence[int]) -> list[str] | None:
+def _natural_order(
+    state: Placer, open_files: Sequence[TorrentFile], open_ids: Sequence[int]
+) -> list[TorrentFile] | None:
     """The open files in natural name order when the ordered zip applies (the "Special 1..N" shape), else None."""
 
     # Pristine: the parse map holds the open files and the extras and nothing else, and nothing but an extra
     # has a verdict, so nothing was placed, held, or seeded.
+    open_set = set(open_files)
     pristine = (
         not state.count_legs_barred
-        and len(open_names) == len(open_ids)
-        and set(state.batch.parsed) == {*open_names, *state.torrent.extras}
+        and len(open_files) == len(open_ids)
+        and all(file.in_parse_map == (file in open_set or file.extra) for file in state.files.values())
         and state.untouched
         and all(
-            (info := state.single_parse(name)) is not None and not info.offline and parse_has_no_number(info)
-            for name in open_names
+            (info := state.single_parse(file)) is not None and not info.offline and parse_has_no_number(info)
+            for file in open_files
         )
     )
-    return sorted(open_names, key=natural_key) if pristine else None
+    return sorted(open_files, key=lambda file: natural_key(file.name)) if pristine else None
 
 
 # Verdicts for files placed by size.
@@ -562,26 +570,26 @@ def _pass_classify(state: Placer) -> None:
 
     proof = _duplicate_proof(state)
     nothing_left = not state.open_ids()
-    for name in state.remaining():
-        reading = state.readings[name]
-        titled = state.torrent.episode(name)
-        if name in state.disputed:
+    for file in state.remaining():
+        reading = file.reading
+        titled = file.titled_as
+        if file.disputed:
             # Its own numbers disagree, or its count stands unconfirmed, and no run placed it: a hand import.
-            state.set_aside(name, PlacementVerdict.MISNUMBERED)
-        elif ids := state.exact_ids(name):
+            state.set_aside(file, PlacementVerdict.MISNUMBERED)
+        elif ids := reading.exact_ids:
             # The exact pass skipped it: an episode is taken. A span only partly taken stays SKIPPED.
             proven = all(ep_id in state.used and ep_id in proof.proven for ep_id in ids)
-            state.set_aside(name, PlacementVerdict.DUPLICATE if proven else PlacementVerdict.SKIPPED)
+            state.set_aside(file, PlacementVerdict.DUPLICATE if proven else PlacementVerdict.SKIPPED)
         elif titled is not None and titled in state.used:
             # Titled as a taken episode: a duplicate only when a version of the same file holds it.
-            twin = titled in proof.held_by_file.get(state.torrent.reads[name].file, ())
-            state.set_aside(name, PlacementVerdict.DUPLICATE if twin else PlacementVerdict.SKIPPED)
-        elif state.map_known and (reading.outside or _titled_outside(state, name, nothing_left)):
-            state.set_aside(name, PlacementVerdict.FOREIGN)
-        elif name in state.run_refuted:
-            state.set_aside(name, PlacementVerdict.TITLE_REFUTED)
+            twin = titled in proof.held_by_file.get(file.identity, ())
+            state.set_aside(file, PlacementVerdict.DUPLICATE if twin else PlacementVerdict.SKIPPED)
+        elif state.map_known and (reading.outside or _titled_outside(state, file, nothing_left)):
+            state.set_aside(file, PlacementVerdict.FOREIGN)
+        elif file.run_refuted:
+            state.set_aside(file, PlacementVerdict.TITLE_REFUTED)
         else:
-            state.set_aside(name, PlacementVerdict.SKIPPED)
+            state.set_aside(file, PlacementVerdict.SKIPPED)
 
 
 def _duplicate_proof(state: Placer) -> _DuplicateProof:
@@ -590,24 +598,25 @@ def _duplicate_proof(state: Placer) -> _DuplicateProof:
     An id held from the start (a seeded file's or an earlier window's) proves nothing alone.
     """
 
-    placing = frozenset(state.batch.names)
-    # A file placed by size only proves its own episode. It doesn't make another file on that episode a copy.
-    by_size = {ep_id for p in state.verdicts.values() if p.verdict in _BY_SIZE for ep_id in p.ids}
+    by_size: set[int] = set()
     evidenced: set[int] = set()
     held: defaultdict[FileIdentity, set[int]] = defaultdict(set)
-    for name, read in state.torrent.reads.items():
-        if (placed := state.verdicts.get(name)) is not None:
-            held[read.file].update(placed.ids)
-        elif name not in placing:
-            evidenced.update(state.readings[name].resolved)
-            if (titled := state.torrent.episode(name)) is not None:
+    for file in state.files.values():
+        if (placed := file.placement) is not None:
+            held[file.identity].update(placed.ids)
+            # A file placed by size only proves its own episode. It doesn't make another file on that episode a copy.
+            if placed.verdict in _BY_SIZE:
+                by_size.update(placed.ids)
+        elif not file.to_place:
+            evidenced.update(file.reading.resolved)
+            if (titled := file.titled_as) is not None:
                 evidenced.add(titled)
-                held[read.file].add(titled)
+                held[file.identity].add(titled)
     proven = (state.used - state.scope.used - by_size) | evidenced
-    return _DuplicateProof(frozenset(proven), {file: frozenset(ids) for file, ids in held.items()})
+    return _DuplicateProof(frozenset(proven), {identity: frozenset(ids) for identity, ids in held.items()})
 
 
-def _titled_outside(state: Placer, name: str, nothing_left: bool) -> bool:
+def _titled_outside(state: Placer, file: TorrentFile, nothing_left: bool) -> bool:
     """Whether the name is titled as an episode outside the scope, confirmed another way.
 
     Confirmed when the file has a complete reading wholly outside the scope, when its reading was rejected
@@ -615,9 +624,9 @@ def _titled_outside(state: Placer, name: str, nothing_left: bool) -> bool:
     title alone never excludes a file the entry may still need.
     """
 
-    ep_id = state.torrent.episode(name)
+    ep_id = file.titled_as
     if ep_id is None or state.scope.admits(ep_id):
         return False
-    reading = state.readings[name]
+    reading = file.reading
     held = bool(reading.resolved) and state.used.issuperset(reading.resolved)
     return (reading.complete and not reading.inside) or (reading.vetoed and held) or nothing_left
