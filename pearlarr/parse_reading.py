@@ -74,6 +74,12 @@ class Reading(NamedTuple):
         return self.trusted and not self.inside
 
     @property
+    def exact_ids(self) -> tuple[int, ...]:
+        """The ids the exact pass places the file on: a trusted reading wholly inside the scope. Else ()."""
+
+        return self.inside if self.trusted and self.inside == self.resolved else ()
+
+    @property
     def rank(self) -> tuple[bool, bool]:
         """Exact-pass priority, best first: an own key Sonarr matched, a borrowed pair, an own key it did not match."""
 

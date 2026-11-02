@@ -438,10 +438,6 @@ class NumberedRun(NamedTuple):
     """The lower versions a member's higher `vN` replaced: duplicates once the run is placed."""
 
     @property
-    def names(self) -> tuple[str, ...]:
-        return tuple(member.name for member in self.members)
-
-    @property
     def whole(self) -> tuple[RunMember, ...]:
         """The members plus the lower versions they superseded."""
 
