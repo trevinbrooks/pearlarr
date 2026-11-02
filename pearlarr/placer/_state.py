@@ -1,7 +1,8 @@
-"""The state one `assign_episode_ids` call runs its passes over, and the run window the run passes read.
+"""The state one `assign_episode_ids` call runs its passes over: its files, their numbered runs, the run window.
 
-`TorrentFile` holds what one call knows and decides about one file, and `Placer` every file plus the views two or
-more passes read. A helper of one pass sits with that pass.
+`TorrentFile` holds what one call knows and decides about one file, `NumberedRun` the files sharing one prefix,
+`RunWindow` the open ids the run passes read, and `Placer` every file plus the views two or more passes read. A
+helper of one pass sits with that pass.
 """
 
 from collections.abc import Iterable, Mapping, Sequence
@@ -11,36 +12,8 @@ from typing import Self
 from ..episode_titles import EpisodeTitles, TorrentNames, spells_title
 from ..parse_reading import Reading, glued_counts, read_parse, spans_multiple, widen_range_key
 from ..placement_types import Placement, PlacementBatch, PlacementVerdict, SeriesFacts, TargetScope
-from ..release_names import FileIdentity, NameRead, NumberedRun, RunMember, is_consecutive, numbered_runs
+from ..release_names import FileIdentity, NameRead, is_consecutive
 from ..seadex_types import ParsedFileInfo
-
-
-@dataclass(frozen=True, slots=True)
-class RunWindow:
-    """The open ids as consecutive episodes, in airing order: the run window."""
-
-    season: int | None
-    """The season every id belongs to, or None when the ids span seasons and absolute numbers order them."""
-    ids: tuple[int, ...]
-    """The open ids, in airing order."""
-    numbers: tuple[int, ...]
-    """The ids' episode numbers (absolute numbers when `season` is None), in the same order."""
-    id_set: frozenset[int] = field(init=False, repr=False, compare=False)
-    """The ids as a set, built once for membership checks."""
-
-    def __post_init__(self) -> None:
-        object.__setattr__(self, "id_set", frozenset(self.ids))
-
-    @property
-    def specials(self) -> bool:
-        """Whether the window lies in the specials season (season 0)."""
-
-        return self.season == 0
-
-    def slice_of(self, run: NumberedRun) -> tuple[RunMember, ...]:
-        """The run members whose numbers are the window's episode numbers (a whole-season run over part of it)."""
-
-        return tuple(member for member in run.members if member.number in self.numbers)
 
 
 @dataclass(slots=True, eq=False, kw_only=True)
@@ -62,7 +35,7 @@ class TorrentFile:
     parsed: ParsedFileInfo | None
     """The widened parse (`widen_range_key`), else None when the batch has no parse for the name."""
     name_read: NameRead
-    """The name read on its own: stem, run membership, title words, numbers."""
+    """The name as `read_names` reads it within the torrent: stem, run membership, title words, numbers."""
     titled_as: int | None
     """The episode the name is titled as: its specific title, carried by no other file of the torrent, else None."""
     leaders: frozenset[int]
@@ -111,6 +84,14 @@ class TorrentFile:
 
         return self.name_read.file
 
+    @property
+    def release_number(self) -> int:
+        """The release number of a run's file. Read it only on a run's files: a file in no run may have none."""
+
+        member = self.name_read.member
+        assert member is not None
+        return member.number
+
     def contradicts(self, ids: Sequence[int]) -> bool:
         """Whether the name is titled as an episode that is not among `ids`."""
 
@@ -130,7 +111,7 @@ class TorrentFile:
     def absolute_disagrees(self) -> bool:
         """Whether the file's parse has one absolute, neither its release number nor one of its `title_numbers`.
 
-        False for a name that is no run member.
+        False for a name without a release number.
         """
 
         member = self.name_read.member
@@ -146,6 +127,82 @@ class TorrentFile:
         self.reading = self.reading._replace(vetoed=True)
 
 
+@dataclass(frozen=True, slots=True)
+class NumberedRun:
+    """The files whose names share one prefix before their release number."""
+
+    prefix: str
+    """The text before the number that every member shares."""
+    members: tuple[TorrentFile, ...]
+    """The top version at each number, in number order. Files tied at the top version all stay, so a number can
+    repeat."""
+    superseded: tuple[TorrentFile, ...]
+    """The lower versions a member's higher `vN` replaced: duplicates once the run is placed."""
+
+    @classmethod
+    def of(cls, prefix: str, by_number: Mapping[int, Sequence[TorrentFile]]) -> Self:
+        """One prefix's run: the top version at each number kept, the lower ones superseded."""
+
+        kept: list[TorrentFile] = []
+        superseded: list[TorrentFile] = []
+        for versions in by_number.values():
+            top = max(file.name_read.version for file in versions)
+            kept.extend(file for file in versions if file.name_read.version == top)
+            superseded.extend(file for file in versions if file.name_read.version < top)
+        members = sorted(kept, key=lambda file: (file.release_number, file.name))
+        return cls(prefix, tuple(members), tuple(superseded))
+
+    @property
+    def whole(self) -> tuple[TorrentFile, ...]:
+        """The members plus the lower versions they superseded."""
+
+        return (*self.members, *self.superseded)
+
+    @property
+    def numbers(self) -> tuple[int, ...]:
+        """The members' release numbers, in order."""
+
+        return tuple(file.release_number for file in self.members)
+
+    def consecutive(self, width: int) -> bool:
+        """Whether the run is exactly `width` consecutive numbers, wherever it starts."""
+
+        return len(self.members) == width and is_consecutive(self.numbers)
+
+    def from_one(self, width: int) -> bool:
+        """Whether the run is numbered `1..width`."""
+
+        return self.numbers == tuple(range(1, width + 1))
+
+
+@dataclass(frozen=True, slots=True)
+class RunWindow:
+    """The open ids as consecutive episodes, in airing order: the run window."""
+
+    season: int | None
+    """The season every id belongs to, or None when the ids span seasons and absolute numbers order them."""
+    ids: tuple[int, ...]
+    """The open ids, in airing order."""
+    numbers: tuple[int, ...]
+    """The ids' episode numbers (absolute numbers when `season` is None), in the same order."""
+    id_set: frozenset[int] = field(init=False, repr=False, compare=False)
+    """The ids as a set, built once for membership checks."""
+
+    def __post_init__(self) -> None:
+        object.__setattr__(self, "id_set", frozenset(self.ids))
+
+    @property
+    def specials(self) -> bool:
+        """Whether the window lies in the specials season (season 0)."""
+
+        return self.season == 0
+
+    def slice_of(self, run: NumberedRun) -> tuple[TorrentFile, ...]:
+        """The run members whose numbers are the window's episode numbers (a whole-season run over part of it)."""
+
+        return tuple(file for file in run.members if file.release_number in self.numbers)
+
+
 @dataclass(slots=True, kw_only=True)
 class Placer:
     """One `assign_episode_ids` call's state: every file of the torrent, and the ids used so far."""
@@ -154,8 +211,8 @@ class Placer:
     facts: SeriesFacts
     episode_titles: EpisodeTitles
     """The episode titles the names were read against."""
-    files: Mapping[str, TorrentFile]
-    """Every file of the torrent by name: the files to place in batch order, then the seeded and gone ones."""
+    files: tuple[TorrentFile, ...]
+    """Every file of the torrent: the files to place in batch order, then the seeded and gone ones."""
     placing: tuple[TorrentFile, ...]
     """The files to place, batch order."""
     counted: tuple[TorrentFile, ...]
@@ -170,8 +227,8 @@ class Placer:
     """Whether the count-based passes (the absolute zip, the ordered zip, the numbered run) are turned off: an
     earlier pass found a sign the batch's count is off."""
     size_refuted_runs: set[str] = field(default_factory=set[str])
-    """Prefixes of runs where a member was placed by size against its own numbers. `pass_release_run` won't
-    place these runs."""
+    """Prefixes of files placed by size against their own release numbers. `pass_release_run` won't place a run
+    with one of these prefixes."""
 
     def __post_init__(self) -> None:
         self.counted_runs = tuple(self.runs(self.counted))
@@ -189,7 +246,7 @@ class Placer:
         readings = {name: read_parse(batch.parsed.get(name), scope) for name in batch.torrent_names}
         torrent = TorrentNames.of(batch, scope, readings)
         names_to_place = frozenset(batch.names)
-        files = {
+        by_name = {
             name: TorrentFile(
                 name=name,
                 to_place=name in names_to_place,
@@ -209,9 +266,9 @@ class Placer:
             scope=scope,
             facts=facts,
             episode_titles=torrent.episode_titles,
-            files=files,
-            placing=tuple(files[name] for name in batch.names),
-            counted=tuple(file for file in files.values() if not file.extra),
+            files=tuple(by_name.values()),
+            placing=tuple(by_name[name] for name in batch.names),
+            counted=tuple(file for file in by_name.values() if not file.extra),
             all_parses_known=batch.all_parses_known,
             used=set(scope.used),
         )
@@ -273,7 +330,7 @@ class Placer:
     def unjudged(self) -> bool:
         """Whether no file other than an extra has a verdict yet."""
 
-        return all(file.extra for file in self.files.values() if file.judged)
+        return all(file.extra for file in self.files if file.judged)
 
     @property
     def untouched(self) -> bool:
@@ -321,11 +378,6 @@ class Placer:
 
         return [file for file in self.placing if file.remaining]
 
-    def files_of(self, members: Iterable[RunMember]) -> list[TorrentFile]:
-        """The run members' files, in the order given."""
-
-        return [self.files[member.name] for member in members]
-
     def place(self, file: TorrentFile, ids: Sequence[int], verdict: PlacementVerdict) -> None:
         """Record a placement and mark its ids used."""
 
@@ -366,11 +418,13 @@ class Placer:
             self.set_aside(file, verdict)
 
     def runs(self, files: Iterable[TorrentFile]) -> list[NumberedRun]:
-        """The numbered runs among `files`, formed by their release numbers, less the `absolute_disagrees` members."""
+        """The numbered runs among `files`, formed by their release numbers, less the `absolute_disagrees` files."""
 
-        return numbered_runs(
-            member for file in files if (member := file.name_read.member) is not None and not file.absolute_disagrees
-        )
+        by_prefix: dict[str, dict[int, list[TorrentFile]]] = {}
+        for file in files:
+            if (member := file.name_read.member) is not None and not file.absolute_disagrees:
+                by_prefix.setdefault(member.prefix, {}).setdefault(member.number, []).append(file)
+        return [NumberedRun.of(prefix, by_number) for prefix, by_number in by_prefix.items()]
 
     def placements(self) -> tuple[Placement, ...]:
         """The placements of the files to place, batch order. Each has one once the passes are done."""

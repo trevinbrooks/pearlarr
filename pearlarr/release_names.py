@@ -1,12 +1,12 @@
 """Read file names without Sonarr.
 
-The offline SxxExx parse, range keys, sort keys, stems, versions, runs, the entry's title told apart from a name's
-numbers (`TitleGround`, `read_names`), and title matching.
+The offline SxxExx parse, range keys, sort keys, stems, versions, run membership, the entry's title told apart from
+a name's numbers (`TitleGround`, `read_names`), and title matching.
 """
 
 import re
 import unicodedata
-from collections.abc import Callable, Iterable, Mapping, Sequence
+from collections.abc import Callable, Iterable, Sequence
 from dataclasses import dataclass, replace
 from itertools import compress, takewhile
 from typing import NamedTuple, Self
@@ -192,9 +192,8 @@ class Stem(NamedTuple):
 
 @dataclass(frozen=True, slots=True)
 class RunMember:
-    """One file's numbered-run membership, read purely from its name."""
+    """A name's numbered-run membership: its release number and the text around it."""
 
-    name: str
     prefix: str
     """The text before the release number: files sharing it form one run."""
     number: int
@@ -251,7 +250,7 @@ def read_name(name: str) -> NameRead:
     """Read a name once: its stem and version, its run membership, and its title words."""
 
     stem = _stem_version(name)
-    member = _member_of(name, stem)
+    member = _member_of(stem)
     return NameRead(
         stem,
         member,
@@ -378,24 +377,29 @@ class _Count(NamedTuple):
 
         return cls(prefix, int(found["number"]), found.end(), int(found.groupdict().get("version") or 1))
 
-    def member(self, name: str, stem: Stem) -> RunMember:
+    def member(self, stem: Stem) -> RunMember:
         """The run membership the count gives the name.
 
         The separators around the number are dropped, so "show_-_07v2_[bd 1080p].mkv" reads as ("show", 7).
         """
 
         tail = folded_words(stem.text[self.end :])
-        return RunMember(name, self.prefix.rstrip(" .-"), self.number, tail, max(stem.version, self.version))
+        return RunMember(
+            prefix=self.prefix.rstrip(" .-"),
+            number=self.number,
+            tail_words=tail,
+            version=max(stem.version, self.version),
+        )
 
 
-def _member_of(name: str, stem: Stem) -> RunMember | None:
+def _member_of(stem: Stem) -> RunMember | None:
     """A name's run membership: the release's own number, read from the text alone, and what surrounds it.
 
     None when no form fits.
     """
 
     match = next((found for form in _NUMBER_FORMS if (found := form(stem.text)) is not None), None)
-    return None if match is None else _Count.of(match, match.group(1)).member(name, stem)
+    return None if match is None else _Count.of(match, match.group(1)).member(stem)
 
 
 def natural_key(name: str) -> str:
@@ -426,74 +430,6 @@ def is_consecutive(numbers: Sequence[int]) -> bool:
     """Whether the numbers count up by one from the first (an empty sequence does)."""
 
     return not numbers or list(numbers) == list(range(numbers[0], numbers[0] + len(numbers)))
-
-
-class NumberedRun(NamedTuple):
-    """The files sharing one prefix, in release-number order."""
-
-    prefix: str
-    """The text before the number that every member shares."""
-    members: tuple[RunMember, ...]
-    superseded: tuple[RunMember, ...]
-    """The lower versions a member's higher `vN` replaced: duplicates once the run is placed."""
-
-    @property
-    def whole(self) -> tuple[RunMember, ...]:
-        """The members plus the lower versions they superseded."""
-
-        return (*self.members, *self.superseded)
-
-    @property
-    def numbers(self) -> tuple[int, ...]:
-        return tuple(member.number for member in self.members)
-
-    def consecutive(self, width: int) -> bool:
-        """Whether the run is exactly `width` consecutive numbers, wherever it starts."""
-
-        return len(self.members) == width and is_consecutive(self.numbers)
-
-
-def numbered_runs(members: Iterable[RunMember]) -> list[NumberedRun]:
-    """Every numbered run among the members, grouped by prefix.
-
-    Of several members sharing a number the highest `vN` stays and the rest are superseded (equal versions all stay).
-    """
-
-    by_prefix: dict[str, dict[int, list[RunMember]]] = {}
-    for member in members:
-        by_prefix.setdefault(member.prefix, {}).setdefault(member.number, []).append(member)
-    return [_run_of(prefix, by_number) for prefix, by_number in by_prefix.items()]
-
-
-def _member_order(member: RunMember) -> tuple[int, str]:
-    """Number order, name order within a number (names are unique per batch)."""
-
-    return (member.number, member.name)
-
-
-def _run_of(prefix: str, by_number: Mapping[int, Sequence[RunMember]]) -> NumberedRun:
-    """One prefix's run: the top version at each number kept, the lower ones superseded."""
-
-    kept: list[RunMember] = []
-    superseded: list[RunMember] = []
-    for versions in by_number.values():
-        top = max(member.version for member in versions)
-        kept.extend(member for member in versions if member.version == top)
-        superseded.extend(member for member in versions if member.version < top)
-    return NumberedRun(prefix, tuple(sorted(kept, key=_member_order)), tuple(superseded))
-
-
-def runs_with_numbers(runs: Iterable[NumberedRun], numbers: Iterable[int]) -> list[NumberedRun]:
-    """The runs numbered exactly `numbers`."""
-
-    expected = tuple(numbers)
-    return [run for run in runs if run.numbers == expected]
-
-
-def runs_from_one(runs: Iterable[NumberedRun], width: int) -> list[NumberedRun]:
-    """The runs numbered `1..width`."""
-
-    return runs_with_numbers(runs, range(1, width + 1))
 
 
 # A title names a candidate when they share at least half of their combined words beyond the series title.
@@ -772,7 +708,7 @@ def _count_ends(text: str, end: int) -> bool:
     return False
 
 
-def _span_member(name: str, stem: Stem, found: re.Match[str]) -> RunMember | None:
+def _span_member(stem: Stem, found: re.Match[str]) -> RunMember | None:
     """The count behind the title's span (`_SPAN_COUNT`) as the name's run membership, else None.
 
     A word behind that count makes it an episode title's number (`_count_ends`), a number standing alone behind it
@@ -789,7 +725,7 @@ def _span_member(name: str, stem: Stem, found: re.Match[str]) -> RunMember | Non
         or _EXTRA_BEHIND.match(text, found.end()) is not None
     ):
         return None
-    return _Count.of(found, _COUNT_LEAD.sub("", text[: found.start("number")])).member(name, stem)
+    return _Count.of(found, _COUNT_LEAD.sub("", text[: found.start("number")])).member(stem)
 
 
 def _tails_a_title(text: str, member: RunMember, end: int) -> bool:
@@ -805,7 +741,7 @@ def _tails_a_title(text: str, member: RunMember, end: int) -> bool:
     )
 
 
-def _titled(name: str, read: NameRead, ground: TitleGround) -> NameRead:
+def _titled(read: NameRead, ground: TitleGround) -> NameRead:
     """The read with the entry's title told apart, when the name opens with one of `TitleGround.titles`.
 
     The title's numbers leave `bare_numbers` for the member's `title_numbers`. A name counted by none of its numbers,
@@ -824,7 +760,7 @@ def _titled(name: str, read: NameRead, ground: TitleGround) -> NameRead:
     before = any(count.start < start for count in counts)
     read = read._replace(bare_numbers=tuple(count.number for count in counts if not start <= count.start < end))
     found = _SPAN_COUNT.match(blanked, end)
-    counted = None if found is None else _span_member(name, read.stem, found)
+    counted = None if found is None else _span_member(read.stem, found)
     member = read.member
     if member is None:
         member = counted
@@ -852,7 +788,7 @@ def read_names(names: Iterable[str], ground: TitleGround) -> dict[str, NameRead]
     "Show S1" alone, or an "S2" repeated over extras, says which season and stays unnumbered.
     """
 
-    reads = {name: _titled(name, read_name(name), ground) for name in names}
+    reads = {name: _titled(read_name(name), ground) for name in names}
     sets: dict[str, dict[int, list[str]]] = {}
     for name, read in reads.items():
         if read.member is None and (found := _LONE_S.match(read.stem.text)) is not None:
@@ -863,7 +799,7 @@ def read_names(names: Iterable[str], ground: TitleGround) -> dict[str, NameRead]
             continue
         for number, members in by_number.items():
             for name in members:
-                member = RunMember(name, prefix, number, (), reads[name].stem.version)
+                member = RunMember(prefix=prefix, number=number, tail_words=(), version=reads[name].stem.version)
                 reads[name] = reads[name]._replace(member=member, title_words=())
     return reads
 

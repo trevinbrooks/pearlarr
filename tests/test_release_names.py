@@ -251,9 +251,7 @@ class TestReadNames:
         specials = [f"[grp] Show S{n} (BD 1080p).mkv" for n in (1, 2, 3)]
         reads = read_names(self._EPISODES + specials, _NO_TITLES)
 
-        assert [reads[name].member for name in specials] == [
-            RunMember(name, "[grp] Show S", n, (), 1) for n, name in enumerate(specials, 1)
-        ]
+        assert [reads[name].member for name in specials] == [RunMember("[grp] Show S", n, (), 1) for n in (1, 2, 3)]
         assert [reads[name].member for name in self._EPISODES] == [read_name(name).member for name in self._EPISODES]
 
     def test_a_higher_version_in_the_set_keeps_its_version(self) -> None:
