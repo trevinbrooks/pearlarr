@@ -34,7 +34,8 @@ Terms used across the placement modules:
 - Unknown parse: a missing parse, or the offline `SxxExx` stand-in. `PlacementBatch.all_parses_known` is False
   while any file of the torrent has one.
 - Numberless: the file name carries no episode or absolute number (a key the series lacks may count as none).
-- Release number: the episode number read from the file name's text alone ("Show - 07"), without Sonarr.
+- Release number: the episode number the file name carries ("Show - 07"), read without Sonarr. A trailing "S2"
+  counts as one only when the names sharing its prefix count up from "S1" (`read_names`).
 - Numbered run (`NumberedRun`): the files whose names share the text before their release number, in number
   order. Of two versions of one number, the higher `vN` is the member and the lower is superseded.
 - Tail: the words of a run member's name after its release number.
@@ -132,11 +133,11 @@ from collections.abc import Iterable, Mapping, Sequence
 from typing import NamedTuple
 
 from ._run_passes import pass_misnumbered_pack, pass_numbered_run, pass_release_run, pass_reread_season_runs
-from ._state import Placer, TorrentFile
+from ._state import NumberedRun, Placer, TorrentFile
 from ..episode_titles import MIN_TITLE_HITS
 from ..parse_reading import glued_counts, numbers_miss_the_series, parse_has_no_number
 from ..placement_types import EpisodeAssignment, PlacementBatch, PlacementVerdict, TargetScope
-from ..release_names import FileIdentity, NumberedRun, natural_key, sole_title_match
+from ..release_names import FileIdentity, natural_key, sole_title_match
 from ..seadex_types import EpisodeKey
 
 
@@ -186,11 +187,9 @@ def _pass_refuse_refuted(state: Placer) -> None:
     unconfirmed = {file for file in files if file.reading.resolved and state.counted_by_title(file)}
     refuted = set(titled)
     for run in state.counted_runs:
-        member_files = set(state.files_of(run.whole))
-        if titled & member_files:
-            refuted |= {
-                file for file in member_files if file.reading.inside and not file.confirms(file.reading.resolved)
-            }
+        mates = set(run.whole)
+        if titled & mates:
+            refuted |= {file for file in mates if file.reading.inside and not file.confirms(file.reading.resolved)}
     state.veto_each(refuted | unconfirmed)
     for file in refuted - titled:
         file.run_refuted = True
@@ -213,7 +212,7 @@ def _pass_refuse_disputed(state: Placer) -> None:
             candidates[file] = candidates.get(file, frozenset()) | ids
             by_position.add(file)
     disputed = {file for file, ids in candidates.items() if any(state.scope.admits(ep_id) for ep_id in ids)}
-    copies = [file for run in runs for file in state.files_of(run.superseded) if file in disputed]
+    copies = [file for run in runs for file in run.superseded if file in disputed]
     # Runner-ups first: a rejected reading wins nothing, and a set-aside copy is out of the running.
     for file, lost in _runner_ups(state, disputed).items():
         file.runner_up_for = lost
@@ -279,17 +278,17 @@ def _positions_disputed(state: Placer, run: NumberedRun) -> dict[TorrentFile, fr
 
     Such a run (`1..N+k` for an N-episode season with k interleaved specials) counted the specials or appended
     extras. From the first special's position on, the two counts put a member on different episodes. A run keyed
-    within its season is left alone. Each disputed member's file maps to the episodes the two counts spread those
-    members over: the season's episodes from the special's position on, and the interleaved specials the run numbers.
+    within its season is left alone. Each disputed member maps to the episodes the two counts spread the disputed
+    members over: the season's episodes from the special's position on, and the interleaved specials the run
+    numbers.
     """
 
-    pairs = list(zip(run.members, state.files_of(run.members), strict=True))
-    seasons = {info.season_number for _member, file in pairs if (info := file.parsed) is not None}
+    seasons = {info.season_number for file in run.members if (info := file.parsed) is not None}
     if len(seasons) != 1 or (season := seasons.pop()) in (None, 0):
         return {}
-    if any((info := file.parsed) is None or info.episode_numbers[:1] != (member.number,) for member, file in pairs):
+    if any((info := file.parsed) is None or info.episode_numbers[:1] != (file.release_number,) for file in run.members):
         return {}
-    if not all(file.name_read.explicit_key for _member, file in pairs):
+    if not all(file.name_read.explicit_key for file in run.members):
         return {}
     count = state.facts.season_counts.get(season, 0)
     # A season the map lacks is no season to count against (the keys miss, and the file reads numberless).
@@ -313,7 +312,7 @@ def _positions_disputed(state: Placer, run: NumberedRun) -> dict[TorrentFile, fr
     spread = frozenset(
         ep_id for ep_id, key in key_by_id.items() if key.season == season and key.episode >= position
     ) | frozenset(ep_id for ep_id, number in interleaved.items() if number - first + 1 in run.numbers)
-    return {file: spread for member, file in pairs if member.number >= position}
+    return {file: spread for file in run.members if file.release_number >= position}
 
 
 def _pass_refuse_overlaps(state: Placer) -> None:
@@ -438,7 +437,7 @@ def _outnumbered(state: Placer, file: TorrentFile, ep_id: int) -> bool:
     """
 
     for run in state.counted_runs:
-        mates = state.files_of(run.whole)
+        mates = run.whole
         if file in mates:
             against = sum(mate.contradicts(mate.reading.resolved) for mate in mates)
             reads_it = any(mate is not file and ep_id in mate.reading.resolved for mate in mates)
@@ -541,7 +540,7 @@ def _natural_order(
     pristine = (
         not state.count_legs_barred
         and len(open_files) == len(open_ids)
-        and all(file.in_parse_map == (file in open_set or file.extra) for file in state.files.values())
+        and all(file.in_parse_map == (file in open_set or file.extra) for file in state.files)
         and state.untouched
         and all(
             (info := state.single_parse(file)) is not None and not info.offline and parse_has_no_number(info)
@@ -601,7 +600,7 @@ def _duplicate_proof(state: Placer) -> _DuplicateProof:
     by_size: set[int] = set()
     evidenced: set[int] = set()
     held: defaultdict[FileIdentity, set[int]] = defaultdict(set)
-    for file in state.files.values():
+    for file in state.files:
         if (placed := file.placement) is not None:
             held[file.identity].update(placed.ids)
             # A file placed by size only proves its own episode. It doesn't make another file on that episode a copy.
