@@ -194,6 +194,11 @@ class TestPlacementVerdict:
         # Both decide a name without ids: no later window may place it by its numbers.
         assert {v for v in PlacementVerdict if v.refused} == {PlacementVerdict.HELD, PlacementVerdict.MISNUMBERED}
 
+    def test_a_hand_import_is_misnumbered_or_refuted_by_its_titles(self) -> None:
+        hand_import = {PlacementVerdict.MISNUMBERED, PlacementVerdict.TITLE_REFUTED}
+
+        assert {v for v in PlacementVerdict if v.hand_import} == hand_import
+
     def test_a_size_match_or_a_special_alias_places(self) -> None:
         # A file placed by size, or through a specials pack's aliases, carries ids like any other placement.
         for verdict in (PlacementVerdict.IDENTIFIED, PlacementVerdict.OVERRIDDEN, PlacementVerdict.ALTERNATE):

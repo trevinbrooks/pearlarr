@@ -229,6 +229,7 @@ class SkipReason(Enum):
     UNSUPPORTED_TRACKER = auto()
     TRACKER_NOT_SELECTED = auto()
     MISNUMBERED = auto()
+    TITLE_REFUTED = auto()
     INPUT_UNREAD = auto()
 
     @property
@@ -346,6 +347,7 @@ class NeedsActionCause(Enum):
     GRAB_FAILED = auto()
     PLACEMENT_INPUT_MISSING = auto()
     MISNUMBERED = auto()
+    TITLE_REFUTED = auto()
 
 
 @dataclass(frozen=True, slots=True)
@@ -484,7 +486,7 @@ class TorrentView:
     import_total: int | None = None
     """On a TERMINAL imported row, the ledger's final files count (`phase_elapsed_s` freezes as its wait clock)."""
     unmatched_files: tuple[str, ...] = ()
-    """On a TERMINAL unmatched row, the on-disk files no episode claimed."""
+    """On a TERMINAL unmatched or partial row, the on-disk files left for a hand import."""
     speed_history: tuple[int, ...] = ()
     """Speed samples (bytes/s, stalled = 0), newest last, bounded to `SPARK_SAMPLES`."""
     outcome: Outcome | None = None
@@ -585,7 +587,7 @@ class TorrentGraduated:
     files: int | None
     waited_s: float
     unmatched_files: tuple[str, ...] = ()
-    """On the `UNMATCHED` outcome, the on-disk files no episode claimed."""
+    """On the `UNMATCHED` and `PARTIAL` outcomes, the on-disk files left for a hand import."""
     scope: ScopeId | None = None
 
 

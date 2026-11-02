@@ -1328,6 +1328,7 @@ def import_probe(
     placements: dict[str, list[int]] | None = None,
     exclusions: tuple[str, ...] = (),
     unmatched_files: tuple[str, ...] = (),
+    hand_import_files: tuple[str, ...] = (),
 ) -> ImportProbe:
     """An `ImportProbe` defaulting to the verified-import outcome (`files_present`)."""
 
@@ -1340,6 +1341,7 @@ def import_probe(
         placements=placements or {},
         exclusions=exclusions,
         unmatched_files=unmatched_files,
+        hand_import_files=hand_import_files,
     )
 
 

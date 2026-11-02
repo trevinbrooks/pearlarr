@@ -1,7 +1,7 @@
 # Builder: resolve the locked dependency set into /app/.venv with uv, then
 # install the project itself (non-editable, so the venv is self-contained).
 FROM python:3.14-slim AS builder
-COPY --from=ghcr.io/astral-sh/uv:0.11.28 /uv /usr/local/bin/uv
+COPY --from=ghcr.io/astral-sh/uv:0.13.6 /uv /usr/local/bin/uv
 # Never fetch a uv-managed CPython: the venv must bind this stage's
 # /usr/local/bin/python3.14, which the final stage shares.
 ENV UV_PYTHON_DOWNLOADS=never \

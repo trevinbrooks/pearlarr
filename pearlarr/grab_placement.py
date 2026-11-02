@@ -140,8 +140,14 @@ class KnownTorrent:
         if any(claim.series_id not in self.indexes for claim in claims):
             return None
         stored = windows_of(claims, self.indexes, own.listing)
-        position = next((i for i, claim in enumerate(claims) if claim.al_id == al_id), None)
-        return (*stored, own) if position is None else (*stored[:position], own, *stored[position + 1 :])
+        position = self.own_index(al_id)
+        return (*stored[:position], own, *stored[position + 1 :])
+
+    def own_index(self, al_id: int) -> int:
+        """Where `windows` puts the entry's own window: at its stored claim, else after every claim."""
+
+        claims = () if self.record is None else self.record.claims
+        return next((i for i, claim in enumerate(claims) if claim.al_id == al_id), len(claims))
 
 
 type KnownTorrents = Mapping[str, KnownTorrent]
@@ -210,8 +216,8 @@ class UrlPlacement(NamedTuple):
 
     records: tuple[EpisodeRecord, ...]
     """One `(season, episode, size)` per file and episode of the whole map inside the entry, in file order.
-    A file nothing placed adds none. A url with no records makes the planner count its release group as
-    covering every episode."""
+    A file nothing placed adds none, and a url held for a hand import (`GrabHold.hand_import`) has none. A url with
+    no records makes the planner count its release group as covering every episode."""
 
     claimed_ids: frozenset[int]
     """The entry's episode ids the whole map covers (a stored placement on another series adds none)."""
@@ -263,9 +269,9 @@ def seed_batch(files: Sequence[SeedFile]) -> PlacementBatch:
 def place_release(files: Sequence[SeedFile], scope: SeedScope, torrent: KnownTorrent) -> UrlPlacement:
     """Place one url's files ONCE, with the same `place_leftover` the import wait runs. Pure.
 
-    Nothing gets placed if a claim's series wasn't read, or if this is a specials window and its listing wasn't
-    read. The url is held (`GrabHold`) for a misnumbered pack, when the size identities weren't read, or when a
-    parse is unknown under a specials listing, because a file the grab seeds is never placed again.
+    Nothing is placed when a claim's series, or a specials window's listing, wasn't read. The url is held
+    (`GrabHold`) when a file of the entry's own window is misnumbered, when a read the placement needs failed, or
+    when its titles refute its numbers and nothing of it lands on the entry.
     """
 
     batch = seed_batch(files)
@@ -277,9 +283,12 @@ def place_release(files: Sequence[SeedFile], scope: SeedScope, torrent: KnownTor
     # An unknown parse only holds the url when a specials listing is checking the pack (`specials_listing`).
     parse_unread = own.specials_listing() is not None and not batch.all_parses_known
     if scope.can_place and windows is not None:
-        assignment = place_leftover(seeded, batch, windows).merged
+        placed = place_leftover(seeded, batch, windows)
+        own_index = torrent.own_index(scope.al_id)
+        assignment = placed.merged
+        misnumbered, refuted = placed.misnumbered_under(own_index), placed.refuted_under(own_index)
     else:
-        assignment = EpisodeAssignment(())
+        assignment, misnumbered, refuted = EpisodeAssignment(()), False, False
     mapped = {**seeded, **assignment.assigned}
     records: list[EpisodeRecord] = []
     claimed: set[int] = set()
@@ -298,25 +307,35 @@ def place_release(files: Sequence[SeedFile], scope: SeedScope, torrent: KnownTor
     # verdict would be final where the import poll retries, so its title is re-checked instead.
     known = windows is not None and (torrent.record is None or scope.can_place)
     # A url with no video file (subs, fonts) places nothing and waits on nothing.
+    unread = identities_unread or parse_unread
+    hold = _hold_of(misnumbered=misnumbered, refuted=refuted and not claimed, unread=unread) if files else None
     return UrlPlacement(
         files=tuple(files),
         assignment=assignment,
-        records=tuple(records),
+        # A pack left for a hand import adds no records: the planner judges it by what its window holds.
+        records=() if hold is not None and hold.hand_import else tuple(records),
         claimed_ids=frozenset(claimed),
         inputs_known=not files or (batch.all_parses_known and known and not identities_unread),
-        hold=_hold_of(assignment, unread=identities_unread or parse_unread) if files else None,
+        hold=hold,
         stored=torrent.record,
         intended_sizes=sizes_by_episode(mapped, sizes),
         identified=own.listing.identified,
     )
 
 
-def _hold_of(assignment: EpisodeAssignment, *, unread: bool) -> GrabHold | None:
-    """Why the url isn't grabbed: a misnumbered pack first, then a missing input (`unread`)."""
+def _hold_of(*, misnumbered: bool, refuted: bool, unread: bool) -> GrabHold | None:
+    """Why the url isn't grabbed: a misnumbered pack first, then a missing input (`unread`), then a refuted pack.
 
-    if any(p.verdict is PlacementVerdict.MISNUMBERED for p in assignment.placements):
+    `misnumbered`: a file of the entry's own window is misnumbered (`WindowedAssignment.misnumbered_under`).
+    `refuted`: the entry's own window refuted a file no window placed, and nothing of the whole map lands on the
+    entry.
+    """
+
+    if misnumbered:
         return GrabHold.MISNUMBERED
-    return GrabHold.INPUT_UNREAD if unread else None
+    if unread:
+        return GrabHold.INPUT_UNREAD
+    return GrabHold.TITLE_REFUTED if refuted else None
 
 
 class IdentityOverride(NamedTuple):

@@ -22,7 +22,6 @@ from .seadex_types import (
     ArrReleases,
     EpisodeKey,
     EpisodeRecord,
-    GrabHold,
     SeadexDict,
     SeadexReleaseGroupItem,
     SeadexUrlItem,
@@ -369,7 +368,7 @@ def _episode_identities(
             continue
         for url_item in rg_item.urls.values():
             # A refused pack placed nothing: an untagged file at one of its listed sizes is its, wherever it sits.
-            if url_item.hold is GrabHold.MISNUMBERED:
+            if url_item.hand_import:
                 for key, size in untagged.items():
                     if key not in identities and size > 0 and size in url_item.size:
                         identities[key] = _EpisodeIdentity(normalized, by_size=True, size=size)
@@ -695,7 +694,7 @@ class DownloadPlanner:
 
             for url_item in seadex_rg_item.urls.values():
                 # A pack the placement refused is judged by what its window holds, never by its numbers.
-                if url_item.hold is GrabHold.MISNUMBERED:
+                if url_item.hand_import:
                     self._match_url_refused(ctx, seadex_rg, url_item)
                     continue
 
@@ -956,7 +955,7 @@ class DownloadPlanner:
         seadex_rg: str,
         url_item: SeadexUrlItem,
     ) -> None:
-        """Decide a specials pack the placement refused (`GrabHold.MISNUMBERED`), by what its window holds.
+        """Decide a pack the placement refused (`GrabHold.hand_import`), by what its window holds.
 
         Flips `url_item.download` in place. The pack is in place once every window episode holds its file at a
         listed size or a covering release's (`_window_in_place`), the shape a hand import leaves. Otherwise it is

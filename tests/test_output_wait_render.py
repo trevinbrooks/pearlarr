@@ -380,5 +380,10 @@ def test_graduation_tail_counts_unmatched_files_and_names_the_action() -> None:
     )
 
 
+def test_graduation_tail_counts_held_back_files_and_names_the_action() -> None:
+    event = _grad("A", Outcome.PARTIAL, waited=15, unmatched_files=("a.mkv", "b.mkv"))
+    assert graduation_tail(event) == "2 files held back · import by hand in Sonarr"
+
+
 def test_graduation_tail_says_a_missing_record_is_gone() -> None:
     assert graduation_tail(_grad("A", Outcome.MISSING)) == "no longer tracked"

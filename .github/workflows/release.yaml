@@ -108,7 +108,7 @@ jobs:
         with:
           persist-credentials: false
       - name: Install uv
-        uses: astral-sh/setup-uv@20cfd1bf945f4377ade1205e4dbc17946fc9a30d # v10.0.1
+        uses: astral-sh/setup-uv@68559e99cc807c1eb7e9238fd43a15bba460eec2 # v10.3.3
         with:
           enable-cache: true
       - name: Sync dependencies
@@ -131,7 +131,7 @@ jobs:
           cp scripts/demo/demo_run.gif docs/assets/demo_run.gif
       - name: Render the grab-notification screenshot
         run: uv run python scripts/sample_grab_post.py
-      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
         with:
           name: readme-media
           path: |
@@ -154,7 +154,7 @@ jobs:
         with:
           persist-credentials: false
       - name: Install uv
-        uses: astral-sh/setup-uv@20cfd1bf945f4377ade1205e4dbc17946fc9a30d # v10.0.1
+        uses: astral-sh/setup-uv@68559e99cc807c1eb7e9238fd43a15bba460eec2 # v10.3.3
       - name: Build
         run: uv build --no-sources
       - name: Assert the PyPI readme pins media and links to v${{ needs.version.outputs.version }}/
@@ -174,7 +174,7 @@ jobs:
           assert_pins "sdist PKG-INFO" /tmp/sdist-pkginfo
       - name: Twine check
         run: uvx twine check --strict dist/*
-      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
         with:
           name: dist
           path: dist/*
@@ -196,7 +196,7 @@ jobs:
       VERSION: ${{ needs.version.outputs.version }}
       ASSETS_REPO: ${{ github.repository }}-assets
     steps:
-      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8
         with:
           name: readme-media
           path: media
@@ -204,7 +204,7 @@ jobs:
         # An app token because the repo-scoped GITHUB_TOKEN cannot push to another
         # repository (the pearlarr-release app). See CONTRIBUTING for details.
         id: app
-        uses: actions/create-github-app-token@bcd2ba49218906704ab6c1aa796996da409d3eb1 # v3
+        uses: actions/create-github-app-token@64ab729a6294000f5aa4a4bc0b73d1f32bc45510 # v3
         with:
           client-id: ${{ secrets.RELEASE_APP_CLIENT_ID }}
           private-key: ${{ secrets.RELEASE_APP_PRIVATE_KEY }}
@@ -278,7 +278,7 @@ jobs:
     permissions:
       id-token: write
     steps:
-      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8
         with:
           name: dist
           path: dist
@@ -303,13 +303,13 @@ jobs:
       # Emulation + a container-driver builder, so one manifest carries both
       # self-hosting architectures (amd64 servers, arm64 SBCs/Apple silicon).
       - name: Set up QEMU
-        uses: docker/setup-qemu-action@1f40c72289eff860ee54a304f1438e3cff362e0a # v4
+        uses: docker/setup-qemu-action@99012661954931238ded8c8b007157a8430204e1 # v4
       - name: Set up Docker Buildx
-        uses: docker/setup-buildx-action@37fe631027851001ddb9b187196cc803df7f5f0e # v4
+        uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4
       # GHCR authenticates with the workflow's own identity + GITHUB_TOKEN. No
       # registry secret to configure (or to be undefined on a fresh fork).
       - name: Log in to GitHub Container Registry
-        uses: docker/login-action@dbcb813823bdd20940b903addbd779551569679f # v4
+        uses: docker/login-action@81c6f93d4bc991e510b342a00b419b3bb4efc5c6 # v4
         with:
           registry: ghcr.io
           username: ${{ github.actor }}
@@ -329,7 +329,7 @@ jobs:
             type=raw,value=latest
       - name: Build and push Docker image
         id: push
-        uses: docker/build-push-action@53b7df96c91f9c12dcc8a07bcb9ccacbed38856a # v7
+        uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc # v7
         with:
           context: .
           file: ./Dockerfile
@@ -362,7 +362,7 @@ jobs:
         with:
           fetch-depth: 0 # the full-changelog compare link needs the tag list
           persist-credentials: false
-      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8
         with:
           name: readme-media
           path: docs/assets
@@ -403,7 +403,7 @@ jobs:
     steps:
       # The runner's default python3 is below our >=3.13 floor, so pip refuses
       # the wheel. Install on the floor itself - the likeliest to break.
-      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+      - uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7.1.0
         with:
           python-version: "3.13"
       - name: Install from PyPI and run the CLI

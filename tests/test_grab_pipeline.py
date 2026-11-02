@@ -14,7 +14,7 @@ login happens. The client `add` is faked by `FakeTorrents`.
 from collections.abc import Mapping
 from dataclasses import replace
 from datetime import datetime, timedelta
-from typing import Any
+from typing import Any, NamedTuple
 
 import httpx
 import pytest
@@ -127,16 +127,15 @@ class TestGrabAnnouncesTheCap:
     def test_the_title_crossing_the_cap_announces_it(self) -> None:
         # The stub reports one add without touching the counter, so the counter is advanced by hand to the cap.
         recording = install_recording_hub()
-        pipeline = make_grab_pipeline(max_torrents_to_add=1, add_torrent=_stub_add_torrent)
-        # Warm the gateway cache so the embed's thumb lookup never hits AniList.
-        pipeline._anilist.al_cache.update({1: {}})
-        pipeline._ctx.torrents_added = 0
+        ctx = RunContext(arr=Arr.SONARR, import_wait_mode=ImportWaitMode.BLOCKING)
 
         def add_and_count(req: GrabRequest) -> tuple[int, list[ReleaseOutcome]]:
-            pipeline._ctx.torrents_added += 1
+            ctx.torrents_added += 1
             return _stub_add_torrent(req)
 
-        pipeline.add_torrent = add_and_count
+        pipeline = make_grab_pipeline(max_torrents_to_add=1, add_torrent=add_and_count, _ctx=ctx)
+        # Warm the gateway cache so the embed's thumb lookup never hits AniList.
+        pipeline._anilist.al_cache.update({1: {}})
 
         assert pipeline._grab(self._request()) == 1
         assert [e.cap for e in recording.of_type(CapReached)] == [1]
@@ -156,15 +155,14 @@ class TestGrabAnnouncesTheCap:
         # MUTATION PIN: reading the raw config cap instead of _effective_cap would announce a cap a preview
         # never enforces.
         recording = install_recording_hub()
-        pipeline = make_grab_pipeline(qbit=None, max_torrents_to_add=1, add_torrent=_stub_add_torrent)
-        pipeline._anilist.al_cache.update({1: {}})
-        pipeline._ctx.torrents_added = 0
+        ctx = RunContext(arr=Arr.SONARR, import_wait_mode=ImportWaitMode.BLOCKING)
 
         def add_and_count(req: GrabRequest) -> tuple[int, list[ReleaseOutcome]]:
-            pipeline._ctx.torrents_added += 1
+            ctx.torrents_added += 1
             return _stub_add_torrent(req)
 
-        pipeline.add_torrent = add_and_count
+        pipeline = make_grab_pipeline(qbit=None, max_torrents_to_add=1, add_torrent=add_and_count, _ctx=ctx)
+        pipeline._anilist.al_cache.update({1: {}})
 
         pipeline._grab(self._request())
 
@@ -1272,6 +1270,16 @@ def test_a_title_read_without_its_tvdb_orders_stays_uncached_with_nothing_to_do(
     assert pipeline._ctx.stats.needs_action == []
 
 
+class _HandImportHold(NamedTuple):
+    """A hold that leaves the url for a hand import, and what the run reports for it."""
+
+    hold: GrabHold
+    skip: SkipReason
+    kind: NeedsActionKind
+    reason: str
+    """The needs-action row's reason."""
+
+
 class TestPlacementHolds:
     """A url the placement refused is never added: the title stays uncached, and the summary says why."""
 
@@ -1283,9 +1291,27 @@ class TestPlacementHolds:
         item.hold = hold
         return item
 
-    def test_a_misnumbered_pack_is_never_added_and_the_title_is_listed_for_a_hand_import(self) -> None:
+    @pytest.mark.parametrize(
+        "case",
+        [
+            _HandImportHold(
+                GrabHold.MISNUMBERED,
+                SkipReason.MISNUMBERED,
+                NeedsActionKind.MISNUMBERED,
+                "numbering does not match its SeaDex listing; import it by hand",
+            ),
+            _HandImportHold(
+                GrabHold.TITLE_REFUTED,
+                SkipReason.TITLE_REFUTED,
+                NeedsActionKind.TITLE_REFUTED,
+                "file titles contradict its numbering; import it by hand",
+            ),
+        ],
+        ids=["misnumbered", "titles-refute"],
+    )
+    def test_a_pack_left_for_a_hand_import_is_never_added_and_the_title_is_listed(self, case: _HandImportHold) -> None:
         recording = install_recording_hub()
-        nyaa = self._held(url="https://nyaa.si/view/1", infohash="h1", hold=GrabHold.MISNUMBERED)
+        nyaa = self._held(url="https://nyaa.si/view/1", infohash="h1", hold=case.hold)
         seadex_dict: SeadexDict = {"RG": rg_group({nyaa.url: nyaa})}
         torrents = FakeTorrents({"h1": (AddOutcome.ADDED, "Show-RG")})
         pipeline = _on_entry(_pipeline(torrents=torrents, sleep_time=0))
@@ -1295,11 +1321,27 @@ class TestPlacementHolds:
         assert torrents.calls == []
         assert pipeline._ctx.torrents_added == 0
         assert pipeline.cache_store.get_entry(Arr.SONARR, 42) is None
-        assert pipeline._ctx.per_title.misnumbered_groups == ["RG"]
-        assert [e.reason for e in recording.of_type(ReleaseSkipped)] == [SkipReason.MISNUMBERED]
+        per_title = pipeline._ctx.per_title
+        assert per_title.misnumbered_groups + per_title.title_refuted_groups == ["RG"]
+        assert [e.reason for e in recording.of_type(ReleaseSkipped)] == [case.skip]
         (row,) = pipeline._ctx.stats.needs_action
-        assert (row.kind, row.group) == (NeedsActionKind.MISNUMBERED, "RG")
-        assert row.reason == "numbering does not match its SeaDex listing; import it by hand"
+        assert (row.kind, row.group, row.reason) == (case.kind, "RG", case.reason)
+
+    def test_a_held_url_of_a_resident_torrent_never_joins_its_record(self) -> None:
+        # Another entry's record holds the torrent.
+        resident = pending_import(infohash="h1")
+        seadex_dict = one_release_dict(srg="RG", infohash="h1")
+        seadex_dict["RG"].urls["https://nyaa.si/view/1"].hold = GrabHold.TITLE_REFUTED
+        torrents = FakeTorrents({"h1": AddResult(AddOutcome.ALREADY_ADDED, "Show", None)})
+        pipeline = _pipeline(torrents=torrents, sleep_time=0)
+        pipeline.cache_store.put_pending(Arr.SONARR, resident.infohash, resident.to_json())
+
+        pipeline.add_torrent(
+            grab_request(seadex_dict=seadex_dict, pending_seeds={"h1": pending_seed("h1", al_id=22, stored=resident)})
+        )
+
+        assert torrents.calls == []
+        assert [c.al_id for c in _stored(pipeline, "h1").claims] == [PENDING_AL_ID]
 
     def test_an_unread_listing_holds_the_url_until_the_next_run(self) -> None:
         # The url names its group among the reads that failed: the row is the retry row, not a hand import.
@@ -1408,10 +1450,9 @@ class TestGrabFailureContainment:
             TorrentParseError("Could not find the torrent title on https://nyaa.si/view/1"),
             TorrentAddError("qBittorrent rejected the torrent"),
             httpx.ConnectError("tracker down"),
-            httpx.ConnectError("nyaa down"),
             qbittorrentapi.APIConnectionError("qbit died mid-run"),
         ],
-        ids=["parse", "add", "tracker", "pynyaa", "qbit"],
+        ids=["parse", "add", "tracker", "qbit"],
     )
     def test_failure_is_one_clean_warning_no_traceback(self, error: Exception) -> None:
         # Every boundary failure mode lands as ONE typed GrabFailed event (the

@@ -11,8 +11,23 @@ Pearlarr is a fork of [bbtufty/seadexarr](https://github.com/bbtufty/seadexarr).
 
 - Sonarr runs fetch the TVDB episode orders (aired, DVD, and the others TVDB lists) of each series they check or a pending import waits on, from Sonarr's metadata service at `skyhook.sonarr.tv`, in a new "Fetching TVDB orders" boot step, and keep them in the cache (cache schema v6). A series is refetched after a week, or a month once it has ended and gone quiet. `pearlarr cache stats` counts the stored series. While SkyHook is unreachable, a title whose series has no stored orders yet stays unchecked and is retried next run.
 
+### Changed
+
+- Pearlarr no longer fetches the tracker page of a release qBittorrent already has. A torrent SeaDex lists under two entries is fetched once instead of twice, and one whose tracker page is down or gone no longer fails the grab.
+- A Nyaa grab now makes one small request instead of downloading the release page and the .torrent file. When qBittorrent hasn't named the torrent yet, the grab's name in the console and the log is now the .torrent's own file name instead of the page title.
+- A pack whose file titles contradict its numbering, with none of its files placed, is no longer grabbed. The title is listed under "needs action" with "file titles contradict its numbering; import it by hand" until a hand import fills its episodes.
+- When only some of such a pack's files are placed, the pack is grabbed and those import. The rest keep the download pending in its grab category: the import line counts them, the log and the Discord wait notification name them, and every run names them again until a hand import fills their episodes or the download reaches `pending_max_age_days`.
+- The first run after upgrading re-checks every cached title once and says so.
+
 ### Fixed
 
+- A pack numbered by absolute episode, such as `Show.101` or `Show - 0517`, now imports onto the episodes those numbers count to, not where Sonarr reads them as a season and episode (S01E01, S05E17). When its pack can't place a file numbered that way, the file is left for a hand import.
+- A release whose file names disagree with their own numbers is left for a hand import instead of imported where Sonarr reads them, and listed under "needs action" until its episodes are filled. That covers a count beside an episode key that names another episode, a key Sonarr worked out from bare digits but didn't match, a number followed by words that name no episode, and a pack numbered past its season's end when the season's absolute numbering counts a special.
+- A pack whose names carry another number before the episode's, such as the show's year or a number in its title (`Show 2003 EP 03`, `Show.100.01`), now imports by the episode number instead of being skipped.
+- A file named with an episode's title now also matches it when the subtitle is set off by dashes instead of a colon, when the name spells the title's "&" as "and", when the title opens with a number Sonarr took for the episode, or when the title is just the season and episode the name carries (`Show 2 - 05` for an episode titled "2.5").
+- When one file of a numbered pack carries the title of the episode another file is numbered for, both are left for a hand import instead of the titled file taking that episode.
+- A pack already downloading for one SeaDex entry now also imports for a second entry whose files it numbers right, even when a file it holds for the first is misnumbered there. That file still isn't placed.
+- A download with files pearlarr couldn't place, named with no group, now finishes once every episode holds one of its files at a listed size, whether Sonarr imported them or you did by hand, instead of warning every run until `pending_max_age_days`.
 - `pearlarr run single` now stops cleanly on SIGTERM and exits 0, like `run scheduled`.
 - A SIGTERM during the Sonarr episode fetch stops right away instead of finishing every queued request. One during the import wait notes how many records were left pending, as Ctrl-C does.
 - A stopped or killed run keeps every title it finished. Before, it lost all of that arr's decisions and the next run redid them.

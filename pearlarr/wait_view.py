@@ -32,7 +32,7 @@ class WaitOutcomeRow:
     carried_over: bool = False
     """Whether the record predates this run. A fresh grab tallies as `added`, never `imported`."""
     unmatched_files: tuple[str, ...] = ()
-    """On the `UNMATCHED` outcome, the on-disk files no episode claimed."""
+    """On the `UNMATCHED` and `PARTIAL` outcomes, the on-disk files left for a hand import."""
 
 
 @dataclass(frozen=True, slots=True)

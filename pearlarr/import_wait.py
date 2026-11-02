@@ -69,7 +69,7 @@ class ImportProbes:
             return TorrentProbe(None, None, observed=False)
         try:
             info = self._qbit.torrents_info(torrent_hashes=infohash)
-        except (qbittorrentapi.APIError, qbittorrentapi.APIConnectionError):
+        except qbittorrentapi.APIError:
             # Transient (a dropped connection or a re-auth in flight): keep waiting.
             return TorrentProbe(None, None, observed=False)
 
@@ -94,7 +94,7 @@ class ImportProbes:
             return {}
         try:
             infos = self._qbit.torrents_info(torrent_hashes=infohashes)
-        except (qbittorrentapi.APIError, qbittorrentapi.APIConnectionError):
+        except qbittorrentapi.APIError:
             return {}
         keys = {infohash.casefold(): infohash for infohash in infohashes}
         telemetry: dict[str, TorrentTelemetry] = {}
@@ -266,7 +266,7 @@ class PostImportCleanup:
             except qbittorrentapi.Conflict409Error:
                 qbit.torrents_create_category(name=category)
                 qbit.torrents_set_category(category=category, torrent_hashes=infohash)
-        except (qbittorrentapi.APIError, qbittorrentapi.APIConnectionError) as e:
+        except qbittorrentapi.APIError as e:
             # Give-up stays DEBUG too: the single user-visible warn is the keep warn.
             self._logger.debug(f"category move to {category!r} failed ({str(e) or type(e).__name__})")
             return EffectStatus.RETRY
@@ -669,7 +669,7 @@ def _exhausted_outcome(probe: ImportProbe) -> Outcome:
 
 
 class _TerminalDetail(NamedTuple):
-    """The coda facts a terminal outcome carries: the imported files count, or the files no episode claimed."""
+    """The coda facts a terminal outcome carries: the imported files count, or the files a hand import places."""
 
     files: int | None = None
     unmatched_files: tuple[str, ...] = ()
@@ -938,6 +938,9 @@ class MonitorPass:
         elif probe.unmatched_files:
             # Nothing to wait for: the deadline would only repeat the answer. Kept for a human, re-reported next run.
             self._terminal(Outcome.UNMATCHED, row, _TerminalDetail(unmatched_files=probe.unmatched_files))
+        elif probe.hand_import_files:
+            # The placed files are in and the rest wait on a hand import: kept, re-reported next run.
+            self._terminal(Outcome.PARTIAL, row, _TerminalDetail(unmatched_files=probe.hand_import_files))
         elif at_deadline and not landed and not deferred:
             self._terminal(_exhausted_outcome(probe), row)
         elif not probe.attempted:

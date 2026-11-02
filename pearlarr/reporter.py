@@ -116,7 +116,10 @@ class NeedsActionKind(Enum):
     PLACEMENT_INPUT_MISSING = auto()
     """A read the grab-time placement needs failed: the grab was judged without it, or held until it answers."""
     MISNUMBERED = auto()
-    """A recommended release is a specials pack numbered by another TVDB state than its listing: a hand import."""
+    """A recommended release's file numbers disagree, or it's a specials pack numbered another way than its
+    listing: a hand import."""
+    TITLE_REFUTED = auto()
+    """A recommended release's file titles contradict its numbering and none of it places on the entry."""
 
 
 @dataclass(frozen=True, slots=True)
@@ -188,6 +191,9 @@ class PerTitleState:
     misnumbered_groups: list[str] = field(default_factory=list[str])
     """Groups with a release the placement refused as misnumbered, never grabbed, so the title stays uncached and
     re-warns until a hand import covers it."""
+    title_refuted_groups: list[str] = field(default_factory=list[str])
+    """Groups with a release whose titles refute its numbers and that placed nothing, never grabbed, so the title
+    stays uncached and re-warns until a hand import covers it."""
     orders_unread: bool = False
     """A series the placement read has no stored TVDB orders, so the title stays uncached and re-checks. Nothing
     for the user to do."""

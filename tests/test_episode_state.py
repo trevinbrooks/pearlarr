@@ -1,6 +1,8 @@
 # pyright: strict
 """Episode-file statuses and the per-target snapshot (never-overwrite, the trust map it reads)."""
 
+import pytest
+
 from pearlarr.episode_state import (
     EpisodeFileStatus,
     EpisodeSnapshot,
@@ -154,6 +156,25 @@ class TestEpisodeFileStatuses:
     def test_untagged_file_at_the_recorded_size_that_is_the_intended_one_is_recommended(self) -> None:
         assert self._holding(2000, None).judge(5, 2000).status is EpisodeFileStatus.RECOMMENDED
 
+    @pytest.mark.parametrize(
+        ("size", "group", "intended", "copy"),
+        [
+            pytest.param(1000, None, None, True, id="at a listed size, nothing intended"),
+            pytest.param(1000, None, 1000, True, id="the intended one"),
+            pytest.param(1000, None, 2000, False, id="another of our files"),
+            pytest.param(1500, None, None, False, id="at no listed size"),
+            pytest.param(1000, "SubGroup", None, False, id="tagged"),
+        ],
+    )
+    def test_an_untagged_copy_is_a_groupless_file_at_a_listed_size_intended_here(
+        self, size: int, group: str | None, intended: int | None, copy: bool
+    ) -> None:
+        judgment = self._holding(size, group).judge(5, intended)
+
+        assert judgment.untagged_copy is copy
+        if group is None and size == 1000:
+            assert judgment.status is EpisodeFileStatus.UNKNOWN_GROUP
+
     @staticmethod
     def _guarded() -> EpisodeSnapshot:
         """An empty index guarded by no facts, voting SubGroup's release at size 1000."""
@@ -172,6 +193,10 @@ class TestEpisodeFileStatuses:
         assert rec.all_done() is True
         assert mixed.all_done() is False
         assert target_statuses({}).all_done() is False
+
+    def test_filled_by_hand_needs_a_target(self) -> None:
+        assert target_statuses({1: EpisodeFileStatus.RECOMMENDED}).filled_by_hand() is True
+        assert target_statuses({}).filled_by_hand() is False
 
     def test_needing_import_excludes_only_recommended(self) -> None:
         statuses = target_statuses(

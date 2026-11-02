@@ -42,7 +42,12 @@ def _series(
     return SonarrSeries.model_validate(raw)
 
 
-def _sync(series: list[SonarrItem], cache: FakeCacheStore, client: FakeSkyHookClient | None = None) -> SonarrSync:
+def _sync(
+    monkeypatch: pytest.MonkeyPatch,
+    series: list[SonarrItem],
+    cache: FakeCacheStore,
+    client: FakeSkyHookClient | None = None,
+) -> SonarrSync:
     """The Sonarr strategy after the run's library read of `series`, its orders fetched through `client`."""
 
     strat = make_sonarr_sync(
@@ -56,7 +61,7 @@ def _sync(series: list[SonarrItem], cache: FakeCacheStore, client: FakeSkyHookCl
     def _library() -> list[SonarrItem]:
         return series
 
-    strat._episodes.get_all_sonarr_series = _library
+    monkeypatch.setattr(strat._episodes, "get_all_sonarr_series", _library)
     strat.get_items()
     return strat
 
@@ -70,11 +75,11 @@ def _sync(series: list[SonarrItem], cache: FakeCacheStore, client: FakeSkyHookCl
     ],
 )
 def test_a_series_is_served_its_stored_orders_only_when_sonarr_numbers_it_by_official(
-    season_type: str, expected: SeriesOrdering
+    season_type: str, expected: SeriesOrdering, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     cache = FakeCacheStore()
     cache.put_tvdb_orders(50, stored_orders(_ORDERS))
-    strat = _sync([_series(1, 50, season_type=season_type)], cache)
+    strat = _sync(monkeypatch, [_series(1, 50, season_type=season_type)], cache)
 
     assert strat._episodes.orders_for(1) == expected
     assert strat._episodes.orders_for(2) == NO_ORDERING
@@ -89,28 +94,30 @@ def test_a_series_is_served_its_stored_orders_only_when_sonarr_numbers_it_by_off
         pytest.param(4, False, id="not-in-the-library"),
     ],
 )
-def test_a_library_series_with_no_stored_record_is_unread(series_id: int, unread: bool) -> None:
+def test_a_library_series_with_no_stored_record_is_unread(
+    series_id: int, unread: bool, monkeypatch: pytest.MonkeyPatch
+) -> None:
     cache = FakeCacheStore()
     cache.put_tvdb_orders(50, stored_orders(_ORDERS))
-    strat = _sync([_series(1, 50), _series(2, 60), _series(3, 0)], cache)
+    strat = _sync(monkeypatch, [_series(1, 50), _series(2, 60), _series(3, 0)], cache)
 
     assert strat._episodes.orders_unread([series_id]) is unread
 
 
-def test_orders_are_fetched_once_per_tvdb_series() -> None:
+def test_orders_are_fetched_once_per_tvdb_series(monkeypatch: pytest.MonkeyPatch) -> None:
     # Two Sonarr series of one TVDB series, one with no TVDB id, and one this run's library read lacks.
     cache = FakeCacheStore()
-    strat = _sync([_series(1, 50), _series(2, 50), _series(3, 0)], cache)
+    strat = _sync(monkeypatch, [_series(1, 50), _series(2, 50), _series(3, 0)], cache)
 
     assert strat._episodes.prefetch_orders([1, 2, 3, 9]) == 1
     assert cache.stats().tvdb_orders == 1
 
 
-def test_sonarr_v5_counts_ride_the_fetch_request() -> None:
+def test_sonarr_v5_counts_ride_the_fetch_request(monkeypatch: pytest.MonkeyPatch) -> None:
     # The record is fresh, so only the count Sonarr's series row carries can make it due.
     cache = FakeCacheStore()
     cache.put_tvdb_orders(50, stored_orders(_ORDERS, sonarr_counts={"official": 2}))
-    strat = _sync([_series(1, 50, counts={"official": 3})], cache)
+    strat = _sync(monkeypatch, [_series(1, 50, counts={"official": 3})], cache)
 
     assert strat._episodes.prefetch_orders([1]) == 1
 
@@ -119,23 +126,27 @@ def test_sonarr_v5_counts_ride_the_fetch_request() -> None:
     ("mode", "fetched"),
     [pytest.param(ImportWaitMode.BLOCKING, 1, id="waiting"), pytest.param(ImportWaitMode.OFF, 0, id="off")],
 )
-def test_a_stored_records_series_is_fetched_while_imports_are_waited_on(mode: ImportWaitMode, fetched: int) -> None:
+def test_a_stored_records_series_is_fetched_while_imports_are_waited_on(
+    mode: ImportWaitMode, fetched: int, monkeypatch: pytest.MonkeyPatch
+) -> None:
     # Nothing in the scan needs series 2, but grab and import read the record's series anyway.
     record = pending_import(infohash="h", series_id=2)
     cache = FakeCacheStore(pending={str(Arr.SONARR): {record.infohash: record.to_json()}})
-    strat = _sync([_series(2, 60)], cache)
+    strat = _sync(monkeypatch, [_series(2, 60)], cache)
     strat._services.begin_run(RunContext(arr=Arr.SONARR, import_wait_mode=mode))
 
     assert strat.prefetch_orders([]) == fetched
 
 
-def test_an_outage_leaves_a_new_series_without_orders_and_serves_the_stored_ones() -> None:
+def test_an_outage_leaves_a_new_series_without_orders_and_serves_the_stored_ones(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     # Series 1's record is due but SkyHook is down: the stale record still serves grab and import. Series 2 was
     # never fetched, so its index has no orders.
     cache = FakeCacheStore()
     cache.put_tvdb_orders(50, stored_orders(_ORDERS, fresh_for=timedelta(days=-1)))
     client = FakeSkyHookClient(failing=frozenset({(50, "official"), (60, "official")}))
-    strat = _sync([_series(1, 50), _series(2, 60)], cache, client)
+    strat = _sync(monkeypatch, [_series(1, 50), _series(2, 60)], cache, client)
 
     assert strat._episodes.prefetch_orders([1, 2]) == 0
 

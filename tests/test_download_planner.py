@@ -31,6 +31,8 @@ across sets onto ONE result - the multi-set tests pin that accumulation.
 
 import logging
 
+import pytest
+
 from pearlarr.config import Arr
 from pearlarr.output import Severity
 from pearlarr.planner import DownloadPlanner, PlanResult
@@ -1709,16 +1711,18 @@ class TestReduceDropRescue:
 
 
 class TestRefusedPack:
-    """A specials pack the placement refused is judged by what its window holds, never by its numbers."""
+    """A pack left for a hand import is judged by what its window holds, never by its numbers."""
 
     _SIZES = (100, 200, 300)
 
     @classmethod
-    def _seadex(cls, **siblings: SeadexReleaseGroupItem) -> dict[str, SeadexReleaseGroupItem]:
-        """The refused pack, three files at `_SIZES` placed nowhere, beside `siblings`."""
+    def _seadex(
+        cls, hold: GrabHold = GrabHold.MISNUMBERED, **siblings: SeadexReleaseGroupItem
+    ) -> dict[str, SeadexReleaseGroupItem]:
+        """The pack left for a hand import for `hold`, three files at `_SIZES` placed nowhere, beside `siblings`."""
 
         item = url_item(size=list(cls._SIZES), episodes=[], infohash="h1")
-        item.hold = GrabHold.MISNUMBERED
+        item.hold = hold
         return {"Pack": rg_group({"u1": item}), **siblings}
 
     @staticmethod
@@ -1738,17 +1742,19 @@ class TestRefusedPack:
 
         return sonarr_ep(0, episode, size=size, release_group="Pack", episode_file_id=file_id)
 
-    def test_every_special_holding_a_pack_file_is_in_place(self) -> None:
+    @pytest.mark.parametrize("hold", [GrabHold.MISNUMBERED, GrabHold.TITLE_REFUTED])
+    def test_every_special_holding_a_pack_file_is_in_place(self, hold: GrabHold) -> None:
         held = [self._ours(n, size, 10 + n) for n, size in enumerate(self._SIZES, 1)]
 
-        item = self._decide(self._seadex(), held)
+        item = self._decide(self._seadex(hold), held)
 
         assert item.download is False
 
-    def test_an_empty_special_flags_the_pack_as_an_upgrade(self) -> None:
+    @pytest.mark.parametrize("hold", [GrabHold.MISNUMBERED, GrabHold.TITLE_REFUTED])
+    def test_an_empty_special_flags_the_pack_as_an_upgrade(self, hold: GrabHold) -> None:
         held = [self._ours(1, 100, 11), self._ours(2, 200, 12), sonarr_ep(0, 3, episode_file_id=0)]
 
-        item = self._decide(self._seadex(), held)
+        item = self._decide(self._seadex(hold), held)
 
         assert (item.download, item.upgrade) == (True, True)
 

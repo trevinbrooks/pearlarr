@@ -683,7 +683,7 @@ EVENT_DESCRIPTIONS: dict[str, str] = {
     "ledger_row": "A self-contained one-line result for a title: `message` is the state word, "
     "`title` the library title.",
     "release_skipped": "A release was skipped at add time. `reason` is `private_only`, "
-    "`unsupported_tracker`, or `tracker_not_selected`.",
+    "`unsupported_tracker`, `tracker_not_selected`, `misnumbered`, `title_refuted`, or `input_unread`.",
     "grab_failed": "Adding a release to qBittorrent failed. The title is retried next run.",
     "grab_action": "The grab decision for a title. `message` distinguishes a real add, a dry-run "
     "would-add, and already in qBittorrent.",
@@ -697,7 +697,7 @@ EVENT_DESCRIPTIONS: dict[str, str] = {
     "wait_started": "The end-of-run pass opened, watching `total` torrents. `kind` is `monitor` (waits for "
     "downloads to finish, then imports) or `check` (one non-blocking poll of earlier runs' downloads).",
     "torrent_graduated": "One watched torrent reached a terminal outcome. `message` is the outcome word. "
-    "`unmatched_files` names the files no episode claimed, only on the `unmatched` outcome.",
+    "`unmatched_files` names the files left for a hand import, only on the `unmatched` and `partial` outcomes.",
     "wait_finished": "The pass closed, with its imported/pending/deferred/failed tally (`pending` counts the "
     "check's rows left for the next run on purpose).",
     "run_finished": "The per-arr run closed (a boundary event).",

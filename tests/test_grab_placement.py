@@ -3,6 +3,8 @@
 
 from dataclasses import replace
 
+import pytest
+
 from pearlarr.grab_placement import (
     EntryPlacements,
     IdentityOverride,
@@ -93,6 +95,12 @@ def _matched(season: int, episode: int) -> ParsedFileInfo:
         episode_numbers=(episode,),
         matched_episodes=(MatchedEpisode(season_number=season, episode_number=episode),),
     )
+
+
+def _bare_key(season: int, episode: int) -> ParsedFileInfo:
+    """A spelled key Sonarr matched nothing for."""
+
+    return ParsedFileInfo(season_number=season, episode_numbers=(episode,))
 
 
 def _pack(count: int = 4) -> list[SeedFile]:
@@ -373,6 +381,67 @@ class TestPlaceOntoResident:
         assert not placement.inputs_known
 
 
+_ST1 = ("Alpha Start", "Bravo Turn", "Charlie Rise")
+_ST2 = ("Echo Dawn", "Foxtrot Fall", "Golf Night")
+# Two titled seasons and a special, season 2 numbered on in absolute order.
+_TITLED = [
+    *(sonarr_ep(1, n, ep_id=100 + n, absolute=n, title=t, episode_file_id=0) for n, t in enumerate(_ST1, 1)),
+    *(sonarr_ep(2, n, ep_id=200 + n, absolute=3 + n, title=t, episode_file_id=0) for n, t in enumerate(_ST2, 1)),
+    sonarr_ep(0, 1, ep_id=501, title="Beach Special", episode_file_id=0),
+]
+_TITLED_INDEX = episode_index(_TITLED)
+
+
+class TestPlaceUnderAnotherEntrysRefutal:
+    """A torrent entry 1's record holds, whose run its titles refute under entry 1's window, placed for another entry."""
+
+    @staticmethod
+    def _place(files: dict[str, ParsedFileInfo], mapped: dict[str, list[int]], entry: list[int]) -> UrlPlacement:
+        """Entry 2 places `files` onto entry 1's record of `mapped` over season 1, its own window `entry`."""
+
+        record = pending_import(
+            infohash="h1",
+            series_id=7,
+            file_episode_map=mapped,
+            seadex_files=tuple(files),
+            ordered_episode_ids=(101, 102, 103),
+        )
+        scope = SeedScope(2, episode_index([ep for ep in _TITLED if ep.id in entry]), _TITLED_INDEX, EntryNames())
+        seeds = [SeedFile(name, 1000 + i, info) for i, (name, info) in enumerate(files.items())]
+        torrent = known_torrent(record, indexes={7: _TITLED_INDEX}, evidence=torrent_evidence(frozenset()))
+        return place_release(seeds, scope, torrent)
+
+    def test_the_sequel_entry_places_the_run_entry_1s_window_refutes(self) -> None:
+        # Sonarr read the sequel's bare numbers as first-season absolutes, and its titled member names a sequel
+        # episode.
+        first = {f"show - s01e{n:02d}.mkv": _matched(1, n) for n in (1, 2, 3)}
+        sequel = {
+            name: ParsedFileInfo(
+                absolute_episode_numbers=(n,), matched_episodes=(MatchedEpisode(season_number=1, episode_number=n),)
+            )
+            for n, name in enumerate(("show s2 - 01 - echo dawn.mkv", "show s2 - 02.mkv", "show s2 - 03.mkv"), 1)
+        }
+
+        placement = self._place(
+            {**first, **sequel}, {name: [100 + n] for n, name in enumerate(first, 1)}, [201, 202, 203]
+        )
+
+        assert placement.hold is None
+        assert placement.claimed_ids == {201, 202, 203}
+
+    def test_an_entry_placing_nothing_is_grabbed_despite_entry_1s_refutal(self) -> None:
+        # The titled file is the third episode's, under the second's key. None of the files is the special's.
+        files = {
+            "show - 01.mkv": _matched(1, 1),
+            "show - 02 - charlie rise.mkv": _matched(1, 2),
+            "show - 03.mkv": _matched(1, 3),
+        }
+
+        placement = self._place(files, {"show - 02 - charlie rise.mkv": [103]}, [501])
+
+        assert placement.hold is None
+
+
 class TestPlaceHeld:
     """A url the grab holds: a specials pack the listing contradicts, or a listing the run could not read."""
 
@@ -408,6 +477,60 @@ class TestPlaceHeld:
         assert placement.claimed_ids == frozenset()
         assert placement.inputs_known
 
+    def test_a_pack_held_for_a_disputed_run_records_none_of_its_placed_files(self) -> None:
+        # The season's absolutes count the special between E02 and E03, and the pack is keyed on past the end.
+        season = [
+            sonarr_ep(1, 1, ep_id=101, episode_file_id=0, absolute=1),
+            sonarr_ep(1, 2, ep_id=102, episode_file_id=0, absolute=2),
+            sonarr_ep(1, 3, ep_id=103, episode_file_id=0, absolute=4),
+        ]
+        series = episode_index([*season, sonarr_ep(0, 1, ep_id=501, episode_file_id=0, absolute=3)])
+        files = [
+            SeedFile(name, 10 * n, _matched(1, n) if n < 4 else _bare_key(1, n)) for n, name in enumerate(_PACK, 1)
+        ]
+        scope = SeedScope(1, episode_index(season), series, EntryNames())
+
+        placement = place_release(files, scope, known_torrent(indexes={7: series}))
+
+        assert placement.hold is GrabHold.MISNUMBERED
+        assert placement.assignment.assigned == {"show - s01e01.mkv": [101], "show - s01e02.mkv": [102]}
+        assert placement.records == ()
+
+    @staticmethod
+    def _titled_scope(*numbers: int) -> SeedScope:
+        """Entry 1 over season 1's episodes `numbers`, within a titled four-episode season."""
+
+        titles = ("Pilot Flight", "The Return", "Festival Night", "Final Bell")
+        season = [sonarr_ep(1, n, ep_id=100 + n, episode_file_id=0, title=t) for n, t in enumerate(titles, 1)]
+        return SeedScope(1, episode_index([season[n - 1] for n in numbers]), episode_index(season), EntryNames())
+
+    def test_a_pack_its_titles_refute_that_places_nothing_holds_the_url_and_records_nothing(self) -> None:
+        # The titled file is the third episode's, under the plain file's key.
+        files = [
+            SeedFile("show - 02 - Festival Night [grp].mkv", 10, _bare_key(1, 2)),
+            SeedFile("show - 03 [grp].mkv", 20, _bare_key(1, 3)),
+        ]
+
+        placement = place_release(files, self._titled_scope(1, 2, 3), known_torrent())
+
+        assert placement.hold is GrabHold.TITLE_REFUTED
+        assert placement.records == ()
+
+    def test_a_pack_its_titles_refute_that_places_some_files_is_not_held(self) -> None:
+        # Each key is one episode early, as the titles show.
+        names = ("show - 01 - The Return [grp].mkv", "show - 02 - Festival Night [grp].mkv", "show - 03 [grp].mkv")
+        files = [SeedFile(name, 10 * n, _matched(1, n)) for n, name in enumerate(names, 1)]
+
+        placement = place_release(files, self._titled_scope(1, 2, 3), known_torrent())
+
+        assert placement.hold is None
+        assert placement.assignment.assigned == {
+            normalize_basename(names[0]): [102],
+            normalize_basename(names[1]): [103],
+        }
+        assert placement.assignment.hand_import_files == (normalize_basename(names[2]),)
+        assert len(placement.records) == 2
+
     def test_a_pack_the_listing_agrees_with_places_and_is_not_held(self) -> None:
         placement = place_release(
             self._specials(), self._specials_scope(1, 2), self._listing(frozenset({501, 502, 503}))
@@ -431,22 +554,61 @@ class TestPlaceHeld:
         assert verdicts_of(placement.assignment) == {PlacementVerdict.ALTERNATE, PlacementVerdict.ALIASED_ELSEWHERE}
         assert placement.claimed_ids == {502, 504}
 
-    def test_a_pack_another_series_places_by_its_numbers_against_the_aliases_holds_the_url(self) -> None:
-        # The stored record also claims the pack for another series, whose window the listing doesn't cover: there
-        # every member places by its own number, against what the aliases say, so the pack waits for a hand import.
-        other = episode_index([sonarr_ep(0, n, ep_id=900 + n, episode_file_id=0) for n in (1, 2, 3)])
-        record = two_claim_record(series_ids=(7, 8), windows=((502, 504), (901, 902, 903)))
-        torrent = known_torrent(
-            record,
-            indexes={7: episode_index(_SPECIALS), 8: other},
+    _OTHER = episode_index([sonarr_ep(0, n, ep_id=900 + n, episode_file_id=0) for n in (1, 2, 3)])
+    """Another series' three specials, which the listing doesn't cover."""
+
+    @classmethod
+    def _aliased_against(cls, numbered: tuple[int, ...]) -> KnownTorrent:
+        """The aliased pack, claimed for entry 1 over specials 2 and 4 and for entry 2 over `numbered` of `_OTHER`."""
+
+        return known_torrent(
+            two_claim_record(series_ids=(7, 8), windows=((502, 504), numbered)),
+            indexes={7: episode_index(_SPECIALS), 8: cls._OTHER},
             evidence=torrent_evidence(ALIASED_PACK.ids, aliases=ALIASED_PACK.special_aliases),
         )
 
-        placement = place_release(self._specials(), self._specials_scope(2, 4), torrent)
+    @pytest.mark.parametrize("al_id", [1, 2])
+    def test_a_pack_another_series_places_by_its_numbers_against_the_aliases_holds_the_url(self, al_id: int) -> None:
+        # The stored record also claims the pack for another series: there every member places by its own number,
+        # against what the aliases say, so the pack waits for a hand import. Either entry holds it: the aliases
+        # placed or claimed its files under the first, the second placed them.
+        scope = self._specials_scope(2, 4) if al_id == 1 else SeedScope(2, self._OTHER, self._OTHER, EntryNames())
+
+        placement = place_release(self._specials(), scope, self._aliased_against((901, 902, 903)))
 
         assert verdicts_of(placement.assignment) == {PlacementVerdict.MISNUMBERED}
         assert placement.hold is GrabHold.MISNUMBERED
         assert placement.claimed_ids == frozenset()
+
+    def test_a_file_the_aliases_claim_that_another_series_places_holds_the_url(self) -> None:
+        # The aliases claim the third file for special 6, outside this window, and the other series places it by
+        # its number. The first two still place.
+        placement = place_release(self._specials(), self._specials_scope(2, 4), self._aliased_against((903,)))
+
+        assert placement.hold is GrabHold.MISNUMBERED
+        assert placement.assignment.assigned == {"show.s00e01.mkv": [502], "show.s00e02.mkv": [504]}
+
+    def test_a_file_misnumbered_under_another_entrys_window_holds_nothing(self) -> None:
+        # The stored record claims season 1 for entry 1, where the first file's key and count disagree. Entry 2's
+        # window reads that file as another season's, and places its own.
+        first = [sonarr_ep(1, n, ep_id=100 + n, episode_file_id=0, absolute=n) for n in (1, 2, 3)]
+        second = [sonarr_ep(2, n, ep_id=200 + n, episode_file_id=0, absolute=3 + n) for n in (1, 2)]
+        series = episode_index([*first, *second])
+        files = [
+            SeedFile("Show - S01E02 (0003).mkv", 10, _matched(1, 2)),
+            SeedFile("Show - S02E01 (0004).mkv", 20, _matched(2, 1)),
+            SeedFile("Show - S02E02 (0005).mkv", 30, _matched(2, 2)),
+        ]
+        record = pending_import(
+            infohash="h1", seadex_files=[f.basename for f in files], ordered_episode_ids=(101, 102, 103)
+        )
+        scope = SeedScope(2, episode_index(second), series, EntryNames())
+
+        placement = place_release(files, scope, known_torrent(record, indexes={7: series}))
+
+        assert PlacementVerdict.MISNUMBERED in verdicts_of(placement.assignment)
+        assert placement.hold is None
+        assert placement.records == (EpisodeRecord(2, 1, 20), EpisodeRecord(2, 2, 30))
 
     def test_an_unread_listing_holds_the_url_and_places_nothing(self) -> None:
         # No verdict could judge the pack, and import time (no listing) would place it by its numbers.

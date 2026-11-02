@@ -1025,7 +1025,7 @@ class TestExternalDetailParity:
                 "yellow",
             ),
         ),
-        # grab_pipeline._screen_url: a specials pack numbered by another TVDB state than its listing.
+        # grab_pipeline._screen_url: a pack whose file numbers disagree, or a specials pack numbered another way.
         _FactSite(
             ReleaseSkipped(group="GroupA", tracker="Nyaa", reason=SkipReason.MISNUMBERED, url="https://x/1"),
             _xdetail(
@@ -1033,6 +1033,17 @@ class TestExternalDetailParity:
                 "    skipped   https://x/1 (numbering does not match its SeaDex listing)",
                 "skipped",
                 "https://x/1 (numbering does not match its SeaDex listing)",
+                "yellow",
+            ),
+        ),
+        # grab_pipeline._screen_url: a pack whose file titles contradict its numbers, none of it placed.
+        _FactSite(
+            ReleaseSkipped(group="GroupA", tracker="Nyaa", reason=SkipReason.TITLE_REFUTED, url="https://x/1"),
+            _xdetail(
+                _W,
+                "    skipped   https://x/1 (file titles contradict its numbering)",
+                "skipped",
+                "https://x/1 (file titles contradict its numbering)",
                 "yellow",
             ),
         ),

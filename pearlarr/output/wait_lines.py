@@ -55,6 +55,8 @@ def graduation_tail(event: TorrentGraduated) -> str:
     if outcome is Outcome.UNMATCHED:
         # The names ride the structured log and the notification. The console gets the count and the action.
         return f"{count_noun(len(event.unmatched_files), 'file')} matched no episode · import by hand in Sonarr"
+    if outcome is Outcome.PARTIAL:
+        return f"{count_noun(len(event.unmatched_files), 'file')} held back · import by hand in Sonarr"
     if outcome is Outcome.IMPORTED:
         parts: list[str] = []
         if event.files:

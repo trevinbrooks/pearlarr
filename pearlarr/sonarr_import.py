@@ -62,7 +62,7 @@ from .seadex_types import (
 )
 from .sonarr_client import AbstractSonarrClient
 from .sonarr_episodes import SonarrEpisodes
-from .sonarr_mapper import FileEpisodeMapper
+from .sonarr_mapper import FileAssignment, FileEpisodeMapper
 
 # How many times the rescan's status is polled, `_RESCAN_COMMAND_POLL_S` apart.
 _RESCAN_COMMAND_MAX_POLLS = 30
@@ -145,6 +145,11 @@ class _ImportContext:
             return series_id
         series_ids = self.pending.series_ids
         return series_ids[0] if len(series_ids) == 1 else None
+
+    def leaves(self, names: tuple[str, ...]) -> tuple[str, ...]:
+        """The on-disk leaf of each normalized basename."""
+
+        return tuple(path_leaf(self.candidates_by_basename[name].path) for name in names)
 
 
 @dataclass
@@ -484,34 +489,35 @@ class ImportExecutor:
             self.logger.debug(f"{pending.display_label}: never this record's to import: {verdicts}")
         unplaced = assignment.unplaced
         if unplaced and assignment.settled and not authoritative:
-            if context.snapshot.statuses(pending.resolved_ids(), pending.file_episode_map).all_done():
-                # A hand import placed what no poll could: every intended episode holds a recommended file.
-                self.logger.debug(f"{content_path}: already imported (recommended files present)")
-                probe = ImportProbe.imported()
+            if (by_hand := self._imported_by_hand(context, pending.file_episode_map)) is not None:
+                # A hand import placed what no poll could.
+                probe = by_hand
             else:
                 # Nothing to verify or import, and the same files come back next poll: an outcome, not a wait.
                 # The skips name what a hand import must place (every one an on-disk key, since the mapper
                 # judges only what it read from the scan). Only exclusions fall back to naming those.
-                unmatched = assignment.skipped or unplaced
-                names = tuple(path_leaf(context.candidates_by_basename[name].path) for name in unmatched)
-                probe = ImportProbe.unmatched(names)
+                probe = ImportProbe.unmatched(context.leaves(assignment.skipped or unplaced))
         else:
             if unplaced and not assignment.settled and not context.at_deadline:
                 # A parse or episode-index miss may be hiding the match, so the skip is no verdict yet. Ask again next poll.
                 self.logger.debug(
                     f"{pending.display_label}: {count_noun(len(unplaced), 'file')} unplaced behind a missing input"
                 )
-            elif skips := self._reportable_skips(pending, assignment.skipped):
-                # From the deadline on a miss that never healed is reported like any other skip.
+            elif skips := self._reportable_skips(pending, assignment.plain_skips):
+                # From the deadline on a miss that never healed is reported like any other skip. The hand-import
+                # files are named by the poll's outcome instead.
                 self._warn_unplaceable_files(pending, skips)
             if overridden := assignment.overridden:
                 self._warn_overridden_files(pending, overridden)
             for name, ids in {**placed, **recovered}.items():
                 self.logger.debug(f"{pending.display_label}: placed {name} -> {ids}")
             probe = self._verify_or_import(context, authoritative)
+            if probe.files_present and assignment.hand_import_files:
+                probe = self._judge_hand_import(context, authoritative, assignment)
         # The mapper's placements and exclusions are kept whatever the branch (the file was on disk this poll).
         # History's are kept only once they verified, so a row that never verifies is re-derived next run, not pinned.
-        placements = {**placed, **recovered} if probe.files_present else placed
+        verified = probe.files_present or bool(probe.hand_import_files)
+        placements = {**placed, **recovered} if verified else placed
         return replace(probe, placements=placements, exclusions=tuple(p.name for p in excluded))
 
     def _verify_or_import(self, context: _ImportContext, authoritative_map: FileEpisodeMap) -> ImportProbe:
@@ -602,6 +608,26 @@ class ImportExecutor:
         self._scratch.issued_command_ids.add(cmd_id)
         self.logger.debug(f"{content_path}: queued {count_noun(len(files), 'file')} for import (command {cmd_id})")
         return ImportProbe.waiting(command_issued=True, deferral=Deferral.ISSUED)
+
+    def _judge_hand_import(
+        self, context: _ImportContext, file_map: FileEpisodeMap, assignment: FileAssignment
+    ) -> ImportProbe:
+        """With every placed file in: imported once a hand import fills the windows, else the hand-import files."""
+
+        if (by_hand := self._imported_by_hand(context, file_map)) is not None:
+            return by_hand
+        if not assignment.settled and not context.at_deadline:
+            self.logger.debug(f"{context.pending.display_label}: held-back files judged behind a missing input")
+            return ImportProbe.waiting()
+        return ImportProbe.hand_import(context.leaves(assignment.hand_import_files))
+
+    def _imported_by_hand(self, context: _ImportContext, file_map: FileEpisodeMap) -> ImportProbe | None:
+        """The IMPORTED probe when every episode of the record's windows is filled (`filled_by_hand`), else None."""
+
+        if not context.snapshot.statuses(context.pending.resolved_ids(), file_map).filled_by_hand():
+            return None
+        self.logger.debug(f"{context.content_path}: already imported (recommended files or untagged copies present)")
+        return ImportProbe.imported()
 
     def _guard_before_post(self, context: _ImportContext) -> ImportProbe | None:
         """The wait when the command list read now blocks the POST, else None."""

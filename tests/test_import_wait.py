@@ -1031,6 +1031,7 @@ class TestPendingStateFold:
             (Outcome.SONARR_BUSY, PendingState.DOWNLOADED),
             (Outcome.NOT_READY, PendingState.DOWNLOADED),
             (Outcome.UNMATCHED, PendingState.DOWNLOADED),
+            (Outcome.PARTIAL, PendingState.DOWNLOADED),
             (Outcome.ATTEMPT_FAILED, PendingState.DOWNLOADED),
             (Outcome.NO_CONTENT_PATH, PendingState.DOWNLOADED),
             (Outcome.DOWNLOAD_ERRORED, PendingState.ERRORED),
@@ -1119,6 +1120,36 @@ class TestUnmatchedGraduation:
         assert view.final("h").outcome is Outcome.UNMATCHED
         assert view.final("slow").outcome is Outcome.UNMATCHED
         assert set(mgr._records.rows()) == {"h", "slow"}
+
+
+class TestHeldBackGraduation:
+    """A probe naming hand-import files graduates as a partial import: kept for the hand import, never retired."""
+
+    _NAMES = ("show - 03 [grp].mkv",)
+
+    def _run(self, store: FakeCacheStore, qbit: FakeQbit) -> tuple[ImportWaitManager, WaitResult | None]:
+        """One run's check pass over the shared store, every poll naming the hand-import file."""
+
+        strategy = _RecordingStrategy(completed=import_probe(files_present=False, hand_import_files=self._NAMES))
+        mgr = make_orchestration_manager(
+            qbit=qbit, strategy=strategy, store=store, post_import_category="pearlarr-done"
+        )
+        return mgr, mgr.check_once(view=RecordingWaitView())
+
+    def test_each_run_names_the_hand_import_files_and_leaves_the_torrent_in_its_category(self) -> None:
+        store = FakeCacheStore()
+        store.put_pending(Arr.SONARR, "h", pending_import(infohash="h", added_at=_FRESH).to_json())
+        qbit = CategoryQbit({"h": [FakeTorrent(is_complete=True, content_path="/d")]})
+
+        _, first = self._run(store, qbit)
+        mgr, second = self._run(store, qbit)
+
+        for result in (first, second):
+            assert result is not None
+            assert [(row.outcome, row.unmatched_files) for row in result.rows] == [(Outcome.PARTIAL, self._NAMES)]
+        assert mgr._ctx.pending_states["h"] is PendingState.DOWNLOADED
+        assert set(mgr._records.rows()) == {"h"}
+        assert qbit.set_category_calls == []
 
 
 class TestMonitorRowDiscriminator:

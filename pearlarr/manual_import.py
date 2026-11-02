@@ -307,6 +307,10 @@ class ImportProbe:
     """The download's on-disk files no episode claimed (one per distinct basename), when that is all the poll
     found. Non-empty only from `unmatched()`: `files_present` and `command_issued` False, `deferral` NONE."""
 
+    hand_import_files: tuple[str, ...] = ()
+    """The download's on-disk files the placement left for a hand import, once every placed file is in and
+    the hand import isn't. Non-empty only from `hand_import()`: `files_present` and `command_issued` False."""
+
     @property
     def deferred(self) -> bool:
         """Whether this poll waited on Sonarr's work (the monitor credits the interval back)."""
@@ -330,6 +334,12 @@ class ImportProbe:
         """Nothing to import or verify: every file on disk matched no episode."""
 
         return cls(files_present=False, command_issued=False, unmatched_files=names)
+
+    @classmethod
+    def hand_import(cls, names: tuple[str, ...]) -> "ImportProbe":
+        """Every placed file is in, but files the placement left for a hand import keep the record pending."""
+
+        return cls(files_present=False, command_issued=False, hand_import_files=names)
 
 
 LEAVE_PROBE = ImportProbe(attempted=False, files_present=False, command_issued=False)
@@ -409,6 +419,12 @@ class Outcome(Enum):
     SONARR_BUSY = ("sonarr busy", "Sonarr busy with a disk command; left pending", OutcomeCategory.DEFERRED, False)
     NOT_READY = ("not ready", "import not ready; left pending", OutcomeCategory.DEFERRED, False)
     UNMATCHED = ("unmatched", "no file matched an episode; import by hand in Sonarr", OutcomeCategory.DEFERRED, False)
+    PARTIAL = (
+        "partial",
+        "imported in part; import the held-back files by hand in Sonarr",
+        OutcomeCategory.DEFERRED,
+        False,
+    )
     ATTEMPT_FAILED = ("failed", "import attempt failed; left pending", OutcomeCategory.DEFERRED, False)
     NOT_CHECKED = ("not checked", "qBittorrent unreachable; checked again next run", OutcomeCategory.DEFERRED, False)
     IMPORT_IN_PROGRESS = ("in progress", "import in progress; checked again next run", OutcomeCategory.PENDING, False)
@@ -464,6 +480,7 @@ PENDING_STATE_FOR_OUTCOME: dict[Outcome, PendingState] = {
     Outcome.SONARR_BUSY: PendingState.DOWNLOADED,
     Outcome.NOT_READY: PendingState.DOWNLOADED,
     Outcome.UNMATCHED: PendingState.DOWNLOADED,
+    Outcome.PARTIAL: PendingState.DOWNLOADED,
     Outcome.ATTEMPT_FAILED: PendingState.DOWNLOADED,
     Outcome.NO_CONTENT_PATH: PendingState.DOWNLOADED,
     Outcome.DOWNLOAD_ERRORED: PendingState.ERRORED,

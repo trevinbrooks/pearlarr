@@ -57,6 +57,9 @@ class TargetJudgment(NamedTuple):
     status: EpisodeFileStatus
     own_copy: bool
     """The file is at one of this torrent's listed sizes. Size alone decides, not the group or the status."""
+    untagged_copy: bool = False
+    """The file has no group and is a copy of the one intended here, or of any of this torrent's files when nothing
+    is intended here: what a hand import of the torrent's own file leaves."""
 
 
 # How a target with no file reads. `RecordSnapshot.judge` also gives it for an id no snapshot covers.
@@ -73,6 +76,9 @@ class TargetStatuses:
     holding_own_copy: frozenset[int]
     """The targets whose current file is at one of this torrent's listed sizes (`TargetJudgment.own_copy`)."""
 
+    holding_untagged_copy: frozenset[int] = frozenset()
+    """The targets whose current file is an untagged copy of this torrent's (`TargetJudgment.untagged_copy`)."""
+
     @classmethod
     def judged(
         cls,
@@ -86,6 +92,7 @@ class TargetStatuses:
         return cls(
             {ep_id: judgment.status for ep_id, judgment in by_target.items()},
             frozenset(ep_id for ep_id, judgment in by_target.items() if judgment.own_copy),
+            frozenset(ep_id for ep_id, judgment in by_target.items() if judgment.untagged_copy),
         )
 
     def all_done(self) -> bool:
@@ -95,6 +102,17 @@ class TargetStatuses:
         """
 
         return bool(self.by_id) and all(s is EpisodeFileStatus.RECOMMENDED for s in self.by_id.values())
+
+    def filled_by_hand(self) -> bool:
+        """Whether every target holds a recommended file or an untagged copy of this torrent's: a hand import done.
+
+        Sonarr reads no group off a file name that carries none, so `all_done` alone never sees that hand import.
+        """
+
+        return bool(self.by_id) and all(
+            status is EpisodeFileStatus.RECOMMENDED or ep_id in self.holding_untagged_copy
+            for ep_id, status in self.by_id.items()
+        )
 
     def needing_import(self) -> set[int]:
         """The never-skip set: every intended id NOT already holding a recommended file."""
@@ -172,8 +190,11 @@ class EpisodeSnapshot(NamedTuple):
         if ep is None or not ep.episode_file_id:
             return _NO_FILE
         file = ep.episode_file
-        own_copy = file is not None and self._own_size(file.size)
-        return TargetJudgment(self._status(ep_id, file, intended_size), own_copy)
+        if file is None:
+            return TargetJudgment(self._status(ep_id, file, intended_size), own_copy=False)
+        own_copy = self._own_size(file.size)
+        untagged_copy = own_copy and not file.release_group and not self._misplaced(file.size, intended_size)
+        return TargetJudgment(self._status(ep_id, file, intended_size), own_copy, untagged_copy)
 
     def _status(self, ep_id: int, file: SonarrEpisodeFile | None, intended_size: int | None) -> EpisodeFileStatus:
         """Classify a target's current file. `file` is None when Sonarr gives the episode a file id but no record."""
