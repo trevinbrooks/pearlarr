@@ -82,7 +82,6 @@ class GrabPipeline:
         self._reporter = deps.reporter
         self.logger = deps.logger
         self.qbit = deps.qbit
-        self._clock = deps.clock
         # The hub's record seam, which the hub binds each run.
         self._records = records
         # Rebound each run by begin_run to the same ctx the engine holds, so the grab bookkeeping stays in sync.
@@ -402,7 +401,7 @@ class GrabPipeline:
         )
 
     def grab_and_cache(self, req: GrabRequest) -> None:
-        """Shared per-id tail: add torrents, notify, cache the outcome, pace the run."""
+        """Shared per-id tail: add torrents, notify, cache the outcome."""
 
         any_to_download = self._planner.get_any_to_download(req.seadex_dict)
         # The strategy's placement facts land on the title's flags beside the add loop's own.
@@ -442,13 +441,11 @@ class GrabPipeline:
             if rec is not None:
                 self._ctx.stats.needs_action.append(rec)
 
-        self._clock.sleep(self._config.advanced.sleep_time)
-
     def _grab(self, req: GrabRequest) -> int:
         """Add this title's torrents and notify, returning the added count.
 
         The cap notice is logged here, once, by the title whose adds crossed it. The cache save belongs to the
-        engine's finalize site.
+        run loop.
         """
 
         # Fetched up front to keep the network calls in the run's request ordering.

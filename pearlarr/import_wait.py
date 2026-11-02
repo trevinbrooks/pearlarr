@@ -495,7 +495,10 @@ class ImportWaitManager:
         view: WaitView | None,
         body: Callable[[WaitView], None],
     ) -> WaitResult:
-        """The shared scaffold of both end-of-run passes: view lifecycle, first push, Ctrl-C."""
+        """The shared scaffold of both end-of-run passes: view lifecycle, first push, interrupts.
+
+        Ctrl-C ends the pass and the run goes on. A SIGTERM stop gets the same note, then propagates.
+        """
 
         own_view = view is None
         if view is None:
@@ -510,12 +513,21 @@ class ImportWaitManager:
             try:
                 body(view)
             except KeyboardInterrupt:
-                view.update(mp.snapshot())
-                hub_note(f"{mp.kind.interrupt_noun} interrupted - {mp.active_count} left pending")
+                self._note_interrupted(mp, view)
+            except SystemExit:
+                self._note_interrupted(mp, view)
+                raise
         finally:
             if own_view:
                 view.close()
         return WaitResult(tuple(mp.results), elapsed_s=mp.elapsed())
+
+    @staticmethod
+    def _note_interrupted(mp: "MonitorPass", view: WaitView) -> None:
+        """Push the rows as they stand and note how many records the interrupted pass left pending."""
+
+        view.update(mp.snapshot())
+        hub_note(f"{mp.kind.interrupt_noun} interrupted - {mp.active_count} left pending")
 
     def _progress_wait(self, mp: "MonitorPass", view: WaitView) -> None:
         """Sleep one heavy-poll interval, refreshing the live rows between slices.

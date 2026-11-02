@@ -509,7 +509,7 @@ class CommandDoc:
 # Exit codes are wire facts of the click/typer stack plus our own exits, verified empirically.
 # No runtime surface enumerates them, so they are authored here.
 EXIT_CODE_ROWS = (
-    ("0", "Success. A scheduled loop stopped with SIGTERM also exits 0 (a clean stop)."),
+    ("0", "Success. A run stopped with SIGTERM also exits 0 (a clean stop)."),
     ("1", "Failure: invalid or missing configuration, a refused selection, a failed run, or a failed command."),
     ("2", "Usage error: an unknown command, option, or option value."),
     ("130", "Interrupted with Ctrl-C."),
