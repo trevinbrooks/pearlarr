@@ -879,7 +879,7 @@ wheels = [
 
 [[package]]
 name = "pearlarr"
-version = "1.5.6"
+version = "1.5.7"
 source = { editable = "." }
 dependencies = [
     { name = "beautifulsoup4" },
