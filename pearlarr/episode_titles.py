@@ -14,12 +14,12 @@ from .release_names import (
     NameRead,
     NumberedRun,
     TitleGround,
-    bare_season,
     folded_words,
     is_extras_name,
     is_quality_word,
     read_names,
     whole_words,
+    written_keys,
 )
 from .seadex_types import EpisodeKey
 
@@ -216,17 +216,15 @@ class EpisodeTitles(NamedTuple):
         return equal
 
     def keyed_by(self, read: NameRead, resolved: Collection[int]) -> frozenset[int]:
-        """The episodes a name's numbers are a key for: Sonarr's read of it (`resolved`), and its bare season and count.
+        """The episodes a name's numbers are a key for: Sonarr's read of it (`resolved`), and the keys it writes.
 
-        "Show 2 - 05" is a key for S02E05. "Show No. 8 - 05" counts as a key for S08E05 too, which is harmless: no
-        title can spell it, since a title's series words are dropped before it spells a key.
+        "Show 2 - 05" and "Show.2.05" are keys for S02E05 (`written_keys`). "Show No. 8 - 05" counts as a key for
+        S08E05 too, which is harmless: no title can spell it, since a title's series words are dropped before it
+        spells a key.
         """
 
-        season = bare_season(read)
-        if read.member is None or season is None:
-            return frozenset(resolved)
-        own = self.id_by_key.get(EpisodeKey(int(season), read.member.number))
-        return frozenset(resolved if own is None else (*resolved, own))
+        written = (self.id_by_key.get(key) for key in written_keys(read))
+        return frozenset((*resolved, *(ep_id for ep_id in written if ep_id is not None)))
 
     def nearly(self, ep_id: int, words: tuple[str, ...]) -> bool:
         """Whether the words open with the episode's title a word off at most: one swapped, added or dropped.

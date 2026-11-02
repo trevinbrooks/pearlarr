@@ -461,7 +461,7 @@ class TestAssignEpisodeTitle:
     )
     def test_a_title_of_numbers_read_whole_names_the_episode(self, series: str, name: str, title: str) -> None:
         # The count is one of the title's numbers. A season tag, or the series title's own number, is no part of it.
-        # "2 - 1 =" spells S02E01, a key the name doesn't carry.
+        # "2 - 1 =" spells S02E01, a key the name doesn't carry: its count isn't zero-padded.
         placed = by_name(place({name: parsed_info()}, _scope(_FIRST_THREE, series=series, titles={603: title})))
 
         assert placed == {name: ((603,), PlacementVerdict.EPISODE_TITLE)}
@@ -476,22 +476,60 @@ class TestAssignEpisodeTitle:
 
         assert placed == {name: ((602,), PlacementVerdict.EXACT)}
 
-    @pytest.mark.parametrize("name", ["show 1 - 02 [grp].mkv", "show.1 - 02 [grp].mkv"])
-    def test_a_bare_season_spells_no_title_without_sonarrs_key(self, name: str) -> None:
+    @pytest.mark.parametrize(
+        "name",
+        [
+            "show 1 - 02 [grp].mkv",
+            "show.1 - 02 [grp].mkv",
+            "show-1-02 [grp].mkv",
+            "show: 1 - 02 [grp].mkv",
+            "show 1st - 02 [grp].mkv",
+            "show.1.02 [grp].mkv",
+            "show - 1 - 02 [grp].mkv",
+            "show 1 ep 02 [grp].mkv",
+            "show 1 Episode 02 [grp].mkv",
+        ],
+    )
+    def test_a_season_and_padded_count_spell_no_title_without_sonarrs_key(self, name: str) -> None:
         # The third episode is titled "1.2". Sonarr reads absolute 2 but matches no episode, and the season and the
-        # count still spell no title.
+        # zero-padded count still spell no title, however the name sets them apart.
         placed = by_name(
             place({name: parsed_info(absolutes=(2,))}, _scope(_FIRST_THREE, titles={**_TITLES, 603: "1.2"}))
         )
 
         assert placed == {name: ((), PlacementVerdict.SKIPPED)}
 
-    @pytest.mark.parametrize("name", ["show - 1 - 02 [grp].mkv", "show.1.02 [grp].mkv"])
-    def test_a_title_of_numbers_spelling_sonarrs_key_is_no_title(self, name: str) -> None:
-        # Sonarr reads absolute 2, S01E02, the key the third episode's title "1.2" spells.
-        parsed = {name: parsed_info(absolutes=(2,), matched=((1, 2),))}
+    def test_a_pack_by_season_and_padded_count_places_by_its_numbers(self) -> None:
+        # The third episode is titled "1.2", which the second file's numbers spell. Sonarr reads absolute numbers.
+        names = [f"show - 1 - {n:02d} [grp].mkv" for n in (1, 2, 3)]
+        parsed = {name: parsed_info(absolutes=(n,)) for n, name in enumerate(names, 1)}
 
         placed = by_name(place(parsed, _scope(_FIRST_THREE, titles={**_TITLES, 603: "1.2"})))
+
+        assert placed == {
+            name: ((ep_id,), PlacementVerdict.ABSOLUTE) for name, ep_id in zip(names, _FIRST_THREE, strict=True)
+        }
+
+    def test_a_bare_season_and_unpadded_count_spell_no_title(self) -> None:
+        # Sonarr reads nothing here, but a number right behind a word and just before the count is the season.
+        name = "show 1 - 2 [grp].mkv"
+
+        placed = by_name(place({name: parsed_info()}, _scope(_FIRST_THREE, titles={**_TITLES, 603: "1.2"})))
+
+        assert placed == {name: ((), PlacementVerdict.SKIPPED)}
+
+    @pytest.mark.parametrize(
+        ("name", "parsed"),
+        [
+            ("show - 1 - 02 [grp].mkv", parsed_info(absolutes=(2,), matched=((1, 2),))),
+            ("show.1.02 [grp].mkv", parsed_info(absolutes=(2,), matched=((1, 2),))),
+            ("show-1-2 [grp].mkv", parsed_info(season=1, episodes=(2,), matched=((1, 2),))),
+        ],
+    )
+    def test_a_title_of_numbers_spelling_sonarrs_key_is_no_title(self, name: str, parsed: ParsedFileInfo) -> None:
+        # Sonarr reads S01E02, the key the third episode's title "1.2" spells, from absolute 2 or from the name's
+        # unpadded pair, which by itself writes no key.
+        placed = by_name(place({name: parsed}, _scope(_FIRST_THREE, titles={**_TITLES, 603: "1.2"})))
 
         assert placed == {name: ((602,), PlacementVerdict.EXACT)}
 

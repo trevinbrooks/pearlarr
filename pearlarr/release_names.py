@@ -12,7 +12,7 @@ from itertools import compress, takewhile
 from typing import NamedTuple, Self
 
 from .manual_import import EntryNames
-from .seadex_types import ParsedFileInfo
+from .seadex_types import EpisodeKey, ParsedFileInfo
 
 _SXXEXX: re.Pattern[str] = re.compile(r"[Ss](\d{1,2})[\s._-]*[Ee](\d{1,3})")
 # "S01E05-06" or "S01E05-E06" with no spaces, maybe a "v2" after it. A letter or digit touching either end, as in
@@ -608,18 +608,24 @@ def whole_words(text: str) -> tuple[str, ...]:
 
 # A bare number closing the text before a name's count, right behind a word: "Show 2 - 05".
 _BARE_SEASON = re.compile(r"(?<=[^\W\d_])[\s.]+(\d{1,2})$")
+# A season number beside a zero-padded episode number, however the name sets the two apart: "Show - 2 - 05",
+# "Show.2.05", "Show-2-05", "Show 2nd - 05", "Show 2 Ep 05". Sonarr reads the padded number as the episode. An
+# unpadded pair ("Show - 2 - 1 =") can be an episode title's numbers.
+_PADDED_PAIR = re.compile(r"\b(\d{1,2})(?:st|[nr]d|th)?[\s.-]+(?:(?:ep|episode)[\s.-]*)?(0\d{1,3})\b", re.IGNORECASE)
 
 
-def bare_season(read: NameRead) -> str | None:
-    """A member's bare number right behind a word, just before its count, folded: "2" of "Show 2 - 05". Else None.
+def written_keys(read: NameRead) -> tuple[EpisodeKey, ...]:
+    """The seasons and episodes a name writes in plain numbers, outside any key token like "S02E05".
 
-    It is the name's own season unless the series title holds it ("Show No. 8 - 05"). A season tag's number is not
-    bare ("Show Season 2 - 05").
+    Each season beside a zero-padded episode, however the name sets the two apart (`_PADDED_PAIR`), and a member's
+    bare number right behind a word with its count ("Show 2 - 5"), unless that number is a season tag's. Either can be
+    the series title's own number: "Show No. 8 - 05" writes S08E05.
     """
 
+    padded = tuple(EpisodeKey(int(season), int(episode)) for season, episode in _PADDED_PAIR.findall(read.stem.text))
     if read.member is None or (found := _BARE_SEASON.search(_SEASON_TAG.sub(" ", read.member.prefix))) is None:
-        return None
-    return folded_words(found.group(1))[0]
+        return padded
+    return (EpisodeKey(int(found.group(1)), read.member.number), *padded)
 
 
 def _blanked(text: str) -> str:
