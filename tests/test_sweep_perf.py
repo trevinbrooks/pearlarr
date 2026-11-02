@@ -31,7 +31,7 @@ from pearlarr.parse_records import (
 )
 from pearlarr.run_services import RunServices
 from pearlarr.seadex_gateway import SeaDexMiss
-from pearlarr.seadex_types import MatchedEpisode, ParsedFileInfo, SeadexDict, SonarrEpisode
+from pearlarr.seadex_types import MatchedEpisode, ParsedFileInfo, SeadexDict, SeasonTypeCount, SonarrEpisode
 from pearlarr.sonarr_episodes import (
     SONARR_FETCH_WORKERS,
     SonarrEpisodes,
@@ -40,6 +40,7 @@ from pearlarr.sonarr_episodes import (
 )
 from pearlarr.sonarr_parse import SonarrParseCache
 from pearlarr.stamps import UPDATED_AT_STR_FORMAT
+from pearlarr.tvdb_orders import OFFICIAL_ORDER
 from pearlarr.video_files import is_video_candidate
 
 from .builders import (
@@ -223,6 +224,8 @@ class _Series:
     monitored: bool
     tvdbId: int
     tmdbId: int
+    seasonType: str = OFFICIAL_ORDER
+    seasonTypes: tuple[SeasonTypeCount, ...] = ()
 
     def __init__(self, **kw: object) -> None:
         self.__dict__.update(kw)

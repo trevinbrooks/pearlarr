@@ -32,6 +32,7 @@ class RunLoop:
         self._seadex = deps.seadex
         self.cache_store = deps.cache_store
         self._anilist = deps.anilist
+        self._skyhook = deps.skyhook
         self._notifier = deps.notifier
         self._reporter = deps.reporter
 
@@ -168,6 +169,15 @@ class RunLoop:
             with boot.step("Fetching Sonarr episodes") as step:
                 warmed = strategy.prefetch_episodes(all_items, progress=step)
                 step.note("cached" if warmed == 0 else count_noun(warmed, "series", "series"))
+            # Like the episode step, after the SeaDex warm and the activity scan's dirty marks: both pick their
+            # series through `al_id_needs_scan`, which reads them.
+            with boot.step("Fetching TVDB orders") as step:
+                fetched = strategy.prefetch_orders(all_items, progress=step)
+                if self._skyhook.outage:
+                    # Terse: the client already warned once with the failure detail.
+                    step.warn("unreachable")
+                else:
+                    step.note("cached" if fetched == 0 else count_noun(fetched, "series", "series"))
         else:
             strategy.prefetch_episodes(all_items)
 
@@ -195,8 +205,15 @@ class RunLoop:
 
         # ONE full-coverage predicate for both gates below. They drifted apart once: an outage run committed the
         # checkpoint, consuming drift events it never acted on. A held title's old cache row may read done and its
-        # drift mark may be pending, so a run that held anything past the cap neither vouches nor commits.
-        full_pass = item_id is None and self._ctx.stats.held_by_cap == 0 and not self._seadex.outage
+        # drift mark may be pending, so a run that held anything past the cap neither vouches nor commits. A SkyHook
+        # outage counts too: an entry re-checked without its orders may keep a current cache row, and a vouch would
+        # skip it for good.
+        full_pass = (
+            item_id is None
+            and self._ctx.stats.held_by_cap == 0
+            and not self._seadex.outage
+            and not self._skyhook.outage
+        )
 
         # Held on outage so the next healthy run re-derives the same dirty ids (the query overlap and id
         # dedup absorb the replay). The staged write persists only at _finalize_run's non-preview save.

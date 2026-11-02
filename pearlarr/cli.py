@@ -939,6 +939,7 @@ def cache_stats(json_output: Annotated[bool, typer.Option("--json", help=_JSON_H
                 sonarr_parse=s.sonarr_parse,
                 pending_imports=s.pending_imports,
                 guard_facts=s.guard_facts,
+                tvdb_orders=s.tvdb_orders,
                 size_bytes=s.size_bytes,
             ),
         )

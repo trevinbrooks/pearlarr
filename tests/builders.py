@@ -8,7 +8,7 @@ import json
 import logging
 from collections.abc import Iterable, Iterator, Mapping, Sequence
 from copy import deepcopy
-from datetime import datetime
+from datetime import datetime, timedelta
 from types import MappingProxyType
 from typing import Any, override
 
@@ -89,13 +89,16 @@ from pearlarr.seadex_types import (
     SonarrEpisode,
     SpecialAliases,
 )
+from pearlarr.skyhook_client import AbstractSkyHookClient
+from pearlarr.skyhook_gateway import SkyHookGateway
 from pearlarr.sonarr_client import AbstractSonarrClient
 from pearlarr.sonarr_episodes import SonarrEpisodes
 from pearlarr.sonarr_parse import SonarrParseCache
-from pearlarr.stamps import UPDATED_AT_STR_FORMAT, parse_stamp
+from pearlarr.stamps import UPDATED_AT_STR_FORMAT, parse_stamp, stamp_of
 from pearlarr.torrents import AddOutcome, AddResult, TorrentService
+from pearlarr.tvdb_orders import OrderRow, StoredOrders
 
-from .fakes import FakeClock, FakeRadarrClient, FakeSonarrClient
+from .fakes import FakeClock, FakeRadarrClient, FakeSkyHookClient, FakeSonarrClient
 
 # The display separator the cockpit/ledger/report rows join parts with. Assertions build expected
 # strings from this so a separator change is one edit.
@@ -276,6 +279,7 @@ class FakeCacheStore(AbstractCacheStore):
         self._anilist_meta: dict[int, dict[str, Any]] = {}
         self._guards: dict[str, dict[int, GuardFacts]] = {}
         self._history_checkpoints: dict[str, HistoryCheckpoint] = {}
+        self._tvdb_orders: dict[int, StoredOrders] = {}
         self._kv: dict[str, str] = {}
 
     # -- lifecycle --
@@ -350,6 +354,7 @@ class FakeCacheStore(AbstractCacheStore):
             url=entry.get("url"),
             coverage=entry.get("coverage"),
             fallback_satisfied=bool(entry.get("fallback_satisfied", False)),
+            season_type=entry.get("season_type"),
         )
 
     @override
@@ -438,6 +443,18 @@ class FakeCacheStore(AbstractCacheStore):
         }
         return {al_id: g for al_id, g in self._guards.get(str(arr), {}).items() if al_id in live}
 
+    # -- TVDB orders --
+    @override
+    def get_tvdb_orders(self, tvdb_id: int) -> StoredOrders | None:
+        """Round-trips through the stored JSON shape, as the real store's column does."""
+
+        stored = self._tvdb_orders.get(tvdb_id)
+        return None if stored is None else StoredOrders.from_json(json.loads(json.dumps(stored.to_json())))
+
+    @override
+    def put_tvdb_orders(self, tvdb_id: int, record: StoredOrders) -> None:
+        self._tvdb_orders[tvdb_id] = record
+
     # -- history checkpoints --
     @override
     def get_history_checkpoint(self, arr: Arr) -> HistoryCheckpoint | None:
@@ -457,6 +474,7 @@ class FakeCacheStore(AbstractCacheStore):
             sonarr_parse=len(self._sonarr_parse),
             pending_imports=sum(len(recs) for recs in self._pending.values()),
             guard_facts=sum(len(g) for g in self._guards.values()),
+            tvdb_orders=len(self._tvdb_orders),
             size_bytes=0,
         )
 
@@ -718,6 +736,7 @@ def make_run_deps(
     seadex: SeaDexSource | None = None,
     logger: logging.Logger | None = None,
     clock: Clock | None = None,
+    skyhook_client: AbstractSkyHookClient | None = None,
 ) -> RunDeps:
     """A real `RunDeps` over typed fakes, with a Sonarr url and api_key set and `qbit` None (preview)."""
 
@@ -753,6 +772,7 @@ def make_run_deps(
         seadex=seadex or FakeSeaDexSource(),
         cache_store=cache_store,
         anilist=AniListGateway(cache_store=cache_store, logger=logger, client=AniListClient(client=http)),
+        skyhook=SkyHookGateway(client=skyhook_client or FakeSkyHookClient(), cache_store=cache_store),
         torrents=_real_torrents(logger, http, categories),
         notifier=Notifier(discord_url=None, webhook_url=None, web=http),
         planner=make_planner(),
@@ -1044,6 +1064,7 @@ def sonarr_ep(
     ep_id: int = 0,
     absolute: int | None = None,
     title: str = "",
+    tvdb_id: int | None = None,
 ) -> SonarrEpisode:
     """`episode_file_id=0` omits the `episodeFile` block, as in Sonarr's record for a missing episode."""
 
@@ -1053,6 +1074,7 @@ def sonarr_ep(
         "episodeNumber": episode,
         "absoluteEpisodeNumber": absolute,
         "title": title,
+        "tvdbId": tvdb_id,
         "episodeFileId": episode_file_id,
     }
     if episode_file_id:
@@ -1353,9 +1375,26 @@ def queue_record(
 def make_sonarr_episodes(**attrs: Any) -> SonarrEpisodes:
     """A bare `SonarrEpisodes` with `__init__` bypassed, its per-run caches defaulted empty."""
 
-    defaults: dict[str, Any] = {"_ep_list_cache": {}, "_series_fp": ""}
+    defaults: dict[str, Any] = {"_ep_list_cache": {}, "_series_fp": "", "_order_facts": {}, "_orderings": {}}
     defaults.update(attrs)
     return make_bare_instance(SonarrEpisodes, **defaults)
+
+
+def stored_orders(
+    orders: Mapping[str, tuple[OrderRow, ...]],
+    *,
+    fresh_for: timedelta = timedelta(days=1),
+    sonarr_counts: Mapping[str, int] | None = None,
+) -> StoredOrders:
+    """A series' order record fetched a day ago, fresh for `fresh_for` from now (past it when negative)."""
+
+    now = datetime.now()
+    return StoredOrders(
+        fetched_at=stamp_of(now - timedelta(days=1)),
+        fresh_until=stamp_of(now + fresh_for),
+        orders=orders,
+        sonarr_counts=sonarr_counts,
+    )
 
 
 def make_sonarr_sync(
@@ -1365,10 +1404,11 @@ def make_sonarr_sync(
     cache_store: AbstractCacheStore | None = None,
     ep_list_cache: dict[int, list[SonarrEpisode]] | None = None,
     clock: Clock | None = None,
+    skyhook_client: AbstractSkyHookClient | None = None,
 ) -> SonarrSync:
-    """A `SonarrSync` built through its real `__init__`, injecting a typed client and seeding `ep_list_cache`."""
+    """A `SonarrSync` built through its real `__init__`, injecting typed clients and seeding `ep_list_cache`."""
 
-    deps = make_run_deps(config=config, cache_store=cache_store, clock=clock)
+    deps = make_run_deps(config=config, cache_store=cache_store, clock=clock, skyhook_client=skyhook_client)
     services = RunServices(deps, Arr.SONARR)
     strat = SonarrSync(
         deps,

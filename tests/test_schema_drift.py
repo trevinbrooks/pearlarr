@@ -149,7 +149,9 @@ _BOTH: Final = ("sonarr", "radarr")
 # ManualImportCommand payload) and the spec's Command component models only the
 # generic envelope, so there is no schema contract to check them against.
 ROSTER: Final = (
-    Spec(SonarrSeries, "SeriesResource", _SONARR),
+    # `seasonType` / `seasonTypes` are Sonarr v5's, and the capture is v4's. `seasonType` defaults to the official
+    # order v4 numbers by, and the empty `seasonTypes` is how the order fetch tells v4 apart.
+    Spec(SonarrSeries, "SeriesResource", _SONARR, exempt=frozenset({"seasonType", "seasonTypes"})),
     Spec(SonarrEpisode, "EpisodeResource", _SONARR),
     Spec(SonarrEpisodeFile, "EpisodeFileResource", _SONARR),
     # `offline` is set only by the local SxxExx regex fallback (never from

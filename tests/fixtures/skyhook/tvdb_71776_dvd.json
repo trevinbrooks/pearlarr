@@ -1,0 +1,26 @@
+{
+  "tvdbId": 71776,
+  "status": "Ended",
+  "seasonTypes": [
+    {
+      "type": "official",
+      "name": "Aired Order",
+      "seasonNumbers": [
+        0,
+        1,
+        2,
+        3,
+        4
+      ],
+      "episodeCount": 96
+    },
+    {
+      "type": "dvd",
+      "name": "DVD Order",
+      "seasonNumbers": [
+        106
+      ],
+      "episodeCount": 0
+    }
+  ]
+}

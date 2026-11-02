@@ -19,6 +19,7 @@ from pearlarr.placement_types import (
     episode_index,
 )
 from pearlarr.seadex_types import SONARR_MISSING_KEY, EpisodeKey, ParsedFileInfo, SonarrEpisode
+from pearlarr.tvdb_orders import OrderRow, SeriesOrdering
 
 from .builders import parsed_info, series_index, sonarr_ep
 
@@ -29,7 +30,8 @@ class TestEpisodeIndex:
     `id_by_key` maps `(season, episode)` to the first episode id, missing numbers
     folding to a sentinel key (no collision with real pairs). Zero-id episodes are
     dropped from every facet before keying. `by_id` keeps the fetch order: the
-    resolved set the add flow persists rides `list(by_id)`.
+    resolved set the add flow persists rides `list(by_id)`. `orders` reads each
+    other TVDB order onto the same ids through the episodes' TVDB ids.
     """
 
     def test_normal_seasoned_episodes(self) -> None:
@@ -69,6 +71,21 @@ class TestEpisodeIndex:
 
         assert (ep.absolute_episode_number, ep.title) == (13, "Beach Day")
         assert (bare.absolute_episode_number, bare.title) == (None, "")
+
+    def test_another_order_reads_onto_the_episodes_by_tvdb_id(self) -> None:
+        # The dvd order splits S01E01 in two and has an episode Sonarr lacks. The repeated key takes its first row.
+        eps = [sonarr_ep(1, 1, ep_id=11, tvdb_id=901), sonarr_ep(1, 2, ep_id=12, tvdb_id=902)]
+        dvd = (
+            OrderRow(1, 1, 902, None),
+            OrderRow(1, 1, 901, None),
+            OrderRow(1, 2, 903, None),
+        )
+
+        index = episode_index(eps, SeriesOrdering({"dvd": dvd}, None))
+
+        assert index.orders["dvd"].id_by_key == {(1, 1): 12}
+        assert index.orders["dvd"].keys == {(1, 1), (1, 2)}
+        assert episode_index(eps).orders == {}
 
     def test_facets_detach_and_reject_mutation(self) -> None:
         source = {EpisodeKey(1, 1): 11}

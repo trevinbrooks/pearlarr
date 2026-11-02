@@ -120,6 +120,13 @@ class RadarrSync(ArrSync[RadarrItem]):
         return 0
 
     @override
+    def prefetch_orders(self, items: list[RadarrItem], *, progress: ProgressSink | None = None) -> int:
+        """No-op: movies have no episode orders. Returns 0 (wrote none)."""
+
+        del items, progress
+        return 0
+
+    @override
     def history_since(self, date: str) -> list[HistoryRecord] | None:
         """Radarr history since `date` (delegates to the client)."""
 

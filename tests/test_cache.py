@@ -35,6 +35,7 @@ from pearlarr.parse_records import parsed_info, to_parse_record
 from pearlarr.seadex_types import ParsedFileInfo
 from pearlarr.sqlite_util import is_corruption
 from pearlarr.stamps import parse_stamp_or_none
+from pearlarr.tvdb_orders import OrderRow, StoredOrders
 
 from .builders import claim_al_ids, entry_claim, make_entry_record, pending_import
 
@@ -670,7 +671,27 @@ class TestSchemaVersionGate:
         store.close()
         assert _user_version(folded) == SCHEMA_VERSION
 
-    def test_fresh_db_starts_at_v5_without_an_al_id_column(self, tmp_path: Path) -> None:
+    def test_v5_entries_gain_a_season_type_column_left_null(self, tmp_path: Path) -> None:
+        # The v5 -> v6 step: a stored entry keeps its columns and reads no season type, and the
+        # `tvdb_orders` table the step relies on `_SCHEMA` for is there to write.
+        db = tmp_path / "cache.db"
+        raw = sqlite3.connect(str(db))
+        raw.executescript(_V3_ENTRIES_SCHEMA)  # entries kept the v3 shape through v5
+        raw.execute("INSERT INTO entries (arr, al_id, name) VALUES ('sonarr', 2, 'Frieren')")
+        raw.execute("PRAGMA user_version=5")
+        raw.commit()
+        raw.close()
+
+        store = CacheStore.load(str(db), config_checksum=CHECKSUM)
+        entry = store.get_entry(Arr.SONARR, 2)
+        assert entry is not None
+        assert (entry.name, entry.season_type) == ("Frieren", None)
+        store.put_tvdb_orders(1, _ORDERS)
+        assert store.get_tvdb_orders(1) == _ORDERS
+        store.close()
+        assert _user_version(db) == SCHEMA_VERSION
+
+    def test_fresh_db_starts_current_without_an_al_id_column(self, tmp_path: Path) -> None:
         db = tmp_path / "cache.db"
         store = _open(tmp_path)
         store.save(preview=False)
@@ -1208,6 +1229,43 @@ class TestGuardFacts:
         store.close()
 
 
+_ORDERS = StoredOrders(
+    fetched_at="2026-07-01 10:00:00",
+    fresh_until="2026-07-08 10:00:00",
+    orders={"official": (OrderRow(1, 1, 101, 1), OrderRow(1, 2, 102, 2)), "dvd": ()},
+    sonarr_counts={"official": 2, "alternate": 2},
+)
+
+
+class TestTvdbOrders:
+    """One record per series, replaced whole, and a record that no longer reads is a miss."""
+
+    def test_a_record_round_trips_and_a_put_replaces_it(self, tmp_path: Path) -> None:
+        store = _open(tmp_path)
+        assert store.get_tvdb_orders(1) is None
+
+        store.put_tvdb_orders(1, StoredOrders(fetched_at="x", fresh_until="x", orders={}, sonarr_counts=None))
+        store.put_tvdb_orders(1, _ORDERS)
+
+        assert store.get_tvdb_orders(1) == _ORDERS
+        assert store.stats().tvdb_orders == 1
+        store.close()
+
+    def test_a_record_of_another_shape_reads_as_none(self, tmp_path: Path) -> None:
+        db = tmp_path / "cache.db"
+        store = _open(tmp_path)
+        store.save(preview=False)
+        store.close()
+        raw = sqlite3.connect(str(db))
+        raw.execute("INSERT INTO tvdb_orders (tvdb_id, record) VALUES (1, jsonb(?))", (json.dumps({"orders": []}),))
+        raw.commit()
+        raw.close()
+
+        reopened = _open(tmp_path)
+        assert reopened.get_tvdb_orders(1) is None
+        reopened.close()
+
+
 class TestHistoryCheckpoints:
     """History checkpoints upsert per arr and respect the preview gate."""
 
@@ -1364,6 +1422,19 @@ class TestMaintenance:
         assert s.pending_imports == 0
         assert s.size_bytes > 0
         assert store.integrity_check() == "ok"
+        store.close()
+
+    def test_stats_count_a_table_the_file_predates_as_empty(self, tmp_path: Path) -> None:
+        # `cache stats` opens the file read-only, so a file no run has migrated yet lacks the newer tables.
+        db = tmp_path / "cache.db"
+        raw = sqlite3.connect(str(db))
+        raw.executescript(_V3_ENTRIES_SCHEMA)
+        raw.execute("PRAGMA user_version=5")
+        raw.commit()
+        raw.close()
+
+        store = CacheStore.open_readonly(str(db))
+        assert store.stats().tvdb_orders == 0
         store.close()
 
 

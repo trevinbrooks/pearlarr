@@ -43,6 +43,8 @@ from .seadex_types import (
     SeadexDict,
     SonarrEpisode,
 )
+from .skyhook_client import SkyHookClient
+from .skyhook_gateway import SkyHookGateway
 from .stamps import stamp_of
 from .torrents import TorrentService
 
@@ -109,6 +111,8 @@ class RunDeps:
     parse_records: ParseRecords
     """The Sonarr parse-cache leaf over `cache_store`, read by the sweep's parse step."""
     anilist: AniListGateway
+    skyhook: SkyHookGateway
+    """The TVDB order cache. The Sonarr strategy reads its records, and the run loop its outage."""
     torrents: TorrentService
     notifier: Notifier
     planner: DownloadPlanner
@@ -247,6 +251,7 @@ class RunDeps:
             seadex=SeaDexGateway(client=SeaDexEntry()),
             cache_store=cache_store,
             anilist=anilist,
+            skyhook=SkyHookGateway(client=SkyHookClient(client=web), cache_store=cache_store),
             torrents=torrents,
             # Discord notifier, a no-op when no webhook is configured. The
             # SecretStr urls are unwrapped here, at their point of use.

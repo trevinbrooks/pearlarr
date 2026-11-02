@@ -1,0 +1,120 @@
+{
+  "tvdbId": 299502,
+  "status": "Ended",
+  "seasonTypes": [
+    {
+      "type": "official",
+      "name": "Aired Order",
+      "seasonNumbers": [
+        0,
+        1
+      ],
+      "episodeCount": 12
+    }
+  ],
+  "episodes": [
+    {
+      "tvdbShowId": 299502,
+      "tvdbId": 8210627,
+      "seasonNumber": 0,
+      "episodeNumber": 1,
+      "airDateUtc": "2016-03-28T13:30:00Z"
+    },
+    {
+      "tvdbShowId": 299502,
+      "tvdbId": 5308221,
+      "seasonNumber": 1,
+      "episodeNumber": 1,
+      "airDateUtc": "2016-01-11T13:30:00Z",
+      "absoluteEpisodeNumber": 1
+    },
+    {
+      "tvdbShowId": 299502,
+      "tvdbId": 5451678,
+      "seasonNumber": 1,
+      "episodeNumber": 2,
+      "airDateUtc": "2016-01-18T13:30:00Z",
+      "absoluteEpisodeNumber": 2
+    },
+    {
+      "tvdbShowId": 299502,
+      "tvdbId": 5451679,
+      "seasonNumber": 1,
+      "episodeNumber": 3,
+      "airDateUtc": "2016-01-25T13:30:00Z",
+      "absoluteEpisodeNumber": 3
+    },
+    {
+      "tvdbShowId": 299502,
+      "tvdbId": 5451680,
+      "seasonNumber": 1,
+      "episodeNumber": 4,
+      "airDateUtc": "2016-02-01T13:30:00Z",
+      "absoluteEpisodeNumber": 4
+    },
+    {
+      "tvdbShowId": 299502,
+      "tvdbId": 5451681,
+      "seasonNumber": 1,
+      "episodeNumber": 5,
+      "airDateUtc": "2016-02-08T13:30:00Z",
+      "absoluteEpisodeNumber": 5
+    },
+    {
+      "tvdbShowId": 299502,
+      "tvdbId": 5451682,
+      "seasonNumber": 1,
+      "episodeNumber": 6,
+      "airDateUtc": "2016-02-15T13:30:00Z",
+      "absoluteEpisodeNumber": 6
+    },
+    {
+      "tvdbShowId": 299502,
+      "tvdbId": 5451683,
+      "seasonNumber": 1,
+      "episodeNumber": 7,
+      "airDateUtc": "2016-02-22T13:30:00Z",
+      "absoluteEpisodeNumber": 7
+    },
+    {
+      "tvdbShowId": 299502,
+      "tvdbId": 5451684,
+      "seasonNumber": 1,
+      "episodeNumber": 8,
+      "airDateUtc": "2016-02-29T13:30:00Z",
+      "absoluteEpisodeNumber": 8
+    },
+    {
+      "tvdbShowId": 299502,
+      "tvdbId": 5451685,
+      "seasonNumber": 1,
+      "episodeNumber": 9,
+      "airDateUtc": "2016-03-07T13:30:00Z",
+      "absoluteEpisodeNumber": 9
+    },
+    {
+      "tvdbShowId": 299502,
+      "tvdbId": 5451686,
+      "seasonNumber": 1,
+      "episodeNumber": 10,
+      "airDateUtc": "2016-03-14T13:30:00Z",
+      "absoluteEpisodeNumber": 10
+    },
+    {
+      "tvdbShowId": 299502,
+      "tvdbId": 5451687,
+      "seasonNumber": 1,
+      "episodeNumber": 11,
+      "airDateUtc": "2016-03-21T13:30:00Z",
+      "absoluteEpisodeNumber": 11
+    },
+    {
+      "tvdbShowId": 299502,
+      "tvdbId": 5451688,
+      "seasonNumber": 1,
+      "episodeNumber": 12,
+      "airDateUtc": "2016-03-28T13:30:00Z",
+      "absoluteEpisodeNumber": 12
+    }
+  ]
+}

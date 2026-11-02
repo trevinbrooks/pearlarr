@@ -48,6 +48,7 @@ flowchart LR
 | Selection | `seadex_gateway`, `seadex_filter`, `planner`, `coverage` | fetch SeaDex entries, filter releases, decide what to grab |
 | Grabbing | `grab_pipeline`, `torrents` | tracker page parsing, qBittorrent adds, per-release outcomes |
 | Import wait | `manual_import`, `sonarr_import`, `probe_verdicts`, `episode_state`, `import_files`, `import_quality`, `import_wait`, `wait_view` | waiting on downloads, Sonarr queue classification, the never-overwrite check, the series-pinned manual import, the per-file plan and its quality key |
+| TVDB orders | `tvdb_orders`, `skyhook_client`, `skyhook_gateway` | the TVDB episode orders (aired, DVD, and the others TVDB lists) of the Sonarr series a run reads, fetched from Sonarr's metadata service and kept per series in `cache.db` |
 | Placement | `placement_types`, `parse_reading`, `release_names`, `placer`, `window_placement`, `grab_placement`, `torrent_listings`, `listing_fold`, `video_files`, `sonarr_mapper`, `sonarr_parse` | mapping a release's files onto episodes at grab time and at import time, the series' SeaDex listings and size identities it uses, and the Sonarr `/parse` cache the placement reads |
 | State | `cache`, `stamps`, `pending_records` | the SQLite decision cache, staged writes, backup/restore, the shared timestamp format, the pending-record seam over the store |
 | Output | `output/*`, `log`, `console_caps`, `boot_flow` | the event hub, renderers, the always-on file log |
@@ -110,6 +111,7 @@ Every host Pearlarr talks to, and why:
 | --- | --- |
 | `seadex.moe` (SeaDex) | Entry lookups: which releases are tagged for each AniList ID. |
 | `graphql.anilist.co` | AniList titles, formats, and episode counts. Cached responses serve while the host is unreachable. |
+| `skyhook.sonarr.tv` (Sonarr's metadata service) | The TVDB episode orders of each Sonarr series a run checks or a pending import waits on, one request per order. A series is refetched after a week, or a month once it has ended and gone quiet, and on Sonarr v5 sooner when Sonarr's episode count for one of its orders changes. Stored orders serve while the host is unreachable. |
 | `github.com` -> `objects.githubusercontent.com` | The primary ID-mapping source (`anibridge-mappings`, a GitHub release asset that 302-redirects to the asset CDN). |
 | `raw.githubusercontent.com` | The two fallback ID-mapping sources (Kometa `Anime-IDs`, anime-lists XML). |
 | Your Sonarr / Radarr | Library, history, parse, and import APIs. |

@@ -2053,13 +2053,14 @@ def test_cache_stats_pins_the_padded_human_format(tmp_path: Path, monkeypatch: p
 
     assert result.exit_code == 0
     lines = result.stdout.splitlines()
-    assert lines[:6] == [
+    assert lines[:7] == [
         "entries:         1",
         "torrent_hashes:  0",
         "anilist_meta:    0",
         "sonarr_parse:    0",
         "pending_imports: 0",
         "guard_facts:     0",
+        "tvdb_orders:     0",
     ]
-    assert re.fullmatch(r"size:            \d+\.\d\d MiB", lines[6])
-    assert len(lines) == 7
+    assert re.fullmatch(r"size:            \d+\.\d\d MiB", lines[7])
+    assert len(lines) == 8

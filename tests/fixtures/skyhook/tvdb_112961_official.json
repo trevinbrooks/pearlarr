@@ -1,0 +1,63 @@
+{
+  "tvdbId": 112961,
+  "status": "Ended",
+  "seasonTypes": [
+    {
+      "type": "official",
+      "name": "Aired Order",
+      "seasonNumbers": [
+        0,
+        1
+      ],
+      "episodeCount": 4
+    },
+    {
+      "type": "dvd",
+      "name": "DVD Order",
+      "seasonNumbers": [
+        1
+      ],
+      "episodeCount": 4
+    }
+  ],
+  "episodes": [
+    {
+      "tvdbShowId": 112961,
+      "tvdbId": 2273871,
+      "seasonNumber": 0,
+      "episodeNumber": 1
+    },
+    {
+      "tvdbShowId": 112961,
+      "tvdbId": 2273831,
+      "seasonNumber": 1,
+      "episodeNumber": 1,
+      "airDateUtc": "1988-11-26T05:00:00Z",
+      "absoluteEpisodeNumber": 1
+    },
+    {
+      "tvdbShowId": 112961,
+      "tvdbId": 2273841,
+      "seasonNumber": 1,
+      "episodeNumber": 2,
+      "airDateUtc": "1989-06-28T04:00:00Z",
+      "absoluteEpisodeNumber": 2
+    },
+    {
+      "tvdbShowId": 112961,
+      "tvdbId": 2273851,
+      "seasonNumber": 1,
+      "episodeNumber": 3,
+      "airDateUtc": "1989-12-20T05:00:00Z",
+      "absoluteEpisodeNumber": 3
+    },
+    {
+      "tvdbShowId": 112961,
+      "tvdbId": 2273861,
+      "seasonNumber": 1,
+      "episodeNumber": 4,
+      "airDateUtc": "1990-02-21T05:00:00Z",
+      "absoluteEpisodeNumber": 4
+    }
+  ]
+}
