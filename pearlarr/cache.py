@@ -1,7 +1,8 @@
 """Persistent run cache: `CacheStore` owns `cache.db`, its schema, freshness checks, and writes.
 
-Writes stage in one deferred transaction and commit only at a non-preview `save`. Do NOT set
-`isolation_level=None` in `_connect`: real autocommit commits staged writes and breaks that gate.
+Writes stage in a deferred transaction until the next non-preview `save` commits them (a run saves
+after each title). Do NOT set `isolation_level=None` in `_connect`: real autocommit commits staged
+writes and breaks that gate.
 One `CacheStore` per arr, never shared across arrs or threads.
 """
 

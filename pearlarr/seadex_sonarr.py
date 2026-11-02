@@ -152,7 +152,6 @@ class SonarrSync(ArrSync[SonarrItem]):
 
         self._services = services
         self._config = deps.config
-        self._clock = deps.clock
         self.logger = deps.logger
         self._mappings = deps.mappings
         self.anibridge = deps.mappings.anibridge
@@ -389,7 +388,7 @@ class SonarrSync(ArrSync[SonarrItem]):
                         movie.title,
                     )
 
-                self._clock.sleep(self._config.advanced.sleep_time)
+                run.owe_pause()
                 return
 
         # Get the episode list for all relevant episodes
@@ -413,7 +412,7 @@ class SonarrSync(ArrSync[SonarrItem]):
                 # ANIBRIDGE) and a degraded imdb/tmdb-resolved entry (mode ANIME_IDS),
                 # while a legit Kometa whole-series entry (source ANIME_IDS) stays quiet.
                 hub_warn(f"AniBridge has no usable season ranges for {title.display} - skipping")
-            self._clock.sleep(self._config.advanced.sleep_time)
+            run.owe_pause()
             return
 
         # If all episodes are unmonitored, then skip if ignore_unmonitored is switched on
@@ -421,7 +420,7 @@ class SonarrSync(ArrSync[SonarrItem]):
             run.log_anilist_item_unmonitored(
                 item_title=title.display,
             )
-            self._clock.sleep(self._config.advanced.sleep_time)
+            run.owe_pause()
             return
 
         # Now that we have the episodes, log the active entry with its

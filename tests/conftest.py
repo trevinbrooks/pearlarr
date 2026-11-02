@@ -7,8 +7,10 @@ isolated logger that replaces the single process-global `builders.make_logger`.
 """
 
 import logging
-from collections.abc import Iterator
+import signal
+from collections.abc import Callable, Iterator
 from pathlib import Path
+from types import FrameType
 from typing import Any
 
 import httpx
@@ -87,6 +89,26 @@ def close_leaked_handles(monkeypatch: pytest.MonkeyPatch) -> Iterator[None]:
         app_logger.removeHandler(handler)
     app_logger.setLevel(logging.NOTSET)
     logging.getLogger().setLevel(logging.WARNING)
+
+
+type _SignalHandler = Callable[[int, FrameType | None], object] | int | None
+
+
+@pytest.fixture(autouse=True)
+def keep_sigterm_disposition(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Drop the run commands' SIGTERM registration, so no test re-points the pytest process's handler.
+
+    Other signals pass through. A test pinning the registration patches over this.
+    """
+
+    real_signal = signal.signal
+
+    def register(signalnum: int, handler: _SignalHandler) -> _SignalHandler:
+        if signalnum == signal.SIGTERM:
+            return signal.getsignal(signal.SIGTERM)
+        return real_signal(signalnum, handler)
+
+    monkeypatch.setattr(signal, "signal", register)
 
 
 @pytest.fixture(autouse=True)

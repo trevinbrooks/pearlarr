@@ -61,7 +61,7 @@ from .builders import (
     rg_group,
     url_item,
 )
-from .fakes import FakeClock, diagnostic_messages, install_recording_hub
+from .fakes import diagnostic_messages, install_recording_hub
 
 
 def _stub_add_torrent(req: GrabRequest) -> tuple[int, list[ReleaseOutcome]]:
@@ -820,11 +820,9 @@ class TestGrabAndCacheAtTheCap:
         assert pipeline._ctx.stats.needs_action == []
 
     def test_a_held_title_is_neither_cached_nor_a_needs_action_row(self) -> None:
-        # Held is not a problem to act on: the title stays uncached so the next run grabs it, and the run keeps
-        # pacing through the clock.
-        clock = FakeClock()
+        # Held is not a problem to act on: the title stays uncached so the next run grabs it.
         torrents = FakeTorrents({"h1": (AddOutcome.ADDED, "Show-RG")})
-        pipeline = _pipeline(torrents=torrents, max_torrents_to_add=1, sleep_time=3, _clock=clock)
+        pipeline = _pipeline(torrents=torrents, max_torrents_to_add=1)
         pipeline._anilist.al_cache.update({42: {}})
         pipeline._ctx.per_title.current_title = "Show S1"
         pipeline._ctx.torrents_added = 1
@@ -835,7 +833,6 @@ class TestGrabAndCacheAtTheCap:
         assert pipeline.cache_store.get_entry(Arr.SONARR, 42) is None
         assert pipeline._ctx.stats.needs_action == []
         assert pipeline._ctx.stats.held_by_cap == 1
-        assert clock.sleeps == [3]
 
     def test_a_held_title_posts_the_held_status(self) -> None:
         recording = install_recording_hub()

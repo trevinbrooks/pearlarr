@@ -245,13 +245,18 @@ class SonarrEpisodes:
         done = 0
         with concurrent.futures.ThreadPoolExecutor(max_workers=workers) as pool:
             futures = [pool.submit(warm, sid) for sid in series_ids]
-            for fut in concurrent.futures.as_completed(futures):
-                sid, eps = fut.result()
-                if eps is not None:
-                    self._ep_list_cache[sid] = eps
-                done += 1
-                if progress is not None:
-                    progress.progress(done / total, f"{done}/{total}")
+            try:
+                for fut in concurrent.futures.as_completed(futures):
+                    sid, eps = fut.result()
+                    if eps is not None:
+                        self._ep_list_cache[sid] = eps
+                    done += 1
+                    if progress is not None:
+                        progress.progress(done / total, f"{done}/{total}")
+            except BaseException:
+                # A stop (SIGTERM, Ctrl-C) drops the queued fetches, which the `with` exit would otherwise run.
+                pool.shutdown(wait=False, cancel_futures=True)
+                raise
         return total
 
     def needs_scan_ids(self, items: Iterable[SonarrItem]) -> list[int]:
