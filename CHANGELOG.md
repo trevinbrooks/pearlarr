@@ -7,6 +7,8 @@ Pearlarr is a fork of [bbtufty/seadexarr](https://github.com/bbtufty/seadexarr).
 
 ## [Unreleased]
 
+## [1.5.7] - 2026-11-02
+
 ### Added
 
 - Sonarr runs fetch the TVDB episode orders (aired, DVD, and the others TVDB lists) of each series they check or a pending import waits on, from Sonarr's metadata service at `skyhook.sonarr.tv`, in a new "Fetching TVDB orders" boot step, and keep them in the cache (cache schema v6). A series is refetched after a week, or a month once it has ended and gone quiet. `pearlarr cache stats` counts the stored series. While SkyHook is unreachable, a title whose series has no stored orders yet stays unchecked and is retried next run.
