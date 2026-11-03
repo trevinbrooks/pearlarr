@@ -9,7 +9,8 @@ from collections.abc import Iterable, Mapping, Sequence
 from dataclasses import dataclass, field
 from typing import Self
 
-from ..episode_titles import EpisodeTitles, TorrentNames, spells_title
+from ._names import TorrentNames
+from ..episode_titles import EpisodeTitles, spells_title
 from ..parse_reading import Reading, glued_counts, read_parse, spans_multiple, widen_range_key
 from ..placement_types import Placement, PlacementBatch, PlacementVerdict, SeriesFacts, TargetScope
 from ..release_names import FileIdentity, NameRead, is_consecutive

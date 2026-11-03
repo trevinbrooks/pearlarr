@@ -8,8 +8,8 @@ from dataclasses import dataclass
 from enum import IntEnum
 from typing import NamedTuple, Self
 
+from ._names import TitleEvidence
 from ._state import NumberedRun, Placer, RunWindow, TorrentFile
-from ..episode_titles import TitleEvidence
 from ..parse_reading import Reading, claims_several_episodes
 from ..placement_types import PlacementVerdict
 from ..release_names import Naming
