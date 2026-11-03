@@ -58,18 +58,18 @@ def _season_fit(state: Placer, run: NumberedRun) -> _SeasonFit | None:
         return None
     if any(len(file.reading.resolved) > 1 for file in run.members):
         return None
-    read = [state.facts.key_by_id[resolved[0]].season for file in run.members if (resolved := file.reading.resolved)]
+    read = [state.series.key_by_id[resolved[0]].season for file in run.members if (resolved := file.reading.resolved)]
     seasons = {season for season in read if season != 0}
     if len(seasons) != 1:
         return None
     season = seasons.pop()
-    if state.facts.season_counts.get(season) != width:
+    if state.series.season_counts.get(season) != width:
         return None
     into_season = read.count(season)
     onto_specials = read.count(0)
     if not onto_specials or into_season < onto_specials:
         return None
-    return _SeasonFit(season, into_season == onto_specials and state.facts.season_counts.get(0) == width)
+    return _SeasonFit(season, into_season == onto_specials and state.series.season_counts.get(0) == width)
 
 
 def _tie(state: Placer, run: NumberedRun, season: int) -> None:
@@ -275,7 +275,7 @@ class _RunFit:
         season = self.window.season
         if season is None:
             return []
-        count = self.state.facts.season_counts.get(season, 0)
+        count = self.state.series.season_counts.get(season, 0)
         return [run for run in self.runs if run.from_one(count)] if count > len(self.window.ids) else []
 
     def covering_refused(self) -> bool:
@@ -287,7 +287,7 @@ class _RunFit:
         season = self.window.season
         if season is None or self.window.specials:
             return True
-        count = self.state.facts.season_counts.get(season, 0)
+        count = self.state.series.season_counts.get(season, 0)
         return any(EpisodeKey(season, n) not in self.state.scope.id_by_key for n in range(1, count + 1))
 
     def from_anywhere(self) -> list[NumberedRun]:
@@ -308,7 +308,7 @@ class _RunFit:
     def seasons_read(self, run: NumberedRun) -> set[int]:
         """The seasons Sonarr read the run's members into."""
 
-        key_by_id = self.state.facts.key_by_id
+        key_by_id = self.state.series.key_by_id
         return {key_by_id[ep_id].season for file in run.members for ep_id in file.reading.resolved}
 
     def read_elsewhere(self, run: NumberedRun) -> bool:

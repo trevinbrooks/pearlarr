@@ -6,6 +6,7 @@ Reading a torrent's names against them belongs in `placer._names`, and reading a
 
 import re
 from collections.abc import Collection, Iterable, Mapping
+from types import MappingProxyType
 from typing import NamedTuple, Self
 
 from .release_names import NameRead, folded_words, is_quality_word, written_keys
@@ -119,13 +120,16 @@ def _sole(hits: Iterable[_TitledEpisode]) -> _TitledEpisode | None:
     return next(iter(named.values())) if len(named) == 1 else None
 
 
-def _grouped[K](pairs: Iterable[tuple[K, _TitledEpisode]]) -> dict[K, tuple[_TitledEpisode, ...]]:
-    """The title forms grouped by key, each group in the order given."""
+def _grouped[K](pairs: Iterable[tuple[K, _TitledEpisode]]) -> Mapping[K, tuple[_TitledEpisode, ...]]:
+    """The title forms grouped by key, each group in the order given.
+
+    Read-only, since every placement under one index shares the view (`EpisodeIndex.titles`).
+    """
 
     groups: dict[K, list[_TitledEpisode]] = {}
     for key, ep in pairs:
         groups.setdefault(key, []).append(ep)
-    return {key: tuple(eps) for key, eps in groups.items()}
+    return MappingProxyType({key: tuple(eps) for key, eps in groups.items()})
 
 
 class TitleLead(NamedTuple):
@@ -158,7 +162,11 @@ class EpisodeTitles(NamedTuple):
     def of(
         cls, by_id: Mapping[int, SonarrEpisode], id_by_key: Mapping[EpisodeKey, int], series_words: frozenset[str]
     ) -> Self:
-        """Fold every form of every episode title into words, noting the words beyond the series title."""
+        """Fold every form of every episode title into words, noting the words beyond the series title.
+
+        `EpisodeIndex.titles` hands one view to every torrent placed under the index with these words, so the fold
+        reads nothing beyond its arguments.
+        """
 
         titled: list[_TitledEpisode] = []
         for ep_id, ep in by_id.items():

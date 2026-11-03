@@ -240,7 +240,7 @@ def _disputes(state: Placer, file: TorrentFile) -> frozenset[int] | None:
         return None
     reading = file.reading
     name_read = file.name_read
-    by_absolute = state.facts.id_by_absolute
+    by_absolute = state.series.id_by_absolute
     resolved = frozenset(reading.resolved)
     if reading.borrowed or not info.episode_numbers or info.season_number is None:
         if not resolved:
@@ -290,11 +290,11 @@ def _positions_disputed(state: Placer, run: NumberedRun) -> dict[TorrentFile, fr
         return {}
     if not all(file.name_read.explicit_key for file in run.members):
         return {}
-    count = state.facts.season_counts.get(season, 0)
+    count = state.series.season_counts.get(season, 0)
     # A season the map lacks is no season to count against (the keys miss, and the file reads numberless).
     if not count or max(run.numbers) <= count:
         return {}
-    absolute_of, key_by_id = state.facts.absolute_of, state.facts.key_by_id
+    absolute_of, key_by_id = state.series.absolute_of, state.series.key_by_id
     regular = sorted(
         absolute_of[ep_id] for ep_id, key in key_by_id.items() if key.season == season and ep_id in absolute_of
     )
@@ -380,8 +380,8 @@ def _numbers_another(state: Placer, file: TorrentFile, ep_id: int) -> bool:
             keys.update(EpisodeKey(info.season_number, number) for number in info.episode_numbers)
     if not (resolved or keys or absolutes or member):
         return False
-    key = state.facts.key_by_id.get(ep_id)
-    absolute = state.facts.absolute_of.get(ep_id)
+    key = state.series.key_by_id.get(ep_id)
+    absolute = state.series.absolute_of.get(ep_id)
     if key in keys or absolute in absolutes:
         return False
     # In a keyed name the release number is no evidence beyond the key.

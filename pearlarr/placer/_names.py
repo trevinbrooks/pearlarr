@@ -89,7 +89,7 @@ class TorrentNames(NamedTuple):
         """
 
         ground = TitleGround.of(scope.names)
-        episode_titles = EpisodeTitles.of(scope.series.by_id, scope.series.id_by_key, ground.series_words)
+        episode_titles = scope.series.titles(ground.series_words)
         reads = read_names(batch.torrent_names, ground)
         leads = {name: _title_lead(episode_titles, read, readings[name].resolved) for name, read in reads.items()}
         carriers = Counter(words for _file, words in {(reads[name].file, lead.words) for name, lead in leads.items()})
