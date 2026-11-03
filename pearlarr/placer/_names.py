@@ -1,7 +1,6 @@
 """A torrent's file names read against the series' episode titles: which episode each name is titled as.
 
-`TorrentNames` reads every name once, and `Placer.start` is its one reader. The passes read `TitleEvidence` and
-`MIN_TITLE_HITS`. No I/O.
+`TorrentNames` reads every name once, and `Placer.start` is its one reader. No I/O.
 """
 
 from collections import Counter
@@ -12,28 +11,6 @@ from ..episode_titles import EpisodeTitles, TitleLead
 from ..parse_reading import Reading
 from ..placement_types import PlacementBatch, TargetScope
 from ..release_names import NameRead, TitleGround, is_extras_name, read_names, whole_words
-
-# Episode titles pick a run, or refuse one, only when at least this many members carry them.
-MIN_TITLE_HITS = 2
-
-
-class TitleEvidence(NamedTuple):
-    """How many run members' tails start with only window titles, and how many with only titles outside it."""
-
-    inside: int
-    outside: int
-
-    @property
-    def selects(self) -> bool:
-        """Whether at least `MIN_TITLE_HITS` members carry window titles, and more than carry outside titles."""
-
-        return self.inside >= MIN_TITLE_HITS and self.inside > self.outside
-
-    @property
-    def vetoes(self) -> bool:
-        """Whether at least `MIN_TITLE_HITS` members carry outside titles and none carries a window title."""
-
-        return self.outside >= MIN_TITLE_HITS and not self.inside
 
 
 class NameTitle(NamedTuple):

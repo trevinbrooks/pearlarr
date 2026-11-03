@@ -8,12 +8,33 @@ from dataclasses import dataclass
 from enum import IntEnum
 from typing import NamedTuple, Self
 
-from ._names import TitleEvidence
 from ._state import NumberedRun, Placer, RunWindow, TorrentFile
 from ..parse_reading import Reading, claims_several_episodes
 from ..placement_types import PlacementVerdict
 from ..release_names import Naming
 from ..seadex_types import EpisodeKey
+
+# Episode titles pick a run, or refuse one, only when at least this many members carry them.
+MIN_TITLE_HITS = 2
+
+
+class TitleEvidence(NamedTuple):
+    """How many run members' tails start with only window titles, and how many with only titles outside it."""
+
+    inside: int
+    outside: int
+
+    @property
+    def selects(self) -> bool:
+        """Whether at least `MIN_TITLE_HITS` members carry window titles, and more than carry outside titles."""
+
+        return self.inside >= MIN_TITLE_HITS and self.inside > self.outside
+
+    @property
+    def vetoes(self) -> bool:
+        """Whether at least `MIN_TITLE_HITS` members carry outside titles and none carries a window title."""
+
+        return self.outside >= MIN_TITLE_HITS and not self.inside
 
 
 class _SeasonFit(NamedTuple):

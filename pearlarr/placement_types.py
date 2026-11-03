@@ -36,15 +36,13 @@ class EpisodeIndex:
 
     The lookups (`key_by_id`, `season_counts`, `absolute_of`, `id_by_absolute`) are derived once at construction,
     and the title view (`titles`) is built on first use. Both are functions of the index alone (the view also of the
-    series title's words), and `SonarrEpisode` is frozen, so nothing under the index drifts after it is built. Every
-    torrent, window and mode placed under one index shares them.
+    series title's words); `SonarrEpisode` is frozen, and nothing under the index changes after it is built. Every
+    torrent and window placed under one index shares them.
 
-    The three facets are copied and made read-only at construction. `episode_index` is
-    the one builder. Episodes with a falsy id (0) are dropped from EVERY facet
-    before keying: a 0 id can never be POSTed to Sonarr, and a real-id twin
-    behind one must still win its `(season, episode)` key. The planner's
-    `index_episodes_by_key` deliberately KEEPS them (a 0-id file is still
-    identity evidence). Do not unify the two.
+    The three facets are copied and made read-only at construction. `episode_index` is the one builder. Episodes
+    with a falsy id (0) are dropped from EVERY facet before keying: a 0 id can never be POSTed to Sonarr, and a
+    real-id twin behind one must still win its `(season, episode)` key. The planner's `index_episodes_by_key`
+    deliberately KEEPS them (a 0-id file is still identity evidence). Do not unify the two.
     """
 
     by_id: Mapping[int, SonarrEpisode]
@@ -78,7 +76,7 @@ class EpisodeIndex:
         object.__setattr__(self, "orders", MappingProxyType(dict(self.orders)))
         keys = self.id_by_key
         object.__setattr__(self, "key_by_id", MappingProxyType({ep_id: key for key, ep_id in keys.items()}))
-        object.__setattr__(self, "season_counts", MappingProxyType(Counter(key.season for key in keys)))
+        object.__setattr__(self, "season_counts", MappingProxyType(dict(Counter(key.season for key in keys))))
         absolute_of = {
             ep_id: ep.absolute_episode_number
             for ep_id, ep in self.by_id.items()

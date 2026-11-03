@@ -132,8 +132,13 @@ from collections import defaultdict
 from collections.abc import Iterable, Mapping, Sequence
 from typing import NamedTuple
 
-from ._names import MIN_TITLE_HITS
-from ._run_passes import pass_misnumbered_pack, pass_numbered_run, pass_release_run, pass_reread_season_runs
+from ._run_passes import (
+    MIN_TITLE_HITS,
+    pass_misnumbered_pack,
+    pass_numbered_run,
+    pass_release_run,
+    pass_reread_season_runs,
+)
 from ._state import NumberedRun, Placer, TorrentFile
 from ..parse_reading import glued_counts, numbers_miss_the_series, parse_has_no_number
 from ..placement_types import EpisodeAssignment, PlacementBatch, PlacementVerdict, TargetScope

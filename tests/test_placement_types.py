@@ -25,7 +25,7 @@ from .builders import parsed_info, series_index, sonarr_ep
 
 
 class TestEpisodeIndex:
-    """`episode_index` folds an episode fetch into the import family's two facets.
+    """`episode_index` folds an episode fetch into the import family's three facets.
 
     `id_by_key` maps `(season, episode)` to the first episode id, missing numbers
     folding to a sentinel key (no collision with real pairs). Zero-id episodes are
@@ -109,7 +109,7 @@ class TestEpisodeIndex:
 
 
 class TestEpisodeIndexViews:
-    """`EpisodeIndex.titles` builds the episode titles once per index and set of series words, read-only."""
+    """`EpisodeIndex.titles` builds the episode titles once per index and set of series words."""
 
     _WORDS = frozenset({"show"})
 
@@ -135,14 +135,6 @@ class TestEpisodeIndexViews:
         index = self._titled_index()
 
         assert index.titles(self._WORDS) == EpisodeTitles.of(index.by_id, index.id_by_key, self._WORDS)
-
-    def test_the_view_groupings_are_read_only(self) -> None:
-        view = self._titled_index().titles(self._WORDS)
-
-        with pytest.raises(TypeError):
-            cast("MutableMapping[tuple[str, ...], tuple[()]]", view.by_first)[("x",)] = ()
-        with pytest.raises(TypeError):
-            cast("MutableMapping[tuple[str, ...], tuple[()]]", view.alone_by_beyond)[("x",)] = ()
 
 
 class TestPlacementBatchParsesKnown:

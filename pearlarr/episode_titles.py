@@ -51,7 +51,7 @@ def _ends_title(words: tuple[str, ...], count: int) -> bool:
     return len(words) == count or (len(words) > count and is_quality_word(words[count]))
 
 
-class _TitledEpisode(NamedTuple):
+class TitledEpisode(NamedTuple):
     """One series episode's title, in one of its forms."""
 
     ep_id: int
@@ -105,28 +105,25 @@ def _title_forms(title: str) -> tuple[_TitleForm, ...]:
     return tuple(forms)
 
 
-def _sole(hits: Iterable[_TitledEpisode]) -> _TitledEpisode | None:
+def _sole(hits: Iterable[TitledEpisode]) -> TitledEpisode | None:
     """The one episode a whole title matches. When no whole title matches, the one a title part matches. Else None.
 
     Two matches count as none: a recap repeating a title, a two-part title, or a title's text before the colon
     that is another episode's subtitle.
     """
 
-    whole: dict[int, _TitledEpisode] = {}
-    parts: dict[int, _TitledEpisode] = {}
+    whole: dict[int, TitledEpisode] = {}
+    parts: dict[int, TitledEpisode] = {}
     for hit in hits:
         (parts if hit.part else whole).setdefault(hit.ep_id, hit)
     named = whole or parts
     return next(iter(named.values())) if len(named) == 1 else None
 
 
-def _grouped[K](pairs: Iterable[tuple[K, _TitledEpisode]]) -> Mapping[K, tuple[_TitledEpisode, ...]]:
-    """The title forms grouped by key, each group in the order given.
+def _grouped[K](pairs: Iterable[tuple[K, TitledEpisode]]) -> Mapping[K, tuple[TitledEpisode, ...]]:
+    """The title forms grouped by key, each group in the order given, read-only."""
 
-    Read-only, since every placement under one index shares the view (`EpisodeIndex.titles`).
-    """
-
-    groups: dict[K, list[_TitledEpisode]] = {}
+    groups: dict[K, list[TitledEpisode]] = {}
     for key, ep in pairs:
         groups.setdefault(key, []).append(ep)
     return MappingProxyType({key: tuple(eps) for key, eps in groups.items()})
@@ -135,7 +132,7 @@ def _grouped[K](pairs: Iterable[tuple[K, _TitledEpisode]]) -> Mapping[K, tuple[_
 class TitleLead(NamedTuple):
     """What the episode titles say about a name's words: a run member's tail, else the whole name."""
 
-    titled: _TitledEpisode | None
+    titled: TitledEpisode | None
     """The one episode the words are titled as (`EpisodeTitles.leading` or `exactly`), whether or not other files
     carry it."""
     leaders: frozenset[int]
@@ -149,26 +146,23 @@ class EpisodeTitles(NamedTuple):
 
     series_words: frozenset[str]
     """The series title's words."""
-    by_first: Mapping[tuple[str, ...], tuple[_TitledEpisode, ...]]
+    by_first: Mapping[tuple[str, ...], tuple[TitledEpisode, ...]]
     """Every title form by its first word (a one-word tuple, so an empty name finds none), in series order."""
-    alone_by_beyond: Mapping[tuple[str, ...], tuple[_TitledEpisode, ...]]
+    alone_by_beyond: Mapping[tuple[str, ...], tuple[TitledEpisode, ...]]
     """The forms that name their episode alone, by their words beyond the series title, in series order."""
-    forms: tuple[_TitledEpisode, ...]
+    forms: tuple[TitledEpisode, ...]
     """Every title form, in series order."""
     id_by_key: Mapping[EpisodeKey, int]
     """Each series episode by its season and number."""
 
+    # EpisodeIndex.titles keeps one view per index and word set, built from these three arguments and nothing else.
     @classmethod
     def of(
         cls, by_id: Mapping[int, SonarrEpisode], id_by_key: Mapping[EpisodeKey, int], series_words: frozenset[str]
     ) -> Self:
-        """Fold every form of every episode title into words, noting the words beyond the series title.
+        """Fold every form of every episode title into words, noting the words beyond the series title."""
 
-        `EpisodeIndex.titles` hands one view to every torrent placed under the index with these words, so the fold
-        reads nothing beyond its arguments.
-        """
-
-        titled: list[_TitledEpisode] = []
+        titled: list[TitledEpisode] = []
         for ep_id, ep in by_id.items():
             for form in _title_forms(ep.title):
                 words = folded_words(form.text)
@@ -178,7 +172,7 @@ class EpisodeTitles(NamedTuple):
                 if words and (distinct or not form.part):
                     alone = names_alone(beyond)
                     titled.append(
-                        _TitledEpisode(ep_id, words, beyond, distinct, alone, form.part, _spelled(id_by_key, beyond))
+                        TitledEpisode(ep_id, words, beyond, distinct, alone, form.part, _spelled(id_by_key, beyond))
                     )
         return cls(
             series_words,
@@ -198,7 +192,7 @@ class EpisodeTitles(NamedTuple):
         titled = _sole(ep for ep in led if ep.distinct and opens_title(words, ep.words))
         return TitleLead(titled, frozenset(ep.ep_id for ep in led), words)
 
-    def exactly(self, words: tuple[str, ...], keyed: Collection[int]) -> _TitledEpisode | None:
+    def exactly(self, words: tuple[str, ...], keyed: Collection[int]) -> TitledEpisode | None:
         """The one episode whose title names it alone and equals a name's words, the series words dropped from both.
 
         `keyed` are the episodes the name's numbers are a key for (`keyed_by`). A title that is just the season and
