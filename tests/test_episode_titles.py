@@ -13,7 +13,7 @@ from .builders import series_index
 
 
 class TestEpisodeTitlesOf:
-    """`EpisodeTitles.of` folds an index's titles into groupings every placement under the index can read."""
+    """`EpisodeTitles.of` folds an index's titles into read-only groupings."""
 
     def test_the_groupings_are_read_only(self) -> None:
         index = series_index(

@@ -34,10 +34,8 @@ class EpisodeOrder:
 class EpisodeIndex:
     """The import family's one episode index, built once per episode fetch.
 
-    The lookups (`key_by_id`, `season_counts`, `absolute_of`, `id_by_absolute`) are derived once at construction,
-    and the title view (`titles`) is built on first use. Both are functions of the index alone (the view also of the
-    series title's words); `SonarrEpisode` is frozen, and nothing under the index changes after it is built. Every
-    torrent and window placed under one index shares them.
+    The lookups are derived at construction, and `titles` builds each title view on first use. Nothing under the
+    index changes after it is built, and every torrent and window placed under it shares them.
 
     The three facets are copied and made read-only at construction. `episode_index` is the one builder. Episodes
     with a falsy id (0) are dropped from EVERY facet before keying: a 0 id can never be POSTed to Sonarr, and a
