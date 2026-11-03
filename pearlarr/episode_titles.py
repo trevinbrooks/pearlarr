@@ -1,29 +1,17 @@
-"""Read a torrent's file names against the series' episode titles: which episode each name is titled as.
+"""The series' episode titles as words, which episode a name's words are titled as, and the placer's queries on them.
 
-No I/O. Reading a name's own numbers belongs in `release_names`, and placing files in `placer`.
+Reading a torrent's names against them belongs in `placer._names`, and reading a name's own numbers in
+`release_names`. No I/O.
 """
 
 import re
-from collections import Counter
 from collections.abc import Collection, Iterable, Mapping
+from types import MappingProxyType
 from typing import NamedTuple, Self
 
-from .parse_reading import Reading
-from .placement_types import EpisodeIndex, PlacementBatch, TargetScope
-from .release_names import (
-    NameRead,
-    TitleGround,
-    folded_words,
-    is_extras_name,
-    is_quality_word,
-    read_names,
-    whole_words,
-    written_keys,
-)
-from .seadex_types import EpisodeKey
+from .release_names import NameRead, folded_words, is_quality_word, written_keys
+from .seadex_types import EpisodeKey, SonarrEpisode
 
-# Episode titles pick a run, or refuse one, only when at least this many members carry them.
-MIN_TITLE_HITS = 2
 # An episode title names a file from this many words past the series title and the labels below.
 _MIN_TITLE_WORDS = 2
 # The words that label a title without being one: "Part 2" and "OVA 1" name nothing.
@@ -63,7 +51,7 @@ def _ends_title(words: tuple[str, ...], count: int) -> bool:
     return len(words) == count or (len(words) > count and is_quality_word(words[count]))
 
 
-class _TitledEpisode(NamedTuple):
+class TitledEpisode(NamedTuple):
     """One series episode's title, in one of its forms."""
 
     ep_id: int
@@ -117,34 +105,34 @@ def _title_forms(title: str) -> tuple[_TitleForm, ...]:
     return tuple(forms)
 
 
-def _sole(hits: Iterable[_TitledEpisode]) -> _TitledEpisode | None:
+def _sole(hits: Iterable[TitledEpisode]) -> TitledEpisode | None:
     """The one episode a whole title matches. When no whole title matches, the one a title part matches. Else None.
 
     Two matches count as none: a recap repeating a title, a two-part title, or a title's text before the colon
     that is another episode's subtitle.
     """
 
-    whole: dict[int, _TitledEpisode] = {}
-    parts: dict[int, _TitledEpisode] = {}
+    whole: dict[int, TitledEpisode] = {}
+    parts: dict[int, TitledEpisode] = {}
     for hit in hits:
         (parts if hit.part else whole).setdefault(hit.ep_id, hit)
     named = whole or parts
     return next(iter(named.values())) if len(named) == 1 else None
 
 
-def _grouped[K](pairs: Iterable[tuple[K, _TitledEpisode]]) -> dict[K, tuple[_TitledEpisode, ...]]:
-    """The title forms grouped by key, each group in the order given."""
+def _grouped[K](pairs: Iterable[tuple[K, TitledEpisode]]) -> Mapping[K, tuple[TitledEpisode, ...]]:
+    """The title forms grouped by key, each group in the order given, read-only."""
 
-    groups: dict[K, list[_TitledEpisode]] = {}
+    groups: dict[K, list[TitledEpisode]] = {}
     for key, ep in pairs:
         groups.setdefault(key, []).append(ep)
-    return {key: tuple(eps) for key, eps in groups.items()}
+    return MappingProxyType({key: tuple(eps) for key, eps in groups.items()})
 
 
-class _TitleLead(NamedTuple):
+class TitleLead(NamedTuple):
     """What the episode titles say about a name's words: a run member's tail, else the whole name."""
 
-    titled: _TitledEpisode | None
+    titled: TitledEpisode | None
     """The one episode the words are titled as (`EpisodeTitles.leading` or `exactly`), whether or not other files
     carry it."""
     leaders: frozenset[int]
@@ -158,40 +146,43 @@ class EpisodeTitles(NamedTuple):
 
     series_words: frozenset[str]
     """The series title's words."""
-    by_first: Mapping[tuple[str, ...], tuple[_TitledEpisode, ...]]
+    by_first: Mapping[tuple[str, ...], tuple[TitledEpisode, ...]]
     """Every title form by its first word (a one-word tuple, so an empty name finds none), in series order."""
-    alone_by_beyond: Mapping[tuple[str, ...], tuple[_TitledEpisode, ...]]
+    alone_by_beyond: Mapping[tuple[str, ...], tuple[TitledEpisode, ...]]
     """The forms that name their episode alone, by their words beyond the series title, in series order."""
-    forms: tuple[_TitledEpisode, ...]
+    forms: tuple[TitledEpisode, ...]
     """Every title form, in series order."""
     id_by_key: Mapping[EpisodeKey, int]
     """Each series episode by its season and number."""
 
+    # EpisodeIndex.titles keeps one view per index and word set, built from these three arguments and nothing else.
     @classmethod
-    def of(cls, series: EpisodeIndex, ground: TitleGround) -> Self:
+    def of(
+        cls, by_id: Mapping[int, SonarrEpisode], id_by_key: Mapping[EpisodeKey, int], series_words: frozenset[str]
+    ) -> Self:
         """Fold every form of every episode title into words, noting the words beyond the series title."""
 
-        titled: list[_TitledEpisode] = []
-        for ep_id, ep in series.by_id.items():
+        titled: list[TitledEpisode] = []
+        for ep_id, ep in by_id.items():
             for form in _title_forms(ep.title):
                 words = folded_words(form.text)
-                beyond = tuple(word for word in words if word not in ground.series_words)
+                beyond = tuple(word for word in words if word not in series_words)
                 distinct = is_distinct_title(beyond)
                 # A title part too short to place a file ("Chapter 4: Home") is not run evidence either.
                 if words and (distinct or not form.part):
                     alone = names_alone(beyond)
                     titled.append(
-                        _TitledEpisode(ep_id, words, beyond, distinct, alone, form.part, _spelled(series, beyond))
+                        TitledEpisode(ep_id, words, beyond, distinct, alone, form.part, _spelled(id_by_key, beyond))
                     )
         return cls(
-            ground.series_words,
+            series_words,
             _grouped((ep.words[:1], ep) for ep in titled),
             _grouped((ep.beyond, ep) for ep in titled if ep.alone),
             tuple(titled),
-            series.id_by_key,
+            id_by_key,
         )
 
-    def leading(self, words: tuple[str, ...]) -> _TitleLead:
+    def leading(self, words: tuple[str, ...]) -> TitleLead:
         """Match a run member's tail: the one specific title that starts it, and every title that starts it.
 
         Quality tags may follow the specific title.
@@ -199,9 +190,9 @@ class EpisodeTitles(NamedTuple):
 
         led = [ep for ep in self.by_first.get(words[:1], ()) if words[: len(ep.words)] == ep.words]
         titled = _sole(ep for ep in led if ep.distinct and opens_title(words, ep.words))
-        return _TitleLead(titled, frozenset(ep.ep_id for ep in led), words)
+        return TitleLead(titled, frozenset(ep.ep_id for ep in led), words)
 
-    def exactly(self, words: tuple[str, ...], keyed: Collection[int]) -> _TitledEpisode | None:
+    def exactly(self, words: tuple[str, ...], keyed: Collection[int]) -> TitledEpisode | None:
         """The one episode whose title names it alone and equals a name's words, the series words dropped from both.
 
         `keyed` are the episodes the name's numbers are a key for (`keyed_by`). A title that is just the season and
@@ -243,12 +234,12 @@ class EpisodeTitles(NamedTuple):
         return False
 
 
-def _spelled(series: EpisodeIndex, beyond: tuple[str, ...]) -> int | None:
+def _spelled(id_by_key: Mapping[EpisodeKey, int], beyond: tuple[str, ...]) -> int | None:
     """The episode whose season and number the words are, when they are two numbers alone, else None."""
 
     if len(beyond) != 2 or not all(word.isdigit() for word in beyond):
         return None
-    return series.id_by_key.get(EpisodeKey(int(beyond[0]), int(beyond[1])))
+    return id_by_key.get(EpisodeKey(int(beyond[0]), int(beyond[1])))
 
 
 def _one_word_apart(words: tuple[str, ...], title: tuple[str, ...]) -> tuple[str, ...] | None:
@@ -264,90 +255,3 @@ def _one_word_apart(words: tuple[str, ...], title: tuple[str, ...]) -> tuple[str
     if len(longer) != len(shorter) + 1:
         return None
     return shorter if any(longer[:i] + longer[i + 1 :] == shorter for i in range(len(longer))) else None
-
-
-class TitleEvidence(NamedTuple):
-    """How many run members' tails start with only window titles, and how many with only titles outside it."""
-
-    inside: int
-    outside: int
-
-    @property
-    def selects(self) -> bool:
-        """Whether at least `MIN_TITLE_HITS` members carry window titles, and more than carry outside titles."""
-
-        return self.inside >= MIN_TITLE_HITS and self.inside > self.outside
-
-    @property
-    def vetoes(self) -> bool:
-        """Whether at least `MIN_TITLE_HITS` members carry outside titles and none carries a window title."""
-
-        return self.outside >= MIN_TITLE_HITS and not self.inside
-
-
-class NameTitle(NamedTuple):
-    """One name read on its own and against the episode titles."""
-
-    read: NameRead
-    """The name read on its own: stem, run membership, title words, numbers."""
-    titled_as: int | None
-    """The episode the name is titled as: its specific title, carried by no other file of the torrent, else None."""
-    leaders: frozenset[int]
-    """Every episode whose title starts the name's tail: run evidence, read for run members only."""
-    extra: bool
-    """Whether the name is an extra: set aside, and left out of every count."""
-
-
-def _title_lead(episodes: EpisodeTitles, read: NameRead, resolved: Collection[int]) -> _TitleLead:
-    """Read one name against the episode titles: the tail behind its count, else the whole name.
-
-    A counted name is read whole too, its season tag left out: "Show - 17 Steps 2" is titled "17 Steps 2". A name
-    that each reading titles as a different episode is titled as neither. `resolved` are the episodes Sonarr read
-    for the file (`EpisodeTitles.keyed_by`).
-    """
-
-    words = read.title_words
-    keyed = episodes.keyed_by(read, resolved)
-    if read.member is None and read.titled_count is None:
-        return _TitleLead(episodes.exactly(words, keyed), frozenset(), words)
-    lead = episodes.leading(words)
-    if lead.titled is None or read.titled_count is not None:
-        whole = whole_words(read.stem.text)
-        if (equal := episodes.exactly(whole, keyed)) is not None:
-            if lead.titled is None:
-                return _TitleLead(equal, lead.leaders, whole)
-            if lead.titled.ep_id != equal.ep_id:
-                return lead._replace(titled=None)
-    return lead
-
-
-class TorrentNames(NamedTuple):
-    """Every file name of the torrent, read once: stem, run membership, episode title, and whether it is an extra."""
-
-    by_name: Mapping[str, NameTitle]
-    """Each name read on its own and against the episode titles, in `PlacementBatch.torrent_names` order."""
-    episode_titles: EpisodeTitles
-    """The episode titles the names were read against."""
-
-    @classmethod
-    def of(cls, batch: PlacementBatch, scope: TargetScope, readings: Mapping[str, Reading]) -> Self:
-        """Read every name, seeded and gone ones included.
-
-        Two versions of one file carrying the same title still count as titled as it. A file whose own key Sonarr
-        matched (`Reading.keyed`) is an episode, whatever extras word its name carries.
-        """
-
-        ground = TitleGround.of(scope.names)
-        episode_titles = EpisodeTitles.of(scope.series, ground)
-        reads = read_names(batch.torrent_names, ground)
-        leads = {name: _title_lead(episode_titles, read, readings[name].resolved) for name, read in reads.items()}
-        carriers = Counter(words for _file, words in {(reads[name].file, lead.words) for name, lead in leads.items()})
-        by_name: dict[str, NameTitle] = {}
-        for name, lead in leads.items():
-            titled = lead.titled
-            titled_as = titled.ep_id if titled is not None and carriers[lead.words] == 1 else None
-            # An extras word that belongs to the entry's titles or the name's episode title marks no extra.
-            shield = ground.entry_words | frozenset(titled.words if titled is not None else ())
-            extra = not readings[name].keyed and is_extras_name(name, shield)
-            by_name[name] = NameTitle(reads[name], titled_as, lead.leaders, extra)
-        return cls(by_name, episode_titles)

@@ -6,13 +6,13 @@ from typing import cast
 
 import pytest
 
+from pearlarr.episode_titles import EpisodeTitles
 from pearlarr.placement_types import (
     EMPTY_LISTING,
     EpisodeIndex,
     ListingEvidence,
     PlacementBatch,
     PlacementVerdict,
-    SeriesFacts,
     TargetScope,
     TorrentListing,
     all_specials,
@@ -25,13 +25,14 @@ from .builders import parsed_info, series_index, sonarr_ep
 
 
 class TestEpisodeIndex:
-    """`episode_index` folds an episode fetch into the import family's two facets.
+    """`episode_index` folds an episode fetch into the import family's three facets.
 
     `id_by_key` maps `(season, episode)` to the first episode id, missing numbers
     folding to a sentinel key (no collision with real pairs). Zero-id episodes are
     dropped from every facet before keying. `by_id` keeps the fetch order: the
     resolved set the add flow persists rides `list(by_id)`. `orders` reads each
-    other TVDB order onto the same ids through the episodes' TVDB ids.
+    other TVDB order onto the same ids through the episodes' TVDB ids. The
+    lookups (`key_by_id` and the rest) derive from the facets.
     """
 
     def test_normal_seasoned_episodes(self) -> None:
@@ -96,6 +97,44 @@ class TestEpisodeIndex:
         assert EpisodeKey(1, 2) not in index.id_by_key
         with pytest.raises(TypeError):
             cast("MutableMapping[EpisodeKey, int]", index.id_by_key)[EpisodeKey(1, 3)] = 13
+
+    def test_the_lookups_are_derived_from_the_facets(self) -> None:
+        keys = {EpisodeKey(0, 1): 501, EpisodeKey(1, 1): 601, EpisodeKey(1, 2): 602}
+        index = series_index(keys, absolutes={601: 1, 602: 2})
+
+        assert index.key_by_id == {501: EpisodeKey(0, 1), 601: EpisodeKey(1, 1), 602: EpisodeKey(1, 2)}
+        assert index.season_counts == {0: 1, 1: 2}
+        assert index.absolute_of == {601: 1, 602: 2}
+        assert index.id_by_absolute == {1: 601, 2: 602}
+
+
+class TestEpisodeIndexViews:
+    """`EpisodeIndex.titles` builds the episode titles once per index and set of series words."""
+
+    _WORDS = frozenset({"show"})
+
+    def _titled_index(self) -> EpisodeIndex:
+        return series_index(
+            {EpisodeKey(1, 1): 11, EpisodeKey(1, 2): 12}, titles={11: "Show: The Long Road Home", 12: "A Quiet Morning"}
+        )
+
+    def test_one_index_hands_out_one_view_per_word_set(self) -> None:
+        index = self._titled_index()
+
+        view = index.titles(self._WORDS)
+
+        assert index.titles(self._WORDS) is view
+        assert index.titles(frozenset({"other"})) is not view
+
+    def test_a_twin_index_builds_its_own_view(self) -> None:
+        index, twin = self._titled_index(), self._titled_index()
+
+        assert twin.titles(self._WORDS) is not index.titles(self._WORDS)
+
+    def test_the_view_is_the_fold_of_the_index(self) -> None:
+        index = self._titled_index()
+
+        assert index.titles(self._WORDS) == EpisodeTitles.of(index.by_id, index.id_by_key, self._WORDS)
 
 
 class TestPlacementBatchParsesKnown:
@@ -252,16 +291,3 @@ class TestSpecialsListing:
         assert self._scope([501, 502]).specials_window
         assert not self._scope([501, 11]).specials_window
         assert not self._scope([]).specials_window
-
-
-class TestSeriesFacts:
-    """`SeriesFacts` builds its lookups once from the episode index."""
-
-    def test_the_lookups_are_derived_from_the_index(self) -> None:
-        keys = {EpisodeKey(0, 1): 501, EpisodeKey(1, 1): 601, EpisodeKey(1, 2): 602}
-        facts = SeriesFacts(series_index(keys, absolutes={601: 1, 602: 2}))
-
-        assert facts.id_by_key == keys
-        assert facts.key_by_id == {501: EpisodeKey(0, 1), 601: EpisodeKey(1, 1), 602: EpisodeKey(1, 2)}
-        assert facts.season_counts == {0: 1, 1: 2}
-        assert facts.absolute_of == {601: 1, 602: 2}

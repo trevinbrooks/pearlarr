@@ -688,6 +688,12 @@ class TestTitledRead:
         assert TitleGround.of(EntryNames("Show", ("Warden II", "Meet A Star IV"))).numbers == frozenset()
         assert TitleGround.of(EntryNames("Tinman 009", ("Seeker x Seeker (2011)",))).numbers == {9, 2011}
 
+    def test_the_series_words_are_the_series_titles_and_the_entry_words_add_the_anilist_titles(self) -> None:
+        ground = TitleGround.of(EntryNames("Show Town", ("Machi Show",)))
+
+        assert ground.series_words == {"show", "town"}
+        assert ground.entry_words == {"show", "town", "machi"}
+
     def test_the_titles_numbers_leave_the_bare_numbers_only(self) -> None:
         assert _read("Tinman 009 - 009.mkv", "Tinman 009") == (9, (9,))
         assert _read("Zap Pilot 100 - 05.mkv", "Zap Pilot 100") == (5, ())

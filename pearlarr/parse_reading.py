@@ -3,7 +3,7 @@
 from collections.abc import Iterable, Mapping, Sequence
 from typing import NamedTuple
 
-from .placement_types import SeriesFacts, TargetScope
+from .placement_types import EpisodeIndex, TargetScope
 from .release_names import range_key
 from .seadex_types import EpisodeKey, MatchedEpisode, ParsedFileInfo, season_episode_key
 
@@ -187,7 +187,7 @@ def read_parse(info: ParsedFileInfo | None, scope: TargetScope) -> Reading:
     return Reading(ids, inside, complete=complete, borrowed=borrowed, vetoed=vetoed, corroborated=corroborated)
 
 
-def widen_range_key(name: str, info: ParsedFileInfo, facts: SeriesFacts) -> ParsedFileInfo:
+def widen_range_key(name: str, info: ParsedFileInfo, series: EpisodeIndex) -> ParsedFileInfo:
     """Widen a parse Sonarr read as just the first episode of the name's `SxxEyy-zz` range to the whole range.
 
     It stays as read if the range doesn't count up, is wider than a triple, ends on its first episode's absolute
@@ -200,12 +200,12 @@ def widen_range_key(name: str, info: ParsedFileInfo, facts: SeriesFacts) -> Pars
     episodes = tuple(range(key.first, key.last + 1))
     if not 1 < len(episodes) <= _MATCHED_SPAN_CAP:
         return info
-    first_id = facts.id_by_key.get(EpisodeKey(key.season, key.first))
-    if first_id is not None and facts.absolute_of.get(first_id) == key.last:
+    first_id = series.id_by_key.get(EpisodeKey(key.season, key.first))
+    if first_id is not None and series.absolute_of.get(first_id) == key.last:
         return info
     matched_season = _matched_season(key.first, info.matched_episodes)
     seasons = (key.season,) if matched_season is None else (key.season, matched_season)
-    if not any(_range_fits(episodes, season, facts) for season in seasons):
+    if not any(_range_fits(episodes, season, series) for season in seasons):
         return info
     # Sonarr often reads the range's last number as an absolute. It isn't one, so drop it.
     absolutes = () if info.absolute_episode_numbers == (key.last,) else info.absolute_episode_numbers
@@ -223,11 +223,11 @@ def _matched_season(first: int, matched: Iterable[MatchedEpisode]) -> int | None
     return seasons.pop() if len(seasons) == 1 and 0 not in seasons else None
 
 
-def _range_fits(episodes: Sequence[int], season: int, facts: SeriesFacts) -> bool:
+def _range_fits(episodes: Sequence[int], season: int, series: EpisodeIndex) -> bool:
     """Whether the season has every episode of the range plus at least one more."""
 
-    return all(EpisodeKey(season, episode) in facts.id_by_key for episode in episodes) and (
-        len(episodes) < facts.season_counts[season]
+    return all(EpisodeKey(season, episode) in series.id_by_key for episode in episodes) and (
+        len(episodes) < series.season_counts[season]
     )
 
 

@@ -7,6 +7,7 @@ from enum import StrEnum
 from types import MappingProxyType
 from typing import NamedTuple, Self
 
+from .episode_titles import EpisodeTitles
 from .manual_import import NO_IDENTIFIED, EntryNames, IdentifiedNames
 from .seadex_types import NO_ALIASES, EpisodeKey, ParsedFileInfo, SonarrEpisode, SpecialAliases, index_episodes_by_key
 from .tvdb_orders import NO_ORDERING, OrderRow, SeriesOrdering
@@ -33,12 +34,13 @@ class EpisodeOrder:
 class EpisodeIndex:
     """The import family's one episode index, built once per episode fetch.
 
-    Both mappings are copied and made read-only at construction. `episode_index` is
-    the one builder. Episodes with a falsy id (0) are dropped from EVERY facet
-    before keying: a 0 id can never be POSTed to Sonarr, and a real-id twin
-    behind one must still win its `(season, episode)` key. The planner's
-    `index_episodes_by_key` deliberately KEEPS them (a 0-id file is still
-    identity evidence). Do not unify the two.
+    The lookups are derived at construction, and `titles` builds each title view on first use. Nothing under the
+    index changes after it is built, and every torrent and window placed under it shares them.
+
+    The three facets are copied and made read-only at construction. `episode_index` is the one builder. Episodes
+    with a falsy id (0) are dropped from EVERY facet before keying: a 0 id can never be POSTed to Sonarr, and a
+    real-id twin behind one must still win its `(season, episode)` key. The planner's `index_episodes_by_key`
+    deliberately KEEPS them (a 0-id file is still identity evidence). Do not unify the two.
     """
 
     by_id: Mapping[int, SonarrEpisode]
@@ -52,11 +54,44 @@ class EpisodeIndex:
     orders: Mapping[str, EpisodeOrder] = field(default_factory=dict[str, EpisodeOrder])
     """The series' other TVDB orders, by name, each read onto these episodes. Never the official order."""
 
+    key_by_id: Mapping[int, EpisodeKey] = field(init=False, repr=False, compare=False)
+    """Episode id -> `(season, episode)`."""
+    season_counts: Mapping[int, int] = field(init=False, repr=False, compare=False)
+    """Season -> how many episodes it has."""
+    absolute_of: Mapping[int, int] = field(init=False, repr=False, compare=False)
+    """Episode id -> absolute number, for the episodes that have one."""
+    id_by_absolute: Mapping[int, int] = field(init=False, repr=False, compare=False)
+    """Absolute number -> episode id, the inverse of `absolute_of` (the last id wins a repeated number)."""
+    _titles: dict[frozenset[str], EpisodeTitles] = field(
+        default_factory=dict[frozenset[str], EpisodeTitles], init=False, repr=False, compare=False
+    )
+    """The memo `titles` fills: one `EpisodeTitles` per set of series title words placed under this index."""
+
     def __post_init__(self) -> None:
         # Detach from the caller's dicts, then wrap read-only.
         object.__setattr__(self, "by_id", MappingProxyType(dict(self.by_id)))
         object.__setattr__(self, "id_by_key", MappingProxyType(dict(self.id_by_key)))
         object.__setattr__(self, "orders", MappingProxyType(dict(self.orders)))
+        keys = self.id_by_key
+        object.__setattr__(self, "key_by_id", MappingProxyType({ep_id: key for key, ep_id in keys.items()}))
+        object.__setattr__(self, "season_counts", MappingProxyType(dict(Counter(key.season for key in keys))))
+        absolute_of = {
+            ep_id: ep.absolute_episode_number
+            for ep_id, ep in self.by_id.items()
+            if ep.absolute_episode_number is not None
+        }
+        object.__setattr__(self, "absolute_of", MappingProxyType(absolute_of))
+        object.__setattr__(
+            self, "id_by_absolute", MappingProxyType({number: ep_id for ep_id, number in absolute_of.items()})
+        )
+
+    def titles(self, series_words: frozenset[str]) -> EpisodeTitles:
+        """The episode titles as words beyond the series title's words, built once per word set under this index."""
+
+        titles = self._titles.get(series_words)
+        if titles is None:
+            titles = self._titles[series_words] = EpisodeTitles.of(self.by_id, self.id_by_key, series_words)
+        return titles
 
 
 def episode_index(ep_list: Iterable[SonarrEpisode], ordering: SeriesOrdering = NO_ORDERING) -> EpisodeIndex:
@@ -88,42 +123,6 @@ def all_specials(series: EpisodeIndex, ids: Iterable[int]) -> bool:
     """Whether every id is one of the series' specials (season 0)."""
 
     return all((ep := series.by_id.get(ep_id)) is not None and ep.season_number == 0 for ep_id in ids)
-
-
-@dataclass(frozen=True, slots=True)
-class SeriesFacts:
-    """Lookups built once from a series' episode index, for placement to read. Nothing changes them after."""
-
-    series: EpisodeIndex
-
-    key_by_id: Mapping[int, EpisodeKey] = field(init=False, repr=False, compare=False)
-    """Episode id -> `(season, episode)`."""
-    season_counts: Mapping[int, int] = field(init=False, repr=False, compare=False)
-    """Season -> how many episodes it has."""
-    absolute_of: Mapping[int, int] = field(init=False, repr=False, compare=False)
-    """Episode id -> absolute number, for the episodes that have one."""
-    id_by_absolute: Mapping[int, int] = field(init=False, repr=False, compare=False)
-    """Absolute number -> episode id, the inverse of `absolute_of` (the last id wins a repeated number)."""
-
-    def __post_init__(self) -> None:
-        keys = self.series.id_by_key
-        object.__setattr__(self, "key_by_id", MappingProxyType({ep_id: key for key, ep_id in keys.items()}))
-        object.__setattr__(self, "season_counts", MappingProxyType(Counter(key.season for key in keys)))
-        absolute_of = {
-            ep_id: ep.absolute_episode_number
-            for ep_id, ep in self.series.by_id.items()
-            if ep.absolute_episode_number is not None
-        }
-        object.__setattr__(self, "absolute_of", MappingProxyType(absolute_of))
-        object.__setattr__(
-            self, "id_by_absolute", MappingProxyType({number: ep_id for ep_id, number in absolute_of.items()})
-        )
-
-    @property
-    def id_by_key(self) -> Mapping[EpisodeKey, int]:
-        """`(season, episode)` -> episode id, straight from the index."""
-
-        return self.series.id_by_key
 
 
 class PlacementVerdict(StrEnum):

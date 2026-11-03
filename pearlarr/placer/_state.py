@@ -9,9 +9,10 @@ from collections.abc import Iterable, Mapping, Sequence
 from dataclasses import dataclass, field
 from typing import Self
 
-from ..episode_titles import EpisodeTitles, TorrentNames, spells_title
+from ._names import TorrentNames
+from ..episode_titles import EpisodeTitles, spells_title
 from ..parse_reading import Reading, glued_counts, read_parse, spans_multiple, widen_range_key
-from ..placement_types import Placement, PlacementBatch, PlacementVerdict, SeriesFacts, TargetScope
+from ..placement_types import EpisodeIndex, Placement, PlacementBatch, PlacementVerdict, TargetScope
 from ..release_names import FileIdentity, NameRead, is_consecutive
 from ..seadex_types import ParsedFileInfo
 
@@ -208,7 +209,6 @@ class Placer:
     """One `assign_episode_ids` call's state: every file of the torrent, and the ids used so far."""
 
     scope: TargetScope
-    facts: SeriesFacts
     episode_titles: EpisodeTitles
     """The episode titles the names were read against."""
     files: tuple[TorrentFile, ...]
@@ -233,13 +233,19 @@ class Placer:
     def __post_init__(self) -> None:
         self.counted_runs = tuple(self.runs(self.counted))
 
+    @property
+    def series(self) -> EpisodeIndex:
+        """The scope's episode index, whose lookups (`EpisodeIndex.key_by_id` and the rest) the passes read."""
+
+        return self.scope.series
+
     @classmethod
     def start(cls, batch: PlacementBatch, scope: TargetScope) -> Self:
         """Read every name and every parse of the torrent once, after widening each range key Sonarr read short."""
 
-        facts = SeriesFacts(scope.series)
         widened = {
-            name: None if info is None else widen_range_key(name, info, facts) for name, info in batch.parsed.items()
+            name: None if info is None else widen_range_key(name, info, scope.series)
+            for name, info in batch.parsed.items()
         }
         # The readings and every pass see the widened parses.
         batch = batch._replace(parsed=widened)
@@ -264,7 +270,6 @@ class Placer:
         }
         return cls(
             scope=scope,
-            facts=facts,
             episode_titles=torrent.episode_titles,
             files=tuple(by_name.values()),
             placing=tuple(by_name[name] for name in batch.names),
@@ -298,7 +303,7 @@ class Placer:
             return False
         if resolved := file.reading.resolved:
             return len(resolved) != 1 or not self.episode_titles.nearly(resolved[0], name_read.title_words)
-        return name_read.titled_count not in self.facts.id_by_absolute
+        return name_read.titled_count not in self.series.id_by_absolute
 
     def _exact_order(self) -> list[TorrentFile]:
         """The unplaced files in the exact pass's order: `Reading.rank`, then the higher `vN`, then batch order."""
@@ -359,7 +364,7 @@ class Placer:
         open_ids = self.open_ids()
         if len(open_ids) < 2:
             return None
-        key_by_id = self.facts.key_by_id
+        key_by_id = self.series.key_by_id
         keyed = sorted((key_by_id[ep_id], ep_id) for ep_id in open_ids if ep_id in key_by_id)
         if len(keyed) != len(open_ids):
             return None
@@ -367,7 +372,7 @@ class Placer:
         episodes = [key.episode for key, _ in keyed]
         if len(seasons) == 1 and is_consecutive(episodes):
             return RunWindow(seasons.pop(), tuple(ep_id for _, ep_id in keyed), tuple(episodes))
-        absolute_of = self.facts.absolute_of
+        absolute_of = self.series.absolute_of
         absolute = sorted((absolute_of[ep_id], ep_id) for ep_id in open_ids if ep_id in absolute_of)
         if len(absolute) != len(open_ids) or not is_consecutive([number for number, _ in absolute]):
             return None
