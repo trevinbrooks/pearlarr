@@ -45,11 +45,7 @@ class WindowedAssignment(NamedTuple):
         Files the window wrote off (another entry's, an extra, a skip) don't count.
         """
 
-        own = {
-            p.name
-            for p in self.windows[index].placements
-            if p.verdict.placed or p.verdict.refused or p.verdict in _BY_ALIAS
-        }
+        own = {p.name for p in self.windows[index].placements if _decides(p.verdict) or p.verdict in _BY_ALIAS}
         return self._left_as(PlacementVerdict.MISNUMBERED, own)
 
     def _left_as(self, verdict: PlacementVerdict, names: Collection[str]) -> bool:
@@ -72,6 +68,12 @@ _CLAIM_RANK: Mapping[PlacementVerdict, int] = {
 }
 _BY_ALIAS = frozenset({PlacementVerdict.ALTERNATE, PlacementVerdict.ALIASED_ELSEWHERE})
 """The verdicts the special aliases give: placed on the aliased special, or claimed for the window that holds it."""
+
+
+def _decides(verdict: PlacementVerdict) -> bool:
+    """Whether a window that gives this verdict decides the file: it placed or refused it."""
+
+    return verdict.placed or verdict.refused
 
 
 def _merged(name: str, judged: Sequence[Placement], decided: Placement | None) -> Placement:
@@ -118,12 +120,14 @@ def windows_of(
     )
 
 
-def place_leftover(seeded: FileEpisodeMap, batch: PlacementBatch, windows: Sequence[TargetScope]) -> WindowedAssignment:
-    """The files the stored map doesn't cover, placed under each window in turn, verdicts merged.
+def place_across_windows(
+    seeded: FileEpisodeMap, batch: PlacementBatch, windows: Sequence[TargetScope]
+) -> WindowedAssignment:
+    """The batch placed under each window in turn, verdicts merged.
 
-    Under each window, the mapped ids and the ids of files earlier windows decided are used, where the window admits
-    them. Mapped files aren't placed again, but the map and their parses still count as evidence. With no windows,
-    every file is skipped.
+    Files the stored map covers aren't placed again, but the map and their parses still count as evidence. Under each
+    window, the mapped ids and the ids of files earlier windows decided are used, where the window admits them. With no
+    windows, every file is skipped.
     """
 
     held = {name: tuple(ids) for name, ids in seeded.items()}
@@ -139,7 +143,7 @@ def place_leftover(seeded: FileEpisodeMap, batch: PlacementBatch, windows: Seque
         for placement in assignment.placements:
             judged[placement.name].append(placement)
             # A refusal decides the file too, so no later window can place it by its numbers.
-            if placement.name not in decided and (placement.verdict.placed or placement.verdict.refused):
+            if placement.name not in decided and _decides(placement.verdict):
                 decided[placement.name] = placement
                 used.extend(placement.ids)
     merged = EpisodeAssignment(tuple(_merged(name, judged[name], decided.get(name)) for name in names))

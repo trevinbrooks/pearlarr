@@ -369,7 +369,7 @@ type SeededNames = Mapping[str, tuple[int, ...]]
 """Normalized file name -> the episode ids the stored record already holds it on."""
 
 NO_SEEDED: SeededNames = MappingProxyType({})
-"""No seeded files: a torrent with no stored record, or a scope `place_leftover` hasn't filled in yet."""
+"""No seeded files: a torrent with no stored record, or a scope `place_across_windows` hasn't filled in yet."""
 
 
 @dataclass(frozen=True, slots=True)
@@ -403,7 +403,7 @@ class TargetScope:
     """What SeaDex's listings tell us about this torrent. At import time only `identified` is filled in."""
 
     seeded: SeededNames = NO_SEEDED
-    """The stored record's map, name -> ids, the same on every window (`place_leftover` fills it in). Seeded files
+    """The stored record's map, name -> ids, the same on every window (`place_across_windows` fills it in). Seeded files
     are never placed again, but the misnumbered pack pass checks each seeded member sits on its aliased special."""
 
     real_ids: frozenset[int] = field(init=False, repr=False, compare=False)

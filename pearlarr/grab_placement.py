@@ -43,7 +43,7 @@ from .seadex_types import (
     season_episode_key,
     unambiguous,
 )
-from .window_placement import place_leftover, windows_of
+from .window_placement import place_across_windows, windows_of
 
 
 class SeedFile(NamedTuple):
@@ -267,7 +267,7 @@ def seed_batch(files: Sequence[SeedFile]) -> PlacementBatch:
 
 
 def place_release(files: Sequence[SeedFile], scope: SeedScope, torrent: KnownTorrent) -> UrlPlacement:
-    """Place one url's files ONCE, with the same `place_leftover` the import wait runs. Pure.
+    """Place one url's files ONCE, with the same `place_across_windows` the import wait runs. Pure.
 
     Nothing is placed when a claim's series, or a specials window's listing, wasn't read. The url is held
     (`GrabHold`) when a file of the entry's own window is misnumbered, when a read the placement needs failed, or
@@ -283,7 +283,7 @@ def place_release(files: Sequence[SeedFile], scope: SeedScope, torrent: KnownTor
     # An unknown parse only holds the url when a specials listing is checking the pack (`specials_listing`).
     parse_unread = own.specials_listing() is not None and not batch.all_parses_known
     if scope.can_place and windows is not None:
-        placed = place_leftover(seeded, batch, windows)
+        placed = place_across_windows(seeded, batch, windows)
         own_index = torrent.own_index(scope.al_id)
         assignment = placed.merged
         misnumbered, refuted = placed.misnumbered_under(own_index), placed.refuted_under(own_index)
