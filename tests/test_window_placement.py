@@ -402,7 +402,7 @@ class TestWindowsOf:
 
 
 class TestStoredMap:
-    """A stored map: its names stay put and its ids are used under every window."""
+    """A stored map: its names stay put and its ids are used under every window that admits them."""
 
     def test_the_mapped_names_are_not_re_placed(self) -> None:
         run = numbered_names("show", 3)

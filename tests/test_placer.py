@@ -3120,6 +3120,16 @@ class TestAlternateNumbering:
 
         assert not verdicts_of(result) & {PlacementVerdict.ALTERNATE, PlacementVerdict.MISNUMBERED}
 
+    def test_a_seed_spanning_its_alias_and_another_special_keeps_the_aliases_out(self) -> None:
+        # The stored record holds file 13 on two specials, its alias among them. A member on more than its one
+        # aliased special is off it, so the pack keeps its numbers.
+        pack = specials_pack(*_PACK_NUMBERS)
+        seeded = {"Show.S00E13.mkv": (512, 513)}
+
+        result = place(pack, _specials_scope([507, 512, 513], self._LISTING), seeded=seeded)
+
+        assert not verdicts_of(result) & {PlacementVerdict.ALTERNATE, PlacementVerdict.MISNUMBERED}
+
     def test_a_seed_on_its_aliased_special_agrees_and_the_rest_places_by_the_aliases(self) -> None:
         # The stored record holds file 13 on special 12, its alias: the rest of the pack follows the aliases.
         pack = specials_pack(*_PACK_NUMBERS)

@@ -276,8 +276,8 @@ NO_SEEDED: FileEpisodeMap = MappingProxyType({})
 class PlacementBatch:
     """A torrent's files to place, with the parses of the WHOLE torrent and its stored map.
 
-    `parsed` may cover MORE files than `to_place`. Every parsed file is evidence (readings, titles, the
-    shared-absolute check), placed or not, and a name `seeded` holds is never placed, in `to_place` or not.
+    `parsed` may cover MORE files than `to_place`. Every parsed file is read as evidence, placed or not, and a name
+    `seeded` holds is never placed, in `to_place` or not.
     """
 
     to_place: Sequence[str]
