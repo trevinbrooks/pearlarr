@@ -8,7 +8,7 @@ from types import MappingProxyType
 from typing import NamedTuple, Self
 
 from .episode_titles import EpisodeTitles
-from .manual_import import NO_IDENTIFIED, EntryNames, IdentifiedNames
+from .manual_import import NO_IDENTIFIED, EntryNames, FileEpisodeMap, IdentifiedNames
 from .seadex_types import NO_ALIASES, EpisodeKey, ParsedFileInfo, SonarrEpisode, SpecialAliases, index_episodes_by_key
 from .tvdb_orders import NO_ORDERING, OrderRow, SeriesOrdering
 
@@ -235,7 +235,7 @@ class EpisodeAssignment(NamedTuple):
     """The outcome of assigning a torrent's on-disk files to resolved episode ids, one verdict per file."""
 
     placements: tuple[Placement, ...]
-    """One per distinct name in `PlacementBatch.to_place`, batch order."""
+    """One per name in `PlacementBatch.names`, batch order."""
 
     @property
     def assigned(self) -> dict[str, list[int]]:
@@ -268,31 +268,49 @@ class EpisodeAssignment(NamedTuple):
         return tuple(p.name for p in self.placements if not p.verdict.placed)
 
 
-class PlacementBatch(NamedTuple):
-    """A torrent's files still to place, with the parses of the WHOLE torrent.
+NO_SEEDED: FileEpisodeMap = MappingProxyType({})
+"""No stored map."""
 
-    `parsed` may cover MORE files than `to_place`: seeded and gone files count as evidence (readings,
-    titles, the shared-absolute check) but are never placed.
+
+@dataclass(frozen=True, slots=True)
+class PlacementBatch:
+    """A torrent's files to place, with the parses of the WHOLE torrent and its stored map.
+
+    `parsed` may cover MORE files than `to_place`. Every parsed file is read as evidence, placed or not, and a name
+    `seeded` holds is never placed, in `to_place` or not.
     """
 
     to_place: Sequence[str]
-    """Normalized basenames in SeaDex order (the order only fixes deterministic output)."""
+    """Normalized basenames in SeaDex order (the order only fixes deterministic output), held as a tuple."""
 
     parsed: Mapping[str, ParsedFileInfo | None]
     """Series-agnostic parse per file (None when Sonarr's parse was unavailable
     and no SxxExx fell out of the name)."""
 
+    seeded: FileEpisodeMap = NO_SEEDED
+    """The stored record's map, normalized name -> episode ids, the ids held as tuples. Its ids count as used wherever
+    the scope admits them, and the misnumbered pack pass checks each seeded member sits on its aliased special."""
+
+    def __post_init__(self) -> None:
+        # Detach from the caller's collections, then wrap read-only (the ids as tuples, so nothing inside mutates).
+        object.__setattr__(self, "to_place", tuple(self.to_place))
+        object.__setattr__(self, "parsed", MappingProxyType(dict(self.parsed)))
+        object.__setattr__(self, "seeded", MappingProxyType({name: tuple(ids) for name, ids in self.seeded.items()}))
+
     @property
     def names(self) -> tuple[str, ...]:
-        """The distinct names to place, batch order."""
+        """The distinct names to place, batch order: `to_place` less the names the map holds."""
 
-        return tuple(dict.fromkeys(self.to_place))
+        return tuple(name for name in dict.fromkeys(self.to_place) if name not in self.seeded)
 
     @property
     def torrent_names(self) -> tuple[str, ...]:
-        """Every distinct name of the torrent: the names to place, then those only `parsed` covers (seeded, gone)."""
+        """The distinct names the placer reads: the names to place, then the rest of `parsed` (seeded, gone).
 
-        return tuple(dict.fromkeys([*self.to_place, *self.parsed]))
+        A mapped name with no parse entry is left out.
+        """
+
+        return tuple(dict.fromkeys([*self.names, *self.parsed]))
 
     @property
     def all_parses_known(self) -> bool:
@@ -365,21 +383,15 @@ NO_EVIDENCE = ListingEvidence()
 """Nothing from the listings: no ids and no size matches, so the size placement and the specials pack check do
 nothing."""
 
-type SeededNames = Mapping[str, tuple[int, ...]]
-"""Normalized file name -> the episode ids the stored record already holds it on."""
-
-NO_SEEDED: SeededNames = MappingProxyType({})
-"""No seeded files: a torrent with no stored record, or a scope `place_across_windows` hasn't filled in yet."""
-
 
 @dataclass(frozen=True, slots=True)
 class TargetScope:
     """The episode set a placement batch may assign into.
 
-    `resolved` is the FULL id list and `used` the ids already held, by seeded files or an earlier window.
-    They stay separate so a fully seeded record still enforces its scope, while an
-    EMPTY `resolved` means no scope at all (`unscoped`): the exact pass then places
-    a name's own keys against the whole series map instead of placing nothing forever.
+    `resolved` is the FULL id list and `used` the ids already held: an earlier window's, plus the stored map's the
+    placer adds (`Placer.scope`). The two stay separate so a fully seeded record still enforces its scope, while an
+    EMPTY `resolved` means no scope at all (`unscoped`): the exact pass then places a name's own keys against the
+    whole series map instead of placing nothing forever.
     """
 
     resolved: Sequence[int]
@@ -393,7 +405,7 @@ class TargetScope:
     run evidence reads."""
 
     used: frozenset[int] = frozenset()
-    """Ids already held, by seeded files or by an earlier window's placements. Never placed again."""
+    """Ids already held, by an earlier window or the stored map. Never placed again."""
 
     names: EntryNames = field(default_factory=EntryNames)
     """The series and AniList titles. Episode titles and extras words are read against them, and they break
@@ -402,18 +414,13 @@ class TargetScope:
     listing: ListingEvidence = NO_EVIDENCE
     """What SeaDex's listings tell us about this torrent. At import time only `identified` is filled in."""
 
-    seeded: SeededNames = NO_SEEDED
-    """The stored record's map, name -> ids, the same on every window (`place_across_windows` fills it in). Seeded files
-    are never placed again, but the misnumbered pack pass checks each seeded member sits on its aliased special."""
-
     real_ids: frozenset[int] = field(init=False, repr=False, compare=False)
     """The resolved ids that can be placed. A stray zero keeps the scope real but is never one."""
 
     def __post_init__(self) -> None:
-        # Detached from the caller's list and dict: `real_ids` is derived from the list once.
+        # Detached from the caller's list: `real_ids` is derived from the list once.
         object.__setattr__(self, "resolved", tuple(self.resolved))
         object.__setattr__(self, "real_ids", frozenset(i for i in self.resolved if i))
-        object.__setattr__(self, "seeded", MappingProxyType(dict(self.seeded)))
 
     @property
     def id_by_key(self) -> Mapping[EpisodeKey, int]:

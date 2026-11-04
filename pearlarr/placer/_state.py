@@ -209,6 +209,7 @@ class Placer:
     """One `assign_episode_ids` call's state: every file of the torrent, and the ids used so far."""
 
     scope: TargetScope
+    """The caller's scope with the stored map's ids it admits used (`TargetScope.using`)."""
     episode_titles: EpisodeTitles
     """The episode titles the names were read against."""
     files: tuple[TorrentFile, ...]
@@ -241,29 +242,34 @@ class Placer:
 
     @classmethod
     def start(cls, batch: PlacementBatch, scope: TargetScope) -> Self:
-        """Read every name and every parse of the torrent once, after widening each range key Sonarr read short."""
+        """Read every name and every parse of the torrent once, after widening each range key Sonarr read short.
 
+        The stored map's ids that `scope` admits count as used from the start.
+        """
+
+        seeded = {name: tuple(ids) for name, ids in batch.seeded.items()}
+        # On the scope, not just `used`: `untouched` and the duplicate proof read `scope.used` as held before this call.
+        scope = scope.using(ep_id for ids in seeded.values() for ep_id in ids)
         widened = {
             name: None if info is None else widen_range_key(name, info, scope.series)
             for name, info in batch.parsed.items()
         }
         # The readings and every pass see the widened parses.
-        batch = batch._replace(parsed=widened)
-        readings = {name: read_parse(batch.parsed.get(name), scope) for name in batch.torrent_names}
+        readings = {name: read_parse(widened.get(name), scope) for name in batch.torrent_names}
         torrent = TorrentNames.of(batch, scope, readings)
         names_to_place = frozenset(batch.names)
         by_name = {
             name: TorrentFile(
                 name=name,
                 to_place=name in names_to_place,
-                in_parse_map=name in batch.parsed,
-                parsed=batch.parsed.get(name),
+                in_parse_map=name in widened,
+                parsed=widened.get(name),
                 name_read=title.read,
                 titled_as=title.titled_as,
                 leaders=title.leaders,
                 extra=title.extra,
                 identified_as=scope.listing.identified.get(name),
-                seeded_on=scope.seeded.get(name),
+                seeded_on=seeded.get(name),
                 reading=readings[name],
             )
             for name, title in torrent.by_name.items()

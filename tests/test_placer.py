@@ -428,7 +428,7 @@ class TestAssignEpisodeTitle:
             (v1, v2), parsed_info(absolutes=(2,), matched=((1, 3),))
         )
 
-        placed = by_name(place(parsed, _scope(_FIRST_THREE, used=[602]), to_place=[v1]))
+        placed = by_name(place(parsed, _scope(_FIRST_THREE), seeded={v2: (602,)}))
 
         assert placed == {v1: ((), PlacementVerdict.DUPLICATE)}
 
@@ -678,7 +678,9 @@ class TestAssignRefutedRun:
     def test_an_import_poll_judges_the_leftover_as_the_grab_did(self) -> None:
         # The titled files were seeded. The poll places only the leftover, over the whole torrent's evidence,
         # so the untitled file's shifted match still never lands on the seed's empty episode.
-        placed = by_name(place(self._PARSED, _scope(_FIRST_THREE, used=[602, 603]), to_place=self._RUN[2:]))
+        seeded = {self._RUN[0]: (602,), self._RUN[1]: (603,)}
+
+        placed = by_name(place(self._PARSED, _scope(_FIRST_THREE), seeded=seeded))
 
         assert placed == {
             self._RUN[2]: ((), PlacementVerdict.TITLE_REFUTED),
@@ -735,7 +737,7 @@ class TestAssignOverlappingClaims:
             single: parsed_info(season=1, episodes=(2,)),
         }
 
-        placed = by_name(place(parsed, _scope(_FIRST_THREE, used=[602]), to_place=[span]))
+        placed = by_name(place(parsed, _scope(_FIRST_THREE), seeded={single: (602,)}))
 
         assert placed == {span: ((), PlacementVerdict.SKIPPED)}
 
@@ -756,7 +758,7 @@ class TestAssignOverlappingClaims:
         span, seed = "show S01E02-E03 [grp].mkv", "show - the return [grp].mkv"
         parsed: dict[str, ParsedFileInfo | None] = {span: parsed_info(season=1, episodes=(2, 3)), seed: parsed_info()}
 
-        placed = by_name(place(parsed, _scope(_FIRST_THREE, used=[602]), to_place=[span]))
+        placed = by_name(place(parsed, _scope(_FIRST_THREE), seeded={seed: (602,)}))
 
         assert placed == {span: ((), PlacementVerdict.SKIPPED)}
 
@@ -1283,7 +1285,7 @@ class TestDuplicateEvidence:
     def _place(cls, seeded_parse: ParsedFileInfo | None) -> EpisodeAssignment:
         # The seed holds 2586 through "seeded.mkv". The keyed on-disk file resolves there by name.
         parsed = {"seeded.mkv": seeded_parse, cls._KEYED: parsed_info(season=1, episodes=(12,))}
-        return place(parsed, TargetScope([2586, 2587], series_index(cls._MAP), used=frozenset({2586})), [cls._KEYED])
+        return place(parsed, TargetScope([2586, 2587], series_index(cls._MAP)), seeded={"seeded.mkv": (2586,)})
 
     def test_a_seeded_holder_reading_the_same_episode_proves_the_duplicate(self) -> None:
         result = self._place(parsed_info(season=1, episodes=(12,)))
@@ -1300,10 +1302,11 @@ class TestDuplicateEvidence:
 
 
 class TestAssignScopeGate:
-    """The scope is the whole resolved set: a fully seeded one stays enforced, and only an empty one is unscoped."""
+    """The scope is the whole resolved set: a fully held one stays enforced, and only an empty one is unscoped."""
 
-    def test_fully_seeded_scope_never_unlocks_the_live_map(self) -> None:
-        # Every resolved id is used, yet a correctly named out-of-scope file is refused, not placed on the live map.
+    def test_a_scope_an_earlier_window_fully_holds_never_unlocks_the_live_map(self) -> None:
+        # An earlier window holds every resolved id, yet a correctly named out-of-scope file is refused, not placed on
+        # the live map.
         parsed = {"x.mkv": parsed_info(season=1, episodes=(1,))}
 
         result = place(parsed, TargetScope([8044], series_index({EpisodeKey(1, 1): 8033}), used=frozenset({8044})))
@@ -1396,7 +1399,7 @@ class TestAbsoluteDuplicateTell:
             "e-12v2.mkv": parsed_info(season=0, absolutes=(12,), matched=((1, 12),)),
         }
 
-        result = place(parsed, TargetScope([2587], series_index({})), ["e-12v2.mkv"])
+        result = place(parsed, TargetScope([2587], series_index({})), seeded={"e-12.mkv": (2586,)})
         alone = place({"e-12v2.mkv": parsed["e-12v2.mkv"]}, TargetScope([2587], series_index({})))
 
         assert result.assigned == {}
@@ -1418,7 +1421,7 @@ class TestAbsoluteDuplicateTell:
         # may be hiding the duplicate: the zip fails closed.
         parsed = {name: sharer, "e-12v2.mkv": parsed_info(season=0, absolutes=(12,), matched=((1, 12),))}
 
-        result = place(parsed, TargetScope([2587], series_index({})), ["e-12v2.mkv"])
+        result = place(parsed, TargetScope([2587], series_index({})), seeded={name: (2586,)})
 
         assert result.assigned == {}
         assert by_name(result) == {"e-12v2.mkv": ((), PlacementVerdict.SKIPPED)}
@@ -1430,7 +1433,7 @@ class TestAbsoluteDuplicateTell:
             "left-13.mkv": parsed_info(season=0, absolutes=(13,)),
         }
 
-        result = place(parsed, TargetScope([507], series_index({})), ["left-13.mkv"])
+        result = place(parsed, TargetScope([507], series_index({})), seeded={"seeded-12.mkv": (506,)})
 
         assert result.assigned == {"left-13.mkv": [507]}
         assert result.skipped == ()
@@ -1442,7 +1445,7 @@ class TestAbsoluteDuplicateTell:
             "e-12v2.mkv": parsed_info(season=0, absolutes=(12,), matched=((1, 12),)),
         }
 
-        result = place(parsed, TargetScope([2588], series_index({})), ["e-12v2.mkv"])
+        result = place(parsed, TargetScope([2588], series_index({})), seeded={"e-12-13.mkv": (2586, 2587)})
 
         assert result.assigned == {}
         assert by_name(result) == {"e-12v2.mkv": ((), PlacementVerdict.SKIPPED)}
@@ -1549,10 +1552,10 @@ class TestAssignNumberlessZip:
         assert sorted(result.skipped) == ["interview.mkv", "making of.mkv"]
 
     def test_seeded_sibling_parse_kills_the_zip(self) -> None:
-        # A parse for a file outside the batch proves a prior placement, so the whole zip is refused.
+        # A seeded file's parse proves a prior placement, so the whole zip is refused.
         parsed = blind(["seeded.mkv", "sp1.mkv", "sp2.mkv"])
 
-        result = place(parsed, TargetScope([901, 902], series_index({})), ["sp1.mkv", "sp2.mkv"])
+        result = place(parsed, TargetScope([901, 902], series_index({})), seeded={"seeded.mkv": (900,)})
 
         assert result.assigned == {}
         assert sorted(result.skipped) == ["sp1.mkv", "sp2.mkv"]
@@ -2276,7 +2279,8 @@ class TestAssignReleaseRun:
         assert {p.verdict for p in result.placements} == {PlacementVerdict.RELEASE_RUN}
 
     def test_a_name_the_parses_never_covered_holds_like_a_miss(self) -> None:
-        # A batch whose parses skip a name to place is as unknown as one carrying a None.
+        # No caller builds this (both parse every name they place), but a name to place with no parse entry still
+        # counts as unknown, like a None.
         parsed = blind(self._RUN[:2])
 
         result = place(parsed, self._scope(), self._RUN)
@@ -2448,8 +2452,8 @@ class TestAssignReleaseRun:
 
         assert by_name(result) == dict.fromkeys(run, ((), PlacementVerdict.SKIPPED))
 
-    def test_a_seed_owning_part_of_the_scope_keeps_a_run_from_anywhere_out(self) -> None:
-        # Three files fit a three-wide leftover by chance once a seed holds the rest of the scope:
+    def test_an_earlier_window_owning_part_of_the_scope_keeps_a_run_from_anywhere_out(self) -> None:
+        # Three files fit a three-wide leftover by chance once an earlier window holds the rest of the scope:
         # the count only speaks for the whole scope.
         run = [f"sp - {n} [grp].mkv" for n in (14, 15, 16)]
         parsed = _zip_blocked(blind(run))
@@ -2458,6 +2462,20 @@ class TestAssignReleaseRun:
         )
 
         result = place(parsed, scope, run)
+
+        assert result.assigned == {}
+
+    def test_a_stored_map_owning_part_of_the_scope_keeps_a_run_from_anywhere_out(self) -> None:
+        # The same three slots left over, held by the stored map instead of an earlier window: without the guard
+        # the specials would take 604-606 as a release run.
+        run = [f"sp - {n} [grp].mkv" for n in (14, 15, 16)]
+        mapped = {
+            f"show - {n:02d} [grp].mkv": parsed_info(season=1, episodes=(n,), matched=((1, n),)) for n in (1, 2, 3)
+        }
+        parsed = _zip_blocked({**mapped, **blind(run)})
+        scope = TargetScope([601, 602, 603, 604, 605, 606], series_index(self._SEASONED))
+
+        result = place(parsed, scope, run, seeded={name: (600 + n,) for n, name in enumerate(mapped, 1)})
 
         assert result.assigned == {}
 
@@ -2844,9 +2862,20 @@ class TestRefuseMisnumbered:
 
     def test_a_seeded_window_stands_down(self) -> None:
         # A stored record already mapped a file, so the window has a used id and the pack isn't refused.
-        result = place(specials_pack(1, 2, 3), replace(_specials_scope([504], _THREE_LISTING), used=frozenset({502})))
+        result = place(
+            specials_pack(1, 2, 3), _specials_scope([504], _THREE_LISTING), seeded={"Show.S00E02.mkv": (504,)}
+        )
 
         assert PlacementVerdict.MISNUMBERED not in verdicts_of(result)
+
+    def test_a_seed_on_another_windows_special_leaves_the_pack_refused(self) -> None:
+        # The stored record mapped a file onto a special outside this window, so this window holds nothing yet and
+        # the pack is still refused.
+        result = place(
+            specials_pack(1, 2, 3), _specials_scope([504], _THREE_LISTING), seeded={"Show.S00E02.mkv": (502,)}
+        )
+
+        assert verdicts_of(result) == {PlacementVerdict.MISNUMBERED}
 
     def test_a_title_refuting_the_numbering_keeps_the_listing_out(self) -> None:
         # The first file is titled as special 2, which the second reads by number.
@@ -3037,8 +3066,7 @@ class TestAlternateNumbering:
         assert placed["Show.S00E07.mkv"] == ((), PlacementVerdict.DUPLICATE)
 
     def test_a_member_whose_special_is_already_held_is_skipped(self) -> None:
-        # A seed or an earlier window already holds special 7. The pack still maps whole, and only that member is
-        # skipped.
+        # An earlier window already holds special 7. The pack still maps whole, and only that member is skipped.
         scope = replace(_specials_scope([507, 512, 513], self._LISTING), used=frozenset({507}))
 
         placed = by_name(place(specials_pack(*_PACK_NUMBERS), scope))
@@ -3077,9 +3105,8 @@ class TestAlternateNumbering:
             "Show.S00E13v2.mkv": parsed_info(season=0, episodes=(13,), matched=((0, 13),)),
         }
         seeded = {"Show.S00E13.mkv": (513,)}
-        scope = replace(_specials_scope([507, 512, 513], self._LISTING), used=frozenset({513}), seeded=seeded)
 
-        result = place(pack, scope, [name for name in pack if name not in seeded])
+        result = place(pack, _specials_scope([507, 512, 513], self._LISTING), seeded=seeded)
 
         assert not verdicts_of(result) & {PlacementVerdict.ALTERNATE, PlacementVerdict.MISNUMBERED}
 
@@ -3088,9 +3115,18 @@ class TestAlternateNumbering:
         # aliases are wrong for this pack, so nothing is placed by them, and the seeded window isn't refused either.
         pack = specials_pack(*_PACK_NUMBERS)
         seeded = {"Show.S00E13.mkv": (513,)}
-        scope = replace(_specials_scope([507, 512, 513], self._LISTING), used=frozenset({513}), seeded=seeded)
 
-        result = place(pack, scope, [name for name in pack if name not in seeded])
+        result = place(pack, _specials_scope([507, 512, 513], self._LISTING), seeded=seeded)
+
+        assert not verdicts_of(result) & {PlacementVerdict.ALTERNATE, PlacementVerdict.MISNUMBERED}
+
+    def test_a_seed_spanning_its_alias_and_another_special_keeps_the_aliases_out(self) -> None:
+        # The stored record holds file 13 on two specials, its alias among them. A member on more than its one
+        # aliased special is off it, so the pack keeps its numbers.
+        pack = specials_pack(*_PACK_NUMBERS)
+        seeded = {"Show.S00E13.mkv": (512, 513)}
+
+        result = place(pack, _specials_scope([507, 512, 513], self._LISTING), seeded=seeded)
 
         assert not verdicts_of(result) & {PlacementVerdict.ALTERNATE, PlacementVerdict.MISNUMBERED}
 
@@ -3098,9 +3134,8 @@ class TestAlternateNumbering:
         # The stored record holds file 13 on special 12, its alias: the rest of the pack follows the aliases.
         pack = specials_pack(*_PACK_NUMBERS)
         seeded = {"Show.S00E13.mkv": (512,)}
-        scope = replace(_specials_scope([507, 512, 513], self._LISTING), used=frozenset({512}), seeded=seeded)
 
-        placed = by_name(place(pack, scope, [name for name in pack if name not in seeded]))
+        placed = by_name(place(pack, _specials_scope([507, 512, 513], self._LISTING), seeded=seeded))
 
         assert placed["Show.S00E07.mkv"] == ((507,), PlacementVerdict.ALTERNATE)
         assert placed["Show.S00E14.mkv"] == ((513,), PlacementVerdict.ALTERNATE)

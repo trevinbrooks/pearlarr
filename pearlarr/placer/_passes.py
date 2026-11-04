@@ -150,10 +150,10 @@ def assign_episode_ids(batch: PlacementBatch, scope: TargetScope) -> EpisodeAssi
     """Place the files of `batch` onto the ids of `scope` by running the passes the module docstring lists, in order.
 
     One file name never overrides the scope. With an empty series map, every verdict that needs the map is
-    refused. The result holds one `Placement` per distinct file, in batch order.
+    refused. The result holds one `Placement` per name of `PlacementBatch.names`, in batch order.
     """
 
-    if not batch.to_place:
+    if not batch.names:
         # The passes would read every parse of the torrent only to return this same empty result.
         return EpisodeAssignment(())
     state = Placer.start(batch, scope)

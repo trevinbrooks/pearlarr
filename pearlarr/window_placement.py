@@ -9,10 +9,9 @@ as a new run and could land wrong. Then the windows merge in order:
 """
 
 from collections.abc import Collection, Iterable, Mapping, Sequence
-from dataclasses import replace
 from typing import NamedTuple
 
-from .manual_import import EntryClaim, FileEpisodeMap
+from .manual_import import EntryClaim
 from .placement_types import (
     EpisodeAssignment,
     EpisodeIndex,
@@ -29,7 +28,7 @@ class WindowedAssignment(NamedTuple):
     """A torrent placed under its windows: the merged verdicts, and each window's own."""
 
     merged: EpisodeAssignment
-    """One verdict per file the stored map doesn't cover, in batch order."""
+    """One verdict per name in `PlacementBatch.names`, batch order."""
     windows: tuple[EpisodeAssignment, ...]
     """What the placer returned under each window, in window order."""
 
@@ -120,25 +119,20 @@ def windows_of(
     )
 
 
-def place_across_windows(
-    seeded: FileEpisodeMap, batch: PlacementBatch, windows: Sequence[TargetScope]
-) -> WindowedAssignment:
+def place_across_windows(batch: PlacementBatch, windows: Sequence[TargetScope]) -> WindowedAssignment:
     """The batch placed under each window in turn, verdicts merged.
 
-    Files the stored map covers aren't placed again, but the map and their parses still count as evidence. Under each
-    window, the mapped ids and the ids of files earlier windows decided are used, where the window admits them. With no
+    Under each window, the ids of files earlier windows decided are used, where the window admits them. With no
     windows, every file is skipped.
     """
 
-    held = {name: tuple(ids) for name, ids in seeded.items()}
-    leftover = PlacementBatch([name for name in batch.to_place if name not in held], batch.parsed)
-    names = leftover.names
-    used = [ep_id for ids in held.values() for ep_id in ids]
+    names = batch.names
+    used: list[int] = []
     decided: dict[str, Placement] = {}
     judged: dict[str, list[Placement]] = {name: [] for name in names}
     assignments: list[EpisodeAssignment] = []
     for window in windows:
-        assignment = assign_episode_ids(leftover, replace(window.using(used), seeded=held))
+        assignment = assign_episode_ids(batch, window.using(used))
         assignments.append(assignment)
         for placement in assignment.placements:
             judged[placement.name].append(placement)

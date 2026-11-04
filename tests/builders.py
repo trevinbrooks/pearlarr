@@ -55,6 +55,7 @@ from pearlarr.parse_records import ParseRecords
 from pearlarr.pending_records import PendingRecords
 from pearlarr.placement_types import (
     EMPTY_LISTING,
+    NO_SEEDED,
     EpisodeAssignment,
     EpisodeIndex,
     PlacementBatch,
@@ -1228,12 +1229,27 @@ def specials_pack(*numbers: int) -> dict[str, ParsedFileInfo | None]:
     return {f"Show.S00E{n:02d}.mkv": parsed_info(season=0, episodes=(n,), matched=((0, n),)) for n in numbers}
 
 
-def place(
-    parsed: Mapping[str, ParsedFileInfo | None], scope: TargetScope, to_place: Sequence[str] | None = None
-) -> EpisodeAssignment:
-    """Place `to_place` (every parsed name when None) under `scope`, over the whole batch's parses."""
+def batch(
+    parsed: Mapping[str, ParsedFileInfo | None],
+    to_place: Sequence[str] | None = None,
+    *,
+    seeded: FileEpisodeMap = NO_SEEDED,
+) -> PlacementBatch:
+    """A batch over the whole torrent's parses: `to_place` (every parsed name when None) and the stored map `seeded`."""
 
-    return assign_episode_ids(PlacementBatch(list(parsed) if to_place is None else list(to_place), parsed), scope)
+    return PlacementBatch(list(parsed) if to_place is None else to_place, parsed, seeded)
+
+
+def place(
+    parsed: Mapping[str, ParsedFileInfo | None],
+    scope: TargetScope,
+    to_place: Sequence[str] | None = None,
+    *,
+    seeded: FileEpisodeMap = NO_SEEDED,
+) -> EpisodeAssignment:
+    """`assign_episode_ids` under `scope` over `batch(parsed, to_place, seeded=seeded)`."""
+
+    return assign_episode_ids(batch(parsed, to_place, seeded=seeded), scope)
 
 
 def numbered_names(prefix: str, count: int, tails: Sequence[str] = ()) -> list[str]:
