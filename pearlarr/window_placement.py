@@ -9,7 +9,7 @@ as a new run and could land wrong. Then the windows merge in order:
 """
 
 from collections.abc import Collection, Iterable, Mapping, Sequence
-from typing import NamedTuple
+from dataclasses import dataclass
 
 from .manual_import import EntryClaim
 from .placement_types import (
@@ -24,7 +24,8 @@ from .placement_types import (
 from .placer import assign_episode_ids
 
 
-class WindowedAssignment(NamedTuple):
+@dataclass(frozen=True, slots=True)
+class WindowedAssignment:
     """A torrent placed under its windows: the merged verdicts, and each window's own."""
 
     merged: EpisodeAssignment

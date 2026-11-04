@@ -473,7 +473,7 @@ class TestPlacementsFromHistory:
 
     def test_a_row_outside_the_listing_is_dropped(self) -> None:
         rows = [HistoryImport("/d/Show - 01.mkv", 101, 7), HistoryImport("/d/Extra.mkv", 101, 7)]
-        assert placements_from_history(rows, _unplaced()) == {"show - 01.mkv": [101]}
+        assert placements_from_history(rows, _unplaced()) == {"show - 01.mkv": (101,)}
 
     def test_an_excluded_file_is_never_claimed(self) -> None:
         pending = _unplaced(
@@ -490,7 +490,7 @@ class TestPlacementsFromHistory:
             seadex_files=["Show - 01.mkv", "Show - 02.mkv"],
         )
         rows = [HistoryImport("/d/Show - 01.mkv", 102, 7), HistoryImport("/d/Show - 02.mkv", 102, 7)]
-        assert placements_from_history(rows, pending) == {"show - 02.mkv": [102]}
+        assert placements_from_history(rows, pending) == {"show - 02.mkv": (102,)}
 
     def test_another_series_row_is_dropped(self) -> None:
         assert placements_from_history([HistoryImport("/d/Show - 01.mkv", 101, 8)], _unplaced()) == {}
@@ -506,7 +506,7 @@ class TestPlacementsFromHistory:
             ),
         )
         rows = [HistoryImport("/d/Show - 01.mkv", 201, 8), HistoryImport("/d/Show - 02.mkv", 201, 7)]
-        assert placements_from_history(rows, pending) == {"show - 01.mkv": [201]}
+        assert placements_from_history(rows, pending) == {"show - 01.mkv": (201,)}
 
     def test_the_claims_window_scopes_the_ids_when_present(self) -> None:
         # A row outside the claim's window is a sibling's slice (or a parse we
@@ -514,16 +514,16 @@ class TestPlacementsFromHistory:
         # every in-series row.
         rows = [HistoryImport("/d/Show - 01.mkv", 999, 7)]
         assert placements_from_history(rows, _unplaced()) == {}
-        assert placements_from_history(rows, _unplaced(ordered_episode_ids=[])) == {"show - 01.mkv": [999]}
+        assert placements_from_history(rows, _unplaced(ordered_episode_ids=[])) == {"show - 01.mkv": (999,)}
 
     def test_a_multi_episode_file_groups_its_sorted_ids(self) -> None:
         pending = _unplaced(ordered_episode_ids=[101, 102], seadex_files=["Show - 01-02.mkv"])
         rows = [HistoryImport("/d/Show - 01-02.mkv", 102, 7), HistoryImport("/d/Show - 01-02.mkv", 101, 7)]
-        assert placements_from_history(rows, pending) == {"show - 01-02.mkv": [101, 102]}
+        assert placements_from_history(rows, pending) == {"show - 01-02.mkv": (101, 102)}
 
     def test_a_remote_path_folds_to_the_normalized_leaf(self) -> None:
         rows = [HistoryImport("C:\\downloads\\Show S01/SHOW - 01.MKV", 101, 7)]
-        assert placements_from_history(rows, _unplaced()) == {"show - 01.mkv": [101]}
+        assert placements_from_history(rows, _unplaced()) == {"show - 01.mkv": (101,)}
 
     def test_no_rows_give_no_placements(self) -> None:
         assert placements_from_history([], _unplaced()) == {}

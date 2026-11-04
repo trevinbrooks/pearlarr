@@ -21,6 +21,7 @@ from .manual_import import (
 )
 from .placement_types import (
     EMPTY_LISTING,
+    NO_SEEDED,
     EpisodeAssignment,
     EpisodeIndex,
     ListingEvidence,
@@ -253,17 +254,18 @@ def _sizes_by_name(files: Sequence[SeedFile]) -> dict[str, int]:
     return unambiguous((normalized_leaf(f.basename), f.size) for f in files)
 
 
-def seed_batch(files: Sequence[SeedFile]) -> PlacementBatch:
+def seed_batch(files: Sequence[SeedFile], seeded: FileEpisodeMap = NO_SEEDED) -> PlacementBatch:
     """One url's files as a placement batch keyed by NORMALIZED file name, as the on-disk names are at import time.
 
     NFC/NFD-safe: two listed files with one normalized name share its verdict (the first parse) and keep their sizes.
+    `seeded` is the stored record's normalized map (`seeded_map`), whose names are never placed.
     """
 
     to_place = list(dict.fromkeys(normalized_leaf(f.basename) for f in files))
     parsed: dict[str, ParsedFileInfo | None] = {}
     for f in files:
         parsed.setdefault(normalized_leaf(f.basename), f.parse)
-    return PlacementBatch(to_place, parsed)
+    return PlacementBatch(to_place, parsed, seeded)
 
 
 def place_release(files: Sequence[SeedFile], scope: SeedScope, torrent: KnownTorrent) -> UrlPlacement:
@@ -274,8 +276,8 @@ def place_release(files: Sequence[SeedFile], scope: SeedScope, torrent: KnownTor
     when its titles refute its numbers and nothing of it lands on the entry.
     """
 
-    seeded: dict[str, list[int]] = {} if torrent.record is None else torrent.record.seeded_map()
-    batch = replace(seed_batch(files), seeded=seeded)
+    seeded: FileEpisodeMap = NO_SEEDED if torrent.record is None else torrent.record.seeded_map()
+    batch = seed_batch(files, seeded=seeded)
     sizes = _sizes_by_name(files)
     own = scope.target(torrent.listing_evidence(sizes))
     identities_unread = torrent.evidence.identities is None
@@ -293,7 +295,7 @@ def place_release(files: Sequence[SeedFile], scope: SeedScope, torrent: KnownTor
     records: list[EpisodeRecord] = []
     claimed: set[int] = set()
     for f in files:
-        for ep_id in mapped.get(normalized_leaf(f.basename), []):
+        for ep_id in mapped.get(normalized_leaf(f.basename), ()):
             # A stored id on another series is not this entry's. One inside the entry counts toward its coverage.
             episode = scope.entry.by_id.get(ep_id)
             if episode is None:

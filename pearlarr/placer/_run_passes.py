@@ -4,9 +4,9 @@ They are passes 5, 6, 8, and 14 of the list in `_passes`.
 """
 
 from collections.abc import Iterable, Sequence
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from enum import IntEnum
-from typing import NamedTuple, Self
+from typing import Self
 
 from ._state import NumberedRun, Placer, RunWindow, TorrentFile
 from ..parse_reading import Reading, claims_several_episodes
@@ -18,7 +18,8 @@ from ..seadex_types import EpisodeKey
 MIN_TITLE_HITS = 2
 
 
-class TitleEvidence(NamedTuple):
+@dataclass(frozen=True, slots=True)
+class TitleEvidence:
     """How many run members' tails start with only window titles, and how many with only titles outside it."""
 
     inside: int
@@ -37,7 +38,8 @@ class TitleEvidence(NamedTuple):
         return self.outside >= MIN_TITLE_HITS and not self.inside
 
 
-class _SeasonFit(NamedTuple):
+@dataclass(frozen=True, slots=True)
+class _SeasonFit:
     """The season a `1..N` run matches, and whether the specials season matches it just as well (a tie)."""
 
     season: int
@@ -90,7 +92,7 @@ def _season_fit(state: Placer, run: NumberedRun) -> _SeasonFit | None:
     onto_specials = read.count(0)
     if not onto_specials or into_season < onto_specials:
         return None
-    return _SeasonFit(season, into_season == onto_specials and state.series.season_counts.get(0) == width)
+    return _SeasonFit(season, tied=into_season == onto_specials and state.series.season_counts.get(0) == width)
 
 
 def _tie(state: Placer, run: NumberedRun, season: int) -> None:
@@ -99,7 +101,7 @@ def _tie(state: Placer, run: NumberedRun, season: int) -> None:
     for file in run.whole:
         keys = (EpisodeKey(season, file.release_number), EpisodeKey(0, file.release_number))
         ids = tuple(i for key in keys if (i := state.scope.id_by_key.get(key)))
-        file.reading = file.reading._replace(vetoed=True, tied=ids)
+        file.reading = replace(file.reading, vetoed=True, tied=ids)
 
 
 def _reread(state: Placer, run: NumberedRun, season: int) -> None:
@@ -110,10 +112,18 @@ def _reread(state: Placer, run: NumberedRun, season: int) -> None:
         if ep_id:
             inside = (ep_id,) if state.scope.admits(ep_id) else ()
             vetoed = file.contradicts((ep_id,))
-            file.reading = Reading((ep_id,), inside, complete=True, borrowed=True, vetoed=vetoed, corroborated=True)
+            file.reading = Reading(
+                resolved=(ep_id,),
+                inside=inside,
+                complete=True,
+                borrowed=True,
+                vetoed=vetoed,
+                corroborated=True,
+            )
 
 
-class _ListedPack(NamedTuple):
+@dataclass(frozen=True, slots=True)
+class _ListedPack:
     """A misnumbered specials pack and the listed specials it is as wide as."""
 
     run: NumberedRun
@@ -229,7 +239,8 @@ class _Tier(IntEnum):
     """Any N consecutive numbers (`_RunFit.from_anywhere`)."""
 
 
-class _Candidate(NamedTuple):
+@dataclass(frozen=True, slots=True)
+class _Candidate:
     """A run that could place onto the window: its position among the runs, its best tier, and its title evidence."""
 
     position: int

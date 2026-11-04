@@ -28,7 +28,7 @@ class TestPlanImportFiles:
     """
 
     def test_imports_only_needing_episodes(self) -> None:
-        amap = {"a.mkv": [11], "b.mkv": [12]}
+        amap = {"a.mkv": (11,), "b.mkv": (12,)}
         cands = {"a.mkv": _candidate("a.mkv"), "b.mkv": _candidate("b.mkv")}
         # episode 12 already holds a recommended file -> only 11 needs import.
         decisions = plan_import_files(
@@ -40,14 +40,14 @@ class TestPlanImportFiles:
         assert by_base["b.mkv"].action == "skip_done"
 
     def test_candidate_not_in_map_is_never_imported(self) -> None:
-        amap = {"a.mkv": [11]}
+        amap = {"a.mkv": (11,)}
         cands = {"a.mkv": _candidate("a.mkv"), "rogue.mkv": _candidate("rogue.mkv")}
         decisions = plan_import_files(amap, cands, target_statuses({11: EpisodeFileStatus.ABSENT}))
         # Only our mapped file is decided on. The rogue on-disk file is ignored.
         assert {d.basename for d in decisions} == {"a.mkv"}
 
     def test_intended_file_missing_from_disk_is_flagged_not_dropped(self) -> None:
-        amap = {"a.mkv": [11], "b.mkv": [12]}
+        amap = {"a.mkv": (11,), "b.mkv": (12,)}
         cands = {"a.mkv": _candidate("a.mkv")}
         decisions = plan_import_files(
             amap, cands, target_statuses({11: EpisodeFileStatus.ABSENT, 12: EpisodeFileStatus.ABSENT})
@@ -58,7 +58,7 @@ class TestPlanImportFiles:
 
     def test_sample_is_not_imported(self) -> None:
         # A sample is never our intended file regardless of need.
-        amap = {"s.mkv": [11]}
+        amap = {"s.mkv": (11,)}
         cands = {"s.mkv": _candidate("s.mkv", sample=True)}
         decisions = plan_import_files(amap, cands, target_statuses({11: EpisodeFileStatus.ABSENT}))
         assert decisions[0].action == "sample"
@@ -67,7 +67,7 @@ class TestPlanImportFiles:
         # Bug fix: Sonarr's "already imported" rejection fires whenever the episode
         # already holds ANY file (including a missing-group one we grabbed to
         # replace). It must NOT veto importing a target that still needs our file.
-        amap = {"i.mkv": [12]}
+        amap = {"i.mkv": (12,)}
         cands = {"i.mkv": _candidate("i.mkv", already=True)}
         decisions = plan_import_files(amap, cands, target_statuses({12: EpisodeFileStatus.UNKNOWN_GROUP}))
         assert decisions[0].action == "import"
@@ -77,13 +77,13 @@ class TestPlanImportFiles:
         # When every target already holds a recommended file (none in needing),
         # Sonarr's rejection and our episode-file check agree -> the more specific
         # `already` (never overwrite).
-        amap = {"i.mkv": [12]}
+        amap = {"i.mkv": (12,)}
         cands = {"i.mkv": _candidate("i.mkv", already=True)}
         decisions = plan_import_files(amap, cands, target_statuses({12: EpisodeFileStatus.RECOMMENDED}))
         assert decisions[0].action == "already"
 
     def test_not_needed_without_rejection_is_skip_done(self) -> None:
-        amap = {"i.mkv": [12]}
+        amap = {"i.mkv": (12,)}
         cands = {"i.mkv": _candidate("i.mkv")}
         decisions = plan_import_files(amap, cands, target_statuses({12: EpisodeFileStatus.RECOMMENDED}))
         assert decisions[0].action == "skip_done"
@@ -95,7 +95,7 @@ class TestOwnCopyAlongside:
     An episode holding any other recommended file is left alone.
     """
 
-    _MAP: ClassVar[dict[str, list[int]]] = {"range.mkv": [21, 22]}
+    _MAP: ClassVar[dict[str, tuple[int, ...]]] = {"range.mkv": (21, 22)}
     _CANDIDATES: ClassVar[dict[str, CandidateFile]] = {"range.mkv": _candidate("range.mkv")}
 
     def test_an_episode_holding_our_own_copy_is_posted_with_the_needing_one(self) -> None:
@@ -124,6 +124,6 @@ class TestOwnCopyAlongside:
     def test_our_copy_on_an_episode_the_file_isnt_placed_on_stays_put(self) -> None:
         statuses = target_statuses({21: EpisodeFileStatus.ABSENT, 23: EpisodeFileStatus.RECOMMENDED}, frozenset({23}))
 
-        [decision] = plan_import_files({"one.mkv": [21]}, {"one.mkv": _candidate("one.mkv")}, statuses)
+        [decision] = plan_import_files({"one.mkv": (21,)}, {"one.mkv": _candidate("one.mkv")}, statuses)
 
         assert decision.episode_ids == (21,)

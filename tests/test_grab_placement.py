@@ -23,7 +23,14 @@ from pearlarr.grab_placement import (
     identity_overrides,
     place_release,
 )
-from pearlarr.manual_import import NO_IDENTIFIED, EntryNames, PendingImport, normalize_basename, normalized_leaf
+from pearlarr.manual_import import (
+    NO_IDENTIFIED,
+    EntryNames,
+    FileEpisodeMap,
+    PendingImport,
+    normalize_basename,
+    normalized_leaf,
+)
 from pearlarr.placement_types import (
     EMPTY_LISTING,
     NO_EVIDENCE,
@@ -143,7 +150,7 @@ class TestPlaceRelease:
         placement = place_release(files, _scope(_SEASON), _NEW)
 
         assert placement.records == tuple(EpisodeRecord(1, n, 10 * n) for n in range(1, 5))
-        assert placement.assignment.assigned == {normalized_leaf(name): [100 + n] for n, name in enumerate(_RUN, 1)}
+        assert placement.assignment.assigned == {normalized_leaf(name): (100 + n,) for n, name in enumerate(_RUN, 1)}
         assert placement.claimed_ids == {101, 102, 103, 104}
         assert placement.inputs_known
         assert placement.stored is None
@@ -200,7 +207,7 @@ class TestPlaceRelease:
         placement = place_release(files, _scope(_SEASON), _NEW)
 
         assert placement.records == (EpisodeRecord(1, 1, 10), EpisodeRecord(1, 1, 20))
-        assert placement.assignment.assigned == {"show - s01e01.mkv": [101]}
+        assert placement.assignment.assigned == {"show - s01e01.mkv": (101,)}
 
     def test_an_episode_two_listed_sizes_share_intends_no_size(self) -> None:
         # Either could be the file intended on E01.
@@ -248,7 +255,7 @@ class TestPlaceIdentified:
 
         placement = place_release([self._LOST, *_pack(2)], _scope(_SEASON), torrent)
 
-        assert placement.assignment.assigned["show - lost tape.mkv"] == [103]
+        assert placement.assignment.assigned["show - lost tape.mkv"] == (103,)
         assert PlacementVerdict.IDENTIFIED in verdicts_of(placement.assignment)
         assert placement.identified == {"show - lost tape.mkv": 103}
         assert placement.inputs_known
@@ -271,7 +278,7 @@ class TestPlaceIdentified:
 
         placement = place_release([self._LOST, *_pack(2)], _scope(_SEASON), torrent)
 
-        assert placement.assignment.assigned == {"show - s01e01.mkv": [101], "show - s01e02.mkv": [102]}
+        assert placement.assignment.assigned == {"show - s01e01.mkv": (101,), "show - s01e02.mkv": (102,)}
         assert placement.hold is GrabHold.INPUT_UNREAD
         assert not placement.inputs_known
 
@@ -301,7 +308,7 @@ class TestPlaceOntoResident:
         placement = place_release(_pack(), _scope(_SEASON), _torrent(record))
 
         # The record's two mapped names are not re-placed, and the records and claim read the full map.
-        assert placement.assignment.assigned == {"show - s01e03.mkv": [103], "show - s01e04.mkv": [104]}
+        assert placement.assignment.assigned == {"show - s01e03.mkv": (103,), "show - s01e04.mkv": (104,)}
         assert placement.records == tuple(EpisodeRecord(1, n, 10 * n) for n in range(1, 5))
         assert placement.claimed_ids == {101, 102, 103, 104}
         assert placement.inputs_known
@@ -338,8 +345,8 @@ class TestPlaceOntoResident:
         stale = place_release(files, _scope(_SEASON[:2]), _torrent(record))
         fresh = place_release(files, _scope(_SEASON), _torrent(record))
 
-        assert stale.assignment.assigned == {"show - s01e02.mkv": [102]}
-        assert fresh.assignment.assigned == {"show - s01e02.mkv": [102], "show - s01e03.mkv": [103]}
+        assert stale.assignment.assigned == {"show - s01e02.mkv": (102,)}
+        assert fresh.assignment.assigned == {"show - s01e02.mkv": (102,), "show - s01e03.mkv": (103,)}
         assert fresh.claimed_ids == {101, 102, 103}
 
     def test_a_re_flag_runs_the_fresh_window_in_the_stale_ones_place(self) -> None:
@@ -353,7 +360,7 @@ class TestPlaceOntoResident:
 
         placement = place_release(files, _scope(_SEASON[:2]), _torrent(record))
 
-        assert placement.assignment.assigned == {"show - 01.mkv": [101], "show - 02.mkv": [102]}
+        assert placement.assignment.assigned == {"show - 01.mkv": (101,), "show - 02.mkv": (102,)}
         assert placement.claimed_ids == {101, 102}
 
     def test_an_unread_claim_series_places_nothing_and_its_inputs_are_not_known(self) -> None:
@@ -396,7 +403,7 @@ class TestPlaceUnderAnotherEntrysRefutal:
     """A torrent entry 1's record holds, whose run its titles refute under entry 1's window, placed for another entry."""
 
     @staticmethod
-    def _place(files: dict[str, ParsedFileInfo], mapped: dict[str, list[int]], entry: list[int]) -> UrlPlacement:
+    def _place(files: dict[str, ParsedFileInfo], mapped: FileEpisodeMap, entry: list[int]) -> UrlPlacement:
         """Entry 2 places `files` onto entry 1's record of `mapped` over season 1, its own window `entry`."""
 
         record = pending_import(
@@ -423,7 +430,7 @@ class TestPlaceUnderAnotherEntrysRefutal:
         }
 
         placement = self._place(
-            {**first, **sequel}, {name: [100 + n] for n, name in enumerate(first, 1)}, [201, 202, 203]
+            {**first, **sequel}, {name: (100 + n,) for n, name in enumerate(first, 1)}, [201, 202, 203]
         )
 
         assert placement.hold is None
@@ -437,7 +444,7 @@ class TestPlaceUnderAnotherEntrysRefutal:
             "show - 03.mkv": _matched(1, 3),
         }
 
-        placement = self._place(files, {"show - 02 - charlie rise.mkv": [103]}, [501])
+        placement = self._place(files, {"show - 02 - charlie rise.mkv": (103,)}, [501])
 
         assert placement.hold is None
 
@@ -493,7 +500,7 @@ class TestPlaceHeld:
         placement = place_release(files, scope, known_torrent(indexes={7: series}))
 
         assert placement.hold is GrabHold.MISNUMBERED
-        assert placement.assignment.assigned == {"show - s01e01.mkv": [101], "show - s01e02.mkv": [102]}
+        assert placement.assignment.assigned == {"show - s01e01.mkv": (101,), "show - s01e02.mkv": (102,)}
         assert placement.records == ()
 
     @staticmethod
@@ -525,8 +532,8 @@ class TestPlaceHeld:
 
         assert placement.hold is None
         assert placement.assignment.assigned == {
-            normalize_basename(names[0]): [102],
-            normalize_basename(names[1]): [103],
+            normalize_basename(names[0]): (102,),
+            normalize_basename(names[1]): (103,),
         }
         assert placement.assignment.hand_import_files == (normalize_basename(names[2]),)
         assert len(placement.records) == 2
@@ -537,7 +544,7 @@ class TestPlaceHeld:
         )
 
         assert placement.hold is None
-        assert placement.assignment.assigned == {"show.s00e01.mkv": [501], "show.s00e02.mkv": [502]}
+        assert placement.assignment.assigned == {"show.s00e01.mkv": (501,), "show.s00e02.mkv": (502,)}
         assert verdicts_of(placement.assignment) == {PlacementVerdict.EXACT, PlacementVerdict.FOREIGN}
 
     def test_a_pack_its_aliases_map_onto_the_listing_places_and_is_not_held(self) -> None:
@@ -550,7 +557,7 @@ class TestPlaceHeld:
         placement = place_release(self._specials(), self._specials_scope(2, 4), torrent)
 
         assert placement.hold is None
-        assert placement.assignment.assigned == {"show.s00e01.mkv": [502], "show.s00e02.mkv": [504]}
+        assert placement.assignment.assigned == {"show.s00e01.mkv": (502,), "show.s00e02.mkv": (504,)}
         assert verdicts_of(placement.assignment) == {PlacementVerdict.ALTERNATE, PlacementVerdict.ALIASED_ELSEWHERE}
         assert placement.claimed_ids == {502, 504}
 
@@ -586,7 +593,7 @@ class TestPlaceHeld:
         placement = place_release(self._specials(), self._specials_scope(2, 4), self._aliased_against((903,)))
 
         assert placement.hold is GrabHold.MISNUMBERED
-        assert placement.assignment.assigned == {"show.s00e01.mkv": [502], "show.s00e02.mkv": [504]}
+        assert placement.assignment.assigned == {"show.s00e01.mkv": (502,), "show.s00e02.mkv": (504,)}
 
     def test_a_file_misnumbered_under_another_entrys_window_holds_nothing(self) -> None:
         # The stored record claims season 1 for entry 1, where the first file's key and count disagree. Entry 2's
@@ -645,7 +652,9 @@ class TestPlaceHeld:
 
         assert placement.hold is GrabHold.INPUT_UNREAD
         assert not placement.inputs_known
-        assert placement.assignment.assigned == {normalize_basename(name): [100 + n] for n, name in enumerate(_PACK, 1)}
+        assert placement.assignment.assigned == {
+            normalize_basename(name): (100 + n,) for n, name in enumerate(_PACK, 1)
+        }
 
     def test_a_parse_miss_under_a_listing_leaving_a_window_special_out_is_no_hold(self) -> None:
         # The listing does not cover the window, so it judges nothing: an unread parse holds nothing either.
@@ -836,7 +845,7 @@ class TestEntryPlacements:
 
         # The subs-only url seeds nothing; the held one is seeded with an empty map for import time.
         assert set(seeds) == {"h1", "h2"}
-        assert dict(seeds["h1"].placements) == {normalize_basename(name): [100 + n] for n, name in enumerate(_RUN, 1)}
+        assert dict(seeds["h1"].placements) == {normalize_basename(name): (100 + n,) for n, name in enumerate(_RUN, 1)}
         listed = {normalize_basename(name): 10 * n for n, name in enumerate(_RUN, 1)}
         assert seeds["h1"].facts == torrent_facts(
             seadex_files=tuple(_RUN), release_sizes=(10, 20, 30, 40), sizes_by_name=listed
@@ -858,7 +867,7 @@ class TestEntryPlacements:
 
         assert seeds["h1"].accreted
         assert seeds["h1"].stored is record
-        assert dict(seeds["h1"].placements) == {"show - s01e03.mkv": [103], "show - s01e04.mkv": [104]}
+        assert dict(seeds["h1"].placements) == {"show - s01e03.mkv": (103,), "show - s01e04.mkv": (104,)}
 
 
 class TestPendingSeedRecordAt:
@@ -868,7 +877,7 @@ class TestPendingSeedRecordAt:
         claim = entry_claim(claimed_at="")
         seed = PendingSeed(
             facts=_FACTS,
-            placements={"show - 01.mkv": [101]},
+            placements={"show - 01.mkv": (101,)},
             excluded=("show - 02.mkv",),
             identified=NO_IDENTIFIED,
             claim=claim,
@@ -884,7 +893,7 @@ class TestPendingSeedRecordAt:
             is_dual_audio=True,
             seadex_files=("Show - 01.mkv",),
             added_at=_STAMP,
-            file_episode_map={"show - 01.mkv": [101]},
+            file_episode_map={"show - 01.mkv": (101,)},
             claims=(replace(claim, claimed_at=_STAMP),),
             excluded_files=("show - 02.mkv",),
             release_sizes=(10,),
@@ -905,7 +914,7 @@ class TestPendingSeedRecordAt:
         claim = entry_claim(claimed_at="", ordered_episode_ids=(101, 102, 103), preowned_episode_ids=(102,))
         seed = PendingSeed(
             facts=_FACTS,
-            placements={"show - 02.mkv": [102]},
+            placements={"show - 02.mkv": (102,)},
             excluded=("show - 03.mkv",),
             identified=NO_IDENTIFIED,
             claim=claim,
@@ -1052,7 +1061,7 @@ class TestEntryClaim:
         claim = build_entry_claim(self._release(files, placed), _scope(_SEASON), entry_facts())
 
         # This call placed E03 alone, yet the slice also carries the record's E01 and E02.
-        assert placed.assignment.assigned == {"show - s01e03.mkv": [103]}
+        assert placed.assignment.assigned == {"show - s01e03.mkv": (103,)}
         assert claim.slice_coverage == "S01 E01-E03"
         assert claim.ordered_episode_ids == (101, 102, 103, 104)
         assert claim.claimed_at == ""

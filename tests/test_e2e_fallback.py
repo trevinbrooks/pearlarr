@@ -706,7 +706,7 @@ def _seed_pending(cache_path: Path, checksum: str, scenario: _Scenario) -> None:
         if scenario.listing is _Listing.NUMBERLESS
         else tuple(name for _, name in named),
         added_at=stamp,
-        file_episode_map={normalize_basename(name): [ep_id] for ep_id, name in named} if mapped else {},
+        file_episode_map={normalize_basename(name): (ep_id,) for ep_id, name in named} if mapped else {},
         claims=(claim,),
     )
     store = CacheStore.load(str(cache_path), config_checksum=checksum)

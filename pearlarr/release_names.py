@@ -9,7 +9,7 @@ import unicodedata
 from collections.abc import Callable, Iterable, Sequence
 from dataclasses import dataclass, replace
 from itertools import compress, takewhile
-from typing import NamedTuple, Self
+from typing import Self
 
 from .manual_import import EntryNames
 from .seadex_types import EpisodeKey, ParsedFileInfo
@@ -22,7 +22,8 @@ _RANGE_KEY = re.compile(
 )
 
 
-class RangeKey(NamedTuple):
+@dataclass(frozen=True, slots=True)
+class RangeKey:
     """The season and the first and last episode numbers of a name's `SxxEyy-zz` range."""
 
     season: int
@@ -183,7 +184,8 @@ _EXTRAS_WORD = re.compile(
 )
 
 
-class Stem(NamedTuple):
+@dataclass(frozen=True, slots=True)
+class Stem:
     """A name stripped of its extension, trailing tags, and `vN`s (repeatedly), and its highest `vN` (1 if none)."""
 
     text: str
@@ -205,7 +207,8 @@ class RunMember:
     """The numbers the entry's title holds in the name ("100" of "Show.100.Again.12")."""
 
 
-class FileIdentity(NamedTuple):
+@dataclass(frozen=True, slots=True)
+class FileIdentity:
     """What a name is a version of: a member's prefix and release number, else its stem alone."""
 
     text: str
@@ -214,7 +217,8 @@ class FileIdentity(NamedTuple):
     """A member's release number, else None."""
 
 
-class NameRead(NamedTuple):
+@dataclass(frozen=True, slots=True)
+class NameRead:
     """One name read once: its stem, its run membership when it carries a release number, and its title words."""
 
     stem: Stem
@@ -280,7 +284,8 @@ def _group_blanked(text: str) -> str:
     return " " * tag.end() + text[tag.end() :]
 
 
-class _BareCount(NamedTuple):
+@dataclass(frozen=True, slots=True)
+class _BareCount:
     """A count standing alone in the stem, and where it starts."""
 
     start: int
@@ -363,7 +368,8 @@ _NUMBER_FORMS: tuple[Callable[[str], re.Match[str] | None], ...] = (
 )
 
 
-class _Count(NamedTuple):
+@dataclass(frozen=True, slots=True)
+class _Count:
     """A release number found in a stem: the text before it, the number, where it ends, and the "vN" behind it."""
 
     prefix: str
@@ -566,7 +572,8 @@ def _blanked(text: str) -> str:
     return _BRACKETED.sub(lambda found: " " * len(found.group()), text)
 
 
-class _Word(NamedTuple):
+@dataclass(frozen=True, slots=True)
+class _Word:
     """A word of a title or a name as a title is matched by it: its text, its span, and whether it is matched."""
 
     text: str
@@ -604,7 +611,8 @@ def _word_set(text: str) -> frozenset[str]:
     return frozenset(folded_words(text))
 
 
-class TitleGround(NamedTuple):
+@dataclass(frozen=True, slots=True)
+class TitleGround:
     """The title words an entry's names are read against."""
 
     series_words: frozenset[str]
@@ -633,10 +641,10 @@ class TitleGround(NamedTuple):
             and not all(word.isdigit() for word in words)
         )
         return cls(
-            series,
-            series.union(*(_word_set(title) for title in names.anilist)),
-            tuple(sorted(titles, key=len, reverse=True)),
-            frozenset(int(word) for title in every for word in _raw_words(_ascii(title)) if word.isdigit()),
+            series_words=series,
+            entry_words=series.union(*(_word_set(title) for title in names.anilist)),
+            titles=tuple(sorted(titles, key=len, reverse=True)),
+            numbers=frozenset(int(word) for title in every for word in _raw_words(_ascii(title)) if word.isdigit()),
         )
 
     def title_span(self, text: str) -> tuple[int, int] | None:
@@ -758,7 +766,7 @@ def _titled(read: NameRead, ground: TitleGround) -> NameRead:
     start, end = span
     counts = _bare_counts(text)
     before = any(count.start < start for count in counts)
-    read = read._replace(bare_numbers=tuple(count.number for count in counts if not start <= count.start < end))
+    bare_numbers = tuple(count.number for count in counts if not start <= count.start < end)
     found = _SPAN_COUNT.match(blanked, end)
     counted = None if found is None else _span_member(read.stem, found)
     member = read.member
@@ -774,10 +782,14 @@ def _titled(read: NameRead, ground: TitleGround) -> NameRead:
     if member is None:
         if found is not None and not _count_ends(text, found.end()):
             tail = folded_words(text[found.end() :])
-            return read._replace(member=None, title_words=tail, titled_count=int(found["number"]))
-        return read._replace(member=None, title_words=folded_words(text))
+            return replace(
+                read, bare_numbers=bare_numbers, member=None, title_words=tail, titled_count=int(found["number"])
+            )
+        return replace(read, bare_numbers=bare_numbers, member=None, title_words=folded_words(text))
     numbers = tuple(int(word) for word in _raw_words(_ascii_digits(blanked[start:end])) if word.isdigit())
-    return read._replace(member=replace(member, title_numbers=numbers), title_words=member.tail_words)
+    return replace(
+        read, bare_numbers=bare_numbers, member=replace(member, title_numbers=numbers), title_words=member.tail_words
+    )
 
 
 def read_names(names: Iterable[str], ground: TitleGround) -> dict[str, NameRead]:
@@ -800,7 +812,7 @@ def read_names(names: Iterable[str], ground: TitleGround) -> dict[str, NameRead]
         for number, members in by_number.items():
             for name in members:
                 member = RunMember(prefix=prefix, number=number, tail_words=(), version=reads[name].stem.version)
-                reads[name] = reads[name]._replace(member=member, title_words=())
+                reads[name] = replace(reads[name], member=member, title_words=())
     return reads
 
 
@@ -810,7 +822,8 @@ def is_quality_word(word: str) -> bool:
     return word in _QUALITY_WORDS or (any(c.isalpha() for c in word) and any(c.isdigit() for c in word))
 
 
-class _Leftover(NamedTuple):
+@dataclass(frozen=True, slots=True)
+class _Leftover:
     """An AniList title's words beyond the series title, in title order, and as a set."""
 
     words: tuple[str, ...]
@@ -818,6 +831,8 @@ class _Leftover(NamedTuple):
 
     @classmethod
     def of(cls, title: str, ground: frozenset[str]) -> Self:
+        """The title's words not in `ground`, in title order, and as a set."""
+
         words = tuple(word for word in folded_words(title) if word not in ground)
         return cls(words, frozenset(words))
 
@@ -837,7 +852,8 @@ class _Leftover(NamedTuple):
         return opening != self.distinct and opening == rest & self.distinct
 
 
-class _Scored(NamedTuple):
+@dataclass(frozen=True, slots=True)
+class _Scored:
     """One candidate's leftover words and its best overlap with a title."""
 
     rest: frozenset[str]
@@ -890,8 +906,11 @@ class Naming:
     def _named(self, index: int) -> bool:
         """Whether a winner shares more than the opening words of some title it scores best against."""
 
-        rest, score = self.scored[index]
-        return any(leftover.overlap(rest) == score and not leftover.opening_only(rest) for leftover in self.leftovers)
+        winner = self.scored[index]
+        return any(
+            leftover.overlap(winner.rest) == winner.score and not leftover.opening_only(winner.rest)
+            for leftover in self.leftovers
+        )
 
     def names_another(self, pick: int, among: Iterable[int]) -> bool:
         """Whether a title names candidates among `among` best and not `pick`. Refuses the pick, never promotes."""

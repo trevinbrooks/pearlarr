@@ -130,7 +130,7 @@ count-based passes off.
 
 from collections import defaultdict
 from collections.abc import Iterable, Mapping, Sequence
-from typing import NamedTuple
+from dataclasses import dataclass
 
 from ._run_passes import (
     MIN_TITLE_HITS,
@@ -562,7 +562,8 @@ def _natural_order(
 _BY_SIZE = frozenset({PlacementVerdict.IDENTIFIED, PlacementVerdict.OVERRIDDEN})
 
 
-class _DuplicateProof(NamedTuple):
+@dataclass(frozen=True, slots=True)
+class _DuplicateProof:
     """The evidence that an unplaced file is a duplicate, gathered once before classification."""
 
     proven: frozenset[int]

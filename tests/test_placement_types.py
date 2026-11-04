@@ -7,6 +7,7 @@ from typing import cast
 import pytest
 
 from pearlarr.episode_titles import EpisodeTitles
+from pearlarr.manual_import import FileEpisodeMap
 from pearlarr.placement_types import (
     EMPTY_LISTING,
     EpisodeIndex,
@@ -165,10 +166,12 @@ class TestPlacementBatchCopies:
     """The batch copies the caller's names, parses and map, the map's ids as tuples, and wraps them read-only."""
 
     def test_the_fields_are_copied_and_read_only(self) -> None:
+        # The ids go in as a list through a cast, as an untyped caller can hand one: the `(11,)` below is the
+        # batch's own tupling.
         ids = [11]
         to_place = ["a.mkv"]
         parsed: dict[str, ParsedFileInfo | None] = {"a.mkv": parsed_info()}
-        batch = PlacementBatch(to_place, parsed, {"b.mkv": ids})
+        batch = PlacementBatch(to_place, parsed, cast("FileEpisodeMap", {"b.mkv": ids}))
 
         to_place.append("c.mkv")
         parsed["c.mkv"] = None

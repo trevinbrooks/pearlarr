@@ -36,6 +36,7 @@ from pearlarr.manual_import import (
     Deferral,
     EffectStatus,
     EntryNames,
+    FileEpisodeMap,
     GuardFacts,
     ImportProbe,
     ImportProgress,
@@ -1427,7 +1428,7 @@ class TestImportCompletedQueueState:
         first = strat.import_completed(pending, "/d", AttemptKind.POLL)
         assert first.files_present is False
         assert first.command_issued is True
-        assert first.placements == {"show - s01e01.mkv": [101]}
+        assert first.placements == {"show - s01e01.mkv": (101,)}
         assert pending.file_episode_map == {}
 
         # The copy landed; the next poll trusts the healed map alone.
@@ -1457,7 +1458,7 @@ class TestImportCompletedQueueState:
         sonarr.episodes_return = [sonarr_ep(1, 1, ep_id=101, release_group="SubGroup")]
         fast = strat.import_completed(seeded, "/d", AttemptKind.POLL)
 
-        assert placing.placements == {"show - s01e01.mkv": [101]}
+        assert placing.placements == {"show - s01e01.mkv": (101,)}
         assert unseeded.file_episode_map == {}
         assert seeded_poll.placements == {}
         assert (fast.files_present, fast.placements) == (True, {})
@@ -2120,13 +2121,13 @@ class _CountingStore(FakeCacheStore):
 
 
 def _two_series_record(
-    files: dict[str, list[int]] | None = None,
+    files: FileEpisodeMap | None = None,
     *,
     other_window: tuple[int, ...] = (201,),
 ) -> PendingImport:
     """One torrent claimed on series 7 (window 101) and series 8 (`other_window`), its listing fully mapped."""
 
-    mapped = {_SHOW_FILE: [101], _OTHER_FILE: [201]} if files is None else files
+    mapped = {_SHOW_FILE: (101,), _OTHER_FILE: (201,)} if files is None else files
     return two_claim_record(
         series_ids=(7, 8),
         windows=((101,), other_window),
@@ -2183,7 +2184,7 @@ class TestMultiSeriesImport:
         # waits, and only the deadline attempt names the file.
         recording = install_recording_hub()
         stray = "Stray - 01 [1080p].mkv"
-        pending = _two_series_record({stray: [301]})
+        pending = _two_series_record({stray: (301,)})
         strat, sonarr = _make_sonarr_for_import(candidates=self._candidates(stray))
 
         polled = strat.import_completed(pending, "/d", AttemptKind.POLL)
@@ -2272,9 +2273,9 @@ class TestMultiSeriesImport:
         ]
 
         assert placements_from_history(rows, pending) == {
-            normalize_basename(_SHOW_FILE): [101],
-            normalize_basename(_OTHER_FILE): [201],
-            normalize_basename(second): [202],
+            normalize_basename(_SHOW_FILE): (101,),
+            normalize_basename(_OTHER_FILE): (201,),
+            normalize_basename(second): (202,),
         }
 
     def test_seed_statuses_read_the_guards_once_for_every_series(self) -> None:
@@ -2565,7 +2566,7 @@ class TestSonarrProcessAlIdSeeds:
         (seed,) = req.pending_seeds.values()
         assert seed.stored == resident
         assert seed.accreted is True
-        assert seed.placements == {normalize_basename(_SEED_FILES[1]): [102]}
+        assert seed.placements == {normalize_basename(_SEED_FILES[1]): (102,)}
         assert seed.claim.al_id == 5
         assert seed.claim.ordered_episode_ids == (102,)
         record = seed.record_at(_STAMP, fresh=False)
@@ -2629,7 +2630,7 @@ class TestSonarrProcessAlIdSeeds:
 
         (req,) = run.grab_requests
         seed = req.pending_seeds["h1"]
-        assert seed.placements == {"show.s00e01.mkv": [502], "show.s00e02.mkv": [501]}
+        assert seed.placements == {"show.s00e01.mkv": (502,), "show.s00e02.mkv": (501,)}
         assert seed.identified == {"show.s00e01.mkv": 502, "show.s00e02.mkv": 501}
         assert diagnostic_messages(recording, Severity.WARNING) == [
             (
@@ -2651,7 +2652,7 @@ class TestSonarrProcessAlIdSeeds:
         (req,) = run.grab_requests
         assert req.seadex_dict["NAN0"].urls[_SEED_URL].hold is GrabHold.INPUT_UNREAD
         assert req.pending_seeds["h1"].placements == {
-            normalize_basename(n): [100 + i] for i, n in enumerate(_SEED_FILES, 1)
+            normalize_basename(n): (100 + i,) for i, n in enumerate(_SEED_FILES, 1)
         }
         assert req.input_missing_groups == ("NAN0",)
 
@@ -2861,7 +2862,7 @@ class TestManualImportWarningGating:
         probe = strat.import_completed(pending, "/d", AttemptKind.POLL)
         strat.import_completed(pending, "/d", AttemptKind.POLL)
 
-        assert probe.placements == {normalize_basename(name): [102]}
+        assert probe.placements == {normalize_basename(name): (102,)}
         warnings = [m for m in diagnostic_messages(recording, Severity.WARNING) if "placed by file size" in m]
         assert warnings == [
             f"{pending.display_label}: {normalize_basename(name)} placed by file size instead of by its name"
@@ -3215,7 +3216,7 @@ class TestProbeExclusions:
         probe = strat.import_completed(self._record(resolved=[101]), "/d", AttemptKind.POLL)
 
         assert probe.exclusions == (self._THEIRS,)
-        assert probe.placements == {self._MINE: [101]}
+        assert probe.placements == {self._MINE: (101,)}
         assert [f.path for f in sonarr.execute_calls[0][0]] == [f"/d/{self._MINE}"]
 
     def test_a_recorded_exclusion_silences_the_next_poll(self, caplog: pytest.LogCaptureFixture) -> None:
@@ -3640,7 +3641,7 @@ class TestFolderScanFallback:
         probe = strat.import_completed(pending, "/d/Show", AttemptKind.POLL)
 
         assert probe.files_present is True
-        assert probe.placements == {normalize_basename(name): [101]}
+        assert probe.placements == {normalize_basename(name): (101,)}
         assert pending.file_episode_map == {}
         assert sonarr.execute_calls == []
         assert diagnostic_messages(recording, Severity.WARNING) == []
@@ -3852,13 +3853,13 @@ class TestFolderScanFallback:
 
     @pytest.mark.parametrize(
         ("by_id", "rebuilt"),
-        [(None, {normalize_basename("Show - 01 [1080p].mkv"): [101]}), ([], {})],
+        [(None, {normalize_basename("Show - 01 [1080p].mkv"): (101,)}), ([], {})],
         ids=["failed", "empty"],
     )
     def test_folder_pinned_record_rebuilds_from_history_only_after_a_failed_download_id_scan(
         self,
         by_id: list[ManualImportCandidate] | None,
-        rebuilt: dict[str, list[int]],
+        rebuilt: FileEpisodeMap,
     ) -> None:
         first, second = "Show - 01 [1080p].mkv", "Show - 02 [1080p].mkv"
         strat, sonarr = self._strat(

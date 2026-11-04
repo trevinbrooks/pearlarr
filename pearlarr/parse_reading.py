@@ -1,7 +1,7 @@
 """Resolve one Sonarr parse against the scope: the episodes a file name claims, and how far to trust them."""
 
 from collections.abc import Iterable, Mapping, Sequence
-from typing import NamedTuple
+from dataclasses import dataclass
 
 from .placement_types import EpisodeIndex, TargetScope
 from .release_names import range_key
@@ -12,7 +12,8 @@ from .seadex_types import EpisodeKey, MatchedEpisode, ParsedFileInfo, season_epi
 _MATCHED_SPAN_CAP = 3
 
 
-class _EpisodeClaim(NamedTuple):
+@dataclass(frozen=True, slots=True)
+class _EpisodeClaim:
     """One identity claim a file's parse makes: a `(season, episode)` pair, plus Sonarr's id when borrowed."""
 
     season: int | None
@@ -22,7 +23,8 @@ class _EpisodeClaim(NamedTuple):
     with our map's id. None for a name-parsed claim (no id to cross-check)."""
 
 
-class Reading(NamedTuple):
+@dataclass(frozen=True, slots=True, kw_only=True)
+class Reading:
     """What one file's parse resolves to in our series map, and how far to trust it."""
 
     resolved: tuple[int, ...]
@@ -86,10 +88,11 @@ class Reading(NamedTuple):
         return (not self.corroborated, self.borrowed)
 
 
-_NO_READING = Reading((), (), complete=False, borrowed=False, vetoed=False, corroborated=False)
+_NO_READING = Reading(resolved=(), inside=(), complete=False, borrowed=False, vetoed=False, corroborated=False)
 
 
-class _Claims(NamedTuple):
+@dataclass(frozen=True, slots=True)
+class _Claims:
     """The claims a parse makes, and whether they are Sonarr's matched pairs rather than the name's own keys."""
 
     claims: tuple[_EpisodeClaim, ...]
@@ -158,24 +161,24 @@ def read_parse(info: ParsedFileInfo | None, scope: TargetScope) -> Reading:
 
     if info is None:
         return _NO_READING
-    claims, borrowed = _claims_of(info, scope)
-    if not claims:
+    basis = _claims_of(info, scope)
+    if not basis.claims:
         return _NO_READING
     # Only a borrowed span is capped (DISTINCT pairs): Sonarr matches a bare
     # "S01" name to the WHOLE season, so a wide match is a season pack without
     # the flag, while the name's own "E11-E16" is an explicit claim. A borrowed
     # span must also COVER the name's own absolutes, or a "12-13" file whose
     # match resolved only E12 would import half.
-    pairs = {(claim.season, claim.episode) for claim in claims}
+    pairs = {(claim.season, claim.episode) for claim in basis.claims}
     absolutes = set(info.absolute_episode_numbers)
     vetoed = info.full_season or (
-        borrowed and (len(pairs) > _MATCHED_SPAN_CAP or (bool(absolutes) and len(pairs) != len(absolutes)))
+        basis.borrowed and (len(pairs) > _MATCHED_SPAN_CAP or (bool(absolutes) and len(pairs) != len(absolutes)))
     )
     matched = {(matched.season_number, matched.episode_number) for matched in info.matched_episodes}
-    corroborated = borrowed or pairs <= matched
+    corroborated = basis.borrowed or pairs <= matched
     resolved: list[int] = []
     complete = True
-    for claim in claims:
+    for claim in basis.claims:
         if (ep_id := _resolve(claim, scope)) is not None:
             resolved.append(ep_id)
         else:
@@ -184,7 +187,14 @@ def read_parse(info: ParsedFileInfo | None, scope: TargetScope) -> Reading:
     # ids too, so Sonarr never receives one episode twice.
     ids = tuple(dict.fromkeys(resolved))
     inside = tuple(i for i in ids if scope.admits(i))
-    return Reading(ids, inside, complete=complete, borrowed=borrowed, vetoed=vetoed, corroborated=corroborated)
+    return Reading(
+        resolved=ids,
+        inside=inside,
+        complete=complete,
+        borrowed=basis.borrowed,
+        vetoed=vetoed,
+        corroborated=corroborated,
+    )
 
 
 def widen_range_key(name: str, info: ParsedFileInfo, series: EpisodeIndex) -> ParsedFileInfo:
