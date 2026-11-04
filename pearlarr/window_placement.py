@@ -134,7 +134,8 @@ def place_leftover(seeded: FileEpisodeMap, batch: PlacementBatch, windows: Seque
     judged: dict[str, list[Placement]] = {name: [] for name in names}
     assignments: list[EpisodeAssignment] = []
     for window in windows:
-        assignments.append(assignment := assign_episode_ids(leftover, replace(window.using(used), seeded=held)))
+        assignment = assign_episode_ids(leftover, replace(window.using(used), seeded=held))
+        assignments.append(assignment)
         for placement in assignment.placements:
             judged[placement.name].append(placement)
             # A refusal decides the file too, so no later window can place it by its numbers.
