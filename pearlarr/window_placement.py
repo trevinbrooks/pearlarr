@@ -1,14 +1,11 @@
-"""A torrent's files placed under several windows. A window is the `TargetScope` of one entry the torrent is listed on.
+"""A torrent's files placed under each entry it's listed on, one window per entry.
 
-Every window judges the WHOLE torrent, exactly as a record with one window does, so a numbered run keeps
-its shape under every window (the remainder re-read as a fresh run could place onto a window the whole
-run never fits). The verdicts merge in window order: the first window that places or refuses a file decides
-it, so an earlier window's `HELD` or `MISNUMBERED` outranks a later window's exact placement (window order
-beats pass order). The ids a deciding window placed a file on count as used under each later window that admits
-them. A file no window placed or refused takes the highest-ranked verdict the windows gave it (`_CLAIM_RANK`).
-One rule beats window order: a file the special aliases placed or claimed under one window, and another window
-placed on other ids without them, is `MISNUMBERED` (`_disputed`). The ids its deciding window placed it on still
-count as used under the later windows, which can only leave another file unplaced, never misfile one.
+Every window places every file, not just the ones earlier windows left, because a numbered run cut short would read
+as a new run and could land wrong. Then the windows merge in order:
+
+- The first window to place or refuse a file decides it, and its ids are used under the later windows.
+- A file no window decides takes its strongest claim (`_CLAIM_RANK`).
+- A file the special aliases claim under one window but its numbers place elsewhere is always `MISNUMBERED`.
 """
 
 from collections.abc import Collection, Iterable, Mapping, Sequence
@@ -29,23 +26,23 @@ from .placer import assign_episode_ids
 
 
 class WindowedAssignment(NamedTuple):
-    """A torrent's files placed under several windows: the merged verdicts, and each window's own."""
+    """A torrent placed under its windows: the merged verdicts, and each window's own."""
 
     merged: EpisodeAssignment
-    """One verdict per distinct name the stored map doesn't cover, batch order, merged over the windows."""
+    """One verdict per file the stored map doesn't cover, in batch order."""
     windows: tuple[EpisodeAssignment, ...]
-    """Each window's `assign_episode_ids` result, in window order."""
+    """What the placer returned under each window, in window order."""
 
     def refuted_under(self, index: int) -> bool:
-        """Whether the window at `index` gave `TITLE_REFUTED` to a file the merge left `TITLE_REFUTED`."""
+        """Whether a file this window refuted by its title is still `TITLE_REFUTED` after the merge."""
 
         refuted = PlacementVerdict.TITLE_REFUTED
         return self._left_as(refuted, {p.name for p in self.windows[index].placements if p.verdict is refuted})
 
     def misnumbered_under(self, index: int) -> bool:
-        """Whether the merge left `MISNUMBERED` a file the window at `index` placed, refused, or claimed by alias.
+        """Whether a file this window placed, refused, or claimed by alias ended up `MISNUMBERED`.
 
-        A file that window wrote off (another slice's, an extra, a skip) is no misnumbered file of its own.
+        Files the window wrote off (another entry's, an extra, a skip) don't count.
         """
 
         own = {
@@ -61,11 +58,10 @@ class WindowedAssignment(NamedTuple):
         return any(p.verdict is verdict and p.name in names for p in self.merged.placements)
 
 
-# Highest wins. SKIPPED outranks FOREIGN and EXTRA, so a file skipped under any window is never excluded as another
-# slice's or as an extra. ALIASED_ELSEWHERE sits between them: the aliases name the file as this series' special,
-# so a window that reads it as foreign doesn't write it off. DUPLICATE outranks SKIPPED (a refused duplicate beats a
-# file placed nowhere). EXTRA depends on each window's titles: lowest. TITLE_REFUTED rejects only its own window's
-# reading: the top claim, so a file no window places stays a hand import.
+# A file no window decided ends with its highest-ranked claim. EXTRA is lowest because it rests on one window's
+# titles. SKIPPED beats FOREIGN and EXTRA, so a file some window couldn't place is never written off, and
+# ALIASED_ELSEWHERE beats FOREIGN because the aliases name the file as this series' special. TITLE_REFUTED is
+# highest, so a file whose title contradicts its numbers stays a hand import.
 _CLAIM_RANK: Mapping[PlacementVerdict, int] = {
     PlacementVerdict.EXTRA: 0,
     PlacementVerdict.FOREIGN: 1,
@@ -81,8 +77,7 @@ _BY_ALIAS = frozenset({PlacementVerdict.ALTERNATE, PlacementVerdict.ALIASED_ELSE
 def _merged(name: str, judged: Sequence[Placement], decided: Placement | None) -> Placement:
     """One file's verdict over every window.
 
-    `MISNUMBERED` when `_disputed`, else the deciding window's, else the top claim (`_CLAIM_RANK`), else `SKIPPED`.
-    With no deciding window, every verdict the windows gave is a claim, so each one has a rank.
+    With no deciding window, every verdict the windows gave is a claim, so `_CLAIM_RANK` ranks each one.
     """
 
     if _disputed(judged):
@@ -95,10 +90,9 @@ def _merged(name: str, judged: Sequence[Placement], decided: Placement | None) -
 
 
 def _disputed(judged: Iterable[Placement]) -> bool:
-    """Whether the aliases spoke for the file under one window and another window placed it elsewhere without them.
+    """Whether the aliases claimed the file under one window while another placed it on other ids by its numbers.
 
-    An `ALIASED_ELSEWHERE` claim carries no ids, so a placement without the aliases stands only where an
-    `ALTERNATE` put the file too.
+    A placement by numbers agrees only with an `ALTERNATE` on the same ids, since an `ALIASED_ELSEWHERE` has none.
     """
 
     by_alias = {placement.ids for placement in judged if placement.verdict in _BY_ALIAS}
@@ -113,9 +107,9 @@ def _disputed(judged: Iterable[Placement]) -> bool:
 def windows_of(
     claims: Iterable[EntryClaim], indexes: Mapping[int, EpisodeIndex], listing: ListingEvidence
 ) -> tuple[TargetScope, ...]:
-    """One window per claim, in claim order, over its series' index (`indexes` holds every claim's series).
+    """One window per claim, in claim order. `indexes` must hold every claim's series.
 
-    Every window gets the same `listing`. A file's size match only counts in windows of that episode's series.
+    All windows share `listing`, but a size match only counts under a window on that episode's series.
     """
 
     return tuple(
@@ -125,12 +119,11 @@ def windows_of(
 
 
 def place_leftover(seeded: FileEpisodeMap, batch: PlacementBatch, windows: Sequence[TargetScope]) -> WindowedAssignment:
-    """The names of `batch` the stored map doesn't cover, placed under every window in order, verdicts merged.
+    """The files the stored map doesn't cover, placed under each window in turn, verdicts merged.
 
-    Each window is one `assign_episode_ids` call over those names. The mapped ids are used under it, and so are the
-    ids of each file an earlier window decided, where the window admits them (every id, when unscoped). Every window
-    still gets the whole map as `TargetScope.seeded`, and the parses of the whole batch. Under no windows at all every
-    file is skipped. The module docstring says how the verdicts merge.
+    Under each window, the mapped ids and the ids of files earlier windows decided are used, where the window admits
+    them. Mapped files aren't placed again, but the map and their parses still count as evidence. With no windows,
+    every file is skipped.
     """
 
     held = {name: tuple(ids) for name, ids in seeded.items()}
@@ -144,7 +137,7 @@ def place_leftover(seeded: FileEpisodeMap, batch: PlacementBatch, windows: Seque
         assignments.append(assignment := assign_episode_ids(leftover, replace(window.using(used), seeded=held)))
         for placement in assignment.placements:
             judged[placement.name].append(placement)
-            # A refusal decides a name as a placement does: no later window may place it by its numbers.
+            # A refusal decides the file too, so no later window can place it by its numbers.
             if placement.name not in decided and (placement.verdict.placed or placement.verdict.refused):
                 decided[placement.name] = placement
                 used.extend(placement.ids)
