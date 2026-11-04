@@ -26,7 +26,7 @@ from .manual_import import (
     ImportProbe,
     ImportProgress,
     PendingImport,
-    normalized_leaf,
+    joined_map,
     path_leaf,
     translate_download_path,
 )
@@ -482,7 +482,8 @@ class ImportExecutor:
             )
         placed = assignment.placed
         excluded = assignment.excluded
-        authoritative = {**assignment.assigned, **recovered}
+        placed_and_recovered = joined_map(placed, recovered)
+        authoritative = joined_map(assignment.assigned, recovered)
         on_record = set(pending.excluded_files)
         if new_exclusions := [p for p in excluded if p.name not in on_record]:
             verdicts = ", ".join(f"{p.name} ({p.verdict})" for p in new_exclusions)
@@ -509,7 +510,7 @@ class ImportExecutor:
                 self._warn_unplaceable_files(pending, skips)
             if overridden := assignment.overridden:
                 self._warn_overridden_files(pending, overridden)
-            for name, ids in {**placed, **recovered}.items():
+            for name, ids in placed_and_recovered.items():
                 self.logger.debug(f"{pending.display_label}: placed {name} -> {ids}")
             probe = self._verify_or_import(context, authoritative)
             if probe.files_present and assignment.hand_import_files:
@@ -517,7 +518,7 @@ class ImportExecutor:
         # The mapper's placements and exclusions are kept whatever the branch (the file was on disk this poll).
         # History's are kept only once they verified, so a row that never verifies is re-derived next run, not pinned.
         verified = probe.files_present or bool(probe.hand_import_files)
-        placements = {**placed, **recovered} if verified else placed
+        placements = placed_and_recovered if verified else placed
         return replace(probe, placements=placements, exclusions=tuple(p.name for p in excluded))
 
     def _verify_or_import(self, context: _ImportContext, authoritative_map: FileEpisodeMap) -> ImportProbe:
@@ -674,7 +675,7 @@ class ImportExecutor:
         reported then and stays quiet.
         """
 
-        excluded = {normalized_leaf(name) for name in pending.excluded_files}
+        excluded = set(pending.excluded_files)
         reportable = tuple(name for name in skipped if name not in excluded)
         if len(reportable) < len(skipped):
             self.logger.debug(

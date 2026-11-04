@@ -7,7 +7,7 @@ from collections.abc import Mapping
 from dataclasses import dataclass
 
 from .import_files import CandidateFile
-from .manual_import import FileEpisodeMap, PendingImport, normalized_leaf, path_leaf
+from .manual_import import FileEpisodeMap, PendingImport, joined_map, normalized_leaf, path_leaf
 from .placement_types import (
     EMPTY_LISTING,
     EpisodeAssignment,
@@ -66,7 +66,7 @@ class FileAssignment:
     def assigned(self) -> dict[str, tuple[int, ...]]:
         """The seeded entries plus `placed`."""
 
-        return {**self.seeded, **self.placed}
+        return joined_map(self.seeded, self.placed)
 
     @property
     def skipped(self) -> tuple[str, ...]:
@@ -117,7 +117,7 @@ class FileEpisodeMapper:
 
         self.sonarr = sonarr
 
-        # Raw leaf -> its `/parse`, so a name reaches Sonarr once a run, not once a poll. A miss (None) is
+        # Leaf -> its `/parse`, so a name reaches Sonarr once a run, not once a poll. A miss (None) is
         # transient and deliberately NOT cached, so a hiccup never strands a correctly named file for the run.
         self._parse_info_cache: dict[str, ParsedFileInfo] = {}
 
@@ -176,7 +176,7 @@ class FileEpisodeMapper:
 
         # Seeded ids are taken as-is, an intended file not yet on disk kept so the planner retries it.
         # Only the on-disk leftover the seed doesn't cover is placed from its parse.
-        seeded = pending.seeded_map()
+        seeded = pending.file_episode_map
         leftover = [norm for norm in ordered if norm not in seeded]
         # Parse the WHOLE batch when anything is left: the shared-absolute check reads seeded files too, and
         # mapped names are parsed BY NAME even once moved out, so a placed or gone v1 never hides its v2.
@@ -184,10 +184,9 @@ class FileEpisodeMapper:
         if leftover:
             for norm_base in ordered:
                 parsed_by_file[norm_base] = self._parsed_file_info(path_leaf(on_disk[norm_base].path))
-            for name in pending.file_episode_map:
-                norm_base = normalized_leaf(name)
-                if norm_base not in parsed_by_file:
-                    parsed_by_file[norm_base] = self._parsed_file_info(path_leaf(name))
+            for name in seeded:
+                if name not in parsed_by_file:
+                    parsed_by_file[name] = self._parsed_file_info(name)
 
         # The leftovers go into each claim's window in turn, with the seeded ids already used there. Import doesn't
         # read SeaDex: files the grab placed by size are placed the same way from the record.
@@ -198,16 +197,16 @@ class FileEpisodeMapper:
         settled = batch.all_parses_known and all(indexes[sid].id_by_key for sid in pending.series_ids)
         return FileAssignment(windowed.merged, seeded, settled=settled)
 
-    def _parsed_file_info(self, raw_base: str) -> ParsedFileInfo | None:
-        """Sonarr `/parse` of one on-disk leaf (name numbers and series-matched pairs), cached per run.
+    def _parsed_file_info(self, leaf: str) -> ParsedFileInfo | None:
+        """Sonarr `/parse` of one file name (on disk, or a mapped name absent from it), cached per run.
 
         A transient failure (None) falls back to the offline `SxxExx` reading, uncached, so a hiccup never sticks.
         """
 
-        if raw_base in self._parse_info_cache:
-            return self._parse_info_cache[raw_base]
-        info = self.sonarr.parse(raw_base)
+        if leaf in self._parse_info_cache:
+            return self._parse_info_cache[leaf]
+        info = self.sonarr.parse(leaf)
         if info is None:
-            return parse_se_from_filename(raw_base)
-        self._parse_info_cache[raw_base] = info
+            return parse_se_from_filename(leaf)
+        self._parse_info_cache[leaf] = info
         return info

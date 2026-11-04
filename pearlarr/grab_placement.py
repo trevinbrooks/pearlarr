@@ -16,6 +16,7 @@ from .manual_import import (
     IdentifiedNames,
     OwnGroup,
     PendingImport,
+    joined_map,
     normalized_leaf,
     sizes_by_episode,
 )
@@ -258,7 +259,7 @@ def seed_batch(files: Sequence[SeedFile], seeded: FileEpisodeMap = NO_SEEDED) ->
     """One url's files as a placement batch keyed by NORMALIZED file name, as the on-disk names are at import time.
 
     NFC/NFD-safe: two listed files with one normalized name share its verdict (the first parse) and keep their sizes.
-    `seeded` is the stored record's normalized map (`seeded_map`), whose names are never placed.
+    `seeded` is the stored record's map (`PendingImport.file_episode_map`), whose names are never placed.
     """
 
     to_place = list(dict.fromkeys(normalized_leaf(f.basename) for f in files))
@@ -276,7 +277,7 @@ def place_release(files: Sequence[SeedFile], scope: SeedScope, torrent: KnownTor
     when its titles refute its numbers and nothing of it lands on the entry.
     """
 
-    seeded: FileEpisodeMap = NO_SEEDED if torrent.record is None else torrent.record.seeded_map()
+    seeded: FileEpisodeMap = NO_SEEDED if torrent.record is None else torrent.record.file_episode_map
     batch = seed_batch(files, seeded=seeded)
     sizes = _sizes_by_name(files)
     own = scope.target(torrent.listing_evidence(sizes))
@@ -291,7 +292,7 @@ def place_release(files: Sequence[SeedFile], scope: SeedScope, torrent: KnownTor
         misnumbered, refuted = placed.misnumbered_under(own_index), placed.refuted_under(own_index)
     else:
         assignment, misnumbered, refuted = EpisodeAssignment(()), False, False
-    mapped = {**seeded, **assignment.assigned}
+    mapped = joined_map(seeded, assignment.assigned)
     records: list[EpisodeRecord] = []
     claimed: set[int] = set()
     for f in files:

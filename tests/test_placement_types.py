@@ -188,6 +188,15 @@ class TestPlacementBatchCopies:
             cast("MutableMapping[str, ParsedFileInfo | None]", batch.parsed)["c.mkv"] = None
 
 
+class TestPlacementBatchNames:
+    """`names` is what the placer places: the batch's distinct names less the ones its map holds."""
+
+    def test_a_mapped_name_is_never_placed(self) -> None:
+        batch = PlacementBatch(["a.mkv", "b.mkv"], {}, {"a.mkv": (1,)})
+
+        assert batch.names == ("b.mkv",)
+
+
 class TestTargetScope:
     """The scope admits its resolved ids, or any when unscoped, and `using` takes only the ids it admits."""
 

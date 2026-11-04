@@ -54,7 +54,7 @@ class TestMapperSeam:
 
     def test_fully_seeded_record_skips_out_of_scope_on_disk_leftover(self) -> None:
         # Every resolved episode is seeded, and the folder also holds a season-2 file: it is another
-        # slice's, never imported through an unscoped fallback, and the seed map stays as it was.
+        # slice's, never imported through an unscoped fallback, so the poll places nothing.
         seed_name, leftover_name = "Show - 01 [1080p].mkv", "Show - S02E01 [1080p].mkv"
         pending = pending_import(
             file_episode_map={seed_name: [101]}, ordered_episode_ids=[101], seadex_files=[seed_name]
@@ -66,7 +66,6 @@ class TestMapperSeam:
         assert 999 not in {ep_id for ids in result.assigned.values() for ep_id in ids}
         assert result.excluded == (Placement(normalize_basename(leftover_name), (), PlacementVerdict.FOREIGN),)
         assert result.placed == {}
-        assert dict(pending.file_episode_map) == {seed_name: (101,)}
 
     def test_assign_returns_placements_without_touching_the_record(self) -> None:
         name = "Show - S01E01 [1080p].mkv"
@@ -198,7 +197,7 @@ class TestSeededSharerTell:
         pending = pending_import(
             file_episode_map={self._V1: [2586]}, ordered_episode_ids=[2586, 2999], seadex_files=[self._V1, self._V2]
         )
-        disk = _Disk({self._V1: self._TWELVE, self._V2: self._TWELVE}.get, (self._V2,))
+        disk = _Disk(lambda _name: self._TWELVE, (self._V2,))
 
         result = _assign_on_disk(pending, disk, {EpisodeKey(1, 12): 2586})
 

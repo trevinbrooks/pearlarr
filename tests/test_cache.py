@@ -615,8 +615,9 @@ class TestSchemaVersionGate:
         old = PendingImport.from_json(records["old"], guards={})
         assert old.claims[0].ordered_episode_ids == (1, 2, 3)
         assert old.claims[0].names == EntryNames()
-        # The map itself is carried verbatim: the fold only derives the window from it.
-        assert dict(old.file_episode_map) == {"a.mkv": (2, 0)}
+        # The fold carries the map verbatim and only derives the window from it. The record drops the zero.
+        assert records["old"]["file_episode_map"] == {"a.mkv": [2, 0]}
+        assert dict(old.file_episode_map) == {"a.mkv": (2,)}
         new = PendingImport.from_json(records["new"], guards={})
         assert new.claims[0].ordered_episode_ids == (9, 8)
         _assert_round_trips({"new": records["new"]})
