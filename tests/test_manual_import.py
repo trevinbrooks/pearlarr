@@ -60,9 +60,23 @@ class TestNormalize:
     def test_strips_and_casefolds(self) -> None:
         assert normalize_basename("  Show - 01.MKV  ") == "show - 01.mkv"
 
+    def test_folding_a_folded_key_gives_the_same_key(self) -> None:
+        # MUTATION PIN: casefold expands ß to "ss" and leaves the mark after it hanging off the second s,
+        # uncomposed, until the NFC after the casefold composes it. A stored record folds its keys again on
+        # every load, so without that NFC the second pass would re-key it.
+        name = "Der Weiß\u0323e Ritter - 01.mkv"
+        once = normalize_basename(name)
+        assert once == "der weis\u1e63e ritter - 01.mkv"
+        assert normalize_basename(once) == once
+
+    def test_canonically_equal_names_fold_alike_when_casefold_turns_a_mark_into_a_letter(self) -> None:
+        # MUTATION PIN: casefold turns U+0345 (the Greek iota below) into a letter, so the NFC before it is what
+        # makes these two spellings of one name fold alike. With only the NFC after it, they fold apart.
+        assert normalize_basename("\u1fb4 - 01.mkv") == normalize_basename("\u03b1\u0345\u0301 - 01.mkv")
+
     def test_windows_paths_and_trailing_separators_still_fold_to_a_leaf(self) -> None:
-        # MUTATION PIN: a Windows arr's paths reach a POSIX host verbatim, where
-        # os.path.basename sees no separator at all and would key the whole path.
+        # MUTATION PIN: a Windows arr's paths reach pearlarr verbatim, where posixpath.basename
+        # sees no separator at all and would key the whole path.
         assert normalized_leaf("C:\\downloads\\Show\\Show - 01.mkv") == "show - 01.mkv"
         # And a directory entry never folds to the empty leaf, which every other
         # unnamed thing would then collide with.
@@ -74,6 +88,12 @@ class TestNormalize:
         # real filename, never a whole Windows path or a folded one.
         assert path_leaf("C:\\downloads\\Show\\Show - 01 [1080p].MKV") == "Show - 01 [1080p].MKV"
         assert path_leaf("Show/NC/") == "NC"
+
+    def test_path_leaf_keeps_a_leaf_that_looks_like_a_drive(self) -> None:
+        # MUTATION PIN: catches a path_leaf on os.path only on the Windows CI leg, where os.path is ntpath and
+        # reads the leading "K:" as a drive, so the grab's key for the file never matches the one Sonarr's path
+        # gives.
+        assert path_leaf("K: Return of Kings - 01.mkv") == "K: Return of Kings - 01.mkv"
 
     def test_group_casefold(self) -> None:
         assert normalize_group("SubGroup") == normalize_group("subgroup")
