@@ -440,6 +440,17 @@ class TestStoredMap:
         assert by_name(inside.merged) == {"b.mkv": ((), PlacementVerdict.SKIPPED)}
         assert outside.merged.assigned == {"b.mkv": [601]}
 
+    def test_every_mapped_id_is_used_under_an_unscoped_window(self) -> None:
+        # The unscoped window resolves any key against the whole series, so an id mapped anywhere is
+        # taken there: the keyed file cannot land on it a second time.
+        keyed = {"b.mkv": parsed_info(season=1, episodes=(1,))}
+
+        free = _place_across(keyed, (_window([]),))
+        used = place_leftover({"a.mkv": [601]}, _batch({**blind(["a.mkv"]), **keyed}), (_window([]),))
+
+        assert free.merged.assigned == {"b.mkv": [601]}
+        assert by_name(used.merged) == {"b.mkv": ((), PlacementVerdict.SKIPPED)}
+
     def test_two_windows_on_two_series_place_each_file_under_the_first_that_resolves_it(self) -> None:
         # The season-2 key resolves outside the first series' window and inside the second's. The mapped
         # file holds the first-season key's episode, so that file stays loud.
