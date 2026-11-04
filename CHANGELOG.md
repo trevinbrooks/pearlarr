@@ -7,6 +7,11 @@ Pearlarr is a fork of [bbtufty/seadexarr](https://github.com/bbtufty/seadexarr).
 
 ## [Unreleased]
 
+### Fixed
+
+- When Pearlarr runs on Windows, a file whose name has a colon as its second character, such as `K: Return of Kings - 01.mkv`, now imports onto the episodes the grab placed it on. Before, Pearlarr read the `K:` as a drive and dropped it from the name, so the import lost the grab's placement and placed the file again from its name alone.
+- A file whose name has a letter that case-folds to several, such as `ß` or `İ`, followed by a combining accent now imports onto the episodes the grab placed it on. Before, folding the name twice gave a different key than folding it once, so the grab's record and Sonarr's file disagreed and the import placed the file again from its name alone.
+
 ## [1.5.7] - 2026-11-02
 
 ### Added

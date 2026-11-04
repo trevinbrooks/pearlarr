@@ -16,7 +16,7 @@ plan, quality/language resolution) live in the sibling planning modules that
 """
 
 import math
-import os
+import posixpath
 import unicodedata
 from collections.abc import Iterable, Mapping, Sequence
 from dataclasses import dataclass, field, replace
@@ -36,10 +36,16 @@ def normalize_basename(name: str) -> str:
         name: A filename (basename or full path - only the text is folded).
 
     Returns:
-        The NFC-normalized, stripped, case-folded leaf.
+        The name stripped and case-folded, composed (NFC) before and after the casefold, so two spellings of
+        one name fold alike and a folded key folds to itself.
     """
 
-    return unicodedata.normalize("NFC", name).strip().casefold()
+    folded = unicodedata.normalize("NFC", name).strip().casefold()
+    # NFC before the casefold keeps two spellings of one name alike: casefold turns U+0345 (the Greek iota below)
+    # into a letter where it sits, so a mark after it moves onto that letter. NFC after it because casefold can
+    # expand one letter into several (ß to ss, İ to i plus a dot) and leave the marks after that letter uncomposed
+    # or out of order, and then folding a stored key a second time would change it.
+    return unicodedata.normalize("NFC", folded)
 
 
 def fold_path_separators(path: str) -> str:
@@ -105,7 +111,9 @@ def translate_download_path(
 def path_leaf(name: str) -> str:
     """A path's leaf with case and unicode preserved, for parser and display use."""
 
-    return os.path.basename(fold_path_separators(name).rstrip("/"))
+    # posixpath on purpose: the separators are already `/`, and on Windows `os.path` reads a leaf whose second
+    # character is a colon (`K: Return of Kings - 01.mkv`) as a drive and cuts those two characters off.
+    return posixpath.basename(fold_path_separators(name).rstrip("/"))
 
 
 def normalized_leaf(name: str) -> str:
