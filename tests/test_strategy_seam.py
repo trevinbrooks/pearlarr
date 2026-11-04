@@ -3668,7 +3668,6 @@ class TestFolderScanFallback:
 
         assert probe.files_present is False
         assert probe.placements == {}
-        assert dict(pending.file_episode_map) == {seeded: (101,)}
 
     def test_rebuilt_map_that_does_not_verify_waits_without_pinning_it(self) -> None:
         # The history row names an episode holding no recommended file (the
@@ -3699,7 +3698,6 @@ class TestFolderScanFallback:
 
         assert probe.files_present is False
         assert probe.placements == {}
-        assert dict(pending.file_episode_map) == {name: (101,)}
 
     def test_empty_poll_then_files_never_warns(self) -> None:
         # The common shape: the first scan lands before the folder is visible,

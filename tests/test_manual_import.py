@@ -28,6 +28,7 @@ from pearlarr.manual_import import (
     WaitOutcome,
     added_at_of,
     classify_pending,
+    joined_map,
     newest_claimed_at_of,
     normalize_basename,
     normalize_group,
@@ -92,18 +93,55 @@ class TestNormalize:
         assert normalize_group("Aergia") == normalize_rg("-Aergia-")
 
 
-class TestPendingImportPlacements:
-    """`with_placements` folds import-time placements into the map; `unplaced_names` is what a rebuild may fill."""
+class TestPendingImportBuild:
+    """Built from whatever the caller passed, the record folds its map and exclusions and holds them read-only."""
 
-    def test_with_exclusions_normalizes_dedupes_and_appends(self) -> None:
-        # The recorded order is the reading order: what the record already held, then this poll's
-        # additions, each normalized once and never repeated.
+    def test_the_map_folds_its_keys_and_drops_zero_ids(self) -> None:
+        pending = pending_import(
+            file_episode_map={"Show - 01.MKV": [101], "Show - 02.mkv": [0], "Show - 03.mkv": [0, 103]}
+        )
+
+        assert dict(pending.file_episode_map) == {"show - 01.mkv": (101,), "show - 03.mkv": (103,)}
+
+    def test_two_spellings_of_one_name_keep_the_first(self) -> None:
+        pending = pending_import(file_episode_map={"Show - 01.mkv": [101], "show - 01.mkv": [111]})
+
+        assert dict(pending.file_episode_map) == {"show - 01.mkv": (101,)}
+
+    def test_a_zero_only_first_spelling_yields_to_the_one_with_ids(self) -> None:
+        pending = pending_import(file_episode_map={"Show - 01.mkv": [0], "show - 01.mkv": [111]})
+
+        assert dict(pending.file_episode_map) == {"show - 01.mkv": (111,)}
+
+    def test_the_exclusions_fold_and_dedupe_in_order(self) -> None:
+        pending = pending_import(excluded_files=["SHOW - 03.MKV", " Show - 02.mkv ", "show - 03.mkv"])
+
+        assert pending.excluded_files == ("show - 03.mkv", "show - 02.mkv")
+
+    def test_the_map_is_detached_and_read_only(self) -> None:
+        # The record copies the caller's map at construction and wraps it read-only, so neither the
+        # caller's dict nor a holder of the record can mutate the map behind it. Built through `replace`: the
+        # builder copies the map itself, which would pass this pin on its own.
+        seed: dict[str, tuple[int, ...]] = {"show - 01.mkv": (101,)}
+        pending = replace(pending_import(), file_episode_map=seed)
+        seed["show - 02.mkv"] = (102,)
+        mutable = cast("dict[str, tuple[int, ...]]", pending.file_episode_map)
+
+        with pytest.raises(TypeError):
+            mutable["show - 02.mkv"] = (102,)
+        assert dict(pending.file_episode_map) == {"show - 01.mkv": (101,)}
+
+
+class TestPendingImportPlacements:
+    """`with_placements` and `with_exclusions` grow the record; `unplaced_names` is what a rebuild may fill."""
+
+    def test_with_exclusions_appends_after_the_stored_ones(self) -> None:
+        # The recorded order is the reading order: what the record already held, then this poll's additions.
         pending = pending_import(excluded_files=["show - 01.mkv"])
 
-        healed = pending.with_exclusions(["SHOW - 03.MKV", " Show - 02.mkv ", "show - 03.mkv", "Show - 01.mkv"])
+        healed = pending.with_exclusions(["show - 03.mkv", "show - 02.mkv"])
 
         assert healed.excluded_files == ("show - 01.mkv", "show - 03.mkv", "show - 02.mkv")
-        assert pending.excluded_files == ("show - 01.mkv",)
 
     def test_with_exclusions_of_nothing_leaves_the_record_equal(self) -> None:
         # The no-op the record seam gates its write on.
@@ -111,21 +149,12 @@ class TestPendingImportPlacements:
 
         assert pending.with_exclusions(()) == pending
 
-    def test_with_placements_normalizes_and_merges(self) -> None:
-        # A raw-cased seed key collapses onto its normalized placement, a
-        # zero-id seed entry with no placement is dropped, a mixed entry keeps
-        # its real ids, and the original record is untouched.
-        seed = {"Show - 01 [1080p].MKV": [101], "Show - 02.mkv": [0], "Show - 03.mkv": [0, 103]}
-        pending = pending_import(file_episode_map=dict(seed))
+    def test_with_placements_keeps_the_stored_ids_of_a_name_it_holds(self) -> None:
+        pending = pending_import(file_episode_map={"show - 01.mkv": [101]})
 
-        healed = pending.with_placements({"SHOW - 01 [1080p].mkv": (111,), "Show - 04.mkv": (104,)})
+        healed = pending.with_placements({"show - 01.mkv": (111,), "show - 02.mkv": (102,)})
 
-        assert dict(healed.file_episode_map) == {
-            "show - 01 [1080p].mkv": (111,),
-            "show - 03.mkv": (103,),
-            "show - 04.mkv": (104,),
-        }
-        assert dict(pending.file_episode_map) == {name: tuple(ids) for name, ids in seed.items()}
+        assert dict(healed.file_episode_map) == {"show - 01.mkv": (101,), "show - 02.mkv": (102,)}
 
     def test_with_placements_lifts_a_placed_name_out_of_the_exclusions(self) -> None:
         # A name an earlier poll excluded that a later import placed is a placement, never both.
@@ -134,23 +163,10 @@ class TestPendingImportPlacements:
             excluded_files=["show - 02.mkv", "show - 03.mkv"],
         )
 
-        healed = pending.with_placements({"Show - 02.mkv": (102,)})
+        healed = pending.with_placements({"show - 02.mkv": (102,)})
 
         assert healed.excluded_files == ("show - 03.mkv",)
         assert dict(healed.file_episode_map) == {"show - 01 [1080p].mkv": (101,), "show - 02.mkv": (102,)}
-
-    def test_the_map_is_detached_and_read_only(self) -> None:
-        # The record copies the caller's map at construction and wraps it read-only, so neither the
-        # caller's dict nor a holder of the record can mutate the map behind it. Built through `replace`: the
-        # builder copies the map itself, which would pass this pin on its own.
-        seed: dict[str, tuple[int, ...]] = {"Show - 01.mkv": (101,)}
-        pending = replace(pending_import(), file_episode_map=seed)
-        seed["Show - 02.mkv"] = (102,)
-        mutable = cast("dict[str, tuple[int, ...]]", pending.file_episode_map)
-
-        with pytest.raises(TypeError):
-            mutable["Show - 02.mkv"] = (102,)
-        assert dict(pending.file_episode_map) == {"Show - 01.mkv": (101,)}
 
     def test_unplaced_names_is_the_listing_minus_map_and_exclusions(self) -> None:
         pending = pending_import(
@@ -183,26 +199,28 @@ class TestPendingImportPlacements:
         assert pending.seed_coverage().accounted == (not pending.unplaced_names())
 
 
-class TestIntendedSizes:
-    """`intended_sizes` and `sizes_by_episode`: each mapped episode id to its file's listed size."""
-
-    @staticmethod
-    def _pending() -> PendingImport:
-        return pending_import(
-            file_episode_map={"A.mkv": [1], "b.mkv": [2, 3], "c.mkv": [0, 4]},
-            sizes_by_name={"a.mkv": 100, "b.mkv": 200},
-        )
+class TestSizesByEpisode:
+    """`sizes_by_episode`: each mapped episode id to its file's listed size."""
 
     def test_sizes_each_episode_a_listed_file_is_mapped_to(self) -> None:
-        pending = self._pending()
+        sizes = sizes_by_episode({"a.mkv": (1,), "b.mkv": (2, 3), "c.mkv": (4,)}, {"a.mkv": 100, "b.mkv": 200})
 
-        assert pending.intended_sizes(pending.file_episode_map) == {1: 100, 2: 200, 3: 200}
-
-    def test_reads_the_map_it_is_given(self) -> None:
-        assert self._pending().intended_sizes({"B.mkv": (1,)}) == {1: 200}
+        assert sizes == {1: 100, 2: 200, 3: 200}
 
     def test_an_id_two_files_size_differently_is_dropped(self) -> None:
         assert sizes_by_episode({"a.mkv": (1, 2), "b.mkv": (2,)}, {"a.mkv": 100, "b.mkv": 200}) == {1: 100}
+
+
+class TestJoinedMap:
+    """`joined_map`: a base map, then the added map's new names."""
+
+    def test_adds_the_new_names_after_the_base_entries(self) -> None:
+        joined = joined_map({"b.mkv": (2,), "a.mkv": (1,)}, {"c.mkv": (3,)})
+
+        assert list(joined.items()) == [("b.mkv", (2,)), ("a.mkv", (1,)), ("c.mkv", (3,))]
+
+    def test_a_shared_name_keeps_the_base_ids(self) -> None:
+        assert joined_map({"a.mkv": (1,)}, {"a.mkv": (9,), "b.mkv": (2,)}) == {"a.mkv": (1,), "b.mkv": (2,)}
 
 
 class TestListedSizes:
@@ -530,11 +548,11 @@ class TestPendingImportRoundTrip:
         # A record predating the cleanup flag owes nothing.
         assert rebuilt.awaiting_cleanup is False
 
-    def test_a_record_predating_sizes_by_name_intends_no_size(self) -> None:
+    def test_a_record_predating_sizes_by_name_lists_no_sizes(self) -> None:
         # Its own group is then judged by listed size alone.
         rebuilt = PendingImport.from_json({"infohash": "h", "file_episode_map": {"a.mkv": [1]}}, guards={})
 
-        assert rebuilt.intended_sizes(rebuilt.file_episode_map) == {}
+        assert rebuilt.sizes_by_name == {}
 
     def test_a_claim_tolerates_missing_keys(self) -> None:
         # A claim missing every optional key rehydrates unscoped, unnamed, unstamped, guard-empty,

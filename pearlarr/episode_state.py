@@ -15,6 +15,7 @@ from .manual_import import (
     PendingImport,
     normalize_group,
     normalize_rg,
+    sizes_by_episode,
 )
 from .placement_types import EpisodeIndex
 from .seadex_types import SonarrEpisodeFile
@@ -320,7 +321,7 @@ class RecordSnapshot:
     def statuses(self, target_ep_ids: Sequence[int], file_map: FileEpisodeMap) -> TargetStatuses:
         """Judge each de-duplicated target as `judge` does, against the size `file_map` intends on it."""
 
-        return TargetStatuses.judged(target_ep_ids, self.pending.intended_sizes(file_map), self.judge)
+        return TargetStatuses.judged(target_ep_ids, sizes_by_episode(file_map, self.pending.sizes_by_name), self.judge)
 
 
 def trusted_groups(guards: GuardFacts, votes: GroupVotes) -> TrustPolicy:

@@ -2668,7 +2668,6 @@ class TestPendingRecordWrites:
         assert healed is not record
         assert dict(healed.file_episode_map) == {"show - 01 [1080p].mkv": (101,), "show - 02 [1080p].mkv": (102,)}
         assert healed.excluded_files == ("show - 03 [1080p].mkv",)
-        assert dict(record.file_episode_map) == {"Show - 01 [1080p].mkv": (101,)}
         assert (row["file_episode_map"], row["excluded_files"]) == (expected, ["show - 03 [1080p].mkv"])
         assert mgr._ctx.pending_imports[record.infohash] is healed
 

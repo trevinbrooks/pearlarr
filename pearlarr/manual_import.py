@@ -265,7 +265,8 @@ class Deferral(Enum):
 
 
 type FileEpisodeMap = Mapping[str, tuple[int, ...]]
-"""A read view of normalized basename -> episode ids: a seed's map, a poll's placements, or both merged."""
+"""A read view of normalized basename -> episode ids: a record's map, a placement's, or both joined (`joined_map`).
+Producers normalize the keys, and readers take them as given."""
 
 
 @dataclass(frozen=True)
@@ -593,14 +594,23 @@ def sizes_by_episode(mapped: FileEpisodeMap, listed: Mapping[str, int]) -> dict[
 
 
 def _normalized_map(entries: FileEpisodeMap) -> dict[str, tuple[int, ...]]:
-    """The map with every key normalized and zero ids dropped, minus the entries that leaves empty."""
+    """The map with every key normalized and zero ids dropped, minus the entries that leaves empty.
+
+    Of two keys that normalize alike, the first one left with ids wins.
+    """
 
     normalized: dict[str, tuple[int, ...]] = {}
     for name, ids in entries.items():
         clean = tuple(i for i in ids if i)
         if clean:
-            normalized[normalized_leaf(name)] = clean
+            normalized.setdefault(normalized_leaf(name), clean)
     return normalized
+
+
+def joined_map(base: FileEpisodeMap, added: FileEpisodeMap) -> dict[str, tuple[int, ...]]:
+    """`base`, then the entries of `added` whose names it lacks."""
+
+    return {**base, **{name: ids for name, ids in added.items() if name not in base}}
 
 
 class SeedCoverage(NamedTuple):
@@ -782,14 +792,15 @@ class PendingImport:
 
     file_episode_map: FileEpisodeMap
     """Normalized basename -> Sonarr episode ids over the WHOLE torrent: the grab-time seeds plus the placements
-    later imports made. Wrapped read-only at construction."""
+    later imports made. Folded as the record is built (`_normalized_map`) and wrapped read-only."""
 
     claims: tuple[EntryClaim, ...]
     """Every entry's claim on the torrent, accretion order (the import's window order)."""
 
     excluded_files: tuple[str, ...] = ()
     """Normalized basenames of video files this record knowably never imports (a collision-refused duplicate,
-    a file every claim's window resolves outside), found at grab time or by an import poll."""
+    a file every claim's window resolves outside), found at grab time or by an import poll. Folded and deduplicated
+    in order as the record is built, and never a name the map holds."""
 
     release_sizes: tuple[int, ...] = ()
     """The grabbed listing's file sizes. Lets the import tell this release's own files from a stale
@@ -807,8 +818,12 @@ class PendingImport:
     SeaDex. Empty on rows written before this field existed."""
 
     def __post_init__(self) -> None:
-        # Detach from the caller's maps, then wrap read-only.
-        object.__setattr__(self, "file_episode_map", MappingProxyType(dict(self.file_episode_map)))
+        # Fold the map and the exclusions so every reader can take the names as normalized, the ids as non-zero,
+        # and no name as both mapped and excluded. Detach the maps from the caller's and wrap them read-only.
+        mapped = _normalized_map(self.file_episode_map)
+        excluded = dict.fromkeys(normalized_leaf(name) for name in self.excluded_files)
+        object.__setattr__(self, "file_episode_map", MappingProxyType(mapped))
+        object.__setattr__(self, "excluded_files", tuple(name for name in excluded if name not in mapped))
         object.__setattr__(self, "sizes_by_name", MappingProxyType(dict(self.sizes_by_name)))
         object.__setattr__(self, "identified", MappingProxyType(dict(self.identified)))
 
@@ -843,20 +858,10 @@ class PendingImport:
             base = f"{base} · {slices}"
         return base
 
-    def seeded_map(self) -> dict[str, tuple[int, ...]]:
-        """The map as the placement reads it: keys normalized, zero ids dropped (see `_normalized_map`)."""
-
-        return _normalized_map(self.file_episode_map)
-
-    def intended_sizes(self, file_map: FileEpisodeMap) -> dict[int, int]:
-        """Each episode id `file_map` places a file on to that file's listed size (see `sizes_by_episode`)."""
-
-        return sizes_by_episode(_normalized_map(file_map), self.sizes_by_name)
-
     def target_ids(self) -> list[int]:
         """Our intended episode ids: the map's values in first-claim order."""
 
-        return list(dict.fromkeys(ep_id for file_ids in self.file_episode_map.values() for ep_id in file_ids if ep_id))
+        return list(dict.fromkeys(ep_id for file_ids in self.file_episode_map.values() for ep_id in file_ids))
 
     def resolved_ids(self) -> list[int]:
         """The episode set unplaced files assign into: the claims' windows in order, else the seeds' ids."""
@@ -886,36 +891,26 @@ class PendingImport:
         needed = _normalized_names(self.seadex_files)
         if not needed:
             return SeedCoverage(mapped=False, accounted=False)
-        mapped_names = _normalized_names(self.file_episode_map)
+        mapped_names = self.file_episode_map.keys()
         if mapped_names >= needed:
             return SeedCoverage(mapped=True, accounted=True)
-        covered = mapped_names | _normalized_names(self.excluded_files)
+        covered = mapped_names | set(self.excluded_files)
         return SeedCoverage(mapped=False, accounted=covered >= needed)
 
     def unplaced_names(self) -> set[str]:
         """Normalized listing names the map does not cover and no exclusion claims: what a rebuild may still place."""
 
-        return (
-            _normalized_names(self.seadex_files)
-            - _normalized_names(self.file_episode_map)
-            - _normalized_names(self.excluded_files)
-        )
+        return _normalized_names(self.seadex_files) - self.file_episode_map.keys() - set(self.excluded_files)
 
     def with_placements(self, placements: FileEpisodeMap) -> "PendingImport":
-        """The record with placements folded into its map, their names no longer excluded.
+        """The record with `placements` joined onto its map (`joined_map`), their names lifted out of the exclusions."""
 
-        The map is normalized and its zero ids dropped.
-        """
-
-        merged = {**_normalized_map(self.file_episode_map), **_normalized_map(placements)}
-        excluded = tuple(name for name in self.excluded_files if name not in merged)
-        return replace(self, file_episode_map=merged, excluded_files=excluded)
+        return replace(self, file_episode_map=joined_map(self.file_episode_map, placements))
 
     def with_exclusions(self, names: Iterable[str]) -> "PendingImport":
-        """The record with import-time exclusions appended, normalized, deduplicated, order kept."""
+        """The record with `names` appended to its exclusions."""
 
-        merged = dict.fromkeys(normalized_leaf(name) for name in (*self.excluded_files, *names))
-        return replace(self, excluded_files=tuple(merged))
+        return replace(self, excluded_files=(*self.excluded_files, *names))
 
     def with_sizes_by_name(self, sizes: Mapping[str, int]) -> "PendingImport":
         """The record with `sizes` learned when it has none, else itself.
