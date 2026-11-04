@@ -264,7 +264,7 @@ class Deferral(Enum):
     """A foreign disk command holds the line."""
 
 
-type FileEpisodeMap = Mapping[str, Sequence[int]]
+type FileEpisodeMap = Mapping[str, tuple[int, ...]]
 """A read view of normalized basename -> episode ids: a seed's map, a poll's placements, or both merged."""
 
 
@@ -295,7 +295,7 @@ class ImportProbe:
     deferral: Deferral = Deferral.NONE
     """Why this poll waited on Sonarr's work instead of this record's."""
 
-    placements: FileEpisodeMap = field(default_factory=dict[str, list[int]])
+    placements: FileEpisodeMap = field(default_factory=dict[str, tuple[int, ...]])
     """Import-time placements this poll made (normalized basename -> ids), for the record seam to persist.
     Empty when the poll placed nothing."""
 
@@ -583,7 +583,7 @@ NO_IDENTIFIED: IdentifiedNames = MappingProxyType({})
 """No files placed by size: a record written before this field existed, or no size matched."""
 
 
-def sizes_by_episode(mapped: Mapping[str, Sequence[int]], listed: Mapping[str, int]) -> dict[int, int]:
+def sizes_by_episode(mapped: FileEpisodeMap, listed: Mapping[str, int]) -> dict[int, int]:
     """Each mapped episode id to its file's listed size.
 
     An unlisted name sizes nothing, and an ambiguous id is dropped.
@@ -592,12 +592,12 @@ def sizes_by_episode(mapped: Mapping[str, Sequence[int]], listed: Mapping[str, i
     return unambiguous((ep_id, listed[name]) for name, ids in mapped.items() if name in listed for ep_id in ids)
 
 
-def _normalized_map(entries: FileEpisodeMap) -> dict[str, list[int]]:
+def _normalized_map(entries: FileEpisodeMap) -> dict[str, tuple[int, ...]]:
     """The map with every key normalized and zero ids dropped, minus the entries that leaves empty."""
 
-    normalized: dict[str, list[int]] = {}
+    normalized: dict[str, tuple[int, ...]] = {}
     for name, ids in entries.items():
-        clean = [i for i in ids if i]
+        clean = tuple(i for i in ids if i)
         if clean:
             normalized[normalized_leaf(name)] = clean
     return normalized
@@ -807,12 +807,8 @@ class PendingImport:
     SeaDex. Empty on rows written before this field existed."""
 
     def __post_init__(self) -> None:
-        # Detach from the caller's map, then wrap read-only (the ids as tuples, so nothing inside mutates).
-        object.__setattr__(
-            self,
-            "file_episode_map",
-            MappingProxyType({name: tuple(ids) for name, ids in self.file_episode_map.items()}),
-        )
+        # Detach from the caller's maps, then wrap read-only.
+        object.__setattr__(self, "file_episode_map", MappingProxyType(dict(self.file_episode_map)))
         object.__setattr__(self, "sizes_by_name", MappingProxyType(dict(self.sizes_by_name)))
         object.__setattr__(self, "identified", MappingProxyType(dict(self.identified)))
 
@@ -847,7 +843,7 @@ class PendingImport:
             base = f"{base} · {slices}"
         return base
 
-    def seeded_map(self) -> dict[str, list[int]]:
+    def seeded_map(self) -> dict[str, tuple[int, ...]]:
         """The map as the placement reads it: keys normalized, zero ids dropped (see `_normalized_map`)."""
 
         return _normalized_map(self.file_episode_map)
@@ -978,7 +974,7 @@ class PendingImport:
             is_dual_audio=raw.get("is_dual_audio", False),
             seadex_files=tuple(raw.get("seadex_files", [])),
             added_at=added_at_of(raw),
-            file_episode_map=raw.get("file_episode_map", {}),
+            file_episode_map={name: tuple(ids) for name, ids in raw.get("file_episode_map", {}).items()},
             claims=tuple(EntryClaim.from_json(claim, guards=guards) for claim in raw.get("claims", [])),
             excluded_files=tuple(raw.get("excluded_files", [])),
             release_sizes=tuple(raw.get("release_sizes", [])),

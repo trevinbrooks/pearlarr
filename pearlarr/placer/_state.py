@@ -247,9 +247,8 @@ class Placer:
         The stored map's ids that `scope` admits count as used from the start.
         """
 
-        seeded = {name: tuple(ids) for name, ids in batch.seeded.items()}
         # On the scope, not just `used`: `untouched` and the duplicate proof read `scope.used` as held before this call.
-        scope = scope.using(ep_id for ids in seeded.values() for ep_id in ids)
+        scope = scope.using(ep_id for ids in batch.seeded.values() for ep_id in ids)
         widened = {
             name: None if info is None else widen_range_key(name, info, scope.series)
             for name, info in batch.parsed.items()
@@ -269,7 +268,7 @@ class Placer:
                 leaders=title.leaders,
                 extra=title.extra,
                 identified_as=scope.listing.identified.get(name),
-                seeded_on=seeded.get(name),
+                seeded_on=batch.seeded.get(name),
                 reading=readings[name],
             )
             for name, title in torrent.by_name.items()

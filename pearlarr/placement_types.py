@@ -240,10 +240,10 @@ class EpisodeAssignment:
     """One per name in `PlacementBatch.names`, batch order."""
 
     @property
-    def assigned(self) -> dict[str, list[int]]:
+    def assigned(self) -> dict[str, tuple[int, ...]]:
         """Normalized basename -> episode ids for every placed file (each id in the scope, used once)."""
 
-        return {p.name: list(p.ids) for p in self.placements if p.verdict.placed}
+        return {p.name: p.ids for p in self.placements if p.verdict.placed}
 
     @property
     def skipped(self) -> tuple[str, ...]:
@@ -294,7 +294,9 @@ class PlacementBatch:
     the scope admits them, and the misnumbered pack pass checks each seeded member sits on its aliased special."""
 
     def __post_init__(self) -> None:
-        # Detach from the caller's collections, then wrap read-only (the ids as tuples, so nothing inside mutates).
+        # Detach from the caller's collections, then wrap read-only. The ids are tupled whatever the type says: a
+        # cast or an untyped script can hand lists, and a list never equals `(ep_id,)` in `_aliased_specials`, so a
+        # seed on its aliased special would read as off it and the misnumbered pack would lose its aliases.
         object.__setattr__(self, "to_place", tuple(self.to_place))
         object.__setattr__(self, "parsed", MappingProxyType(dict(self.parsed)))
         object.__setattr__(self, "seeded", MappingProxyType({name: tuple(ids) for name, ids in self.seeded.items()}))

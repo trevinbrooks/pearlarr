@@ -2545,11 +2545,11 @@ class TestFinalizeRunImportedBump:
         assert engine._ctx.stats.imported == 1
 
 
-_PLACED = {"show - 01 [1080p].mkv": [101]}
+_PLACED = {"show - 01 [1080p].mkv": (101,)}
 """The placement a poll makes for the unmapped one-file record the placement tests share."""
 
-_PLACED_IDS = {"show - 01 [1080p].mkv": (101,)}
-"""`_PLACED` as the record holds it (its map wraps every id list as a tuple)."""
+_PLACED_ROW = {"show - 01 [1080p].mkv": [101]}
+"""`_PLACED` as the stored row holds it, the ids as JSON lists."""
 
 
 def _unmapped_record(**overrides: object) -> PendingImport:
@@ -2590,7 +2590,7 @@ class TestMonitorAbsorbsPlacements:
 
         assert result is not None
         assert [row.outcome for row in result.rows] == [Outcome.IMPORT_IN_PROGRESS]
-        assert mgr._records.rows()["h"]["file_episode_map"] == _PLACED
+        assert mgr._records.rows()["h"]["file_episode_map"] == _PLACED_ROW
 
     def test_healed_record_reaches_the_next_poll_and_a_failed_retire_keeps_it(self) -> None:
         # The next heavy poll runs on the healed record (mapped, so the fast
@@ -2616,10 +2616,10 @@ class TestMonitorAbsorbsPlacements:
 
         first, second = strategy.import_calls
         assert dict(first.pending.file_episode_map) == {}
-        assert dict(second.pending.file_episode_map) == _PLACED_IDS
+        assert dict(second.pending.file_episode_map) == _PLACED
         assert second.pending.seed_coverage().mapped is True
         row = mgr._records.rows()["h"]
-        assert (row.get("awaiting_cleanup"), row["file_episode_map"]) == (True, _PLACED)
+        assert (row.get("awaiting_cleanup"), row["file_episode_map"]) == (True, _PLACED_ROW)
 
     def test_no_placements_writes_nothing(self) -> None:
         # Scripted probes carry no placements: the seam must not stage a blob
@@ -2657,7 +2657,7 @@ class TestPendingRecordWrites:
         probe = ImportProbe(
             files_present=False,
             command_issued=True,
-            placements={"show - 02 [1080p].mkv": [102]},
+            placements={"show - 02 [1080p].mkv": (102,)},
             exclusions=("show - 03 [1080p].mkv",),
         )
 
@@ -2684,7 +2684,7 @@ class TestPendingRecordWrites:
         held = ImportProbe(
             files_present=False,
             command_issued=False,
-            placements={"show - 01 [1080p].mkv": [101]},
+            placements={"show - 01 [1080p].mkv": (101,)},
             exclusions=("show - 02 [1080p].mkv",),
         )
 
@@ -3818,7 +3818,7 @@ class TestCleanupHealVerification:
 
         row = mgr._records.rows()["h"]
         assert row.get("awaiting_cleanup") is flag
-        assert row["file_episode_map"] == _PLACED
+        assert row["file_episode_map"] == _PLACED_ROW
 
     def test_files_gone_and_reimport_issued_demotes_to_pending(self) -> None:
         # The files vanished and a fresh re-import command just went in (the

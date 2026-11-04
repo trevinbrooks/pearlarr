@@ -90,7 +90,7 @@ def plan_import_files(
     for basename, ep_ids in authoritative_map.items():
         candidate = candidates_by_basename.get(basename)
         if candidate is None:
-            decisions.append(ImportDecision(basename, ImportAction.MISSING, None, None, tuple(ep_ids)))
+            decisions.append(ImportDecision(basename, ImportAction.MISSING, None, None, ep_ids))
             continue
         if candidate.is_sample:
             decisions.append(ImportDecision(basename, ImportAction.SAMPLE, candidate.path, None, ()))
@@ -100,9 +100,7 @@ def plan_import_files(
             # No episode needs this file, so Sonarr's already-imported rejection agrees with us. Report `ALREADY`
             # when Sonarr raised it, else `SKIP_DONE`.
             action = ImportAction.ALREADY if candidate.is_already_imported else ImportAction.SKIP_DONE
-            decisions.append(
-                ImportDecision(basename, action, candidate.path, None, tuple(ep_ids)),
-            )
+            decisions.append(ImportDecision(basename, action, candidate.path, None, ep_ids))
             continue
         # An episode still needs this file, so import it even when Sonarr says it's already imported. Sonarr says
         # that about any file already on the episode, including the one we're replacing.

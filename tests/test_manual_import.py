@@ -6,7 +6,6 @@ The planning modules' tests sit beside this file, one per module: `test_placemen
 """
 
 import json
-from collections.abc import Sequence
 from dataclasses import replace
 from datetime import datetime
 from types import SimpleNamespace
@@ -119,7 +118,7 @@ class TestPendingImportPlacements:
         seed = {"Show - 01 [1080p].MKV": [101], "Show - 02.mkv": [0], "Show - 03.mkv": [0, 103]}
         pending = pending_import(file_episode_map=dict(seed))
 
-        healed = pending.with_placements({"SHOW - 01 [1080p].mkv": [111], "Show - 04.mkv": [104]})
+        healed = pending.with_placements({"SHOW - 01 [1080p].mkv": (111,), "Show - 04.mkv": (104,)})
 
         assert dict(healed.file_episode_map) == {
             "show - 01 [1080p].mkv": (111,),
@@ -135,18 +134,19 @@ class TestPendingImportPlacements:
             excluded_files=["show - 02.mkv", "show - 03.mkv"],
         )
 
-        healed = pending.with_placements({"Show - 02.mkv": [102]})
+        healed = pending.with_placements({"Show - 02.mkv": (102,)})
 
         assert healed.excluded_files == ("show - 03.mkv",)
         assert dict(healed.file_episode_map) == {"show - 01 [1080p].mkv": (101,), "show - 02.mkv": (102,)}
 
     def test_the_map_is_detached_and_read_only(self) -> None:
         # The record copies the caller's map at construction and wraps it read-only, so neither the
-        # caller's dict nor a holder of the record can mutate the map behind it.
-        seed: dict[str, Sequence[int]] = {"Show - 01.mkv": [101]}
-        pending = pending_import(file_episode_map=seed)
-        seed["Show - 02.mkv"] = [102]
-        mutable = cast("dict[str, Sequence[int]]", pending.file_episode_map)
+        # caller's dict nor a holder of the record can mutate the map behind it. Built through `replace`: the
+        # builder copies the map itself, which would pass this pin on its own.
+        seed: dict[str, tuple[int, ...]] = {"Show - 01.mkv": (101,)}
+        pending = replace(pending_import(), file_episode_map=seed)
+        seed["Show - 02.mkv"] = (102,)
+        mutable = cast("dict[str, tuple[int, ...]]", pending.file_episode_map)
 
         with pytest.raises(TypeError):
             mutable["Show - 02.mkv"] = (102,)
@@ -199,10 +199,10 @@ class TestIntendedSizes:
         assert pending.intended_sizes(pending.file_episode_map) == {1: 100, 2: 200, 3: 200}
 
     def test_reads_the_map_it_is_given(self) -> None:
-        assert self._pending().intended_sizes({"B.mkv": [1]}) == {1: 200}
+        assert self._pending().intended_sizes({"B.mkv": (1,)}) == {1: 200}
 
     def test_an_id_two_files_size_differently_is_dropped(self) -> None:
-        assert sizes_by_episode({"a.mkv": [1, 2], "b.mkv": [2]}, {"a.mkv": 100, "b.mkv": 200}) == {1: 100}
+        assert sizes_by_episode({"a.mkv": (1, 2), "b.mkv": (2,)}, {"a.mkv": 100, "b.mkv": 200}) == {1: 100}
 
 
 class TestListedSizes:
@@ -466,7 +466,7 @@ class TestPendingImportRoundTrip:
             is_dual_audio=True,
             seadex_files=("ep1.mkv", "ep2.mkv"),
             added_at="2026-06-24 12:00:00",
-            file_episode_map={"ep1.mkv": [11], "ep2.mkv": [12]},
+            file_episode_map={"ep1.mkv": (11,), "ep2.mkv": (12,)},
             claims=(claim,),
             excluded_files=("other-slice.mkv",),
             release_sizes=(700, 710),
@@ -504,7 +504,7 @@ class TestPendingImportRoundTrip:
         # record rehydrates mapped on the next run.
         pending = pending_import(file_episode_map={}, seadex_files=["Show - 01 [1080p].mkv"], ordered_episode_ids=[101])
 
-        healed = pending.with_placements({"show - 01 [1080p].mkv": [101]})
+        healed = pending.with_placements({"show - 01 [1080p].mkv": (101,)})
 
         assert PendingImport.from_json(healed.to_json(), guards={}) == healed
         assert (pending.seed_coverage().mapped, healed.seed_coverage().mapped) == (False, True)

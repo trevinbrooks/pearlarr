@@ -76,7 +76,7 @@ class TestMapperSeam:
             pending, _Disk(lambda _f: parsed_info(season=1, episodes=(1,))), {EpisodeKey(1, 1): 101}
         )
 
-        assert result.placed == result.assigned == {normalize_basename(name): [101]}
+        assert result.placed == result.assigned == {normalize_basename(name): (101,)}
         assert dict(pending.file_episode_map) == {}
 
     def test_placed_excludes_the_seeded_entries(self) -> None:
@@ -92,8 +92,8 @@ class TestMapperSeam:
 
         result = _assign_on_disk(pending, _Disk(parses.get), {EpisodeKey(1, 1): 101, EpisodeKey(1, 2): 102})
 
-        assert result.placed == {normalize_basename(leftover_name): [102]}
-        assert result.assigned == {normalize_basename(seed_name): [101], normalize_basename(leftover_name): [102]}
+        assert result.placed == {normalize_basename(leftover_name): (102,)}
+        assert result.assigned == {normalize_basename(seed_name): (101,), normalize_basename(leftover_name): (102,)}
 
 
 class TestIdentifiedAtImport:
@@ -130,13 +130,13 @@ class TestIdentifiedAtImport:
 
         result = _assign_on_disk(self._pending({second: 7898, third: 7897}), self._disk(), self._MAP)
 
-        assert result.assigned == {second: [7898], third: [7897]}
+        assert result.assigned == {second: (7898,), third: (7897,)}
         assert result.excluded == ()
 
     def test_a_record_without_identities_places_by_name(self) -> None:
         result = _assign_on_disk(self._pending({}), self._disk(), self._MAP)
 
-        assert result.assigned == {normalize_basename(self._SECOND): [7897], normalize_basename(self._THIRD): [7898]}
+        assert result.assigned == {normalize_basename(self._SECOND): (7897,), normalize_basename(self._THIRD): (7898,)}
 
 
 class TestSeededSharerTell:
@@ -159,7 +159,7 @@ class TestSeededSharerTell:
         first = mapper.assign(pending, candidates, indexes)
         second = mapper.assign(pending.with_placements(first.placed), candidates, indexes)
 
-        assert first.placed == {normalize_basename(self._V2): [2586]}
+        assert first.placed == {normalize_basename(self._V2): (2586,)}
         assert normalize_basename(self._V1) not in second.assigned
         assert second.excluded == (Placement(normalize_basename(self._V1), (), PlacementVerdict.DUPLICATE),)
         assert dict(pending.file_episode_map) == {}
@@ -234,8 +234,8 @@ class TestAssignDuplicateLeaves:
             pending, _Disk(lambda _f: parsed_info(season=1, episodes=(1,))), {EpisodeKey(1, 1): 101}
         )
 
-        assert result.assigned == {normalize_basename(name): [101]}
-        assert result.placed == {normalize_basename(name): [101]}
+        assert result.assigned == {normalize_basename(name): (101,)}
+        assert result.placed == {normalize_basename(name): (101,)}
         assert result.skipped == ()
 
     def test_unplaced_duplicate_leaf_is_reported_once(self) -> None:
@@ -334,11 +334,11 @@ class TestSeedEqualsMapper:
         assert seed.excluded == tuple(p.name for p in live.excluded)
         # A real placement, not two empty maps agreeing.
         assert seed.placements == {
-            normalize_basename(self._NAMES[0]): [501],
-            normalize_basename(self._NAMES[1]): [502],
+            normalize_basename(self._NAMES[0]): (501,),
+            normalize_basename(self._NAMES[1]): (502,),
         }
         assert seed.excluded == (normalize_basename(self._NAMES[2]),)
         # The record the pipeline persists carries the same map and exclusions.
         record = seed.record_at("2026-01-01 00:00:00", fresh=True)
-        assert dict(record.file_episode_map) == {name: tuple(ids) for name, ids in live.assigned.items()}
+        assert dict(record.file_episode_map) == live.assigned
         assert record.excluded_files == seed.excluded

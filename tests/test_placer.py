@@ -904,7 +904,7 @@ class TestAssignExactSeason:
 
         result = place(parsed, TargetScope([8030, 8031, 8032], series_index(ep_id_map)))
 
-        assert result.assigned == {"s00e01.mkv": [8030], "s00e02.mkv": [8031]}
+        assert result.assigned == {"s00e01.mkv": (8030,), "s00e02.mkv": (8031,)}
         assert (result.skipped, result.excluded) == ((), ())
 
     def test_empty_resolved_set_places_correctly_named_specials(self) -> None:
@@ -918,7 +918,7 @@ class TestAssignExactSeason:
 
         result = place(parsed, TargetScope([], series_index(ep_id_map)))
 
-        assert result.assigned == {"s00e01.mkv": [8030], "s00e02.mkv": [8031]}
+        assert result.assigned == {"s00e01.mkv": (8030,), "s00e02.mkv": (8031,)}
         assert (result.skipped, result.excluded) == ((), ())
 
 
@@ -934,11 +934,11 @@ class TestAssignAbsolute:
 
         assert result.skipped == ()
         assert result.assigned == {
-            "01.mkv": [8034],
-            "02.mkv": [8035],
-            "03.mkv": [8036],
-            "04.mkv": [8037],
-            "05.mkv": [8038],
+            "01.mkv": (8034,),
+            "02.mkv": (8035,),
+            "03.mkv": (8036,),
+            "04.mkv": (8037,),
+            "05.mkv": (8038,),
         }
 
     def test_continuous_absolute_batch_spans_seasons(self) -> None:
@@ -948,10 +948,10 @@ class TestAssignAbsolute:
         result = place(parsed, TargetScope([501, 502, 601, 602], series_index({})))
 
         assert result.assigned == {
-            "e1.mkv": [501],
-            "e2.mkv": [502],
-            "e3.mkv": [601],
-            "e4.mkv": [602],
+            "e1.mkv": (501,),
+            "e2.mkv": (502,),
+            "e3.mkv": (601,),
+            "e4.mkv": (602,),
         }
 
     def test_no_signal_file_refuses_the_positional_leg(self) -> None:
@@ -977,7 +977,7 @@ class TestAssignAbsolute:
 
         result = place(parsed, TargetScope([501, 502], series_index({})))
 
-        assert result.assigned == {"a.mkv": [501], "b.mkv": [502]}
+        assert result.assigned == {"a.mkv": (501,), "b.mkv": (502,)}
 
     def test_absolute_ova_pack_maps_onto_resolved_set(self) -> None:
         # Thirteen season-0 absolute-only OVA files onto the entry's S00E16..E28, count-matched 13:13.
@@ -987,7 +987,7 @@ class TestAssignAbsolute:
         result = place(parsed, TargetScope(list(range(2090, 2103)), series_index({})))
 
         assert result.skipped == ()
-        assert result.assigned == {f"{n:02d}.mkv": [2089 + n] for n in range(1, 14)}
+        assert result.assigned == {f"{n:02d}.mkv": (2089 + n,) for n in range(1, 14)}
 
     def test_mixed_exact_then_leftover_absolute(self) -> None:
         # The exact pass places the named file. The absolute file maps onto the one leftover id.
@@ -998,7 +998,7 @@ class TestAssignAbsolute:
 
         result = place(parsed, TargetScope([8033, 8044], series_index({EpisodeKey(1, 1): 8033})))
 
-        assert result.assigned == {"s01e01.mkv": [8033], "extra.mkv": [8044]}
+        assert result.assigned == {"s01e01.mkv": (8033,), "extra.mkv": (8044,)}
         assert result.skipped == ()
 
 
@@ -1018,7 +1018,7 @@ class TestAssignMatchedPairs:
 
         result = place(parsed, TargetScope([2586, 2587], series_index(ep_id_map)))
 
-        assert result.assigned == {"ep-12.mkv": [2586], "ep-13.mkv": [2587]}
+        assert result.assigned == {"ep-12.mkv": (2586,), "ep-13.mkv": (2587,)}
         assert result.skipped == ()
         assert {p.name: p.verdict for p in result.excluded} == {
             "ep-11.mkv": PlacementVerdict.FOREIGN,
@@ -1032,7 +1032,7 @@ class TestAssignMatchedPairs:
 
         result = place(parsed, TargetScope([400, 999], series_index(ep_id_map)))
 
-        assert result.assigned == {"x.mkv": [400]}
+        assert result.assigned == {"x.mkv": (400,)}
 
     def test_matched_pairs_never_apply_unscoped(self) -> None:
         # With NO resolved set the live-map fallback trusts only a name-parsed pair.
@@ -1094,7 +1094,7 @@ class TestAssignMatchedPairs:
 
         result = place({"x.mkv": info}, TargetScope([501, 502], series_index({EpisodeKey(1, 1): 501})))
 
-        assert result.assigned == {"x.mkv": [501]}
+        assert result.assigned == {"x.mkv": (501,)}
 
     def test_wrong_id_match_cannot_veto_the_single_file_fallback(self) -> None:
         # A disagreeing id refuses the CLAIM, but one numberless file and one leftover id still place.
@@ -1102,7 +1102,7 @@ class TestAssignMatchedPairs:
 
         result = place({"only.mkv": info}, TargetScope([501], series_index({EpisodeKey(1, 1): 501})))
 
-        assert result.assigned == {"only.mkv": [501]}
+        assert result.assigned == {"only.mkv": (501,)}
 
     def test_junk_duplicates_beyond_the_cap_still_collapse_and_place(self) -> None:
         # The cap counts DISTINCT claims: four wire duplicates of one pair are one claim, not a season pack.
@@ -1110,7 +1110,7 @@ class TestAssignMatchedPairs:
 
         result = place(parsed, TargetScope([501], series_index({EpisodeKey(1, 1): 501})))
 
-        assert result.assigned == {"x.mkv": [501]}
+        assert result.assigned == {"x.mkv": (501,)}
 
     def test_mixed_id_duplicate_of_a_triple_span_still_places(self) -> None:
         # An id-bearing junk duplicate of one pair can't inflate a triple past the cap.
@@ -1126,7 +1126,7 @@ class TestAssignMatchedPairs:
 
         result = place({"x.mkv": info}, TargetScope([501, 502, 503], series_index(ep_id_map)))
 
-        assert result.assigned == {"x.mkv": [501, 502, 503]}
+        assert result.assigned == {"x.mkv": (501, 502, 503)}
 
     def test_partially_resolved_double_absolute_never_half_imports(self) -> None:
         # A "12-13" file whose match resolved only E12: the borrowed span doesn't cover the absolutes.
@@ -1143,7 +1143,7 @@ class TestAssignMatchedPairs:
 
         result = place(parsed, TargetScope([2586, 2587], series_index(ep_id_map)))
 
-        assert result.assigned == {"d.mkv": [2586, 2587]}
+        assert result.assigned == {"d.mkv": (2586, 2587)}
         assert result.skipped == ()
 
     def test_matched_span_never_half_imports_via_the_single_file_fallback(self) -> None:
@@ -1167,7 +1167,7 @@ class TestAssignMatchedPairs:
 
         result = place(parsed, TargetScope([501, 502, 503, 504], series_index(ep_id_map)))
 
-        assert result.assigned == {"e01.mkv": [501], "e02.mkv": [502], "e03.mkv": [503]}
+        assert result.assigned == {"e01.mkv": (501,), "e02.mkv": (502,), "e03.mkv": (503,)}
         assert result.skipped == ("extras-s01.mkv",)
 
 
@@ -1185,7 +1185,7 @@ class TestAssignExactPrecedence:
 
         result = place(parsed, TargetScope([2574], series_index(ep_id_map)))
 
-        assert result.assigned == {"ep - 17.5 (S00E01).mkv": [2574]}
+        assert result.assigned == {"ep - 17.5 (S00E01).mkv": (2574,)}
         assert by_name(result)["ep - 17.mkv"] == ((), PlacementVerdict.DUPLICATE)
 
     def test_a_borrowed_pair_beats_an_own_key_sonarr_never_matched(self) -> None:
@@ -1198,7 +1198,7 @@ class TestAssignExactPrecedence:
 
         result = place(parsed, TargetScope([508], series_index({EpisodeKey(1, 8): 508})))
 
-        assert result.assigned == {"ep - 08.mkv": [508]}
+        assert result.assigned == {"ep - 08.mkv": (508,)}
         assert by_name(result)["ep - Bonus [E8F03223].mkv"] == ((), PlacementVerdict.DUPLICATE)
 
     def test_batch_order_breaks_a_tie_within_a_rank(self) -> None:
@@ -1243,7 +1243,7 @@ class TestAssignBesideForeignFiles:
 
         result = place(parsed, TargetScope([901], series_index(self._MAP)))
 
-        assert result.assigned == {"show - OVA.mkv": [901]}
+        assert result.assigned == {"show - OVA.mkv": (901,)}
         assert [p.verdict for p in result.excluded] == [PlacementVerdict.FOREIGN, PlacementVerdict.FOREIGN]
 
     def test_a_borrowed_pair_outside_yields_to_an_open_file(self) -> None:
@@ -1257,7 +1257,7 @@ class TestAssignBesideForeignFiles:
 
         result = place(parsed, TargetScope([901], series_index(ep_id_map)))
 
-        assert result.assigned == {"show - OVA.mkv": [901]}
+        assert result.assigned == {"show - OVA.mkv": (901,)}
         assert [p.verdict for p in result.excluded] == [PlacementVerdict.FOREIGN]
 
     def test_the_absolute_zip_counts_only_the_contenders(self) -> None:
@@ -1271,7 +1271,7 @@ class TestAssignBesideForeignFiles:
 
         result = place(parsed, TargetScope([601, 602], series_index(self._MAP)))
 
-        assert result.assigned == {"show - 13.mkv": [601], "show - 14.mkv": [602]}
+        assert result.assigned == {"show - 13.mkv": (601,), "show - 14.mkv": (602,)}
         assert by_name(result)["show - S01E01.mkv"] == ((), PlacementVerdict.FOREIGN)
 
 
@@ -1388,7 +1388,7 @@ class TestAbsoluteDuplicateTell:
 
         result = place(parsed, TargetScope([2586, 2587], series_index(ep_id_map)))
 
-        assert result.assigned == {"e-12v2.mkv": [2586]}
+        assert result.assigned == {"e-12v2.mkv": (2586,)}
         assert by_name(result)["e-12.mkv"] == ((), PlacementVerdict.DUPLICATE)
 
     def test_seeded_sharer_still_vetoes_the_positional_leg(self) -> None:
@@ -1405,7 +1405,7 @@ class TestAbsoluteDuplicateTell:
         assert result.assigned == {}
         assert by_name(result) == {"e-12v2.mkv": ((), PlacementVerdict.SKIPPED)}
         # The control: drop the sharer and the very same file takes the spare id.
-        assert alone.assigned == {"e-12v2.mkv": [2587]}
+        assert alone.assigned == {"e-12v2.mkv": (2587,)}
 
     @pytest.mark.parametrize(
         ("name", "sharer"),
@@ -1435,7 +1435,7 @@ class TestAbsoluteDuplicateTell:
 
         result = place(parsed, TargetScope([507], series_index({})), seeded={"seeded-12.mkv": (506,)})
 
-        assert result.assigned == {"left-13.mkv": [507]}
+        assert result.assigned == {"left-13.mkv": (507,)}
         assert result.skipped == ()
 
     def test_multi_absolute_seeded_sharer_still_vetoes(self) -> None:
@@ -1476,7 +1476,7 @@ class TestAssignBogusKeyDowngrade:
 
         result = place(parsed, TargetScope([900], series_index({EpisodeKey(1, 1): 501})))
 
-        assert result.assigned == {"movie.mkv": [900]}
+        assert result.assigned == {"movie.mkv": (900,)}
         assert result.skipped == ()
 
     def test_resolving_key_is_never_downgraded(self) -> None:
@@ -1503,7 +1503,7 @@ class TestAssignBogusKeyDowngrade:
 
         result = place(parsed, TargetScope([900], series_index({EpisodeKey(1, 5): 555})))
 
-        assert result.assigned == {"sp.mkv": [900]}
+        assert result.assigned == {"sp.mkv": (900,)}
         assert result.skipped == ()
 
 
@@ -1514,7 +1514,7 @@ class TestAssignNumberlessZip:
         # One leftover file, one leftover id, and Sonarr saw the name and found no number: it's that one.
         result = place({"only.mkv": ParsedFileInfo()}, TargetScope([900], series_index({})))
 
-        assert result.assigned == {"only.mkv": [900]}
+        assert result.assigned == {"only.mkv": (900,)}
         assert result.skipped == ()
 
     def test_single_none_parse_single_target_is_refused(self) -> None:
@@ -1529,14 +1529,14 @@ class TestAssignNumberlessZip:
         # Name order maps onto airing order regardless of the on-disk listing order.
         result = place(blind(["sp2.mkv", "sp1.mkv", "sp3.mkv"]), TargetScope([901, 902, 903], series_index({})))
 
-        assert result.assigned == {"sp1.mkv": [901], "sp2.mkv": [902], "sp3.mkv": [903]}
+        assert result.assigned == {"sp1.mkv": (901,), "sp2.mkv": (902,), "sp3.mkv": (903,)}
         assert result.skipped == ()
 
     def test_zip_orders_digits_naturally(self) -> None:
         # "sp10" sorts after "sp2": lexical order would hand sp10 the second id.
         result = place(blind(["sp1.mkv", "sp2.mkv", "sp10.mkv"]), TargetScope([901, 902, 903], series_index({})))
 
-        assert result.assigned == {"sp1.mkv": [901], "sp2.mkv": [902], "sp10.mkv": [903]}
+        assert result.assigned == {"sp1.mkv": (901,), "sp2.mkv": (902,), "sp10.mkv": (903,)}
 
     def test_mixed_batch_never_zips(self) -> None:
         # The exact pass placing one file leaves more parses than leftovers: numberless extras never fill episodes.
@@ -1548,7 +1548,7 @@ class TestAssignNumberlessZip:
 
         result = place(parsed, TargetScope([501, 502, 503], series_index({EpisodeKey(1, 1): 501})))
 
-        assert result.assigned == {"e01.mkv": [501]}
+        assert result.assigned == {"e01.mkv": (501,)}
         assert sorted(result.skipped) == ["interview.mkv", "making of.mkv"]
 
     def test_seeded_sibling_parse_kills_the_zip(self) -> None:
@@ -1629,7 +1629,7 @@ class TestAssignTitledSingle:
 
         result = self._place({deja: parsed_info(), live: parsed_info()}, "Show: D\u00e9j\u00e0 Vu")
 
-        assert result.assigned == {deja: [901]}
+        assert result.assigned == {deja: (901,)}
 
     def test_a_title_that_is_the_series_names_nothing(self) -> None:
         # The entry is the series itself: no word of its title tells one file from another.
@@ -1659,7 +1659,7 @@ class TestAssignTitledSingle:
 
         result = self._place({sunny: parsed_info(), prologue: parsed_info()}, "Show 2nd Season: Sunny Day")
 
-        assert result.assigned == {sunny: [901]}
+        assert result.assigned == {sunny: (901,)}
 
     def test_an_extras_file_is_never_the_titled_one(self) -> None:
         # The opening's words match the title best, but an opening is never the episode.
@@ -1708,7 +1708,7 @@ class TestAssignTitledSingle:
             {movie: parsed_info(), special: parsed_info()}, "Show: The Miracle of Endymion", "Show: Endymion no Kiseki"
         )
 
-        assert result.assigned == {movie: [901]}
+        assert result.assigned == {movie: (901,)}
 
     def test_two_leftovers_a_title_names_alike_place_nothing(self) -> None:
         parsed: dict[str, ParsedFileInfo | None] = {
@@ -1859,7 +1859,7 @@ class TestReleaseNumberForms:
 
         result = self._place(names)
 
-        assert result.assigned == {names[0]: [501], names[2]: [502], names[3]: [503]}
+        assert result.assigned == {names[0]: (501,), names[2]: (502,), names[3]: (503,)}
         assert by_name(result)[names[1]] == ((), PlacementVerdict.DUPLICATE)
 
     def test_equal_versions_of_one_number_break_the_run(self) -> None:
@@ -2028,7 +2028,7 @@ class TestAssignReleaseRun:
 
         result = place(parsed, TargetScope([601, 501, 502, 504], series_index(gappy)))
 
-        assert result.assigned == {"pack.mkv": [601]}
+        assert result.assigned == {"pack.mkv": (601,)}
         assert sorted(result.skipped) == sorted(self._RUN)
 
     def test_a_two_season_window_refuses(self) -> None:
@@ -2264,7 +2264,7 @@ class TestAssignReleaseRun:
 
         result = place(parsed, self._scope())
 
-        assert result.assigned == {"extra.mkv": [502]}
+        assert result.assigned == {"extra.mkv": (502,)}
         assert sorted(result.skipped) == sorted(self._RUN)
 
     def test_a_member_sonarr_matched_to_two_episodes_stays_in_the_run(self) -> None:
@@ -2275,7 +2275,7 @@ class TestAssignReleaseRun:
 
         result = place(parsed, self._scope())
 
-        assert result.assigned == dict(zip(self._RUN, ([501], [502], [503]), strict=True))
+        assert result.assigned == dict(zip(self._RUN, ((501,), (502,), (503,)), strict=True))
         assert {p.verdict for p in result.placements} == {PlacementVerdict.RELEASE_RUN}
 
     def test_a_name_the_parses_never_covered_holds_like_a_miss(self) -> None:
@@ -2306,7 +2306,7 @@ class TestAssignReleaseRun:
 
         result = place(parsed, scope)
 
-        assert result.assigned == ({name: [501 + i] for i, name in enumerate(fit)} if placed else {})
+        assert result.assigned == ({name: (501 + i,) for i, name in enumerate(fit)} if placed else {})
 
     @pytest.mark.parametrize("title", ["Show 3rd Season", "Show Third Season", "Show Season 3", "Show III", "Show 3"])
     def test_a_season_counted_any_way_names_the_run_counted_that_way(self, title: str) -> None:
@@ -2318,7 +2318,7 @@ class TestAssignReleaseRun:
 
         result = place(parsed, scope)
 
-        assert result.assigned == {name: [501 + i] for i, name in enumerate(third)}
+        assert result.assigned == {name: (501 + i,) for i, name in enumerate(third)}
 
     def test_a_whole_season_run_over_a_slice_window_places_the_slice(self) -> None:
         # A season pack listed on a cour's entry: the run counts the whole season, the window is two of
@@ -2505,7 +2505,7 @@ class TestAssignAbsoluteWindow:
         # An entry holding a special TVDB interleaved: "02" is absolute 2, the special, whatever season it sits in.
         result = self._place(1, 2, 3)
 
-        assert result.assigned == {self._RUN[0]: [601], self._RUN[1]: [501], self._RUN[2]: [602]}
+        assert result.assigned == {self._RUN[0]: (601,), self._RUN[1]: (501,), self._RUN[2]: (602,)}
         assert {p.verdict for p in result.placements} == {PlacementVerdict.RELEASE_RUN}
 
     @pytest.mark.parametrize("absolutes", [(1, None, 3), (1, 2, 4)])
@@ -2559,7 +2559,7 @@ class TestAssignRunTitleEvidence:
     def test_the_run_whose_members_name_the_window_is_picked(self) -> None:
         result = self._place(self._INSIDE, self._OUTSIDE)
 
-        assert result.assigned == {name: [501 + i] for i, name in enumerate(self._INSIDE)}
+        assert result.assigned == {name: (501 + i,) for i, name in enumerate(self._INSIDE)}
 
     def test_the_other_runs_titled_members_are_foreign_once_the_window_is_full(self) -> None:
         result = self._place(self._INSIDE, self._OUTSIDE)
@@ -2576,7 +2576,7 @@ class TestAssignRunTitleEvidence:
 
         result = self._place(inside, numbered_names("show b", 3))
 
-        assert result.assigned == {inside[0]: [501]}
+        assert result.assigned == {inside[0]: (501,)}
         assert by_name(result)[inside[0]] == ((501,), PlacementVerdict.EPISODE_TITLE)
 
     @pytest.mark.parametrize("blocked", [True, False], ids=["mixed batch", "pristine batch"])
@@ -2593,7 +2593,7 @@ class TestAssignRunTitleEvidence:
 
         result = self._place(run, retitled={601: "Chapter 4: Home"})
 
-        assert result.assigned == {name: [501 + i] for i, name in enumerate(run)}
+        assert result.assigned == {name: (501 + i,) for i, name in enumerate(run)}
 
     def test_one_word_titles_still_refuse_the_run(self) -> None:
         # A title too short to place a file is still evidence against a run titled as another season's.
@@ -2609,7 +2609,7 @@ class TestAssignRunTitleEvidence:
 
         result = self._place(run, retitled={601: "Beach Day", 602: "Hot Springs"}, blocked=True)
 
-        assert result.assigned == {name: [501 + i] for i, name in enumerate(run)}
+        assert result.assigned == {name: (501 + i,) for i, name in enumerate(run)}
 
 
 class TestRereadSeasonRun:
@@ -2649,7 +2649,7 @@ class TestRereadSeasonRun:
 
         result = self._place(run, [601, 602, 603, 604])
 
-        assert result.assigned == {name: [601 + i] for i, name in enumerate(run)}
+        assert result.assigned == {name: (601 + i,) for i, name in enumerate(run)}
         assert {p.verdict for p in result.placements} == {PlacementVerdict.EXACT}
 
     def test_a_lower_version_of_a_member_is_re_read_with_it(self) -> None:
@@ -2725,7 +2725,7 @@ class TestRereadSeasonRun:
 
         result = self._place(run, [501])
 
-        assert result.assigned == {run[2]: [501]}
+        assert result.assigned == {run[2]: (501,)}
 
     def test_another_season_of_the_same_width_does_not_block_the_reread(self) -> None:
         # Sonarr's reads name the season the run belongs to, so a second four-episode season is no rival.
@@ -2858,7 +2858,7 @@ class TestRefuseMisnumbered:
     def test_an_unscoped_window_stands_down(self) -> None:
         result = place(specials_pack(1, 2, 3), _specials_scope([], _THREE_LISTING))
 
-        assert result.assigned == {"Show.S00E01.mkv": [501], "Show.S00E02.mkv": [502], "Show.S00E03.mkv": [503]}
+        assert result.assigned == {"Show.S00E01.mkv": (501,), "Show.S00E02.mkv": (502,), "Show.S00E03.mkv": (503,)}
 
     def test_a_seeded_window_stands_down(self) -> None:
         # A stored record already mapped a file, so the window has a used id and the pack isn't refused.
@@ -2898,7 +2898,7 @@ class TestRefuseMisnumbered:
         result = place(pack, _specials_scope([501, 503], TorrentListing(frozenset({501, 503, 505}))))
 
         assert PlacementVerdict.MISNUMBERED not in verdicts_of(result)
-        assert result.assigned["Show.S00E03.mkv"] == [503]
+        assert result.assigned["Show.S00E03.mkv"] == (503,)
 
     def test_a_multi_episode_special_stands_down(self) -> None:
         pack = {
@@ -3382,7 +3382,7 @@ class TestAssignNumberedRun:
         run = self._run("extra ", range(1, 4))
         result = place(self._batch(run), self._scope())
 
-        assert result.assigned == {self._MAIN: [10384], **{name: [10370 + i] for i, name in enumerate(run)}}
+        assert result.assigned == {self._MAIN: (10384,), **{name: (10370 + i,) for i, name in enumerate(run)}}
         assert (result.skipped, result.excluded) == ((), ())
         assert {p.verdict for p in result.placements if p.name in run} == {PlacementVerdict.NUMBERED_RUN}
 
@@ -3394,7 +3394,7 @@ class TestAssignNumberedRun:
 
         result = place(parsed, self._scope())
 
-        assert result.assigned == {self._MAIN: [10384], run[0]: [10370], later: [10371], run[2]: [10372]}
+        assert result.assigned == {self._MAIN: (10384,), run[0]: (10370,), later: (10371,), run[2]: (10372,)}
         assert by_name(result)[run[1]] == ((), PlacementVerdict.DUPLICATE)
 
     def test_a_season_zero_absolute_run_still_counts_as_blind(self) -> None:
@@ -3421,7 +3421,7 @@ class TestAssignNumberedRun:
     def test_a_run_that_cannot_index_the_window_refuses(self, run: list[str], window: list[int]) -> None:
         result = place(self._batch(run), TargetScope([10384, *window], series_index(self._MAP)))
 
-        assert result.assigned == {self._MAIN: [10384]}
+        assert result.assigned == {self._MAIN: (10384,)}
         assert sorted(result.skipped) == sorted(run)
 
     def test_an_unknown_parse_refuses(self) -> None:
@@ -3432,7 +3432,7 @@ class TestAssignNumberedRun:
 
         result = place(parsed, self._scope(), [self._MAIN, *run])
 
-        assert result.assigned == {self._MAIN: [10384]}
+        assert result.assigned == {self._MAIN: (10384,)}
         assert sorted(result.skipped) == sorted(run)
 
 

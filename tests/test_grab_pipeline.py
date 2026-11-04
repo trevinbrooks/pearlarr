@@ -519,7 +519,7 @@ class TestReacquireRegistration:
         pipeline = _pipeline(torrents=self._reacquire(None))
         resident = self._resident(pipeline)
         seed = pending_seed(
-            "h1", ordered_episode_ids=(101, 102), placements={"Show - 02 [1080p].mkv": [102]}, stored=resident
+            "h1", ordered_episode_ids=(101, 102), placements={"Show - 02 [1080p].mkv": (102,)}, stored=resident
         )
 
         self._add(pipeline, seed)

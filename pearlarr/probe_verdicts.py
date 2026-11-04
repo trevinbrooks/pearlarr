@@ -387,7 +387,7 @@ def _import_rows(page: HistoryPage, start: int) -> tuple[HistoryImport, ...]:
     return tuple(rows)
 
 
-def placements_from_history(imports: Sequence[HistoryImport], pending: PendingImport) -> dict[str, list[int]]:
+def placements_from_history(imports: Sequence[HistoryImport], pending: PendingImport) -> dict[str, tuple[int, ...]]:
     """Sonarr's import rows as placements for the record's unplaced listing files, normalized leaf -> sorted ids.
 
     Our seed stays authoritative, and a row lands only where some claim admits it: by name
@@ -403,4 +403,4 @@ def placements_from_history(imports: Sequence[HistoryImport], pending: PendingIm
         if not any(c.series_id == row.series_id and c.admits(row.episode_id) for c in pending.claims):
             continue
         grouped.setdefault(name, set()).add(row.episode_id)
-    return {name: sorted(ids) for name, ids in grouped.items()}
+    return {name: tuple(sorted(ids)) for name, ids in grouped.items()}

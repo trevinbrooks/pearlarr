@@ -147,7 +147,7 @@ class TestBuildPendingSeeds:
         record = seed.record_at(_ADDED_AT, fresh=True)
         assert record.added_at == _ADDED_AT
         assert record.claims == (replace(claim, claimed_at=_ADDED_AT),)
-        assert dict(seed.placements) == {normalize_basename("Show - 01.mkv"): [101]}
+        assert dict(seed.placements) == {normalize_basename("Show - 01.mkv"): (101,)}
         assert seed.facts.seadex_files == ("Show - 01.mkv",)
         # The claim's own episode slice, for the wait/notification label, and the window it is judged under.
         assert claim.slice_coverage == "S01 E01"
@@ -315,8 +315,8 @@ class TestBuildPendingSeeds:
 
         seed = seeds["h1"]
         assert dict(seed.placements) == {
-            normalize_basename("Show - 01.mkv"): [101],
-            normalize_basename("Show - 02.mkv"): [102],
+            normalize_basename("Show - 01.mkv"): (101,),
+            normalize_basename("Show - 02.mkv"): (102,),
         }
         assert seed.claim.slice_coverage == "S01 E01-E02"
         # The targets are the map's per-file ids alone, so the old cross-file
@@ -453,7 +453,7 @@ class TestBuildPendingSeeds:
         )
 
         seed = seeds["h1"]
-        assert dict(seed.placements) == {normalize_basename("Show - 01v2.mkv"): [101]}
+        assert dict(seed.placements) == {normalize_basename("Show - 01v2.mkv"): (101,)}
         assert seed.excluded == (normalize_basename("Show - 01.mkv"),)
 
     def test_unparsed_and_vetoed_files_stay_possibly_ours(self) -> None:
@@ -663,7 +663,7 @@ class TestSeedGuards:
             entry=entry_facts(),
         )
 
-        assert dict(seeds["h1"].placements) == {normalize_basename("Show - 01-02.mkv"): [101, 102]}
+        assert dict(seeds["h1"].placements) == {normalize_basename("Show - 01-02.mkv"): (101, 102)}
 
     def test_partially_resolving_span_is_not_seeded(self) -> None:
         # A double-episode file straddling the entry boundary: only episode 1
@@ -714,7 +714,7 @@ class TestSeedGuards:
             entry=entry_facts(),
         )
 
-        assert dict(seeds["h1"].placements) == {normalize_basename("Show - 13v2.mkv"): [213]}
+        assert dict(seeds["h1"].placements) == {normalize_basename("Show - 13v2.mkv"): (213,)}
 
     def test_partial_collision_refuses_the_whole_later_file(self) -> None:
         # The later file claims one taken id and one free one: assignment
@@ -744,7 +744,7 @@ class TestSeedGuards:
             entry=entry_facts(),
         )
 
-        assert dict(seeds["h1"].placements) == {normalize_basename("Show - 01.mkv"): [101]}
+        assert dict(seeds["h1"].placements) == {normalize_basename("Show - 01.mkv"): (101,)}
 
     def test_duplicate_leaf_names_seed_once(self) -> None:
         # The same basename in two folders collapses in the basename-keyed
@@ -771,7 +771,7 @@ class TestSeedGuards:
             entry=entry_facts(),
         )
 
-        assert dict(seeds["h1"].placements) == {normalize_basename("Show - 01.mkv"): [101]}
+        assert dict(seeds["h1"].placements) == {normalize_basename("Show - 01.mkv"): (101,)}
         # Both physical files stay tracked (the leaves list is disk truth).
         assert seeds["h1"].facts.seadex_files == ("Show - 01.mkv", "Show - 01.mkv")
 
@@ -802,7 +802,7 @@ class TestParseWriteFeedsSeeds:
             entry=entry_facts(),
         )
 
-        assert dict(seeds["h1"].placements) == {normalize_basename("Show - 01.mkv"): [101]}
+        assert dict(seeds["h1"].placements) == {normalize_basename("Show - 01.mkv"): (101,)}
         # Asked once, and persisted for the next run's gather.
         assert sonarr.parse_calls == ["Show - 01.mkv"]
         assert strat._parse.cache_store.get_sonarr_parse("Show - 01.mkv") is not None

@@ -4,10 +4,10 @@ The grab-time map is taken as is, and every other file is parsed and placed (Son
 """
 
 from collections.abc import Mapping
-from typing import NamedTuple
+from dataclasses import dataclass
 
 from .import_files import CandidateFile
-from .manual_import import PendingImport, normalized_leaf, path_leaf
+from .manual_import import FileEpisodeMap, PendingImport, normalized_leaf, path_leaf
 from .placement_types import (
     EMPTY_LISTING,
     EpisodeAssignment,
@@ -44,25 +44,26 @@ def _rejection_matches(candidate: ManualImportCandidate, tokens: tuple[str, ...]
     return False
 
 
-class FileAssignment(NamedTuple):
+@dataclass(frozen=True, slots=True)
+class FileAssignment:
     """One poll's file -> episode map: the seeded entries plus this poll's verdict on every other leaf."""
 
     result: EpisodeAssignment
     """This poll's verdicts on the on-disk video files the stored map (`seeded`) does not cover, SeaDex order."""
-    seeded: dict[str, list[int]]
+    seeded: FileEpisodeMap
     """The stored map's entries (the grab-time placements plus earlier polls'), keyed by normalized basename."""
     settled: bool
     """Whether the skips are a verdict against real inputs: every parse known (`PlacementBatch.all_parses_known`)
     and the episode index served. False makes a skip tentative, re-asked next poll."""
 
     @property
-    def placed(self) -> dict[str, list[int]]:
+    def placed(self) -> dict[str, tuple[int, ...]]:
         """This poll's fresh placements alone, for the caller to persist."""
 
         return self.result.assigned
 
     @property
-    def assigned(self) -> dict[str, list[int]]:
+    def assigned(self) -> dict[str, tuple[int, ...]]:
         """The seeded entries plus `placed`."""
 
         return {**self.seeded, **self.placed}

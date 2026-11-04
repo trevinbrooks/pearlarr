@@ -148,7 +148,7 @@ def test_seed_places_captured_shape(case: ShapeCase) -> None:
 
     result = place(_parsed(case), scope.target(NO_EVIDENCE))
 
-    assert result.assigned == {name: list(ids) for name, ids in case.expected.items()}
+    assert result.assigned == case.expected
     assert {placement.name for placement in result.excluded} == set(case.expected_excluded)
 
 
@@ -187,7 +187,7 @@ def test_mapper_matches_the_seed(case: ShapeCase) -> None:
 
     assignment = mapper.assign(pending, candidates, indexes_for(pending, episode_index(case.episodes)))
 
-    assert assignment.assigned == {normalize_basename(name): list(ids) for name, ids in case.expected.items()}
+    assert assignment.assigned == {normalize_basename(name): ids for name, ids in case.expected.items()}
     assert {placement.name for placement in assignment.excluded} == {
         normalize_basename(name) for name in case.expected_excluded
     }

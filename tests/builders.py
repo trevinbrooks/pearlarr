@@ -1318,7 +1318,7 @@ def pending_import(**overrides: Any) -> PendingImport:
     claim_overrides = {key: overrides.pop(key) for key in list(overrides) if key in _CLAIM_KEYS}
     defaults: dict[str, Any] = {
         "infohash": "abc123",
-        "file_episode_map": {"Show - 01 [1080p].mkv": [101]},
+        "file_episode_map": {"Show - 01 [1080p].mkv": (101,)},
         "release_group": "SubGroup",
         "is_dual_audio": False,
         "seadex_files": ("Show - 01 [1080p].mkv",),
@@ -1331,6 +1331,7 @@ def pending_import(**overrides: Any) -> PendingImport:
     for key in ("seadex_files", "excluded_files", "release_sizes"):
         if key in defaults:
             defaults[key] = tuple(defaults[key])
+    defaults["file_episode_map"] = {name: tuple(ids) for name, ids in defaults["file_episode_map"].items()}
     return PendingImport(**defaults)
 
 
@@ -1341,7 +1342,7 @@ def import_probe(
     imported_count: int = 0,
     target_count: int = 0,
     deferral: Deferral = Deferral.NONE,
-    placements: dict[str, list[int]] | None = None,
+    placements: FileEpisodeMap | None = None,
     exclusions: tuple[str, ...] = (),
     unmatched_files: tuple[str, ...] = (),
     hand_import_files: tuple[str, ...] = (),
