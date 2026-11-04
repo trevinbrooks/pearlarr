@@ -153,6 +153,9 @@ def assign_episode_ids(batch: PlacementBatch, scope: TargetScope) -> EpisodeAssi
     refused. The result holds one `Placement` per distinct file, in batch order.
     """
 
+    if not batch.to_place:
+        # The passes would read every parse of the torrent only to return this same empty result.
+        return EpisodeAssignment(())
     state = Placer.start(batch, scope)
     _pass_extras(state)
     _pass_refuse_refuted(state)

@@ -4,8 +4,8 @@ Every window judges the WHOLE torrent, exactly as a record with one window does,
 its shape under every window (the remainder re-read as a fresh run could place onto a window the whole
 run never fits). The verdicts merge in window order: the first window that places or refuses a file decides
 it, so an earlier window's `HELD` or `MISNUMBERED` outranks a later window's exact placement (window order
-beats pass order). Ids an earlier window placed count as used under each later window that admits them. A
-file no window placed or refused takes the highest-ranked verdict the windows gave it (`_CLAIM_RANK`).
+beats pass order). The ids a deciding window placed a file on count as used under each later window that admits
+them. A file no window placed or refused takes the highest-ranked verdict the windows gave it (`_CLAIM_RANK`).
 One rule beats window order: a file the special aliases placed or claimed under one window, and another window
 placed on other ids without them, is `MISNUMBERED` (`_disputed`). The ids its deciding window placed it on still
 count as used under the later windows, which can only leave another file unplaced, never misfile one.
@@ -28,30 +28,13 @@ from .placement_types import (
 from .placer import assign_episode_ids
 
 
-class WindowVerdict(NamedTuple):
-    """One file's merged verdict and, when placed, the index into the windows of the one that placed it."""
-
-    placement: Placement
-    window_index: int | None
-
-
 class WindowedAssignment(NamedTuple):
-    """One merged verdict per distinct name in `PlacementBatch.to_place`, batch order, and each window's own."""
+    """A torrent's files placed under several windows: the merged verdicts, and each window's own."""
 
-    verdicts: tuple[WindowVerdict, ...]
+    merged: EpisodeAssignment
+    """One verdict per distinct name the stored map doesn't cover, batch order, merged over the windows."""
     windows: tuple[EpisodeAssignment, ...]
     """Each window's `assign_episode_ids` result, in window order."""
-
-    @property
-    def merged(self) -> EpisodeAssignment:
-        """The single-window view: every verdict as `assign_episode_ids` returns it."""
-
-        return EpisodeAssignment(tuple(v.placement for v in self.verdicts))
-
-    def assigned_under(self, index: int) -> dict[str, list[int]]:
-        """Name -> episode ids for the files the window at `index` placed."""
-
-        return {v.placement.name: list(v.placement.ids) for v in self.verdicts if v.window_index == index}
 
     def refuted_under(self, index: int) -> bool:
         """Whether the window at `index` gave `TITLE_REFUTED` to a file the merge left `TITLE_REFUTED`."""
@@ -75,7 +58,7 @@ class WindowedAssignment(NamedTuple):
     def _left_as(self, verdict: PlacementVerdict, names: Collection[str]) -> bool:
         """Whether the merge left any of `names` with `verdict`."""
 
-        return any(v.placement.verdict is verdict and v.placement.name in names for v in self.verdicts)
+        return any(p.verdict is verdict and p.name in names for p in self.merged.placements)
 
 
 # Highest wins. SKIPPED outranks FOREIGN and EXTRA, so a file skipped under any window is never excluded as another
@@ -95,35 +78,7 @@ _BY_ALIAS = frozenset({PlacementVerdict.ALTERNATE, PlacementVerdict.ALIASED_ELSE
 """The verdicts the special aliases give: placed on the aliased special, or claimed for the window that holds it."""
 
 
-def assign_across_windows(batch: PlacementBatch, windows: Sequence[TargetScope]) -> WindowedAssignment:
-    """Place a torrent's files under every window in order and merge the verdicts (see the module).
-
-    One window is exactly one `assign_episode_ids` call over the same batch and scope. Under no
-    windows at all every file is skipped.
-    """
-
-    names = batch.names
-    decided: dict[str, WindowVerdict] = {}
-    judged: dict[str, list[Placement]] = {name: [] for name in names}
-    assignments: list[EpisodeAssignment] = []
-    for index, window in enumerate(windows):
-        # Ids earlier windows placed count as used here: the ones this window admits, all of them when unscoped.
-        scope = window.using(i for v in decided.values() for i in v.placement.ids)
-        assignments.append(assignment := assign_episode_ids(batch, scope))
-        for placement in assignment.placements:
-            judged[placement.name].append(placement)
-            if placement.name in decided:
-                continue
-            if placement.verdict.placed:
-                decided[placement.name] = WindowVerdict(placement, index)
-            elif placement.verdict.refused:
-                # A refusal decides a name as a placement does: no later window may place it by its numbers.
-                decided[placement.name] = WindowVerdict(placement, None)
-    merged = tuple(_merged(name, judged[name], decided.get(name)) for name in names)
-    return WindowedAssignment(merged, tuple(assignments))
-
-
-def _merged(name: str, judged: Sequence[Placement], decided: WindowVerdict | None) -> WindowVerdict:
+def _merged(name: str, judged: Sequence[Placement], decided: Placement | None) -> Placement:
     """One file's verdict over every window.
 
     `MISNUMBERED` when `_disputed`, else the deciding window's, else the top claim (`_CLAIM_RANK`), else `SKIPPED`.
@@ -131,12 +86,12 @@ def _merged(name: str, judged: Sequence[Placement], decided: WindowVerdict | Non
     """
 
     if _disputed(judged):
-        return WindowVerdict(Placement(name, (), PlacementVerdict.MISNUMBERED), None)
+        return Placement(name, (), PlacementVerdict.MISNUMBERED)
     if decided is not None:
         return decided
     if not judged:
-        return WindowVerdict(Placement(name, (), PlacementVerdict.SKIPPED), None)
-    return WindowVerdict(max(judged, key=lambda claim: _CLAIM_RANK[claim.verdict]), None)
+        return Placement(name, (), PlacementVerdict.SKIPPED)
+    return max(judged, key=lambda claim: _CLAIM_RANK[claim.verdict])
 
 
 def _disputed(judged: Iterable[Placement]) -> bool:
@@ -170,15 +125,28 @@ def windows_of(
 
 
 def place_leftover(seeded: FileEpisodeMap, batch: PlacementBatch, windows: Sequence[TargetScope]) -> WindowedAssignment:
-    """The names of `batch` the map does not cover, placed under `windows` with the mapped ids already used.
+    """The names of `batch` the stored map doesn't cover, placed under every window in order, verdicts merged.
 
-    Each window marks used only the mapped ids it admits, as with ids an earlier window placed, so one
-    series' placements never turn off another series' count-based passes. Every window still gets the whole
-    map as `TargetScope.seeded`.
+    Each window is one `assign_episode_ids` call over those names. The mapped ids are used under it, and so are the
+    ids of each file an earlier window decided, where the window admits them (every id, when unscoped). Every window
+    still gets the whole map as `TargetScope.seeded`, and the parses of the whole batch. Under no windows at all every
+    file is skipped. The module docstring says how the verdicts merge.
     """
 
-    leftover = [name for name in batch.to_place if name not in seeded]
     held = {name: tuple(ids) for name, ids in seeded.items()}
-    mapped = [ep_id for ids in held.values() for ep_id in ids]
-    narrowed = tuple(replace(window.using(mapped), seeded=held) for window in windows)
-    return assign_across_windows(PlacementBatch(leftover, batch.parsed), narrowed)
+    leftover = PlacementBatch([name for name in batch.to_place if name not in held], batch.parsed)
+    names = leftover.names
+    used = [ep_id for ids in held.values() for ep_id in ids]
+    decided: dict[str, Placement] = {}
+    judged: dict[str, list[Placement]] = {name: [] for name in names}
+    assignments: list[EpisodeAssignment] = []
+    for window in windows:
+        assignments.append(assignment := assign_episode_ids(leftover, replace(window.using(used), seeded=held)))
+        for placement in assignment.placements:
+            judged[placement.name].append(placement)
+            # A refusal decides a name as a placement does: no later window may place it by its numbers.
+            if placement.name not in decided and (placement.verdict.placed or placement.verdict.refused):
+                decided[placement.name] = placement
+                used.extend(placement.ids)
+    merged = EpisodeAssignment(tuple(_merged(name, judged[name], decided.get(name)) for name in names))
+    return WindowedAssignment(merged, tuple(assignments))
