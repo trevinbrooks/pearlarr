@@ -529,7 +529,7 @@ class ImportExecutor:
         # Done-check against the intended set: the seeded map plus what the mapper placed this poll, or what
         # Sonarr's history says it imported when no scan saw the files. `all_done()` needs a non-empty `by_id`.
         target_ids = sorted({i for ids in authoritative_map.values() for i in ids})
-        statuses = context.snapshot.statuses(target_ids, authoritative_map)
+        statuses = context.snapshot.map_statuses(target_ids, authoritative_map)
         if statuses.all_done():
             self.logger.debug(f"{content_path}: already imported (recommended files present)")
             return ImportProbe.imported()
@@ -625,7 +625,7 @@ class ImportExecutor:
     def _imported_by_hand(self, context: _ImportContext, file_map: FileEpisodeMap) -> ImportProbe | None:
         """The IMPORTED probe when every episode of the record's windows is filled (`filled_by_hand`), else None."""
 
-        if not context.snapshot.statuses(context.pending.resolved_ids(), file_map).filled_by_hand():
+        if not context.snapshot.map_statuses(context.pending.resolved_ids(), file_map).filled_by_hand():
             return None
         self.logger.debug(f"{context.content_path}: already imported (recommended files or untagged copies present)")
         return ImportProbe.imported()
@@ -1009,7 +1009,7 @@ class ImportReconciler:
             for claim in pending.claims
         }
         snapshot = RecordSnapshot(pending, by_series, by_claim)
-        statuses = snapshot.statuses(targets, pending.file_episode_map)
+        statuses = snapshot.map_statuses(targets, pending.file_episode_map)
         preowned = sum(1 for ep_id in targets if snapshot.preowned(ep_id))
         recommended = sum(1 for status in statuses.by_id.values() if status is EpisodeFileStatus.RECOMMENDED)
         return _SeedStatuses(snapshot, statuses, max(0, recommended - preowned), len(targets) - preowned)

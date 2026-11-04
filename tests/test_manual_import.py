@@ -6,6 +6,7 @@ The planning modules' tests sit beside this file, one per module: `test_placemen
 """
 
 import json
+from collections.abc import Callable
 from dataclasses import replace
 from datetime import datetime
 from types import SimpleNamespace
@@ -118,6 +119,15 @@ class TestPendingImportBuild:
 
         assert pending.excluded_files == ("show - 03.mkv", "show - 02.mkv")
 
+    def test_the_by_name_maps_fold_their_keys_and_drop_a_name_whose_spellings_disagree(self) -> None:
+        pending = pending_import(
+            sizes_by_name={"Sub/Show - 01.MKV": 100, "Show - 02.mkv": 200, "show - 02.mkv": 201},
+            identified={"Show - 01.MKV": 101},
+        )
+
+        assert pending.sizes_by_name == {"show - 01.mkv": 100}
+        assert pending.identified == {"show - 01.mkv": 101}
+
     def test_the_map_is_detached_and_read_only(self) -> None:
         # The record copies the caller's map at construction and wraps it read-only, so neither the
         # caller's dict nor a holder of the record can mutate the map behind it. Built through `replace`: the
@@ -132,8 +142,25 @@ class TestPendingImportBuild:
         assert dict(pending.file_episode_map) == {"show - 01.mkv": (101,)}
 
 
+_NO_OP_CHANGES: dict[str, Callable[[PendingImport], PendingImport]] = {
+    "no placements": lambda p: p.with_placements({}),
+    "a placement of a held name": lambda p: p.with_placements({"show - 01.mkv": (111,)}),
+    "no exclusions": lambda p: p.with_exclusions(()),
+    "an exclusion already held": lambda p: p.with_exclusions(["SHOW - 02.MKV"]),
+    "no sizes onto none": lambda p: p.with_sizes_by_name({}),
+    "no identified names": lambda p: p.with_identified({}),
+    "the identified name again": lambda p: p.with_identified({"show - 01.mkv": 101}),
+    "the stored claim again": lambda p: p.with_claim(p.claims[0]),
+}
+"""Changes that leave a record equal: it holds `show - 01.mkv` on 101, identified by size, and excludes
+`show - 02.mkv`."""
+
+
 class TestPendingImportPlacements:
-    """`with_placements` and `with_exclusions` grow the record; `unplaced_names` is what a rebuild may fill."""
+    """`with_placements` and `with_exclusions` grow the record, and `unplaced_names` is what a rebuild may fill.
+
+    Every `with_*` hands the record back on a no-op.
+    """
 
     def test_with_exclusions_appends_after_the_stored_ones(self) -> None:
         # The recorded order is the reading order: what the record already held, then this poll's additions.
@@ -143,11 +170,18 @@ class TestPendingImportPlacements:
 
         assert healed.excluded_files == ("show - 01.mkv", "show - 03.mkv", "show - 02.mkv")
 
-    def test_with_exclusions_of_nothing_leaves_the_record_equal(self) -> None:
-        # The no-op the record seam gates its write on.
-        pending = pending_import(excluded_files=["show - 01.mkv"])
+    @pytest.mark.parametrize("change", _NO_OP_CHANGES.values(), ids=list(_NO_OP_CHANGES))
+    def test_a_change_that_leaves_the_record_equal_returns_the_record(
+        self, change: Callable[[PendingImport], PendingImport]
+    ) -> None:
+        # One rule for every `with_*`: the record seam gates its save on it.
+        pending = pending_import(
+            file_episode_map={"show - 01.mkv": [101]},
+            excluded_files=["show - 02.mkv"],
+            identified={"show - 01.mkv": 101},
+        )
 
-        assert pending.with_exclusions(()) == pending
+        assert change(pending) is pending
 
     def test_with_placements_keeps_the_stored_ids_of_a_name_it_holds(self) -> None:
         pending = pending_import(file_episode_map={"show - 01.mkv": [101]})
@@ -275,11 +309,6 @@ class TestIdentifiedNames:
 
         assert pending.with_identified({"a.mkv": 3}).identified == {"b.mkv": 2}
 
-    def test_nothing_new_keeps_the_record(self) -> None:
-        pending = pending_import(identified={"a.mkv": 1})
-
-        assert pending.with_identified({"a.mkv": 1}) is pending
-
 
 class TestPendingImportClaims:
     """The claim reads over a record: every entry's series, window, guards, and ids, in claim order."""
@@ -326,11 +355,26 @@ class TestPendingImportClaims:
         # last-wins per episode. Another series' claim contributes nothing.
         pending = pending_import(
             claims=(
-                entry_claim(al_id=1, guards=GuardFacts(("A", "B"), ("S",), (OwnedEpisode(11, 700),))),
-                entry_claim(al_id=2, series_id=8, guards=GuardFacts(("Z",), ("Y",), (OwnedEpisode(11, 999),))),
+                entry_claim(
+                    al_id=1,
+                    guards=GuardFacts(
+                        entry_groups=("A", "B"), stale_groups=("S",), owned_episodes=(OwnedEpisode(11, 700),)
+                    ),
+                ),
+                entry_claim(
+                    al_id=2,
+                    series_id=8,
+                    guards=GuardFacts(
+                        entry_groups=("Z",), stale_groups=("Y",), owned_episodes=(OwnedEpisode(11, 999),)
+                    ),
+                ),
                 entry_claim(
                     al_id=3,
-                    guards=GuardFacts(("B", "C"), ("S", "T"), (OwnedEpisode(11, 710), OwnedEpisode(12, 720))),
+                    guards=GuardFacts(
+                        entry_groups=("B", "C"),
+                        stale_groups=("S", "T"),
+                        owned_episodes=(OwnedEpisode(11, 710), OwnedEpisode(12, 720)),
+                    ),
                 ),
             ),
         )
@@ -338,9 +382,9 @@ class TestPendingImportClaims:
         merged = pending.guards_for(7)
 
         assert merged == GuardFacts(
-            ("A", "B", "C"),
-            ("S", "T"),
-            (OwnedEpisode(11, 700), OwnedEpisode(11, 710), OwnedEpisode(12, 720)),
+            entry_groups=("A", "B", "C"),
+            stale_groups=("S", "T"),
+            owned_episodes=(OwnedEpisode(11, 700), OwnedEpisode(11, 710), OwnedEpisode(12, 720)),
         )
         assert merged.owned_sizes == {11: 710, 12: 720}
         assert pending.guards_for(9) == GuardFacts()
@@ -636,6 +680,16 @@ class TestPendingStateAndProbe:
         assert LEAVE_PROBE.attempted is False
         assert LEAVE_PROBE.files_present is False
         assert LEAVE_PROBE.command_issued is False
+
+    def test_a_probes_placements_are_detached_and_read_only(self) -> None:
+        placed: dict[str, tuple[int, ...]] = {"show - 01.mkv": (101,)}
+        probe = ImportProbe(files_present=False, command_issued=True, placements=placed)
+        placed["show - 02.mkv"] = (102,)
+        mutable = cast("dict[str, tuple[int, ...]]", probe.placements)
+
+        with pytest.raises(TypeError):
+            mutable["show - 02.mkv"] = (102,)
+        assert dict(probe.placements) == {"show - 01.mkv": (101,)}
 
 
 class TestClassifyPending:

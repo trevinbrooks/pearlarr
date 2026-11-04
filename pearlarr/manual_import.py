@@ -269,7 +269,7 @@ type FileEpisodeMap = Mapping[str, tuple[int, ...]]
 Producers normalize the keys, and readers take them as given."""
 
 
-@dataclass(frozen=True)
+@dataclass(frozen=True, slots=True, kw_only=True)
 class ImportProbe:
     """The outcome of one `import_completed` poll.
 
@@ -297,8 +297,8 @@ class ImportProbe:
     """Why this poll waited on Sonarr's work instead of this record's."""
 
     placements: FileEpisodeMap = field(default_factory=dict[str, tuple[int, ...]])
-    """Import-time placements this poll made (normalized basename -> ids), for the record seam to persist.
-    Empty when the poll placed nothing."""
+    """Import-time placements this poll made (normalized basename -> ids), copied and wrapped read-only for the
+    record seam to persist. Empty when the poll placed nothing."""
 
     exclusions: tuple[str, ...] = ()
     """On-disk files this poll proved never this record's to import (a sibling's slice, a duplicate), for the
@@ -311,6 +311,9 @@ class ImportProbe:
     hand_import_files: tuple[str, ...] = ()
     """The download's on-disk files the placement left for a hand import, once every placed file is in and
     the hand import isn't. Non-empty only from `hand_import()`: `files_present` and `command_issued` False."""
+
+    def __post_init__(self) -> None:
+        object.__setattr__(self, "placements", MappingProxyType(dict(self.placements)))
 
     @property
     def deferred(self) -> bool:
@@ -347,7 +350,8 @@ LEAVE_PROBE = ImportProbe(attempted=False, files_present=False, command_issued=F
 """The fail-open probe: no attempt ran, so leave the record pending for a later run."""
 
 
-class ImportProgress(NamedTuple):
+@dataclass(frozen=True, slots=True)
+class ImportProgress:
     """A cheap, read-only files-landed count for the wait cockpit's import bar."""
 
     done: int
@@ -494,7 +498,8 @@ PENDING_STATE_FOR_OUTCOME: dict[Outcome, PendingState] = {
 _QBIT_ETA_INFINITE = 8_640_000
 
 
-class TorrentTelemetry(NamedTuple):
+@dataclass(frozen=True, slots=True)
+class TorrentTelemetry:
     """One info row's sanitized live telemetry: download fraction, speed, ETA, and byte counts."""
 
     progress: float
@@ -508,11 +513,11 @@ _ZERO_TELEMETRY = TorrentTelemetry(0.0, None, None, None, None)
 """The unread placeholder (no client, or a transient qBittorrent error)."""
 
 
-@dataclass(frozen=True)
+@dataclass(frozen=True, slots=True)
 class TorrentProbe:
     """One qBittorrent completion poll, with live download telemetry."""
 
-    outcome: "WaitOutcome | None"
+    outcome: WaitOutcome | None
     """The terminal outcome this poll, or None while still downloading (or on a transient qB error)."""
 
     content_path: str | None
@@ -607,29 +612,46 @@ def _normalized_map(entries: FileEpisodeMap) -> dict[str, tuple[int, ...]]:
     return normalized
 
 
+def _normalized_keys[V](by_name: Mapping[str, V]) -> dict[str, V]:
+    """`by_name` keyed by normalized leaf.
+
+    A name whose spellings disagree on the value is dropped, unlike the map's first-wins fold: a file with no size
+    is never read as misplaced and one with no identity is placed by its name, where a guessed value could misjudge
+    it.
+    """
+
+    return unambiguous((normalized_leaf(name), value) for name, value in by_name.items())
+
+
 def joined_map(base: FileEpisodeMap, added: FileEpisodeMap) -> dict[str, tuple[int, ...]]:
     """`base`, then the entries of `added` whose names it lacks."""
 
     return {**base, **{name: ids for name, ids in added.items() if name not in base}}
 
 
-class SeedCoverage(NamedTuple):
-    """A record's two seed trust levels over its grabbed video files."""
+@dataclass(frozen=True, slots=True, kw_only=True)
+class SeedCoverage:
+    """How far a record's map and exclusions account for its listed files. Both False when it lists none."""
 
     mapped: bool
-    """the map ALONE covers every file"""
+    """Whether the map alone names every listed file."""
+
     accounted: bool
-    """map + knowably-excluded files"""
+    """Whether the map and the exclusions together name every listed file."""
 
 
 class OwnedEpisode(NamedTuple):
-    """One grab-time ownership claim over an untagged on-disk file."""
+    """One grab-time ownership claim over an untagged on-disk file.
+
+    A tuple on purpose: `GuardFacts.owned_sizes` and the JSON form read it as an (id, size) pair.
+    """
 
     ep_id: int
     size: int
 
 
-class OwnGroup(NamedTuple):
+@dataclass(frozen=True, slots=True)
+class OwnGroup:
     """A torrent's own release group and the sizes its current listing carries (the trust policy's last vote)."""
 
     release_group: str
@@ -659,7 +681,7 @@ class EntryNames:
         return cls(series=raw.get("series", ""), anilist=tuple(raw.get("anilist", [])))
 
 
-@dataclass(frozen=True)
+@dataclass(frozen=True, slots=True, kw_only=True)
 class GuardFacts:
     """The plan's per-entry overwrite-guard evidence, carried whole."""
 
@@ -773,7 +795,11 @@ class EntryClaim:
 
 @dataclass(frozen=True, slots=True, kw_only=True)
 class PendingImport:
-    """One torrent awaiting import: its whole file map and every entry's claim on it."""
+    """One torrent awaiting import: its whole file map and every entry's claim on it.
+
+    A `with_*` method returns this record itself when the change leaves it equal, so a caller tells a no-op by
+    identity.
+    """
 
     infohash: str
     """The qBittorrent tracking key, lowercase (never None). Also the dedup `downloadId` sent to Sonarr."""
@@ -811,21 +837,22 @@ class PendingImport:
 
     sizes_by_name: Mapping[str, int] = NO_SIZES_BY_NAME
     """Normalized listing name -> its listed size, so the import knows which file each episode should hold.
-    Empty on a row written before it was kept, which then never reads a file as misplaced."""
+    Folded as the record is built (`_normalized_keys`). Empty on a row written before it was kept, which then
+    never reads a file as misplaced."""
 
     identified: IdentifiedNames = NO_IDENTIFIED
     """Files the grab placed by size, name -> episode id, so the import places them the same way without reading
-    SeaDex. Empty on rows written before this field existed."""
+    SeaDex. Folded as the record is built (`_normalized_keys`). Empty on rows written before this field existed."""
 
     def __post_init__(self) -> None:
-        # Fold the map and the exclusions so every reader can take the names as normalized, the ids as non-zero,
-        # and no name as both mapped and excluded. Detach the maps from the caller's and wrap them read-only.
+        # Fold the map, the exclusions and the two by-name maps so readers can take the names as normalized, the
+        # map's ids as non-zero, and no name as both mapped and excluded. Detach the maps and wrap them read-only.
         mapped = _normalized_map(self.file_episode_map)
         excluded = dict.fromkeys(normalized_leaf(name) for name in self.excluded_files)
         object.__setattr__(self, "file_episode_map", MappingProxyType(mapped))
         object.__setattr__(self, "excluded_files", tuple(name for name in excluded if name not in mapped))
-        object.__setattr__(self, "sizes_by_name", MappingProxyType(dict(self.sizes_by_name)))
-        object.__setattr__(self, "identified", MappingProxyType(dict(self.identified)))
+        object.__setattr__(self, "sizes_by_name", MappingProxyType(_normalized_keys(self.sizes_by_name)))
+        object.__setattr__(self, "identified", MappingProxyType(_normalized_keys(self.identified)))
 
     @property
     def own_group(self) -> OwnGroup:
@@ -883,7 +910,9 @@ class PendingImport:
                 entry_groups.update(dict.fromkeys(claim.guards.entry_groups))
                 stale_groups.update(dict.fromkeys(claim.guards.stale_groups))
                 owned.extend(claim.guards.owned_episodes)
-        return GuardFacts(tuple(entry_groups), tuple(stale_groups), tuple(owned))
+        return GuardFacts(
+            entry_groups=tuple(entry_groups), stale_groups=tuple(stale_groups), owned_episodes=tuple(owned)
+        )
 
     def seed_coverage(self) -> SeedCoverage:
         """Coverage from normalized-name SUPERSETS (never lengths): a healed extra can't fake it."""
@@ -902,15 +931,20 @@ class PendingImport:
 
         return _normalized_names(self.seadex_files) - self.file_episode_map.keys() - set(self.excluded_files)
 
+    def _or_self(self, changed: "PendingImport") -> "PendingImport":
+        """`changed`, or this record when the change left it equal."""
+
+        return self if changed == self else changed
+
     def with_placements(self, placements: FileEpisodeMap) -> "PendingImport":
         """The record with `placements` joined onto its map (`joined_map`), their names lifted out of the exclusions."""
 
-        return replace(self, file_episode_map=joined_map(self.file_episode_map, placements))
+        return self._or_self(replace(self, file_episode_map=joined_map(self.file_episode_map, placements)))
 
     def with_exclusions(self, names: Iterable[str]) -> "PendingImport":
         """The record with `names` appended to its exclusions."""
 
-        return replace(self, excluded_files=(*self.excluded_files, *names))
+        return self._or_self(replace(self, excluded_files=(*self.excluded_files, *names)))
 
     def with_sizes_by_name(self, sizes: Mapping[str, int]) -> "PendingImport":
         """The record with `sizes` learned when it has none, else itself.
@@ -918,13 +952,12 @@ class PendingImport:
         Only an empty map fills: an infohash's listing never changes, and an unscoped seed carries none.
         """
 
-        return self if self.sizes_by_name else replace(self, sizes_by_name=sizes)
+        return self._or_self(replace(self, sizes_by_name=self.sizes_by_name or sizes))
 
     def with_identified(self, names: IdentifiedNames) -> "PendingImport":
         """The record with `names` merged in, dropping any name the two map to different episodes."""
 
-        joined = unambiguous([*self.identified.items(), *names.items()])
-        return self if joined == self.identified else replace(self, identified=joined)
+        return self._or_self(replace(self, identified=unambiguous([*self.identified.items(), *names.items()])))
 
     def with_claim(self, claim: EntryClaim) -> "PendingImport":
         """The record with `claim` joined and its cleanup flag cleared (new files to import make it active again).
@@ -939,7 +972,7 @@ class PendingImport:
                 kept = replace(claim, preowned_episode_ids=stored.preowned_episode_ids, claimed_at=stored.claimed_at)
                 claims = (*self.claims[:index], kept, *self.claims[index + 1 :])
                 break
-        return replace(self, claims=claims, awaiting_cleanup=False)
+        return self._or_self(replace(self, claims=claims, awaiting_cleanup=False))
 
     def to_json(self) -> dict[str, Any]:
         """Serialize to the plain dict persisted under `pending_imports`."""
