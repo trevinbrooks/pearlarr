@@ -190,9 +190,9 @@ class FileEpisodeMapper:
 
         # The leftovers go into each claim's window in turn, with the seeded ids already used there. Import doesn't
         # read SeaDex: files the grab placed by size are placed the same way from the record.
-        batch = PlacementBatch(leftover, parsed_by_file)
+        batch = PlacementBatch(leftover, parsed_by_file, seeded)
         listing = ListingEvidence(EMPTY_LISTING, pending.identified)
-        windowed = place_across_windows(seeded, batch, windows_of(pending.claims, indexes, listing))
+        windowed = place_across_windows(batch, windows_of(pending.claims, indexes, listing))
         # An empty index means the exact pass could not have matched a numbered name this poll.
         settled = batch.all_parses_known and all(indexes[sid].id_by_key for sid in pending.series_ids)
         return FileAssignment(windowed.merged, seeded, settled=settled)

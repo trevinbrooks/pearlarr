@@ -11,7 +11,6 @@ from pearlarr.placement_types import (
     NO_EVIDENCE,
     EpisodeIndex,
     ListingEvidence,
-    PlacementBatch,
     PlacementVerdict,
     TargetScope,
     TorrentListing,
@@ -21,6 +20,7 @@ from pearlarr.window_placement import WindowedAssignment, place_across_windows, 
 
 from .builders import (
     ALIASED_PACK,
+    batch,
     blind,
     by_name,
     entry_claim,
@@ -68,14 +68,10 @@ def _listed_windows(listing: ListingEvidence, *windows: list[int]) -> tuple[Targ
     return tuple(_listed_window(listing, ids) for ids in windows)
 
 
-def _batch(parsed: Mapping[str, ParsedFileInfo | None]) -> PlacementBatch:
-    return PlacementBatch(list(parsed), parsed)
-
-
 def _place_across(parsed: Mapping[str, ParsedFileInfo | None], windows: Sequence[TargetScope]) -> WindowedAssignment:
     """Every parsed name placed under `windows`, with no stored map."""
 
-    return place_across_windows({}, _batch(parsed), windows)
+    return place_across_windows(batch(parsed), windows)
 
 
 class TestOneWindow:
@@ -411,7 +407,7 @@ class TestStoredMap:
     def test_the_mapped_names_are_not_re_placed(self) -> None:
         run = numbered_names("show", 3)
 
-        result = place_across_windows({run[0]: [601]}, _batch(blind(run)), (_window(_FIRST_COUR),))
+        result = place_across_windows(batch(blind(run), seeded={run[0]: [601]}), (_window(_FIRST_COUR),))
 
         assert [p.name for p in result.merged.placements] == run[1:]
         assert result.merged.assigned == {run[1]: [602], run[2]: [603]}
@@ -425,17 +421,17 @@ class TestStoredMap:
         alone = place({v2: parsed[v2]}, _window([2586, 2587], used=[2586], series=series))
         assert alone.assigned == {v2: [2587]}
 
-        result = place_across_windows({v1: [2586]}, _batch(parsed), (_window([2586, 2587], series=series),))
+        result = place_across_windows(batch(parsed, seeded={v1: [2586]}), (_window([2586, 2587], series=series),))
 
         assert by_name(result.merged) == {v2: ((), PlacementVerdict.SKIPPED)}
 
     def test_a_mapped_id_is_used_under_a_scoped_window_only_inside_its_ids(self) -> None:
         # One slot, one blind file: the slot is gone when the map holds it, open when the map's id is
         # another window's.
-        batch = _batch(blind(["a.mkv", "b.mkv"]))
+        parsed = blind(["a.mkv", "b.mkv"])
 
-        inside = place_across_windows({"a.mkv": [601]}, batch, (_window([601]),))
-        outside = place_across_windows({"a.mkv": [999]}, batch, (_window([601]),))
+        inside = place_across_windows(batch(parsed, seeded={"a.mkv": [601]}), (_window([601]),))
+        outside = place_across_windows(batch(parsed, seeded={"a.mkv": [999]}), (_window([601]),))
 
         assert by_name(inside.merged) == {"b.mkv": ((), PlacementVerdict.SKIPPED)}
         assert outside.merged.assigned == {"b.mkv": [601]}
@@ -446,7 +442,7 @@ class TestStoredMap:
         keyed = {"b.mkv": parsed_info(season=1, episodes=(1,))}
 
         free = _place_across(keyed, (_window([]),))
-        used = place_across_windows({"a.mkv": [601]}, _batch({**blind(["a.mkv"]), **keyed}), (_window([]),))
+        used = place_across_windows(batch({**blind(["a.mkv"]), **keyed}, seeded={"a.mkv": [601]}), (_window([]),))
 
         assert free.merged.assigned == {"b.mkv": [601]}
         assert by_name(used.merged) == {"b.mkv": ((), PlacementVerdict.SKIPPED)}
@@ -461,8 +457,8 @@ class TestStoredMap:
         }
         windows = (_window(_FIRST_COUR), _window([201, 202, 203], series=_OTHER_SERIES))
 
-        held = place_across_windows({"s.mkv": [601]}, _batch(parsed), windows)
-        free = place_across_windows({"s.mkv": [602]}, _batch(parsed), windows)
+        held = place_across_windows(batch(parsed, seeded={"s.mkv": [601]}), windows)
+        free = place_across_windows(batch(parsed, seeded={"s.mkv": [602]}), windows)
 
         assert held.merged.assigned == {"b.mkv": [201]}
         assert by_name(held.merged)["a.mkv"] == ((), PlacementVerdict.SKIPPED)
@@ -474,7 +470,7 @@ class TestStoredMap:
         seeded = {"Show.S00E01.mkv": [502], "Show.S00E02.mkv": [504]}
         stored, own = _listed_windows(_ALIASED, [502, 504], [506])
 
-        result = place_across_windows(seeded, _batch(specials_pack(1, 2, 3)), (stored, own))
+        result = place_across_windows(batch(specials_pack(1, 2, 3), seeded=seeded), (stored, own))
 
         assert result.merged.assigned == {"Show.S00E03.mkv": [506]}
         assert by_name(result.merged)["Show.S00E03.mkv"][1] is PlacementVerdict.ALTERNATE
@@ -485,7 +481,7 @@ class TestStoredMap:
         seeded = {"Show.S00E02.mkv": [502]}
         stored, own = _listed_windows(_ALIASED, [502, 504], [506])
 
-        result = place_across_windows(seeded, _batch(specials_pack(1, 2, 3)), (stored, own))
+        result = place_across_windows(batch(specials_pack(1, 2, 3), seeded=seeded), (stored, own))
 
         assert result.merged.assigned == {}
         assert PlacementVerdict.ALTERNATE not in verdicts_of(result.merged)

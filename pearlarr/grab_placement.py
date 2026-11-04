@@ -274,8 +274,8 @@ def place_release(files: Sequence[SeedFile], scope: SeedScope, torrent: KnownTor
     when its titles refute its numbers and nothing of it lands on the entry.
     """
 
-    batch = seed_batch(files)
     seeded: dict[str, list[int]] = {} if torrent.record is None else torrent.record.seeded_map()
+    batch = replace(seed_batch(files), seeded=seeded)
     sizes = _sizes_by_name(files)
     own = scope.target(torrent.listing_evidence(sizes))
     identities_unread = torrent.evidence.identities is None
@@ -283,7 +283,7 @@ def place_release(files: Sequence[SeedFile], scope: SeedScope, torrent: KnownTor
     # An unknown parse only holds the url when a specials listing is checking the pack (`specials_listing`).
     parse_unread = own.specials_listing() is not None and not batch.all_parses_known
     if scope.can_place and windows is not None:
-        placed = place_across_windows(seeded, batch, windows)
+        placed = place_across_windows(batch, windows)
         own_index = torrent.own_index(scope.al_id)
         assignment = placed.merged
         misnumbered, refuted = placed.misnumbered_under(own_index), placed.refuted_under(own_index)
