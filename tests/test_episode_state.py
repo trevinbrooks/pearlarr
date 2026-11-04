@@ -291,7 +291,7 @@ class TestRecordSnapshot:
         )
         snapshot = RecordSnapshot(pending, {7: series}, {})
 
-        assert snapshot.statuses([1, 2], pending.file_episode_map).by_id == {
+        assert snapshot.map_statuses([1, 2], pending.file_episode_map).by_id == {
             1: EpisodeFileStatus.MISPLACED,
             2: EpisodeFileStatus.RECOMMENDED,
         }
@@ -305,7 +305,7 @@ class TestRecordSnapshot:
         series = episode_snapshot(episodes=episode_index(episodes), own=OwnGroup("SubGroup", (100, 200)))
         snapshot = RecordSnapshot(pending_import(), {7: series}, {})
 
-        assert snapshot.statuses([1, 2, 3], {}).holding_own_copy == {1}
+        assert snapshot.map_statuses([1, 2, 3], {}).holding_own_copy == {1}
 
     def test_indexes_are_each_series_episode_index(self) -> None:
         snapshot = self._snapshot()
@@ -316,7 +316,7 @@ class TestRecordSnapshot:
     def test_statuses_route_each_target_to_its_series(self) -> None:
         # Each id classifies under the series whose index holds it (the same group is trusted on one
         # and not the other), target order is kept, and an id no index holds is absent.
-        statuses = self._snapshot().statuses([2, 3, 1, 2], {})
+        statuses = self._snapshot().map_statuses([2, 3, 1, 2], {})
 
         assert list(statuses.by_id.items()) == [
             (2, EpisodeFileStatus.OTHER_GROUP),
@@ -336,12 +336,12 @@ class TestRecordSnapshot:
         assert snapshot.snapshot_for(1) is snapshot.by_claim[1]
         assert snapshot.snapshot_for(2) is snapshot.by_series[8]
         assert snapshot.snapshot_for(3) is None
-        assert snapshot.statuses([1, 2], {}).by_id == {
+        assert snapshot.map_statuses([1, 2], {}).by_id == {
             1: EpisodeFileStatus.OTHER_GROUP,
             2: EpisodeFileStatus.OTHER_GROUP,
         }
         # Without a per-claim snapshot the holding claim's id falls back to the series' view.
-        assert self._snapshot().statuses([1], {}).by_id == {1: EpisodeFileStatus.RECOMMENDED}
+        assert self._snapshot().map_statuses([1], {}).by_id == {1: EpisodeFileStatus.RECOMMENDED}
 
     def test_route_names_the_first_scoped_claim_holding_the_id(self) -> None:
         # Two windows hold id 2: the earlier claim judges it, as the placer's first window decides, so the
@@ -375,7 +375,7 @@ class TestRecordSnapshot:
         snapshot = RecordSnapshot(pending_import(claims=(first, second)), {7: _series(1, 2, 3, group="G")}, by_claim)
 
         assert snapshot.snapshot_for(2) is by_claim[1]
-        assert snapshot.statuses([2, 3], {}).by_id == {
+        assert snapshot.map_statuses([2, 3], {}).by_id == {
             2: EpisodeFileStatus.OTHER_GROUP,
             3: EpisodeFileStatus.RECOMMENDED,
         }

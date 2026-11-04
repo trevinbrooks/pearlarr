@@ -318,8 +318,8 @@ class RecordSnapshot:
         snapshot = self.snapshot_for(ep_id)
         return _NO_FILE if snapshot is None else snapshot.judge(ep_id, intended_size)
 
-    def statuses(self, target_ep_ids: Sequence[int], file_map: FileEpisodeMap) -> TargetStatuses:
-        """Judge each de-duplicated target as `judge` does, against the size `file_map` intends on it."""
+    def map_statuses(self, target_ep_ids: Sequence[int], file_map: FileEpisodeMap) -> TargetStatuses:
+        """Judge each de-duplicated target as `judge` does, against the listed size of the file `file_map` puts on it."""
 
         return TargetStatuses.judged(target_ep_ids, sizes_by_episode(file_map, self.pending.sizes_by_name), self.judge)
 

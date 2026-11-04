@@ -2068,7 +2068,7 @@ class TestRecordSnapshot:
     def test_statuses_classify_under_each_series_in_the_asked_order(self) -> None:
         # The grouping by series never reorders the answer, a repeat collapses, and an id no index
         # holds reads ABSENT rather than raising.
-        statuses = self._snapshot().statuses([201, 999, 101, 201], {})
+        statuses = self._snapshot().map_statuses([201, 999, 101, 201], {})
 
         assert list(statuses.by_id) == [201, 999, 101]
         assert statuses.by_id == {

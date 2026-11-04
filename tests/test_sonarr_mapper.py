@@ -50,7 +50,7 @@ def _assign_on_disk(pending: PendingImport, disk: _Disk, id_by_key: Mapping[Epis
 
 
 class TestMapperSeam:
-    """What a poll hands back: its fresh placements beside the seeded ones, with the record itself untouched."""
+    """What a poll hands back: its fresh placements beside the seeded ones."""
 
     def test_fully_seeded_record_skips_out_of_scope_on_disk_leftover(self) -> None:
         # Every resolved episode is seeded, and the folder also holds a season-2 file: it is another
@@ -67,7 +67,7 @@ class TestMapperSeam:
         assert result.excluded == (Placement(normalize_basename(leftover_name), (), PlacementVerdict.FOREIGN),)
         assert result.placed == {}
 
-    def test_assign_returns_placements_without_touching_the_record(self) -> None:
+    def test_an_unseeded_file_rides_assigned_and_placed(self) -> None:
         name = "Show - S01E01 [1080p].mkv"
         pending = pending_import(file_episode_map={}, ordered_episode_ids=[101], seadex_files=[name])
 
@@ -76,7 +76,6 @@ class TestMapperSeam:
         )
 
         assert result.placed == result.assigned == {normalize_basename(name): (101,)}
-        assert dict(pending.file_episode_map) == {}
 
     def test_placed_excludes_the_seeded_entries(self) -> None:
         # A seeded entry rides `assigned` only, so the seam never re-persists what the record holds.

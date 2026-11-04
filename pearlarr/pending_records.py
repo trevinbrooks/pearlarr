@@ -127,11 +127,11 @@ class PendingRecords:
     def absorb_probe(self, record: PendingImport, probe: ImportProbe) -> PendingImport:
         """Persist a poll's import-time placements and exclusions onto the record and return the healed copy.
 
-        Writes only when the healed record differs from the stored one.
+        Writes only when the poll added something: the record hands itself back on a no-op.
         """
 
         healed = record.with_placements(probe.placements).with_exclusions(probe.exclusions)
-        if healed == record:
+        if healed is record:
             return record
         self.save(healed)
         return healed
