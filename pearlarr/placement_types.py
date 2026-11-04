@@ -276,14 +276,12 @@ NO_SEEDED: FileEpisodeMap = MappingProxyType({})
 class PlacementBatch:
     """A torrent's files to place, with the parses of the WHOLE torrent and its stored map.
 
-    `parsed` may cover MORE files than `to_place`: seeded and gone files count as evidence (readings,
-    titles, the shared-absolute check) but are never placed. A name the map holds is never placed either, in
-    `to_place` or not.
+    `parsed` may cover MORE files than `to_place`. Those files, and the names `seeded` holds, in `to_place` or not,
+    count as evidence (readings, titles, the shared-absolute check) but are never placed.
     """
 
     to_place: Sequence[str]
-    """Normalized basenames in SeaDex order (the order only fixes deterministic output), held as a tuple. A name the
-    map holds counts as evidence only."""
+    """Normalized basenames in SeaDex order (the order only fixes deterministic output), held as a tuple."""
 
     parsed: Mapping[str, ParsedFileInfo | None]
     """Series-agnostic parse per file (None when Sonarr's parse was unavailable
@@ -307,7 +305,7 @@ class PlacementBatch:
 
     @property
     def torrent_names(self) -> tuple[str, ...]:
-        """Every distinct name of the torrent: the names to place, then the rest of `parsed` (seeded, gone).
+        """The distinct names the placer reads: the names to place, then the rest of `parsed` (seeded, gone).
 
         A mapped name with no parse entry is left out.
         """
@@ -390,10 +388,10 @@ nothing."""
 class TargetScope:
     """The episode set a placement batch may assign into.
 
-    `resolved` is the FULL id list and `used` the ids an earlier window's files decided. The placer adds the stored
-    map's ids the scope admits (`Placer.scope`). They stay separate so a fully seeded record still enforces its scope,
-    while an EMPTY `resolved` means no scope at all (`unscoped`): the exact pass then places a name's own keys against
-    the whole series map instead of placing nothing forever.
+    `resolved` is the FULL id list and `used` the ids already held: an earlier window's, plus the stored map's the
+    placer adds (`Placer.scope`). The two stay separate so a fully seeded record still enforces its scope, while an
+    EMPTY `resolved` means no scope at all (`unscoped`): the exact pass then places a name's own keys against the
+    whole series map instead of placing nothing forever.
     """
 
     resolved: Sequence[int]
@@ -407,7 +405,7 @@ class TargetScope:
     run evidence reads."""
 
     used: frozenset[int] = frozenset()
-    """Ids an earlier window's files decided. The placer adds the stored map's. Never placed again."""
+    """Ids already held, by an earlier window or the stored map. Never placed again."""
 
     names: EntryNames = field(default_factory=EntryNames)
     """The series and AniList titles. Episode titles and extras words are read against them, and they break

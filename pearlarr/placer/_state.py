@@ -244,7 +244,7 @@ class Placer:
     def start(cls, batch: PlacementBatch, scope: TargetScope) -> Self:
         """Read every name and every parse of the torrent once, after widening each range key Sonarr read short.
 
-        The stored map's ids that `scope` admits count as used from the start, on `Placer.scope` itself.
+        The stored map's ids that `scope` admits count as used from the start.
         """
 
         seeded = {name: tuple(ids) for name, ids in batch.seeded.items()}

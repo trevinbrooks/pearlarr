@@ -402,7 +402,7 @@ class TestWindowsOf:
 
 
 class TestStoredMap:
-    """A stored map: its names stay put, its ids are used, and the whole batch's parses ride along."""
+    """A stored map: its names stay put and its ids are used under every window."""
 
     def test_the_mapped_names_are_not_re_placed(self) -> None:
         run = numbered_names("show", 3)
@@ -412,29 +412,11 @@ class TestStoredMap:
         assert [p.name for p in result.merged.placements] == run[1:]
         assert result.merged.assigned == {run[1]: [602], run[2]: [603]}
 
-    def test_the_parse_overlay_keeps_the_whole_batchs_parses(self) -> None:
-        # The mapped sharer's parse still feeds the shared-absolute tell: over the leftover alone, the
-        # v2 would take the spare id.
-        v1, v2 = "e - 12.mkv", "e - 12v2.mkv"
-        parsed = {v1: parsed_info(absolutes=(12,)), v2: parsed_info(absolutes=(12,))}
-        series = series_index({EpisodeKey(1, 12): 2586, EpisodeKey(1, 13): 2587})
-        alone = place({v2: parsed[v2]}, _window([2586, 2587], used=[2586], series=series))
-        assert alone.assigned == {v2: [2587]}
+    def test_a_mapped_id_takes_its_slot(self) -> None:
+        # One slot, one blind file: the slot is gone when the map holds it.
+        result = place_across_windows(batch(blind(["a.mkv", "b.mkv"]), seeded={"a.mkv": [601]}), (_window([601]),))
 
-        result = place_across_windows(batch(parsed, seeded={v1: [2586]}), (_window([2586, 2587], series=series),))
-
-        assert by_name(result.merged) == {v2: ((), PlacementVerdict.SKIPPED)}
-
-    def test_a_mapped_id_is_used_under_a_scoped_window_only_inside_its_ids(self) -> None:
-        # One slot, one blind file: the slot is gone when the map holds it, open when the map's id is
-        # another window's.
-        parsed = blind(["a.mkv", "b.mkv"])
-
-        inside = place_across_windows(batch(parsed, seeded={"a.mkv": [601]}), (_window([601]),))
-        outside = place_across_windows(batch(parsed, seeded={"a.mkv": [999]}), (_window([601]),))
-
-        assert by_name(inside.merged) == {"b.mkv": ((), PlacementVerdict.SKIPPED)}
-        assert outside.merged.assigned == {"b.mkv": [601]}
+        assert by_name(result.merged) == {"b.mkv": ((), PlacementVerdict.SKIPPED)}
 
     def test_every_mapped_id_is_used_under_an_unscoped_window(self) -> None:
         # The unscoped window resolves any key against the whole series, so an id mapped anywhere is

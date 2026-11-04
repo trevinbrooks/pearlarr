@@ -2279,8 +2279,8 @@ class TestAssignReleaseRun:
         assert {p.verdict for p in result.placements} == {PlacementVerdict.RELEASE_RUN}
 
     def test_a_name_the_parses_never_covered_holds_like_a_miss(self) -> None:
-        # The fail-closed guard, not a batch a caller builds: a name to place with no parse entry is as unknown as
-        # a None.
+        # No caller builds this (both parse every name they place), but a name to place with no parse entry still
+        # counts as unknown, like a None.
         parsed = blind(self._RUN[:2])
 
         result = place(parsed, self._scope(), self._RUN)
@@ -2853,6 +2853,15 @@ class TestRefuseMisnumbered:
         )
 
         assert PlacementVerdict.MISNUMBERED not in verdicts_of(result)
+
+    def test_a_seed_on_another_windows_special_leaves_the_pack_refused(self) -> None:
+        # The stored record mapped a file onto a special outside this window, so this window holds nothing yet and
+        # the pack is still refused.
+        result = place(
+            specials_pack(1, 2, 3), _specials_scope([504], _THREE_LISTING), seeded={"Show.S00E02.mkv": (502,)}
+        )
+
+        assert verdicts_of(result) == {PlacementVerdict.MISNUMBERED}
 
     def test_a_title_refuting_the_numbering_keeps_the_listing_out(self) -> None:
         # The first file is titled as special 2, which the second reads by number.

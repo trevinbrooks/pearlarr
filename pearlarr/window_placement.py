@@ -28,7 +28,7 @@ class WindowedAssignment(NamedTuple):
     """A torrent placed under its windows: the merged verdicts, and each window's own."""
 
     merged: EpisodeAssignment
-    """One verdict per file the stored map doesn't cover, in batch order."""
+    """One verdict per name in `PlacementBatch.names`, batch order."""
     windows: tuple[EpisodeAssignment, ...]
     """What the placer returned under each window, in window order."""
 
@@ -122,9 +122,8 @@ def windows_of(
 def place_across_windows(batch: PlacementBatch, windows: Sequence[TargetScope]) -> WindowedAssignment:
     """The batch placed under each window in turn, verdicts merged.
 
-    Files the batch's stored map covers aren't placed again, but the map and their parses still count as evidence.
-    Under each window, the mapped ids and the ids of files earlier windows decided are used, where the window admits
-    them. With no windows, every file is skipped.
+    Under each window, the ids of files earlier windows decided are used, where the window admits them. With no
+    windows, every file is skipped.
     """
 
     names = batch.names

@@ -1235,7 +1235,7 @@ def batch(
     *,
     seeded: FileEpisodeMap = NO_SEEDED,
 ) -> PlacementBatch:
-    """The batch placing `to_place` (every parsed name when None) over the whole torrent's parses and `seeded`."""
+    """A batch over the whole torrent's parses: `to_place` (every parsed name when None) and the stored map `seeded`."""
 
     return PlacementBatch(list(parsed) if to_place is None else to_place, parsed, seeded)
 
@@ -1247,7 +1247,7 @@ def place(
     *,
     seeded: FileEpisodeMap = NO_SEEDED,
 ) -> EpisodeAssignment:
-    """Place `to_place` (every parsed name when None) under `scope`, over the whole batch's parses and `seeded`."""
+    """`assign_episode_ids` under `scope` over `batch(parsed, to_place, seeded=seeded)`."""
 
     return assign_episode_ids(batch(parsed, to_place, seeded=seeded), scope)
 
