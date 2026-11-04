@@ -181,6 +181,8 @@ class TestPlacementBatchCopies:
         )
         with pytest.raises(TypeError):
             cast("MutableMapping[str, tuple[int, ...]]", batch.seeded)["c.mkv"] = (12,)
+        with pytest.raises(TypeError):
+            cast("MutableMapping[str, ParsedFileInfo | None]", batch.parsed)["c.mkv"] = None
 
 
 class TestTargetScope:

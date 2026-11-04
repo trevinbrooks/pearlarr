@@ -2465,6 +2465,20 @@ class TestAssignReleaseRun:
 
         assert result.assigned == {}
 
+    def test_a_stored_map_owning_part_of_the_scope_keeps_a_run_from_anywhere_out(self) -> None:
+        # The same three slots left over, held by the stored map instead of an earlier window: without the guard
+        # the specials would take 604-606 as a release run.
+        run = [f"sp - {n} [grp].mkv" for n in (14, 15, 16)]
+        mapped = {
+            f"show - {n:02d} [grp].mkv": parsed_info(season=1, episodes=(n,), matched=((1, n),)) for n in (1, 2, 3)
+        }
+        parsed = _zip_blocked({**mapped, **blind(run)})
+        scope = TargetScope([601, 602, 603, 604, 605, 606], series_index(self._SEASONED))
+
+        result = place(parsed, scope, run, seeded={name: (600 + n,) for n, name in enumerate(mapped, 1)})
+
+        assert result.assigned == {}
+
 
 class TestAssignAbsoluteWindow:
     """The release-run pass over a window spanning seasons: the absolute numbering orders it when every slot has one."""
