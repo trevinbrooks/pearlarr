@@ -5,7 +5,8 @@
 
 from collections import Counter
 from collections.abc import Collection, Mapping
-from typing import NamedTuple, Self
+from dataclasses import dataclass, replace
+from typing import Self
 
 from ..episode_titles import EpisodeTitles, TitleLead
 from ..parse_reading import Reading
@@ -13,7 +14,8 @@ from ..placement_types import PlacementBatch, TargetScope
 from ..release_names import NameRead, TitleGround, is_extras_name, read_names, whole_words
 
 
-class NameTitle(NamedTuple):
+@dataclass(frozen=True, slots=True)
+class NameTitle:
     """One name read on its own and against the episode titles."""
 
     read: NameRead
@@ -45,11 +47,12 @@ def _title_lead(episodes: EpisodeTitles, read: NameRead, resolved: Collection[in
             if lead.titled is None:
                 return TitleLead(equal, lead.leaders, whole)
             if lead.titled.ep_id != equal.ep_id:
-                return lead._replace(titled=None)
+                return replace(lead, titled=None)
     return lead
 
 
-class TorrentNames(NamedTuple):
+@dataclass(frozen=True, slots=True)
+class TorrentNames:
     """Every file name of the torrent, read once: stem, run membership, episode title, and whether it is an extra."""
 
     by_name: Mapping[str, NameTitle]

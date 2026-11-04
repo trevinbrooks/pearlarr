@@ -6,8 +6,9 @@ Reading a torrent's names against them belongs in `placer._names`, and reading a
 
 import re
 from collections.abc import Collection, Iterable, Mapping
+from dataclasses import dataclass
 from types import MappingProxyType
-from typing import NamedTuple, Self
+from typing import Self
 
 from .release_names import NameRead, folded_words, is_quality_word, written_keys
 from .seadex_types import EpisodeKey, SonarrEpisode
@@ -51,7 +52,8 @@ def _ends_title(words: tuple[str, ...], count: int) -> bool:
     return len(words) == count or (len(words) > count and is_quality_word(words[count]))
 
 
-class TitledEpisode(NamedTuple):
+@dataclass(frozen=True, slots=True, kw_only=True)
+class TitledEpisode:
     """One series episode's title, in one of its forms."""
 
     ep_id: int
@@ -69,7 +71,8 @@ class TitledEpisode(NamedTuple):
     """The episode whose season and number `beyond` is, when it is those two numbers alone ("1.2" is S01E02)."""
 
 
-class _TitleForm(NamedTuple):
+@dataclass(frozen=True, slots=True)
+class _TitleForm:
     """One form of an episode title: the whole title, or a part a colon or a dash sets off."""
 
     text: str
@@ -85,7 +88,7 @@ _WRAPPED = re.compile(r"(?:^|(?<=\s))-([^\s-](?:[^-]*[^\s-])?)-(?=\s|$)")
 def _parts(*texts: str) -> tuple[_TitleForm, ...]:
     """The texts with words, as title parts; none when fewer than two have words."""
 
-    parts = tuple(_TitleForm(text, True) for text in texts if text.strip())
+    parts = tuple(_TitleForm(text, part=True) for text in texts if text.strip())
     return parts if len(parts) > 1 else ()
 
 
@@ -96,7 +99,7 @@ def _title_forms(title: str) -> tuple[_TitleForm, ...]:
     """
 
     head, _colon, subtitle = title.rpartition(":")
-    forms = [_TitleForm(title, False), *_parts(head, subtitle)]
+    forms = [_TitleForm(title, part=False), *_parts(head, subtitle)]
     if dashes := list(_SPACED_DASH.finditer(title)):
         forms += _parts(title[: dashes[-1].start()], title[dashes[-1].end() :])
     if wrapped := _WRAPPED.search(title):
@@ -129,7 +132,8 @@ def _grouped[K](pairs: Iterable[tuple[K, TitledEpisode]]) -> Mapping[K, tuple[Ti
     return MappingProxyType({key: tuple(eps) for key, eps in groups.items()})
 
 
-class TitleLead(NamedTuple):
+@dataclass(frozen=True, slots=True)
+class TitleLead:
     """What the episode titles say about a name's words: a run member's tail, else the whole name."""
 
     titled: TitledEpisode | None
@@ -141,7 +145,8 @@ class TitleLead(NamedTuple):
     """The words read. Two files carrying the same words are titled as nothing."""
 
 
-class EpisodeTitles(NamedTuple):
+@dataclass(frozen=True, slots=True)
+class EpisodeTitles:
     """The series' episode titles as words: specific titles can place a file, and every title is run evidence."""
 
     series_words: frozenset[str]
@@ -170,16 +175,23 @@ class EpisodeTitles(NamedTuple):
                 distinct = is_distinct_title(beyond)
                 # A title part too short to place a file ("Chapter 4: Home") is not run evidence either.
                 if words and (distinct or not form.part):
-                    alone = names_alone(beyond)
                     titled.append(
-                        TitledEpisode(ep_id, words, beyond, distinct, alone, form.part, _spelled(id_by_key, beyond))
+                        TitledEpisode(
+                            ep_id=ep_id,
+                            words=words,
+                            beyond=beyond,
+                            distinct=distinct,
+                            alone=names_alone(beyond),
+                            part=form.part,
+                            spelled_id=_spelled(id_by_key, beyond),
+                        )
                     )
         return cls(
-            series_words,
-            _grouped((ep.words[:1], ep) for ep in titled),
-            _grouped((ep.beyond, ep) for ep in titled if ep.alone),
-            tuple(titled),
-            id_by_key,
+            series_words=series_words,
+            by_first=_grouped((ep.words[:1], ep) for ep in titled),
+            alone_by_beyond=_grouped((ep.beyond, ep) for ep in titled if ep.alone),
+            forms=tuple(titled),
+            id_by_key=id_by_key,
         )
 
     def leading(self, words: tuple[str, ...]) -> TitleLead:

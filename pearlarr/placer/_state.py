@@ -6,7 +6,7 @@ helper of one pass sits with that pass.
 """
 
 from collections.abc import Iterable, Mapping, Sequence
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from typing import Self
 
 from ._names import TorrentNames
@@ -125,7 +125,7 @@ class TorrentFile:
     def veto(self) -> None:
         """Reject the reading: it still counts as evidence, but no pass places the file by it."""
 
-        self.reading = self.reading._replace(vetoed=True)
+        self.reading = replace(self.reading, vetoed=True)
 
 
 @dataclass(frozen=True, slots=True)

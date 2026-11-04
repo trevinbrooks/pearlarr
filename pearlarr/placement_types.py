@@ -5,7 +5,7 @@ from collections.abc import Iterable, Mapping, Sequence
 from dataclasses import dataclass, field, replace
 from enum import StrEnum
 from types import MappingProxyType
-from typing import NamedTuple, Self
+from typing import Self
 
 from .episode_titles import EpisodeTitles
 from .manual_import import NO_IDENTIFIED, EntryNames, FileEpisodeMap, IdentifiedNames
@@ -220,7 +220,8 @@ _HAND_IMPORT = frozenset({PlacementVerdict.MISNUMBERED, PlacementVerdict.TITLE_R
 _REFUSED = frozenset({PlacementVerdict.HELD, PlacementVerdict.MISNUMBERED})
 
 
-class Placement(NamedTuple):
+@dataclass(frozen=True, slots=True)
+class Placement:
     """One file's verdict, with its episode ids when placed."""
 
     name: str
@@ -231,7 +232,8 @@ class Placement(NamedTuple):
     """How the file left the passes."""
 
 
-class EpisodeAssignment(NamedTuple):
+@dataclass(frozen=True, slots=True)
+class EpisodeAssignment:
     """The outcome of assigning a torrent's on-disk files to resolved episode ids, one verdict per file."""
 
     placements: tuple[Placement, ...]
