@@ -6,7 +6,7 @@ helper of one pass sits with that pass.
 """
 
 from collections.abc import Iterable, Mapping, Sequence
-from dataclasses import dataclass, field, replace
+from dataclasses import dataclass, field
 from typing import Self
 
 from ._names import TorrentNames
@@ -255,16 +255,15 @@ class Placer:
             for name, info in batch.parsed.items()
         }
         # The readings and every pass see the widened parses.
-        batch = replace(batch, parsed=widened)
-        readings = {name: read_parse(batch.parsed.get(name), scope) for name in batch.torrent_names}
+        readings = {name: read_parse(widened.get(name), scope) for name in batch.torrent_names}
         torrent = TorrentNames.of(batch, scope, readings)
         names_to_place = frozenset(batch.names)
         by_name = {
             name: TorrentFile(
                 name=name,
                 to_place=name in names_to_place,
-                in_parse_map=name in batch.parsed,
-                parsed=batch.parsed.get(name),
+                in_parse_map=name in widened,
+                parsed=widened.get(name),
                 name_read=title.read,
                 titled_as=title.titled_as,
                 leaders=title.leaders,
