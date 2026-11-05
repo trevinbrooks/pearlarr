@@ -47,8 +47,8 @@ class HoldRow:
     """The needs-action row's reason text."""
 
 
-# Ordered by row precedence within each class of hold: `_classify_needs_action` walks the hand-import holds, then
-# the holds that clear on their own, in this order.
+# The order is the precedence `_classify_needs_action` reports holds in: the first hand-import hold found here
+# wins, and a hold that clears on its own is reported only when no hand-import hold and no failed grab is.
 _HOLD_ROWS: Mapping[GrabHold, HoldRow] = MappingProxyType(
     {
         GrabHold.MISNUMBERED: HoldRow(
