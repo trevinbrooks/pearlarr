@@ -759,6 +759,20 @@ class TorrentListing:
         object.__setattr__(self, "special_aliases", MappingProxyType(dict(self.special_aliases)))
         object.__setattr__(self, "ids", frozenset(ep_id for window in entries for ep_id in window.ordered_episode_ids))
 
+    def reading(self, listing: "TorrentListing") -> "TorrentListing":
+        """This listing with `listing`, one series' read, read into it.
+
+        A listing is read per series, so `listing`'s windows replace the stored ones of the series it covers and
+        another series' stay. The aliases join, the new read winning a number both pair. An empty read (an unlisted
+        hash, an unread listing) changes nothing.
+        """
+
+        if not listing.entries:
+            return self
+        read = {window.series_id for window in listing.entries}
+        kept = tuple(window for window in self.entries if window.series_id not in read)
+        return TorrentListing((*listing.entries, *kept), {**self.special_aliases, **listing.special_aliases})
+
     def to_json(self) -> dict[str, Any]:
         """The plain dict persisted inside a record.
 
@@ -962,11 +976,11 @@ class PendingImport:
 
     listing: TorrentListing = EMPTY_LISTING
     """The torrent's SeaDex listing: the window of every entry that lists it, each series' windows as the latest
-    grab on that series read them (`with_listing`), and their special aliases. The import places its leftovers under these windows and the
-    claims'. Every window's series is a claimed series, since a listing is read per series and stored in the same
-    `PendingSeed.record_at` as a claim on that series. `EMPTY_LISTING` when the record holds none, which a reader
-    treats the same whatever the cause (a row written before the field existed, a url no entry lists): the claims'
-    windows run alone."""
+    grab on that series read them (`with_listing`), and their special aliases. The import places its leftovers
+    under these windows and the claims', the windows the grab placed under. Every window's series is a claimed
+    series, since a listing is read per series and stored in the same `PendingSeed.record_at` as a claim on that
+    series. `EMPTY_LISTING` when the record holds none, which a reader treats the same whatever the cause (a row
+    written before the field existed, a url no entry lists): the claims' windows run alone."""
 
     def __post_init__(self) -> None:
         # Fold the map, the exclusions and the two by-name maps so readers can take the names as normalized, the
@@ -1079,20 +1093,13 @@ class PendingImport:
         return self._or_self(replace(self, sizes_by_name=self.sizes_by_name or sizes))
 
     def with_listing(self, listing: TorrentListing) -> "PendingImport":
-        """The record with `listing` read into its own, else itself when `listing` has no entries.
+        """The record with `listing` read into its own (`TorrentListing.reading`), itself when the read is empty.
 
-        A listing is read per series, so `listing`'s windows replace the stored ones of the series it covers, and
-        another series' stay: SeaDex can list the torrent under another title later, and the newest grab placed its
-        files under the newest read. The aliases join, the new read winning a number both pair. An empty read (an
-        unlisted hash, an unread listing) keeps the stored one.
+        A read goes into the stored listing where `with_sizes_by_name` only fills: SeaDex can list the torrent under
+        another title later, and the newest grab placed its files under the newest read.
         """
 
-        if not listing.entries:
-            return self
-        read = {window.series_id for window in listing.entries}
-        kept = tuple(window for window in self.listing.entries if window.series_id not in read)
-        aliases = {**self.listing.special_aliases, **listing.special_aliases}
-        return self._or_self(replace(self, listing=TorrentListing((*listing.entries, *kept), aliases)))
+        return self._or_self(replace(self, listing=self.listing.reading(listing)))
 
     def with_identified(self, names: IdentifiedNames) -> "PendingImport":
         """The record with `names` merged in, dropping any name the two map to different episodes."""

@@ -149,16 +149,17 @@ class KnownTorrent:
     def order(self, own: EntryWindow) -> WindowOrder | None:
         """The windows the torrent is placed under, None when the listing or a window's series is unread.
 
-        Every listed entry's window, every stored claim's, and `own`, the grabbing entry's, in `ordered_windows`'
-        order. Once `own` is stored as a claim and the listing on the record, the import poll runs the same windows,
-        unless this read listed nothing or the record holds another series' listing.
+        Every window of this read and of the record's stored listing (read into each other as `record_at` stores
+        them), every stored claim's, and `own`, the grabbing entry's, in `ordered_windows`' order. The import poll
+        runs the same windows once `own` is stored as a claim and the listing on the record.
         """
 
         listing = self.evidence.listing
         if listing is None:
             return None
-        claims = () if self.record is None else self.record.claims
-        return ordered_windows(listing, claims, own, self.indexes)
+        if self.record is None:
+            return ordered_windows(listing, (), own, self.indexes)
+        return ordered_windows(self.record.listing.reading(listing), self.record.claims, own, self.indexes)
 
 
 type KnownTorrents = Mapping[str, KnownTorrent]

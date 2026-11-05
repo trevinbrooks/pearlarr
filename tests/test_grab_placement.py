@@ -1004,6 +1004,23 @@ class TestKnownTorrent:
         assert [w.al_id for w in order.windows] == [1, 2]
         assert (order.at(1), order.imports) == (0, {0})
 
+    def test_a_stored_listings_window_of_another_series_runs_at_the_grab(self) -> None:
+        # The record was last placed from series 8, whose read listed entry 3 beside entry 2's claim. This read of
+        # series 7 lists nothing, so entry 3's stored window runs here as it does at the import.
+        record = two_claim_record(
+            series_ids=(7, 8),
+            windows=((101, 102), (902, 903)),
+            listing=torrent_listing(entry_window(3, (901,), series_id=8)),
+        )
+        other = episode_index([sonarr_ep(0, n, ep_id=900 + n, episode_file_id=0) for n in (1, 2, 3)])
+        torrent = known_torrent(record, indexes={**_INDEXES, 8: other}, evidence=torrent_evidence())
+
+        order = torrent.order(_scope(_SEASON).window)
+
+        assert order is not None
+        assert [(w.al_id, w.series_id) for w in order.windows] == [(1, 7), (2, 8), (3, 8)]
+        assert order.imports == {0, 1}
+
 
 class TestTorrentReads:
     """What the run read of an entry's torrents, keyed by url."""
