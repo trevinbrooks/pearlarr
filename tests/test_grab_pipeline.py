@@ -26,8 +26,6 @@ from pearlarr.config import Arr
 from pearlarr.discord import DiscordEmbed
 from pearlarr.grab_pipeline import (
     _HOLD_ROWS,
-    _HOLDS_ABOVE_GRAB_FAILED,
-    _HOLDS_BELOW_GRAB_FAILED,
     NO_SEEDS,
     GrabPipeline,
     GrabRequest,
@@ -1278,10 +1276,9 @@ def test_a_title_read_without_its_tvdb_orders_stays_uncached_with_nothing_to_do(
     assert pipeline._ctx.stats.needs_action == []
 
 
-def test_every_hold_has_a_row_and_one_place_in_the_row_precedence() -> None:
-    # A hold missing from the table raises at its skip, and one missing from both tuples never gets a row.
+def test_every_hold_has_a_row() -> None:
+    # A hold missing from the table raises at its skip and never gets a needs-action row.
     assert _HOLD_ROWS.keys() == set(GrabHold)
-    assert sorted(_HOLDS_ABOVE_GRAB_FAILED + _HOLDS_BELOW_GRAB_FAILED) == sorted(GrabHold)
 
 
 class TestPlacementHolds:
@@ -1334,7 +1331,7 @@ class TestPlacementHolds:
         assert pipeline._ctx.per_title.held_groups == {hold: ["RG"]}
         assert [e.reason for e in recording.of_type(ReleaseSkipped)] == [expected.skip]
         (row,) = pipeline._ctx.stats.needs_action
-        assert (row.kind, row.group, row.reason) == (expected.kind, "RG", expected.row)
+        assert (row.kind, row.group, row.reason) == (expected.kind, "RG", expected.reason)
 
     def test_a_held_url_of_a_resident_torrent_never_joins_its_record(self) -> None:
         # Another entry's record holds the torrent.

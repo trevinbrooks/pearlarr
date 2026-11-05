@@ -187,9 +187,10 @@ class PerTitleState:
     grab_failed_groups: list[str] = field(default_factory=list[str])
     """Groups whose release hit a contained grab failure (tracker or client down), so the title stays uncached."""
     held_groups: dict[GrabHold, list[str]] = field(default_factory=dict[GrabHold, list[str]])
-    """Groups with a url the placement held, by hold, never grabbed, so the title stays uncached and re-checks (a
-    hand-import hold re-warns until the import covers it). `GrabHold.INPUT_UNREAD` also lists a group whose
-    placement waited on a failed read though nothing held its url. Written through `add_held`."""
+    """Groups the placement held something of, by hold, so the title stays uncached and re-checks (a hand-import
+    hold re-warns until the import covers it). A held url is never grabbed. `GrabHold.INPUT_UNREAD` also lists a
+    group whose placement waited on a failed read though nothing held its url, and that group's other urls may
+    have been grabbed. Written through `add_held`."""
     orders_unread: bool = False
     """A series the placement read has no stored TVDB orders, so the title stays uncached and re-checks. Nothing
     for the user to do."""

@@ -43,10 +43,12 @@ class HoldRow:
 
     skip: SkipReason
     kind: NeedsActionKind
-    row: str
+    reason: str
     """The needs-action row's reason text."""
 
 
+# Ordered by row precedence within each class of hold: `_classify_needs_action` walks the hand-import holds, then
+# the holds that clear on their own, in this order.
 _HOLD_ROWS: Mapping[GrabHold, HoldRow] = MappingProxyType(
     {
         GrabHold.MISNUMBERED: HoldRow(
@@ -67,11 +69,6 @@ _HOLD_ROWS: Mapping[GrabHold, HoldRow] = MappingProxyType(
         ),
     },
 )
-
-_HOLDS_ABOVE_GRAB_FAILED = (GrabHold.MISNUMBERED, GrabHold.TITLE_REFUTED)
-"""The holds whose row outranks a failed grab's, in order: each needs a hand import, which no retry brings."""
-_HOLDS_BELOW_GRAB_FAILED = (GrabHold.INPUT_UNREAD,)
-"""The holds a failed grab's row outranks, in order: each clears on its own next run."""
 
 
 @dataclass(frozen=True)
@@ -365,8 +362,9 @@ class GrabPipeline:
     def _classify_needs_action(self) -> NeedsActionRecord | None:
         """The single needs-action row for a title NOT cached as done, or None.
 
-        Flat guard-returns keep the precedence private-only > unsupported-tracker > `_HOLDS_ABOVE_GRAB_FAILED` >
-        grab-failed > `_HOLDS_BELOW_GRAB_FAILED`.
+        Flat guard-returns keep the precedence private-only > unsupported-tracker > hand-import holds > grab-failed >
+        the holds that clear on their own, the holds in `_HOLD_ROWS` order. A hand import is what no retry brings, so
+        its row outranks a failed grab's, and a failed grab's outranks a hold the next run clears.
         """
 
         if self._ctx.per_title.private_only_skipped:
@@ -380,7 +378,7 @@ class GrabPipeline:
                 NeedsActionKind.UNSUPPORTED_TRACKER,
             )
 
-        held = self._held_row(_HOLDS_ABOVE_GRAB_FAILED)
+        held = self._held_row(hold for hold in _HOLD_ROWS if hold.hand_import)
         if held is not None:
             return held
 
@@ -393,7 +391,7 @@ class GrabPipeline:
                 NeedsActionKind.GRAB_FAILED,
             )
 
-        return self._held_row(_HOLDS_BELOW_GRAB_FAILED)
+        return self._held_row(hold for hold in _HOLD_ROWS if not hold.hand_import)
 
     def _held_row(self, holds: Iterable[GrabHold]) -> NeedsActionRecord | None:
         """The row of the first of `holds` that held a group of this title, or None."""
@@ -403,7 +401,7 @@ class GrabPipeline:
             groups = held_groups.get(hold)
             if groups:
                 hold_row = _HOLD_ROWS[hold]
-                return self._needs_action(groups, hold_row.row, hold_row.kind)
+                return self._needs_action(groups, hold_row.reason, hold_row.kind)
         return None
 
     def _private_only_reason(self) -> tuple[str, NeedsActionKind]:
@@ -444,9 +442,7 @@ class GrabPipeline:
 
         if not any_to_download:
             # A failed Sonarr read may have held a placement, so "already have it" is not claimed either.
-            if not (
-                self._ctx.per_title.private_only_skipped or GrabHold.INPUT_UNREAD in self._ctx.per_title.held_groups
-            ):
+            if not (self._ctx.per_title.private_only_skipped or req.input_missing_groups):
                 self._ctx.stats.up_to_date += 1
                 self._reporter.detail(
                     "status",
