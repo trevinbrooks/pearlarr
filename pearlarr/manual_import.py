@@ -712,6 +712,27 @@ class EntryWindow:
         ids = tuple(dict.fromkeys(ep.id for ep in ep_list if ep.id))
         return cls(al_id=al_id, series_id=series_id, ordered_episode_ids=ids, names=names)
 
+    def to_json(self) -> dict[str, Any]:
+        """The plain dict persisted inside a record's listing: the schema, spelled out."""
+
+        return {
+            "al_id": self.al_id,
+            "series_id": self.series_id,
+            "ordered_episode_ids": list(self.ordered_episode_ids),
+            "names": self.names.to_json(),
+        }
+
+    @classmethod
+    def from_json(cls, raw: dict[str, Any]) -> "EntryWindow":
+        """Rebuild a window from its persisted dict."""
+
+        return cls(
+            al_id=raw.get("al_id", 0),
+            series_id=raw.get("series_id", 0),
+            ordered_episode_ids=tuple(raw.get("ordered_episode_ids", [])),
+            names=EntryNames.from_json(raw.get("names", {})),
+        )
+
 
 @dataclass(frozen=True, slots=True)
 class TorrentListing:
@@ -737,6 +758,26 @@ class TorrentListing:
         object.__setattr__(self, "entries", entries)
         object.__setattr__(self, "special_aliases", MappingProxyType(dict(self.special_aliases)))
         object.__setattr__(self, "ids", frozenset(ep_id for window in entries for ep_id in window.ordered_episode_ids))
+
+    def to_json(self) -> dict[str, Any]:
+        """The plain dict persisted inside a record.
+
+        The aliases ride as `[tmdb, tvdb]` pairs, since a JSON object's keys would come back as strings.
+        """
+
+        return {
+            "entries": [window.to_json() for window in self.entries],
+            "special_aliases": [[tmdb, tvdb] for tmdb, tvdb in self.special_aliases.items()],
+        }
+
+    @classmethod
+    def from_json(cls, raw: dict[str, Any]) -> "TorrentListing":
+        """Rebuild a listing from its persisted dict (missing keys fall back empty)."""
+
+        return cls(
+            tuple(EntryWindow.from_json(window) for window in raw.get("entries", [])),
+            dict(raw.get("special_aliases", [])),
+        )
 
 
 EMPTY_LISTING = TorrentListing()
@@ -914,6 +955,10 @@ class PendingImport:
     """Files the grab placed by size, name -> episode id, so the import places them the same way without reading
     SeaDex. Folded as the record is built (`_normalized_keys`). Empty on rows written before this field existed."""
 
+    listing: TorrentListing = EMPTY_LISTING
+    """The torrent's SeaDex listing: the window of every entry that lists it, and their special aliases.
+    `EMPTY_LISTING` when the record holds none, as on rows written before this field existed."""
+
     def __post_init__(self) -> None:
         # Fold the map, the exclusions and the two by-name maps so readers can take the names as normalized, the
         # map's ids as non-zero, and no name as both mapped and excluded. Detach the maps and wrap them read-only.
@@ -1060,6 +1105,7 @@ class PendingImport:
             "awaiting_cleanup": self.awaiting_cleanup,
             "sizes_by_name": dict(self.sizes_by_name),
             "identified": dict(self.identified),
+            "listing": self.listing.to_json(),
         }
 
     @classmethod
@@ -1079,6 +1125,7 @@ class PendingImport:
             awaiting_cleanup=is_awaiting_cleanup(raw),
             sizes_by_name=raw.get("sizes_by_name", {}),
             identified=raw.get("identified", {}),
+            listing=TorrentListing.from_json(raw.get("listing", {})),
         )
 
 

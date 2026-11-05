@@ -15,6 +15,7 @@ from typing import cast
 import pytest
 
 from pearlarr.manual_import import (
+    EMPTY_LISTING,
     LEAVE_PROBE,
     NO_IDENTIFIED,
     Deferral,
@@ -26,6 +27,7 @@ from pearlarr.manual_import import (
     OwnedEpisode,
     PendingImport,
     PendingState,
+    TorrentListing,
     TorrentTelemetry,
     WaitOutcome,
     added_at_of,
@@ -527,7 +529,7 @@ class TestDisplayLabel:
 
 
 class TestTorrentListing:
-    """The listing's windows and aliases: built from Sonarr's episodes and copied from the caller."""
+    """The listing's windows and aliases: built from Sonarr's episodes, copied from the caller, and persisted."""
 
     def test_a_window_takes_each_episode_once_in_sonarrs_order(self) -> None:
         episodes = [sonarr_ep(1, 3, ep_id=103), sonarr_ep(1, 1, ep_id=101), sonarr_ep(1, 3, ep_id=103)]
@@ -535,6 +537,29 @@ class TestTorrentListing:
         window = EntryWindow.of(al_id=5, series_id=7, ep_list=episodes, names=EntryNames("Show"))
 
         assert window == entry_window(5, (103, 101), series_id=7, names=EntryNames("Show"))
+
+    def test_a_window_persists_as_the_spelled_out_schema(self) -> None:
+        window = entry_window(5, (103, 101), series_id=7, names=EntryNames("Show", ("Show!",)))
+
+        text = json.dumps(window.to_json())
+
+        assert text == (
+            '{"al_id": 5, "series_id": 7, "ordered_episode_ids": [103, 101], '
+            '"names": {"series": "Show", "anilist": ["Show!"]}}'
+        )
+        assert EntryWindow.from_json(json.loads(text)) == window
+
+    def test_a_listing_persists_its_aliases_as_pairs(self) -> None:
+        # A JSON object would hand the aliases' TMDB numbers back as strings, so they ride as pairs.
+        listing = torrent_listing(entry_window(1, (501,)), aliases={13: 12})
+
+        text = json.dumps(listing.to_json())
+
+        assert text == (
+            '{"entries": [{"al_id": 1, "series_id": 1, "ordered_episode_ids": [501], '
+            '"names": {"series": "", "anilist": []}}], "special_aliases": [[13, 12]]}'
+        )
+        assert TorrentListing.from_json(json.loads(text)) == listing
 
     def test_a_change_to_the_callers_dict_leaves_the_listing_as_it_was(self) -> None:
         aliases = {13: 12}
@@ -581,6 +606,7 @@ class TestPendingImportRoundTrip:
             awaiting_cleanup=True,
             sizes_by_name={"ep1.mkv": 700, "ep2.mkv": 710},
             identified={"ep2.mkv": 12},
+            listing=torrent_listing(claim.window, entry_window(991, (13,), series_id=55), aliases={1: 2}),
         )
 
         raw = pending.to_json()
@@ -637,6 +663,8 @@ class TestPendingImportRoundTrip:
         assert rebuilt.release_sizes == ()
         # A record predating the cleanup flag owes nothing.
         assert rebuilt.awaiting_cleanup is False
+        # A record predating the listing holds none.
+        assert rebuilt.listing == EMPTY_LISTING
 
     def test_a_record_predating_sizes_by_name_lists_no_sizes(self) -> None:
         # Its own group is then judged by listed size alone.
