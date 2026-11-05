@@ -474,8 +474,8 @@ class RunServices:
     def listing_mappings(self, ids: ExternalIds) -> dict[int, MappingEntry]:
         """Every entry mapped to the external ids, the ignored ones included, in AniList id order.
 
-        For the series' listing read: an ignored entry is never processed, but a torrent it lists is still its
-        files, so its window keeps them off a sibling's episodes. Logs nothing, since `get_anilist_ids` logs the
+        For the series' listing read: an ignored entry is never processed, but the files of a torrent it lists are
+        still its own, so its window keeps them off a sibling's episodes. Logs nothing, since `get_anilist_ids` logs the
         ignored ids.
         """
 

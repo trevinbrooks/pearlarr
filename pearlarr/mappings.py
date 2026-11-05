@@ -812,7 +812,7 @@ class MappingResolver(AnimeIdSets):
                     if existing is None or (ids.tvdb is not None and _is_degraded_anibridge(existing)):
                         anilist_mappings[al_id] = entry
 
-            # Set aside any AniList IDs configured to be ignored.
+            # Set aside any AniList ids configured to be ignored.
             ignored = {
                 al_id: anilist_mappings.pop(al_id)
                 for al_id in sorted(self.ignore_anilist_ids)

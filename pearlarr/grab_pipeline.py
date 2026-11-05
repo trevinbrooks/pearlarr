@@ -373,8 +373,9 @@ class GrabPipeline:
         """The single needs-action row for a title NOT cached as done, or None.
 
         Flat guard-returns keep the precedence private-only > unsupported-tracker > hand-import holds > grab-failed >
-        the other holds, the holds in `_HOLD_ROWS` order. A hand import is what no retry brings, so its row outranks a
-        failed grab's, and a failed grab's, a release the title should have, outranks the other holds'.
+        the other holds, each in `_HOLD_ROWS` order. A hand import is what no retry brings, so its row outranks a
+        failed grab's. A failed grab is a release the title should have, so its row outranks a url held as another
+        title's or on a failed read.
         """
 
         if self._ctx.per_title.private_only_skipped:

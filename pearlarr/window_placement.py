@@ -65,8 +65,8 @@ def ordered_windows(
     """
 
     # A claim's window takes its entry's slot from the listed one, since the claim is what the import routes by, and
-    # `own` takes it from both, since this grab replaces its claim. A claim whose entry is no longer listed keeps its
-    # window, and an entry listed and never claimed gets its listed window.
+    # `own` takes it from both, since this grab replaces its claim. A claim whose entry the listing doesn't name keeps
+    # its window, and an entry listed and never claimed gets its listed window.
     chosen = {window.al_id: window for window in listing.entries if window.ordered_episode_ids}
     imported = set[int]()
     for claim in claims:
@@ -106,7 +106,7 @@ class WindowedAssignment:
     def for_record(self, imports: Collection[int]) -> EpisodeAssignment:
         """The merged verdicts, with each file a window outside `imports` placed set aside as another title's.
 
-        Such a file becomes `LISTED_ELSEWHERE`: it isn't the record's to import until its entry claims the torrent.
+        Such a file becomes `LISTED_ELSEWHERE`: it isn't the record's to import under its current claims.
         A refusal stays as merged, since a misnumbered file is left for a hand import whichever window refused it.
         """
 

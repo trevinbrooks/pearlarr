@@ -329,8 +329,8 @@ def place_release(files: Sequence[SeedFile], scope: SeedScope, torrent: KnownTor
                 continue
             records.append(EpisodeRecord(season=episode.season_number, episode=episode.episode_number, size=f.size))
     # With every window's series read, a scope that can't place (`SeedScope.can_place`) still places nothing. A new
-    # torrent is then judged by group and size, while a stored one's verdict would be final where the import poll
-    # retries, so its title is re-checked instead.
+    # torrent is then judged by group and size. A stored one's grab-time verdict would be final where the import
+    # poll retries, so its title is re-checked.
     known = order is not None and (torrent.record is None or scope.can_place)
     # An order that couldn't be built is a read that failed, since the url's windows are unknown.
     unread = order is None or identities_unread or parse_unread

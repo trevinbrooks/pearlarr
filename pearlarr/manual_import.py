@@ -961,8 +961,8 @@ class PendingImport:
     SeaDex. Folded as the record is built (`_normalized_keys`). Empty on rows written before this field existed."""
 
     listing: TorrentListing = EMPTY_LISTING
-    """The torrent's SeaDex listing: the window of every entry that lists it, each series' as its latest grab read
-    them (`with_listing`), and their special aliases. The import places its leftovers under these windows and the
+    """The torrent's SeaDex listing: the window of every entry that lists it, each series' windows as the latest
+    grab on that series read them (`with_listing`), and their special aliases. The import places its leftovers under these windows and the
     claims'. Every window's series is a claimed series, since a listing is read per series and stored in the same
     `PendingSeed.record_at` as a claim on that series. `EMPTY_LISTING` when the record holds none, which a reader
     treats the same whatever the cause (a row written before the field existed, a url no entry lists): the claims'

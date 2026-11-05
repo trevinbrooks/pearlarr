@@ -387,7 +387,7 @@ class SeadexSettings(_ConfigBase):
     """
 
     ignore_anilist_ids: set[int] = Field(default_factory=set[int])
-    """AniList IDs never processed: an ignored title is never grabbed or imported
+    """AniList ids never processed: an ignored title is never grabbed or imported
     for. Its window still runs on a torrent it shares with a kept title of the
     show, so the shared files are placed by its mapping and never on the other
     title. Empty ignores none."""
