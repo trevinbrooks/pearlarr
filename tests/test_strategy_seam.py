@@ -256,9 +256,9 @@ class _FakeRunServices(RunServices):
         return self._anilist_ids
 
     @override
-    def listing_mappings(self, ids: ExternalIds) -> dict[int, MappingEntry]:
+    def listing_mappings(self, ids: ExternalIds) -> ResolvedMappings:
         del ids
-        return ResolvedMappings(mappings=self._anilist_ids, ignored=self._ignored).every_entry
+        return ResolvedMappings(mappings=self._anilist_ids, ignored=self._ignored)
 
     @override
     def al_id_prologue(self, al_id: int) -> EntryRecord | None:
@@ -384,10 +384,10 @@ class _ScriptedListings:
         outage: bool = False,
     ) -> None:
         self._read = None if outage else ListingsRead(listed or {}, identities or {})
-        self.reads: list[tuple[int, dict[int, MappingEntry]]] = []
+        self.reads: list[tuple[int, ResolvedMappings]] = []
 
-    def read(self, series_id: int, entries: Mapping[int, MappingEntry]) -> ListingsRead | None:
-        self.reads.append((series_id, dict(entries)))
+    def read(self, series_id: int, resolved: ResolvedMappings) -> ListingsRead | None:
+        self.reads.append((series_id, resolved))
         return self._read
 
 
@@ -2693,7 +2693,7 @@ class TestSonarrProcessAlIdSeeds:
 
         strat.process_al_id(_Item(id=7, title="Show", tvdbId=70, imdbId=None), 5, kept[5])
 
-        assert listings.reads == [(7, {5: kept[5], 6: ignored[6]})]
+        assert listings.reads == [(7, ResolvedMappings(mappings=kept, ignored=ignored))]
 
     def test_an_ignored_entrys_listed_files_are_never_grabbed_onto_a_sibling(self) -> None:
         # Entry 5, the season, is on the ignore list, and entry 6 is the specials. The torrent is the season's
@@ -2724,7 +2724,7 @@ class TestSonarrProcessAlIdSeeds:
             _episodes=ScriptedEpisodes(FakeSonarrClient(episodes=[_EP1, _EP2, *specials]), windows={6: specials}),
             _parse=_ScriptedParse({_SEED_URL: files}),
             _listings=_ScriptedListings(
-                {"h1": torrent_listing(entry_window(5, (101, 102)), entry_window(6, (501, 502)))}
+                {"h1": torrent_listing(entry_window(5, (101, 102), ignored=True), entry_window(6, (501, 502)))}
             ),
             _config=make_config(sleep_time=0),
             ignore_movies_in_radarr=False,

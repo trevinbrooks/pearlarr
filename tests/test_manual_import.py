@@ -45,7 +45,16 @@ from pearlarr.manual_import import (
 )
 from pearlarr.seadex_types import RemotePathMapping
 
-from .builders import SEP, claim_al_ids, entry_claim, entry_window, pending_import, sonarr_ep, torrent_listing
+from .builders import (
+    SEP,
+    claim_al_ids,
+    entry_claim,
+    entry_window,
+    pending_import,
+    sonarr_ep,
+    torrent_listing,
+    two_claim_record,
+)
 
 
 class TestNormalize:
@@ -150,6 +159,14 @@ class TestPendingImportBuild:
 
         assert pending.sizes_by_name == {"show - 01.mkv": 100}
         assert pending.identified == {"show - 01.mkv": 101}
+
+    def test_the_listing_keeps_only_the_windows_on_claimed_series(self) -> None:
+        # The one claim is on series 7, so entry 3's window on series 8 drops and the aliases stay.
+        listing = torrent_listing(entry_window(1, (101,)), entry_window(3, (801,), series_id=8), aliases={1: 2})
+
+        pending = pending_import(listing=listing)
+
+        assert pending.listing == torrent_listing(entry_window(1, (101,)), aliases={1: 2})
 
     def test_the_map_is_detached_and_read_only(self) -> None:
         # The record copies the caller's map at construction and wraps it read-only, so neither the
@@ -334,7 +351,10 @@ class TestIdentifiedNames:
 
 
 class TestWithListing:
-    """`with_listing`: a series' newest read replaces its stored windows, and an empty read keeps them all."""
+    """`with_listing`: a series' newest read replaces its stored windows, and an empty read keeps them all.
+
+    The records claim both series 7 and 8, since a window on a series no claim is on doesn't stay on the record.
+    """
 
     _TWO_SERIES = torrent_listing(
         entry_window(1, (101,)), entry_window(2, (102,)), entry_window(3, (801,), series_id=8)
@@ -342,21 +362,25 @@ class TestWithListing:
     """Entries 1 and 2 listed on series 7, entry 3 on series 8."""
 
     def test_a_read_of_another_series_keeps_the_stored_windows(self) -> None:
-        pending = pending_import(listing=torrent_listing(entry_window(1, (101,)), entry_window(2, (102,))))
+        pending = two_claim_record(
+            series_ids=(7, 8), listing=torrent_listing(entry_window(1, (101,)), entry_window(2, (102,)))
+        )
 
         joined = pending.with_listing(torrent_listing(entry_window(3, (801,), series_id=8)))
 
         assert joined.listing == self._TWO_SERIES
 
     def test_a_re_read_of_a_series_replaces_its_windows_and_keeps_the_others(self) -> None:
-        pending = pending_import(listing=self._TWO_SERIES)
+        pending = two_claim_record(series_ids=(7, 8), listing=self._TWO_SERIES)
 
         joined = pending.with_listing(torrent_listing(entry_window(4, (103,))))
 
         assert joined.listing == torrent_listing(entry_window(3, (801,), series_id=8), entry_window(4, (103,)))
 
     def test_the_aliases_join_and_the_new_read_wins_a_number_both_pair(self) -> None:
-        pending = pending_import(listing=torrent_listing(entry_window(1, (501,)), aliases={1: 2, 2: 4}))
+        pending = two_claim_record(
+            series_ids=(7, 8), listing=torrent_listing(entry_window(1, (501,)), aliases={1: 2, 2: 4})
+        )
 
         joined = pending.with_listing(torrent_listing(entry_window(3, (801,), series_id=8), aliases={2: 6, 3: 8}))
 
@@ -580,9 +604,15 @@ class TestTorrentListing:
 
         assert text == (
             '{"al_id": 5, "series_id": 7, "ordered_episode_ids": [103, 101], '
-            '"names": {"series": "Show", "anilist": ["Show!"]}}'
+            '"names": {"series": "Show", "anilist": ["Show!"]}, "ignored": false}'
         )
         assert EntryWindow.from_json(json.loads(text)) == window
+
+    def test_a_window_stored_before_the_flag_was_kept_reads_as_kept(self) -> None:
+        raw = entry_window(5, (501,)).to_json()
+        del raw["ignored"]
+
+        assert EntryWindow.from_json(raw) == entry_window(5, (501,))
 
     def test_a_listing_persists_its_aliases_as_pairs(self) -> None:
         # A JSON object would hand the aliases' TMDB numbers back as strings, so they ride as pairs.
@@ -592,9 +622,15 @@ class TestTorrentListing:
 
         assert text == (
             '{"entries": [{"al_id": 1, "series_id": 7, "ordered_episode_ids": [501], '
-            '"names": {"series": "", "anilist": []}}], "special_aliases": [[13, 12]]}'
+            '"names": {"series": "", "anilist": []}, "ignored": false}], "special_aliases": [[13, 12]]}'
         )
         assert TorrentListing.from_json(json.loads(text)) == listing
+
+    def test_on_series_keeps_the_windows_on_those_series_and_the_aliases_whole(self) -> None:
+        listing = torrent_listing(entry_window(1, (101,)), entry_window(3, (801,), series_id=8), aliases={1: 2})
+
+        assert listing.on_series({7}) == torrent_listing(entry_window(1, (101,)), aliases={1: 2})
+        assert listing.on_series({7, 8}) is listing
 
     def test_two_windows_under_one_anilist_id_keep_the_first(self) -> None:
         first, second, other = entry_window(1, (501,)), entry_window(1, (502,)), entry_window(2, (503,))
@@ -660,6 +696,15 @@ class TestPendingImportRoundTrip:
         assert bare == replace(pending, claims=(replace(claim, guards=GuardFacts()),))
         # The caller-supplied rows (the read seams' join) hydrate the claim back whole.
         assert PendingImport.from_json(raw, guards={claim.al_id: claim.guards}) == pending
+
+    def test_a_row_with_a_window_on_an_unclaimed_series_hydrates_without_it(self) -> None:
+        # A stored row can hold a window whose claim since moved series (`PendingImport.listing`).
+        raw = pending_import(listing=torrent_listing(entry_window(1, (101,)))).to_json()
+        raw["listing"]["entries"].append(entry_window(3, (901,), series_id=9).to_json())
+
+        rebuilt = PendingImport.from_json(raw, guards={})
+
+        assert rebuilt.listing == torrent_listing(entry_window(1, (101,)))
 
     def test_from_json_rehydrates_each_claims_guards_by_al_id(self) -> None:
         first, second = GuardFacts(entry_groups=("A",)), GuardFacts(stale_groups=("B",))

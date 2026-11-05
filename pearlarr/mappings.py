@@ -240,7 +240,8 @@ class ResolvedMappings:
     """AniList id -> mapping, the ignore list removed, in AniList id order."""
     ignored: dict[int, MappingEntry]
     """The entries on the ignore list, AniList id -> mapping, in AniList id order. Never processed, but a
-    series' listing read still places a torrent they share with a kept entry under their windows."""
+    series' listing read still runs their windows on a torrent they share with a kept entry, after the kept
+    entries' windows."""
 
     @property
     def every_entry(self) -> dict[int, MappingEntry]:

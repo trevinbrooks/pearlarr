@@ -73,17 +73,19 @@ class GrabHold(StrEnum):
     disagree, or a specials pack numbered another way than its listing. Grabbed, it would import onto the wrong
     episodes, so it's left for a hand import."""
     INPUT_UNREAD = "a read failed"
-    """A SeaDex listing for the series, or a parse the specials pack check needs, couldn't be read this run.
-    Without the listing nothing is placed, since another title it names may own some of the files. Grabbing now
-    could seed a file onto the wrong episode for good, so the url waits for the next run."""
+    """A SeaDex listing for the series, a parse the specials pack check needs, or the episode list of a series the
+    record claims couldn't be read this run. Without the listing nothing is placed, since another title it names
+    may own some of the files. Grabbing now could seed a file onto the wrong episode for good, so the url waits for
+    the next run."""
     TITLE_REFUTED = "titles refute its numbers"
     """A pack whose file titles contradict its numbers, with nothing of it placed on the entry
     (`PlacementVerdict.TITLE_REFUTED`): left for a hand import."""
     PLACED_ELSEWHERE = "files place under another title"
     """A url none of whose files land on the entry, while some land on another title SeaDex lists the torrent
-    with: placed or refused as misnumbered by that title's window, or stored on its episodes. That title's grab
-    imports them, unless the title is in `ignore_anilist_ids`, which is never grabbed for. Not a hand-import hold:
-    the url as a whole isn't the entry's, and only its files nothing placed are a hand import."""
+    with: placed or refused by that title's window, or stored on an episode its window holds. A stored file on an
+    episode no listed title's window holds is nobody's and holds nothing. That title's grab imports them, unless
+    the title is in `ignore_anilist_ids`, which is never grabbed for. Not a hand-import hold: the url as a whole
+    isn't the entry's, and only its files nothing placed are a hand import."""
 
     @property
     def hand_import(self) -> bool:

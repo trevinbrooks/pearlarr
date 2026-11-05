@@ -192,7 +192,8 @@ class FileEpisodeMapper:
         # Import doesn't read SeaDex: the record keeps the listing and the size matches the grab placed with.
         batch = PlacementBatch(leftover, parsed_by_file, seeded)
         order = ordered_windows(pending.listing, pending.claims, None, indexes)
-        # Every stored window's series is a claimed one (`PendingImport.listing`), and `indexes` holds those.
+        # Every stored window's series is a claimed one (`PendingImport.__post_init__` keeps only those), and
+        # `indexes` holds the claimed series.
         assert order is not None
         listing = ListingEvidence(pending.listing, pending.identified)
         windowed = place_across_windows(batch, windows_of(order.windows, indexes, listing))

@@ -166,9 +166,10 @@ class PlacementVerdict(StrEnum):
     reading's rejection while other files hold its episodes, or by no open id being left: not this record's to
     import under its current claims."""
     LISTED_ELSEWHERE = "another listed title's"
-    """Placed by the window of another title SeaDex lists the torrent under, one with no claim on the record: not
-    this record's to import under its current claims. That title's own grab claims the torrent and places the
-    file, unless the title is in `ignore_anilist_ids`, which is never grabbed for."""
+    """Placed by the window of another title SeaDex lists the torrent under, one with no claim on the record, or
+    left for a hand import by such a window with none of the record's claimed windows party to it: not this
+    record's to import or hand-import under its current claims. That title's own grab claims the torrent and places
+    or reports the file, unless the title is in `ignore_anilist_ids`, which is never grabbed for."""
     DUPLICATE = "duplicate"
     """Reads inside the scope onto episodes other files provably hold, or is titled as an episode a version of the
     same file holds."""

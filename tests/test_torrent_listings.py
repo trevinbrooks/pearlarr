@@ -1,12 +1,13 @@
 # pyright: strict
 """SeriesListings: reads every entry's record and window, and folds them once per series per run."""
 
-from collections.abc import Mapping
+from collections.abc import Iterable, Mapping
+from dataclasses import replace
 
 from seadex import EntryRecord
 
 from pearlarr.manual_import import EMPTY_LISTING, EntryNames, EntryWindow
-from pearlarr.mappings import MappingEntry
+from pearlarr.mappings import MappingEntry, ResolvedMappings
 from pearlarr.seadex_types import SonarrEpisode, SpecialAliasing
 from pearlarr.torrent_listings import SeriesListings
 
@@ -37,8 +38,14 @@ def _entry(al_id: int, *hashes: str | None) -> EntryRecord:
     return make_entry_record(anilist_id=al_id, url=f"https://releases.moe/{al_id}", torrents=torrents)
 
 
-def _mappings(*al_ids: int) -> dict[int, MappingEntry]:
-    return {al_id: MappingEntry(anilist_id=al_id) for al_id in al_ids}
+def _mappings(*al_ids: int, ignored: Iterable[int] = ()) -> ResolvedMappings:
+    """The series' resolved mappings: `al_ids` kept, `ignored` on the ignore list, each a bare mapping."""
+
+    return _resolved({al_id: MappingEntry(anilist_id=al_id) for al_id in al_ids}, ignored=ignored)
+
+
+def _resolved(kept: dict[int, MappingEntry], *, ignored: Iterable[int] = ()) -> ResolvedMappings:
+    return ResolvedMappings(mappings=kept, ignored={al_id: MappingEntry(anilist_id=al_id) for al_id in ignored})
 
 
 def _episodes(*numbers: int) -> list[SonarrEpisode]:
@@ -97,7 +104,7 @@ class TestRead:
             2: MappingEntry(anilist_id=2, special_aliasing=SpecialAliasing(900, {4: 3})),
         }
 
-        read = _reader(seadex, _windows({1: _episodes(1), 2: _episodes(3)})).read(7, mappings)
+        read = _reader(seadex, _windows({1: _episodes(1), 2: _episodes(3)})).read(7, _resolved(mappings))
 
         assert read is not None
         assert read.listing(_H1) == torrent_listing(_window(1, 501), _window(2, 503), aliases={2: 1, 4: 3})
@@ -111,10 +118,22 @@ class TestRead:
             2: MappingEntry(anilist_id=2),
         }
 
-        read = _reader(seadex, _windows({1: [], 2: _episodes(3)})).read(7, mappings)
+        read = _reader(seadex, _windows({1: [], 2: _episodes(3)})).read(7, _resolved(mappings))
 
         assert read is not None
         assert read.listing(_H1) == torrent_listing(_window(1), _window(2, 503), aliases={2: 1})
+
+    def test_an_ignored_entrys_window_is_read_like_a_siblings_and_carries_the_flag(self) -> None:
+        # Entry 2 is on the ignore list: its record and window are read like entry 1's, in id order, and only its
+        # window is flagged, so the placement runs it after the kept windows.
+        episodes = _windows({1: _episodes(1), 2: _episodes(3)})
+        seadex = FakeSeaDexSource({1: _entry(1, _H1), 2: _entry(2, _H1)})
+
+        read = _reader(seadex, episodes).read(7, _mappings(1, ignored=(2,)))
+
+        assert read is not None
+        assert read.listing(_H1) == torrent_listing(_window(1, 501), replace(_window(2, 503), ignored=True))
+        assert episodes.calls == [(7, 1), (7, 2)]
 
     def test_a_series_is_read_once_a_run(self) -> None:
         episodes = _windows({1: _episodes(1)})
@@ -179,7 +198,7 @@ class TestRead:
 def test_no_entry_asks_nothing_of_the_real_resolver() -> None:
     # Built over the real collaborator types: with no entry resolved, every hash is listed nowhere and the
     # resolver (bare, no Sonarr behind it) is never asked.
-    read = SeriesListings(FakeSeaDexSource(), make_sonarr_episodes(), frozenset(), _names).read(7, {})
+    read = SeriesListings(FakeSeaDexSource(), make_sonarr_episodes(), frozenset(), _names).read(7, _mappings())
 
     assert read is not None
     assert read.listing(_H1) == EMPTY_LISTING

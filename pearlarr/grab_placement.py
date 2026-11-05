@@ -293,7 +293,8 @@ def place_release(files: Sequence[SeedFile], scope: SeedScope, torrent: KnownTor
     """Place one url's files under the windows the import poll runs (`KnownTorrent.order`), with no I/O.
 
     Nothing is placed when the listing or a window's series wasn't read. A file the window of a listed title with
-    no claim on the record places is set aside as that title's. The url is held (`GrabHold`) when a file of the
+    no claim on the record places, or refuses with no claimed window party to it, is set aside as that title's. The
+    url is held (`GrabHold`) when a file of the
     entry's own window is misnumbered, when a read the placement needs failed, or when nothing of it lands on the
     entry and either its titles refute its numbers or some of it lands on another title.
     """
@@ -336,11 +337,12 @@ def place_release(files: Sequence[SeedFile], scope: SeedScope, torrent: KnownTor
     # An order that couldn't be built is a read that failed, since the url's windows are unknown.
     unread = order is None or identities_unread or parse_unread
     # With nothing of the whole map on the entry, a file another title's window placed or refused is that title's,
-    # and so is every file the map holds. Judged on the whole map, so a sibling's stored files count as its fresh
-    # ones would.
-    elsewhere = (
-        frozenset[str]() if claimed else outside | (mapped.keys() & {normalized_leaf(f.basename) for f in files})
-    )
+    # and so is a stored file on an episode another title's window holds. A stored file on an episode no listed
+    # title's window holds is nobody's, so it holds nothing. Judged on the whole map, so a sibling's stored files
+    # count as its fresh ones would.
+    others = frozenset[int]() if order is None else order.ids_outside(scope.al_id)
+    stored_elsewhere = frozenset(name for name in batch.to_place if not others.isdisjoint(mapped.get(name, ())))
+    elsewhere = frozenset[str]() if claimed else outside | stored_elsewhere
     # A url with no video file (subs, fonts) places nothing and waits on nothing.
     hold = (
         _hold_of(misnumbered=misnumbered, unread=unread, refuted=refuted and not claimed, elsewhere=bool(elsewhere))
@@ -384,7 +386,8 @@ def _hold_of(*, misnumbered: bool, unread: bool, refuted: bool, elsewhere: bool)
 def _elsewhere_counts(elsewhere: frozenset[str], assignment: EpisodeAssignment) -> ElsewhereCounts:
     """How a url whose files are another title's splits: `elsewhere`, and the files nothing placed outside it.
 
-    A file another title's window refused as misnumbered is both skipped and among `elsewhere`, so it counts once.
+    A file another title's window refused can be skipped as well as among `elsewhere` (a claimed title was party to
+    the refusal), so it counts once.
     """
 
     unplaced = sum(name not in elsewhere for name in assignment.skipped)
@@ -626,6 +629,9 @@ class PendingSeed:
                 identified=self.evidence.identified,
                 listing=self.evidence.listing,
             )
+        # The claim joins before the listing is read in: the record keeps only the windows on claimed series
+        # (`PendingImport.listing`), so a read on a series the record didn't claim yet would drop before its claim
+        # arrived.
         record = (
             self.stored.with_placements(self.placements)
             .with_exclusions(self.excluded)

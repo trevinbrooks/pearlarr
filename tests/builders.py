@@ -1144,10 +1144,12 @@ _NO_NAMES = EntryNames()
 """An entry with no series or AniList titles."""
 
 
-def entry_window(al_id: int, ids: Iterable[int], *, series_id: int = 7, names: EntryNames = _NO_NAMES) -> EntryWindow:
+def entry_window(
+    al_id: int, ids: Iterable[int], *, series_id: int = 7, names: EntryNames = _NO_NAMES, ignored: bool = False
+) -> EntryWindow:
     """Entry `al_id`'s window over `ids` on `series_id` (series 7, as `entry_claim`'s), in the order given."""
 
-    return EntryWindow(al_id=al_id, series_id=series_id, ordered_episode_ids=tuple(ids), names=names)
+    return EntryWindow(al_id=al_id, series_id=series_id, ordered_episode_ids=tuple(ids), names=names, ignored=ignored)
 
 
 def torrent_listing(*windows: EntryWindow, aliases: SpecialAliases = NO_ALIASES) -> TorrentListing:

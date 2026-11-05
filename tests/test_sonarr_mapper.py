@@ -197,6 +197,39 @@ class TestListedWindowsAtImport:
         assert result.assigned == {}
         assert set(result.hand_import_files) == {normalize_basename(name) for name in pack}
 
+    def test_a_claim_made_before_its_title_was_ignored_still_imports(self) -> None:
+        # Entry 3 grabbed the torrent and was put on the ignore list since: the re-read flags its window, which
+        # runs after the kept ones, and its claim still imports what it places.
+        listing = torrent_listing(
+            entry_window(1, (101,)), entry_window(2, (102,)), entry_window(3, (103,), ignored=True)
+        )
+        pending = replace(
+            self._pending(listing),
+            claims=(*self._pending().claims, entry_claim(al_id=3, ordered_episode_ids=(103,))),
+        )
+
+        result = _assign_on_disk(pending, self._disk(), self._MAP)
+
+        assert result.assigned == {normalize_basename(name): (100 + n,) for n, name in enumerate(self._NAMES, 1)}
+        assert result.excluded == ()
+
+    def test_a_leftover_a_listed_unclaimed_title_refuses_is_set_aside_not_a_hand_import(self) -> None:
+        # Entry 2's listed window refuses the pack as misnumbered and the record's one claim never read it, so the
+        # files are entry 2's to report, not this record's hand import.
+        pack = specials_pack(1, 2, 3)
+        pending = pending_import(
+            file_episode_map={},
+            seadex_files=tuple(pack),
+            claims=(entry_claim(al_id=1, ordered_episode_ids=(101,)),),
+            listing=torrent_listing(entry_window(2, (502, 504, 506))),
+        )
+        id_by_key = {**{EpisodeKey(0, n): 500 + n for n in range(1, 7)}, EpisodeKey(1, 1): 101}
+
+        result = _assign_on_disk(pending, _Disk(pack.get), id_by_key)
+
+        assert (result.assigned, result.hand_import_files) == ({}, ())
+        assert {p.verdict for p in result.excluded} == {PlacementVerdict.LISTED_ELSEWHERE}
+
 
 class TestSeededSharerTell:
     """A seeded file's parse still feeds the duplicate tell: a version sharing its absolute never takes a spare id."""

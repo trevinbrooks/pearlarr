@@ -673,10 +673,11 @@ class TestRunServicesIgnoredIds:
             assert list(services.get_anilist_ids(ExternalIds(tvdb=74796))) == [269]
         assert log.ids == [270]
 
-    def test_the_listing_read_keeps_the_ignored_entry_in_id_order_and_logs_nothing(self) -> None:
+    def test_the_listing_read_gets_the_ignored_entry_set_apart_and_logs_nothing(self) -> None:
         log = _IgnoredIdLog()
         with self._services(log) as services:
-            assert list(services.listing_mappings(ExternalIds(tvdb=74796))) == [269, 270]
+            resolved = services.listing_mappings(ExternalIds(tvdb=74796))
+        assert (list(resolved.mappings), list(resolved.ignored)) == ([269], [270])
         assert log.ids == []
 
 

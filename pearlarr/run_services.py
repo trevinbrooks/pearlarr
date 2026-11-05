@@ -28,7 +28,7 @@ from .config import AppConfig, Arr, ArrSettings, PrivateReleaseAction, secret_va
 from .grab_pipeline import GrabPipeline, GrabRequest
 from .log import EntryState
 from .manual_import import ImportWaitMode
-from .mappings import ExternalIds, MappingEntry, MappingResolver
+from .mappings import ExternalIds, MappingEntry, MappingResolver, ResolvedMappings
 from .notify import Notifier
 from .output import emit_to_hub, hub_counts
 from .parse_records import ParseRecords
@@ -471,15 +471,15 @@ class RunServices:
 
         return resolved.mappings
 
-    def listing_mappings(self, ids: ExternalIds) -> dict[int, MappingEntry]:
-        """Every entry mapped to the external ids, the ignored ones included, in AniList id order.
+    def listing_mappings(self, ids: ExternalIds) -> ResolvedMappings:
+        """The entries mapped to the external ids, the ignored ones set apart, for the series' listing read.
 
-        For the series' listing read: an ignored entry is never processed, but the files of a torrent it lists are
-        still its own, so its window keeps them off a sibling's episodes. Logs nothing, since `get_anilist_ids` logs the
+        An ignored entry is never processed, but the files of a torrent it lists are still its own, so its window
+        runs in the read after the kept entries' (`ordered_windows`). Logs nothing, since `get_anilist_ids` logs the
         ignored ids.
         """
 
-        return self._mappings.get_anilist_ids(ids).every_entry
+        return self._mappings.get_anilist_ids(ids)
 
     def resolve_title(self, al_id: int) -> EntryTitle:
         """Resolve the entry's title through the ladder (resolves only: no logging, no attribution).

@@ -1,9 +1,11 @@
 """A torrent's files placed under each entry it's listed on, one window per entry.
 
-The windows run season windows first, then specials windows, each in AniList id order (`ordered_windows`), so a
-torrent places the same whichever entry sees it first and whether or not a record exists. Season windows go first
-because the release-run pass lets a specials window take a run keyed outside it: a specials title with a lower id
-than its season title would otherwise take the season's episodes.
+The windows run season windows first, then specials windows, the kept titles before the ones in `ignore_anilist_ids`
+within each kind, and otherwise in AniList id order (`ordered_windows`), so a torrent places the same whichever entry
+sees it first and whether or not a record exists. Season windows go first because the release-run pass lets a
+specials window take a run keyed outside it: a specials title with a lower id than its season title would otherwise
+take the season's episodes. An ignored title goes after the kept ones because it never grabs or imports: a file both
+would take is the kept title's to import, and only a file no kept title places is left as the ignored title's.
 
 Every window places every file, not just the ones earlier windows left, because a numbered run cut short would read
 as a new run and could land wrong. Then the windows merge in order:
@@ -12,7 +14,8 @@ as a new run and could land wrong. Then the windows merge in order:
 - A file no window decides takes its strongest claim (`_CLAIM_RANK`).
 - A file the special aliases claim under one window but its numbers place elsewhere is always `MISNUMBERED`.
 
-A record imports only what its own entries' windows place (`WindowedAssignment.for_record`).
+A record imports only what its own entries' windows place, and leaves for a hand import only a refusal one of them
+was party to (`WindowedAssignment.for_record`).
 """
 
 from collections.abc import Collection, Iterable, Mapping, Sequence
@@ -38,7 +41,8 @@ class WindowOrder:
     """The windows a torrent is placed under, in placement order, and which of them the record imports."""
 
     windows: tuple[EntryWindow, ...]
-    """One per AniList id: season windows first, then specials windows, each in AniList id order."""
+    """One per AniList id: season windows first, then specials windows, the kept titles before the ignored ones of
+    each kind, each in AniList id order."""
 
     imports: frozenset[int]
     """The positions whose files the record imports: the grabbing entry's and every claimed entry's."""
@@ -47,6 +51,13 @@ class WindowOrder:
         """The position of `al_id`'s window. Raises `ValueError` when the order holds none."""
 
         return [window.al_id for window in self.windows].index(al_id)
+
+    def ids_outside(self, al_id: int) -> frozenset[int]:
+        """Every episode id a window other than `al_id`'s holds."""
+
+        return frozenset(
+            ep_id for window in self.windows if window.al_id != al_id for ep_id in window.ordered_episode_ids
+        )
 
 
 def ordered_windows(
@@ -59,6 +70,9 @@ def ordered_windows(
 
     The first three parameters are the three sources of windows, and `indexes` classifies each one. None when
     `indexes` lacks a window's series, since that window can be neither classified nor placed.
+
+    Season windows come first, then specials windows. Within each kind the kept titles come before the ones in
+    `ignore_anilist_ids`, and otherwise AniList id order holds (the module docstring says why).
 
     A listed window with no ids is left out, since it would be unscoped and admit any id. A claim's window with no
     ids still runs: `EntryClaim.admits` reads such a claim as covering any id. It sorts with the specials windows.
@@ -80,7 +94,11 @@ def ordered_windows(
     windows = tuple(
         sorted(
             chosen.values(),
-            key=lambda window: (all_specials(indexes[window.series_id], window.ordered_episode_ids), window.al_id),
+            key=lambda window: (
+                all_specials(indexes[window.series_id], window.ordered_episode_ids),
+                window.ignored,
+                window.al_id,
+            ),
         )
     )
     return WindowOrder(
@@ -104,31 +122,46 @@ class WindowedAssignment:
         object.__setattr__(self, "decided_by", MappingProxyType(dict(self.decided_by)))
 
     def for_record(self, imports: Collection[int]) -> EpisodeAssignment:
-        """The merged verdicts, with each file a window outside `imports` placed set aside as another title's.
+        """The merged verdicts, with each file that is another title's set aside as `LISTED_ELSEWHERE`.
 
-        Such a file becomes `LISTED_ELSEWHERE`: it isn't the record's to import under its current claims.
-        A refusal stays as merged, since a misnumbered file is left for a hand import whichever window refused it.
+        A file is another title's when a window outside `imports` placed it, or when it's left for a hand import
+        (misnumbered, or refuted by its titles) and no window in `imports` was party to that (`_party`). The record
+        neither imports nor hand-imports such a file: the title whose window judged it reports it under its own row.
         """
 
         elsewhere = PlacementVerdict.LISTED_ELSEWHERE
         return EpisodeAssignment(
             tuple(
-                Placement(p.name, (), elsewhere) if p.verdict.placed and self.decided_by[p.name] not in imports else p
-                for p in self.merged.placements
+                Placement(p.name, (), elsewhere) if self._another_titles(at, p, imports) else p
+                for at, p in enumerate(self.merged.placements)
             )
         )
 
     def decided_outside(self, own_at: int) -> frozenset[str]:
-        """The files a window other than the one at `own_at` placed, or refused as misnumbered.
+        """The files that are another title's for the window at `own_at` alone (`for_record`'s rule, one window).
 
         A file a window held for a re-ask isn't among them, since no window has read it yet.
         """
 
-        return frozenset(
-            p.name
-            for p in self.merged.placements
-            if (p.verdict.placed or p.verdict is PlacementVerdict.MISNUMBERED) and self.decided_by[p.name] != own_at
-        )
+        return frozenset(p.name for at, p in enumerate(self.merged.placements) if self._another_titles(at, p, {own_at}))
+
+    def _another_titles(self, index: int, merged: Placement, imports: Collection[int]) -> bool:
+        """Whether the file at `index` of the batch, merged as `merged`, is a title's outside `imports`."""
+
+        if merged.verdict.placed:
+            return self.decided_by[merged.name] not in imports
+        if merged.verdict.hand_import:
+            return not any(at in imports for at in self._party_to(index))
+        return False
+
+    def _party_to(self, index: int) -> frozenset[int]:
+        """The positions of the windows party to the file at `index` of the batch (`_party`).
+
+        Every window's placements are in batch order (`EpisodeAssignment.placements`), so one index names one file
+        under each of them.
+        """
+
+        return frozenset(at for at, window in enumerate(self.windows) if _party(window.placements[index].verdict))
 
     def refuted_under(self, own_at: int) -> bool:
         """Whether a file the window at `own_at` refuted by its title is still `TITLE_REFUTED` after the merge."""
@@ -137,12 +170,12 @@ class WindowedAssignment:
         return self._left_as(refuted, {p.name for p in self.windows[own_at].placements if p.verdict is refuted})
 
     def misnumbered_under(self, own_at: int) -> bool:
-        """Whether a file the window at `own_at` placed, refused, or claimed by alias ended up `MISNUMBERED`.
+        """Whether a file the window at `own_at` was party to (`_party`) ended up `MISNUMBERED`.
 
         Files the window wrote off (another entry's, an extra, a skip) don't count.
         """
 
-        own = {p.name for p in self.windows[own_at].placements if _decides(p.verdict) or p.verdict in _BY_ALIAS}
+        own = {p.name for p in self.windows[own_at].placements if _party(p.verdict)}
         return self._left_as(PlacementVerdict.MISNUMBERED, own)
 
     def _left_as(self, verdict: PlacementVerdict, names: Collection[str]) -> bool:
@@ -171,6 +204,16 @@ def _decides(verdict: PlacementVerdict) -> bool:
     """Whether a window that gives this verdict decides the file: it placed or refused it."""
 
     return verdict.placed or verdict.refused
+
+
+def _party(verdict: PlacementVerdict) -> bool:
+    """Whether a window giving this verdict has a stake in the file.
+
+    It placed, refused or refuted the file, or claimed it by alias. A window that wrote the file off (another
+    slice's, a duplicate, an extra, a skip) has none.
+    """
+
+    return _decides(verdict) or verdict in _BY_ALIAS or verdict is PlacementVerdict.TITLE_REFUTED
 
 
 def _merged(name: str, judged: Sequence[Placement], decided: Placement | None) -> Placement:

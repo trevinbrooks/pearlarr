@@ -18,7 +18,7 @@ plan, quality/language resolution) live in the sibling planning modules that
 import math
 import posixpath
 import unicodedata
-from collections.abc import Iterable, Mapping, Sequence
+from collections.abc import Collection, Iterable, Mapping, Sequence
 from dataclasses import dataclass, field, replace
 from datetime import datetime
 from enum import Enum, StrEnum, auto
@@ -705,12 +705,25 @@ class EntryWindow:
     names: EntryNames
     """The entry's series and AniList titles (see `EntryNames`)."""
 
+    ignored: bool = False
+    """Whether the entry was in `ignore_anilist_ids` at the read. Its window then looks after the kept windows of its
+    kind (`ordered_windows`): a file a kept title's window also places is that title's, since an ignored title never
+    grabs or imports. A stored window keeps the flag until a kept title's grab re-reads the series."""
+
     @classmethod
-    def of(cls, *, al_id: int, series_id: int, ep_list: Iterable[SonarrEpisode], names: EntryNames) -> "EntryWindow":
+    def of(
+        cls,
+        *,
+        al_id: int,
+        series_id: int,
+        ep_list: Iterable[SonarrEpisode],
+        names: EntryNames,
+        ignored: bool = False,
+    ) -> "EntryWindow":
         """The window over `ep_list`: each episode with an id, once, in the list's order."""
 
         ids = tuple(dict.fromkeys(ep.id for ep in ep_list if ep.id))
-        return cls(al_id=al_id, series_id=series_id, ordered_episode_ids=ids, names=names)
+        return cls(al_id=al_id, series_id=series_id, ordered_episode_ids=ids, names=names, ignored=ignored)
 
     def to_json(self) -> dict[str, Any]:
         """The plain dict persisted inside a record's listing: the schema, spelled out."""
@@ -720,17 +733,19 @@ class EntryWindow:
             "series_id": self.series_id,
             "ordered_episode_ids": list(self.ordered_episode_ids),
             "names": self.names.to_json(),
+            "ignored": self.ignored,
         }
 
     @classmethod
     def from_json(cls, raw: dict[str, Any]) -> "EntryWindow":
-        """Rebuild a window from its persisted dict."""
+        """Rebuild a window from its persisted dict (a window stored before the flag was kept reads as kept)."""
 
         return cls(
             al_id=raw.get("al_id", 0),
             series_id=raw.get("series_id", 0),
             ordered_episode_ids=tuple(raw.get("ordered_episode_ids", [])),
             names=EntryNames.from_json(raw.get("names", {})),
+            ignored=raw.get("ignored", False),
         )
 
 
@@ -763,8 +778,9 @@ class TorrentListing:
         """This listing with `listing`, one series' read, read into it.
 
         A listing is read per series, so `listing`'s windows replace the stored ones of the series it covers and
-        another series' stay. The aliases join, the new read winning a number both pair. An empty read (an unlisted
-        hash, an unread listing) changes nothing.
+        another series' stay. The read's windows go first, so an AniList id mapped to both series keeps the fresh one
+        (`__post_init__` keeps the first window per id). The aliases join, the new read winning a number both pair.
+        An empty read (an unlisted hash, an unread listing) changes nothing.
         """
 
         if not listing.entries:
@@ -772,6 +788,15 @@ class TorrentListing:
         read = {window.series_id for window in listing.entries}
         kept = tuple(window for window in self.entries if window.series_id not in read)
         return TorrentListing((*listing.entries, *kept), {**self.special_aliases, **listing.special_aliases})
+
+    def on_series(self, series_ids: Collection[int]) -> "TorrentListing":
+        """This listing with only the windows on `series_ids`, or itself when none drops.
+
+        The aliases stay whole: they aren't kept per entry, and `reading` carries them across reads the same way.
+        """
+
+        kept = tuple(window for window in self.entries if window.series_id in series_ids)
+        return self if len(kept) == len(self.entries) else TorrentListing(kept, self.special_aliases)
 
     def to_json(self) -> dict[str, Any]:
         """The plain dict persisted inside a record.
@@ -954,8 +979,8 @@ class PendingImport:
 
     excluded_files: tuple[str, ...] = ()
     """Normalized basenames of video files that aren't this record's to import under its current claims (a
-    collision-refused duplicate, a file every window resolves outside or places as another listed title's), found
-    at grab time or by an import poll. They only quiet the import's warning: a later claim's window can still place
+    collision-refused duplicate, a file every window resolves outside, one another listed title's window placed or
+    refused), found at grab time or by an import poll. They only quiet the import's warning: a later claim's window can still place
     one. Folded and deduplicated in order as the record is built, and never a name the map holds."""
 
     release_sizes: tuple[int, ...] = ()
@@ -978,9 +1003,11 @@ class PendingImport:
     """The torrent's SeaDex listing: the window of every entry that lists it, each series' windows as the latest
     grab on that series read them (`with_listing`), and their special aliases. The import places its leftovers
     under these windows and the claims', the windows the grab placed under. Every window's series is a claimed
-    series, since a listing is read per series and stored in the same `PendingSeed.record_at` as a claim on that
-    series. `EMPTY_LISTING` when the record holds none, which a reader treats the same whatever the cause (a row
-    written before the field existed, a url no entry lists): the claims' windows run alone."""
+    series: `__post_init__` drops the windows on any other, so a claim that moves series (`with_claim` replaces by
+    AniList id) takes the series it left out of the listing, and the import, which reads only the claimed series'
+    episodes, can run every stored window. `EMPTY_LISTING` when the record holds none, which a reader treats the
+    same whatever the cause (a row written before the field existed, a url no entry lists): the claims' windows run
+    alone."""
 
     def __post_init__(self) -> None:
         # Fold the map, the exclusions and the two by-name maps so readers can take the names as normalized, the
@@ -991,6 +1018,8 @@ class PendingImport:
         object.__setattr__(self, "excluded_files", tuple(name for name in excluded if name not in mapped))
         object.__setattr__(self, "sizes_by_name", MappingProxyType(_normalized_keys(self.sizes_by_name)))
         object.__setattr__(self, "identified", MappingProxyType(_normalized_keys(self.identified)))
+        # Only the windows on claimed series stay (`listing`), so the import can place under every stored window.
+        object.__setattr__(self, "listing", self.listing.on_series(self.series_ids))
 
     @property
     def own_group(self) -> OwnGroup:
@@ -1110,7 +1139,8 @@ class PendingImport:
         """The record with `claim` joined and its cleanup flag cleared (new files to import make it active again).
 
         A re-flag by an entry already claiming replaces its claim, keeping the stored claim's first clock and
-        preowned ids: the window follows the newest plan, the TTL and the wait bar's net-out never restart.
+        preowned ids: the window follows the newest plan, the TTL and the wait bar's net-out never restart. When
+        the replaced claim was the last on its series, the listing's windows on that series drop (`__post_init__`).
         """
 
         claims = (*self.claims, claim)
