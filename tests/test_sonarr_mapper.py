@@ -2,7 +2,7 @@
 """The import-time `FileEpisodeMapper`: on-disk leaves and a record's seed through the placer."""
 
 from collections.abc import Callable, Iterable, Mapping
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from typing import ClassVar
 
 import pytest
@@ -19,12 +19,14 @@ from .builders import (
     entry_facts,
     entry_window,
     indexes_for,
+    known_torrent,
     new_torrent,
     parsed_info,
     pending_import,
     seed_scope,
     series_index,
     specials_pack,
+    torrent_evidence,
     torrent_listing,
     url_item,
 )
@@ -401,3 +403,28 @@ class TestSeedEqualsMapper:
         record = seed.record_at("2026-01-01 00:00:00", fresh=True)
         assert dict(record.file_episode_map) == live.assigned
         assert record.excluded_files == seed.excluded
+
+    def test_the_seed_under_a_listed_sibling_and_the_mapper_under_the_stored_listing_agree(self) -> None:
+        # Entry 2 is listed over the season's episode with no claim yet. The grab sets that file aside as entry 2's,
+        # and the import, running the record's listing beside its claim, does the same.
+        parses = self._parses()
+        scope = seed_scope(self._index(), series_index(self._MAP))
+        torrent = known_torrent(
+            indexes={7: series_index(self._MAP)}, evidence=torrent_evidence(entry_window(2, (601,)))
+        )
+        placed = place_release([SeedFile(name, 1000, parses[name]) for name in self._NAMES], scope, torrent)
+        release = SeedRelease(
+            release_group="grp", url_item=url_item(url="u", infohash="h"), infohash="h", placed=placed
+        )
+        seed = build_pending_seed(release, scope, entry_facts(al_id=1, series_id=7, title="t"))
+        record = seed.record_at("2026-01-01 00:00:00", fresh=True)
+
+        live = _assign_on_disk(replace(record, file_episode_map={}), _Disk(parses.get), self._MAP)
+
+        assert seed.placements == live.assigned
+        assert seed.excluded == tuple(p.name for p in live.excluded)
+        assert seed.placements == {
+            normalize_basename(self._NAMES[0]): (501,),
+            normalize_basename(self._NAMES[1]): (502,),
+        }
+        assert live.excluded == (Placement(normalize_basename(self._NAMES[2]), (), PlacementVerdict.LISTED_ELSEWHERE),)
