@@ -64,6 +64,7 @@ from .builders import (
     known_torrent,
     new_torrent,
     pending_import,
+    pending_seed,
     rg_group,
     seed_scope,
     sonarr_ep,
@@ -1181,12 +1182,11 @@ class TestPendingSeedRecordAt:
 
     def test_accreted_appends_a_new_entrys_claim(self) -> None:
         stored = pending_import(infohash="h1", added_at="2026-01-01 00:00:00")
-        claim = entry_claim(al_id=2, claimed_at="")
-        seed = PendingSeed(facts=_FACTS, placements={}, excluded=(), evidence=NO_EVIDENCE, claim=claim, stored=stored)
+        seed = pending_seed("h1", stored=stored, al_id=2)
 
         record = seed.record_at(_STAMP, fresh=False)
 
-        assert record.claims == (*stored.claims, replace(claim, claimed_at=_STAMP))
+        assert record.claims == (*stored.claims, replace(seed.claim, claimed_at=_STAMP))
         assert [c.claimed_at for c in record.claims] == ["2026-01-01 00:00:00", _STAMP]
 
     def test_accreted_onto_a_record_without_sizes_by_name_learns_them(self) -> None:
@@ -1216,68 +1216,33 @@ class TestPendingSeedRecordAt:
         assert seed.record_at(_STAMP, fresh=False).sizes_by_name == {"show - 01.mkv": 99}
 
     def test_born_keeps_the_identified_names(self) -> None:
-        seed = PendingSeed(
-            facts=_FACTS,
-            placements={},
-            excluded=(),
-            evidence=ListingEvidence(identified={"show - 01.mkv": 101}),
-            claim=entry_claim(claimed_at=""),
-            stored=None,
-        )
+        seed = pending_seed("h1", evidence=ListingEvidence(identified={"show - 01.mkv": 101}))
 
         assert seed.record_at(_STAMP, fresh=True).identified == {"show - 01.mkv": 101}
 
     def test_born_keeps_the_listing_its_files_were_placed_under(self) -> None:
         listing = torrent_listing(entry_window(1, (101,)), entry_window(2, (102,)))
-        seed = PendingSeed(
-            facts=_FACTS,
-            placements={},
-            excluded=(),
-            evidence=ListingEvidence(listing),
-            claim=entry_claim(claimed_at=""),
-            stored=None,
-        )
+        seed = pending_seed("h1", evidence=ListingEvidence(listing))
 
         assert seed.record_at(_STAMP, fresh=True).listing == listing
 
-    def test_accreted_replaces_the_stored_listing(self) -> None:
-        # The newest grab placed its files under the newest read.
+    def test_accreted_reads_the_newest_listing_into_the_stored_one(self) -> None:
+        # The newest grab placed its files under the newest read (`PendingImport.with_listing`).
         stored = pending_import(infohash="h1", listing=torrent_listing(entry_window(1, (101,))))
         newer = torrent_listing(entry_window(1, (101,)), entry_window(2, (102,)))
-        seed = PendingSeed(
-            facts=_FACTS,
-            placements={},
-            excluded=(),
-            evidence=ListingEvidence(newer),
-            claim=entry_claim(claimed_at=""),
-            stored=stored,
-        )
+        seed = pending_seed("h1", stored=stored, evidence=ListingEvidence(newer))
 
         assert seed.record_at(_STAMP, fresh=False).listing == newer
 
     def test_accreted_merges_the_identified_names(self) -> None:
         stored = pending_import(infohash="h1", identified={"show - 01.mkv": 101})
-        seed = PendingSeed(
-            facts=_FACTS,
-            placements={},
-            excluded=(),
-            evidence=ListingEvidence(identified={"show - 02.mkv": 102}),
-            claim=entry_claim(claimed_at=""),
-            stored=stored,
-        )
+        seed = pending_seed("h1", stored=stored, evidence=ListingEvidence(identified={"show - 02.mkv": 102}))
 
         assert seed.record_at(_STAMP, fresh=False).identified == {"show - 01.mkv": 101, "show - 02.mkv": 102}
 
     def test_fresh_restamps_every_clock(self) -> None:
         stored = pending_import(infohash="h1", added_at="2026-01-01 00:00:00")
-        seed = PendingSeed(
-            facts=_FACTS,
-            placements={},
-            excluded=(),
-            evidence=NO_EVIDENCE,
-            claim=entry_claim(al_id=2, claimed_at=""),
-            stored=stored,
-        )
+        seed = pending_seed("h1", stored=stored, al_id=2)
 
         record = seed.record_at(_STAMP, fresh=True)
 

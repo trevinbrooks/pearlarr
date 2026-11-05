@@ -60,6 +60,7 @@ from pearlarr.placement_types import (
     NO_SEEDED,
     EpisodeAssignment,
     EpisodeIndex,
+    ListingEvidence,
     PlacementBatch,
     PlacementVerdict,
     SizeIdentities,
@@ -864,15 +865,19 @@ def pending_seed(
     *,
     stored: PendingImport | None = None,
     placements: FileEpisodeMap | None = None,
+    evidence: ListingEvidence = NO_EVIDENCE,
     **claim: Any,
 ) -> PendingSeed:
-    """A seed on `infohash` (group NAN0, no files) claimed by `entry_claim(**claim)`, born unless `stored` is given."""
+    """A seed on `infohash` (group NAN0, no files) claimed by `entry_claim(**claim)`, born unless `stored` is given.
+
+    Placed under `evidence`, by default no listing and no size matches.
+    """
 
     return PendingSeed(
         facts=torrent_facts(infohash=infohash, release_group="NAN0"),
         placements=placements or {},
         excluded=(),
-        evidence=NO_EVIDENCE,
+        evidence=evidence,
         claim=entry_claim(claimed_at="", **claim),
         stored=stored,
     )
