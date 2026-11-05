@@ -1047,6 +1047,40 @@ class TestExternalDetailParity:
                 "yellow",
             ),
         ),
+        # grab_pipeline._screen_url: a url whose files place under another title, some of them on none.
+        _FactSite(
+            ReleaseSkipped(
+                group="GroupA",
+                tracker="Nyaa",
+                reason=SkipReason.PLACED_ELSEWHERE,
+                url="https://x/1",
+                detail="12 files are another title's, 6 could not be placed",
+            ),
+            _xdetail(
+                _W,
+                "    skipped   https://x/1 (12 files are another title's, 6 could not be placed)",
+                "skipped",
+                "https://x/1 (12 files are another title's, 6 could not be placed)",
+                "yellow",
+            ),
+        ),
+        # grab_pipeline._screen_url: a url whose files are all another title's.
+        _FactSite(
+            ReleaseSkipped(
+                group="GroupA",
+                tracker="Nyaa",
+                reason=SkipReason.PLACED_ELSEWHERE,
+                url="https://x/1",
+                detail="12 files are another title's",
+            ),
+            _xdetail(
+                _W,
+                "    skipped   https://x/1 (12 files are another title's)",
+                "skipped",
+                "https://x/1 (12 files are another title's)",
+                "yellow",
+            ),
+        ),
         # grab_pipeline._screen_url: the listing the placement judges a pack by could not be read.
         _FactSite(
             ReleaseSkipped(group="GroupA", tracker="Nyaa", reason=SkipReason.INPUT_UNREAD, url="https://x/1"),

@@ -119,16 +119,17 @@ class WindowedAssignment:
             )
         )
 
-    def decided_outside(self, own_at: int) -> bool:
-        """Whether a window other than the one at `own_at` placed a file, or refused one as misnumbered.
+    def decided_outside(self, own_at: int) -> frozenset[str]:
+        """The files a window other than the one at `own_at` placed, or refused as misnumbered.
 
-        A file a window held for a re-ask doesn't count, since no window has read it yet.
+        A file a window held for a re-ask isn't among them, since no window has read it yet.
         """
 
-        return any(
-            self.decided_by.get(p.name, own_at) != own_at
+        return frozenset(
+            p.name
             for p in self.merged.placements
-            if p.verdict.placed or p.verdict is PlacementVerdict.MISNUMBERED
+            if (p.verdict.placed or p.verdict is PlacementVerdict.MISNUMBERED)
+            and self.decided_by.get(p.name, own_at) != own_at
         )
 
     def refuted_under(self, index: int) -> bool:

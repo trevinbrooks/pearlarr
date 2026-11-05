@@ -48,7 +48,7 @@ class HoldRow:
 
 
 # The order is the precedence `_classify_needs_action` reports holds in: the first hand-import hold found here
-# wins, and a hold that clears on its own is reported only when no hand-import hold and no failed grab is.
+# wins, and any other hold is reported only when no hand-import hold and no failed grab is.
 _HOLD_ROWS: Mapping[GrabHold, HoldRow] = MappingProxyType(
     {
         GrabHold.MISNUMBERED: HoldRow(
@@ -60,6 +60,12 @@ _HOLD_ROWS: Mapping[GrabHold, HoldRow] = MappingProxyType(
             SkipReason.TITLE_REFUTED,
             NeedsActionKind.TITLE_REFUTED,
             "file titles contradict its numbering; import it by hand",
+        ),
+        # No retry clears it: the row stays until the entry holds the group's files, so it outranks a failed read.
+        GrabHold.PLACED_ELSEWHERE: HoldRow(
+            SkipReason.PLACED_ELSEWHERE,
+            NeedsActionKind.PLACED_ELSEWHERE,
+            "its files place under another title SeaDex lists it with; any it could not place need a hand import",
         ),
         # The placement may have held a run on the missing read, so the grab was judged coarsely: re-check.
         GrabHold.INPUT_UNREAD: HoldRow(
@@ -215,7 +221,11 @@ class GrabPipeline:
             return True
         # Never added, and the title stays uncached for the next run.
         self._ctx.per_title.add_held(hold, (srg,))
-        self._reporter.post(ReleaseSkipped(group=srg, tracker=tracker, reason=_HOLD_ROWS[hold].skip, url=url))
+        self._reporter.post(
+            ReleaseSkipped(
+                group=srg, tracker=tracker, reason=_HOLD_ROWS[hold].skip, url=url, detail=url_item.hold_detail
+            )
+        )
         return False
 
     def _hold_capped(self, url_item: SeadexUrlItem, req: GrabRequest) -> None:
@@ -336,7 +346,7 @@ class GrabPipeline:
         """Whether this title's outcome may be cached as done.
 
         Only if something was grabbed or nothing was skipped. A url held by the run cap, a fallback hold, a failed
-        grab, a failed read under a placement, a pack the placement refused, or a series without its TVDB orders
+        grab, a failed read under a placement, a url the placement held, or a series without its TVDB orders
         vetoes it.
         """
 
@@ -363,8 +373,8 @@ class GrabPipeline:
         """The single needs-action row for a title NOT cached as done, or None.
 
         Flat guard-returns keep the precedence private-only > unsupported-tracker > hand-import holds > grab-failed >
-        the holds that clear on their own, the holds in `_HOLD_ROWS` order. A hand import is what no retry brings, so
-        its row outranks a failed grab's, and a failed grab's outranks a hold the next run clears.
+        the other holds, the holds in `_HOLD_ROWS` order. A hand import is what no retry brings, so its row outranks a
+        failed grab's, and a failed grab's, a release the title should have, outranks the other holds'.
         """
 
         if self._ctx.per_title.private_only_skipped:

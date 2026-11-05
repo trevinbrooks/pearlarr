@@ -232,6 +232,22 @@ def test_grab_action_line_joins_groups_and_names_sink_side() -> None:
     )
 
 
+def test_release_skipped_line_carries_its_detail() -> None:
+    skipped = ReleaseSkipped(
+        group="G",
+        tracker="Nyaa",
+        reason=SkipReason.PLACED_ELSEWHERE,
+        url="https://x",
+        detail="12 files are another title's",
+        scope=_ENTRY,
+    )
+    line = _format(skipped, *_entry_context())
+    assert line == (
+        f"{_TS} WARNING [sonarr › [3/182] Frieren › entry] release skipped "
+        f'group=G tracker=Nyaa reason=placed_elsewhere detail="12 files are another title\'s" link=https://x'
+    )
+
+
 def test_grab_failed_line_escapes_embedded_quotes() -> None:
     failed = GrabFailed(group="G", url="https://x", error='tracker said "denied"', scope=_ENTRY)
     line = _format(failed, *_entry_context())

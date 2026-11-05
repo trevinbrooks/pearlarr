@@ -234,6 +234,8 @@ def _fields_release_skipped(event: ReleaseSkipped) -> tuple[Field, ...]:
         Field("tracker", event.tracker),
         Field("reason", event.reason.name.lower()),
     ]
+    if event.detail:
+        fields.append(Field("detail", event.detail))
     if event.url:
         fields.append(Field("link", event.url))
     return tuple(fields)

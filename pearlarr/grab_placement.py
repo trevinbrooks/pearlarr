@@ -7,6 +7,7 @@ from typing import NamedTuple
 
 from .coverage import coverage_string, episodes_from_ep_list
 from .episode_state import EpisodeFileStatus, EpisodeSnapshot, GroupVotes
+from .log import count_noun
 from .manual_import import (
     EMPTY_LISTING,
     NO_SIZES_BY_NAME,
@@ -243,6 +244,10 @@ class UrlPlacement:
     hold: GrabHold | None
     """Why the url is not grabbed this run, None when it may be."""
 
+    hold_detail: str | None
+    """What the skip line adds to the hold's reason: for `GrabHold.PLACED_ELSEWHERE`, how many of the files are
+    another title's and how many nothing placed. None for any other url."""
+
     stored: PendingImport | None
     """The record the url was placed against, None when the torrent is new."""
 
@@ -289,8 +294,8 @@ def place_release(files: Sequence[SeedFile], scope: SeedScope, torrent: KnownTor
 
     Nothing is placed when the listing or a window's series wasn't read. A file the window of a listed title with
     no claim on the record places is set aside as that title's. The url is held (`GrabHold`) when a file of the
-    entry's own window is misnumbered, when a read the placement needs failed, or when its titles refute its
-    numbers and nothing of it lands on the entry.
+    entry's own window is misnumbered, when a read the placement needs failed, or when nothing of it lands on the
+    entry and either its titles refute its numbers or some of it lands on another title.
     """
 
     seeded: FileEpisodeMap = NO_SEEDED if torrent.record is None else torrent.record.file_episode_map
@@ -306,8 +311,9 @@ def place_release(files: Sequence[SeedFile], scope: SeedScope, torrent: KnownTor
         placed = place_across_windows(batch, windows_of(order.windows, torrent.indexes, evidence))
         assignment = placed.for_record(order.imports)
         misnumbered, refuted = placed.misnumbered_under(order.own_at), placed.refuted_under(order.own_at)
+        outside = placed.decided_outside(order.own_at)
     else:
-        assignment, misnumbered, refuted = EpisodeAssignment(()), False, False
+        assignment, misnumbered, refuted, outside = EpisodeAssignment(()), False, False, frozenset[str]()
     mapped = joined_map(seeded, assignment.assigned)
     records: list[EpisodeRecord] = []
     claimed: set[int] = set()
@@ -325,9 +331,16 @@ def place_release(files: Sequence[SeedFile], scope: SeedScope, torrent: KnownTor
     # A new torrent under an unread map is judged coarsely, as before the placement existed. A stored one's
     # verdict would be final where the import poll retries, so its title is re-checked instead.
     known = order is not None and (torrent.record is None or scope.can_place)
-    # A url with no video file (subs, fonts) places nothing and waits on nothing.
     unread = identities_unread or parse_unread
-    hold = _hold_of(misnumbered=misnumbered, refuted=refuted and not claimed, unread=unread) if files else None
+    # With nothing of the whole map on the entry, a file another title's window placed or refused is that title's,
+    # and so is every file the map holds. Judged on the whole map, so a sibling's stored files count as its fresh
+    # ones would.
+    elsewhere = (
+        frozenset[str]() if claimed else outside | (mapped.keys() & {normalized_leaf(f.basename) for f in files})
+    )
+    window_hold = _window_hold(misnumbered=misnumbered, refuted=refuted and not claimed, elsewhere=bool(elsewhere))
+    # A url with no video file (subs, fonts) places nothing and waits on nothing.
+    hold = _hold_of(window_hold, unread=unread) if files else None
     return UrlPlacement(
         files=tuple(files),
         assignment=assignment,
@@ -336,25 +349,48 @@ def place_release(files: Sequence[SeedFile], scope: SeedScope, torrent: KnownTor
         claimed_ids=frozenset(claimed),
         inputs_known=not files or (batch.all_parses_known and known and not identities_unread),
         hold=hold,
+        hold_detail=_elsewhere_detail(elsewhere, assignment) if hold is GrabHold.PLACED_ELSEWHERE else None,
         stored=torrent.record,
         intended_sizes=sizes_by_episode(mapped, sizes),
         evidence=evidence,
     )
 
 
-def _hold_of(*, misnumbered: bool, refuted: bool, unread: bool) -> GrabHold | None:
-    """Why the url isn't grabbed: a misnumbered pack first, then a missing input (`unread`), then a refuted pack.
+def _window_hold(*, misnumbered: bool, refuted: bool, elsewhere: bool) -> GrabHold | None:
+    """What the windows' verdicts hold the url for: a misnumbered pack, else a refuted one, else another title's.
 
     `misnumbered`: a file of the entry's own window is misnumbered (`WindowedAssignment.misnumbered_under`).
     `refuted`: the entry's own window refuted a file no window placed, and nothing of the whole map lands on the
-    entry.
+    entry. It outranks `elsewhere`, since a refuted file is nobody's and saying it's another title's would be wrong.
+    `elsewhere`: nothing of the whole map lands on the entry, and some file lands on another title.
     """
 
     if misnumbered:
         return GrabHold.MISNUMBERED
-    if unread:
-        return GrabHold.INPUT_UNREAD
-    return GrabHold.TITLE_REFUTED if refuted else None
+    if refuted:
+        return GrabHold.TITLE_REFUTED
+    return GrabHold.PLACED_ELSEWHERE if elsewhere else None
+
+
+def _hold_of(window_hold: GrabHold | None, *, unread: bool) -> GrabHold | None:
+    """Why the url isn't grabbed: a misnumbered pack first, then a missing input (`unread`), then `window_hold`."""
+
+    if window_hold is GrabHold.MISNUMBERED:
+        return window_hold
+    return GrabHold.INPUT_UNREAD if unread else window_hold
+
+
+def _elsewhere_detail(elsewhere: frozenset[str], assignment: EpisodeAssignment) -> str:
+    """The skip line's counts for a url whose files are another title's.
+
+    Such as "12 files are another title's, 6 could not be placed", the second half only when some file nothing
+    placed isn't among `elsewhere`.
+    """
+
+    verb = "is" if len(elsewhere) == 1 else "are"
+    text = f"{count_noun(len(elsewhere), 'file')} {verb} another title's"
+    unplaced = sum(name not in elsewhere for name in assignment.skipped)
+    return f"{text}, {unplaced} could not be placed" if unplaced else text
 
 
 class IdentityOverride(NamedTuple):
@@ -419,7 +455,7 @@ class EntryPlacements(NamedTuple):
         return cls(scope, {url: place_release(files, scope, torrents[url]) for url, files in files_by_url.items()})
 
     def attach_placements(self, seadex_dict: SeadexDict) -> None:
-        """Write each url's placed records and hold onto its item, and the records' union onto its group."""
+        """Write each url's records, hold, and hold detail onto its item, and the records' union onto its group."""
 
         for rg_item in seadex_dict.values():
             all_episodes: list[EpisodeRecord] = []
@@ -427,6 +463,7 @@ class EntryPlacements(NamedTuple):
                 placement = self.by_url[url]
                 url_item.episodes = list(placement.records)
                 url_item.hold = placement.hold
+                url_item.hold_detail = placement.hold_detail
                 all_episodes.extend(url_item.episodes)
             rg_item.all_episodes = all_episodes
 

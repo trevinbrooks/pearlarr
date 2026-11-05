@@ -243,6 +243,7 @@ class TestPlaceRelease:
             claimed_ids=frozenset(),
             inputs_known=True,
             hold=None,
+            hold_detail=None,
             stored=None,
             intended_sizes={},
             evidence=NO_EVIDENCE,
@@ -440,8 +441,9 @@ class TestPlaceUnderAnotherEntrysRefutal:
         assert placement.hold is None
         assert placement.claimed_ids == {201, 202, 203}
 
-    def test_an_entry_placing_nothing_is_grabbed_despite_entry_1s_refutal(self) -> None:
-        # The titled file is the third episode's, under the second's key. None of the files is the special's.
+    def test_an_entry_placing_nothing_is_held_as_entry_1s_not_as_refuted(self) -> None:
+        # The titled file is the third episode's, under the second's key. None of the files is the special's, and
+        # entry 1's record holds the titled one, so the url is entry 1's, not refuted under entry 2.
         files = {
             "show - 01.mkv": _matched(1, 1),
             "show - 02 - charlie rise.mkv": _matched(1, 2),
@@ -450,7 +452,8 @@ class TestPlaceUnderAnotherEntrysRefutal:
 
         placement = self._place(files, {"show - 02 - charlie rise.mkv": (103,)}, [501])
 
-        assert placement.hold is None
+        assert placement.hold is GrabHold.PLACED_ELSEWHERE
+        assert placement.hold_detail == "1 file is another title's, 2 could not be placed"
 
 
 class TestPlaceHeld:

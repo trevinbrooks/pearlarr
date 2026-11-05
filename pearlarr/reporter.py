@@ -121,6 +121,9 @@ class NeedsActionKind(Enum):
     listing: a hand import."""
     TITLE_REFUTED = auto()
     """A recommended release's file titles contradict its numbering and none of it places on the entry."""
+    PLACED_ELSEWHERE = auto()
+    """None of a recommended release's files place on the entry, and some place under another title SeaDex lists
+    it with."""
 
 
 @dataclass(frozen=True, slots=True)

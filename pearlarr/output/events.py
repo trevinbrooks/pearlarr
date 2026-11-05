@@ -230,6 +230,7 @@ class SkipReason(Enum):
     TRACKER_NOT_SELECTED = auto()
     MISNUMBERED = auto()
     TITLE_REFUTED = auto()
+    PLACED_ELSEWHERE = auto()
     INPUT_UNREAD = auto()
 
     @property
@@ -247,6 +248,9 @@ class ReleaseSkipped:
     tracker: str
     reason: SkipReason
     url: str | None = None
+    detail: str | None = None
+    """What the skip line adds to the reason, such as how many of a release's files are another title's. None when
+    the reason says it all."""
     scope: ScopeId | None = None
 
 
@@ -348,6 +352,7 @@ class NeedsActionCause(Enum):
     PLACEMENT_INPUT_MISSING = auto()
     MISNUMBERED = auto()
     TITLE_REFUTED = auto()
+    PLACED_ELSEWHERE = auto()
 
 
 @dataclass(frozen=True, slots=True)

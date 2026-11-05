@@ -74,10 +74,15 @@ class GrabHold(StrEnum):
     episodes, so it's left for a hand import."""
     INPUT_UNREAD = "a read failed"
     """A SeaDex listing for the series, or a parse the specials pack check needs, couldn't be read this run.
-    Grabbing now could seed a file onto the wrong episode for good, so the url waits for the next run."""
+    Without the listing nothing is placed, since another title it names may own some of the files. Grabbing now
+    could seed a file onto the wrong episode for good, so the url waits for the next run."""
     TITLE_REFUTED = "titles refute its numbers"
     """A pack whose file titles contradict its numbers, with nothing of it placed on the entry
     (`PlacementVerdict.TITLE_REFUTED`): left for a hand import."""
+    PLACED_ELSEWHERE = "files place under another title"
+    """A url none of whose files land on the entry, while some land on another title SeaDex lists the torrent
+    with: placed or refused as misnumbered by that title's window, or stored on its episodes. That title's grab
+    is what brings them. Not a hand-import hold, since the url as a whole is never the entry's to import."""
 
     @property
     def hand_import(self) -> bool:
@@ -109,6 +114,9 @@ class SeadexUrlItem:
     episodes: list[EpisodeRecord] = field(default_factory=list[EpisodeRecord])
     hold: GrabHold | None = None
     """Why the placement refuses to grab the url this run (`attach_placements` sets it), None when it may be."""
+    hold_detail: str | None = None
+    """What the skip line adds to the hold's reason (`UrlPlacement.hold_detail`), None when the reason says it
+    all."""
 
     def __post_init__(self) -> None:
         self.infohash = normalized_infohash(self.infohash)

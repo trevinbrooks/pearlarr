@@ -233,6 +233,8 @@ def _skip_text(event: ReleaseSkipped) -> str:
             return f"{event.url or event.group} (numbering does not match its SeaDex listing)"
         case SkipReason.TITLE_REFUTED:
             return f"{event.url or event.group} (file titles contradict its numbering)"
+        case SkipReason.PLACED_ELSEWHERE:
+            return f"{event.url or event.group} ({event.detail or 'its files place under another title'})"
         case SkipReason.INPUT_UNREAD:
             return f"{event.url or event.group} (a read the placement needs failed)"
     assert_never(event.reason)

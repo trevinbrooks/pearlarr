@@ -1365,6 +1365,53 @@ class TestPlacementHolds:
         assert [e.reason for e in recording.of_type(ReleaseSkipped)] == [SkipReason.INPUT_UNREAD]
         assert [r.kind for r in pipeline._ctx.stats.needs_action] == [NeedsActionKind.PLACEMENT_INPUT_MISSING]
 
+    def test_a_url_whose_files_are_another_titles_is_never_added_and_its_skip_carries_the_counts(self) -> None:
+        recording = install_recording_hub()
+        nyaa = self._held(url="https://nyaa.si/view/1", infohash="h1", hold=GrabHold.PLACED_ELSEWHERE)
+        nyaa.hold_detail = "12 files are another title's, 6 could not be placed"
+        seadex_dict: SeadexDict = {"RG": rg_group({nyaa.url: nyaa})}
+        torrents = FakeTorrents({"h1": (AddOutcome.ADDED, "Show-RG")})
+        pipeline = _on_entry(_pipeline(torrents=torrents, sleep_time=0))
+
+        pipeline.grab_and_cache(_entry_request(seadex_dict, ["h1"]))
+
+        assert torrents.calls == []
+        assert pipeline.cache_store.get_entry(Arr.SONARR, 42) is None
+        assert pipeline._ctx.per_title.held_groups == {GrabHold.PLACED_ELSEWHERE: ["RG"]}
+        assert [(e.reason, e.detail) for e in recording.of_type(ReleaseSkipped)] == [
+            (SkipReason.PLACED_ELSEWHERE, "12 files are another title's, 6 could not be placed")
+        ]
+        (row,) = pipeline._ctx.stats.needs_action
+        assert (row.kind, row.reason) == (
+            NeedsActionKind.PLACED_ELSEWHERE,
+            "its files place under another title SeaDex lists it with; any it could not place need a hand import",
+        )
+
+    def test_the_another_titles_row_outranks_a_failed_read(self) -> None:
+        # A failed read clears next run. A url whose files are another title's stays held until the entry has them.
+        elsewhere = self._held(url="https://nyaa.si/view/1", infohash="h1", hold=GrabHold.PLACED_ELSEWHERE)
+        unread = self._held(url="https://nyaa.si/view/2", infohash="h2", hold=GrabHold.INPUT_UNREAD)
+        seadex_dict: SeadexDict = {"RG": rg_group({elsewhere.url: elsewhere}), "Other": rg_group({unread.url: unread})}
+        pipeline = _on_entry(_pipeline(torrents=FakeTorrents({}), sleep_time=0))
+
+        pipeline.grab_and_cache(_entry_request(seadex_dict, ["h1", "h2"]))
+
+        assert [r.kind for r in pipeline._ctx.stats.needs_action] == [NeedsActionKind.PLACED_ELSEWHERE]
+
+    def test_a_failed_grab_outranks_the_another_titles_row(self) -> None:
+        elsewhere = self._held(url="https://nyaa.si/view/1", infohash="h1", hold=GrabHold.PLACED_ELSEWHERE)
+        failing = _nyaa_release(url="https://nyaa.si/view/2", infohash="h2")
+        seadex_dict: SeadexDict = {
+            "RG": rg_group({elsewhere.url: elsewhere}),
+            "Other": rg_group({failing.url: failing}),
+        }
+        torrents = FakeTorrents({}, raises={"h2": httpx.ConnectError("nyaa down")})
+        pipeline = _on_entry(_pipeline(torrents=torrents, sleep_time=0))
+
+        pipeline.grab_and_cache(_entry_request(seadex_dict, ["h1", "h2"]))
+
+        assert [r.kind for r in pipeline._ctx.stats.needs_action] == [NeedsActionKind.GRAB_FAILED]
+
     def test_a_held_url_beside_a_grabbable_one_lets_the_other_grab(self) -> None:
         held = self._held(url="https://nyaa.si/view/1", infohash="h1", hold=GrabHold.MISNUMBERED)
         other = _nyaa_release(url="https://nyaa.si/view/2", infohash="h2")
