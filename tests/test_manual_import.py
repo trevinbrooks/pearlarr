@@ -561,6 +561,11 @@ class TestTorrentListing:
         )
         assert TorrentListing.from_json(json.loads(text)) == listing
 
+    def test_two_windows_under_one_anilist_id_keep_the_first(self) -> None:
+        first, second, other = entry_window(1, (501,)), entry_window(1, (502,)), entry_window(2, (503,))
+
+        assert torrent_listing(other, first, second).entries == (first, other)
+
     def test_a_change_to_the_callers_dict_leaves_the_listing_as_it_was(self) -> None:
         aliases = {13: 12}
         listing = torrent_listing(entry_window(1, (501,)), aliases=aliases)

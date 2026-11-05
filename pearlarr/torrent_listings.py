@@ -18,7 +18,7 @@ class SeriesListings:
 
     Each collaborator serves `_read`: `seadex` gives each entry's record, `episodes` its window, `ignore_tags` the
     torrents the size identities skip, and `names` the entry's titles for its window (the title ladder the entry's
-    own run uses). The names can't ride `read`, whose per-series cache ignores a later call's arguments.
+    own run uses). All four hold for the run, so they come in at construction.
     """
 
     def __init__(

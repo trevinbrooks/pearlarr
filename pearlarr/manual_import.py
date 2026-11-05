@@ -700,10 +700,11 @@ class EntryWindow:
     """The Sonarr series id the window's episodes belong to."""
 
     ordered_episode_ids: tuple[int, ...]
-    """The window's episode ids in season order, each once. Empty for an entry whose episode list came back empty."""
+    """The window's episode ids in season order; `of` keeps each once. Empty for an entry whose episode list came
+    back empty."""
 
     names: EntryNames
-    """The series and AniList titles the placement breaks ties by (see `EntryNames`)."""
+    """The entry's series and AniList titles (see `EntryNames`)."""
 
     @classmethod
     def of(cls, *, al_id: int, series_id: int, ep_list: Iterable[SonarrEpisode], names: EntryNames) -> "EntryWindow":
@@ -750,7 +751,8 @@ class TorrentListing:
     """Union of the entries' episode ids."""
 
     def __post_init__(self) -> None:
-        # Detach from the caller's dict, then wrap read-only. `ids` is derived from the windows once.
+        # One window per AniList id, the first kept, in id order, and `ids` derived from them once. The aliases are
+        # detached from the caller's dict, then wrapped read-only.
         kept: dict[int, EntryWindow] = {}
         for window in self.entries:
             kept.setdefault(window.al_id, window)
@@ -862,7 +864,10 @@ class EntryClaim:
 
     @property
     def window(self) -> EntryWindow:
-        """The claim's window, as a listing holds one."""
+        """The claim's window, as a listing holds one.
+
+        A claim with no ids, which `admits` reads as covering any id, gives a window with no ids.
+        """
 
         return EntryWindow(
             al_id=self.al_id, series_id=self.series_id, ordered_episode_ids=self.ordered_episode_ids, names=self.names
@@ -888,19 +893,19 @@ class EntryClaim:
     def from_json(cls, raw: dict[str, Any], *, guards: Mapping[int, GuardFacts]) -> "EntryClaim":
         """Rebuild a claim from its persisted dict, fed the arr's guard rows by entry."""
 
-        al_id = raw.get("al_id", 0)
+        window = EntryWindow.from_json(raw)
         return cls(
-            al_id=al_id,
-            series_id=raw.get("series_id", 0),
+            al_id=window.al_id,
+            series_id=window.series_id,
             title=raw.get("title"),
             coverage=raw.get("coverage"),
             url=raw.get("url"),
-            ordered_episode_ids=tuple(raw.get("ordered_episode_ids", [])),
-            names=EntryNames.from_json(raw.get("names", {})),
+            ordered_episode_ids=window.ordered_episode_ids,
+            names=window.names,
             preowned_episode_ids=tuple(raw.get("preowned_episode_ids", [])),
             slice_coverage=raw.get("slice_coverage"),
             claimed_at=raw.get("claimed_at", ""),
-            guards=guards.get(al_id, GuardFacts()),
+            guards=guards.get(window.al_id, GuardFacts()),
         )
 
 
@@ -957,7 +962,8 @@ class PendingImport:
 
     listing: TorrentListing = EMPTY_LISTING
     """The torrent's SeaDex listing: the window of every entry that lists it, and their special aliases.
-    `EMPTY_LISTING` when the record holds none, as on rows written before this field existed."""
+    `EMPTY_LISTING` when the record holds none, which a reader treats the same whatever the cause (a row written
+    before the field existed, a url no entry lists)."""
 
     def __post_init__(self) -> None:
         # Fold the map, the exclusions and the two by-name maps so readers can take the names as normalized, the
