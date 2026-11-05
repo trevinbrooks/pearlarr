@@ -309,8 +309,8 @@ class ImportProbe:
     record seam to persist. Empty when the poll placed nothing."""
 
     exclusions: tuple[str, ...] = ()
-    """On-disk files this poll proved never this record's to import (a sibling's slice, a duplicate), for the
-    record seam to persist. Empty when the poll excluded nothing."""
+    """On-disk files this poll proved aren't this record's to import under its current claims (a sibling's slice,
+    another listed title's, a duplicate), for the record seam to persist. Empty when the poll excluded nothing."""
 
     unmatched_files: tuple[str, ...] = ()
     """The download's on-disk files no episode claimed (one per distinct basename), when that is all the poll
@@ -935,12 +935,14 @@ class PendingImport:
     later imports made. Folded as the record is built (`_normalized_map`) and wrapped read-only."""
 
     claims: tuple[EntryClaim, ...]
-    """Every entry's claim on the torrent, accretion order (the import's window order)."""
+    """Every entry's claim on the torrent, in accretion order. The import runs their windows in `ordered_windows`'
+    order."""
 
     excluded_files: tuple[str, ...] = ()
-    """Normalized basenames of video files this record knowably never imports (a collision-refused duplicate,
-    a file every claim's window resolves outside), found at grab time or by an import poll. Folded and deduplicated
-    in order as the record is built, and never a name the map holds."""
+    """Normalized basenames of video files that aren't this record's to import under its current claims (a
+    collision-refused duplicate, a file every window resolves outside or places as another listed title's), found
+    at grab time or by an import poll. They only quiet the import's warning: a later claim's window can still place
+    one. Folded and deduplicated in order as the record is built, and never a name the map holds."""
 
     release_sizes: tuple[int, ...] = ()
     """The grabbed listing's file sizes. Lets the import tell this release's own files from a stale

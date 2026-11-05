@@ -163,11 +163,12 @@ class PlacementVerdict(StrEnum):
     A claim, not a refusal, so the window that holds that special may still place it."""
     FOREIGN = "other slice"
     """Reads wholly outside the scope, or is titled as an episode outside it and confirmed by its reading, by that
-    reading's rejection while other files hold its episodes, or by no open id being left: never this record's to
-    import."""
+    reading's rejection while other files hold its episodes, or by no open id being left: not this record's to
+    import under its current claims."""
     LISTED_ELSEWHERE = "another listed title's"
     """Placed by the window of another title SeaDex lists the torrent under, one with no claim on the record: not
-    this record's to import until that title claims the torrent and its own grab places the file."""
+    this record's to import under its current claims. That title's own grab claims the torrent and places the
+    file, unless the title is in `ignore_anilist_ids`, which is never grabbed for."""
     DUPLICATE = "duplicate"
     """Reads inside the scope onto episodes other files provably hold, or is titled as an episode a version of the
     same file holds."""
@@ -193,9 +194,9 @@ class PlacementVerdict(StrEnum):
 
     @property
     def excluded(self) -> bool:
-        """Whether the file is knowably not this record's to import.
+        """Whether the file isn't this record's to import under its current claims.
 
-        Never, except another listed title's, which is that title's once it claims the torrent.
+        A later claim's window can still place a foreign file or another listed title's.
         """
 
         return self in _EXCLUDED
@@ -273,7 +274,7 @@ class EpisodeAssignment:
 
     @property
     def excluded(self) -> tuple[Placement, ...]:
-        """The files this record knowably doesn't import, and how (`PlacementVerdict.excluded`)."""
+        """The files not this record's under its current claims, and how (`PlacementVerdict.excluded`)."""
 
         return tuple(p for p in self.placements if p.verdict.excluded)
 

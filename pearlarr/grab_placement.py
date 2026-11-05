@@ -588,7 +588,7 @@ class PendingSeed:
     """This placement's fresh map: the whole batch when the torrent is new, else the files the stored map lacks."""
 
     excluded: tuple[str, ...]
-    """The names this placement proved never the record's to import."""
+    """The names this placement proved aren't the record's to import under its current claims."""
 
     evidence: ListingEvidence
     """The listing and size matches this placement ran with (`UrlPlacement.evidence`), kept on the record so the
@@ -671,8 +671,8 @@ def build_entry_claim(release: SeedRelease, scope: SeedScope, entry: EntryFacts)
 def build_pending_seed(release: SeedRelease, scope: SeedScope, entry: EntryFacts) -> PendingSeed:
     """Fold one placed release into the entry's seed on its torrent. Pure, never places.
 
-    A placed file is seeded, an excluded one recorded as never the record's, and a held or skipped one
-    left for import time, where the parses are re-read.
+    A placed file is seeded, an excluded one recorded as not the record's under its current claims, and a held or
+    skipped one left for import time, where the parses are re-read.
     """
 
     placed = release.placed

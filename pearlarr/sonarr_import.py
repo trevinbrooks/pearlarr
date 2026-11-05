@@ -487,7 +487,7 @@ class ImportExecutor:
         on_record = set(pending.excluded_files)
         if new_exclusions := [p for p in excluded if p.name not in on_record]:
             verdicts = ", ".join(f"{p.name} ({p.verdict})" for p in new_exclusions)
-            self.logger.debug(f"{pending.display_label}: never this record's to import: {verdicts}")
+            self.logger.debug(f"{pending.display_label}: not this record's under its current claims: {verdicts}")
         unplaced = assignment.unplaced
         if unplaced and assignment.settled and not authoritative:
             if (by_hand := self._imported_by_hand(context, pending.file_episode_map)) is not None:

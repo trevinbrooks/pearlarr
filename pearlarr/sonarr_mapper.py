@@ -94,7 +94,7 @@ class FileAssignment:
 
     @property
     def excluded(self) -> tuple[Placement, ...]:
-        """The leaves this record knowably doesn't import, with their verdicts (for the caller to persist)."""
+        """The leaves not this record's under its current claims, with their verdicts (for the caller to persist)."""
 
         return self.result.excluded
 

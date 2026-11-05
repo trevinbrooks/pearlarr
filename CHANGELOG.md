@@ -9,7 +9,7 @@ Pearlarr is a fork of [bbtufty/seadexarr](https://github.com/bbtufty/seadexarr).
 
 ### Changed
 
-- A torrent SeaDex lists under several titles of a show is placed under every one of them, at the grab and at the import, season titles first, then specials titles. A file another listed title places is that title's: it's never imported for the title being checked, and that title's own grab imports it.
+- A torrent SeaDex lists under several titles of a show is placed under every one of them, at the grab and at the import, season titles first, then specials titles. A file another listed title places is that title's: it's never imported for the title being checked, and that title's own grab imports it, unless that title is in `ignore_anilist_ids`, when nothing does.
 - A release none of whose files place on the title being checked, while some place under another title SeaDex lists it with, is no longer grabbed for it. The title is listed under "needs action" with "its files place under another title SeaDex lists it with; any it could not place need a hand import", and the release's "skipped" line counts the files, such as "12 files are another title's, 6 could not be placed". The row stays until one of the title's episodes holds a file of the release at its listed size.
 - A pending import places its leftover files under the same titles the grab did. So a specials pack whose numbers don't match its listing is left for a hand import at the import too, where before its leftover files could import by their numbers. This covers downloads this version grabs.
 - While SeaDex can't be read, a release isn't placed at all, since another title it lists may own some of its files. It's held until the next run, as before.

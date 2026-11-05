@@ -82,7 +82,8 @@ class GrabHold(StrEnum):
     PLACED_ELSEWHERE = "files place under another title"
     """A url none of whose files land on the entry, while some land on another title SeaDex lists the torrent
     with: placed or refused as misnumbered by that title's window, or stored on its episodes. That title's grab
-    is what brings them. Not a hand-import hold, since the url as a whole is never the entry's to import."""
+    imports them, unless the title is in `ignore_anilist_ids`, which is never grabbed for. Not a hand-import hold:
+    the url as a whole isn't the entry's, and only its files nothing placed are a hand import."""
 
     @property
     def hand_import(self) -> bool:
