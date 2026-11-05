@@ -466,7 +466,9 @@ class SonarrSync(ArrSync[SonarrItem]):
         stored: dict[str, PendingImport] = run.records.stored_records(hashes) if waits_on_imports else {}
         series_ids = {sonarr_series_id, *(sid for record in stored.values() for sid in record.series_ids)}
         indexes = self._series_indexes(series_ids)
-        listings = self._listings.read(sonarr_series_id, self.item_anilist_ids(item, log_ignored=False))
+        listings = self._listings.read(
+            sonarr_series_id, self._services.listing_mappings(ExternalIds(tvdb=item.tvdbId, imdb=item.imdbId))
+        )
         scope = SeedScope(
             al_id,
             episode_index(ep_list, self._episodes.orders_for(sonarr_series_id)),

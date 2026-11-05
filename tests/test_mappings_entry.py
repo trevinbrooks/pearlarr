@@ -59,9 +59,9 @@ class TestKometaPath:
             },
         )
 
-        mappings, dropped = resolver.get_anilist_ids(ExternalIds(tvdb=200))
+        mappings, ignored = resolver.get_anilist_ids(ExternalIds(tvdb=200))
 
-        assert dropped == []
+        assert ignored == {}
         assert list(mappings) == [100]
         entry = mappings[100]
         assert isinstance(entry, MappingEntry)

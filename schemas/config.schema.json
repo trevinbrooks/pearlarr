@@ -501,7 +501,7 @@
           "uniqueItems": true
         },
         "ignore_anilist_ids": {
-          "description": "AniList IDs never processed. Empty ignores none.",
+          "description": "AniList IDs never processed: an ignored title is never grabbed or imported for. Its window still runs on a torrent it shares with a kept title of the show, so the shared files are placed by its mapping and never on the other title. Empty ignores none.",
           "items": {
             "type": "integer"
           },

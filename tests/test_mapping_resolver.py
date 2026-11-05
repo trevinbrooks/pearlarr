@@ -16,7 +16,8 @@ import logging
 import os
 import sqlite3
 import time
-from collections.abc import Iterator
+from collections.abc import Generator, Iterator
+from contextlib import contextmanager
 from pathlib import Path
 from types import SimpleNamespace
 from typing import NamedTuple
@@ -45,10 +46,12 @@ from pearlarr.mappings import (
 )
 from pearlarr.output import Severity
 from pearlarr.paths import resolve_paths
+from pearlarr.reporter import RunContext
+from pearlarr.run_services import RunServices
 from pearlarr.seadex_types import NO_ALIASES, SpecialAliases, SpecialAliasing, TvdbMappings
 from pearlarr.sonarr_episodes import SonarrEpisodes, check_ep_by_anibridge
 
-from .builders import make_bare_instance, sonarr_ep
+from .builders import make_bare_instance, make_services, sonarr_ep
 from .fakes import CaptureHandler, diagnostic_messages, install_recording_hub
 
 # One inert shared client for the resolver ctors (inline sources: nothing downloads).
@@ -601,12 +604,12 @@ class TestAnimeIdsParity:
 
 
 class TestGetAnilistIdsMerge:
-    """`get_anilist_ids` merges AniBridge (winning) with anime-ids fallback, drops ignored ids, and sorts by id."""
+    """`get_anilist_ids` merges AniBridge (winning) with anime-ids fallback, sets ignored ids aside, and sorts by id."""
 
     def test_anibridge_wins_then_anime_fills_then_drop_and_sort(self) -> None:
         # 269 resolves in both sources for tvdb 74796. AniBridge must win (it is
-        # queried first). 270 is AniBridge-only. Ignored ids are dropped. The result
-        # is sorted by AniList id.
+        # queried first). 270 is AniBridge-only. Ignored ids are set aside with their
+        # mappings. The result is sorted by AniList id.
         amap = {"x": {"anilist_id": 269, "tvdb_id": 74796, "tvdb_season": 7}}
         resolver = MappingResolver(
             cache_time=1,
@@ -619,14 +622,61 @@ class TestGetAnilistIdsMerge:
             ),
         )
         try:
-            mappings, dropped = resolver.get_anilist_ids(ExternalIds(tvdb=74796))
-            assert dropped == [270]
-            assert list(mappings) == [269]  # 270 dropped, sorted
+            mappings, ignored = resolver.get_anilist_ids(ExternalIds(tvdb=74796))
+            assert list(ignored) == [270]
+            assert ignored[270].anilist_id == 270
+            assert list(mappings) == [269]  # 270 set aside, sorted
             # AniBridge won for 269 -> ANIBRIDGE mode (not the anime-ids season 7).
             assert mappings[269].mode is MappingMode.ANIBRIDGE
             assert mappings[269].tvdb_mappings == {2: [(1, 21)], 3: [(1, 9), (11, 12)]}
         finally:
             resolver.close()
+
+
+class _IgnoredIdLog:
+    """Records each `log_ignored_anilist_id` call's AniList id."""
+
+    def __init__(self) -> None:
+        self.ids: list[int] = []
+
+    def log_ignored_anilist_id(self, ctx: RunContext, al_id: int) -> None:
+        del ctx
+        self.ids.append(al_id)
+
+
+class TestRunServicesIgnoredIds:
+    """The run's two reads of one series' mappings: the entries it processes, and every entry its listing reads."""
+
+    @staticmethod
+    @contextmanager
+    def _services(log: _IgnoredIdLog) -> Generator[RunServices]:
+        # tvdb 74796 maps 269 (both sources) and 270 (AniBridge only), and 270 is on the ignore list.
+        resolver = MappingResolver(
+            cache_time=1,
+            ignore_anilist_ids={270},
+            web=_WEB,
+            sources=MappingSources(
+                anime={"x": {"anilist_id": 269, "tvdb_id": 74796, "tvdb_season": 7}},
+                anidb=False,
+                anibridge=GRAPH,
+            ),
+        )
+        try:
+            yield make_services(_mappings=resolver, _reporter=log)
+        finally:
+            resolver.close()
+
+    def test_the_processed_entries_leave_out_the_ignored_one_and_log_it(self) -> None:
+        log = _IgnoredIdLog()
+        with self._services(log) as services:
+            assert list(services.get_anilist_ids(ExternalIds(tvdb=74796))) == [269]
+        assert log.ids == [270]
+
+    def test_the_listing_read_keeps_the_ignored_entry_in_id_order_and_logs_nothing(self) -> None:
+        log = _IgnoredIdLog()
+        with self._services(log) as services:
+            assert list(services.listing_mappings(ExternalIds(tvdb=74796))) == [269, 270]
+        assert log.ids == []
 
 
 class TestVu1DegradedAniBridge:

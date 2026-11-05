@@ -13,8 +13,9 @@ from .sonarr_episodes import SonarrEpisodes
 class SeriesListings:
     """Reads every SeaDex entry of a series into a `ListingsRead`, once per series per run.
 
-    The caller passes the series' AniList ids, with the ignore list already applied. Prefetched entries come from
-    the gateway's cache, and anything else costs a request.
+    The caller passes every entry mapped to the series, the ignored ones included: an ignored entry still lists
+    its own files. Prefetched entries come from the gateway's cache, and anything else, an ignored entry among
+    them, costs a request.
 
     Each collaborator serves `_read`: `seadex` gives each entry's record, `episodes` its window, `ignore_tags` the
     torrents the size identities skip, and `names` the entry's titles for its window (the title ladder the entry's

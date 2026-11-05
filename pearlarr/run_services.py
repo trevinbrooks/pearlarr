@@ -458,18 +458,29 @@ class RunServices:
     def get_anilist_ids(self, ids: ExternalIds, log_ignored: bool = True) -> dict[int, MappingEntry]:
         """Resolve external Arr ids to a {AniList id -> mapping} dict, logging the ignored ones.
 
-        The resolver maps and reports the ids it dropped (the ignore list), and the ledger rows stay
-        here. `log_ignored=False` on the prefetch pass keeps an ignored id from being logged twice.
+        The resolver maps and sets aside the ignore list's entries, and the ledger rows stay here.
+        `log_ignored=False` on the prefetch pass keeps an ignored id from being logged twice.
         """
 
-        anilist_mappings, ids_to_drop = self._mappings.get_anilist_ids(ids)
+        anilist_mappings, ignored = self._mappings.get_anilist_ids(ids)
 
         # Logged per call, not only on the cache-filling one, so the main loop still logs every ignored id.
         if log_ignored:
-            for al_id in ids_to_drop:
+            for al_id in ignored:
                 self._reporter.log_ignored_anilist_id(self._ctx, al_id)
 
         return anilist_mappings
+
+    def listing_mappings(self, ids: ExternalIds) -> dict[int, MappingEntry]:
+        """Every entry mapped to the external ids, the ignored ones included, in AniList id order.
+
+        For the series' listing read: an ignored entry is never processed, but a torrent it lists is still its
+        files, so its window keeps them off a sibling's episodes. Logs nothing, since `get_anilist_ids` logs the
+        ignored ids.
+        """
+
+        anilist_mappings, ignored = self._mappings.get_anilist_ids(ids)
+        return dict(sorted({**anilist_mappings, **ignored}.items()))
 
     def resolve_title(self, al_id: int) -> EntryTitle:
         """Resolve the entry's title through the ladder (resolves only: no logging, no attribution).

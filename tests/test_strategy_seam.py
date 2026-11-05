@@ -185,6 +185,7 @@ class _FakeRunServices(RunServices):
         self,
         *,
         anilist_ids: dict[int, MappingEntry] | None = None,
+        ignored: dict[int, MappingEntry] | None = None,
         prologue_entry: EntryRecord | None = None,
         anilist_title: str = "Title",
         cached_skip: bool = False,
@@ -204,6 +205,7 @@ class _FakeRunServices(RunServices):
         self._records = PendingRecords(self.cache_store)
         self._records.begin_run(RunContext(arr=arr, import_wait_mode=import_wait_mode))
         self._anilist_ids = anilist_ids or {}
+        self._ignored = ignored or {}
         self._prologue_entry = prologue_entry
         self._anilist_title = anilist_title
         self._cached_skip = cached_skip
@@ -252,6 +254,11 @@ class _FakeRunServices(RunServices):
     def get_anilist_ids(self, ids: ExternalIds, log_ignored: bool = True) -> dict[int, MappingEntry]:
         self.get_anilist_ids_calls.append(GetAniListIdsCall(ids, log_ignored))
         return self._anilist_ids
+
+    @override
+    def listing_mappings(self, ids: ExternalIds) -> dict[int, MappingEntry]:
+        del ids
+        return dict(sorted({**self._anilist_ids, **self._ignored}.items()))
 
     @override
     def al_id_prologue(self, al_id: int) -> EntryRecord | None:
@@ -377,9 +384,10 @@ class _ScriptedListings:
         outage: bool = False,
     ) -> None:
         self._read = None if outage else ListingsRead(listed or {}, identities or {})
+        self.reads: list[tuple[int, dict[int, MappingEntry]]] = []
 
     def read(self, series_id: int, entries: Mapping[int, MappingEntry]) -> ListingsRead | None:
-        del series_id, entries
+        self.reads.append((series_id, dict(entries)))
         return self._read
 
 
@@ -2657,6 +2665,37 @@ class TestSonarrProcessAlIdSeeds:
             normalize_basename(n): (100 + i,) for i, n in enumerate(_SEED_FILES, 1)
         }
         assert req.input_missing_groups == ("NAN0",)
+
+    def test_the_listing_read_gets_the_ignored_entries_too(self) -> None:
+        # Entry 6 shares the series but is on the ignore list. It's never processed, but a torrent it lists is
+        # still its files, so the series' listing read gets it beside the entries the run processes.
+        kept, ignored = {5: MappingEntry(anilist_id=5)}, {6: MappingEntry(anilist_id=6)}
+        seadex: SeadexDict = {
+            "NAN0": rg_group({_SEED_URL: url_item(url=_SEED_URL, infohash="h1", download=True, files=["a.mkv"])}),
+        }
+        run = _FakeRunServices(
+            anilist_ids=kept,
+            ignored=ignored,
+            prologue_entry=make_entry_record(url="https://releases.moe/5"),
+            seadex_dict=seadex,
+            filter_downloads_result=plan_result(["h1"], seadex),
+            import_wait_mode=ImportWaitMode.BLOCKING,
+        )
+        listings = _ScriptedListings()
+        strat = make_bare_instance(
+            SonarrSync,
+            _services=run,
+            _episodes=ScriptedEpisodes(FakeSonarrClient(episodes=[_EP1]), windows={5: [_EP1]}),
+            _parse=_ScriptedParse(),
+            _listings=listings,
+            _config=make_config(sleep_time=0),
+            ignore_movies_in_radarr=False,
+            logger=make_logger(),
+        )
+
+        strat.process_al_id(_Item(id=7, title="Show", tvdbId=70, imdbId=None), 5, kept[5])
+
+        assert listings.reads == [(7, {5: kept[5], 6: ignored[6]})]
 
     def test_wait_mode_off_reads_no_record_and_seeds_nothing(self) -> None:
         store = _CountingStore()
