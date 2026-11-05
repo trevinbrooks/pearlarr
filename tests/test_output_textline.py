@@ -90,7 +90,7 @@ from pearlarr.output import (
 from pearlarr.output.textline import _BACKUP_STAMP_FORMAT, _JSON_SKIP, _TEXT_SKIP
 from pearlarr.output.trace import CapturedTrace
 from pearlarr.reporter import GrabRecord, NeedsActionKind, NeedsActionRecord, RunStats
-from pearlarr.seadex_types import Json
+from pearlarr.seadex_types import ElsewhereCounts, Json
 
 _EPOCH = 1_751_990_000.0
 _WHEN = datetime.fromtimestamp(_EPOCH)
@@ -232,19 +232,19 @@ def test_grab_action_line_joins_groups_and_names_sink_side() -> None:
     )
 
 
-def test_release_skipped_line_carries_its_detail() -> None:
+def test_release_skipped_line_carries_its_counts() -> None:
     skipped = ReleaseSkipped(
         group="G",
         tracker="Nyaa",
         reason=SkipReason.PLACED_ELSEWHERE,
         url="https://x",
-        detail="12 files are another title's",
+        counts=ElsewhereCounts(elsewhere=12, unplaced=0),
         scope=_ENTRY,
     )
     line = _format(skipped, *_entry_context())
     assert line == (
         f"{_TS} WARNING [sonarr › [3/182] Frieren › entry] release skipped "
-        f'group=G tracker=Nyaa reason=placed_elsewhere detail="12 files are another title\'s" link=https://x'
+        "group=G tracker=Nyaa reason=placed_elsewhere elsewhere=12 unplaced=0 link=https://x"
     )
 
 

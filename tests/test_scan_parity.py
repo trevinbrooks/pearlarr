@@ -73,7 +73,7 @@ from pearlarr.reporter import (
     RunReporter,
     RunStats,
 )
-from pearlarr.seadex_types import SeadexDict
+from pearlarr.seadex_types import ElsewhereCounts, SeadexDict
 from pearlarr.torrents import AddOutcome, ReleaseOutcome
 
 from .builders import (
@@ -1054,7 +1054,7 @@ class TestExternalDetailParity:
                 tracker="Nyaa",
                 reason=SkipReason.PLACED_ELSEWHERE,
                 url="https://x/1",
-                detail="12 files are another title's, 6 could not be placed",
+                counts=ElsewhereCounts(elsewhere=12, unplaced=6),
             ),
             _xdetail(
                 _W,
@@ -1064,20 +1064,20 @@ class TestExternalDetailParity:
                 "yellow",
             ),
         ),
-        # grab_pipeline._screen_url: a url whose files are all another title's.
+        # grab_pipeline._screen_url: a url whose one file is another title's.
         _FactSite(
             ReleaseSkipped(
                 group="GroupA",
                 tracker="Nyaa",
                 reason=SkipReason.PLACED_ELSEWHERE,
                 url="https://x/1",
-                detail="12 files are another title's",
+                counts=ElsewhereCounts(elsewhere=1, unplaced=0),
             ),
             _xdetail(
                 _W,
-                "    skipped   https://x/1 (12 files are another title's)",
+                "    skipped   https://x/1 (1 file is another title's)",
                 "skipped",
-                "https://x/1 (12 files are another title's)",
+                "https://x/1 (1 file is another title's)",
                 "yellow",
             ),
         ),

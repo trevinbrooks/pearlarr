@@ -58,6 +58,7 @@ from .events import (
     ScopeId,
     ScopeOpened,
     Severity,
+    SkipReason,
     StarterConfigWritten,
     TorrentGraduated,
     WaitFinished,
@@ -234,8 +235,8 @@ def _fields_release_skipped(event: ReleaseSkipped) -> tuple[Field, ...]:
         Field("tracker", event.tracker),
         Field("reason", event.reason.name.lower()),
     ]
-    if event.detail:
-        fields.append(Field("detail", event.detail))
+    if event.reason is SkipReason.PLACED_ELSEWHERE:
+        fields.extend((Field("elsewhere", event.counts.elsewhere), Field("unplaced", event.counts.unplaced)))
     if event.url:
         fields.append(Field("link", event.url))
     return tuple(fields)

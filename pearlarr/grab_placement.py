@@ -7,7 +7,6 @@ from typing import NamedTuple
 
 from .coverage import coverage_string, episodes_from_ep_list
 from .episode_state import EpisodeFileStatus, EpisodeSnapshot, GroupVotes
-from .log import count_noun
 from .manual_import import (
     EMPTY_LISTING,
     NO_SIZES_BY_NAME,
@@ -36,6 +35,8 @@ from .placement_types import (
     TargetScope,
 )
 from .seadex_types import (
+    NO_ELSEWHERE,
+    ElsewhereCounts,
     EpisodeKey,
     EpisodeRecord,
     FlaggedUrl,
@@ -242,9 +243,9 @@ class UrlPlacement:
     hold: GrabHold | None
     """Why the url is not grabbed this run, None when it may be."""
 
-    hold_detail: str | None
-    """What the skip line adds to the hold's reason: for `GrabHold.PLACED_ELSEWHERE`, how many of the files are
-    another title's and how many nothing placed. None for any other url."""
+    hold_counts: ElsewhereCounts
+    """For `GrabHold.PLACED_ELSEWHERE`, how many of the files are another title's and how many nothing placed.
+    `NO_ELSEWHERE` for any other url."""
 
     stored: PendingImport | None
     """The record the url was placed against, None when the torrent is new."""
@@ -353,7 +354,7 @@ def place_release(files: Sequence[SeedFile], scope: SeedScope, torrent: KnownTor
         claimed_ids=frozenset(claimed),
         inputs_known=not files or (batch.all_parses_known and known and not identities_unread),
         hold=hold,
-        hold_detail=_elsewhere_detail(elsewhere, assignment) if hold is GrabHold.PLACED_ELSEWHERE else None,
+        hold_counts=_elsewhere_counts(elsewhere, assignment) if hold is GrabHold.PLACED_ELSEWHERE else NO_ELSEWHERE,
         stored=torrent.record,
         intended_sizes=sizes_by_episode(mapped, sizes),
         evidence=evidence,
@@ -379,17 +380,14 @@ def _hold_of(*, misnumbered: bool, unread: bool, refuted: bool, elsewhere: bool)
     return GrabHold.PLACED_ELSEWHERE if elsewhere else None
 
 
-def _elsewhere_detail(elsewhere: frozenset[str], assignment: EpisodeAssignment) -> str:
-    """The skip line's counts for a url whose files are another title's.
+def _elsewhere_counts(elsewhere: frozenset[str], assignment: EpisodeAssignment) -> ElsewhereCounts:
+    """How a url whose files are another title's splits: `elsewhere`, and the files nothing placed outside it.
 
-    Such as "12 files are another title's, 6 could not be placed", the second half only when some file nothing
-    placed isn't among `elsewhere`.
+    A file another title's window refused as misnumbered is both skipped and among `elsewhere`, so it counts once.
     """
 
-    verb = "is" if len(elsewhere) == 1 else "are"
-    text = f"{count_noun(len(elsewhere), 'file')} {verb} another title's"
     unplaced = sum(name not in elsewhere for name in assignment.skipped)
-    return f"{text}, {unplaced} could not be placed" if unplaced else text
+    return ElsewhereCounts(elsewhere=len(elsewhere), unplaced=unplaced)
 
 
 class IdentityOverride(NamedTuple):
@@ -454,7 +452,7 @@ class EntryPlacements(NamedTuple):
         return cls(scope, {url: place_release(files, scope, torrents[url]) for url, files in files_by_url.items()})
 
     def attach_placements(self, seadex_dict: SeadexDict) -> None:
-        """Write each url's records, hold, and hold detail onto its item, and the records' union onto its group."""
+        """Write each url's records, hold, and hold counts onto its item, and the records' union onto its group."""
 
         for rg_item in seadex_dict.values():
             all_episodes: list[EpisodeRecord] = []
@@ -462,7 +460,7 @@ class EntryPlacements(NamedTuple):
                 placement = self.by_url[url]
                 url_item.episodes = list(placement.records)
                 url_item.hold = placement.hold
-                url_item.hold_detail = placement.hold_detail
+                url_item.hold_counts = placement.hold_counts
                 all_episodes.extend(url_item.episodes)
             rg_item.all_episodes = all_episodes
 

@@ -46,7 +46,7 @@ from pearlarr.output import (
 )
 from pearlarr.output.recording import RecordingHub
 from pearlarr.reporter import NeedsActionKind, PerTitleState, RunContext
-from pearlarr.seadex_types import GrabHold, SeadexDict, SeadexUrlItem
+from pearlarr.seadex_types import ElsewhereCounts, GrabHold, SeadexDict, SeadexUrlItem
 from pearlarr.stamps import now_stamp, stamp_of
 from pearlarr.torrent import TorrentParseError
 from pearlarr.torrents import AddResult, ReleaseOutcome, TorrentAddError
@@ -1368,7 +1368,7 @@ class TestPlacementHolds:
     def test_a_url_whose_files_are_another_titles_is_never_added_and_its_skip_carries_the_counts(self) -> None:
         recording = install_recording_hub()
         nyaa = self._held(url="https://nyaa.si/view/1", infohash="h1", hold=GrabHold.PLACED_ELSEWHERE)
-        nyaa.hold_detail = "12 files are another title's, 6 could not be placed"
+        nyaa.hold_counts = ElsewhereCounts(elsewhere=12, unplaced=6)
         seadex_dict: SeadexDict = {"RG": rg_group({nyaa.url: nyaa})}
         torrents = FakeTorrents({"h1": (AddOutcome.ADDED, "Show-RG")})
         pipeline = _on_entry(_pipeline(torrents=torrents, sleep_time=0))
@@ -1378,8 +1378,8 @@ class TestPlacementHolds:
         assert torrents.calls == []
         assert pipeline.cache_store.get_entry(Arr.SONARR, 42) is None
         assert pipeline._ctx.per_title.held_groups == {GrabHold.PLACED_ELSEWHERE: ["RG"]}
-        assert [(e.reason, e.detail) for e in recording.of_type(ReleaseSkipped)] == [
-            (SkipReason.PLACED_ELSEWHERE, "12 files are another title's, 6 could not be placed")
+        assert [(e.reason, e.counts) for e in recording.of_type(ReleaseSkipped)] == [
+            (SkipReason.PLACED_ELSEWHERE, ElsewhereCounts(elsewhere=12, unplaced=6))
         ]
         (row,) = pipeline._ctx.stats.needs_action
         assert (row.kind, row.reason) == (

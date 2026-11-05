@@ -42,6 +42,8 @@ from pearlarr.placement_types import (
     episode_index,
 )
 from pearlarr.seadex_types import (
+    NO_ELSEWHERE,
+    ElsewhereCounts,
     EpisodeKey,
     EpisodeRecord,
     FlaggedUrl,
@@ -245,7 +247,7 @@ class TestPlaceRelease:
             claimed_ids=frozenset(),
             inputs_known=True,
             hold=None,
-            hold_detail=None,
+            hold_counts=NO_ELSEWHERE,
             stored=None,
             intended_sizes={},
             evidence=NO_EVIDENCE,
@@ -467,7 +469,7 @@ class TestPlaceUnderAnotherEntrysRefutal:
         placement = self._place(files, {"show - 02 - charlie rise.mkv": (103,)}, [501])
 
         assert placement.hold is GrabHold.PLACED_ELSEWHERE
-        assert placement.hold_detail == "1 file is another title's, 2 could not be placed"
+        assert placement.hold_counts == ElsewhereCounts(elsewhere=1, unplaced=2)
 
 
 class TestPlaceHeld:
@@ -750,6 +752,24 @@ class TestPlaceBesideAnotherListedTitle:
         }
         assert placement.hold is None
 
+    def test_a_file_a_sibling_refused_as_misnumbered_counts_once_as_another_titles(self) -> None:
+        # Entry 1's window reads the first file's key and count as disagreeing, and places the second. The refused
+        # file is skipped too, but it's entry 1's, so nothing is left unplaced.
+        season = [sonarr_ep(1, n, ep_id=100 + n, episode_file_id=0, absolute=n) for n in (1, 2, 3)]
+        series = episode_index([_SPECIAL, *season])
+        files = [
+            SeedFile("Show - S01E02 (0003).mkv", 10, _matched(1, 2)),
+            SeedFile("Show - S01E03 (0003).mkv", 20, _matched(1, 3)),
+        ]
+        scope = seed_scope(episode_index([_SPECIAL]), series, al_id=2)
+        torrent = known_torrent(indexes={7: series}, evidence=torrent_evidence(entry_window(1, (101, 102, 103))))
+
+        placement = place_release(files, scope, torrent)
+
+        assert by_name(placement.assignment)["show - s01e02 (0003).mkv"] == ((), PlacementVerdict.MISNUMBERED)
+        assert placement.hold is GrabHold.PLACED_ELSEWHERE
+        assert placement.hold_counts == ElsewhereCounts(elsewhere=2, unplaced=0)
+
     def test_a_run_a_sibling_held_is_not_another_titles(self) -> None:
         # Entry 1's window picked the run, but an unread parse keeps it from placing. No window has read it yet, so
         # the url isn't held as entry 1's, and the title is re-checked once the parse reads.
@@ -903,7 +923,7 @@ class TestRollingGirlsBatch:
         assert placement.records == ()
         assert placement.claimed_ids == frozenset()
         assert placement.hold is GrabHold.PLACED_ELSEWHERE
-        assert placement.hold_detail == "12 files are another title's, 6 could not be placed"
+        assert placement.hold_counts == ElsewhereCounts(elsewhere=12, unplaced=6)
 
     def test_under_the_chibi_entry_beside_the_seasons_record_the_url_is_held(self) -> None:
         record = pending_import(
@@ -923,7 +943,7 @@ class TestRollingGirlsBatch:
         assert placement.records == ()
         assert placement.claimed_ids == frozenset()
         assert placement.hold is GrabHold.PLACED_ELSEWHERE
-        assert placement.hold_detail == "12 files are another title's, 6 could not be placed"
+        assert placement.hold_counts == ElsewhereCounts(elsewhere=12, unplaced=6)
 
 
 class TestKnownTorrent:

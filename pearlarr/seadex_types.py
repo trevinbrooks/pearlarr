@@ -94,6 +94,25 @@ class GrabHold(StrEnum):
 _HAND_IMPORT_HOLDS = frozenset({GrabHold.MISNUMBERED, GrabHold.TITLE_REFUTED})
 
 
+@dataclass(frozen=True, slots=True, kw_only=True)
+class ElsewhereCounts:
+    """How the files of a url held as another title's (`GrabHold.PLACED_ELSEWHERE`) split, for its skip line.
+
+    Built by keyword, so the two counts can't silently transpose.
+    """
+
+    elsewhere: int
+    """The files another title SeaDex lists the torrent with holds: placed or refused as misnumbered by its
+    window, or stored on its episodes."""
+
+    unplaced: int
+    """The other files, which nothing placed."""
+
+
+NO_ELSEWHERE = ElsewhereCounts(elsewhere=0, unplaced=0)
+"""The counts of a url not held as another title's."""
+
+
 @dataclass
 class SeadexUrlItem:
     """One SeaDex url record within a release group."""
@@ -114,9 +133,8 @@ class SeadexUrlItem:
     episodes: list[EpisodeRecord] = field(default_factory=list[EpisodeRecord])
     hold: GrabHold | None = None
     """Why the placement refuses to grab the url this run (`attach_placements` sets it), None when it may be."""
-    hold_detail: str | None = None
-    """What the skip line adds to the hold's reason (`UrlPlacement.hold_detail`), None when the reason says it
-    all."""
+    hold_counts: ElsewhereCounts = NO_ELSEWHERE
+    """How the url's files split when it's held as another title's (`UrlPlacement.hold_counts`)."""
 
     def __post_init__(self) -> None:
         self.infohash = normalized_infohash(self.infohash)

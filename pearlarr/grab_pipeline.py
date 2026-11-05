@@ -223,7 +223,7 @@ class GrabPipeline:
         self._ctx.per_title.add_held(hold, (srg,))
         self._reporter.post(
             ReleaseSkipped(
-                group=srg, tracker=tracker, reason=_HOLD_ROWS[hold].skip, url=url, detail=url_item.hold_detail
+                group=srg, tracker=tracker, reason=_HOLD_ROWS[hold].skip, url=url, counts=url_item.hold_counts
             )
         )
         return False

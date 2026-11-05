@@ -14,6 +14,7 @@ from .trace import CapturedTrace
 from ..config import Arr
 from ..log import EntryState
 from ..manual_import import Outcome, OutcomeCategory
+from ..seadex_types import NO_ELSEWHERE, ElsewhereCounts
 
 if TYPE_CHECKING:
     from ..reporter import RunStats
@@ -248,9 +249,9 @@ class ReleaseSkipped:
     tracker: str
     reason: SkipReason
     url: str | None = None
-    detail: str | None = None
-    """What the skip line adds to the reason, such as how many of a release's files are another title's. None when
-    the reason says it all."""
+    counts: ElsewhereCounts = NO_ELSEWHERE
+    """For `SkipReason.PLACED_ELSEWHERE`, how many of the release's files are another title's and how many nothing
+    placed."""
     scope: ScopeId | None = None
 
 

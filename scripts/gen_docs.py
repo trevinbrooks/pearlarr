@@ -684,8 +684,8 @@ EVENT_DESCRIPTIONS: dict[str, str] = {
     "`title` the library title.",
     "release_skipped": "A release was skipped at add time. `reason` is `private_only`, "
     "`unsupported_tracker`, `tracker_not_selected`, `misnumbered`, `title_refuted`, `placed_elsewhere`, or "
-    "`input_unread`. `detail`, when present, adds to the reason, such as how many of the release's files place "
-    "under another title.",
+    "`input_unread`. On `placed_elsewhere`, `elsewhere` counts the release's files another title holds and "
+    "`unplaced` the rest, which nothing placed.",
     "grab_failed": "Adding a release to qBittorrent failed. The title is retried next run.",
     "grab_action": "The grab decision for a title. `message` distinguishes a real add, a dry-run "
     "would-add, and already in qBittorrent.",
