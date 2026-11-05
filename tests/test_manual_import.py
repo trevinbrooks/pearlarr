@@ -334,13 +334,33 @@ class TestIdentifiedNames:
 
 
 class TestWithListing:
-    """`with_listing`: the newest grab's listing replaces the stored one, and an empty read keeps it."""
+    """`with_listing`: a series' newest read replaces its stored windows, and an empty read keeps them all."""
 
-    def test_a_listing_with_entries_replaces_the_stored_one(self) -> None:
-        newer = torrent_listing(entry_window(1, (501,)), entry_window(2, (601,)))
-        pending = pending_import(listing=torrent_listing(entry_window(1, (501,))))
+    _TWO_SERIES = torrent_listing(
+        entry_window(1, (101,)), entry_window(2, (102,)), entry_window(3, (801,), series_id=8)
+    )
+    """Entries 1 and 2 listed on series 7, entry 3 on series 8."""
 
-        assert pending.with_listing(newer).listing == newer
+    def test_a_read_of_another_series_keeps_the_stored_windows(self) -> None:
+        pending = pending_import(listing=torrent_listing(entry_window(1, (101,)), entry_window(2, (102,))))
+
+        joined = pending.with_listing(torrent_listing(entry_window(3, (801,), series_id=8)))
+
+        assert joined.listing == self._TWO_SERIES
+
+    def test_a_re_read_of_a_series_replaces_its_windows_and_keeps_the_others(self) -> None:
+        pending = pending_import(listing=self._TWO_SERIES)
+
+        joined = pending.with_listing(torrent_listing(entry_window(4, (103,))))
+
+        assert joined.listing == torrent_listing(entry_window(3, (801,), series_id=8), entry_window(4, (103,)))
+
+    def test_the_aliases_join_and_the_new_read_wins_a_number_both_pair(self) -> None:
+        pending = pending_import(listing=torrent_listing(entry_window(1, (501,)), aliases={1: 2, 2: 4}))
+
+        joined = pending.with_listing(torrent_listing(entry_window(3, (801,), series_id=8), aliases={2: 6, 3: 8}))
+
+        assert joined.listing.special_aliases == {1: 2, 2: 6, 3: 8}
 
     def test_an_empty_listing_keeps_the_stored_one(self) -> None:
         pending = pending_import(listing=torrent_listing(entry_window(1, (501,))))
