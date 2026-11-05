@@ -96,6 +96,9 @@ Rejected: reusing Sonarr's manual-import candidates as the mapping source, the e
 | release / release group | A torrent listed on an entry / the group that made it. |
 | grab | Adding a torrent to qBittorrent. |
 | import | The arr (or Pearlarr's manual import) moving finished files into the library. |
+| window | The episodes of one entry, on its Sonarr series, that a torrent's files are placed against. |
+| listing | Every entry SeaDex lists a torrent on, each with its window, plus the special aliases that can place a misnumbered specials pack. A torrent is placed under every window its listing and its claims name, season windows first, then specials windows. |
+| claim | An entry's stake in a pending import: the entry grabbed the torrent, and its window's files import onto its episodes. A file a listed entry with no claim places is that entry's, never imported for another. |
 | run | One sweep over every configured arr: a single `pearlarr run single`, or one scheduled cycle. |
 | cycle | One scheduled-loop iteration (every configured arr, once). |
 | wait pass | The post-grab phase that waits for downloads and drives imports. |
