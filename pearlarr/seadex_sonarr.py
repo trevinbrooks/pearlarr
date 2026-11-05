@@ -179,9 +179,8 @@ class SonarrSync(ArrSync[SonarrItem]):
         # cache, and builds every episode index with its orders_for.
         self._episodes = SonarrEpisodes(deps, self.sonarr, self._services)
 
-        # Listing collaborator: reads every SeaDex entry of the series once per run. That gives each listing
-        # entry's window (its ids are what a specials pack is checked against), and the size identities used to
-        # place files. A window's names come from the same title ladder the entry's own run resolves.
+        # Reads every SeaDex entry of the series once per run, for each entry's episode window and the size
+        # identities files are placed by. Window names come from the title ladder an entry's own run uses.
         self._listings = SeriesListings(
             deps.seadex,
             self._episodes,

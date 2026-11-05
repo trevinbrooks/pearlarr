@@ -700,8 +700,7 @@ class EntryWindow:
     """The Sonarr series id the window's episodes belong to."""
 
     ordered_episode_ids: tuple[int, ...]
-    """The window's episode ids in season order; `of` keeps each once. Empty for an entry whose episode list came
-    back empty."""
+    """The window's episode ids in season order, each once. Empty when the entry's episode list came back empty."""
 
     names: EntryNames
     """The entry's series and AniList titles (see `EntryNames`)."""
@@ -740,8 +739,7 @@ class TorrentListing:
     """The windows of the SeaDex entries that list one torrent, and those entries' special aliases."""
 
     entries: tuple[EntryWindow, ...] = ()
-    """One window per listing entry, in AniList id order. Of two windows with one AniList id the first is kept,
-    since SeaDex can list one hash twice under an entry."""
+    """One window per listing entry, in AniList id order."""
 
     special_aliases: SpecialAliases = NO_ALIASES
     """The union of those entries' special aliases, minus any TMDB number two entries pair differently. Empty when
@@ -751,13 +749,13 @@ class TorrentListing:
     """Union of the entries' episode ids."""
 
     def __post_init__(self) -> None:
-        # One window per AniList id, the first kept, in id order, and `ids` derived from them once. The aliases are
-        # detached from the caller's dict, then wrapped read-only.
+        # SeaDex can list one hash twice under an entry, so the first window per AniList id wins.
         kept: dict[int, EntryWindow] = {}
         for window in self.entries:
             kept.setdefault(window.al_id, window)
         entries = tuple(sorted(kept.values(), key=lambda window: window.al_id))
         object.__setattr__(self, "entries", entries)
+        # Copied before it's wrapped, so a caller's later edits can't reach the listing.
         object.__setattr__(self, "special_aliases", MappingProxyType(dict(self.special_aliases)))
         object.__setattr__(self, "ids", frozenset(ep_id for window in entries for ep_id in window.ordered_episode_ids))
 
@@ -864,9 +862,9 @@ class EntryClaim:
 
     @property
     def window(self) -> EntryWindow:
-        """The claim's window, as a listing holds one.
+        """The claim as a window, the shape a listing holds.
 
-        A claim with no ids, which `admits` reads as covering any id, gives a window with no ids.
+        A claim with no ids gives a window with no ids, and `admits` still reads that claim as covering any id.
         """
 
         return EntryWindow(
