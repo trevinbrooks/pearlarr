@@ -755,7 +755,7 @@ class TestPlaceBesideAnotherListedTitle:
         }
         assert placement.hold is None
 
-    def test_a_file_a_sibling_refused_as_misnumbered_counts_once_as_another_titles(self) -> None:
+    def test_a_file_only_a_sibling_refused_is_the_siblings(self) -> None:
         # Entry 1's window reads the first file's key and count as disagreeing, and places the second. Entry 2's
         # window read neither as its own, so the refused file is entry 1's to report, not this entry's hand import.
         season = [sonarr_ep(1, n, ep_id=100 + n, episode_file_id=0, absolute=n) for n in (1, 2, 3)]
@@ -795,7 +795,7 @@ class TestPlaceBesideAnotherListedTitle:
         assert placement.hold is GrabHold.PLACED_ELSEWHERE
         assert placement.hold_counts == ElsewhereCounts(elsewhere=2, unplaced=0)
 
-    def test_a_kept_title_looks_before_an_ignored_one_of_its_kind(self) -> None:
+    def test_a_kept_title_runs_before_an_ignored_one_of_its_kind(self) -> None:
         # Both windows are seasons of four, and the bare run fits either. The ignored title has the lower id, but
         # the kept title's window places first, so the run is the kept title's and nothing is held.
         second = [sonarr_ep(2, n, ep_id=200 + n, episode_file_id=0) for n in range(1, 5)]
@@ -807,6 +807,25 @@ class TestPlaceBesideAnotherListedTitle:
         placement = place_release(files, scope, known_torrent(indexes={7: series}, evidence=listed))
 
         assert placement.claimed_ids == {101, 102, 103, 104}
+        assert placement.hold is None
+
+    def test_a_kept_title_runs_before_a_stale_claim_of_an_ignored_one(self) -> None:
+        # Entry 1 claimed the run before it was ignored, and its stored claim can't know that. The read flags its
+        # listed window, so its claim's window runs after the kept title's: the run is entry 2's and nothing is held.
+        second = [sonarr_ep(2, n, ep_id=200 + n, episode_file_id=0) for n in range(1, 5)]
+        series = episode_index([*_SEASON, *second])
+        files = [SeedFile(name, 10 * n, _bare(n)) for n, name in enumerate(_RUN, 1)]
+        record = pending_import(
+            infohash="h1", al_id=1, ordered_episode_ids=(101, 102, 103, 104), file_episode_map={}, seadex_files=_RUN
+        )
+        listed = torrent_evidence(
+            entry_window(1, (101, 102, 103, 104), ignored=True), entry_window(2, (ep.id for ep in second))
+        )
+        scope = seed_scope(episode_index(second), series, al_id=2)
+
+        placement = place_release(files, scope, known_torrent(record, indexes={7: series}, evidence=listed))
+
+        assert placement.claimed_ids == {201, 202, 203, 204}
         assert placement.hold is None
 
     @staticmethod
@@ -979,18 +998,15 @@ class TestRollingGirlsBatch:
 
     def test_under_the_chibi_entry_with_the_season_entry_ignored_the_url_is_still_held(self) -> None:
         # The season's title is on the ignore list: nobody grabs for it, but its window still sets the episodes
-        # aside as its own, so they never land on the Chibi entry's specials.
+        # aside as its own, so they never land on the Chibi entry's specials. A season window runs before a specials
+        # window whether or not its title is ignored, so the placement is the kept title's.
         evidence = torrent_evidence(replace(_RG_SEASON_WINDOW, ignored=True), _RG_CHIBI_WINDOW)
 
         placement = self._place(102077, evidence=evidence)
+        kept = self._place(102077)
 
-        assert by_name(placement.assignment) == {
-            **dict.fromkeys(_RG_EPISODE_NAMES, ((), PlacementVerdict.LISTED_ELSEWHERE)),
-            **_RG_REST,
-        }
-        assert placement.records == ()
-        assert placement.hold is GrabHold.PLACED_ELSEWHERE
-        assert placement.hold_counts == ElsewhereCounts(elsewhere=12, unplaced=6)
+        assert placement.assignment == kept.assignment
+        assert (placement.records, placement.hold, placement.hold_counts) == (kept.records, kept.hold, kept.hold_counts)
 
     def test_under_the_chibi_entry_beside_the_seasons_record_the_url_is_held(self) -> None:
         record = pending_import(
@@ -1086,6 +1102,28 @@ class TestKnownTorrent:
         assert order is not None
         assert [(w.al_id, w.series_id) for w in order.windows] == [(1, 7), (2, 8), (3, 8)]
         assert order.imports == {0, 1}
+
+    def test_a_claim_moving_series_drops_the_windows_only_its_old_claim_held(self) -> None:
+        # Entry 1 claimed the pack on series 7, where entry 2 was listed beside it. This grab moves entry 1's claim
+        # to series 8, leaving series 7 unclaimed: entry 2's stored window leaves the order with it, and the unread
+        # series 7 doesn't stand the placement down.
+        record = pending_import(
+            infohash="h1",
+            al_id=1,
+            ordered_episode_ids=(101, 102, 103, 104),
+            file_episode_map={},
+            seadex_files=_PACK,
+            listing=torrent_listing(entry_window(1, (101, 102, 103, 104)), entry_window(2, (103, 104))),
+        )
+        other = episode_index([sonarr_ep(1, n, ep_id=800 + n, episode_file_id=0) for n in range(1, 5)])
+        fresh = torrent_evidence(entry_window(1, (801, 802, 803, 804), series_id=8))
+        torrent = known_torrent(record, indexes={8: other}, evidence=fresh)
+
+        order = torrent.order(seed_scope(other, other, al_id=1, series_id=8).window)
+
+        assert order is not None
+        assert [(w.al_id, w.series_id) for w in order.windows] == [(1, 8)]
+        assert order.imports == {0}
 
 
 class TestTorrentReads:

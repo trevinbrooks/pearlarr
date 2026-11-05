@@ -198,8 +198,8 @@ class TestListedWindowsAtImport:
         assert set(result.hand_import_files) == {normalize_basename(name) for name in pack}
 
     def test_a_claim_made_before_its_title_was_ignored_still_imports(self) -> None:
-        # Entry 3 grabbed the torrent and was put on the ignore list since: the re-read flags its window, which
-        # runs after the kept ones, and its claim still imports what it places.
+        # Entry 3 grabbed the torrent and was put on the ignore list since. Its claim's window runs after the kept
+        # ones (`ordered_windows` takes the flag from the listing), and its claim still imports what that leaves it.
         listing = torrent_listing(
             entry_window(1, (101,)), entry_window(2, (102,)), entry_window(3, (103,), ignored=True)
         )
@@ -461,3 +461,38 @@ class TestSeedEqualsMapper:
             normalize_basename(self._NAMES[1]): (502,),
         }
         assert live.excluded == (Placement(normalize_basename(self._NAMES[2]), (), PlacementVerdict.LISTED_ELSEWHERE),)
+
+    def test_a_grab_moving_the_claims_series_and_the_import_of_its_record_agree(self) -> None:
+        # Entry 1 claimed the pack on series 7, where entry 2 was listed beside it, and this grab moves the claim to
+        # series 8. Only series 8 is read: the grab folds the listing to the series the record will claim, so entry
+        # 2's old window neither stands the placement down nor takes a file, and the import runs the same one window.
+        names = [f"Show - S01E{n:02d}.mkv" for n in range(1, 5)]
+        parses = {name: parsed_info(season=1, episodes=(n,), matched=((1, n),)) for n, name in enumerate(names, 1)}
+        on_8 = {EpisodeKey(1, n): 800 + n for n in range(1, 5)}
+        index = series_index(on_8)
+        stored = pending_import(
+            infohash="h",
+            al_id=1,
+            ordered_episode_ids=(101, 102, 103, 104),
+            file_episode_map={},
+            seadex_files=tuple(names),
+            listing=torrent_listing(entry_window(1, (101, 102, 103, 104)), entry_window(2, (103, 104))),
+        )
+        scope = seed_scope(index, index, al_id=1, series_id=8)
+        torrent = known_torrent(
+            stored, indexes={8: index}, evidence=torrent_evidence(entry_window(1, tuple(on_8.values()), series_id=8))
+        )
+        placed = place_release([SeedFile(name, 1000, parses[name]) for name in names], scope, torrent)
+        release = SeedRelease(
+            release_group="grp", url_item=url_item(url="u", infohash="h"), infohash="h", placed=placed
+        )
+        seed = build_pending_seed(release, scope, entry_facts(al_id=1, series_id=8, title="t"))
+        record = seed.record_at("2026-01-01 00:00:00", fresh=False)
+
+        live = _assign_on_disk(replace(record, file_episode_map={}), _Disk(parses.get), on_8)
+
+        assert placed.hold is None
+        assert seed.placements == {normalize_basename(name): (800 + n,) for n, name in enumerate(names, 1)}
+        assert seed.placements == live.assigned
+        assert (seed.excluded, live.excluded) == ((), ())
+        assert record.series_ids == (8,)

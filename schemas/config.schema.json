@@ -501,7 +501,7 @@
           "uniqueItems": true
         },
         "ignore_anilist_ids": {
-          "description": "AniList ids never processed: an ignored title is never grabbed or imported for. On a torrent it shares with a kept title of the show, its window still runs, after the kept titles', so a file only its mapping places is set aside as its own and never lands on the other title. Empty ignores none.",
+          "description": "AniList ids never processed: an ignored title is never grabbed for, and a download it grabbed before it was ignored imports only what no kept title of the show places. On a torrent it shares with a kept title, its mapping is still read, after the kept titles of its kind (a season's or the specials'), so a file only it places never lands on the other title. Empty ignores none.",
           "items": {
             "type": "integer"
           },

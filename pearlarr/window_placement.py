@@ -4,8 +4,9 @@ The windows run season windows first, then specials windows, the kept titles bef
 within each kind, and otherwise in AniList id order (`ordered_windows`), so a torrent places the same whichever entry
 sees it first and whether or not a record exists. Season windows go first because the release-run pass lets a
 specials window take a run keyed outside it: a specials title with a lower id than its season title would otherwise
-take the season's episodes. An ignored title goes after the kept ones because it never grabs or imports: a file both
-would take is the kept title's to import, and only a file no kept title places is left as the ignored title's.
+take the season's episodes. An ignored title goes after the kept ones of its kind because it never grabs: a file both
+would take is the kept title's to import, and only a file no kept title of its kind places is left as the ignored
+title's.
 
 Every window places every file, not just the ones earlier windows left, because a numbered run cut short would read
 as a new run and could land wrong. Then the windows merge in order:
@@ -14,12 +15,12 @@ as a new run and could land wrong. Then the windows merge in order:
 - A file no window decides takes its strongest claim (`_CLAIM_RANK`).
 - A file the special aliases claim under one window but its numbers place elsewhere is always `MISNUMBERED`.
 
-A record imports only what its own entries' windows place, and leaves for a hand import only a refusal one of them
-was party to (`WindowedAssignment.for_record`).
+A record imports only what its own entries' windows place, and takes on a hand import only when one of them was party
+to it (`WindowedAssignment.for_record`).
 """
 
 from collections.abc import Collection, Iterable, Mapping, Sequence
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from types import MappingProxyType
 
 from .manual_import import EntryClaim, EntryWindow, TorrentListing
@@ -41,8 +42,7 @@ class WindowOrder:
     """The windows a torrent is placed under, in placement order, and which of them the record imports."""
 
     windows: tuple[EntryWindow, ...]
-    """One per AniList id: season windows first, then specials windows, the kept titles before the ignored ones of
-    each kind, each in AniList id order."""
+    """One per AniList id, in placement order (`ordered_windows`)."""
 
     imports: frozenset[int]
     """The positions whose files the record imports: the grabbing entry's and every claimed entry's."""
@@ -71,20 +71,25 @@ def ordered_windows(
     The first three parameters are the three sources of windows, and `indexes` classifies each one. None when
     `indexes` lacks a window's series, since that window can be neither classified nor placed.
 
-    Season windows come first, then specials windows. Within each kind the kept titles come before the ones in
-    `ignore_anilist_ids`, and otherwise AniList id order holds (the module docstring says why).
+    Sorted as the module docstring says: season windows before specials windows, kept before ignored within a kind,
+    then AniList id.
 
     A listed window with no ids is left out, since it would be unscoped and admit any id. A claim's window with no
     ids still runs: `EntryClaim.admits` reads such a claim as covering any id. It sorts with the specials windows.
+
+    A claim's window takes the ignored flag from its entry's listed window, since the claim predates any ignore.
     """
 
     # A claim's window takes its entry's slot from the listed one, since the claim is what the import routes by, and
     # `own` takes it from both, since this grab replaces its claim. A claim whose entry the listing doesn't name keeps
-    # its window, and an entry listed and never claimed gets its listed window.
+    # its window, and an entry listed and never claimed gets its listed window. The ignored flag is the listing's for
+    # every window: a fact about the entry at the read, which a claim made before the title was ignored can't hold.
+    # It's read off every listed window, so an entry whose listed window came back empty still flags its claim.
     chosen = {window.al_id: window for window in listing.entries if window.ordered_episode_ids}
+    ignored_ids = {window.al_id for window in listing.entries if window.ignored}
     imported = set[int]()
     for claim in claims:
-        chosen[claim.al_id] = claim.window
+        chosen[claim.al_id] = replace(claim.window, ignored=claim.al_id in ignored_ids)
         imported.add(claim.al_id)
     if own is not None:
         chosen[own.al_id] = own
@@ -132,36 +137,32 @@ class WindowedAssignment:
         elsewhere = PlacementVerdict.LISTED_ELSEWHERE
         return EpisodeAssignment(
             tuple(
-                Placement(p.name, (), elsewhere) if self._another_titles(at, p, imports) else p
+                Placement(p.name, (), elsewhere) if self._listed_elsewhere(at, imports) else p
                 for at, p in enumerate(self.merged.placements)
             )
         )
 
-    def decided_outside(self, own_at: int) -> frozenset[str]:
+    def listed_elsewhere_under(self, own_at: int) -> frozenset[str]:
         """The files that are another title's for the window at `own_at` alone (`for_record`'s rule, one window).
 
         A file a window held for a re-ask isn't among them, since no window has read it yet.
         """
 
-        return frozenset(p.name for at, p in enumerate(self.merged.placements) if self._another_titles(at, p, {own_at}))
+        return frozenset(p.name for at, p in enumerate(self.merged.placements) if self._listed_elsewhere(at, {own_at}))
 
-    def _another_titles(self, index: int, merged: Placement, imports: Collection[int]) -> bool:
-        """Whether the file at `index` of the batch, merged as `merged`, is a title's outside `imports`."""
-
-        if merged.verdict.placed:
-            return self.decided_by[merged.name] not in imports
-        if merged.verdict.hand_import:
-            return not any(at in imports for at in self._party_to(index))
-        return False
-
-    def _party_to(self, index: int) -> frozenset[int]:
-        """The positions of the windows party to the file at `index` of the batch (`_party`).
+    def _listed_elsewhere(self, index: int, imports: Collection[int]) -> bool:
+        """Whether the file at `index` of the batch is a title's outside `imports`.
 
         Every window's placements are in batch order (`EpisodeAssignment.placements`), so one index names one file
         under each of them.
         """
 
-        return frozenset(at for at, window in enumerate(self.windows) if _party(window.placements[index].verdict))
+        merged = self.merged.placements[index]
+        if merged.verdict.placed:
+            return self.decided_by[merged.name] not in imports
+        if merged.verdict.hand_import:
+            return not any(_party(self.windows[at].placements[index].verdict) for at in imports)
+        return False
 
     def refuted_under(self, own_at: int) -> bool:
         """Whether a file the window at `own_at` refuted by its title is still `TITLE_REFUTED` after the merge."""
@@ -170,10 +171,7 @@ class WindowedAssignment:
         return self._left_as(refuted, {p.name for p in self.windows[own_at].placements if p.verdict is refuted})
 
     def misnumbered_under(self, own_at: int) -> bool:
-        """Whether a file the window at `own_at` was party to (`_party`) ended up `MISNUMBERED`.
-
-        Files the window wrote off (another entry's, an extra, a skip) don't count.
-        """
+        """Whether a file the window at `own_at` was party to (`_party`) ended up `MISNUMBERED`."""
 
         own = {p.name for p in self.windows[own_at].placements if _party(p.verdict)}
         return self._left_as(PlacementVerdict.MISNUMBERED, own)
@@ -207,10 +205,10 @@ def _decides(verdict: PlacementVerdict) -> bool:
 
 
 def _party(verdict: PlacementVerdict) -> bool:
-    """Whether a window giving this verdict has a stake in the file.
+    """Whether a window giving this verdict is party to the file.
 
     It placed, refused or refuted the file, or claimed it by alias. A window that wrote the file off (another
-    slice's, a duplicate, an extra, a skip) has none.
+    slice's, a duplicate, an extra, a skip) isn't.
     """
 
     return _decides(verdict) or verdict in _BY_ALIAS or verdict is PlacementVerdict.TITLE_REFUTED

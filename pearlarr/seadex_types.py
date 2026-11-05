@@ -81,11 +81,10 @@ class GrabHold(StrEnum):
     """A pack whose file titles contradict its numbers, with nothing of it placed on the entry
     (`PlacementVerdict.TITLE_REFUTED`): left for a hand import."""
     PLACED_ELSEWHERE = "files place under another title"
-    """A url none of whose files land on the entry, while some land on another title SeaDex lists the torrent
-    with: placed or refused by that title's window, or stored on an episode its window holds. A stored file on an
-    episode no listed title's window holds is nobody's and holds nothing. That title's grab imports them, unless
-    the title is in `ignore_anilist_ids`, which is never grabbed for. Not a hand-import hold: the url as a whole
-    isn't the entry's, and only its files nothing placed are a hand import."""
+    """A url none of whose files land on the entry, while some are another title's SeaDex lists the torrent with:
+    placed or left for a hand import by that title's window, or stored on an episode its window holds. That title's
+    grab imports the placed ones, unless the title is in `ignore_anilist_ids`, which is never grabbed for. Not a
+    hand-import hold: the url as a whole isn't the entry's, and only its files nothing placed are a hand import."""
 
     @property
     def hand_import(self) -> bool:
@@ -105,8 +104,8 @@ class ElsewhereCounts:
     """
 
     elsewhere: int
-    """The files another title SeaDex lists the torrent with holds: placed or refused as misnumbered by its
-    window, or stored on its episodes."""
+    """The files another title SeaDex lists the torrent with holds: placed or left for a hand import by its window,
+    or stored on its episodes."""
 
     unplaced: int
     """The other files, which nothing placed."""

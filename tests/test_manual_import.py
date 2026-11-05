@@ -161,12 +161,12 @@ class TestPendingImportBuild:
         assert pending.identified == {"show - 01.mkv": 101}
 
     def test_the_listing_keeps_only_the_windows_on_claimed_series(self) -> None:
-        # The one claim is on series 7, so entry 3's window on series 8 drops and the aliases stay.
-        listing = torrent_listing(entry_window(1, (101,)), entry_window(3, (801,), series_id=8), aliases={1: 2})
+        # The one claim is on series 7, so entry 3's window on series 8 drops.
+        listing = torrent_listing(entry_window(1, (101,)), entry_window(3, (801,), series_id=8))
 
         pending = pending_import(listing=listing)
 
-        assert pending.listing == torrent_listing(entry_window(1, (101,)), aliases={1: 2})
+        assert pending.listing == torrent_listing(entry_window(1, (101,)))
 
     def test_the_map_is_detached_and_read_only(self) -> None:
         # The record copies the caller's map at construction and wraps it read-only, so neither the
@@ -405,6 +405,13 @@ class TestPendingImportClaims:
         )
 
         assert pending.series_ids == (8, 7)
+
+    def test_series_ids_after_are_the_other_claims_series_and_the_grabbing_entrys(self) -> None:
+        pending = pending_import(claims=(entry_claim(al_id=1, series_id=7), entry_claim(al_id=2, series_id=8)))
+
+        assert pending.series_ids_after(entry_window(3, (901,), series_id=9)) == {7, 8, 9}
+        assert pending.series_ids_after(entry_window(1, (101,), series_id=7)) == {7, 8}
+        assert pending.series_ids_after(entry_window(2, (901,), series_id=9)) == {7, 9}
 
     def test_a_claim_persists_as_the_spelled_out_schema(self) -> None:
         # The persisted shape is pinned: a new field never enters a row without a migration.
@@ -696,15 +703,6 @@ class TestPendingImportRoundTrip:
         assert bare == replace(pending, claims=(replace(claim, guards=GuardFacts()),))
         # The caller-supplied rows (the read seams' join) hydrate the claim back whole.
         assert PendingImport.from_json(raw, guards={claim.al_id: claim.guards}) == pending
-
-    def test_a_row_with_a_window_on_an_unclaimed_series_hydrates_without_it(self) -> None:
-        # A stored row can hold a window whose claim since moved series (`PendingImport.listing`).
-        raw = pending_import(listing=torrent_listing(entry_window(1, (101,)))).to_json()
-        raw["listing"]["entries"].append(entry_window(3, (901,), series_id=9).to_json())
-
-        rebuilt = PendingImport.from_json(raw, guards={})
-
-        assert rebuilt.listing == torrent_listing(entry_window(1, (101,)))
 
     def test_from_json_rehydrates_each_claims_guards_by_al_id(self) -> None:
         first, second = GuardFacts(entry_groups=("A",)), GuardFacts(stale_groups=("B",))

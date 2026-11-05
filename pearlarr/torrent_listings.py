@@ -14,8 +14,8 @@ class SeriesListings:
     """Reads every SeaDex entry of a series into a `ListingsRead`, once per series per run.
 
     The caller passes the series' resolved mappings, the ignored entries set apart: an ignored entry still lists
-    its own files, and its window carries the flag so it looks after the kept ones (`ordered_windows`). Prefetched
-    entries come from the gateway's cache, and anything else, an ignored entry among them, costs a request.
+    its own files, and its window is flagged so `ordered_windows` runs it after the kept windows of its kind.
+    Prefetched entries come from the gateway's cache. Anything else, an ignored entry among them, costs a request.
 
     Each collaborator serves `_read`: `seadex` gives each entry's record, `episodes` its window, `ignore_tags` the
     torrents the size identities skip, and `names` the entry's titles for its window (the title ladder the entry's

@@ -450,6 +450,16 @@ class TestOrderedWindows:
 
         assert (order.windows, order.imports) == ((claim.window,), {0})
 
+    def test_a_claims_window_takes_its_listed_windows_ignored_flag(self) -> None:
+        # Entry 1 claimed the torrent before it was ignored. Its claim's window still imports, but runs after the
+        # kept season window, where its listed window would.
+        claim = entry_claim(al_id=1, ordered_episode_ids=_FIRST_COUR[:2])
+
+        order = _order((entry_window(1, _FIRST_COUR, ignored=True), entry_window(2, _SECOND_COUR)), (claim,))
+
+        assert order.windows == (entry_window(2, _SECOND_COUR), replace(claim.window, ignored=True))
+        assert order.imports == {1}
+
     def test_a_listed_entry_never_claimed_runs_its_listed_window_and_does_not_import(self) -> None:
         listed = entry_window(2, _SECOND_COUR)
 
@@ -517,7 +527,7 @@ class TestDecidedBy:
         assert assignment.assigned == {name: (601 + i,) for i, name in enumerate(run[:3])}
         assert {by_name(assignment)[name] for name in run[3:]} == {((), PlacementVerdict.LISTED_ELSEWHERE)}
 
-    def test_the_record_sets_aside_a_refusal_no_window_it_imports_was_party_to(self) -> None:
+    def test_the_record_sets_aside_a_hand_import_no_window_it_imports_was_party_to(self) -> None:
         # The second cour refused the last four as misnumbered, and the first cour read them as another slice's.
         pack, result = _disputed_pack()
 
@@ -525,7 +535,7 @@ class TestDecidedBy:
 
         assert {by_name(assignment)[name][1] for name in pack[3:]} == {PlacementVerdict.LISTED_ELSEWHERE}
 
-    def test_the_record_keeps_a_refusal_a_window_it_imports_was_party_to(self) -> None:
+    def test_the_record_keeps_a_hand_import_a_window_it_imports_was_party_to(self) -> None:
         pack, result = _disputed_pack()
 
         for imports in ({1}, {0, 1}):
@@ -533,7 +543,7 @@ class TestDecidedBy:
 
             assert {by_name(assignment)[name][1] for name in pack[3:]} == {PlacementVerdict.MISNUMBERED}
 
-    def test_the_record_keeps_a_dispute_a_window_it_imports_placed_a_side_of(self) -> None:
+    def test_the_record_keeps_a_disputed_file_a_window_it_imports_placed_by_number(self) -> None:
         # The aliases claim the pack's 1 for the second window while the first places it by number: a dispute is
         # misnumbered, and the first window, which placed it, is party to it.
         pack = specials_pack(1, 2, 3)
@@ -543,12 +553,15 @@ class TestDecidedBy:
 
         assert by_name(assignment)[next(iter(pack))][1] is PlacementVerdict.MISNUMBERED
 
-    def test_a_file_another_window_placed_or_refused_is_decided_outside(self) -> None:
+    def test_a_file_another_window_placed_or_refused_is_listed_elsewhere_for_this_one(self) -> None:
         pack, result = _disputed_pack()
 
-        assert (result.decided_outside(0), result.decided_outside(1)) == (frozenset(pack[3:]), frozenset(pack[:3]))
+        assert (result.listed_elsewhere_under(0), result.listed_elsewhere_under(1)) == (
+            frozenset(pack[3:]),
+            frozenset(pack[:3]),
+        )
 
-    def test_a_file_another_window_held_is_not_decided_outside(self) -> None:
+    def test_a_file_another_window_held_is_not_listed_elsewhere(self) -> None:
         # No window has read a held file yet.
         run = numbered_names("sp", 3)
         parsed = {**blind(run), "x.mkv": None}
@@ -556,7 +569,7 @@ class TestDecidedBy:
         result = _place_across(parsed, (_window(_SPECIALS), _window([601])))
 
         assert {by_name(result.merged)[name][1] for name in run} == {PlacementVerdict.HELD}
-        assert result.decided_outside(1) == frozenset()
+        assert result.listed_elsewhere_under(1) == frozenset()
 
 
 class TestWindowsOf:

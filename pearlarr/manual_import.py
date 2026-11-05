@@ -706,9 +706,11 @@ class EntryWindow:
     """The entry's series and AniList titles (see `EntryNames`)."""
 
     ignored: bool = False
-    """Whether the entry was in `ignore_anilist_ids` at the read. Its window then looks after the kept windows of its
-    kind (`ordered_windows`): a file a kept title's window also places is that title's, since an ignored title never
-    grabs or imports. A stored window keeps the flag until a kept title's grab re-reads the series."""
+    """Whether the entry was in `ignore_anilist_ids` at the read, so `ordered_windows` runs its window after the kept
+    windows of its kind: a file a kept window of its kind also places is that kept title's, since an ignored title
+    never grabs, and a claim it made before it was ignored imports only what no kept title places. A claim's window
+    takes the flag from its entry's listed window, and a stored window keeps it until a kept title's grab re-reads
+    the series."""
 
     @classmethod
     def of(
@@ -903,7 +905,9 @@ class EntryClaim:
     def window(self) -> EntryWindow:
         """The claim as a window, the shape a listing holds.
 
-        A claim with no ids gives a window with no ids, and `admits` still reads that claim as covering any id.
+        A claim with no ids gives a window with no ids, and `admits` still reads that claim as covering any id. The
+        window is never flagged ignored: a claim predates any ignore, so `ordered_windows` takes the flag from the
+        listing.
         """
 
         return EntryWindow(
@@ -980,8 +984,9 @@ class PendingImport:
     excluded_files: tuple[str, ...] = ()
     """Normalized basenames of video files that aren't this record's to import under its current claims (a
     collision-refused duplicate, a file every window resolves outside, one another listed title's window placed or
-    refused), found at grab time or by an import poll. They only quiet the import's warning: a later claim's window can still place
-    one. Folded and deduplicated in order as the record is built, and never a name the map holds."""
+    left for a hand import), found at grab time or by an import poll. They only quiet the import's warning: a later
+    claim's window can still place one. Folded and deduplicated in order as the record is built, and never a name
+    the map holds."""
 
     release_sizes: tuple[int, ...] = ()
     """The grabbed listing's file sizes. Lets the import tell this release's own files from a stale
@@ -1032,6 +1037,15 @@ class PendingImport:
         """The distinct series the claims span, claim order."""
 
         return tuple(dict.fromkeys(claim.series_id for claim in self.claims))
+
+    def series_ids_after(self, own: EntryWindow) -> frozenset[int]:
+        """The series the record claims once `own`'s entry claims it on `own.series_id`: the other claims' and own's.
+
+        A grab folds the listing it places under to these (`KnownTorrent.order`), as `__post_init__` folds the stored
+        one to `series_ids`, so a claim that moves series takes the windows only its old claim held out of the order.
+        """
+
+        return frozenset(claim.series_id for claim in self.claims if claim.al_id != own.al_id) | {own.series_id}
 
     def claim_for(self, series_id: int) -> EntryClaim:
         """The first claim on `series_id` (the caller reads a record stored under that series)."""
