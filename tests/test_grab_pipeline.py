@@ -1431,6 +1431,31 @@ class TestPlacementHolds:
 
         assert [r.kind for r in pipeline._ctx.stats.needs_action] == [NeedsActionKind.MISNUMBERED]
 
+    def test_the_misnumbered_row_outranks_the_titles_refute_row(self) -> None:
+        # The table's order decides between two hand-import holds.
+        refuted = self._held(url="https://nyaa.si/view/1", infohash="h1", hold=GrabHold.TITLE_REFUTED)
+        misnumbered = self._held(url="https://nyaa.si/view/2", infohash="h2", hold=GrabHold.MISNUMBERED)
+        seadex_dict: SeadexDict = {
+            "RG": rg_group({refuted.url: refuted}),
+            "Other": rg_group({misnumbered.url: misnumbered}),
+        }
+        pipeline = _on_entry(_pipeline(torrents=FakeTorrents({}), sleep_time=0))
+
+        pipeline.grab_and_cache(_entry_request(seadex_dict, ["h1", "h2"]))
+
+        assert [r.kind for r in pipeline._ctx.stats.needs_action] == [NeedsActionKind.MISNUMBERED]
+
+    def test_the_titles_refute_row_outranks_a_failed_grab(self) -> None:
+        held = self._held(url="https://nyaa.si/view/1", infohash="h1", hold=GrabHold.TITLE_REFUTED)
+        failing = _nyaa_release(url="https://nyaa.si/view/2", infohash="h2")
+        seadex_dict: SeadexDict = {"RG": rg_group({held.url: held}), "Other": rg_group({failing.url: failing})}
+        torrents = FakeTorrents({}, raises={"h2": httpx.ConnectError("nyaa down")})
+        pipeline = _on_entry(_pipeline(torrents=torrents, sleep_time=0))
+
+        pipeline.grab_and_cache(_entry_request(seadex_dict, ["h1", "h2"]))
+
+        assert [r.kind for r in pipeline._ctx.stats.needs_action] == [NeedsActionKind.TITLE_REFUTED]
+
 
 class TestGrabFailureContainment:
     """An expected external failure (tracker or qBittorrent down/erroring) is contained at the add.
