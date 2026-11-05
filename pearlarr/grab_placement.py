@@ -1,7 +1,7 @@
 """Grab-time placement: each url's files placed under the entry's scope, the planner's records, and the seeds."""
 
 from collections.abc import Mapping, Sequence
-from dataclasses import dataclass, replace
+from dataclasses import dataclass, field, replace
 from types import MappingProxyType
 from typing import NamedTuple
 
@@ -149,17 +149,15 @@ class KnownTorrent:
         """The windows the torrent is placed under, None when the listing or a window's series is unread.
 
         Every listed entry's window, every stored claim's, and `own`, the grabbing entry's, in `ordered_windows`'
-        order. Once `own` is stored as a claim and the listing on the record, the import poll runs the same windows.
+        order. Once `own` is stored as a claim and the listing on the record, the import poll runs the same windows,
+        unless this read listed nothing or the record holds another series' listing.
         """
 
         listing = self.evidence.listing
         if listing is None:
             return None
         claims = () if self.record is None else self.record.claims
-        windows = (*listing.entries, *(claim.window for claim in claims), own)
-        if any(window.series_id not in self.indexes for window in windows):
-            return None
-        return ordered_windows(listing.entries, claims, own, self.indexes)
+        return ordered_windows(listing, claims, own, self.indexes)
 
 
 type KnownTorrents = Mapping[str, KnownTorrent]
@@ -290,7 +288,7 @@ def seed_batch(files: Sequence[SeedFile], seeded: FileEpisodeMap = NO_SEEDED) ->
 
 
 def place_release(files: Sequence[SeedFile], scope: SeedScope, torrent: KnownTorrent) -> UrlPlacement:
-    """Place one url's files ONCE, under the windows the import wait runs (`KnownTorrent.order`). Pure.
+    """Place one url's files under the windows the import poll runs (`KnownTorrent.order`), with no I/O.
 
     Nothing is placed when the listing or a window's series wasn't read. A file the window of a listed title with
     no claim on the record places is set aside as that title's. The url is held (`GrabHold`) when a file of the
@@ -307,11 +305,12 @@ def place_release(files: Sequence[SeedFile], scope: SeedScope, torrent: KnownTor
     order = torrent.order(scope.window)
     # An unknown parse only holds the url when a specials listing is checking the pack (`specials_listing`).
     parse_unread = own.specials_listing() is not None and not batch.all_parses_known
-    if scope.can_place and order is not None and order.own_at is not None:
+    if scope.can_place and order is not None:
+        own_at = order.at(scope.al_id)
         placed = place_across_windows(batch, windows_of(order.windows, torrent.indexes, evidence))
         assignment = placed.for_record(order.imports)
-        misnumbered, refuted = placed.misnumbered_under(order.own_at), placed.refuted_under(order.own_at)
-        outside = placed.decided_outside(order.own_at)
+        misnumbered, refuted = placed.misnumbered_under(own_at), placed.refuted_under(own_at)
+        outside = placed.decided_outside(own_at)
     else:
         assignment, misnumbered, refuted, outside = EpisodeAssignment(()), False, False, frozenset[str]()
     mapped = joined_map(seeded, assignment.assigned)
@@ -328,19 +327,24 @@ def place_release(files: Sequence[SeedFile], scope: SeedScope, torrent: KnownTor
             if episode.season_number is None or episode.episode_number is None:
                 continue
             records.append(EpisodeRecord(season=episode.season_number, episode=episode.episode_number, size=f.size))
-    # A new torrent under an unread map is judged coarsely, as before the placement existed. A stored one's
-    # verdict would be final where the import poll retries, so its title is re-checked instead.
+    # With every window's series read, a scope that can't place (`SeedScope.can_place`) still places nothing. A new
+    # torrent is then judged by group and size, while a stored one's verdict would be final where the import poll
+    # retries, so its title is re-checked instead.
     known = order is not None and (torrent.record is None or scope.can_place)
-    unread = identities_unread or parse_unread
+    # An order that couldn't be built is a read that failed, since the url's windows are unknown.
+    unread = order is None or identities_unread or parse_unread
     # With nothing of the whole map on the entry, a file another title's window placed or refused is that title's,
     # and so is every file the map holds. Judged on the whole map, so a sibling's stored files count as its fresh
     # ones would.
     elsewhere = (
         frozenset[str]() if claimed else outside | (mapped.keys() & {normalized_leaf(f.basename) for f in files})
     )
-    window_hold = _window_hold(misnumbered=misnumbered, refuted=refuted and not claimed, elsewhere=bool(elsewhere))
     # A url with no video file (subs, fonts) places nothing and waits on nothing.
-    hold = _hold_of(window_hold, unread=unread) if files else None
+    hold = (
+        _hold_of(misnumbered=misnumbered, unread=unread, refuted=refuted and not claimed, elsewhere=bool(elsewhere))
+        if files
+        else None
+    )
     return UrlPlacement(
         files=tuple(files),
         assignment=assignment,
@@ -356,28 +360,23 @@ def place_release(files: Sequence[SeedFile], scope: SeedScope, torrent: KnownTor
     )
 
 
-def _window_hold(*, misnumbered: bool, refuted: bool, elsewhere: bool) -> GrabHold | None:
-    """What the windows' verdicts hold the url for: a misnumbered pack, else a refuted one, else another title's.
+def _hold_of(*, misnumbered: bool, unread: bool, refuted: bool, elsewhere: bool) -> GrabHold | None:
+    """Why the url isn't grabbed: the first of these that holds, in this order.
 
-    `misnumbered`: a file of the entry's own window is misnumbered (`WindowedAssignment.misnumbered_under`).
-    `refuted`: the entry's own window refuted a file no window placed, and nothing of the whole map lands on the
-    entry. It outranks `elsewhere`, since a refuted file is nobody's and saying it's another title's would be wrong.
-    `elsewhere`: nothing of the whole map lands on the entry, and some file lands on another title.
+    Four flags, since their order is the rule. `misnumbered`: a file of the entry's own window is misnumbered
+    (`WindowedAssignment.misnumbered_under`). `unread`: a read the placement needs failed. `refuted`: the entry's
+    own window refuted a file no window placed, and nothing of the whole map lands on the entry. It outranks
+    `elsewhere`, since a refuted file is nobody's and saying it's another title's would be wrong. `elsewhere`:
+    nothing of the whole map lands on the entry, and some file lands on another title.
     """
 
     if misnumbered:
         return GrabHold.MISNUMBERED
+    if unread:
+        return GrabHold.INPUT_UNREAD
     if refuted:
         return GrabHold.TITLE_REFUTED
     return GrabHold.PLACED_ELSEWHERE if elsewhere else None
-
-
-def _hold_of(window_hold: GrabHold | None, *, unread: bool) -> GrabHold | None:
-    """Why the url isn't grabbed: a misnumbered pack first, then a missing input (`unread`), then `window_hold`."""
-
-    if window_hold is GrabHold.MISNUMBERED:
-        return window_hold
-    return GrabHold.INPUT_UNREAD if unread else window_hold
 
 
 def _elsewhere_detail(elsewhere: frozenset[str], assignment: EpisodeAssignment) -> str:
@@ -475,14 +474,15 @@ class EntryPlacements(NamedTuple):
         )
 
 
-class ClaimTerms(NamedTuple):
+@dataclass(frozen=True, slots=True, kw_only=True)
+class ClaimTerms:
     """What one claim records about a torrent: its window's ids and titles, its preowned ids, and its slice.
 
     All empty when unscoped.
     """
 
     ordered_episode_ids: tuple[int, ...] = ()
-    names: EntryNames = EntryNames()
+    names: EntryNames = field(default_factory=EntryNames)
     preowned_episode_ids: tuple[int, ...] = ()
     slice_coverage: str | None = None
 

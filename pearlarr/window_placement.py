@@ -19,7 +19,7 @@ from collections.abc import Collection, Iterable, Mapping, Sequence
 from dataclasses import dataclass
 from types import MappingProxyType
 
-from .manual_import import EntryClaim, EntryWindow
+from .manual_import import EntryClaim, EntryWindow, TorrentListing
 from .placement_types import (
     EpisodeAssignment,
     EpisodeIndex,
@@ -40,34 +40,34 @@ class WindowOrder:
     windows: tuple[EntryWindow, ...]
     """One per AniList id: season windows first, then specials windows, each in AniList id order."""
 
-    own_at: int | None
-    """The position of the grabbing entry's window, None at import, where no entry is grabbing."""
-
     imports: frozenset[int]
     """The positions whose files the record imports: the grabbing entry's and every claimed entry's."""
 
+    def at(self, al_id: int) -> int:
+        """The position of `al_id`'s window. Raises `ValueError` when the order holds none."""
+
+        return [window.al_id for window in self.windows].index(al_id)
+
 
 def ordered_windows(
-    listed: Iterable[EntryWindow],
+    listing: TorrentListing,
     claims: Iterable[EntryClaim],
     own: EntryWindow | None,
     indexes: Mapping[int, EpisodeIndex],
-) -> WindowOrder:
+) -> WindowOrder | None:
     """Every window a torrent is placed under, one per AniList id, in placement order.
 
-    The first three parameters are the three sources of windows, and `indexes` classifies each one, so it must hold
-    every window's series. `own` wins its entry's slot, since its claim is replaced by this grab's. A claimed
-    entry's window is its claim's, since the claim is what the import routes by. An entry listed and never claimed
-    gets its listed window, and a claim whose entry is no longer listed keeps its window.
+    The first three parameters are the three sources of windows, and `indexes` classifies each one. None when
+    `indexes` lacks a window's series, since that window can be neither classified nor placed.
 
     A listed window with no ids is left out, since it would be unscoped and admit any id. A claim's window with no
     ids still runs: `EntryClaim.admits` reads such a claim as covering any id. It sorts with the specials windows.
     """
 
-    chosen: dict[int, EntryWindow] = {}
-    for window in listed:
-        if window.ordered_episode_ids:
-            chosen.setdefault(window.al_id, window)
+    # A claim's window takes its entry's slot from the listed one, since the claim is what the import routes by, and
+    # `own` takes it from both, since this grab replaces its claim. A claim whose entry is no longer listed keeps its
+    # window, and an entry listed and never claimed gets its listed window.
+    chosen = {window.al_id: window for window in listing.entries if window.ordered_episode_ids}
     imported = set[int]()
     for claim in claims:
         chosen[claim.al_id] = claim.window
@@ -75,17 +75,16 @@ def ordered_windows(
     if own is not None:
         chosen[own.al_id] = own
         imported.add(own.al_id)
+    if any(window.series_id not in indexes for window in chosen.values()):
+        return None
     windows = tuple(
         sorted(
             chosen.values(),
             key=lambda window: (all_specials(indexes[window.series_id], window.ordered_episode_ids), window.al_id),
         )
     )
-    position = {window.al_id: at for at, window in enumerate(windows)}
     return WindowOrder(
-        windows=windows,
-        own_at=None if own is None else position[own.al_id],
-        imports=frozenset(position[al_id] for al_id in imported),
+        windows=windows, imports=frozenset(at for at, window in enumerate(windows) if window.al_id in imported)
     )
 
 
@@ -128,23 +127,22 @@ class WindowedAssignment:
         return frozenset(
             p.name
             for p in self.merged.placements
-            if (p.verdict.placed or p.verdict is PlacementVerdict.MISNUMBERED)
-            and self.decided_by.get(p.name, own_at) != own_at
+            if (p.verdict.placed or p.verdict is PlacementVerdict.MISNUMBERED) and self.decided_by[p.name] != own_at
         )
 
-    def refuted_under(self, index: int) -> bool:
-        """Whether a file this window refuted by its title is still `TITLE_REFUTED` after the merge."""
+    def refuted_under(self, own_at: int) -> bool:
+        """Whether a file the window at `own_at` refuted by its title is still `TITLE_REFUTED` after the merge."""
 
         refuted = PlacementVerdict.TITLE_REFUTED
-        return self._left_as(refuted, {p.name for p in self.windows[index].placements if p.verdict is refuted})
+        return self._left_as(refuted, {p.name for p in self.windows[own_at].placements if p.verdict is refuted})
 
-    def misnumbered_under(self, index: int) -> bool:
-        """Whether a file this window placed, refused, or claimed by alias ended up `MISNUMBERED`.
+    def misnumbered_under(self, own_at: int) -> bool:
+        """Whether a file the window at `own_at` placed, refused, or claimed by alias ended up `MISNUMBERED`.
 
         Files the window wrote off (another entry's, an extra, a skip) don't count.
         """
 
-        own = {p.name for p in self.windows[index].placements if _decides(p.verdict) or p.verdict in _BY_ALIAS}
+        own = {p.name for p in self.windows[own_at].placements if _decides(p.verdict) or p.verdict in _BY_ALIAS}
         return self._left_as(PlacementVerdict.MISNUMBERED, own)
 
     def _left_as(self, verdict: PlacementVerdict, names: Collection[str]) -> bool:
