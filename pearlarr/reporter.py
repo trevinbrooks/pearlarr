@@ -1,6 +1,7 @@
 """The run reporter: per-run context and stats, and the typed emission path the run logs through."""
 
 import time
+from collections.abc import Sequence
 from dataclasses import dataclass, field
 from enum import Enum, auto
 from typing import TYPE_CHECKING, ClassVar, Literal
@@ -44,7 +45,7 @@ from .output import (
     SeverityCounts,
     StyledValue,
 )
-from .seadex_types import SeadexDict
+from .seadex_types import GrabHold, SeadexDict
 from .torrents import AddOutcome, ReleaseOutcome
 
 if TYPE_CHECKING:
@@ -185,15 +186,10 @@ class PerTitleState:
     """Hashes held out of the cached hash set, so the release is re-considered once a parser lands."""
     grab_failed_groups: list[str] = field(default_factory=list[str])
     """Groups whose release hit a contained grab failure (tracker or client down), so the title stays uncached."""
-    input_missing_groups: list[str] = field(default_factory=list[str])
-    """Groups with a url whose placement waited on a read that failed, so the title stays uncached and
-    re-checks."""
-    misnumbered_groups: list[str] = field(default_factory=list[str])
-    """Groups with a release the placement refused as misnumbered, never grabbed, so the title stays uncached and
-    re-warns until a hand import covers it."""
-    title_refuted_groups: list[str] = field(default_factory=list[str])
-    """Groups with a release whose titles refute its numbers and that placed nothing, never grabbed, so the title
-    stays uncached and re-warns until a hand import covers it."""
+    held_groups: dict[GrabHold, list[str]] = field(default_factory=dict[GrabHold, list[str]])
+    """Groups with a url the placement held, by hold, never grabbed, so the title stays uncached and re-checks (a
+    hand-import hold re-warns until the import covers it). `GrabHold.INPUT_UNREAD` also lists a group whose
+    placement waited on a failed read though nothing held its url. Written through `add_held`."""
     orders_unread: bool = False
     """A series the placement read has no stored TVDB orders, so the title stays uncached and re-checks. Nothing
     for the user to do."""
@@ -203,6 +199,15 @@ class PerTitleState:
     """SeaDex URL of the entry currently being processed, so grabs and the summary can link what they grab."""
     current_coverage: str | None = None
     """Coverage of the entry currently being processed, so grabs and the summary can attribute what they grab."""
+
+    def add_held(self, hold: GrabHold, groups: Sequence[str]) -> None:
+        """List `groups` under `hold` in `held_groups`.
+
+        No groups adds no key, so an empty `held_groups` means nothing held the title.
+        """
+
+        if groups:
+            self.held_groups.setdefault(hold, []).extend(groups)
 
     def absorb_skips(self, skips: "PrivateOnlySkips") -> None:
         """Fold a planner private-only skip result onto this title's flags."""
