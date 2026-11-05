@@ -48,7 +48,7 @@ from pearlarr.manual_import import (
     TorrentListing,
     normalize_basename,
 )
-from pearlarr.mappings import ExternalIds, MappingEntry, MappingSource
+from pearlarr.mappings import ExternalIds, MappingEntry, MappingSource, ResolvedMappings
 from pearlarr.output import Severity
 from pearlarr.output.recording import RecordingHub
 from pearlarr.pending_records import PendingRecords
@@ -258,7 +258,7 @@ class _FakeRunServices(RunServices):
     @override
     def listing_mappings(self, ids: ExternalIds) -> dict[int, MappingEntry]:
         del ids
-        return dict(sorted({**self._anilist_ids, **self._ignored}.items()))
+        return ResolvedMappings(mappings=self._anilist_ids, ignored=self._ignored).every_entry
 
     @override
     def al_id_prologue(self, al_id: int) -> EntryRecord | None:

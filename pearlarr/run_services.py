@@ -462,14 +462,14 @@ class RunServices:
         `log_ignored=False` on the prefetch pass keeps an ignored id from being logged twice.
         """
 
-        anilist_mappings, ignored = self._mappings.get_anilist_ids(ids)
+        resolved = self._mappings.get_anilist_ids(ids)
 
         # Logged per call, not only on the cache-filling one, so the main loop still logs every ignored id.
         if log_ignored:
-            for al_id in ignored:
+            for al_id in resolved.ignored:
                 self._reporter.log_ignored_anilist_id(self._ctx, al_id)
 
-        return anilist_mappings
+        return resolved.mappings
 
     def listing_mappings(self, ids: ExternalIds) -> dict[int, MappingEntry]:
         """Every entry mapped to the external ids, the ignored ones included, in AniList id order.
@@ -479,8 +479,7 @@ class RunServices:
         ignored ids.
         """
 
-        anilist_mappings, ignored = self._mappings.get_anilist_ids(ids)
-        return dict(sorted({**anilist_mappings, **ignored}.items()))
+        return self._mappings.get_anilist_ids(ids).every_entry
 
     def resolve_title(self, al_id: int) -> EntryTitle:
         """Resolve the entry's title through the ladder (resolves only: no logging, no attribution).

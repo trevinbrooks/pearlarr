@@ -273,7 +273,7 @@ class SonarrSync(ArrSync[SonarrItem]):
         """Resolve AniList ids for a Sonarr series (by TVDB / IMDb id)."""
 
         return self._services.get_anilist_ids(
-            ExternalIds(tvdb=item.tvdbId, imdb=item.imdbId),
+            ExternalIds.of_series(item),
             log_ignored=log_ignored,
         )
 
@@ -465,9 +465,7 @@ class SonarrSync(ArrSync[SonarrItem]):
         stored: dict[str, PendingImport] = run.records.stored_records(hashes) if waits_on_imports else {}
         series_ids = {sonarr_series_id, *(sid for record in stored.values() for sid in record.series_ids)}
         indexes = self._series_indexes(series_ids)
-        listings = self._listings.read(
-            sonarr_series_id, self._services.listing_mappings(ExternalIds(tvdb=item.tvdbId, imdb=item.imdbId))
-        )
+        listings = self._listings.read(sonarr_series_id, self._services.listing_mappings(ExternalIds.of_series(item)))
         scope = SeedScope(
             al_id=al_id,
             series_id=sonarr_series_id,

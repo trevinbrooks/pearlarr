@@ -606,7 +606,7 @@ class TestAnimeIdsParity:
 class TestGetAnilistIdsMerge:
     """`get_anilist_ids` merges AniBridge (winning) with anime-ids fallback, sets ignored ids aside, and sorts by id."""
 
-    def test_anibridge_wins_then_anime_fills_then_drop_and_sort(self) -> None:
+    def test_anibridge_wins_then_anime_fills_then_the_ignored_are_set_aside_and_sorted(self) -> None:
         # 269 resolves in both sources for tvdb 74796. AniBridge must win (it is
         # queried first). 270 is AniBridge-only. Ignored ids are set aside with their
         # mappings. The result is sorted by AniList id.
@@ -622,9 +622,10 @@ class TestGetAnilistIdsMerge:
             ),
         )
         try:
-            mappings, ignored = resolver.get_anilist_ids(ExternalIds(tvdb=74796))
-            assert list(ignored) == [270]
-            assert ignored[270].anilist_id == 270
+            resolved = resolver.get_anilist_ids(ExternalIds(tvdb=74796))
+            assert list(resolved.ignored) == [270]
+            assert resolved.ignored[270].anilist_id == 270
+            mappings = resolved.mappings
             assert list(mappings) == [269]  # 270 set aside, sorted
             # AniBridge won for 269 -> ANIBRIDGE mode (not the anime-ids season 7).
             assert mappings[269].mode is MappingMode.ANIBRIDGE
@@ -702,7 +703,7 @@ class TestVu1DegradedAniBridge:
             ),
         )
         try:
-            mappings, _dropped = resolver.get_anilist_ids(ExternalIds(tvdb=555, imdb="tt400"))
+            mappings = resolver.get_anilist_ids(ExternalIds(tvdb=555, imdb="tt400")).mappings
             entry = mappings[400]
             assert entry.source is MappingSource.ANIME_IDS  # Kometa won, not the degraded AniBridge entry
             assert entry.tvdb_season == 2  # the precise season is no longer shadowed
@@ -728,7 +729,7 @@ class TestVu1DegradedAniBridge:
             ),
         )
         try:
-            mappings, _dropped = resolver.get_anilist_ids(ExternalIds(tvdb=555, imdb="tt600"))
+            mappings = resolver.get_anilist_ids(ExternalIds(tvdb=555, imdb="tt600")).mappings
             entry = mappings[600]
             assert entry.source is MappingSource.ANIME_IDS  # Kometa restored, not the degraded -1
             assert entry.tvdb_season == 0  # season 0 preserved -> the special is still selectable
@@ -750,7 +751,7 @@ class TestVu1DegradedAniBridge:
             ),
         )
         try:
-            mappings, _dropped = resolver.get_anilist_ids(ExternalIds(tmdb=888, imdb="tt401"))
+            mappings = resolver.get_anilist_ids(ExternalIds(tmdb=888, imdb="tt401")).mappings
             assert mappings[401].source is MappingSource.ANIBRIDGE  # AniBridge stays primary
         finally:
             resolver.close()
@@ -770,7 +771,7 @@ class TestVu1DegradedAniBridge:
             ),
         )
         try:
-            mappings, _dropped = resolver.get_anilist_ids(ExternalIds(tvdb=777, imdb="tt500"))
+            mappings = resolver.get_anilist_ids(ExternalIds(tvdb=777, imdb="tt500")).mappings
         finally:
             resolver.close()
         degraded = mappings[500]
