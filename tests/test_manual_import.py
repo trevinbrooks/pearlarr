@@ -556,7 +556,7 @@ class TestTorrentListing:
         text = json.dumps(listing.to_json())
 
         assert text == (
-            '{"entries": [{"al_id": 1, "series_id": 1, "ordered_episode_ids": [501], '
+            '{"entries": [{"al_id": 1, "series_id": 7, "ordered_episode_ids": [501], '
             '"names": {"series": "", "anilist": []}}], "special_aliases": [[13, 12]]}'
         )
         assert TorrentListing.from_json(json.loads(text)) == listing

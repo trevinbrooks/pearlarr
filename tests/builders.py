@@ -33,11 +33,10 @@ from pearlarr.clock import Clock
 from pearlarr.config import AppConfig, Arr
 from pearlarr.episode_state import EpisodeFileStatus, EpisodeSnapshot, TargetStatuses, TrustPolicy
 from pearlarr.grab_pipeline import GrabPipeline, GrabRequest
-from pearlarr.grab_placement import EntryFacts, KnownTorrent, PendingSeed, TorrentEvidence, TorrentFacts
+from pearlarr.grab_placement import EntryFacts, KnownTorrent, PendingSeed, SeedScope, TorrentEvidence, TorrentFacts
 from pearlarr.import_wait import ImportProbes, ImportWaitManager, PostImportCleanup
 from pearlarr.manual_import import (
     EMPTY_LISTING,
-    NO_IDENTIFIED,
     NO_SIZES_BY_NAME,
     Deferral,
     EntryClaim,
@@ -57,6 +56,7 @@ from pearlarr.output import SeverityCounts, emit_to_hub
 from pearlarr.parse_records import ParseRecords
 from pearlarr.pending_records import PendingRecords
 from pearlarr.placement_types import (
+    NO_EVIDENCE,
     NO_SEEDED,
     EpisodeAssignment,
     EpisodeIndex,
@@ -872,7 +872,7 @@ def pending_seed(
         facts=torrent_facts(infohash=infohash, release_group="NAN0"),
         placements=placements or {},
         excluded=(),
-        identified=NO_IDENTIFIED,
+        evidence=NO_EVIDENCE,
         claim=entry_claim(claimed_at="", **claim),
         stored=stored,
     )
@@ -1139,8 +1139,8 @@ _NO_NAMES = EntryNames()
 """An entry with no series or AniList titles."""
 
 
-def entry_window(al_id: int, ids: Iterable[int], *, series_id: int = 1, names: EntryNames = _NO_NAMES) -> EntryWindow:
-    """Entry `al_id`'s window over `ids`, in the order given."""
+def entry_window(al_id: int, ids: Iterable[int], *, series_id: int = 7, names: EntryNames = _NO_NAMES) -> EntryWindow:
+    """Entry `al_id`'s window over `ids` on `series_id` (series 7, as `entry_claim`'s), in the order given."""
 
     return EntryWindow(al_id=al_id, series_id=series_id, ordered_episode_ids=tuple(ids), names=names)
 
@@ -1172,6 +1172,20 @@ def known_torrent(
     """A `KnownTorrent`, by default a new torrent that nothing lists, with no series read."""
 
     return KnownTorrent(record, indexes or {}, evidence)
+
+
+def seed_scope(
+    entry: EpisodeIndex, series: EpisodeIndex, *, al_id: int = 1, series_id: int = 7, names: EntryNames = _NO_NAMES
+) -> SeedScope:
+    """Entry `al_id`'s grab scope over `entry`, within `series` on `series_id` (series 7, as `entry_claim`'s)."""
+
+    return SeedScope(al_id=al_id, series_id=series_id, entry=entry, series=series, names=names)
+
+
+def new_torrent(scope: SeedScope) -> KnownTorrent:
+    """A new torrent that nothing lists, with only the scope's own series read."""
+
+    return known_torrent(indexes={scope.series_id: scope.series})
 
 
 def indexes_for(pending: PendingImport, index: EpisodeIndex) -> dict[int, EpisodeIndex]:

@@ -165,6 +165,9 @@ class PlacementVerdict(StrEnum):
     """Reads wholly outside the scope, or is titled as an episode outside it and confirmed by its reading, by that
     reading's rejection while other files hold its episodes, or by no open id being left: never this record's to
     import."""
+    LISTED_ELSEWHERE = "another listed title's"
+    """Placed by the window of another title SeaDex lists the torrent under, one with no claim on the record: not
+    this record's to import until that title claims the torrent and its own grab places the file."""
     DUPLICATE = "duplicate"
     """Reads inside the scope onto episodes other files provably hold, or is titled as an episode a version of the
     same file holds."""
@@ -190,7 +193,10 @@ class PlacementVerdict(StrEnum):
 
     @property
     def excluded(self) -> bool:
-        """Whether the file is knowably never this record's to import."""
+        """Whether the file is knowably not this record's to import.
+
+        Never, except another listed title's, which is that title's once it claims the torrent.
+        """
 
         return self in _EXCLUDED
 
@@ -222,7 +228,14 @@ _PLACED = frozenset(
         PlacementVerdict.ALTERNATE,
     }
 )
-_EXCLUDED = frozenset({PlacementVerdict.FOREIGN, PlacementVerdict.DUPLICATE, PlacementVerdict.EXTRA})
+_EXCLUDED = frozenset(
+    {
+        PlacementVerdict.FOREIGN,
+        PlacementVerdict.LISTED_ELSEWHERE,
+        PlacementVerdict.DUPLICATE,
+        PlacementVerdict.EXTRA,
+    }
+)
 _HAND_IMPORT = frozenset({PlacementVerdict.MISNUMBERED, PlacementVerdict.TITLE_REFUTED})
 _REFUSED = frozenset({PlacementVerdict.HELD, PlacementVerdict.MISNUMBERED})
 
@@ -260,7 +273,7 @@ class EpisodeAssignment:
 
     @property
     def excluded(self) -> tuple[Placement, ...]:
-        """The files this record knowably never imports (another slice's, a duplicate, an extra), and how."""
+        """The files this record knowably doesn't import, and how (`PlacementVerdict.excluded`)."""
 
         return tuple(p for p in self.placements if p.verdict.excluded)
 
@@ -343,12 +356,13 @@ episode. A file with that exact size is that episode."""
 class ListingEvidence:
     """What SeaDex's listings for the series tell the placer about one torrent.
 
-    Import time only fills in `identified`.
+    The import reads both halves off the record (`PendingImport.listing`, `PendingImport.identified`).
     """
 
     listing: TorrentListing = EMPTY_LISTING
     """The torrent's listing: the ids a numbered specials pack is checked against, and the special aliases that
-    can place a misnumbered one. Empty at import time, which turns the pack check off."""
+    can place a misnumbered one. Empty when no entry lists the torrent, or on a record that holds none, which
+    turns the pack check off."""
 
     identified: IdentifiedNames = NO_IDENTIFIED
     """File name -> episode id, for the files whose size matched an episode (see `SizeIdentities`)."""
@@ -403,7 +417,7 @@ class TargetScope:
     ties when several runs or numberless files could fill the open ids."""
 
     listing: ListingEvidence = NO_EVIDENCE
-    """What SeaDex's listings tell us about this torrent. At import time only `identified` is filled in."""
+    """What SeaDex's listings tell us about this torrent, read off the record at import time."""
 
     real_ids: frozenset[int] = field(init=False, repr=False, compare=False)
     """The resolved ids that can be placed. A stray zero keeps the scope real but is never one."""

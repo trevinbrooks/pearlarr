@@ -458,9 +458,8 @@ class SonarrSync(ArrSync[SonarrItem]):
         self.logger.debug(f"SeaDex: {', '.join(seadex_dict)}")
 
         # Place every listed file where the import will put it, so the grab is judged by the map the import
-        # runs: a torrent already downloading under a stored record is placed as that record's leftover, under
-        # every claim's window, and a specials pack against the windows of every entry listing it. The series
-        # maps are the whole-series lists (a per-run cache hit each).
+        # runs: under every listing entry's window and every stored claim's, a stored torrent as its record's
+        # leftover. The series maps are the whole-series lists (a per-run cache hit each).
         waits_on_imports = run.import_wait_mode is not ImportWaitMode.OFF
         hashes = entry_hashes(seadex_dict)
         stored: dict[str, PendingImport] = run.records.stored_records(hashes) if waits_on_imports else {}
@@ -470,10 +469,11 @@ class SonarrSync(ArrSync[SonarrItem]):
             sonarr_series_id, self._services.listing_mappings(ExternalIds(tvdb=item.tvdbId, imdb=item.imdbId))
         )
         scope = SeedScope(
-            al_id,
-            episode_index(ep_list, self._episodes.orders_for(sonarr_series_id)),
-            indexes.get(sonarr_series_id, episode_index([])),
-            title.names,
+            al_id=al_id,
+            series_id=sonarr_series_id,
+            entry=episode_index(ep_list, self._episodes.orders_for(sonarr_series_id)),
+            series=indexes.get(sonarr_series_id, episode_index([])),
+            names=title.names,
         )
         placed = EntryPlacements.place(
             scope,
@@ -583,7 +583,7 @@ class SonarrSync(ArrSync[SonarrItem]):
             self.logger.debug(
                 f"{url}: placed {_coverage.coverage_string(list(placement.records)) or 'nothing'}"
                 f"{'' if placement.inputs_known else ' (a read failed)'}{hold}"
-                f"{f'; set aside (other slice / duplicate): {aside}' if aside else ''}"
+                f"{f'; set aside (other slice / another listed title / duplicate): {aside}' if aside else ''}"
             )
 
     @override

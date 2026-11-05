@@ -959,9 +959,11 @@ class PendingImport:
     SeaDex. Folded as the record is built (`_normalized_keys`). Empty on rows written before this field existed."""
 
     listing: TorrentListing = EMPTY_LISTING
-    """The torrent's SeaDex listing: the window of every entry that lists it, and their special aliases.
-    `EMPTY_LISTING` when the record holds none, which a reader treats the same whatever the cause (a row written
-    before the field existed, a url no entry lists)."""
+    """The torrent's SeaDex listing, as the latest grab read it: the window of every entry that lists it, and their
+    special aliases. The import places its leftovers under these windows and the claims'. Every window's series is
+    a claimed series, since a listing is read per series and stored in the same `PendingSeed.record_at` as a claim
+    on that series. `EMPTY_LISTING` when the record holds none, which a reader treats the same whatever the cause
+    (a row written before the field existed, a url no entry lists): the claims' windows run alone."""
 
     def __post_init__(self) -> None:
         # Fold the map, the exclusions and the two by-name maps so readers can take the names as normalized, the
@@ -1072,6 +1074,18 @@ class PendingImport:
         """
 
         return self._or_self(replace(self, sizes_by_name=self.sizes_by_name or sizes))
+
+    def with_listing(self, listing: TorrentListing) -> "PendingImport":
+        """The record with `listing` in place of its own, else itself when `listing` has no entries.
+
+        A listing replaces where `with_sizes_by_name` only fills: SeaDex can list the torrent under another title
+        later, and the newest grab placed its files under the newest read. An empty read (an unlisted hash, an
+        unread listing) keeps the stored one.
+        """
+
+        if not listing.entries:
+            return self
+        return self._or_self(replace(self, listing=listing))
 
     def with_identified(self, names: IdentifiedNames) -> "PendingImport":
         """The record with `names` merged in, dropping any name the two map to different episodes."""

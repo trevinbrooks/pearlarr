@@ -12,11 +12,12 @@ Terms used across the placement modules:
 - Scope (`TargetScope`): the entry's episode ids a file may be placed on, plus the whole series' episode
   map every key is looked up in. An empty id list means no scope ("unscoped"): a file's own keys then
   place against the whole series.
-- Window (`window_placement`): the scope of one entry a torrent is listed on. A torrent listed on several
-  entries is placed under each window in turn.
+- Window (`window_placement`): the scope of one entry a torrent is listed on or claimed by. A torrent is
+  placed under every window in turn, season windows first, then specials windows, each in AniList id order.
 - Listing (`TargetScope.listing`): what SeaDex's listings tell us about the torrent. `ids` are the episodes of
-  every entry that lists it, which a numbered specials pack is checked against (empty at import time, so the
-  check is skipped). `identified` maps files to the episode whose single-file release has the same size.
+  every entry that lists it, which a numbered specials pack is checked against (empty on a record that holds no
+  listing, so the check is skipped). `identified` maps files to the episode whose single-file release has the
+  same size.
   `special_aliases` maps a TMDB specials number to the TVDB special it stands for.
 - Open ids: the scope's ids that no file holds yet.
 - Seeded file: a file of the torrent that the grab-time placement or an earlier import poll already mapped.

@@ -7,7 +7,7 @@ from collections.abc import Mapping
 from dataclasses import dataclass
 
 from .import_files import CandidateFile
-from .manual_import import EMPTY_LISTING, FileEpisodeMap, PendingImport, joined_map, normalized_leaf, path_leaf
+from .manual_import import FileEpisodeMap, PendingImport, joined_map, normalized_leaf, path_leaf
 from .placement_types import (
     EpisodeAssignment,
     EpisodeIndex,
@@ -20,7 +20,7 @@ from .release_names import parse_se_from_filename
 from .seadex_types import ManualImportCandidate, ParsedFileInfo
 from .sonarr_client import AbstractSonarrClient
 from .video_files import is_video_candidate
-from .window_placement import place_across_windows, windows_of
+from .window_placement import ordered_windows, place_across_windows, windows_of
 
 # Rejection-reason substrings, matched case-insensitively. Only ALREADY_IMPORTED means Sonarr holds the file:
 # a SAMPLE is just a file to skip, never a sign the episode imported, so the two stay apart.
@@ -94,7 +94,7 @@ class FileAssignment:
 
     @property
     def excluded(self) -> tuple[Placement, ...]:
-        """The leaves this record knowably never imports, with their verdicts (for the caller to persist)."""
+        """The leaves this record knowably doesn't import, with their verdicts (for the caller to persist)."""
 
         return self.result.excluded
 
@@ -158,8 +158,10 @@ class FileEpisodeMapper:
     ) -> FileAssignment:
         """Build the final `basename -> episode ids` map from OUR resolved set, never from Sonarr's parse alone.
 
-        Seeded files keep their ids, the on-disk leftover is placed under one window per claim in claim
-        order, and anything ambiguous comes back skipped. The record is never mutated: fresh placements ride `placed`.
+        Seeded files keep their ids, and the on-disk leftover is placed under the grab's windows: every stored
+        listing entry's and every claim's (`ordered_windows`). A file a window with no claim places is set aside as
+        another listed title's, and anything ambiguous comes back skipped. `indexes` must hold every claimed series.
+        The record is never mutated: fresh placements ride `placed`.
         """
 
         on_disk = {
@@ -187,14 +189,14 @@ class FileEpisodeMapper:
                 if name not in parsed_by_file:
                     parsed_by_file[name] = self._parsed_file_info(name)
 
-        # The leftovers go into each claim's window in turn, with the seeded ids already used there. Import doesn't
-        # read SeaDex: files the grab placed by size are placed the same way from the record.
+        # Import doesn't read SeaDex: the record keeps the listing and the size matches the grab placed with.
         batch = PlacementBatch(leftover, parsed_by_file, seeded)
-        listing = ListingEvidence(EMPTY_LISTING, pending.identified)
-        windowed = place_across_windows(batch, windows_of(pending.claims, indexes, listing))
+        order = ordered_windows(pending.listing.entries, pending.claims, None, indexes)
+        listing = ListingEvidence(pending.listing, pending.identified)
+        windowed = place_across_windows(batch, windows_of(order.windows, indexes, listing))
         # An empty index means the exact pass could not have matched a numbered name this poll.
         settled = batch.all_parses_known and all(indexes[sid].id_by_key for sid in pending.series_ids)
-        return FileAssignment(windowed.merged, seeded, settled=settled)
+        return FileAssignment(windowed.for_record(order.imports), seeded, settled=settled)
 
     def _parsed_file_info(self, leaf: str) -> ParsedFileInfo | None:
         """Sonarr `/parse` of one file name (on disk, or a mapped name absent from it), cached per run.

@@ -1,17 +1,25 @@
 """A torrent's files placed under each entry it's listed on, one window per entry.
 
+The windows run season windows first, then specials windows, each in AniList id order (`ordered_windows`), so a
+torrent places the same whichever entry sees it first and whether or not a record exists. Season windows go first
+because the release-run pass lets a specials window take a run keyed outside it: a specials title with a lower id
+than its season title would otherwise take the season's episodes.
+
 Every window places every file, not just the ones earlier windows left, because a numbered run cut short would read
 as a new run and could land wrong. Then the windows merge in order:
 
 - The first window to place or refuse a file decides it, and its ids are used under the later windows.
 - A file no window decides takes its strongest claim (`_CLAIM_RANK`).
 - A file the special aliases claim under one window but its numbers place elsewhere is always `MISNUMBERED`.
+
+A record imports only what its own entries' windows place (`WindowedAssignment.for_record`).
 """
 
 from collections.abc import Collection, Iterable, Mapping, Sequence
 from dataclasses import dataclass
+from types import MappingProxyType
 
-from .manual_import import EntryClaim
+from .manual_import import EntryClaim, EntryWindow
 from .placement_types import (
     EpisodeAssignment,
     EpisodeIndex,
@@ -20,18 +28,108 @@ from .placement_types import (
     PlacementBatch,
     PlacementVerdict,
     TargetScope,
+    all_specials,
 )
 from .placer import assign_episode_ids
 
 
 @dataclass(frozen=True, slots=True)
+class WindowOrder:
+    """The windows a torrent is placed under, in placement order, and which of them the record imports."""
+
+    windows: tuple[EntryWindow, ...]
+    """One per AniList id: season windows first, then specials windows, each in AniList id order."""
+
+    own_at: int | None
+    """The position of the grabbing entry's window, None at import, where no entry is grabbing."""
+
+    imports: frozenset[int]
+    """The positions whose files the record imports: the grabbing entry's and every claimed entry's."""
+
+
+def ordered_windows(
+    listed: Iterable[EntryWindow],
+    claims: Iterable[EntryClaim],
+    own: EntryWindow | None,
+    indexes: Mapping[int, EpisodeIndex],
+) -> WindowOrder:
+    """Every window a torrent is placed under, one per AniList id, in placement order.
+
+    The first three parameters are the three sources of windows, and `indexes` classifies each one, so it must hold
+    every window's series. `own` wins its entry's slot, since its claim is replaced by this grab's. A claimed
+    entry's window is its claim's, since the claim is what the import routes by. An entry listed and never claimed
+    gets its listed window, and a claim whose entry is no longer listed keeps its window.
+
+    A listed window with no ids is left out, since it would be unscoped and admit any id. A claim's window with no
+    ids still runs: `EntryClaim.admits` reads such a claim as covering any id. It goes with the specials, last.
+    """
+
+    chosen: dict[int, EntryWindow] = {}
+    for window in listed:
+        if window.ordered_episode_ids:
+            chosen.setdefault(window.al_id, window)
+    imported = set[int]()
+    for claim in claims:
+        chosen[claim.al_id] = claim.window
+        imported.add(claim.al_id)
+    if own is not None:
+        chosen[own.al_id] = own
+        imported.add(own.al_id)
+    windows = tuple(
+        sorted(
+            chosen.values(),
+            key=lambda window: (all_specials(indexes[window.series_id], window.ordered_episode_ids), window.al_id),
+        )
+    )
+    position = {window.al_id: at for at, window in enumerate(windows)}
+    return WindowOrder(
+        windows=windows,
+        own_at=None if own is None else position[own.al_id],
+        imports=frozenset(position[al_id] for al_id in imported),
+    )
+
+
+@dataclass(frozen=True, slots=True)
 class WindowedAssignment:
-    """A torrent placed under its windows: the merged verdicts, and each window's own."""
+    """A torrent placed under its windows: the merged verdicts, each window's own, and which window decided."""
 
     merged: EpisodeAssignment
-    """One verdict per name in `PlacementBatch.names`, batch order."""
+    """One verdict per name in `PlacementBatch.names`, batch order, whichever window placed it."""
     windows: tuple[EpisodeAssignment, ...]
     """What the placer returned under each window, in window order."""
+    decided_by: Mapping[str, int]
+    """Name -> the position of the window that placed or refused it. A file no window decided is absent."""
+
+    def __post_init__(self) -> None:
+        # Detach from the caller's dict, then wrap read-only.
+        object.__setattr__(self, "decided_by", MappingProxyType(dict(self.decided_by)))
+
+    def for_record(self, imports: Collection[int]) -> EpisodeAssignment:
+        """The merged verdicts, with each file a window outside `imports` placed set aside as another title's.
+
+        Such a file becomes `LISTED_ELSEWHERE`: it isn't the record's to import until its entry claims the torrent.
+        A refusal stays as merged, since a misnumbered file is left for a hand import whichever window refused it.
+        """
+
+        elsewhere = PlacementVerdict.LISTED_ELSEWHERE
+        return EpisodeAssignment(
+            tuple(
+                Placement(p.name, (), elsewhere) if p.verdict.placed and self.decided_by[p.name] not in imports else p
+                for p in self.merged.placements
+            )
+        )
+
+    def decided_outside(self, own_at: int) -> bool:
+        """Whether a window other than the one at `own_at` placed a file, or refused one as misnumbered.
+
+        A file a window held for a re-ask doesn't count, since no window has read it yet.
+        """
+
+        return any(
+            self.decided_by.get(p.name, own_at) != own_at
+            for p in self.merged.placements
+            if p.verdict.placed or p.verdict is PlacementVerdict.MISNUMBERED
+        )
 
     def refuted_under(self, index: int) -> bool:
         """Whether a file this window refuted by its title is still `TITLE_REFUTED` after the merge."""
@@ -107,16 +205,16 @@ def _disputed(judged: Iterable[Placement]) -> bool:
 
 
 def windows_of(
-    claims: Iterable[EntryClaim], indexes: Mapping[int, EpisodeIndex], listing: ListingEvidence
+    windows: Iterable[EntryWindow], indexes: Mapping[int, EpisodeIndex], listing: ListingEvidence
 ) -> tuple[TargetScope, ...]:
-    """One window per claim, in claim order. `indexes` must hold every claim's series.
+    """One placement scope per window, in order. `indexes` must hold every window's series.
 
-    All windows share `listing`, but a size match only counts under a window on that episode's series.
+    All scopes share `listing`, but a size match only counts under a window on that episode's series.
     """
 
     return tuple(
-        TargetScope(list(claim.ordered_episode_ids), indexes[claim.series_id], names=claim.names, listing=listing)
-        for claim in claims
+        TargetScope(window.ordered_episode_ids, indexes[window.series_id], names=window.names, listing=listing)
+        for window in windows
     )
 
 
@@ -130,9 +228,10 @@ def place_across_windows(batch: PlacementBatch, windows: Sequence[TargetScope]) 
     names = batch.names
     used: list[int] = []
     decided: dict[str, Placement] = {}
+    decided_by: dict[str, int] = {}
     judged: dict[str, list[Placement]] = {name: [] for name in names}
     assignments: list[EpisodeAssignment] = []
-    for window in windows:
+    for position, window in enumerate(windows):
         assignment = assign_episode_ids(batch, window.using(used))
         assignments.append(assignment)
         for placement in assignment.placements:
@@ -140,6 +239,7 @@ def place_across_windows(batch: PlacementBatch, windows: Sequence[TargetScope]) 
             # A refusal decides the file too, so no later window can place it by its numbers.
             if placement.name not in decided and _decides(placement.verdict):
                 decided[placement.name] = placement
+                decided_by[placement.name] = position
                 used.extend(placement.ids)
     merged = EpisodeAssignment(tuple(_merged(name, judged[name], decided.get(name)) for name in names))
-    return WindowedAssignment(merged, tuple(assignments))
+    return WindowedAssignment(merged, tuple(assignments), decided_by)

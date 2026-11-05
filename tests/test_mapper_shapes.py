@@ -27,7 +27,7 @@ from pearlarr.seadex_types import (
 )
 from pearlarr.sonarr_mapper import FileEpisodeMapper
 
-from .builders import indexes_for, known_torrent, pending_import, place
+from .builders import indexes_for, new_torrent, pending_import, place, seed_scope
 from .fakes import FakeSonarrClient
 
 _CATALOG = Path(__file__).parent / "fixtures" / "sonarr" / "mapper_shapes.json"
@@ -131,7 +131,9 @@ def _scope(case: ShapeCase) -> SeedScope:
     """The grab-time scope: the entry's slice of the whole-series index, and the names."""
 
     index = episode_index(case.episodes)
-    return SeedScope(1, episode_index([index.by_id[episode_id] for episode_id in case.entry_ids]), index, _names(case))
+    return seed_scope(
+        episode_index([index.by_id[episode_id] for episode_id in case.entry_ids]), index, names=_names(case)
+    )
 
 
 def _parsed(case: ShapeCase) -> dict[str, ParsedFileInfo]:
@@ -160,7 +162,7 @@ def test_the_grab_records_the_placed_episodes(case: ShapeCase) -> None:
     parsed = _parsed(case)
     files = [SeedFile(name, size, parsed[name]) for size, name in enumerate(case.parses, start=1)]
 
-    placement = place_release(files, scope, known_torrent())
+    placement = place_release(files, scope, new_torrent(scope))
 
     expected = [
         EpisodeRecord(scope.series.by_id[ep_id].season_number, scope.series.by_id[ep_id].episode_number, size)

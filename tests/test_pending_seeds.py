@@ -34,11 +34,12 @@ from .builders import (
     SEP,
     FakeCacheStore,
     entry_facts,
-    known_torrent,
     make_sonarr_sync,
+    new_torrent,
     parsed_info,
     pending_import,
     rg_group,
+    seed_scope,
     sonarr_ep,
     url_item,
 )
@@ -84,7 +85,7 @@ def _build(
     series = strat._episodes.cached_episodes(entry.series_id) or []
     scope = scope or _scope(series, series)
     files = strat._parse.parsed_files(seadex_dict, series_fp="")
-    placed = EntryPlacements.place(scope, files, dict.fromkeys(files, known_torrent()))
+    placed = EntryPlacements.place(scope, files, dict.fromkeys(files, new_torrent(scope)))
     return build_pending_seeds(seadex_dict, placed, entry)
 
 
@@ -97,7 +98,7 @@ def _record(seed: PendingSeed) -> PendingImport:
 def _scope(ep_list: list[SonarrEpisode], series: list[SonarrEpisode], names: EntryNames | None = None) -> SeedScope:
     """The grab-time scope: entry 1's own list over the whole-series map."""
 
-    return SeedScope(1, episode_index(ep_list), episode_index(series), names or EntryNames())
+    return seed_scope(episode_index(ep_list), episode_index(series), names=names or EntryNames())
 
 
 def _trust(own: PendingImport, siblings: Sequence[PendingImport] = ()) -> TrustPolicy:

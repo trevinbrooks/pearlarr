@@ -7,9 +7,9 @@ from typing import ClassVar
 
 import pytest
 
-from pearlarr.grab_placement import SeedFile, SeedRelease, SeedScope, build_pending_seed, place_release
+from pearlarr.grab_placement import SeedFile, SeedRelease, build_pending_seed, place_release
 from pearlarr.import_files import CandidateFile
-from pearlarr.manual_import import EntryNames, PendingImport, normalize_basename
+from pearlarr.manual_import import PendingImport, normalize_basename
 from pearlarr.placement_types import NO_EVIDENCE, EpisodeIndex, Placement, PlacementVerdict, TargetScope
 from pearlarr.seadex_types import EpisodeKey, ManualImportCandidate, ParsedFileInfo
 from pearlarr.sonarr_mapper import FileAssignment, FileEpisodeMapper
@@ -18,9 +18,10 @@ from .builders import (
     entry_claim,
     entry_facts,
     indexes_for,
-    known_torrent,
+    new_torrent,
     parsed_info,
     pending_import,
+    seed_scope,
     series_index,
     url_item,
 )
@@ -308,18 +309,20 @@ class TestSeedEqualsMapper:
         return series_index({EpisodeKey(0, 1): 501, EpisodeKey(0, 2): 502})
 
     def test_seed_scope_targets_the_entrys_ids_over_the_series_map(self) -> None:
-        scope = SeedScope(1, self._index(), series_index(self._MAP), EntryNames())
+        scope = seed_scope(self._index(), series_index(self._MAP))
 
         assert scope.target(NO_EVIDENCE) == TargetScope([501, 502], series_index(self._MAP))
 
     def test_the_seed_and_the_mapper_place_and_exclude_alike(self) -> None:
         parses = self._parses()
-        scope = SeedScope(1, self._index(), series_index(self._MAP), EntryNames())
+        scope = seed_scope(self._index(), series_index(self._MAP))
         release = SeedRelease(
             release_group="grp",
             url_item=url_item(url="u", infohash="h"),
             infohash="h",
-            placed=place_release([SeedFile(name, 1000, parses[name]) for name in self._NAMES], scope, known_torrent()),
+            placed=place_release(
+                [SeedFile(name, 1000, parses[name]) for name in self._NAMES], scope, new_torrent(scope)
+            ),
         )
 
         seed = build_pending_seed(release, scope, entry_facts(al_id=1, series_id=2, title="t"))

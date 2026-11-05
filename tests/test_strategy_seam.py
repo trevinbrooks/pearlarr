@@ -2641,7 +2641,7 @@ class TestSonarrProcessAlIdSeeds:
         (req,) = run.grab_requests
         seed = req.pending_seeds["h1"]
         assert seed.placements == {"show.s00e01.mkv": (502,), "show.s00e02.mkv": (501,)}
-        assert seed.identified == {"show.s00e01.mkv": 502, "show.s00e02.mkv": 501}
+        assert seed.evidence.identified == {"show.s00e01.mkv": 502, "show.s00e02.mkv": 501}
         assert diagnostic_messages(recording, Severity.WARNING) == [
             (
                 f"{_SEED_URL}: show.s00e01.mkv goes on S00E02 because its size matches SeaDex's S00E02 release "
@@ -2650,9 +2650,9 @@ class TestSonarrProcessAlIdSeeds:
             )
         ]
 
-    def test_an_unread_listing_places_by_number_and_holds_the_url(self) -> None:
-        # SeaDex is down, so there are no size identities. The pack is placed by its numbers but held, and the
-        # title isn't cached as done since its inputs weren't all read.
+    def test_an_unread_listing_places_nothing_and_holds_the_url(self) -> None:
+        # SeaDex is down, so the windows the torrent runs under and the size identities are both unknown. Nothing
+        # is placed, the url is held, and the title isn't cached as done since its inputs weren't all read.
         files = tuple(
             SeedFile(name, 1000, parsed_info(season=1, episodes=(n,))) for n, name in enumerate(_SEED_FILES, 1)
         )
@@ -2661,9 +2661,7 @@ class TestSonarrProcessAlIdSeeds:
 
         (req,) = run.grab_requests
         assert req.seadex_dict["NAN0"].urls[_SEED_URL].hold is GrabHold.INPUT_UNREAD
-        assert req.pending_seeds["h1"].placements == {
-            normalize_basename(n): (100 + i,) for i, n in enumerate(_SEED_FILES, 1)
-        }
+        assert req.pending_seeds["h1"].placements == {}
         assert req.input_missing_groups == ("NAN0",)
 
     def test_the_listing_read_gets_the_ignored_entries_too(self) -> None:

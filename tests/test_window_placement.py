@@ -381,26 +381,22 @@ class TestSeveralWindows:
 
 
 class TestWindowsOf:
-    """`windows_of`: one window per claim in order, over its series' index, with the claim's names and the listing."""
+    """`windows_of`: one scope per entry window in order, over its series' index, with its names and the listing."""
 
-    def test_one_window_per_claim_over_its_series_index(self) -> None:
+    def test_one_scope_per_window_over_its_series_index(self) -> None:
         names = EntryNames("Show", ("Show Alpha",))
-        claims = (
-            entry_claim(al_id=1, series_id=7, ordered_episode_ids=[601, 602], names=names),
-            entry_claim(al_id=2, series_id=8, ordered_episode_ids=[201]),
-        )
-
+        entries = (entry_window(1, (601, 602), series_id=7, names=names), entry_window(2, (201,), series_id=8))
         listing = ListingEvidence(torrent_listing(entry_window(1, (601,))), {"a.mkv": 601})
 
-        windows = windows_of(claims, {7: _SERIES, 8: _OTHER_SERIES}, listing)
+        windows = windows_of(entries, {7: _SERIES, 8: _OTHER_SERIES}, listing)
 
         assert windows == (
             TargetScope([601, 602], _SERIES, names=names, listing=listing),
             TargetScope([201], _OTHER_SERIES, names=EntryNames(), listing=listing),
         )
 
-    def test_an_unscoped_claim_gives_an_unscoped_window(self) -> None:
-        (window,) = windows_of((entry_claim(series_id=7),), {7: _SERIES}, NO_EVIDENCE)
+    def test_a_claim_with_no_ids_gives_an_unscoped_window(self) -> None:
+        (window,) = windows_of((entry_claim(series_id=7).window,), {7: _SERIES}, NO_EVIDENCE)
 
         assert window == TargetScope([], _SERIES)
         assert window.unscoped
