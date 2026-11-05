@@ -773,6 +773,17 @@ class TestPlaceBesideAnotherListedTitle:
         assert placement.hold is GrabHold.PLACED_ELSEWHERE
         assert placement.hold_counts == ElsewhereCounts(elsewhere=2, unplaced=0)
 
+    def test_attach_writes_each_urls_hold_counts(self) -> None:
+        # Entry 3's specials window places nothing of the season pack the two season entries take.
+        seadex_dict: SeadexDict = {"RG": rg_group({"u1": url_item(url="u1", infohash="h1", download=True)})}
+        torrent = _torrent(listed=[entry_window(1, (101, 102)), entry_window(2, (103, 104))])
+        placed = EntryPlacements.place(_scope([_SPECIAL], al_id=3), {"u1": _pack()}, {"u1": torrent})
+
+        placed.attach_placements(seadex_dict)
+
+        item = seadex_dict["RG"].urls["u1"]
+        assert (item.hold, item.hold_counts) == (GrabHold.PLACED_ELSEWHERE, ElsewhereCounts(elsewhere=4, unplaced=0))
+
     def test_a_stored_file_on_an_episode_no_other_window_holds_is_nobodys(self) -> None:
         # The record maps the pack's last two files past this entry's window, and no other listed title holds
         # those episodes, so nothing is another title's and the url isn't held.

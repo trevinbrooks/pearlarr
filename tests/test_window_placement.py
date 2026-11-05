@@ -460,6 +460,14 @@ class TestOrderedWindows:
         assert order.windows == (entry_window(2, _SECOND_COUR), replace(claim.window, ignored=True))
         assert order.imports == {1}
 
+    def test_a_claims_window_takes_the_flag_off_an_empty_listed_window(self) -> None:
+        # The listed window came back empty, so it doesn't run, but its flag still reaches the claim's window.
+        claim = entry_claim(al_id=1, ordered_episode_ids=_FIRST_COUR[:2])
+
+        order = _order((entry_window(1, (), ignored=True), entry_window(2, _SECOND_COUR)), (claim,))
+
+        assert order.windows == (entry_window(2, _SECOND_COUR), replace(claim.window, ignored=True))
+
     def test_a_listed_entry_never_claimed_runs_its_listed_window_and_does_not_import(self) -> None:
         listed = entry_window(2, _SECOND_COUR)
 

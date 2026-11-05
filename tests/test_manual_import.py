@@ -386,6 +386,15 @@ class TestWithListing:
 
         assert joined.listing.special_aliases == {1: 2, 2: 6, 3: 8}
 
+    def test_the_new_read_wins_an_anilist_id_both_series_hold(self) -> None:
+        # Entry 1 was stored on series 7 and the fresh read of series 8 lists it there: one window per id, the
+        # read's.
+        pending = two_claim_record(series_ids=(7, 8), listing=torrent_listing(entry_window(1, (501,))))
+
+        joined = pending.with_listing(torrent_listing(entry_window(1, (801,), series_id=8)))
+
+        assert joined.listing == torrent_listing(entry_window(1, (801,), series_id=8))
+
     def test_an_empty_listing_keeps_the_stored_one(self) -> None:
         pending = pending_import(listing=torrent_listing(entry_window(1, (501,))))
 
@@ -620,6 +629,11 @@ class TestTorrentListing:
         del raw["ignored"]
 
         assert EntryWindow.from_json(raw) == entry_window(5, (501,))
+
+    def test_a_stored_ignored_flag_reads_back(self) -> None:
+        window = entry_window(5, (501,), ignored=True)
+
+        assert EntryWindow.from_json(json.loads(json.dumps(window.to_json()))) == window
 
     def test_a_listing_persists_its_aliases_as_pairs(self) -> None:
         # A JSON object would hand the aliases' TMDB numbers back as strings, so they ride as pairs.
