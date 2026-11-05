@@ -61,7 +61,7 @@ def ordered_windows(
     gets its listed window, and a claim whose entry is no longer listed keeps its window.
 
     A listed window with no ids is left out, since it would be unscoped and admit any id. A claim's window with no
-    ids still runs: `EntryClaim.admits` reads such a claim as covering any id. It goes with the specials, last.
+    ids still runs: `EntryClaim.admits` reads such a claim as covering any id. It sorts with the specials windows.
     """
 
     chosen: dict[int, EntryWindow] = {}

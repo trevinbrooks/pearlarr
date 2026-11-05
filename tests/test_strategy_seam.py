@@ -2695,6 +2695,50 @@ class TestSonarrProcessAlIdSeeds:
 
         assert listings.reads == [(7, {5: kept[5], 6: ignored[6]})]
 
+    def test_an_ignored_entrys_listed_files_are_never_grabbed_onto_a_sibling(self) -> None:
+        # Entry 5, the season, is on the ignore list, and entry 6 is the specials. The torrent is the season's
+        # bare-numbered run, which entry 6's window alone would take as its specials. The season's listed window
+        # decides the files first, so entry 6 grabs none of them and the url is held as another title's.
+        specials = [sonarr_ep(0, n, ep_id=500 + n, episode_file_id=0) for n in (1, 2)]
+        files = tuple(
+            SeedFile(name, 1000 * n, parsed_info(season=0, absolutes=(n,), matched=((1, n),)))
+            for n, name in enumerate(_SEED_FILES, 1)
+        )
+        seadex: SeadexDict = {
+            "NAN0": rg_group(
+                {_SEED_URL: url_item(url=_SEED_URL, infohash="h1", download=True, files=list(_SEED_FILES))}
+            ),
+        }
+        run = _FakeRunServices(
+            anilist_ids={6: MappingEntry(anilist_id=6)},
+            ignored={5: MappingEntry(anilist_id=5)},
+            prologue_entry=make_entry_record(url="https://releases.moe/6"),
+            seadex_dict=seadex,
+            filter_downloads_result=plan_result(["h1"], seadex),
+            import_wait_mode=ImportWaitMode.BLOCKING,
+            cache_store=FakeCacheStore(),
+        )
+        strat = make_bare_instance(
+            SonarrSync,
+            _services=run,
+            _episodes=ScriptedEpisodes(FakeSonarrClient(episodes=[_EP1, _EP2, *specials]), windows={6: specials}),
+            _parse=_ScriptedParse({_SEED_URL: files}),
+            _listings=_ScriptedListings(
+                {"h1": torrent_listing(entry_window(5, (101, 102)), entry_window(6, (501, 502)))}
+            ),
+            _config=make_config(sleep_time=0),
+            ignore_movies_in_radarr=False,
+            logger=make_logger(),
+        )
+
+        strat.process_al_id(_Item(id=7, title="Show", tvdbId=70, imdbId=None), 6, MappingEntry(anilist_id=6))
+
+        (req,) = run.grab_requests
+        seed = req.pending_seeds["h1"]
+        assert seed.placements == {}
+        assert seed.excluded == tuple(normalize_basename(name) for name in _SEED_FILES)
+        assert req.seadex_dict["NAN0"].urls[_SEED_URL].hold is GrabHold.PLACED_ELSEWHERE
+
     def test_wait_mode_off_reads_no_record_and_seeds_nothing(self) -> None:
         store = _CountingStore()
         sonarr = FakeSonarrClient(episodes=[_EP1, _EP2])

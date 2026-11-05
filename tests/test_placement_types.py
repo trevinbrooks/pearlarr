@@ -260,6 +260,14 @@ class TestPlacementVerdict:
 
         assert {v for v in PlacementVerdict if v.hand_import} == hand_import
 
+    def test_another_listed_titles_file_is_excluded_and_no_hand_import(self) -> None:
+        # It waits for the other title's own grab to claim the torrent, so this record skips it and it's no hand import.
+        verdict = PlacementVerdict.LISTED_ELSEWHERE
+
+        assert verdict.excluded
+        assert not verdict.placed
+        assert not verdict.hand_import
+
     def test_a_size_match_or_a_special_alias_places(self) -> None:
         # A file placed by size, or through a specials pack's aliases, carries ids like any other placement.
         for verdict in (PlacementVerdict.IDENTIFIED, PlacementVerdict.OVERRIDDEN, PlacementVerdict.ALTERNATE):

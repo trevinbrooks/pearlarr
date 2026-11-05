@@ -333,6 +333,21 @@ class TestIdentifiedNames:
         assert pending.with_identified({"a.mkv": 3}).identified == {"b.mkv": 2}
 
 
+class TestWithListing:
+    """`with_listing`: the newest grab's listing replaces the stored one, and an empty read keeps it."""
+
+    def test_a_listing_with_entries_replaces_the_stored_one(self) -> None:
+        newer = torrent_listing(entry_window(1, (501,)), entry_window(2, (601,)))
+        pending = pending_import(listing=torrent_listing(entry_window(1, (501,))))
+
+        assert pending.with_listing(newer).listing == newer
+
+    def test_an_empty_listing_keeps_the_stored_one(self) -> None:
+        pending = pending_import(listing=torrent_listing(entry_window(1, (501,))))
+
+        assert pending.with_listing(EMPTY_LISTING) is pending
+
+
 class TestPendingImportClaims:
     """The claim reads over a record: every entry's series, window, guards, and ids, in claim order."""
 

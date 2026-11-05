@@ -15,7 +15,7 @@ from pearlarr.placement_types import (
     TargetScope,
 )
 from pearlarr.seadex_types import EpisodeKey, ParsedFileInfo
-from pearlarr.window_placement import WindowedAssignment, place_across_windows, windows_of
+from pearlarr.window_placement import WindowedAssignment, ordered_windows, place_across_windows, windows_of
 
 from .builders import (
     ALIASED_PACK,
@@ -51,6 +51,8 @@ _MANY_SPECIALS = series_index({EpisodeKey(0, n): 500 + n for n in range(1, 7)})
 _OTHER_SPECIALS = series_index({EpisodeKey(0, n): 900 + n for n in (1, 2, 3)})
 # `ALIASED_PACK` as the evidence every window carries: the pack's 1, 2 and 3 aliased onto specials 2, 4 and 6.
 _ALIASED = ListingEvidence(ALIASED_PACK)
+# `_SERIES` as Sonarr series 7, the series the window and claim builders default to.
+_SERIES_7: Mapping[int, EpisodeIndex] = {7: _SERIES}
 
 
 def _window(resolved: list[int], *titles: str, used: Iterable[int] = (), series: EpisodeIndex = _SERIES) -> TargetScope:
@@ -73,6 +75,23 @@ def _place_across(parsed: Mapping[str, ParsedFileInfo | None], windows: Sequence
     """Every parsed name placed under `windows`, with no stored map."""
 
     return place_across_windows(batch(parsed), windows)
+
+
+def _disputed_pack() -> tuple[list[str], WindowedAssignment]:
+    """A pack the first cour places three of, its last four refused as misnumbered under the second.
+
+    The special's absolute sits between the cours, and the pack is keyed on past the season's end.
+    """
+
+    series = series_index(
+        {**{EpisodeKey(1, n): 600 + n for n in range(1, 7)}, EpisodeKey(0, 1): 501},
+        absolutes={601: 1, 602: 2, 603: 3, 501: 4, 604: 5, 605: 6, 606: 7},
+    )
+    pack = [f"Show - S01E{n:02d}.mkv" for n in range(1, 8)]
+    parsed = {
+        name: parsed_info(season=1, episodes=(n,), matched=((1, n),) if n < 7 else ()) for n, name in enumerate(pack, 1)
+    }
+    return pack, _place_across(parsed, (_window(_FIRST_COUR, series=series), _window(_SECOND_COUR, series=series)))
 
 
 class TestOneWindow:
@@ -245,18 +264,7 @@ class TestSeveralWindows:
     def test_a_run_disputed_past_the_cour_boundary_places_under_the_first_cour_and_is_refused_under_the_second(
         self,
     ) -> None:
-        # The special's absolute sits between the cours, and the pack is keyed on past the season's end.
-        series = series_index(
-            {**{EpisodeKey(1, n): 600 + n for n in range(1, 7)}, EpisodeKey(0, 1): 501},
-            absolutes={601: 1, 602: 2, 603: 3, 501: 4, 604: 5, 605: 6, 606: 7},
-        )
-        pack = [f"Show - S01E{n:02d}.mkv" for n in range(1, 8)]
-        parsed = {
-            name: parsed_info(season=1, episodes=(n,), matched=((1, n),) if n < 7 else ())
-            for n, name in enumerate(pack, 1)
-        }
-
-        result = _place_across(parsed, (_window(_FIRST_COUR, series=series), _window(_SECOND_COUR, series=series)))
+        pack, result = _disputed_pack()
 
         assert result.merged.assigned == {name: (600 + n,) for n, name in enumerate(pack[:3], 1)}
         assert {by_name(result.merged)[name][1] for name in pack[3:]} == {PlacementVerdict.MISNUMBERED}
@@ -378,6 +386,120 @@ class TestSeveralWindows:
         result = _place_across(blind(["a.mkv", "b.mkv"]), (_window([501]), _window([502])))
 
         assert by_name(result.merged) == dict.fromkeys(("a.mkv", "b.mkv"), ((), PlacementVerdict.SKIPPED))
+
+
+class TestOrderedWindows:
+    """`ordered_windows`: one window per AniList id, season windows before specials windows, and which import."""
+
+    def test_season_windows_run_before_specials_windows_each_in_anilist_id_order(self) -> None:
+        listed = (
+            entry_window(1, _SPECIALS[:1]),
+            entry_window(4, _SECOND_COUR),
+            entry_window(2, _SPECIALS[1:]),
+            entry_window(3, _FIRST_COUR),
+        )
+
+        order = ordered_windows(listed, (), None, _SERIES_7)
+
+        assert [w.al_id for w in order.windows] == [3, 4, 1, 2]
+
+    def test_the_grabbing_entrys_window_wins_its_slot(self) -> None:
+        own = entry_window(1, _FIRST_COUR)
+
+        order = ordered_windows((entry_window(1, _FIRST_COUR[:2]),), (entry_claim(al_id=1),), own, _SERIES_7)
+
+        assert order.windows == (own,)
+
+    def test_a_claimed_entrys_window_is_its_claims_and_it_imports(self) -> None:
+        claim = entry_claim(al_id=2, ordered_episode_ids=_SECOND_COUR[:2])
+
+        order = ordered_windows((entry_window(2, _SECOND_COUR),), (claim,), None, _SERIES_7)
+
+        assert (order.windows, order.imports) == ((claim.window,), {0})
+
+    def test_a_listed_entry_never_claimed_runs_its_listed_window_and_does_not_import(self) -> None:
+        listed = entry_window(2, _SECOND_COUR)
+
+        order = ordered_windows((listed,), (), entry_window(1, _FIRST_COUR), _SERIES_7)
+
+        assert order.windows[1] == listed
+        assert (order.own_at, order.imports) == (0, {0})
+
+    def test_a_claim_its_entry_no_longer_lists_keeps_its_window(self) -> None:
+        claim = entry_claim(al_id=2, ordered_episode_ids=_SECOND_COUR)
+
+        order = ordered_windows((entry_window(1, _FIRST_COUR),), (claim,), None, _SERIES_7)
+
+        assert [w.al_id for w in order.windows] == [1, 2]
+        assert order.imports == {1}
+
+    def test_the_own_window_and_the_claims_import_wherever_they_sort(self) -> None:
+        listed = (entry_window(1, _FIRST_COUR),)
+        claim = entry_claim(al_id=2, ordered_episode_ids=_SECOND_COUR)
+
+        order = ordered_windows(listed, (claim,), entry_window(3, _SPECIALS), _SERIES_7)
+
+        assert [w.al_id for w in order.windows] == [1, 2, 3]
+        assert (order.own_at, order.imports) == (2, {1, 2})
+
+    def test_a_listed_window_with_no_ids_is_left_out(self) -> None:
+        # It would be unscoped, admitting every id of the series.
+        order = ordered_windows((entry_window(2, ()),), (), entry_window(1, _FIRST_COUR), _SERIES_7)
+
+        assert [w.al_id for w in order.windows] == [1]
+
+    def test_a_claim_with_no_ids_still_runs_with_the_specials_windows(self) -> None:
+        # A record an older version wrote can hold such a claim, which admits any id.
+        claim = entry_claim(al_id=1)
+
+        order = ordered_windows((entry_window(2, _FIRST_COUR),), (claim,), None, _SERIES_7)
+
+        assert order.windows == (entry_window(2, _FIRST_COUR), claim.window)
+        assert order.imports == {1}
+
+
+class TestDecidedBy:
+    """Which window decided each file, and what that means for the record the windows place for."""
+
+    def test_each_file_names_the_first_window_to_place_or_refuse_it(self) -> None:
+        run = numbered_names("show", 6)
+
+        result = _place_across(
+            {**blind(run), "loose.mkv": parsed_info()}, (_window(_FIRST_COUR), _window(_SECOND_COUR))
+        )
+
+        assert result.decided_by == {**dict.fromkeys(run[:3], 0), **dict.fromkeys(run[3:], 1)}
+
+    def test_the_record_sets_aside_a_file_a_window_it_doesnt_import_placed(self) -> None:
+        run = numbered_names("show", 6)
+        result = _place_across(blind(run), (_window(_FIRST_COUR), _window(_SECOND_COUR)))
+
+        assignment = result.for_record({0})
+
+        assert assignment.assigned == {name: (601 + i,) for i, name in enumerate(run[:3])}
+        assert {by_name(assignment)[name] for name in run[3:]} == {((), PlacementVerdict.LISTED_ELSEWHERE)}
+
+    def test_the_record_keeps_a_misnumbered_file_whichever_window_refused_it(self) -> None:
+        pack, result = _disputed_pack()
+
+        assignment = result.for_record({0})
+
+        assert {by_name(assignment)[name][1] for name in pack[3:]} == {PlacementVerdict.MISNUMBERED}
+
+    def test_a_file_another_window_placed_or_refused_is_decided_outside(self) -> None:
+        pack, result = _disputed_pack()
+
+        assert (result.decided_outside(0), result.decided_outside(1)) == (frozenset(pack[3:]), frozenset(pack[:3]))
+
+    def test_a_file_another_window_held_is_not_decided_outside(self) -> None:
+        # No window has read a held file yet.
+        run = numbered_names("sp", 3)
+        parsed = {**blind(run), "x.mkv": None}
+
+        result = _place_across(parsed, (_window(_SPECIALS), _window([601])))
+
+        assert {by_name(result.merged)[name][1] for name in run} == {PlacementVerdict.HELD}
+        assert result.decided_outside(1) == frozenset()
 
 
 class TestWindowsOf:

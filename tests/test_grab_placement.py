@@ -55,6 +55,7 @@ from pearlarr.seadex_types import (
 from .builders import (
     ALIASED_PACK,
     UNREAD_EVIDENCE,
+    by_name,
     entry_claim,
     entry_facts,
     entry_window,
@@ -555,17 +556,20 @@ class TestPlaceHeld:
         assert verdicts_of(placement.assignment) == {PlacementVerdict.EXACT, PlacementVerdict.FOREIGN}
 
     def test_a_pack_its_aliases_map_onto_the_listing_places_and_is_not_held(self) -> None:
-        # The pack's `1` isn't a listed special, but the entries' aliases map 1, 2 and 3 onto 2, 4 and 6.
+        # The pack's `1` isn't a listed special, but the entries' aliases map 1, 2 and 3 onto 2, 4 and 6. Special 6
+        # is entry 2's, which has no claim yet, so its file is set aside as entry 2's.
         torrent = known_torrent(
             indexes={7: episode_index(_SPECIALS)},
-            evidence=torrent_evidence(*ALIASED_PACK.entries, aliases=ALIASED_PACK.special_aliases),
+            evidence=torrent_evidence(
+                entry_window(1, (502, 504)), entry_window(2, (506,)), aliases=ALIASED_PACK.special_aliases
+            ),
         )
 
         placement = place_release(self._specials(), self._specials_scope(2, 4), torrent)
 
         assert placement.hold is None
         assert placement.assignment.assigned == {"show.s00e01.mkv": (502,), "show.s00e02.mkv": (504,)}
-        assert verdicts_of(placement.assignment) == {PlacementVerdict.ALTERNATE, PlacementVerdict.ALIASED_ELSEWHERE}
+        assert by_name(placement.assignment)["show.s00e03.mkv"] == ((), PlacementVerdict.LISTED_ELSEWHERE)
         assert placement.claimed_ids == {502, 504}
 
     _OTHER = episode_index([sonarr_ep(0, n, ep_id=900 + n, episode_file_id=0) for n in (1, 2, 3)])
@@ -697,6 +701,198 @@ class TestPlaceHeld:
         holds = [seadex_dict["RG"].urls[u].hold for u in urls]
         assert holds == [GrabHold.MISNUMBERED, GrabHold.INPUT_UNREAD, None]
         assert placed.input_missing_groups(seadex_dict) == ("RG",)
+
+
+class TestPlaceBesideAnotherListedTitle:
+    """A url another listed title shares: held as that title's only when none of it lands on the entry."""
+
+    def test_an_entry_placing_some_beside_a_sibling_placing_the_rest_is_not_held(self) -> None:
+        torrent = _torrent(listed=[entry_window(1, (101, 102)), entry_window(2, (103, 104))])
+
+        placement = place_release(_pack(), _scope(_SEASON[:2]), torrent)
+
+        assert by_name(placement.assignment) == {
+            "show - s01e01.mkv": ((101,), PlacementVerdict.EXACT),
+            "show - s01e02.mkv": ((102,), PlacementVerdict.EXACT),
+            "show - s01e03.mkv": ((), PlacementVerdict.LISTED_ELSEWHERE),
+            "show - s01e04.mkv": ((), PlacementVerdict.LISTED_ELSEWHERE),
+        }
+        assert placement.hold is None
+
+    def test_a_run_a_sibling_held_is_not_another_titles(self) -> None:
+        # Entry 1's window picked the run, but an unread parse keeps it from placing. No window has read it yet, so
+        # the url isn't held as entry 1's, and the title is re-checked once the parse reads.
+        files = [SeedFile(name, 10 * n, ParsedFileInfo()) for n, name in enumerate(_RUN, 1)]
+        files.append(SeedFile("Show - NCOP.mkv", 50, None))
+        torrent = _torrent(listed=[entry_window(1, (101, 102, 103, 104)), entry_window(2, (201, 202))])
+
+        placement = place_release(files, _scope(_SERIES[-2:], al_id=2), torrent)
+
+        assert by_name(placement.assignment) == {
+            **{normalize_basename(name): ((), PlacementVerdict.HELD) for name in _RUN},
+            "show - ncop.mkv": ((), PlacementVerdict.EXTRA),
+        }
+        assert placement.hold is None
+        assert not placement.inputs_known
+
+
+# neko-raws' The Rolling Girls BD batch (nyaa 743477) and its Sonarr series. SeaDex lists the batch under the
+# season's entry (AniList 20815) and the Chibi shorts' (AniList 102077), whose window is the series' 12 specials.
+_RG_EPISODES = (
+    "King of Rookies",
+    "Center of the World",
+    "I Wanna Be a Hero",
+    "Dream",
+    "Disappointing Person",
+    "Lightning Speed",
+    "Give Me the Stars",
+    "After the Rain",
+    "Thieves of the Night",
+    "No No No",
+    "Rose of Passion",
+    "The Future Is in Our Hands",
+)
+_RG_SHORTS = (
+    "Chibi #1 Special Move",
+    "Chibi #2 Nickname",
+    "Chibi #3 I Can't Hear You",
+    "Chibi #4 Sorting Duty",
+    "Chibi #5 Summoning",
+    "Chibi #6 Please Take This Seriously",
+    "Chibi #7 If I Were to Become a Best",
+    "Chibi #8 Identity",
+    "Chibi #9 Letting Your Guard Down",
+    "Chibi #10 Gossip",
+    "Chibi #11 Fallen Over",
+    "Chibi #12 Hero",
+)
+_RG_SEASON = [
+    sonarr_ep(1, n, ep_id=40905 + n, absolute=n, title=title, episode_file_id=0)
+    for n, title in enumerate(_RG_EPISODES, 1)
+]
+_RG_SPECIALS = [
+    sonarr_ep(0, n, ep_id=40893 + n, title=title, episode_file_id=0) for n, title in enumerate(_RG_SHORTS, 1)
+]
+_RG_SERIES = episode_index([*_RG_SPECIALS, *_RG_SEASON])
+_RG_MAIN = EntryNames(series="The Rolling Girls", anilist=("The Rolling Girls", "Rolling☆Girls"))
+_RG_CHIBI = EntryNames(series="The Rolling Girls", anilist=("Rolling☆Girls: Chibi☆Rolling☆Girls Korokoro Gekijou",))
+_RG_EVIDENCE = torrent_evidence(
+    entry_window(20815, (ep.id for ep in _RG_SEASON), series_id=919, names=_RG_MAIN),
+    entry_window(102077, (ep.id for ep in _RG_SPECIALS), series_id=919, names=_RG_CHIBI),
+)
+
+
+def _rg_name(stem: str) -> str:
+    return f"[neko-raws]The Rolling Girls{stem}[BD][1080p][Hi10p][FLAC].mkv"
+
+
+_RG_EPISODE_SIZES = (
+    3558150369,
+    3973711515,
+    3941779309,
+    3990822624,
+    4203858580,
+    4468218825,
+    4160475173,
+    4450357433,
+    3911101136,
+    4210091934,
+    4411058595,
+    4226868601,
+)
+_RG_SHORT_SIZES = (131743215, 114360566, 86421088, 70253068, 99820463, 143155027)
+# Sonarr reads each episode's bare number as an absolute and matches it to the season, and matches nothing for
+# the shorts. It reads nothing at all from the OP and ED.
+_RG_FILES = (
+    *(
+        SeedFile(
+            _rg_name(f" - {n:02d}"),
+            size,
+            ParsedFileInfo(
+                season_number=0,
+                absolute_episode_numbers=(n,),
+                matched_episodes=(MatchedEpisode(season_number=1, episode_number=n, id=40905 + n),),
+            ),
+        )
+        for n, size in enumerate(_RG_EPISODE_SIZES, 1)
+    ),
+    *(
+        SeedFile(
+            _rg_name(f" Chibi Special - {n:02d}"), size, ParsedFileInfo(season_number=0, absolute_episode_numbers=(n,))
+        )
+        for n, size in enumerate(_RG_SHORT_SIZES, 1)
+    ),
+    SeedFile(_rg_name(" - OP"), 305872174, ParsedFileInfo()),
+    SeedFile(_rg_name(" - ED"), 541996641, ParsedFileInfo()),
+)
+_RG_EPISODE_NAMES = [normalize_basename(f.basename) for f in _RG_FILES[:12]]
+# Under either window the shorts place nowhere, and the OP and ED are extras.
+_RG_REST = {
+    **{normalize_basename(f.basename): ((), PlacementVerdict.SKIPPED) for f in _RG_FILES[12:18]},
+    **{normalize_basename(f.basename): ((), PlacementVerdict.EXTRA) for f in _RG_FILES[18:]},
+}
+
+
+class TestRollingGirlsBatch:
+    """The real batch: its 12 episodes are the season's under either entry, never the Chibi entry's specials."""
+
+    @staticmethod
+    def _place(al_id: int, record: PendingImport | None = None) -> UrlPlacement:
+        main = al_id == 20815
+        scope = seed_scope(
+            episode_index(_RG_SEASON if main else _RG_SPECIALS),
+            _RG_SERIES,
+            al_id=al_id,
+            series_id=919,
+            names=_RG_MAIN if main else _RG_CHIBI,
+        )
+        return place_release(_RG_FILES, scope, known_torrent(record, indexes={919: _RG_SERIES}, evidence=_RG_EVIDENCE))
+
+    def test_under_the_season_entry_the_episodes_place_exact_on_the_season(self) -> None:
+        placement = self._place(20815)
+
+        assert by_name(placement.assignment) == {
+            **{
+                name: ((ep.id,), PlacementVerdict.EXACT) for name, ep in zip(_RG_EPISODE_NAMES, _RG_SEASON, strict=True)
+            },
+            **_RG_REST,
+        }
+        assert placement.hold is None
+        assert placement.claimed_ids == {ep.id for ep in _RG_SEASON}
+
+    def test_under_the_chibi_entry_alone_the_episodes_are_the_seasons_and_the_url_is_held(self) -> None:
+        # The season's window decides the episodes first, and the season's entry has no claim on a record yet, so
+        # they're set aside as its files. Nothing lands on the Chibi entry, so the url is held as another title's.
+        placement = self._place(102077)
+
+        assert by_name(placement.assignment) == {
+            **dict.fromkeys(_RG_EPISODE_NAMES, ((), PlacementVerdict.LISTED_ELSEWHERE)),
+            **_RG_REST,
+        }
+        assert placement.records == ()
+        assert placement.claimed_ids == frozenset()
+        assert placement.hold is GrabHold.PLACED_ELSEWHERE
+        assert placement.hold_detail == "12 files are another title's, 6 could not be placed"
+
+    def test_under_the_chibi_entry_beside_the_seasons_record_the_url_is_held(self) -> None:
+        record = pending_import(
+            infohash="h1",
+            al_id=20815,
+            series_id=919,
+            file_episode_map={name: (ep.id,) for name, ep in zip(_RG_EPISODE_NAMES, _RG_SEASON, strict=True)},
+            seadex_files=[f.basename for f in _RG_FILES],
+            ordered_episode_ids=tuple(ep.id for ep in _RG_SEASON),
+        )
+
+        placement = self._place(102077, record)
+
+        # The record already maps the episodes onto the season, so only the rest is placed, and the Chibi entry
+        # gets none of the episodes.
+        assert by_name(placement.assignment) == _RG_REST
+        assert placement.records == ()
+        assert placement.claimed_ids == frozenset()
+        assert placement.hold is GrabHold.PLACED_ELSEWHERE
+        assert placement.hold_detail == "12 files are another title's, 6 could not be placed"
 
 
 class TestKnownTorrent:
@@ -987,6 +1183,34 @@ class TestPendingSeedRecordAt:
         )
 
         assert seed.record_at(_STAMP, fresh=True).identified == {"show - 01.mkv": 101}
+
+    def test_born_keeps_the_listing_its_files_were_placed_under(self) -> None:
+        listing = torrent_listing(entry_window(1, (101,)), entry_window(2, (102,)))
+        seed = PendingSeed(
+            facts=_FACTS,
+            placements={},
+            excluded=(),
+            evidence=ListingEvidence(listing),
+            claim=entry_claim(claimed_at=""),
+            stored=None,
+        )
+
+        assert seed.record_at(_STAMP, fresh=True).listing == listing
+
+    def test_accreted_replaces_the_stored_listing(self) -> None:
+        # The newest grab placed its files under the newest read.
+        stored = pending_import(infohash="h1", listing=torrent_listing(entry_window(1, (101,))))
+        newer = torrent_listing(entry_window(1, (101,)), entry_window(2, (102,)))
+        seed = PendingSeed(
+            facts=_FACTS,
+            placements={},
+            excluded=(),
+            evidence=ListingEvidence(newer),
+            claim=entry_claim(claimed_at=""),
+            stored=stored,
+        )
+
+        assert seed.record_at(_STAMP, fresh=False).listing == newer
 
     def test_accreted_merges_the_identified_names(self) -> None:
         stored = pending_import(infohash="h1", identified={"show - 01.mkv": 101})
