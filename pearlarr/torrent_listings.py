@@ -1,8 +1,9 @@
 """Reads every SeaDex entry of a series once per run and folds them into torrent listings and size identities."""
 
-from collections.abc import Mapping
+from collections.abc import Callable, Mapping
 
 from .listing_fold import EntryListing, fold_listings
+from .manual_import import EntryNames, EntryWindow
 from .mappings import MappingEntry
 from .placement_types import ListingsRead
 from .seadex_gateway import SeaDexMiss, SeaDexSource
@@ -14,12 +15,23 @@ class SeriesListings:
 
     The caller passes the series' AniList ids, with the ignore list already applied. Prefetched entries come from
     the gateway's cache, and anything else costs a request.
+
+    Each collaborator serves `_read`: `seadex` gives each entry's record, `episodes` its window, `ignore_tags` the
+    torrents the size identities skip, and `names` the entry's titles for its window (the title ladder the entry's
+    own run uses). The names can't ride `read`, whose per-series cache ignores a later call's arguments.
     """
 
-    def __init__(self, seadex: SeaDexSource, episodes: SonarrEpisodes, ignore_tags: frozenset[str]) -> None:
+    def __init__(
+        self,
+        seadex: SeaDexSource,
+        episodes: SonarrEpisodes,
+        ignore_tags: frozenset[str],
+        names: Callable[[int], EntryNames],
+    ) -> None:
         self._seadex = seadex
         self._episodes = episodes
         self._ignore_tags = ignore_tags
+        self._names = names
         self._reads: dict[int, ListingsRead | None] = {}
 
     def reset(self) -> None:
@@ -40,7 +52,10 @@ class SeriesListings:
         return self._reads[series_id]
 
     def _read(self, series_id: int, entries: Mapping[int, MappingEntry]) -> ListingsRead | None:
-        """Read each entry's record, window, and special aliases, then fold them."""
+        """Read each entry's record, window, and special aliases, then fold them.
+
+        An entry whose episode list comes back empty keeps a window with no ids.
+        """
 
         listed: list[EntryListing] = []
         for al_id, mapping in entries.items():
@@ -53,6 +68,10 @@ class SeriesListings:
                 ep_list = self._episodes.get_ep_list(series_id, al_id, mapping)
             except ValueError:
                 continue
-            window = None if ep_list is None else frozenset(ep.id for ep in ep_list if ep.id)
+            window = (
+                None
+                if ep_list is None
+                else EntryWindow.of(al_id=al_id, series_id=series_id, ep_list=ep_list, names=self._names(al_id))
+            )
             listed.append(EntryListing(record, window, mapping.special_aliasing))
         return fold_listings(listed, self._ignore_tags)

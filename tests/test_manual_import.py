@@ -20,6 +20,7 @@ from pearlarr.manual_import import (
     Deferral,
     EntryClaim,
     EntryNames,
+    EntryWindow,
     GuardFacts,
     ImportProbe,
     OwnedEpisode,
@@ -42,7 +43,7 @@ from pearlarr.manual_import import (
 )
 from pearlarr.seadex_types import RemotePathMapping
 
-from .builders import SEP, claim_al_ids, entry_claim, pending_import
+from .builders import SEP, claim_al_ids, entry_claim, entry_window, pending_import, sonarr_ep, torrent_listing
 
 
 class TestNormalize:
@@ -362,6 +363,12 @@ class TestPendingImportClaims:
         )
         assert EntryClaim.from_json(claim.to_json(), guards={}) == claim
 
+    def test_a_claims_window_is_its_entry_series_ids_and_names(self) -> None:
+        names = EntryNames("Show", ("Show!",))
+        claim = entry_claim(al_id=3, series_id=8, ordered_episode_ids=(102, 101), names=names)
+
+        assert claim.window == entry_window(3, (102, 101), series_id=8, names=names)
+
     def test_claim_for_is_the_first_claim_on_the_series(self) -> None:
         first, second = entry_claim(al_id=1, series_id=8), entry_claim(al_id=2, series_id=8)
         pending = pending_import(claims=(first, second))
@@ -517,6 +524,25 @@ class TestDisplayLabel:
     def test_a_titleless_record_falls_back_to_its_infohash(self) -> None:
         assert pending_import(infohash="h", release_group="", title=None).display_label == "h"
         assert pending_import(infohash="h", release_group="Era-Raws", title=None).display_label == f"h{SEP}Era-Raws"
+
+
+class TestTorrentListing:
+    """The listing's windows and aliases: built from Sonarr's episodes and copied from the caller."""
+
+    def test_a_window_takes_each_episode_once_in_sonarrs_order(self) -> None:
+        episodes = [sonarr_ep(1, 3, ep_id=103), sonarr_ep(1, 1, ep_id=101), sonarr_ep(1, 3, ep_id=103)]
+
+        window = EntryWindow.of(al_id=5, series_id=7, ep_list=episodes, names=EntryNames("Show"))
+
+        assert window == entry_window(5, (103, 101), series_id=7, names=EntryNames("Show"))
+
+    def test_a_change_to_the_callers_dict_leaves_the_listing_as_it_was(self) -> None:
+        aliases = {13: 12}
+        listing = torrent_listing(entry_window(1, (501,)), aliases=aliases)
+
+        aliases[14] = 13
+
+        assert dict(listing.special_aliases) == {13: 12}
 
 
 def _guarded_claim() -> EntryClaim:

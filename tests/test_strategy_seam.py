@@ -45,13 +45,14 @@ from pearlarr.manual_import import (
     OwnGroup,
     PendingImport,
     PendingState,
+    TorrentListing,
     normalize_basename,
 )
 from pearlarr.mappings import ExternalIds, MappingEntry, MappingSource
 from pearlarr.output import Severity
 from pearlarr.output.recording import RecordingHub
 from pearlarr.pending_records import PendingRecords
-from pearlarr.placement_types import ListingsRead, TorrentListing, episode_index
+from pearlarr.placement_types import ListingsRead, episode_index
 from pearlarr.planner import PlanResult
 from pearlarr.probe_verdicts import DownloadHistoryVerdict, HistoryImport, placements_from_history
 from pearlarr.reporter import EntryTitle, RunContext
@@ -89,6 +90,7 @@ from .builders import (
     FakeClock,
     claim_al_ids,
     entry_claim,
+    entry_window,
     episode_snapshot,
     make_bare_instance,
     make_config,
@@ -105,6 +107,7 @@ from .builders import (
     queue_record,
     rg_group,
     sonarr_ep,
+    torrent_listing,
     two_claim_record,
     url_item,
 )
@@ -368,13 +371,12 @@ class _ScriptedListings:
 
     def __init__(
         self,
-        listed: Mapping[str, frozenset[int]] | None = None,
+        listed: Mapping[str, TorrentListing] | None = None,
         identities: Mapping[int, int] | None = None,
         *,
         outage: bool = False,
     ) -> None:
-        by_hash = {infohash: TorrentListing(ids) for infohash, ids in (listed or {}).items()}
-        self._read = None if outage else ListingsRead(by_hash, identities or {})
+        self._read = None if outage else ListingsRead(listed or {}, identities or {})
 
     def read(self, series_id: int, entries: Mapping[int, MappingEntry]) -> ListingsRead | None:
         del series_id, entries
@@ -2602,7 +2604,7 @@ class TestSonarrProcessAlIdSeeds:
             _services=run,
             _episodes=ScriptedEpisodes(FakeSonarrClient(episodes=specials), windows={5: [specials[1], specials[3]]}),
             _parse=_ScriptedParse({_SEED_URL: tuple(SeedFile(name, 1000, parses[name]) for name in files)}),
-            _listings=_ScriptedListings({"h1": frozenset({502, 504, 506})}),
+            _listings=_ScriptedListings({"h1": torrent_listing(entry_window(1, (502, 504, 506)))}),
             _config=make_config(sleep_time=0),
             ignore_movies_in_radarr=False,
             logger=make_logger(),

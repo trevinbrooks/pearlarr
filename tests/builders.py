@@ -36,17 +36,20 @@ from pearlarr.grab_pipeline import GrabPipeline, GrabRequest
 from pearlarr.grab_placement import EntryFacts, KnownTorrent, PendingSeed, TorrentEvidence, TorrentFacts
 from pearlarr.import_wait import ImportProbes, ImportWaitManager, PostImportCleanup
 from pearlarr.manual_import import (
+    EMPTY_LISTING,
     NO_IDENTIFIED,
     NO_SIZES_BY_NAME,
     Deferral,
     EntryClaim,
     EntryNames,
+    EntryWindow,
     FileEpisodeMap,
     GuardFacts,
     ImportProbe,
     ImportWaitMode,
     OwnGroup,
     PendingImport,
+    TorrentListing,
 )
 from pearlarr.mappings import MappingResolver, MappingSources
 from pearlarr.notify import Notifier
@@ -54,7 +57,6 @@ from pearlarr.output import SeverityCounts, emit_to_hub
 from pearlarr.parse_records import ParseRecords
 from pearlarr.pending_records import PendingRecords
 from pearlarr.placement_types import (
-    EMPTY_LISTING,
     NO_SEEDED,
     EpisodeAssignment,
     EpisodeIndex,
@@ -62,7 +64,6 @@ from pearlarr.placement_types import (
     PlacementVerdict,
     SizeIdentities,
     TargetScope,
-    TorrentListing,
     episode_index,
 )
 from pearlarr.placer import assign_episode_ids
@@ -1133,16 +1134,33 @@ UNLISTED = TorrentEvidence(EMPTY_LISTING, _NO_SIZES)
 UNREAD_EVIDENCE = TorrentEvidence(None, None)
 """SeaDex couldn't be read: no listing and no size identities."""
 
-ALIASED_PACK = TorrentListing(frozenset({502, 504, 506}), {1: 2, 2: 4, 3: 6})
+
+_NO_NAMES = EntryNames()
+"""An entry with no series or AniList titles."""
+
+
+def entry_window(al_id: int, ids: Iterable[int], *, series_id: int = 1, names: EntryNames = _NO_NAMES) -> EntryWindow:
+    """Entry `al_id`'s window over `ids`, in the order given."""
+
+    return EntryWindow(al_id=al_id, series_id=series_id, ordered_episode_ids=tuple(ids), names=names)
+
+
+def torrent_listing(*windows: EntryWindow, aliases: SpecialAliases = NO_ALIASES) -> TorrentListing:
+    """The listing of a torrent the `windows`' entries list, with `aliases`."""
+
+    return TorrentListing(windows, aliases)
+
+
+ALIASED_PACK = torrent_listing(entry_window(1, (502, 504, 506)), aliases={1: 2, 2: 4, 3: 6})
 """A listing of specials 2, 4 and 6 whose aliases map a pack's 1, 2 and 3 onto them."""
 
 
 def torrent_evidence(
-    listed: frozenset[int], identities: SizeIdentities = _NO_SIZES, aliases: SpecialAliases = NO_ALIASES
+    *windows: EntryWindow, identities: SizeIdentities = _NO_SIZES, aliases: SpecialAliases = NO_ALIASES
 ) -> TorrentEvidence:
-    """Evidence after a good read: a listing of `listed` with `aliases`, and size `identities`. Both default to none."""
+    """Evidence after a good read: the `windows`' listing with `aliases`, and size `identities` (both none by default)."""
 
-    return TorrentEvidence(TorrentListing(listed, aliases), identities)
+    return TorrentEvidence(torrent_listing(*windows, aliases=aliases), identities)
 
 
 def known_torrent(

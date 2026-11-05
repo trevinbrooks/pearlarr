@@ -8,8 +8,15 @@ from types import MappingProxyType
 from typing import Self
 
 from .episode_titles import EpisodeTitles
-from .manual_import import NO_IDENTIFIED, EntryNames, FileEpisodeMap, IdentifiedNames
-from .seadex_types import NO_ALIASES, EpisodeKey, ParsedFileInfo, SonarrEpisode, SpecialAliases, index_episodes_by_key
+from .manual_import import (
+    EMPTY_LISTING,
+    NO_IDENTIFIED,
+    EntryNames,
+    FileEpisodeMap,
+    IdentifiedNames,
+    TorrentListing,
+)
+from .seadex_types import EpisodeKey, ParsedFileInfo, SonarrEpisode, SpecialAliases, index_episodes_by_key
 from .tvdb_orders import NO_ORDERING, OrderRow, SeriesOrdering
 
 
@@ -330,26 +337,6 @@ class PlacementBatch:
 type SizeIdentities = Mapping[int, int]
 """File size -> episode id, from SeaDex releases with a single video file listed under an entry that covers one
 episode. A file with that exact size is that episode."""
-
-
-@dataclass(frozen=True, slots=True)
-class TorrentListing:
-    """The episodes covered by the SeaDex entries that list one torrent, and those entries' special aliases."""
-
-    ids: frozenset[int]
-    """Union of the episode windows of every entry in the series that lists the torrent."""
-
-    special_aliases: SpecialAliases = NO_ALIASES
-    """The union of those entries' special aliases, minus any TMDB number two entries pair differently. Empty when
-    the entries pair against different TMDB shows."""
-
-    def __post_init__(self) -> None:
-        # Detach from the caller's dict, then wrap read-only.
-        object.__setattr__(self, "special_aliases", MappingProxyType(dict(self.special_aliases)))
-
-
-EMPTY_LISTING = TorrentListing(frozenset())
-"""A torrent no entry lists. Listings match by infohash, so a url without one always gets this."""
 
 
 @dataclass(frozen=True, slots=True)

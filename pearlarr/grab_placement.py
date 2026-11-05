@@ -7,6 +7,7 @@ from typing import NamedTuple
 from .coverage import coverage_string, episodes_from_ep_list
 from .episode_state import EpisodeFileStatus, EpisodeSnapshot, GroupVotes
 from .manual_import import (
+    EMPTY_LISTING,
     NO_IDENTIFIED,
     NO_SIZES_BY_NAME,
     EntryClaim,
@@ -16,12 +17,12 @@ from .manual_import import (
     IdentifiedNames,
     OwnGroup,
     PendingImport,
+    TorrentListing,
     joined_map,
     normalized_leaf,
     sizes_by_episode,
 )
 from .placement_types import (
-    EMPTY_LISTING,
     NO_SEEDED,
     EpisodeAssignment,
     EpisodeIndex,
@@ -31,7 +32,6 @@ from .placement_types import (
     PlacementVerdict,
     SizeIdentities,
     TargetScope,
-    TorrentListing,
 )
 from .seadex_types import (
     EpisodeKey,

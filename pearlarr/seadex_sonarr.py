@@ -179,9 +179,15 @@ class SonarrSync(ArrSync[SonarrItem]):
         # cache, and builds every episode index with its orders_for.
         self._episodes = SonarrEpisodes(deps, self.sonarr, self._services)
 
-        # Listing collaborator: reads every SeaDex entry of the series once per run. That gives the windows a
-        # specials pack is checked against, and the size identities used to place files.
-        self._listings = SeriesListings(deps.seadex, self._episodes, ignore_tag_set(self._config.seadex.ignore_tags))
+        # Listing collaborator: reads every SeaDex entry of the series once per run. That gives each listing
+        # entry's window (its ids are what a specials pack is checked against), and the size identities used to
+        # place files. A window's names come from the same title ladder the entry's own run resolves.
+        self._listings = SeriesListings(
+            deps.seadex,
+            self._episodes,
+            ignore_tag_set(self._config.seadex.ignore_tags),
+            lambda al_id: self._services.resolve_title(al_id).names,
+        )
 
         # Parse-cache collaborator: grab-time `/parse` of SeaDex filenames + the
         # durable, freshness-checked parse cache (read-through the shared cache_store).

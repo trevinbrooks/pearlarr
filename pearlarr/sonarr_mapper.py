@@ -7,9 +7,8 @@ from collections.abc import Mapping
 from dataclasses import dataclass
 
 from .import_files import CandidateFile
-from .manual_import import FileEpisodeMap, PendingImport, joined_map, normalized_leaf, path_leaf
+from .manual_import import EMPTY_LISTING, FileEpisodeMap, PendingImport, joined_map, normalized_leaf, path_leaf
 from .placement_types import (
-    EMPTY_LISTING,
     EpisodeAssignment,
     EpisodeIndex,
     ListingEvidence,

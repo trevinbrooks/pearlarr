@@ -13,7 +13,6 @@ from pearlarr.placement_types import (
     ListingEvidence,
     PlacementVerdict,
     TargetScope,
-    TorrentListing,
 )
 from pearlarr.seadex_types import EpisodeKey, ParsedFileInfo
 from pearlarr.window_placement import WindowedAssignment, place_across_windows, windows_of
@@ -24,11 +23,13 @@ from .builders import (
     blind,
     by_name,
     entry_claim,
+    entry_window,
     numbered_names,
     parsed_info,
     place,
     series_index,
     specials_pack,
+    torrent_listing,
     verdicts_of,
 )
 
@@ -264,7 +265,7 @@ class TestSeveralWindows:
         # Under the first window's listing (specials 2, 4 and 6, three as the pack is wide) the pack's `1` is
         # no listed special: misnumbered, a human's. The second window, unlisted, would place it by number.
         pack = specials_pack(1, 2, 3)
-        listed = _listed_window(ListingEvidence(TorrentListing(ALIASED_PACK.ids)), [502, 504])
+        listed = _listed_window(ListingEvidence(torrent_listing(*ALIASED_PACK.entries)), [502, 504])
 
         result = _place_across(pack, (listed, _window([501, 502, 503], series=_MANY_SPECIALS)))
 
@@ -306,7 +307,7 @@ class TestSeveralWindows:
     def test_a_window_sharing_a_special_the_first_placed_still_maps_the_pack_through_its_aliases(self) -> None:
         # The second window also admits special 2, which the first window placed. It still maps the whole pack,
         # skips that member, and places the other two by their aliases rather than their own numbers.
-        listing = ListingEvidence(TorrentListing(frozenset({502, 505, 506}), {1: 2, 5: 6, 6: 5}))
+        listing = ListingEvidence(torrent_listing(entry_window(1, (502, 505, 506)), aliases={1: 2, 5: 6, 6: 5}))
         windows = _listed_windows(listing, [502], [502, 505, 506])
 
         result = _place_across(specials_pack(1, 5, 6), windows)
@@ -389,7 +390,7 @@ class TestWindowsOf:
             entry_claim(al_id=2, series_id=8, ordered_episode_ids=[201]),
         )
 
-        listing = ListingEvidence(TorrentListing(frozenset({601})), {"a.mkv": 601})
+        listing = ListingEvidence(torrent_listing(entry_window(1, (601,))), {"a.mkv": 601})
 
         windows = windows_of(claims, {7: _SERIES, 8: _OTHER_SERIES}, listing)
 

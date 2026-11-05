@@ -25,7 +25,7 @@ from enum import Enum, StrEnum, auto
 from types import MappingProxyType
 from typing import Any, NamedTuple
 
-from .seadex_types import RemotePathMapping, coerce_int, unambiguous
+from .seadex_types import NO_ALIASES, RemotePathMapping, SonarrEpisode, SpecialAliases, coerce_int, unambiguous
 from .stamps import parse_stamp_or_none
 
 
@@ -690,6 +690,60 @@ class EntryNames:
 
 
 @dataclass(frozen=True, slots=True, kw_only=True)
+class EntryWindow:
+    """One entry's episode window on a series: its episode ids and the names it goes by."""
+
+    al_id: int
+    """The AniList entry id."""
+
+    series_id: int
+    """The Sonarr series id the window's episodes belong to."""
+
+    ordered_episode_ids: tuple[int, ...]
+    """The window's episode ids in season order, each once. Empty for an entry whose episode list came back empty."""
+
+    names: EntryNames
+    """The series and AniList titles the placement breaks ties by (see `EntryNames`)."""
+
+    @classmethod
+    def of(cls, *, al_id: int, series_id: int, ep_list: Iterable[SonarrEpisode], names: EntryNames) -> "EntryWindow":
+        """The window over `ep_list`: each episode with an id, once, in the list's order."""
+
+        ids = tuple(dict.fromkeys(ep.id for ep in ep_list if ep.id))
+        return cls(al_id=al_id, series_id=series_id, ordered_episode_ids=ids, names=names)
+
+
+@dataclass(frozen=True, slots=True)
+class TorrentListing:
+    """The windows of the SeaDex entries that list one torrent, and those entries' special aliases."""
+
+    entries: tuple[EntryWindow, ...] = ()
+    """One window per listing entry, in AniList id order. Of two windows with one AniList id the first is kept,
+    since SeaDex can list one hash twice under an entry."""
+
+    special_aliases: SpecialAliases = NO_ALIASES
+    """The union of those entries' special aliases, minus any TMDB number two entries pair differently. Empty when
+    the entries pair against different TMDB shows."""
+
+    ids: frozenset[int] = field(init=False, repr=False, compare=False)
+    """Union of the entries' episode ids."""
+
+    def __post_init__(self) -> None:
+        # Detach from the caller's dict, then wrap read-only. `ids` is derived from the windows once.
+        kept: dict[int, EntryWindow] = {}
+        for window in self.entries:
+            kept.setdefault(window.al_id, window)
+        entries = tuple(sorted(kept.values(), key=lambda window: window.al_id))
+        object.__setattr__(self, "entries", entries)
+        object.__setattr__(self, "special_aliases", MappingProxyType(dict(self.special_aliases)))
+        object.__setattr__(self, "ids", frozenset(ep_id for window in entries for ep_id in window.ordered_episode_ids))
+
+
+EMPTY_LISTING = TorrentListing()
+"""A torrent no entry lists. Listings match by infohash, so a url without one always gets this."""
+
+
+@dataclass(frozen=True, slots=True, kw_only=True)
 class GuardFacts:
     """The plan's per-entry overwrite-guard evidence, carried whole."""
 
@@ -764,6 +818,14 @@ class EntryClaim:
         """
 
         return not self.ordered_episode_ids or ep_id in self.ordered_episode_ids
+
+    @property
+    def window(self) -> EntryWindow:
+        """The claim's window, as a listing holds one."""
+
+        return EntryWindow(
+            al_id=self.al_id, series_id=self.series_id, ordered_episode_ids=self.ordered_episode_ids, names=self.names
+        )
 
     def to_json(self) -> dict[str, Any]:
         """The plain dict persisted inside the record (the guards ride their own row): the schema, spelled out."""

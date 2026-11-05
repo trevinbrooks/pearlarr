@@ -7,22 +7,20 @@ from typing import cast
 import pytest
 
 from pearlarr.episode_titles import EpisodeTitles
-from pearlarr.manual_import import FileEpisodeMap
+from pearlarr.manual_import import EMPTY_LISTING, FileEpisodeMap
 from pearlarr.placement_types import (
-    EMPTY_LISTING,
     EpisodeIndex,
     ListingEvidence,
     PlacementBatch,
     PlacementVerdict,
     TargetScope,
-    TorrentListing,
     all_specials,
     episode_index,
 )
 from pearlarr.seadex_types import SONARR_MISSING_KEY, EpisodeKey, ParsedFileInfo, SonarrEpisode
 from pearlarr.tvdb_orders import OrderRow, SeriesOrdering
 
-from .builders import parsed_info, series_index, sonarr_ep
+from .builders import entry_window, parsed_info, series_index, sonarr_ep, torrent_listing
 
 
 class TestEpisodeIndex:
@@ -217,7 +215,7 @@ class TestTargetScope:
         assert TargetScope([], self._SERIES).using([12, 21]).used == {12, 21}
 
     def test_using_keeps_the_listing(self) -> None:
-        listing = ListingEvidence(TorrentListing(frozenset({11, 12})), {"a.mkv": 11})
+        listing = ListingEvidence(torrent_listing(entry_window(1, (11, 12))), {"a.mkv": 11})
         scope = TargetScope([11], self._SERIES, listing=listing)
 
         assert scope.using([12]).listing == listing
@@ -236,23 +234,11 @@ class TestListingEvidence:
             cast("dict[str, int]", evidence.identified)["c.mkv"] = 13
 
     def test_the_ids_and_aliases_come_from_the_listing(self) -> None:
-        listing = TorrentListing(frozenset({501}), {13: 12})
+        listing = torrent_listing(entry_window(1, (501,)), aliases={13: 12})
 
         evidence = ListingEvidence(listing)
 
         assert (evidence.listing, evidence.ids, dict(evidence.special_aliases)) == (listing, {501}, {13: 12})
-
-
-class TestListingSpecialAliases:
-    """The torrent listing keeps its own copy of the caller's special aliases."""
-
-    def test_a_change_to_the_callers_dict_leaves_the_listing_as_it_was(self) -> None:
-        aliases = {13: 12}
-        torrent = TorrentListing(frozenset({501}), aliases)
-
-        aliases[14] = 13
-
-        assert dict(torrent.special_aliases) == {13: 12}
 
 
 class TestPlacementVerdict:
@@ -305,23 +291,23 @@ class TestSpecialsListing:
 
     _SERIES = series_index({EpisodeKey(0, n): 500 + n for n in range(1, 5)} | {EpisodeKey(1, 1): 11})
 
-    def _scope(self, resolved: list[int], listed: frozenset[int] = frozenset()) -> TargetScope:
-        return TargetScope(resolved, self._SERIES, listing=ListingEvidence(TorrentListing(listed)))
+    def _scope(self, resolved: list[int], listed: tuple[int, ...] = ()) -> TargetScope:
+        return TargetScope(resolved, self._SERIES, listing=ListingEvidence(torrent_listing(entry_window(1, listed))))
 
     def test_a_listing_covering_a_window_of_specials_judges(self) -> None:
-        assert self._scope([502, 504], frozenset({502, 503, 504})).specials_listing() == {502, 503, 504}
+        assert self._scope([502, 504], (502, 503, 504)).specials_listing() == {502, 503, 504}
 
     def test_a_listing_leaving_a_window_special_out_stands_down(self) -> None:
-        assert self._scope([501, 502], frozenset({502, 504})).specials_listing() is None
+        assert self._scope([501, 502], (502, 504)).specials_listing() is None
 
     def test_a_listing_with_a_seasoned_id_stands_down(self) -> None:
-        assert self._scope([501], frozenset({501, 11})).specials_listing() is None
+        assert self._scope([501], (501, 11)).specials_listing() is None
 
     def test_no_listing_stands_down(self) -> None:
         assert self._scope([501]).specials_listing() is None
 
     def test_an_unscoped_window_stands_down(self) -> None:
-        assert self._scope([], frozenset({501})).specials_listing() is None
+        assert self._scope([], (501,)).specials_listing() is None
 
     def test_a_specials_window_is_scoped_and_specials_only(self) -> None:
         assert self._scope([501, 502]).specials_window
