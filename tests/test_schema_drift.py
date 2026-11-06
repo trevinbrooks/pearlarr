@@ -154,9 +154,7 @@ ROSTER: Final = (
     Spec(SonarrSeries, "SeriesResource", _SONARR, exempt=frozenset({"seasonType", "seasonTypes"})),
     Spec(SonarrEpisode, "EpisodeResource", _SONARR),
     Spec(SonarrEpisodeFile, "EpisodeFileResource", _SONARR),
-    # `offline` is set only by the local SxxExx regex fallback (never from
-    # the wire). It marks a parse the positional leg must treat as unknown.
-    Spec(ParsedFileInfo, "ParseResource", _SONARR, exempt=frozenset({"offline"})),
+    Spec(ParsedFileInfo, "ParseResource", _SONARR),
     Spec(MatchedEpisode, "EpisodeResource", _SONARR),
     Spec(ManualImportCandidate, "ManualImportResource", _SONARR),
     Spec(ManualImportFile, "ManualImportReprocessResource", _SONARR),

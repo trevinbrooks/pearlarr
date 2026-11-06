@@ -1,20 +1,23 @@
 """Pure per-file import plan: which of our intended files import onto which episodes, and which are left."""
 
-from collections.abc import Mapping
+from collections.abc import Iterable, Mapping
 from dataclasses import dataclass
 from enum import StrEnum
 
 from .episode_state import TargetStatuses
-from .manual_import import FileEpisodeMap
-from .seadex_types import QualityModel
+from .manual_import import FileEpisodeMap, PendingImport, normalized_leaf, path_leaf
+from .seadex_types import ManualImportCandidate, QualityModel
+from .video_files import is_video_candidate
+
+# Rejection-reason substrings, matched case-insensitively. Only ALREADY_IMPORTED means Sonarr holds the file:
+# a SAMPLE is just a file to skip, never a sign the episode imported, so the two stay apart.
+_ALREADY_IMPORTED_TOKENS = ("already", "exist")
+_SAMPLE_TOKENS = ("sample",)
 
 
 @dataclass(frozen=True, slots=True)
 class CandidateFile:
-    """An on-disk manual-import candidate, reduced to what planning needs.
-
-    Built by the strategy from one raw ManualImportResource.
-    """
+    """An on-disk manual-import candidate, reduced to what planning needs (`candidate_files`)."""
 
     basename: str
     """The normalized match key against our authoritative map."""
@@ -30,6 +33,82 @@ class CandidateFile:
 
     is_already_imported: bool
     """Folds Sonarr's per-file already-imported rejection into the plan."""
+
+
+def _rejection_matches(candidate: ManualImportCandidate, tokens: tuple[str, ...]) -> bool:
+    """True if any of a candidate's rejection reasons contains one of `tokens` (lowercase), case-insensitively.
+
+    A bare-string rejection from an older Sonarr is folded into `reason` at the client boundary.
+    """
+
+    for rejection in candidate.rejections:
+        if not rejection.reason:
+            continue
+        lowered = rejection.reason.casefold()
+        if any(token in lowered for token in tokens):
+            return True
+    return False
+
+
+def candidate_files(candidates: Iterable[ManualImportCandidate]) -> dict[str, CandidateFile]:
+    """Index on-disk candidates by normalized basename: a basename duplicated across folders carries one verdict.
+
+    The candidates arrive parsed at the Sonarr client boundary (`SonarrClient.manual_import_candidates`), so each is
+    read by attribute and the raw DTO never reaches the decision path.
+    """
+
+    by_basename: dict[str, CandidateFile] = {}
+    for candidate in candidates:
+        path = candidate.path
+        if not path:
+            continue
+        base = normalized_leaf(path)
+        by_basename[base] = CandidateFile(
+            basename=base,
+            path=path,
+            quality=candidate.quality,
+            is_sample=_rejection_matches(candidate, _SAMPLE_TOKENS),
+            is_already_imported=_rejection_matches(candidate, _ALREADY_IMPORTED_TOKENS),
+        )
+    return by_basename
+
+
+@dataclass(frozen=True, slots=True)
+class DiskLeftover:
+    """One poll's video files on disk that the import's map lacks. The import reports them and never places one."""
+
+    names: tuple[str, ...]
+    """Their normalized basenames, in SeaDex's order, then the scan's for a file SeaDex doesn't list."""
+
+    reported: tuple[str, ...]
+    """The names the record doesn't exclude (`PendingImport.excluded_files`), in the same order."""
+
+    hand_import: tuple[str, ...]
+    """The reported names the grab left for a hand import (`PendingImport.hand_import_files`)."""
+
+    @property
+    def skips(self) -> tuple[str, ...]:
+        """The reported names not left for a hand import: the files the skip warning counts."""
+
+        return tuple(name for name in self.reported if name not in self.hand_import)
+
+
+def disk_leftover(
+    pending: PendingImport, candidates_by_basename: Mapping[str, CandidateFile], mapped: FileEpisodeMap
+) -> DiskLeftover:
+    """The video files among `candidates_by_basename` that `mapped` lacks, split by what `pending` says of them."""
+
+    video = {
+        name for name, candidate in candidates_by_basename.items() if is_video_candidate(path_leaf(candidate.path))
+    }
+    # SeaDex's order keeps the output stable from poll to poll. A file the list doesn't name follows in disk order.
+    listed = dict.fromkeys(name for name in (normalized_leaf(f) for f in pending.seadex_files) if name in video)
+    ordered = [*listed, *(name for name in candidates_by_basename if name in video and name not in listed)]
+    names = tuple(name for name in ordered if name not in mapped)
+    excluded = set(pending.excluded_files)
+    reported = tuple(name for name in names if name not in excluded)
+    hand_import = set(pending.hand_import_files)
+    return DiskLeftover(names, reported, tuple(name for name in reported if name in hand_import))
 
 
 class ImportAction(StrEnum):

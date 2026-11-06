@@ -1190,12 +1190,6 @@ def new_torrent(scope: SeedScope) -> KnownTorrent:
     return known_torrent(indexes={scope.series_id: scope.series})
 
 
-def indexes_for(pending: PendingImport, index: EpisodeIndex) -> dict[int, EpisodeIndex]:
-    """The one index under every series the record claims (what the mapper's `indexes` reads for a one-series test)."""
-
-    return dict.fromkeys(pending.series_ids, index)
-
-
 def series_index(
     id_by_key: Mapping[EpisodeKey, int],
     *,
@@ -1223,7 +1217,6 @@ def parsed_info(
     absolutes: tuple[int, ...] = (),
     matched: tuple[tuple[int, int], ...] = (),
     full_season: bool = False,
-    offline: bool = False,
 ) -> ParsedFileInfo:
     """Shorthand `ParsedFileInfo` for the placement tests: the name's own numbers, plus any series-matched pairs."""
 
@@ -1235,7 +1228,6 @@ def parsed_info(
             MatchedEpisode(season_number=matched_season, episode_number=episode) for matched_season, episode in matched
         ),
         full_season=full_season,
-        offline=offline,
     )
 
 
@@ -1377,7 +1369,6 @@ def import_probe(
     target_count: int = 0,
     deferral: Deferral = Deferral.NONE,
     placements: FileEpisodeMap | None = None,
-    exclusions: tuple[str, ...] = (),
     unmatched_files: tuple[str, ...] = (),
     hand_import_files: tuple[str, ...] = (),
 ) -> ImportProbe:
@@ -1390,7 +1381,6 @@ def import_probe(
         target_count=target_count,
         deferral=deferral,
         placements=placements or {},
-        exclusions=exclusions,
         unmatched_files=unmatched_files,
         hand_import_files=hand_import_files,
     )

@@ -24,7 +24,6 @@ from pearlarr.radarr_client import RadarrClient
 from pearlarr.seadex_types import HistoryRecord, ImportRejection, QueueRecord
 from pearlarr.sonarr_client import SonarrClient
 from pearlarr.sonarr_import import ImportExecutor, PollReading
-from pearlarr.sonarr_mapper import FileEpisodeMapper
 
 from .builders import episode_snapshot, make_run_deps, pending_import
 
@@ -95,7 +94,7 @@ def _drive_manual_import(
     post_route = respx.post(f"{_BASE}/command").respond(json={"id": 55})
 
     client = _make_sonarr_client()
-    executor = ImportExecutor(make_run_deps(), client, FileEpisodeMapper(client))
+    executor = ImportExecutor(make_run_deps(), client)
     pending = pending_import()
     scan = executor.scanner.scan(pending, "/d", untracked=False)
     assert scan is not None
@@ -167,7 +166,7 @@ def test_golden_body_dead_tracked_folder_import_omits_download_id() -> None:
     post_route = respx.post(f"{_BASE}/command").respond(json={"id": 55})
 
     client = _make_sonarr_client()
-    executor = ImportExecutor(make_run_deps(), client, FileEpisodeMapper(client))
+    executor = ImportExecutor(make_run_deps(), client)
     pending = pending_import()
     scan = executor.scanner.scan(pending, "/d", untracked=True)
     assert scan is not None

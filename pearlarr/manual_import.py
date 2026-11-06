@@ -305,20 +305,17 @@ class ImportProbe:
     """Why this poll waited on Sonarr's work instead of this record's."""
 
     placements: FileEpisodeMap = field(default_factory=dict[str, tuple[int, ...]])
-    """Import-time placements this poll made (normalized basename -> ids), copied and wrapped read-only for the
-    record seam to persist. Empty when the poll placed nothing."""
-
-    exclusions: tuple[str, ...] = ()
-    """On-disk files this poll proved aren't this record's to import under its current claims (a sibling's slice,
-    another listed title's, a duplicate), for the record seam to persist. Empty when the poll excluded nothing."""
+    """The files Sonarr's history placed for a download no scan saw (normalized basename -> ids), once they
+    verified, copied and wrapped read-only for the record seam to persist. Empty otherwise."""
 
     unmatched_files: tuple[str, ...] = ()
     """The download's on-disk files no episode claimed (one per distinct basename), when that is all the poll
     found. Non-empty only from `unmatched()`: `files_present` and `command_issued` False, `deferral` NONE."""
 
     hand_import_files: tuple[str, ...] = ()
-    """The download's on-disk files the placement left for a hand import, once every placed file is in and
-    the hand import isn't. Non-empty only from `hand_import()`: `files_present` and `command_issued` False."""
+    """The download's on-disk files the grab left for a hand import (`PendingImport.hand_import_files`), once every
+    placed file is in and the hand import isn't. Non-empty only from `hand_import()`: `files_present` and
+    `command_issued` False."""
 
     def __post_init__(self) -> None:
         object.__setattr__(self, "placements", MappingProxyType(dict(self.placements)))
@@ -349,7 +346,7 @@ class ImportProbe:
 
     @classmethod
     def hand_import(cls, names: tuple[str, ...]) -> "ImportProbe":
-        """Every placed file is in, but files the placement left for a hand import keep the record pending."""
+        """Every placed file is in, but files the grab left for a hand import keep the record pending."""
 
         return cls(files_present=False, command_issued=False, hand_import_files=names)
 

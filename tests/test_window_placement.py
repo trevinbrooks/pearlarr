@@ -394,10 +394,8 @@ class TestSeveralWindows:
         assert by_name(result.merged) == dict.fromkeys(("a.mkv", "b.mkv"), ((), PlacementVerdict.SKIPPED))
 
 
-def _order(
-    listed: Sequence[EntryWindow], claims: Sequence[EntryClaim] = (), own: EntryWindow | None = None
-) -> WindowOrder:
-    """`ordered_windows` over series 7, every window on it."""
+def _order(own: EntryWindow, listed: Sequence[EntryWindow], claims: Sequence[EntryClaim] = ()) -> WindowOrder:
+    """`ordered_windows` over series 7, every window on it, for the grab whose entry's window is `own`."""
 
     order = ordered_windows(torrent_listing(*listed), claims, own, _SERIES_7)
     assert order is not None
@@ -415,7 +413,7 @@ class TestOrderedWindows:
             entry_window(3, _FIRST_COUR),
         )
 
-        order = _order(listed)
+        order = _order(listed[3], listed)
 
         assert [w.al_id for w in order.windows] == [3, 4, 1, 2]
 
@@ -427,86 +425,93 @@ class TestOrderedWindows:
             entry_window(4, _SPECIALS[1:]),
         )
 
-        order = _order(listed)
+        order = _order(listed[1], listed)
 
         assert [w.al_id for w in order.windows] == [2, 1, 4, 3]
 
     def test_ids_outside_are_every_other_windows_ids(self) -> None:
-        order = _order((entry_window(1, _FIRST_COUR), entry_window(2, _SECOND_COUR), entry_window(3, _SPECIALS)))
+        listed = (entry_window(1, _FIRST_COUR), entry_window(2, _SECOND_COUR), entry_window(3, _SPECIALS))
+
+        order = _order(listed[0], listed)
 
         assert order.ids_outside(2) == frozenset(_FIRST_COUR + _SPECIALS)
 
     def test_the_grabbing_entrys_window_wins_its_slot(self) -> None:
         own = entry_window(1, _FIRST_COUR)
 
-        order = _order((entry_window(1, _FIRST_COUR[:2]),), (entry_claim(al_id=1),), own)
+        order = _order(own, (entry_window(1, _FIRST_COUR[:2]),), (entry_claim(al_id=1),))
 
         assert order.windows == (own,)
 
     def test_a_claimed_entrys_window_is_its_claims_and_it_imports(self) -> None:
+        own = entry_window(1, _FIRST_COUR)
         claim = entry_claim(al_id=2, ordered_episode_ids=_SECOND_COUR[:2])
 
-        order = _order((entry_window(2, _SECOND_COUR),), (claim,))
+        order = _order(own, (entry_window(2, _SECOND_COUR),), (claim,))
 
-        assert (order.windows, order.imports) == ((claim.window,), {0})
+        assert (order.windows, order.imports) == ((own, claim.window), {0, 1})
 
     def test_a_claims_window_takes_its_listed_windows_ignored_flag(self) -> None:
         # Entry 1 claimed the torrent before it was ignored. Its claim's window still imports, but runs after the
         # kept season window, where its listed window would.
         claim = entry_claim(al_id=1, ordered_episode_ids=_FIRST_COUR[:2])
+        listed = (entry_window(1, _FIRST_COUR, ignored=True), entry_window(2, _SECOND_COUR))
 
-        order = _order((entry_window(1, _FIRST_COUR, ignored=True), entry_window(2, _SECOND_COUR)), (claim,))
+        order = _order(listed[1], listed, (claim,))
 
-        assert order.windows == (entry_window(2, _SECOND_COUR), replace(claim.window, ignored=True))
-        assert order.imports == {1}
+        assert order.windows == (listed[1], replace(claim.window, ignored=True))
+        assert order.imports == {0, 1}
 
     def test_a_claims_window_takes_the_flag_off_an_empty_listed_window(self) -> None:
         # The listed window came back empty, so it doesn't run, but its flag still reaches the claim's window.
         claim = entry_claim(al_id=1, ordered_episode_ids=_FIRST_COUR[:2])
+        listed = (entry_window(1, (), ignored=True), entry_window(2, _SECOND_COUR))
 
-        order = _order((entry_window(1, (), ignored=True), entry_window(2, _SECOND_COUR)), (claim,))
+        order = _order(listed[1], listed, (claim,))
 
-        assert order.windows == (entry_window(2, _SECOND_COUR), replace(claim.window, ignored=True))
+        assert order.windows == (listed[1], replace(claim.window, ignored=True))
 
     def test_a_listed_entry_never_claimed_runs_its_listed_window_and_does_not_import(self) -> None:
         listed = entry_window(2, _SECOND_COUR)
 
-        order = _order((listed,), own=entry_window(1, _FIRST_COUR))
+        order = _order(entry_window(1, _FIRST_COUR), (listed,))
 
         assert order.windows[1] == listed
         assert (order.at(1), order.imports) == (0, {0})
 
     def test_a_claim_its_entry_no_longer_lists_keeps_its_window(self) -> None:
         claim = entry_claim(al_id=2, ordered_episode_ids=_SECOND_COUR)
+        listed = entry_window(1, _FIRST_COUR)
 
-        order = _order((entry_window(1, _FIRST_COUR),), (claim,))
+        order = _order(listed, (listed,), (claim,))
 
         assert [w.al_id for w in order.windows] == [1, 2]
-        assert order.imports == {1}
+        assert order.imports == {0, 1}
 
     def test_the_own_window_and_the_claims_import_wherever_they_sort(self) -> None:
         listed = (entry_window(1, _FIRST_COUR),)
         claim = entry_claim(al_id=2, ordered_episode_ids=_SECOND_COUR)
 
-        order = _order(listed, (claim,), entry_window(3, _SPECIALS))
+        order = _order(entry_window(3, _SPECIALS), listed, (claim,))
 
         assert [w.al_id for w in order.windows] == [1, 2, 3]
         assert (order.at(3), order.imports) == (2, {1, 2})
 
     def test_a_listed_window_with_no_ids_is_left_out(self) -> None:
         # It would be unscoped, admitting every id of the series.
-        order = _order((entry_window(2, ()),), own=entry_window(1, _FIRST_COUR))
+        order = _order(entry_window(1, _FIRST_COUR), (entry_window(2, ()),))
 
         assert [w.al_id for w in order.windows] == [1]
 
     def test_a_claim_with_no_ids_still_runs_with_the_specials_windows(self) -> None:
         # A record an older version wrote can hold such a claim, which admits any id.
         claim = entry_claim(al_id=1)
+        listed = entry_window(2, _FIRST_COUR)
 
-        order = _order((entry_window(2, _FIRST_COUR),), (claim,))
+        order = _order(listed, (listed,), (claim,))
 
-        assert order.windows == (entry_window(2, _FIRST_COUR), claim.window)
-        assert order.imports == {1}
+        assert order.windows == (listed, claim.window)
+        assert order.imports == {0, 1}
 
     def test_a_window_on_a_series_left_unread_orders_nothing(self) -> None:
         listed = torrent_listing(entry_window(2, (201,), series_id=8))

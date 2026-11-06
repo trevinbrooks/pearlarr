@@ -3,9 +3,8 @@
 
 Two tiers: this catalog holds real captures (whole-series episode lists and raw
 `/parse` payloads) with expectations taken from independent truth, never from the
-placer's own output. The synthetic edge cases live in `test_placer.py` and `test_sonarr_mapper.py`.
-Each case runs twice, through the grab-time scope and through the import-time
-mapper, so a seed and its import wait can never disagree.
+placer's own output. The synthetic edge cases live in `test_placer.py`. Each case
+runs through the grab's placement, whose map the import imports as is.
 """
 
 import json
@@ -21,14 +20,11 @@ from pearlarr.placement_types import episode_index
 from pearlarr.seadex_types import (
     EpisodeRecord,
     Json,
-    ManualImportCandidate,
     ParsedFileInfo,
     SonarrEpisode,
 )
-from pearlarr.sonarr_mapper import FileEpisodeMapper
 
-from .builders import indexes_for, new_torrent, pending_import, seed_scope
-from .fakes import FakeSonarrClient
+from .builders import new_torrent, seed_scope
 
 _CATALOG = Path(__file__).parent / "fixtures" / "sonarr" / "mapper_shapes.json"
 
@@ -175,28 +171,6 @@ def test_the_grab_records_the_placed_episodes(case: ShapeCase) -> None:
     ]
     assert list(placement.records) == expected
     assert placement.inputs_known
-
-
-@pytest.mark.parametrize("case", _PARAMS)
-def test_mapper_matches_the_seed(case: ShapeCase) -> None:
-    """The import-time mapper reaches the same verdicts from the same capture."""
-
-    parsed = _parsed(case)
-    mapper = FileEpisodeMapper(FakeSonarrClient(parse_fn=parsed.get))
-    pending = pending_import(
-        file_episode_map={},
-        ordered_episode_ids=list(case.entry_ids),
-        seadex_files=list(case.parses),
-        names=_names(case),
-    )
-    candidates = mapper.candidate_files([ManualImportCandidate(path=f"/dl/{name}") for name in case.parses])
-
-    assignment = mapper.assign(pending, candidates, indexes_for(pending, episode_index(case.episodes)))
-
-    assert assignment.assigned == {normalize_basename(name): ids for name, ids in case.expected.items()}
-    assert {placement.name for placement in assignment.excluded} == {
-        normalize_basename(name) for name in case.expected_excluded
-    }
 
 
 def test_every_shape_tag_carries_a_case() -> None:

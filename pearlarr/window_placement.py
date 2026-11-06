@@ -64,7 +64,7 @@ class WindowOrder:
 def ordered_windows(
     listing: TorrentListing,
     claims: Iterable[EntryClaim],
-    own: EntryWindow | None,
+    own: EntryWindow,
     indexes: Mapping[int, EpisodeIndex],
 ) -> WindowOrder | None:
     """Every window a torrent is placed under, one per AniList id, in placement order.
@@ -81,8 +81,8 @@ def ordered_windows(
     A claim's window takes the ignored flag from its entry's listed window, since the claim predates any ignore.
     """
 
-    # A claim's window takes its entry's slot from the listed one, since the claim is what the import routes by, and
-    # `own` takes it from both, since this grab replaces its claim. A claim whose entry the listing doesn't name keeps
+    # A claim's window takes its entry's slot from the listed one, since the record's import is judged against its
+    # claims, and `own` takes it from both, since this grab replaces its claim. A claim whose entry the listing doesn't name keeps
     # its window, and an entry listed and never claimed gets its listed window. The ignored flag is the listing's for
     # every window: a fact about the entry at the read, which a claim made before the title was ignored can't hold.
     # It's read off every listed window, so an entry whose listed window came back empty still flags its claim.
@@ -92,9 +92,8 @@ def ordered_windows(
     for claim in claims:
         chosen[claim.al_id] = replace(claim.window, ignored=claim.al_id in ignored_ids)
         imported.add(claim.al_id)
-    if own is not None:
-        chosen[own.al_id] = own
-        imported.add(own.al_id)
+    chosen[own.al_id] = own
+    imported.add(own.al_id)
     if any(window.series_id not in indexes for window in chosen.values()):
         return None
     windows = tuple(

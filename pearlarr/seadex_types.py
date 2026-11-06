@@ -1148,8 +1148,8 @@ class MatchedEpisode(_ApiModel):
     season_number: int = Field(validation_alias="seasonNumber")
     episode_number: int = Field(validation_alias="episodeNumber")
     id: int | None = None
-    """Sonarr's episode id, checked against OUR map so a wrong-series title match is refused. None for an offline
-    stand-in, or for a pair `widen_range_key` added."""
+    """Sonarr's episode id, checked against OUR map so a wrong-series title match is refused. None for a pair
+    `widen_range_key` added."""
 
 
 class ParsedFileInfo(_ApiModel):
@@ -1183,9 +1183,6 @@ class ParsedFileInfo(_ApiModel):
         validation_alias=AliasPath("parsedEpisodeInfo", "fullSeason"),
     )
     """A season-pack-shaped name (bare "S01"). Its matched pairs span the season, never one file's claims."""
-    offline: bool = False
-    """Built by the offline SxxExx fallback, not Sonarr's parser (`ParseResource` has no such property). Never
-    persisted: the parse cache refuses an offline stand-in."""
     matched_episodes: tuple[MatchedEpisode, ...] = Field(default=(), validation_alias="episodes")
     """Sonarr's series-matched pairs. The exact leg's fallback when the name carries no `(season, episode)`."""
 

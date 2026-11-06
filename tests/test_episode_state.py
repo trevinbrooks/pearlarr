@@ -307,12 +307,6 @@ class TestRecordSnapshot:
 
         assert snapshot.map_statuses([1, 2, 3], {}).holding_own_copy == {1}
 
-    def test_indexes_are_each_series_episode_index(self) -> None:
-        snapshot = self._snapshot()
-
-        assert dict(snapshot.indexes) == {7: snapshot.by_series[7].episodes, 8: snapshot.by_series[8].episodes}
-        assert (snapshot.series_of(1), snapshot.series_of(2), snapshot.series_of(3)) == (7, 8, None)
-
     def test_statuses_route_each_target_to_its_series(self) -> None:
         # Each id classifies under the series whose index holds it (the same group is trusted on one
         # and not the other), target order is kept, and an id no index holds is absent.

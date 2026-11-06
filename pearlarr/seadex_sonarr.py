@@ -47,7 +47,6 @@ from .seadex_types import (
 from .sonarr_client import AbstractSonarrClient, SonarrClient
 from .sonarr_episodes import SonarrEpisodes
 from .sonarr_import import ImportExecutor, ImportReconciler
-from .sonarr_mapper import FileEpisodeMapper
 from .sonarr_parse import SonarrParseCache
 from .torrent_listings import SeriesListings
 
@@ -193,18 +192,12 @@ class SonarrSync(ArrSync[SonarrItem]):
         # The run's series fingerprint is threaded per call.
         self._parse = SonarrParseCache(deps, self.sonarr)
 
-        # Import-time file -> episode mapper: owns the gnarly assignment of on-disk
-        # leaves into OUR resolved episode set + the per-run on-disk parse cache.
-        # The import executor calls candidate_files/assign. assign returns the
-        # unplaceable files the executor warns about (producer/consumer split).
-        self._mapper = FileEpisodeMapper(self.sonarr)
-
         # Import-execution collaborator: builds + POSTs the authoritative manual
-        # import from the mapper's resolved map, owns the per-run quality/language
+        # import from the record's map, owns the per-run quality/language
         # caches + the once-per-record rescan, and exposes the queue/command reads
-        # import_completed consults. Built from the shared deps + this client + the
-        # mapper. Its caches reset in get_items, the run-start hook.
-        self._executor = ImportExecutor(deps, self.sonarr, self._mapper)
+        # import_completed consults. Built from the shared deps + this client.
+        # Its caches reset in get_items, the run-start hook.
+        self._executor = ImportExecutor(deps, self.sonarr)
 
         # Import-reconcile collaborator: the import_completed decision + the
         # grab-time pending-seed build. Composes the episode collaborator + the
@@ -250,7 +243,6 @@ class SonarrSync(ArrSync[SonarrItem]):
         as it enumerates (this is called once, before the per-item loop).
         """
 
-        self._mapper.reset()
         self._executor.reset()
         self._listings.reset()
         return self._episodes.collect_series()
@@ -457,8 +449,8 @@ class SonarrSync(ArrSync[SonarrItem]):
 
         self.logger.debug(f"SeaDex: {', '.join(seadex_dict)}")
 
-        # Place every listed file where the import will put it, so the grab is judged by the map the import
-        # runs: under every listing entry's window and every stored claim's, a stored torrent as its record's
+        # Place every listed file now: the import imports this map and places nothing, so the grab is judged by
+        # it. Placed under every listing entry's window and every stored claim's, a stored torrent as its record's
         # leftover. The series maps are the whole-series lists (a per-run cache hit each).
         waits_on_imports = run.import_wait_mode is not ImportWaitMode.OFF
         hashes = entry_hashes(seadex_dict)

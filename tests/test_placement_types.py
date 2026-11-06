@@ -138,15 +138,11 @@ class TestEpisodeIndexViews:
 
 
 class TestPlacementBatchParsesKnown:
-    """`all_parses_known`: the settled hinge on the parses. Any miss, transport or offline, unsettles the batch."""
+    """`all_parses_known`: one file's missing parse makes the batch's parses unknown."""
 
     def test_a_transport_miss_is_unknown(self) -> None:
         parsed: dict[str, ParsedFileInfo | None] = {"a.mkv": parsed_info(), "b.mkv": None}
         assert PlacementBatch(["a.mkv", "b.mkv"], parsed).all_parses_known is False
-
-    def test_an_offline_stand_in_is_unknown(self) -> None:
-        parsed: dict[str, ParsedFileInfo | None] = {"a.mkv": parsed_info(season=1, episodes=(1,), offline=True)}
-        assert PlacementBatch(["a.mkv"], parsed).all_parses_known is False
 
     def test_served_parses_are_known(self) -> None:
         # A numberless answer from Sonarr is a real answer: known, even though it places nothing.

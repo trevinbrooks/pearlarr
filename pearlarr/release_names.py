@@ -1,7 +1,7 @@
 """Read file names without Sonarr.
 
-The offline SxxExx parse, range keys, sort keys, stems, versions, run membership, the entry's title told apart from
-a name's numbers (`TitleGround`, `read_names`), and title matching.
+Range keys, sort keys, stems, versions, run membership, the entry's title told apart from a name's numbers
+(`TitleGround`, `read_names`), and title matching.
 """
 
 import re
@@ -12,9 +12,8 @@ from itertools import compress, takewhile
 from typing import Self
 
 from .manual_import import EntryNames
-from .seadex_types import EpisodeKey, ParsedFileInfo
+from .seadex_types import EpisodeKey
 
-_SXXEXX: re.Pattern[str] = re.compile(r"[Ss](\d{1,2})[\s._-]*[Ee](\d{1,3})")
 # "S01E05-06" or "S01E05-E06" with no spaces, maybe a "v2" after it. A letter or digit touching either end, as in
 # "S01E05-720p", or a one-digit last number, as in a version-like "S01E01-2.0", means the name says something else.
 _RANGE_KEY = re.compile(
@@ -29,23 +28,6 @@ class RangeKey:
     season: int
     first: int
     last: int
-
-
-def parse_se_from_filename(name: str) -> ParsedFileInfo | None:
-    """Offline `SxxExx` fallback for when Sonarr's `/parse` is unreachable: one key pulled from the leaf, else None.
-
-    Marked `offline` because the regex knows nothing about absolute numbers: a dual-numbered name parsed here
-    would otherwise pass as a known parse and hide a shared absolute from the absolute zip's check.
-    """
-
-    m = _SXXEXX.search(name)
-    if not m:
-        return None
-    return ParsedFileInfo(
-        season_number=int(m.group(1)),
-        episode_numbers=(int(m.group(2)),),
-        offline=True,
-    )
 
 
 def range_key(name: str) -> RangeKey | None:

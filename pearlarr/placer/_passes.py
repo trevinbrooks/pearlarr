@@ -15,12 +15,11 @@ Terms used across the placement modules:
 - Window (`window_placement`): the scope of one entry a torrent is listed on or claimed by. A torrent is
   placed under every window in turn, season windows first, then specials windows, each in AniList id order.
 - Listing (`TargetScope.listing`): what SeaDex's listings tell us about the torrent. `ids` are the episodes of
-  every entry that lists it, which a numbered specials pack is checked against (empty on a record that holds no
-  listing, so the check is skipped). `identified` maps files to the episode whose single-file release has the
-  same size.
+  every entry that lists it, which a numbered specials pack is checked against (empty when no entry lists it, so
+  the check is skipped). `identified` maps files to the episode whose single-file release has the same size.
   `special_aliases` maps a TMDB specials number to the TVDB special it stands for.
 - Open ids: the scope's ids that no file holds yet.
-- Seeded file: a file of the torrent that the grab-time placement or an earlier import poll already mapped.
+- Seeded file: a file of the torrent that an earlier grab already mapped.
   Its ids start out used, as do ids an earlier window placed. Seeded files, and files since moved off disk
   ("gone"), are never placed again, but their parses and names still count as evidence.
 - Alias match: Sonarr moved a name's episode numbers, unchanged, into one regular season (a sequel as season 1).
@@ -32,8 +31,7 @@ Terms used across the placement modules:
 - Runner-up: a file whose reading the exact pass's order (`Reading.rank`, the higher `vN`, batch order) places
   after a disputed file's reading for an episode. A refusal opens no episode to a runner-up: it never takes the
   episode by its reading or its title, and its claim on it refuses no run.
-- Unknown parse: a missing parse, or the offline `SxxExx` stand-in. `PlacementBatch.all_parses_known` is False
-  while any file of the torrent has one.
+- Unknown parse: a missing parse. `PlacementBatch.all_parses_known` is False while any file of the torrent has one.
 - Numberless: the file name carries no episode or absolute number (a key the series lacks may count as none).
 - Release number: the episode number the file name carries ("Show - 07"), read without Sonarr. A trailing "S2"
   counts as one only when the names sharing its prefix count up from "S1" (`read_names`).
@@ -551,10 +549,7 @@ def _natural_order(
         and len(open_files) == len(open_ids)
         and all(file.in_parse_map == (file in open_set or file.extra) for file in state.files)
         and state.untouched
-        and all(
-            (info := state.single_parse(file)) is not None and not info.offline and parse_has_no_number(info)
-            for file in open_files
-        )
+        and all((info := state.single_parse(file)) is not None and parse_has_no_number(info) for file in open_files)
     )
     return sorted(open_files, key=lambda file: natural_key(file.name)) if pristine else None
 

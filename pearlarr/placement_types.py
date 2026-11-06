@@ -278,12 +278,6 @@ class EpisodeAssignment:
 
         return tuple(p.name for p in self.placements if p.verdict.hand_import)
 
-    @property
-    def unplaced(self) -> tuple[str, ...]:
-        """Every file without ids: the skips plus the exclusions."""
-
-        return tuple(p.name for p in self.placements if not p.verdict.placed)
-
 
 NO_SEEDED: FileEpisodeMap = MappingProxyType({})
 """No stored map."""
@@ -301,8 +295,7 @@ class PlacementBatch:
     """Normalized basenames in SeaDex order (the order only fixes deterministic output), held as a tuple."""
 
     parsed: Mapping[str, ParsedFileInfo | None]
-    """Series-agnostic parse per file (None when Sonarr's parse was unavailable
-    and no SxxExx fell out of the name)."""
+    """Series-agnostic parse per file (None when Sonarr's parse was unavailable)."""
 
     seeded: FileEpisodeMap = NO_SEEDED
     """The stored record's map, normalized name -> episode ids, the ids held as tuples. Its ids count as used wherever
@@ -333,13 +326,13 @@ class PlacementBatch:
 
     @property
     def all_parses_known(self) -> bool:
-        """Every parse came from Sonarr this run: no transport miss (None) and no offline `SxxExx` stand-in.
+        """Every parse came from Sonarr this run: no miss (None).
 
         Seeded and gone files are parsed by name too, so a miss on any of them counts, as
         does a file to place that has no parse entry.
         """
 
-        return all((info := self.parsed.get(name)) is not None and not info.offline for name in self.torrent_names)
+        return all(self.parsed.get(name) is not None for name in self.torrent_names)
 
 
 type SizeIdentities = Mapping[int, int]

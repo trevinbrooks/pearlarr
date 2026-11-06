@@ -369,7 +369,7 @@ class ImportWaitManager:
         self._ctx.pending_states[key] = PENDING_STATE_FOR_OUTCOME[outcome]
 
     def absorb_probe(self, record: PendingImport, probe: ImportProbe) -> PendingImport:
-        """Persist a poll's import-time placements and exclusions onto the record and return the healed copy."""
+        """Persist the files a poll's Sonarr history placed onto the record and return the healed copy."""
 
         return self._records.absorb_probe(record, probe)
 

@@ -178,7 +178,6 @@ def test_parsed_file_info_with_numbers_replaces_only_the_numbers() -> None:
         absolute_episode_numbers=(30,),
         matched_episodes=(MatchedEpisode(season_number=1, episode_number=5, id=105),),
         special=True,
-        offline=True,
     )
     matched = (
         MatchedEpisode(season_number=1, episode_number=5, id=105),
@@ -190,7 +189,6 @@ def test_parsed_file_info_with_numbers_replaces_only_the_numbers() -> None:
         episode_numbers=(5, 6),
         matched_episodes=matched,
         special=True,
-        offline=True,
     )
 
 

@@ -1420,21 +1420,11 @@ class TestAbsoluteDuplicateTell:
         # The control: drop the sharer and the very same file takes the spare id.
         assert alone.assigned == {"e-12v2.mkv": (2587,)}
 
-    @pytest.mark.parametrize(
-        ("name", "sharer"),
-        [
-            pytest.param("e-12.mkv", None, id="a blipped parse"),
-            pytest.param("e-s01e12.mkv", parsed_info(season=1, episodes=(12,), offline=True), id="an offline parse"),
-        ],
-    )
-    def test_a_sharer_parse_blind_to_absolutes_refuses_the_positional_leg(
-        self, name: str, sharer: ParsedFileInfo | None
-    ) -> None:
-        # A parse the caller couldn't get, or the offline stand-in that knows nothing of absolutes,
-        # may be hiding the duplicate: the zip fails closed.
-        parsed = {name: sharer, "e-12v2.mkv": parsed_info(season=0, absolutes=(12,), matched=((1, 12),))}
+    def test_a_sharer_parse_the_caller_couldnt_get_refuses_the_positional_leg(self) -> None:
+        # The missing parse may be hiding the duplicate: the zip fails closed.
+        parsed = {"e-12.mkv": None, "e-12v2.mkv": parsed_info(season=0, absolutes=(12,), matched=((1, 12),))}
 
-        result = place(parsed, TargetScope([2587], series_index({})), seeded={name: (2586,)})
+        result = place(parsed, TargetScope([2587], series_index({})), seeded={"e-12.mkv": (2586,)})
 
         assert result.assigned == {}
         assert by_name(result) == {"e-12v2.mkv": ((), PlacementVerdict.SKIPPED)}
@@ -1583,15 +1573,9 @@ class TestAssignNumberlessZip:
         assert surplus_ids.assigned == {}
         assert surplus_ids.skipped == ("sp1.mkv",)
 
-    @pytest.mark.parametrize(
-        "third",
-        [
-            pytest.param(None, id="a parse the caller couldn't get"),
-            pytest.param(parsed_info(offline=True), id="the offline stand-in"),
-        ],
-    )
-    def test_a_parse_that_is_no_real_numberless_read_refuses_the_zip(self, third: ParsedFileInfo | None) -> None:
-        parsed = {**blind(["sp1.mkv", "sp2.mkv"]), "sp3.mkv": third}
+    def test_a_parse_the_caller_couldnt_get_refuses_the_zip(self) -> None:
+        # A missing parse is no numberless read: it may hold a number.
+        parsed = {**blind(["sp1.mkv", "sp2.mkv"]), "sp3.mkv": None}
 
         result = place(parsed, TargetScope([901, 902, 903], series_index({})))
 
