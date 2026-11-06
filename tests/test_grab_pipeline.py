@@ -14,7 +14,7 @@ login happens. The client `add` is faked by `FakeTorrents`.
 from collections.abc import Mapping
 from dataclasses import replace
 from datetime import datetime, timedelta
-from typing import Any, NamedTuple
+from typing import Any
 
 import httpx
 import pytest
@@ -24,7 +24,13 @@ from seadex import Tracker
 from pearlarr import notify
 from pearlarr.config import Arr
 from pearlarr.discord import DiscordEmbed
-from pearlarr.grab_pipeline import NO_SEEDS, GrabPipeline, GrabRequest
+from pearlarr.grab_pipeline import (
+    _HOLD_ROWS,
+    NO_SEEDS,
+    GrabPipeline,
+    GrabRequest,
+    HoldRow,
+)
 from pearlarr.grab_placement import PendingSeed
 from pearlarr.manual_import import GuardFacts, ImportWaitMode, PendingImport, normalize_basename
 from pearlarr.notify import Notifier
@@ -40,7 +46,7 @@ from pearlarr.output import (
 )
 from pearlarr.output.recording import RecordingHub
 from pearlarr.reporter import NeedsActionKind, PerTitleState, RunContext
-from pearlarr.seadex_types import GrabHold, SeadexDict, SeadexUrlItem
+from pearlarr.seadex_types import ElsewhereCounts, GrabHold, SeadexDict, SeadexUrlItem
 from pearlarr.stamps import now_stamp, stamp_of
 from pearlarr.torrent import TorrentParseError
 from pearlarr.torrents import AddResult, ReleaseOutcome, TorrentAddError
@@ -1270,14 +1276,9 @@ def test_a_title_read_without_its_tvdb_orders_stays_uncached_with_nothing_to_do(
     assert pipeline._ctx.stats.needs_action == []
 
 
-class _HandImportHold(NamedTuple):
-    """A hold that leaves the url for a hand import, and what the run reports for it."""
-
-    hold: GrabHold
-    skip: SkipReason
-    kind: NeedsActionKind
-    reason: str
-    """The needs-action row's reason."""
+def test_every_hold_has_a_row() -> None:
+    # A hold missing from the table raises at its skip and never gets a needs-action row.
+    assert _HOLD_ROWS.keys() == set(GrabHold)
 
 
 class TestPlacementHolds:
@@ -1292,26 +1293,32 @@ class TestPlacementHolds:
         return item
 
     @pytest.mark.parametrize(
-        "case",
+        ("hold", "expected"),
         [
-            _HandImportHold(
+            (
                 GrabHold.MISNUMBERED,
-                SkipReason.MISNUMBERED,
-                NeedsActionKind.MISNUMBERED,
-                "numbering does not match its SeaDex listing; import it by hand",
+                HoldRow(
+                    SkipReason.MISNUMBERED,
+                    NeedsActionKind.MISNUMBERED,
+                    "numbering does not match its SeaDex listing; import it by hand",
+                ),
             ),
-            _HandImportHold(
+            (
                 GrabHold.TITLE_REFUTED,
-                SkipReason.TITLE_REFUTED,
-                NeedsActionKind.TITLE_REFUTED,
-                "file titles contradict its numbering; import it by hand",
+                HoldRow(
+                    SkipReason.TITLE_REFUTED,
+                    NeedsActionKind.TITLE_REFUTED,
+                    "file titles contradict its numbering; import it by hand",
+                ),
             ),
         ],
         ids=["misnumbered", "titles-refute"],
     )
-    def test_a_pack_left_for_a_hand_import_is_never_added_and_the_title_is_listed(self, case: _HandImportHold) -> None:
+    def test_a_pack_left_for_a_hand_import_is_never_added_and_the_title_is_listed(
+        self, hold: GrabHold, expected: HoldRow
+    ) -> None:
         recording = install_recording_hub()
-        nyaa = self._held(url="https://nyaa.si/view/1", infohash="h1", hold=case.hold)
+        nyaa = self._held(url="https://nyaa.si/view/1", infohash="h1", hold=hold)
         seadex_dict: SeadexDict = {"RG": rg_group({nyaa.url: nyaa})}
         torrents = FakeTorrents({"h1": (AddOutcome.ADDED, "Show-RG")})
         pipeline = _on_entry(_pipeline(torrents=torrents, sleep_time=0))
@@ -1321,11 +1328,10 @@ class TestPlacementHolds:
         assert torrents.calls == []
         assert pipeline._ctx.torrents_added == 0
         assert pipeline.cache_store.get_entry(Arr.SONARR, 42) is None
-        per_title = pipeline._ctx.per_title
-        assert per_title.misnumbered_groups + per_title.title_refuted_groups == ["RG"]
-        assert [e.reason for e in recording.of_type(ReleaseSkipped)] == [case.skip]
+        assert pipeline._ctx.per_title.held_groups == {hold: ["RG"]}
+        assert [e.reason for e in recording.of_type(ReleaseSkipped)] == [expected.skip]
         (row,) = pipeline._ctx.stats.needs_action
-        assert (row.kind, row.group, row.reason) == (case.kind, "RG", case.reason)
+        assert (row.kind, row.group, row.reason) == (expected.kind, "RG", expected.reason)
 
     def test_a_held_url_of_a_resident_torrent_never_joins_its_record(self) -> None:
         # Another entry's record holds the torrent.
@@ -1355,10 +1361,56 @@ class TestPlacementHolds:
 
         assert torrents.calls == []
         assert pipeline.cache_store.get_entry(Arr.SONARR, 42) is None
-        assert pipeline._ctx.per_title.misnumbered_groups == []
-        assert pipeline._ctx.per_title.input_missing_groups == ["RG"]
+        assert pipeline._ctx.per_title.held_groups == {GrabHold.INPUT_UNREAD: ["RG"]}
         assert [e.reason for e in recording.of_type(ReleaseSkipped)] == [SkipReason.INPUT_UNREAD]
         assert [r.kind for r in pipeline._ctx.stats.needs_action] == [NeedsActionKind.PLACEMENT_INPUT_MISSING]
+
+    def test_a_url_whose_files_are_another_titles_is_never_added_and_its_skip_carries_the_counts(self) -> None:
+        recording = install_recording_hub()
+        nyaa = self._held(url="https://nyaa.si/view/1", infohash="h1", hold=GrabHold.PLACED_ELSEWHERE)
+        nyaa.hold_counts = ElsewhereCounts(elsewhere=12, unplaced=6)
+        seadex_dict: SeadexDict = {"RG": rg_group({nyaa.url: nyaa})}
+        torrents = FakeTorrents({"h1": (AddOutcome.ADDED, "Show-RG")})
+        pipeline = _on_entry(_pipeline(torrents=torrents, sleep_time=0))
+
+        pipeline.grab_and_cache(_entry_request(seadex_dict, ["h1"]))
+
+        assert torrents.calls == []
+        assert pipeline.cache_store.get_entry(Arr.SONARR, 42) is None
+        assert pipeline._ctx.per_title.held_groups == {GrabHold.PLACED_ELSEWHERE: ["RG"]}
+        assert [(e.reason, e.counts) for e in recording.of_type(ReleaseSkipped)] == [
+            (SkipReason.PLACED_ELSEWHERE, ElsewhereCounts(elsewhere=12, unplaced=6))
+        ]
+        (row,) = pipeline._ctx.stats.needs_action
+        assert (row.kind, row.reason) == (
+            NeedsActionKind.PLACED_ELSEWHERE,
+            "its files place under another title SeaDex lists it with; any it could not place need a hand import",
+        )
+
+    def test_the_another_titles_row_outranks_a_failed_read(self) -> None:
+        # A failed read clears next run. A url whose files are another title's stays held until the entry has them.
+        elsewhere = self._held(url="https://nyaa.si/view/1", infohash="h1", hold=GrabHold.PLACED_ELSEWHERE)
+        unread = self._held(url="https://nyaa.si/view/2", infohash="h2", hold=GrabHold.INPUT_UNREAD)
+        seadex_dict: SeadexDict = {"RG": rg_group({elsewhere.url: elsewhere}), "Other": rg_group({unread.url: unread})}
+        pipeline = _on_entry(_pipeline(torrents=FakeTorrents({}), sleep_time=0))
+
+        pipeline.grab_and_cache(_entry_request(seadex_dict, ["h1", "h2"]))
+
+        assert [r.kind for r in pipeline._ctx.stats.needs_action] == [NeedsActionKind.PLACED_ELSEWHERE]
+
+    def test_a_failed_grab_outranks_the_another_titles_row(self) -> None:
+        elsewhere = self._held(url="https://nyaa.si/view/1", infohash="h1", hold=GrabHold.PLACED_ELSEWHERE)
+        failing = _nyaa_release(url="https://nyaa.si/view/2", infohash="h2")
+        seadex_dict: SeadexDict = {
+            "RG": rg_group({elsewhere.url: elsewhere}),
+            "Other": rg_group({failing.url: failing}),
+        }
+        torrents = FakeTorrents({}, raises={"h2": httpx.ConnectError("nyaa down")})
+        pipeline = _on_entry(_pipeline(torrents=torrents, sleep_time=0))
+
+        pipeline.grab_and_cache(_entry_request(seadex_dict, ["h1", "h2"]))
+
+        assert [r.kind for r in pipeline._ctx.stats.needs_action] == [NeedsActionKind.GRAB_FAILED]
 
     def test_a_held_url_beside_a_grabbable_one_lets_the_other_grab(self) -> None:
         held = self._held(url="https://nyaa.si/view/1", infohash="h1", hold=GrabHold.MISNUMBERED)
@@ -1401,7 +1453,7 @@ class TestPlacementHolds:
         pipeline.grab_and_cache(_entry_request(seadex_dict, []))
 
         assert recording.of_type(ReleaseSkipped) == []
-        assert pipeline._ctx.per_title.misnumbered_groups == []
+        assert pipeline._ctx.per_title.held_groups == {}
         assert pipeline._ctx.stats.up_to_date == 1
         assert pipeline.cache_store.get_entry(Arr.SONARR, 42) is not None
 
@@ -1425,6 +1477,31 @@ class TestPlacementHolds:
         pipeline.grab_and_cache(_entry_request(seadex_dict, ["h1", "h2"]))
 
         assert [r.kind for r in pipeline._ctx.stats.needs_action] == [NeedsActionKind.MISNUMBERED]
+
+    def test_the_misnumbered_row_outranks_the_titles_refute_row(self) -> None:
+        # The table's order decides between two hand-import holds.
+        refuted = self._held(url="https://nyaa.si/view/1", infohash="h1", hold=GrabHold.TITLE_REFUTED)
+        misnumbered = self._held(url="https://nyaa.si/view/2", infohash="h2", hold=GrabHold.MISNUMBERED)
+        seadex_dict: SeadexDict = {
+            "RG": rg_group({refuted.url: refuted}),
+            "Other": rg_group({misnumbered.url: misnumbered}),
+        }
+        pipeline = _on_entry(_pipeline(torrents=FakeTorrents({}), sleep_time=0))
+
+        pipeline.grab_and_cache(_entry_request(seadex_dict, ["h1", "h2"]))
+
+        assert [r.kind for r in pipeline._ctx.stats.needs_action] == [NeedsActionKind.MISNUMBERED]
+
+    def test_the_titles_refute_row_outranks_a_failed_grab(self) -> None:
+        held = self._held(url="https://nyaa.si/view/1", infohash="h1", hold=GrabHold.TITLE_REFUTED)
+        failing = _nyaa_release(url="https://nyaa.si/view/2", infohash="h2")
+        seadex_dict: SeadexDict = {"RG": rg_group({held.url: held}), "Other": rg_group({failing.url: failing})}
+        torrents = FakeTorrents({}, raises={"h2": httpx.ConnectError("nyaa down")})
+        pipeline = _on_entry(_pipeline(torrents=torrents, sleep_time=0))
+
+        pipeline.grab_and_cache(_entry_request(seadex_dict, ["h1", "h2"]))
+
+        assert [r.kind for r in pipeline._ctx.stats.needs_action] == [NeedsActionKind.TITLE_REFUTED]
 
 
 class TestGrabFailureContainment:
@@ -1661,7 +1738,7 @@ class TestShouldCacheAsDone:
         if grab_failed:
             pipeline._ctx.per_title.grab_failed_groups.append("RG")
         if misnumbered:
-            pipeline._ctx.per_title.misnumbered_groups.append("RG")
+            pipeline._ctx.per_title.add_held(GrabHold.MISNUMBERED, ("RG",))
         return pipeline._should_cache_as_done(added_this_title=added_this_title)
 
     def test_plain_grab_caches(self) -> None:

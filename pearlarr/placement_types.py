@@ -8,7 +8,7 @@ from types import MappingProxyType
 from typing import Self
 
 from .episode_titles import EpisodeTitles
-from .manual_import import NO_IDENTIFIED, EntryNames, FileEpisodeMap, IdentifiedNames
+from .manual_import import EntryNames, EntryWindow, FileEpisodeMap
 from .seadex_types import NO_ALIASES, EpisodeKey, ParsedFileInfo, SonarrEpisode, SpecialAliases, index_episodes_by_key
 from .tvdb_orders import NO_ORDERING, OrderRow, SeriesOrdering
 
@@ -156,8 +156,13 @@ class PlacementVerdict(StrEnum):
     A claim, not a refusal, so the window that holds that special may still place it."""
     FOREIGN = "other slice"
     """Reads wholly outside the scope, or is titled as an episode outside it and confirmed by its reading, by that
-    reading's rejection while other files hold its episodes, or by no open id being left: never this record's to
-    import."""
+    reading's rejection while other files hold its episodes, or by no open id being left: not this record's to
+    import under its current claims."""
+    LISTED_ELSEWHERE = "another listed title's"
+    """Placed by the window of another title SeaDex lists the torrent under, one with no claim on the record, or
+    left for a hand import by such a window with none of the record's claimed windows party to it: not this
+    record's to import or hand-import under its current claims. That title's own grab claims the torrent and places
+    or reports the file, unless the title is in `ignore_anilist_ids`, which is never grabbed for."""
     DUPLICATE = "duplicate"
     """Reads inside the scope onto episodes other files provably hold, or is titled as an episode a version of the
     same file holds."""
@@ -183,7 +188,10 @@ class PlacementVerdict(StrEnum):
 
     @property
     def excluded(self) -> bool:
-        """Whether the file is knowably never this record's to import."""
+        """Whether the file isn't this record's to import under its current claims.
+
+        A later claim's window can still place a foreign file or another listed title's.
+        """
 
         return self in _EXCLUDED
 
@@ -215,7 +223,14 @@ _PLACED = frozenset(
         PlacementVerdict.ALTERNATE,
     }
 )
-_EXCLUDED = frozenset({PlacementVerdict.FOREIGN, PlacementVerdict.DUPLICATE, PlacementVerdict.EXTRA})
+_EXCLUDED = frozenset(
+    {
+        PlacementVerdict.FOREIGN,
+        PlacementVerdict.LISTED_ELSEWHERE,
+        PlacementVerdict.DUPLICATE,
+        PlacementVerdict.EXTRA,
+    }
+)
 _HAND_IMPORT = frozenset({PlacementVerdict.MISNUMBERED, PlacementVerdict.TITLE_REFUTED})
 _REFUSED = frozenset({PlacementVerdict.HELD, PlacementVerdict.MISNUMBERED})
 
@@ -253,7 +268,7 @@ class EpisodeAssignment:
 
     @property
     def excluded(self) -> tuple[Placement, ...]:
-        """The files this record knowably never imports (another slice's, a duplicate, an extra), and how."""
+        """The files not this record's under its current claims, and how (`PlacementVerdict.excluded`)."""
 
         return tuple(p for p in self.placements if p.verdict.excluded)
 
@@ -262,12 +277,6 @@ class EpisodeAssignment:
         """The skipped files left for a hand import (`PlacementVerdict.hand_import`)."""
 
         return tuple(p.name for p in self.placements if p.verdict.hand_import)
-
-    @property
-    def unplaced(self) -> tuple[str, ...]:
-        """Every file without ids: the skips plus the exclusions."""
-
-        return tuple(p.name for p in self.placements if not p.verdict.placed)
 
 
 NO_SEEDED: FileEpisodeMap = MappingProxyType({})
@@ -286,8 +295,7 @@ class PlacementBatch:
     """Normalized basenames in SeaDex order (the order only fixes deterministic output), held as a tuple."""
 
     parsed: Mapping[str, ParsedFileInfo | None]
-    """Series-agnostic parse per file (None when Sonarr's parse was unavailable
-    and no SxxExx fell out of the name)."""
+    """Series-agnostic parse per file (None when Sonarr's parse was unavailable)."""
 
     seeded: FileEpisodeMap = NO_SEEDED
     """The stored record's map, normalized name -> episode ids, the ids held as tuples. Its ids count as used wherever
@@ -318,13 +326,13 @@ class PlacementBatch:
 
     @property
     def all_parses_known(self) -> bool:
-        """Every parse came from Sonarr this run: no transport miss (None) and no offline `SxxExx` stand-in.
+        """Every parse came from Sonarr this run: no miss (None).
 
         Seeded and gone files are parsed by name too, so a miss on any of them counts, as
         does a file to place that has no parse entry.
         """
 
-        return all((info := self.parsed.get(name)) is not None and not info.offline for name in self.torrent_names)
+        return all(self.parsed.get(name) is not None for name in self.torrent_names)
 
 
 type SizeIdentities = Mapping[int, int]
@@ -334,34 +342,47 @@ episode. A file with that exact size is that episode."""
 
 @dataclass(frozen=True, slots=True)
 class TorrentListing:
-    """The episodes covered by the SeaDex entries that list one torrent, and those entries' special aliases."""
+    """The windows of the SeaDex entries that list one torrent, and those entries' special aliases."""
 
-    ids: frozenset[int]
-    """Union of the episode windows of every entry in the series that lists the torrent."""
+    entries: tuple[EntryWindow, ...] = ()
+    """One window per listing entry, in AniList id order."""
 
     special_aliases: SpecialAliases = NO_ALIASES
     """The union of those entries' special aliases, minus any TMDB number two entries pair differently. Empty when
     the entries pair against different TMDB shows."""
 
+    ids: frozenset[int] = field(init=False, repr=False, compare=False)
+    """Union of the entries' episode ids."""
+
     def __post_init__(self) -> None:
-        # Detach from the caller's dict, then wrap read-only.
+        # SeaDex can list one hash twice under an entry, so the first window per AniList id wins.
+        kept: dict[int, EntryWindow] = {}
+        for window in self.entries:
+            kept.setdefault(window.al_id, window)
+        entries = tuple(sorted(kept.values(), key=lambda window: window.al_id))
+        object.__setattr__(self, "entries", entries)
+        # Copied before it's wrapped, so a caller's later edits can't reach the listing.
         object.__setattr__(self, "special_aliases", MappingProxyType(dict(self.special_aliases)))
+        object.__setattr__(self, "ids", frozenset(ep_id for window in entries for ep_id in window.ordered_episode_ids))
 
 
-EMPTY_LISTING = TorrentListing(frozenset())
+EMPTY_LISTING = TorrentListing()
 """A torrent no entry lists. Listings match by infohash, so a url without one always gets this."""
+
+type IdentifiedNames = Mapping[str, int]
+"""Normalized file name -> the episode id its size matched."""
+
+NO_IDENTIFIED: IdentifiedNames = MappingProxyType({})
+"""No files placed by size: no size matched, or the size identities weren't read."""
 
 
 @dataclass(frozen=True, slots=True)
 class ListingEvidence:
-    """What SeaDex's listings for the series tell the placer about one torrent.
-
-    Import time only fills in `identified`.
-    """
+    """What SeaDex's listings for the series tell the placer about one torrent, as this run read them."""
 
     listing: TorrentListing = EMPTY_LISTING
     """The torrent's listing: the ids a numbered specials pack is checked against, and the special aliases that
-    can place a misnumbered one. Empty at import time, which turns the pack check off."""
+    can place a misnumbered one. Empty when no entry lists the torrent, which turns the pack check off."""
 
     identified: IdentifiedNames = NO_IDENTIFIED
     """File name -> episode id, for the files whose size matched an episode (see `SizeIdentities`)."""
@@ -416,7 +437,7 @@ class TargetScope:
     ties when several runs or numberless files could fill the open ids."""
 
     listing: ListingEvidence = NO_EVIDENCE
-    """What SeaDex's listings tell us about this torrent. At import time only `identified` is filled in."""
+    """What SeaDex's listings tell us about this torrent this run."""
 
     real_ids: frozenset[int] = field(init=False, repr=False, compare=False)
     """The resolved ids that can be placed. A stray zero keeps the scope real but is never one."""

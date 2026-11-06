@@ -258,9 +258,6 @@ class RecordSnapshot:
     by_claim: Mapping[int, EpisodeSnapshot]
     """Each claim's snapshot by AniList id: its series' same index under the claim's OWN guard evidence."""
 
-    indexes: Mapping[int, EpisodeIndex] = field(init=False)
-    """Each series' fresh episode index, the placement windows' inputs (a view over `by_series`)."""
-
     lone_unscoped: Mapping[int, EntryClaim] = field(init=False)
     """Each series' one unscoped claim where it has exactly one (see `lone_unscoped_claims`)."""
 
@@ -268,11 +265,6 @@ class RecordSnapshot:
         object.__setattr__(self, "by_series", MappingProxyType(dict(self.by_series)))
         object.__setattr__(self, "by_claim", MappingProxyType(dict(self.by_claim)))
         object.__setattr__(self, "lone_unscoped", MappingProxyType(lone_unscoped_claims(self.pending.claims)))
-        object.__setattr__(
-            self,
-            "indexes",
-            MappingProxyType({series_id: snapshot.episodes for series_id, snapshot in self.by_series.items()}),
-        )
 
     def series_of(self, ep_id: int) -> int | None:
         """The series whose index holds `ep_id` (Sonarr episode ids are global, so at most one does)."""

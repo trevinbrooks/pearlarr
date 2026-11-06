@@ -14,6 +14,7 @@ from .trace import CapturedTrace
 from ..config import Arr
 from ..log import EntryState
 from ..manual_import import Outcome, OutcomeCategory
+from ..seadex_types import NO_ELSEWHERE, ElsewhereCounts
 
 if TYPE_CHECKING:
     from ..reporter import RunStats
@@ -230,6 +231,7 @@ class SkipReason(Enum):
     TRACKER_NOT_SELECTED = auto()
     MISNUMBERED = auto()
     TITLE_REFUTED = auto()
+    PLACED_ELSEWHERE = auto()
     INPUT_UNREAD = auto()
 
     @property
@@ -247,6 +249,9 @@ class ReleaseSkipped:
     tracker: str
     reason: SkipReason
     url: str | None = None
+    counts: ElsewhereCounts = NO_ELSEWHERE
+    """For `SkipReason.PLACED_ELSEWHERE`, how many of the release's files are another title's and how many nothing
+    placed."""
     scope: ScopeId | None = None
 
 
@@ -348,6 +353,7 @@ class NeedsActionCause(Enum):
     PLACEMENT_INPUT_MISSING = auto()
     MISNUMBERED = auto()
     TITLE_REFUTED = auto()
+    PLACED_ELSEWHERE = auto()
 
 
 @dataclass(frozen=True, slots=True)

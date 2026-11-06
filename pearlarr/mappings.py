@@ -45,7 +45,7 @@ from .mapping_store import (
 )
 from .output import hub_warn
 from .paths import resolve_paths
-from .seadex_types import ProgressSink, SpecialAliasing, TvdbMappings
+from .seadex_types import ProgressSink, SonarrItem, SpecialAliasing, TvdbMappings
 from .web_client import failure_detail
 
 type AnimeIdsRecord = dict[str, Any]
@@ -214,6 +214,12 @@ class ExternalIds(NamedTuple):
     tmdb: int | None = None
     imdb: str | None = None
 
+    @classmethod
+    def of_series(cls, item: SonarrItem) -> "ExternalIds":
+        """The ids a Sonarr series is looked up by: its TVDB and IMDb ids."""
+
+        return cls(tvdb=item.tvdbId, imdb=item.imdbId)
+
     def require_any(self) -> None:
         """Raise if no external id was supplied (at least one is required)."""
 
@@ -223,16 +229,25 @@ class ExternalIds(NamedTuple):
             )
 
 
-class ResolvedMappings(NamedTuple):
-    """One `get_anilist_ids` result: the resolved mappings plus the ignored ids.
+@dataclass(frozen=True, slots=True, kw_only=True)
+class ResolvedMappings:
+    """One `get_anilist_ids` result: the kept mappings plus the ignored ones.
 
-    A named record (not a bare positional pair) so the two halves - the AniList
-    id -> mapping dict and the ignored AniList ids removed from it - can't
-    silently transpose, and the memo field reads as a domain type.
+    Built by keyword, so the two same-typed halves can't silently transpose.
     """
 
     mappings: dict[int, MappingEntry]
-    ignored: list[int]
+    """AniList id -> mapping, the ignore list removed, in AniList id order."""
+    ignored: dict[int, MappingEntry]
+    """The entries on the ignore list, AniList id -> mapping, in AniList id order. Never processed, but a series'
+    listing read still builds their windows, flagged so `ordered_windows` runs each after the kept windows of its
+    kind."""
+
+    @property
+    def every_entry(self) -> dict[int, MappingEntry]:
+        """The kept and the ignored entries together, in AniList id order, for the series' listing read."""
+
+        return dict(sorted({**self.mappings, **self.ignored}.items()))
 
 
 ANIME_IDS_URL = "https://raw.githubusercontent.com/Kometa-Team/Anime-IDs/refs/heads/master/anime_ids.json"
@@ -420,8 +435,8 @@ class MappingResolver(AnimeIdSets):
 
     Downloads-if-stale, then - only when a source's content digest changed -
     parses and indexes it into `mappings.db` (owned here). Lookups are answered
-    from SQL. `get_anilist_ids` returns the AniList mappings plus the ids it
-    dropped because they're configured to be ignored, so the caller (not the
+    from SQL. `get_anilist_ids` returns the AniList mappings plus the ones it
+    set aside because they're configured to be ignored, so the caller (not the
     resolver) owns the per-id logging.
     """
 
@@ -441,7 +456,7 @@ class MappingResolver(AnimeIdSets):
         Args:
             cache_time: Days a downloaded source stays usable before it's
                 re-fetched.
-            ignore_anilist_ids: AniList ids to drop from every result.
+            ignore_anilist_ids: AniList ids to set aside from every result.
             sources: The three source configs, each tri-state
                 (disabled / download / pre-parsed inline).
             web: The shared web client the source downloads ride.
@@ -766,8 +781,8 @@ class MappingResolver(AnimeIdSets):
 
         Returns:
             A `ResolvedMappings`: a fresh copy of the resolved mappings (so a
-            caller mutating it can't corrupt the memo), plus the ignored AniList
-            ids removed from the result, for the caller to log.
+            caller mutating it can't corrupt the memo), plus the ignored entries
+            removed from the result, for the caller to log and the listing read.
         """
 
         ids.require_any()
@@ -776,7 +791,7 @@ class MappingResolver(AnimeIdSets):
         # args, so memoize it and only redo the per-call logging.
         cached = self._anilist_ids_cache.get(ids)
         if cached is not None:
-            anilist_mappings, ids_to_drop = cached
+            anilist_mappings, ignored = cached.mappings, cached.ignored
         else:
             anilist_mappings: dict[int, MappingEntry] = {}
 
@@ -798,19 +813,21 @@ class MappingResolver(AnimeIdSets):
                     if existing is None or (ids.tvdb is not None and _is_degraded_anibridge(existing)):
                         anilist_mappings[al_id] = entry
 
-            # Drop any AniList IDs configured to be ignored.
-            ids_to_drop = [al_id for al_id in self.ignore_anilist_ids if al_id in anilist_mappings]
-            for al_id in ids_to_drop:
-                del anilist_mappings[al_id]
+            # Set aside any AniList ids configured to be ignored.
+            ignored = {
+                al_id: anilist_mappings.pop(al_id)
+                for al_id in sorted(self.ignore_anilist_ids)
+                if al_id in anilist_mappings
+            }
 
             # Sort by AniList ID.
             anilist_mappings = dict(sorted(anilist_mappings.items()))
 
-            self._anilist_ids_cache[ids] = ResolvedMappings(anilist_mappings, ids_to_drop)
+            self._anilist_ids_cache[ids] = ResolvedMappings(mappings=anilist_mappings, ignored=ignored)
 
         # Return fresh copies of BOTH so a caller mutating either can't corrupt the
-        # memo (the entries are frozen, so a shallow dict/list copy is enough).
-        return ResolvedMappings(dict(anilist_mappings), list(ids_to_drop))
+        # memo (the entries are frozen, so a shallow dict copy is enough).
+        return ResolvedMappings(mappings=dict(anilist_mappings), ignored=dict(ignored))
 
     def get_mappings_from_anime_mappings(
         self,

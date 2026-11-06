@@ -147,7 +147,7 @@ class TestParseIsFresh:
 
 
 class TestParseRecords:
-    """The parse-cache leaf: fresh-only reads, shape-owning writes, and the offline refusal."""
+    """The parse-cache leaf: fresh-only reads and shape-owning writes."""
 
     @staticmethod
     def _records() -> tuple[ParseRecords, FakeCacheStore]:
@@ -155,7 +155,6 @@ class TestParseRecords:
         return ParseRecords(store), store
 
     def test_round_trip_keeps_the_matched_ids(self) -> None:
-        # The seed cross-checks the ids exactly as the import poll's live parse does.
         records, _ = self._records()
         info = ParsedFileInfo(
             season_number=1,
@@ -185,17 +184,6 @@ class TestParseRecords:
         row = store.get_sonarr_parse("show - 01.mkv")
         assert row is not None
         assert "series_fp" not in row
-
-    def test_offline_stand_in_is_refused_and_never_written(self) -> None:
-        # The regex stand-in is blind to absolutes, so persisting it would
-        # launder a lost absolute into a "known" parse.
-        records, store = self._records()
-        offline = ParsedFileInfo(season_number=1, episode_numbers=(1,), offline=True)
-
-        with pytest.raises(ValueError, match="offline"):
-            records.write("show - S01E01.mkv", offline, window=_window())
-
-        assert store.get_sonarr_parse("show - S01E01.mkv") is None
 
     def test_unreadable_parse_reads_as_a_miss(self) -> None:
         # Validation IS the version gate: a row this build cannot read re-parses.

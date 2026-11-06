@@ -13,7 +13,6 @@ is a real `RunServices` subclass. The strategies are built bare
 (`object.__new__`) so no live Sonarr/Radarr client is constructed.
 """
 
-import logging
 from collections.abc import Callable, Mapping, MutableMapping
 from dataclasses import replace
 from datetime import timedelta
@@ -28,7 +27,7 @@ from pearlarr.cache import CacheRecord
 from pearlarr.config import Arr
 from pearlarr.episode_state import EpisodeFileStatus, GroupVotes, RecordSnapshot, trusted_groups
 from pearlarr.grab_pipeline import NO_SEEDS, GrabRequest
-from pearlarr.grab_placement import SeedFile
+from pearlarr.grab_placement import EntryPlacements, SeedFile, place_release
 from pearlarr.import_quality import resolve_language_objects
 from pearlarr.log import EntryState
 from pearlarr.manual_import import (
@@ -47,7 +46,7 @@ from pearlarr.manual_import import (
     PendingState,
     normalize_basename,
 )
-from pearlarr.mappings import ExternalIds, MappingEntry, MappingSource
+from pearlarr.mappings import ExternalIds, MappingEntry, MappingSource, ResolvedMappings
 from pearlarr.output import Severity
 from pearlarr.output.recording import RecordingHub
 from pearlarr.pending_records import PendingRecords
@@ -68,7 +67,6 @@ from pearlarr.seadex_types import (
     Language,
     ManualImportCandidate,
     MovieFile,
-    ParsedFileInfo,
     ProgressSink,
     QualityDefinition,
     QueueRecord,
@@ -89,6 +87,7 @@ from .builders import (
     FakeClock,
     claim_al_ids,
     entry_claim,
+    entry_window,
     episode_snapshot,
     make_bare_instance,
     make_config,
@@ -99,12 +98,15 @@ from .builders import (
     make_sonarr_episodes,
     make_sonarr_sync,
     manual_candidate,
+    new_torrent,
     parsed_info,
     pending_import,
     plan_result,
     queue_record,
     rg_group,
+    seed_scope,
     sonarr_ep,
+    torrent_listing,
     two_claim_record,
     url_item,
 )
@@ -114,6 +116,7 @@ from .fakes import (
     FakeSonarrClient,
     HookedSonarrClient,
     ScriptedEpisodes,
+    debug_logger,
     diagnostic_messages,
     install_recording_hub,
 )
@@ -182,6 +185,7 @@ class _FakeRunServices(RunServices):
         self,
         *,
         anilist_ids: dict[int, MappingEntry] | None = None,
+        ignored: dict[int, MappingEntry] | None = None,
         prologue_entry: EntryRecord | None = None,
         anilist_title: str = "Title",
         cached_skip: bool = False,
@@ -201,6 +205,7 @@ class _FakeRunServices(RunServices):
         self._records = PendingRecords(self.cache_store)
         self._records.begin_run(RunContext(arr=arr, import_wait_mode=import_wait_mode))
         self._anilist_ids = anilist_ids or {}
+        self._ignored = ignored or {}
         self._prologue_entry = prologue_entry
         self._anilist_title = anilist_title
         self._cached_skip = cached_skip
@@ -249,6 +254,11 @@ class _FakeRunServices(RunServices):
     def get_anilist_ids(self, ids: ExternalIds, log_ignored: bool = True) -> dict[int, MappingEntry]:
         self.get_anilist_ids_calls.append(GetAniListIdsCall(ids, log_ignored))
         return self._anilist_ids
+
+    @override
+    def listing_mappings(self, ids: ExternalIds) -> ResolvedMappings:
+        del ids
+        return ResolvedMappings(mappings=self._anilist_ids, ignored=self._ignored)
 
     @override
     def al_id_prologue(self, al_id: int) -> EntryRecord | None:
@@ -368,16 +378,16 @@ class _ScriptedListings:
 
     def __init__(
         self,
-        listed: Mapping[str, frozenset[int]] | None = None,
+        listed: Mapping[str, TorrentListing] | None = None,
         identities: Mapping[int, int] | None = None,
         *,
         outage: bool = False,
     ) -> None:
-        by_hash = {infohash: TorrentListing(ids) for infohash, ids in (listed or {}).items()}
-        self._read = None if outage else ListingsRead(by_hash, identities or {})
+        self._read = None if outage else ListingsRead(listed or {}, identities or {})
+        self.reads: list[tuple[int, ResolvedMappings]] = []
 
-    def read(self, series_id: int, entries: Mapping[int, MappingEntry]) -> ListingsRead | None:
-        del series_id, entries
+    def read(self, series_id: int, resolved: ResolvedMappings) -> ListingsRead | None:
+        self.reads.append((series_id, resolved))
         return self._read
 
 
@@ -1006,39 +1016,31 @@ class TestImportCompletedQueueState:
         executor.reset()
         assert executor._is_own_command(42) is False
 
-    def test_wrongly_excluded_file_is_still_imported_via_repair(self) -> None:
-        # THE under-import guard: accounting is complete via excluded_files and
-        # every MAPPED target is done, yet no imported fast path. The repair
-        # gets the final say (grab-time parses lie) and here it places the
-        # "excluded" file onto the unclaimed episode and imports it.
+    def test_an_excluded_file_is_not_imported_once_the_mapped_targets_are_in(self) -> None:
         done_file = "Show - 01 [1080p].mkv"
-        wrong_file = "Show - 13 [1080p].mkv"
+        excluded_file = "Show - 02 [1080p].mkv"
         pending = pending_import(
             file_episode_map={done_file: [101]},
             ordered_episode_ids=[101, 102],
-            seadex_files=[done_file, wrong_file],
-            excluded_files=[normalize_basename(wrong_file)],
+            seadex_files=[done_file, excluded_file],
+            excluded_files=[normalize_basename(excluded_file)],
         )
         sonarr = FakeSonarrClient(
             episodes=[
                 sonarr_ep(1, 1, ep_id=101, release_group="SubGroup"),
                 SonarrEpisode.model_validate({"id": 102, "seasonNumber": 1, "episodeNumber": 2}),
             ],
-            candidates=[manual_candidate(f"/d/{done_file}"), manual_candidate(f"/d/{wrong_file}")],
+            candidates=[manual_candidate(f"/d/{done_file}"), manual_candidate(f"/d/{excluded_file}")],
             quality_defs=[],
             languages=[],
             execute_command_id=42,
-            parse_fn=lambda name: ParsedFileInfo(season_number=1, episode_numbers=(2,)) if name == wrong_file else None,
         )
         strat = make_sonarr_sync(sonarr=sonarr, config=make_config(), cache_store=FakeCacheStore())
 
         probe = strat.import_completed(pending, "/d", AttemptKind.POLL)
 
-        assert probe.files_present is False
-        assert probe.command_issued is True
-        assert len(sonarr.execute_calls) == 1
-        files, _mode = sonarr.execute_calls[0]
-        assert [f.path for f in files] == [f"/d/{wrong_file}"]
+        assert probe.files_present is True
+        assert sonarr.execute_calls == []
 
     @pytest.mark.parametrize(
         ("command_status", "command_status_script", "refresh_calls"),
@@ -1409,59 +1411,6 @@ class TestImportCompletedQueueState:
         second = strat.import_completed(pending, "/d", AttemptKind.POLL)
         assert second.files_present is True
         assert len(sonarr.execute_calls) == 1
-
-    def test_self_heal_on_one_poll_unlocks_the_fast_path_on_the_next(self) -> None:
-        # PIN: a placement rides the probe out of the strategy and the record
-        # seam applies it. Poll 1 places the unseeded file and reports it, the
-        # record itself untouched; poll 2 over the healed record must take the
-        # map-complete imported fast path, no new candidate scan.
-        pending = pending_import(
-            file_episode_map={},
-            seadex_files=["Show - S01E01.mkv"],
-            ordered_episode_ids=[101],
-        )
-        strat, sonarr = _make_sonarr_for_import(
-            candidates=[manual_candidate("/d/Show - S01E01.mkv")],
-            episodes=[sonarr_ep(1, 1, ep_id=101, episode_file_id=0)],
-        )
-
-        first = strat.import_completed(pending, "/d", AttemptKind.POLL)
-        assert first.files_present is False
-        assert first.command_issued is True
-        assert first.placements == {"show - s01e01.mkv": (101,)}
-        assert pending.file_episode_map == {}
-
-        # The copy landed; the next poll trusts the healed map alone.
-        healed = pending.with_placements(first.placements)
-        assert healed.seed_coverage().mapped is True
-        sonarr.episodes_return = [sonarr_ep(1, 1, ep_id=101, release_group="SubGroup")]
-
-        second = strat.import_completed(healed, "/d", AttemptKind.POLL)
-        assert second.files_present is True
-        assert len(sonarr.candidate_calls) == 1
-        assert len(sonarr.execute_calls) == 1
-
-    def test_placements_ride_the_probe_through_the_reconciler(self) -> None:
-        # The reconciler's count overlay passes the executor's placements
-        # through untouched: a placing poll carries them, a seeded record's
-        # poll and the map-complete fast path carry none.
-        name = "Show - S01E01.mkv"
-        unseeded = pending_import(file_episode_map={}, seadex_files=[name], ordered_episode_ids=[101])
-        seeded = pending_import(file_episode_map={name: [101]}, seadex_files=[name])
-        strat, sonarr = _make_sonarr_for_import(
-            candidates=[manual_candidate(f"/d/{name}")],
-            episodes=[sonarr_ep(1, 1, ep_id=101, episode_file_id=0)],
-        )
-
-        placing = strat.import_completed(unseeded, "/d", AttemptKind.POLL)
-        seeded_poll = strat.import_completed(seeded, "/d", AttemptKind.POLL)
-        sonarr.episodes_return = [sonarr_ep(1, 1, ep_id=101, release_group="SubGroup")]
-        fast = strat.import_completed(seeded, "/d", AttemptKind.POLL)
-
-        assert placing.placements == {"show - s01e01.mkv": (101,)}
-        assert unseeded.file_episode_map == {}
-        assert seeded_poll.placements == {}
-        assert (fast.files_present, fast.placements) == (True, {})
 
     def test_not_in_queue_steps_in(self) -> None:
         pending = pending_import(
@@ -2063,7 +2012,6 @@ class TestRecordSnapshot:
         snapshot = self._snapshot()
 
         assert (snapshot.series_of(101), snapshot.series_of(201), snapshot.series_of(999)) == (7, 8, None)
-        assert {sid: set(index.by_id) for sid, index in snapshot.indexes.items()} == {7: {101}, 8: {201}}
 
     def test_statuses_classify_under_each_series_in_the_asked_order(self) -> None:
         # The grouping by series never reorders the answer, a repeat collapses, and an id no index
@@ -2602,7 +2550,7 @@ class TestSonarrProcessAlIdSeeds:
             _services=run,
             _episodes=ScriptedEpisodes(FakeSonarrClient(episodes=specials), windows={5: [specials[1], specials[3]]}),
             _parse=_ScriptedParse({_SEED_URL: tuple(SeedFile(name, 1000, parses[name]) for name in files)}),
-            _listings=_ScriptedListings({"h1": frozenset({502, 504, 506})}),
+            _listings=_ScriptedListings({"h1": torrent_listing(entry_window(1, (502, 504, 506)))}),
             _config=make_config(sleep_time=0),
             ignore_movies_in_radarr=False,
             logger=make_logger(),
@@ -2617,8 +2565,7 @@ class TestSonarrProcessAlIdSeeds:
         assert req.input_missing_groups == ()
 
     def test_a_file_placed_by_size_over_its_name_warns_once_per_url(self) -> None:
-        # Two specials named as each other. Each goes where its size matches, and the record keeps the size
-        # matches for the import.
+        # Two specials named as each other.
         specials = [sonarr_ep(0, n, ep_id=500 + n, episode_file_id=0) for n in (1, 2)]
         files = tuple(
             SeedFile(f"Show.S00E0{n}.mkv", 1000 * n, parsed_info(season=0, episodes=(n,), matched=((0, n),)))
@@ -2631,7 +2578,6 @@ class TestSonarrProcessAlIdSeeds:
         (req,) = run.grab_requests
         seed = req.pending_seeds["h1"]
         assert seed.placements == {"show.s00e01.mkv": (502,), "show.s00e02.mkv": (501,)}
-        assert seed.identified == {"show.s00e01.mkv": 502, "show.s00e02.mkv": 501}
         assert diagnostic_messages(recording, Severity.WARNING) == [
             (
                 f"{_SEED_URL}: show.s00e01.mkv goes on S00E02 because its size matches SeaDex's S00E02 release "
@@ -2640,9 +2586,9 @@ class TestSonarrProcessAlIdSeeds:
             )
         ]
 
-    def test_an_unread_listing_places_by_number_and_holds_the_url(self) -> None:
-        # SeaDex is down, so there are no size identities. The pack is placed by its numbers but held, and the
-        # title isn't cached as done since its inputs weren't all read.
+    def test_an_unread_listing_places_nothing_and_holds_the_url(self) -> None:
+        # SeaDex is down, so the windows the torrent runs under and the size identities are both unknown. Nothing
+        # is placed, the url is held, and the title isn't cached as done since its inputs weren't all read.
         files = tuple(
             SeedFile(name, 1000, parsed_info(season=1, episodes=(n,))) for n, name in enumerate(_SEED_FILES, 1)
         )
@@ -2651,10 +2597,83 @@ class TestSonarrProcessAlIdSeeds:
 
         (req,) = run.grab_requests
         assert req.seadex_dict["NAN0"].urls[_SEED_URL].hold is GrabHold.INPUT_UNREAD
-        assert req.pending_seeds["h1"].placements == {
-            normalize_basename(n): (100 + i,) for i, n in enumerate(_SEED_FILES, 1)
-        }
+        assert req.pending_seeds["h1"].placements == {}
         assert req.input_missing_groups == ("NAN0",)
+
+    def test_the_listing_read_gets_the_ignored_entries_too(self) -> None:
+        # Entry 6 shares the series but is on the ignore list. It's never processed, but a torrent it lists is
+        # still its files, so the series' listing read gets it beside the entries the run processes.
+        kept, ignored = {5: MappingEntry(anilist_id=5)}, {6: MappingEntry(anilist_id=6)}
+        seadex: SeadexDict = {
+            "NAN0": rg_group({_SEED_URL: url_item(url=_SEED_URL, infohash="h1", download=True, files=["a.mkv"])}),
+        }
+        run = _FakeRunServices(
+            anilist_ids=kept,
+            ignored=ignored,
+            prologue_entry=make_entry_record(url="https://releases.moe/5"),
+            seadex_dict=seadex,
+            filter_downloads_result=plan_result(["h1"], seadex),
+            import_wait_mode=ImportWaitMode.BLOCKING,
+        )
+        listings = _ScriptedListings()
+        strat = make_bare_instance(
+            SonarrSync,
+            _services=run,
+            _episodes=ScriptedEpisodes(FakeSonarrClient(episodes=[_EP1]), windows={5: [_EP1]}),
+            _parse=_ScriptedParse(),
+            _listings=listings,
+            _config=make_config(sleep_time=0),
+            ignore_movies_in_radarr=False,
+            logger=make_logger(),
+        )
+
+        strat.process_al_id(_Item(id=7, title="Show", tvdbId=70, imdbId=None), 5, kept[5])
+
+        assert listings.reads == [(7, ResolvedMappings(mappings=kept, ignored=ignored))]
+
+    def test_an_ignored_entrys_listed_files_are_never_grabbed_onto_a_sibling(self) -> None:
+        # Entry 5, the season, is on the ignore list, and entry 6 is the specials. The torrent is the season's
+        # bare-numbered run, which entry 6's window alone would take as its specials. The season's listed window
+        # decides the files first, so entry 6 grabs none of them and the url is held as another title's.
+        specials = [sonarr_ep(0, n, ep_id=500 + n, episode_file_id=0) for n in (1, 2)]
+        files = tuple(
+            SeedFile(name, 1000 * n, parsed_info(season=0, absolutes=(n,), matched=((1, n),)))
+            for n, name in enumerate(_SEED_FILES, 1)
+        )
+        seadex: SeadexDict = {
+            "NAN0": rg_group(
+                {_SEED_URL: url_item(url=_SEED_URL, infohash="h1", download=True, files=list(_SEED_FILES))}
+            ),
+        }
+        run = _FakeRunServices(
+            anilist_ids={6: MappingEntry(anilist_id=6)},
+            ignored={5: MappingEntry(anilist_id=5)},
+            prologue_entry=make_entry_record(url="https://releases.moe/6"),
+            seadex_dict=seadex,
+            filter_downloads_result=plan_result(["h1"], seadex),
+            import_wait_mode=ImportWaitMode.BLOCKING,
+            cache_store=FakeCacheStore(),
+        )
+        strat = make_bare_instance(
+            SonarrSync,
+            _services=run,
+            _episodes=ScriptedEpisodes(FakeSonarrClient(episodes=[_EP1, _EP2, *specials]), windows={6: specials}),
+            _parse=_ScriptedParse({_SEED_URL: files}),
+            _listings=_ScriptedListings(
+                {"h1": torrent_listing(entry_window(5, (101, 102), ignored=True), entry_window(6, (501, 502)))}
+            ),
+            _config=make_config(sleep_time=0),
+            ignore_movies_in_radarr=False,
+            logger=make_logger(),
+        )
+
+        strat.process_al_id(_Item(id=7, title="Show", tvdbId=70, imdbId=None), 6, MappingEntry(anilist_id=6))
+
+        (req,) = run.grab_requests
+        seed = req.pending_seeds["h1"]
+        assert seed.placements == {}
+        assert seed.excluded == tuple(normalize_basename(name) for name in _SEED_FILES)
+        assert req.seadex_dict["NAN0"].urls[_SEED_URL].hold is GrabHold.PLACED_ELSEWHERE
 
     def test_wait_mode_off_reads_no_record_and_seeds_nothing(self) -> None:
         store = _CountingStore()
@@ -2667,6 +2686,22 @@ class TestSonarrProcessAlIdSeeds:
         assert store.get_pending_record_calls == 0
         # The placement still runs: the planner's coverage never depends on the wait mode.
         assert req.seadex_dict["NAN0"].urls[_SEED_URL].episodes == [EpisodeRecord(season=1, episode=2, size=1000)]
+
+
+class TestPlacementDebugLine:
+    """The grab's debug line per url says what placed and why the url waited."""
+
+    def test_a_url_held_on_a_failed_read_names_the_read_once(self, caplog: pytest.LogCaptureFixture) -> None:
+        logger = debug_logger("pearlarr-placement-line")
+        strat = make_bare_instance(SonarrSync, logger=logger)
+        scope = seed_scope(episode_index([_EP1]), episode_index([_EP1]))
+        placement = place_release([SeedFile("Show - 01.mkv", 1000, None)], scope, new_torrent(scope))
+
+        with caplog.at_level("DEBUG"):
+            strat._log_placements(EntryPlacements(scope, {_SEED_URL: placement}))
+
+        assert placement.hold is GrabHold.INPUT_UNREAD
+        assert [r.message for r in caplog.records] == [f"{_SEED_URL}: placed nothing (not grabbed: a read failed)"]
 
 
 class TestSonarrProcessAlIdOrdersUnread:
@@ -2797,10 +2832,7 @@ class TestManualImportWarningGating:
         # missing-file line is logged by the import executor, which holds the same
         # logger as the strat in production - so set both (the strat's plus the
         # executor's) to mirror that and let caplog see the executor's record.
-        logger = logging.getLogger("pearlarr-warning-gating")
-        logger.handlers.clear()
-        logger.propagate = True
-        logger.setLevel(logging.DEBUG)
+        logger = debug_logger("pearlarr-warning-gating")
         strat.logger = logger
         strat._executor.logger = logger
         return strat, pending
@@ -2829,44 +2861,14 @@ class TestManualImportWarningGating:
 
     @staticmethod
     def _strat_with_unplaceable(*names: str) -> tuple[SonarrSync, FakeSonarrClient]:
-        # The mapped file plus `names`, none of which parse to an episode. Sonarr serves every parse (numberless)
-        # and the bare target episode, so the skips are settled and the warn arm is the one under test.
+        # The mapped file plus `names`, which the map lacks, beside the bare target episode.
         strat, sonarr = _make_sonarr_for_import(
             candidates=[manual_candidate("/d/Show - 01 [1080p].mkv"), *(manual_candidate(f"/d/{n}") for n in names)],
             episodes=[sonarr_ep(1, 1, ep_id=101, episode_file_id=0)],
         )
-        sonarr.parse_fn = lambda _n: ParsedFileInfo()
-        logger = logging.getLogger("pearlarr-warning-gating")
-        logger.handlers.clear()
-        logger.propagate = True
-        logger.setLevel(logging.DEBUG)
+        logger = debug_logger("pearlarr-warning-gating")
         strat._executor.logger = logger
         return strat, sonarr
-
-    def test_a_file_placed_by_size_over_its_name_warns_once(self) -> None:
-        # The record's size match puts the file on the second episode, over its own number.
-        name = "Show - 01 [1080p].mkv"
-        pending = pending_import(
-            file_episode_map={},
-            seadex_files=[name],
-            ordered_episode_ids=(101, 102),
-            identified={normalize_basename(name): 102},
-        )
-        strat, sonarr = _make_sonarr_for_import(
-            candidates=[manual_candidate(f"/d/{name}")],
-            episodes=[sonarr_ep(1, n, ep_id=100 + n, episode_file_id=0) for n in (1, 2)],
-        )
-        sonarr.parse_fn = lambda _n: parsed_info(season=1, episodes=(1,), matched=((1, 1),))
-        recording = install_recording_hub()
-
-        probe = strat.import_completed(pending, "/d", AttemptKind.POLL)
-        strat.import_completed(pending, "/d", AttemptKind.POLL)
-
-        assert probe.placements == {normalize_basename(name): (102,)}
-        warnings = [m for m in diagnostic_messages(recording, Severity.WARNING) if "placed by file size" in m]
-        assert warnings == [
-            f"{pending.display_label}: {normalize_basename(name)} placed by file size instead of by its name"
-        ]
 
     def test_grab_time_excluded_unplaceable_file_never_warns(self, caplog: pytest.LogCaptureFixture) -> None:
         # A sibling record's slice of a shared torrent was decided at grab time:
@@ -2905,49 +2907,41 @@ class TestManualImportWarningGating:
         assert len(warnings) == 1
         assert "1 file could not be matched" in warnings[0]
 
-    def test_unsettled_partial_skip_neither_warns_nor_blocks_the_import(self) -> None:
-        # The fake's default parse miss leaves the skip tentative: the seeded file still imports, and the
-        # "could not be matched" warning waits for a poll whose parses were all served.
-        pending = pending_import(seadex_files=["Show - 01 [1080p].mkv", "Extras.mkv"])
-        strat, sonarr = self._strat_with_unplaceable("Extras.mkv")
-        sonarr.parse_fn = lambda _n: None
+    def test_a_disk_file_seadexs_list_lacks_warns_as_a_skip(self) -> None:
+        pending = pending_import(seadex_files=["Show - 01 [1080p].mkv"])
+        strat, sonarr = self._strat_with_unplaceable("Show - S02E01 [1080p].mkv")
         recording = install_recording_hub()
 
-        probe = strat.import_completed(pending, "/d", AttemptKind.POLL)
+        strat.import_completed(pending, "/d", AttemptKind.POLL)
 
-        assert probe.command_issued is True
-        assert probe.unmatched_files == ()
-        assert len(sonarr.execute_calls) == 1
-        assert not any("could not be matched" in m for m in diagnostic_messages(recording, Severity.WARNING))
-
-    def test_unsettled_skip_warns_at_the_deadline(self) -> None:
-        # A miss that never healed is reported from the deadline on, so a record held behind it is
-        # visible rather than silently re-asked until it ages out. The seeded file still imports.
-        pending = pending_import(seadex_files=["Show - 01 [1080p].mkv", "Extras.mkv"])
-        strat, sonarr = self._strat_with_unplaceable("Extras.mkv")
-        sonarr.parse_fn = lambda _n: None
-        recording = install_recording_hub()
-
-        probe = strat.import_completed(pending, "/d", AttemptKind.DEADLINE)
-
-        assert probe.command_issued is True
-        assert len(sonarr.execute_calls) == 1
+        assert [f.path for f in sonarr.execute_calls[0][0]] == ["/d/Show - 01 [1080p].mkv"]
         warnings = [m for m in diagnostic_messages(recording, Severity.WARNING) if "could not be matched" in m]
         assert len(warnings) == 1
 
+    def test_a_duplicate_leaf_the_map_lacks_is_reported_once(self) -> None:
+        pending = pending_import(seadex_files=["Show - 01 [1080p].mkv", "a/Extras.mkv", "b/Extras.mkv"])
+        strat, sonarr = self._strat_with_unplaceable("a/Extras.mkv", "b/Extras.mkv")
+        recording = install_recording_hub()
+
+        strat.import_completed(pending, "/d", AttemptKind.POLL)
+
+        assert [f.path for f in sonarr.execute_calls[0][0]] == ["/d/Show - 01 [1080p].mkv"]
+        warnings = [m for m in diagnostic_messages(recording, Severity.WARNING) if "could not be matched" in m]
+        assert len(warnings) == 1
+        assert "1 file could not be matched" in warnings[0]
+
 
 class TestUnmatchedProbe:
-    """A download whose every on-disk file matches no episode is an outcome, not a wait.
+    """A download whose every on-disk file the map lacks is an outcome on its first poll, not a wait.
 
-    The verdict needs settled inputs: every parse served and the episode index served. A miss on
-    either keeps the poll a plain wait, so a Sonarr hiccup never graduates a record.
+    The import places nothing, so the next poll would find the same files: no parse or episode read is waited on.
     """
 
     _NAMES = ("Movie Part 1.mkv", "Movie Part 2.mkv")
 
     @classmethod
-    def _numberless_pair(cls, *, excluded: tuple[str, ...] = ()) -> PendingImport:
-        # Two numberless files for one target episode: no leg can place either, on any poll.
+    def _unplaced_pair(cls, *, excluded: tuple[str, ...] = ()) -> PendingImport:
+        # Two files the grab placed nowhere, for one target episode.
         return pending_import(
             file_episode_map={},
             ordered_episode_ids=[101],
@@ -2963,12 +2957,10 @@ class TestUnmatchedProbe:
             candidates=[manual_candidate(f"/d/{name}") for name in cls._NAMES],
             episodes=[target] if served else None,
         )
-        if served:
-            sonarr.parse_fn = lambda _n: ParsedFileInfo()
         return strat, sonarr
 
-    def test_settled_all_unmatched_returns_the_names_without_a_warning(self) -> None:
-        pending = self._numberless_pair()
+    def test_all_unmatched_returns_the_names_without_a_warning(self) -> None:
+        pending = self._unplaced_pair()
         strat, sonarr = self._strat()
         recording = install_recording_hub()
 
@@ -2983,42 +2975,37 @@ class TestUnmatchedProbe:
         assert sonarr.execute_calls == []
         assert diagnostic_messages(recording, Severity.WARNING) == []
 
-    def test_a_parse_miss_keeps_the_poll_a_wait(self) -> None:
-        pending = self._numberless_pair()
-        strat, sonarr = self._strat()
-        sonarr.parse_fn = lambda _n: None
-        recording = install_recording_hub()
+    def test_an_empty_episode_index_still_reads_unmatched(self) -> None:
+        pending = self._unplaced_pair()
+        strat, _ = self._strat(served=False)
 
         probe = strat.import_completed(pending, "/d", AttemptKind.POLL)
 
-        assert probe == ImportProbe.waiting()
-        assert diagnostic_messages(recording, Severity.WARNING) == []
-
-    def test_an_empty_episode_index_keeps_the_poll_a_wait(self) -> None:
-        pending = self._numberless_pair()
-        strat, sonarr = self._strat(served=False)
-        sonarr.parse_fn = lambda _n: ParsedFileInfo()
-        recording = install_recording_hub()
-
-        probe = strat.import_completed(pending, "/d", AttemptKind.POLL)
-
-        assert probe == ImportProbe.waiting()
-        assert diagnostic_messages(recording, Severity.WARNING) == []
+        assert probe.unmatched_files == self._NAMES
 
     def test_every_file_excluded_at_grab_time_still_reads_unmatched(self) -> None:
         # Nothing of the record's own is on disk and nothing is authoritative: a recorded exclusion
         # silences the warning, never the verdict, so the record graduates instead of waiting out its deadline.
-        pending = self._numberless_pair(excluded=self._NAMES)
+        pending = self._unplaced_pair(excluded=self._NAMES)
         strat, _ = self._strat()
 
         probe = strat.import_completed(pending, "/d", AttemptKind.POLL)
 
         assert probe.unmatched_files == self._NAMES
 
+    def test_the_unmatched_names_leave_out_the_excluded_files(self) -> None:
+        pending = self._unplaced_pair(excluded=self._NAMES[1:])
+        strat, sonarr = self._strat()
+
+        probe = strat.import_completed(pending, "/d", AttemptKind.POLL)
+
+        assert probe.unmatched_files == self._NAMES[:1]
+        assert sonarr.execute_calls == []
+
     def test_a_hand_import_that_filled_every_intended_episode_reads_imported(self) -> None:
-        # The files still sit in the folder (a copy import), so the mapper skips them again. The
+        # The files still sit in the folder (a copy import), and the map still lacks them. The
         # intended episode holds the record's own group now: done, never re-reported.
-        pending = self._numberless_pair()
+        pending = self._unplaced_pair()
         strat, sonarr = self._strat(held_by="SubGroup")
         recording = install_recording_hub()
 
@@ -3043,7 +3030,7 @@ class TestUnmatchedProbe:
 
     def test_another_groups_copy_on_the_target_keeps_the_verdict_unmatched(self) -> None:
         # The stale copy this grab replaces is not ours: the human still has the import to do.
-        pending = self._numberless_pair()
+        pending = self._unplaced_pair()
         strat, _ = self._strat(held_by="OtherPick")
 
         probe = strat.import_completed(pending, "/d", AttemptKind.POLL)
@@ -3057,7 +3044,6 @@ class TestUnmatchedProbe:
             candidates=[manual_candidate("/d/Show - 01 [1080p].mkv"), manual_candidate("/d/Extras.mkv")],
             episodes=[sonarr_ep(1, 1, ep_id=101, episode_file_id=0)],
         )
-        sonarr.parse_fn = lambda _n: ParsedFileInfo()
         recording = install_recording_hub()
 
         first = strat.import_completed(pending, "/d", AttemptKind.POLL)
@@ -3071,20 +3057,18 @@ class TestUnmatchedProbe:
 
 
 class TestHeldBackFiles:
-    """A file the placement left for a hand import keeps the record pending once every placed file is in."""
+    """A file the grab left for a hand import keeps the record pending once every placed file is in."""
 
-    # Each key is one episode early, as the titles show. The plain file belongs on 601.
+    # Each file's number is one episode early. The titles say where the titled two go; the plain file belongs on 601.
     _NAMES = ("show - 01 - The Return [grp].mkv", "show - 02 - Festival Night [grp].mkv", "show - 03 [grp].mkv")
     _TITLES = ("Pilot Flight", "The Return", "Festival Night")
     _SIZE_ON: ClassVar[dict[int, int]] = {601: 1003, 602: 1001, 603: 1002}
-    _PARSES: ClassVar[dict[str, ParsedFileInfo]] = {
-        name: parsed_info(season=1, episodes=(n,), matched=((1, n),)) for n, name in enumerate(_NAMES, 1)
-    }
 
     @classmethod
     def _record(cls) -> PendingImport:
         return pending_import(
             file_episode_map={normalize_basename(cls._NAMES[0]): [602], normalize_basename(cls._NAMES[1]): [603]},
+            hand_import_files=(normalize_basename(cls._NAMES[2]),),
             seadex_files=list(cls._NAMES),
             release_sizes=tuple(sorted(cls._SIZE_ON.values())),
             ordered_episode_ids=(601, 602, 603),
@@ -3103,14 +3087,12 @@ class TestHeldBackFiles:
 
     @classmethod
     def _strat(cls, *extras: str) -> tuple[SonarrSync, FakeSonarrClient]:
-        """The download's files plus `extras` on disk, the placed two in. Sonarr reads no number off an extra."""
+        """The download's files plus `extras` on disk, the placed two in."""
 
-        strat, sonarr = _make_sonarr_for_import(
+        return _make_sonarr_for_import(
             candidates=[manual_candidate(f"/d/{name}") for name in (*cls._NAMES, *extras)],
             episodes=cls._episodes(602, 603),
         )
-        sonarr.parse_fn = lambda name: cls._PARSES.get(name, ParsedFileInfo())
-        return strat, sonarr
 
     def test_the_held_back_file_keeps_the_record_and_is_named_every_poll(self) -> None:
         strat, sonarr = self._strat()
@@ -3158,112 +3140,17 @@ class TestHeldBackFiles:
         assert len(warnings) == 1
         assert ": 1 file could not be matched" in warnings[0]
 
-    def test_a_parse_miss_waits_until_the_deadline(self) -> None:
-        strat, sonarr = self._strat("Extras.mkv")
-        sonarr.parse_fn = self._PARSES.get
-
-        polled = strat.import_completed(self._record(), "/d", AttemptKind.POLL)
-        final = strat.import_completed(self._record(), "/d", AttemptKind.DEADLINE)
-
-        assert polled == ImportProbe.waiting()
-        assert final.hand_import_files == (self._NAMES[2],)
-
     def test_a_plain_skip_alone_retires(self) -> None:
-        strat, sonarr = _make_sonarr_for_import(
+        strat, _ = _make_sonarr_for_import(
             candidates=[manual_candidate("/d/Show - 01 [1080p].mkv"), manual_candidate("/d/Extras.mkv")],
             episodes=[sonarr_ep(1, 1, ep_id=101, release_group="SubGroup")],
         )
-        sonarr.parse_fn = lambda _n: ParsedFileInfo()
         pending = pending_import(seadex_files=["Show - 01 [1080p].mkv", "Extras.mkv"])
 
         probe = strat.import_completed(pending, "/d", AttemptKind.POLL)
 
         assert probe.files_present is True
         assert probe.hand_import_files == ()
-
-
-class TestProbeExclusions:
-    """The exclusions one poll proved ride the probe, and a recorded one never warns again."""
-
-    _MINE = "show - s01e01 [1080p].mkv"
-    _THEIRS = "show - s02e01 [1080p].mkv"
-
-    @classmethod
-    def _strat(cls) -> tuple[SonarrSync, FakeSonarrClient]:
-        # Both seasons are served, so the season-2 file resolves cleanly OUTSIDE the record's set.
-        parses = {
-            cls._MINE: ParsedFileInfo(season_number=1, episode_numbers=(1,)),
-            cls._THEIRS: ParsedFileInfo(season_number=2, episode_numbers=(1,)),
-        }
-        strat, sonarr = _make_sonarr_for_import(
-            candidates=[manual_candidate(f"/d/{name}") for name in (cls._MINE, cls._THEIRS)],
-            episodes=[sonarr_ep(1, 1, ep_id=101, episode_file_id=0), sonarr_ep(2, 1, ep_id=201, episode_file_id=0)],
-        )
-        sonarr.parse_fn = parses.get
-        return strat, sonarr
-
-    @classmethod
-    def _record(cls, *, resolved: list[int]) -> PendingImport:
-        return pending_import(
-            file_episode_map={},
-            ordered_episode_ids=resolved,
-            seadex_files=[cls._MINE, cls._THEIRS],
-        )
-
-    def test_a_foreign_file_rides_the_probe_as_an_exclusion(self) -> None:
-        strat, sonarr = self._strat()
-
-        probe = strat.import_completed(self._record(resolved=[101]), "/d", AttemptKind.POLL)
-
-        assert probe.exclusions == (self._THEIRS,)
-        assert probe.placements == {self._MINE: (101,)}
-        assert [f.path for f in sonarr.execute_calls[0][0]] == [f"/d/{self._MINE}"]
-
-    def test_a_recorded_exclusion_silences_the_next_poll(self, caplog: pytest.LogCaptureFixture) -> None:
-        # Season 2 drops out of the next episode read, so the same file reads as a plain skip. The
-        # exclusion the first poll recorded keeps it a debug note instead of a fresh warning.
-        strat, sonarr = self._strat()
-        logger = logging.getLogger("pearlarr-recorded-exclusion")
-        logger.handlers.clear()
-        logger.propagate = True
-        logger.setLevel(logging.DEBUG)
-        strat._executor.logger = logger
-        first = strat.import_completed(self._record(resolved=[101]), "/d", AttemptKind.POLL)
-        healed = self._record(resolved=[101]).with_placements(first.placements).with_exclusions(first.exclusions)
-        sonarr.episodes_return = [sonarr_ep(1, 1, ep_id=101, episode_file_id=0)]
-        recording = install_recording_hub()
-
-        with caplog.at_level("DEBUG"):
-            probe = strat.import_completed(healed, "/d", AttemptKind.POLL)
-
-        assert probe.exclusions == ()
-        assert not any("could not be matched" in m for m in diagnostic_messages(recording, Severity.WARNING))
-        assert any("1 file excluded on record" in r.message and r.levelname == "DEBUG" for r in caplog.records)
-
-    def test_every_file_foreign_with_nothing_authoritative_reads_unmatched(self) -> None:
-        # Both files resolve outside the record's set: excluded, never skipped, and nothing was placed,
-        # so the poll is an outcome rather than a wait for files that are not this record's. The
-        # exclusions ride this branch too, so the record can record what it already proved foreign.
-        strat, sonarr = self._strat()
-
-        probe = strat.import_completed(self._record(resolved=[301]), "/d", AttemptKind.POLL)
-
-        assert probe.unmatched_files == (self._MINE, self._THEIRS)
-        assert probe.exclusions == (self._MINE, self._THEIRS)
-        assert sonarr.execute_calls == []
-
-    def test_the_unmatched_names_are_the_skips_not_the_exclusions(self) -> None:
-        # One file another slice's, one nothing could read: the outcome names what a hand import
-        # must place, and the foreign file rides only as an exclusion.
-        strat, sonarr = self._strat()
-        parses = {self._THEIRS: ParsedFileInfo(season_number=2, episode_numbers=(1,)), self._MINE: ParsedFileInfo()}
-        sonarr.parse_fn = parses.get
-
-        probe = strat.import_completed(self._record(resolved=[101, 102]), "/d", AttemptKind.POLL)
-
-        assert probe.unmatched_files == (self._MINE,)
-        assert probe.exclusions == (self._THEIRS,)
-        assert sonarr.execute_calls == []
 
 
 class TestDefaultQualityWarning:
@@ -3507,10 +3394,7 @@ class TestFolderScanFallback:
             folder_candidates=[manual_candidate("/d/Show/Show - 01 [1080p].mkv")],
         )
         # The dead-tracked note is debug-level; caplog needs a propagating logger.
-        logger = logging.getLogger("pearlarr-dead-verdict")
-        logger.handlers.clear()
-        logger.propagate = True
-        logger.setLevel(logging.DEBUG)
+        logger = debug_logger("pearlarr-dead-verdict")
         strat._executor.scanner.logger = logger
         pending = pending_import()
 
@@ -3552,10 +3436,7 @@ class TestFolderScanFallback:
         # rebuild yields nothing and the record stays unmapped.
         recording = install_recording_hub()
         strat, _ = self._strat(history=_dead_history(), folder_candidates=[])
-        logger = logging.getLogger("pearlarr-folder-scan")
-        logger.handlers.clear()
-        logger.propagate = True
-        logger.setLevel(logging.DEBUG)
+        logger = debug_logger("pearlarr-folder-scan")
         strat._executor.logger = logger
         pending = pending_import(file_episode_map={}, ordered_episode_ids=[101])
 

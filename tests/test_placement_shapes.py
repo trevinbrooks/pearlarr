@@ -3,9 +3,8 @@
 
 Two tiers: this catalog holds real captures (whole-series episode lists and raw
 `/parse` payloads) with expectations taken from independent truth, never from the
-placer's own output. The synthetic edge cases live in `test_placer.py` and `test_sonarr_mapper.py`.
-Each case runs twice, through the grab-time scope and through the import-time
-mapper, so a seed and its import wait can never disagree.
+placer's own output. The synthetic edge cases live in `test_placer.py`. Each case
+runs through the grab's placement, whose map the import imports as is.
 """
 
 import json
@@ -17,20 +16,17 @@ from pydantic import BaseModel, RootModel
 
 from pearlarr.grab_placement import SeedFile, SeedScope, place_release
 from pearlarr.manual_import import EntryNames, normalize_basename
-from pearlarr.placement_types import NO_EVIDENCE, episode_index
+from pearlarr.placement_types import episode_index
 from pearlarr.seadex_types import (
     EpisodeRecord,
     Json,
-    ManualImportCandidate,
     ParsedFileInfo,
     SonarrEpisode,
 )
-from pearlarr.sonarr_mapper import FileEpisodeMapper
 
-from .builders import indexes_for, known_torrent, pending_import, place
-from .fakes import FakeSonarrClient
+from .builders import new_torrent, seed_scope
 
-_CATALOG = Path(__file__).parent / "fixtures" / "sonarr" / "mapper_shapes.json"
+_CATALOG = Path(__file__).parent / "fixtures" / "sonarr" / "placement_shapes.json"
 
 
 class ShapeTag(StrEnum):
@@ -131,7 +127,9 @@ def _scope(case: ShapeCase) -> SeedScope:
     """The grab-time scope: the entry's slice of the whole-series index, and the names."""
 
     index = episode_index(case.episodes)
-    return SeedScope(1, episode_index([index.by_id[episode_id] for episode_id in case.entry_ids]), index, _names(case))
+    return seed_scope(
+        episode_index([index.by_id[episode_id] for episode_id in case.entry_ids]), index, names=_names(case)
+    )
 
 
 def _parsed(case: ShapeCase) -> dict[str, ParsedFileInfo]:
@@ -141,56 +139,27 @@ def _parsed(case: ShapeCase) -> dict[str, ParsedFileInfo]:
 
 
 @pytest.mark.parametrize("case", _PARAMS)
-def test_seed_places_captured_shape(case: ShapeCase) -> None:
-    """The grab-time scope places every captured file where independent truth puts it."""
+def test_the_grab_places_the_captured_shape(case: ShapeCase) -> None:
+    """The grab places every captured file where independent truth puts it.
 
-    scope = _scope(case)
-
-    result = place(_parsed(case), scope.target(NO_EVIDENCE))
-
-    assert result.assigned == case.expected
-    assert {placement.name for placement in result.excluded} == set(case.expected_excluded)
-
-
-@pytest.mark.parametrize("case", _PARAMS)
-def test_the_grab_records_the_placed_episodes(case: ShapeCase) -> None:
-    """The records the planner judges coverage by are exactly the placed episodes' numbers, sized per file."""
+    The records the planner judges coverage by are the placed episodes' numbers, sized per file.
+    """
 
     scope = _scope(case)
     parsed = _parsed(case)
     files = [SeedFile(name, size, parsed[name]) for size, name in enumerate(case.parses, start=1)]
 
-    placement = place_release(files, scope, known_torrent())
+    placement = place_release(files, scope, new_torrent(scope))
 
-    expected = [
+    assignment = placement.assignment
+    assert assignment.assigned == {normalize_basename(name): ids for name, ids in case.expected.items()}
+    assert {p.name for p in assignment.excluded} == {normalize_basename(name) for name in case.expected_excluded}
+    assert list(placement.records) == [
         EpisodeRecord(scope.series.by_id[ep_id].season_number, scope.series.by_id[ep_id].episode_number, size)
         for size, name in enumerate(case.parses, start=1)
         for ep_id in case.expected.get(name, ())
     ]
-    assert list(placement.records) == expected
     assert placement.inputs_known
-
-
-@pytest.mark.parametrize("case", _PARAMS)
-def test_mapper_matches_the_seed(case: ShapeCase) -> None:
-    """The import-time mapper reaches the same verdicts from the same capture."""
-
-    parsed = _parsed(case)
-    mapper = FileEpisodeMapper(FakeSonarrClient(parse_fn=parsed.get))
-    pending = pending_import(
-        file_episode_map={},
-        ordered_episode_ids=list(case.entry_ids),
-        seadex_files=list(case.parses),
-        names=_names(case),
-    )
-    candidates = mapper.candidate_files([ManualImportCandidate(path=f"/dl/{name}") for name in case.parses])
-
-    assignment = mapper.assign(pending, candidates, indexes_for(pending, episode_index(case.episodes)))
-
-    assert assignment.assigned == {normalize_basename(name): ids for name, ids in case.expected.items()}
-    assert {placement.name for placement in assignment.excluded} == {
-        normalize_basename(name) for name in case.expected_excluded
-    }
 
 
 def test_every_shape_tag_carries_a_case() -> None:

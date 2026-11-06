@@ -369,7 +369,7 @@ class ImportWaitManager:
         self._ctx.pending_states[key] = PENDING_STATE_FOR_OUTCOME[outcome]
 
     def absorb_probe(self, record: PendingImport, probe: ImportProbe) -> PendingImport:
-        """Persist a poll's import-time placements and exclusions onto the record and return the healed copy."""
+        """Persist the files a poll's Sonarr history placed onto the record and return the healed copy."""
 
         return self._records.absorb_probe(record, probe)
 
@@ -683,7 +683,7 @@ class _MonitorRow:
     """One record's live state within a monitor pass. The row owns its `TorrentView` presentation."""
 
     record: PendingImport
-    """The durable record this row tracks, replaced by its placement-carrying copy after a placing poll."""
+    """The durable record this row tracks, replaced after a poll whose probe placed files from Sonarr's history."""
     dl_start: float
     """Download-phase clock, stamped at construction."""
     carried_over: bool
@@ -964,8 +964,8 @@ class MonitorPass:
             if clock is None:
                 continue
             progress = self._mgr.probes.import_progress(row.record)
-            # Indeterminate (a partial seed map) means no bar and no promotion. The heavy poll's repaired
-            # done-check finishes the row.
+            # Indeterminate (a partial seed map) means no bar and no promotion. The heavy poll's done-check
+            # finishes the row.
             if not progress.determinate or progress.total <= 0:
                 continue
             clock.note_progress(progress.done, progress.total, self._clock.now())

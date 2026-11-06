@@ -75,17 +75,13 @@ class SonarrParseRecord(TypedDict):
 
 
 def to_parse_record(info: ParsedFileInfo) -> dict[str, Json]:
-    """The JSON the cache persists for one parse: every field but `offline`.
+    """The JSON the cache persists for one parse.
 
-    The matched pairs' ids ride along so a seed cross-checks them exactly as the
-    import poll's live parse does. A series re-add renumbers them, which only
-    weakens the seed until the row expires (the poll places from a live parse).
-    An offline stand-in is never persisted.
+    The matched pairs' ids ride along so a seed cross-checks them against the series map, which refuses a
+    wrong-series match. A series re-add renumbers them, which only weakens the seed until the row expires.
     """
 
-    if info.offline:
-        raise ValueError("an offline SxxExx stand-in is never a cache record")
-    return info.model_dump(mode="json", exclude={"offline"})
+    return info.model_dump(mode="json")
 
 
 def parsed_info(record: Mapping[str, object]) -> ParsedFileInfo | None:

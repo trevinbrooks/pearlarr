@@ -49,7 +49,7 @@ flowchart LR
 | Grabbing | `grab_pipeline`, `torrents` | tracker page parsing, qBittorrent adds, per-release outcomes |
 | Import wait | `manual_import`, `sonarr_import`, `probe_verdicts`, `episode_state`, `import_files`, `import_quality`, `import_wait`, `wait_view` | waiting on downloads, Sonarr queue classification, the never-overwrite check, the series-pinned manual import, the per-file plan and its quality key |
 | TVDB orders | `tvdb_orders`, `skyhook_client`, `skyhook_gateway` | the TVDB episode orders (aired, DVD, and the others TVDB lists) of the Sonarr series a run reads, fetched from Sonarr's metadata service and kept per series in `cache.db` |
-| Placement | `placement_types`, `parse_reading`, `release_names`, `episode_titles`, `placer/*`, `window_placement`, `grab_placement`, `torrent_listings`, `listing_fold`, `video_files`, `sonarr_mapper`, `sonarr_parse` | mapping a release's files onto episodes at grab time and at import time, the series' SeaDex listings and size identities it uses, and the Sonarr `/parse` cache the placement reads |
+| Placement | `placement_types`, `parse_reading`, `release_names`, `episode_titles`, `placer/*`, `window_placement`, `grab_placement`, `torrent_listings`, `listing_fold`, `video_files`, `sonarr_parse` | mapping a release's files onto episodes at grab time, the series' SeaDex listings and size identities it uses, and the Sonarr `/parse` cache the placement reads |
 | State | `cache`, `stamps`, `pending_records` | the SQLite decision cache, staged writes, backup/restore, the shared timestamp format, the pending-record seam over the store |
 | Output | `output/*`, `log`, `console_caps`, `boot_flow` | the event hub, renderers, the always-on file log |
 | Notifications | `notify`, `discord` | Discord embeds, the generic wait webhook |
@@ -85,6 +85,7 @@ The predecessor `cache.json` was rejected for having no atomicity, no partial-fa
 ### Manual import: our mapping is authoritative
 
 The wait pass treats Sonarr's *episode files and queue* as ground truth for what landed, but never trusts Sonarr's candidate parse for what a file *is*: the AniList-derived episode mapping assigns files to episodes (`ordered_episode_ids`), because SeaDex releases routinely carry specials and orderings Sonarr misparses.
+The import places nothing. It imports the map the grab placed, plus the files Sonarr's history placed for a download no scan saw, and reports a file on disk the map lacks: a warned skip, an unmatched outcome, or a file the grab left for a hand import.
 Sonarr is always given the chance to import first. The manual import only steps in for blocked or untracked downloads, and a clean `importPending` row always waits (see the invariants below).
 Rejected: reusing Sonarr's manual-import candidates as the mapping source, the exact misparse the feature exists to correct.
 
@@ -96,6 +97,9 @@ Rejected: reusing Sonarr's manual-import candidates as the mapping source, the e
 | release / release group | A torrent listed on an entry / the group that made it. |
 | grab | Adding a torrent to qBittorrent. |
 | import | The arr (or Pearlarr's manual import) moving finished files into the library. |
+| window | The episodes of one entry, on its Sonarr series, that a torrent's files are placed against. |
+| listing | Every entry SeaDex lists a torrent on, each with its window, plus the special aliases that can place a misnumbered specials pack. A torrent is placed under every window its listing and its claims name, season windows first, then specials windows. |
+| claim | An entry's stake in a pending import: the entry grabbed the torrent, and its window's files import onto its episodes. A file a listed entry with no claim places is that entry's, never imported for another. |
 | run | One sweep over every configured arr: a single `pearlarr run single`, or one scheduled cycle. |
 | cycle | One scheduled-loop iteration (every configured arr, once). |
 | wait pass | The post-grab phase that waits for downloads and drives imports. |

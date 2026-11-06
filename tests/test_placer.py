@@ -10,11 +10,13 @@ from typing import ClassVar
 
 import pytest
 
-from pearlarr.manual_import import NO_IDENTIFIED, EntryNames, IdentifiedNames
+from pearlarr.manual_import import EntryNames
 from pearlarr.placement_types import (
     EMPTY_LISTING,
+    NO_IDENTIFIED,
     EpisodeAssignment,
     EpisodeIndex,
+    IdentifiedNames,
     ListingEvidence,
     Placement,
     PlacementVerdict,
@@ -23,7 +25,18 @@ from pearlarr.placement_types import (
 )
 from pearlarr.seadex_types import EpisodeKey, MatchedEpisode, ParsedFileInfo
 
-from .builders import blind, by_name, numbered_names, parsed_info, place, series_index, specials_pack, verdicts_of
+from .builders import (
+    blind,
+    by_name,
+    entry_window,
+    numbered_names,
+    parsed_info,
+    place,
+    series_index,
+    specials_pack,
+    torrent_listing,
+    verdicts_of,
+)
 
 _GONE = "gone.mkv"
 """A name outside the batch: parsed blind it keeps the numberless zip out, unparsed (None) it holds the batch."""
@@ -1407,21 +1420,10 @@ class TestAbsoluteDuplicateTell:
         # The control: drop the sharer and the very same file takes the spare id.
         assert alone.assigned == {"e-12v2.mkv": (2587,)}
 
-    @pytest.mark.parametrize(
-        ("name", "sharer"),
-        [
-            pytest.param("e-12.mkv", None, id="a blipped parse"),
-            pytest.param("e-s01e12.mkv", parsed_info(season=1, episodes=(12,), offline=True), id="an offline parse"),
-        ],
-    )
-    def test_a_sharer_parse_blind_to_absolutes_refuses_the_positional_leg(
-        self, name: str, sharer: ParsedFileInfo | None
-    ) -> None:
-        # A parse the caller couldn't get, or the offline stand-in that knows nothing of absolutes,
-        # may be hiding the duplicate: the zip fails closed.
-        parsed = {name: sharer, "e-12v2.mkv": parsed_info(season=0, absolutes=(12,), matched=((1, 12),))}
+    def test_a_sharer_parse_the_caller_couldnt_get_refuses_the_positional_leg(self) -> None:
+        parsed = {"e-12.mkv": None, "e-12v2.mkv": parsed_info(season=0, absolutes=(12,), matched=((1, 12),))}
 
-        result = place(parsed, TargetScope([2587], series_index({})), seeded={name: (2586,)})
+        result = place(parsed, TargetScope([2587], series_index({})), seeded={"e-12.mkv": (2586,)})
 
         assert result.assigned == {}
         assert by_name(result) == {"e-12v2.mkv": ((), PlacementVerdict.SKIPPED)}
@@ -1570,15 +1572,8 @@ class TestAssignNumberlessZip:
         assert surplus_ids.assigned == {}
         assert surplus_ids.skipped == ("sp1.mkv",)
 
-    @pytest.mark.parametrize(
-        "third",
-        [
-            pytest.param(None, id="a parse the caller couldn't get"),
-            pytest.param(parsed_info(offline=True), id="the offline stand-in"),
-        ],
-    )
-    def test_a_parse_that_is_no_real_numberless_read_refuses_the_zip(self, third: ParsedFileInfo | None) -> None:
-        parsed = {**blind(["sp1.mkv", "sp2.mkv"]), "sp3.mkv": third}
+    def test_a_parse_the_caller_couldnt_get_refuses_the_zip(self) -> None:
+        parsed = {**blind(["sp1.mkv", "sp2.mkv"]), "sp3.mkv": None}
 
         result = place(parsed, TargetScope([901, 902, 903], series_index({})))
 
@@ -2761,12 +2756,20 @@ class TestRereadSeasonRun:
 # Twenty-five specials and one seasoned episode, the series the specials pack tests place into.
 _SPECIALS_MAP: dict[EpisodeKey, int] = {**{EpisodeKey(0, n): 500 + n for n in range(1, 26)}, EpisodeKey(1, 1): 601}
 _SPECIALS_INDEX = series_index(_SPECIALS_MAP)
+
+
+def _listing(*ids: int) -> TorrentListing:
+    """A torrent one entry lists, over the specials `ids`."""
+
+    return torrent_listing(entry_window(1, ids))
+
+
 # The eight specials the entries list (7, 12, 13, 15, 17, 20, 22 and 23), and a pack as wide numbered another way.
-_EIGHT_LISTED = frozenset({507, 512, 513, 515, 517, 520, 522, 523})
-_EIGHT_LISTING = TorrentListing(_EIGHT_LISTED)
+_EIGHT_WINDOW = entry_window(1, (507, 512, 513, 515, 517, 520, 522, 523))
+_EIGHT_LISTING = torrent_listing(_EIGHT_WINDOW)
 _PACK_NUMBERS = (7, 13, 14, 15, 16, 17, 18, 19)
 # A listing of three specials, room for a three-wide pack numbered 1, 2 and 3 to miss it.
-_THREE_LISTING = TorrentListing(frozenset({502, 504, 506}))
+_THREE_LISTING = _listing(502, 504, 506)
 
 
 def _specials_scope(
@@ -2806,7 +2809,7 @@ class TestRefuseMisnumbered:
         # listing's order is the pack's. The whole pack is a human's.
         result = place(
             specials_pack(*range(1, 9)),
-            _specials_scope([501, 502, 503], TorrentListing(frozenset({*range(501, 508), 520}))),
+            _specials_scope([501, 502, 503], _listing(*range(501, 508), 520)),
         )
 
         assert verdicts_of(result) == {PlacementVerdict.MISNUMBERED}
@@ -2820,9 +2823,7 @@ class TestRefuseMisnumbered:
         assert {placed[name][1] for name in specials_pack(1, 2, 3)} == {PlacementVerdict.MISNUMBERED}
 
     def test_a_pack_the_listing_agrees_with_places_by_number(self) -> None:
-        placed = by_name(
-            place(specials_pack(1, 2, 3), _specials_scope([501, 502, 503], TorrentListing(frozenset({501, 502, 503}))))
-        )
+        placed = by_name(place(specials_pack(1, 2, 3), _specials_scope([501, 502, 503], _listing(501, 502, 503))))
 
         assert placed == {
             "Show.S00E01.mkv": ((501,), PlacementVerdict.EXACT),
@@ -2832,9 +2833,7 @@ class TestRefuseMisnumbered:
 
     def test_a_listing_with_a_seasoned_episode_is_no_specials_listing(self) -> None:
         # A season's numbering is stable: a number outside it is a mislisting, never a shifted count.
-        placed = by_name(
-            place(specials_pack(1, 2, 3), _specials_scope([501, 502], TorrentListing(frozenset({501, 502, 601}))))
-        )
+        placed = by_name(place(specials_pack(1, 2, 3), _specials_scope([501, 502], _listing(501, 502, 601))))
 
         assert placed == {
             "Show.S00E01.mkv": ((501,), PlacementVerdict.EXACT),
@@ -2843,9 +2842,7 @@ class TestRefuseMisnumbered:
         }
 
     def test_a_listing_of_another_width_stands_down(self) -> None:
-        placed = by_name(
-            place(specials_pack(1, 2, 3), _specials_scope([501, 502], TorrentListing(frozenset({501, 502, 504, 505}))))
-        )
+        placed = by_name(place(specials_pack(1, 2, 3), _specials_scope([501, 502], _listing(501, 502, 504, 505))))
 
         assert placed["Show.S00E01.mkv"] == ((501,), PlacementVerdict.EXACT)
         assert placed["Show.S00E03.mkv"] == ((), PlacementVerdict.FOREIGN)
@@ -2895,7 +2892,7 @@ class TestRefuseMisnumbered:
             "Show.S00E01.BluRay.mkv": parsed_info(season=0, episodes=(1,), matched=((0, 1),)),
         }
 
-        result = place(pack, _specials_scope([501, 503], TorrentListing(frozenset({501, 503, 505}))))
+        result = place(pack, _specials_scope([501, 503], _listing(501, 503, 505)))
 
         assert PlacementVerdict.MISNUMBERED not in verdicts_of(result)
         assert result.assigned["Show.S00E03.mkv"] == (503,)
@@ -2906,7 +2903,7 @@ class TestRefuseMisnumbered:
             "Show.S00E02-E03.mkv": parsed_info(season=0, episodes=(2, 3), matched=((0, 2), (0, 3))),
         }
 
-        result = place(pack, _specials_scope([502, 504], TorrentListing(frozenset({502, 504}))))
+        result = place(pack, _specials_scope([502, 504], _listing(502, 504)))
 
         assert PlacementVerdict.MISNUMBERED not in verdicts_of(result)
 
@@ -2969,7 +2966,7 @@ class TestRefuseMisnumbered:
         assert sorted(result.skipped) == sorted(pack)
 
     def test_a_number_the_series_lacks_refuses_the_pack(self) -> None:
-        result = place(specials_pack(1, 2, 26), _specials_scope([501, 502], TorrentListing(frozenset({501, 502, 503}))))
+        result = place(specials_pack(1, 2, 26), _specials_scope([501, 502], _listing(501, 502, 503)))
 
         assert verdicts_of(result) == {PlacementVerdict.MISNUMBERED}
 
@@ -3000,7 +2997,7 @@ class TestAlternateNumbering:
 
     # Maps the pack's numbers onto the eight listed specials.
     _ALIASES: ClassVar[dict[int, int]] = {7: 7, 13: 12, 14: 13, 15: 15, 16: 17, 17: 20, 18: 22, 19: 23}
-    _LISTING: ClassVar[TorrentListing] = TorrentListing(_EIGHT_LISTED, _ALIASES)
+    _LISTING: ClassVar[TorrentListing] = torrent_listing(_EIGHT_WINDOW, aliases=_ALIASES)
 
     def test_each_member_goes_on_its_aliased_special_or_stays_aliased_outside_the_window(self) -> None:
         placed = by_name(place(specials_pack(*_PACK_NUMBERS), _specials_scope([507, 512, 513], self._LISTING)))
@@ -3034,7 +3031,8 @@ class TestAlternateNumbering:
     )
     def test_aliases_not_one_to_one_onto_the_listing_refuse_the_pack(self, aliases: dict[int, int]) -> None:
         result = place(
-            specials_pack(*_PACK_NUMBERS), _specials_scope([507, 512, 513], TorrentListing(_EIGHT_LISTED, aliases))
+            specials_pack(*_PACK_NUMBERS),
+            _specials_scope([507, 512, 513], torrent_listing(_EIGHT_WINDOW, aliases=aliases)),
         )
 
         assert verdicts_of(result) == {PlacementVerdict.MISNUMBERED}

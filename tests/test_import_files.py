@@ -4,9 +4,9 @@
 from typing import ClassVar
 
 from pearlarr.episode_state import EpisodeFileStatus
-from pearlarr.import_files import CandidateFile, plan_import_files
+from pearlarr.import_files import CandidateFile, DiskLeftover, candidate_files, disk_leftover, plan_import_files
 
-from .builders import target_statuses
+from .builders import manual_candidate, pending_import, target_statuses
 
 
 def _candidate(basename: str, *, sample: bool = False, already: bool = False) -> CandidateFile:
@@ -127,3 +127,28 @@ class TestOwnCopyAlongside:
         [decision] = plan_import_files({"one.mkv": (21,)}, {"one.mkv": _candidate("one.mkv")}, statuses)
 
         assert decision.episode_ids == (21,)
+
+
+class TestDiskLeftover:
+    """`disk_leftover`: the scan's video files the map lacks, split by what the record says of them."""
+
+    def test_the_leftover_runs_in_seadex_order_then_disk_order_split_by_the_record(self) -> None:
+        # On disk: an unlisted file first, a subtitle, a duplicate leaf in a second folder, and four listed files.
+        scan = candidate_files(
+            manual_candidate(f"/d/{path}")
+            for path in ("extra.mkv", "c.ass", "sub/b.mkv", "c.mkv", "b.mkv", "a.mkv", "mapped.mkv")
+        )
+        pending = pending_import(
+            seadex_files=["Mapped.mkv", "A.mkv", "B.mkv", "C.mkv"],
+            excluded_files=["b.mkv"],
+            hand_import_files=["c.mkv"],
+        )
+
+        leftover = disk_leftover(pending, scan, {"mapped.mkv": (101,)})
+
+        assert leftover == DiskLeftover(
+            names=("a.mkv", "b.mkv", "c.mkv", "extra.mkv"),
+            reported=("a.mkv", "c.mkv", "extra.mkv"),
+            hand_import_files=("c.mkv",),
+        )
+        assert leftover.skips == ("a.mkv", "extra.mkv")

@@ -77,7 +77,8 @@ CREATE INDEX IF NOT EXISTS ix_sonarr_parse_fetched ON sonarr_parse (fetched_at);
 
 CREATE TABLE IF NOT EXISTS pending_imports (
     arr      TEXT NOT NULL,
-    -- One record per torrent (lowercase hash): every entry listing it rides the record as a claim.
+    -- One record per torrent (lowercase hash): every entry that grabbed it rides the record as a claim, beside the
+    -- grab's map of its files, which the import imports.
     infohash TEXT NOT NULL,
     record   BLOB NOT NULL,
     PRIMARY KEY (arr, infohash)

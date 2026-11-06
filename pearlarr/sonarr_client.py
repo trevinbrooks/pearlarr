@@ -161,8 +161,8 @@ class SonarrClient(AbstractSonarrClient):
 
         `parsedEpisodeInfo` carries series-agnostic numbers lifted from the release name (populated even when
         Sonarr matches no library series) and `episodes` the series-matched pairs. None is a failure that must
-        NOT be cached. One transport for the sweep and the import wait: /parse is a string parse, never a disk
-        scan, so the main handle's in-call retries and client timeout fit both.
+        NOT be cached. /parse is a string parse, never a disk scan, so the main handle's in-call retries and
+        client timeout fit it.
         """
 
         payload = self._http.get_json_dict(

@@ -282,7 +282,7 @@ A self-contained one-line result for a title: `message` is the state word, `titl
 
 ### `release_skipped`
 
-A release was skipped at add time. `reason` is `private_only`, `unsupported_tracker`, `tracker_not_selected`, `misnumbered`, `title_refuted`, or `input_unread`.
+A release was skipped at add time. `reason` is `private_only`, `unsupported_tracker`, `tracker_not_selected`, `misnumbered`, `title_refuted`, `placed_elsewhere`, or `input_unread`. On `placed_elsewhere`, `elsewhere` counts the release's files another title holds and `unplaced` the rest, which nothing placed.
 
 ```json
 {

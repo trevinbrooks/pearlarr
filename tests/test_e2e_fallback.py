@@ -23,21 +23,20 @@ Seven scenarios pin the import wait end to end:
   back to the downloadId scan and imports through the normal tracked shape.
 * UNSCANNABLE: both scans fail every poll. The record defers (never drops)
   and the folder-scan warn template fires.
-* ABSOLUTE-BATCH: dead-tracked with the real Thighs incident's file shape - an
-  empty grab-time map, absolute-only names resolved through Sonarr's
-  series-matched `/parse` pairs, and an out-of-entry sibling episode + NC
-  extra sharing the folder that must be skipped, never veto the batch.
+* ABSOLUTE-BATCH: dead-tracked with the real Thighs incident's file shape -
+  absolute-only names the grab mapped, an out-of-entry sibling episode it
+  excluded, and an NC extra sharing the folder. The map imports as is, with
+  no `/parse`, and the sibling and the extra never warn or reach the wire.
 * IMPORTED-UNSEEN: Sonarr imported the download before any scan saw its
   files. The by-id scan is dead, the folder is empty, and the history rows
   rebuild the empty grab-time map, which the episode files verify at once.
 * NUMBERLESS: dead-tracked with three numberless names for a two-episode
-  record. No leg can place them on any poll, so the first poll ends the wait
-  with the `unmatched` outcome naming the files, and the record stays for a
-  human.
+  record. The grab placed none, so the first poll ends the wait with the
+  `unmatched` outcome naming the files, and the record stays for a human.
 * NUMBERLESS-BY-HAND: the same download after its files were imported by
-  hand in Sonarr (a copy import, so the folder still holds them). No leg can
-  place them now either, but every intended episode holds the record's own
-  group, so the first poll verifies it imported and the torrent moves category.
+  hand in Sonarr (a copy import, so the folder still holds them). The map
+  still lacks them, but every intended episode holds the record's own group,
+  so the first poll verifies it imported and the torrent moves category.
 """
 
 import json
@@ -90,8 +89,7 @@ _ABS_FILES: tuple[tuple[int, str], ...] = (
 )
 _ABS_SIBLING = "Demo Batch - 03 (BD 1080p) [Thighs].mkv"
 _ABS_EXTRA = "Demo Batch - NCED1 (BD 1080p) [Thighs].mkv"
-_ABSOLUTE_NUMBER = re.compile(r" - (\d{2}) ")
-# Three names carrying no episode number, for the two-episode record: no leg can place them.
+# Three names carrying no episode number, for the two-episode record: the grab placed none.
 _NUMBERLESS_FILES = (
     "Demo Batch - Movie Part One (BD 1080p) [Thighs].mkv",
     "Demo Batch - Movie Part Two (BD 1080p) [Thighs].mkv",
@@ -125,12 +123,12 @@ _DOWNLOAD_CLIENTS: Json = [
 
 
 class _Listing(StrEnum):
-    """The file names a scenario's download carries, which decides what the import has to place."""
+    """The file names a scenario's download carries, which decides what the grab's map holds."""
 
     EPISODES = "episodes"
     """`SxxExx` names, mapped at grab time."""
     ABSOLUTE = "absolute"
-    """Absolute-only names over an empty map, with an out-of-entry sibling and an NC extra on disk."""
+    """Absolute-only names the grab mapped, with an out-of-entry sibling it excluded and an NC extra on disk."""
     NUMBERLESS = "numberless"
     """Three names with no episode number for two episodes: nothing can place them."""
 
@@ -160,10 +158,9 @@ class _Scenario:
 
     listing: _Listing = _Listing.EPISODES
     """The download's file names. ABSOLUTE replays the real Thighs incident
-    shape: an EMPTY grab-time map, absolute-only names, and an out-of-entry
-    sibling + NC extra in the folder. The import must self-heal through
-    `/parse`'s series-matched pairs, with the sibling skipped instead of
-    vetoing the batch. NUMBERLESS serves names nothing can place."""
+    shape: absolute-only names the grab mapped, and an out-of-entry sibling it
+    excluded + an NC extra in the folder. The import must carry the map alone,
+    the sibling quiet. NUMBERLESS serves names nothing can place."""
 
     imported_unseen: bool = False
     """Sonarr imported the download before any scan saw its files: an EMPTY
@@ -403,33 +400,6 @@ class _World:
             return neutral + rescans + imports
 
 
-def _parse_payload(title: str) -> Json:
-    """Sonarr's `/parse` for the absolute batch, mirroring the live wire.
-
-    `parsedEpisodeInfo` carries the absolute number with NO (season, episode).
-    The series-MATCHED `episodes` array resolves it to a concrete pair (with
-    Sonarr's episode id, so the id-consistency check runs end to end). A name
-    without a two-digit absolute folds to a null object and no episodes - the
-    live NC-extra shape, though the video filter keeps such files from ever
-    being parsed in this scenario.
-    """
-
-    match = _ABSOLUTE_NUMBER.search(title)
-    if match is None:
-        return {"title": title, "parsedEpisodeInfo": None, "episodes": []}
-    number = int(match.group(1))
-    return {
-        "title": title,
-        "parsedEpisodeInfo": {
-            "seasonNumber": 0,
-            "episodeNumbers": [],
-            "absoluteEpisodeNumbers": [number],
-            "special": False,
-        },
-        "episodes": [{"id": 301000 + number, "seasonNumber": 1, "episodeNumber": number}],
-    }
-
-
 def _scenario_files(listing: _Listing) -> list[str]:
     """The on-disk file names a scan serves (sibling + extra exist on disk only)."""
 
@@ -547,8 +517,6 @@ class _SonarrHandler(_JsonHandler):
             self._send_json({"page": 1, "pageSize": 1000, "totalRecords": 0, "records": []})
         elif route == "/api/v3/history":
             self._send_json(self.world.history_payload())
-        elif route == "/api/v3/parse":
-            self._send_json(_parse_payload(request.params.get("title", "")))
         elif route == "/api/v3/manualimport":
             self._manual_import(request)
         elif route == "/api/v3/command":
@@ -675,16 +643,17 @@ def _serve(world: _World) -> Generator[tuple[str, str]]:
 def _seed_pending(cache_path: Path, checksum: str, scenario: _Scenario) -> None:
     """Plant the carried-over record a prior run's grab would have left behind.
 
-    The absolute-batch scenario's record carries an EMPTY grab-time map (the
-    incident state: grab time resolved nothing, import time must self-heal).
-    Its `seadex_files` still name the episode files - never the extra, which
-    only exists on disk. The imported-unseen record's map is empty too: the
-    rebuild from Sonarr's history has to fill it. The numberless record's map
-    is empty as well, and its listing names the three files nothing can place.
+    The absolute-batch scenario's record maps its two episode files and
+    excludes the sibling as another slice's. Its `seadex_files` name all three,
+    never the extra, which only exists on disk. The imported-unseen record's
+    map is empty: the rebuild from Sonarr's history has to fill it. The
+    numberless record's map is empty as well, and its listing names the three
+    files nothing can place.
     """
 
     named = _ABS_FILES if scenario.listing is _Listing.ABSOLUTE else _EPISODES
-    mapped = scenario.listing is _Listing.EPISODES and not scenario.imported_unseen
+    siblings = (_ABS_SIBLING,) if scenario.listing is _Listing.ABSOLUTE else ()
+    mapped = scenario.listing is not _Listing.NUMBERLESS and not scenario.imported_unseen
     stamp = stamp_of(datetime.now() - timedelta(minutes=5))
     claim = EntryClaim(
         al_id=_AL_ID,
@@ -704,9 +673,10 @@ def _seed_pending(cache_path: Path, checksum: str, scenario: _Scenario) -> None:
         is_dual_audio=False,
         seadex_files=tuple(_NUMBERLESS_FILES)
         if scenario.listing is _Listing.NUMBERLESS
-        else tuple(name for _, name in named),
+        else (*(name for _, name in named), *siblings),
         added_at=stamp,
         file_episode_map={normalize_basename(name): (ep_id,) for ep_id, name in named} if mapped else {},
+        excluded_files=tuple(normalize_basename(name) for name in siblings),
         claims=(claim,),
     )
     store = CacheStore.load(str(cache_path), config_checksum=checksum)
@@ -899,7 +869,7 @@ def test_transient_scan_blip_does_not_pin_folder_mode(
         assert entry.get("downloadId") == _INFOHASH.upper()
 
 
-def test_absolute_batch_empty_seed_self_heals_and_sibling_is_skipped(
+def test_absolute_batch_imports_the_grabs_map_and_the_excluded_sibling_stays_quiet(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
     capsys: pytest.CaptureFixture[str],
@@ -907,14 +877,12 @@ def test_absolute_batch_empty_seed_self_heals_and_sibling_is_skipped(
     outcome = _drive(tmp_path, monkeypatch, _ABSOLUTE_BATCH)
     out = _flat(capsys.readouterr().out)
 
-    # The real Thighs incident shape: the entry's own files place exactly and
-    # import. The out-of-entry sibling resolves to an episode of the series
-    # outside the entry, so it is another slice's (excluded), never a veto and
-    # never a warning.
+    # The grab mapped the entry's own files and excluded the out-of-entry sibling as another slice's.
     _assert_converged_imported(outcome, out)
     assert "could not be matched to an episode" not in out
+    assert outcome.world.requests_for("/api/v3/parse") == []
 
-    # ONE ManualImport carrying exactly the two episode files on their matched
+    # ONE ManualImport carrying exactly the two episode files on their mapped
     # ids. Neither the sibling nor the extra ever reached the wire.
     commands = outcome.world.manual_commands
     assert len(commands) == 1

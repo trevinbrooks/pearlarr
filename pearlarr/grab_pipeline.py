@@ -1,10 +1,10 @@
 """The grab "produce" side: add torrents, register pending records, write cache."""
 
-from collections.abc import Mapping
+from collections.abc import Iterable, Mapping
 from dataclasses import dataclass
 from datetime import datetime
 from types import MappingProxyType
-from typing import TYPE_CHECKING, assert_never
+from typing import TYPE_CHECKING
 
 from seadex import EntryRecord
 
@@ -35,6 +35,46 @@ if TYPE_CHECKING:
 
 NO_SEEDS: Mapping[str, PendingSeed] = MappingProxyType({})
 """No seeds: the strategies build them only when a record can be persisted (the wait mode is on)."""
+
+
+@dataclass(frozen=True, slots=True)
+class HoldRow:
+    """What the run reports for a url the placement held: its skip line and its title's needs-action row."""
+
+    skip: SkipReason
+    kind: NeedsActionKind
+    reason: str
+    """The needs-action row's reason text."""
+
+
+# The order is the precedence `_classify_needs_action` reports holds in: the first hand-import hold found here
+# wins, and any other hold is reported only when no hand-import hold and no failed grab is.
+_HOLD_ROWS: Mapping[GrabHold, HoldRow] = MappingProxyType(
+    {
+        GrabHold.MISNUMBERED: HoldRow(
+            SkipReason.MISNUMBERED,
+            NeedsActionKind.MISNUMBERED,
+            "numbering does not match its SeaDex listing; import it by hand",
+        ),
+        GrabHold.TITLE_REFUTED: HoldRow(
+            SkipReason.TITLE_REFUTED,
+            NeedsActionKind.TITLE_REFUTED,
+            "file titles contradict its numbering; import it by hand",
+        ),
+        # No retry clears it: the row stays until the entry holds the group's files, so it outranks a failed read.
+        GrabHold.PLACED_ELSEWHERE: HoldRow(
+            SkipReason.PLACED_ELSEWHERE,
+            NeedsActionKind.PLACED_ELSEWHERE,
+            "its files place under another title SeaDex lists it with; any it could not place need a hand import",
+        ),
+        # The placement may have held a run on the missing read, so the grab was judged coarsely: re-check.
+        GrabHold.INPUT_UNREAD: HoldRow(
+            SkipReason.INPUT_UNREAD,
+            NeedsActionKind.PLACEMENT_INPUT_MISSING,
+            "a read the placement needs failed; will retry next run",
+        ),
+    },
+)
 
 
 @dataclass(frozen=True)
@@ -180,19 +220,12 @@ class GrabPipeline:
         if hold is None:
             return True
         # Never added, and the title stays uncached for the next run.
-        match hold:
-            case GrabHold.MISNUMBERED:
-                reason = SkipReason.MISNUMBERED
-                self._ctx.per_title.misnumbered_groups.append(srg)
-            case GrabHold.TITLE_REFUTED:
-                reason = SkipReason.TITLE_REFUTED
-                self._ctx.per_title.title_refuted_groups.append(srg)
-            case GrabHold.INPUT_UNREAD:
-                reason = SkipReason.INPUT_UNREAD
-                self._ctx.per_title.input_missing_groups.append(srg)
-            case _:
-                assert_never(hold)
-        self._reporter.post(ReleaseSkipped(group=srg, tracker=tracker, reason=reason, url=url))
+        self._ctx.per_title.add_held(hold, (srg,))
+        self._reporter.post(
+            ReleaseSkipped(
+                group=srg, tracker=tracker, reason=_HOLD_ROWS[hold].skip, url=url, counts=url_item.hold_counts
+            )
+        )
         return False
 
     def _hold_capped(self, url_item: SeadexUrlItem, req: GrabRequest) -> None:
@@ -313,7 +346,7 @@ class GrabPipeline:
         """Whether this title's outcome may be cached as done.
 
         Only if something was grabbed or nothing was skipped. A url held by the run cap, a fallback hold, a failed
-        grab, a failed read under a placement, a pack the placement refused, or a series without its TVDB orders
+        grab, a failed read under a placement, a url the placement held, or a series without its TVDB orders
         vetoes it.
         """
 
@@ -331,9 +364,7 @@ class GrabPipeline:
             not per_title.held_by_cap
             and not fallback_hold
             and not per_title.grab_failed_groups
-            and not per_title.input_missing_groups
-            and not per_title.misnumbered_groups
-            and not per_title.title_refuted_groups
+            and not per_title.held_groups
             and not per_title.orders_unread
             and (added_this_title > 0 or not (per_title.private_only_skipped or per_title.unsupported_tracker_skipped))
         )
@@ -341,8 +372,10 @@ class GrabPipeline:
     def _classify_needs_action(self) -> NeedsActionRecord | None:
         """The single needs-action row for a title NOT cached as done, or None.
 
-        Flat guard-returns preserve the precedence private-only > unsupported-tracker > misnumbered > title-refuted >
-        grab-failed > read-missed.
+        Flat guard-returns keep the precedence private-only > unsupported-tracker > hand-import holds > grab-failed >
+        the other holds, each in `_HOLD_ROWS` order. A hand import is what no retry brings, so its row outranks a
+        failed grab's. A failed grab is a release the title should have, so its row outranks a url held as another
+        title's or on a failed read.
         """
 
         if self._ctx.per_title.private_only_skipped:
@@ -356,19 +389,9 @@ class GrabPipeline:
                 NeedsActionKind.UNSUPPORTED_TRACKER,
             )
 
-        if self._ctx.per_title.misnumbered_groups:
-            return self._needs_action(
-                self._ctx.per_title.misnumbered_groups,
-                "numbering does not match its SeaDex listing; import it by hand",
-                NeedsActionKind.MISNUMBERED,
-            )
-
-        if self._ctx.per_title.title_refuted_groups:
-            return self._needs_action(
-                self._ctx.per_title.title_refuted_groups,
-                "file titles contradict its numbering; import it by hand",
-                NeedsActionKind.TITLE_REFUTED,
-            )
+        held = self._held_row(hold for hold in _HOLD_ROWS if hold.hand_import)
+        if held is not None:
+            return held
 
         if self._ctx.per_title.grab_failed_groups:
             # No user action needed (the warning named it, the uncached title retries), but the summary must say why
@@ -379,14 +402,17 @@ class GrabPipeline:
                 NeedsActionKind.GRAB_FAILED,
             )
 
-        if self._ctx.per_title.input_missing_groups:
-            # The placement may have held a run on the missing read, so the grab was judged coarsely: re-check.
-            return self._needs_action(
-                self._ctx.per_title.input_missing_groups,
-                "a read the placement needs failed; will retry next run",
-                NeedsActionKind.PLACEMENT_INPUT_MISSING,
-            )
+        return self._held_row(hold for hold in _HOLD_ROWS if not hold.hand_import)
 
+    def _held_row(self, holds: Iterable[GrabHold]) -> NeedsActionRecord | None:
+        """The row of the first of `holds` that held a group of this title, or None."""
+
+        held_groups = self._ctx.per_title.held_groups
+        for hold in holds:
+            groups = held_groups.get(hold)
+            if groups:
+                hold_row = _HOLD_ROWS[hold]
+                return self._needs_action(groups, hold_row.reason, hold_row.kind)
         return None
 
     def _private_only_reason(self) -> tuple[str, NeedsActionKind]:
@@ -420,14 +446,14 @@ class GrabPipeline:
 
         any_to_download = self._planner.get_any_to_download(req.seadex_dict)
         # The strategy's placement facts land on the title's flags beside the add loop's own.
-        self._ctx.per_title.input_missing_groups.extend(req.input_missing_groups)
+        self._ctx.per_title.add_held(GrabHold.INPUT_UNREAD, req.input_missing_groups)
         self._ctx.per_title.orders_unread |= req.orders_unread
 
         added_this_title = 0
 
         if not any_to_download:
             # A failed Sonarr read may have held a placement, so "already have it" is not claimed either.
-            if not (self._ctx.per_title.private_only_skipped or self._ctx.per_title.input_missing_groups):
+            if not (self._ctx.per_title.private_only_skipped or req.input_missing_groups):
                 self._ctx.stats.up_to_date += 1
                 self._reporter.detail(
                     "status",

@@ -274,7 +274,7 @@ class SonarrEpisodes:
                 continue
             if not item.monitored and self._config.sonarr.ignore_unmonitored:
                 continue
-            al_ids = run.get_anilist_ids(ExternalIds(tvdb=item.tvdbId, imdb=item.imdbId), log_ignored=False)
+            al_ids = run.get_anilist_ids(ExternalIds.of_series(item), log_ignored=False)
             if not al_ids:
                 continue
             if not any(run.al_id_needs_scan(aid) for aid in al_ids):

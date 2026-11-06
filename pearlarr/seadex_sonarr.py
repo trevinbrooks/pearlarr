@@ -36,6 +36,7 @@ from .protocols import ArrSync
 from .radarr_client import AbstractRadarrClient, RadarrClient, collect_anime_movies
 from .run_services import RunDeps, RunServices, bind_arr_http
 from .seadex_types import (
+    GrabHold,
     HistoryRecord,
     ProgressSink,
     RadarrItem,
@@ -47,7 +48,6 @@ from .seadex_types import (
 from .sonarr_client import AbstractSonarrClient, SonarrClient
 from .sonarr_episodes import SonarrEpisodes
 from .sonarr_import import ImportExecutor, ImportReconciler
-from .sonarr_mapper import FileEpisodeMapper
 from .sonarr_parse import SonarrParseCache
 from .torrent_listings import SeriesListings
 
@@ -179,27 +179,26 @@ class SonarrSync(ArrSync[SonarrItem]):
         # cache, and builds every episode index with its orders_for.
         self._episodes = SonarrEpisodes(deps, self.sonarr, self._services)
 
-        # Listing collaborator: reads every SeaDex entry of the series once per run. That gives the windows a
-        # specials pack is checked against, and the size identities used to place files.
-        self._listings = SeriesListings(deps.seadex, self._episodes, ignore_tag_set(self._config.seadex.ignore_tags))
+        # Reads every SeaDex entry of the series once per run, for each entry's episode window and the size
+        # identities files are placed by. Window names come from the title ladder an entry's own run uses.
+        self._listings = SeriesListings(
+            deps.seadex,
+            self._episodes,
+            ignore_tag_set(self._config.seadex.ignore_tags),
+            lambda al_id: self._services.resolve_title(al_id).names,
+        )
 
         # Parse-cache collaborator: grab-time `/parse` of SeaDex filenames + the
         # durable, freshness-checked parse cache (read-through the shared cache_store).
         # The run's series fingerprint is threaded per call.
         self._parse = SonarrParseCache(deps, self.sonarr)
 
-        # Import-time file -> episode mapper: owns the gnarly assignment of on-disk
-        # leaves into OUR resolved episode set + the per-run on-disk parse cache.
-        # The import executor calls candidate_files/assign. assign returns the
-        # unplaceable files the executor warns about (producer/consumer split).
-        self._mapper = FileEpisodeMapper(self.sonarr)
-
         # Import-execution collaborator: builds + POSTs the authoritative manual
-        # import from the mapper's resolved map, owns the per-run quality/language
+        # import from the record's map, owns the per-run quality/language
         # caches + the once-per-record rescan, and exposes the queue/command reads
-        # import_completed consults. Built from the shared deps + this client + the
-        # mapper. Its caches reset in get_items, the run-start hook.
-        self._executor = ImportExecutor(deps, self.sonarr, self._mapper)
+        # import_completed consults. Built from the shared deps + this client.
+        # Its caches reset in get_items, the run-start hook.
+        self._executor = ImportExecutor(deps, self.sonarr)
 
         # Import-reconcile collaborator: the import_completed decision + the
         # grab-time pending-seed build. Composes the episode collaborator + the
@@ -245,7 +244,6 @@ class SonarrSync(ArrSync[SonarrItem]):
         as it enumerates (this is called once, before the per-item loop).
         """
 
-        self._mapper.reset()
         self._executor.reset()
         self._listings.reset()
         return self._episodes.collect_series()
@@ -268,7 +266,7 @@ class SonarrSync(ArrSync[SonarrItem]):
         """Resolve AniList ids for a Sonarr series (by TVDB / IMDb id)."""
 
         return self._services.get_anilist_ids(
-            ExternalIds(tvdb=item.tvdbId, imdb=item.imdbId),
+            ExternalIds.of_series(item),
             log_ignored=log_ignored,
         )
 
@@ -452,21 +450,21 @@ class SonarrSync(ArrSync[SonarrItem]):
 
         self.logger.debug(f"SeaDex: {', '.join(seadex_dict)}")
 
-        # Place every listed file where the import will put it, so the grab is judged by the map the import
-        # runs: a torrent already downloading under a stored record is placed as that record's leftover, under
-        # every claim's window, and a specials pack against the windows of every entry listing it. The series
-        # maps are the whole-series lists (a per-run cache hit each).
+        # Place every listed file now: the import imports this map and places nothing, so the grab is judged by
+        # it. Placed under every listing entry's window and every stored claim's, a stored torrent as its record's
+        # leftover. The series maps are the whole-series lists (a per-run cache hit each).
         waits_on_imports = run.import_wait_mode is not ImportWaitMode.OFF
         hashes = entry_hashes(seadex_dict)
         stored: dict[str, PendingImport] = run.records.stored_records(hashes) if waits_on_imports else {}
         series_ids = {sonarr_series_id, *(sid for record in stored.values() for sid in record.series_ids)}
         indexes = self._series_indexes(series_ids)
-        listings = self._listings.read(sonarr_series_id, self.item_anilist_ids(item, log_ignored=False))
+        listings = self._listings.read(sonarr_series_id, self._services.listing_mappings(ExternalIds.of_series(item)))
         scope = SeedScope(
-            al_id,
-            episode_index(ep_list, self._episodes.orders_for(sonarr_series_id)),
-            indexes.get(sonarr_series_id, episode_index([])),
-            title.names,
+            al_id=al_id,
+            series_id=sonarr_series_id,
+            entry=episode_index(ep_list, self._episodes.orders_for(sonarr_series_id)),
+            series=indexes.get(sonarr_series_id, episode_index([])),
+            names=title.names,
         )
         placed = EntryPlacements.place(
             scope,
@@ -570,13 +568,15 @@ class SonarrSync(ArrSync[SonarrItem]):
         for url, placement in placed.by_url.items():
             if not placement.files:
                 continue
-            # The hold and the failed read explain an empty coverage on a listed release.
+            # The hold and the failed read explain an empty coverage on a listed release. A url held on the read
+            # names it once, in its hold.
             aside = ", ".join(p.name for p in placement.assignment.excluded)
             hold = "" if placement.hold is None else f" (not grabbed: {placement.hold})"
+            note_read_failed = not placement.inputs_known and placement.hold is not GrabHold.INPUT_UNREAD
             self.logger.debug(
                 f"{url}: placed {_coverage.coverage_string(list(placement.records)) or 'nothing'}"
-                f"{'' if placement.inputs_known else ' (a read failed)'}{hold}"
-                f"{f'; set aside (other slice / duplicate): {aside}' if aside else ''}"
+                f"{' (a read failed)' if note_read_failed else ''}{hold}"
+                f"{f'; set aside (other slice / another listed title / duplicate): {aside}' if aside else ''}"
             )
 
     @override

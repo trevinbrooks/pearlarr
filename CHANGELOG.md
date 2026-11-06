@@ -7,8 +7,20 @@ Pearlarr is a fork of [bbtufty/seadexarr](https://github.com/bbtufty/seadexarr).
 
 ## [Unreleased]
 
+### Changed
+
+- A torrent SeaDex lists under several titles of a show is placed under every one of them, season titles first, then specials titles, and the titles in `ignore_anilist_ids` after the kept ones of each kind. A file another listed title places is that title's: it's never imported for the title being checked, and that title's own grab imports it, unless that title is in `ignore_anilist_ids`, when nothing does. A file only another listed title's mapping could read, and that title left for a hand import, is reported under that title.
+- A release none of whose files place on the title being checked, while some place under another title SeaDex lists it with, is no longer grabbed for it. The title is listed under "needs action" with "its files place under another title SeaDex lists it with; any it could not place need a hand import", and the release's "skipped" line counts the files, such as "12 files are another title's, 6 could not be placed". The row stays until one of the title's episodes holds a file of the release at its listed size.
+- A pending import no longer places files. It imports the files the grab placed and reports the rest: one the grab left for a hand import keeps the download pending as before, and any other is warned about once a run, or reported unmatched on the first check when nothing else of the download imports. A file the grab left unplaced, such as the leftover of a specials pack whose numbers don't match its listing, or a file in the download SeaDex doesn't list, is no longer imported by its number, as 1.5.7 did.
+- A release with a file name Sonarr's parse couldn't read is held until the next run instead of grabbed, unless every file of it is already placed from an earlier grab. The title is listed under "needs action" with "a read the placement needs failed; will retry next run".
+- While SeaDex can't be read, a release isn't placed at all, since another title it lists may own some of its files. It's held until the next run, as before.
+- A title in `ignore_anilist_ids` is still read when it shares a torrent with another title of the show, so its files are never placed on the other title. It is still never grabbed for. Reading it costs one SeaDex request, since ignored titles aren't in the start-up batch.
+- When a show is read, each title SeaDex lists beside the one being checked has its title looked up, once per listed title per run. The lookup is served from the run's caches, and AniList is asked live only for a title the start-up batch didn't fetch.
+- The first run after upgrading re-checks every cached title once and says so.
+
 ### Fixed
 
+- A batch SeaDex lists under both a show's season and its specials no longer places the season's episodes as specials when the specials title checks it. Before, a specials title checked the batch alone, so a season run it could fit landed on the specials.
 - When Pearlarr runs on Windows, a file whose name has a colon as its second character, such as `K: Return of Kings - 01.mkv`, now imports onto the episodes the grab placed it on. Before, Pearlarr read the `K:` as a drive and dropped it from the name, so the import lost the grab's placement and placed the file again from its name alone.
 - A file whose name has a letter that case-folds to several, such as `ß` or `İ`, followed by a combining accent now imports onto the episodes the grab placed it on. Before, folding the name twice gave a different key than folding it once, so the grab's record and Sonarr's file disagreed and the import placed the file again from its name alone.
 

@@ -22,7 +22,6 @@ from pearlarr.probe_verdicts import (
     in_flight_disk_commands,
     manual_import_in_flight,
 )
-from pearlarr.release_names import parse_se_from_filename
 from pearlarr.seadex_sonarr import SonarrSync
 from pearlarr.seadex_types import (
     CommandResource,
@@ -148,28 +147,6 @@ class TestParsedFileInfoFromRealBodies:
         }
         info = ParsedFileInfo.model_validate(body)
         assert info.matched_episodes == ()
-
-
-class TestParseSeFromFilename:
-    """`parse_se_from_filename` extracts an offline SxxExx pattern, never guessing a bare absolute number."""
-
-    def test_sxxexx_extracted(self) -> None:
-        info = parse_se_from_filename("Show.Name.S00E05.480p.mkv")
-        assert info is not None
-        assert info.season_number == 0
-        assert info.episode_numbers == (5,)
-        # Marked offline: the regex is blind to absolutes, so the absolute
-        # zip's duplicate tell must treat this stand-in as unknown.
-        assert info.offline is True
-
-    def test_dash_separated_sxxexx(self) -> None:
-        info = parse_se_from_filename("Show - S2E3 [1080p].mkv")
-        assert info is not None
-        assert (info.season_number, info.episode_numbers) == (2, (3,))
-
-    def test_bare_absolute_number_is_not_guessed(self) -> None:
-        # "01" alone is NOT an SxxExx: it is left to Sonarr's parse and the absolute zip.
-        assert parse_se_from_filename("Show - 01 [1080p].mkv") is None
 
 
 class TestResolvedIds:
@@ -310,16 +287,6 @@ class TestManualImportInFlightFixture:
         assert not in_flight_disk_commands([c for c in commands if c.status == "completed"])
 
 
-def _replay_specials_parse(raw_base: str) -> ParsedFileInfo | None:
-    """Replay the captured /parse bodies for the two specials by basename."""
-
-    if "S00E01" in raw_base:
-        return _load_parse("parse_yamada_s00e01.json")
-    if "S00E02" in raw_base:
-        return _load_parse("parse_yamada_s00e02.json")
-    return None
-
-
 class _Specials(NamedTuple):
     """The captured specials download wired into a bare `SonarrSync` and its scripted fake."""
 
@@ -327,6 +294,12 @@ class _Specials(NamedTuple):
     sonarr: FakeSonarrClient
     files: list[str]
     """The on-disk basenames of the captured candidates."""
+
+    @property
+    def grab_map(self) -> dict[str, list[int]]:
+        """The map the grab writes for the download: S00E01 and S00E02, the first two of the entry's three specials."""
+
+        return {name: [8030 + i] for i, name in enumerate(self.files)}
 
     def pending(self, **overrides: Any) -> PendingImport:
         """A record for the download (its series, group, and files) with `overrides` applied."""
@@ -336,14 +309,13 @@ class _Specials(NamedTuple):
 
 
 def _specials(config: AppConfig | None = None) -> _Specials:
-    """The captured episode list, candidates, and parses replayed by a fresh fake, under `config`."""
+    """The captured episode list and candidates served by a fresh fake, under `config`."""
 
     candidates = _load_models("manualimport_yamada.json", ManualImportCandidate)
     sonarr = FakeSonarrClient(
         queue=[],  # not tracked, so the poll steps in
         episodes=_load_models("episodes_213_yamada.json", SonarrEpisode),
         candidates=candidates,
-        parse_fn=_replay_specials_parse,
         refresh_count=7,
         command_status=CommandResource(status="completed"),
         quality_defs=[],
@@ -355,24 +327,14 @@ def _specials(config: AppConfig | None = None) -> _Specials:
 
 
 class TestCapturedSpecialsEndToEnd:
-    """Drive `import_completed` with the real fixtures for a specials download Sonarr couldn't match."""
+    """Drive `import_completed` with the real fixtures for a specials download."""
 
-    @pytest.mark.parametrize(
-        "ordered_episode_ids",
-        [
-            # The torrent carries only E01/E02 of the entry's three specials, so only those two place.
-            pytest.param([8030, 8031, 8032], id="the resolved set"),
-            # No resolved set: the exact pass falls back to the live series map, so the record imports
-            # rather than retrying forever.
-            pytest.param([], id="an empty set"),
-        ],
-    )
-    def test_specials_import_to_their_episode_ids(self, ordered_episode_ids: list[int]) -> None:
+    def test_specials_import_to_the_grabs_episode_ids(self) -> None:
         specials = _specials()
         pending = specials.pending(
             infohash="1111111111111111111111111111111111111111",
-            file_episode_map={},
-            ordered_episode_ids=ordered_episode_ids,
+            file_episode_map=specials.grab_map,
+            ordered_episode_ids=[8030, 8031, 8032],
         )
 
         probe = specials.strat.import_completed(pending, "/downloads/yamada", AttemptKind.POLL)
@@ -397,7 +359,7 @@ class TestCapturedSpecialsEndToEnd:
         specials = _specials(config)
         pending = specials.pending(
             infohash="1111111111111111111111111111111111111111",
-            file_episode_map={},
+            file_episode_map=specials.grab_map,
             ordered_episode_ids=[8030, 8031, 8032],
         )
 
@@ -409,7 +371,7 @@ class TestCapturedSpecialsEndToEnd:
     def test_import_completed_probe_carries_seed_complete_counts(self) -> None:
         # A complete seed map gives the probe determinate counts over the seed set, none landed yet.
         specials = _specials()
-        ep_map = {name: [8030 + i] for i, name in enumerate(specials.files)}
+        ep_map = specials.grab_map
         pending = specials.pending(
             infohash="2222222222222222222222222222222222222222",
             file_episode_map=ep_map,
@@ -425,7 +387,7 @@ class TestCapturedSpecialsEndToEnd:
         # The fast poll: a determinate count over the seed targets, reading ONLY the episode files,
         # never the refresh, queue, or execute pipeline.
         specials = _specials()
-        ep_map = {name: [8030 + i] for i, name in enumerate(specials.files)}
+        ep_map = specials.grab_map
         pending = specials.pending(
             infohash="4444444444444444444444444444444444444444",
             file_episode_map=ep_map,

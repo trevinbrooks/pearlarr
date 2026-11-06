@@ -28,7 +28,7 @@ from .config import AppConfig, Arr, ArrSettings, PrivateReleaseAction, secret_va
 from .grab_pipeline import GrabPipeline, GrabRequest
 from .log import EntryState
 from .manual_import import ImportWaitMode
-from .mappings import ExternalIds, MappingEntry, MappingResolver
+from .mappings import ExternalIds, MappingEntry, MappingResolver, ResolvedMappings
 from .notify import Notifier
 from .output import emit_to_hub, hub_counts
 from .parse_records import ParseRecords
@@ -458,18 +458,28 @@ class RunServices:
     def get_anilist_ids(self, ids: ExternalIds, log_ignored: bool = True) -> dict[int, MappingEntry]:
         """Resolve external Arr ids to a {AniList id -> mapping} dict, logging the ignored ones.
 
-        The resolver maps and reports the ids it dropped (the ignore list), and the ledger rows stay
-        here. `log_ignored=False` on the prefetch pass keeps an ignored id from being logged twice.
+        The resolver maps and sets aside the ignore list's entries, and the ledger rows stay here.
+        `log_ignored=False` on the prefetch pass keeps an ignored id from being logged twice.
         """
 
-        anilist_mappings, ids_to_drop = self._mappings.get_anilist_ids(ids)
+        resolved = self._mappings.get_anilist_ids(ids)
 
         # Logged per call, not only on the cache-filling one, so the main loop still logs every ignored id.
         if log_ignored:
-            for al_id in ids_to_drop:
+            for al_id in resolved.ignored:
                 self._reporter.log_ignored_anilist_id(self._ctx, al_id)
 
-        return anilist_mappings
+        return resolved.mappings
+
+    def listing_mappings(self, ids: ExternalIds) -> ResolvedMappings:
+        """The entries mapped to the external ids, the ignored ones set apart, for the series' listing read.
+
+        An ignored entry is never processed, but a torrent it lists is still placed under its window, flagged so
+        `ordered_windows` runs it after the kept windows of the same kind (season or specials). Logs nothing, since
+        `get_anilist_ids` logs the ignored ids.
+        """
+
+        return self._mappings.get_anilist_ids(ids)
 
     def resolve_title(self, al_id: int) -> EntryTitle:
         """Resolve the entry's title through the ladder (resolves only: no logging, no attribution).

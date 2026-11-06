@@ -73,11 +73,18 @@ class GrabHold(StrEnum):
     disagree, or a specials pack numbered another way than its listing. Grabbed, it would import onto the wrong
     episodes, so it's left for a hand import."""
     INPUT_UNREAD = "a read failed"
-    """A SeaDex listing for the series, or a parse the specials pack check needs, couldn't be read this run.
-    Grabbing now could seed a file onto the wrong episode for good, so the url waits for the next run."""
+    """A SeaDex listing for the series, Sonarr's parse of any of the url's video files while one is left to place,
+    or the episode list of a series the record claims couldn't be read this run. Without the listing nothing is
+    placed, since another title it names may own some of the files. Grabbing now could seed a file onto the wrong
+    episode for good, or leave one unplaced that the import never places, so the url waits for the next run."""
     TITLE_REFUTED = "titles refute its numbers"
     """A pack whose file titles contradict its numbers, with nothing of it placed on the entry
     (`PlacementVerdict.TITLE_REFUTED`): left for a hand import."""
+    PLACED_ELSEWHERE = "files place under another title"
+    """A url none of whose files land on the entry, while some are another title's SeaDex lists the torrent with:
+    placed or left for a hand import by that title's window, or stored on an episode its window holds. That title's
+    grab imports the placed ones, unless the title is in `ignore_anilist_ids`, which is never grabbed for. Not a
+    hand-import hold: the url as a whole isn't the entry's, and only its files nothing placed are a hand import."""
 
     @property
     def hand_import(self) -> bool:
@@ -87,6 +94,25 @@ class GrabHold(StrEnum):
 
 
 _HAND_IMPORT_HOLDS = frozenset({GrabHold.MISNUMBERED, GrabHold.TITLE_REFUTED})
+
+
+@dataclass(frozen=True, slots=True, kw_only=True)
+class ElsewhereCounts:
+    """How the files of a url held as another title's (`GrabHold.PLACED_ELSEWHERE`) split, for its skip line.
+
+    Built by keyword, so the two counts can't silently transpose.
+    """
+
+    elsewhere: int
+    """The files another title SeaDex lists the torrent with holds: placed or left for a hand import by its window,
+    or stored on its episodes."""
+
+    unplaced: int
+    """The other files, which nothing placed."""
+
+
+NO_ELSEWHERE = ElsewhereCounts(elsewhere=0, unplaced=0)
+"""The counts of a url not held as another title's."""
 
 
 @dataclass
@@ -109,6 +135,8 @@ class SeadexUrlItem:
     episodes: list[EpisodeRecord] = field(default_factory=list[EpisodeRecord])
     hold: GrabHold | None = None
     """Why the placement refuses to grab the url this run (`attach_placements` sets it), None when it may be."""
+    hold_counts: ElsewhereCounts = NO_ELSEWHERE
+    """How the url's files split when it's held as another title's (`UrlPlacement.hold_counts`)."""
 
     def __post_init__(self) -> None:
         self.infohash = normalized_infohash(self.infohash)
@@ -173,7 +201,7 @@ def flagged_urls(seadex_dict: SeadexDict) -> list[FlaggedUrl]:
 
 # Folded into the config's selection digest: bump when the release-selection
 # rules change in code so every cached verdict re-checks once after an upgrade.
-SELECTION_RULES_VERSION: int = 11
+SELECTION_RULES_VERSION: int = 12
 
 SONARR_MISSING_KEY: int = 999
 """Out-of-range stand-in for a missing Sonarr `seasonNumber`/`episodeNumber`, never colliding with a real one."""
@@ -1120,8 +1148,8 @@ class MatchedEpisode(_ApiModel):
     season_number: int = Field(validation_alias="seasonNumber")
     episode_number: int = Field(validation_alias="episodeNumber")
     id: int | None = None
-    """Sonarr's episode id, checked against OUR map so a wrong-series title match is refused. None for an offline
-    stand-in, or for a pair `widen_range_key` added."""
+    """Sonarr's episode id, checked against OUR map so a wrong-series title match is refused. None for a pair
+    `widen_range_key` added."""
 
 
 class ParsedFileInfo(_ApiModel):
@@ -1155,9 +1183,6 @@ class ParsedFileInfo(_ApiModel):
         validation_alias=AliasPath("parsedEpisodeInfo", "fullSeason"),
     )
     """A season-pack-shaped name (bare "S01"). Its matched pairs span the season, never one file's claims."""
-    offline: bool = False
-    """Built by the offline SxxExx fallback, not Sonarr's parser (`ParseResource` has no such property). Never
-    persisted: the parse cache refuses an offline stand-in."""
     matched_episodes: tuple[MatchedEpisode, ...] = Field(default=(), validation_alias="episodes")
     """Sonarr's series-matched pairs. The exact leg's fallback when the name carries no `(season, episode)`."""
 

@@ -73,7 +73,7 @@ from pearlarr.reporter import (
     RunReporter,
     RunStats,
 )
-from pearlarr.seadex_types import SeadexDict
+from pearlarr.seadex_types import ElsewhereCounts, SeadexDict
 from pearlarr.torrents import AddOutcome, ReleaseOutcome
 
 from .builders import (
@@ -983,7 +983,7 @@ class _FactSite:
 
 
 class TestExternalDetailParity:
-    """The external producer sites: grab pipeline, release filter, episode mapper.
+    """The external producer sites: grab pipeline, release filter, Sonarr episode coverage.
 
     Each golden was captured by running the pre-migration `LogFormatter.detail` with the site's literal args at
     fc58aef. The reporter must reproduce every line byte-identically through the shipped `scan_lines` builders (the
@@ -1044,6 +1044,40 @@ class TestExternalDetailParity:
                 "    skipped   https://x/1 (file titles contradict its numbering)",
                 "skipped",
                 "https://x/1 (file titles contradict its numbering)",
+                "yellow",
+            ),
+        ),
+        # grab_pipeline._screen_url: a url whose files place under another title, some of them on none.
+        _FactSite(
+            ReleaseSkipped(
+                group="GroupA",
+                tracker="Nyaa",
+                reason=SkipReason.PLACED_ELSEWHERE,
+                url="https://x/1",
+                counts=ElsewhereCounts(elsewhere=12, unplaced=6),
+            ),
+            _xdetail(
+                _W,
+                "    skipped   https://x/1 (12 files are another title's, 6 could not be placed)",
+                "skipped",
+                "https://x/1 (12 files are another title's, 6 could not be placed)",
+                "yellow",
+            ),
+        ),
+        # grab_pipeline._screen_url: a url whose one file is another title's.
+        _FactSite(
+            ReleaseSkipped(
+                group="GroupA",
+                tracker="Nyaa",
+                reason=SkipReason.PLACED_ELSEWHERE,
+                url="https://x/1",
+                counts=ElsewhereCounts(elsewhere=1, unplaced=0),
+            ),
+            _xdetail(
+                _W,
+                "    skipped   https://x/1 (1 file is another title's)",
+                "skipped",
+                "https://x/1 (1 file is another title's)",
                 "yellow",
             ),
         ),
