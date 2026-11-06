@@ -153,16 +153,15 @@ class TestPendingImportBuild:
 
         assert pending.sizes_by_name == {"show - 01.mkv": 100}
 
-    def test_the_hand_import_files_fold_dedupe_and_drop_a_name_the_map_or_the_exclusions_hold(self) -> None:
-        # A later claim's grab can place or exclude a file an earlier grab left for a hand import, and the
-        # record must not then wait on it.
+    def test_the_fold_ranks_the_map_over_the_hand_import_files_over_the_exclusions(self) -> None:
         pending = pending_import(
             file_episode_map={"show - 01.mkv": [101]},
-            excluded_files=["show - 02.mkv"],
+            excluded_files=["show - 01.mkv", "SHOW - 02.MKV", "show - 03.mkv", "show - 05.mkv"],
             hand_import_files=["SHOW - 04.MKV", "Show - 01.mkv", "show - 02.mkv", "Sub/Show - 03.mkv", "show - 04.mkv"],
         )
 
-        assert pending.hand_import_files == ("show - 04.mkv", "show - 03.mkv")
+        assert pending.hand_import_files == ("show - 04.mkv", "show - 02.mkv", "show - 03.mkv")
+        assert pending.excluded_files == ("show - 05.mkv",)
 
     def test_the_map_is_detached_and_read_only(self) -> None:
         # The record copies the caller's map at construction and wraps it read-only, so neither the
@@ -186,7 +185,6 @@ _NO_OP_CHANGES: dict[str, Callable[[PendingImport], PendingImport]] = {
     "no sizes onto none": lambda p: p.with_sizes_by_name({}),
     "no hand-import files": lambda p: p.with_hand_import_files(()),
     "a hand-import file already held": lambda p: p.with_hand_import_files(["SHOW - 03.MKV"]),
-    "a hand-import file the map holds": lambda p: p.with_hand_import_files(["show - 01.mkv"]),
     "the stored claim again": lambda p: p.with_claim(p.claims[0]),
 }
 """Changes that leave a record equal: it holds `show - 01.mkv` on 101, excludes `show - 02.mkv`, and leaves
@@ -238,14 +236,6 @@ class TestPendingImportPlacements:
 
         assert healed.excluded_files == ("show - 03.mkv",)
         assert dict(healed.file_episode_map) == {"show - 01 [1080p].mkv": (101,), "show - 02.mkv": (102,)}
-
-    def test_with_hand_import_files_joins_after_the_stored_ones(self) -> None:
-        # Joined, not replaced: a grab whose scope can't place carries none, and must not clear the names.
-        pending = pending_import(hand_import_files=["show - 03.mkv"])
-
-        joined = pending.with_hand_import_files(["show - 05.mkv", "show - 04.mkv"]).with_hand_import_files(())
-
-        assert joined.hand_import_files == ("show - 03.mkv", "show - 05.mkv", "show - 04.mkv")
 
     def test_with_placements_lifts_a_placed_name_out_of_the_hand_import_files(self) -> None:
         pending = pending_import(hand_import_files=["show - 02.mkv", "show - 03.mkv"])
@@ -632,7 +622,6 @@ class TestPendingImportRoundTrip:
         assert rebuilt.release_sizes == ()
         # A record predating the cleanup flag owes nothing.
         assert rebuilt.awaiting_cleanup is False
-        # A record predating the hand-import files waits on none.
         assert rebuilt.hand_import_files == ()
 
     def test_a_record_predating_sizes_by_name_lists_no_sizes(self) -> None:

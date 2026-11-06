@@ -877,9 +877,7 @@ def test_absolute_batch_imports_the_grabs_map_and_the_excluded_sibling_stays_qui
     outcome = _drive(tmp_path, monkeypatch, _ABSOLUTE_BATCH)
     out = _flat(capsys.readouterr().out)
 
-    # The real Thighs incident shape: the grab mapped the entry's own files and
-    # excluded the out-of-entry sibling as another slice's, so the import reads
-    # no parse and the sibling is never a warning.
+    # The grab mapped the entry's own files and excluded the out-of-entry sibling as another slice's.
     _assert_converged_imported(outcome, out)
     assert "could not be matched to an episode" not in out
     assert outcome.world.requests_for("/api/v3/parse") == []

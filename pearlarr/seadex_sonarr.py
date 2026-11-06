@@ -572,10 +572,10 @@ class SonarrSync(ArrSync[SonarrItem]):
             # names it once, in its hold.
             aside = ", ".join(p.name for p in placement.assignment.excluded)
             hold = "" if placement.hold is None else f" (not grabbed: {placement.hold})"
-            unread = not placement.inputs_known and placement.hold is not GrabHold.INPUT_UNREAD
+            note_read_failed = not placement.inputs_known and placement.hold is not GrabHold.INPUT_UNREAD
             self.logger.debug(
                 f"{url}: placed {_coverage.coverage_string(list(placement.records)) or 'nothing'}"
-                f"{' (a read failed)' if unread else ''}{hold}"
+                f"{' (a read failed)' if note_read_failed else ''}{hold}"
                 f"{f'; set aside (other slice / another listed title / duplicate): {aside}' if aside else ''}"
             )
 

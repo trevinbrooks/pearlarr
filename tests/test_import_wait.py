@@ -2567,7 +2567,7 @@ def _unmapped_record(**overrides: object) -> PendingImport:
 
 
 class TestMonitorAbsorbsPlacements:
-    """A placing poll's placements land on the record before any outcome reads it."""
+    """The placements a poll verified from Sonarr's history land on the record before any outcome reads it."""
 
     def test_check_pass_persists_the_placements(self) -> None:
         # A carried-over record (store-resident, not a this-run grab): the

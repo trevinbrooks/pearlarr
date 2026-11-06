@@ -94,6 +94,16 @@ def scan_lines_from_events(events: Iterable[Event]) -> list[LegacyLine]:
     return lines
 
 
+def debug_logger(name: str) -> logging.Logger:
+    """A logger `caplog` sees at DEBUG: no handlers of its own, propagating to the root."""
+
+    logger = logging.getLogger(name)
+    logger.handlers.clear()
+    logger.propagate = True
+    logger.setLevel(logging.DEBUG)
+    return logger
+
+
 def install_recording_hub() -> RecordingHub:
     """Install a fresh `RecordingHub` as the process hub. Conftest's autouse teardown restores the default."""
 

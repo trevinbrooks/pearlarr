@@ -26,7 +26,7 @@ from pearlarr.seadex_types import (
 
 from .builders import new_torrent, seed_scope
 
-_CATALOG = Path(__file__).parent / "fixtures" / "sonarr" / "mapper_shapes.json"
+_CATALOG = Path(__file__).parent / "fixtures" / "sonarr" / "placement_shapes.json"
 
 
 class ShapeTag(StrEnum):
@@ -139,24 +139,11 @@ def _parsed(case: ShapeCase) -> dict[str, ParsedFileInfo]:
 
 
 @pytest.mark.parametrize("case", _PARAMS)
-def test_seed_places_captured_shape(case: ShapeCase) -> None:
-    """The grab places every captured file where independent truth puts it."""
+def test_the_grab_places_the_captured_shape(case: ShapeCase) -> None:
+    """The grab places every captured file where independent truth puts it.
 
-    scope = _scope(case)
-    parsed = _parsed(case)
-    files = [SeedFile(name, 1, parsed[name]) for name in case.parses]
-
-    result = place_release(files, scope, new_torrent(scope)).assignment
-
-    assert result.assigned == {normalize_basename(name): ids for name, ids in case.expected.items()}
-    assert {placement.name for placement in result.excluded} == {
-        normalize_basename(name) for name in case.expected_excluded
-    }
-
-
-@pytest.mark.parametrize("case", _PARAMS)
-def test_the_grab_records_the_placed_episodes(case: ShapeCase) -> None:
-    """The records the planner judges coverage by are exactly the placed episodes' numbers, sized per file."""
+    The records the planner judges coverage by are the placed episodes' numbers, sized per file.
+    """
 
     scope = _scope(case)
     parsed = _parsed(case)
@@ -164,12 +151,14 @@ def test_the_grab_records_the_placed_episodes(case: ShapeCase) -> None:
 
     placement = place_release(files, scope, new_torrent(scope))
 
-    expected = [
+    assignment = placement.assignment
+    assert assignment.assigned == {normalize_basename(name): ids for name, ids in case.expected.items()}
+    assert {p.name for p in assignment.excluded} == {normalize_basename(name) for name in case.expected_excluded}
+    assert list(placement.records) == [
         EpisodeRecord(scope.series.by_id[ep_id].season_number, scope.series.by_id[ep_id].episode_number, size)
         for size, name in enumerate(case.parses, start=1)
         for ep_id in case.expected.get(name, ())
     ]
-    assert list(placement.records) == expected
     assert placement.inputs_known
 
 

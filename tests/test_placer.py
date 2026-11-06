@@ -1421,7 +1421,6 @@ class TestAbsoluteDuplicateTell:
         assert alone.assigned == {"e-12v2.mkv": (2587,)}
 
     def test_a_sharer_parse_the_caller_couldnt_get_refuses_the_positional_leg(self) -> None:
-        # The missing parse may be hiding the duplicate: the zip fails closed.
         parsed = {"e-12.mkv": None, "e-12v2.mkv": parsed_info(season=0, absolutes=(12,), matched=((1, 12),))}
 
         result = place(parsed, TargetScope([2587], series_index({})), seeded={"e-12.mkv": (2586,)})
@@ -1574,7 +1573,6 @@ class TestAssignNumberlessZip:
         assert surplus_ids.skipped == ("sp1.mkv",)
 
     def test_a_parse_the_caller_couldnt_get_refuses_the_zip(self) -> None:
-        # A missing parse is no numberless read: it may hold a number.
         parsed = {**blind(["sp1.mkv", "sp2.mkv"]), "sp3.mkv": None}
 
         result = place(parsed, TargetScope([901, 902, 903], series_index({})))

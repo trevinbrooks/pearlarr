@@ -133,7 +133,7 @@ class TestDiskLeftover:
     """`disk_leftover`: the scan's video files the map lacks, split by what the record says of them."""
 
     def test_the_leftover_runs_in_seadex_order_then_disk_order_split_by_the_record(self) -> None:
-        # On disk: an unlisted file first, a subtitle, a duplicate leaf in a second folder, and three listed files.
+        # On disk: an unlisted file first, a subtitle, a duplicate leaf in a second folder, and four listed files.
         scan = candidate_files(
             manual_candidate(f"/d/{path}")
             for path in ("extra.mkv", "c.ass", "sub/b.mkv", "c.mkv", "b.mkv", "a.mkv", "mapped.mkv")
@@ -149,6 +149,6 @@ class TestDiskLeftover:
         assert leftover == DiskLeftover(
             names=("a.mkv", "b.mkv", "c.mkv", "extra.mkv"),
             reported=("a.mkv", "c.mkv", "extra.mkv"),
-            hand_import=("c.mkv",),
+            hand_import_files=("c.mkv",),
         )
         assert leftover.skips == ("a.mkv", "extra.mkv")

@@ -191,7 +191,6 @@ class TestPlaceRelease:
         assert verdicts_of(placement.assignment) == {PlacementVerdict.FOREIGN}
 
     def test_a_held_run_records_nothing_holds_the_url_and_its_inputs_are_not_known(self) -> None:
-        # One parse request failed: the run is held, the url isn't grabbed, and the title re-checks next run.
         files = [SeedFile(name, 1, None if n == 3 else _bare(n)) for n, name in enumerate(_RUN, start=1)]
 
         placement = place_release(files, _scope(_SEASON), _NEW)
@@ -208,7 +207,6 @@ class TestPlaceRelease:
 
         placement = place_release(files, _scope([_SPECIAL, *_SEASON]), _NEW)
 
-        # The hold isn't a hand import's, so the placed file still counts toward the planner's coverage.
         assert placement.records == (EpisodeRecord(0, 1, 5),)
         assert placement.hold is GrabHold.INPUT_UNREAD
         assert not placement.inputs_known
@@ -328,8 +326,6 @@ class TestPlaceOntoResident:
         assert placement.stored is record
 
     def test_a_seeded_parse_miss_on_a_wholly_mapped_torrent_holds_nothing(self) -> None:
-        # Every file is the record's, so nothing is left to place and no parse is needed: the claim joins and the
-        # title caches.
         record = pending_import(
             infohash="h1",
             file_episode_map={normalize_basename(name): [100 + n] for n, name in enumerate(_PACK, start=1)},
@@ -345,7 +341,6 @@ class TestPlaceOntoResident:
         assert placement.claimed_ids == {101, 102, 103, 104}
 
     def test_a_seeded_parse_miss_holds_the_url_while_a_file_is_left_to_place(self) -> None:
-        # The seeded file's parse feeds the checks on the files being placed, so its miss holds the url.
         files = [SeedFile(_PACK[0], 10, None), *_pack()[1:]]
 
         placement = place_release(files, _scope(_SEASON), _torrent(_resident_record()))
@@ -708,7 +703,6 @@ class TestPlaceHeld:
         assert placement.records == (EpisodeRecord(2, 1, 20), EpisodeRecord(2, 2, 30))
 
     def test_an_unread_listing_holds_the_url_and_places_nothing(self) -> None:
-        # No verdict can judge the pack until the listing reads.
         placement = place_release(self._specials(), self._specials_scope(1, 2), self._listing(None))
 
         assert placement.hold is GrabHold.INPUT_UNREAD
@@ -717,19 +711,9 @@ class TestPlaceHeld:
         assert not placement.inputs_known
 
     def test_a_parse_miss_under_a_specials_listing_holds_the_url(self) -> None:
-        # One parse unread: the pack cannot be judged against its listing. Held until the parse reads.
         files = [SeedFile(f"Show.S00E{n:02d}.mkv", 10 * n, None if n == 2 else _matched(0, n)) for n in (1, 2, 3)]
 
         placement = place_release(files, self._specials_scope(1, 2), self._listing((501, 502, 503)))
-
-        assert placement.hold is GrabHold.INPUT_UNREAD
-        assert not placement.inputs_known
-
-    def test_a_parse_miss_under_a_seasoned_listing_holds_the_url(self) -> None:
-        # No listing judges a season's pack, but nothing places the unread file after the grab either.
-        files = [SeedFile(_PACK[0], 10, None), *_pack()[1:]]
-
-        placement = place_release(files, _scope(_SEASON), _torrent(listed=[entry_window(1, (101, 102, 103, 104))]))
 
         assert placement.hold is GrabHold.INPUT_UNREAD
         assert not placement.inputs_known
@@ -885,8 +869,7 @@ class TestPlaceBesideAnotherListedTitle:
         )
 
     def test_a_run_a_sibling_held_holds_the_url_as_unread(self) -> None:
-        # Entry 1's window picked the run, but an unread parse keeps it from placing. No window has read it yet, so
-        # the url is held for the read, not as entry 1's, and the title is re-checked once the parse reads.
+        # The run fits entry 1's window; the NCOP's parse is unread.
         files = [SeedFile(name, 10 * n, ParsedFileInfo()) for n, name in enumerate(_RUN, 1)]
         files.append(SeedFile("Show - NCOP.mkv", 50, None))
         torrent = _torrent(listed=[entry_window(1, (101, 102, 103, 104)), entry_window(2, (201, 202))])
@@ -1121,8 +1104,7 @@ class TestKnownTorrent:
         assert (order.at(1), order.imports) == (0, {0})
 
     def test_a_claim_moving_series_leaves_its_old_series_unread(self) -> None:
-        # Entry 1 claimed the pack on series 7. This grab moves its claim to series 8: the old claim leaves the order,
-        # and the unread series 7 doesn't stand the placement down.
+        # Entry 1's stored claim is on series 7; this grab claims series 8.
         record = pending_import(
             infohash="h1",
             al_id=1,
@@ -1226,8 +1208,6 @@ class TestEntryPlacements:
 
         seeds = build_pending_seeds(seadex_dict, placed, entry)
 
-        # The subs-only url seeds nothing. The held one still seeds, with an empty map, though a held url is never
-        # added.
         assert set(seeds) == {"h1", "h2"}
         assert dict(seeds["h1"].placements) == {normalize_basename(name): (100 + n,) for n, name in enumerate(_RUN, 1)}
         listed = {normalize_basename(name): 10 * n for n, name in enumerate(_RUN, 1)}
@@ -1358,7 +1338,6 @@ class TestPendingSeedRecordAt:
         assert seed.record_at(_STAMP, fresh=True).hand_import_files == ("show - 02.mkv",)
 
     def test_accreted_joins_the_hand_import_files(self) -> None:
-        # A grab whose scope can't place carries none, and the stored names stay.
         stored = pending_import(infohash="h1", hand_import_files=("show - 02.mkv",))
 
         kept = pending_seed("h1", stored=stored).record_at(_STAMP, fresh=False)

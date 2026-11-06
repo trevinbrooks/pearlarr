@@ -83,14 +83,29 @@ class DiskLeftover:
     reported: tuple[str, ...]
     """The names the record doesn't exclude (`PendingImport.excluded_files`), in the same order."""
 
-    hand_import: tuple[str, ...]
+    hand_import_files: tuple[str, ...]
     """The reported names the grab left for a hand import (`PendingImport.hand_import_files`)."""
+
+    @property
+    def quiet(self) -> int:
+        """How many names the record excludes: reported at the grab, not again."""
+
+        return len(self.names) - len(self.reported)
 
     @property
     def skips(self) -> tuple[str, ...]:
         """The reported names not left for a hand import: the files the skip warning counts."""
 
-        return tuple(name for name in self.reported if name not in self.hand_import)
+        return tuple(name for name in self.reported if name not in self.hand_import_files)
+
+    @property
+    def unmatched(self) -> tuple[str, ...]:
+        """The names a hand import must place when nothing is mapped.
+
+        The reported ones, or every name when the record excluded them all.
+        """
+
+        return self.reported or self.names
 
 
 def disk_leftover(

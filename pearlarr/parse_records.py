@@ -75,7 +75,7 @@ class SonarrParseRecord(TypedDict):
 
 
 def to_parse_record(info: ParsedFileInfo) -> dict[str, Json]:
-    """The JSON the cache persists for one parse: every field.
+    """The JSON the cache persists for one parse.
 
     The matched pairs' ids ride along so a seed cross-checks them against the series map, which refuses a
     wrong-series match. A series re-add renumbers them, which only weakens the seed until the row expires.

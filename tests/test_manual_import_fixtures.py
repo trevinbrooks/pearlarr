@@ -327,10 +327,9 @@ def _specials(config: AppConfig | None = None) -> _Specials:
 
 
 class TestCapturedSpecialsEndToEnd:
-    """Drive `import_completed` with the real fixtures for a specials download Sonarr couldn't match."""
+    """Drive `import_completed` with the real fixtures for a specials download."""
 
     def test_specials_import_to_the_grabs_episode_ids(self) -> None:
-        # Sonarr matched neither file to the series, so the ids are the grab's map alone.
         specials = _specials()
         pending = specials.pending(
             infohash="1111111111111111111111111111111111111111",

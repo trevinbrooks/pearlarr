@@ -518,7 +518,6 @@ class TestBuildPendingSeeds:
         assert _record(seeds["h2"]).display_label == f"Show{SEP}RG{SEP}S02 E07"
 
     def test_an_unparsed_video_still_seeds_with_an_empty_map(self) -> None:
-        # No grab-time parse hit holds the url, and its seed still carries the video file with an empty map.
         ep_list = [sonarr_ep(1, 1, ep_id=101, episode_file_id=0)]
         seadex_dict = {
             "RG": rg_group(

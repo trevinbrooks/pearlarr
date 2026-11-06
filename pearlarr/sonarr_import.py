@@ -485,30 +485,33 @@ class ImportExecutor:
                 f"{content_path}: Sonarr's history placed {count_noun(len(recovered), 'file')} "
                 f"for {pending.display_label} that no scan saw"
             )
+            for name, ids in recovered.items():
+                self.logger.debug(f"{pending.display_label}: placed {name} -> {ids} from Sonarr's history")
         authoritative = joined_map(pending.file_episode_map, recovered)
         leftover = disk_leftover(pending, context.candidates_by_basename, authoritative)
         if leftover.names and not authoritative:
-            if (by_hand := self._imported_by_hand(context, pending.file_episode_map)) is not None:
+            if (by_hand := self._imported_by_hand(context, authoritative)) is not None:
                 # A hand import placed what the grab couldn't.
                 probe = by_hand
             else:
-                # Nothing to verify or import, and the same files come back next poll: an outcome, not a wait. The
-                # names are what a hand import must place, the excluded ones only when nothing else is on disk.
-                probe = ImportProbe.unmatched(context.leaves(leftover.reported or leftover.names))
+                # Nothing to verify or import, and the same files come back next poll: an outcome, not a wait.
+                probe = ImportProbe.unmatched(context.leaves(leftover.unmatched))
         else:
-            if quiet := len(leftover.names) - len(leftover.reported):
+            if leftover.quiet:
                 # A sibling's slice or a refused duplicate the grab excluded was reported then and stays quiet.
                 self.logger.debug(
-                    f"{pending.display_label}: {count_noun(quiet, 'file')} excluded on record, not reported"
+                    f"{pending.display_label}: {count_noun(leftover.quiet, 'file')} excluded on record, not reported"
                 )
-            if leftover.skips:
+            if skips := leftover.skips:
                 # The hand-import files are named by the poll's outcome instead.
-                self._warn_unplaceable_files(pending, leftover.skips)
-            for name, ids in recovered.items():
-                self.logger.debug(f"{pending.display_label}: placed {name} -> {ids} from Sonarr's history")
+                self._warn_unplaceable_files(pending, skips)
             probe = self._verify_or_import(context, authoritative)
-            if probe.files_present and leftover.hand_import:
-                probe = self._judge_hand_import(context, authoritative, leftover.hand_import)
+            if probe.files_present and leftover.hand_import_files:
+                # The fill is checked first, so a hand import in copy mode, which leaves the file on disk, retires
+                # the record.
+                by_hand = self._imported_by_hand(context, authoritative)
+                hand_import = ImportProbe.hand_import(context.leaves(leftover.hand_import_files))
+                probe = by_hand if by_hand is not None else hand_import
         # History's placements are kept only once they verified, so a row that never verifies is re-derived next
         # run, not pinned.
         verified = probe.files_present or bool(probe.hand_import_files)
@@ -603,18 +606,6 @@ class ImportExecutor:
         self.logger.debug(f"{content_path}: queued {count_noun(len(files), 'file')} for import (command {cmd_id})")
         return ImportProbe.waiting(command_issued=True, deferral=Deferral.ISSUED)
 
-    def _judge_hand_import(
-        self, context: _ImportContext, file_map: FileEpisodeMap, names: tuple[str, ...]
-    ) -> ImportProbe:
-        """With every placed file in: imported once a hand import fills the windows, else the hand-import `names`.
-
-        The fill is checked first, so a hand import in copy mode, which leaves the file on disk, retires the record.
-        """
-
-        if (by_hand := self._imported_by_hand(context, file_map)) is not None:
-            return by_hand
-        return ImportProbe.hand_import(context.leaves(names))
-
     def _imported_by_hand(self, context: _ImportContext, file_map: FileEpisodeMap) -> ImportProbe | None:
         """The IMPORTED probe when every episode of the record's windows is filled (`filled_by_hand`), else None."""
 
@@ -661,7 +652,7 @@ class ImportExecutor:
         else:
             self.logger.debug(message)
 
-    def _warn_unplaceable_files(self, pending: PendingImport, reportable: tuple[str, ...]) -> None:
+    def _warn_unplaceable_files(self, pending: PendingImport, skips: tuple[str, ...]) -> None:
         """Warn (once a run per download) about on-disk video files the map lacks.
 
         We import what we can and leave the rest, surfaced loudly so nothing is silently dropped.
@@ -671,8 +662,8 @@ class ImportExecutor:
             return
         self._scratch.warned_unplaceable.add(pending.infohash)
         hub_warn(
-            f"{pending.display_label}: {count_noun(len(reportable), 'file')} could not be matched "
-            f"to an episode and {pluralize(len(reportable), 'was', 'were')} not imported"
+            f"{pending.display_label}: {count_noun(len(skips), 'file')} could not be matched "
+            f"to an episode and {pluralize(len(skips), 'was', 'were')} not imported"
         )
 
     def _import_language_objects(self, pending: PendingImport) -> list[Language]:

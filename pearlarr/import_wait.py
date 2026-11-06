@@ -683,7 +683,7 @@ class _MonitorRow:
     """One record's live state within a monitor pass. The row owns its `TorrentView` presentation."""
 
     record: PendingImport
-    """The durable record this row tracks, replaced by its placement-carrying copy after a placing poll."""
+    """The durable record this row tracks, replaced after a poll whose probe placed files from Sonarr's history."""
     dl_start: float
     """Download-phase clock, stamped at construction."""
     carried_over: bool

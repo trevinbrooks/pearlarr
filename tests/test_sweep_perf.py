@@ -155,7 +155,6 @@ class TestParseRecords:
         return ParseRecords(store), store
 
     def test_round_trip_keeps_the_matched_ids(self) -> None:
-        # The seed cross-checks the ids against the series map, so they must survive the cache.
         records, _ = self._records()
         info = ParsedFileInfo(
             season_number=1,

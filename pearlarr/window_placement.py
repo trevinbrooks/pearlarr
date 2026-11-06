@@ -82,10 +82,11 @@ def ordered_windows(
     """
 
     # A claim's window takes its entry's slot from the listed one, since the record's import is judged against its
-    # claims, and `own` takes it from both, since this grab replaces its claim. A claim whose entry the listing doesn't name keeps
-    # its window, and an entry listed and never claimed gets its listed window. The ignored flag is the listing's for
-    # every window: a fact about the entry at the read, which a claim made before the title was ignored can't hold.
-    # It's read off every listed window, so an entry whose listed window came back empty still flags its claim.
+    # claims, and `own` takes it from both, since this grab replaces its claim. A claim whose entry the listing
+    # doesn't name keeps its window, and an entry listed and never claimed gets its listed window. The ignored flag
+    # is the listing's for every window: a fact about the entry at the read, which a claim made before the title was
+    # ignored can't hold. It's read off every listed window, so an entry whose listed window came back empty still
+    # flags its claim.
     chosen = {window.al_id: window for window in listing.entries if window.ordered_episode_ids}
     ignored_ids = {window.al_id for window in listing.entries if window.ignored}
     imported = set[int]()

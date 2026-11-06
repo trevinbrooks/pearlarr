@@ -339,7 +339,7 @@ def place_release(files: Sequence[SeedFile], scope: SeedScope, torrent: KnownTor
         # A pack left for a hand import adds no records: the planner judges it by what its window holds.
         records=() if hold is not None and hold.hand_import else tuple(records),
         claimed_ids=frozenset(claimed),
-        inputs_known=not files or (not parse_unread and known and not identities_unread),
+        inputs_known=not files or (known and not unread),
         hold=hold,
         hold_counts=_elsewhere_counts(elsewhere, assignment) if hold is GrabHold.PLACED_ELSEWHERE else NO_ELSEWHERE,
         stored=torrent.record,
