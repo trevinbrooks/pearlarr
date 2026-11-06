@@ -600,9 +600,9 @@ class TestPrivateOnlyTip:
 def _action_messages(
     results: list[ReleaseOutcome],
     *,
-    dry_run: bool = False,
-    monitor_active: bool = False,
-) -> tuple[bool, list[str]]:
+    preview: bool = False,
+    waiting_to_import: bool = False,
+) -> list[str]:
     """The status + per-release rows log_seadex_action re-derives to.
 
     Passes an empty `seadex_dict` so the recommended-group rows are skipped and
@@ -610,20 +610,19 @@ def _action_messages(
     """
 
     reporter, events = _record()
-    logged = reporter.log_seadex_action({}, results, dry_run=dry_run, monitor_active=monitor_active)
-    return logged, _event_messages(events)
+    reporter.log_seadex_action({}, results, preview=preview, waiting_to_import=waiting_to_import)
+    return _event_messages(events)
 
 
 class TestLogSeadexAction:
-    """log_seadex_action renders adding / already-downloading / keeping distinctly."""
+    """log_seadex_action renders adding / would add / already-downloading distinctly."""
 
     def test_added_status_and_label(self) -> None:
-        logged, messages = _action_messages(
+        messages = _action_messages(
             [ReleaseOutcome(outcome=AddOutcome.ADDED, name="Show-NAN0", group="NAN0")],
         )
         joined = "\n".join(messages)
 
-        assert logged is True
         assert "adding SeaDex's recommended release" in joined
         assert "added" in joined
         assert "Show-NAN0" in joined
@@ -631,22 +630,20 @@ class TestLogSeadexAction:
     def test_added_hashless_release_shows_group_not_none(self) -> None:
         # A hashless/private torrent has name=None. The row must fall back to the
         # release group, never render the literal "None".
-        logged, messages = _action_messages(
+        messages = _action_messages(
             [ReleaseOutcome(outcome=AddOutcome.ADDED, name=None, group="NAN0")],
         )
         joined = "\n".join(messages)
 
-        assert logged is True
         assert "None" not in joined  # the bug rendered "added : None"
 
-    def test_already_downloading_status_monitor_active(self) -> None:
-        logged, messages = _action_messages(
+    def test_already_downloading_waiting_to_import(self) -> None:
+        messages = _action_messages(
             [ReleaseOutcome(outcome=AddOutcome.ALREADY_ADDED, name="Show-NAN0", group="NAN0")],
-            monitor_active=True,
+            waiting_to_import=True,
         )
         joined = "\n".join(messages)
 
-        assert logged is True
         assert "already in qBittorrent" in joined
         assert "waiting to import" in joined
         assert "downloading" in joined and "Show-NAN0" in joined
@@ -654,11 +651,11 @@ class TestLogSeadexAction:
         assert "keeping it" not in joined
         assert "kept" not in joined
 
-    def test_already_downloading_status_monitor_inactive(self) -> None:
+    def test_already_downloading_not_waiting(self) -> None:
         # Feature off / preview: state the fact, but don't promise an import.
-        _, messages = _action_messages(
+        messages = _action_messages(
             [ReleaseOutcome(outcome=AddOutcome.ALREADY_ADDED, name="X", group="G")],
-            monitor_active=False,
+            waiting_to_import=False,
         )
         joined = "\n".join(messages)
 
@@ -668,12 +665,12 @@ class TestLogSeadexAction:
     def test_mixed_added_and_already_added_reads_adding(self) -> None:
         # A fresh grab happened, so the headline is "adding". The per-release rows
         # disambiguate (one added, one still downloading).
-        _, messages = _action_messages(
+        messages = _action_messages(
             [
                 ReleaseOutcome(outcome=AddOutcome.ADDED, name="new", group="G"),
                 ReleaseOutcome(outcome=AddOutcome.ALREADY_ADDED, name="old", group="G"),
             ],
-            monitor_active=True,
+            waiting_to_import=True,
         )
         joined = "\n".join(messages)
 
@@ -684,21 +681,19 @@ class TestLogSeadexAction:
     def test_dry_run_reads_would_add(self) -> None:
         # A dry run must never read like a real grab: the status says "would add
         # ... (dry run)" and the per-release row is labeled "would add".
-        logged, messages = _action_messages(
+        messages = _action_messages(
             [ReleaseOutcome(outcome=AddOutcome.ADDED, name="Show-NAN0", group="NAN0")],
-            dry_run=True,
+            preview=True,
         )
         joined = "\n".join(messages)
 
-        assert logged is True
         assert "would add SeaDex's recommended release (dry run)" in joined
         assert any("would add" in m and "Show-NAN0" in m for m in messages)
         assert "adding SeaDex's recommended release" not in joined
 
-    def test_all_skipped_returns_false_and_emits_nothing(self) -> None:
-        logged, messages = _action_messages([])
+    def test_no_outcomes_emit_nothing(self) -> None:
+        messages = _action_messages([])
 
-        assert logged is False
         assert messages == []
 
     def test_recommended_group_tags_are_sorted(self) -> None:
@@ -714,6 +709,8 @@ class TestLogSeadexAction:
         reporter.log_seadex_action(
             seadex_dict,
             [ReleaseOutcome(outcome=AddOutcome.ADDED, name="Show-NAN0", group="NAN0")],
+            preview=False,
+            waiting_to_import=False,
         )
 
         action = next(e for e in events if isinstance(e, GrabAction))

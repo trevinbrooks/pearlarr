@@ -1201,12 +1201,16 @@ class TestActionBlockParity:
 
     def test_fresh_add(self) -> None:
         harness = _Harness()
-        assert harness.reporter.log_seadex_action(self._SEADEX_DICT, self._FRESH_RESULTS) is True
+        harness.reporter.log_seadex_action(
+            self._SEADEX_DICT, self._FRESH_RESULTS, preview=False, waiting_to_import=False
+        )
         assert harness.lines() == ACTION_FRESH_LINES
 
     def test_dry_run(self) -> None:
         harness = _Harness()
-        assert harness.reporter.log_seadex_action(self._SEADEX_DICT, self._FRESH_RESULTS, dry_run=True) is True
+        harness.reporter.log_seadex_action(
+            self._SEADEX_DICT, self._FRESH_RESULTS, preview=True, waiting_to_import=False
+        )
         assert harness.lines() == ACTION_DRY_LINES
 
     def test_already_downloading_with_monitor(self) -> None:
@@ -1217,11 +1221,11 @@ class TestActionBlockParity:
         results = [
             ReleaseOutcome(outcome=AddOutcome.ALREADY_ADDED, name="[GroupA] Frieren S01 1080p.mkv", group="GroupA"),
         ]
-        assert harness.reporter.log_seadex_action(seadex_dict, results, monitor_active=True) is True
+        harness.reporter.log_seadex_action(seadex_dict, results, preview=False, waiting_to_import=True)
         assert harness.lines() == ACTION_DOWNLOADING_WAITING_LINES
 
         harness.events.clear()
-        assert harness.reporter.log_seadex_action(seadex_dict, results, monitor_active=False) is True
+        harness.reporter.log_seadex_action(seadex_dict, results, preview=False, waiting_to_import=False)
         assert harness.lines() == ACTION_DOWNLOADING_NO_WAIT_LINES
 
     def test_mixed_results_group_added_before_downloading(self) -> None:
@@ -1232,7 +1236,7 @@ class TestActionBlockParity:
             ReleaseOutcome(outcome=AddOutcome.ALREADY_ADDED, name="[GroupA] Frieren S01 1080p.mkv", group="GroupA"),
             ReleaseOutcome(outcome=AddOutcome.ADDED, name="[GroupB] Frieren S01 1080p.mkv", group="GroupB"),
         ]
-        assert harness.reporter.log_seadex_action(self._SEADEX_DICT, results) is True
+        harness.reporter.log_seadex_action(self._SEADEX_DICT, results, preview=False, waiting_to_import=False)
         assert harness.lines() == ACTION_MIXED_LINES
 
     def test_max_torrents(self) -> None:
@@ -1393,7 +1397,12 @@ class TestScopeLifecycle:
         harness = _Harness()
         ctx = RunContext(arr=Arr.SONARR)
         harness.reporter.log_al_title(ctx, "Show", make_entry_record(url="https://releases.moe/1"))
-        harness.reporter.log_seadex_action({}, [ReleaseOutcome(outcome=AddOutcome.ADDED, name="X", group="G")])
+        harness.reporter.log_seadex_action(
+            {},
+            [ReleaseOutcome(outcome=AddOutcome.ADDED, name="X", group="G")],
+            preview=False,
+            waiting_to_import=False,
+        )
 
         assert not any(isinstance(e, ScopeClosed) for e in harness.events)
         opened = next(e for e in harness.events if isinstance(e, ScopeOpened))

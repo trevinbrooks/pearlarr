@@ -537,17 +537,19 @@ class RunReporter:
         self,
         seadex_dict: SeadexDict,
         results: list[ReleaseOutcome],
-        dry_run: bool = False,
-        monitor_active: bool = False,
-    ) -> bool:
+        *,
+        preview: bool,
+        waiting_to_import: bool,
+    ) -> None:
         """Post the action block for a title that differs from SeaDex's pick, after the adding has run."""
 
         # Nothing grabbed and nothing already present (every release skipped): leave the status to the
         # inline "skipped" warning.
-        if not results and not dry_run:
-            return False
+        if not results and not preview:
+            return
 
-        # A hashless/private release has no name, and the builder falls back to its group.
+        # A release neither qBittorrent nor its tracker page named has no name, and `ReleaseName.display` falls back
+        # to its group.
         added: list[ReleaseName] = []
         downloading: list[ReleaseName] = []
         for r in results:
@@ -556,7 +558,7 @@ class RunReporter:
             elif r.outcome is AddOutcome.ALREADY_ADDED:
                 downloading.append(ReleaseName(r.name or "", r.group))
 
-        if dry_run:
+        if preview:
             status = GrabStatus.WOULD_ADD
         elif added:
             status = GrabStatus.ADDING
@@ -576,10 +578,9 @@ class RunReporter:
                 groups=groups,
                 added=tuple(added),
                 downloading=tuple(downloading),
-                waiting_to_import=monitor_active,
+                waiting_to_import=waiting_to_import,
             ),
         )
-        return True
 
     def log_max_torrents_added(self, cap: int) -> None:
         """Report hitting the per-run torrent cap (advanced.max_torrents_to_add)."""
