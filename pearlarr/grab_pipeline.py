@@ -500,16 +500,17 @@ class GrabPipeline:
         n_torrents_added, results = self.add_torrent(req)
 
         # Logged only now the outcome is known, so the status reads "adding" only when something was actually grabbed.
+        preview = self._is_preview()
         self._reporter.log_seadex_action(
             req.seadex_dict,
             results,
-            dry_run=self._is_preview(),
-            monitor_active=(self._ctx.import_wait_mode is not ImportWaitMode.OFF and not self._is_preview()),
+            preview=preview,
+            waiting_to_import=self._ctx.import_wait_mode is not ImportWaitMode.OFF and not preview,
         )
 
         # Never on a preview: this is an outward notification. Built after the add so each group is labeled with what
         # actually happened.
-        if self._notifier.enabled and n_torrents_added > 0 and not self._is_preview():
+        if self._notifier.enabled and n_torrents_added > 0 and not preview:
             self._notifier.push_grab(
                 GrabNotice(
                     arr=self._ctx.arr,
