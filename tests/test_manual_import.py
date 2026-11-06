@@ -624,6 +624,29 @@ class TestPendingImportRoundTrip:
         assert rebuilt.awaiting_cleanup is False
         assert rebuilt.hand_import_files == ()
 
+    def test_a_row_without_hand_import_files_leaves_its_unplaced_listed_files_for_a_hand_import(self) -> None:
+        record = pending_import(
+            file_episode_map={"show - 01 [1080p].mkv": [101]},
+            excluded_files=("Show - 03 [1080p].mkv",),
+            seadex_files=("Show - 01 [1080p].mkv", "Show - 02 [1080p].mkv", "Show - 03 [1080p].mkv"),
+            hand_import_files=("show - 02 [1080p].mkv",),
+        )
+        raw = record.to_json()
+        del raw["hand_import_files"]
+        raw["identified"] = dict[str, int]()
+
+        rebuilt = PendingImport.from_json(raw, guards={})
+
+        assert rebuilt.hand_import_files == ("show - 02 [1080p].mkv",)
+        assert rebuilt.excluded_files == ("show - 03 [1080p].mkv",)
+        assert dict(rebuilt.file_episode_map) == {"show - 01 [1080p].mkv": (101,)}
+
+    def test_a_row_with_an_empty_hand_import_files_key_reads_none(self) -> None:
+        raw = pending_import(seadex_files=("Show - 01 [1080p].mkv", "Show - 02 [1080p].mkv")).to_json()
+        raw["hand_import_files"] = list[str]()
+
+        assert PendingImport.from_json(raw, guards={}).hand_import_files == ()
+
     def test_a_record_predating_sizes_by_name_lists_no_sizes(self) -> None:
         # Its own group is then judged by listed size alone.
         rebuilt = PendingImport.from_json({"infohash": "h", "file_episode_map": {"a.mkv": [1]}}, guards={})

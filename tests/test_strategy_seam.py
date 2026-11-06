@@ -3107,6 +3107,19 @@ class TestHeldBackFiles:
         assert sonarr.execute_calls == []
         assert not any("could not be matched" in m for m in diagnostic_messages(recording, Severity.WARNING))
 
+    def test_a_record_stored_without_hand_import_files_keeps_its_unplaced_file_pending(self) -> None:
+        strat, sonarr = self._strat()
+        record = self._record()
+        raw = record.to_json()
+        del raw["hand_import_files"]
+        stored = PendingImport.from_json(raw, guards={claim.al_id: claim.guards for claim in record.claims})
+
+        probe = strat.import_completed(stored, "/d", AttemptKind.POLL)
+
+        assert probe.hand_import_files == (self._NAMES[2],)
+        assert probe.files_present is False
+        assert sonarr.execute_calls == []
+
     def test_the_record_retires_once_a_hand_import_fills_its_window(self) -> None:
         strat, sonarr = self._strat()
         held = strat.import_completed(self._record(), "/d", AttemptKind.POLL)
