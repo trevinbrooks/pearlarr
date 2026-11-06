@@ -17,7 +17,7 @@ from pydantic import BaseModel, RootModel
 
 from pearlarr.grab_placement import SeedFile, SeedScope, place_release
 from pearlarr.manual_import import EntryNames, normalize_basename
-from pearlarr.placement_types import NO_EVIDENCE, episode_index
+from pearlarr.placement_types import episode_index
 from pearlarr.seadex_types import (
     EpisodeRecord,
     Json,
@@ -27,7 +27,7 @@ from pearlarr.seadex_types import (
 )
 from pearlarr.sonarr_mapper import FileEpisodeMapper
 
-from .builders import indexes_for, new_torrent, pending_import, place, seed_scope
+from .builders import indexes_for, new_torrent, pending_import, seed_scope
 from .fakes import FakeSonarrClient
 
 _CATALOG = Path(__file__).parent / "fixtures" / "sonarr" / "mapper_shapes.json"
@@ -144,14 +144,18 @@ def _parsed(case: ShapeCase) -> dict[str, ParsedFileInfo]:
 
 @pytest.mark.parametrize("case", _PARAMS)
 def test_seed_places_captured_shape(case: ShapeCase) -> None:
-    """The grab-time scope places every captured file where independent truth puts it."""
+    """The grab places every captured file where independent truth puts it."""
 
     scope = _scope(case)
+    parsed = _parsed(case)
+    files = [SeedFile(name, 1, parsed[name]) for name in case.parses]
 
-    result = place(_parsed(case), scope.target(NO_EVIDENCE))
+    result = place_release(files, scope, new_torrent(scope)).assignment
 
-    assert result.assigned == case.expected
-    assert {placement.name for placement in result.excluded} == set(case.expected_excluded)
+    assert result.assigned == {normalize_basename(name): ids for name, ids in case.expected.items()}
+    assert {placement.name for placement in result.excluded} == {
+        normalize_basename(name) for name in case.expected_excluded
+    }
 
 
 @pytest.mark.parametrize("case", _PARAMS)

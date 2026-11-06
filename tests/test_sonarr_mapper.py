@@ -11,11 +11,9 @@ from pearlarr.grab_placement import SeedFile, SeedRelease, build_pending_seed, p
 from pearlarr.import_files import CandidateFile
 from pearlarr.manual_import import PendingImport, normalize_basename
 from pearlarr.placement_types import (
-    NO_EVIDENCE,
     EpisodeIndex,
     Placement,
     PlacementVerdict,
-    TargetScope,
 )
 from pearlarr.seadex_types import EpisodeKey, ManualImportCandidate, ParsedFileInfo
 from pearlarr.sonarr_mapper import FileAssignment, FileEpisodeMapper
@@ -269,11 +267,6 @@ class TestSeedEqualsMapper:
     @classmethod
     def _index(cls) -> EpisodeIndex:
         return series_index({EpisodeKey(0, 1): 501, EpisodeKey(0, 2): 502})
-
-    def test_seed_scope_targets_the_entrys_ids_over_the_series_map(self) -> None:
-        scope = seed_scope(self._index(), series_index(self._MAP))
-
-        assert scope.target(NO_EVIDENCE) == TargetScope([501, 502], series_index(self._MAP))
 
     def test_the_seed_and_the_mapper_place_and_exclude_alike(self) -> None:
         parses = self._parses()

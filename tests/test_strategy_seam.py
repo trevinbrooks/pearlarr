@@ -2626,8 +2626,7 @@ class TestSonarrProcessAlIdSeeds:
         assert req.input_missing_groups == ()
 
     def test_a_file_placed_by_size_over_its_name_warns_once_per_url(self) -> None:
-        # Two specials named as each other. Each goes where its size matches, and the record keeps the size
-        # matches for the import.
+        # Two specials named as each other. Each goes where its size matches.
         specials = [sonarr_ep(0, n, ep_id=500 + n, episode_file_id=0) for n in (1, 2)]
         files = tuple(
             SeedFile(f"Show.S00E0{n}.mkv", 1000 * n, parsed_info(season=0, episodes=(n,), matched=((0, n),)))
@@ -2640,7 +2639,6 @@ class TestSonarrProcessAlIdSeeds:
         (req,) = run.grab_requests
         seed = req.pending_seeds["h1"]
         assert seed.placements == {"show.s00e01.mkv": (502,), "show.s00e02.mkv": (501,)}
-        assert seed.evidence.identified == {"show.s00e01.mkv": 502, "show.s00e02.mkv": 501}
         assert diagnostic_messages(recording, Severity.WARNING) == [
             (
                 f"{_SEED_URL}: show.s00e01.mkv goes on S00E02 because its size matches SeaDex's S00E02 release "
