@@ -7,6 +7,8 @@ Pearlarr is a fork of [bbtufty/seadexarr](https://github.com/bbtufty/seadexarr).
 
 ## [Unreleased]
 
+## [1.5.8] - 2026-11-06
+
 ### Changed
 
 - A torrent SeaDex lists under several titles of a show is placed under every one of them, season titles first, then specials titles, and the titles in `ignore_anilist_ids` after the kept ones of each kind. A file another listed title places is that title's: it's never imported for the title being checked, and that title's own grab imports it, unless that title is in `ignore_anilist_ids`, when nothing does. A file only another listed title's mapping could read, and that title left for a hand import, is reported under that title.
