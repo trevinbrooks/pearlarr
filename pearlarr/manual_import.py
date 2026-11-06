@@ -1065,20 +1065,40 @@ class PendingImport:
     def from_json(cls, raw: dict[str, Any], *, guards: Mapping[int, GuardFacts]) -> "PendingImport":
         """Rebuild a record from its persisted cache-store dict, each claim fed its entry's guard row."""
 
+        seadex_files = tuple(raw.get("seadex_files", []))
+        mapped = {name: tuple(ids) for name, ids in raw.get("file_episode_map", {}).items()}
+        excluded = tuple(raw.get("excluded_files", []))
         return cls(
             infohash=raw.get("infohash", ""),
             release_group=raw.get("release_group", ""),
             is_dual_audio=raw.get("is_dual_audio", False),
-            seadex_files=tuple(raw.get("seadex_files", [])),
+            seadex_files=seadex_files,
             added_at=added_at_of(raw),
-            file_episode_map={name: tuple(ids) for name, ids in raw.get("file_episode_map", {}).items()},
+            file_episode_map=mapped,
             claims=tuple(EntryClaim.from_json(claim, guards=guards) for claim in raw.get("claims", [])),
-            excluded_files=tuple(raw.get("excluded_files", [])),
+            excluded_files=excluded,
             release_sizes=tuple(raw.get("release_sizes", [])),
             awaiting_cleanup=is_awaiting_cleanup(raw),
             sizes_by_name=raw.get("sizes_by_name", {}),
-            hand_import_files=tuple(raw.get("hand_import_files", [])),
+            hand_import_files=(
+                tuple(raw["hand_import_files"])
+                if "hand_import_files" in raw
+                else _unplaced_listed_files(seadex_files, mapped, excluded)
+            ),
         )
+
+
+def _unplaced_listed_files(
+    listed: Iterable[str], mapped: Mapping[str, tuple[int, ...]], excluded: Iterable[str]
+) -> tuple[str, ...]:
+    """The listed files a stored row with no `hand_import_files` key left for a hand import.
+
+    Every one the grab neither mapped nor excluded counts, since nothing else on the row tells a refused file from a
+    plain skip.
+    """
+
+    taken = {*_normalized_names_in_order(mapped), *_normalized_names_in_order(excluded)}
+    return tuple(name for name in _normalized_names_in_order(listed) if name not in taken)
 
 
 def is_awaiting_cleanup(raw: dict[str, Any]) -> bool:

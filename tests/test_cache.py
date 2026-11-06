@@ -228,12 +228,18 @@ def _v4_blob(infohash: str, al_id: int, **fields: Any) -> dict[str, Any]:
 
 
 def _assert_round_trips(records: dict[str, dict[str, Any]]) -> None:
-    """Every migrated blob re-serializes byte-for-byte as a record, gaining only its empty sizes and hand imports."""
+    """Every migrated blob re-serializes byte-for-byte as a record, gaining only its empty sizes and, as hand imports,
+    the listed files it neither mapped nor excluded."""
 
-    empty: dict[str, Any] = {"sizes_by_name": {}, "hand_import_files": []}
     for infohash, blob in records.items():
         rebuilt = PendingImport.from_json(blob, guards={}).to_json()
-        assert json.dumps(rebuilt) == json.dumps({**blob, **empty}), infohash
+        unplaced = [
+            name
+            for name in blob["seadex_files"]
+            if name not in blob["file_episode_map"] and name not in blob["excluded_files"]
+        ]
+        expected = {**blob, "sizes_by_name": {}, "hand_import_files": unplaced}
+        assert json.dumps(rebuilt) == json.dumps(expected), infohash
 
 
 def _pending_columns(db: Path) -> list[str]:
