@@ -541,11 +541,14 @@ class RunReporter:
         preview: bool,
         waiting_to_import: bool,
     ) -> None:
-        """Post the action block for a title that differs from SeaDex's pick, after the adding has run."""
+        """Post the action block for a title that differs from SeaDex's pick, after the adding has run.
 
-        # Nothing grabbed and nothing already present (every release skipped): leave the status to the
-        # inline "skipped" warning.
-        if not results and not preview:
+        Posts nothing when no release was added or already in qBittorrent.
+        """
+
+        # Nothing was added and nothing was already in qBittorrent, in a real run or a preview: the skipped, failed
+        # and held-by-cap rows say why.
+        if not results:
             return
 
         # A release neither qBittorrent nor its tracker page named has no name, and `ReleaseName.display` falls back
@@ -558,12 +561,13 @@ class RunReporter:
             elif r.outcome is AddOutcome.ALREADY_ADDED:
                 downloading.append(ReleaseName(r.name or "", r.group))
 
-        if preview:
-            status = GrabStatus.WOULD_ADD
-        elif added:
-            status = GrabStatus.ADDING
-        else:
+        # `added` first, so a preview says "would add" only for a title it would add something for.
+        if not added:
             status = GrabStatus.ALREADY_DOWNLOADING
+        elif preview:
+            status = GrabStatus.WOULD_ADD
+        else:
+            status = GrabStatus.ADDING
 
         # Tag is a StrEnum, so sorting is by value.
         groups = tuple(

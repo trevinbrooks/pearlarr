@@ -17,6 +17,7 @@ composite, fake its leaves" seam - so the whole file type-checks at strict.
 
 import time
 
+import pytest
 from seadex import Tag
 
 from pearlarr.anilist_client import AniListClient
@@ -651,16 +652,19 @@ class TestLogSeadexAction:
         assert "keeping it" not in joined
         assert "kept" not in joined
 
-    def test_already_downloading_not_waiting(self) -> None:
-        # Feature off / preview: state the fact, but don't promise an import.
+    @pytest.mark.parametrize("preview", [False, True], ids=["wait mode off", "preview"])
+    def test_already_downloading_not_waiting(self, preview: bool) -> None:
+        # State the fact, but don't promise an import, and in a preview don't say "would add".
         messages = _action_messages(
             [ReleaseOutcome(outcome=AddOutcome.ALREADY_ADDED, name="X", group="G")],
+            preview=preview,
             waiting_to_import=False,
         )
         joined = "\n".join(messages)
 
         assert "already in qBittorrent" in joined
         assert "waiting to import" not in joined
+        assert "would add" not in joined
 
     def test_mixed_added_and_already_added_reads_adding(self) -> None:
         # A fresh grab happened, so the headline is "adding". The per-release rows
@@ -691,8 +695,9 @@ class TestLogSeadexAction:
         assert any("would add" in m and "Show-NAN0" in m for m in messages)
         assert "adding SeaDex's recommended release" not in joined
 
-    def test_no_outcomes_emit_nothing(self) -> None:
-        messages = _action_messages([])
+    @pytest.mark.parametrize("preview", [False, True], ids=["real run", "preview"])
+    def test_no_outcomes_emit_nothing(self, preview: bool) -> None:
+        messages = _action_messages([], preview=preview)
 
         assert messages == []
 

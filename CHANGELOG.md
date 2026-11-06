@@ -7,6 +7,10 @@ Pearlarr is a fork of [bbtufty/seadexarr](https://github.com/bbtufty/seadexarr).
 
 ## [Unreleased]
 
+### Fixed
+
+- A preview or `--dry-run` no longer reports a "would add" status for a title it would add nothing for. A title whose releases were all skipped or failed to grab prints those lines alone, and one whose release is already in qBittorrent says so, as in a real run.
+
 ## [1.5.8] - 2026-11-06
 
 ### Changed
