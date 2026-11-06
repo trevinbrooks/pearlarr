@@ -475,8 +475,8 @@ class RunServices:
         """The entries mapped to the external ids, the ignored ones set apart, for the series' listing read.
 
         An ignored entry is never processed, but a torrent it lists is still placed under its window, flagged so
-        `ordered_windows` runs it after the kept windows of its kind. Logs nothing, since `get_anilist_ids` logs the
-        ignored ids.
+        `ordered_windows` runs it after the kept windows of the same kind (season or specials). Logs nothing, since
+        `get_anilist_ids` logs the ignored ids.
         """
 
         return self._mappings.get_anilist_ids(ids)

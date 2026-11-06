@@ -702,9 +702,9 @@ class EntryWindow:
     """The entry's series and AniList titles (see `EntryNames`)."""
 
     ignored: bool = False
-    """Whether the entry was in `ignore_anilist_ids` at the read, so `ordered_windows` runs its window after the kept
-    windows of its kind: a file a kept window of its kind also places is that kept title's, since an ignored title
-    never grabs. A claim's window takes the flag from its entry's listed window."""
+    """Whether the entry was in `ignore_anilist_ids` at the read. `ordered_windows` runs an ignored window after the
+    kept windows of the same kind (season or specials), so a file a kept title can place is the kept title's. A
+    claim's window takes the flag from its entry's listed window."""
 
     @classmethod
     def of(

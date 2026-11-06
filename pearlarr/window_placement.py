@@ -4,9 +4,8 @@ The windows run season windows first, then specials windows, the kept titles bef
 within each kind, and otherwise in AniList id order (`ordered_windows`), so a torrent places the same whichever entry
 sees it first and whether or not a record exists. Season windows go first because the release-run pass lets a
 specials window take a run keyed outside it: a specials title with a lower id than its season title would otherwise
-take the season's episodes. An ignored title goes after the kept ones of its kind because it never grabs: a file both
-would take is the kept title's to import, and only a file no kept title of its kind places is left as the ignored
-title's.
+take the season's episodes. An ignored title goes after the kept ones of the same kind because it never grabs: a file
+both could place is the kept title's to import, and the ignored title gets only what no kept title places.
 
 Every window places every file, not just the ones earlier windows left, because a numbered run cut short would read
 as a new run and could land wrong. Then the windows merge in order:
