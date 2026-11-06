@@ -36,7 +36,6 @@ from pearlarr.grab_pipeline import GrabPipeline, GrabRequest
 from pearlarr.grab_placement import EntryFacts, KnownTorrent, PendingSeed, SeedScope, TorrentEvidence, TorrentFacts
 from pearlarr.import_wait import ImportProbes, ImportWaitManager, PostImportCleanup
 from pearlarr.manual_import import (
-    EMPTY_LISTING,
     NO_SIZES_BY_NAME,
     Deferral,
     EntryClaim,
@@ -48,7 +47,6 @@ from pearlarr.manual_import import (
     ImportWaitMode,
     OwnGroup,
     PendingImport,
-    TorrentListing,
 )
 from pearlarr.mappings import MappingResolver, MappingSources
 from pearlarr.notify import Notifier
@@ -56,6 +54,7 @@ from pearlarr.output import SeverityCounts, emit_to_hub
 from pearlarr.parse_records import ParseRecords
 from pearlarr.pending_records import PendingRecords
 from pearlarr.placement_types import (
+    EMPTY_LISTING,
     NO_EVIDENCE,
     NO_SEEDED,
     EpisodeAssignment,
@@ -65,6 +64,7 @@ from pearlarr.placement_types import (
     PlacementVerdict,
     SizeIdentities,
     TargetScope,
+    TorrentListing,
     episode_index,
 )
 from pearlarr.placer import assign_episode_ids

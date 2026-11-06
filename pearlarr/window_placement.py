@@ -23,7 +23,7 @@ from collections.abc import Collection, Iterable, Mapping, Sequence
 from dataclasses import dataclass, replace
 from types import MappingProxyType
 
-from .manual_import import EntryClaim, EntryWindow, TorrentListing
+from .manual_import import EntryClaim, EntryWindow
 from .placement_types import (
     EpisodeAssignment,
     EpisodeIndex,
@@ -32,6 +32,7 @@ from .placement_types import (
     PlacementBatch,
     PlacementVerdict,
     TargetScope,
+    TorrentListing,
     all_specials,
 )
 from .placer import assign_episode_ids

@@ -4,7 +4,8 @@
 from seadex import EntryRecord, Tag, TorrentRecord, Tracker
 
 from pearlarr.listing_fold import EntryListing, fold_listings, size_identities
-from pearlarr.manual_import import EMPTY_LISTING, EntryWindow
+from pearlarr.manual_import import EntryWindow
+from pearlarr.placement_types import EMPTY_LISTING
 from pearlarr.seadex_types import SpecialAliasing
 
 from .builders import entry_window, make_entry_record, make_torrent_record, torrent_listing

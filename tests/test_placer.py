@@ -10,14 +10,18 @@ from typing import ClassVar
 
 import pytest
 
-from pearlarr.manual_import import EMPTY_LISTING, NO_IDENTIFIED, EntryNames, IdentifiedNames, TorrentListing
+from pearlarr.manual_import import EntryNames
 from pearlarr.placement_types import (
+    EMPTY_LISTING,
+    NO_IDENTIFIED,
     EpisodeAssignment,
     EpisodeIndex,
+    IdentifiedNames,
     ListingEvidence,
     Placement,
     PlacementVerdict,
     TargetScope,
+    TorrentListing,
 )
 from pearlarr.seadex_types import EpisodeKey, MatchedEpisode, ParsedFileInfo
 

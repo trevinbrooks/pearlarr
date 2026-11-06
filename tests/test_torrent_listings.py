@@ -6,8 +6,9 @@ from dataclasses import replace
 
 from seadex import EntryRecord
 
-from pearlarr.manual_import import EMPTY_LISTING, EntryNames, EntryWindow
+from pearlarr.manual_import import EntryNames, EntryWindow
 from pearlarr.mappings import MappingEntry, ResolvedMappings
+from pearlarr.placement_types import EMPTY_LISTING
 from pearlarr.seadex_types import SonarrEpisode, SpecialAliasing
 from pearlarr.torrent_listings import SeriesListings
 

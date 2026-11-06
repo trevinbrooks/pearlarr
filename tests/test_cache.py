@@ -228,9 +228,9 @@ def _v4_blob(infohash: str, al_id: int, **fields: Any) -> dict[str, Any]:
 
 
 def _assert_round_trips(records: dict[str, dict[str, Any]]) -> None:
-    """Every migrated blob re-serializes byte-for-byte as a record, gaining only its empty size maps and listing."""
+    """Every migrated blob re-serializes byte-for-byte as a record, gaining only its empty sizes and hand imports."""
 
-    empty: dict[str, Any] = {"sizes_by_name": {}, "identified": {}, "listing": {"entries": [], "special_aliases": []}}
+    empty: dict[str, Any] = {"sizes_by_name": {}, "hand_import_files": []}
     for infohash, blob in records.items():
         rebuilt = PendingImport.from_json(blob, guards={}).to_json()
         assert json.dumps(rebuilt) == json.dumps({**blob, **empty}), infohash

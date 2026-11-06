@@ -7,8 +7,9 @@ from typing import cast
 import pytest
 
 from pearlarr.episode_titles import EpisodeTitles
-from pearlarr.manual_import import EMPTY_LISTING, FileEpisodeMap
+from pearlarr.manual_import import FileEpisodeMap
 from pearlarr.placement_types import (
+    EMPTY_LISTING,
     EpisodeIndex,
     ListingEvidence,
     PlacementBatch,
@@ -219,6 +220,23 @@ class TestTargetScope:
         scope = TargetScope([11], self._SERIES, listing=listing)
 
         assert scope.using([12]).listing == listing
+
+
+class TestTorrentListing:
+    """The listing's windows, one per AniList id in id order, and its aliases copied from the caller."""
+
+    def test_two_windows_under_one_anilist_id_keep_the_first(self) -> None:
+        first, second, other = entry_window(1, (501,)), entry_window(1, (502,)), entry_window(2, (503,))
+
+        assert torrent_listing(other, first, second).entries == (first, other)
+
+    def test_a_change_to_the_callers_dict_leaves_the_listing_as_it_was(self) -> None:
+        aliases = {13: 12}
+        listing = torrent_listing(entry_window(1, (501,)), aliases=aliases)
+
+        aliases[14] = 13
+
+        assert dict(listing.special_aliases) == {13: 12}
 
 
 class TestListingEvidence:

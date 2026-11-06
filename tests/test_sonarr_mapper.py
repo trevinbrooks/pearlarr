@@ -2,32 +2,32 @@
 """The import-time `FileEpisodeMapper`: on-disk leaves and a record's seed through the placer."""
 
 from collections.abc import Callable, Iterable, Mapping
-from dataclasses import dataclass, replace
+from dataclasses import dataclass
 from typing import ClassVar
 
 import pytest
 
 from pearlarr.grab_placement import SeedFile, SeedRelease, build_pending_seed, place_release
 from pearlarr.import_files import CandidateFile
-from pearlarr.manual_import import EMPTY_LISTING, PendingImport, TorrentListing, normalize_basename
-from pearlarr.placement_types import NO_EVIDENCE, EpisodeIndex, Placement, PlacementVerdict, TargetScope
+from pearlarr.manual_import import PendingImport, normalize_basename
+from pearlarr.placement_types import (
+    NO_EVIDENCE,
+    EpisodeIndex,
+    Placement,
+    PlacementVerdict,
+    TargetScope,
+)
 from pearlarr.seadex_types import EpisodeKey, ManualImportCandidate, ParsedFileInfo
 from pearlarr.sonarr_mapper import FileAssignment, FileEpisodeMapper
 
 from .builders import (
-    entry_claim,
     entry_facts,
-    entry_window,
     indexes_for,
-    known_torrent,
     new_torrent,
     parsed_info,
     pending_import,
     seed_scope,
     series_index,
-    specials_pack,
-    torrent_evidence,
-    torrent_listing,
     url_item,
 )
 from .fakes import FakeSonarrClient
@@ -98,137 +98,6 @@ class TestMapperSeam:
 
         assert result.placed == {normalize_basename(leftover_name): (102,)}
         assert result.assigned == {normalize_basename(seed_name): (101,), normalize_basename(leftover_name): (102,)}
-
-
-class TestIdentifiedAtImport:
-    """Import places the files the grab placed by size the same way, from the record, without reading SeaDex."""
-
-    _SECOND: ClassVar[str] = "Show - S00E02 [1080p].mkv"
-    _THIRD: ClassVar[str] = "Show - S00E03 [1080p].mkv"
-    _MAP: ClassVar[dict[EpisodeKey, int]] = {EpisodeKey(0, 2): 7897, EpisodeKey(0, 3): 7898}
-
-    def _pending(self, identified: Mapping[str, int]) -> PendingImport:
-        """Two specials, one window each, nothing seeded."""
-
-        return pending_import(
-            file_episode_map={},
-            seadex_files=[self._SECOND, self._THIRD],
-            claims=(
-                entry_claim(al_id=1, ordered_episode_ids=(7897,)),
-                entry_claim(al_id=2, ordered_episode_ids=(7898,)),
-            ),
-            identified=identified,
-        )
-
-    def _disk(self) -> _Disk:
-        parses = {
-            self._SECOND: parsed_info(season=0, episodes=(2,), matched=((0, 2),)),
-            self._THIRD: parsed_info(season=0, episodes=(3,), matched=((0, 3),)),
-        }
-        return _Disk(parses.get)
-
-    def test_each_window_places_the_file_its_size_identifies(self) -> None:
-        # The specials are named as each other. Each window sets aside the file whose size belongs to the other
-        # window, so the import keeps the grab's swap.
-        second, third = normalize_basename(self._SECOND), normalize_basename(self._THIRD)
-
-        result = _assign_on_disk(self._pending({second: 7898, third: 7897}), self._disk(), self._MAP)
-
-        assert result.assigned == {second: (7898,), third: (7897,)}
-        assert result.excluded == ()
-
-    def test_a_record_without_identities_places_by_name(self) -> None:
-        result = _assign_on_disk(self._pending({}), self._disk(), self._MAP)
-
-        assert result.assigned == {normalize_basename(self._SECOND): (7897,), normalize_basename(self._THIRD): (7898,)}
-
-
-class TestListedWindowsAtImport:
-    """The import runs the windows the grab ran: the stored listing's and the claims', importing only the claims'."""
-
-    _NAMES: ClassVar[tuple[str, ...]] = tuple(f"Show - S01E{n:02d} [1080p].mkv" for n in (1, 2, 3))
-    _MAP: ClassVar[dict[EpisodeKey, int]] = {EpisodeKey(1, n): 100 + n for n in (1, 2, 3)}
-    # Entries 1 and 2 claim the torrent, and entry 3 is listed on it without a claim.
-    _LISTING = torrent_listing(entry_window(1, (101,)), entry_window(2, (102,)), entry_window(3, (103,)))
-
-    def _pending(self, listing: TorrentListing = EMPTY_LISTING) -> PendingImport:
-        return pending_import(
-            file_episode_map={},
-            seadex_files=self._NAMES,
-            claims=(entry_claim(al_id=1, ordered_episode_ids=(101,)), entry_claim(al_id=2, ordered_episode_ids=(102,))),
-            listing=listing,
-        )
-
-    def _disk(self) -> _Disk:
-        parses = {
-            name: parsed_info(season=1, episodes=(n,), matched=((1, n),)) for n, name in enumerate(self._NAMES, 1)
-        }
-        return _Disk(parses.get)
-
-    def test_a_claimed_entrys_file_imports_and_a_listed_unclaimed_entrys_is_set_aside(self) -> None:
-        first, second, third = (normalize_basename(name) for name in self._NAMES)
-
-        result = _assign_on_disk(self._pending(self._LISTING), self._disk(), self._MAP)
-
-        assert result.assigned == {first: (101,), second: (102,)}
-        assert result.excluded == (Placement(third, (), PlacementVerdict.LISTED_ELSEWHERE),)
-
-    def test_a_record_without_a_listing_runs_its_claims_alone(self) -> None:
-        # A record an older version wrote has no listing: the third file reads outside every claim, another slice's.
-        third = normalize_basename(self._NAMES[2])
-
-        result = _assign_on_disk(self._pending(), self._disk(), self._MAP)
-
-        assert result.excluded == (Placement(third, (), PlacementVerdict.FOREIGN),)
-
-    def test_a_stored_listing_judges_a_leftover_specials_pack(self) -> None:
-        # The listing names specials 2, 4 and 6, three as the pack is wide, and the pack's 1 and 3 are no listed
-        # special: it's left for a hand import at the import as the grab would leave it.
-        pack = specials_pack(1, 2, 3)
-        pending = pending_import(
-            file_episode_map={},
-            seadex_files=tuple(pack),
-            ordered_episode_ids=(502, 504, 506),
-            listing=torrent_listing(entry_window(1, (502, 504, 506))),
-        )
-
-        result = _assign_on_disk(pending, _Disk(pack.get), {EpisodeKey(0, n): 500 + n for n in range(1, 7)})
-
-        assert result.assigned == {}
-        assert set(result.hand_import_files) == {normalize_basename(name) for name in pack}
-
-    def test_a_claim_made_before_its_title_was_ignored_still_imports(self) -> None:
-        # Entry 3 grabbed the torrent and was put on the ignore list since. Its claim's window runs after the kept
-        # ones (`ordered_windows` takes the flag from the listing), and its claim still imports what that leaves it.
-        listing = torrent_listing(
-            entry_window(1, (101,)), entry_window(2, (102,)), entry_window(3, (103,), ignored=True)
-        )
-        pending = replace(
-            self._pending(listing),
-            claims=(*self._pending().claims, entry_claim(al_id=3, ordered_episode_ids=(103,))),
-        )
-
-        result = _assign_on_disk(pending, self._disk(), self._MAP)
-
-        assert result.assigned == {normalize_basename(name): (100 + n,) for n, name in enumerate(self._NAMES, 1)}
-        assert result.excluded == ()
-
-    def test_a_leftover_a_listed_unclaimed_title_refuses_is_set_aside_not_a_hand_import(self) -> None:
-        # Entry 2's listed window refuses the pack as misnumbered and the record's one claim never read it, so the
-        # files are entry 2's to report, not this record's hand import.
-        pack = specials_pack(1, 2, 3)
-        pending = pending_import(
-            file_episode_map={},
-            seadex_files=tuple(pack),
-            claims=(entry_claim(al_id=1, ordered_episode_ids=(101,)),),
-            listing=torrent_listing(entry_window(2, (502, 504, 506))),
-        )
-        id_by_key = {**{EpisodeKey(0, n): 500 + n for n in range(1, 7)}, EpisodeKey(1, 1): 101}
-
-        result = _assign_on_disk(pending, _Disk(pack.get), id_by_key)
-
-        assert (result.assigned, result.hand_import_files) == ({}, ())
-        assert {p.verdict for p in result.excluded} == {PlacementVerdict.LISTED_ELSEWHERE}
 
 
 class TestSeededSharerTell:
@@ -436,63 +305,3 @@ class TestSeedEqualsMapper:
         record = seed.record_at("2026-01-01 00:00:00", fresh=True)
         assert dict(record.file_episode_map) == live.assigned
         assert record.excluded_files == seed.excluded
-
-    def test_the_seed_under_a_listed_sibling_and_the_mapper_under_the_stored_listing_agree(self) -> None:
-        # Entry 2 is listed over the season's episode with no claim yet. The grab sets that file aside as entry 2's,
-        # and the import, running the record's listing beside its claim, does the same.
-        parses = self._parses()
-        scope = seed_scope(self._index(), series_index(self._MAP))
-        torrent = known_torrent(
-            indexes={7: series_index(self._MAP)}, evidence=torrent_evidence(entry_window(2, (601,)))
-        )
-        placed = place_release([SeedFile(name, 1000, parses[name]) for name in self._NAMES], scope, torrent)
-        release = SeedRelease(
-            release_group="grp", url_item=url_item(url="u", infohash="h"), infohash="h", placed=placed
-        )
-        seed = build_pending_seed(release, scope, entry_facts(al_id=1, series_id=7, title="t"))
-        record = seed.record_at("2026-01-01 00:00:00", fresh=True)
-
-        live = _assign_on_disk(replace(record, file_episode_map={}), _Disk(parses.get), self._MAP)
-
-        assert seed.placements == live.assigned
-        assert seed.excluded == tuple(p.name for p in live.excluded)
-        assert seed.placements == {
-            normalize_basename(self._NAMES[0]): (501,),
-            normalize_basename(self._NAMES[1]): (502,),
-        }
-        assert live.excluded == (Placement(normalize_basename(self._NAMES[2]), (), PlacementVerdict.LISTED_ELSEWHERE),)
-
-    def test_a_grab_moving_the_claims_series_and_the_import_of_its_record_agree(self) -> None:
-        # Entry 1 claimed the pack on series 7, where entry 2 was listed beside it, and this grab moves the claim to
-        # series 8. Only series 8 is read: the grab folds the listing to the series the record will claim, so entry
-        # 2's old window neither stands the placement down nor takes a file, and the import runs the same one window.
-        names = [f"Show - S01E{n:02d}.mkv" for n in range(1, 5)]
-        parses = {name: parsed_info(season=1, episodes=(n,), matched=((1, n),)) for n, name in enumerate(names, 1)}
-        on_8 = {EpisodeKey(1, n): 800 + n for n in range(1, 5)}
-        index = series_index(on_8)
-        stored = pending_import(
-            infohash="h",
-            al_id=1,
-            ordered_episode_ids=(101, 102, 103, 104),
-            file_episode_map={},
-            seadex_files=tuple(names),
-            listing=torrent_listing(entry_window(1, (101, 102, 103, 104)), entry_window(2, (103, 104))),
-        )
-        scope = seed_scope(index, index, al_id=1, series_id=8)
-        torrent = known_torrent(
-            stored, indexes={8: index}, evidence=torrent_evidence(entry_window(1, tuple(on_8.values()), series_id=8))
-        )
-        placed = place_release([SeedFile(name, 1000, parses[name]) for name in names], scope, torrent)
-        release = SeedRelease(
-            release_group="grp", url_item=url_item(url="u", infohash="h"), infohash="h", placed=placed
-        )
-        seed = build_pending_seed(release, scope, entry_facts(al_id=1, series_id=8, title="t"))
-        record = seed.record_at("2026-01-01 00:00:00", fresh=False)
-
-        live = _assign_on_disk(replace(record, file_episode_map={}), _Disk(parses.get), on_8)
-
-        assert placed.hold is None
-        assert seed.placements == {normalize_basename(name): (800 + n,) for n, name in enumerate(names, 1)}
-        assert seed.placements == live.assigned
-        assert (seed.excluded, live.excluded) == ((), ())
-        assert record.series_ids == (8,)

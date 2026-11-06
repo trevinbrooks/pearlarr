@@ -45,14 +45,13 @@ from pearlarr.manual_import import (
     OwnGroup,
     PendingImport,
     PendingState,
-    TorrentListing,
     normalize_basename,
 )
 from pearlarr.mappings import ExternalIds, MappingEntry, MappingSource, ResolvedMappings
 from pearlarr.output import Severity
 from pearlarr.output.recording import RecordingHub
 from pearlarr.pending_records import PendingRecords
-from pearlarr.placement_types import ListingsRead, episode_index
+from pearlarr.placement_types import ListingsRead, TorrentListing, episode_index
 from pearlarr.planner import PlanResult
 from pearlarr.probe_verdicts import DownloadHistoryVerdict, HistoryImport, placements_from_history
 from pearlarr.reporter import EntryTitle, RunContext
@@ -2925,31 +2924,6 @@ class TestManualImportWarningGating:
         logger.setLevel(logging.DEBUG)
         strat._executor.logger = logger
         return strat, sonarr
-
-    def test_a_file_placed_by_size_over_its_name_warns_once(self) -> None:
-        # The record's size match puts the file on the second episode, over its own number.
-        name = "Show - 01 [1080p].mkv"
-        pending = pending_import(
-            file_episode_map={},
-            seadex_files=[name],
-            ordered_episode_ids=(101, 102),
-            identified={normalize_basename(name): 102},
-        )
-        strat, sonarr = _make_sonarr_for_import(
-            candidates=[manual_candidate(f"/d/{name}")],
-            episodes=[sonarr_ep(1, n, ep_id=100 + n, episode_file_id=0) for n in (1, 2)],
-        )
-        sonarr.parse_fn = lambda _n: parsed_info(season=1, episodes=(1,), matched=((1, 1),))
-        recording = install_recording_hub()
-
-        probe = strat.import_completed(pending, "/d", AttemptKind.POLL)
-        strat.import_completed(pending, "/d", AttemptKind.POLL)
-
-        assert probe.placements == {normalize_basename(name): (102,)}
-        warnings = [m for m in diagnostic_messages(recording, Severity.WARNING) if "placed by file size" in m]
-        assert warnings == [
-            f"{pending.display_label}: {normalize_basename(name)} placed by file size instead of by its name"
-        ]
 
     def test_grab_time_excluded_unplaceable_file_never_warns(self, caplog: pytest.LogCaptureFixture) -> None:
         # A sibling record's slice of a shared torrent was decided at grab time:

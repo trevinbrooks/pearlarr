@@ -18,14 +18,14 @@ plan, quality/language resolution) live in the sibling planning modules that
 import math
 import posixpath
 import unicodedata
-from collections.abc import Collection, Iterable, Mapping, Sequence
+from collections.abc import Iterable, Mapping, Sequence
 from dataclasses import dataclass, field, replace
 from datetime import datetime
 from enum import Enum, StrEnum, auto
 from types import MappingProxyType
 from typing import Any, NamedTuple
 
-from .seadex_types import NO_ALIASES, RemotePathMapping, SonarrEpisode, SpecialAliases, coerce_int, unambiguous
+from .seadex_types import RemotePathMapping, SonarrEpisode, coerce_int, unambiguous
 from .stamps import parse_stamp_or_none
 
 
@@ -587,14 +587,14 @@ def _normalized_names(names: Iterable[str]) -> set[str]:
     return {normalized_leaf(name) for name in names}
 
 
+def _normalized_names_in_order(names: Iterable[str]) -> tuple[str, ...]:
+    """Each name's normalized leaf, once, in first-seen order."""
+
+    return tuple(dict.fromkeys(normalized_leaf(name) for name in names))
+
+
 NO_SIZES_BY_NAME: Mapping[str, int] = MappingProxyType({})
 """No listed sizes: a record written before they were kept, or a torrent whose files are never listed."""
-
-type IdentifiedNames = Mapping[str, int]
-"""Normalized file name -> the episode id its size matched."""
-
-NO_IDENTIFIED: IdentifiedNames = MappingProxyType({})
-"""No files placed by size: a record written before this field existed, or no size matched."""
 
 
 def sizes_by_episode(mapped: FileEpisodeMap, listed: Mapping[str, int]) -> dict[int, int]:
@@ -624,8 +624,7 @@ def _normalized_keys[V](by_name: Mapping[str, V]) -> dict[str, V]:
     """`by_name` keyed by normalized leaf.
 
     A name whose spellings disagree on the value is dropped, unlike the map's first-wins fold: a file with no size
-    is never read as misplaced and one with no identity is placed by its name, where a guessed value could misjudge
-    it.
+    is never read as misplaced, where a guessed size could misjudge it.
     """
 
     return unambiguous((normalized_leaf(name), value) for name, value in by_name.items())
@@ -708,9 +707,7 @@ class EntryWindow:
     ignored: bool = False
     """Whether the entry was in `ignore_anilist_ids` at the read, so `ordered_windows` runs its window after the kept
     windows of its kind: a file a kept window of its kind also places is that kept title's, since an ignored title
-    never grabs, and a claim it made before it was ignored imports only what no kept title places. A claim's window
-    takes the flag from its entry's listed window, and a stored window keeps it until a kept title's grab re-reads
-    the series."""
+    never grabs. A claim's window takes the flag from its entry's listed window."""
 
     @classmethod
     def of(
@@ -727,102 +724,16 @@ class EntryWindow:
         ids = tuple(dict.fromkeys(ep.id for ep in ep_list if ep.id))
         return cls(al_id=al_id, series_id=series_id, ordered_episode_ids=ids, names=names, ignored=ignored)
 
-    def to_json(self) -> dict[str, Any]:
-        """The plain dict persisted inside a record's listing: the schema, spelled out."""
-
-        return {
-            "al_id": self.al_id,
-            "series_id": self.series_id,
-            "ordered_episode_ids": list(self.ordered_episode_ids),
-            "names": self.names.to_json(),
-            "ignored": self.ignored,
-        }
-
     @classmethod
     def from_json(cls, raw: dict[str, Any]) -> "EntryWindow":
-        """Rebuild a window from its persisted dict (a window stored before the flag was kept reads as kept)."""
+        """Rebuild a window from a persisted claim's dict."""
 
         return cls(
             al_id=raw.get("al_id", 0),
             series_id=raw.get("series_id", 0),
             ordered_episode_ids=tuple(raw.get("ordered_episode_ids", [])),
             names=EntryNames.from_json(raw.get("names", {})),
-            ignored=raw.get("ignored", False),
         )
-
-
-@dataclass(frozen=True, slots=True)
-class TorrentListing:
-    """The windows of the SeaDex entries that list one torrent, and those entries' special aliases."""
-
-    entries: tuple[EntryWindow, ...] = ()
-    """One window per listing entry, in AniList id order."""
-
-    special_aliases: SpecialAliases = NO_ALIASES
-    """The union of those entries' special aliases, minus any TMDB number two entries pair differently. Empty when
-    the entries pair against different TMDB shows."""
-
-    ids: frozenset[int] = field(init=False, repr=False, compare=False)
-    """Union of the entries' episode ids."""
-
-    def __post_init__(self) -> None:
-        # SeaDex can list one hash twice under an entry, so the first window per AniList id wins.
-        kept: dict[int, EntryWindow] = {}
-        for window in self.entries:
-            kept.setdefault(window.al_id, window)
-        entries = tuple(sorted(kept.values(), key=lambda window: window.al_id))
-        object.__setattr__(self, "entries", entries)
-        # Copied before it's wrapped, so a caller's later edits can't reach the listing.
-        object.__setattr__(self, "special_aliases", MappingProxyType(dict(self.special_aliases)))
-        object.__setattr__(self, "ids", frozenset(ep_id for window in entries for ep_id in window.ordered_episode_ids))
-
-    def reading(self, listing: "TorrentListing") -> "TorrentListing":
-        """This listing with `listing`, one series' read, read into it.
-
-        A listing is read per series, so `listing`'s windows replace the stored ones of the series it covers and
-        another series' stay. The read's windows go first, so an AniList id mapped to both series keeps the fresh one
-        (`__post_init__` keeps the first window per id). The aliases join, the new read winning a number both pair.
-        An empty read (an unlisted hash, an unread listing) changes nothing.
-        """
-
-        if not listing.entries:
-            return self
-        read = {window.series_id for window in listing.entries}
-        kept = tuple(window for window in self.entries if window.series_id not in read)
-        return TorrentListing((*listing.entries, *kept), {**self.special_aliases, **listing.special_aliases})
-
-    def on_series(self, series_ids: Collection[int]) -> "TorrentListing":
-        """This listing with only the windows on `series_ids`, or itself when none drops.
-
-        The aliases stay whole: they aren't kept per entry, and `reading` carries them across reads the same way.
-        """
-
-        kept = tuple(window for window in self.entries if window.series_id in series_ids)
-        return self if len(kept) == len(self.entries) else TorrentListing(kept, self.special_aliases)
-
-    def to_json(self) -> dict[str, Any]:
-        """The plain dict persisted inside a record.
-
-        The aliases ride as `[tmdb, tvdb]` pairs, since a JSON object's keys would come back as strings.
-        """
-
-        return {
-            "entries": [window.to_json() for window in self.entries],
-            "special_aliases": [[tmdb, tvdb] for tmdb, tvdb in self.special_aliases.items()],
-        }
-
-    @classmethod
-    def from_json(cls, raw: dict[str, Any]) -> "TorrentListing":
-        """Rebuild a listing from its persisted dict (missing keys fall back empty)."""
-
-        return cls(
-            tuple(EntryWindow.from_json(window) for window in raw.get("entries", [])),
-            dict(raw.get("special_aliases", [])),
-        )
-
-
-EMPTY_LISTING = TorrentListing()
-"""A torrent no entry lists. Listings match by infohash, so a url without one always gets this."""
 
 
 @dataclass(frozen=True, slots=True, kw_only=True)
@@ -974,19 +885,18 @@ class PendingImport:
     """The torrent's birth in `UPDATED_AT_STR_FORMAT`: the pipeline's stamp at the add."""
 
     file_episode_map: FileEpisodeMap
-    """Normalized basename -> Sonarr episode ids over the WHOLE torrent: the grab-time seeds plus the placements
-    later imports made. Folded as the record is built (`_normalized_map`) and wrapped read-only."""
+    """Normalized basename -> Sonarr episode ids over the WHOLE torrent: the grab-time seeds plus the files Sonarr's
+    history placed for a download no scan saw. Folded as the record is built (`_normalized_map`) and wrapped
+    read-only."""
 
     claims: tuple[EntryClaim, ...]
-    """Every entry's claim on the torrent, in accretion order. The import runs their windows in `ordered_windows`'
-    order."""
+    """Every entry's claim on the torrent, in accretion order."""
 
     excluded_files: tuple[str, ...] = ()
     """Normalized basenames of video files that aren't this record's to import under its current claims (a
     collision-refused duplicate, a file every window resolves outside, one another listed title's window placed or
-    left for a hand import), found at grab time or by an import poll. They only quiet the import's warning: a later
-    claim's window can still place one. Folded and deduplicated in order as the record is built, and never a name
-    the map holds."""
+    left for a hand import), found at grab time. They only quiet the import's warning: a later claim's grab can
+    still place one. Folded and deduplicated in order as the record is built, and never a name the map holds."""
 
     release_sizes: tuple[int, ...] = ()
     """The grabbed listing's file sizes. Lets the import tell this release's own files from a stale
@@ -1000,31 +910,27 @@ class PendingImport:
     Folded as the record is built (`_normalized_keys`). Empty on a row written before it was kept, which then
     never reads a file as misplaced."""
 
-    identified: IdentifiedNames = NO_IDENTIFIED
-    """Files the grab placed by size, name -> episode id, so the import places them the same way without reading
-    SeaDex. Folded as the record is built (`_normalized_keys`). Empty on rows written before this field existed."""
-
-    listing: TorrentListing = EMPTY_LISTING
-    """The torrent's SeaDex listing: the window of every entry that lists it, each series' windows as the latest
-    grab on that series read them (`with_listing`), and their special aliases. The import places its leftovers
-    under these windows and the claims', the windows the grab placed under. Every window's series is a claimed
-    series: `__post_init__` drops the windows on any other, so a claim that moves series (`with_claim` replaces by
-    AniList id) takes the series it left out of the listing, and the import, which reads only the claimed series'
-    episodes, can run every stored window. `EMPTY_LISTING` when the record holds none, which a reader treats the
-    same whatever the cause (a row written before the field existed, a url no entry lists): the claims' windows run
-    alone."""
+    hand_import_files: tuple[str, ...] = ()
+    """Normalized basenames of the video files the grab left for a hand import (misnumbered, or refuted by their
+    run's titles), which keep the record pending once the placed files are in. Folded and deduplicated in order as
+    the record is built, and never a name the map or the exclusions hold. Empty on rows written before it was
+    kept."""
 
     def __post_init__(self) -> None:
-        # Fold the map, the exclusions and the two by-name maps so readers can take the names as normalized, the
-        # map's ids as non-zero, and no name as both mapped and excluded. Detach the maps and wrap them read-only.
+        # Fold the map, the exclusions, the hand-import files and the by-name sizes so readers can take the names as
+        # normalized, the map's ids as non-zero, and no name as two of mapped, excluded and left for a hand import.
+        # Detach the maps and wrap them read-only.
         mapped = _normalized_map(self.file_episode_map)
-        excluded = dict.fromkeys(normalized_leaf(name) for name in self.excluded_files)
+        excluded = tuple(name for name in _normalized_names_in_order(self.excluded_files) if name not in mapped)
+        hand_import = (
+            name
+            for name in _normalized_names_in_order(self.hand_import_files)
+            if name not in mapped and name not in excluded
+        )
         object.__setattr__(self, "file_episode_map", MappingProxyType(mapped))
-        object.__setattr__(self, "excluded_files", tuple(name for name in excluded if name not in mapped))
+        object.__setattr__(self, "excluded_files", excluded)
+        object.__setattr__(self, "hand_import_files", tuple(hand_import))
         object.__setattr__(self, "sizes_by_name", MappingProxyType(_normalized_keys(self.sizes_by_name)))
-        object.__setattr__(self, "identified", MappingProxyType(_normalized_keys(self.identified)))
-        # Only the windows on claimed series stay (`listing`), so the import can place under every stored window.
-        object.__setattr__(self, "listing", self.listing.on_series(self.series_ids))
 
     @property
     def own_group(self) -> OwnGroup:
@@ -1037,15 +943,6 @@ class PendingImport:
         """The distinct series the claims span, claim order."""
 
         return tuple(dict.fromkeys(claim.series_id for claim in self.claims))
-
-    def series_ids_after(self, own: EntryWindow) -> frozenset[int]:
-        """The series the record claims once `own`'s entry claims it on `own.series_id`: the other claims' and own's.
-
-        A grab folds the listing it places under to these (`KnownTorrent.order`), as `__post_init__` folds the stored
-        one to `series_ids`, so a claim that moves series takes the windows only its old claim held out of the order.
-        """
-
-        return frozenset(claim.series_id for claim in self.claims if claim.al_id != own.al_id) | {own.series_id}
 
     def claim_for(self, series_id: int) -> EntryClaim:
         """The first claim on `series_id` (the caller reads a record stored under that series)."""
@@ -1072,7 +969,7 @@ class PendingImport:
         return list(dict.fromkeys(ep_id for file_ids in self.file_episode_map.values() for ep_id in file_ids))
 
     def resolved_ids(self) -> list[int]:
-        """The episode set unplaced files assign into: the claims' windows in order, else the seeds' ids."""
+        """The episodes the record's windows cover: the claims' windows in order, else the seeds' ids."""
 
         windows = list(dict.fromkeys(ep_id for claim in self.claims for ep_id in claim.ordered_episode_ids))
         return windows or sorted(self.target_ids())
@@ -1135,26 +1032,16 @@ class PendingImport:
 
         return self._or_self(replace(self, sizes_by_name=self.sizes_by_name or sizes))
 
-    def with_listing(self, listing: TorrentListing) -> "PendingImport":
-        """The record with `listing` read into its own (`TorrentListing.reading`), itself when the read is empty.
+    def with_hand_import_files(self, names: Iterable[str]) -> "PendingImport":
+        """The record with `names` joined to its hand-import files."""
 
-        A read goes into the stored listing where `with_sizes_by_name` only fills: SeaDex can list the torrent under
-        another title later, and the newest grab placed its files under the newest read.
-        """
-
-        return self._or_self(replace(self, listing=self.listing.reading(listing)))
-
-    def with_identified(self, names: IdentifiedNames) -> "PendingImport":
-        """The record with `names` merged in, dropping any name the two map to different episodes."""
-
-        return self._or_self(replace(self, identified=unambiguous([*self.identified.items(), *names.items()])))
+        return self._or_self(replace(self, hand_import_files=(*self.hand_import_files, *names)))
 
     def with_claim(self, claim: EntryClaim) -> "PendingImport":
         """The record with `claim` joined and its cleanup flag cleared (new files to import make it active again).
 
         A re-flag by an entry already claiming replaces its claim, keeping the stored claim's first clock and
-        preowned ids: the window follows the newest plan, the TTL and the wait bar's net-out never restart. When
-        the replaced claim was the last on its series, the listing's windows on that series drop (`__post_init__`).
+        preowned ids: the window follows the newest plan, the TTL and the wait bar's net-out never restart.
         """
 
         claims = (*self.claims, claim)
@@ -1180,8 +1067,7 @@ class PendingImport:
             "release_sizes": list(self.release_sizes),
             "awaiting_cleanup": self.awaiting_cleanup,
             "sizes_by_name": dict(self.sizes_by_name),
-            "identified": dict(self.identified),
-            "listing": self.listing.to_json(),
+            "hand_import_files": list(self.hand_import_files),
         }
 
     @classmethod
@@ -1200,8 +1086,7 @@ class PendingImport:
             release_sizes=tuple(raw.get("release_sizes", [])),
             awaiting_cleanup=is_awaiting_cleanup(raw),
             sizes_by_name=raw.get("sizes_by_name", {}),
-            identified=raw.get("identified", {}),
-            listing=TorrentListing.from_json(raw.get("listing", {})),
+            hand_import_files=tuple(raw.get("hand_import_files", [])),
         )
 
 

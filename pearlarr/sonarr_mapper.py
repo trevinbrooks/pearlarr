@@ -9,9 +9,10 @@ from dataclasses import dataclass
 from .import_files import CandidateFile
 from .manual_import import FileEpisodeMap, PendingImport, joined_map, normalized_leaf, path_leaf
 from .placement_types import (
+    EMPTY_LISTING,
+    NO_EVIDENCE,
     EpisodeAssignment,
     EpisodeIndex,
-    ListingEvidence,
     Placement,
     PlacementBatch,
     PlacementVerdict,
@@ -158,9 +159,8 @@ class FileEpisodeMapper:
     ) -> FileAssignment:
         """Build the final `basename -> episode ids` map from OUR resolved set, never from Sonarr's parse alone.
 
-        Seeded files keep their ids, and the on-disk leftover is placed under the grab's windows: every stored
-        listing entry's and every claim's (`ordered_windows`). A file a window with no claim places is set aside as
-        another listed title's, and anything ambiguous comes back skipped. `indexes` must hold every claimed series.
+        Seeded files keep their ids, and the on-disk leftover is placed under every claim's window
+        (`ordered_windows`). Anything ambiguous comes back skipped. `indexes` must hold every claimed series.
         The record is never mutated: fresh placements ride `placed`.
         """
 
@@ -189,14 +189,11 @@ class FileEpisodeMapper:
                 if name not in parsed_by_file:
                     parsed_by_file[name] = self._parsed_file_info(name)
 
-        # Import doesn't read SeaDex: the record keeps the listing and the size matches the grab placed with.
         batch = PlacementBatch(leftover, parsed_by_file, seeded)
-        order = ordered_windows(pending.listing, pending.claims, None, indexes)
-        # Every stored window's series is a claimed one (`PendingImport.__post_init__` keeps only those), and
+        order = ordered_windows(EMPTY_LISTING, pending.claims, None, indexes)
         # `indexes` holds the claimed series.
         assert order is not None
-        listing = ListingEvidence(pending.listing, pending.identified)
-        windowed = place_across_windows(batch, windows_of(order.windows, indexes, listing))
+        windowed = place_across_windows(batch, windows_of(order.windows, indexes, NO_EVIDENCE))
         # An empty index means the exact pass could not have matched a numbered name this poll.
         settled = batch.all_parses_known and all(indexes[sid].id_by_key for sid in pending.series_ids)
         return FileAssignment(windowed.for_record(order.imports), seeded, settled=settled)

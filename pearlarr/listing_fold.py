@@ -5,8 +5,8 @@ from dataclasses import dataclass
 
 from seadex import EntryRecord
 
-from .manual_import import EntryWindow, TorrentListing, path_leaf
-from .placement_types import ListingsRead, SizeIdentities
+from .manual_import import EntryWindow, path_leaf
+from .placement_types import ListingsRead, SizeIdentities, TorrentListing
 from .seadex_types import NO_ALIASES, SpecialAliasing, carries_ignored_tag, normalized_infohash, unambiguous
 from .video_files import is_video_candidate
 

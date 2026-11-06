@@ -8,15 +8,8 @@ from types import MappingProxyType
 from typing import Self
 
 from .episode_titles import EpisodeTitles
-from .manual_import import (
-    EMPTY_LISTING,
-    NO_IDENTIFIED,
-    EntryNames,
-    FileEpisodeMap,
-    IdentifiedNames,
-    TorrentListing,
-)
-from .seadex_types import EpisodeKey, ParsedFileInfo, SonarrEpisode, SpecialAliases, index_episodes_by_key
+from .manual_import import EntryNames, EntryWindow, FileEpisodeMap
+from .seadex_types import NO_ALIASES, EpisodeKey, ParsedFileInfo, SonarrEpisode, SpecialAliases, index_episodes_by_key
 from .tvdb_orders import NO_ORDERING, OrderRow, SeriesOrdering
 
 
@@ -355,16 +348,48 @@ episode. A file with that exact size is that episode."""
 
 
 @dataclass(frozen=True, slots=True)
-class ListingEvidence:
-    """What SeaDex's listings for the series tell the placer about one torrent.
+class TorrentListing:
+    """The windows of the SeaDex entries that list one torrent, and those entries' special aliases."""
 
-    The import reads both halves off the record (`PendingImport.listing`, `PendingImport.identified`).
-    """
+    entries: tuple[EntryWindow, ...] = ()
+    """One window per listing entry, in AniList id order."""
+
+    special_aliases: SpecialAliases = NO_ALIASES
+    """The union of those entries' special aliases, minus any TMDB number two entries pair differently. Empty when
+    the entries pair against different TMDB shows."""
+
+    ids: frozenset[int] = field(init=False, repr=False, compare=False)
+    """Union of the entries' episode ids."""
+
+    def __post_init__(self) -> None:
+        # SeaDex can list one hash twice under an entry, so the first window per AniList id wins.
+        kept: dict[int, EntryWindow] = {}
+        for window in self.entries:
+            kept.setdefault(window.al_id, window)
+        entries = tuple(sorted(kept.values(), key=lambda window: window.al_id))
+        object.__setattr__(self, "entries", entries)
+        # Copied before it's wrapped, so a caller's later edits can't reach the listing.
+        object.__setattr__(self, "special_aliases", MappingProxyType(dict(self.special_aliases)))
+        object.__setattr__(self, "ids", frozenset(ep_id for window in entries for ep_id in window.ordered_episode_ids))
+
+
+EMPTY_LISTING = TorrentListing()
+"""A torrent no entry lists. Listings match by infohash, so a url without one always gets this."""
+
+type IdentifiedNames = Mapping[str, int]
+"""Normalized file name -> the episode id its size matched."""
+
+NO_IDENTIFIED: IdentifiedNames = MappingProxyType({})
+"""No files placed by size: no size matched, or the size identities weren't read."""
+
+
+@dataclass(frozen=True, slots=True)
+class ListingEvidence:
+    """What SeaDex's listings for the series tell the placer about one torrent, as this run read them."""
 
     listing: TorrentListing = EMPTY_LISTING
     """The torrent's listing: the ids a numbered specials pack is checked against, and the special aliases that
-    can place a misnumbered one. Empty when no entry lists the torrent, or on a record that holds none, which
-    turns the pack check off."""
+    can place a misnumbered one. Empty when no entry lists the torrent, which turns the pack check off."""
 
     identified: IdentifiedNames = NO_IDENTIFIED
     """File name -> episode id, for the files whose size matched an episode (see `SizeIdentities`)."""
@@ -419,7 +444,7 @@ class TargetScope:
     ties when several runs or numberless files could fill the open ids."""
 
     listing: ListingEvidence = NO_EVIDENCE
-    """What SeaDex's listings tell us about this torrent, read off the record at import time."""
+    """What SeaDex's listings tell us about this torrent this run."""
 
     real_ids: frozenset[int] = field(init=False, repr=False, compare=False)
     """The resolved ids that can be placed. A stray zero keeps the scope real but is never one."""

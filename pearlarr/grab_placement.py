@@ -8,7 +8,6 @@ from typing import NamedTuple
 from .coverage import coverage_string, episodes_from_ep_list
 from .episode_state import EpisodeFileStatus, EpisodeSnapshot, GroupVotes
 from .manual_import import (
-    EMPTY_LISTING,
     NO_SIZES_BY_NAME,
     EntryClaim,
     EntryNames,
@@ -17,12 +16,12 @@ from .manual_import import (
     GuardFacts,
     OwnGroup,
     PendingImport,
-    TorrentListing,
     joined_map,
     normalized_leaf,
     sizes_by_episode,
 )
 from .placement_types import (
+    EMPTY_LISTING,
     NO_EVIDENCE,
     NO_SEEDED,
     EpisodeAssignment,
@@ -33,6 +32,7 @@ from .placement_types import (
     PlacementVerdict,
     SizeIdentities,
     TargetScope,
+    TorrentListing,
 )
 from .seadex_types import (
     NO_ELSEWHERE,
@@ -133,35 +133,26 @@ class KnownTorrent:
     """The torrent's listing and the series' size identities."""
 
     def listing_evidence(self, sizes: Mapping[str, int]) -> ListingEvidence:
-        """The `ListingEvidence` every window of this torrent is placed with.
+        """The `ListingEvidence` every window of this torrent is placed with: this run's listing and size matches.
 
-        Size matches from this run are merged with the ones already on the stored record (the same merge
-        `PendingImport.with_identified` does), so the grab places with the same names the import poll uses later.
-        The listing's ids and special aliases pass through as read.
+        `sizes` is each file's listed size by normalized name. No size matches when the identities weren't read.
         """
 
         listing, identities = self.evidence
-        pairs = [] if self.record is None else list(self.record.identified.items())
-        if identities is not None:
-            pairs.extend((name, identities[size]) for name, size in sizes.items() if size in identities)
-        return ListingEvidence(EMPTY_LISTING if listing is None else listing, unambiguous(pairs))
+        identified = {} if identities is None else {n: identities[s] for n, s in sizes.items() if s in identities}
+        return ListingEvidence(EMPTY_LISTING if listing is None else listing, identified)
 
     def order(self, own: EntryWindow) -> WindowOrder | None:
         """The windows the torrent is placed under, None when the listing or a window's series is unread.
 
-        Every window of this read and of the record's stored listing (read into each other as `record_at` stores
-        them, and folded to the series the record will claim, `PendingImport.series_ids_after`), every stored
-        claim's, and `own`, the grabbing entry's, in `ordered_windows`' order. The import poll runs the same windows
-        once `own` is stored as a claim and the listing on the record.
+        Every window of this run's read, every stored claim's, and `own`, the grabbing entry's, in `ordered_windows`'
+        order.
         """
 
         listing = self.evidence.listing
         if listing is None:
             return None
-        if self.record is None:
-            return ordered_windows(listing, (), own, self.indexes)
-        merged = self.record.listing.reading(listing).on_series(self.record.series_ids_after(own))
-        return ordered_windows(merged, self.record.claims, own, self.indexes)
+        return ordered_windows(listing, () if self.record is None else self.record.claims, own, self.indexes)
 
 
 type KnownTorrents = Mapping[str, KnownTorrent]
@@ -628,19 +619,12 @@ class PendingSeed:
                 excluded_files=self.excluded,
                 release_sizes=self.facts.release_sizes,
                 sizes_by_name=self.facts.sizes_by_name,
-                identified=self.evidence.identified,
-                listing=self.evidence.listing,
             )
-        # The claim joins before the listing is read in: the record keeps only the windows on claimed series
-        # (`PendingImport.listing`), so a read on a series the record didn't claim yet would drop before its claim
-        # arrived.
         record = (
             self.stored.with_placements(self.placements)
             .with_exclusions(self.excluded)
             .with_claim(claim)
             .with_sizes_by_name(self.facts.sizes_by_name)
-            .with_identified(self.evidence.identified)
-            .with_listing(self.evidence.listing)
         )
         if not fresh:
             return record

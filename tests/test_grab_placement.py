@@ -25,7 +25,6 @@ from pearlarr.grab_placement import (
     place_release,
 )
 from pearlarr.manual_import import (
-    EMPTY_LISTING,
     EntryNames,
     EntryWindow,
     FileEpisodeMap,
@@ -34,6 +33,7 @@ from pearlarr.manual_import import (
     normalized_leaf,
 )
 from pearlarr.placement_types import (
+    EMPTY_LISTING,
     NO_EVIDENCE,
     EpisodeAssignment,
     ListingEvidence,
@@ -1059,16 +1059,6 @@ class TestKnownTorrent:
 
         assert evidence == ListingEvidence(torrent_listing(entry_window(1, (101, 102))), {"show - 01.mkv": 101})
 
-    def test_the_evidence_merges_the_stored_records_names(self) -> None:
-        # Without a fresh read the stored names are used as is. With one, a file the two disagree on is dropped.
-        record = pending_import(identified={"show - 02.mkv": 102, "show - 03.mkv": 103})
-        sizes = {"show - 01.mkv": 10, "show - 03.mkv": 30}
-        read = known_torrent(record, evidence=torrent_evidence(identities={10: 101, 30: 104}))
-        unread = known_torrent(record, evidence=UNREAD_EVIDENCE)
-
-        assert read.listing_evidence(sizes).identified == {"show - 01.mkv": 101, "show - 02.mkv": 102}
-        assert unread.listing_evidence(sizes).identified == {"show - 02.mkv": 102, "show - 03.mkv": 103}
-
     def test_the_evidence_carries_the_listings_aliases(self) -> None:
         torrent = known_torrent(evidence=torrent_evidence(entry_window(1, (501, 502)), aliases={1: 2}))
 
@@ -1097,34 +1087,15 @@ class TestKnownTorrent:
         assert [w.al_id for w in order.windows] == [1, 2]
         assert (order.at(1), order.imports) == (0, {0})
 
-    def test_a_stored_listings_window_of_another_series_runs_at_the_grab(self) -> None:
-        # The record was last placed from series 8, whose read listed entry 3 beside entry 2's claim. This read of
-        # series 7 lists nothing, so entry 3's stored window runs here as it does at the import.
-        record = two_claim_record(
-            series_ids=(7, 8),
-            windows=((101, 102), (902, 903)),
-            listing=torrent_listing(entry_window(3, (901,), series_id=8)),
-        )
-        other = episode_index([sonarr_ep(0, n, ep_id=900 + n, episode_file_id=0) for n in (1, 2, 3)])
-        torrent = known_torrent(record, indexes={**_INDEXES, 8: other}, evidence=torrent_evidence())
-
-        order = torrent.order(_scope(_SEASON).window)
-
-        assert order is not None
-        assert [(w.al_id, w.series_id) for w in order.windows] == [(1, 7), (2, 8), (3, 8)]
-        assert order.imports == {0, 1}
-
-    def test_a_claim_moving_series_drops_the_windows_only_its_old_claim_held(self) -> None:
-        # Entry 1 claimed the pack on series 7, where entry 2 was listed beside it. This grab moves entry 1's claim
-        # to series 8, leaving series 7 unclaimed: entry 2's stored window leaves the order with it, and the unread
-        # series 7 doesn't stand the placement down.
+    def test_a_claim_moving_series_leaves_its_old_series_unread(self) -> None:
+        # Entry 1 claimed the pack on series 7. This grab moves its claim to series 8: the old claim leaves the order,
+        # and the unread series 7 doesn't stand the placement down.
         record = pending_import(
             infohash="h1",
             al_id=1,
             ordered_episode_ids=(101, 102, 103, 104),
             file_episode_map={},
             seadex_files=_PACK,
-            listing=torrent_listing(entry_window(1, (101, 102, 103, 104)), entry_window(2, (103, 104))),
         )
         other = episode_index([sonarr_ep(1, n, ep_id=800 + n, episode_file_id=0) for n in range(1, 5)])
         fresh = torrent_evidence(entry_window(1, (801, 802, 803, 804), series_id=8))
@@ -1321,22 +1292,6 @@ class TestPendingSeedRecordAt:
         assert record.claims == (*stored.claims, replace(seed.claim, claimed_at=_STAMP))
         assert [c.claimed_at for c in record.claims] == ["2026-01-01 00:00:00", _STAMP]
 
-    def test_a_claim_that_moves_series_takes_the_old_series_out_of_the_listing(self) -> None:
-        # Entry 1's one claim was on series 7 beside entry 2's listed window. Re-claimed on series 8, the record
-        # claims no series-7 title, so entry 2's window drops with it.
-        stored = pending_import(
-            infohash="h1",
-            ordered_episode_ids=(101,),
-            listing=torrent_listing(entry_window(1, (101,)), entry_window(2, (102,))),
-        )
-        moved = ListingEvidence(torrent_listing(entry_window(1, (801,), series_id=8)))
-        seed = pending_seed("h1", stored=stored, series_id=8, ordered_episode_ids=(801,), evidence=moved)
-
-        record = seed.record_at(_STAMP, fresh=False)
-
-        assert record.series_ids == (8,)
-        assert record.listing == torrent_listing(entry_window(1, (801,), series_id=8))
-
     def test_accreted_onto_a_record_without_sizes_by_name_learns_them(self) -> None:
         stored = pending_import(infohash="h1")
         seed = PendingSeed(
@@ -1362,31 +1317,6 @@ class TestPendingSeedRecordAt:
         )
 
         assert seed.record_at(_STAMP, fresh=False).sizes_by_name == {"show - 01.mkv": 99}
-
-    def test_born_keeps_the_identified_names(self) -> None:
-        seed = pending_seed("h1", evidence=ListingEvidence(identified={"show - 01.mkv": 101}))
-
-        assert seed.record_at(_STAMP, fresh=True).identified == {"show - 01.mkv": 101}
-
-    def test_born_keeps_the_listing_its_files_were_placed_under(self) -> None:
-        listing = torrent_listing(entry_window(1, (101,)), entry_window(2, (102,)))
-        seed = pending_seed("h1", evidence=ListingEvidence(listing))
-
-        assert seed.record_at(_STAMP, fresh=True).listing == listing
-
-    def test_accreted_reads_the_newest_listing_into_the_stored_one(self) -> None:
-        # The newest grab placed its files under the newest read (`PendingImport.with_listing`).
-        stored = pending_import(infohash="h1", listing=torrent_listing(entry_window(1, (101,))))
-        newer = torrent_listing(entry_window(1, (101,)), entry_window(2, (102,)))
-        seed = pending_seed("h1", stored=stored, evidence=ListingEvidence(newer))
-
-        assert seed.record_at(_STAMP, fresh=False).listing == newer
-
-    def test_accreted_merges_the_identified_names(self) -> None:
-        stored = pending_import(infohash="h1", identified={"show - 01.mkv": 101})
-        seed = pending_seed("h1", stored=stored, evidence=ListingEvidence(identified={"show - 02.mkv": 102}))
-
-        assert seed.record_at(_STAMP, fresh=False).identified == {"show - 01.mkv": 101, "show - 02.mkv": 102}
 
     def test_fresh_restamps_every_clock(self) -> None:
         stored = pending_import(infohash="h1", added_at="2026-01-01 00:00:00")

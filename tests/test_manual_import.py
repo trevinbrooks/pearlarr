@@ -15,9 +15,7 @@ from typing import cast
 import pytest
 
 from pearlarr.manual_import import (
-    EMPTY_LISTING,
     LEAVE_PROBE,
-    NO_IDENTIFIED,
     Deferral,
     EntryClaim,
     EntryNames,
@@ -27,7 +25,6 @@ from pearlarr.manual_import import (
     OwnedEpisode,
     PendingImport,
     PendingState,
-    TorrentListing,
     TorrentTelemetry,
     WaitOutcome,
     added_at_of,
@@ -52,8 +49,6 @@ from .builders import (
     entry_window,
     pending_import,
     sonarr_ep,
-    torrent_listing,
-    two_claim_record,
 )
 
 
@@ -151,22 +146,23 @@ class TestPendingImportBuild:
 
         assert pending.excluded_files == ("show - 03.mkv", "show - 02.mkv")
 
-    def test_the_by_name_maps_fold_their_keys_and_drop_a_name_whose_spellings_disagree(self) -> None:
+    def test_the_sizes_fold_their_keys_and_drop_a_name_whose_spellings_disagree(self) -> None:
         pending = pending_import(
             sizes_by_name={"Sub/Show - 01.MKV": 100, "Show - 02.mkv": 200, "show - 02.mkv": 201},
-            identified={"Show - 01.MKV": 101},
         )
 
         assert pending.sizes_by_name == {"show - 01.mkv": 100}
-        assert pending.identified == {"show - 01.mkv": 101}
 
-    def test_the_listing_keeps_only_the_windows_on_claimed_series(self) -> None:
-        # The one claim is on series 7, so entry 3's window on series 8 drops.
-        listing = torrent_listing(entry_window(1, (101,)), entry_window(3, (801,), series_id=8))
+    def test_the_hand_import_files_fold_dedupe_and_drop_a_name_the_map_or_the_exclusions_hold(self) -> None:
+        # A later claim's grab can place or exclude a file an earlier grab left for a hand import, and the
+        # record must not then wait on it.
+        pending = pending_import(
+            file_episode_map={"show - 01.mkv": [101]},
+            excluded_files=["show - 02.mkv"],
+            hand_import_files=["SHOW - 04.MKV", "Show - 01.mkv", "show - 02.mkv", "Sub/Show - 03.mkv", "show - 04.mkv"],
+        )
 
-        pending = pending_import(listing=listing)
-
-        assert pending.listing == torrent_listing(entry_window(1, (101,)))
+        assert pending.hand_import_files == ("show - 04.mkv", "show - 03.mkv")
 
     def test_the_map_is_detached_and_read_only(self) -> None:
         # The record copies the caller's map at construction and wraps it read-only, so neither the
@@ -188,12 +184,13 @@ _NO_OP_CHANGES: dict[str, Callable[[PendingImport], PendingImport]] = {
     "no exclusions": lambda p: p.with_exclusions(()),
     "an exclusion already held": lambda p: p.with_exclusions(["SHOW - 02.MKV"]),
     "no sizes onto none": lambda p: p.with_sizes_by_name({}),
-    "no identified names": lambda p: p.with_identified({}),
-    "the identified name again": lambda p: p.with_identified({"show - 01.mkv": 101}),
+    "no hand-import files": lambda p: p.with_hand_import_files(()),
+    "a hand-import file already held": lambda p: p.with_hand_import_files(["SHOW - 03.MKV"]),
+    "a hand-import file the map holds": lambda p: p.with_hand_import_files(["show - 01.mkv"]),
     "the stored claim again": lambda p: p.with_claim(p.claims[0]),
 }
-"""Changes that leave a record equal: it holds `show - 01.mkv` on 101, identified by size, and excludes
-`show - 02.mkv`."""
+"""Changes that leave a record equal: it holds `show - 01.mkv` on 101, excludes `show - 02.mkv`, and leaves
+`show - 03.mkv` for a hand import."""
 
 
 class TestPendingImportPlacements:
@@ -218,7 +215,7 @@ class TestPendingImportPlacements:
         pending = pending_import(
             file_episode_map={"show - 01.mkv": [101]},
             excluded_files=["show - 02.mkv"],
-            identified={"show - 01.mkv": 101},
+            hand_import_files=["show - 03.mkv"],
         )
 
         assert change(pending) is pending
@@ -241,6 +238,21 @@ class TestPendingImportPlacements:
 
         assert healed.excluded_files == ("show - 03.mkv",)
         assert dict(healed.file_episode_map) == {"show - 01 [1080p].mkv": (101,), "show - 02.mkv": (102,)}
+
+    def test_with_hand_import_files_joins_after_the_stored_ones(self) -> None:
+        # Joined, not replaced: a grab whose scope can't place carries none, and must not clear the names.
+        pending = pending_import(hand_import_files=["show - 03.mkv"])
+
+        joined = pending.with_hand_import_files(["show - 05.mkv", "show - 04.mkv"]).with_hand_import_files(())
+
+        assert joined.hand_import_files == ("show - 03.mkv", "show - 05.mkv", "show - 04.mkv")
+
+    def test_with_placements_lifts_a_placed_name_out_of_the_hand_import_files(self) -> None:
+        pending = pending_import(hand_import_files=["show - 02.mkv", "show - 03.mkv"])
+
+        healed = pending.with_placements({"show - 02.mkv": (102,)})
+
+        assert healed.hand_import_files == ("show - 03.mkv",)
 
     def test_unplaced_names_is_the_listing_minus_map_and_exclusions(self) -> None:
         pending = pending_import(
@@ -322,85 +334,6 @@ class TestListedSizes:
         assert pending.with_sizes_by_name({"a.mkv": 1}) is pending
 
 
-class TestIdentifiedNames:
-    """`identified`: files the grab placed by size, merged across grabs, with conflicting names dropped."""
-
-    def test_a_record_predating_them_identifies_nothing(self) -> None:
-        rebuilt = PendingImport.from_json({"infohash": "h", "file_episode_map": {}}, guards={})
-
-        assert rebuilt.identified == NO_IDENTIFIED
-
-    def test_detached_and_read_only(self) -> None:
-        names = {"a.mkv": 1}
-        identified = cast("dict[str, int]", pending_import(identified=names).identified)
-        names["a.mkv"] = 2
-
-        assert identified == {"a.mkv": 1}
-        with pytest.raises(TypeError):
-            identified["a.mkv"] = 2
-
-    def test_with_identified_merges_the_names(self) -> None:
-        joined = pending_import(identified={"a.mkv": 1}).with_identified({"b.mkv": 2})
-
-        assert joined.identified == {"a.mkv": 1, "b.mkv": 2}
-
-    def test_a_name_two_grabs_identify_differently_is_dropped(self) -> None:
-        pending = pending_import(identified={"a.mkv": 1, "b.mkv": 2})
-
-        assert pending.with_identified({"a.mkv": 3}).identified == {"b.mkv": 2}
-
-
-class TestWithListing:
-    """`with_listing`: a series' newest read replaces its stored windows, and an empty read keeps them all.
-
-    The records claim both series 7 and 8, since a window on a series no claim is on doesn't stay on the record.
-    """
-
-    _TWO_SERIES = torrent_listing(
-        entry_window(1, (101,)), entry_window(2, (102,)), entry_window(3, (801,), series_id=8)
-    )
-    """Entries 1 and 2 listed on series 7, entry 3 on series 8."""
-
-    def test_a_read_of_another_series_keeps_the_stored_windows(self) -> None:
-        pending = two_claim_record(
-            series_ids=(7, 8), listing=torrent_listing(entry_window(1, (101,)), entry_window(2, (102,)))
-        )
-
-        joined = pending.with_listing(torrent_listing(entry_window(3, (801,), series_id=8)))
-
-        assert joined.listing == self._TWO_SERIES
-
-    def test_a_re_read_of_a_series_replaces_its_windows_and_keeps_the_others(self) -> None:
-        pending = two_claim_record(series_ids=(7, 8), listing=self._TWO_SERIES)
-
-        joined = pending.with_listing(torrent_listing(entry_window(4, (103,))))
-
-        assert joined.listing == torrent_listing(entry_window(3, (801,), series_id=8), entry_window(4, (103,)))
-
-    def test_the_aliases_join_and_the_new_read_wins_a_number_both_pair(self) -> None:
-        pending = two_claim_record(
-            series_ids=(7, 8), listing=torrent_listing(entry_window(1, (501,)), aliases={1: 2, 2: 4})
-        )
-
-        joined = pending.with_listing(torrent_listing(entry_window(3, (801,), series_id=8), aliases={2: 6, 3: 8}))
-
-        assert joined.listing.special_aliases == {1: 2, 2: 6, 3: 8}
-
-    def test_the_new_read_wins_an_anilist_id_both_series_hold(self) -> None:
-        # Entry 1 was stored on series 7 and the fresh read of series 8 lists it there: one window per id, the
-        # read's.
-        pending = two_claim_record(series_ids=(7, 8), listing=torrent_listing(entry_window(1, (501,))))
-
-        joined = pending.with_listing(torrent_listing(entry_window(1, (801,), series_id=8)))
-
-        assert joined.listing == torrent_listing(entry_window(1, (801,), series_id=8))
-
-    def test_an_empty_listing_keeps_the_stored_one(self) -> None:
-        pending = pending_import(listing=torrent_listing(entry_window(1, (501,))))
-
-        assert pending.with_listing(EMPTY_LISTING) is pending
-
-
 class TestPendingImportClaims:
     """The claim reads over a record: every entry's series, window, guards, and ids, in claim order."""
 
@@ -414,13 +347,6 @@ class TestPendingImportClaims:
         )
 
         assert pending.series_ids == (8, 7)
-
-    def test_series_ids_after_are_the_other_claims_series_and_the_grabbing_entrys(self) -> None:
-        pending = pending_import(claims=(entry_claim(al_id=1, series_id=7), entry_claim(al_id=2, series_id=8)))
-
-        assert pending.series_ids_after(entry_window(3, (901,), series_id=9)) == {7, 8, 9}
-        assert pending.series_ids_after(entry_window(1, (101,), series_id=7)) == {7, 8}
-        assert pending.series_ids_after(entry_window(2, (901,), series_id=9)) == {7, 9}
 
     def test_a_claim_persists_as_the_spelled_out_schema(self) -> None:
         # The persisted shape is pinned: a new field never enters a row without a migration.
@@ -603,8 +529,8 @@ class TestDisplayLabel:
         assert pending_import(infohash="h", release_group="Era-Raws", title=None).display_label == f"h{SEP}Era-Raws"
 
 
-class TestTorrentListing:
-    """The listing's windows and aliases: built from Sonarr's episodes, copied from the caller, and persisted."""
+class TestEntryWindow:
+    """A window built from Sonarr's episodes."""
 
     def test_a_window_takes_each_episode_once_in_sonarrs_order(self) -> None:
         episodes = [sonarr_ep(1, 3, ep_id=103), sonarr_ep(1, 1, ep_id=101), sonarr_ep(1, 3, ep_id=103)]
@@ -612,59 +538,6 @@ class TestTorrentListing:
         window = EntryWindow.of(al_id=5, series_id=7, ep_list=episodes, names=EntryNames("Show"))
 
         assert window == entry_window(5, (103, 101), series_id=7, names=EntryNames("Show"))
-
-    def test_a_window_persists_as_the_spelled_out_schema(self) -> None:
-        window = entry_window(5, (103, 101), series_id=7, names=EntryNames("Show", ("Show!",)))
-
-        text = json.dumps(window.to_json())
-
-        assert text == (
-            '{"al_id": 5, "series_id": 7, "ordered_episode_ids": [103, 101], '
-            '"names": {"series": "Show", "anilist": ["Show!"]}, "ignored": false}'
-        )
-        assert EntryWindow.from_json(json.loads(text)) == window
-
-    def test_a_window_stored_before_the_flag_was_kept_reads_as_kept(self) -> None:
-        raw = entry_window(5, (501,)).to_json()
-        del raw["ignored"]
-
-        assert EntryWindow.from_json(raw) == entry_window(5, (501,))
-
-    def test_a_stored_ignored_flag_reads_back(self) -> None:
-        window = entry_window(5, (501,), ignored=True)
-
-        assert EntryWindow.from_json(json.loads(json.dumps(window.to_json()))) == window
-
-    def test_a_listing_persists_its_aliases_as_pairs(self) -> None:
-        # A JSON object would hand the aliases' TMDB numbers back as strings, so they ride as pairs.
-        listing = torrent_listing(entry_window(1, (501,)), aliases={13: 12})
-
-        text = json.dumps(listing.to_json())
-
-        assert text == (
-            '{"entries": [{"al_id": 1, "series_id": 7, "ordered_episode_ids": [501], '
-            '"names": {"series": "", "anilist": []}, "ignored": false}], "special_aliases": [[13, 12]]}'
-        )
-        assert TorrentListing.from_json(json.loads(text)) == listing
-
-    def test_on_series_keeps_the_windows_on_those_series_and_the_aliases_whole(self) -> None:
-        listing = torrent_listing(entry_window(1, (101,)), entry_window(3, (801,), series_id=8), aliases={1: 2})
-
-        assert listing.on_series({7}) == torrent_listing(entry_window(1, (101,)), aliases={1: 2})
-        assert listing.on_series({7, 8}) is listing
-
-    def test_two_windows_under_one_anilist_id_keep_the_first(self) -> None:
-        first, second, other = entry_window(1, (501,)), entry_window(1, (502,)), entry_window(2, (503,))
-
-        assert torrent_listing(other, first, second).entries == (first, other)
-
-    def test_a_change_to_the_callers_dict_leaves_the_listing_as_it_was(self) -> None:
-        aliases = {13: 12}
-        listing = torrent_listing(entry_window(1, (501,)), aliases=aliases)
-
-        aliases[14] = 13
-
-        assert dict(listing.special_aliases) == {13: 12}
 
 
 def _guarded_claim() -> EntryClaim:
@@ -702,8 +575,7 @@ class TestPendingImportRoundTrip:
             release_sizes=(700, 710),
             awaiting_cleanup=True,
             sizes_by_name={"ep1.mkv": 700, "ep2.mkv": 710},
-            identified={"ep2.mkv": 12},
-            listing=torrent_listing(claim.window, entry_window(991, (13,), series_id=55), aliases={1: 2}),
+            hand_import_files=("ep3.mkv",),
         )
 
         raw = pending.to_json()
@@ -760,8 +632,8 @@ class TestPendingImportRoundTrip:
         assert rebuilt.release_sizes == ()
         # A record predating the cleanup flag owes nothing.
         assert rebuilt.awaiting_cleanup is False
-        # A record predating the listing holds none.
-        assert rebuilt.listing == EMPTY_LISTING
+        # A record predating the hand-import files waits on none.
+        assert rebuilt.hand_import_files == ()
 
     def test_a_record_predating_sizes_by_name_lists_no_sizes(self) -> None:
         # Its own group is then judged by listed size alone.
