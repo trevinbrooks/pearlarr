@@ -7,7 +7,7 @@
 The seed-construction heart of the wait/import feature: it turns the filtered
 SeaDex releases into the `PendingSeed`s the pipeline stamps into the durable
 `PendingImport` records the import path later reads, placing each grabbed video
-file by the same `assign_episode_ids` the import wait runs. Built bare (no live
+file by `place_release`, whose map the import imports as is. Built bare (no live
 Sonarr) with a seeded in-memory parse cache and a warm whole-series episode list.
 """
 
@@ -517,9 +517,8 @@ class TestBuildPendingSeeds:
         assert _record(seeds["h1"]).display_label == f"Show{SEP}RG{SEP}S02 E06"
         assert _record(seeds["h2"]).display_label == f"Show{SEP}RG{SEP}S02 E07"
 
-    def test_unparsed_video_still_seeded_for_import_time_repair(self) -> None:
-        # No grab-time parse hit -> an empty map, but the seed is STILL persisted
-        # (it carries a video file) so the import-time repair can map it later.
+    def test_an_unparsed_video_still_seeds_with_an_empty_map(self) -> None:
+        # No grab-time parse hit holds the url, and its seed still carries the video file with an empty map.
         ep_list = [sonarr_ep(1, 1, ep_id=101, episode_file_id=0)]
         seadex_dict = {
             "RG": rg_group(
@@ -587,12 +586,11 @@ class TestBuildPendingSeeds:
 
 
 class TestSeedGuards:
-    """The grab-time mirror of the import-side borrow gates.
+    """The grab's seed guards.
 
     A full-season parse never seeds, colliding claims resolve first-wins in
     SeaDex file order, and a duplicate leaf seeds once. A refused file is left
-    unseeded so import-time assignment places or refuses it under the full
-    guard set.
+    unseeded, and the import never places it.
     """
 
     def test_full_season_parse_never_seeds(self) -> None:
@@ -689,8 +687,7 @@ class TestSeedGuards:
 
     def test_second_claim_of_a_seeded_id_is_not_seeded(self) -> None:
         # "13" and "13v2" both parse to S02E13: the later version wins,
-        # deterministically, and the other claimant is left for import-time
-        # assignment (which refuses the second claim of a taken id).
+        # deterministically, and the other claimant is left unseeded.
         ep_list = [sonarr_ep(2, 13, ep_id=213, episode_file_id=0)]
         parses = {
             "Show - 13.mkv": parsed_info(season=2, episodes=(13,)),

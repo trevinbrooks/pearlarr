@@ -73,10 +73,10 @@ class GrabHold(StrEnum):
     disagree, or a specials pack numbered another way than its listing. Grabbed, it would import onto the wrong
     episodes, so it's left for a hand import."""
     INPUT_UNREAD = "a read failed"
-    """A SeaDex listing for the series, a parse the specials pack check needs, or the episode list of a series the
-    record claims couldn't be read this run. Without the listing nothing is placed, since another title it names
-    may own some of the files. Grabbing now could seed a file onto the wrong episode for good, so the url waits for
-    the next run."""
+    """A SeaDex listing for the series, Sonarr's parse of any of the url's video files while one is left to place,
+    or the episode list of a series the record claims couldn't be read this run. Without the listing nothing is
+    placed, since another title it names may own some of the files. Grabbing now could seed a file onto the wrong
+    episode for good, or leave one unplaced that the import never places, so the url waits for the next run."""
     TITLE_REFUTED = "titles refute its numbers"
     """A pack whose file titles contradict its numbers, with nothing of it placed on the entry
     (`PlacementVerdict.TITLE_REFUTED`): left for a hand import."""

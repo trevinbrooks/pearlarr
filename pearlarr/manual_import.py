@@ -966,7 +966,7 @@ class PendingImport:
         return list(dict.fromkeys(ep_id for file_ids in self.file_episode_map.values() for ep_id in file_ids))
 
     def resolved_ids(self) -> list[int]:
-        """The episodes the record's windows cover: the claims' windows in order, else the seeds' ids."""
+        """The episodes a hand import must fill (`filled_by_hand`): the claims' windows in order, else the seeds' ids."""
 
         windows = list(dict.fromkeys(ep_id for claim in self.claims for ep_id in claim.ordered_episode_ids))
         return windows or sorted(self.target_ids())

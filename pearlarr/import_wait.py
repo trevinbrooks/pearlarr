@@ -964,8 +964,8 @@ class MonitorPass:
             if clock is None:
                 continue
             progress = self._mgr.probes.import_progress(row.record)
-            # Indeterminate (a partial seed map) means no bar and no promotion. The heavy poll's repaired
-            # done-check finishes the row.
+            # Indeterminate (a partial seed map) means no bar and no promotion. The heavy poll's done-check
+            # finishes the row.
             if not progress.determinate or progress.total <= 0:
                 continue
             clock.note_progress(progress.done, progress.total, self._clock.now())

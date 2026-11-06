@@ -28,7 +28,7 @@ from pearlarr.cache import CacheRecord
 from pearlarr.config import Arr
 from pearlarr.episode_state import EpisodeFileStatus, GroupVotes, RecordSnapshot, trusted_groups
 from pearlarr.grab_pipeline import NO_SEEDS, GrabRequest
-from pearlarr.grab_placement import SeedFile
+from pearlarr.grab_placement import EntryPlacements, SeedFile, place_release
 from pearlarr.import_quality import resolve_language_objects
 from pearlarr.log import EntryState
 from pearlarr.manual_import import (
@@ -99,11 +99,13 @@ from .builders import (
     make_sonarr_episodes,
     make_sonarr_sync,
     manual_candidate,
+    new_torrent,
     parsed_info,
     pending_import,
     plan_result,
     queue_record,
     rg_group,
+    seed_scope,
     sonarr_ep,
     torrent_listing,
     two_claim_record,
@@ -2686,6 +2688,25 @@ class TestSonarrProcessAlIdSeeds:
         assert store.get_pending_record_calls == 0
         # The placement still runs: the planner's coverage never depends on the wait mode.
         assert req.seadex_dict["NAN0"].urls[_SEED_URL].episodes == [EpisodeRecord(season=1, episode=2, size=1000)]
+
+
+class TestPlacementDebugLine:
+    """The grab's debug line per url says what placed and why the url waited."""
+
+    def test_a_url_held_on_a_failed_read_names_the_read_once(self, caplog: pytest.LogCaptureFixture) -> None:
+        logger = logging.getLogger("pearlarr-placement-line")
+        logger.handlers.clear()
+        logger.propagate = True
+        logger.setLevel(logging.DEBUG)
+        strat = make_bare_instance(SonarrSync, logger=logger)
+        scope = seed_scope(episode_index([_EP1]), episode_index([_EP1]))
+        placement = place_release([SeedFile("Show - 01.mkv", 1000, None)], scope, new_torrent(scope))
+
+        with caplog.at_level("DEBUG"):
+            strat._log_placements(EntryPlacements(scope, {_SEED_URL: placement}))
+
+        assert placement.hold is GrabHold.INPUT_UNREAD
+        assert [r.message for r in caplog.records] == [f"{_SEED_URL}: placed nothing (not grabbed: a read failed)"]
 
 
 class TestSonarrProcessAlIdOrdersUnread:

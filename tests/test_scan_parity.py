@@ -983,7 +983,7 @@ class _FactSite:
 
 
 class TestExternalDetailParity:
-    """The external producer sites: grab pipeline, release filter, episode mapper.
+    """The external producer sites: grab pipeline, release filter, Sonarr episode coverage.
 
     Each golden was captured by running the pre-migration `LogFormatter.detail` with the site's literal args at
     fc58aef. The reporter must reproduce every line byte-identically through the shipped `scan_lines` builders (the

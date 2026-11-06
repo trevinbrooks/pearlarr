@@ -388,10 +388,10 @@ class SeadexSettings(_ConfigBase):
 
     ignore_anilist_ids: set[int] = Field(default_factory=set[int])
     """AniList ids never processed: an ignored title is never grabbed for, and a
-    download it grabbed before it was ignored imports only what no kept title of
-    the show places. On a torrent it shares with a kept title, its mapping is
-    still read, after the kept titles of its kind (a season's or the specials'),
-    so a file only it places never lands on the other title. Empty ignores none."""
+    download it grabbed before it was ignored still imports as the grab placed
+    it. On a torrent it shares with a kept title, its mapping is still read,
+    after the kept titles of its kind (a season's or the specials'), so a file
+    only it places never lands on the other title. Empty ignores none."""
 
     ignore_seadex_update_times: bool = False
     """Re-check entries even when SeaDex has not updated them since the last check."""

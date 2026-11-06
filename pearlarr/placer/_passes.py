@@ -118,8 +118,8 @@ The passes run in this order. Each places files only onto the ids that earlier p
     files provably hold, or a version of the same file holds its titled episode), `FOREIGN` (its reading lies
     wholly outside the scope, or it is titled as an episode outside it and confirmed by its reading, by that
     reading's rejection while other files hold its episodes, or by no open id being left), `TITLE_REFUTED` (a
-    run member pass 2 rejected), or `SKIPPED`. The caller warns about skipped files and records the exclusions.
-    It never guesses.
+    run member pass 2 rejected), or `SKIPPED`. The grab records the exclusions on the pending record, and the
+    import warns about a skipped file it finds on disk. It never guesses.
 
 At most one of passes 11 to 13 is tried: the absolute zip when its conditions hold, else the single-file
 pass when one id is open, else the ordered zip. They consider only open files. Every zip (passes 8, 11,

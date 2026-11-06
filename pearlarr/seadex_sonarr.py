@@ -36,6 +36,7 @@ from .protocols import ArrSync
 from .radarr_client import AbstractRadarrClient, RadarrClient, collect_anime_movies
 from .run_services import RunDeps, RunServices, bind_arr_http
 from .seadex_types import (
+    GrabHold,
     HistoryRecord,
     ProgressSink,
     RadarrItem,
@@ -567,12 +568,14 @@ class SonarrSync(ArrSync[SonarrItem]):
         for url, placement in placed.by_url.items():
             if not placement.files:
                 continue
-            # The hold and the failed read explain an empty coverage on a listed release.
+            # The hold and the failed read explain an empty coverage on a listed release. A url held on the read
+            # names it once, in its hold.
             aside = ", ".join(p.name for p in placement.assignment.excluded)
             hold = "" if placement.hold is None else f" (not grabbed: {placement.hold})"
+            unread = not placement.inputs_known and placement.hold is not GrabHold.INPUT_UNREAD
             self.logger.debug(
                 f"{url}: placed {_coverage.coverage_string(list(placement.records)) or 'nothing'}"
-                f"{'' if placement.inputs_known else ' (a read failed)'}{hold}"
+                f"{' (a read failed)' if unread else ''}{hold}"
                 f"{f'; set aside (other slice / another listed title / duplicate): {aside}' if aside else ''}"
             )
 
