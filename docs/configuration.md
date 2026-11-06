@@ -128,7 +128,7 @@ Switching from `fallback` back to `warn` re-checks those remembered titles and r
 | `want_best` | `true` |  | Prefer releases SeaDex marks as best, among those matching the audio preference. |
 | `ignore_tags` | *(blank)* |  | SeaDex release tags to skip, e.g. `Dolby Vision` or `Deband Required`. Empty skips none. |
 | `trackers` | all but Other/OtherPrivate | `Nyaa`, `AnimeTosho`, `AniDex`, `RuTracker`, `AB`, `BeyondHD`, `PassThePopcorn`, `BroadcastTheNet`, `HDBits`, `Blutopia`, `Aither`, `Other`, `OtherPrivate` | Tracker names considered during release selection, case-insensitive. Empty or absent considers every named tracker except the `Other` and `OtherPrivate` catch-alls. A listed tracker is not necessarily grabbable: private releases are never downloaded, and grabs come only from the public trackers Pearlarr can parse. |
-| `ignore_anilist_ids` | *(blank)* |  | AniList IDs never processed. Empty ignores none. When an ignored title and a kept title of the same show share one torrent, the ignored title's mapping is still read, so its files are not placed on the kept title. Ignoring a title does not cancel a download already grabbed for it. |
+| `ignore_anilist_ids` | *(blank)* |  | AniList IDs never processed. Empty ignores none. |
 | `ignore_seadex_update_times` | `false` |  | Re-check entries even when SeaDex has not updated them since the last check. |
 | `use_torrent_hash_to_filter` | `false` |  | Match what is already downloaded by torrent hash instead of by release group name. |
 <!-- /gen:group-seadex -->
