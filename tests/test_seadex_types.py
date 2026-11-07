@@ -14,6 +14,7 @@ from pydantic import ValidationError
 from pearlarr.output import Diagnostic, Severity, install_hub
 from pearlarr.output.recording import RecordingHub
 from pearlarr.seadex_types import (
+    AlternateTitle,
     AniListMediaNode,
     BoundaryContractError,
     CommandResource,
@@ -160,6 +161,26 @@ def test_sonarr_series_reads_its_orders_and_drops_a_junk_one_alone() -> None:
     )
 
 
+def test_sonarr_series_reads_its_alternate_titles_and_drops_a_junk_one_alone() -> None:
+    """A row with no `alternateTitles` has none, and a junk entry (a null title among them) drops alone."""
+
+    assert SonarrSeries.model_validate({"id": 1, "title": "Show"}).alternateTitles == ()
+
+    series = SonarrSeries.model_validate(
+        {
+            "id": 1,
+            "title": "Show",
+            "alternateTitles": [
+                {"title": "To Glimmer-Zu", "sceneSeasonNumber": -1},
+                {"title": None, "sceneSeasonNumber": 2},
+                "junk",
+                {"title": "Shin To Glimmer-Zu", "sceneSeasonNumber": 2},
+            ],
+        },
+    )
+    assert series.alternateTitles == (AlternateTitle(title="To Glimmer-Zu"), AlternateTitle(title="Shin To Glimmer-Zu"))
+
+
 def test_parsed_file_info_null_number_arrays_fold_to_empty() -> None:
     """Sonarr nulls empty number arrays. They fold to () like the absent case."""
 
@@ -167,6 +188,15 @@ def test_parsed_file_info_null_number_arrays_fold_to_empty() -> None:
         {"parsedEpisodeInfo": {"seasonNumber": 1, "episodeNumbers": None, "absoluteEpisodeNumbers": None}},
     )
     assert info == ParsedFileInfo(season_number=1)
+
+
+def test_parsed_file_info_reads_the_lifted_series_title_and_folds_a_null_one() -> None:
+    """The title Sonarr lifted rides along. A null one, or a null `parsedEpisodeInfo`, reads as "" and never fails."""
+
+    lifted = ParsedFileInfo.model_validate({"parsedEpisodeInfo": {"seriesTitle": "To Glimmer-Zu"}})
+    assert lifted.series_title == "To Glimmer-Zu"
+    assert ParsedFileInfo.model_validate({"parsedEpisodeInfo": {"seriesTitle": None}}) == ParsedFileInfo()
+    assert ParsedFileInfo.model_validate({"parsedEpisodeInfo": None, "episodes": []}) == ParsedFileInfo()
 
 
 def test_parsed_file_info_with_numbers_replaces_only_the_numbers() -> None:
@@ -178,6 +208,7 @@ def test_parsed_file_info_with_numbers_replaces_only_the_numbers() -> None:
         absolute_episode_numbers=(30,),
         matched_episodes=(MatchedEpisode(season_number=1, episode_number=5, id=105),),
         special=True,
+        series_title="Show",
     )
     matched = (
         MatchedEpisode(season_number=1, episode_number=5, id=105),
@@ -189,6 +220,7 @@ def test_parsed_file_info_with_numbers_replaces_only_the_numbers() -> None:
         episode_numbers=(5, 6),
         matched_episodes=matched,
         special=True,
+        series_title="Show",
     )
 
 

@@ -465,6 +465,9 @@ class SonarrSync(ArrSync[SonarrItem]):
             entry=episode_index(ep_list, self._episodes.orders_for(sonarr_series_id)),
             series=indexes.get(sonarr_series_id, episode_index([])),
             names=title.names,
+            episode_count=self._episodes.episode_count(al_id),
+            alternate_titles=tuple(alt.title for alt in item.alternateTitles),
+            aired_numbering=self._episodes.numbers_aired(sonarr_series_id),
         )
         placed = EntryPlacements.place(
             scope,

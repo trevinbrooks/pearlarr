@@ -77,20 +77,26 @@ def ordered_windows(
     A listed window with no ids is left out, since it would be unscoped and admit any id. A claim's window with no
     ids still runs: `EntryClaim.admits` reads such a claim as covering any id. It sorts with the specials windows.
 
-    A claim's window takes the ignored flag from its entry's listed window, since the claim predates any ignore.
+    A claim's window takes the ignored flag and the AniList episode count from its entry's listed window, since the
+    claim predates any ignore and doesn't keep the count. A claim whose entry isn't listed has neither.
     """
 
     # A claim's window takes its entry's slot from the listed one, since the record's import is judged against its
     # claims, and `own` takes it from both, since this grab replaces its claim. A claim whose entry the listing
     # doesn't name keeps its window, and an entry listed and never claimed gets its listed window. The ignored flag
-    # is the listing's for every window: a fact about the entry at the read, which a claim made before the title was
-    # ignored can't hold. It's read off every listed window, so an entry whose listed window came back empty still
-    # flags its claim.
+    # and the episode count are the listing's for every window: facts about the entry at the read, which a claim
+    # doesn't hold. They're read off every listed window, so an entry whose listed window came back empty still
+    # gives them to its claim.
     chosen = {window.al_id: window for window in listing.entries if window.ordered_episode_ids}
-    ignored_ids = {window.al_id for window in listing.entries if window.ignored}
+    listed = {window.al_id: window for window in listing.entries}
     imported = set[int]()
     for claim in claims:
-        chosen[claim.al_id] = replace(claim.window, ignored=claim.al_id in ignored_ids)
+        entry = listed.get(claim.al_id)
+        chosen[claim.al_id] = (
+            claim.window
+            if entry is None
+            else replace(claim.window, ignored=entry.ignored, episode_count=entry.episode_count)
+        )
         imported.add(claim.al_id)
     chosen[own.al_id] = own
     imported.add(own.al_id)

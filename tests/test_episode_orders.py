@@ -86,6 +86,24 @@ def test_a_series_is_served_its_stored_orders_only_when_sonarr_numbers_it_by_off
 
 
 @pytest.mark.parametrize(
+    ("season_type", "aired"),
+    [
+        pytest.param("official", True, id="official"),
+        pytest.param("dvd", False, id="dvd-ordered"),
+        # A null or junk `seasonType` names no order.
+        pytest.param("", False, id="no-order"),
+    ],
+)
+def test_a_series_numbers_aired_only_when_sonarr_numbers_it_by_official(
+    season_type: str, aired: bool, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    strat = _sync(monkeypatch, [_series(1, 50, season_type=season_type)], FakeCacheStore())
+
+    assert strat._episodes.numbers_aired(1) is aired
+    assert strat._episodes.numbers_aired(2) is False
+
+
+@pytest.mark.parametrize(
     ("series_id", "unread"),
     [
         pytest.param(1, False, id="stored"),
