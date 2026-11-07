@@ -13,6 +13,7 @@ Pearlarr is a fork of [bbtufty/seadexarr](https://github.com/bbtufty/seadexarr).
 
 ### Fixed
 
+- A file named by number alone that nothing else placed is placed where its numbers fall, when counting them every way the release group could have meant agrees and the listing's titles match AniList's episode counts. A second season's release numbered from one or from the series' first episode imports either way, and a release listed under a title of nothing but specials counts them from one. A repeated number, two ways of counting that disagree, or a series title the run doesn't know still leave the file for a hand import.
 - A preview or `--dry-run` no longer reports a "would add" status for a title it would add nothing for. A title whose releases were all skipped or failed to grab prints those lines alone, and one whose release is already in qBittorrent says so, as in a real run.
 
 ## [1.5.8] - 2026-11-06

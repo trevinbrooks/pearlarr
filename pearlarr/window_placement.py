@@ -14,6 +14,11 @@ as a new run and could land wrong. Then the windows merge in order:
 - A file no window decides takes its strongest claim (`_CLAIM_RANK`).
 - A file the special aliases claim under one window but its numbers place elsewhere is always `MISNUMBERED`.
 
+After the merge, the numberings reader (`numberings`) fills the gaps the windows left (`WindowedAssignment.filled`): a
+file named by number alone that every window skipped or read as another slice's, that no window was party to or read
+inside itself, is placed where its numbers fall when every way the group could have counted them agrees. The fill
+never moves a file a window placed or refused, and a filled file's ids are the window's that holds them.
+
 A record imports only what its own entries' windows place, and takes on a hand import only when one of them was party
 to it (`WindowedAssignment.for_record`).
 """
@@ -21,8 +26,10 @@ to it (`WindowedAssignment.for_record`).
 from collections.abc import Collection, Iterable, Mapping, Sequence
 from dataclasses import dataclass, replace
 from types import MappingProxyType
+from typing import Self
 
 from .manual_import import EntryClaim, EntryWindow
+from .numberings import NumberingReading
 from .placement_types import (
     EpisodeAssignment,
     EpisodeIndex,
@@ -34,7 +41,7 @@ from .placement_types import (
     TorrentListing,
     all_specials,
 )
-from .placer import assign_episode_ids
+from .placer import NameFacts, assign_episode_ids
 
 
 @dataclass(frozen=True, slots=True)
@@ -122,15 +129,64 @@ class WindowedAssignment:
     """A torrent placed under its windows: the merged verdicts, each window's own, and which window decided."""
 
     merged: EpisodeAssignment
-    """One verdict per name in `PlacementBatch.names`, batch order, whichever window placed it."""
+    """One verdict per name in `PlacementBatch.names`, batch order, whichever window placed it. A file `filled`
+    placed carries `NUMBERINGS_AGREE`, a verdict no window gives."""
     windows: tuple[EpisodeAssignment, ...]
-    """What the placer returned under each window, in window order."""
+    """What the placer returned under each window, in window order. A fill changes none of them: a filled file still
+    reads as the windows left it here."""
     decided_by: Mapping[str, int]
-    """Name -> the position of the window that placed or refused it. A file no window decided is absent."""
+    """Name -> the position of the window that placed or refused it, or, for a filled file, of the window that holds
+    its ids. A file no window decided and no fill placed is absent."""
 
     def __post_init__(self) -> None:
         # Detach from the caller's dict, then wrap read-only.
         object.__setattr__(self, "decided_by", MappingProxyType(dict(self.decided_by)))
+
+    def filled(
+        self,
+        batch: PlacementBatch,
+        reading: NumberingReading,
+        scopes: Sequence[TargetScope],
+        facts: Sequence[Mapping[str, NameFacts]],
+    ) -> Self:
+        """The assignment with each gap the reader proposed ids for filled, in batch order.
+
+        A gap is a merged `SKIPPED` or `FOREIGN` file no window was party to (`_party`) and no window's reading
+        resolved inside (`NameFacts.reads_inside`): the passes never judged it by its own numbers, so a verdict on
+        them is new, not a reversal. The proposed ids must be free, held by no merged placement, no name of the
+        stored map, and no earlier fill. The receiving window is the earliest whose scope holds every id, and a name
+        titled under it as an episode outside them is left (the title veto the zips apply). `scopes` and `facts`
+        are per window, in window order, as `windows` is.
+        """
+
+        used = {ep_id for ids in batch.seeded.values() for ep_id in ids}
+        used.update(ep_id for placement in self.merged.placements for ep_id in placement.ids)
+        placements = list(self.merged.placements)
+        decided_by = dict(self.decided_by)
+        for index, placement in enumerate(placements):
+            ids = reading.ids.get(placement.name)
+            if ids is None or not self._gap(index, facts) or not used.isdisjoint(ids):
+                continue
+            position = next((at for at, scope in enumerate(scopes) if scope.real_ids.issuperset(ids)), None)
+            if position is None:
+                continue
+            titled_as = facts[position][placement.name].titled_as
+            if titled_as is not None and titled_as not in ids:
+                continue
+            placements[index] = Placement(placement.name, ids, PlacementVerdict.NUMBERINGS_AGREE)
+            decided_by[placement.name] = position
+            used.update(ids)
+        return replace(self, merged=EpisodeAssignment(tuple(placements)), decided_by=decided_by)
+
+    def _gap(self, index: int, facts: Sequence[Mapping[str, NameFacts]]) -> bool:
+        """Whether the file at `index` of the batch is a gap the windows left (`filled`)."""
+
+        merged = self.merged.placements[index]
+        if merged.verdict not in _GAP:
+            return False
+        if any(_party(window.placements[index].verdict) for window in self.windows):
+            return False
+        return not any(window_facts[merged.name].reads_inside for window_facts in facts)
 
     def for_record(self, imports: Collection[int]) -> EpisodeAssignment:
         """The merged verdicts, with each file that is another title's set aside as `LISTED_ELSEWHERE`.
@@ -202,6 +258,9 @@ _CLAIM_RANK: Mapping[PlacementVerdict, int] = {
 }
 _BY_ALIAS = frozenset({PlacementVerdict.ALTERNATE, PlacementVerdict.ALIASED_ELSEWHERE})
 """The verdicts the special aliases give: placed on the aliased special, or claimed for the window that holds it."""
+_GAP = frozenset({PlacementVerdict.SKIPPED, PlacementVerdict.FOREIGN})
+"""The merged verdicts a fill may replace: nothing placed the file and nothing settled it for a hand import. An
+alias-claimed specials file merges to `SKIPPED` too, which is why `filled` also asks whether a window was party."""
 
 
 def _decides(verdict: PlacementVerdict) -> bool:

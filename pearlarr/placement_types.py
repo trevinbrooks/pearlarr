@@ -151,6 +151,9 @@ class PlacementVerdict(StrEnum):
     """Placed by file size even though the name's number points at a different episode. The caller logs a warning."""
     ALTERNATE = "alternate numbering"
     """A file of a misnumbered specials pack, placed on the special its number's alias points at."""
+    NUMBERINGS_AGREE = "every numbering agrees"
+    """A file named by number alone that no window placed or refused, placed where its numbers fall once every way
+    the group could have counted them agrees (`numberings`). Given after the windows merge, never by a pass."""
     ALIASED_ELSEWHERE = "aliased special outside the window"
     """Not placed here: a file of a misnumbered specials pack whose alias points at a special outside this window.
     A claim, not a refusal, so the window that holds that special may still place it."""
@@ -221,6 +224,7 @@ _PLACED = frozenset(
         PlacementVerdict.IDENTIFIED,
         PlacementVerdict.OVERRIDDEN,
         PlacementVerdict.ALTERNATE,
+        PlacementVerdict.NUMBERINGS_AGREE,
     }
 )
 _EXCLUDED = frozenset(

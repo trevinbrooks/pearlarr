@@ -20,6 +20,7 @@ from .manual_import import (
     normalized_leaf,
     sizes_by_episode,
 )
+from .numberings import NumberingReader
 from .placement_types import (
     EMPTY_LISTING,
     NO_SEEDED,
@@ -32,6 +33,7 @@ from .placement_types import (
     SizeIdentities,
     TorrentListing,
 )
+from .placer import name_facts
 from .seadex_types import (
     NO_ELSEWHERE,
     ElsewhereCounts,
@@ -288,11 +290,12 @@ def seed_batch(files: Sequence[SeedFile], seeded: FileEpisodeMap = NO_SEEDED) ->
 def place_release(files: Sequence[SeedFile], scope: SeedScope, torrent: KnownTorrent) -> UrlPlacement:
     """Place one url's files under the torrent's windows (`KnownTorrent.order`), with no I/O.
 
-    Nothing is placed when the listing or a window's series wasn't read. A file another title's window placed, or
-    left for a hand import with no window the record imports party to it, is set aside as that title's. The url is
-    held (`GrabHold`) when a file of the entry's own window is misnumbered, when a read the placement needs failed,
-    or when nothing of it lands on the entry and either its titles refute its numbers or some of it is another
-    title's.
+    Nothing is placed when the listing or a window's series wasn't read. After the windows merge, a file named by
+    number alone that they left is placed where every numbering agrees (`NumberingReader`, `WindowedAssignment.filled`),
+    the window holding its ids deciding it. A file another title's window placed, or left for a hand import with no
+    window the record imports party to it, is set aside as that title's. The url is held (`GrabHold`) when a file of
+    the entry's own window is misnumbered, when a read the placement needs failed, or when nothing of it lands on the
+    entry and either its titles refute its numbers or some of it is another title's.
     """
 
     seeded: FileEpisodeMap = NO_SEEDED if torrent.record is None else torrent.record.file_episode_map
@@ -307,7 +310,10 @@ def place_release(files: Sequence[SeedFile], scope: SeedScope, torrent: KnownTor
     parse_unread = bool(batch.names) and not batch.all_parses_known
     if scope.can_place and order is not None:
         own_at = order.at(scope.al_id)
-        placed = place_across_windows(batch, windows_of(order.windows, torrent.indexes, evidence))
+        scopes = windows_of(order.windows, torrent.indexes, evidence)
+        facts = tuple(name_facts(batch, window) for window in scopes)
+        reading = NumberingReader.of(scope, order.windows).read(batch, facts[own_at])
+        placed = place_across_windows(batch, scopes).filled(batch, reading, scopes, facts)
         assignment = placed.for_record(order.imports)
         misnumbered, refuted = placed.misnumbered_under(own_at), placed.refuted_under(own_at)
         outside = placed.listed_elsewhere_under(own_at)
