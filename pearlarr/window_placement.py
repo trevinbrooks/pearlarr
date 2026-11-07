@@ -133,8 +133,14 @@ class WindowFacts:
     names: Mapping[str, NameFacts]
     """Every name of the torrent, seeded and gone names included."""
 
+    def __post_init__(self) -> None:
+        # Detach from the caller's dict, then wrap read-only.
+        object.__setattr__(self, "names", MappingProxyType(dict(self.names)))
+
     @classmethod
     def of(cls, batch: PlacementBatch, scope: TargetScope) -> Self:
+        """The scope with the passes' reading of every name of `batch` under it."""
+
         return cls(scope, name_facts(batch, scope))
 
 

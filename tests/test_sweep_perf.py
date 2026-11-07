@@ -201,8 +201,12 @@ class TestParseRecords:
         assert "series_fp" not in row
 
     def test_unreadable_parse_reads_as_a_miss(self) -> None:
-        # A row whose values this build cannot validate re-parses.
-        row: dict[str, object] = {"fetched_at": _stamp(1), "parse": {"episode_numbers": "one", "series_title": ""}}
+        # A row whose values this build cannot validate re-parses: every field is present, so the key check passes
+        # it and validation is what misses.
+        row: dict[str, object] = {
+            "fetched_at": _stamp(1),
+            "parse": {**to_parse_record(_matched(1, 1)), "episode_numbers": "one"},
+        }
         store = FakeCacheStore(sonarr_parse={"show - 01.mkv": row})
 
         assert ParseRecords(store).read("show - 01.mkv", window=_window()) is None
@@ -703,11 +707,12 @@ class TestParsedFilesUnmatchedCache:
 
     def test_unreadable_row_is_re_fetched_and_rewritten(self) -> None:
         # A row whose parse this build cannot validate is a miss, so `_parse_for`
-        # re-asks Sonarr and overwrites it with a readable record.
+        # re-asks Sonarr and overwrites it with a readable record. Every field is
+        # present, so the key check passes it and validation is what misses.
         seeded: dict[str, dict[str, object]] = {
             "[X] Show - 01.mkv": {
                 "fetched_at": datetime.now().strftime(UPDATED_AT_STR_FORMAT),
-                "parse": {"episode_numbers": "one", "series_title": ""},
+                "parse": {**to_parse_record(_matched(1, 1)), "episode_numbers": "one"},
             },
         }
         parse, sonarr = self._parse(parse_result=_matched(1, 1), sonarr_parse=seeded)

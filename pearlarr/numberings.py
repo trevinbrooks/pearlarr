@@ -6,9 +6,9 @@ first episode the entry covers (`WINDOW_ROW`), straight through every entry the 
 (`UNION_ROW`), or by TVDB's absolute numbers (`ABSOLUTE`). The passes place such a file when Sonarr's reading of its
 number lands inside the window or a run carries it. For a lone-number file they leave, the reader reads the number
 under every numbering that fits the torrent's windows and proposes its row only when the numberings that fit all
-name the same row. A torrent whose windows don't match AniList's episode counts, a repeated number, a series row
-that doesn't carry its number, two numberings that disagree, or a lifted series title the run doesn't know each
-refuse the file, which keeps its verdict. Nothing the reader proposes outranks a pass: `WindowedAssignment.filled`
+name the same row. A torrent whose windows don't match AniList's episode counts, a number repeated under one title,
+a series row that doesn't carry its number, two numberings that disagree, or a lifted series title the run doesn't
+know each refuse the file, which keeps its verdict. Nothing the reader proposes outranks a pass: `WindowedAssignment.filled`
 places a proposal only into a gap the windows left.
 
 The reader runs once per torrent, after the windows merge, on the grabbing entry's series only, and only while
@@ -267,36 +267,25 @@ def _lone_number(info: ParsedFileInfo) -> bool:
 
 
 @dataclass(frozen=True, slots=True)
-class _Part:
-    """One title's files of a repeating or ambiguous torrent, read again under the one window that title names."""
-
-    window: _Window
-    numbers: tuple[int, ...]
-    """The part's numbers, each carried once, sorted."""
-    fits: tuple[_Fit, ...]
-    """The numberings under which every number of the part reads inside its window."""
-
-
-@dataclass(frozen=True, slots=True)
 class _Pool:
     """The torrent's lone-number files, the numberings that fit them, and what the repeat and partition gates read.
 
-    Built by `NumberingReader._pool`, once per torrent: every file is read under the same fits.
+    Built by `NumberingReader._pool`, once per torrent: a file is read under the pool's fits, or under its title's
+    part.
     """
 
     files: tuple[_LoneNumberFile, ...]
-    numbers: tuple[int, ...]
-    """Every distinct number the pool carries, sorted."""
     repeated: frozenset[int]
     """The numbers more than one file carries."""
     fits: tuple[_Fit, ...]
-    """The numberings under which every number of the pool reads inside the torrent's windows together. None when
-    a repeated number is carried under more than one lifted title (`_raw_title`): that may be two seasons each
+    """The numberings under which every number of the pool reads inside the torrent's windows together. Empty when
+    the pool repeats a number and carries more than one lifted title (`_raw_title`): that may be two seasons each
     numbered from one, so no file is read over the whole torrent, and each is read under the one window its title
-    names, or refused. A repeated number under one title refuses only the files carrying it."""
-    parts: Mapping[str, _Part]
-    """`_marked_title` of a lifted title -> the one window that title names and the title's numbers, for the titles
-    that name exactly one window and repeat no number among themselves."""
+    names, or refused. In a pool of one title a repeated number refuses only the files carrying it."""
+    parts: Mapping[str, tuple[_Fit, ...]]
+    """`_marked_title` of a lifted title -> the numberings under which every number of the title's files reads
+    inside the one window that title names, for the titles that name exactly one window and repeat no number among
+    themselves."""
 
     def __post_init__(self) -> None:
         object.__setattr__(self, "parts", MappingProxyType(dict(self.parts)))
@@ -402,15 +391,13 @@ class NumberingReader:
         by_marked: dict[str, list[int]] = {}
         for file in files:
             by_marked.setdefault(file.marked, []).extend(file.numbers)
-        parts: dict[str, _Part] = {}
+        parts: dict[str, tuple[_Fit, ...]] = {}
         for marked, carried in by_marked.items():
             window = sole.get(marked)
             if window is not None and len(set(carried)) == len(carried):
-                part_numbers = tuple(sorted(carried))
-                parts[marked] = _Part(window, part_numbers, self._fits(part_numbers, (window,)))
+                parts[marked] = self._fits(tuple(sorted(carried)), (window,))
         return _Pool(
             files=tuple(files),
-            numbers=numbers,
             repeated=repeated,
             fits=self._fits(numbers, self.windows) if one_title or not repeated else (),
             parts=parts,
@@ -424,9 +411,9 @@ class NumberingReader:
         # window numberings fit and they disagree: a torrent of two titles (K-ON! and K-ON!!) reads each title's
         # files under the one window that title names.
         if pool.repeated or not readings or _window_numberings_disagree(readings):
-            part = pool.parts.get(file.marked)
-            if part is not None:
-                readings = self._readings(file, part.fits)
+            fits = pool.parts.get(file.marked)
+            if fits is not None:
+                readings = self._readings(file, fits)
             elif pool.carries_repeat(file):
                 return None
             if not readings:
