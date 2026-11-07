@@ -471,6 +471,24 @@ class TestOrderedWindows:
 
         assert order.windows == (listed[1], replace(claim.window, ignored=True))
 
+    def test_a_claims_window_takes_its_listed_windows_episode_count(self) -> None:
+        # A claim doesn't keep AniList's count, so its window reads it off the entry's listed window.
+        own = entry_window(1, _FIRST_COUR)
+        claim = entry_claim(al_id=2, ordered_episode_ids=_SECOND_COUR[:2])
+
+        order = _order(own, (entry_window(2, _SECOND_COUR, episode_count=3),), (claim,))
+
+        assert order.windows == (own, replace(claim.window, episode_count=3))
+
+    def test_a_claim_its_entry_no_longer_lists_has_no_episode_count(self) -> None:
+        claim = entry_claim(al_id=2, ordered_episode_ids=_SECOND_COUR)
+        listed = entry_window(1, _FIRST_COUR, episode_count=3)
+
+        order = _order(listed, (listed,), (claim,))
+
+        assert order.windows == (listed, claim.window)
+        assert order.windows[1].episode_count is None
+
     def test_a_listed_entry_never_claimed_runs_its_listed_window_and_does_not_import(self) -> None:
         listed = entry_window(2, _SECOND_COUR)
 

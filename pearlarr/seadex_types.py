@@ -467,9 +467,15 @@ class SeasonTypeCount(_ApiModel):
     episode_count: int = Field(validation_alias="episodeCount")
 
 
+class AlternateTitle(_ApiModel):
+    """One `alternateTitles[]` element: another title Sonarr knows the series by."""
+
+    title: str
+
+
 @runtime_checkable
 class SonarrItem(ArrItem, Protocol):
-    """An `ArrItem` keyed on `tvdbId`, with the TVDB orders Sonarr lists for it."""
+    """An `ArrItem` keyed on `tvdbId`, with the TVDB orders Sonarr lists for it and its alternate titles."""
 
     @property
     def tvdbId(self) -> int: ...
@@ -479,6 +485,9 @@ class SonarrItem(ArrItem, Protocol):
 
     @property
     def seasonTypes(self) -> tuple[SeasonTypeCount, ...]: ...
+
+    @property
+    def alternateTitles(self) -> tuple[AlternateTitle, ...]: ...
 
 
 @runtime_checkable
@@ -505,6 +514,8 @@ class SonarrSeries(_ApiModel):
     null or junk value folds to "", which names no order, so the series is read without its other orders."""
     seasonTypes: tuple[SeasonTypeCount, ...] = ()
     """The orders TVDB lists for the series, with counts. Sonarr v5 only."""
+    alternateTitles: tuple[AlternateTitle, ...] = ()
+    """The series' other titles, in Sonarr's order. Some name one season, which this model doesn't keep."""
 
     @field_validator("seasonTypes", mode="before")
     @classmethod
@@ -512,6 +523,13 @@ class SonarrSeries(_ApiModel):
         """Skip junk `seasonTypes[]` entries, never failing the series over one."""
 
         return _validate_skipping_junk(SeasonTypeCount, value)
+
+    @field_validator("alternateTitles", mode="before")
+    @classmethod
+    def _lenient_alternate_titles(cls, value: object) -> object:
+        """Skip junk `alternateTitles[]` entries (a null title among them), never failing the series over one."""
+
+        return _validate_skipping_junk(AlternateTitle, value)
 
 
 class RadarrMovie(_ApiModel):
@@ -1183,6 +1201,12 @@ class ParsedFileInfo(_ApiModel):
         validation_alias=AliasPath("parsedEpisodeInfo", "fullSeason"),
     )
     """A season-pack-shaped name (bare "S01"). Its matched pairs span the season, never one file's claims."""
+    series_title: _BlankStr = Field(
+        default="",
+        validation_alias=AliasPath("parsedEpisodeInfo", "seriesTitle"),
+    )
+    """The series title Sonarr's parser lifted from the name, whether or not it matched a series. "" when it lifted
+    none."""
     matched_episodes: tuple[MatchedEpisode, ...] = Field(default=(), validation_alias="episodes")
     """Sonarr's series-matched pairs. The exact leg's fallback when the name carries no `(season, episode)`."""
 

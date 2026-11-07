@@ -24,6 +24,7 @@ from pydantic.fields import FieldInfo
 
 from pearlarr.json_narrow import is_json_list, is_json_obj
 from pearlarr.seadex_types import (
+    AlternateTitle,
     CommandResource,
     DownloadClientField,
     DownloadClientRecord,
@@ -152,6 +153,7 @@ ROSTER: Final = (
     # `seasonType` / `seasonTypes` are Sonarr v5's, and the capture is v4's. `seasonType` defaults to the official
     # order v4 numbers by, and the empty `seasonTypes` is how the order fetch tells v4 apart.
     Spec(SonarrSeries, "SeriesResource", _SONARR, exempt=frozenset({"seasonType", "seasonTypes"})),
+    Spec(AlternateTitle, "AlternateTitleResource", _SONARR),
     Spec(SonarrEpisode, "EpisodeResource", _SONARR),
     Spec(SonarrEpisodeFile, "EpisodeFileResource", _SONARR),
     Spec(ParsedFileInfo, "ParseResource", _SONARR),

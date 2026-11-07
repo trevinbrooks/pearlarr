@@ -568,7 +568,7 @@ class ScriptedEpisodes:
 
     `get_ep_list` records its calls, raises for an `ambiguous` id, and serves `windows[al_id]` when windows are
     given, else the whole series list. Without a client every read is None, a failed fetch. The `unread` series have
-    no stored order record.
+    no stored order record. `counts` are AniList's episode counts by AniList id, None for an id left out.
     """
 
     series_fp = "fp"
@@ -580,11 +580,13 @@ class ScriptedEpisodes:
         windows: Mapping[int, list[SonarrEpisode] | None] | None = None,
         ambiguous: frozenset[int] = frozenset(),
         unread: frozenset[int] = frozenset(),
+        counts: Mapping[int, int] | None = None,
     ) -> None:
         self._sonarr = sonarr
         self._windows = windows
         self._ambiguous = ambiguous
         self._unread = unread
+        self._counts: Mapping[int, int] = counts or {}
         self.calls: list[tuple[int, int]] = []
         """Each `get_ep_list` call's (series id, AniList id), in call order."""
 
@@ -613,6 +615,17 @@ class ScriptedEpisodes:
 
         del series_id
         return NO_ORDERING
+
+    def numbers_aired(self, series_id: int) -> bool:
+        """Sonarr numbers every series as aired."""
+
+        del series_id
+        return True
+
+    def episode_count(self, al_id: int) -> int | None:
+        """The scripted count, None for an unscripted id."""
+
+        return self._counts.get(al_id)
 
     def orders_unread(self, series_ids: Iterable[int]) -> bool:
         """Whether any of the series is one of the `unread`."""

@@ -7,6 +7,10 @@ Pearlarr is a fork of [bbtufty/seadexarr](https://github.com/bbtufty/seadexarr).
 
 ## [Unreleased]
 
+### Changed
+
+- Sonarr's parse of a file name now keeps the series title it read from the name, so the first run after upgrading asks Sonarr to parse each cached name once more.
+
 ### Fixed
 
 - A preview or `--dry-run` no longer reports a "would add" status for a title it would add nothing for. A title whose releases were all skipped or failed to grab prints those lines alone, and one whose release is already in qBittorrent says so, as in a real run.

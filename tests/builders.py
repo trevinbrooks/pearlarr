@@ -1140,11 +1140,24 @@ _NO_NAMES = EntryNames()
 
 
 def entry_window(
-    al_id: int, ids: Iterable[int], *, series_id: int = 7, names: EntryNames = _NO_NAMES, ignored: bool = False
+    al_id: int,
+    ids: Iterable[int],
+    *,
+    series_id: int = 7,
+    names: EntryNames = _NO_NAMES,
+    ignored: bool = False,
+    episode_count: int | None = None,
 ) -> EntryWindow:
     """Entry `al_id`'s window over `ids` on `series_id` (series 7, as `entry_claim`'s), in the order given."""
 
-    return EntryWindow(al_id=al_id, series_id=series_id, ordered_episode_ids=tuple(ids), names=names, ignored=ignored)
+    return EntryWindow(
+        al_id=al_id,
+        series_id=series_id,
+        ordered_episode_ids=tuple(ids),
+        names=names,
+        ignored=ignored,
+        episode_count=episode_count,
+    )
 
 
 def torrent_listing(*windows: EntryWindow, aliases: SpecialAliases = NO_ALIASES) -> TorrentListing:
@@ -1177,11 +1190,29 @@ def known_torrent(
 
 
 def seed_scope(
-    entry: EpisodeIndex, series: EpisodeIndex, *, al_id: int = 1, series_id: int = 7, names: EntryNames = _NO_NAMES
+    entry: EpisodeIndex,
+    series: EpisodeIndex,
+    *,
+    al_id: int = 1,
+    series_id: int = 7,
+    names: EntryNames = _NO_NAMES,
+    episode_count: int | None = None,
 ) -> SeedScope:
-    """Entry `al_id`'s grab scope over `entry`, within `series` on `series_id` (series 7, as `entry_claim`'s)."""
+    """Entry `al_id`'s grab scope over `entry`, within `series` on `series_id` (series 7, as `entry_claim`'s).
 
-    return SeedScope(al_id=al_id, series_id=series_id, entry=entry, series=series, names=names)
+    The series has no alternate titles and Sonarr numbers it as aired.
+    """
+
+    return SeedScope(
+        al_id=al_id,
+        series_id=series_id,
+        entry=entry,
+        series=series,
+        names=names,
+        episode_count=episode_count,
+        alternate_titles=(),
+        aired_numbering=True,
+    )
 
 
 def new_torrent(scope: SeedScope) -> KnownTorrent:
@@ -1217,8 +1248,9 @@ def parsed_info(
     absolutes: tuple[int, ...] = (),
     matched: tuple[tuple[int, int], ...] = (),
     full_season: bool = False,
+    series_title: str = "",
 ) -> ParsedFileInfo:
-    """Shorthand `ParsedFileInfo` for the placement tests: the name's own numbers, plus any series-matched pairs."""
+    """Shorthand `ParsedFileInfo` for the placement tests: the name's own numbers and title, plus any matched pairs."""
 
     return ParsedFileInfo(
         season_number=season,
@@ -1228,6 +1260,7 @@ def parsed_info(
             MatchedEpisode(season_number=matched_season, episode_number=episode) for matched_season, episode in matched
         ),
         full_season=full_season,
+        series_title=series_title,
     )
 
 

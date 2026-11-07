@@ -58,6 +58,7 @@ from pearlarr.run_services import RunServices
 from pearlarr.seadex_radarr import RadarrSync
 from pearlarr.seadex_sonarr import SonarrSync
 from pearlarr.seadex_types import (
+    AlternateTitle,
     ArrReleases,
     CommandResource,
     EpisodeRecord,
@@ -138,6 +139,7 @@ class _Item:
     tmdbId: int
     seasonType: str = OFFICIAL_ORDER
     seasonTypes: tuple[SeasonTypeCount, ...] = ()
+    alternateTitles: tuple[AlternateTitle, ...] = ()
 
     def __init__(self, **kw: object) -> None:
         self.__dict__.update(kw)

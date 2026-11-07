@@ -65,7 +65,7 @@ class SeedFile(NamedTuple):
 
 @dataclass(frozen=True, slots=True, kw_only=True)
 class SeedScope:
-    """What one entry's files are placed against: its own index, the whole-series map, and its names."""
+    """What one entry's files are placed against: its indexes, its names, and what AniList and Sonarr say of it."""
 
     al_id: int
     """The entry claiming the placement: a stored claim of its own is replaced by the fresh window."""
@@ -82,6 +82,15 @@ class SeedScope:
     names: EntryNames
     """The series and AniList titles the placement breaks ties by, persisted onto every seed."""
 
+    episode_count: int | None
+    """AniList's episode count for the entry (`SonarrEpisodes.episode_count`), None when AniList gives none."""
+
+    alternate_titles: tuple[str, ...]
+    """The series' other titles in Sonarr (`SonarrSeries.alternateTitles`), in Sonarr's order."""
+
+    aired_numbering: bool
+    """Whether Sonarr numbers the series by TVDB's aired order (`SonarrEpisodes.numbers_aired`)."""
+
     @property
     def can_place(self) -> bool:
         """Whether there is an entry index and a served series map to place against.
@@ -97,7 +106,11 @@ class SeedScope:
         """The entry's own window, built as a listing builds an entry's (`EntryWindow.of`)."""
 
         return EntryWindow.of(
-            al_id=self.al_id, series_id=self.series_id, ep_list=self.entry.by_id.values(), names=self.names
+            al_id=self.al_id,
+            series_id=self.series_id,
+            ep_list=self.entry.by_id.values(),
+            names=self.names,
+            episode_count=self.episode_count,
         )
 
 

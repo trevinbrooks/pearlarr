@@ -7,8 +7,9 @@ ranges) resolves to `[]` instead of silently selecting episodes. The caller
 (`process_al_id`) surfaces the visible NO_EPISODES skip. The sibling `{season: []}`
 whole-season-covered case must NOT be treated as empty.
 
-Also pins that the anime-ids path resolves the AniList format / episode count
-through the gateway (whose retry log narrates backoffs), never the bare helpers.
+Also pins that the anime-ids path and `episode_count` resolve the AniList format /
+episode count through the gateway (whose retry log narrates backoffs), never the
+bare helpers.
 
 The `has_anidb=True` path is pinned too: the lookup gate (non-TV format or
 season 0, with an AniDB id), the either/or with the offset slice (a non-empty
@@ -97,6 +98,16 @@ def test_anime_ids_lookups_route_through_the_gateway() -> None:
     # The gateway-resolved episode count drove the offset slice (2 eps -> 1).
     assert result is not None
     assert [ep.episode_number for ep in result] == [1]
+
+
+def test_the_episode_count_is_the_gateways() -> None:
+    """`episode_count` reads AniList's count through the gateway too."""
+
+    anilist = _RecordingAniList(n_eps=12)
+    episodes = make_sonarr_episodes(sonarr=_FakeSonarr([]), _anilist=anilist)
+
+    assert episodes.episode_count(123) == 12
+    assert anilist.n_eps_calls == [123]
 
 
 def test_empty_anibridge_season_map_resolves_to_no_episodes() -> None:

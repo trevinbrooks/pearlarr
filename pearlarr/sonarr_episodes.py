@@ -304,15 +304,25 @@ class SonarrEpisodes:
 
         ordering = self._orderings.get(series_id)
         if ordering is None:
-            facts = self._order_facts.get(series_id)
             # Every index reads Sonarr's rows as aired, so another order can't be read onto a series numbered by
             # one of them yet.
-            if facts is None or facts.season_type != OFFICIAL_ORDER:
-                ordering = NO_ORDERING
+            if self.numbers_aired(series_id):
+                ordering = SeriesOrdering(self._skyhook.other_orders(self._order_facts[series_id].tvdb_id), None)
             else:
-                ordering = SeriesOrdering(self._skyhook.other_orders(facts.tvdb_id), None)
+                ordering = NO_ORDERING
             self._orderings[series_id] = ordering
         return ordering
+
+    def numbers_aired(self, series_id: int) -> bool:
+        """Whether Sonarr numbers the series by TVDB's aired order. False for a series this run didn't read."""
+
+        facts = self._order_facts.get(series_id)
+        return facts is not None and facts.season_type == OFFICIAL_ORDER
+
+    def episode_count(self, al_id: int) -> int | None:
+        """AniList's episode count for the entry, None when AniList gives none."""
+
+        return self._anilist.n_eps(al_id)
 
     def orders_unread(self, series_ids: Iterable[int]) -> bool:
         """Whether any of the series has no stored order record, as when SkyHook was down before its first fetch.
@@ -458,7 +468,7 @@ class SonarrEpisodes:
 
         # Slice the list to get the correct episodes, so any potential offsets
         ep_offset = mapping.tvdb_epoffset
-        n_eps = self._anilist.n_eps(al_id)
+        n_eps = self.episode_count(al_id)
 
         # If we don't get a number of episodes, use them all
         if n_eps is None:

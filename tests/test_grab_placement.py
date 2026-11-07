@@ -1089,6 +1089,11 @@ class TestKnownTorrent:
         assert [w.ordered_episode_ids for w in order.windows] == [(101, 102, 103, 104), (103, 104)]
         assert (order.at(1), order.imports) == (0, {0, 1})
 
+    def test_the_entrys_own_window_carries_its_anilist_episode_count(self) -> None:
+        scope = seed_scope(episode_index(_SEASON), episode_index(_SERIES), episode_count=4)
+
+        assert scope.window == entry_window(1, (101, 102, 103, 104), episode_count=4)
+
     def test_a_new_entrys_own_window_takes_its_anilist_ids_place(self) -> None:
         order = _torrent(two_claim_record()).order(_scope(_SEASON, al_id=3).window)
 

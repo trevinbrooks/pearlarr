@@ -706,6 +706,10 @@ class EntryWindow:
     kept windows of the same kind (season or specials), so a file a kept title can place is the kept title's. A
     claim's window takes the flag from its entry's listed window."""
 
+    episode_count: int | None = None
+    """AniList's episode count for the entry at the read, None when AniList gives none. Never persisted: a claim's
+    window takes it from its entry's listed window, and has none when the entry isn't listed."""
+
     @classmethod
     def of(
         cls,
@@ -715,11 +719,19 @@ class EntryWindow:
         ep_list: Iterable[SonarrEpisode],
         names: EntryNames,
         ignored: bool = False,
+        episode_count: int | None = None,
     ) -> "EntryWindow":
         """The window over `ep_list`: each episode with an id, once, in the list's order."""
 
         ids = tuple(dict.fromkeys(ep.id for ep in ep_list if ep.id))
-        return cls(al_id=al_id, series_id=series_id, ordered_episode_ids=ids, names=names, ignored=ignored)
+        return cls(
+            al_id=al_id,
+            series_id=series_id,
+            ordered_episode_ids=ids,
+            names=names,
+            ignored=ignored,
+            episode_count=episode_count,
+        )
 
 
 @dataclass(frozen=True, slots=True, kw_only=True)
@@ -803,8 +815,8 @@ class EntryClaim:
         """The claim as a window, the shape a listing holds.
 
         A claim with no ids gives a window with no ids, and `admits` still reads that claim as covering any id. The
-        window is never flagged ignored: a claim predates any ignore, so `ordered_windows` takes the flag from the
-        listing.
+        window is never flagged ignored and has no episode count: a claim predates any ignore and doesn't keep the
+        count, so `ordered_windows` takes both from the listing.
         """
 
         return EntryWindow(

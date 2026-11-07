@@ -31,7 +31,14 @@ from pearlarr.parse_records import (
 )
 from pearlarr.run_services import RunServices
 from pearlarr.seadex_gateway import SeaDexMiss
-from pearlarr.seadex_types import MatchedEpisode, ParsedFileInfo, SeadexDict, SeasonTypeCount, SonarrEpisode
+from pearlarr.seadex_types import (
+    AlternateTitle,
+    MatchedEpisode,
+    ParsedFileInfo,
+    SeadexDict,
+    SeasonTypeCount,
+    SonarrEpisode,
+)
 from pearlarr.sonarr_episodes import (
     SONARR_FETCH_WORKERS,
     SonarrEpisodes,
@@ -93,6 +100,14 @@ def _record(info: ParsedFileInfo, *, days_ago: float = 1, series_fp: str | None 
     if series_fp is not None:
         row["series_fp"] = series_fp
     return row
+
+
+def _untitled(info: ParsedFileInfo) -> dict[str, object]:
+    """A row stamped a day ago whose parse has no `series_title` key, as older builds wrote it."""
+
+    parse = to_parse_record(info)
+    del parse["series_title"]
+    return {"fetched_at": _stamp(1), "parse": parse}
 
 
 def _fresh(record: dict[str, object], *, series_fp: str = "fp") -> bool:
@@ -186,11 +201,19 @@ class TestParseRecords:
         assert "series_fp" not in row
 
     def test_unreadable_parse_reads_as_a_miss(self) -> None:
-        # Validation IS the version gate: a row this build cannot read re-parses.
-        row: dict[str, object] = {"fetched_at": _stamp(1), "parse": {"episode_numbers": "one"}}
+        # A row whose values this build cannot validate re-parses.
+        row: dict[str, object] = {"fetched_at": _stamp(1), "parse": {"episode_numbers": "one", "series_title": ""}}
         store = FakeCacheStore(sonarr_parse={"show - 01.mkv": row})
 
         assert ParseRecords(store).read("show - 01.mkv", window=_window()) is None
+
+    def test_a_parse_without_a_series_title_is_stale_for_the_warm_check_and_the_read(self) -> None:
+        # The model would read the missing title as "", so the key decides, inside the TTL.
+        store = FakeCacheStore(sonarr_parse={"show - 01.mkv": _untitled(_matched(1, 1))})
+        records = ParseRecords(store)
+
+        assert not records.is_fresh("show - 01.mkv", window=_window())
+        assert records.read("show - 01.mkv", window=_window()) is None
 
 
 class TestFetchWorkers:
@@ -214,6 +237,7 @@ class _Series:
     tmdbId: int
     seasonType: str = OFFICIAL_ORDER
     seasonTypes: tuple[SeasonTypeCount, ...] = ()
+    alternateTitles: tuple[AlternateTitle, ...] = ()
 
     def __init__(self, **kw: object) -> None:
         self.__dict__.update(kw)
@@ -683,7 +707,7 @@ class TestParsedFilesUnmatchedCache:
         seeded: dict[str, dict[str, object]] = {
             "[X] Show - 01.mkv": {
                 "fetched_at": datetime.now().strftime(UPDATED_AT_STR_FORMAT),
-                "parse": {"episode_numbers": "one"},
+                "parse": {"episode_numbers": "one", "series_title": ""},
             },
         }
         parse, sonarr = self._parse(parse_result=_matched(1, 1), sonarr_parse=seeded)
@@ -693,6 +717,18 @@ class TestParsedFilesUnmatchedCache:
         assert info == _matched(1, 1)
         assert sonarr.calls == ["[X] Show - 01.mkv"]
         rec = parse.cache_store.get_sonarr_parse("[X] Show - 01.mkv")
+        assert rec is not None
+        assert rec["parse"] == to_parse_record(_matched(1, 1))
+
+    def test_a_row_without_a_series_title_is_re_parsed_by_the_warm_pass(self) -> None:
+        # The warm pass sees it stale too, so it re-parses in the pool with the cold names, not alone afterwards.
+        names = ["[X] Show - 01.mkv", "[X] Show - 02.mkv"]
+        parse, sonarr = self._parse(parse_result=_matched(1, 1), sonarr_parse={names[0]: _untitled(_matched(1, 1))})
+
+        parse._warm_parse_cache(names, window=_window())
+
+        assert sorted(sonarr.calls) == names
+        rec = parse.cache_store.get_sonarr_parse(names[0])
         assert rec is not None
         assert rec["parse"] == to_parse_record(_matched(1, 1))
 

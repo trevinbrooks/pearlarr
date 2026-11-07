@@ -400,6 +400,7 @@ def test_parse_decodes_season_episode() -> None:
         episode_numbers=(1,),
         absolute_episode_numbers=(),
         special=False,
+        series_title="Saijaku Muhai no Bahamut",
         matched_episodes=(MatchedEpisode(season_number=1, episode_number=1, id=8476),),
     )
     request = route.calls.last.request
@@ -426,6 +427,7 @@ def test_parse_decodes_absolute() -> None:
         episode_numbers=(),
         absolute_episode_numbers=(14,),
         special=False,
+        series_title="To Glimmer-Zu",
         matched_episodes=(MatchedEpisode(season_number=1, episode_number=14, id=2886),),
     )
 

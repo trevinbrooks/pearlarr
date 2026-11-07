@@ -98,6 +98,16 @@ class TestRead:
         assert read.identities == {2: 503, 3: 504}
         assert episodes.calls == [(7, 1), (7, 2), (7, 3)]
 
+    def test_each_window_carries_its_entrys_anilist_episode_count(self) -> None:
+        # Entry 2 has no count on AniList.
+        episodes = ScriptedEpisodes(windows={1: _episodes(1, 2), 2: _episodes(3)}, counts={1: 2})
+        seadex = FakeSeaDexSource({1: _entry(1, _H1), 2: _entry(2, _H1)})
+
+        read = _reader(seadex, episodes).read(7, _mappings(1, 2))
+
+        assert read is not None
+        assert read.listing(_H1) == torrent_listing(replace(_window(1, 501, 502), episode_count=2), _window(2, 503))
+
     def test_each_entrys_aliases_reach_the_hashes_it_lists(self) -> None:
         seadex = FakeSeaDexSource({1: _entry(1, _H1), 2: _entry(2, _H1, _H2)})
         mappings = {

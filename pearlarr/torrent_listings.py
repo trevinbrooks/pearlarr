@@ -18,9 +18,9 @@ class SeriesListings:
     (season or specials).
     Prefetched entries come from the gateway's cache. Anything else, an ignored entry among them, costs a request.
 
-    Each collaborator serves `_read`: `seadex` gives each entry's record, `episodes` its window, `ignore_tags` the
-    torrents the size identities skip, and `names` the entry's titles for its window (the title ladder the entry's
-    own run uses). All four hold for the run, so they come in at construction.
+    Each collaborator serves `_read`: `seadex` gives each entry's record, `episodes` its window and AniList episode
+    count, `ignore_tags` the torrents the size identities skip, and `names` the entry's titles for its window (the
+    title ladder the entry's own run uses). All four hold for the run, so they come in at construction.
     """
 
     def __init__(
@@ -79,6 +79,7 @@ class SeriesListings:
                     ep_list=ep_list,
                     names=self._names(al_id),
                     ignored=al_id in resolved.ignored,
+                    episode_count=self._episodes.episode_count(al_id),
                 )
             )
             listed.append(EntryListing(record, window, mapping.special_aliasing))
