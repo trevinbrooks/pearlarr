@@ -58,11 +58,12 @@ Terms used across the placement modules:
 - Claim: one entry's part of a stored record (`EntryClaim`). In `parse_reading`: a `(season, episode)` a parse names.
 - Lone-number file: a file Sonarr parsed to absolute numbers alone ("Show - 07"), no own key, no season above 0,
   neither a special nor a season pack. Not an extra, and not counted by its own title.
-- Numberings reader (`numberings`): reads each lone-number file the windows left under every way the release group
-  could have counted the series (from its first episode, from the window's, by Sonarr's episode numbers, straight
-  through the torrent's windows, by TVDB's absolutes) and proposes its row when every fitting way agrees
-  (`NUMBERINGS_AGREE`). It runs once per torrent, after the windows merge, on the files no window placed, refused or
-  read inside itself, so it never outranks a pass, and no count sign turns it off: its own gates refuse instead.
+- Numberings reader (`numberings`): reads a torrent's lone-number files under every way the release group could
+  have counted the series (from its first episode, from the window's, by Sonarr's episode numbers, straight through
+  the torrent's windows, by TVDB's absolutes) and proposes each file's row when every fitting way agrees. It runs
+  once per torrent, after the windows merge, and the fill (`WindowedAssignment.filled`) places a proposal only on a
+  file no window placed, refused or read inside itself (`NUMBERINGS_AGREE`), so it never outranks a pass. No count
+  sign turns it off: its own gates refuse instead.
 
 The passes run in this order. Each places files only onto the ids that earlier passes left open:
 

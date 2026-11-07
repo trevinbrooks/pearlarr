@@ -16,10 +16,10 @@ from pearlarr.placement_types import (
     PlacementVerdict,
     TargetScope,
 )
-from pearlarr.placer import name_facts
 from pearlarr.seadex_types import EpisodeKey, ParsedFileInfo
 from pearlarr.window_placement import (
     WindowedAssignment,
+    WindowFacts,
     WindowOrder,
     ordered_windows,
     place_across_windows,
@@ -490,15 +490,6 @@ class TestOrderedWindows:
 
         assert order.windows == (own, replace(claim.window, episode_count=3))
 
-    def test_a_claim_its_entry_no_longer_lists_has_no_episode_count(self) -> None:
-        claim = entry_claim(al_id=2, ordered_episode_ids=_SECOND_COUR)
-        listed = entry_window(1, _FIRST_COUR, episode_count=3)
-
-        order = _order(listed, (listed,), (claim,))
-
-        assert order.windows == (listed, claim.window)
-        assert order.windows[1].episode_count is None
-
     def test_a_listed_entry_never_claimed_runs_its_listed_window_and_does_not_import(self) -> None:
         listed = entry_window(2, _SECOND_COUR)
 
@@ -508,12 +499,13 @@ class TestOrderedWindows:
         assert (order.at(1), order.imports) == (0, {0})
 
     def test_a_claim_its_entry_no_longer_lists_keeps_its_window(self) -> None:
+        # Unchanged, so with no ignored flag and no episode count: the listing has neither for it.
         claim = entry_claim(al_id=2, ordered_episode_ids=_SECOND_COUR)
-        listed = entry_window(1, _FIRST_COUR)
+        listed = entry_window(1, _FIRST_COUR, episode_count=3)
 
         order = _order(listed, (listed,), (claim,))
 
-        assert [w.al_id for w in order.windows] == [1, 2]
+        assert order.windows == (listed, claim.window)
         assert order.imports == {0, 1}
 
     def test_the_own_window_and_the_claims_import_wherever_they_sort(self) -> None:
@@ -615,7 +607,8 @@ class TestDecidedBy:
 
 _GAP = "show - 05.mkv"
 """A name whose bare 5 the shared series resolves to nothing: every window skips it."""
-_KEYED = "show - s01e01.mkv"
+_PLACED = "show - 01.mkv"
+"""A name whose bare 1 Sonarr matched to S01E01: the exact pass places it under the first window."""
 
 
 def _filled(
@@ -628,15 +621,15 @@ def _filled(
     """The torrent placed under `windows`, before and after the reader's `proposals` fill it."""
 
     torrent = batch(parsed, seeded=seeded)
-    facts = [name_facts(torrent, window) for window in windows]
+    facts = [WindowFacts.of(torrent, window) for window in windows]
     before = place_across_windows(torrent, windows)
-    return before, before.filled(torrent, NumberingReading(proposals), windows, facts)
+    return before, before.filled(torrent, NumberingReading(proposals), facts)
 
 
-def _gap_and_keyed() -> dict[str, ParsedFileInfo | None]:
+def _gap_and_placed() -> dict[str, ParsedFileInfo | None]:
     return {
         _GAP: parsed_info(season=0, absolutes=(5,)),
-        _KEYED: parsed_info(season=1, episodes=(1,), matched=((1, 1),)),
+        _PLACED: parsed_info(season=0, absolutes=(1,), matched=((1, 1),)),
     }
 
 
@@ -644,19 +637,19 @@ class TestFilled:
     """The reader's proposals fill the gaps the windows left, and touch nothing else."""
 
     def test_a_gap_is_filled_and_the_window_holding_its_ids_decides_it(self) -> None:
-        before, after = _filled(_gap_and_keyed(), (_window(_FIRST_COUR), _window(_SECOND_COUR)), {_GAP: (605,)})
+        before, after = _filled(_gap_and_placed(), (_window(_FIRST_COUR), _window(_SECOND_COUR)), {_GAP: (605,)})
 
         assert by_name(after.merged) == {
             _GAP: ((605,), PlacementVerdict.NUMBERINGS_AGREE),
-            _KEYED: ((601,), PlacementVerdict.EXACT),
+            _PLACED: ((601,), PlacementVerdict.EXACT),
         }
-        assert after.decided_by == {_KEYED: 0, _GAP: 1}
+        assert after.decided_by == {_PLACED: 0, _GAP: 1}
         assert after.windows == before.windows
 
     def test_a_file_a_window_placed_keeps_its_placement(self) -> None:
-        _, after = _filled(_gap_and_keyed(), (_window(_FIRST_COUR), _window(_SECOND_COUR)), {_KEYED: (602,)})
+        _, after = _filled(_gap_and_placed(), (_window(_FIRST_COUR), _window(_SECOND_COUR)), {_PLACED: (602,)})
 
-        assert by_name(after.merged)[_KEYED] == ((601,), PlacementVerdict.EXACT)
+        assert by_name(after.merged)[_PLACED] == ((601,), PlacementVerdict.EXACT)
 
     def test_a_file_a_window_refused_keeps_its_refusal(self) -> None:
         pack, parsed, windows = _disputed_torrent()
@@ -692,7 +685,7 @@ class TestFilled:
         assert by_name(after.merged)[ova] == ((), PlacementVerdict.SKIPPED)
 
     def test_an_id_a_window_placed_is_not_filled_again(self) -> None:
-        _, after = _filled(_gap_and_keyed(), (_window(_FIRST_COUR), _window(_SECOND_COUR)), {_GAP: (601,)})
+        _, after = _filled(_gap_and_placed(), (_window(_FIRST_COUR), _window(_SECOND_COUR)), {_GAP: (601,)})
 
         assert by_name(after.merged)[_GAP] == ((), PlacementVerdict.SKIPPED)
 
@@ -740,7 +733,7 @@ class TestFilled:
         assert by_name(after.merged)[name] == ((), PlacementVerdict.SKIPPED)
 
     def test_a_fill_into_a_window_the_record_does_not_import_is_another_titles(self) -> None:
-        _, after = _filled(_gap_and_keyed(), (_window(_FIRST_COUR), _window(_SECOND_COUR)), {_GAP: (605,)})
+        _, after = _filled(_gap_and_placed(), (_window(_FIRST_COUR), _window(_SECOND_COUR)), {_GAP: (605,)})
 
         assert by_name(after.for_record({0}))[_GAP] == ((), PlacementVerdict.LISTED_ELSEWHERE)
         assert by_name(after.for_record({1}))[_GAP] == ((605,), PlacementVerdict.NUMBERINGS_AGREE)

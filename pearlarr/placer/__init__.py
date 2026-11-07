@@ -1,7 +1,8 @@
 """Place a torrent's files onto an entry's Sonarr episodes. No I/O.
 
 Two ways in: `assign_episode_ids` places a batch under a scope, and `name_facts` reads what the passes would judge
-each name by (its title, whether its parse reads inside the scope, whether it is an extra) without placing anything.
+each name by (its title, whether its parse reads inside the scope, whether it is an extra, whether its number is
+its own title's) without placing anything.
 """
 
 from ._facts import NameFacts, name_facts

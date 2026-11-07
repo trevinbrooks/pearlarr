@@ -14,8 +14,8 @@ class NameFacts:
     titled_as: int | None
     """The episode the name is titled as (`TorrentFile.titled_as`), else None."""
     reads_inside: bool
-    """Whether the name's parse resolves wholly inside the scope: the exact pass would place it there, were its ids
-    open and nothing disputing them."""
+    """Whether a trusted reading of the name resolves wholly inside the scope (`Reading.exact_ids`): the exact pass
+    would place it there, were its ids open and nothing disputing them."""
     extra: bool
     """Whether the name is an extra (an opening, an ending, and so on): never an episode."""
     title_counted: bool
