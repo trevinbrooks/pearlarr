@@ -411,13 +411,14 @@ class TestTheReaderStandsDown:
         assert _read(_scope(_STRAY_CATS, _STRAY_CATS_SEASON), windows, parsed) == {}
 
     def test_off_the_aired_numbering_the_reader_proposes_nothing(self) -> None:
+        # Constructed: Stray Cats' real batch under a numbering its series doesn't have (Sonarr numbers it as aired).
         scope = _scope(_STRAY_CATS, _STRAY_CATS_SEASON, aired_numbering=False)
 
         assert _read(scope, (_STRAY_CATS_SEASON,), _STRAY_CATS_FILES) == {}
 
     def test_a_window_on_another_series_is_left_out(self) -> None:
-        # A claim's window on Sonarr series 8 lists ids the grabbing series lacks and a count no window of it
-        # matches. Left out, it gates nothing.
+        # Constructed: a claim's window on Sonarr series 8 lists ids the grabbing series lacks and a count no window
+        # of it matches. Left out, it gates nothing.
         elsewhere = entry_window(9, (81, 82, 83), series_id=8, episode_count=1)
         windows = (_STRAY_CATS_SEASON, elsewhere)
 
