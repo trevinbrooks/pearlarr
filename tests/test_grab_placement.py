@@ -65,6 +65,7 @@ from .builders import (
     entry_window,
     known_torrent,
     new_torrent,
+    parsed_info,
     pending_import,
     pending_seed,
     rg_group,
@@ -1059,7 +1060,7 @@ class TestRollingGirlsBatch:
 def _lone(number: int, title: str) -> ParsedFileInfo:
     """Sonarr's parse of a name carrying `number` alone: season 0, the absolute, and the series title it lifted."""
 
-    return ParsedFileInfo(season_number=0, absolute_episode_numbers=(number,), series_title=title)
+    return parsed_info(season=0, absolutes=(number,), series_title=title)
 
 
 # Tsundere's Stray Cats Overrun! BD batch (nyaa 1050453): twelve episodes named by number alone, six SP files, listed

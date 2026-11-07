@@ -88,7 +88,7 @@ def parsed_info(record: Mapping[str, object]) -> ParsedFileInfo | None:
     """Rebuild a record's parse (the inverse of `to_parse_record`), or None when the row has no readable parse.
 
     A parse whose values don't validate is a miss and re-fetches. A missing key validates to its default, so the
-    version gate is the key check in `_parse_is_fresh`, which every read passes first.
+    version gate is the field check in `_parse_is_fresh`, which every read passes first.
     """
 
     raw = record.get("parse")
@@ -100,18 +100,22 @@ def parsed_info(record: Mapping[str, object]) -> ParsedFileInfo | None:
         return None
 
 
+_PARSE_FIELDS = frozenset(ParsedFileInfo.model_fields)
+"""The keys `to_parse_record` writes: a row missing one was written before that field existed."""
+
+
 def _parse_is_fresh(record: Mapping[str, object], *, window: ParseWindow) -> bool:
     """True if a persisted parse record is still usable.
 
-    A legacy row is stale: one with no whole parse, or whose parse has no `series_title`. The model would read the
-    missing title as "", so only this key check re-parses the row, and the warm pass sees it stale too.
-    MATCHED (no `series_fp`): valid for the 30-day `window.matched_cutoff`. UNMATCHED: valid only while the
-    series-id set is unchanged (matching `window.series_fp`) and within the short `window.unmatched_cutoff`
-    backstop, so a newly-added series self-heals.
+    A legacy row is stale: one with no whole parse, or whose parse lacks a field of `ParsedFileInfo`, which an
+    older build wrote before the field existed. The model would read a missing field as its default, so only this
+    check re-parses the row, and the warm pass sees it stale too. MATCHED (no `series_fp`): valid for the 30-day
+    `window.matched_cutoff`. UNMATCHED: valid only while the series-id set is unchanged (matching
+    `window.series_fp`) and within the short `window.unmatched_cutoff` backstop, so a newly-added series self-heals.
     """
 
     parse = record.get("parse")
-    if not is_json_obj(parse) or "series_title" not in parse:
+    if not is_json_obj(parse) or not parse.keys() >= _PARSE_FIELDS:
         return False
     stamped = cast("dict[str, Any]", record)
     if "series_fp" not in record:

@@ -3,7 +3,8 @@
 # The title keys are the module's own; the pins on them read the private functions.
 """The numberings reader over real torrents: their names, Sonarr's parses, and the series rows as Sonarr holds them.
 
-Each series is cut to the rows the read touches, with its real ids and absolute numbers.
+Each series is cut to the rows the read touches, with its real ids and absolute numbers. A case no real torrent
+has is marked "Constructed".
 """
 
 from collections.abc import Iterable, Mapping, Sequence
@@ -312,7 +313,8 @@ class TestTheGatesRefuse:
         assert proposed == {names[n]: (9668 + n,) for n in range(1, 13)}
 
     def test_a_two_number_names_numbers_count_toward_repeats(self) -> None:
-        # Gintama's batch with a 002 single beside the 001-002 file: 2 repeats, and both files are refused.
+        # Constructed: Gintama's batch with a 002 single added beside the 001-002 file. 2 repeats, and both files
+        # are refused.
         series, window, parsed = _gintama()
         parsed[_gintama_name("002")] = _lone(2, "Gintama", matched=((1, 2),))
 
@@ -333,8 +335,10 @@ class TestTheGatesRefuse:
 
         assert proposed == {_hourou_musuko(f"{n:02d}"): (33585 + n,) for n in range(1, 10)}
 
-    def test_without_the_repeat_the_tenth_row_takes_the_tenth_file(self) -> None:
-        # The same batch without its 10+11 cut: the series row and the absolute agree on S01E10 for 10.
+    def test_without_the_repeat_the_tenth_file_lands_on_the_tenth_row_which_is_wrong(self) -> None:
+        # Constructed: the same batch without its 10+11 cut. The series row and the absolute agree on S01E10 for
+        # 10, and by content the file is S01E11 (the cut is S01E10 and the special). Nothing guards this shape,
+        # which no real torrent has: this pins the known gap so a change to it shows.
         series, windows, parsed = _wandering_son()
         del parsed[_hourou_musuko("10+11")]
 
@@ -363,7 +367,7 @@ class TestTheGatesRefuse:
         "title",
         [
             pytest.param("ReZero kara Hajimeru Isekai Seikatsu - Shin Henshuu-ban", id="a recut's title the run lacks"),
-            pytest.param("", id="no title lifted"),
+            pytest.param("", id="no title lifted (constructed)"),
         ],
     )
     def test_a_lifted_title_the_run_does_not_know_refuses_the_file(self, title: str) -> None:
@@ -382,6 +386,16 @@ class TestTheGatesRefuse:
         scope = _scope(series, window, alternate_titles=("ReZero kara Hajimeru Isekai Seikatsu",))
 
         assert _read(scope, (window,), {name: _lone(1, title)}) == {}
+
+    def test_two_files_proposed_one_id_are_both_dropped(self) -> None:
+        # Constructed: two titles of one torrent read under two windows that share their first regular season's
+        # numbers.
+        series = _series(_run(1, range(601, 604), absolute=1), _run(2, range(701, 704), absolute=4))
+        first = _window(1, _ids(series, 1), 3, "Show", "Show!")
+        second = _window(2, _ids(series, 1)[:1], 1, "Show", "Show!!")
+        parsed = {"show! - 01.mkv": _lone(1, "Show!"), "show!! - 01.mkv": _lone(1, "Show!!")}
+
+        assert _read(_scope(series, first), (first, second), parsed) == {}
 
 
 class TestTheReaderStandsDown:
@@ -412,9 +426,9 @@ class TestTheReaderStandsDown:
         assert proposed == {_stray_cat(n): (32768 + n,) for n in range(1, 13)}
 
     def test_an_extra_and_a_title_counted_name_are_not_in_the_pool(self) -> None:
-        # An NCOP Sonarr read a number off, and a name whose number is its own title's (no title confirms "03 Days
-        # of Summer" and the series has no absolute 3 among the window's rows), beside the batch's 01. Neither
-        # repeats 01's number nor is proposed; 01 places.
+        # Constructed: an NCOP Sonarr read a number off, and a name whose number is its own title's (no title
+        # confirms "03 Days of Summer" and the series has no absolute 3 among the window's rows), beside the
+        # batch's 01. Neither repeats 01's number nor is proposed; 01 places.
         series = _series(_run(1, range(601, 604), absolute=1))
         window = _window(1, _ids(series, 1), 3, "Show")
         parsed = {
@@ -426,15 +440,6 @@ class TestTheReaderStandsDown:
         proposed = _read(_scope(series, window), (window,), parsed)
 
         assert proposed == {"show - 01 [grp].mkv": (601,)}
-
-    def test_two_files_proposed_one_id_are_both_dropped(self) -> None:
-        # Two titles of one torrent read under two windows that share their first regular season's numbers.
-        series = _series(_run(1, range(601, 604), absolute=1), _run(2, range(701, 704), absolute=4))
-        first = _window(1, _ids(series, 1), 3, "Show", "Show!")
-        second = _window(2, _ids(series, 1)[:1], 1, "Show", "Show!!")
-        parsed = {"show! - 01.mkv": _lone(1, "Show!"), "show!! - 01.mkv": _lone(1, "Show!!")}
-
-        assert _read(_scope(series, first), (first, second), parsed) == {}
 
 
 class TestTitleKeys:

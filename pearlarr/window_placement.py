@@ -17,7 +17,8 @@ as a new run and could land wrong. Then the windows merge in order:
 After the merge, the numberings reader (`numberings`) fills the gaps the windows left (`WindowedAssignment.filled`): a
 file named by number alone that every window skipped or read as another slice's, that no window was party to or read
 inside itself, is placed where its numbers fall when every way the group could have counted them agrees. The fill
-never moves a file a window placed or refused, and a filled file's ids are the window's that holds them.
+never moves a file a window placed or refused, and a filled file counts as decided by the earliest window holding
+its ids.
 
 A record imports only what its own entries' windows place, and takes on a hand import only when one of them was party
 to it (`WindowedAssignment.for_record`).
@@ -41,7 +42,7 @@ from .placement_types import (
     TorrentListing,
     all_specials,
 )
-from .placer import NameFacts, assign_episode_ids
+from .placer import NameFacts, assign_episode_ids, name_facts
 
 
 @dataclass(frozen=True, slots=True)
@@ -125,6 +126,19 @@ def ordered_windows(
 
 
 @dataclass(frozen=True, slots=True)
+class WindowFacts:
+    """One window's scope, with what the passes read off each name of the torrent under it (`name_facts`)."""
+
+    scope: TargetScope
+    names: Mapping[str, NameFacts]
+    """Every name of the torrent, seeded and gone names included."""
+
+    @classmethod
+    def of(cls, batch: PlacementBatch, scope: TargetScope) -> Self:
+        return cls(scope, name_facts(batch, scope))
+
+
+@dataclass(frozen=True, slots=True)
 class WindowedAssignment:
     """A torrent placed under its windows: the merged verdicts, each window's own, and which window decided."""
 
@@ -142,21 +156,15 @@ class WindowedAssignment:
         # Detach from the caller's dict, then wrap read-only.
         object.__setattr__(self, "decided_by", MappingProxyType(dict(self.decided_by)))
 
-    def filled(
-        self,
-        batch: PlacementBatch,
-        reading: NumberingReading,
-        scopes: Sequence[TargetScope],
-        facts: Sequence[Mapping[str, NameFacts]],
-    ) -> Self:
+    def filled(self, batch: PlacementBatch, reading: NumberingReading, facts: Sequence[WindowFacts]) -> Self:
         """The assignment with each gap the reader proposed ids for filled, in batch order.
 
         A gap is a merged `SKIPPED` or `FOREIGN` file no window was party to (`_party`) and no window's reading
         resolved inside (`NameFacts.reads_inside`): the passes never judged it by its own numbers, so a verdict on
         them is new, not a reversal. The proposed ids must be free, held by no merged placement, no name of the
         stored map, and no earlier fill. The receiving window is the earliest whose scope holds every id, and a name
-        titled under it as an episode outside them is left (the title veto the zips apply). `scopes` and `facts`
-        are per window, in window order, as `windows` is.
+        titled under it as an episode outside them is left (the title veto the zips apply). `facts` are per window,
+        in window order, as `windows` is.
         """
 
         used = {ep_id for ids in batch.seeded.values() for ep_id in ids}
@@ -167,10 +175,10 @@ class WindowedAssignment:
             ids = reading.ids.get(placement.name)
             if ids is None or not self._gap(index, facts) or not used.isdisjoint(ids):
                 continue
-            position = next((at for at, scope in enumerate(scopes) if scope.real_ids.issuperset(ids)), None)
+            position = next((at for at, window in enumerate(facts) if window.scope.real_ids.issuperset(ids)), None)
             if position is None:
                 continue
-            titled_as = facts[position][placement.name].titled_as
+            titled_as = facts[position].names[placement.name].titled_as
             if titled_as is not None and titled_as not in ids:
                 continue
             placements[index] = Placement(placement.name, ids, PlacementVerdict.NUMBERINGS_AGREE)
@@ -178,7 +186,7 @@ class WindowedAssignment:
             used.update(ids)
         return replace(self, merged=EpisodeAssignment(tuple(placements)), decided_by=decided_by)
 
-    def _gap(self, index: int, facts: Sequence[Mapping[str, NameFacts]]) -> bool:
+    def _gap(self, index: int, facts: Sequence[WindowFacts]) -> bool:
         """Whether the file at `index` of the batch is a gap the windows left (`filled`)."""
 
         merged = self.merged.placements[index]
@@ -186,7 +194,7 @@ class WindowedAssignment:
             return False
         if any(_party(window.placements[index].verdict) for window in self.windows):
             return False
-        return not any(window_facts[merged.name].reads_inside for window_facts in facts)
+        return not any(window.names[merged.name].reads_inside for window in facts)
 
     def for_record(self, imports: Collection[int]) -> EpisodeAssignment:
         """The merged verdicts, with each file that is another title's set aside as `LISTED_ELSEWHERE`.

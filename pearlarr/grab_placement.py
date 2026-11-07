@@ -33,7 +33,6 @@ from .placement_types import (
     SizeIdentities,
     TorrentListing,
 )
-from .placer import name_facts
 from .seadex_types import (
     NO_ELSEWHERE,
     ElsewhereCounts,
@@ -48,7 +47,7 @@ from .seadex_types import (
     season_episode_key,
     unambiguous,
 )
-from .window_placement import WindowOrder, ordered_windows, place_across_windows, windows_of
+from .window_placement import WindowFacts, WindowOrder, ordered_windows, place_across_windows, windows_of
 
 
 class SeedFile(NamedTuple):
@@ -311,9 +310,12 @@ def place_release(files: Sequence[SeedFile], scope: SeedScope, torrent: KnownTor
     if scope.can_place and order is not None:
         own_at = order.at(scope.al_id)
         scopes = windows_of(order.windows, torrent.indexes, evidence)
-        facts = tuple(name_facts(batch, window) for window in scopes)
-        reading = NumberingReader.of(scope, order.windows).read(batch, facts[own_at])
-        placed = place_across_windows(batch, scopes).filled(batch, reading, scopes, facts)
+        placed = place_across_windows(batch, scopes)
+        own = WindowFacts.of(batch, scopes[own_at])
+        reading = NumberingReader.of(scope, order.windows).read(batch, own.names)
+        if reading.ids:
+            facts = tuple(own if at == own_at else WindowFacts.of(batch, window) for at, window in enumerate(scopes))
+            placed = placed.filled(batch, reading, facts)
         assignment = placed.for_record(order.imports)
         misnumbered, refuted = placed.misnumbered_under(own_at), placed.refuted_under(own_at)
         outside = placed.listed_elsewhere_under(own_at)
