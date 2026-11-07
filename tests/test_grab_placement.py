@@ -1056,6 +1056,108 @@ class TestRollingGirlsBatch:
         assert placement.hold_counts == ElsewhereCounts(elsewhere=12, unplaced=6)
 
 
+def _lone(number: int, title: str) -> ParsedFileInfo:
+    """Sonarr's parse of a name carrying `number` alone: season 0, the absolute, and the series title it lifted."""
+
+    return ParsedFileInfo(season_number=0, absolute_episode_numbers=(number,), series_title=title)
+
+
+# Tsundere's Stray Cats Overrun! BD batch (nyaa 1050453): twelve episodes named by number alone, six SP files, listed
+# under the season's entry (AniList 7590) and the specials' (AniList 8599). Sonarr matched the numbers to nothing.
+_SC_SPECIALS = [sonarr_ep(0, n, ep_id=32761 + n, episode_file_id=0) for n in range(1, 8)]
+_SC_SEASON = [sonarr_ep(1, n, ep_id=32768 + n, episode_file_id=0, absolute=n) for n in range(1, 14)]
+_SC_SERIES = episode_index([*_SC_SPECIALS, *_SC_SEASON])
+_SC_MAIN = EntryNames("Stray Cats Overrun!", ("Mayoi Neko Overrun!",))
+_SC_EXTRAS = EntryNames("Stray Cats Overrun!", ("Mayoi Neko Overrun! Specials",))
+_SC_SEASON_WINDOW = entry_window(7590, (ep.id for ep in _SC_SEASON), names=_SC_MAIN, episode_count=13)
+_SC_SPECIALS_WINDOW = entry_window(8599, (ep.id for ep in _SC_SPECIALS[:6]), names=_SC_EXTRAS, episode_count=6)
+_SC_EPISODES = [
+    f"[Tsundere] Mayoi Neko Overrun! - {n:02d} [BDRip h264 1920x1080 FLAC][746CE979].mkv" for n in range(1, 13)
+]
+_SC_SPS = [f"[Tsundere] Mayoi Neko Overrun! - SP{n} [BDRip h264 1920x1080 FLAC][B66672E2].mkv" for n in range(1, 7)]
+_SC_FILES = [
+    *(SeedFile(name, 1_000_000_000 + n, _lone(n, "Mayoi Neko Overrun!")) for n, name in enumerate(_SC_EPISODES, 1)),
+    *(SeedFile(name, 100_000_000 + n, ParsedFileInfo()) for n, name in enumerate(_SC_SPS, 1)),
+]
+
+
+class TestPlaceWhereEveryNumberingAgrees:
+    """A file named by number alone that the windows left is placed where every numbering agrees, after the merge."""
+
+    def test_a_single_a_specials_only_entry_lists_places_on_its_first_special(self) -> None:
+        # My Hero Academia (Sonarr 254): the Ikinokore OVA entry (AniList 122349) is specials 8 and 9. HorribleSubs'
+        # 01 reads S01E01 by the series' numbers, outside the window, so the passes skip it; the window counts its
+        # specials from one.
+        series = episode_index(
+            [
+                *(sonarr_ep(0, n, ep_id=9246 + n, episode_file_id=0) for n in range(7, 11)),
+                *(sonarr_ep(1, n, ep_id=9270 + n, episode_file_id=0, absolute=n) for n in range(1, 4)),
+            ]
+        )
+        names = EntryNames(
+            "My Hero Academia",
+            (
+                "My Hero Academia: Make It! Do-or-Die Survival Training",
+                "Boku no Hero Academia: Ikinokore! Kesshi no Survival Kunren",
+            ),
+        )
+        window = entry_window(122349, (9254, 9255), names=names, episode_count=2)
+        scope = seed_scope(
+            episode_index([series.by_id[9254], series.by_id[9255]]),
+            series,
+            al_id=122349,
+            names=names,
+            episode_count=2,
+            alternate_titles=("Boku no Hero Academia",),
+        )
+        name = "[HorribleSubs] Boku no Hero Academia - Ikinokore! Kesshi no Survival Kunren - 01 [1080p].mkv"
+        files = [
+            SeedFile(name, 1_400_000_000, _lone(1, "Boku no Hero Academia - Ikinokore! Kesshi no Survival Kunren"))
+        ]
+
+        placement = place_release(files, scope, known_torrent(indexes={7: series}, evidence=torrent_evidence(window)))
+
+        assert by_name(placement.assignment) == {normalize_basename(name): ((9254,), PlacementVerdict.NUMBERINGS_AGREE)}
+        assert placement.claimed_ids == {9254}
+        assert placement.records == (EpisodeRecord(0, 8, 1_400_000_000),)
+        assert placement.hold is None
+
+    def test_a_batch_counted_from_one_places_on_the_seasons_entry(self) -> None:
+        scope = seed_scope(episode_index(_SC_SEASON), _SC_SERIES, al_id=7590, names=_SC_MAIN, episode_count=13)
+        torrent = known_torrent(
+            indexes={7: _SC_SERIES}, evidence=torrent_evidence(_SC_SEASON_WINDOW, _SC_SPECIALS_WINDOW)
+        )
+
+        placement = place_release(_SC_FILES, scope, torrent)
+
+        assert by_name(placement.assignment) == {
+            **{
+                normalize_basename(name): ((ep.id,), PlacementVerdict.NUMBERINGS_AGREE)
+                for name, ep in zip(_SC_EPISODES, _SC_SEASON, strict=False)
+            },
+            **dict.fromkeys((normalize_basename(name) for name in _SC_SPS), ((), PlacementVerdict.SKIPPED)),
+        }
+        assert placement.claimed_ids == {ep.id for ep in _SC_SEASON[:12]}
+        assert placement.hold is None
+
+    def test_under_the_specials_entry_the_batch_is_the_seasons_and_the_url_is_held(self) -> None:
+        # The fill places the twelve under the season's window, so for the specials' entry they're another title's,
+        # as a file the season's window had placed would be: no hand import, and nothing of the url lands here.
+        scope = seed_scope(episode_index(_SC_SPECIALS[:6]), _SC_SERIES, al_id=8599, names=_SC_EXTRAS, episode_count=6)
+        torrent = known_torrent(
+            indexes={7: _SC_SERIES}, evidence=torrent_evidence(_SC_SEASON_WINDOW, _SC_SPECIALS_WINDOW)
+        )
+
+        placement = place_release(_SC_FILES, scope, torrent)
+
+        assert {by_name(placement.assignment)[normalize_basename(name)] for name in _SC_EPISODES} == {
+            ((), PlacementVerdict.LISTED_ELSEWHERE)
+        }
+        assert placement.records == ()
+        assert placement.hold is GrabHold.PLACED_ELSEWHERE
+        assert placement.hold_counts == ElsewhereCounts(elsewhere=12, unplaced=6)
+
+
 class TestKnownTorrent:
     """The windows a torrent is placed under: every listed entry's, every stored claim's, and the entry's own."""
 

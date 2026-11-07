@@ -23,9 +23,11 @@ from pearlarr.placement_types import (
     TargetScope,
     TorrentListing,
 )
+from pearlarr.placer import NameFacts, name_facts
 from pearlarr.seadex_types import EpisodeKey, MatchedEpisode, ParsedFileInfo
 
 from .builders import (
+    batch,
     blind,
     by_name,
     entry_window,
@@ -3899,3 +3901,38 @@ class TestRefuseInterleavedSpecial:
             501: {self._RUN[2]: PlacementVerdict.MISNUMBERED, self._RUN[3]: PlacementVerdict.MISNUMBERED},
             701: {self._RUN[2]: PlacementVerdict.FOREIGN, self._RUN[3]: PlacementVerdict.SKIPPED},
         }
+
+
+class TestNameFacts:
+    """`name_facts` reads every name as the passes would, seeded and gone names included, and places nothing."""
+
+    def test_every_torrent_name_gets_the_facts_the_passes_judge_by(self) -> None:
+        # The titled file carries episode 2's title; the extra is an NCOP; the seeded file is counted by its own
+        # title's number, which no title confirms; the gone name reads inside the scope on its matched pair.
+        titled, extra, counted = (
+            "show - 02 The Return [grp].mkv",
+            "[grp] show - NCOP1 [bd].mkv",
+            "show - 03 Days of Summer [grp].mkv",
+        )
+        parsed = {
+            titled: parsed_info(absolutes=(2,), matched=((1, 2),)),
+            extra: parsed_info(),
+            counted: parsed_info(absolutes=(3,), matched=((1, 3),)),
+            _GONE: parsed_info(absolutes=(1,), matched=((1, 1),)),
+        }
+
+        facts = name_facts(batch(parsed, [titled, extra], seeded={counted: (603,)}), _scope(_FIRST_THREE))
+
+        assert facts == {
+            titled: NameFacts(titled_as=602, reads_inside=True, extra=False, title_counted=False),
+            extra: NameFacts(titled_as=None, reads_inside=False, extra=True, title_counted=False),
+            counted: NameFacts(titled_as=None, reads_inside=True, extra=False, title_counted=True),
+            _GONE: NameFacts(titled_as=None, reads_inside=True, extra=False, title_counted=False),
+        }
+
+    def test_a_reading_outside_the_scope_does_not_read_inside(self) -> None:
+        parsed = {"show - 05 [grp].mkv": parsed_info(absolutes=(5,), matched=((2, 1),))}
+
+        facts = name_facts(batch(parsed), _scope(_FIRST_THREE))
+
+        assert facts["show - 05 [grp].mkv"].reads_inside is False

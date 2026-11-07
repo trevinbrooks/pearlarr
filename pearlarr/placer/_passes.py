@@ -56,6 +56,13 @@ Terms used across the placement modules:
   another slice is `FOREIGN`.
 - Stored record: the pending import record already saved for a torrent, one per infohash.
 - Claim: one entry's part of a stored record (`EntryClaim`). In `parse_reading`: a `(season, episode)` a parse names.
+- Lone-number file: a file Sonarr parsed to absolute numbers alone ("Show - 07"), no own key, no season above 0,
+  neither a special nor a season pack. Not an extra, and not counted by its own title.
+- Numberings reader (`numberings`): reads each lone-number file the windows left under every way the release group
+  could have counted the series (from its first episode, from the window's, by Sonarr's episode numbers, straight
+  through the torrent's windows, by TVDB's absolutes) and proposes its row when every fitting way agrees
+  (`NUMBERINGS_AGREE`). It runs once per torrent, after the windows merge, on the files no window placed, refused or
+  read inside itself, so it never outranks a pass, and no count sign turns it off: its own gates refuse instead.
 
 The passes run in this order. Each places files only onto the ids that earlier passes left open:
 

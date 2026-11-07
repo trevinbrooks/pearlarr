@@ -289,6 +289,14 @@ class TestPlacementVerdict:
             assert not verdict.excluded
             assert not verdict.refused
 
+    def test_agreeing_numberings_place(self) -> None:
+        # The fill after the windows merge carries ids like a pass's placement, so the record imports it.
+        verdict = PlacementVerdict.NUMBERINGS_AGREE
+
+        assert verdict.placed
+        assert not verdict.excluded
+        assert not verdict.hand_import
+
 
 class TestAllSpecials:
     """Whether every id is one of the series' specials: the shape a listing must have to judge a specials pack."""

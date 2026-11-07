@@ -1197,10 +1197,12 @@ def seed_scope(
     series_id: int = 7,
     names: EntryNames = _NO_NAMES,
     episode_count: int | None = None,
+    alternate_titles: tuple[str, ...] = (),
+    aired_numbering: bool = True,
 ) -> SeedScope:
     """Entry `al_id`'s grab scope over `entry`, within `series` on `series_id` (series 7, as `entry_claim`'s).
 
-    The series has no alternate titles and Sonarr numbers it as aired.
+    Unless given, the series has no alternate titles and Sonarr numbers it as aired.
     """
 
     return SeedScope(
@@ -1210,8 +1212,8 @@ def seed_scope(
         series=series,
         names=names,
         episode_count=episode_count,
-        alternate_titles=(),
-        aired_numbering=True,
+        alternate_titles=alternate_titles,
+        aired_numbering=aired_numbering,
     )
 
 
