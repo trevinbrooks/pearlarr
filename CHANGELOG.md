@@ -7,6 +7,8 @@ Pearlarr is a fork of [bbtufty/seadexarr](https://github.com/bbtufty/seadexarr).
 
 ## [Unreleased]
 
+## [1.5.9] - 2026-11-08
+
 ### Changed
 
 - Sonarr's parse of a file name now keeps the series title it read from the name, so the first run after upgrading asks Sonarr to parse each cached name once more.
