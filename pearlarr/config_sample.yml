@@ -4,7 +4,7 @@
 # Schema version of the config file's keys and values. A file from an older Pearlarr is migrated
 # automatically: every load brings it forward in memory, and a run rewrites the file itself (keeping
 # a backup).
-config_version: 5
+config_version: 6
 
 # Sonarr connection and behavior. url and api_key are required only when a Sonarr run actually
 # executes. A Radarr-only config still loads.
@@ -133,9 +133,6 @@ seadex:
 
   # Re-check entries even when SeaDex has not updated them since the last check.
   ignore_seadex_update_times: false
-
-  # Match what is already downloaded by torrent hash instead of by release group name.
-  use_torrent_hash_to_filter: false
 
 # Waiting for grabbed torrents and Sonarr manual import. Sonarr only, except the pending-import
 # bookkeeping.

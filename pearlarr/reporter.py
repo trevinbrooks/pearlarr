@@ -185,8 +185,6 @@ class PerTitleState:
     """The tracker has no parser, so the title must not be cached as done."""
     unsupported_tracker_groups: list[str] = field(default_factory=list[str])
     """Group names of the unsupported-tracker skip, riding along for the summary."""
-    unsupported_tracker_hashes: list[str] = field(default_factory=list[str])
-    """Hashes held out of the cached hash set, so the release is re-considered once a parser lands."""
     grab_failed_groups: list[str] = field(default_factory=list[str])
     """Groups whose release hit a contained grab failure (tracker or client down), so the title stays uncached."""
     held_groups: dict[GrabHold, list[str]] = field(default_factory=dict[GrabHold, list[str]])

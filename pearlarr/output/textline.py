@@ -78,8 +78,7 @@ _BACKUP_STAMP_FORMAT: Final = "%Y-%m-%d_%H%M%S"
 # The rotation backstop, a module attribute so tests can monkeypatch it.
 _BACKSTOP_MAX_BACKUPS = 500
 
-# The JSON stream's envelope version: changes within it are additive-only.
-# A removal, rename, or semantic change bumps it alongside a new major release (docs/output.md states the policy).
+# The JSON stream's envelope version (docs/output.md states the stability policy).
 JSON_SCHEMA_VERSION: Final = 1
 
 # Scalars for run events, plus lists and objects on the json-only cli facts (which never reach a text line).
@@ -401,7 +400,6 @@ def _fields_config_migrated(event: ConfigMigrated) -> tuple[Field, ...]:
 def _fields_cache_stats(event: CacheStatsReported) -> tuple[Field, ...]:
     return (
         Field("entries", event.entries),
-        Field("torrent_hashes", event.torrent_hashes),
         Field("anilist_meta", event.anilist_meta),
         Field("sonarr_parse", event.sonarr_parse),
         Field("pending_imports", event.pending_imports),

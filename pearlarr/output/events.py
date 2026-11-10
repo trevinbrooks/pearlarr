@@ -727,7 +727,6 @@ class CacheStatsReported:
     """`cache stats`: per-block row counts and the on-disk size."""
 
     entries: int
-    torrent_hashes: int
     anilist_meta: int
     sonarr_parse: int
     pending_imports: int

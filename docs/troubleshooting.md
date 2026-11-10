@@ -225,7 +225,7 @@ Runs are also deliberately paced (`advanced.sleep_time`) to be a polite API citi
 ## Deleting the cache
 
 `cache.db` is regenerable: deleting it loses no media, and the next run rebuilds it.
-But it holds the "already handled" memory, pending-import state, and grab history, so the next run re-evaluates the whole library, may re-notify about things it already told you about, and forgets in-flight imports.
+But it holds the "already handled" memory and pending-import state, so the next run re-evaluates the whole library, may re-notify about things it already told you about, and forgets in-flight imports.
 Prefer `pearlarr cache remove` over deleting the file (it takes the run lock and cleans up the WAL/SHM sidecars).
 Config edits never require it: a changed matching preference is detected and re-checked automatically, keeping all of the state above (see [configuration.md](configuration.md#configuration-changes-and-the-cache)).
 Removing the cache is a factory reset for when the database itself is suspect (a failed `pearlarr cache check`, a restore gone wrong), not routine maintenance.

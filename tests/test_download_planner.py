@@ -2,11 +2,11 @@
 """Characterization tests for the download-decision engine.
 
 This is the core domain logic extracted into `DownloadPlanner` in Phase 4:
-`get_any_to_download`, `reduce_overlapping_downloads`,
-`filter_by_torrent_hash` and `filter_by_release_group`. The tests assert on
-the resulting per-url `download` flags, the returned hash list, and the
-private-only skip outcome surfaced on the `PlanResult` /
-`PrivateOnlySkips` (rather than mutated run state, as before Phase 4).
+`get_any_to_download`, `reduce_overlapping_downloads` and
+`filter_by_release_group`. The tests assert on the resulting per-url
+`download` flags and the private-only skip outcome surfaced on the
+`PlanResult` / `PrivateOnlySkips` (rather than mutated run state, as before
+Phase 4).
 
 The `reduce_overlapping_downloads` branch matrix these tests pin:
 
@@ -666,27 +666,6 @@ class TestSameGroupDuplicateDedup:
         assert seadex["B"].urls["u2"].download is True
 
 
-class TestFilterByTorrentHash:
-    """`filter_by_torrent_hash` flags urls whose infohash isn't already cached, and always lists every url's hash."""
-
-    def test_flags_uncached_hashes(self) -> None:
-        planner = make_planner()
-        seadex = {"A": rg_group({"u1": url_item(infohash="h1", download=False)})}
-        result = planner.filter_by_torrent_hash(seadex_dict=seadex, cached_hashes=[])
-        assert result.seadex_dict["A"].urls["u1"].download is True
-        assert result.torrent_hashes == ["h1"]
-
-    def test_cached_hash_not_flagged_but_still_listed(self) -> None:
-        planner = make_planner()
-        seadex = {"A": rg_group({"u1": url_item(infohash="h1", download=False)})}
-        result = planner.filter_by_torrent_hash(
-            seadex_dict=seadex,
-            cached_hashes=["h1"],
-        )
-        assert result.seadex_dict["A"].urls["u1"].download is False
-        assert result.torrent_hashes == ["h1"]
-
-
 class TestFilterByReleaseGroup:
     """`filter_by_release_group` skips a release whose group and size(s) already match what the arr holds (case-insensitively), downloading otherwise."""
 
@@ -699,7 +678,6 @@ class TestFilterByReleaseGroup:
             ep_list=None,
         )
         assert result.seadex_dict["NewRG"].urls["u1"].download is True
-        assert result.torrent_hashes == ["h1"]
 
     def test_matching_group_sizes_match_no_download(self) -> None:
         planner = make_planner()
@@ -710,7 +688,6 @@ class TestFilterByReleaseGroup:
             ep_list=None,
         )
         assert result.seadex_dict["RG"].urls["u1"].download is False
-        assert result.torrent_hashes == []
 
     def test_matching_group_sizes_differ_downloads(self) -> None:
         planner = make_planner()
@@ -721,7 +698,6 @@ class TestFilterByReleaseGroup:
             ep_list=None,
         )
         assert result.seadex_dict["RG"].urls["u1"].download is True
-        assert result.torrent_hashes == ["h1"]
 
     def test_matching_group_case_insensitive_no_download(self) -> None:
         # The no-episode path matches by normalized name like the per-episode
@@ -735,7 +711,6 @@ class TestFilterByReleaseGroup:
             ep_list=None,
         )
         assert result.seadex_dict["Ember"].urls["u1"].download is False
-        assert result.torrent_hashes == []
 
     def test_matching_group_case_insensitive_size_mismatch_downloads(self) -> None:
         # The same normalized group with DISJOINT sizes must still upgrade.
@@ -751,7 +726,6 @@ class TestFilterByReleaseGroup:
         )
         assert result.seadex_dict["Ember"].urls["u1"].download is True
         assert result.seadex_dict["Ember"].urls["u1"].upgrade is True
-        assert result.torrent_hashes == ["h1"]
 
     def test_nothing_placed_on_the_entry_nothing_on_disk_downloads(self) -> None:
         # The placement put none of the url's files on the entry's episodes (its
@@ -766,7 +740,6 @@ class TestFilterByReleaseGroup:
             ep_list=[sonarr_ep(0, 21, episode_file_id=0)],
         )
         assert result.seadex_dict["RG"].urls["u1"].download is True
-        assert result.torrent_hashes == ["h1"]
 
     def test_nothing_placed_on_the_entry_owned_copy_holds(self) -> None:
         # The entry's copy on disk is this group's at a listed size: held.
@@ -778,7 +751,6 @@ class TestFilterByReleaseGroup:
             ep_list=[sonarr_ep(0, 21, size=100, release_group="RG")],
         )
         assert result.seadex_dict["RG"].urls["u1"].download is False
-        assert result.torrent_hashes == []
 
     def test_nothing_placed_on_the_entry_sibling_copy_holds(self) -> None:
         # The entry's copy on disk is a sibling recommended group's: nothing to flag.
@@ -795,7 +767,6 @@ class TestFilterByReleaseGroup:
             ep_list=[sonarr_ep(0, 21, size=200, release_group="Other")],
         )
         assert result.seadex_dict["RG"].urls["u1"].download is False
-        assert result.torrent_hashes == []
 
     def test_one_placed_record_keeps_the_per_episode_leg(self) -> None:
         # One file placed on the entry, so the per-episode leg decides: the
@@ -827,7 +798,6 @@ class TestFilterByReleaseGroup:
             ep_list=[sonarr_ep(1, 1, size=100, release_group="Era-Raws")],
         )
         assert result.seadex_dict["Era-Raws"].urls["u1"].download is False
-        assert result.torrent_hashes == []
 
     def test_episode_different_rg_downloads(self) -> None:
         planner = make_planner()
@@ -844,7 +814,6 @@ class TestFilterByReleaseGroup:
             ep_list=[sonarr_ep(1, 1, size=100, release_group="SubsPlease")],
         )
         assert result.seadex_dict["Era-Raws"].urls["u1"].download is True
-        assert result.torrent_hashes == ["h1"]
 
     def test_episode_same_rg_all_sizes_differ_downloads(self) -> None:
         planner = make_planner()
@@ -861,7 +830,6 @@ class TestFilterByReleaseGroup:
             ep_list=[sonarr_ep(1, 1, size=100, release_group="Era-Raws")],
         )
         assert result.seadex_dict["Era-Raws"].urls["u1"].download is True
-        assert result.torrent_hashes == ["h1"]
 
     def test_episode_groupless_file_at_exact_size_no_download(self) -> None:
         # A rename can strip the on-disk group tag: a positive exact-size match
@@ -880,7 +848,6 @@ class TestFilterByReleaseGroup:
             ep_list=[sonarr_ep(1, 1, size=100, release_group=None)],
         )
         assert result.seadex_dict["Era-Raws"].urls["u1"].download is False
-        assert result.torrent_hashes == []
 
     def test_episode_groupless_file_at_other_size_downloads(self) -> None:
         planner = make_planner()
@@ -897,7 +864,6 @@ class TestFilterByReleaseGroup:
             ep_list=[sonarr_ep(1, 1, size=555, release_group=None)],
         )
         assert result.seadex_dict["Era-Raws"].urls["u1"].download is True
-        assert result.torrent_hashes == ["h1"]
 
     def test_episode_groupless_zero_size_still_downloads(self) -> None:
         # 0 == 0 must not read as identity: a failed-copy stub against a
@@ -916,7 +882,6 @@ class TestFilterByReleaseGroup:
             ep_list=[sonarr_ep(1, 1, size=0, release_group=None)],
         )
         assert result.seadex_dict["Era-Raws"].urls["u1"].download is True
-        assert result.torrent_hashes == ["h1"]
 
     def test_episode_untagged_exact_size_never_masks_a_stale_release(self) -> None:
         # One untagged file identified by size must not vouch for the release's
@@ -969,7 +934,6 @@ class TestFilterByReleaseGroup:
         )
         assert result.seadex_dict["Era-Raws"].urls["u1"].download is False
         assert result.seadex_dict["Other"].urls["u2"].download is False
-        assert result.torrent_hashes == []
         # The plan reports the identified episode - with the size backing the
         # claim - so the import seeds protect exactly that file.
         assert result.guards.owned_episodes == ((101, 100),)
@@ -1069,7 +1033,6 @@ class TestFilterByReleaseGroup:
             ep_list=None,
         )
         assert result.seadex_dict["Ember"].urls["u1"].download is False
-        assert result.torrent_hashes == []
 
     def test_movie_groupless_file_identified_past_the_listing_extras(self) -> None:
         # A listing carries files the arr never holds (subs, fonts, extras), so
@@ -1083,7 +1046,6 @@ class TestFilterByReleaseGroup:
             ep_list=None,
         )
         assert result.seadex_dict["Ember"].urls["u1"].download is False
-        assert result.torrent_hashes == []
 
     def test_movie_with_no_files_at_all_downloads(self) -> None:
         # A movie with no files folds to an empty record, leaving no untagged
@@ -1096,7 +1058,6 @@ class TestFilterByReleaseGroup:
             ep_list=None,
         )
         assert result.seadex_dict["Ember"].urls["u1"].download is True
-        assert result.torrent_hashes == ["h1"]
 
     def test_movie_zero_size_untagged_file_downloads(self) -> None:
         # A zero-byte failed copy proves nothing, even against a zero-size entry.
@@ -1108,7 +1069,6 @@ class TestFilterByReleaseGroup:
             ep_list=None,
         )
         assert result.seadex_dict["Ember"].urls["u1"].download is True
-        assert result.torrent_hashes == ["h1"]
 
     def test_movie_groupless_file_at_other_size_downloads(self) -> None:
         planner = make_planner(arr=Arr.RADARR)
@@ -1119,7 +1079,6 @@ class TestFilterByReleaseGroup:
             ep_list=None,
         )
         assert result.seadex_dict["Ember"].urls["u1"].download is True
-        assert result.torrent_hashes == ["h1"]
 
     def test_movie_blank_named_listing_never_name_matches_untagged_files(self) -> None:
         # PIN: a pick whose name normalizes to None has no name to match, so it
@@ -1134,7 +1093,6 @@ class TestFilterByReleaseGroup:
             ep_list=None,
         )
         assert result.seadex_dict[""].urls["u1"].download is True
-        assert result.torrent_hashes == ["h1"]
 
     def test_movie_blank_named_listing_partial_size_overlap_downloads(self) -> None:
         # PIN: untagged ownership is all-or-nothing. A blank-named pick whose
@@ -1149,7 +1107,6 @@ class TestFilterByReleaseGroup:
             ep_list=None,
         )
         assert result.seadex_dict[""].urls["u1"].download is True
-        assert result.torrent_hashes == ["h1"]
 
     def test_movie_blank_named_listing_grabs_plain_not_upgrade(self) -> None:
         # PIN: a blank name never reaches the name-match arm, so its grab is a
@@ -1182,7 +1139,6 @@ class TestFilterByReleaseGroup:
             ep_list=None,
         )
         assert result.seadex_dict[""].urls["u1"].download is True
-        assert result.torrent_hashes == ["h1"]
 
     def test_movie_blank_named_owner_holds_siblings_by_overlap(self) -> None:
         # PIN: ownership IS an overlap. When the blank-named pick owns the
@@ -1200,7 +1156,6 @@ class TestFilterByReleaseGroup:
         )
         assert result.seadex_dict[""].urls["u1"].download is False
         assert result.seadex_dict["RG"].urls["u2"].download is False
-        assert result.torrent_hashes == []
 
     def test_episodes_but_no_ep_list_skips(self) -> None:
         planner = make_planner()
@@ -1217,7 +1172,6 @@ class TestFilterByReleaseGroup:
             ep_list=None,
         )
         assert result.seadex_dict["Era-Raws"].urls["u1"].download is False
-        assert result.torrent_hashes == []
 
     def test_matching_group_radarr_none_size_downloads(self) -> None:
         # A group whose only file has an unreadable size keeps its name with no
@@ -1231,7 +1185,6 @@ class TestFilterByReleaseGroup:
             ep_list=None,
         )
         assert result.seadex_dict["RG"].urls["u1"].download is True
-        assert result.torrent_hashes == ["h1"]
 
     def test_debug_logging_path_does_not_crash(self) -> None:
         # Exercise the debug_on=True branch (its f-strings are otherwise skipped)
@@ -1250,7 +1203,6 @@ class TestFilterByReleaseGroup:
             ep_list=[sonarr_ep(1, 1, size=100, release_group="SubsPlease")],
         )
         assert result.seadex_dict["Era-Raws"].urls["u1"].download is True
-        assert result.torrent_hashes == ["h1"]
         # Reset so a later test doesn't inherit DEBUG from the shared logger
         planner.logger.setLevel(logging.WARNING)
 
@@ -1384,7 +1336,7 @@ class TestListedSizeOnTooManyEpisodes:
     def test_a_private_groups_doubled_size_reports_private_only(self) -> None:
         result = self._plan(self._listing(100, 200, is_public=False), [self._ours(1, 200, 11), self._ours(2, 200, 12)])
 
-        assert (result.skips.skipped, result.torrent_hashes) == (True, [])
+        assert (result.skips.skipped, result.seadex_dict["Era-Raws"].urls["u1"].download) == (True, False)
 
     @staticmethod
     def _beside_public(*, is_fallback: bool) -> dict[str, SeadexReleaseGroupItem]:
@@ -1524,17 +1476,6 @@ class TestGroupVerdicts:
         assert set(result.guards.entry_groups) == {"RG", "Kept"}
         assert result.guards.stale_groups == ()
 
-    def test_hash_filter_grants_no_guard_protection(self) -> None:
-        # Hash mode gathers no size evidence, so the plan vouches for nothing:
-        # the import then guards on grabbed groups alone, as before the guard
-        # widening existed.
-        planner = make_planner(use_torrent_hash_to_filter=True)
-        seadex = {"RG": rg_group({"u1": url_item(infohash="h1")})}
-        result = planner.plan(seadex_dict=seadex, arr_releases=ArrReleases(tagged={"RG": (100,)}), cached_hashes=[])
-        assert result.guards.entry_groups == ()
-        assert result.guards.stale_groups == ()
-        assert result.guards.owned_episodes == ()
-
     def test_sonarr_untagged_copy_holds_an_unparseable_url(self) -> None:
         # A Sonarr url whose files never parsed reaches the blunt matcher. The
         # untagged on-disk files (a rename stripped the tags) all belong to it
@@ -1550,7 +1491,6 @@ class TestGroupVerdicts:
             ],
         )
         assert result.seadex_dict["Era-Raws"].urls["u1"].download is False
-        assert result.torrent_hashes == []
 
     def test_movie_untagged_owned_copy_suppresses_the_sibling_pick(self) -> None:
         # The untagged movie file is pick A's by size. Grabbing sibling pick B
@@ -1568,7 +1508,6 @@ class TestGroupVerdicts:
         )
         assert result.seadex_dict["A"].urls["u1"].download is False
         assert result.seadex_dict["B"].urls["u2"].download is False
-        assert result.torrent_hashes == []
 
 
 class TestReduceDropRescue:

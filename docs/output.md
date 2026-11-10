@@ -51,7 +51,7 @@ Every object carries the envelope keys, in stable order:
 
 | Key | Meaning |
 | --- | --- |
-| `schema_version` | The stream's schema version (see the stability policy below) |
+| `schema_version` | The version of these keys (see the stability policy below) |
 | `time` | Local time with its UTC offset, ISO 8601, seconds precision |
 | `event` | The event name. The catalog below enumerates them |
 | `level` | `DEBUG` / `INFO` / `WARNING` / `ERROR` / `CRITICAL` |
@@ -69,8 +69,9 @@ The command events at the end of the catalog (`paths_shown`, `starter_config_wri
 ### Stability policy
 
 `schema_version` is currently `1`.
-Within a major release, changes are additive only: new event names and new fields may appear, and consumers should ignore what they do not recognize.
-Removing or renaming an event or field, or changing a field's meaning, only happens with a new major release, an "Upgrade notes" entry in the [CHANGELOG](../CHANGELOG.md), and a `schema_version` bump.
+It only covers the keys every line carries, the ones in the table above, such as `time`, `event` and `level`.
+Events and their own fields are not covered. Any release can add one, so ignore what you do not recognize.
+Any release can also rename or remove one, or change what it means, and says so under "Upgrade notes" in the [CHANGELOG](../CHANGELOG.md).
 
 ### Replaying a capture
 
@@ -703,7 +704,6 @@ The `paths` command: the resolved data directory and the files within it.
   "message": "cache stats",
   "component": "cli",
   "entries": 128,
-  "torrent_hashes": 141,
   "anilist_meta": 96,
   "sonarr_parse": 412,
   "pending_imports": 0,

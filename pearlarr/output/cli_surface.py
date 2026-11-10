@@ -190,7 +190,6 @@ class CliTextRenderer(Renderer):
     def _cache_stats(event: CacheStatsReported) -> None:
         rows = [
             ("entries", str(event.entries)),
-            ("torrent_hashes", str(event.torrent_hashes)),
             ("anilist_meta", str(event.anilist_meta)),
             ("sonarr_parse", str(event.sonarr_parse)),
             ("pending_imports", str(event.pending_imports)),

@@ -1,8 +1,8 @@
 # pyright: strict
 """Behavioral tests for the SQLite-backed `CacheStore`.
 
-Pins behavior, not internals: the per-entry records + torrent-hash child rows,
-the JSONB meta/parse caches, pending imports, the descriptor, and - critically -
+Pins behavior, not internals: the per-entry records, the JSONB meta/parse caches,
+pending imports, the descriptor, and - critically -
 the staged-write / preview gate (a preview never persists, a real save does) and
 the in-memory -> file promotion for a missing cache.
 """
@@ -59,7 +59,7 @@ def _raise_os_replace(*_args: object, **_kwargs: object) -> None:
 
 
 def _raise_locked(*_args: object, **_kwargs: object) -> sqlite3.Connection:
-    """A drop-in for `_connect` that simulates a transient open-time lock."""
+    """A drop-in for `connect` that simulates a transient open-time lock."""
 
     raise sqlite3.OperationalError("database is locked")
 
@@ -101,20 +101,28 @@ class TestSchemaAndDescriptor:
         assert rows.get("config_checksum") == CHECKSUM
 
 
-# The original (pre-versioning) shape of the per-entry tables: `entries` without
-# `fallback_satisfied`, stamped `user_version` 0 by default. Pins the v0 -> v1
-# upgrade path (the shape a first-release cache.db still has on disk).
-_V0_SCHEMA = """
-CREATE TABLE kv (key TEXT PRIMARY KEY, value TEXT);
-CREATE TABLE entries (
-    arr TEXT NOT NULL, al_id INTEGER NOT NULL,
-    name TEXT, url TEXT, coverage TEXT, updated_at TEXT,
-    PRIMARY KEY (arr, al_id));
+# `torrent_hashes` as every schema through v6 declared it. The v6 -> v7 step drops it.
+_TORRENT_HASHES_TABLE = """
 CREATE TABLE torrent_hashes (
     arr TEXT NOT NULL, al_id INTEGER NOT NULL, infohash TEXT NOT NULL,
     PRIMARY KEY (arr, al_id, infohash),
     FOREIGN KEY (arr, al_id) REFERENCES entries (arr, al_id) ON DELETE CASCADE);
 """
+
+
+# The original (pre-versioning) shape of the per-entry tables: `entries` without
+# `fallback_satisfied`, stamped `user_version` 0 by default. Pins the v0 -> v1
+# upgrade path (the shape a first-release cache.db still has on disk).
+_V0_SCHEMA = (
+    """
+CREATE TABLE kv (key TEXT PRIMARY KEY, value TEXT);
+CREATE TABLE entries (
+    arr TEXT NOT NULL, al_id INTEGER NOT NULL,
+    name TEXT, url TEXT, coverage TEXT, updated_at TEXT,
+    PRIMARY KEY (arr, al_id));
+"""
+    + _TORRENT_HASHES_TABLE
+)
 
 
 # The v1 shape of `pending_imports` (PK without al_id), as shipped through 1.0.x.
@@ -154,6 +162,12 @@ CREATE TABLE entries (
     fallback_satisfied INTEGER NOT NULL DEFAULT 0,
     PRIMARY KEY (arr, al_id));
 """
+
+
+# The table with the index a v6 file holds beside it.
+_V6_TORRENT_HASHES_SCHEMA = (
+    _TORRENT_HASHES_TABLE + "CREATE INDEX ix_torrent_hashes_infohash ON torrent_hashes (infohash);\n"
+)
 
 
 def _seed_v2_db(db: Path, rows: list[tuple[str, str, int, str]]) -> None:
@@ -245,12 +259,12 @@ def _assert_round_trips(records: dict[str, dict[str, Any]]) -> None:
         assert json.dumps(rebuilt) == json.dumps(expected), infohash
 
 
-def _pending_columns(db: Path) -> list[str]:
-    """The `pending_imports` column names as the file holds them."""
+def _columns(db: Path, table: str) -> list[str]:
+    """`table`'s column names as the file holds them. Empty when the file has no such table."""
 
     raw = sqlite3.connect(str(db))
     try:
-        return [str(row[1]) for row in raw.execute("PRAGMA table_info(pending_imports)")]
+        return [str(name) for (name,) in raw.execute("SELECT name FROM pragma_table_info(?)", (table,))]
     finally:
         raw.close()
 
@@ -523,7 +537,7 @@ class TestSchemaVersionGate:
                 },
             }
             _assert_round_trips(records)
-            assert _pending_columns(db) == ["arr", "infohash", "record"]
+            assert _columns(db, "pending_imports") == ["arr", "infohash", "record"]
         assert _user_version(db) == SCHEMA_VERSION
 
     def test_v4_fold_needs_every_cleanup_flag_and_keeps_the_arrs_apart(self, tmp_path: Path) -> None:
@@ -674,12 +688,32 @@ class TestSchemaVersionGate:
             assert store.get_tvdb_orders(1) == _ORDERS
         assert _user_version(db) == SCHEMA_VERSION
 
+    def test_v6_torrent_hashes_table_is_dropped(self, tmp_path: Path) -> None:
+        # The v6 -> v7 step: the table goes, and the entry its rows hung off stays.
+        db = tmp_path / "cache.db"
+        with _open(tmp_path) as store:
+            store.update_cache(Arr.SONARR, 2, {"name": "Frieren", "url": "u"})
+            store.save(preview=False)
+        raw = sqlite3.connect(str(db))
+        raw.executescript(_V6_TORRENT_HASHES_SCHEMA)
+        raw.execute("INSERT INTO torrent_hashes (arr, al_id, infohash) VALUES ('sonarr', 2, 'abc')")
+        raw.execute("PRAGMA user_version=6")
+        raw.commit()
+        raw.close()
+
+        with _open(tmp_path) as store:
+            entry = store.get_entry(Arr.SONARR, 2)
+            assert entry is not None
+            assert (entry.name, entry.url) == ("Frieren", "u")
+        assert _user_version(db) == SCHEMA_VERSION
+        assert _columns(db, "torrent_hashes") == []
+
     def test_fresh_db_starts_current_without_an_al_id_column(self, tmp_path: Path) -> None:
         db = tmp_path / "cache.db"
         with _open(tmp_path) as store:
             store.save(preview=False)
         assert _user_version(db) == SCHEMA_VERSION
-        assert _pending_columns(db) == ["arr", "infohash", "record"]
+        assert _columns(db, "pending_imports") == ["arr", "infohash", "record"]
 
     def test_newer_schema_is_refused_not_quarantined(self, tmp_path: Path) -> None:
         db = tmp_path / "cache.db"
@@ -709,12 +743,7 @@ class TestEntries:
             assert (entry.name, entry.url, entry.coverage) == ("Title", "u", "S01")
 
     def test_clear_entry_stamp_clears_the_timestamp_and_nothing_else(self, tmp_path: Path) -> None:
-        stamped: CacheRecord = {
-            "name": "Title",
-            "url": "u",
-            "updated_at": datetime(2021, 6, 5),
-            "torrent_hashes": ["h1"],
-        }
+        stamped: CacheRecord = {"name": "Title", "url": "u", "updated_at": datetime(2021, 6, 5)}
         with _open(tmp_path) as store:
             store.update_cache(Arr.SONARR, 7, stamped)
             store.update_cache(Arr.RADARR, 7, stamped)
@@ -724,7 +753,6 @@ class TestEntries:
             entry = store.get_entry(Arr.SONARR, 7)
             assert entry is not None
             assert (entry.updated_at, entry.name, entry.url) == (None, "Title", "u")
-            assert store.torrent_hashes(Arr.SONARR, 7) == ["h1"]
             # The other arr's row for the same id keeps its timestamp.
             other = store.get_entry(Arr.RADARR, 7)
             assert other is not None
@@ -749,7 +777,7 @@ class TestEntries:
             assert _entry_name(store, 7, Arr.SONARR) == "S"
             assert _entry_name(store, 7, Arr.RADARR) == "R"
 
-    def test_get_entry_reads_all_scalar_columns_at_once(self, tmp_path: Path) -> None:
+    def test_get_entry_reads_all_columns_at_once(self, tmp_path: Path) -> None:
         with _open(tmp_path) as store:
             store.update_cache(
                 Arr.SONARR,
@@ -807,58 +835,6 @@ class TestFallbackSatisfied:
             entry = store.get_entry(Arr.SONARR, 7)
             assert entry is not None
             assert entry.fallback_satisfied is False
-
-
-class TestTorrentHashes:
-    """Torrent hashes preserve the None (hashless) marker and dedup it.
-
-    Rewriting the set replaces it wholesale, and the shape stays compatible with a pre-existing NOT NULL schema.
-    """
-
-    def test_roundtrip_preserves_none_marker(self, tmp_path: Path) -> None:
-        with _open(tmp_path) as store:
-            store.update_cache(Arr.SONARR, 7, {"torrent_hashes": ["aaa", "bbb", None]})
-            # The None marker (a hashless release) is preserved: the planner dedups on
-            # its membership, so dropping it would re-grab the release. Order is free.
-            assert set(store.torrent_hashes(Arr.SONARR, 7)) == {"aaa", "bbb", None}
-            # Missing entry -> empty list, never None.
-            assert store.torrent_hashes(Arr.SONARR, 999) == []
-
-    def test_duplicate_none_markers_collapse_to_one(self, tmp_path: Path) -> None:
-        with _open(tmp_path) as store:
-            store.update_cache(Arr.SONARR, 7, {"torrent_hashes": [None, "aaa", None]})
-            assert store.torrent_hashes(Arr.SONARR, 7) == [None, "aaa"]
-
-    def test_rewrite_replaces_the_set(self, tmp_path: Path) -> None:
-        with _open(tmp_path) as store:
-            store.update_cache(Arr.SONARR, 7, {"torrent_hashes": ["aaa", "bbb"]})
-            store.update_cache(Arr.SONARR, 7, {"torrent_hashes": ["ccc"]})
-            assert store.torrent_hashes(Arr.SONARR, 7) == ["ccc"]
-
-    def test_none_marker_on_a_preexisting_db(self, tmp_path: Path) -> None:
-        # Upgrade path: a pre-existing cache.db has `infohash TEXT NOT NULL`, and
-        # CREATE TABLE IF NOT EXISTS will NOT alter it - so the None marker must
-        # round-trip via the sentinel WITHOUT an IntegrityError, not lean on a schema
-        # change that never reaches an existing db. (This test fails if torrent_hashes
-        # is made nullable instead, since the old table stays NOT NULL.) The raw
-        # schema tracks _SCHEMA's current shape: dbs from older schemas are
-        # unsupported until real migrations land (manual ALTERs bridge the gap).
-        db = str(tmp_path / "cache.db")
-        raw = sqlite3.connect(db)
-        raw.executescript(
-            "CREATE TABLE entries (arr TEXT NOT NULL, al_id INTEGER NOT NULL, name TEXT, "
-            "url TEXT, coverage TEXT, updated_at TEXT, "
-            "fallback_satisfied INTEGER NOT NULL DEFAULT 0, PRIMARY KEY (arr, al_id));"
-            "CREATE TABLE torrent_hashes (arr TEXT NOT NULL, al_id INTEGER NOT NULL, "
-            "infohash TEXT NOT NULL, PRIMARY KEY (arr, al_id, infohash), "
-            "FOREIGN KEY (arr, al_id) REFERENCES entries (arr, al_id) ON DELETE CASCADE);",
-        )
-        raw.commit()
-        raw.close()
-
-        with _open(tmp_path) as store:
-            store.update_cache(Arr.SONARR, 7, {"torrent_hashes": ["aaa", None]})  # must not raise
-            assert set(store.torrent_hashes(Arr.SONARR, 7)) == {"aaa", None}
 
 
 class TestPreviewGate:
@@ -1287,7 +1263,6 @@ class TestRunLifecycle:
                     "url": "u",
                     "coverage": "S01",
                     "updated_at": datetime(2026, 1, 2, 3, 4, 5),
-                    "torrent_hashes": ["aaa", "bbb"],
                 },
             )
             store.put_anilist_meta(7, {"fetched_at": "2026-06-26 12:00:00", "data": {"id": 7}})
@@ -1295,11 +1270,10 @@ class TestRunLifecycle:
             store.put_pending(Arr.SONARR, "aaa", carried)
             store.save(preview=False)  # the run's commit, so the close's rollback has nothing to undo
 
-        # Run 2: reopen -> cache hit, remembered hashes, carried-over pending.
+        # Run 2: reopen -> cache hit, carried-over pending.
         with _open(tmp_path) as again:
             stamped_under = make_entry_record(updated_at=datetime(2026, 1, 2, 3, 4, 5))
             assert cached_as_done(again.get_entry(Arr.SONARR, 7), stamped_under)
-            assert again.torrent_hashes(Arr.SONARR, 7) == ["aaa", "bbb"]
             assert again.get_pending(Arr.SONARR) == {"aaa": carried}
             # A completed import is dropped, and that drop persists across a save.
             again.drop_pending(Arr.SONARR, "aaa")
@@ -1344,13 +1318,12 @@ class TestMaintenance:
 
     def test_stats_and_integrity(self, tmp_path: Path) -> None:
         with _open(tmp_path) as store:
-            store.update_cache(Arr.SONARR, 7, {"name": "T", "torrent_hashes": ["a", "b"]})
+            store.update_cache(Arr.SONARR, 7, {"name": "T"})
             store.put_anilist_meta(1, {"fetched_at": "2026-06-26 12:00:00", "data": {}})
             store.save(preview=False)  # promote to file so size_bytes > 0
 
             s = store.stats()
             assert s.entries == 1
-            assert s.torrent_hashes == 2
             assert s.anilist_meta == 1
             assert s.sonarr_parse == 0
             assert s.pending_imports == 0
@@ -1391,7 +1364,7 @@ class TestCorruptStore:
 
         # Simulate a transient lock at open time (e.g. the WAL switch hitting BUSY).
         with monkeypatch.context() as mp:
-            mp.setattr("pearlarr.cache._connect", _raise_locked)
+            mp.setattr("pearlarr.sqlite_util.connect", _raise_locked)
             raised = False
             try:
                 CacheStore.load(str(db), config_checksum=CHECKSUM)
@@ -1423,6 +1396,6 @@ class TestCorruptStore:
         [notice] = [d for d in recording.of_type(Diagnostic) if d.severity is Severity.WARNING]
         assert "moved it to" in notice.message
         assert notice.message.endswith(
-            "started a fresh cache (titles will be re-checked; grab-dedup and "
+            "started a fresh cache (titles will be re-checked; "
             "pending-import tracking reset, so recent grabs may be re-offered)",
         )

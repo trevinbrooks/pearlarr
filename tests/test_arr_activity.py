@@ -215,20 +215,18 @@ class TestScan:
         [(Arr.SONARR, "downloadFolderImported"), (Arr.RADARR, "movieFolderImported")],
     )
     def test_own_grab_import_touches_its_item(self, arr: Arr, event: str) -> None:
-        # Own hashes are seeded so a re-added own-grab filter fails here: the arr may import only part of a grab.
+        # An own pending grab is seeded so a re-added own-grab filter fails here: the arr may import only part of a grab.
         cache = FakeCacheStore()
-        cache.update_cache(arr, 7, {"torrent_hashes": ["ABCDEF"]})
         cache.put_pending(arr, "beef01", {"infohash": "beef01"})
         monitor = ArrActivityMonitor(arr, cache, make_logger())
         fetch = _Fetch(
             [
-                _rec(1, item_id=1, event=event, download_id="ABCDEF"),  # remembered grab
-                _rec(2, item_id=2, event=event, download_id="BEEF01"),  # pending grab
-                _rec(3, item_id=3, event=event, download_id="cafe00"),  # someone else's grab
+                _rec(1, item_id=1, event=event, download_id="BEEF01"),  # pending grab
+                _rec(2, item_id=2, event=event, download_id="cafe00"),  # someone else's grab
             ],
         )
 
-        assert monitor.scan(fetch, now=_NOW).touched == frozenset({1, 2, 3})
+        assert monitor.scan(fetch, now=_NOW).touched == frozenset({1, 2})
 
     def test_committed_own_grab_import_is_not_touched_again(self) -> None:
         # The committed cursor dedups the overlap's replay, so the next run re-checks nothing.

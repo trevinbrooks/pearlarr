@@ -1,7 +1,7 @@
 """Persistent run cache: `CacheStore` owns `cache.db`, its schema, freshness checks, and writes.
 
 Writes stage in a deferred transaction until the next non-preview `save` commits them (a run saves
-after each title). Do NOT set `isolation_level=None` in `_connect`: real autocommit commits staged
+after each title). Do NOT set `isolation_level=None` on its connection: real autocommit commits staged
 writes and breaks that gate.
 One `CacheStore` per arr, never shared across arrs or threads.
 """
@@ -15,7 +15,7 @@ from abc import ABC, abstractmethod
 from collections.abc import Callable, Iterator, Sequence
 from dataclasses import asdict, dataclass
 from datetime import datetime
-from typing import Any, NamedTuple, TypedDict, cast, override
+from typing import Any, NamedTuple, TypedDict, override
 
 from . import __version__
 from .config import Arr
@@ -23,8 +23,7 @@ from .json_narrow import is_json_obj
 from .log import LOG_NAME
 from .manual_import import GuardFacts
 from .output import hub_note
-from .sqlite_util import connect as _sqlite_connect
-from .sqlite_util import open_or_quarantine, rollback_and_close
+from .sqlite_util import connect, open_or_quarantine, rollback_and_close
 from .stamps import parse_stamp, parse_stamp_or_none, stamp_of
 from .tvdb_orders import StoredOrders
 
@@ -48,16 +47,6 @@ CREATE TABLE IF NOT EXISTS entries (
     season_type TEXT,
     PRIMARY KEY (arr, al_id)
 );
-
-CREATE TABLE IF NOT EXISTS torrent_hashes (
-    arr      TEXT    NOT NULL,
-    al_id    INTEGER NOT NULL,
-    -- A hashless release round-trips as the `_NO_HASH` sentinel (the column is NOT NULL).
-    infohash TEXT NOT NULL,
-    PRIMARY KEY (arr, al_id, infohash),
-    FOREIGN KEY (arr, al_id) REFERENCES entries (arr, al_id) ON DELETE CASCADE
-);
-CREATE INDEX IF NOT EXISTS ix_torrent_hashes_infohash ON torrent_hashes (infohash);
 
 CREATE TABLE IF NOT EXISTS anilist_meta (
     al_id      INTEGER PRIMARY KEY,
@@ -104,7 +93,7 @@ CREATE TABLE IF NOT EXISTS tvdb_orders (
 """
 
 # Current cache.db schema version, stored in `PRAGMA user_version`.
-SCHEMA_VERSION = 6
+SCHEMA_VERSION = 7
 
 _LOG = logging.getLogger(f"{LOG_NAME}.cache")
 
@@ -303,6 +292,12 @@ def _migrate_5_to_6(conn: sqlite3.Connection) -> None:
         conn.execute("ALTER TABLE entries ADD COLUMN season_type TEXT")
 
 
+def _migrate_6_to_7(conn: sqlite3.Connection) -> None:
+    """Drop `torrent_hashes` and its index. Nothing reads the hashes of the torrents a title grabbed."""
+
+    conn.execute("DROP TABLE IF EXISTS torrent_hashes")
+
+
 _MIGRATIONS: dict[int, Callable[[sqlite3.Connection], None]] = {
     0: _migrate_0_to_1,
     1: _migrate_1_to_2,
@@ -310,6 +305,7 @@ _MIGRATIONS: dict[int, Callable[[sqlite3.Connection], None]] = {
     3: _migrate_3_to_4,
     4: _migrate_4_to_5,
     5: _migrate_5_to_6,
+    6: _migrate_6_to_7,
 }
 
 
@@ -371,13 +367,11 @@ class CacheRecord(TypedDict, total=False):
     """Whether a public fallback satisfied the title."""
     season_type: str
     """The TVDB order the entry's Sonarr series was numbered by when it was checked."""
-    torrent_hashes: list[str | None]
-    """A remembered list can carry `None` (a hashless release), which the store preserves."""
 
 
 @dataclass(frozen=True, slots=True)
 class CachedEntry:
-    """The scalar columns of one `entries` row, read in a single query."""
+    """One `entries` row, read in a single query."""
 
     updated_at: str | None
     """SeaDex's update time the title was cached as done under. None while the title waits on a check."""
@@ -403,10 +397,7 @@ class HistoryCheckpoint:
     """The per-arr autoincrement id, for strict `record.id > last_id` dedup across the re-query overlap."""
 
 
-_ENTRY_SCALAR_COLUMNS = ("name", "url", "coverage", "updated_at", "fallback_satisfied", "season_type")
-
-# Sentinel stored in `torrent_hashes.infohash` (NOT NULL) for a remembered `None`. A real infohash is never empty.
-_NO_HASH = ""
+_ENTRY_COLUMNS = ("name", "url", "coverage", "updated_at", "fallback_satisfied", "season_type")
 
 
 class _JsonBlock(NamedTuple):
@@ -427,7 +418,6 @@ class CacheStats(NamedTuple):
     """Row counts per cache table plus the on-disk size in bytes."""
 
     entries: int
-    torrent_hashes: int
     anilist_meta: int
     sonarr_parse: int
     pending_imports: int
@@ -448,12 +438,6 @@ def selection_digest_key(arr: Arr) -> str:
     return f"selection_digest_{_arr_key(arr)}"
 
 
-def _connect(path: str, *, ensure_wal: bool = True) -> sqlite3.Connection:
-    """Open a cache-db connection (see `sqlite_util.connect`)."""
-
-    return _sqlite_connect(path, ensure_wal=ensure_wal, foreign_keys=ensure_wal)
-
-
 class AbstractCacheStore(ABC):
     """The instance facade run collaborators depend on. The `load` / `open_readonly` constructors stay off it."""
 
@@ -468,9 +452,7 @@ class AbstractCacheStore(ABC):
     @abstractmethod
     def get_entry(self, arr: Arr, al_id: int) -> CachedEntry | None: ...
     @abstractmethod
-    def torrent_hashes(self, arr: Arr, al_id: int) -> list[str | None]: ...
-    @abstractmethod
-    def update_cache(self, arr: Arr, al_id: int, cache_details: CacheRecord | None = None) -> None: ...
+    def update_cache(self, arr: Arr, al_id: int, cache_details: CacheRecord) -> None: ...
     @abstractmethod
     def clear_entry_stamp(self, arr: Arr, al_id: int) -> None: ...
     @abstractmethod
@@ -544,10 +526,9 @@ class CacheStore(AbstractCacheStore):
         # Fail-closed on transient errors, fail-open (quarantine + `:memory:`) on real corruption.
         conn, fell_back = open_or_quarantine(
             path if exists else ":memory:",
-            connect_fn=_connect,
             ensure=lambda c: _ensure_schema(c, path),
             what="Cache database",
-            recovery="started a fresh cache (titles will be re-checked; grab-dedup and "
+            recovery="started a fresh cache (titles will be re-checked; "
             "pending-import tracking reset, so recent grabs may be re-offered)",
         )
         if fell_back:
@@ -563,7 +544,7 @@ class CacheStore(AbstractCacheStore):
         No WAL pragmas (a diagnostic must not mutate the file's journal mode), no schema ensure, no quarantine.
         """
 
-        return cls(_connect(path, ensure_wal=False), path, on_memory=False)
+        return cls(connect(path, ensure_wal=False), path, on_memory=False)
 
     def _reconcile(self, config_checksum: str) -> None:
         """Stamp the current package version and config checksum into `kv`."""
@@ -608,7 +589,7 @@ class CacheStore(AbstractCacheStore):
                 with contextlib.suppress(OSError):
                     os.remove(tmp_path + suffix)
         self._conn.close()
-        self._conn = _connect(self._path)
+        self._conn = connect(self._path)
         self._on_memory = False
 
     @override
@@ -642,11 +623,11 @@ class CacheStore(AbstractCacheStore):
 
         self._set_kv(selection_digest_key(arr), digest)
 
-    # -- per-entry records (entries + torrent_hashes) ------------------------
+    # -- per-entry records (entries) ------------------------------------------
 
     @override
     def get_entry(self, arr: Arr, al_id: int) -> CachedEntry | None:
-        """The scalar columns of an entry's row in one query, or None (the `torrent_hashes` child set is excluded)."""
+        """An entry's row in one query, or None."""
 
         row = self._conn.execute(
             "SELECT updated_at, name, url, coverage, fallback_satisfied, season_type FROM entries "
@@ -656,70 +637,42 @@ class CacheStore(AbstractCacheStore):
         return None if row is None else CachedEntry(row[0], row[1], row[2], row[3], bool(row[4]), row[5])
 
     @override
-    def torrent_hashes(self, arr: Arr, al_id: int) -> list[str | None]:
-        """Torrent hashes remembered for an entry (empty if none). A `None` marker (hashless release) survives."""
-
-        rows = self._conn.execute(
-            "SELECT infohash FROM torrent_hashes WHERE arr = ? AND al_id = ? ORDER BY infohash",
-            (_arr_key(arr), al_id),
-        ).fetchall()
-        return cast("list[str | None]", [None if r[0] == _NO_HASH else r[0] for r in rows])
-
-    @override
     def update_cache(
         self,
         arr: Arr,
         al_id: int,
-        cache_details: CacheRecord | None = None,
+        cache_details: CacheRecord,
     ) -> None:
-        """Merge fields into an entry's record: only supplied ones, staged until a save point."""
+        """Merge fields into an entry's record: only supplied ones, staged until a save point.
 
-        details: dict[str, Any] = dict(cache_details or {})
+        An empty record writes nothing.
+        """
+
+        details: dict[str, Any] = dict(cache_details)
 
         updated_at = details.get("updated_at")
         if isinstance(updated_at, datetime):
             details["updated_at"] = stamp_of(updated_at)
 
-        arr_key = _arr_key(arr)
-
-        scalar = [c for c in _ENTRY_SCALAR_COLUMNS if c in details]
-        if scalar:
-            # One upsert, not INSERT-then-UPDATE: an existing row updates ONLY the supplied columns (partial merge).
-            # The names come from the closed _ENTRY_SCALAR_COLUMNS tuple, so the interpolation is safe.
-            cols = ", ".join(scalar)
-            placeholders = ", ".join("?" for _ in scalar)
-            assignments = ", ".join(f"{c} = excluded.{c}" for c in scalar)
-            self._conn.execute(
-                f"INSERT INTO entries (arr, al_id, {cols}) VALUES (?, ?, {placeholders}) "
-                f"ON CONFLICT (arr, al_id) DO UPDATE SET {assignments}",
-                (arr_key, al_id, *(details[c] for c in scalar)),
-            )
-        else:
-            # No scalar fields: just ensure the row exists (the FK target for torrent_hashes).
-            self._conn.execute(
-                "INSERT INTO entries (arr, al_id) VALUES (?, ?) ON CONFLICT (arr, al_id) DO NOTHING",
-                (arr_key, al_id),
-            )
-
-        if "torrent_hashes" in details:
-            self._conn.execute(
-                "DELETE FROM torrent_hashes WHERE arr = ? AND al_id = ?",
-                (arr_key, al_id),
-            )
-            hashes: list[str | None] = details["torrent_hashes"] or []
-            # A None marker stores as the _NO_HASH sentinel (the column is NOT NULL), and ON CONFLICT collapses
-            # repeated sentinels so at most one marker is kept.
-            self._conn.executemany(
-                "INSERT INTO torrent_hashes (arr, al_id, infohash) VALUES (?, ?, ?) "
-                "ON CONFLICT (arr, al_id, infohash) DO NOTHING",
-                [(arr_key, al_id, _NO_HASH if h is None else h) for h in hashes],
-            )
+        supplied = [c for c in _ENTRY_COLUMNS if c in details]
+        if not supplied:
+            return
+        # One upsert, not INSERT-then-UPDATE: an existing row updates ONLY the supplied columns (partial merge).
+        # The names come from the closed _ENTRY_COLUMNS tuple, so the interpolation is safe.
+        cols = ", ".join(supplied)
+        placeholders = ", ".join("?" for _ in supplied)
+        assignments = ", ".join(f"{c} = excluded.{c}" for c in supplied)
+        self._conn.execute(
+            f"INSERT INTO entries (arr, al_id, {cols}) VALUES (?, ?, {placeholders}) "
+            f"ON CONFLICT (arr, al_id) DO UPDATE SET {assignments}",
+            (_arr_key(arr), al_id, *(details[c] for c in supplied)),
+        )
 
     @override
     def clear_entry_stamp(self, arr: Arr, al_id: int) -> None:
         """Clear an entry's stamp: the arr's own runs stop skipping the title until a check caches it as done again.
 
-        The rest of the row and its remembered hashes stay. Without a row this does nothing. Staged like any write.
+        The rest of the row stays. Without a row this does nothing. Staged like any write.
         """
 
         self._conn.execute(
@@ -945,7 +898,6 @@ class CacheStore(AbstractCacheStore):
                     size += os.path.getsize(self._path + suffix)
         return CacheStats(
             entries=self._count("entries"),
-            torrent_hashes=self._count("torrent_hashes"),
             anilist_meta=self._count("anilist_meta"),
             sonarr_parse=self._count("sonarr_parse"),
             pending_imports=self._count("pending_imports"),

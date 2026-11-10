@@ -892,7 +892,6 @@ def _specimen_stream() -> tuple[ev.Event, ...]:
         ev.CacheRemoved(path=f"{data_dir}/cache.db"),
         ev.CacheStatsReported(
             entries=128,
-            torrent_hashes=141,
             anilist_meta=96,
             sonarr_parse=412,
             pending_imports=0,

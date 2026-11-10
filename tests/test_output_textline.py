@@ -1166,7 +1166,6 @@ def _exemplars() -> list[Event]:
         CacheRemoved(path="/d/cache.db"),
         CacheStatsReported(
             entries=1,
-            torrent_hashes=1,
             anilist_meta=1,
             sonarr_parse=1,
             pending_imports=0,
