@@ -15,6 +15,7 @@ Pearlarr is a fork of [bbtufty/seadexarr](https://github.com/bbtufty/seadexarr).
 ### Changed
 
 - Pearlarr no longer gives up on a pending import after `pending_max_age_days`. A download stays tracked until it imports or leaves qBittorrent. On Sonarr, importing its files by hand ends it too, and a download that needs a hand import says so each run until then. In `hybrid` and `blocking` mode a download that never finishes holds each Sonarr run's wait for `wait_timeout` until you remove it from qBittorrent.
+- The first run after upgrading re-checks every cached title once and says so. That picks up any title an earlier version stopped checking (see Fixed below).
 - When the re-check after an upgrade or a settings change holds grabs past `advanced.max_torrents_to_add`, the next run checks only the titles it held. Before, every run re-checked the whole library and printed the "Matching settings changed" note until one held nothing.
 
 ### Fixed
