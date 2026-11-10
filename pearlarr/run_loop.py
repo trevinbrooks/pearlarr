@@ -198,25 +198,21 @@ class RunLoop:
             # commits what it staged, as the end save always did.
             self.cache_store.save(preview=preview)
 
-        # ONE full-coverage predicate for both gates below. They drifted apart once: an outage run committed the
-        # checkpoint, consuming drift events it never acted on. A held title's old cache row may read done and its
-        # drift mark may be pending, so a run that held anything past the cap neither vouches nor commits. A SkyHook
-        # outage counts too: an entry re-checked without its orders may keep a current cache row, and a vouch would
-        # skip it for good.
-        full_pass = (
-            item_id is None
-            and self._ctx.stats.held_by_cap == 0
-            and not self._seadex.outage
-            and not self._skyhook.outage
-        )
+        # ONE full-coverage predicate for both gates below: a checkpoint committed on an outage run would consume
+        # drift events the run never acted on. A SkyHook outage counts too: a series it left unrefreshed was read by
+        # its old order record, and with neither committed the next pass repeats the re-checks they drive (a settings
+        # change, a file change in the arr) against the refreshed one. A title held past the cap, or one whose check
+        # didn't cache it as done, holds back neither: `cached_entry_skip` cleared its stamp, so the next run checks
+        # it whatever is committed here.
+        full_pass = item_id is None and not self._seadex.outage and not self._skyhook.outage
 
         # Held on outage so the next healthy run re-derives the same dirty ids (the query overlap and id
         # dedup absorb the replay). The staged write persists only at _finalize_run's non-preview save.
         if monitor is not None and full_pass:
             monitor.commit_checkpoint()
 
-        # A contained per-id error still vouches: otherwise one flaky title re-scans the library every run.
-        # Dropping its entry to force a re-check is not the answer either, that could re-grab.
+        # A contained per-id error still vouches: otherwise one flaky title re-scans the library every run. A title
+        # whose check raised past the cached-entry gate is checked again next run all the same.
         if full_pass:
             self.cache_store.vouch_selection(arr, self._config.selection_digest())
 
@@ -270,7 +266,7 @@ class RunLoop:
                 )
                 continue
 
-        # A read-only snapshot, never an import: the end pass owns that. Radarr returns None here.
+        # A snapshot, never an import: the end pass owns that. Radarr returns None here.
         # Placed after all of the item's AniList ids so it covers the cached, grabbed and no-entry paths alike.
         if self._wait_active and (sid := strategy.pending_import_series_id(item)) is not None:
             self._wait_manager.snapshot_pending_for_series(sid)

@@ -4,17 +4,18 @@
 # the repo disables reportPrivateUsage for tests.
 """The cached-entry short-circuit (`RunServices.cached_entry_skip`) and the title seams around it.
 
-Pins the skip decision after it was folded onto a single `CacheStore.get_entry`
-read (was a `check_al_id_in_cache` + a per-field `get_cached_field`): a cached
+Pins the skip decision, made from a single `CacheStore.get_entry` read: a cached
 entry whose SeaDex `updated_at` still matches is skipped (and its url/coverage
 backfilled once if the record predates those fields, its name once AniList can
-resolve it). An absent or stale entry is re-processed.
+resolve it). An absent or stale entry is re-processed, and a row sent on to a
+check loses its stamp until a check caches the title as done.
 """
 
 from dataclasses import dataclass
 from datetime import datetime
 from typing import override
 
+import httpx
 import pytest
 
 from pearlarr.cache import CacheRecord
@@ -25,12 +26,17 @@ from pearlarr.reporter import EntryTitle, RunContext
 from pearlarr.run_services import RunServices
 
 from .builders import (
+    AddOutcome,
     FakeCacheStore,
     FakeSeaDexSource,
+    FakeTorrents,
     ScriptedAniListClient,
+    grab_request,
     make_anilist_gateway,
     make_entry_record,
+    make_grab_pipeline,
     make_services,
+    one_release_dict,
 )
 
 
@@ -241,6 +247,98 @@ class TestCachedEntrySkip:
         assert run.cached_entry_skip(7, make_entry_record(updated_at=datetime(2021, 1, 1)), lambda: "") is True
 
 
+_CACHED_ON = datetime(2026, 1, 1)
+"""SeaDex's update time for entry 7, the stamp its row carries while it is cached as done."""
+
+
+class TestACheckedTitleLosesItsStamp:
+    """The gate clears the stamp of a title it sends on to a check: only a check that caches it as done writes it back."""
+
+    _ENTRY = make_entry_record(updated_at=_CACHED_ON)
+
+    @staticmethod
+    def _run(cache: FakeCacheStore, **wiring: object) -> RunServices:
+        return make_services(
+            cache_store=cache,
+            _reporter=_RecordingReporter(),
+            _anilist=make_anilist_gateway(ScriptedAniListClient(None)),
+            **wiring,
+        )
+
+    def _rechecking(self, cache: FakeCacheStore, torrents: FakeTorrents, *, add_cap: int = 0) -> RunServices:
+        """A run made to check entry 7 again over its cached row, as a library change makes it."""
+
+        cache.update_cache(Arr.SONARR, 7, {"updated_at": _CACHED_ON, "torrent_hashes": ["h0"]})
+        pipeline = make_grab_pipeline(_torrents=torrents, cache_store=cache, sleep_time=0, max_torrents_to_add=add_cap)
+        pipeline._anilist.al_cache.update({7: {}})
+        pipeline._ctx.per_title.current_title = "Show"
+        run = self._run(cache, _grab_pipeline=pipeline, _ctx=pipeline._ctx)
+        run.mark_dirty([7])
+        return run
+
+    def _grab(self, run: RunServices) -> None:
+        """The check's tail over one flagged release, hash h1, seeded as a strategy seeds it."""
+
+        run.grab_and_cache(
+            grab_request(
+                al_id=7,
+                entry=self._ENTRY,
+                seadex_dict=one_release_dict(srg="RG", infohash="h1"),
+                torrent_hashes=["h1"],
+                cache_details=run.new_cache_details(run.resolve_title(7), self._ENTRY),
+            )
+        )
+
+    def test_a_title_sent_on_to_a_check_loses_its_stamp(self) -> None:
+        cache = FakeCacheStore()
+        cache.update_cache(Arr.SONARR, 7, {"url": "u", "updated_at": _CACHED_ON})
+        run = self._run(cache)
+        run.mark_dirty([7])
+
+        assert run.cached_entry_skip(7, self._ENTRY, lambda: "") is False
+
+        entry = cache.get_entry(Arr.SONARR, 7)
+        assert entry is not None
+        assert entry.updated_at is None
+
+    def test_a_skipped_title_keeps_its_stamp(self) -> None:
+        cache = FakeCacheStore()
+        cache.update_cache(Arr.SONARR, 7, {"url": "u", "updated_at": _CACHED_ON})
+
+        assert self._run(cache).cached_entry_skip(7, self._ENTRY, lambda: "") is True
+        assert self._run(cache).cached_entry_skip(7, self._ENTRY, lambda: "") is True
+
+    def test_a_recheck_whose_grab_fails_is_checked_again_next_run(self) -> None:
+        # The row matched SeaDex's current update before the re-check, and nothing forces the next run.
+        cache = FakeCacheStore()
+        run = self._rechecking(cache, FakeTorrents({}, raises={"h1": httpx.ConnectError("nyaa down")}))
+
+        assert run.cached_entry_skip(7, self._ENTRY, lambda: "") is False
+        self._grab(run)
+
+        assert self._run(cache).cached_entry_skip(7, self._ENTRY, lambda: "") is False
+
+    def test_a_recheck_held_past_the_add_cap_is_checked_again_next_run(self) -> None:
+        cache = FakeCacheStore()
+        run = self._rechecking(cache, FakeTorrents({"h1": (AddOutcome.ADDED, "Show-RG")}), add_cap=1)
+        run.ctx.torrents_added = 1
+
+        assert run.cached_entry_skip(7, self._ENTRY, lambda: "") is False
+        self._grab(run)
+
+        assert run.ctx.stats.held_by_cap == 1
+        assert self._run(cache).cached_entry_skip(7, self._ENTRY, lambda: "") is False
+
+    def test_a_recheck_that_caches_the_title_as_done_is_skipped_next_run(self) -> None:
+        cache = FakeCacheStore()
+        run = self._rechecking(cache, FakeTorrents({"h1": (AddOutcome.ADDED, "Show-RG")}))
+
+        assert run.cached_entry_skip(7, self._ENTRY, lambda: "") is False
+        self._grab(run)
+
+        assert self._run(cache).cached_entry_skip(7, self._ENTRY, lambda: "") is True
+
+
 class TestFallbackSatisfiedResurfacing:
     """The fallback-satisfied marker bypasses the cache skip in warn mode only."""
 
@@ -291,6 +389,26 @@ class _CtxBind:
 
     def begin_run(self, ctx: RunContext) -> None:
         del ctx
+
+
+class TestCrossArrReadCountsAnUnstampedRow:
+    """The Sonarr run's read of Radarr's cache counts a row with no stamp, but not one with an older stamp."""
+
+    def test_a_radarr_title_waiting_on_a_check_is_still_in_radarr(self) -> None:
+        # Radarr's row lost its stamp: its check didn't finish, or its download left qBittorrent.
+        cache = FakeCacheStore()
+        cache.update_cache(Arr.RADARR, 7, {"updated_at": datetime(2021, 1, 1)})
+        cache.clear_entry_stamp(Arr.RADARR, 7)
+        run = make_services(cache_store=cache, _ctx=RunContext(arr=Arr.SONARR))
+
+        assert run.check_al_id_in_cache(Arr.RADARR, 7, make_entry_record(updated_at=datetime(2021, 1, 1))) is True
+
+    def test_a_radarr_title_cached_under_an_older_seadex_update_is_not_in_radarr(self) -> None:
+        cache = FakeCacheStore()
+        cache.update_cache(Arr.RADARR, 7, {"updated_at": datetime(2021, 1, 1)})
+        run = make_services(cache_store=cache, _ctx=RunContext(arr=Arr.SONARR))
+
+        assert run.check_al_id_in_cache(Arr.RADARR, 7, make_entry_record(updated_at=datetime(2022, 1, 1))) is False
 
 
 class TestCrossArrLookupHonorsParam:

@@ -329,17 +329,12 @@ class FakeCacheStore(AbstractCacheStore):
             self._entry_hashes[key] = list(dict.fromkeys(hashes))
 
     @override
-    def check_al_id_in_cache(
-        self,
-        arr: Arr,
-        al_id: int,
-        seadex_entry: EntryRecord,
-    ) -> bool:
-        """True if the entry exists and its stored timestamp matches the SeaDex one."""
+    def clear_entry_stamp(self, arr: Arr, al_id: int) -> None:
+        """Drop the entry's stored timestamp. No row, no effect."""
 
-        sd_time_str = seadex_entry.updated_at.strftime(UPDATED_AT_STR_FORMAT)
         entry = self._entries.get((str(arr), al_id))
-        return entry is not None and entry.get("updated_at") == sd_time_str
+        if entry is not None:
+            entry.pop("updated_at", None)
 
     @override
     def get_entry(self, arr: Arr, al_id: int) -> CachedEntry | None:
@@ -550,6 +545,12 @@ def make_config(**overrides: Any) -> AppConfig:
         group, field = _resolve_setting(key)
         nested.setdefault(group, {})[field] = value
     return AppConfig.model_validate(nested)
+
+
+def cached_as_done(row: CachedEntry | None, sd_entry: EntryRecord) -> bool:
+    """Whether a cache row has its title cached as done under SeaDex's current update time."""
+
+    return row is not None and row.cached_under(sd_entry.updated_at)
 
 
 def make_entry_record(

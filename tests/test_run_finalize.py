@@ -53,7 +53,7 @@ from .builders import (
     make_services,
     pending_import,
 )
-from .fakes import CapMeeting, FakeArrItem, FakeClock, FakeSkyHookClient, FakeStrategy, install_recording_hub
+from .fakes import FakeArrItem, FakeClock, FakeSkyHookClient, FakeStrategy, install_recording_hub
 
 
 class _FakeGateway:
@@ -196,8 +196,7 @@ class TestHeldTitleKeepsScanning:
         strategy = FakeStrategy(
             items=[FakeArrItem(item_id=1, title="A"), FakeArrItem(item_id=2, title="B")],
             anilist_ids={1: MappingEntry(anilist_id=1)},
-            cap_through=engine._services,
-            cap=CapMeeting.HELD,
+            held_through=engine._services,
         )
 
         engine.run_sync(strategy, item_id=None, dry_run=True, boot=BootFlow())
@@ -608,16 +607,15 @@ class TestSelectionRecheck:
         item_id: int | None = None,
         config: AppConfig | None = None,
         seadex: _FakeGateway | None = None,
-        cap: CapMeeting = CapMeeting.NONE,
+        held: bool = False,
     ) -> tuple[RunLoop, RecordingHub]:
         recording = install_recording_hub()
         engine = _engine(_FinalizeRecorder(), logger, config=config, seadex=seadex)
         strategy = FakeStrategy(
             items=[FakeArrItem(item_id=3, title="A")],
             anilist_ids={11: MappingEntry(anilist_id=11)},
-            cap_through=engine._services if cap is not CapMeeting.NONE else None,
-            cap=cap,
-            history=[_IMPORT_EVENT] if cap is not CapMeeting.NONE else None,
+            held_through=engine._services if held else None,
+            history=[_IMPORT_EVENT] if held else None,
         )
         engine._services._selection_stale = stale
         engine.run_sync(strategy, item_id=item_id, dry_run=True, boot=BootFlow())
@@ -666,18 +664,12 @@ class TestSelectionRecheck:
 
         assert self._vouched_any(engine) is False
 
-    def test_held_run_neither_vouches_nor_commits_the_checkpoint(self, logger: logging.Logger) -> None:
-        engine, _ = self._run(logger, cap=CapMeeting.HELD)
+    def test_a_run_that_held_a_title_past_the_cap_vouches_and_commits_the_checkpoint(
+        self, logger: logging.Logger
+    ) -> None:
+        # A hold keeps neither the vouch nor the checkpoint back.
+        engine, _ = self._run(logger, held=True)
 
-        assert self._vouched_any(engine) is False
-        assert engine.cache_store.get_history_checkpoint(Arr.SONARR) is None
-
-    def test_exact_cap_run_with_nothing_held_vouches_and_commits_the_checkpoint(self, logger: logging.Logger) -> None:
-        # Reaching the cap is not a hold: only a title held PAST it leaves the pass partial.
-        engine, _ = self._run(logger, config=make_config(max_torrents_to_add=1), cap=CapMeeting.FILLED)
-
-        assert engine._services.ctx.torrents_added == 1
-        assert engine._services.ctx.stats.held_by_cap == 0
         assert self._vouched_any(engine) is True
         assert engine.cache_store.get_history_checkpoint(Arr.SONARR) is not None
 
@@ -721,7 +713,8 @@ class _OrderFetchingStrategy(FakeStrategy):
 def test_a_skyhook_outage_notes_unreachable_and_the_run_neither_vouches_nor_commits(
     logger: logging.Logger, failing: frozenset[tuple[int, str]], note: str, full_pass: bool
 ) -> None:
-    # An entry re-checked without its orders may keep a current cache row, so a vouch would skip it for good.
+    # A series the outage left unrefreshed was read by its old order record, so the pass stays open and the next one
+    # repeats the re-checks a settings or file change drove.
     recording = install_recording_hub()
     store = FakeCacheStore()
     skyhook = SkyHookGateway(client=FakeSkyHookClient(failing=failing), cache_store=store)

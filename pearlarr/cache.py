@@ -17,8 +17,6 @@ from dataclasses import asdict, dataclass
 from datetime import datetime
 from typing import Any, NamedTuple, TypedDict, cast, override
 
-from seadex import EntryRecord
-
 from . import __version__
 from .config import Arr
 from .json_narrow import is_json_obj
@@ -382,11 +380,17 @@ class CachedEntry:
     """The scalar columns of one `entries` row, read in a single query."""
 
     updated_at: str | None
+    """SeaDex's update time the title was cached as done under. None while the title waits on a check."""
     name: str | None
     url: str | None
     coverage: str | None
     fallback_satisfied: bool
     season_type: str | None
+
+    def cached_under(self, seadex_updated_at: datetime) -> bool:
+        """Whether the title is cached as done under this SeaDex update time."""
+
+        return self.updated_at == stamp_of(seadex_updated_at)
 
 
 @dataclass(frozen=True, slots=True)
@@ -462,13 +466,13 @@ class AbstractCacheStore(ABC):
     @abstractmethod
     def vouch_selection(self, arr: Arr, digest: str) -> None: ...
     @abstractmethod
-    def check_al_id_in_cache(self, arr: Arr, al_id: int, seadex_entry: EntryRecord) -> bool: ...
-    @abstractmethod
     def get_entry(self, arr: Arr, al_id: int) -> CachedEntry | None: ...
     @abstractmethod
     def torrent_hashes(self, arr: Arr, al_id: int) -> list[str | None]: ...
     @abstractmethod
     def update_cache(self, arr: Arr, al_id: int, cache_details: CacheRecord | None = None) -> None: ...
+    @abstractmethod
+    def clear_entry_stamp(self, arr: Arr, al_id: int) -> None: ...
     @abstractmethod
     def iter_anilist_meta(self) -> Iterator[tuple[int, dict[str, Any]]]: ...
     @abstractmethod
@@ -641,22 +645,6 @@ class CacheStore(AbstractCacheStore):
     # -- per-entry records (entries + torrent_hashes) ------------------------
 
     @override
-    def check_al_id_in_cache(
-        self,
-        arr: Arr,
-        al_id: int,
-        seadex_entry: EntryRecord,
-    ) -> bool:
-        """True if the cached entry's timestamp matches the SeaDex entry's `updated_at`."""
-
-        sd_time_str = stamp_of(seadex_entry.updated_at)
-        row = self._conn.execute(
-            "SELECT updated_at FROM entries WHERE arr = ? AND al_id = ?",
-            (_arr_key(arr), al_id),
-        ).fetchone()
-        return bool(row) and row[0] == sd_time_str
-
-    @override
     def get_entry(self, arr: Arr, al_id: int) -> CachedEntry | None:
         """The scalar columns of an entry's row in one query, or None (the `torrent_hashes` child set is excluded)."""
 
@@ -726,6 +714,18 @@ class CacheStore(AbstractCacheStore):
                 "ON CONFLICT (arr, al_id, infohash) DO NOTHING",
                 [(arr_key, al_id, _NO_HASH if h is None else h) for h in hashes],
             )
+
+    @override
+    def clear_entry_stamp(self, arr: Arr, al_id: int) -> None:
+        """Clear an entry's stamp: the arr's own runs stop skipping the title until a check caches it as done again.
+
+        The rest of the row and its remembered hashes stay. Without a row this does nothing. Staged like any write.
+        """
+
+        self._conn.execute(
+            "UPDATE entries SET updated_at = NULL WHERE arr = ? AND al_id = ?",
+            (_arr_key(arr), al_id),
+        )
 
     # -- JSONB record blocks (shared plumbing) --------------------------------
     # Table/column names come only from the closed _JsonBlock constants, so the f-string SQL isn't an injection
