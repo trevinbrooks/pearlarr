@@ -106,7 +106,10 @@ class GrabRequest:
 
 
 def _reacquire_stamp(added_on: datetime | None) -> str:
-    """A record-less torrent's stamp: its qBittorrent add time, or now when it reports none."""
+    """The `added_at` of a new record for a torrent already in qBittorrent.
+
+    Its add time there, or now when the client reports none.
+    """
 
     return now_stamp() if added_on is None else stamp_of(added_on)
 
@@ -243,8 +246,8 @@ class GrabPipeline:
             self._ctx.per_title.held_by_cap = True
             self._ctx.stats.held_by_cap += 1
         seed = self._seed_for(url_item, req)
-        if seed is not None and seed.accreted:
-            self._records.save_with_claim(seed.record_at(now_stamp(), fresh=False), seed.claim)
+        if seed is not None and (joined := seed.joined()) is not None:
+            self._records.save_with_claim(joined, seed.claim)
 
     def _add_one_url(
         self,
@@ -294,9 +297,9 @@ class GrabPipeline:
     def _register_pending_import(self, url_item: SeadexUrlItem, req: GrabRequest, result: AddResult) -> None:
         """Persist a grabbed or already-present release: `ADDED` tracks, `ALREADY_ADDED` accretes or reacquires.
 
-        A fresh add enters the run list with every clock stamped now. A torrent already in qBittorrent, whoever
-        added it, joins its stored record or starts one, and is reacquired unless the record is this run's own
-        grab (a torrent two entries list in one run).
+        A fresh add enters the run list stamped now. A torrent already in qBittorrent, whoever added it, joins its
+        stored record or starts one, and is reacquired unless the record is this run's own grab (a torrent two
+        entries list in one run).
         """
 
         seed = self._seed_for(url_item, req)
@@ -305,8 +308,7 @@ class GrabPipeline:
         if result.outcome is AddOutcome.ADDED:
             self._records.insert_fresh(seed.record_at(now_stamp(), fresh=True), seed.claim)
             return
-        stamp = now_stamp() if seed.accreted else _reacquire_stamp(result.added_on)
-        record = seed.record_at(stamp, fresh=False)
+        record = seed.record_at(_reacquire_stamp(result.added_on), fresh=False)
         self._records.save_with_claim(record, seed.claim)
         if record.infohash not in self._ctx.pending_imports:
             self._ctx.reacquired_keys.add(record.infohash)

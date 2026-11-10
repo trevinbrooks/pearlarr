@@ -793,9 +793,6 @@ class EntryClaim:
     slice_coverage: str | None
     """This claim's own ids as a coverage string (e.g. `"S02 E06"`)."""
 
-    claimed_at: str
-    """The claim's clock in `UPDATED_AT_STR_FORMAT`, stamped by the pipeline."""
-
     guards: GuardFacts = field(default_factory=GuardFacts)
     """The plan's overwrite-guard evidence. Not serialized: hydrated from `guard_facts` by `al_id`."""
 
@@ -834,7 +831,6 @@ class EntryClaim:
             "names": self.names.to_json(),
             "preowned_episode_ids": list(self.preowned_episode_ids),
             "slice_coverage": self.slice_coverage,
-            "claimed_at": self.claimed_at,
         }
 
     @classmethod
@@ -852,7 +848,6 @@ class EntryClaim:
             names=EntryNames.from_json(raw.get("names", {})),
             preowned_episode_ids=tuple(raw.get("preowned_episode_ids", [])),
             slice_coverage=raw.get("slice_coverage"),
-            claimed_at=raw.get("claimed_at", ""),
             guards=guards.get(al_id, GuardFacts()),
         )
 
@@ -1043,14 +1038,14 @@ class PendingImport:
     def with_claim(self, claim: EntryClaim) -> "PendingImport":
         """The record with `claim` joined and its cleanup flag cleared (new files to import make it active again).
 
-        A re-flag by an entry already claiming replaces its claim, keeping the stored claim's first clock and
-        preowned ids: the window follows the newest plan, the wait bar's net-out never restarts.
+        A re-flag by an entry already claiming replaces its claim, keeping the stored claim's preowned ids: the
+        window follows the newest plan, the wait bar's net-out never restarts.
         """
 
         claims = (*self.claims, claim)
         for index, stored in enumerate(self.claims):
             if stored.al_id == claim.al_id:
-                kept = replace(claim, preowned_episode_ids=stored.preowned_episode_ids, claimed_at=stored.claimed_at)
+                kept = replace(claim, preowned_episode_ids=stored.preowned_episode_ids)
                 claims = (*self.claims[:index], kept, *self.claims[index + 1 :])
                 break
         return self._or_self(replace(self, claims=claims, awaiting_cleanup=False))

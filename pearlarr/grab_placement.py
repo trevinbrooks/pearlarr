@@ -515,7 +515,7 @@ class EntryFacts:
     """The plan's overwrite-guard evidence, copied onto every claim unchanged (see `GuardFacts`)."""
 
     def claim(self, terms: ClaimTerms) -> EntryClaim:
-        """The entry's claim on `terms`, its clock blank until the record is stamped."""
+        """The entry's claim on `terms`."""
 
         return EntryClaim(
             al_id=self.al_id,
@@ -527,7 +527,6 @@ class EntryFacts:
             names=terms.names,
             preowned_episode_ids=terms.preowned_episode_ids,
             slice_coverage=terms.slice_coverage,
-            claimed_at="",
             guards=self.guards,
         )
 
@@ -587,7 +586,7 @@ class SeedRelease(NamedTuple):
 
 @dataclass(frozen=True, slots=True, kw_only=True)
 class PendingSeed:
-    """One entry's contribution to a torrent's record. Only `record_at` builds the record, with the pipeline's stamp."""
+    """One entry's contribution to a torrent's record."""
 
     facts: TorrentFacts
     """The torrent's identity fields for a new record. A stored record keeps its own."""
@@ -603,22 +602,34 @@ class PendingSeed:
     record pending once the placed files are in."""
 
     claim: EntryClaim
-    """This entry's fresh claim, its `claimed_at` blank until `record_at` stamps it."""
+    """This entry's fresh claim."""
 
     stored: PendingImport | None
     """The stored record this seed joins, None when the torrent is new."""
 
-    @property
-    def accreted(self) -> bool:
-        """Whether the seed joins a stored record."""
+    def joined(self) -> PendingImport | None:
+        """The stored record with this grab joined, None when the torrent is new."""
 
-        return self.stored is not None
+        if self.stored is None:
+            return None
+        # The hand-import files join the stored ones rather than replace them: a grab whose scope can't place
+        # carries none, and would otherwise clear an earlier grab's.
+        return (
+            self.stored.with_placements(self.placements)
+            .with_exclusions(self.excluded)
+            .with_hand_import_files(self.hand_import_files)
+            .with_claim(self.claim)
+            .with_sizes_by_name(self.facts.sizes_by_name)
+        )
 
     def record_at(self, stamp: str, *, fresh: bool) -> PendingImport:
-        """The record to persist: new at `stamp`, or the stored one updated, with every clock reset when `fresh`."""
+        """The record to persist: a new one starting at `stamp`, or the stored one with this grab joined.
 
-        claim = replace(self.claim, claimed_at=stamp)
-        if self.stored is None:
+        `fresh` restarts the stored one at `stamp`: a fresh add is a new download.
+        """
+
+        joined = self.joined()
+        if joined is None:
             return PendingImport(
                 infohash=self.facts.infohash,
                 release_group=self.facts.release_group,
@@ -626,29 +637,17 @@ class PendingSeed:
                 seadex_files=self.facts.seadex_files,
                 added_at=stamp,
                 file_episode_map=self.placements,
-                claims=(claim,),
+                claims=(self.claim,),
                 excluded_files=self.excluded,
                 release_sizes=self.facts.release_sizes,
                 sizes_by_name=self.facts.sizes_by_name,
                 hand_import_files=self.hand_import_files,
             )
-        # The hand-import files join the stored ones rather than replace them: a grab whose scope can't place
-        # carries none, and would otherwise clear an earlier grab's.
-        record = (
-            self.stored.with_placements(self.placements)
-            .with_exclusions(self.excluded)
-            .with_hand_import_files(self.hand_import_files)
-            .with_claim(claim)
-            .with_sizes_by_name(self.facts.sizes_by_name)
-        )
-        if not fresh:
-            return record
-        # A fresh add starts every clock: the birth and each claim's.
-        return replace(record, added_at=stamp, claims=tuple(replace(c, claimed_at=stamp) for c in record.claims))
+        return replace(joined, added_at=stamp) if fresh else joined
 
 
 def build_entry_claim(release: SeedRelease, scope: SeedScope, entry: EntryFacts) -> EntryClaim:
-    """The entry's claim on the release: its window, slice, and preowned ids. Pure, its clock blank."""
+    """The entry's claim on the release: its window, slice, and preowned ids. Pure."""
 
     claimed = release.placed.claimed_ids
     index = scope.entry
