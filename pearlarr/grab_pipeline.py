@@ -237,10 +237,7 @@ class GrabPipeline:
         return False
 
     def _hold_capped(self, url_item: SeadexUrlItem, req: GrabRequest) -> None:
-        """Hold a grabbable url past the cap: the title stays uncached, and a resident torrent keeps its claim.
-
-        The tally lands before the save, so a raise in between never leaves the full-pass gate open.
-        """
+        """Hold a grabbable url past the cap: the title stays uncached, and a resident torrent keeps its claim."""
 
         if not self._ctx.per_title.held_by_cap:
             self._ctx.per_title.held_by_cap = True

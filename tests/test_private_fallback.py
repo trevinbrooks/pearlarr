@@ -31,6 +31,7 @@ from .builders import (
     FakeCacheStore,
     FakeSeaDexSource,
     FakeTorrents,
+    cached_as_done,
     make_entry_record,
     make_grab_pipeline,
     make_planner,
@@ -252,8 +253,8 @@ class TestOwnedPreferredPrivateAtMatchingSize:
         pipe.grab_and_cache(_grab_request(11, plan.seadex_dict, plan.torrent_hashes, entry))
         assert ctx.stats.up_to_date == 1
         assert ctx.stats.needs_action == []
-        assert cache.check_al_id_in_cache(Arr.SONARR, 11, entry) is True
         cached = cache.get_entry(Arr.SONARR, 11)
+        assert cached_as_done(cached, entry) is True
         assert cached is not None
         # The owned PREFERRED private pick satisfied the title, not the idle
         # fallback pool - the false positive the coarse any(is_fallback) had.
@@ -288,8 +289,8 @@ class TestOwnedPreferredPrivateAtMatchingSize:
         pipe.grab_and_cache(_grab_request(22, plan.seadex_dict, plan.torrent_hashes, entry))
         assert ctx.stats.up_to_date == 1
         assert ctx.stats.needs_action == []
-        assert cache.check_al_id_in_cache(Arr.RADARR, 22, entry) is True
         cached = cache.get_entry(Arr.RADARR, 22)
+        assert cached_as_done(cached, entry) is True
         assert cached is not None
         assert cached.fallback_satisfied is False
 
@@ -366,8 +367,8 @@ class TestOwnedFallbackSoftSkip:
 
         assert ctx.stats.up_to_date == 1
         assert ctx.stats.needs_action == []
-        assert cache.check_al_id_in_cache(Arr.SONARR, 11, entry) is True
         cached = cache.get_entry(Arr.SONARR, 11)
+        assert cached_as_done(cached, entry) is True
         assert cached is not None
         # The owned-fallback soft-skip marks the cache, so warn mode re-checks it.
         assert cached.fallback_satisfied is True
@@ -554,7 +555,7 @@ class TestMixedGroupKeeperPreference:
         pipe.grab_and_cache(_grab_request(55, plan.seadex_dict, plan.torrent_hashes, entry))
         assert torrents.calls == [self.H_HASH]
         assert ctx.stats.needs_action == []
-        assert cache.check_al_id_in_cache(Arr.SONARR, 55, entry) is True
+        assert cached_as_done(cache.get_entry(Arr.SONARR, 55), entry) is True
         assert cache.torrent_hashes(Arr.SONARR, 55) == [self.H_HASH]
 
     def test_no_public_batch_boundary_warns_at_add_time(self) -> None:
@@ -606,7 +607,7 @@ class TestMixedGroupKeeperPreference:
         assert ctx.per_title.private_only_skipped is True
         assert ctx.per_title.private_only_groups == ["G"]
         assert torrents.calls == [PUB_HASH]
-        assert cache.check_al_id_in_cache(Arr.SONARR, 56, entry) is True
+        assert cached_as_done(cache.get_entry(Arr.SONARR, 56), entry) is True
 
 
 class TestSurvivingPrivateCoverage:
@@ -686,7 +687,7 @@ class TestSurvivingPrivateCoverage:
         # A non-interactive fallback hold blocks the cache even on a partial grab
         # (the S2 files stay missing), and the no-fallback row resurfaces the title
         # in every run's summary until a covering public release lands.
-        assert cache.check_al_id_in_cache(Arr.SONARR, 33, entry) is False
+        assert cached_as_done(cache.get_entry(Arr.SONARR, 33), entry) is False
         assert [n.kind for n in ctx.stats.needs_action] == [NeedsActionKind.PRIVATE_ONLY_NO_FALLBACK]
         # Exact wording pinned once, in test_grab_pipeline's
         # test_private_only_in_fallback_mode_surfaces_no_alternative.
@@ -768,8 +769,8 @@ class TestPromotionGeneralization:
         assert torrents.calls == [PUB_HASH]
         assert ctx.stats.needs_action == []
         # Nothing is held, so the fallback-hold uncache must not fire.
-        assert cache.check_al_id_in_cache(Arr.SONARR, 66, entry) is True
         cached = cache.get_entry(Arr.SONARR, 66)
+        assert cached_as_done(cached, entry) is True
         assert cached is not None
         # A promoted PREFERRED public group is not a fallback: no marker.
         assert cached.fallback_satisfied is False
@@ -988,7 +989,7 @@ class TestEqualUnionMixedGroups:
             assert set(torrents.calls) == {self.A_PUB_HASH, self.B_PUB_HASH}, f"order={al_id}"
             assert _private_skips(recording), recording.events
             assert ctx.per_title.private_only_skipped is True
-            assert cache.check_al_id_in_cache(Arr.SONARR, al_id, entry) is True
+            assert cached_as_done(cache.get_entry(Arr.SONARR, al_id), entry) is True
 
 
 class _CachedEntryReporter:
@@ -1052,9 +1053,20 @@ class TestModeSwitchResurfacesFallbackSatisfied:
         assert cached is not None
         assert cached.fallback_satisfied is True
 
-        # 2) warn services over the same cache: BOTH gates re-process the id
-        # (prefetch warming and the loop's skip must agree).
+        # 2) a later fallback-mode run skips the marked entry as cached: the marker
+        # re-opens nothing there.
         seadex = FakeSeaDexSource({11: entry})
+        fallback_run = make_services(
+            cache_store=cache,
+            _seadex=seadex,
+            _reporter=_CachedEntryReporter(),
+            private_releases="fallback",
+        )
+        assert fallback_run.al_id_needs_scan(11) is False
+        assert fallback_run.cached_entry_skip(11, entry, lambda: "") is True
+
+        # 3) warn services over the same cache: BOTH gates re-process the id
+        # (prefetch warming and the loop's skip must agree).
         warn_run = make_services(
             cache_store=cache,
             _seadex=seadex,
@@ -1064,7 +1076,7 @@ class TestModeSwitchResurfacesFallbackSatisfied:
         assert warn_run.al_id_needs_scan(11) is True
         assert warn_run.cached_entry_skip(11, entry, lambda: "") is False
 
-        # 3) the warn-mode reprocess warns and holds: the private pick is all
+        # 4) the warn-mode reprocess warns and holds: the private pick is all
         # that's offered (the Arr owns the grabbed fallback's file), nothing is
         # cached, and the marker persists for the next run.
         warn_ctx = RunContext(arr=Arr.SONARR)
@@ -1090,17 +1102,7 @@ class TestModeSwitchResurfacesFallbackSatisfied:
         assert [n.kind for n in warn_ctx.stats.needs_action] == [NeedsActionKind.PRIVATE_ONLY]
         persisted = cache.get_entry(Arr.SONARR, 11)
         assert persisted is not None
-        assert persisted.fallback_satisfied is True  # the hold wrote nothing
-
-        # 4) switching back to fallback mode: the marked entry skips as cached.
-        fallback_run = make_services(
-            cache_store=cache,
-            _seadex=seadex,
-            _reporter=_CachedEntryReporter(),
-            private_releases="fallback",
-        )
-        assert fallback_run.al_id_needs_scan(11) is False
-        assert fallback_run.cached_entry_skip(11, entry, lambda: "") is True
+        assert persisted.fallback_satisfied is True  # the hold left the marker alone
 
 
 class TestFolderLayoutCoverage:

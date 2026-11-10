@@ -20,6 +20,7 @@ import pytest
 import pearlarr
 from pearlarr.cache import (
     SCHEMA_VERSION,
+    CacheRecord,
     CacheSchemaError,
     CacheStore,
     HistoryCheckpoint,
@@ -37,7 +38,7 @@ from pearlarr.sqlite_util import is_corruption
 from pearlarr.stamps import parse_stamp_or_none
 from pearlarr.tvdb_orders import OrderRow, StoredOrders
 
-from .builders import claim_al_ids, entry_claim, make_entry_record, pending_import
+from .builders import cached_as_done, claim_al_ids, entry_claim, make_entry_record, pending_import
 
 # Stand-in for a config-file checksum. `CacheStore` only stamps and compares the
 # value it is handed. It never computes one, so any string works here.
@@ -696,7 +697,7 @@ class TestSchemaVersionGate:
 
 
 class TestEntries:
-    """Per-entry columns merge partially on update, format/match timestamps, and stay isolated per arr."""
+    """Per-entry columns merge partially on update, format and clear timestamps, and stay isolated per arr."""
 
     def test_update_cache_is_a_partial_merge(self, tmp_path: Path) -> None:
         with _open(tmp_path) as store:
@@ -707,30 +708,39 @@ class TestEntries:
             assert entry is not None
             assert (entry.name, entry.url, entry.coverage) == ("Title", "u", "S01")
 
+    def test_clear_entry_stamp_clears_the_timestamp_and_nothing_else(self, tmp_path: Path) -> None:
+        stamped: CacheRecord = {
+            "name": "Title",
+            "url": "u",
+            "updated_at": datetime(2021, 6, 5),
+            "torrent_hashes": ["h1"],
+        }
+        with _open(tmp_path) as store:
+            store.update_cache(Arr.SONARR, 7, stamped)
+            store.update_cache(Arr.RADARR, 7, stamped)
+
+            store.clear_entry_stamp(Arr.SONARR, 7)
+
+            entry = store.get_entry(Arr.SONARR, 7)
+            assert entry is not None
+            assert (entry.updated_at, entry.name, entry.url) == (None, "Title", "u")
+            assert store.torrent_hashes(Arr.SONARR, 7) == ["h1"]
+            # The other arr's row for the same id keeps its timestamp.
+            other = store.get_entry(Arr.RADARR, 7)
+            assert other is not None
+            assert other.updated_at == "2021-06-05 00:00:00"
+
+    def test_clear_entry_stamp_adds_no_row(self, tmp_path: Path) -> None:
+        with _open(tmp_path) as store:
+            store.clear_entry_stamp(Arr.SONARR, 7)
+            assert store.get_entry(Arr.SONARR, 7) is None
+
     def test_update_cache_formats_datetime_timestamp(self, tmp_path: Path) -> None:
         with _open(tmp_path) as store:
             store.update_cache(Arr.SONARR, 7, {"updated_at": datetime(2021, 6, 5, 4, 3, 2)})
             entry = store.get_entry(Arr.SONARR, 7)
             assert entry is not None
             assert entry.updated_at == "2021-06-05 04:03:02"
-
-    def test_check_al_id_in_cache_matches_timestamp(self, tmp_path: Path) -> None:
-        with _open(tmp_path) as store:
-            store.update_cache(Arr.SONARR, 7, {"updated_at": datetime(2021, 6, 5, 4, 3, 2)})
-            assert (
-                store.check_al_id_in_cache(Arr.SONARR, 7, make_entry_record(updated_at=datetime(2021, 6, 5, 4, 3, 2)))
-                is True
-            )
-            # Same id, different timestamp -> stale.
-            assert (
-                store.check_al_id_in_cache(Arr.SONARR, 7, make_entry_record(updated_at=datetime(2022, 1, 1, 0, 0, 0)))
-                is False
-            )
-            # Unknown id -> no record -> no match.
-            assert (
-                store.check_al_id_in_cache(Arr.SONARR, 8, make_entry_record(updated_at=datetime(2021, 6, 5, 4, 3, 2)))
-                is False
-            )
 
     def test_arrs_are_isolated(self, tmp_path: Path) -> None:
         with _open(tmp_path) as store:
@@ -1287,9 +1297,8 @@ class TestRunLifecycle:
 
         # Run 2: reopen -> cache hit, remembered hashes, carried-over pending.
         with _open(tmp_path) as again:
-            assert again.check_al_id_in_cache(
-                Arr.SONARR, 7, make_entry_record(updated_at=datetime(2026, 1, 2, 3, 4, 5))
-            )
+            stamped_under = make_entry_record(updated_at=datetime(2026, 1, 2, 3, 4, 5))
+            assert cached_as_done(again.get_entry(Arr.SONARR, 7), stamped_under)
             assert again.torrent_hashes(Arr.SONARR, 7) == ["aaa", "bbb"]
             assert again.get_pending(Arr.SONARR) == {"aaa": carried}
             # A completed import is dropped, and that drop persists across a save.

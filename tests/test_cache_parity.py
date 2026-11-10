@@ -21,7 +21,7 @@ from pearlarr.config import Arr
 from pearlarr.manual_import import GuardFacts
 from pearlarr.tvdb_orders import OrderRow, StoredOrders
 
-from .builders import FakeCacheStore, entry_claim, make_entry_record, pending_import
+from .builders import FakeCacheStore, entry_claim, pending_import
 
 # fetched_at stamps straddling the eviction cutoff (UPDATED_AT_STR_FORMAT strings).
 _OLD = "2020-01-01 00:00:00"
@@ -66,6 +66,10 @@ def _apply_ops(store: AbstractCacheStore) -> None:
     # A cross-arr row + a duplicate/None hash list, to exercise the dedup + None
     # marker. No fallback_satisfied key, pinning the default-False parity.
     store.update_cache(Arr.RADARR, 99, CacheRecord(name="Movie", torrent_hashes=["z", "z", None]))
+    # A row whose stamp is cleared loses its timestamp and nothing else. Clearing an id with no row adds none.
+    store.update_cache(Arr.SONARR, 8, CacheRecord(name="Cleared", updated_at=_ENTRY_STAMP, torrent_hashes=["hr"]))
+    store.clear_entry_stamp(Arr.SONARR, 8)
+    store.clear_entry_stamp(Arr.SONARR, 4242)
 
     store.put_anilist_meta(7, {"fetched_at": _NEW, "data": {"title": "Show"}})
     store.put_anilist_meta(8, {"fetched_at": _OLD, "data": {"title": "Old"}})
@@ -117,16 +121,16 @@ def _apply_ops(store: AbstractCacheStore) -> None:
 def _observe(store: AbstractCacheStore) -> dict[str, object]:
     """Every observable read the fake-trusting tests rely on, as one comparable snapshot."""
 
-    match_entry = make_entry_record(anilist_id=7, updated_at=_ENTRY_STAMP)
     stats = store.stats()
     return {
         "entry_s7": store.get_entry(Arr.SONARR, 7),
         "entry_r99": store.get_entry(Arr.RADARR, 99),
         "entry_missing": store.get_entry(Arr.SONARR, 4242),
+        "entry_cleared": store.get_entry(Arr.SONARR, 8),
         "hashes_s7": store.torrent_hashes(Arr.SONARR, 7),
+        "hashes_cleared": store.torrent_hashes(Arr.SONARR, 8),
         "hashes_r99": store.torrent_hashes(Arr.RADARR, 99),
-        "check_match": store.check_al_id_in_cache(Arr.SONARR, 7, match_entry),
-        "check_wrong_arr": store.check_al_id_in_cache(Arr.RADARR, 7, match_entry),
+        "entry_wrong_arr": store.get_entry(Arr.RADARR, 7),
         "anilist_7": store.get_anilist_meta(7),
         "anilist_all": dict(store.iter_anilist_meta()),
         "sonarr_parse_fresh": store.get_sonarr_parse("fresh.mkv"),

@@ -45,7 +45,6 @@ from .seadex_types import (
 )
 from .skyhook_client import SkyHookClient
 from .skyhook_gateway import SkyHookGateway
-from .stamps import stamp_of
 from .torrents import TorrentService
 
 
@@ -403,9 +402,15 @@ class RunServices:
         al_id: int,
         seadex_entry: EntryRecord,
     ) -> bool:
-        """Whether the cached entry matches SeaDex's last-updated timestamp."""
+        """Whether `arr`'s cache has the title as its own: stamped with SeaDex's current update time, or unstamped.
 
-        return self.cache_store.check_al_id_in_cache(arr, al_id, seadex_entry)
+        The Sonarr run asks this about Radarr, to leave Radarr's movies alone. A row with no stamp counts: Radarr's
+        check of the movie is unfinished, or its download left qBittorrent. A row stamped under an older update
+        doesn't, and the Sonarr run goes on to Radarr's movie list.
+        """
+
+        entry = self.cache_store.get_entry(arr, al_id)
+        return entry is not None and (entry.updated_at is None or entry.cached_under(seadex_entry.updated_at))
 
     def al_id_needs_scan(self, al_id: int) -> bool:
         """Side-effect-free mirror of process_al_id's no-entry + cached_entry_skip gates.
@@ -413,8 +418,8 @@ class RunServices:
         True iff the per-id loop would actually process this id. Lets
         prefetch_episodes warm only the series the loop won't short-circuit
         (no SeaDex entry, or cached and unchanged), instead of every mapped
-        series. No logging / stats / backfill - purely a predicate over the
-        warmed SeaDex cache and the entry cache.
+        series. No logging / stats / backfill / stamp clear - purely a predicate
+        over the warmed SeaDex cache and the entry cache.
         """
 
         sd_entry = self._seadex.entry(al_id)  # warmed cache, no network
@@ -430,8 +435,7 @@ class RunServices:
         the two must agree or un-warmed ids hit AniList one at a time. Run-wide
         bypasses come first (no db read): the ignore flag, a selection-digest
         change (matching preferences moved, so every cached verdict is suspect),
-        or a dirty id. Then the SeaDex-timestamp compare
-        (mirrors `check_al_id_in_cache`), then warn mode re-processes
+        or a dirty id. Then the SeaDex-timestamp compare, then warn mode re-processes
         fallback-satisfied entries, so their private-only warning resurfaces
         after a switch back from fallback mode.
         """
@@ -439,7 +443,7 @@ class RunServices:
         if self._config.seadex.ignore_seadex_update_times or self._selection_stale or al_id in self._dirty_al_ids:
             return None
         entry = self.cache_store.get_entry(self._ctx.arr, al_id)
-        if entry is None or entry.updated_at != stamp_of(sd_entry.updated_at):
+        if entry is None or not entry.cached_under(sd_entry.updated_at):
             return None
         if entry.fallback_satisfied and self._config.seadex.private_releases is PrivateReleaseAction.WARN:
             return None
@@ -624,7 +628,11 @@ class RunServices:
         sd_entry: EntryRecord,
         coverage: Callable[[], str],
     ) -> bool:
-        """Shared cached-entry short-circuit: backfill, log, and return True when the id is cached and skippable.
+        """The cached-entry gate both strategies pass each id through: True skips it, False sends it on to a check.
+
+        A skip backfills what an older row lacks and logs the cached block. A title sent on has its row's stamp
+        cleared here, before anything in the check can fail: `grab_and_cache` (when the outcome may be
+        cached as done) and `no_releases_skip` are the two writes that stamp it again.
 
         `coverage` stays a callable so the (for Sonarr, episode-fetching) lookup runs only on the
         one-time url backfill, never on the common already-backfilled path.
@@ -632,6 +640,9 @@ class RunServices:
 
         entry = self._skippable_entry(al_id, sd_entry)
         if entry is None:
+            # A forced re-check finds the row already stamped with SeaDex's current update time. Left so, a check
+            # that ends in a failed grab, a hold or an error would leave the title skipped as cached from then on.
+            self.cache_store.clear_entry_stamp(self._ctx.arr, al_id)
             return False
 
         # One-time backfills merged into a single write: the url + coverage an older record lacks,
