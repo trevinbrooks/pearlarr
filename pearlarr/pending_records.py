@@ -142,6 +142,19 @@ class PendingRecords:
         self._store.drop_pending(self._ctx.arr, infohash)
         self._ctx.pending_imports.pop(infohash, None)
 
+    def drop_unimported(self, record: PendingImport) -> None:
+        """Remove the record of a torrent that left qBittorrent unimported, and have the next run check its titles.
+
+        A title is cached as done once its torrent is added, so each claiming title's stamp is cleared. The check
+        grabs the release again when the arr still lacks it. The remembered hash stays: hash mode can't see what
+        the arr holds, so forgetting it would download again a release imported by hand before the torrent was
+        removed.
+        """
+
+        self.drop(record.infohash)
+        for claim in record.claims:
+            self._store.clear_entry_stamp(self._ctx.arr, claim.al_id)
+
     def other_arr_holds(self, infohash: str) -> bool:
         """Whether the other arr still holds a record on the torrent (the category move defers on it)."""
 

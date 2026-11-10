@@ -69,7 +69,7 @@ def graduation_tail(event: TorrentGraduated) -> str:
     if not outcome.dropped:
         return "retries next run"
     # The only other dropped outcome is MISSING: the torrent is gone from qBittorrent.
-    return "no longer tracked"
+    return "no longer tracked · title checked again next run"
 
 
 # --- the durable ledger-line builders (the rich console's scrollback) ----------------

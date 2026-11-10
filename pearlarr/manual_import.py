@@ -414,7 +414,7 @@ class Outcome(Enum):
     """A torrent's terminal result in the wait pass, with its rendering vocab."""
 
     IMPORTED = ("imported", "imported", OutcomeCategory.SUCCESS, True)
-    MISSING = ("gone", "gone from qBittorrent", OutcomeCategory.FAILED, True)
+    MISSING = ("gone", "gone from qBittorrent; title checked again next run", OutcomeCategory.FAILED, True)
     DOWNLOAD_ERRORED = ("errored", "download errored; left pending", OutcomeCategory.FAILED, False)
     DOWNLOAD_TIMED_OUT = ("timed out", "download timed out; left pending", OutcomeCategory.DEFERRED, False)
     NO_CONTENT_PATH = (

@@ -373,6 +373,8 @@ class ImportWaitManager:
     def resolve_terminal(self, record: PendingImport, outcome: Outcome, *, carried_over: bool) -> None:
         """One terminal outcome's store effects: retire on IMPORTED, drop on MISSING, else fold the state.
 
+        A MISSING drop also clears its titles' stamps, so the next run checks them again.
+
         Callers freeze their frame / result row only after this returns: a raising
         retire or drop must leave no phantom row for _finalize_run to count.
         """
@@ -381,8 +383,8 @@ class ImportWaitManager:
             # A failed retire keeps the record flagged: the result row still counts the import,
             # and the flag keeps every later counter off the key.
             self._cleanup.retire(record)
-        elif outcome.dropped:
-            self._records.drop(record.infohash)
+        elif outcome is Outcome.MISSING:
+            self._records.drop_unimported(record)
         elif carried_over:
             # Still store-resident: fold the outcome so the check pass's tally buckets
             # it truthfully (the monitor runs post-tally, where the fold is unread).
@@ -401,8 +403,11 @@ class ImportWaitManager:
             # A kept-for-cleanup record still counts here: the import happened this run.
             self._cleanup.retire(pending)
         elif state is PendingState.MISSING:
-            self._records.drop(pending.infohash)
-            hub_warn(f"Pending import {pending.display_label} is gone from qBittorrent - dropping its record")
+            self._records.drop_unimported(pending)
+            hub_warn(
+                f"Pending import {pending.display_label} is gone from qBittorrent - dropping its record "
+                "(title checked again next run)"
+            )
         elif state is PendingState.ERRORED:
             self.logger.debug(f"Pending import {pending.display_label} errored in qBittorrent - left for a later run")
         self._ctx.pending_states[pending.infohash] = state
