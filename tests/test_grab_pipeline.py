@@ -45,7 +45,6 @@ from pearlarr.output import (
     severity_of,
 )
 from pearlarr.output.recording import RecordingHub
-from pearlarr.planner import PrivateOnlySkips
 from pearlarr.reporter import NeedsActionKind, PerTitleState, RunContext
 from pearlarr.seadex_types import ElsewhereCounts, GrabHold, SeadexDict, SeadexUrlItem
 from pearlarr.stamps import now_stamp, stamp_of
@@ -1087,24 +1086,6 @@ class TestFallbackMarker:
         cached = pipeline.cache_store.get_entry(Arr.SONARR, 7)
         assert cached is not None
         assert cached.fallback_satisfied is False
-
-    def test_owned_fallback_soft_skip_marks_the_title(self) -> None:
-        # The planner reported its soft-skip (a public fallback already covers the private
-        # pick's files): the title caches as done, marked so warn mode re-checks it.
-        private = url_item(url="https://ab.example/1", infohash="hp", is_public=False, download=False)
-        private.tracker = Tracker.ANIMEBYTES
-        fall = url_item(url="https://nyaa.si/view/9", infohash="hf", download=False, is_fallback=True)
-        fall.tracker = Tracker.NYAA
-        seadex_dict: SeadexDict = {"Priv": rg_group({private.url: private}), "Fall": rg_group({fall.url: fall})}
-
-        pipeline = _pipeline(torrents=FakeTorrents({}), private_releases="fallback", sleep_time=0)
-        pipeline._ctx.per_title.absorb_skips(PrivateOnlySkips(fallback_covered=True))
-
-        pipeline.grab_and_cache(_entry_request(seadex_dict))
-
-        cached = pipeline.cache_store.get_entry(Arr.SONARR, 42)
-        assert cached is not None
-        assert cached.fallback_satisfied is True
 
 
 def _entry_request(seadex_dict: SeadexDict, *, input_missing: bool = False) -> GrabRequest:

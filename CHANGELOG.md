@@ -21,6 +21,7 @@ Pearlarr is a fork of [bbtufty/seadexarr](https://github.com/bbtufty/seadexarr).
 - A download that leaves qBittorrent before it imports has its title checked again: the run that notices says so, and the run after it grabs the release again if your library still lacks it. Before, the title stayed cached as handled until SeaDex updated its entry or something else made Pearlarr re-check it. So removing a download no longer stops Pearlarr wanting the release: to stop a title for good, add its AniList ID to `seadex.ignore_anilist_ids`. With `imports.wait_mode: off` Pearlarr doesn't track downloads, so it never sees one leave.
 - The first run after upgrading re-checks every cached title once and says so. That picks up any title an earlier version stopped checking (see Fixed below).
 - When the re-check after an upgrade or a settings change holds grabs past `advanced.max_torrents_to_add`, the next run checks only the titles it held. Before, every run re-checked the whole library and printed the "Matching settings changed" note until one held nothing.
+- With `seadex.private_releases: fallback`, the "private-only; a public fallback already covers these files" note is gone. It was how matching by torrent hash said a fallback it had grabbed stood in for a private release. Matching by file size doesn't want the private release when your library holds the fallback's files, so the title reads as already having the recommended release.
 
 ### Removed
 

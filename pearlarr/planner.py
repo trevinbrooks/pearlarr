@@ -37,8 +37,8 @@ class SkipNotice:
     """A release dropped for being private, for the caller to log.
 
     Rendered by the orchestrator as `"<groups> <reason>"` on a `skipped`
-    detail line. A warn-and-hold skip logs at WARNING. A drop covered by a
-    public fallback logs at INFO.
+    detail line. A warn-and-hold skip logs at WARNING. A drop with a public
+    group grabbed in its place logs at INFO.
     """
 
     groups: list[str]
@@ -51,8 +51,8 @@ class PrivateOnlySkips:
     """The private-only skip outcome of `reduce_overlapping_downloads`."""
 
     skipped: bool = False
-    """True when at least one set of same-files release groups was dropped because none were available
-    publicly and no public fallback covered the same files."""
+    """True when at least one same-files set was dropped with a warning: none of its flagged groups was
+    public, and no public group was promoted in their place."""
     groups: list[str] = field(default_factory=list[str])
     """The dropped groups' names, for the run summary."""
     notices: list[SkipNotice] = field(default_factory=list[SkipNotice])
@@ -60,9 +60,6 @@ class PrivateOnlySkips:
     stale_held: bool = False
     """A hold where the Arr owns the preferred private release at a stale size and only a fallback could
     stand in. A fallback never replaces an owned copy."""
-    fallback_covered: bool = False
-    """The owned-fallback soft-skip: the Arr genuinely owns a public fallback's files. Drives the cache's
-    fallback-satisfied marker."""
 
 
 @dataclass
@@ -890,14 +887,12 @@ class DownloadPlanner:
         prefer a public release group and drop the private ones (private
         releases are never grabbed). If the only options are private, we
         record a warning SkipNotice and skip the title (without caching it as
-        done) rather than grabbing a private release - unless an unflagged
-        public group covering the same files rides along (a
-        `private_releases: fallback` stand-in or a preferred public pick).
-        Then the private groups are dropped with an INFO notice instead: a
-        *preferred* public group is promoted (grabbed) when a private flag was
-        an upgrade over held files (a stale size, or a file on too many
-        episodes), and left alone when the Arr genuinely already owns its files. A fallback is never promoted over an owned copy of the
-        preferred private release - those sets warn and hold (`stale_held`).
+        done) rather than grabbing a private release. The one way out: when
+        a private flag is an upgrade over held files (a stale size, or a file
+        on too many episodes) and an unflagged *preferred* public group covers
+        the same files, that group is promoted (grabbed) with an INFO notice.
+        A fallback is never promoted over an owned copy of the preferred
+        private release - those sets warn and hold (`stale_held`).
 
         After each set resolves, just-dropped public urls whose coverage no
         surviving url carries are re-flagged (group-atomic drops must not lose
@@ -970,41 +965,26 @@ class DownloadPlanner:
         upgrade_pending = any(u.upgrade for rg in flagged for u in seadex_dict[rg].urls.values())
 
         if len(public_flagged) == 0:
-            # An unflagged public group in THIS same-files set can stand in
-            # (fallback or preferred, a flagged one would have taken the keeper
-            # branch below). A public group covering OTHER files doesn't excuse
-            # dropping this set, so the gate is per-set, never per-entry.
-            fallback_rides = any(_is_fallback_group(seadex_dict[rg]) for rg in same_files.names)
+            # Only an unflagged preferred public group in THIS same-files set
+            # can be promoted in its place (a flagged one would have taken the
+            # keeper branch below). A public group covering OTHER files never
+            # stands in, so the search is per-set, never per-entry.
             if upgrade_pending:
                 promoted = self._promote_public_alternative(seadex_dict, same_files)
                 if promoted is not None:
                     skips.notices.append(_promotion_notice(flagged, "private-only", promoted))
                     self._unflag_all(seadex_dict, same_files)
                     return
-            elif fallback_rides:
-                # Unflagged with no size mismatch: the Arr genuinely already
-                # owns the fallback's files.
-                skips.fallback_covered = True
-                skips.notices.append(
-                    SkipNotice(
-                        groups=list(flagged),
-                        reason="private-only; a public fallback already covers these files",
-                        severity=Severity.INFO,
-                    ),
-                )
-                self._unflag_all(seadex_dict, same_files)
-                return
 
-            # The Arr has none of these release groups, private grabs are off,
-            # and no promotable public url covers the same files. Don't grab a
-            # private release, just record a skip notice and skip. Flag the skip
-            # so the caller doesn't cache the title as done. A riding fallback
-            # here means a held preferred pick (a stale size, or misplaced files)
-            # it must not replace (only reachable upgrade-pending, the soft-skip
-            # consumed the other case): mark the stale hold for the summary row.
+            # Private grabs are off and no promotable public url covers the
+            # same files. Don't grab a private release, just record a skip
+            # notice and skip. Flag the skip so the caller doesn't cache the
+            # title as done. An upgrade flag with a fallback in the set means a
+            # held preferred pick (a stale size, or misplaced files) the
+            # fallback must not replace: mark the stale hold for the summary row.
             # Invariant: a fallback substitute never replaces an owned copy of the
             # preferred private release - those sets hold and warn every run.
-            if fallback_rides:
+            if upgrade_pending and any(_is_fallback_group(seadex_dict[rg]) for rg in same_files.names):
                 reason = (
                     "private-only; your copy is outdated (its file size no longer matches the release) "
                     "and only a fallback covers it"

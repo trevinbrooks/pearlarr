@@ -328,8 +328,8 @@ class GrabPipeline:
         """
 
         per_title = self._ctx.per_title
-        # A non-interactive fallback-mode private hold means the fallback COULDN'T cover these files: never cache, so
-        # every run re-checks and resurfaces it. Warn mode and interactive picks keep the plain gate.
+        # A non-interactive fallback-mode private hold means nothing public was grabbed for these files: never cache,
+        # so every run re-checks and resurfaces it. Warn mode and interactive picks keep the plain gate.
         fallback_hold = (
             per_title.private_only_skipped
             and self._config.seadex.private_releases is PrivateReleaseAction.FALLBACK
@@ -441,10 +441,9 @@ class GrabPipeline:
 
         if self._should_cache_as_done(added_this_title=added_this_title):
             # Always written: the partial-merge upsert would otherwise preserve a stale True.
-            fallback_satisfied = self._ctx.per_title.fallback_covered or any(
+            req.cache_details["fallback_satisfied"] = any(
                 u.is_fallback and u.download for rg_item in req.seadex_dict.values() for u in rg_item.urls.values()
             )
-            req.cache_details["fallback_satisfied"] = fallback_satisfied
             self.cache_store.update_cache(
                 self._ctx.arr,
                 req.al_id,
