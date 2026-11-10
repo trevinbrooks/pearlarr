@@ -260,18 +260,3 @@ def test_rundeps_build_category_handle_derives_from_arr_http(
     assert category_http is not None
     assert category_http.retries == 0
     assert category_http.streaks is deps.arr_http.streaks
-
-
-def test_sonarr_cross_check_builds_without_network_via_radarr_seam() -> None:
-    # With ignore_movies_in_radarr on, SonarrSync.__init__ used to hard-build a
-    # RadarrClient and eagerly fetch its library (in the constructor) - the one
-    # arr client construction without a seam. The injected fake makes the REAL
-    # __init__ testable with the feature ON. Empty mappings -> no movies collected.
-    deps = make_run_deps(config=make_config(url="http://sonarr", api_key="key", ignore_movies_in_radarr=True))
-    services = RunServices(deps, Arr.SONARR)
-    fake = FakeRadarrClient()
-
-    strat = SonarrSync(deps, services, sonarr_client=FakeSonarrClient(), radarr_client=fake)
-
-    assert strat.ignore_movies_in_radarr is True
-    assert strat.all_radarr_movies == []

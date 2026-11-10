@@ -327,7 +327,6 @@ class EntryState(StrEnum):
     """The outcome word in an entry-ledger row's state column. The widest value fixes STATE_WIDTH."""
 
     UNCHANGED = "unchanged"
-    IN_RADARR = "in radarr"
     CHECKING = "checking"
     UNMONITORED = "unmonitored"
     NO_MAPPING = "no mapping"

@@ -178,6 +178,12 @@ NO_MAPPING_LINES: tuple[Line, ...] = (
     _styled("  no mapping  Unmapped Show", "grey50"),
 )
 
+NO_EPISODES_ROW = LedgerRow(state=EntryState.NO_EPISODES, label="Episodeless Show")
+NO_EPISODES_LINES: tuple[Line, ...] = (
+    _blank(),
+    _styled("  no episodes Episodeless Show", "grey50"),
+)
+
 IGNORED_ROW = LedgerRow(state=EntryState.IGNORED, label="AniList #123")
 IGNORED_LINES: tuple[Line, ...] = (
     _blank(),
@@ -235,13 +241,6 @@ CACHED_FULL_LINES: tuple[Line, ...] = (
     _styled("  unchanged   Cached Show", "grey50"),
     _detail("    files     S01 E01-E12", "files", "S01 E01-E12"),
     _detail("    link      https://releases.moe/20997", "link", "https://releases.moe/20997"),
-)
-
-CACHED_IN_RADARR = EntryHeader(state=EntryState.IN_RADARR, title="Cached Movie", url="https://releases.moe/64")
-CACHED_IN_RADARR_LINES: tuple[Line, ...] = (
-    _blank(),
-    _styled("  in radarr   Cached Movie", "grey50"),
-    _detail("    link      https://releases.moe/64", "link", "https://releases.moe/64"),
 )
 
 CACHED_BARE = EntryHeader(state=EntryState.UNCHANGED, title="Bare Show")
@@ -823,8 +822,7 @@ def _seeded_store() -> FakeCacheStore:
         1,
         CacheRecord(name="Cached Show", coverage="S01 E01-E12", url="https://releases.moe/20997"),
     )
-    store.update_cache(Arr.RADARR, 2, CacheRecord(name="Cached Movie", url="https://releases.moe/64"))
-    store.update_cache(Arr.SONARR, 3, CacheRecord(name="Bare Show"))
+    store.update_cache(Arr.SONARR, 2, CacheRecord(name="Bare Show"))
     return store
 
 
@@ -851,7 +849,7 @@ class TestBannerParity:
 
 
 class TestLedgerRowParity:
-    """The self-contained ledger rows (unmonitored, no-mapping, ignored) reproduce their pinned golden lines."""
+    """The self-contained ledger rows (unmonitored, no-mapping, no-episodes, ignored) reproduce their golden lines."""
 
     def test_unmonitored(self) -> None:
         harness = _Harness()
@@ -862,6 +860,11 @@ class TestLedgerRowParity:
         harness = _Harness()
         harness.reporter.log_no_anilist_mappings(RunContext(arr=Arr.SONARR), "Unmapped Show")
         assert harness.lines() == NO_MAPPING_LINES
+
+    def test_no_episodes(self) -> None:
+        harness = _Harness()
+        harness.reporter.log_no_episodes("Episodeless Show")
+        assert harness.lines() == NO_EPISODES_LINES
 
     def test_ignored(self) -> None:
         harness = _Harness()
@@ -894,17 +897,12 @@ class TestEntryHeaderParity:
 
     def test_cached_full_row(self) -> None:
         harness = _Harness(store=_seeded_store())
-        harness.reporter.log_cached_entry(RunContext(arr=Arr.SONARR), Arr.SONARR, 1)
+        harness.reporter.log_cached_entry(RunContext(arr=Arr.SONARR), 1)
         assert harness.lines() == CACHED_FULL_LINES
-
-    def test_cached_in_radarr(self) -> None:
-        harness = _Harness(store=_seeded_store())
-        harness.reporter.log_cached_entry(RunContext(arr=Arr.SONARR), Arr.RADARR, 2, state=EntryState.IN_RADARR)
-        assert harness.lines() == CACHED_IN_RADARR_LINES
 
     def test_cached_without_coverage_or_url_renders_just_the_row(self) -> None:
         harness = _Harness(store=_seeded_store())
-        harness.reporter.log_cached_entry(RunContext(arr=Arr.SONARR), Arr.SONARR, 3)
+        harness.reporter.log_cached_entry(RunContext(arr=Arr.SONARR), 2)
         assert harness.lines() == CACHED_BARE_LINES
 
     def test_pending_snapshots(self) -> None:
@@ -1375,7 +1373,7 @@ class TestScopeLifecycle:
         harness.reporter.log_arr_item_unmonitored(ctx, "Unmon")
         harness.reporter.log_no_anilist_mappings(ctx, "NoMap")
         harness.reporter.log_ignored_anilist_id(ctx, 7)
-        harness.reporter.log_entry_status(EntryState.IN_RADARR, "Owned")
+        harness.reporter.log_no_episodes("NoEps")
 
         assert not any(isinstance(e, (ScopeOpened, ScopeClosed)) for e in harness.events)
         assert all(isinstance(e, LedgerRow) for e in harness.events)

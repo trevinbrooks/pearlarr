@@ -72,7 +72,7 @@
     },
     "ArrSettings": {
       "additionalProperties": false,
-      "description": "Radarr connection and behavior. `url` and `api_key` are required only when a Radarr run actually executes. A Sonarr-only config still loads.",
+      "description": "Connection and per-run behavior for one arr. The `sonarr` and `radarr` groups share these keys.",
       "properties": {
         "url": {
           "anyOf": [
@@ -517,100 +517,20 @@
       },
       "title": "SeadexSettings",
       "type": "object"
-    },
-    "SonarrSettings": {
-      "additionalProperties": false,
-      "description": "Sonarr connection and behavior. `url` and `api_key` are required only when a Sonarr run actually executes. A Radarr-only config still loads.",
-      "properties": {
-        "url": {
-          "anyOf": [
-            {
-              "type": "string"
-            },
-            {
-              "type": "null"
-            }
-          ],
-          "default": null,
-          "description": "Base URL of the instance's web UI, e.g. `http://localhost:8989` for Sonarr or `http://localhost:7878` for Radarr. Blank leaves this arr unconfigured and its runs are skipped.",
-          "title": "Url"
-        },
-        "api_key": {
-          "anyOf": [
-            {
-              "format": "password",
-              "type": "string",
-              "writeOnly": true
-            },
-            {
-              "type": "null"
-            }
-          ],
-          "default": null,
-          "description": "API key of the instance, from Settings > General in its web UI. Blank leaves this arr unconfigured and its runs are skipped.",
-          "title": "Api Key"
-        },
-        "verify_ssl": {
-          "default": true,
-          "description": "Verify the instance's HTTPS certificate. Turn off only for a self-signed instance whose CA cannot be trusted via the OS store or `SSL_CERT_FILE`.",
-          "title": "Verify Ssl",
-          "type": "boolean"
-        },
-        "ignore_unmonitored": {
-          "default": false,
-          "description": "Skip items the arr does not monitor. For Radarr this means unmonitored movies. For Sonarr, unmonitored series or entries whose episodes are all unmonitored.",
-          "title": "Ignore Unmonitored",
-          "type": "boolean"
-        },
-        "torrent_category": {
-          "anyOf": [
-            {
-              "type": "string"
-            },
-            {
-              "type": "null"
-            }
-          ],
-          "default": null,
-          "description": "qBittorrent category applied to torrents grabbed for this arr. Omitted adopts the category set on this arr's own qBittorrent download client; an explicit blank (`\"\"`) keeps no category at all. The adopted client should be the qBittorrent instance Pearlarr itself talks to; with several enabled, the lowest priority number wins (the arr's own per-download pick is not predictable from outside).",
-          "title": "Torrent Category"
-        },
-        "post_import_category": {
-          "anyOf": [
-            {
-              "type": "string"
-            },
-            {
-              "type": "null"
-            }
-          ],
-          "default": null,
-          "description": "qBittorrent category applied once every import using a torrent grabbed for this arr has completed. Lets finished torrents carry their own seeding rules. A torrent shared by several entries, or by Sonarr and Radarr, moves only after all of them have imported. Point delete-with-data cleanup scripts at this category alone - a SeaDex update can attach a new entry to an already-moved torrent, and deleted data is re-downloaded. Omitted adopts the post-import category set on this arr's own qBittorrent download client (the same client pick as `torrent_category`); an explicit blank (`\"\"`) keeps the add-time category. Ignored when `imports.wait_mode` is `off`.",
-          "title": "Post Import Category"
-        },
-        "ignore_movies_in_radarr": {
-          "default": false,
-          "description": "Skip movies that already exist in Radarr instead of also grabbing them on the Sonarr side.",
-          "title": "Ignore Movies In Radarr",
-          "type": "boolean"
-        }
-      },
-      "title": "SonarrSettings",
-      "type": "object"
     }
   },
   "additionalProperties": false,
   "description": "The full validated config: one submodel per settings group.",
   "properties": {
     "config_version": {
-      "default": 4,
+      "default": 5,
       "description": "Schema version of the config file's keys and values. A file from an older Pearlarr is migrated automatically: every load brings it forward in memory, and a run rewrites the file itself (keeping a backup).",
       "minimum": 1,
       "title": "Config Version",
       "type": "integer"
     },
     "sonarr": {
-      "$ref": "#/$defs/SonarrSettings",
+      "$ref": "#/$defs/ArrSettings",
       "description": "Sonarr connection and behavior. `url` and `api_key` are required only when a Sonarr run actually executes. A Radarr-only config still loads."
     },
     "radarr": {

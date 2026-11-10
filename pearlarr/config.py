@@ -234,13 +234,12 @@ class _ConfigBase(BaseModel):
 
 
 class ArrSettings(_ConfigBase):
-    """Connection + per-arr behavior, shared by the `sonarr` and `radarr` groups.
+    """Connection and per-run behavior for one arr. The `sonarr` and `radarr` groups share these keys.
 
     `api_key` is a `SecretStr` so a dumped/logged model masks it.
-    `AppConfig.require_connection` (and the Sonarr->Radarr cross-check)
-    unwrap it at the client-construction boundary. `verify_ssl: false` is the
-    last-resort escape hatch for a self-signed arr whose CA can't be trusted via
-    the OS store / `SSL_CERT_FILE`.
+    `AppConfig.require_connection` unwraps it at the client-construction
+    boundary. `verify_ssl: false` is the last-resort escape hatch for a
+    self-signed arr whose CA can't be trusted via the OS store / `SSL_CERT_FILE`.
     """
 
     url: str | None = None
@@ -293,17 +292,6 @@ class ArrSettings(_ConfigBase):
     `torrent_category`); an explicit blank (`""`) keeps the add-time category.
     Ignored when `imports.wait_mode` is `off`.
     """
-
-
-class SonarrSettings(ArrSettings):
-    """Sonarr adds one cross-arr flag the Radarr group must not accept.
-
-    `ignore_movies_in_radarr` is read only on a Sonarr run. Declaring it here (not
-    on the shared base) means `extra="forbid"` correctly rejects it under `radarr`.
-    """
-
-    ignore_movies_in_radarr: bool = False
-    """Skip movies that already exist in Radarr instead of also grabbing them on the Sonarr side."""
 
 
 class QbittorrentSettings(_ConfigBase):
@@ -724,7 +712,7 @@ class AppConfig(_ConfigBase):
     it forward in memory, and a run rewrites the file itself (keeping a backup).
     """
 
-    sonarr: SonarrSettings = Field(default_factory=SonarrSettings)
+    sonarr: ArrSettings = Field(default_factory=ArrSettings)
     """Sonarr connection and behavior.
 
     `url` and `api_key` are required only when a Sonarr run actually executes.
@@ -857,11 +845,7 @@ class AppConfig(_ConfigBase):
         return self.sonarr if arr is Arr.SONARR else self.radarr
 
     def is_configured(self, arr: Arr) -> bool:
-        """Whether the arr's connection pair (url + api_key) is filled in.
-
-        The CLI uses this to skip an unconfigured arr cleanly (a Sonarr-only
-        setup is normal) instead of tripping `require_connection`.
-        """
+        """Whether the arr's connection pair (url + api_key) is filled in."""
 
         return not self.missing_arr_keys(arr)
 

@@ -11,7 +11,6 @@ this module only and never see the loop type.
 import logging
 from collections.abc import Callable, Iterable
 from dataclasses import dataclass, replace
-from typing import Literal
 
 import httpx
 import qbittorrentapi
@@ -26,7 +25,6 @@ from .cache import AbstractCacheStore, CachedEntry, CacheRecord, CacheStore
 from .clock import Clock, SystemClock
 from .config import AppConfig, Arr, ArrSettings, PrivateReleaseAction, secret_value
 from .grab_pipeline import GrabPipeline, GrabRequest
-from .log import EntryState
 from .manual_import import ImportWaitMode
 from .mappings import ExternalIds, MappingEntry, MappingResolver, ResolvedMappings
 from .notify import Notifier
@@ -396,22 +394,6 @@ class RunServices:
 
         return self._records
 
-    def check_al_id_in_cache(
-        self,
-        arr: Arr,
-        al_id: int,
-        seadex_entry: EntryRecord,
-    ) -> bool:
-        """Whether `arr`'s cache has the title as its own: stamped with SeaDex's current update time, or unstamped.
-
-        The Sonarr run asks this about Radarr, to leave Radarr's movies alone. A row with no stamp counts: Radarr's
-        check of the movie is unfinished, or its download left qBittorrent. A row stamped under an older update
-        doesn't, and the Sonarr run goes on to Radarr's movie list.
-        """
-
-        entry = self.cache_store.get_entry(arr, al_id)
-        return entry is not None and (entry.updated_at is None or entry.cached_under(seadex_entry.updated_at))
-
     def al_id_needs_scan(self, al_id: int) -> bool:
         """Side-effect-free mirror of process_al_id's no-entry + cached_entry_skip gates.
 
@@ -655,7 +637,7 @@ class RunServices:
             backfill["name"] = name
         if backfill:
             self._update_cache(al_id=al_id, cache_details=backfill)
-        self._reporter.log_cached_entry(self._ctx, self._ctx.arr, al_id)
+        self._reporter.log_cached_entry(self._ctx, al_id)
         return True
 
     def grab_and_cache(self, req: GrabRequest) -> None:
@@ -675,9 +657,9 @@ class RunServices:
     # only log_* methods kept here are the ones the Sonarr/Radarr strategies
     # invoke through their services view. Each delegates the same way.
 
-    def log_entry_status(self, state: EntryState, label: str) -> None:
-        """Log a one-line entry status row (delegates to RunReporter)."""
-        self._reporter.log_entry_status(state, label)
+    def log_no_episodes(self, title: str) -> None:
+        """Log a title whose mapping resolved no episodes (delegates to RunReporter)."""
+        self._reporter.log_no_episodes(title)
 
     def log_anilist_item_unmonitored(self, item_title: str) -> None:
         """Log an unmonitored-item skip (delegates to RunReporter)."""
@@ -696,15 +678,6 @@ class RunServices:
             sd_entry,
             coverage=coverage,
         )
-
-    def log_cached_entry(
-        self,
-        arr: Arr,
-        al_id: int,
-        state: Literal[EntryState.UNCHANGED, EntryState.IN_RADARR] = EntryState.UNCHANGED,
-    ) -> None:
-        """Log a cached entry (delegates to RunReporter)."""
-        self._reporter.log_cached_entry(self._ctx, arr, al_id, state=state)
 
     def _log_no_seadex_releases(self) -> None:
         """Log a no-suitable-releases outcome (delegates to RunReporter)."""

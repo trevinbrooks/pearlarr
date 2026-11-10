@@ -20,7 +20,6 @@ from seadex import EntryRecord, TorrentRecord, Tracker
 
 from pearlarr.config import Arr
 from pearlarr.grab_pipeline import GrabRequest
-from pearlarr.log import EntryState
 from pearlarr.output import EntryDetail, ReleaseSkipped, Severity, SkipReason, install_hub, uninstall_hub
 from pearlarr.output.recording import RecordingHub
 from pearlarr.reporter import NeedsActionKind, RunContext
@@ -995,15 +994,8 @@ class TestEqualUnionMixedGroups:
 class _CachedEntryReporter:
     """Just enough reporter surface for `cached_entry_skip`'s logging tail."""
 
-    def log_cached_entry(
-        self,
-        ctx: RunContext,
-        arr: Arr,
-        al_id: int,
-        state: EntryState = EntryState.UNCHANGED,
-    ) -> bool:
-        del ctx, arr, al_id, state
-        return True
+    def log_cached_entry(self, ctx: RunContext, al_id: int) -> None:
+        del ctx, al_id
 
 
 class TestModeSwitchResurfacesFallbackSatisfied:

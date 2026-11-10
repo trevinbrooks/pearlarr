@@ -20,7 +20,7 @@ import yaml
 from .json_narrow import is_json_obj
 from .seadex_types import Json
 
-CONFIG_VERSION = 4
+CONFIG_VERSION = 5
 
 # The one remediation sentence, shared by every surface that reports an
 # old-schema file (and quoted by docs/troubleshooting.md's anchor grep).
@@ -155,6 +155,28 @@ def _to_v4(config: dict[str, Json]) -> list[str]:
     ]
 
 
+def _to_v5(config: dict[str, Json]) -> list[str]:
+    """v4 -> v5: drop the removed `sonarr.ignore_movies_in_radarr`, saying what changes when it was on.
+
+    A blank or a false value was off. Anything else gets the note about the
+    change. A quoted "true" loaded as on, and a quoted "false" getting the note
+    too is harmless.
+    """
+
+    sonarr = _group(config, "sonarr")
+    if sonarr is None or "ignore_movies_in_radarr" not in sonarr:
+        return []
+    if sonarr.pop("ignore_movies_in_radarr") in (None, False):
+        return ["sonarr.ignore_movies_in_radarr was removed - dropped (it was off, so nothing changes)"]
+    return [
+        (
+            "sonarr.ignore_movies_in_radarr was removed - dropped (Sonarr now checks a movie Radarr also has, "
+            "so it can be grabbed for Sonarr too. To skip one, unmonitor its episode in Sonarr and turn on "
+            "sonarr.ignore_unmonitored)"
+        ),
+    ]
+
+
 @dataclass(frozen=True)
 class _Migration:
     """One schema step: brings a mapping from `to_version - 1` to `to_version`."""
@@ -168,6 +190,7 @@ _MIGRATIONS: tuple[_Migration, ...] = (
     _Migration(to_version=2, apply=_to_v2),
     _Migration(to_version=3, apply=_to_v3),
     _Migration(to_version=4, apply=_to_v4),
+    _Migration(to_version=5, apply=_to_v5),
 )
 
 

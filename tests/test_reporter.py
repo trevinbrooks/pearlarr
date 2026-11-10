@@ -138,7 +138,7 @@ class TestStatsCounters:
         # A stored name short-circuits the AniList lookup (no network)
         reporter = _make_reporter(_seeded_store(name="Cached", coverage="S01", url="u"))
         ctx = RunContext(arr=Arr.SONARR)
-        reporter.log_cached_entry(ctx, Arr.SONARR, 1)
+        reporter.log_cached_entry(ctx, 1)
         assert ctx.stats.cached == 1
 
     def test_no_sd_entry_increments_and_caches_title(self) -> None:
@@ -161,7 +161,7 @@ class TestStatsCounters:
         client = ScriptedAniListClient()
         reporter = _make_reporter(store, client=client)
         ctx = RunContext(arr=Arr.SONARR)
-        reporter.log_cached_entry(ctx, Arr.SONARR, 1)
+        reporter.log_cached_entry(ctx, 1)
         assert ctx.stats.cached == 1
         assert client.query_calls == [1]
 
@@ -204,7 +204,7 @@ class TestStatsCounters:
         reporter, events = _record(store, client=client)
         ctx = RunContext(arr=Arr.SONARR)
         ctx.arr_title = "Series"
-        reporter.log_cached_entry(ctx, Arr.SONARR, 1)
+        reporter.log_cached_entry(ctx, 1)
 
         assert client.query_calls == [1]
         assert any("Series" in m for m in _event_messages(events))
@@ -241,7 +241,7 @@ class TestEntryHeaderAlId:
         store = FakeCacheStore()
         store.update_cache(Arr.SONARR, 4242, CacheRecord(name="Cached", coverage="S01", url="u"))
         reporter, events = _record(store)
-        reporter.log_cached_entry(RunContext(arr=Arr.SONARR), Arr.SONARR, 4242)
+        reporter.log_cached_entry(RunContext(arr=Arr.SONARR), 4242)
         assert self._header(events).al_id == 4242
 
 
@@ -291,7 +291,7 @@ class TestCompleteBlocksSelfClose:
 
     def test_cached_entry_emits_scope_closed_before_returning(self) -> None:
         reporter, events = _record(_seeded_store(name="Cached", coverage="S01", url="u"))
-        reporter.log_cached_entry(RunContext(arr=Arr.SONARR), Arr.SONARR, 1)
+        reporter.log_cached_entry(RunContext(arr=Arr.SONARR), 1)
         assert [type(e) for e in events] == [ScopeOpened, EntryHeader, ScopeClosed]
 
     def test_pending_snapshot_emits_scope_closed_before_returning(self) -> None:
