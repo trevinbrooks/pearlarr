@@ -20,7 +20,7 @@ import yaml
 from .json_narrow import is_json_obj
 from .seadex_types import Json
 
-CONFIG_VERSION = 3
+CONFIG_VERSION = 4
 
 # The one remediation sentence, shared by every surface that reports an
 # old-schema file (and quoted by docs/troubleshooting.md's anchor grep).
@@ -140,6 +140,21 @@ def _to_v3(config: dict[str, Json]) -> list[str]:
     ]
 
 
+def _to_v4(config: dict[str, Json]) -> list[str]:
+    """v3 -> v4: drop the removed `imports.pending_max_age_days`, noting it only when the file set it."""
+
+    imports = _group(config, "imports")
+    if imports is None or "pending_max_age_days" not in imports:
+        return []
+    imports.pop("pending_max_age_days")
+    return [
+        (
+            "imports.pending_max_age_days was removed - dropped "
+            "(a pending import now stays tracked until it imports or leaves qBittorrent)"
+        ),
+    ]
+
+
 @dataclass(frozen=True)
 class _Migration:
     """One schema step: brings a mapping from `to_version - 1` to `to_version`."""
@@ -152,6 +167,7 @@ _MIGRATIONS: tuple[_Migration, ...] = (
     _Migration(to_version=1, apply=_to_v1),
     _Migration(to_version=2, apply=_to_v2),
     _Migration(to_version=3, apply=_to_v3),
+    _Migration(to_version=4, apply=_to_v4),
 )
 
 

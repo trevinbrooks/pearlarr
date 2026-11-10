@@ -15,13 +15,14 @@ is a real `RunServices` subclass. The strategies are built bare
 
 from collections.abc import Callable, Mapping, MutableMapping
 from dataclasses import replace
-from datetime import timedelta
+from datetime import UTC, datetime, timedelta
 from typing import Any, ClassVar, NamedTuple, cast, override
 
 import pytest
 from seadex import EntryRecord
 
 from pearlarr import sonarr_import as sonarr_import_module
+from pearlarr.arr_activity import HISTORY_MAX_LOOKBACK_DAYS
 from pearlarr.arr_http import DeleteOutcome
 from pearlarr.cache import CacheRecord
 from pearlarr.config import Arr
@@ -55,7 +56,7 @@ from pearlarr.planner import PlanResult
 from pearlarr.probe_verdicts import DownloadHistoryVerdict, HistoryImport, placements_from_history
 from pearlarr.reporter import EntryTitle, RunContext
 from pearlarr.run_services import RunServices
-from pearlarr.seadex_radarr import RadarrSync
+from pearlarr.seadex_radarr import _HISTORY_SKEW_HOURS, RadarrSync
 from pearlarr.seadex_sonarr import SonarrSync
 from pearlarr.seadex_types import (
     AlternateTitle,
@@ -79,6 +80,7 @@ from pearlarr.seadex_types import (
     SonarrItem,
 )
 from pearlarr.sonarr_episodes import sonarr_series_fingerprint
+from pearlarr.stamps import parse_stamp, stamp_of
 from pearlarr.tvdb_orders import NO_ORDERING, OFFICIAL_ORDER
 
 from .builders import (
@@ -2397,6 +2399,33 @@ class TestRadarrImportCompletedHistory:
 
         assert len(radarr.history_calls) == 2
 
+    @pytest.mark.parametrize("age_days", [None, HISTORY_MAX_LOOKBACK_DAYS + 10], ids=["no-records", "past-the-cap"])
+    def test_history_window_starts_at_the_cap_when_no_stamp_is_newer(self, age_days: int | None) -> None:
+        store = FakeCacheStore()
+        if age_days is not None:
+            stamp = stamp_of(datetime.now() - timedelta(days=age_days))
+            store.put_pending(Arr.RADARR, "h", pending_import(infohash="h", added_at=stamp).to_json())
+        strat = make_radarr_sync(cache_store=store)
+        back = timedelta(days=HISTORY_MAX_LOOKBACK_DAYS, hours=_HISTORY_SKEW_HOURS)
+
+        before = datetime.now(UTC)
+        start = strat._history_query_start()
+        after = datetime.now(UTC)
+
+        assert before - back <= start <= after - back
+
+    def test_history_window_starts_at_the_oldest_stamp_inside_the_cap(self) -> None:
+        older = stamp_of(datetime.now() - timedelta(days=HISTORY_MAX_LOOKBACK_DAYS - 10))
+        newer = stamp_of(datetime.now() - timedelta(days=1))
+        store = FakeCacheStore()
+        store.put_pending(Arr.RADARR, "new", pending_import(infohash="new", added_at=newer).to_json())
+        store.put_pending(Arr.RADARR, "old", pending_import(infohash="old", added_at=older).to_json())
+        strat = make_radarr_sync(cache_store=store)
+
+        start = strat._history_query_start()
+
+        assert start == parse_stamp(older).astimezone(UTC) - timedelta(hours=_HISTORY_SKEW_HOURS)
+
     def test_pending_import_series_id_is_none(self) -> None:
         # Radarr records carry series_id=0, so the per-item snapshot hook key is
         # None (short-circuits the per-item snapshot - reconcile runs in the tail).
@@ -3278,8 +3307,8 @@ class TestFolderScanFallback:
 
     A download Sonarr's history maps to Imported/Failed/Ignored is queue-hidden
     and its `downloadId=` scan never serves it (a 500 on v4, `[]` on v5). Without
-    the fallback every poll deferred "for a later run" until the pending TTL
-    silently dropped it.
+    the fallback every poll would defer "for a later run" for as long as the
+    torrent stayed in qBittorrent.
     """
 
     @staticmethod

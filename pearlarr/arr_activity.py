@@ -23,7 +23,8 @@ from .config import Arr
 from .seadex_types import HistoryRecord
 
 # Re-query overlap behind the checkpoint (absorbs tz/clock skew between the arr
-# server and us) and the hard lookback cap for a long-idle checkpoint.
+# server and us) and the hard lookback cap on a history query: the reply is unpaged,
+# so a long-idle checkpoint or an old pending record would pull months of events.
 HISTORY_QUERY_OVERLAP_HOURS = 26
 HISTORY_MAX_LOOKBACK_DAYS = 30
 

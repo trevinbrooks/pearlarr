@@ -5,7 +5,7 @@ from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 from typing import override
 
-from .arr_activity import IMPORT_EVENTS, format_history_date
+from .arr_activity import HISTORY_MAX_LOOKBACK_DAYS, IMPORT_EVENTS, format_history_date
 from .config import Arr
 from .grab_pipeline import NO_SEEDS, GrabRequest
 from .grab_placement import EntryFacts, PendingSeed, build_unscoped_seed
@@ -28,9 +28,10 @@ from .run_services import RunDeps, RunServices, bind_arr_http
 from .seadex_types import ArrReleases, HistoryRecord, ProgressSink, RadarrItem, flagged_urls
 from .stamps import parse_stamp_aware
 
-# Clock-skew cushion subtracted from the oldest pending record's grab time before the history query.
+# Clock-skew cushion subtracted from the oldest pending record's `added_at` before the history query.
 # The added_at stamps are converted to UTC first, so this absorbs only genuine NTP drift, never a timezone
-# gap. A window starting after a real import event would miss its evidence and strand the record until TTL.
+# gap. A window starting after a real import event would miss its evidence and strand the record until its
+# torrent leaves qBittorrent.
 _HISTORY_SKEW_HOURS = 2
 
 
@@ -267,7 +268,7 @@ class RadarrSync(ArrSync[RadarrItem]):
         return self._evidence
 
     def _fetch_import_evidence(self) -> _ImportEvidence:
-        """Query Radarr history since the oldest pending grab and index the import events."""
+        """Query Radarr history from `_history_query_start` and index the import events."""
 
         records = self.radarr.history_since(format_history_date(self._history_query_start()))
         if records is None:
@@ -280,15 +281,19 @@ class RadarrSync(ArrSync[RadarrItem]):
         return _ImportEvidence(imported, readable=True)
 
     def _history_query_start(self) -> datetime:
-        """Aware-UTC lower bound for the import-history query: oldest pending grab, minus skew."""
+        """Aware-UTC start of the history query.
 
-        floor = datetime.now(UTC) - timedelta(days=self._config.imports.pending_max_age_days)
+        The oldest pending `added_at`, no earlier than the look-back cap, minus skew. An import event older
+        than the cap goes unseen, and its record waits until its torrent leaves qBittorrent.
+        """
+
+        floor = datetime.now(UTC) - timedelta(days=HISTORY_MAX_LOOKBACK_DAYS)
         stamps = [
             moment.astimezone(UTC)
             for raw in self._services.records.rows().values()
             if (moment := parse_stamp_aware(added_at_of(raw))) is not None
         ]
-        oldest = min(stamps) if stamps else floor
+        oldest = max(min(stamps, default=floor), floor)
         return oldest - timedelta(hours=_HISTORY_SKEW_HOURS)
 
     # --- Radarr domain logic ------------------------------------------------

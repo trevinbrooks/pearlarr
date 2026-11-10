@@ -3,13 +3,12 @@
 import logging
 from collections.abc import Callable
 from dataclasses import dataclass, field, replace
-from typing import Any, NamedTuple
+from typing import NamedTuple
 
 import qbittorrentapi
 
 from .clock import Clock
 from .config import ImportsSettings
-from .log import count_noun
 from .manual_import import (
     LEAVE_PROBE,
     NO_PROGRESS,
@@ -28,7 +27,6 @@ from .manual_import import (
     WaitOutcome,
     classify_pending,
     is_awaiting_cleanup,
-    newest_claimed_at_of,
     sanitize_torrent_telemetry,
 )
 from .output import SPARK_SAMPLES, Phase, TorrentView, WaitKind, WaitSnapshot, hub_error, hub_note, hub_warn
@@ -36,7 +34,6 @@ from .pending_records import PendingRecords
 from .protocols import ImportCompleter
 from .reporter import RunContext
 from .run_services import RunDeps
-from .stamps import pending_cutoff
 from .wait_view import WaitOutcomeRow, WaitResult, WaitView, make_wait_view
 
 _EFFECT_BACKOFF_S: tuple[float, float] = (1.0, 3.0)
@@ -196,7 +193,7 @@ class PostImportCleanup:
     def _keep_for_cleanup(self, pending: PendingImport, failed: tuple[CleanupEffect, ...]) -> None:
         """Keep a record whose import verified but whose `failed` effects have not finished.
 
-        The round-trip preserves `added_at`, so the TTL still bounds a never-healing record.
+        `heal_flagged` retries the cleanup on later runs until it finishes.
         """
 
         kept = replace(pending, awaiting_cleanup=True)
@@ -222,7 +219,7 @@ class PostImportCleanup:
     def _close_tracked_download(self, pending: PendingImport, moved_to: str | None) -> EffectStatus:
         """Dismiss the arr's leftover queue entry once `pending`'s torrent is fully imported.
 
-        Import-only: a TTL or MISSING drop closes nothing. Skipped outright whenever the post-import move
+        Import-only: a MISSING drop closes nothing. Skipped outright whenever the post-import move
         to `moved_to` untracks the torrent, whatever this run's move outcome: the entry then clears on its
         own, without the permanent "download ignored" history marker an explicit delete writes.
         """
@@ -283,7 +280,7 @@ class PostImportCleanup:
         poll = self._probes.poll_torrent(record.infohash)
         if poll.outcome is WaitOutcome.MISSING:
             # A gone torrent leaves no content path to verify with, the import verified once,
-            # and holding the flag would wedge the record until the TTL while the stale queue
+            # and holding the flag would wedge the record for good while the stale queue
             # entry invites Sonarr's failed-download handling. The move is vacuous and the
             # close clears the leftover entry: the one effects-without-fresh-check case.
             self._finish_cleanup(record)
@@ -564,31 +561,6 @@ class ImportWaitManager:
         records = [pending for pending in self._ctx.pending_imports.values() if pending.infohash]
         records.extend(self._records.active_records().values())
         return records
-
-    def prune_expired_pending(self) -> None:
-        """Drop durable pending records whose newest claim is past `imports.pending_max_age_days`.
-
-        A record with no parseable claim stamp drops too.
-        """
-
-        cutoff = pending_cutoff(self.imports.pending_max_age_days)
-        # The clocks are read off the raw rows (a store snapshot), so only an aged row rehydrates, for its note.
-        aged: dict[str, dict[str, Any]] = {}
-        for infohash, raw in self._records.rows().items():
-            newest = newest_claimed_at_of(raw)
-            if newest is None:
-                self.logger.debug(f"Pending import {infohash} has no parseable timestamp; dropping as expired")
-                self._records.drop(infohash)
-            elif newest < cutoff:
-                aged[infohash] = raw
-        for pending in self._records.hydrate(aged).values():
-            # A flagged record's import succeeded. Only the cleanup is being abandoned.
-            goal = "its post-import cleanup" if pending.awaiting_cleanup else "it"
-            hub_note(
-                f"Pending import {pending.display_label} is older than "
-                f"{count_noun(self.imports.pending_max_age_days, 'day')} - giving up on {goal}",
-            )
-            self._records.drop(pending.infohash)
 
 
 # Cap on deferral credit, in ready timeouts per row: Sonarr work wedged forever (a command in flight, a pass that

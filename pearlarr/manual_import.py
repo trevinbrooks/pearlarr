@@ -20,13 +20,11 @@ import posixpath
 import unicodedata
 from collections.abc import Iterable, Mapping, Sequence
 from dataclasses import dataclass, field, replace
-from datetime import datetime
 from enum import Enum, StrEnum, auto
 from types import MappingProxyType
 from typing import Any, NamedTuple
 
 from .seadex_types import RemotePathMapping, SonarrEpisode, coerce_int, unambiguous
-from .stamps import parse_stamp_or_none
 
 
 def normalize_basename(name: str) -> str:
@@ -161,7 +159,7 @@ class WaitOutcome(Enum):
     """Import now."""
 
     ERRORED = auto()
-    """Leave the record pending for a later retry (TTL eventually drops it)."""
+    """Leave the record pending, retried each run until the torrent recovers or leaves qBittorrent."""
 
     MISSING = auto()
     """The torrent is gone from qBittorrent, so the record should be dropped."""
@@ -796,7 +794,7 @@ class EntryClaim:
     """This claim's own ids as a coverage string (e.g. `"S02 E06"`)."""
 
     claimed_at: str
-    """The claim's clock in `UPDATED_AT_STR_FORMAT`, stamped by the pipeline. The TTL drop ages the newest."""
+    """The claim's clock in `UPDATED_AT_STR_FORMAT`, stamped by the pipeline."""
 
     guards: GuardFacts = field(default_factory=GuardFacts)
     """The plan's overwrite-guard evidence. Not serialized: hydrated from `guard_facts` by `al_id`."""
@@ -880,7 +878,9 @@ class PendingImport:
     """SeaDex filenames, for our regex quality parse."""
 
     added_at: str
-    """The torrent's birth in `UPDATED_AT_STR_FORMAT`: the pipeline's stamp at the add."""
+    """When the download started, in `UPDATED_AT_STR_FORMAT`: Pearlarr's own add, or for a torrent already in
+    qBittorrent the client's add time (now when it reports none). The rescan proof and Radarr's history window
+    count from it."""
 
     file_episode_map: FileEpisodeMap
     """Normalized basename -> Sonarr episode ids over the WHOLE torrent: the grab-time seeds plus the files Sonarr's
@@ -1044,7 +1044,7 @@ class PendingImport:
         """The record with `claim` joined and its cleanup flag cleared (new files to import make it active again).
 
         A re-flag by an entry already claiming replaces its claim, keeping the stored claim's first clock and
-        preowned ids: the window follows the newest plan, the TTL and the wait bar's net-out never restart.
+        preowned ids: the window follows the newest plan, the wait bar's net-out never restarts.
         """
 
         claims = (*self.claims, claim)
@@ -1120,18 +1120,10 @@ def is_awaiting_cleanup(raw: dict[str, Any]) -> bool:
 
 
 def added_at_of(raw: dict[str, Any]) -> str:
-    """The birth stamp off a stored row's raw dict (`""` when unset or not a string)."""
+    """A stored row's `added_at` off its raw dict (`""` when unset or not a string)."""
 
     stamp = raw.get("added_at", "")
     return stamp if isinstance(stamp, str) else ""
-
-
-def newest_claimed_at_of(raw: dict[str, Any]) -> datetime | None:
-    """The newest parseable claim stamp off a stored row's raw dict: the TTL clock, read without a rehydration."""
-
-    stamps = (claim.get("claimed_at", "") for claim in raw.get("claims", []))
-    moments = [moment for stamp in stamps if (moment := parse_stamp_or_none(stamp)) is not None]
-    return max(moments) if moments else None
 
 
 def hydrate_pending(rows: Mapping[str, dict[str, Any]], guards: Mapping[int, GuardFacts]) -> dict[str, PendingImport]:

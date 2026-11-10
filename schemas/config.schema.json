@@ -238,13 +238,6 @@
           "title": "Languages Single",
           "type": "array"
         },
-        "pending_max_age_days": {
-          "default": 14,
-          "description": "Days a pending import may wait for its download before its record is dropped.",
-          "minimum": 1,
-          "title": "Pending Max Age Days",
-          "type": "integer"
-        },
         "digest_interval": {
           "default": 300,
           "description": "Target seconds between wait-progress digest lines on a non-interactive console (Docker, cron).",
@@ -610,7 +603,7 @@
   "description": "The full validated config: one submodel per settings group.",
   "properties": {
     "config_version": {
-      "default": 3,
+      "default": 4,
       "description": "Schema version of the config file's keys and values. A file from an older Pearlarr is migrated automatically: every load brings it forward in memory, and a run rewrites the file itself (keeping a backup).",
       "minimum": 1,
       "title": "Config Version",

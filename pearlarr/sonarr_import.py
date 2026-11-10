@@ -641,7 +641,8 @@ class ImportExecutor:
         # Read-only over the memo the fallback filled on this same poll, never a fetch.
         folder = self.scanner.content_paths(context.content_path).sonarr_visible
         # An empty folder right after completion is expected (Sonarr's mount lags), so only the deadline
-        # attempt says so, once a run: dead-tracked plus still empty means silent retries until expiry.
+        # attempt says so, once a run. Without it a dead-tracked download whose folder stays empty would
+        # retry in silence every run.
         message = (
             f"{pending.display_label}: Sonarr won't serve this download by id and "
             f"a scan of its folder found no files ({folder}) - will retry"
@@ -768,7 +769,7 @@ class _SonarrView:
     commands: list[CommandResource]
     """The command list read just before the queue."""
     untracked: bool
-    """Whether the download has no queue row and Sonarr lists a completed rescan from after its add."""
+    """Whether the download has no queue row and Sonarr lists a completed rescan from after it entered qBittorrent."""
 
     @property
     def needs_rescan(self) -> bool:
