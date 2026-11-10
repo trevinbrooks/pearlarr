@@ -350,9 +350,14 @@ class TestPendingImportClaims:
         assert json.dumps(claim.to_json()) == (
             '{"al_id": 1, "series_id": 7, "title": "Show", "coverage": "S1", "url": "https://example.invalid/1", '
             '"ordered_episode_ids": [101, 102], "names": {"series": "Show", "anilist": ["Show!"]}, '
-            '"preowned_episode_ids": [101], "slice_coverage": "S1 E1-2", "claimed_at": "2026-06-24 00:00:00"}'
+            '"preowned_episode_ids": [101], "slice_coverage": "S1 E1-2"}'
         )
         assert EntryClaim.from_json(claim.to_json(), guards={}) == claim
+
+    def test_from_json_skips_a_stored_claimed_at(self) -> None:
+        claim = entry_claim()
+
+        assert EntryClaim.from_json({**claim.to_json(), "claimed_at": "2026-06-24 00:00:00"}, guards={}) == claim
 
     def test_a_claims_window_is_its_entry_series_ids_and_names(self) -> None:
         names = EntryNames("Show", ("Show!",))
@@ -435,21 +440,16 @@ class TestPendingImportClaims:
         assert pending.with_claim(added).claims == (*pending.claims, added)
         assert len(pending.claims) == 1
 
-    def test_with_claim_replaces_the_entrys_claim_in_place_keeping_its_clock_and_preowned_ids(self) -> None:
-        # A re-flag refreshes the window, but the clock and the net-out stay the FIRST claim's.
+    def test_with_claim_replaces_the_entrys_claim_in_place_keeping_its_preowned_ids(self) -> None:
+        # A re-flag refreshes the window, but the net-out stays the FIRST claim's.
         stored = entry_claim(al_id=1, ordered_episode_ids=[101], preowned_episode_ids=[101])
         other = entry_claim(al_id=2, series_id=8)
         pending = pending_import(claims=(stored, other))
-        fresh = entry_claim(
-            al_id=1,
-            ordered_episode_ids=[101, 102],
-            preowned_episode_ids=[102],
-            claimed_at="2026-06-25 00:00:00",
-        )
+        fresh = entry_claim(al_id=1, ordered_episode_ids=[101, 102], preowned_episode_ids=[102])
 
         refreshed = pending.with_claim(fresh)
 
-        assert refreshed.claims == (replace(fresh, preowned_episode_ids=(101,), claimed_at=stored.claimed_at), other)
+        assert refreshed.claims == (replace(fresh, preowned_episode_ids=(101,)), other)
         assert pending.claims == (stored, other)
 
     def test_with_claim_clears_the_cleanup_flag(self) -> None:
@@ -525,7 +525,6 @@ def _guarded_claim() -> EntryClaim:
         names=EntryNames("Some Show", ("Some Show", "Aru Show")),
         preowned_episode_ids=[11],
         slice_coverage="S02 E01-E02",
-        claimed_at="2026-06-24 12:00:00",
         guards=GuardFacts(entry_groups=("Era-Raws", "OtherPick"), owned_episodes=(OwnedEpisode(11, 700),)),
     )
 
@@ -636,7 +635,7 @@ class TestPendingImportRoundTrip:
         assert rebuilt.sizes_by_name == {}
 
     def test_a_claim_tolerates_missing_keys(self) -> None:
-        # A claim missing every optional key rehydrates unscoped, unnamed, unstamped, guard-empty,
+        # A claim missing every optional key rehydrates unscoped, unnamed, guard-empty,
         # with coverage and url None, and a missing al_id lands under the 0 sentinel.
         rebuilt = PendingImport.from_json({"infohash": "h", "claims": [{"series_id": 1}]}, guards={})
 
@@ -651,7 +650,6 @@ class TestPendingImportRoundTrip:
                 names=EntryNames(),
                 preowned_episode_ids=(),
                 slice_coverage=None,
-                claimed_at="",
             ),
         )
 

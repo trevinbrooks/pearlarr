@@ -2544,7 +2544,6 @@ class TestSonarrProcessAlIdSeeds:
         (req,) = run.grab_requests
         (seed,) = req.pending_seeds.values()
         assert seed.stored == resident
-        assert seed.accreted is True
         assert seed.placements == {normalize_basename(_SEED_FILES[1]): (102,)}
         assert seed.claim.al_id == 5
         assert seed.claim.ordered_episode_ids == (102,)
@@ -2801,9 +2800,8 @@ class TestRadarrProcessAlIdSeeds:
         assert seed.claim.al_id == 42
         assert seed.claim.title == "A Movie"
         assert seed.claim.url == "https://releases.moe/9"
-        # A torrent the store does not hold is born.
+        # A torrent the store does not hold starts a new record.
         assert seed.stored is None
-        assert seed.accreted is False
         # Sonarr-domain fields deliberately stay empty for a Radarr record.
         assert seed.claim.series_id == 0
         assert seed.placements == {}
@@ -2814,7 +2812,7 @@ class TestRadarrProcessAlIdSeeds:
         # display_label renders sensibly from these (title · group).
         assert record.display_label == f"A Movie{SEP}NAN0"
         assert record.target_ids() == []
-        assert record.added_at == record.claims[0].claimed_at == _STAMP
+        assert record.added_at == _STAMP
 
     def test_seed_carries_the_stored_record(self) -> None:
         # A torrent another Radarr entry already holds: the seed accretes this entry's claim onto it.
@@ -2827,7 +2825,6 @@ class TestRadarrProcessAlIdSeeds:
         (req,) = run.grab_requests
         (seed,) = req.pending_seeds.values()
         assert seed.stored == resident
-        assert seed.accreted is True
         assert claim_al_ids(seed.record_at(_STAMP, fresh=False)) == (9, 42)
 
     def test_no_seeds_when_wait_mode_off(self) -> None:

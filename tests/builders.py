@@ -865,14 +865,14 @@ def pending_seed(
     hand_import_files: tuple[str, ...] = (),
     **claim: Any,
 ) -> PendingSeed:
-    """A seed on `infohash` (group NAN0, no files) claimed by `entry_claim(**claim)`, born unless `stored` is given."""
+    """A seed on `infohash` (group NAN0, no files) claimed by `entry_claim(**claim)`, new unless `stored` is given."""
 
     return PendingSeed(
         facts=torrent_facts(infohash=infohash, release_group="NAN0"),
         placements=placements or {},
         excluded=(),
         hand_import_files=hand_import_files,
-        claim=entry_claim(claimed_at="", **claim),
+        claim=entry_claim(**claim),
         stored=stored,
     )
 
@@ -1343,7 +1343,6 @@ def entry_claim(**overrides: Any) -> EntryClaim:
         "names": EntryNames(),
         "preowned_episode_ids": (),
         "slice_coverage": None,
-        "claimed_at": PENDING_STAMP,
     }
     defaults.update(overrides)
     for key in ("ordered_episode_ids", "preowned_episode_ids"):
@@ -1372,7 +1371,7 @@ def pending_import(**overrides: Any) -> PendingImport:
     """A `PendingImport` wiring one mapped file to one episode id under one claim.
 
     Claim keys (`series_id`, `al_id`, `title`, `ordered_episode_ids`, ...) build that claim unless
-    `claims` is given; its clock defaults to the record's `added_at`.
+    `claims` is given.
     """
 
     claim_overrides = {key: overrides.pop(key) for key in list(overrides) if key in _CLAIM_KEYS}
@@ -1386,7 +1385,6 @@ def pending_import(**overrides: Any) -> PendingImport:
     }
     defaults.update(overrides)
     if "claims" not in defaults:
-        claim_overrides.setdefault("claimed_at", defaults["added_at"])
         defaults["claims"] = (entry_claim(**claim_overrides),)
     for key in ("seadex_files", "excluded_files", "release_sizes"):
         if key in defaults:

@@ -665,7 +665,6 @@ def _seed_pending(cache_path: Path, checksum: str, scenario: _Scenario) -> None:
         names=EntryNames(),
         preowned_episode_ids=(),
         slice_coverage=None,
-        claimed_at=stamp,
     )
     record = PendingImport(
         infohash=_INFOHASH,

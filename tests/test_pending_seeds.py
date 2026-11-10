@@ -12,7 +12,6 @@ Sonarr) with a seeded in-memory parse cache and a warm whole-series episode list
 """
 
 from collections.abc import Mapping, Sequence
-from dataclasses import replace
 
 from pearlarr.config import Arr
 from pearlarr.episode_state import EpisodeFileStatus, GroupVotes, TrustPolicy, trusted_groups
@@ -142,12 +141,10 @@ class TestBuildPendingSeeds:
         assert claim.al_id == 1  # the entry's guard-row key
         assert claim.title == "Show"
         assert claim.names == EntryNames("Show", ("Show", "Shou"))
-        # The fold reads no clock: the claim stays blank until the pipeline's stamp births the record.
-        assert claim.claimed_at == ""
-        assert not seed.accreted
+        assert seed.stored is None
         record = seed.record_at(_ADDED_AT, fresh=True)
         assert record.added_at == _ADDED_AT
-        assert record.claims == (replace(claim, claimed_at=_ADDED_AT),)
+        assert record.claims == (claim,)
         assert dict(seed.placements) == {normalize_basename("Show - 01.mkv"): (101,)}
         assert seed.facts.seadex_files == ("Show - 01.mkv",)
         # The claim's own episode slice, for the wait/notification label, and the window it is judged under.

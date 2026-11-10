@@ -451,11 +451,11 @@ class TestSchemaVersionGate:
 
     def test_v4_rows_of_one_torrent_fold_into_one_record(self, tmp_path: Path) -> None:
         # The v4 -> v5 step: one torrent's per-entry rows become ONE record whose
-        # claims sit in al_id order, each keeping its row's clock as its own. The
-        # rows group by case fold and the key + record hash come out lowercase.
+        # claims sit in al_id order. The rows group by case fold and the key +
+        # record hash come out lowercase.
         # The release facts are the first row's, the maps union with the first
         # row winning a shared name, an exclusion another row mapped is dropped,
-        # the birth is the oldest stamp, and the flag holds when every row had it.
+        # `added_at` is the oldest stamp, and the flag holds when every row had it.
         # The union keeps distinct file-name keys byte-exact (an NFC and an NFD
         # spelling stay two keys): `normalized_leaf` reconciles them at read time.
         db = tmp_path / "cache.db"
@@ -503,7 +503,6 @@ class TestSchemaVersionGate:
                             "names": {"series": "Series", "anilist": ["Alias"]},
                             "preowned_episode_ids": [],
                             "slice_coverage": "S01 E01",
-                            "claimed_at": "2026-07-01 00:00:00",
                         },
                         {
                             "al_id": 22,
@@ -515,7 +514,6 @@ class TestSchemaVersionGate:
                             "names": {"series": "Series", "anilist": ["Second Alias"]},
                             "preowned_episode_ids": [201],
                             "slice_coverage": "S02 E01-E02",
-                            "claimed_at": "2026-07-02 00:00:00",
                         },
                     ],
                     "excluded_files": ["y.mkv", "x.mkv"],
@@ -562,9 +560,8 @@ class TestSchemaVersionGate:
             _assert_round_trips(radarr)
 
     def test_v4_fold_takes_the_oldest_parseable_stamp(self, tmp_path: Path) -> None:
-        # The birth is the oldest row stamp that parses. A junk stamp is skipped
-        # for the birth yet stays the claim's own clock verbatim, and a torrent
-        # whose rows all carry junk is born unstamped.
+        # `added_at` is the oldest row stamp that parses: a junk stamp is skipped,
+        # and a torrent whose rows all carry junk gets an empty one.
         db = tmp_path / "cache.db"
         _seed_v4_db(
             db,
@@ -579,11 +576,6 @@ class TestSchemaVersionGate:
         with _open(tmp_path) as store:
             records = store.get_pending(Arr.SONARR)
             assert records["k"]["added_at"] == "2026-07-02 00:00:00"
-            assert [claim["claimed_at"] for claim in records["k"]["claims"]] == [
-                "junk",
-                "2026-07-03 00:00:00",
-                "2026-07-02 00:00:00",
-            ]
             assert records["j"]["added_at"] == ""
             _assert_round_trips(records)
 

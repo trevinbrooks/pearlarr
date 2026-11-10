@@ -324,7 +324,7 @@ class TestAddOneUrlRegistersPending:
         assert n_added == 1
         assert pipeline._ctx.torrents_added == 1
 
-    def test_a_born_seed_on_a_resident_hash_replaces_the_stored_record(self) -> None:
+    def test_a_seed_built_without_the_stored_record_replaces_it(self) -> None:
         # The seed's own `stored` decides the arm, never the store: a second entry's seed built
         # without the record reacquires and overwrites it (one record per torrent, the last writer's).
         torrents = FakeTorrents({"h1": (AddOutcome.ALREADY_ADDED, "Show")})
@@ -432,8 +432,8 @@ class TestAddOneUrlRegistersPending:
 class TestReacquireRegistration:
     """`_register_pending_import`'s three arms: a fresh add tracks, an ALREADY_ADDED accretes or reacquires.
 
-    The seed's `stored` decides between the last two, never the store. Only a born
-    seed's reacquire is stamped at qBittorrent's add time.
+    The seed's `stored` decides between the last two, never the store. Only a seed with no
+    stored record is stamped at qBittorrent's add time.
     """
 
     _STORED_AT = "2026-01-01 00:00:00"
@@ -454,21 +454,18 @@ class TestReacquireRegistration:
         )
         return results
 
-    def test_accretion_keeps_the_stored_clocks(self) -> None:
-        # A second entry's seed carrying the stored record joins it: the birth and
-        # the first claim keep their stamps, only the new claim is stamped now, and
-        # a carried-over record is a reacquire (never a run-list insert).
-        pipeline = _pipeline(torrents=self._reacquire(None))
+    def test_accretion_keeps_the_stored_start(self) -> None:
+        # A second entry's seed carrying the stored record joins it. The record keeps its own `added_at`
+        # whatever qBittorrent's add time says, and a carried-over record is a reacquire (never a
+        # run-list insert).
+        pipeline = _pipeline(torrents=self._reacquire(datetime.now() - timedelta(days=100)))
         resident = self._resident(pipeline)
-        before = now_stamp()
 
         self._add(pipeline, pending_seed("h1", al_id=22, stored=resident))
 
         record = _stored(pipeline, "h1")
         assert record.added_at == self._STORED_AT
         assert [c.al_id for c in record.claims] == [PENDING_AL_ID, 22]
-        assert record.claims[0].claimed_at == self._STORED_AT
-        assert before <= record.claims[1].claimed_at <= now_stamp()
         assert pipeline._ctx.reacquired_keys == {"h1"}
         assert pipeline._ctx.pending_imports == {}
 
@@ -481,16 +478,6 @@ class TestReacquireRegistration:
         self._add(pipeline, pending_seed("h1"))
 
         assert pipeline._ctx.reacquired_keys == set()
-
-    def test_accretion_never_reads_the_add_time(self) -> None:
-        # qBittorrent's add time stamps only a born seed: a stored record accretes under its own birth.
-        pipeline = _pipeline(torrents=self._reacquire(datetime.now() - timedelta(days=100)))
-        resident = self._resident(pipeline)
-
-        self._add(pipeline, pending_seed("h1", stored=resident))
-
-        assert pipeline._ctx.reacquired_keys == {"h1"}
-        assert _stored(pipeline, "h1").added_at == self._STORED_AT
 
     def test_resident_reacquire_refreshes_the_guard_row(self) -> None:
         # The entry's guard evidence follows the newest plan, never a frozen copy:
@@ -517,8 +504,8 @@ class TestReacquireRegistration:
         assert _guards(pipeline) == {PENDING_AL_ID: newer, 22: joining}
 
     def test_accretion_replaces_the_entrys_own_claim_and_merges_the_map(self) -> None:
-        # A re-flag by the entry already claiming the record: its claim is replaced
-        # under its first clock, the fresh placements fold into the map, the birth stands.
+        # A re-flag by the entry already claiming the record: its claim is replaced and
+        # the fresh placements fold into the map.
         pipeline = _pipeline(torrents=self._reacquire(None))
         resident = self._resident(pipeline)
         seed = pending_seed(
@@ -530,16 +517,14 @@ class TestReacquireRegistration:
         record = _stored(pipeline, "h1")
         (claim,) = record.claims
         assert claim.ordered_episode_ids == (101, 102)
-        assert claim.claimed_at == self._STORED_AT
-        assert record.added_at == self._STORED_AT
         assert dict(record.file_episode_map) == {
             normalize_basename("Show - 01 [1080p].mkv"): (101,),
             normalize_basename("Show - 02 [1080p].mkv"): (102,),
         }
 
-    def test_no_add_time_born_seed_is_stamped_now(self) -> None:
-        # No stored record and no usable qBittorrent time: tracked from now, birth
-        # and claim alike, with the entry's guard row.
+    def test_a_new_record_with_no_add_time_starts_now(self) -> None:
+        # No stored record and no usable qBittorrent time: tracked from now, with the
+        # entry's guard row.
         pipeline = _pipeline(torrents=self._reacquire(None))
         before = now_stamp()
 
@@ -547,24 +532,13 @@ class TestReacquireRegistration:
 
         record = _stored(pipeline, "h1")
         assert before <= record.added_at <= now_stamp()
-        assert record.claims[0].claimed_at == record.added_at
         assert pipeline._ctx.reacquired_keys == {"h1"}
         assert pipeline._ctx.pending_imports == {}
         assert _guards(pipeline).keys() == {PENDING_AL_ID}
 
-    def test_born_seed_joins_at_the_qbit_add_time(self) -> None:
-        # qBittorrent's add time stamps the birth AND the claim.
-        added_on = datetime.now() - timedelta(days=2)
-        pipeline = _pipeline(torrents=self._reacquire(added_on))
-
-        self._add(pipeline, pending_seed("h1"))
-
-        record = _stored(pipeline, "h1")
-        assert record.added_at == record.claims[0].claimed_at == stamp_of(added_on)
-        assert pipeline._ctx.reacquired_keys == {"h1"}
-        assert pipeline._ctx.pending_imports == {}
-
     def test_a_torrent_long_in_qbittorrent_is_tracked_at_its_add_time(self) -> None:
+        # No stored record: the new one starts at qBittorrent's add time. A torrent's age refuses nothing
+        # and warns of nothing.
         added_on = datetime.now() - timedelta(days=100)
         pipeline = _pipeline(torrents=self._reacquire(added_on))
         recording = install_recording_hub()
@@ -574,6 +548,7 @@ class TestReacquireRegistration:
         assert diagnostic_messages(recording, Severity.WARNING) == []
         assert _stored(pipeline, "h1").added_at == stamp_of(added_on)
         assert pipeline._ctx.reacquired_keys == {"h1"}
+        assert pipeline._ctx.pending_imports == {}
         assert _guards(pipeline).keys() == {PENDING_AL_ID}
         assert [r.outcome for r in results] == [AddOutcome.ALREADY_ADDED]
 
@@ -588,10 +563,10 @@ class TestReacquireRegistration:
         assert [p.infohash for p in pipeline._ctx.pending_imports.values()] == ["h1"]
         assert before <= _stored(pipeline, "h1").added_at <= now_stamp()
 
-    def test_fresh_add_of_a_stored_record_restarts_every_clock(self) -> None:
+    def test_fresh_add_of_a_stored_record_restamps_the_start(self) -> None:
         # A re-add of a torrent whose record survived (qBittorrent lost it): the
-        # accreted record enters the run list with its birth and every claim
-        # stamped now, so the wait never ages it from before.
+        # accreted record enters the run list restarted at now, the start a new
+        # download's rescan proof counts from.
         pipeline = _pipeline(torrents=FakeTorrents({"h1": (AddOutcome.ADDED, "Show")}))
         resident = self._resident(pipeline)
         before = now_stamp()
@@ -601,7 +576,6 @@ class TestReacquireRegistration:
         record = _stored(pipeline, "h1")
         assert [c.al_id for c in record.claims] == [PENDING_AL_ID, 22]
         assert before <= record.added_at <= now_stamp()
-        assert {c.claimed_at for c in record.claims} == {record.added_at}
         assert pipeline._ctx.reacquired_keys == set()
         assert list(pipeline._ctx.pending_imports) == ["h1"]
 
@@ -702,7 +676,7 @@ class TestAddTorrentCap:
         assert pipeline._ctx.reacquired_keys == set()
         assert pipeline._ctx.pending_imports == {}
 
-    def test_a_held_born_seed_stores_nothing(self) -> None:
+    def test_a_held_seed_for_a_new_torrent_stores_nothing(self) -> None:
         u1 = _nyaa_release(url="https://nyaa.si/view/1", infohash="h1")
         seadex_dict: SeadexDict = {"RG": rg_group({u1.url: u1})}
         pipeline = _pipeline(torrents=FakeTorrents({"h1": (AddOutcome.ADDED, "one")}), max_torrents_to_add=1)

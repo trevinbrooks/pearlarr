@@ -3,7 +3,7 @@
 from datetime import datetime
 
 UPDATED_AT_STR_FORMAT = "%Y-%m-%d %H:%M:%S"
-"""Timestamp format for cache record fields (`updated_at`, `fetched_at`, `added_at`, `claimed_at`)."""
+"""Timestamp format for cache record fields (`updated_at`, `fetched_at`, `added_at`)."""
 
 
 def stamp_of(moment: datetime) -> str:

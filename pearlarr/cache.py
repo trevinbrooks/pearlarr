@@ -246,7 +246,6 @@ class _PendingV4:
             "names": self.names,
             "preowned_episode_ids": self.preowned_episode_ids,
             "slice_coverage": self.slice_coverage,
-            "claimed_at": self.added_at,
         }
 
 

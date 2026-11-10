@@ -10,7 +10,7 @@ Pearlarr is a fork of [bbtufty/seadexarr](https://github.com/bbtufty/seadexarr).
 ### Upgrade notes
 
 - **`imports.pending_max_age_days` is removed.** The next run, or `pearlarr config migrate`, rewrites `config.yml` at the new schema without it and keeps the previous file as `config.yml.bak`. A dry run never rewrites. Hand-written comments stay only in the backup. If your environment sets `PEARLARR_IMPORTS__PENDING_MAX_AGE_DAYS`, unset it before upgrading: the config no longer loads while it is set.
-- **Downgrading needs the backup.** An older release refuses the rewritten `config.yml`, so restore `config.yml.bak` over it first.
+- **Downgrading needs the backup.** An older release refuses the rewritten `config.yml`, so restore `config.yml.bak` over it first. It also forgets the pending imports this release saved.
 
 ### Changed
 

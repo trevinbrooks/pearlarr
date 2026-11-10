@@ -1323,7 +1323,7 @@ class TestEntryPlacements:
             seadex_files=tuple(_RUN), release_sizes=(10, 20, 30, 40), sizes_by_name=listed
         )
         assert seeds["h1"].claim.names == names
-        assert not seeds["h1"].accreted
+        assert seeds["h1"].stored is None
         assert dict(seeds["h2"].placements) == {}
 
     def test_a_url_with_a_stored_record_seeds_onto_it(self) -> None:
@@ -1337,16 +1337,15 @@ class TestEntryPlacements:
 
         seeds = build_pending_seeds(seadex_dict, placed, entry_facts())
 
-        assert seeds["h1"].accreted
         assert seeds["h1"].stored is record
         assert dict(seeds["h1"].placements) == {"show - s01e03.mkv": (103,), "show - s01e04.mkv": (104,)}
 
 
 class TestPendingSeedRecordAt:
-    """The one record constructor: a birth, or an accretion onto the stored record."""
+    """The record a seed persists: a new one, or an accretion onto the stored one."""
 
-    def test_born_stamps_the_birth_and_the_claim(self) -> None:
-        claim = entry_claim(claimed_at="")
+    def test_a_new_record_starts_at_the_stamp(self) -> None:
+        claim = entry_claim()
         seed = PendingSeed(
             facts=_FACTS,
             placements={"show - 01.mkv": (101,)},
@@ -1358,7 +1357,7 @@ class TestPendingSeedRecordAt:
 
         record = seed.record_at(_STAMP, fresh=True)
 
-        assert not seed.accreted
+        assert seed.joined() is None
         assert record == PendingImport(
             infohash="h1",
             release_group="RG",
@@ -1366,12 +1365,12 @@ class TestPendingSeedRecordAt:
             seadex_files=("Show - 01.mkv",),
             added_at=_STAMP,
             file_episode_map={"show - 01.mkv": (101,)},
-            claims=(replace(claim, claimed_at=_STAMP),),
+            claims=(claim,),
             excluded_files=("show - 02.mkv",),
             release_sizes=(10,),
             sizes_by_name={"show - 01.mkv": 10},
         )
-        # A birth is stamped whether or not the add was fresh.
+        # A new record starts at the stamp whether or not the add was fresh.
         assert seed.record_at(_STAMP, fresh=False) == record
 
     def test_accreted_folds_the_placements_exclusions_and_claim(self) -> None:
@@ -1383,7 +1382,7 @@ class TestPendingSeedRecordAt:
             preowned_episode_ids=(101,),
             awaiting_cleanup=True,
         )
-        claim = entry_claim(claimed_at="", ordered_episode_ids=(101, 102, 103), preowned_episode_ids=(102,))
+        claim = entry_claim(ordered_episode_ids=(101, 102, 103), preowned_episode_ids=(102,))
         seed = PendingSeed(
             facts=_FACTS,
             placements={"show - 02.mkv": (102,)},
@@ -1395,13 +1394,13 @@ class TestPendingSeedRecordAt:
 
         record = seed.record_at(_STAMP, fresh=False)
 
-        assert seed.accreted
+        assert seed.joined() == record
         assert dict(record.file_episode_map) == {"show - 01.mkv": (101,), "show - 02.mkv": (102,)}
         assert record.excluded_files == ("show - 09.mkv", "show - 03.mkv")
-        # The entry's own claim is replaced under its first clock, its first preowned ids kept.
-        assert record.claims == (replace(claim, claimed_at=stored.added_at, preowned_episode_ids=(101,)),)
+        # The entry's own claim is replaced, its first preowned ids kept.
+        assert record.claims == (replace(claim, preowned_episode_ids=(101,)),)
         assert record.awaiting_cleanup is False
-        # Not a fresh add: the birth keeps its clock, and the identity stays the stored record's.
+        # Not a fresh add: the record keeps its `added_at`, and the identity stays the stored record's.
         assert record.added_at == "2026-01-01 00:00:00"
         assert record.release_group == stored.release_group
 
@@ -1411,8 +1410,7 @@ class TestPendingSeedRecordAt:
 
         record = seed.record_at(_STAMP, fresh=False)
 
-        assert record.claims == (*stored.claims, replace(seed.claim, claimed_at=_STAMP))
-        assert [c.claimed_at for c in record.claims] == ["2026-01-01 00:00:00", _STAMP]
+        assert record.claims == (*stored.claims, seed.claim)
 
     def test_accreted_onto_a_record_without_sizes_by_name_learns_them(self) -> None:
         stored = pending_import(infohash="h1")
@@ -1421,7 +1419,7 @@ class TestPendingSeedRecordAt:
             placements={},
             excluded=(),
             hand_import_files=(),
-            claim=entry_claim(claimed_at=""),
+            claim=entry_claim(),
             stored=stored,
         )
 
@@ -1434,13 +1432,13 @@ class TestPendingSeedRecordAt:
             placements={},
             excluded=(),
             hand_import_files=(),
-            claim=entry_claim(claimed_at=""),
+            claim=entry_claim(),
             stored=stored,
         )
 
         assert seed.record_at(_STAMP, fresh=False).sizes_by_name == {"show - 01.mkv": 99}
 
-    def test_born_keeps_the_hand_import_files(self) -> None:
+    def test_a_new_record_keeps_the_hand_import_files(self) -> None:
         seed = pending_seed("h1", hand_import_files=("show - 02.mkv",))
 
         assert seed.record_at(_STAMP, fresh=True).hand_import_files == ("show - 02.mkv",)
@@ -1454,14 +1452,13 @@ class TestPendingSeedRecordAt:
         assert kept.hand_import_files == ("show - 02.mkv",)
         assert joined.hand_import_files == ("show - 02.mkv", "show - 03.mkv")
 
-    def test_fresh_restamps_every_clock(self) -> None:
+    def test_fresh_restarts_the_stored_record(self) -> None:
         stored = pending_import(infohash="h1", added_at="2026-01-01 00:00:00")
         seed = pending_seed("h1", stored=stored, al_id=2)
 
         record = seed.record_at(_STAMP, fresh=True)
 
         assert record.added_at == _STAMP
-        assert [c.claimed_at for c in record.claims] == [_STAMP, _STAMP]
 
 
 class TestBuildUnscopedSeed:
@@ -1476,11 +1473,11 @@ class TestBuildUnscopedSeed:
 
         seed = build_unscoped_seed(self._flagged(), facts, None)
 
-        assert not seed.accreted
+        assert seed.stored is None
         assert seed.facts == torrent_facts(is_dual_audio=True)
         assert seed.placements == {} and seed.excluded == ()
         assert seed.claim == entry_claim(
-            al_id=9, series_id=0, title="Movie", url="https://releases.moe/9", claimed_at="", guards=facts.guards
+            al_id=9, series_id=0, title="Movie", url="https://releases.moe/9", guards=facts.guards
         )
 
     def test_a_listed_torrent_accretes_its_stored_record(self) -> None:
@@ -1495,7 +1492,7 @@ class TestBuildUnscopedSeed:
 
 
 class TestEntryClaim:
-    """The entry's claim reads the whole map inside the entry, its clock blank until the record is stamped."""
+    """The entry's claim reads the whole map inside the entry."""
 
     @staticmethod
     def _release(files: list[SeedFile], placed: UrlPlacement) -> SeedRelease:
@@ -1515,7 +1512,6 @@ class TestEntryClaim:
         assert placed.assignment.assigned == {"show - s01e03.mkv": (103,)}
         assert claim.slice_coverage == "S01 E01-E03"
         assert claim.ordered_episode_ids == (101, 102, 103, 104)
-        assert claim.claimed_at == ""
 
     def test_preowned_reads_every_claimed_id(self) -> None:
         # E01 (the record's, not this call's) already holds the own group's file at a listed size.
