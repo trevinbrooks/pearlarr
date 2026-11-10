@@ -8,7 +8,8 @@
 
 Pins the overlay's path mapping and YAML value parsing, the leaf-wins/
 dicts-merge semantics against a real file, the reserved delimiter-less names,
-loud typo failure, and the checksum folding a qualifying env change in.
+the error line naming the variable that set a bad key, and the checksum folding
+a qualifying env change in.
 """
 
 import hashlib
@@ -129,23 +130,64 @@ class TestOverlayThroughLoad:
         monkeypatch.setenv("PEARLARR_ADVANCED__SLEEP_TIME", "")
         assert AppConfig.load(path).advanced.sleep_time == 0
 
-    def test_unknown_path_fails_validation_naming_the_key(
-        self,
-        tmp_path: Path,
-        monkeypatch: pytest.MonkeyPatch,
-    ) -> None:
-        path = self._write(tmp_path, "sonarr:\n  url: http://x\n")
-        monkeypatch.setenv("PEARLARR_SONAR__URL", "http://typo")  # sonar, not sonarr
-        with pytest.raises(ValidationError) as excinfo:
-            AppConfig.load(path)
-        assert "sonar" in str(excinfo.value)
-
     def test_non_mapping_file_skips_the_merge(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
         # A junk (non-mapping) file lets its own validation error stand unchanged.
         path = self._write(tmp_path, "- just\n- a\n- list\n")
         monkeypatch.setenv("PEARLARR_SONARR__URL", "http://x")
         with pytest.raises(ValidationError):
             AppConfig.load(path)
+
+
+class TestErrorLinesNameTheVariable:
+    """A config error line names the environment variable that set its key."""
+
+    def _error(self, tmp_path: Path, text: str) -> str:
+        cfg = tmp_path / "config.yml"
+        cfg.write_text(text, encoding="utf-8")
+        with pytest.raises(ValidationError) as excinfo:
+            AppConfig.load(str(cfg))
+        return format_validation_errors(excinfo.value)
+
+    def test_unknown_key_names_its_variable(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+        monkeypatch.setenv("PEARLARR_SEADEX__WANT_BST", "false")
+        assert self._error(tmp_path, "") == "  - seadex.want_bst (set by PEARLARR_SEADEX__WANT_BST): unknown key"
+
+    def test_bad_value_names_its_variable(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+        monkeypatch.setenv("PEARLARR_ADVANCED__SLEEP_TIME", "soon")
+        error = self._error(tmp_path, "")
+        assert error.startswith("  - advanced.sleep_time (set by PEARLARR_ADVANCED__SLEEP_TIME): Input should be")
+
+    def test_unknown_group_names_every_variable_under_it(
+        self,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        monkeypatch.setenv("PEARLARR_SONAR__VERIFY_SSL", "false")
+        monkeypatch.setenv("PEARLARR_SONAR__LANGUAGE", "English")
+        error = self._error(tmp_path, "")
+        assert error == "  - sonar (set by PEARLARR_SONAR__LANGUAGE, PEARLARR_SONAR__VERIFY_SSL): unknown key"
+
+    def test_bad_list_item_names_the_variable_that_set_the_list(
+        self,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        monkeypatch.setenv("PEARLARR_SEADEX__IGNORE_ANILIST_IDS", "[1, nope]")
+        error = self._error(tmp_path, "")
+        assert error.startswith("  - seadex.ignore_anilist_ids.1 (set by PEARLARR_SEADEX__IGNORE_ANILIST_IDS): ")
+
+    def test_file_key_names_no_variable_of_its_group(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+        monkeypatch.setenv("PEARLARR_ADVANCED__LOG_LEVEL", "INFO")
+        assert self._error(tmp_path, "advanced:\n  sleep_tme: 5\n") == "  - advanced.sleep_tme: unknown key"
+
+    def test_non_mapping_file_names_no_variable(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+        monkeypatch.setenv("PEARLARR_ADVANCED__LOG_LEVEL", "INFO")
+        assert self._error(tmp_path, "- just\n- a\n- list\n").startswith("  - : Input should be")
+
+    def test_unparseable_value_names_its_variable_once(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+        monkeypatch.setenv("PEARLARR_ADVANCED__SLEEP_TIME", "'unterminated")
+        error = self._error(tmp_path, "")
+        assert error == "  - PEARLARR_ADVANCED__SLEEP_TIME: is not valid YAML - fix or unset the environment variable"
 
 
 class TestChecksumFoldsEnv:

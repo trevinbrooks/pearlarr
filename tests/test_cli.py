@@ -768,7 +768,7 @@ class TestConfigInspection:
         assert config_validate() is False
         err = capsys.readouterr().err
         assert "Invalid configuration" in err
-        assert "sonar" in err
+        assert "  - sonar: unknown key" in err
 
     def test_validate_reports_malformed_yaml_cleanly(self, capsys: pytest.CaptureFixture[str]) -> None:
         paths = resolve_paths()

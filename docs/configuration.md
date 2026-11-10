@@ -48,6 +48,7 @@ YAML comments apply too: a space followed by `#` starts one, so a password like 
 A blank value (`PEARLARR_SONARR__URL=`) reads like a blank key in the file and falls back to the built-in default.
 
 A misspelled path fails loudly: `PEARLARR_SONAR__URL` (or any name that resolves to an unknown key) is rejected by the same validation that catches a typo'd file key, naming the offending key rather than being silently ignored.
+The error line for a key a variable set names the variable: `sonar (set by PEARLARR_SONAR__URL): unknown key`.
 `pearlarr config show` prints the effective configuration with every override already merged in, so it is the way to confirm an override landed.
 
 ## Configuration changes and the cache
