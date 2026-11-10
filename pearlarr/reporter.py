@@ -179,8 +179,6 @@ class PerTitleState:
     """Group names of the private-only skip, riding along for the run summary's "needs action" list."""
     private_only_stale_held: bool = False
     """A stale owned private pick is held because only a fallback covers it."""
-    fallback_covered: bool = False
-    """The Arr already owns a public fallback's files."""
     unsupported_tracker_skipped: bool = False
     """The tracker has no parser, so the title must not be cached as done."""
     unsupported_tracker_groups: list[str] = field(default_factory=list[str])
@@ -217,7 +215,6 @@ class PerTitleState:
         self.private_only_skipped |= skips.skipped
         self.private_only_groups.extend(skips.groups)
         self.private_only_stale_held |= skips.stale_held
-        self.fallback_covered |= skips.fallback_covered
 
 
 @dataclass

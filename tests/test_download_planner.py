@@ -14,8 +14,7 @@ The `reduce_overlapping_downloads` branch matrix these tests pin:
     per same-files set (no flagged: skip set), public_flagged == 0:
       upgrade_pending + promotion found .... INFO "private-only; grabbing public alternative X"
       upgrade_pending + none + fallback .... WARNING stale reason, stale_held, skipped
-      no mismatch + owned fallback rides ... INFO soft-skip, fallback_covered
-      neither .............................. WARNING "not supported", skipped
+      otherwise ............................ WARNING "not supported", skipped
     public_flagged >= 1:
       first fully-addable group ............ keeper, losers unflag (debug only)
       none addable + mismatch + promotion .. INFO "remaining files private-only; grabbing ..."
@@ -25,7 +24,7 @@ The `reduce_overlapping_downloads` branch matrix these tests pin:
     then per set: rescue re-flags just-dropped public urls no survivor covers.
     finally per group: identical non-empty filesets dedup to the first.
 
-Skip state (skipped/groups/notices/stale_held/fallback_covered) accumulates
+Skip state (skipped/groups/notices/stale_held) accumulates
 across sets onto ONE result - the multi-set tests pin that accumulation.
 """
 
@@ -119,10 +118,8 @@ class TestReduceOverlappingDownloads:
         assert seadex["Priv"].urls["u1"].download is False
         assert skips.skipped is True
         assert skips.groups == ["Priv"]
-        # Plain-reason mutant killer: no fallback rides, so no stale hold and
-        # nothing fallback-covered.
+        # Plain-reason mutant killer: no fallback rides, so no stale hold.
         assert skips.stale_held is False
-        assert skips.fallback_covered is False
         assert len(skips.notices) == 1
         assert skips.notices[0].groups == ["Priv"]
         assert skips.notices[0].reason == "private-only (private releases not supported)"
@@ -151,10 +148,10 @@ class TestReduceOverlappingDownloads:
         assert len(skips.notices) == 1
         assert skips.notices[0].severity is Severity.WARNING
 
-    def test_private_only_set_with_owned_fallback_soft_skips(self) -> None:
-        # Same files, and the public fallback is unflagged (the Arr already has
-        # its release): drop the private pick at INFO with no skipped flag, so
-        # the title can still cache as done.
+    def test_private_only_set_with_an_unflagged_fallback_warns_plainly(self) -> None:
+        # Same files, an unflagged public fallback, and the private flag is no
+        # upgrade: nothing says the Arr holds a stale copy, so the set gets the
+        # plain warning and the title stays uncached.
         planner = make_planner()
         seadex = {
             "Priv": rg_group({"u1": url_item(download=True, is_public=False)}),
@@ -162,14 +159,13 @@ class TestReduceOverlappingDownloads:
         }
         skips = planner.reduce_overlapping_downloads(seadex)
         assert seadex["Priv"].urls["u1"].download is False
-        assert skips.skipped is False
-        assert skips.groups == []
-        # The soft-skip is the ONE producer of the fallback-covered bit (the
-        # cache's fallback-satisfied marker).
-        assert skips.fallback_covered is True
-        assert len(skips.notices) == 1
-        assert skips.notices[0].groups == ["Priv"]
-        assert skips.notices[0].severity is Severity.INFO
+        assert seadex["Fall"].urls["u2"].download is False
+        assert skips.skipped is True
+        assert skips.groups == ["Priv"]
+        assert skips.stale_held is False
+        assert [(n.reason, n.severity) for n in skips.notices] == [
+            ("private-only (private releases not supported)", Severity.WARNING),
+        ]
 
     def test_keeper_prefers_fully_addable_group(self) -> None:
         # A mixed group (public + flagged private url) is first, but its private
@@ -231,8 +227,6 @@ class TestReduceOverlappingDownloads:
         assert skips.skipped is True
         assert skips.groups == ["Priv"]
         assert skips.stale_held is True
-        # A hold is not a soft-skip: the marker bit must stay off.
-        assert skips.fallback_covered is False
         assert len(skips.notices) == 1
         assert skips.notices[0].groups == ["Priv"]
         assert skips.notices[0].severity is Severity.WARNING
@@ -365,9 +359,6 @@ class TestReduceOverlappingDownloads:
         assert seadex["Fall"].urls["u2"].download is True
         assert seadex["Priv"].urls["u1"].download is False
         assert skips.skipped is False
-        # The keeper GRABS the fallback. The covered bit is only for the
-        # owned-fallback soft-skip (the grab itself marks the cache).
-        assert skips.fallback_covered is False
         assert len(skips.notices) == 1
         assert skips.notices[0].groups == ["Priv"]
         assert skips.notices[0].severity is Severity.INFO
@@ -459,40 +450,26 @@ class TestReduceOverlappingDownloads:
         assert [n.groups for n in skips.notices] == [["P1"], ["P2"]]
         assert [n.severity for n in skips.notices] == [Severity.WARNING, Severity.WARNING]
 
-    def test_soft_skip_and_stale_hold_combine_across_sets(self) -> None:
-        # One entry, two sets: an owned-fallback soft-skip (set 1) and a
-        # size-mismatch fallback hold (set 2). The per-set bits land TOGETHER on
-        # one result - fallback_covered and stale_held are independent - and only
-        # the held set reaches skipped/groups. The notices keep their levels.
+    def test_a_stale_hold_survives_a_later_plain_skip(self) -> None:
+        # One entry, two sets: a stale hold (set 1), then a plain private-only
+        # skip (set 2). The later set doesn't clear the hold, and each set keeps
+        # its own reason.
         planner = make_planner()
         e1 = [EpisodeRecord(season=1, episode=1, size=0)]
         e2 = [EpisodeRecord(season=2, episode=1, size=0)]
         seadex = {
-            "Priv1": rg_group({"u1": url_item(download=True, is_public=False)}, all_episodes=e1),
-            "Fall1": rg_group(
-                {"u2": url_item(download=False, is_public=True, is_fallback=True)},
-                all_episodes=e1,
-            ),
-            "Priv2": rg_group(
-                {"u3": url_item(download=True, is_public=False, upgrade=True)},
-                all_episodes=e2,
-            ),
-            "Fall2": rg_group(
-                {"u4": url_item(download=False, is_public=True, is_fallback=True)},
-                all_episodes=e2,
-            ),
+            "Priv1": rg_group({"u1": url_item(download=True, is_public=False, upgrade=True)}, all_episodes=e1),
+            "Fall1": rg_group({"u2": url_item(download=False, is_public=True, is_fallback=True)}, all_episodes=e1),
+            "Priv2": rg_group({"u3": url_item(download=True, is_public=False)}, all_episodes=e2),
         }
         skips = planner.reduce_overlapping_downloads(seadex)
-        assert seadex["Priv1"].urls["u1"].download is False
-        assert seadex["Priv2"].urls["u3"].download is False
-        assert seadex["Fall1"].urls["u2"].download is False
-        assert seadex["Fall2"].urls["u4"].download is False
-        assert skips.fallback_covered is True
+        stale_reason = (
+            "private-only; your copy is outdated (its file size no longer matches the release) "
+            "and only a fallback covers it"
+        )
         assert skips.stale_held is True
-        assert skips.skipped is True
-        assert skips.groups == ["Priv2"]
-        assert [n.groups for n in skips.notices] == [["Priv1"], ["Priv2"]]
-        assert [n.severity for n in skips.notices] == [Severity.INFO, Severity.WARNING]
+        assert skips.groups == ["Priv1", "Priv2"]
+        assert [n.reason for n in skips.notices] == [stale_reason, "private-only (private releases not supported)"]
 
     def test_both_promotion_prefixes_in_one_entry(self) -> None:
         # The two promotion notices are DISTINCT: the no-public-flagged branch
