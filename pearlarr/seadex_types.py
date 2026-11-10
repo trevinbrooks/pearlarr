@@ -200,8 +200,9 @@ def flagged_urls(seadex_dict: SeadexDict) -> list[FlaggedUrl]:
 
 
 # Folded into the config's selection digest: bump when the release-selection
-# rules change in code so every cached verdict re-checks once after an upgrade.
-SELECTION_RULES_VERSION: int = 13
+# rules change in code, or a fix leaves earlier verdicts in doubt, so every
+# cached verdict re-checks once after an upgrade.
+SELECTION_RULES_VERSION: int = 14
 
 SONARR_MISSING_KEY: int = 999
 """Out-of-range stand-in for a missing Sonarr `seasonNumber`/`episodeNumber`, never colliding with a real one."""
