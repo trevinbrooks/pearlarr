@@ -20,7 +20,6 @@ import pytest
 
 from pearlarr.cache import CacheRecord
 from pearlarr.config import Arr
-from pearlarr.log import EntryState
 from pearlarr.manual_import import EntryNames
 from pearlarr.reporter import EntryTitle, RunContext
 from pearlarr.run_services import RunServices
@@ -54,20 +53,14 @@ class _RecordingCacheStore(FakeCacheStore):
 
 
 class _RecordingReporter:
-    """Records `log_cached_entry` calls, so the cross-arr param can be asserted on recorded state."""
+    """Records the title each `log_cached_entry` call reports as cached."""
 
     def __init__(self) -> None:
-        self.calls: list[tuple[RunContext, Arr, int, EntryState]] = []
+        self.cached: list[int] = []
 
-    def log_cached_entry(
-        self,
-        ctx: RunContext,
-        arr: Arr,
-        al_id: int,
-        state: EntryState = EntryState.UNCHANGED,
-    ) -> bool:
-        self.calls.append((ctx, arr, al_id, state))
-        return True
+    def log_cached_entry(self, ctx: RunContext, al_id: int) -> None:
+        del ctx
+        self.cached.append(al_id)
 
 
 @dataclass(frozen=True, slots=True)
@@ -111,7 +104,7 @@ class TestCachedEntrySkip:
             _anilist=make_anilist_gateway(ScriptedAniListClient(None)),
         )
         assert run.cached_entry_skip(7, make_entry_record(updated_at=datetime(2021, 1, 1)), lambda: "") is True
-        assert len(reporter.calls) == 1
+        assert reporter.cached == [7]
 
     def test_does_not_skip_when_entry_absent(self) -> None:
         run = self._run(FakeCacheStore())
@@ -389,56 +382,6 @@ class _CtxBind:
 
     def begin_run(self, ctx: RunContext) -> None:
         del ctx
-
-
-class TestCrossArrReadCountsAnUnstampedRow:
-    """The Sonarr run's read of Radarr's cache counts a row with no stamp, but not one with an older stamp."""
-
-    def test_a_radarr_title_waiting_on_a_check_is_still_in_radarr(self) -> None:
-        # Radarr's row lost its stamp: its check didn't finish, or its download left qBittorrent.
-        cache = FakeCacheStore()
-        cache.update_cache(Arr.RADARR, 7, {"updated_at": datetime(2021, 1, 1)})
-        cache.clear_entry_stamp(Arr.RADARR, 7)
-        run = make_services(cache_store=cache, _ctx=RunContext(arr=Arr.SONARR))
-
-        assert run.check_al_id_in_cache(Arr.RADARR, 7, make_entry_record(updated_at=datetime(2021, 1, 1))) is True
-
-    def test_a_radarr_title_cached_under_an_older_seadex_update_is_not_in_radarr(self) -> None:
-        cache = FakeCacheStore()
-        cache.update_cache(Arr.RADARR, 7, {"updated_at": datetime(2021, 1, 1)})
-        run = make_services(cache_store=cache, _ctx=RunContext(arr=Arr.SONARR))
-
-        assert run.check_al_id_in_cache(Arr.RADARR, 7, make_entry_record(updated_at=datetime(2022, 1, 1))) is False
-
-
-class TestCrossArrLookupHonorsParam:
-    """`check_al_id_in_cache` / `log_cached_entry` read the `arr` parameter, never `self._ctx.arr`.
-
-    The run-arr consolidation drops `arr` from methods that only ever act on the
-    run's own arr, but these two stay parameterised because the Sonarr run's
-    `ignore_movies_in_radarr` dedup calls them with `Arr.RADARR` to hit the
-    Radarr cache while `ctx.arr` is SONARR. If either ever read `ctx.arr`
-    instead of the param, that cross-arr check silently reads the wrong cache -
-    a regression the all-SONARR tests above physically cannot catch.
-    """
-
-    def test_check_al_id_in_cache_honors_explicit_arr_over_ctx(self) -> None:
-        cache = FakeCacheStore()
-        # Present in the RADARR cache only. The run's ctx.arr is SONARR.
-        cache.update_cache(Arr.RADARR, 7, {"updated_at": datetime(2021, 1, 1)})
-        run = make_services(cache_store=cache, _ctx=RunContext(arr=Arr.SONARR))
-        entry = make_entry_record(updated_at=datetime(2021, 1, 1))
-        # The explicit RADARR param must select the Radarr cache (hit)...
-        assert run.check_al_id_in_cache(Arr.RADARR, 7, entry) is True
-        # ...and the run's own SONARR arr must miss (no Sonarr entry exists).
-        assert run.check_al_id_in_cache(Arr.SONARR, 7, entry) is False
-
-    def test_log_cached_entry_forwards_param_arr_not_ctx(self) -> None:
-        reporter = _RecordingReporter()
-        run = make_services(_reporter=reporter, _ctx=RunContext(arr=Arr.SONARR))
-        run.log_cached_entry(Arr.RADARR, 7, state=EntryState.IN_RADARR)
-        # The reporter delegate receives the explicit cross-arr value, not ctx.arr.
-        assert reporter.calls == [(run._ctx, Arr.RADARR, 7, EntryState.IN_RADARR)]
 
 
 class _TailReporter:

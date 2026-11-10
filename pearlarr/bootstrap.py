@@ -311,21 +311,6 @@ def configured_arrs(
     return kept
 
 
-def implicated_arrs(arr: Arr, app_config: AppConfig) -> list[Arr]:
-    """The arrs a run leg connects to, for attributing a connection/auth failure.
-
-    A Sonarr leg also builds a Radarr client when `ignore_movies_in_radarr`
-    is on (the specials cross-check), so a connection/auth failure there can
-    belong to either instance - the error handlers name every candidate key
-    instead of pinning a Radarr outage on Sonarr.
-    """
-
-    implicated = [arr]
-    if arr is Arr.SONARR and app_config.sonarr.ignore_movies_in_radarr and app_config.is_configured(Arr.RADARR):
-        implicated.append(Arr.RADARR)
-    return implicated
-
-
 @dataclass(frozen=True)
 class LegContext:
     """The run-invariant collaborators every arr leg shares (built once per run).
@@ -415,10 +400,7 @@ def _run_leg(target: ArrTarget, ctx: LegContext) -> bool:
         hub_error(str(e))
         return False
     except ArrConnectionError as e:
-        # The error's message names the URL it couldn't reach, which
-        # disambiguates when this leg contacted more than one arr.
-        keys = " / ".join(f"{a}.url" for a in implicated_arrs(arr_name, ctx.app_config))
-        hub_error(f"{arr_name.capitalize()} run failed - {e} - check {keys} in your config")
+        hub_error(f"{arr_name.capitalize()} run failed - {e} - check {arr_name}.url in your config")
         return False
     except BoundaryContractError as e:
         # The arr answered but its library payload validated to
@@ -426,16 +408,7 @@ def _run_leg(target: ArrTarget, ctx: LegContext) -> bool:
         hub_error(f"{arr_name.capitalize()} run failed - {e}")
         return False
     except ArrAuthError:
-        implicated = implicated_arrs(arr_name, ctx.app_config)
-        if len(implicated) == 1:
-            hub_error(f"{arr_name.capitalize()} rejected the API key - check {arr_name}.api_key in your config")
-        else:
-            # This leg presented more than one key - name every
-            # candidate (the config keys are what gets edited).
-            keys = " / ".join(f"{a}.api_key" for a in implicated)
-            hub_error(
-                f"An arr rejected the API key during the {arr_name.capitalize()} run - check {keys} in your config"
-            )
+        hub_error(f"{arr_name.capitalize()} rejected the API key - check {arr_name}.api_key in your config")
         return False
     except Exception as e:
         hub_error(

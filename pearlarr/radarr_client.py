@@ -108,9 +108,7 @@ def collect_anime_movies(
     """Radarr movies that have an AniList mapping, sorted by title.
 
     Gathers the candidate TMDB/IMDb id sets from the two mapping sources, then
-    keeps each Radarr movie that matches one of them. Shared by
-    `RadarrSync.get_all_radarr_movies` and Sonarr's `ignore_movies_in_radarr`
-    path.
+    keeps each Radarr movie that matches one of them.
 
     Args:
         radarr_client: Client to fetch the movie list from.

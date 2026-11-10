@@ -30,7 +30,6 @@ from pearlarr.episode_state import EpisodeFileStatus, GroupVotes, RecordSnapshot
 from pearlarr.grab_pipeline import NO_SEEDS, GrabRequest
 from pearlarr.grab_placement import EntryPlacements, SeedFile, place_release
 from pearlarr.import_quality import resolve_language_objects
-from pearlarr.log import EntryState
 from pearlarr.manual_import import (
     AttemptKind,
     Deferral,
@@ -158,22 +157,6 @@ class GetAniListIdsCall(NamedTuple):
     log_ignored: bool = True
 
 
-class CheckAlIdInCacheCall(NamedTuple):
-    """One recorded `check_al_id_in_cache` call (its explicit cross-arr `arr`)."""
-
-    arr: Arr
-    al_id: int
-    seadex_entry: EntryRecord
-
-
-class LogCachedEntryCall(NamedTuple):
-    """One recorded `log_cached_entry` call (its explicit cross-arr `arr`)."""
-
-    arr: Arr
-    al_id: int
-    state: EntryState = EntryState.UNCHANGED
-
-
 class _FakeRunServices(RunServices):
     """A scripted `RunServices` - the seam a strategy holds as `self._services`.
 
@@ -193,17 +176,14 @@ class _FakeRunServices(RunServices):
         prologue_entry: EntryRecord | None = None,
         anilist_title: str = "Title",
         cached_skip: bool = False,
-        al_id_in_cache: bool = False,
         needs_scan: bool = True,
         seadex_dict: SeadexDict | None = None,
         interactive_result: SeadexDict | None = None,
         filter_downloads_result: PlanResult | None = None,
         import_wait_mode: ImportWaitMode = ImportWaitMode.OFF,
-        selection_stale: bool = False,
         arr: Arr = Arr.SONARR,
         cache_store: FakeCacheStore | None = None,
     ) -> None:
-        self._selection_stale = selection_stale
         # The record seam the strategies read stored records through, bound as a run would bind it.
         self.cache_store = cache_store if cache_store is not None else FakeCacheStore()
         self._records = PendingRecords(self.cache_store)
@@ -213,7 +193,6 @@ class _FakeRunServices(RunServices):
         self._prologue_entry = prologue_entry
         self._anilist_title = anilist_title
         self._cached_skip = cached_skip
-        self._al_id_in_cache = al_id_in_cache
         self._needs_scan = needs_scan
         self._seadex_dict: SeadexDict = seadex_dict if seadex_dict is not None else {}
         self._interactive_result = interactive_result
@@ -221,10 +200,8 @@ class _FakeRunServices(RunServices):
         self._import_wait_mode = import_wait_mode
         self.get_anilist_ids_calls: list[GetAniListIdsCall] = []
         self.al_id_prologue_calls: list[int] = []
-        self.check_al_id_in_cache_calls: list[CheckAlIdInCacheCall] = []
-        self.log_entry_status_calls: list[tuple[EntryState, str]] = []
+        self.no_episodes_titles: list[str] = []
         self.log_al_title_calls: list[str] = []
-        self.log_cached_entry_calls: list[LogCachedEntryCall] = []
         self.cached_skip_coverages: list[Callable[[], str]] = []
         self.get_seadex_dict_calls: list[EntryRecord] = []
         self.interactive_calls: list[SeadexDict] = []
@@ -236,18 +213,8 @@ class _FakeRunServices(RunServices):
 
     @property
     @override
-    def selection_stale(self) -> bool:
-        return self._selection_stale
-
-    @property
-    @override
     def records(self) -> PendingRecords:
         return self._records
-
-    @override
-    def check_al_id_in_cache(self, arr: Arr, al_id: int, seadex_entry: EntryRecord) -> bool:
-        self.check_al_id_in_cache_calls.append(CheckAlIdInCacheCall(arr, al_id, seadex_entry))
-        return self._al_id_in_cache
 
     @override
     def al_id_needs_scan(self, al_id: int) -> bool:
@@ -340,8 +307,8 @@ class _FakeRunServices(RunServices):
         self.grab_requests.append(req)
 
     @override
-    def log_entry_status(self, state: EntryState, label: str) -> None:
-        self.log_entry_status_calls.append((state, label))
+    def log_no_episodes(self, title: str) -> None:
+        self.no_episodes_titles.append(title)
 
     @override
     def log_anilist_item_unmonitored(self, item_title: str) -> None:
@@ -351,10 +318,6 @@ class _FakeRunServices(RunServices):
     def log_al_title(self, title: str, sd_entry: EntryRecord, coverage: str | None = None) -> None:
         del sd_entry, coverage
         self.log_al_title_calls.append(title)
-
-    @override
-    def log_cached_entry(self, arr: Arr, al_id: int, state: EntryState = EntryState.UNCHANGED) -> None:
-        self.log_cached_entry_calls.append(LogCachedEntryCall(arr, al_id, state))
 
 
 def test_fake_overrides_the_full_public_surface() -> None:
@@ -367,7 +330,7 @@ def test_fake_overrides_the_full_public_surface() -> None:
 
     # Loop-driven members (the runner calls these, strategies never do), so the
     # fake doesn't script them.
-    lifecycle = {"begin_run", "ctx", "is_preview", "mark_dirty", "pay_pause"}
+    lifecycle = {"begin_run", "ctx", "is_preview", "mark_dirty", "pay_pause", "selection_stale"}
     surface = {
         name
         for name, member in vars(RunServices).items()
@@ -526,7 +489,7 @@ class TestProcessAlIdThreadsServices:
 
     def test_sonarr_no_episodes_resolved_skips_explicitly(self) -> None:
         # An anime-id mapping that resolves to [] (season not in Sonarr / offset past
-        # the end): skip with the NO_EPISODES status, never mislabeled "unmonitored"
+        # the end): skip with a no-episodes row, never mislabeled "unmonitored"
         # and never falling through to grab orphans - and NO AniBridge warning.
         run = _FakeRunServices(prologue_entry=make_entry_record(), anilist_title="Title")
         episodes = ScriptedEpisodes(FakeSonarrClient(episodes=[]))
@@ -536,12 +499,11 @@ class TestProcessAlIdThreadsServices:
             _services=run,
             _episodes=episodes,
             _config=make_config(sleep_time=0),
-            ignore_movies_in_radarr=False,
             logger=make_logger(),
         )
 
         strat.process_al_id(_Item(id=1, title="Title"), 5, MappingEntry(anilist_id=5))
-        assert run.log_entry_status_calls == [(EntryState.NO_EPISODES, "Title")]
+        assert run.no_episodes_titles == ["Title"]
         assert run.log_al_title_calls == []
         assert run.pauses_owed == 1
         # anime-id empty is NOT the AniBridge case -> no warning surfaced.
@@ -561,7 +523,6 @@ class TestProcessAlIdThreadsServices:
             _services=run,
             _episodes=episodes,
             _config=make_config(sleep_time=0),
-            ignore_movies_in_radarr=False,
             logger=make_logger(),
         )
 
@@ -570,7 +531,7 @@ class TestProcessAlIdThreadsServices:
             5,
             MappingEntry(anilist_id=5, tvdb_mappings={}, source=MappingSource.ANIBRIDGE),
         )
-        assert run.log_entry_status_calls == [(EntryState.NO_EPISODES, "Title")]
+        assert run.no_episodes_titles == ["Title"]
         assert run.log_al_title_calls == []
         # AniBridge-specific notice surfaced.
         assert any(
@@ -597,7 +558,6 @@ class TestProcessAlIdThreadsServices:
             _parse=_ScriptedParse(),
             _listings=_ScriptedListings(),
             _config=make_config(interactive=True, sleep_time=0),
-            ignore_movies_in_radarr=False,
             logger=make_logger(),
         )
 
@@ -605,44 +565,6 @@ class TestProcessAlIdThreadsServices:
         assert run.invalid_selection_skips == 1
         assert run.grab_requests == []
         assert run.no_releases_calls == []
-
-    def test_sonarr_movie_in_radarr_cache_dedups_via_explicit_arr(self) -> None:
-        # The Sonarr->Radarr dedup MUST pass an explicit Arr.RADARR to both the
-        # cache check and the cached-entry log (the cross-arr invariant: ctx.arr
-        # is SONARR here and would look in the wrong cache). Pinned by recording.
-        entry = make_entry_record()
-        run = _FakeRunServices(prologue_entry=entry, al_id_in_cache=True)
-        strat = make_bare_instance(
-            SonarrSync,
-            _services=run,
-            _episodes=ScriptedEpisodes(FakeSonarrClient(episodes=[])),
-            _config=make_config(sleep_time=0),
-            ignore_movies_in_radarr=True,
-            logger=make_logger(),
-        )
-
-        strat.process_al_id(_Item(id=1, title="Title"), 5, MappingEntry(anilist_id=5))
-        assert run.check_al_id_in_cache_calls == [CheckAlIdInCacheCall(Arr.RADARR, 5, entry)]
-        assert run.log_cached_entry_calls == [LogCachedEntryCall(Arr.RADARR, 5, EntryState.IN_RADARR)]
-
-    def test_selection_stale_bypasses_the_radarr_cache_dedup(self) -> None:
-        # A moved matching setting makes every cached verdict suspect (the shared
-        # seadex config drives both arrs), so the cross-arr Radarr short-circuit is
-        # skipped just like ignore_seadex_update_times - the id flows on to a fresh
-        # evaluation instead of a stale IN_RADARR skip. Radarr's own run re-vouches.
-        run = _FakeRunServices(prologue_entry=make_entry_record(), al_id_in_cache=True, selection_stale=True)
-        strat = make_bare_instance(
-            SonarrSync,
-            _services=run,
-            _episodes=ScriptedEpisodes(FakeSonarrClient(episodes=[])),
-            _config=make_config(sleep_time=0),
-            ignore_movies_in_radarr=True,
-            all_radarr_movies=None,
-            logger=make_logger(),
-        )
-
-        strat.process_al_id(_Item(id=1, title="Title"), 5, MappingEntry(anilist_id=5))
-        assert run.check_al_id_in_cache_calls == []  # the stale run never trusts the cross-arr cache
 
 
 class _QbitState(NamedTuple):
@@ -2481,7 +2403,6 @@ def _sonarr_seed_run(mode: ImportWaitMode, *, store: FakeCacheStore, episodes: S
         _parse=_ScriptedParse({_SEED_URL: tuple(SeedFile(name, 1000, parses[name]) for name in _SEED_FILES)}),
         _listings=_ScriptedListings(),
         _config=make_config(sleep_time=0),
-        ignore_movies_in_radarr=False,
         logger=make_logger(),
     )
     strat.process_al_id(_Item(id=7, title="Show", tvdbId=70, imdbId=None), 5, MappingEntry(anilist_id=5))
@@ -2513,7 +2434,6 @@ def _entry_run(
         _parse=_ScriptedParse({_SEED_URL: files}),
         _listings=listings,
         _config=make_config(sleep_time=0),
-        ignore_movies_in_radarr=False,
         logger=make_logger(),
     )
     strat.process_al_id(_Item(id=7, title="Show", tvdbId=70, imdbId=None), 5, MappingEntry(anilist_id=5))
@@ -2582,7 +2502,6 @@ class TestSonarrProcessAlIdSeeds:
             _parse=_ScriptedParse({_SEED_URL: tuple(SeedFile(name, 1000, parses[name]) for name in files)}),
             _listings=_ScriptedListings({"h1": torrent_listing(entry_window(1, (502, 504, 506)))}),
             _config=make_config(sleep_time=0),
-            ignore_movies_in_radarr=False,
             logger=make_logger(),
         )
 
@@ -2653,7 +2572,6 @@ class TestSonarrProcessAlIdSeeds:
             _parse=_ScriptedParse(),
             _listings=listings,
             _config=make_config(sleep_time=0),
-            ignore_movies_in_radarr=False,
             logger=make_logger(),
         )
 
@@ -2693,7 +2611,6 @@ class TestSonarrProcessAlIdSeeds:
                 {"h1": torrent_listing(entry_window(5, (101, 102), ignored=True), entry_window(6, (501, 502)))}
             ),
             _config=make_config(sleep_time=0),
-            ignore_movies_in_radarr=False,
             logger=make_logger(),
         )
 

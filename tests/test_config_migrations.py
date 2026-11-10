@@ -176,6 +176,44 @@ class TestMigrateMapping:
         assert mapping == {"config_version": CONFIG_VERSION, "imports": {"mode": "copy"}}
         assert outcome.notes == ()
 
+    # A quoted "true" loaded as on, so it gets the note too.
+    @pytest.mark.parametrize("value", [True, "true"])
+    def test_v4_to_v5_drops_ignore_movies_in_radarr_and_says_what_changes_when_it_was_on(self, value: Json) -> None:
+        mapping: dict[str, Json] = {
+            "config_version": 4,
+            "sonarr": {"url": "http://s", "ignore_movies_in_radarr": value},
+        }
+        outcome = migrate_mapping(mapping)
+        assert outcome is not None
+        assert mapping == {"config_version": CONFIG_VERSION, "sonarr": {"url": "http://s"}}
+        (note,) = outcome.notes
+        assert note == (
+            "sonarr.ignore_movies_in_radarr was removed - dropped (Sonarr now checks a movie Radarr also has, "
+            "so it can be grabbed for Sonarr too. To skip one, unmonitor its episode in Sonarr and turn on "
+            "sonarr.ignore_unmonitored)"
+        )
+
+    @pytest.mark.parametrize("value", [False, None])
+    def test_v4_to_v5_notes_nothing_changes_when_ignore_movies_in_radarr_was_off(self, value: Json) -> None:
+        mapping: dict[str, Json] = {
+            "config_version": 4,
+            "sonarr": {"url": "http://s", "ignore_movies_in_radarr": value},
+        }
+        outcome = migrate_mapping(mapping)
+        assert outcome is not None
+        assert mapping == {"config_version": CONFIG_VERSION, "sonarr": {"url": "http://s"}}
+        (note,) = outcome.notes
+        assert note == "sonarr.ignore_movies_in_radarr was removed - dropped (it was off, so nothing changes)"
+
+    # A group without the key, and a malformed one, which is left for validation to reject by name.
+    @pytest.mark.parametrize("sonarr", [{"url": "http://s"}, 5])
+    def test_v4_without_ignore_movies_in_radarr_migrates_with_no_note(self, sonarr: Json) -> None:
+        mapping: dict[str, Json] = {"config_version": 4, "sonarr": sonarr}
+        outcome = migrate_mapping(mapping)
+        assert outcome is not None
+        assert mapping == {"config_version": CONFIG_VERSION, "sonarr": sonarr}
+        assert outcome.notes == ()
+
     def test_the_chain_is_contiguous_and_ends_at_the_current_version(self) -> None:
         # Declaration order IS application order: pin that the steps run 1..N
         # with no gap, and that bumping CONFIG_VERSION without its step (or

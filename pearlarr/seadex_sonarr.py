@@ -1,11 +1,10 @@
 """The Sonarr strategy: series/episode coverage and per-AniList-id processing over the services hub."""
 
-from collections.abc import Iterable, Mapping, Sequence
+from collections.abc import Iterable, Mapping
 from dataclasses import replace
 from typing import override
 
 from . import coverage as _coverage
-from .arr_http import make_httpx_client
 from .config import Arr
 from .grab_pipeline import NO_SEEDS, GrabRequest
 from .grab_placement import (
@@ -19,7 +18,7 @@ from .grab_placement import (
     entry_hashes,
     identity_overrides,
 )
-from .log import EntryState, count_noun, pluralize
+from .log import count_noun, pluralize
 from .manual_import import (
     AttemptKind,
     EffectStatus,
@@ -33,13 +32,11 @@ from .output import hub_warn
 from .placement_types import EpisodeIndex, episode_index
 from .planner import get_episode_keys
 from .protocols import ArrSync
-from .radarr_client import AbstractRadarrClient, RadarrClient, collect_anime_movies
 from .run_services import RunDeps, RunServices, bind_arr_http
 from .seadex_types import (
     GrabHold,
     HistoryRecord,
     ProgressSink,
-    RadarrItem,
     SeadexDict,
     SonarrItem,
     flagged_urls,
@@ -80,34 +77,6 @@ def get_overlapping_results(seadex_dict: SeadexDict) -> bool:
     return False
 
 
-def radarr_movies_matching(
-    mapping: MappingEntry,
-    movies: Sequence[RadarrItem],
-) -> list[RadarrItem]:
-    """The Radarr movies a specials mapping already covers, matched by TMDB/IMDb id.
-
-    Only a season-0 mapping can match (shows and movies are sometimes lumped
-    together, so a movie rides along as a special). An unset mapping id never
-    matches - the `is not None` guards mean None == None is not a match.
-    Order is preserved. A movie matching on both ids appears once.
-    """
-
-    radarr_movies: list[RadarrItem] = []
-
-    if mapping.tvdb_season == 0:
-        mapping_tmdb_id = mapping.tmdb_movie_id
-        mapping_imdb_id = mapping.imdb_id
-
-        for m in movies:
-            # Match by TMDB or IMDb id. One append per movie either way.
-            tmdb_match = mapping_tmdb_id is not None and m.tmdbId == mapping_tmdb_id
-            imdb_match = mapping_imdb_id is not None and m.imdbId == mapping_imdb_id
-            if tmdb_match or imdb_match:
-                radarr_movies.append(m)
-
-    return radarr_movies
-
-
 def _override_line(url: str, override: IdentityOverride) -> str:
     """The warning for one file placed by size over its name."""
 
@@ -130,31 +99,23 @@ class SonarrSync(ArrSync[SonarrItem]):
         services: RunServices,
         *,
         sonarr_client: AbstractSonarrClient | None = None,
-        radarr_client: AbstractRadarrClient | None = None,
     ) -> None:
         """Stand up the Sonarr client from the injected shared collaborators.
 
         Args:
-            deps: The shared collaborators. The config/mappings
-                this strategy reads directly are unpacked off it, and it's handed
-                to the Sonarr collaborators for the cache/AniList gateway/log
-                formatter they read.
+            deps: The shared collaborators. The config this strategy reads
+                directly is unpacked off it, and it's handed to the Sonarr
+                collaborators for the cache/AniList gateway/log formatter they
+                read.
             services: The services hub the per-id hooks call into.
             sonarr_client: A pre-built client to use instead of constructing
                 the real `SonarrClient` (which needs the connection keys).
                 None builds the real one.
-            radarr_client: Same seam for the
-                movies-in-Radarr cross-check client, whose library is fetched
-                eagerly below (only consulted when
-                `sonarr.ignore_movies_in_radarr` is on). None builds the real
-                one when the feature is on and the Radarr keys are set.
         """
 
         self._services = services
         self._config = deps.config
         self.logger = deps.logger
-        self._mappings = deps.mappings
-        self.anibridge = deps.mappings.anibridge
 
         # Set up Sonarr. An injected client (tests) is used as-is. Otherwise the
         # connection keys are required only now (when a Sonarr run runs) and the
@@ -204,34 +165,6 @@ class SonarrSync(ArrSync[SonarrItem]):
         # grab-time pending-seed build. Composes the episode collaborator + the
         # executor. The import_completed / process_al_id hooks delegate to it.
         self._reconciler = ImportReconciler(self._services.records, self._episodes, self._executor)
-
-        self.ignore_movies_in_radarr = self._config.sonarr.ignore_movies_in_radarr
-
-        # Only when ignore_movies_in_radarr is on do we need Radarr's movie list
-        # (for the specials cross-check in process_al_id). Build a lightweight
-        # RadarrClient and reuse the already-built shared mappings - no full
-        # RadarrSync + engine stack (which would re-run mapping parse, cache
-        # load, and a qBittorrent login, all unused here).
-        self.all_radarr_movies: list[RadarrItem] | None = None
-        if self.ignore_movies_in_radarr:
-            if radarr_client is not None:
-                self.all_radarr_movies = collect_anime_movies(
-                    radarr_client,
-                    self._mappings,
-                    self.anibridge,
-                )
-            elif self._config.is_configured(Arr.RADARR):
-                # The Radarr keys are optional here (a Sonarr run) - the gate
-                # tolerates their absence instead of require_connection raising.
-                # The run's shared client is pinned to SONARR's verify_ssl. This
-                # one eager fetch talks to Radarr, so honor Radarr's own knob
-                # with a scoped client (closed as soon as the list is read).
-                with make_httpx_client(verify=self._config.radarr.verify_ssl) as radarr_http:
-                    self.all_radarr_movies = collect_anime_movies(
-                        RadarrClient(http=bind_arr_http(Arr.RADARR, self._config, radarr_http)),
-                        self._mappings,
-                        self.anibridge,
-                    )
 
     # --- ArrSync hooks ------------------------------------------------------
 
@@ -344,50 +277,11 @@ class SonarrSync(ArrSync[SonarrItem]):
         ):
             return
 
-        # Also check if it's in the Radarr cache, if we have that option. Skipped
-        # alongside the same re-check signals the per-id gate honors: a forced
-        # re-check (ignore flag) or moved matching settings (selection stale -
-        # shared seadex config, so Radarr's verdict is suspect too) must fall
-        # through to the live check, not short-circuit on a cached cross-arr verdict.
-        # Invariant: this dedup names Arr.RADARR explicitly while running Sonarr -
-        # folding the arr param into the run's bound arr breaks the cross-arr read.
-        if (
-            self.ignore_movies_in_radarr
-            and not self._config.seadex.ignore_seadex_update_times
-            and not run.selection_stale
-        ):
-            al_id_in_radarr_cache = run.check_al_id_in_cache(
-                arr=Arr.RADARR,
-                al_id=al_id,
-                seadex_entry=sd_entry,
-            )
-            if al_id_in_radarr_cache:
-                run.log_cached_entry(
-                    arr=Arr.RADARR,
-                    al_id=al_id,
-                    state=EntryState.IN_RADARR,
-                )
-                return
-
         # Resolved now, logged once the episode coverage is known.
         title = run.resolve_title(al_id)
 
         # Setup info for cache
         cache_details = run.new_cache_details(title, sd_entry)
-
-        # If we don't want to add movies that are already in Radarr, do that now
-        if self.ignore_movies_in_radarr and self.all_radarr_movies is not None:
-            radarr_movies = radarr_movies_matching(mapping, self.all_radarr_movies)
-
-            if len(radarr_movies) > 0:
-                for movie in radarr_movies:
-                    run.log_entry_status(
-                        EntryState.IN_RADARR,
-                        movie.title,
-                    )
-
-                run.owe_pause()
-                return
 
         # Get the episode list for all relevant episodes
         ep_list = self._episodes.get_ep_list(
@@ -402,7 +296,7 @@ class SonarrSync(ArrSync[SonarrItem]):
         if not ep_list:
             # Resolved zero episodes (season not in Sonarr, offset past the end, or
             # AniBridge with no ranges): skip, don't mislabel "unmonitored" or grab orphans.
-            run.log_entry_status(EntryState.NO_EPISODES, title.display)
+            run.log_no_episodes(title.display)
             if mapping.source is MappingSource.ANIBRIDGE and not mapping.tvdb_mappings:
                 # Surface any AniBridge no-usable-ranges case LOUDLY (distinct from a
                 # Sonarr-library gap): a WARNING under the skip row naming the cause.

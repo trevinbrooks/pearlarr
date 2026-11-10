@@ -10,6 +10,7 @@ Pearlarr is a fork of [bbtufty/seadexarr](https://github.com/bbtufty/seadexarr).
 ### Upgrade notes
 
 - **`imports.pending_max_age_days` is removed.** The next run, or `pearlarr config migrate`, rewrites `config.yml` at the new schema without it and keeps the previous file as `config.yml.bak`. A dry run never rewrites. Hand-written comments stay only in the backup. If your environment sets `PEARLARR_IMPORTS__PENDING_MAX_AGE_DAYS`, unset it before upgrading: the config no longer loads while it is set.
+- **`sonarr.ignore_movies_in_radarr` is removed.** The next run, or `pearlarr config migrate`, rewrites `config.yml` without it. If it was off (the default), nothing changes. If it was on, a Sonarr run now checks a movie that is also in Radarr, so its release can be grabbed for Sonarr too, and the `in radarr` rows are gone. To keep Sonarr off such a movie, unmonitor its episode in Sonarr and turn on `sonarr.ignore_unmonitored`. That setting also skips every other series or title whose episodes are all unmonitored. If your environment sets `PEARLARR_SONARR__IGNORE_MOVIES_IN_RADARR` to anything, unset it before upgrading: the config no longer loads while it is set.
 - **Downgrading needs the backup.** An older release refuses the rewritten `config.yml`, so restore `config.yml.bak` over it first. It also forgets the pending imports this release saved.
 
 ### Changed
@@ -18,6 +19,10 @@ Pearlarr is a fork of [bbtufty/seadexarr](https://github.com/bbtufty/seadexarr).
 - A download that leaves qBittorrent before it imports has its title checked again: the run that notices says so, and the run after it grabs the release again if your library still lacks it. Before, the title stayed cached as handled until SeaDex updated its entry or something else made Pearlarr re-check it. So removing a download no longer stops Pearlarr wanting the release: to stop a title for good, add its AniList ID to `seadex.ignore_anilist_ids`. With `seadex.use_torrent_hash_to_filter` on the title is checked again but nothing is grabbed, since a release is grabbed once per torrent hash. With `imports.wait_mode: off` Pearlarr doesn't track downloads, so it never sees one leave.
 - The first run after upgrading re-checks every cached title once and says so. That picks up any title an earlier version stopped checking (see Fixed below).
 - When the re-check after an upgrade or a settings change holds grabs past `advanced.max_torrents_to_add`, the next run checks only the titles it held. Before, every run re-checked the whole library and printed the "Matching settings changed" note until one held nothing.
+
+### Removed
+
+- `sonarr.ignore_movies_in_radarr` (see Upgrade notes). It couldn't be relied on: its check of Radarr's movies never matched a title mapped through AniBridge, which with the default mapping sources is nearly every movie, and its check of the titles Radarr had cached was skipped on the re-check after an upgrade or a settings change.
 
 ### Fixed
 

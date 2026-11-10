@@ -404,12 +404,6 @@ class TestStrictValidation:
         with pytest.raises(ValidationError):
             AppConfig.model_validate({"sonar": {"url": "x"}})
 
-    def test_radarr_group_rejects_sonarr_only_key(self) -> None:
-        # ignore_movies_in_radarr lives on SonarrSettings only.
-        AppConfig.model_validate({"sonarr": {"ignore_movies_in_radarr": True}})
-        with pytest.raises(ValidationError):
-            AppConfig.model_validate({"radarr": {"ignore_movies_in_radarr": True}})
-
     def test_bad_scalar_type_is_rejected(self) -> None:
         with pytest.raises(ValidationError):
             AppConfig.model_validate({"advanced": {"sleep_time": "abc"}})
@@ -601,13 +595,6 @@ class TestConnection:
         for arr in (Arr.SONARR, Arr.RADARR):
             with pytest.raises(ValueError):
                 cfg.require_connection(arr)
-
-    def test_cross_check_reads_are_none_tolerant(self) -> None:
-        # The Sonarr->Radarr specials cross-check reads radarr url/api_key directly
-        # (no require), so they stay None on a Sonarr-only config.
-        cfg = AppConfig.model_validate({"sonarr": {"url": "http://s", "api_key": "sk"}})
-        assert cfg.radarr.url is None
-        assert cfg.radarr.api_key is None
 
 
 class TestSecrets:

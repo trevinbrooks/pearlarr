@@ -21,6 +21,7 @@ import io
 import re
 import sys
 import textwrap
+from collections import Counter
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from enum import Enum
@@ -342,24 +343,28 @@ def _normalize_descriptions(node: object) -> None:
             _normalize_descriptions(item)
 
 
+def _keep_summary(schema: dict[str, Any]) -> None:
+    """Cut a schema's description to its summary paragraph. The rest of a class docstring is for contributors."""
+
+    description = schema.get("description")
+    if isinstance(description, str):
+        schema["description"] = description.split("\n\n")[0]
+
+
 def render_schema(groups: tuple[GroupDoc, ...]) -> str:
     """The JSON Schema for `config.yml`, published at a tag-stable path."""
 
     generated = AppConfig.model_json_schema()
     defs = cast("dict[str, dict[str, Any]]", generated.get("$defs", {}))
-    for group in groups:
-        # Class docstrings are contributor-facing. The group attribute docstrings are what a config editor surfaces.
-        defs[group.class_name]["description"] = group.description
+    backing = Counter(group.class_name for group in groups)
     for def_schema in defs.values():
-        # Enum class docstrings: only the summary paragraph is for users. The
-        # rationale paragraphs are contributor-facing.
-        description = def_schema.get("description")
-        if "enum" in def_schema and isinstance(description, str):
-            def_schema["description"] = description.split("\n\n")[0]
-    # Same summary-only treatment for the root: AppConfig's rationale paragraphs are contributor-facing.
-    root_description = generated.get("description")
-    if isinstance(root_description, str):
-        generated["description"] = root_description.split("\n\n")[0]
+        _keep_summary(def_schema)
+    for group in groups:
+        # A config editor shows a class's description, so a class behind one group carries that group's text.
+        # One behind several can't, so it keeps its own summary and each group's text sits beside its $ref.
+        if backing[group.class_name] == 1:
+            defs[group.class_name]["description"] = group.description
+    _keep_summary(generated)
     generated.pop("title", None)
     schema: dict[str, Any] = {
         "$schema": "https://json-schema.org/draft/2020-12/schema",

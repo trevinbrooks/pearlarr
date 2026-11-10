@@ -612,8 +612,7 @@ class TestRunFailuresAreCleanAndNonzero:
             pytest.param("qbit", "qBittorrent connection failed", id="qbit-connection"),
             pytest.param(
                 "unreachable",
-                # The failing URL (from the error's message) is surfaced, so the
-                # user sees which connection broke, not just which leg was running.
+                # The error's message carries the address that was tried.
                 "Sonarr run failed - Could not reach Sonarr at http://sonarr:8989 "
                 "(request failed (ConnectError)) - check sonarr.url",
                 id="arr-unreachable",
@@ -655,54 +654,6 @@ class TestRunFailuresAreCleanAndNonzero:
 
         monkeypatch.setattr(RunDeps, "build", fail_build)
         _write_runnable_config()
-
-        assert run_single(sonarr=True) is False
-        out = capsys.readouterr().out
-        assert expected in out
-        assert "Traceback" not in out
-
-    @pytest.mark.parametrize(
-        ("error", "expected"),
-        [
-            pytest.param("unreachable", "check sonarr.url / radarr.url", id="arr-unreachable"),
-            pytest.param(
-                "unauthorized",
-                "An arr rejected the API key during the Sonarr run - check sonarr.api_key / radarr.api_key",
-                id="arr-unauthorized",
-            ),
-        ],
-    )
-    def test_a_sonarr_leg_that_also_contacts_radarr_names_both_key_sets(
-        self,
-        error: str,
-        expected: str,
-        monkeypatch: pytest.MonkeyPatch,
-        capsys: pytest.CaptureFixture[str],
-    ) -> None:
-        # Under ignore_movies_in_radarr a Sonarr leg also builds a Radarr client,
-        # so a connection/auth failure there must not be pinned on Sonarr alone: a
-        # Radarr outage would otherwise read "check sonarr.url" - confidently wrong.
-        from pearlarr.arr_http import ArrAuthError, ArrConnectionError
-        from pearlarr.run_services import RunDeps
-
-        exceptions: dict[str, Exception] = {
-            "unreachable": ArrConnectionError(
-                "Could not reach Radarr at http://radarr:7878 (request failed (ConnectError))",
-            ),
-            "unauthorized": ArrAuthError("Radarr at http://radarr:7878 rejected the API key (status code 401)"),
-        }
-
-        def fail_build(*args: object, **kwargs: object) -> NoReturn:
-            raise exceptions[error]
-
-        monkeypatch.setattr(RunDeps, "build", fail_build)
-        paths = resolve_paths()
-        os.makedirs(paths.data_dir)
-        Path(paths.config).write_text(
-            "sonarr:\n  url: http://sonarr:8989\n  api_key: k\n  ignore_movies_in_radarr: true\n"
-            "radarr:\n  url: http://radarr:7878\n  api_key: k\n" + _NO_MAPPINGS,
-            encoding="utf-8",
-        )
 
         assert run_single(sonarr=True) is False
         out = capsys.readouterr().out

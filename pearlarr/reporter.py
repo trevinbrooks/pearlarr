@@ -4,7 +4,7 @@ import time
 from collections.abc import Sequence
 from dataclasses import dataclass, field
 from enum import Enum, auto
-from typing import TYPE_CHECKING, ClassVar, Literal
+from typing import TYPE_CHECKING, ClassVar
 
 import qbittorrentapi
 from seadex import EntryRecord
@@ -381,10 +381,10 @@ class RunReporter:
 
     # --- self-contained ledger rows ------------------------------------------
 
-    def log_entry_status(self, state: EntryState, label: str) -> None:
-        """Emit a one-line entry status as a self-contained (col-0) ledger row."""
+    def log_no_episodes(self, title: str) -> None:
+        """Report a title whose mapping resolved no episodes, as a self-contained (col-0) ledger row."""
 
-        self._ledger(state, label)
+        self._ledger(EntryState.NO_EPISODES, title)
 
     def log_arr_item_unmonitored(self, ctx: RunContext, item_title: str) -> None:
         """Report skipping an unmonitored item (bumps the tally, emits its row)."""
@@ -427,7 +427,6 @@ class RunReporter:
     def _display_title(self, ctx: RunContext, al_id: int, stored: str | None) -> EntryTitle:
         """The entry's label: the stored name, else AniList, else the arr's own title, else the id form."""
 
-        # `stored` is a parameter because `log_cached_entry` reads it under an arr that may differ from `ctx.arr`.
         return resolve_entry_title(al_id, (stored,) if stored else self.anilist.titles(al_id), ctx.arr_title)
 
     def _titled_row(self, state: EntryState, title: EntryTitle) -> None:
@@ -468,28 +467,18 @@ class RunReporter:
             ),
         )
 
-    def log_cached_entry(
-        self,
-        ctx: RunContext,
-        arr: Arr,
-        al_id: int,
-        # The builder keys row style on state, so a wider type would let a "cached" row render undimmed.
-        state: Literal[EntryState.UNCHANGED, EntryState.IN_RADARR] = EntryState.UNCHANGED,
-    ) -> None:
-        """Emit a cached entry's self-contained block, read from the cache record.
-
-        The explicit `arr` is the one the entry is cached under, which may not be the running arr.
-        """
+    def log_cached_entry(self, ctx: RunContext, al_id: int) -> None:
+        """Emit a cached entry's self-contained block, read from the cache record."""
 
         ctx.stats.cached += 1
 
-        entry = self.cache_store.get_entry(arr, al_id)
+        entry = self.cache_store.get_entry(ctx.arr, al_id)
         title = self._display_title(ctx, al_id, entry.name if entry is not None else None)
 
         # A complete block: self-close so a later diagnostic attributes to the open item, not to this row.
         self._block(
             EntryHeader(
-                state,
+                EntryState.UNCHANGED,
                 title.display,
                 al_id=al_id,
                 coverage=entry.coverage if entry is not None else None,
