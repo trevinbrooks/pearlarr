@@ -47,8 +47,8 @@ class _RecordingCacheStore(FakeCacheStore):
         self.updates: list[CacheRecord] = []
 
     @override
-    def update_cache(self, arr: Arr, al_id: int, cache_details: CacheRecord | None = None) -> None:
-        self.updates.append(cache_details if cache_details is not None else {})
+    def update_cache(self, arr: Arr, al_id: int, cache_details: CacheRecord) -> None:
+        self.updates.append(cache_details)
         super().update_cache(arr, al_id, cache_details)
 
 
@@ -261,7 +261,7 @@ class TestACheckedTitleLosesItsStamp:
     def _rechecking(self, cache: FakeCacheStore, torrents: FakeTorrents, *, add_cap: int = 0) -> RunServices:
         """A run made to check entry 7 again over its cached row, as a library change makes it."""
 
-        cache.update_cache(Arr.SONARR, 7, {"updated_at": _CACHED_ON, "torrent_hashes": ["h0"]})
+        cache.update_cache(Arr.SONARR, 7, {"updated_at": _CACHED_ON})
         pipeline = make_grab_pipeline(_torrents=torrents, cache_store=cache, sleep_time=0, max_torrents_to_add=add_cap)
         pipeline._anilist.al_cache.update({7: {}})
         pipeline._ctx.per_title.current_title = "Show"
@@ -277,7 +277,6 @@ class TestACheckedTitleLosesItsStamp:
                 al_id=7,
                 entry=self._ENTRY,
                 seadex_dict=one_release_dict(srg="RG", infohash="h1"),
-                torrent_hashes=["h1"],
                 cache_details=run.new_cache_details(run.resolve_title(7), self._ENTRY),
             )
         )
@@ -504,4 +503,4 @@ class TestNewCacheDetails:
 
         details = run.new_cache_details(title, entry)
 
-        assert details == {**name, "updated_at": entry.updated_at, "torrent_hashes": []}
+        assert details == {**name, "updated_at": entry.updated_at}

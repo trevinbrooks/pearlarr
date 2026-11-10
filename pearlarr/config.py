@@ -380,9 +380,6 @@ class SeadexSettings(_ConfigBase):
     ignore_seadex_update_times: bool = False
     """Re-check entries even when SeaDex has not updated them since the last check."""
 
-    use_torrent_hash_to_filter: bool = False
-    """Match what is already downloaded by torrent hash instead of by release group name."""
-
     @field_validator("trackers", mode="before")
     @classmethod
     def _casefold_trackers(cls, value: Any) -> Any:

@@ -44,8 +44,8 @@ class EpisodeRecord:
 def normalized_infohash(raw: str | None) -> str | None:
     """The one spelling of an infohash: stripped and lowercase, a blank one None.
 
-    An empty `hashes` filter matches every torrent in the qBittorrent dedup, "" collides with the cache's no-hash
-    marker, and the pending store keys on the hash byte-exact.
+    An empty `hashes` filter matches every torrent in the qBittorrent dedup, and the pending store keys on the hash
+    byte-exact.
     """
 
     if raw is None:

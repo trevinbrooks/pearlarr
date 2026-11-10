@@ -507,12 +507,6 @@
           "description": "Re-check entries even when SeaDex has not updated them since the last check.",
           "title": "Ignore Seadex Update Times",
           "type": "boolean"
-        },
-        "use_torrent_hash_to_filter": {
-          "default": false,
-          "description": "Match what is already downloaded by torrent hash instead of by release group name.",
-          "title": "Use Torrent Hash To Filter",
-          "type": "boolean"
         }
       },
       "title": "SeadexSettings",
@@ -523,7 +517,7 @@
   "description": "The full validated config: one submodel per settings group.",
   "properties": {
     "config_version": {
-      "default": 5,
+      "default": 6,
       "description": "Schema version of the config file's keys and values. A file from an older Pearlarr is migrated automatically: every load brings it forward in memory, and a run rewrites the file itself (keeping a backup).",
       "minimum": 1,
       "title": "Config Version",

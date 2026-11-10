@@ -1,11 +1,11 @@
 """The download-decision engine: which SeaDex releases to grab.
 
 `DownloadPlanner` is near-pure: it consumes the shaped `seadex_dict`, the
-Arr's current release info, an optional episode list, and the cached torrent
-hashes, and returns a `PlanResult`. It flips the per-url `download`
-flags in place and reports the private-only skip outcome (`PlanResult.skips`:
-*what to log* and *what was skipped*) as data, rather than reaching into the
-orchestrator's run state or its log formatter.
+Arr's current release info and an optional episode list, and returns a
+`PlanResult`. It flips the per-url `download` flags in place and reports the
+private-only skip outcome (`PlanResult.skips`: *what to log* and *what was
+skipped*) as data, rather than reaching into the orchestrator's run state or
+its log formatter.
 """
 
 import logging
@@ -26,7 +26,6 @@ from .seadex_types import (
     SeadexReleaseGroupItem,
     SeadexUrlItem,
     SonarrEpisode,
-    flagged_urls,
     index_episodes_by_key,
     season_episode_key,
     unambiguous,
@@ -70,22 +69,19 @@ class PrivateOnlySkips:
 class PlanResult:
     """The download-decision engine's output.
 
-    Carries the annotated dict, the hashes to remember, and the private-only skip
-    outcome (`skips`) so the orchestrator can log it, name it in the summary, and
-    decide whether to cache the title as done.
+    Carries the annotated dict and the private-only skip outcome (`skips`) so
+    the orchestrator can log it, name it in the summary, and decide whether to
+    cache the title as done.
     """
 
     seadex_dict: SeadexDict
     """The same dict passed in, annotated in place with per-url `download` flags."""
-    torrent_hashes: list[str | None]
-    """The unique torrent infohashes to remember. None for a hashless private torrent."""
     skips: PrivateOnlySkips
     """The private-only skip outcome from `reduce_overlapping_downloads`, folded onto run state by the caller."""
-    guards: GuardFacts = field(default_factory=GuardFacts)
+    guards: GuardFacts
     """The overwrite-guard evidence the import inherits whole (see `GuardFacts`):
     the size-verified current groups, the positively-stale ones, and the owned
-    untagged `(episode id, size)` claims. All-empty for Radarr and the hash path,
-    which gather no size evidence and so protect only grabbed groups."""
+    untagged `(episode id, size)` claims. Only Sonarr's import reads it."""
 
 
 def _untagged_counter(untagged_sizes: Iterable[int]) -> Counter[int] | None:
@@ -495,12 +491,12 @@ def _group_verdicts(seadex_dict: SeadexDict, ctx: _MatchContext) -> _GroupVerdic
 class DownloadPlanner:
     """Decides which SeaDex releases to grab for one AniList entry.
 
-    Constructed once per Arr run with the arr it plans for and the two config
-    flags it consults. Every decision method takes the already-shaped
-    `seadex_dict` plus the Arr's release info as arguments and returns a
-    `PlanResult`. The planner keeps a logger only for the per-release
-    debug breadcrumbs. The operator-facing private-only skip is returned as a
-    `SkipNotice`, never logged here.
+    Constructed once per Arr run with the arr it plans for and whether the run
+    is interactive. `filter_by_release_group` takes the already-shaped
+    `seadex_dict` plus the Arr's release info and returns a `PlanResult`. The
+    planner keeps a logger only for the per-release debug breadcrumbs. The
+    operator-facing private-only skip is returned as a `SkipNotice`, never
+    logged here.
     """
 
     def __init__(
@@ -508,100 +504,11 @@ class DownloadPlanner:
         *,
         arr: Arr,
         interactive: bool,
-        use_torrent_hash_to_filter: bool,
         logger: logging.Logger,
     ) -> None:
         self.arr = arr
         self.interactive = interactive
-        self.use_torrent_hash_to_filter = use_torrent_hash_to_filter
         self.logger = logger
-
-    def plan(
-        self,
-        *,
-        seadex_dict: SeadexDict,
-        arr_releases: ArrReleases,
-        cached_hashes: list[str | None],
-        ep_list: list[SonarrEpisode] | None = None,
-    ) -> PlanResult:
-        """Flip the download flags and return the full plan for an entry.
-
-        Selects the hash-based or release-group-based strategy from the config
-        flag, then unions in the cached hashes (release-group path only - the
-        hash path already lists every url's hash) and de-duplicates.
-        `seadex_dict` is annotated in place. `cached_hashes` are the torrent
-        hashes already remembered for this entry.
-        """
-
-        if self.use_torrent_hash_to_filter:
-            result = self.filter_by_torrent_hash(
-                seadex_dict=seadex_dict,
-                cached_hashes=cached_hashes,
-            )
-        else:
-            result = self.filter_by_release_group(
-                seadex_dict=seadex_dict,
-                arr_releases=arr_releases,
-                ep_list=ep_list,
-            )
-
-            # Also include any cached hashes
-            result.torrent_hashes.extend(cached_hashes)
-
-        # Make sure the hashes are unique
-        result.torrent_hashes = list(set(result.torrent_hashes))
-
-        return result
-
-    def filter_by_torrent_hash(
-        self,
-        seadex_dict: SeadexDict,
-        cached_hashes: list[str | None],
-    ) -> PlanResult:
-        """Select downloads if the torrent hash is not already in the cache.
-
-        Multiple "best" releases are all grabbed, except where several cover
-        the same files (see reduce_overlapping_downloads), in which case only
-        one is kept
-        """
-
-        torrent_hashes: list[str | None] = []
-
-        for seadex_rg, seadex_rg_item in seadex_dict.items():
-            self.logger.debug(f"Filtering for release group {seadex_rg}")
-
-            seadex_urls = seadex_rg_item.urls
-            for url_item in seadex_urls.values():
-                infohash = url_item.infohash
-
-                # Dedup by infohash. KNOWN LIMITATION of this opt-in mode: a hashless
-                # (private) release has infohash=None and the cache keeps a single None
-                # marker, so a 2nd DISTINCT hashless release for an entry collapses to it
-                # and is skipped (the first run still grabs all hashless releases present).
-                torrent_hashes.append(infohash)
-                if infohash not in cached_hashes:
-                    self.logger.debug(f"Torrent hash {infohash} not found in cache. Will add to downloads")
-
-                    url_item.flag()
-
-                elif infohash is None:
-                    self.logger.debug(
-                        "Hashless release already represented by the cache's None marker; "
-                        "skipping (hashless releases can't be told apart)",
-                    )
-
-                else:
-                    self.logger.debug(f"Torrent hash {infohash} in cache. Will skip download")
-
-        # Where multiple preferred release groups cover the same files and the
-        # Arr has none of them, only grab one (preferring a public group)
-        skips = self.reduce_overlapping_downloads(seadex_dict=seadex_dict)
-
-        return PlanResult(
-            seadex_dict=seadex_dict,
-            torrent_hashes=torrent_hashes,
-            skips=skips,
-        )
 
     def filter_by_release_group(
         self,
@@ -710,14 +617,9 @@ class DownloadPlanner:
         # Arr has none of them, only grab one (preferring a public group)
         skips = self.reduce_overlapping_downloads(seadex_dict=seadex_dict)
 
-        # The hash list is whatever is still flagged, so it matches the set
-        # we'll add - `flagged_urls` is the shared filter. Private torrents carry no infohash.
-        torrent_hashes: list[str | None] = [flagged.infohash for flagged in flagged_urls(seadex_dict)]
-
         verdicts = _group_verdicts(seadex_dict, ctx)
         return PlanResult(
             seadex_dict=seadex_dict,
-            torrent_hashes=torrent_hashes,
             skips=skips,
             guards=GuardFacts(
                 entry_groups=verdicts.current,

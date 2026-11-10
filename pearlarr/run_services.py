@@ -261,7 +261,6 @@ class RunDeps:
             planner=DownloadPlanner(
                 arr=arr,
                 interactive=app_config.advanced.interactive,
-                use_torrent_hash_to_filter=app_config.seadex.use_torrent_hash_to_filter,
                 logger=logger,
             ),
             # Presentation: every log_* method emits a typed output event through
@@ -483,7 +482,7 @@ class RunServices:
         name keeps what an earlier run stored instead of clobbering it with a fallback label.
         """
 
-        details: CacheRecord = {"updated_at": sd_entry.updated_at, "torrent_hashes": []}
+        details: CacheRecord = {"updated_at": sd_entry.updated_at}
         if title.anilist is not None:
             details["name"] = title.anilist
         return details
@@ -504,14 +503,13 @@ class RunServices:
 
     def filter_seadex_downloads(
         self,
-        al_id: int,
         seadex_dict: SeadexDict,
         arr_releases: ArrReleases,
         ep_list: list[SonarrEpisode] | None = None,
     ) -> PlanResult:
         """Apply the download plan, stamping private-only skips onto ctx (delegates)."""
 
-        return self._filter.filter_downloads(al_id, seadex_dict, arr_releases, ep_list)
+        return self._filter.filter_downloads(seadex_dict, arr_releases, ep_list)
 
     def is_preview(self) -> bool:
         """A run is a no-op preview (nothing can be grabbed): explicit dry run, or qBittorrent not configured."""
@@ -533,7 +531,7 @@ class RunServices:
     def _update_cache(
         self,
         al_id: int,
-        cache_details: CacheRecord | None = None,
+        cache_details: CacheRecord,
     ) -> None:
         """Merge `cache_details` into an entry's cache record (in-memory only).
 

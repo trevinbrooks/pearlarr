@@ -38,7 +38,7 @@ import sqlite3
 from collections.abc import Callable, Iterable
 from typing import Literal, NamedTuple, overload
 
-from .sqlite_util import connect, open_or_quarantine, rollback_and_close
+from .sqlite_util import open_or_quarantine, rollback_and_close
 
 # Bump when the table layout below changes. A stored `user_version` that differs
 # triggers a DROP+rebuild (the data is a pure cache, re-derived from the sources).
@@ -316,7 +316,6 @@ class MappingStore:
 
         conn, _ = open_or_quarantine(
             path,
-            connect_fn=connect,
             ensure=_ensure_schema,
             what="Mappings database",
             recovery="started a fresh one (sources will be re-parsed this run)",

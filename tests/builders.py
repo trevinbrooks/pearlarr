@@ -21,7 +21,7 @@ from pearlarr.anilist_gateway import AniListGateway
 from pearlarr.arr_categories import ArrCategoryResolver, _CategoryPair
 from pearlarr.arr_http import ArrHttp
 from pearlarr.cache import (
-    _ENTRY_SCALAR_COLUMNS,
+    _ENTRY_COLUMNS,
     AbstractCacheStore,
     CachedEntry,
     CacheRecord,
@@ -176,9 +176,9 @@ def make_bare_instance[T](cls: type[T], **attrs: Any) -> T:
     return obj
 
 
-# The scalar entry columns `update_cache` merges, aliased from the real store's tuple so the fake
+# The entry columns `update_cache` merges, aliased from the real store's tuple so the fake
 # can't drift from `CacheStore`.
-_FAKE_SCALAR_FIELDS: tuple[str, ...] = _ENTRY_SCALAR_COLUMNS
+_FAKE_ENTRY_FIELDS: tuple[str, ...] = _ENTRY_COLUMNS
 
 
 def _evict_stale[K](store: dict[K, dict[str, Any]], cutoff: datetime) -> int:
@@ -272,10 +272,8 @@ class FakeCacheStore(AbstractCacheStore):
     ) -> None:
         self._sonarr_parse: dict[str, dict[str, Any]] = dict(sonarr_parse or {})
         self._pending: dict[str, dict[str, dict[str, Any]]] = {arr: dict(recs) for arr, recs in (pending or {}).items()}
-        # The entries / torrent_hashes split, keyed by (arr, al_id). An entry with an empty scalar dict
-        # still "exists": the existence checks key on membership, never the dict's truthiness.
+        # The entries, keyed by (arr, al_id). The existence checks key on membership, never the dict's truthiness.
         self._entries: dict[tuple[str, int], dict[str, Any]] = {}
-        self._entry_hashes: dict[tuple[str, int], list[str | None]] = {}
         self._anilist_meta: dict[int, dict[str, Any]] = {}
         self._guards: dict[str, dict[int, GuardFacts]] = {}
         self._history_checkpoints: dict[str, HistoryCheckpoint] = {}
@@ -301,32 +299,24 @@ class FakeCacheStore(AbstractCacheStore):
     def vouch_selection(self, arr: Arr, digest: str) -> None:
         self._kv[selection_digest_key(arr)] = digest
 
-    # -- per-entry records (entries + torrent_hashes) --
+    # -- per-entry records (entries) --
     @override
     def update_cache(
         self,
         arr: Arr,
         al_id: int,
-        cache_details: CacheRecord | None = None,
+        cache_details: CacheRecord,
     ) -> None:
-        """Partial-merge the supplied scalars. Replace the hash set if given."""
+        """Partial-merge the supplied columns. An empty record adds no row."""
 
-        details: dict[str, Any] = dict(cache_details) if cache_details else {}
+        details: dict[str, Any] = dict(cache_details)
         updated_at = details.get("updated_at")
         if isinstance(updated_at, datetime):
             details["updated_at"] = updated_at.strftime(UPDATED_AT_STR_FORMAT)
 
-        key = (str(arr), al_id)
-        entry = self._entries.setdefault(key, {})
-        for column in _FAKE_SCALAR_FIELDS:
-            if column in details:
-                entry[column] = details[column]
-
-        if "torrent_hashes" in details:
-            hashes: list[str | None] = list(details["torrent_hashes"] or [])
-            # de-dupe while keeping the single None marker the planner dedups on. The real PK leaves
-            # NULLs distinct, and update_cache collapses the input to one None just like this.
-            self._entry_hashes[key] = list(dict.fromkeys(hashes))
+        supplied = {column: details[column] for column in _FAKE_ENTRY_FIELDS if column in details}
+        if supplied:
+            self._entries.setdefault((str(arr), al_id), {}).update(supplied)
 
     @override
     def clear_entry_stamp(self, arr: Arr, al_id: int) -> None:
@@ -338,7 +328,7 @@ class FakeCacheStore(AbstractCacheStore):
 
     @override
     def get_entry(self, arr: Arr, al_id: int) -> CachedEntry | None:
-        """The scalar columns of the entry as a `CachedEntry`, or None."""
+        """The entry as a `CachedEntry`, or None."""
 
         entry = self._entries.get((str(arr), al_id))
         if entry is None:
@@ -351,15 +341,6 @@ class FakeCacheStore(AbstractCacheStore):
             fallback_satisfied=bool(entry.get("fallback_satisfied", False)),
             season_type=entry.get("season_type"),
         )
-
-    @override
-    def torrent_hashes(self, arr: Arr, al_id: int) -> list[str | None]:
-        """The entry's hashes, ordered None-first then ascending (mirrors ORDER BY)."""
-
-        stored = self._entry_hashes.get((str(arr), al_id), [])
-        ordered: list[str | None] = [None] if None in stored else []
-        ordered.extend(sorted(h for h in stored if h is not None))
-        return ordered
 
     # -- AniList meta (TTL-swept) --
     @override
@@ -464,7 +445,6 @@ class FakeCacheStore(AbstractCacheStore):
     def stats(self) -> CacheStats:
         return CacheStats(
             entries=len(self._entries),
-            torrent_hashes=sum(len(h) for h in self._entry_hashes.values()),
             anilist_meta=len(self._anilist_meta),
             sonarr_parse=len(self._sonarr_parse),
             pending_imports=sum(len(recs) for recs in self._pending.values()),
@@ -537,7 +517,6 @@ def make_config(**overrides: Any) -> AppConfig:
             "want_best": True,
             "prefer_dual_audio": True,
             "ignore_tags": [],
-            "use_torrent_hash_to_filter": False,
         },
         "advanced": {"interactive": False},
     }
@@ -782,11 +761,11 @@ def make_run_deps(
 
 
 def make_release_filter(**overrides: Any) -> SeadexReleaseFilter:
-    """A `SeadexReleaseFilter` over an assembled `RunDeps`, with `ctx`, `cache_store`, and `planner` overridable."""
+    """A `SeadexReleaseFilter` over an assembled `RunDeps`, with `ctx` and `planner` overridable."""
 
     config = _split_config(overrides)
     ctx = overrides.pop("ctx", None) or RunContext(arr=Arr.SONARR)
-    deps = make_run_deps(config=config, cache_store=overrides.pop("cache_store", None))
+    deps = make_run_deps(config=config)
     if "planner" in overrides:
         deps = dataclasses.replace(deps, planner=overrides.pop("planner"))
     if overrides:
@@ -902,7 +881,6 @@ def grab_request(**overrides: Any) -> GrabRequest:
         "entry_title": "Show",
         "entry": make_entry_record(url="https://releases.moe/1"),
         "seadex_dict": {},
-        "torrent_hashes": [],
         "cache_details": {},
         "replaced_groups": (),
     }
@@ -990,14 +968,13 @@ def make_import_wait_manager(**overrides: Any) -> ImportWaitManager:
 
 
 def make_planner(**overrides: Any) -> DownloadPlanner:
-    """A `DownloadPlanner` with test-friendly defaults (arr `SONARR`, both flags off)."""
+    """A `DownloadPlanner` with test-friendly defaults (arr `SONARR`, not interactive)."""
 
     logger = make_logger()
 
     defaults: dict[str, Any] = {
         "arr": Arr.SONARR,
         "interactive": False,
-        "use_torrent_hash_to_filter": False,
         "logger": logger,
     }
     defaults.update(overrides)
@@ -1035,10 +1012,10 @@ def url_item(
     )
 
 
-def plan_result(torrent_hashes: list[str | None], seadex_dict: SeadexDict) -> PlanResult:
-    """A `PlanResult` carrying just the hashes and the dict, with empty `PrivateOnlySkips`."""
+def plan_result(seadex_dict: SeadexDict) -> PlanResult:
+    """A `PlanResult` carrying just the dict, with no skips and no guard evidence."""
 
-    return PlanResult(seadex_dict=seadex_dict, torrent_hashes=torrent_hashes, skips=PrivateOnlySkips())
+    return PlanResult(seadex_dict=seadex_dict, skips=PrivateOnlySkips(), guards=GuardFacts())
 
 
 def rg_group(

@@ -558,7 +558,7 @@ class TestPendingRecordsGuardHydration:
         records = mgr._records.active_records()
         assert [c.guards for c in records["run1"].claims] == [facts]
         assert [c.guards for c in records["run2"].claims] == [facts]
-        # No row = empty facts, the designed state (Radarr, hash mode, degradation).
+        # No row = empty facts, the designed state (Radarr, degradation).
         assert [c.guards for c in records["other"].claims] == [GuardFacts()]
 
 
@@ -776,11 +776,11 @@ class TestGoneTorrentHasItsTitlesCheckedAgain:
 
     @classmethod
     def _store(cls) -> FakeCacheStore:
-        """Entries 5, 6 and 9 cached as done, each remembering hash "h"."""
+        """Entries 5, 6 and 9 cached as done."""
 
         store = FakeCacheStore()
         for al_id in (5, 6, 9):
-            store.update_cache(Arr.SONARR, al_id, {"updated_at": cls._CACHED_ON, "torrent_hashes": ["h"]})
+            store.update_cache(Arr.SONARR, al_id, {"updated_at": cls._CACHED_ON})
         return store
 
     @staticmethod
@@ -805,16 +805,6 @@ class TestGoneTorrentHasItsTitlesCheckedAgain:
         assert mgr._records.rows() == {}
         # Entry 9 never claimed the torrent.
         assert self._stamps(store) == {5: None, 6: None, 9: self._CACHED_ON}
-
-    def test_the_remembered_hash_stays(self) -> None:
-        store = self._store()
-        mgr = make_orchestration_manager(
-            qbit=FakeQbit({}), strategy=_RecordingStrategy(), store=store, store_records=[self._record()]
-        )
-
-        mgr.snapshot_pending_for_series(7)
-
-        assert store.torrent_hashes(Arr.SONARR, 5) == ["h"]
 
     def test_the_end_pass_clears_the_stamp_of_every_claiming_title(self) -> None:
         store = self._store()

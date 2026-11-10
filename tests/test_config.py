@@ -240,7 +240,6 @@ class TestDefaults:
         assert cfg.seadex.prefer_dual_audio is True
         assert cfg.seadex.want_best is True
         assert cfg.seadex.ignore_seadex_update_times is False
-        assert cfg.seadex.use_torrent_hash_to_filter is False
         assert cfg.advanced.interactive is False
         assert cfg.advanced.sleep_time == 0
         assert cfg.advanced.cache_time == 1

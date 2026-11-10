@@ -77,7 +77,6 @@ class SeadexReleaseFilter:
     ) -> None:
         self._config = deps.config
         self._planner = deps.planner
-        self.cache_store = deps.cache_store
         self.logger = deps.logger
         self._reporter = deps.reporter
         # Seeded with the services hub's placeholder ctx, rebound each run via
@@ -298,30 +297,28 @@ class SeadexReleaseFilter:
 
     def filter_downloads(
         self,
-        al_id: int,
         seadex_dict: SeadexDict,
         arr_releases: ArrReleases,
         ep_list: list[SonarrEpisode] | None = None,
     ) -> PlanResult:
         """Flip the switch on whether we're downloading each torrent or not.
 
-        Thin orchestrator seam over the `DownloadPlanner`: pass it the
-        entry's cached hashes, then apply the plan's private-only skip outcome back
-        onto the run context the grab/cache tail still reads (the SkipNotice log
-        lines, the private_only_skipped flag, and the skipped group names). The
-        plan itself is returned whole, so a field added to `PlanResult` reaches
-        the strategies without a hand-synced mirror type.
+        Thin orchestrator seam over the `DownloadPlanner`: run it, then apply
+        the plan's private-only skip outcome back onto the run context the
+        grab/cache tail reads (the SkipNotice log lines, the
+        private_only_skipped flag, and the skipped group names). The plan
+        itself is returned whole, so a field added to `PlanResult` reaches the
+        strategies without a hand-synced mirror type.
         """
 
-        result = self._planner.plan(
+        result = self._planner.filter_by_release_group(
             seadex_dict=seadex_dict,
             arr_releases=arr_releases,
-            cached_hashes=self.cache_store.torrent_hashes(self._ctx.arr, al_id),
             ep_list=ep_list,
         )
 
-        # The planner reports what to log rather than logging it. Post each
-        # private-only skip exactly as the inline call used to.
+        # The planner reports what to log rather than logging it, so each
+        # private-only skip is posted here.
         for notice in result.skips.notices:
             self._reporter.detail(
                 "skipped",

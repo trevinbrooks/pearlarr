@@ -205,7 +205,7 @@ class _FakeRunServices(RunServices):
         self.cached_skip_coverages: list[Callable[[], str]] = []
         self.get_seadex_dict_calls: list[EntryRecord] = []
         self.interactive_calls: list[SeadexDict] = []
-        self.filter_downloads_calls: list[tuple[int, SeadexDict, ArrReleases]] = []
+        self.filter_downloads_calls: list[tuple[SeadexDict, ArrReleases]] = []
         self.grab_requests: list[GrabRequest] = []
         self.no_releases_calls: list[tuple[int, CacheRecord]] = []
         self.invalid_selection_skips = 0
@@ -274,16 +274,15 @@ class _FakeRunServices(RunServices):
     @override
     def filter_seadex_downloads(
         self,
-        al_id: int,
         seadex_dict: SeadexDict,
         arr_releases: ArrReleases,
         ep_list: list[SonarrEpisode] | None = None,
     ) -> PlanResult:
         del ep_list
-        self.filter_downloads_calls.append((al_id, seadex_dict, arr_releases))
+        self.filter_downloads_calls.append((seadex_dict, arr_releases))
         if self._filter_downloads_result is not None:
             return self._filter_downloads_result
-        return plan_result([], seadex_dict)
+        return plan_result(seadex_dict)
 
     @property
     @override
@@ -2391,7 +2390,7 @@ def _sonarr_seed_run(mode: ImportWaitMode, *, store: FakeCacheStore, episodes: S
         prologue_entry=make_entry_record(url="https://releases.moe/5"),
         anilist_title="Show Cour 2",
         seadex_dict=seadex,
-        filter_downloads_result=plan_result(["h1"], seadex),
+        filter_downloads_result=plan_result(seadex),
         import_wait_mode=mode,
         cache_store=store,
     )
@@ -2423,7 +2422,7 @@ def _entry_run(
         prologue_entry=make_entry_record(url="https://releases.moe/5"),
         anilist_title="Show",
         seadex_dict=seadex,
-        filter_downloads_result=plan_result(["h1"], seadex),
+        filter_downloads_result=plan_result(seadex),
         import_wait_mode=ImportWaitMode.BLOCKING,
         cache_store=FakeCacheStore(),
     )
@@ -2490,7 +2489,7 @@ class TestSonarrProcessAlIdSeeds:
             prologue_entry=make_entry_record(url="https://releases.moe/5"),
             anilist_title="Show Specials",
             seadex_dict=seadex,
-            filter_downloads_result=plan_result(["h1"], seadex),
+            filter_downloads_result=plan_result(seadex),
             import_wait_mode=ImportWaitMode.BLOCKING,
             cache_store=FakeCacheStore(),
         )
@@ -2561,7 +2560,7 @@ class TestSonarrProcessAlIdSeeds:
             ignored=ignored,
             prologue_entry=make_entry_record(url="https://releases.moe/5"),
             seadex_dict=seadex,
-            filter_downloads_result=plan_result(["h1"], seadex),
+            filter_downloads_result=plan_result(seadex),
             import_wait_mode=ImportWaitMode.BLOCKING,
         )
         listings = _ScriptedListings()
@@ -2598,7 +2597,7 @@ class TestSonarrProcessAlIdSeeds:
             ignored={5: MappingEntry(anilist_id=5)},
             prologue_entry=make_entry_record(url="https://releases.moe/6"),
             seadex_dict=seadex,
-            filter_downloads_result=plan_result(["h1"], seadex),
+            filter_downloads_result=plan_result(seadex),
             import_wait_mode=ImportWaitMode.BLOCKING,
             cache_store=FakeCacheStore(),
         )
@@ -2691,7 +2690,7 @@ class TestRadarrProcessAlIdSeeds:
             prologue_entry=make_entry_record(url="https://releases.moe/9"),
             anilist_title="A Movie",
             seadex_dict=seadex,
-            filter_downloads_result=plan_result(["h1"], seadex),
+            filter_downloads_result=plan_result(seadex),
             import_wait_mode=mode,
             arr=Arr.RADARR,
             cache_store=store,
@@ -3861,7 +3860,6 @@ class TestRadarrProcessAlIdSeam:
         expected: CacheRecord = {
             "name": "Movie Title",
             "updated_at": entry.updated_at,
-            "torrent_hashes": [],
             "url": "https://releases.moe/5",
             "coverage": "",
         }
@@ -3876,13 +3874,13 @@ class TestRadarrProcessAlIdSeam:
             prologue_entry=entry,
             anilist_title="Movie Title",
             seadex_dict=seadex_dict,
-            filter_downloads_result=plan_result(["feedface"], filtered),
+            filter_downloads_result=plan_result(filtered),
         )
         strat, _ = self._make_strat(run, files=[MovieFile(release_group="OldGroup", size=100)])
 
         strat.process_al_id(_Item(id=3, title="Item Title"), 5, MappingEntry(anilist_id=5))
         # The download filter received the movie's accumulated releases.
-        assert run.filter_downloads_calls == [(5, seadex_dict, ArrReleases(tagged={"OldGroup": (100,)}))]
+        assert run.filter_downloads_calls == [(seadex_dict, ArrReleases(tagged={"OldGroup": (100,)}))]
         [req] = run.grab_requests
         assert req.al_id == 5
         assert req.arr_title == "Item Title"
@@ -3890,9 +3888,8 @@ class TestRadarrProcessAlIdSeam:
         # The SeaDex entry rides the request whole (the notifier reads its
         # url/notes/comparisons), so pin identity, not a copied field.
         assert req.entry is entry
-        # The grab consumes the FILTERED dict + hashes, not the pre-filter dict.
+        # The grab consumes the FILTERED dict, not the pre-filter dict.
         assert req.seadex_dict is filtered
-        assert req.torrent_hashes == ["feedface"]
         # replaced_groups carries the movie's tagged groups (all of them).
         assert req.replaced_groups == ("OldGroup",)
 
@@ -3904,7 +3901,7 @@ class TestRadarrProcessAlIdSeam:
             prologue_entry=make_entry_record(),
             anilist_title="Movie Title",
             seadex_dict=_one_group_dict("SubGroup"),
-            filter_downloads_result=plan_result([], _one_group_dict("SubGroup")),
+            filter_downloads_result=plan_result(_one_group_dict("SubGroup")),
         )
         strat, _ = self._make_strat(
             run,

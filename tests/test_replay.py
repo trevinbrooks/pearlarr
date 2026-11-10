@@ -98,7 +98,6 @@ def test_golden_round_trip_reproduces_the_text_grammar(
         EntryHeader(state=EntryState.CHECKING, title="Frieren", scope=_ENTRY),
         CacheStatsReported(
             entries=1,
-            torrent_hashes=1,
             anilist_meta=1,
             sonarr_parse=1,
             pending_imports=0,
@@ -115,7 +114,7 @@ def test_golden_round_trip_reproduces_the_text_grammar(
     # component bracket for the process banner and the cli command event.
     assert f"{_TS} INFO [run] Pearlarr started version=v1.0.0 data_dir=/data" in out
     assert (
-        f"{_TS} INFO [cli] cache stats entries=1 torrent_hashes=1 anilist_meta=1 "
+        f"{_TS} INFO [cli] cache stats entries=1 anilist_meta=1 "
         f"sonarr_parse=1 pending_imports=0 guard_facts=0 tvdb_orders=0 size_bytes=4096"
     ) in out
     # path wins over component for a scoped event.

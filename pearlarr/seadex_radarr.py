@@ -187,12 +187,10 @@ class RadarrSync(ArrSync[RadarrItem]):
                 run.invalid_selection_skip()
                 return
 
-        plan = run.filter_seadex_downloads(
-            al_id=al_id,
+        seadex_dict = run.filter_seadex_downloads(
             seadex_dict=seadex_dict,
             arr_releases=radarr_releases,
-        )
-        torrent_hashes, seadex_dict = plan.torrent_hashes, plan.seadex_dict
+        ).seadex_dict
 
         # Seed a pending record per grabbed torrent so the engine's gate persists it: the category move then
         # defers until Radarr imports the movie, and for a torrent shared with a Sonarr grab until both arrs clear.
@@ -213,7 +211,6 @@ class RadarrSync(ArrSync[RadarrItem]):
                 entry_title=title.display,
                 entry=sd_entry,
                 seadex_dict=seadex_dict,
-                torrent_hashes=torrent_hashes,
                 cache_details=cache_details,
                 # Every edition's tagged group, not just the first file's.
                 replaced_groups=radarr_releases.replaced_groups(),

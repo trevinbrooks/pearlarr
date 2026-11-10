@@ -30,11 +30,11 @@ from .output import hub_warn
 BUSY_TIMEOUT_MS = 5000
 
 
-def connect(path: str, *, ensure_wal: bool = True, foreign_keys: bool = False) -> sqlite3.Connection:
+def connect(path: str, *, ensure_wal: bool = True) -> sqlite3.Connection:
     """Open a connection with the project's fixed pragmas + transaction control.
 
     The single place these connections are created, so every caller shares
-    identical settings instead of re-typing the pragma trio. `busy_timeout` is
+    identical settings instead of re-typing the pragmas. `busy_timeout` is
     applied FIRST so the WAL-mode switch and the schema statements that follow
     already honor it (rather than racing with a zero timeout).
 
@@ -55,8 +55,6 @@ def connect(path: str, *, ensure_wal: bool = True, foreign_keys: bool = False) -
         ensure_wal: Apply the WAL-mode pragma (the writable run path).
             Read-only diagnostics pass False so they neither mutate the db's
             journal mode nor need the file to be a valid db just to open.
-        foreign_keys: Apply `PRAGMA foreign_keys=ON` (only the cache has FK
-            constraints - the mapping store has none).
     """
 
     conn = sqlite3.connect(path)
@@ -66,8 +64,9 @@ def connect(path: str, *, ensure_wal: bool = True, foreign_keys: bool = False) -
         conn.execute(f"PRAGMA busy_timeout={BUSY_TIMEOUT_MS}")
         if ensure_wal:
             conn.execute("PRAGMA journal_mode=WAL")
-        if foreign_keys:
-            conn.execute("PRAGMA foreign_keys=ON")
+        # SQLite ignores a declared FOREIGN KEY unless the connection asks for it, so every connection asks, whether or
+        # not a table declares one.
+        conn.execute("PRAGMA foreign_keys=ON")
     except sqlite3.DatabaseError:
         conn.close()
         raise
@@ -92,7 +91,6 @@ class OpenResult(NamedTuple):
 def open_or_quarantine(
     path: str,
     *,
-    connect_fn: Callable[[str], sqlite3.Connection],
     ensure: Callable[[sqlite3.Connection], object],
     what: str,
     recovery: str,
@@ -108,8 +106,6 @@ def open_or_quarantine(
 
     Args:
         path: Database path to open (or `":memory:"`).
-        connect_fn: The store's own connection factory (keeps its
-            pragma choices and the tests' patch point).
         ensure: Ensures the schema on a fresh connection.
         what: Human noun for the quarantine log line.
         recovery: Trailing recovery clause for the quarantine log line.
@@ -121,14 +117,14 @@ def open_or_quarantine(
 
     conn: sqlite3.Connection | None = None
     try:
-        conn = connect_fn(path)
+        conn = connect(path)
         ensure(conn)
     except sqlite3.DatabaseError as exc:
         _close_quietly(conn)
         if not is_corruption(exc):
             raise
         quarantine_corrupt(path, what=what, recovery=recovery)
-        conn = connect_fn(":memory:")
+        conn = connect(":memory:")
         try:
             ensure(conn)
         except BaseException:

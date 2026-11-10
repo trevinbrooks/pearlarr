@@ -59,7 +59,7 @@ Changing a selection-affecting setting (anything in the `seadex` group, or `impo
 Matching settings changed - rechecking cached entries
 ```
 
-That one run does a full evaluation pass (roughly first-run speed). Grab history, pending imports, and the arr-activity checkpoint are all kept, so titles the new rules still consider satisfied are not re-downloaded or re-announced.
+That one run does a full evaluation pass (roughly first-run speed). Pending imports and the arr-activity checkpoint are kept, and titles the new rules still consider satisfied are not re-downloaded or re-announced.
 Other settings take effect immediately and trigger no re-check, and nothing needs to be deleted by hand.
 A preview-only run (qBittorrent not configured) never records the pass, so it re-checks and re-announces every run until qBittorrent is set and a real run confirms the new settings.
 
@@ -113,7 +113,7 @@ Preview mode is the safe way to try a config against live Sonarr/Radarr instance
 ## seadex
 
 How a release is chosen for each title.
-Pearlarr takes the SeaDex entry for a title, drops releases excluded by `ignore_tags` and `trackers`, keeps those matching the audio preference (`prefer_dual_audio`) and among them the ones marked best (`want_best`), and finally compares the survivors against what the arr already has: by release group name, or by torrent hash when `use_torrent_hash_to_filter` is on. The audio preference outranks the best tag: a dual-audio alternative is chosen over a single-audio best.
+Pearlarr takes the SeaDex entry for a title, drops releases excluded by `ignore_tags` and `trackers`, keeps those matching the audio preference (`prefer_dual_audio`) and among them the ones marked best (`want_best`), and finally compares the survivors against the files the arr already has. The audio preference outranks the best tag: a dual-audio alternative is chosen over a single-audio best.
 
 Private releases are never grabbed (SeaDex carries no download link for them, and no private-tracker auth is supported).
 `private_releases` decides what happens when a title's preferred release is private-only: `warn` keeps the title uncached so every run re-checks it. `fallback` takes the best public alternative and remembers that the title was satisfied by a fallback.
@@ -129,7 +129,6 @@ Switching from `fallback` back to `warn` re-checks those remembered titles and r
 | `trackers` | all but Other/OtherPrivate | `Nyaa`, `AnimeTosho`, `AniDex`, `RuTracker`, `AB`, `BeyondHD`, `PassThePopcorn`, `BroadcastTheNet`, `HDBits`, `Blutopia`, `Aither`, `Other`, `OtherPrivate` | Tracker names considered during release selection, case-insensitive. Empty or absent considers every named tracker except the `Other` and `OtherPrivate` catch-alls. A listed tracker is not necessarily grabbable: private releases are never downloaded, and grabs come only from the public trackers Pearlarr can parse. |
 | `ignore_anilist_ids` | *(blank)* |  | AniList IDs never processed. Empty ignores none. |
 | `ignore_seadex_update_times` | `false` |  | Re-check entries even when SeaDex has not updated them since the last check. |
-| `use_torrent_hash_to_filter` | `false` |  | Match what is already downloaded by torrent hash instead of by release group name. |
 <!-- /gen:group-seadex -->
 
 ## imports
@@ -140,7 +139,7 @@ During the scan, an earlier run's download is reported under its series as `queu
 Sonarr imports the files itself where it can.
 When it cannot (a blocked import, or a download Sonarr is not tracking), Pearlarr steps in with a manual import, pinned to the correct series and episodes by its own mapping.
 A download that outlasts the run (including one a wait times out on) is carried as a pending import and picked up by a later run, until it imports or leaves qBittorrent.
-A download that leaves qBittorrent before it imports is no longer tracked, on Sonarr and Radarr alike, and the next run checks its title again: the release is grabbed again if the library still lacks it (with `use_torrent_hash_to_filter` on, a release is grabbed only once).
+A download that leaves qBittorrent before it imports is no longer tracked, on Sonarr and Radarr alike, and the next run checks its title again: the release is grabbed again if the library still lacks it.
 In `blocking` and `hybrid` each later run waits on a pending download again, up to `wait_timeout`. To stop Pearlarr waiting on one that will never finish, add the title's AniList ID to `seadex.ignore_anilist_ids` and remove the download from qBittorrent.
 
 A Radarr run never waits or imports, since Radarr imports its own downloads.

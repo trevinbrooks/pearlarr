@@ -111,7 +111,7 @@ What is in it, and what deleting each piece costs:
 | File | What it holds | If you delete it |
 | --- | --- | --- |
 | `config.yml` | Your settings and credentials, the only file you author. | Gone is gone: `pearlarr config init` writes a fresh starter, but you refill it yourself. Keep it backed up. |
-| `cache.db` | Run state: which entries were processed, grab history and torrent hashes, pending imports awaiting a wait pass, the arr-activity checkpoint. | Safe but costly: the next run re-evaluates the whole library, pending imports are forgotten (Sonarr still imports what it can on its own), and with `seadex.use_torrent_hash_to_filter: true` everything looks un-grabbed and gets re-downloaded. |
+| `cache.db` | Run state: which entries were processed, pending imports awaiting a wait pass, the arr-activity checkpoint. | Safe but costly: the next run re-evaluates the whole library, and pending imports are forgotten (Sonarr still imports what it can on its own). |
 | `cache.backup.db` | The snapshot written by `pearlarr cache backup`. | You lose the rollback point. Take a new backup. |
 | `mappings.db` | The parsed ID-mapping sources. | Cheap: rebuilt from the mapping downloads on the next run. |
 | `logs/` | `Pearlarr.log` plus dated `Pearlarr.log.<timestamp>` backups, kept for `advanced.log_retention_days` days. | Disposable. |
@@ -181,8 +181,7 @@ Pearlarr 1.0 is a renamed fork of [bbtufty/seadexarr](https://github.com/bbtufty
 - **The data directory is new**: upstream kept files beside the install. Pearlarr uses one OS-standard directory (see [above](#the-data-directory)).
   In Docker, mount `/config` as before. The layout inside it is Pearlarr's own.
 - **The cache is not carried over**: the old `cache.json` is not read, and Pearlarr starts fresh.
-  That is cheap in the default matching mode. The first run re-evaluates the library against what the arrs already have on disk and downloads nothing it finds there.
-  Only with `seadex.use_torrent_hash_to_filter: true` does a fresh cache mean re-grabbing, since hash matching only knows what Pearlarr itself added.
+  That is cheap: the first run re-evaluates the library against what the arrs already have on disk and downloads nothing it finds there.
 - **`SCHEDULE_TIME` is deprecated**: set `schedule.interval_hours` (bare metal) or `PEARLARR_CRON` (Docker) instead.
   On bare metal a still-set `SCHEDULE_TIME` wins for now, with a deprecation warning. The container never reads it.
 - **Python 3.13 or newer** is required for a pip install. The Docker image brings its own interpreter.

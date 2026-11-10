@@ -20,7 +20,7 @@ import yaml
 from .json_narrow import is_json_obj
 from .seadex_types import Json
 
-CONFIG_VERSION = 5
+CONFIG_VERSION = 6
 
 # The one remediation sentence, shared by every surface that reports an
 # old-schema file (and quoted by docs/troubleshooting.md's anchor grep).
@@ -177,6 +177,27 @@ def _to_v5(config: dict[str, Json]) -> list[str]:
     ]
 
 
+def _to_v6(config: dict[str, Json]) -> list[str]:
+    """v5 -> v6: drop the removed `seadex.use_torrent_hash_to_filter`, saying what changes when it was on.
+
+    A blank or `false` was off. Any other value gets the note about what changes, as in `_to_v5`.
+    """
+
+    seadex = _group(config, "seadex")
+    if seadex is None or "use_torrent_hash_to_filter" not in seadex:
+        return []
+    if seadex.pop("use_torrent_hash_to_filter") in (None, False):
+        return ["seadex.use_torrent_hash_to_filter was removed - dropped (it was off, so nothing changes)"]
+    return [
+        (
+            "seadex.use_torrent_hash_to_filter was removed - dropped (a release is now matched against the files "
+            "the library holds, by release group and file size, so one whose files are gone or changed is grabbed "
+            "again even if Pearlarr grabbed it before. To skip a title, add its AniList ID to "
+            "seadex.ignore_anilist_ids)"
+        ),
+    ]
+
+
 @dataclass(frozen=True)
 class _Migration:
     """One schema step: brings a mapping from `to_version - 1` to `to_version`."""
@@ -191,6 +212,7 @@ _MIGRATIONS: tuple[_Migration, ...] = (
     _Migration(to_version=3, apply=_to_v3),
     _Migration(to_version=4, apply=_to_v4),
     _Migration(to_version=5, apply=_to_v5),
+    _Migration(to_version=6, apply=_to_v6),
 )
 
 

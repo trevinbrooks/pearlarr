@@ -214,6 +214,46 @@ class TestMigrateMapping:
         assert mapping == {"config_version": CONFIG_VERSION, "sonarr": sonarr}
         assert outcome.notes == ()
 
+    # A quoted "true" loaded as on, so it gets the note too.
+    @pytest.mark.parametrize("value", [True, "true"])
+    def test_v5_to_v6_drops_the_hash_filter_and_says_what_changes_when_it_was_on(self, value: Json) -> None:
+        mapping: dict[str, Json] = {
+            "config_version": 5,
+            "seadex": {"want_best": False, "use_torrent_hash_to_filter": value},
+        }
+        outcome = migrate_mapping(mapping)
+        assert outcome is not None
+        assert mapping == {"config_version": CONFIG_VERSION, "seadex": {"want_best": False}}
+        (note,) = outcome.notes
+        assert note == (
+            "seadex.use_torrent_hash_to_filter was removed - dropped (a release is now matched against the files "
+            "the library holds, by release group and file size, so one whose files are gone or changed is grabbed "
+            "again even if Pearlarr grabbed it before. To skip a title, add its AniList ID to "
+            "seadex.ignore_anilist_ids)"
+        )
+
+    @pytest.mark.parametrize("value", [False, None])
+    def test_v5_to_v6_notes_nothing_changes_when_the_hash_filter_was_off(self, value: Json) -> None:
+        mapping: dict[str, Json] = {
+            "config_version": 5,
+            "seadex": {"want_best": False, "use_torrent_hash_to_filter": value},
+        }
+        outcome = migrate_mapping(mapping)
+        assert outcome is not None
+        assert mapping == {"config_version": CONFIG_VERSION, "seadex": {"want_best": False}}
+        assert outcome.notes == (
+            "seadex.use_torrent_hash_to_filter was removed - dropped (it was off, so nothing changes)",
+        )
+
+    # A group without the key, and a malformed one, which is left for validation to reject by name.
+    @pytest.mark.parametrize("seadex", [{"want_best": False}, 5])
+    def test_v5_without_the_hash_filter_migrates_with_no_note(self, seadex: Json) -> None:
+        mapping: dict[str, Json] = {"config_version": 5, "seadex": seadex}
+        outcome = migrate_mapping(mapping)
+        assert outcome is not None
+        assert mapping == {"config_version": CONFIG_VERSION, "seadex": seadex}
+        assert outcome.notes == ()
+
     def test_the_chain_is_contiguous_and_ends_at_the_current_version(self) -> None:
         # Declaration order IS application order: pin that the steps run 1..N
         # with no gap, and that bumping CONFIG_VERSION without its step (or

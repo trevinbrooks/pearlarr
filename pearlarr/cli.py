@@ -934,7 +934,6 @@ def cache_stats(json_output: Annotated[bool, typer.Option("--json", help=_JSON_H
         emit_to_hub(
             CacheStatsReported(
                 entries=s.entries,
-                torrent_hashes=s.torrent_hashes,
                 anilist_meta=s.anilist_meta,
                 sonarr_parse=s.sonarr_parse,
                 pending_imports=s.pending_imports,

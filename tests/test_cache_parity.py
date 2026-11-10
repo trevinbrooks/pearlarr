@@ -2,9 +2,9 @@
 """Parity guard: `tests/builders.FakeCacheStore` must observably match `CacheStore`.
 
 ~50 tests trust `FakeCacheStore` as a drop-in for the SQLite `CacheStore`, yet
-nothing checks the two agree. A semantic drift - TTL eviction, the
-entries/torrent_hashes split + ordering, the JSONB round-trip, the pending
-series filter - would silently invalidate every test that leans on the fake. This
+nothing checks the two agree. A semantic drift - TTL eviction, the entry
+merge, the JSONB round-trip, the pending series filter - would
+silently invalidate every test that leans on the fake. This
 drives one identical op sequence through both and asserts every observable read is
 equal, then the eviction counts and a post-drop/post-save re-read.
 """
@@ -44,7 +44,7 @@ def _both_stores(tmp_path: Path) -> Generator[tuple[FakeCacheStore, CacheStore]]
 
 
 def _apply_ops(store: AbstractCacheStore) -> None:
-    """One identical mutating sequence: entries + hashes, the two TTL caches, pending."""
+    """One identical mutating sequence: entries, the two TTL caches, pending."""
 
     store.update_cache(
         Arr.SONARR,
@@ -54,22 +54,21 @@ def _apply_ops(store: AbstractCacheStore) -> None:
             url="https://releases.moe/7",
             coverage="S1",
             updated_at=_ENTRY_STAMP,
-            torrent_hashes=[None, "hb", "ha"],
             fallback_satisfied=True,
             season_type="dvd",
         ),
     )
     # Partial re-update of the SAME entry (omits name/url/updated_at/marker): pins the
-    # scalar merge (absent columns untouched - incl. the fallback marker, still True)
-    # + the hash-set replace (not append).
-    store.update_cache(Arr.SONARR, 7, CacheRecord(coverage="S2", torrent_hashes=[None, "hc", "ha"]))
-    # A cross-arr row + a duplicate/None hash list, to exercise the dedup + None
-    # marker. No fallback_satisfied key, pinning the default-False parity.
-    store.update_cache(Arr.RADARR, 99, CacheRecord(name="Movie", torrent_hashes=["z", "z", None]))
-    # A row whose stamp is cleared loses its timestamp and nothing else. Clearing an id with no row adds none.
-    store.update_cache(Arr.SONARR, 8, CacheRecord(name="Cleared", updated_at=_ENTRY_STAMP, torrent_hashes=["hr"]))
+    # partial merge (absent columns untouched - incl. the fallback marker, still True).
+    store.update_cache(Arr.SONARR, 7, CacheRecord(coverage="S2"))
+    # A cross-arr row. No fallback_satisfied key, pinning the default-False parity.
+    store.update_cache(Arr.RADARR, 99, CacheRecord(name="Movie"))
+    # A row whose stamp is cleared loses its timestamp and nothing else. Clearing an id with no row adds none, and
+    # neither does an empty record.
+    store.update_cache(Arr.SONARR, 8, CacheRecord(name="Cleared", updated_at=_ENTRY_STAMP))
     store.clear_entry_stamp(Arr.SONARR, 8)
     store.clear_entry_stamp(Arr.SONARR, 4242)
+    store.update_cache(Arr.SONARR, 4242, CacheRecord())
 
     store.put_anilist_meta(7, {"fetched_at": _NEW, "data": {"title": "Show"}})
     store.put_anilist_meta(8, {"fetched_at": _OLD, "data": {"title": "Old"}})
@@ -127,9 +126,6 @@ def _observe(store: AbstractCacheStore) -> dict[str, object]:
         "entry_r99": store.get_entry(Arr.RADARR, 99),
         "entry_missing": store.get_entry(Arr.SONARR, 4242),
         "entry_cleared": store.get_entry(Arr.SONARR, 8),
-        "hashes_s7": store.torrent_hashes(Arr.SONARR, 7),
-        "hashes_cleared": store.torrent_hashes(Arr.SONARR, 8),
-        "hashes_r99": store.torrent_hashes(Arr.RADARR, 99),
         "entry_wrong_arr": store.get_entry(Arr.RADARR, 7),
         "anilist_7": store.get_anilist_meta(7),
         "anilist_all": dict(store.iter_anilist_meta()),

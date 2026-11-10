@@ -88,7 +88,6 @@ class GrabRequest:
     entry: EntryRecord
     """The SeaDex entry whole: the notification renders its url, notes, comparison links, and incomplete flag."""
     seadex_dict: SeadexDict
-    torrent_hashes: list[str | None]
     cache_details: CacheRecord
     """The run's mutable `CacheRecord` accumulator: the frozen field pins the reference, not the dict's contents."""
     replaced_groups: tuple[str, ...]
@@ -220,8 +219,6 @@ class GrabPipeline:
             )
             self._ctx.per_title.unsupported_tracker_skipped = True
             self._ctx.per_title.unsupported_tracker_groups.append(srg)
-            if url_item.infohash is not None:
-                self._ctx.per_title.unsupported_tracker_hashes.append(url_item.infohash)
             return False
 
         hold = url_item.hold
@@ -443,15 +440,10 @@ class GrabPipeline:
             added_this_title = self._grab(req)
 
         if self._should_cache_as_done(added_this_title=added_this_title):
-            # Unsupported-tracker hashes are excluded so the release is re-considered once a parser lands. Private-only
-            # ones deliberately are not: private releases are never grabbed, so their quiet suppression is intended.
-            skipped = set(self._ctx.per_title.unsupported_tracker_hashes)
-            cacheable = [h for h in req.torrent_hashes if h is None or h not in skipped]
             # Always written: the partial-merge upsert would otherwise preserve a stale True.
             fallback_satisfied = self._ctx.per_title.fallback_covered or any(
                 u.is_fallback and u.download for rg_item in req.seadex_dict.values() for u in rg_item.urls.values()
             )
-            req.cache_details["torrent_hashes"] = cacheable
             req.cache_details["fallback_satisfied"] = fallback_satisfied
             self.cache_store.update_cache(
                 self._ctx.arr,
