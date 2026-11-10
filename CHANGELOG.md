@@ -7,6 +7,19 @@ Pearlarr is a fork of [bbtufty/seadexarr](https://github.com/bbtufty/seadexarr).
 
 ## [Unreleased]
 
+### Upgrade notes
+
+- **`imports.pending_max_age_days` is removed.** The next run, or `pearlarr config migrate`, rewrites `config.yml` at the new schema without it and keeps the previous file as `config.yml.bak`. A dry run never rewrites. Hand-written comments stay only in the backup. If your environment sets `PEARLARR_IMPORTS__PENDING_MAX_AGE_DAYS`, unset it before upgrading: the config no longer loads while it is set.
+- **Downgrading needs the backup.** An older release refuses the rewritten `config.yml`, so restore `config.yml.bak` over it first.
+
+### Changed
+
+- Pearlarr no longer gives up on a pending import after `pending_max_age_days`. A download stays tracked until it imports or leaves qBittorrent. On Sonarr, importing its files by hand ends it too, and a download that needs a hand import says so each run until then. In `hybrid` and `blocking` mode a download that never finishes holds each Sonarr run's wait for `wait_timeout` until you remove it from qBittorrent.
+
+### Fixed
+
+- A release already in qBittorrent when Pearlarr goes to grab it is tracked from then on, whatever its age and whoever added it. Pearlarr used to refuse one older than `pending_max_age_days` (two weeks by default), so a download Sonarr or you had added longer ago than that, or one Pearlarr had imported before and still seeds, was left untracked and never imported. On Radarr, Pearlarr reads the last 30 days of import history, so a movie download Radarr imported before that stays pending until it leaves qBittorrent.
+
 ## [1.5.9] - 2026-11-08
 
 ### Changed

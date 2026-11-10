@@ -271,7 +271,7 @@ class GrabStatus(Enum):
     ADDING = auto()
     WOULD_ADD = auto()
     ALREADY_DOWNLOADING = auto()
-    """SeaDex's pick is already in qBittorrent from an earlier run."""
+    """SeaDex's pick is already in qBittorrent."""
 
 
 @dataclass(frozen=True, slots=True)

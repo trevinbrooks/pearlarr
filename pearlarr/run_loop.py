@@ -106,11 +106,6 @@ class RunLoop:
 
         self.reset_run_stats(dry_run=dry_run, import_wait_mode=resolved_wait_mode)
 
-        # The TTL prune runs at run start for EVERY active mode, so aged-out records can't accumulate forever.
-        # Reporting carried-over records is per item, importing them is _finalize_run's, never before the banner.
-        if self._wait_active:
-            self._wait_manager.prune_expired_pending()
-
         with boot.step(f"Fetching {arr.capitalize()} library") as fetching:
             all_items: list[ItemT] = strategy.get_items()
 

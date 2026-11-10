@@ -28,7 +28,7 @@ from pearlarr.cache import (
 )
 from pearlarr.config import Arr
 from pearlarr.log import LOG_NAME
-from pearlarr.manual_import import EntryNames, GuardFacts, OwnedEpisode, PendingImport, newest_claimed_at_of
+from pearlarr.manual_import import EntryNames, GuardFacts, OwnedEpisode, PendingImport
 from pearlarr.output import Diagnostic, Severity, install_hub
 from pearlarr.output.recording import RecordingHub
 from pearlarr.parse_records import parsed_info, to_parse_record
@@ -585,7 +585,6 @@ class TestSchemaVersionGate:
                 "2026-07-02 00:00:00",
             ]
             assert records["j"]["added_at"] == ""
-            assert newest_claimed_at_of(records["j"]) is None
             _assert_round_trips(records)
 
     def test_v4_legacy_ids_fold_into_the_claims_window(self, tmp_path: Path) -> None:

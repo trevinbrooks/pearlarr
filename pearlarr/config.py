@@ -503,11 +503,6 @@ class ImportsSettings(_ConfigBase):
     languages_single: list[str] = Field(default_factory=lambda: list(_LANGUAGES_SINGLE_DEFAULT))
     """Languages tagged on files imported from single-audio releases. Empty falls back like `languages_dual`."""
 
-    # ge=1: 0 would expire every pending-import record immediately, silently
-    # defeating the deferred-import carry.
-    pending_max_age_days: int = Field(default=14, ge=1)
-    """Days a pending import may wait for its download before its record is dropped."""
-
     # ge=1: 0 is degenerate (the wait view floors the cadence to the poll interval).
     digest_interval: int = Field(default=300, ge=1)
     """Target seconds between wait-progress digest lines on a non-interactive console (Docker, cron)."""

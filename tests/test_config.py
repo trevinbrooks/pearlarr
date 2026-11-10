@@ -288,12 +288,6 @@ class TestDefaults:
         with pytest.raises(ValidationError):
             ImportsSettings.model_validate({"progress_poll_interval": -1})
 
-    def test_pending_max_age_days_bounds(self) -> None:
-        # ge=1: 0 would expire every pending-import record immediately.
-        assert ImportsSettings.model_validate({"pending_max_age_days": 1}).pending_max_age_days == 1
-        with pytest.raises(ValidationError):
-            ImportsSettings.model_validate({"pending_max_age_days": 0})
-
     def test_digest_interval_bounds(self) -> None:
         assert ImportsSettings.model_validate({"digest_interval": 1}).digest_interval == 1
         with pytest.raises(ValidationError):
@@ -330,7 +324,6 @@ class TestDefaults:
         assert imp.default_quality is None
         assert imp.languages_dual == ["Japanese", "English"]
         assert imp.languages_single == ["Japanese"]
-        assert imp.pending_max_age_days == 14
         assert imp.digest_interval == 300
 
     def test_progress_poll_interval_zero_disables_the_fast_poll(self) -> None:
@@ -364,14 +357,12 @@ class TestBlankCoalescing:
                 "poll_interval": None,
                 "ready_timeout": None,
                 "mode": None,
-                "pending_max_age_days": None,
             },
         )
         assert imp.wait_timeout == 3600
         assert imp.poll_interval == 30
         assert imp.ready_timeout == 600
         assert imp.mode == "auto"
-        assert imp.pending_max_age_days == 14
 
     def test_blank_language_lists_fall_back_to_defaults(self) -> None:
         imp = ImportsSettings.model_validate({"languages_dual": None, "languages_single": None})

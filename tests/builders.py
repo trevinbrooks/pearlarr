@@ -126,7 +126,6 @@ _FLAT_ALIASES: dict[str, tuple[str, str]] = {
     "import_default_quality": ("imports", "default_quality"),
     "import_languages_dual": ("imports", "languages_dual"),
     "import_languages_single": ("imports", "languages_single"),
-    "import_pending_max_age_days": ("imports", "pending_max_age_days"),
     "wait_digest_interval": ("imports", "digest_interval"),
     "max_torrents_to_add": ("advanced", "max_torrents_to_add"),
     "sleep_time": ("advanced", "sleep_time"),

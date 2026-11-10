@@ -8,7 +8,6 @@ The planning modules' tests sit beside this file, one per module: `test_placemen
 import json
 from collections.abc import Callable
 from dataclasses import replace
-from datetime import datetime
 from types import SimpleNamespace
 from typing import cast
 
@@ -30,7 +29,6 @@ from pearlarr.manual_import import (
     added_at_of,
     classify_pending,
     joined_map,
-    newest_claimed_at_of,
     normalize_basename,
     normalize_group,
     normalize_rg,
@@ -438,8 +436,7 @@ class TestPendingImportClaims:
         assert len(pending.claims) == 1
 
     def test_with_claim_replaces_the_entrys_claim_in_place_keeping_its_clock_and_preowned_ids(self) -> None:
-        # A re-flag refreshes the window, but the clock stays the FIRST claim's (the TTL never
-        # restarts on a re-flag) and so does the net-out.
+        # A re-flag refreshes the window, but the clock and the net-out stay the FIRST claim's.
         stored = entry_claim(al_id=1, ordered_episode_ids=[101], preowned_episode_ids=[101])
         other = entry_claim(al_id=2, series_id=8)
         pending = pending_import(claims=(stored, other))
@@ -462,21 +459,6 @@ class TestPendingImportClaims:
 
         assert flagged.with_claim(entry_claim(al_id=2, series_id=8)).awaiting_cleanup is False
         assert flagged.with_claim(entry_claim(ordered_episode_ids=[101])).awaiting_cleanup is False
-
-    def test_newest_claimed_at_of_reads_the_raw_row(self) -> None:
-        # The prune's clock off the stored dict, no rehydration: junk and a missing key are skipped,
-        # and a row with no parseable claim stamp reads None.
-        raw = pending_import(
-            claims=(
-                entry_claim(al_id=1, claimed_at="2026-06-24 00:00:00"),
-                entry_claim(al_id=2, series_id=8, claimed_at="junk"),
-                entry_claim(al_id=3, claimed_at="2026-06-26 00:00:00"),
-            ),
-        ).to_json()
-
-        assert newest_claimed_at_of(raw) == datetime(2026, 6, 26)
-        assert newest_claimed_at_of({"claims": [{"al_id": 1}]}) is None
-        assert newest_claimed_at_of({}) is None
 
 
 class TestDisplayLabel:

@@ -1,6 +1,6 @@
-"""The one record timestamp format: what the cache stamps, the pending records age by, and both parse."""
+"""The one record timestamp format: what the cache and the pending records stamp, and how both parse."""
 
-from datetime import datetime, timedelta
+from datetime import datetime
 
 UPDATED_AT_STR_FORMAT = "%Y-%m-%d %H:%M:%S"
 """Timestamp format for cache record fields (`updated_at`, `fetched_at`, `added_at`, `claimed_at`)."""
@@ -38,9 +38,3 @@ def parse_stamp_aware(stamp: str) -> datetime | None:
 
     moment = parse_stamp_or_none(stamp)
     return None if moment is None else moment.astimezone()
-
-
-def pending_cutoff(max_age_days: int) -> datetime:
-    """The oldest clock still inside `imports.pending_max_age_days`: a record's newest claim ages against it."""
-
-    return datetime.now() - timedelta(days=max_age_days)

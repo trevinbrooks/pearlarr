@@ -26,9 +26,11 @@ from pearlarr.boot_flow import BootFlow
 from pearlarr.cache import AbstractCacheStore, CacheStore
 from pearlarr.config import AppConfig, Arr
 from pearlarr.grab_pipeline import GrabRequest
+from pearlarr.import_wait import ImportWaitManager
+from pearlarr.log import EntryState
 from pearlarr.manual_import import ImportWaitMode, Outcome, OutcomeCategory
 from pearlarr.mappings import MappingEntry
-from pearlarr.output import BootStepFinished, CountsMark, Diagnostic, Severity, SeverityCounts
+from pearlarr.output import BootStepFinished, CountsMark, Diagnostic, EntryHeader, Severity, SeverityCounts
 from pearlarr.output.recording import RecordingHub
 from pearlarr.protocols import ImportCompleter
 from pearlarr.reporter import RunContext
@@ -47,7 +49,9 @@ from .builders import (
     make_anilist_gateway,
     make_bare_instance,
     make_config,
+    make_import_wait_manager,
     make_services,
+    pending_import,
 )
 from .fakes import CapMeeting, FakeArrItem, FakeClock, FakeSkyHookClient, FakeStrategy, install_recording_hub
 
@@ -142,7 +146,7 @@ def _engine(
     cache_store: AbstractCacheStore | None = None,
     anilist: AniListGateway | None = None,
     services: RunServices | None = None,
-    wait_manager: _FakeBound | None = None,
+    wait_manager: _FakeBound | ImportWaitManager | None = None,
     skyhook: SkyHookGateway | None = None,
 ) -> RunLoop:
     """A bare `RunLoop` wired with typed fakes for the run-loop collaborators.
@@ -157,7 +161,7 @@ def _engine(
     `cache_store` shares one store across engines (the checkpoint replay tests).
     `anilist` swaps in a real gateway (the AniList boot-note tests).
     `services` swaps the hub (the commit tests make it real and share its store).
-    `wait_manager` swaps the ctx-bind wait manager (the contained-error commit test).
+    `wait_manager` swaps the ctx-bind wait manager (the contained-error commit test, the run-start test).
     `skyhook` swaps in a gateway over a failing client (the SkyHook outage tests).
     """
 
@@ -315,9 +319,6 @@ class _StagingStrategy(FakeStrategy):
 class _RaisingSnapshots(_FakeBound):
     """A wait manager whose per-item pending snapshot raises, after that item's ids staged their rows."""
 
-    def prune_expired_pending(self) -> None:
-        pass
-
     def snapshot_pending_for_series(self, series_id: int) -> None:
         raise RuntimeError(f"snapshot failed for series {series_id}")
 
@@ -425,6 +426,24 @@ class TestPerTitleCommit:
         store.close()
 
         assert _kept(tmp_path / "cache.db", [1]) == kept
+
+
+class TestRunStartKeepsPendingRecords:
+    """Nothing at a run's start drops a carried-over record, however old."""
+
+    def test_a_years_old_record_survives_the_run_start_and_is_reported(self, logger: logging.Logger) -> None:
+        store = FakeCacheStore()
+        old = pending_import(infohash="h", series_id=1, added_at="2000-01-01 00:00:00")
+        store.put_pending(Arr.SONARR, old.infohash, old.to_json())
+        services = _services(qbit=CLIENT_SENTINEL, cache_store=store)
+        manager = make_import_wait_manager(cache_store=store)
+        engine = _engine(_FinalizeRecorder(), logger, cache_store=store, services=services, wait_manager=manager)
+        recording = install_recording_hub()
+
+        _run(engine, _StagingStrategy(items=_TITLES[:1], services=services, stop_at=None), ImportWaitMode.BLOCKING)
+
+        assert set(store.get_pending(Arr.SONARR)) == {"h"}
+        assert [(h.state, h.title) for h in recording.of_type(EntryHeader)] == [(EntryState.QUEUED, old.display_label)]
 
 
 class _GrabRecorder(_FakeBound):

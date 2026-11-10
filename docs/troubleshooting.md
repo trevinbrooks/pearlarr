@@ -166,7 +166,7 @@ It can also be a pack of any season whose file names disagree with their own num
 
 The run summary lists a title under "needs action" with "file titles contradict its numbering; import it by hand", and the release's "skipped" line names the contradiction. Some of the release's file names carry episode titles, and those titles name other episodes than the files' numbers do, so the files with no title can't be placed by their numbers either. None of the pack's files could be placed on the title's episodes, and Pearlarr does not grab it: importing it by its numbers would put files on the wrong episodes. Download it and import it by hand, matching each file to its episode by its title or its content. The row stops once the pack is in place: every episode of the title holds one of the pack's files at its listed size, or a file of another recommended release covering that episode. An episode the pack has no file for keeps the row.
 
-When some of the pack's files are placed by their titles, Pearlarr grabs the pack and imports those, and no row appears. The rest are left for a hand import: the import's line counts them, the wait notification and the log name them, and the download stays pending, named again on every run, until a hand import fills its episodes or it reaches `pending_max_age_days`.
+When some of the pack's files are placed by their titles, Pearlarr grabs the pack and imports those, and no row appears. The rest are left for a hand import: the import's line counts them, the wait notification and the log name them, and the download stays pending, named again on every run, until a hand import fills its episodes or the download is removed from qBittorrent.
 
 ## A release whose files place under another title
 

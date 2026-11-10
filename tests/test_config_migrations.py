@@ -158,6 +158,24 @@ class TestMigrateMapping:
         assert outcome is not None
         assert len(outcome.notes) == 1
 
+    def test_v3_to_v4_drops_pending_max_age_days_with_a_note(self) -> None:
+        mapping: dict[str, Json] = {"config_version": 3, "imports": {"pending_max_age_days": 30, "mode": "copy"}}
+        outcome = migrate_mapping(mapping)
+        assert outcome is not None
+        assert mapping == {"config_version": CONFIG_VERSION, "imports": {"mode": "copy"}}
+        (note,) = outcome.notes
+        assert note == (
+            "imports.pending_max_age_days was removed - dropped "
+            "(a pending import now stays tracked until it imports or leaves qBittorrent)"
+        )
+
+    def test_v3_without_pending_max_age_days_migrates_with_no_note(self) -> None:
+        mapping: dict[str, Json] = {"config_version": 3, "imports": {"mode": "copy"}}
+        outcome = migrate_mapping(mapping)
+        assert outcome is not None
+        assert mapping == {"config_version": CONFIG_VERSION, "imports": {"mode": "copy"}}
+        assert outcome.notes == ()
+
     def test_the_chain_is_contiguous_and_ends_at_the_current_version(self) -> None:
         # Declaration order IS application order: pin that the steps run 1..N
         # with no gap, and that bumping CONFIG_VERSION without its step (or

@@ -12,10 +12,9 @@ from . import coverage as _coverage
 from .cache import CacheRecord
 from .config import PrivateReleaseAction
 from .grab_placement import PendingSeed
-from .log import count_noun
 from .manual_import import ImportWaitMode
 from .notify import GrabNotice
-from .output import Accent, GrabFailed, ReleaseSkipped, SkipReason, StyledValue, hub_warn
+from .output import Accent, GrabFailed, ReleaseSkipped, SkipReason, StyledValue
 from .pending_records import PendingRecords
 from .reporter import (
     GrabRecord,
@@ -25,7 +24,7 @@ from .reporter import (
     is_preview,
 )
 from .seadex_types import GrabHold, SeadexDict, SeadexUrlItem
-from .stamps import now_stamp, pending_cutoff, stamp_of
+from .stamps import now_stamp, stamp_of
 from .torrents import GRAB_FAILURES, PARSEABLE_TRACKERS, AddOutcome, AddResult, ReleaseOutcome
 
 if TYPE_CHECKING:
@@ -104,6 +103,12 @@ class GrabRequest:
     orders_unread: bool = False
     """A series the placement read has no stored TVDB orders (SkyHook was down before its first fetch): the title
     is never cached as done and re-checks next run."""
+
+
+def _reacquire_stamp(added_on: datetime | None) -> str:
+    """A record-less torrent's stamp: its qBittorrent add time, or now when it reports none."""
+
+    return now_stamp() if added_on is None else stamp_of(added_on)
 
 
 class GrabPipeline:
@@ -247,10 +252,7 @@ class GrabPipeline:
         url_item: SeadexUrlItem,
         req: GrabRequest,
     ) -> ReleaseOutcome | None:
-        """Add one screened url, or None on a contained failure or a refused add.
-
-        Both ADDED and ALREADY_ADDED persist the durable `PendingImport` (already-present means a prior-run grab).
-        """
+        """Add one screened url and register its pending import: its outcome, or None on a contained failure."""
 
         url = url_item.url
 
@@ -277,13 +279,10 @@ class GrabPipeline:
                 ),
             )
 
-        # ALREADY_ADDED is an earlier run's grab still awaiting import. The genuine "already own it" case is the
-        # any_to_download=False branch, which never reaches add_torrent.
-        if result.outcome in (AddOutcome.ADDED, AddOutcome.ALREADY_ADDED):
-            self._register_pending_import(url_item, req, result)
-            return ReleaseOutcome(outcome=result.outcome, name=result.name, group=srg)
-
-        return None
+        # ALREADY_ADDED is a torrent already in qBittorrent, whoever added it, and it's tracked like a grab. The
+        # genuine "already own it" case is the any_to_download=False branch, which never reaches add_torrent.
+        self._register_pending_import(url_item, req, result)
+        return ReleaseOutcome(outcome=result.outcome, name=result.name, group=srg)
 
     def _seed_for(self, url_item: SeadexUrlItem, req: GrabRequest) -> PendingSeed | None:
         """The url's seed (the strategy seeds nothing when the wait mode is off), or None on a preview or no hash."""
@@ -295,8 +294,9 @@ class GrabPipeline:
     def _register_pending_import(self, url_item: SeadexUrlItem, req: GrabRequest, result: AddResult) -> None:
         """Persist a grabbed or already-present release: `ADDED` tracks, `ALREADY_ADDED` accretes or reacquires.
 
-        A fresh add enters the run list with every clock stamped now. Any other is refreshed and reacquired
-        unless the record is this run's own grab (a torrent two entries list in one run).
+        A fresh add enters the run list with every clock stamped now. A torrent already in qBittorrent, whoever
+        added it, joins its stored record or starts one, and is reacquired unless the record is this run's own
+        grab (a torrent two entries list in one run).
         """
 
         seed = self._seed_for(url_item, req)
@@ -305,30 +305,11 @@ class GrabPipeline:
         if result.outcome is AddOutcome.ADDED:
             self._records.insert_fresh(seed.record_at(now_stamp(), fresh=True), seed.claim)
             return
-        stamp = now_stamp() if seed.accreted else self._reacquire_stamp(seed, result.added_on)
-        if stamp is None:
-            return
+        stamp = now_stamp() if seed.accreted else _reacquire_stamp(result.added_on)
         record = seed.record_at(stamp, fresh=False)
         self._records.save_with_claim(record, seed.claim)
         if record.infohash not in self._ctx.pending_imports:
             self._ctx.reacquired_keys.add(record.infohash)
-
-    def _reacquire_stamp(self, seed: PendingSeed, added_on: datetime | None) -> str | None:
-        """A record-less torrent's stamp: its qBittorrent add time, or now when it reports none.
-
-        None when that time is already past `imports.pending_max_age_days` (the torrent is not tracked).
-        """
-
-        if added_on is None:
-            return now_stamp()
-        max_age_days = self._config.imports.pending_max_age_days
-        if added_on < pending_cutoff(max_age_days):
-            hub_warn(
-                f"{seed.claim.title or seed.facts.infohash} has been in qBittorrent longer than "
-                f"{count_noun(max_age_days, 'day')}, not tracking it, remove it from the client or import it by hand",
-            )
-            return None
-        return stamp_of(added_on)
 
     def _needs_action(self, groups: list[str], reason: str, kind: NeedsActionKind) -> NeedsActionRecord:
         """A needs-action record for the current title."""
