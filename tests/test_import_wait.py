@@ -769,6 +769,120 @@ class TestSnapshotPendingForSeries:
         assert [c.state for c in reporter.snapshot_calls] == [PendingState.DOWNLOADED]
 
 
+class TestGoneTorrentHasItsTitlesCheckedAgain:
+    """A record dropped because its torrent left qBittorrent clears its titles' stamps, so the next run checks them."""
+
+    _CACHED_ON = "2021-06-05 00:00:00"
+
+    @classmethod
+    def _store(cls) -> FakeCacheStore:
+        """Entries 5, 6 and 9 cached as done, each remembering hash "h"."""
+
+        store = FakeCacheStore()
+        for al_id in (5, 6, 9):
+            store.update_cache(Arr.SONARR, al_id, {"updated_at": cls._CACHED_ON, "torrent_hashes": ["h"]})
+        return store
+
+    @staticmethod
+    def _record() -> PendingImport:
+        """Torrent "h", claimed by entry 5 on series 7 and entry 6 on series 8."""
+
+        return two_claim_record(al_ids=(5, 6), series_ids=(7, 8), infohash="h")
+
+    @staticmethod
+    def _stamps(store: FakeCacheStore) -> dict[int, str | None]:
+        entries = {al_id: store.get_entry(Arr.SONARR, al_id) for al_id in (5, 6, 9)}
+        return {al_id: entry.updated_at for al_id, entry in entries.items() if entry is not None}
+
+    def test_the_scan_snapshot_clears_the_stamp_of_every_claiming_title(self) -> None:
+        store = self._store()
+        mgr = make_orchestration_manager(
+            qbit=FakeQbit({}), strategy=_RecordingStrategy(), store=store, store_records=[self._record()]
+        )
+
+        mgr.snapshot_pending_for_series(7)
+
+        assert mgr._records.rows() == {}
+        # Entry 9 never claimed the torrent.
+        assert self._stamps(store) == {5: None, 6: None, 9: self._CACHED_ON}
+
+    def test_the_remembered_hash_stays(self) -> None:
+        store = self._store()
+        mgr = make_orchestration_manager(
+            qbit=FakeQbit({}), strategy=_RecordingStrategy(), store=store, store_records=[self._record()]
+        )
+
+        mgr.snapshot_pending_for_series(7)
+
+        assert store.torrent_hashes(Arr.SONARR, 5) == ["h"]
+
+    def test_the_end_pass_clears_the_stamp_of_every_claiming_title(self) -> None:
+        store = self._store()
+        mgr = make_orchestration_manager(
+            qbit=FakeQbit({}), strategy=_RecordingStrategy(), store=store, store_records=[self._record()]
+        )
+
+        mgr.check_once(view=RecordingWaitView())
+
+        assert mgr._records.rows() == {}
+        assert self._stamps(store) == {5: None, 6: None, 9: self._CACHED_ON}
+
+    def test_an_imported_record_leaves_its_titles_cached(self) -> None:
+        store = self._store()
+        mgr = make_orchestration_manager(
+            qbit=FakeQbit({"h": [FakeTorrent(is_complete=True, content_path="/d")]}),
+            strategy=_RecordingStrategy(progress=ImportProgress(1, 1, determinate=True)),
+            store=store,
+            store_records=[self._record()],
+        )
+
+        mgr.snapshot_pending_for_series(7)
+
+        assert mgr._records.rows() == {}
+        assert self._stamps(store) == dict.fromkeys((5, 6, 9), self._CACHED_ON)
+
+    def test_the_end_pass_leaves_an_imported_records_titles_cached(self) -> None:
+        store = self._store()
+        mgr = make_orchestration_manager(
+            qbit=FakeQbit({"h": [FakeTorrent(is_complete=True, content_path="/d")]}),
+            strategy=_RecordingStrategy(completed=import_probe(files_present=True)),
+            store=store,
+            store_records=[self._record()],
+        )
+
+        mgr.check_once(view=RecordingWaitView())
+
+        assert mgr._records.rows() == {}
+        assert self._stamps(store) == dict.fromkeys((5, 6, 9), self._CACHED_ON)
+
+    def test_the_other_arrs_row_keeps_its_stamp(self) -> None:
+        store = self._store()
+        store.update_cache(Arr.RADARR, 5, {"updated_at": self._CACHED_ON})
+        mgr = make_orchestration_manager(
+            qbit=FakeQbit({}), strategy=_RecordingStrategy(), store=store, store_records=[self._record()]
+        )
+
+        mgr.snapshot_pending_for_series(7)
+
+        radarr_row = store.get_entry(Arr.RADARR, 5)
+        assert radarr_row is not None
+        assert radarr_row.updated_at == self._CACHED_ON
+
+    def test_a_verified_import_whose_torrent_is_gone_leaves_its_titles_cached(self) -> None:
+        store = self._store()
+        mgr = make_orchestration_manager(
+            qbit=FakeQbit({}),
+            strategy=_RecordingStrategy(),
+            store=store,
+            store_records=[replace(self._record(), awaiting_cleanup=True)],
+        )
+
+        mgr._cleanup.heal_flagged()
+
+        assert mgr._records.rows() == {}
+        assert self._stamps(store) == dict.fromkeys((5, 6, 9), self._CACHED_ON)
+
+
 class TestCheckOnce:
     """check_once runs ONE non-blocking check cycle over every carried-over record."""
 

@@ -170,6 +170,15 @@ def test_push_wait_summary_builds_discord_embed(pushes: list[DiscordEmbed]) -> N
     assert embed.color == COLOR_FAILED
 
 
+def test_push_wait_summary_says_a_gone_download_has_its_title_checked_again(pushes: list[DiscordEmbed]) -> None:
+    notifier = Notifier(discord_url="https://discord.example", web=httpx.Client())
+    row = WaitOutcomeRow("Demo Batch", Outcome.MISSING)
+
+    assert notifier.push_wait_summary(arr=Arr.SONARR, result=WaitResult((row,), elapsed_s=15)) is True
+    [field] = pushes[0].fields
+    assert field.value == "Demo Batch - gone from qBittorrent; title checked again next run"
+
+
 def test_push_wait_summary_lists_the_unmatched_files_under_their_row(pushes: list[DiscordEmbed]) -> None:
     # One backticked line per name: Discord strips leading whitespace and reads `_` as markdown.
     notifier = Notifier(discord_url="https://discord.example", web=httpx.Client())

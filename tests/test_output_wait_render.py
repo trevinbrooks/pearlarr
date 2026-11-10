@@ -386,4 +386,4 @@ def test_graduation_tail_counts_held_back_files_and_names_the_action() -> None:
 
 
 def test_graduation_tail_says_a_missing_record_is_gone() -> None:
-    assert graduation_tail(_grad("A", Outcome.MISSING)) == "no longer tracked"
+    assert graduation_tail(_grad("A", Outcome.MISSING)) == "no longer tracked · title checked again next run"

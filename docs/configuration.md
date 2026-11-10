@@ -141,7 +141,8 @@ During the scan, an earlier run's download is reported under its series as `queu
 Sonarr imports the files itself where it can.
 When it cannot (a blocked import, or a download Sonarr is not tracking), Pearlarr steps in with a manual import, pinned to the correct series and episodes by its own mapping.
 A download that outlasts the run (including one a wait times out on) is carried as a pending import and picked up by a later run, until it imports or leaves qBittorrent.
-In `blocking` and `hybrid` each later run waits on it again, up to `wait_timeout`, so remove a download that will never finish from qBittorrent.
+A download that leaves qBittorrent before it imports is no longer tracked, on Sonarr and Radarr alike, and the next run checks its title again: the release is grabbed again if the library still lacks it (with `use_torrent_hash_to_filter` on, a release is grabbed only once).
+In `blocking` and `hybrid` each later run waits on a pending download again, up to `wait_timeout`. To stop Pearlarr waiting on one that will never finish, add the title's AniList ID to `seadex.ignore_anilist_ids` and remove the download from qBittorrent.
 
 A Radarr run never waits or imports, since Radarr imports its own downloads.
 With a `wait_mode` other than `off` it tracks a grabbed movie until Radarr's import history (the last 30 days of it) shows the import or the torrent leaves qBittorrent, and applies `post_import_category` after the import.
