@@ -26,6 +26,7 @@ from .config import (
     Arr,
     ArrTarget,
     config_permissions_loose,
+    env_variables_for,
     upgrade_config_file,
 )
 from .config_migrations import CONFIG_VERSION, MIGRATE_HINT
@@ -56,9 +57,20 @@ if TYPE_CHECKING:
 
 
 def validation_error_lines(e: ValidationError) -> list[str]:
-    """Each bad key of a config ValidationError as one `path: message` line (input values never included)."""
+    """Each bad key of a config ValidationError as one `path: message` line (input values never included).
 
-    return [f"{'.'.join(str(part) for part in err['loc'])}: {err['msg']}" for err in e.errors()]
+    A key the schema lacks reads "unknown key". A key set by an environment variable reads
+    `path (set by NAME): message`.
+    """
+
+    lines: list[str] = []
+    for err in e.errors():
+        key_path = [str(part) for part in err["loc"]]
+        variables = env_variables_for(key_path)
+        source = f" (set by {', '.join(variables)})" if variables else ""
+        message = "unknown key" if err["type"] == "extra_forbidden" else err["msg"]
+        lines.append(f"{'.'.join(key_path)}{source}: {message}")
+    return lines
 
 
 def format_validation_errors(e: ValidationError) -> str:

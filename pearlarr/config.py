@@ -18,7 +18,7 @@ import copy
 import json
 import os
 import tempfile
-from collections.abc import Mapping
+from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 from enum import StrEnum
 from hashlib import md5, sha256
@@ -922,6 +922,21 @@ def _overlay_path(name: str) -> list[str]:
         freeform = _mapping_annotation(annotation)
         model = annotation if isinstance(annotation, type) and issubclass(annotation, BaseModel) else None
     return path
+
+
+def env_variables_for(key_path: Sequence[str]) -> list[str]:
+    """The override variables that set the key at `key_path`, one under it, or one it sits under, sorted by name.
+
+    The empty path names none.
+    """
+
+    if not key_path:
+        return []
+    return [
+        name
+        for name, _ in _qualifying_env(os.environ)
+        if all(mine == theirs for mine, theirs in zip(_overlay_path(name), key_path, strict=False))
+    ]
 
 
 def _env_overlay(environ: Mapping[str, str]) -> dict[str, object]:
