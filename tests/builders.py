@@ -715,6 +715,8 @@ def make_services(**overrides: Any) -> RunServices:
         "_dirty_al_ids": set[int](),
         "_selection_stale": False,
         "_clock": FakeClock(),
+        # `begin_run` tells the torrent service who imports.
+        "_torrents": _real_torrents(logger, httpx.Client(), make_categories()),
     }
     defaults.update(overrides)
     return make_bare_instance(RunServices, **defaults)

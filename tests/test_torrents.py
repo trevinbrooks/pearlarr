@@ -1,5 +1,5 @@
 # pyright: strict
-"""Tests for `TorrentService` (the qBittorrent add path) and the `APIConnectionError` -> `QbitConnectionError` mapping.
+"""Tests for `TorrentService` (the add path and the cross-seed marks) and the `QbitConnectionError` mapping.
 
 `TorrentService.add` asks qBittorrent for the hash, then runs the tracker parser and `_add_to_qbit`.
 These tests monkeypatch the tracker parsers (the HTML/feed scrapers, covered in
@@ -14,21 +14,27 @@ login happens), so that one path is exercised through `build` with the qbit
 """
 
 import logging
-from dataclasses import dataclass
+from collections.abc import Mapping
+from dataclasses import dataclass, replace
 from datetime import datetime
 from typing import cast
 
 import httpx
 import pytest
 import qbittorrentapi
+import respx
 from seadex import Tracker
 
 import pearlarr.torrents as torrents
+from pearlarr.arr_categories import ArrCategoryResolver, CategorySources
 from pearlarr.boot_flow import BootFlow
-from pearlarr.config import Arr
+from pearlarr.config import Arr, ArrSettings
+from pearlarr.manual_import import ImportWaitMode
 from pearlarr.mappings import MappingResolver
-from pearlarr.run_services import QbitConnectionError, RunDeps
-from pearlarr.seadex_types import SeadexUrlItem
+from pearlarr.output import Severity
+from pearlarr.reporter import RunContext
+from pearlarr.run_services import QbitConnectionError, RunDeps, RunServices
+from pearlarr.seadex_types import SeadexReleaseGroupItem, SeadexUrlItem
 from pearlarr.torrent import TorrentParseError
 from pearlarr.torrents import (
     GRAB_FAILURES,
@@ -38,20 +44,50 @@ from pearlarr.torrents import (
     TorrentService,
 )
 
-from .builders import make_bare_instance, make_categories, make_config
+from .builders import (
+    download_client_json,
+    make_bare_instance,
+    make_categories,
+    make_config,
+    make_entry_record,
+    make_run_deps,
+    make_torrent_record,
+    sonarr_client_fields,
+    url_item,
+)
+from .fakes import bind_arr_http, diagnostic_messages, install_recording_hub
 
 _HASH = "a" * 40
 _PARSED_URL = "magnet:?xt=urn:btih:DEAD"
 _SOURCE_TITLE = "Scraped Source Title"
+_GRAB = "anime"
+_POST = "anime-done"
 
 
 @dataclass(frozen=True)
 class _TorrInfo:
-    """The `torrents_info` row the add path reads (`.hash` / `.name` / `.added_on`)."""
+    """A `torrents_info` row: the fields the add path and the cross-seed look read."""
 
     hash: str
     name: str
     added_on: object = None
+    category: str = _GRAB
+    total_size: int = 0
+    state: str = "downloading"
+    progress: float = 0.0
+
+    @property
+    def state_enum(self) -> qbittorrentapi.TorrentState:
+        return qbittorrentapi.TorrentState(self.state)
+
+
+@dataclass(frozen=True)
+class _TorrFile:
+    """A `torrents_files` row: the file's path inside the torrent, its size, and its priority (0 is not downloaded)."""
+
+    name: str
+    size: int
+    priority: int = 1
 
 
 @dataclass(frozen=True)
@@ -67,53 +103,81 @@ class _FakeQbit:
     """A typed recording stand-in for `qbittorrentapi.Client`.
 
     Models qBittorrent's dedup-by-hash: `torrents_info` reports whichever hashes
-    are `present`. `torrents_add` records its call and (optionally) registers a
-    hash->name as now-present, so the post-add name read-back finds it.
+    are `present` or in `rows`, and lists a category's `rows` (`list_error` fails the list). `torrents_add`
+    records its call and (optionally) registers a hash->name as now-present, so the post-add name read-back finds it.
+    `torrents_files` answers each torrent's `files`, raising a scripted error, or 404 for a torrent with none.
     """
 
     def __init__(
         self,
         *,
         present: dict[str, str] | None = None,
+        rows: tuple[_TorrInfo, ...] = (),
+        files: Mapping[str, list[_TorrFile] | Exception] | None = None,
+        list_error: Exception | None = None,
         register_on_add: tuple[str, str] | None = None,
         add_result: str = "Ok.",
         added_on: object = None,
     ) -> None:
-        self._present: dict[str, str] = dict(present or {})
+        self._rows = {h: _TorrInfo(h, n, added_on) for h, n in (present or {}).items()} | {r.hash: r for r in rows}
+        self._files = files or {}
+        self._list_error = list_error
         self._added_on = added_on
         self._register_on_add = register_on_add
         self._add_result = add_result
         self.add_calls: list[_AddCall] = []
         self.info_queries: list[str] = []
+        self.category_lists: list[str] = []
+        self.files_reads: list[str] = []
 
-    def torrents_info(self, *, torrent_hashes: str) -> list[_TorrInfo]:
+    def torrents_info(self, *, torrent_hashes: str = "", category: str | None = None) -> list[_TorrInfo]:
+        if category is not None:
+            self.category_lists.append(category)
+            if self._list_error is not None:
+                raise self._list_error
+            return [row for row in self._rows.values() if row.category == category]
         self.info_queries.append(torrent_hashes)
         # qBittorrent treats an empty `hashes` filter as "no filter" and returns
         # every torrent - the footgun the empty-infohash normalization guards against.
         if not torrent_hashes:
-            return [_TorrInfo(hash=h, name=n, added_on=self._added_on) for h, n in self._present.items()]
-        name = self._present.get(torrent_hashes)
-        return [_TorrInfo(hash=torrent_hashes, name=name, added_on=self._added_on)] if name is not None else []
+            return list(self._rows.values())
+        row = self._rows.get(torrent_hashes)
+        return [row] if row is not None else []
+
+    def torrents_files(self, *, torrent_hash: str) -> list[_TorrFile]:
+        self.files_reads.append(torrent_hash)
+        files = self._files.get(torrent_hash, qbittorrentapi.NotFound404Error())
+        if isinstance(files, Exception):
+            raise files
+        return files
 
     def torrents_add(self, *, urls: str, category: str | None, tags: list[str] | None) -> str:
         self.add_calls.append(_AddCall(urls=urls, category=category, tags=tags))
         if self._register_on_add is not None:
             registered_hash, registered_name = self._register_on_add
-            self._present[registered_hash] = registered_name
+            self._rows[registered_hash] = _TorrInfo(registered_hash, registered_name, self._added_on)
         return self._add_result
 
 
-def _service(qbit: _FakeQbit, *, category: str | None = "anime", tags: list[str] | None = None) -> TorrentService:
+def _service(
+    qbit: _FakeQbit,
+    *,
+    category: str | None = _GRAB,
+    tags: list[str] | None = None,
+    categories: ArrCategoryResolver | None = None,
+) -> TorrentService:
     """A `TorrentService` over the fake qbit (cast at the leaf-client boundary).
 
     `category` rides a fetchless resolver (no transport), so the explicit
-    value passes through to the add exactly as configured.
+    value passes through to the add exactly as configured. The post-import category is `_POST`.
+    `categories` swaps in a resolver that reads the arr's clients.
     """
 
+    config = make_config(sonarr_torrent_category=category, sonarr_post_import_category=_POST)
     return TorrentService(
         qbit=cast("qbittorrentapi.Client", qbit),
         web=httpx.Client(),
-        categories=make_categories(make_config(sonarr_torrent_category=category)),
+        categories=categories or make_categories(config),
         tags=tags if tags is not None else ["seadex"],
         logger=logging.getLogger("pearlarr.test"),
     )
@@ -411,3 +475,221 @@ def test_add_a_torrent_two_entries_list_is_fetched_once(monkeypatch: pytest.Monk
 
     assert (first.outcome, second.outcome) == (AddOutcome.ADDED, AddOutcome.ALREADY_ADDED)
     assert fetched == ["https://nyaa.si/view/1"]
+
+
+# --- TorrentService.mark_cross_seeds and a marked url's add -------------------
+
+_SEADEX = "b" * 40
+_CROSS = "c" * 40
+_NEWER = "d" * 40
+_EPISODES = [_TorrFile("Show/Show - 01.mkv", 100), _TorrFile("Show/Show - 02.mkv", 200)]
+"""The url's files as qBittorrent lists them inside a torrent's folder."""
+_HELD: Mapping[str, list[_TorrFile] | Exception] = {_CROSS: _EPISODES}
+
+
+def _url() -> SeadexUrlItem:
+    """SeaDex's public url for `_EPISODES`, under its own hash."""
+
+    return url_item(files=["Show - 01.mkv", "Show - 02.mkv"], size=[100, 200], tracker=Tracker.NYAA, infohash=_SEADEX)
+
+
+def _row(infohash: str, *, category: str = _GRAB, state: str = "downloading", progress: float = 0.5) -> _TorrInfo:
+    """A torrent at `_EPISODES`'s total size, downloading and half done unless told otherwise."""
+
+    return _TorrInfo(
+        infohash, "Cross", added_on=1_700_000_000, category=category, total_size=300, state=state, progress=progress
+    )
+
+
+def _marked(service: TorrentService, item: SeadexUrlItem, *, pearlarr_imports: bool = True) -> str | None:
+    """Mark one title's dict holding `item` on a run Pearlarr imports for, and return the hash it was marked with."""
+
+    service.begin_run(pearlarr_imports=pearlarr_imports)
+    service.mark_cross_seeds({"Group": SeadexReleaseGroupItem(urls={item.url: item})})
+    return item.cross_seed_hash
+
+
+@pytest.mark.parametrize(
+    ("row", "pearlarr_imports"),
+    [
+        pytest.param(_row(_CROSS), True, id="downloading"),
+        pytest.param(_row(_CROSS), False, id="downloading-arr-imports"),
+        pytest.param(_row(_CROSS, category=_POST, state="stalledUP", progress=1.0), True, id="seeding-after-import"),
+    ],
+)
+def test_mark_cross_seeds_marks_a_torrent_holding_the_urls_files(row: _TorrInfo, pearlarr_imports: bool) -> None:
+    """A counted torrent holding exactly the url's files under another hash marks the url with that hash."""
+
+    qbit = _FakeQbit(rows=(row,), files=_HELD)
+
+    assert _marked(_service(qbit), _url(), pearlarr_imports=pearlarr_imports) == _CROSS
+
+
+@pytest.mark.parametrize(
+    ("rows", "files", "pearlarr_imports"),
+    [
+        pytest.param(
+            (_row(_CROSS),), {_CROSS: [_TorrFile("Show/Show - 01v2.mkv", 100), _EPISODES[1]]}, True, id="a-name-differs"
+        ),
+        pytest.param(
+            (_row(_CROSS),),
+            {_CROSS: [_EPISODES[0], replace(_EPISODES[1], priority=0)]},
+            True,
+            id="a-file-not-downloaded",
+        ),
+        pytest.param((_row(_CROSS, category="tv"),), _HELD, True, id="in-another-category"),
+        pytest.param((_row(_CROSS, category=_POST),), _HELD, False, id="after-import-arr-imports"),
+        pytest.param((_row(_CROSS), _row(_SEADEX, category="tv")), _HELD, True, id="seadexs-own-in-another-category"),
+        pytest.param((_row(_CROSS, state="stalledUP", progress=1.0),), _HELD, False, id="finished-arr-imports"),
+        pytest.param((_row(_CROSS, state="missingFiles"),), _HELD, True, id="errored"),
+    ],
+)
+def test_mark_cross_seeds_leaves_a_url_no_counted_torrent_holds(
+    rows: tuple[_TorrInfo, ...], files: Mapping[str, list[_TorrFile] | Exception], pearlarr_imports: bool
+) -> None:
+    """A url stays SeaDex's when no counted torrent holds exactly its files, or SeaDex's own is in qBittorrent."""
+
+    qbit = _FakeQbit(rows=rows, files=files)
+
+    assert _marked(_service(qbit), _url(), pearlarr_imports=pearlarr_imports) is None
+
+
+@pytest.mark.parametrize(
+    ("item", "rows"),
+    [
+        pytest.param(_url(), (_row(_CROSS), _row(_SEADEX)), id="seadexs-own-at-that-size"),
+        pytest.param(replace(_url(), infohash=None), (_row(_CROSS),), id="no-hash"),
+    ],
+)
+def test_mark_cross_seeds_skips_a_url_without_reading_a_file_list(
+    item: SeadexUrlItem, rows: tuple[_TorrInfo, ...]
+) -> None:
+    """A url SeaDex's own torrent holds, or one with no hash (every private url), is left before any file-list read."""
+
+    qbit = _FakeQbit(rows=rows, files=_HELD)
+
+    assert _marked(_service(qbit), item) is None
+    assert qbit.files_reads == []
+
+
+def test_mark_cross_seeds_lists_once_a_run_and_reads_a_file_list_once() -> None:
+    """The categories are listed at the run's first title, and only a torrent at a url's total size has its files read."""
+
+    other_size = replace(_row(_NEWER), total_size=999)
+    qbit = _FakeQbit(rows=(_row(_CROSS), other_size), files=_HELD)
+    service = _service(qbit)
+
+    marks = [_marked(service, _url()) for _ in range(2)]
+
+    assert marks == [_CROSS, _CROSS]
+    assert qbit.category_lists == [_GRAB, _POST]
+    assert qbit.files_reads == [_CROSS]
+
+
+@respx.mock
+def test_mark_cross_seeds_looks_again_after_a_title_whose_grab_category_could_not_be_read() -> None:
+    """A title checked while the arr's download clients can't be read is left unmarked, and the next title looks."""
+
+    respx.get("http://arr.test/api/v3/downloadclient").side_effect = [
+        httpx.Response(500),
+        httpx.Response(200, json=[download_client_json(sonarr_client_fields(grab=_GRAB, post_import=_POST))]),
+    ]
+    qbit = _FakeQbit(rows=(_row(_CROSS),), files=_HELD)
+    sources = CategorySources(replace(bind_arr_http()[0], retries=0), cast("qbittorrentapi.Client", qbit))
+    service = _service(qbit, categories=ArrCategoryResolver(Arr.SONARR, ArrSettings(), sources))
+
+    assert [_marked(service, _url()) for _ in range(2)] == [None, _CROSS]
+
+
+def test_mark_cross_seeds_takes_the_oldest_holder() -> None:
+    """Of two torrents holding the url's files, the oldest marks it, though the newer one has finished."""
+
+    newer = replace(_row(_NEWER, state="stalledUP", progress=1.0), added_on=1_700_000_500)
+    qbit = _FakeQbit(rows=(newer, _row(_CROSS)), files={_CROSS: _EPISODES, _NEWER: _EPISODES})
+
+    assert _marked(_service(qbit), _url()) == _CROSS
+
+
+def test_mark_cross_seeds_passes_over_a_holder_gone_at_its_file_list() -> None:
+    """A torrent that left qBittorrent before its files were read gives way to the next one."""
+
+    newer = replace(_row(_NEWER), added_on=1_700_000_500)
+    qbit = _FakeQbit(rows=(_row(_CROSS), newer), files={_NEWER: _EPISODES})
+
+    assert _marked(_service(qbit), _url()) == _NEWER
+
+
+@pytest.mark.parametrize(
+    ("list_error", "files"),
+    [
+        pytest.param(qbittorrentapi.APIConnectionError("Connection refused"), _HELD, id="list"),
+        pytest.param(None, {_CROSS: qbittorrentapi.APIConnectionError("Connection refused")}, id="file-list"),
+    ],
+)
+def test_mark_cross_seeds_a_failed_read_warns_once_and_reads_nothing_more(
+    list_error: Exception | None, files: Mapping[str, list[_TorrFile] | Exception]
+) -> None:
+    """A failed qBittorrent read warns once: the run's later titles go unmarked and read nothing again."""
+
+    recording = install_recording_hub()
+    qbit = _FakeQbit(rows=(_row(_CROSS),), files=files, list_error=list_error)
+    service = _service(qbit)
+
+    marks = [_marked(service, _url()) for _ in range(2)]
+
+    assert marks == [None, None]
+    warning = (
+        "Could not read qBittorrent's torrents (APIConnectionError) - "
+        "this run may add a release that another torrent already holds"
+    )
+    assert diagnostic_messages(recording, Severity.WARNING) == [warning]
+
+
+@pytest.mark.parametrize(
+    ("arr", "wait_mode", "marked"),
+    [
+        pytest.param(Arr.SONARR, ImportWaitMode.BLOCKING, _CROSS, id="pearlarr-imports"),
+        pytest.param(Arr.SONARR, ImportWaitMode.OFF, None, id="wait-off"),
+        pytest.param(Arr.RADARR, ImportWaitMode.BLOCKING, None, id="radarr"),
+    ],
+)
+def test_a_runs_seadex_dict_carries_a_finished_cross_seed_only_when_pearlarr_imports(
+    arr: Arr, wait_mode: ImportWaitMode, marked: str | None
+) -> None:
+    """The dict a run builds from a SeaDex entry is marked, a finished torrent counting only on a Sonarr run that waits."""
+
+    qbit = _FakeQbit(rows=(_row(_CROSS, category=_POST, state="stalledUP", progress=1.0),), files=_HELD)
+    services = RunServices(replace(make_run_deps(), torrents=_service(qbit)), arr)
+    services.begin_run(RunContext(arr=arr, import_wait_mode=wait_mode))
+    listed = make_torrent_record(
+        release_group="Group", infohash=_SEADEX, file_names=("Show - 01.mkv", "Show - 02.mkv"), file_sizes=(100, 200)
+    )
+
+    seadex_dict = services.get_seadex_dict(make_entry_record(torrents=(listed,)))
+
+    (item,) = seadex_dict["Group"].urls.values()
+    assert item.cross_seed_hash == marked
+
+
+def test_add_a_marked_url_is_its_cross_seed() -> None:
+    """A marked url is ALREADY_ADDED as the torrent holding its files, and SeaDex's is never added."""
+
+    qbit = _FakeQbit(present={_CROSS: "Cross"})
+    item = replace(_url(), cross_seed_hash=_CROSS)
+
+    result = _service(qbit).add(item=item, preview=False)
+
+    assert (result.outcome, result.name) == (AddOutcome.ALREADY_ADDED, "Cross")
+    assert qbit.add_calls == []
+
+
+def test_add_a_marked_url_whose_cross_seed_left_raises(monkeypatch: pytest.MonkeyPatch) -> None:
+    """A marked url whose torrent left qBittorrent fails its grab instead of adding SeaDex's under its record."""
+
+    _patch_nyaa_parser(monkeypatch)
+    qbit = _FakeQbit()
+
+    with pytest.raises(TorrentAddError, match="left qBittorrent"):
+        _service(qbit).add(item=replace(_url(), cross_seed_hash=_CROSS), preview=False)
+
+    assert qbit.add_calls == []

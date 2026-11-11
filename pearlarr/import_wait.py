@@ -29,6 +29,8 @@ from .manual_import import (
     classify_pending,
     is_awaiting_cleanup,
     sanitize_torrent_telemetry,
+    torrent_errored,
+    torrent_finished,
 )
 from .output import SPARK_SAMPLES, Phase, TorrentView, WaitKind, WaitSnapshot, hub_error, hub_note, hub_warn
 from .pending_records import PendingRecords
@@ -76,9 +78,9 @@ class ImportProbes:
 
         t = info[0]
         telemetry = sanitize_torrent_telemetry(t)
-        if t.state_enum.is_errored:
+        if torrent_errored(t):
             return TorrentProbe(WaitOutcome.ERRORED, None, telemetry)
-        if t.state_enum.is_complete or telemetry.progress >= 1.0:
+        if torrent_finished(t):
             return TorrentProbe(WaitOutcome.COMPLETE, t.content_path, telemetry)
         return TorrentProbe(None, None, telemetry)
 

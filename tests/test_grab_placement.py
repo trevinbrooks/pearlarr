@@ -1264,6 +1264,16 @@ class TestTorrentReads:
             "u3": KnownTorrent(None, _INDEXES, TorrentEvidence(None, None)),
         }
 
+    def test_a_marked_url_reads_its_record_by_its_cross_seed_and_its_listing_by_seadexs_hash(self) -> None:
+        seadex_dict = self._dict()
+        seadex_dict["RG"].urls["u1"].cross_seed_hash = "c1"
+        record = _resident_record()
+        listing = torrent_listing(entry_window(1, (101,)))
+        reads = TorrentReads({"c1": record}, _INDEXES, ListingsRead({"h1": listing, "h3": None}, None))
+
+        assert entry_hashes(seadex_dict) == {"c1", "h3"}
+        assert reads.known(seadex_dict)["u1"] == KnownTorrent(record, _INDEXES, TorrentEvidence(listing, None))
+
     def test_an_outage_leaves_every_hash_unread_and_a_hash_less_url_listed_nowhere(self) -> None:
         known = TorrentReads({}, _INDEXES, None).known(self._dict())
 
@@ -1325,6 +1335,17 @@ class TestEntryPlacements:
         assert seeds["h1"].claim.names == names
         assert seeds["h1"].stored is None
         assert dict(seeds["h2"].placements) == {}
+
+    def test_a_marked_url_seeds_under_its_cross_seed(self) -> None:
+        placed, seadex_dict = self._entry()
+        seadex_dict["RG"].urls["u1"].cross_seed_hash = "c1"
+
+        seeds = build_pending_seeds(seadex_dict, placed, entry_facts())
+
+        assert set(seeds) == {"c1", "h2"}
+        records = {key: seed.record_at(_STAMP, fresh=True) for key, seed in seeds.items()}
+        assert (records["c1"].infohash, records["c1"].cross_seed) == ("c1", True)
+        assert records["h2"].cross_seed is False
 
     def test_a_url_with_a_stored_record_seeds_onto_it(self) -> None:
         record = _resident_record()

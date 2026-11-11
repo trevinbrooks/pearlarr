@@ -562,6 +562,19 @@ def sanitize_torrent_telemetry(row: object) -> TorrentTelemetry:
     return TorrentTelemetry(frac, speed_bps, eta_s, bytes_done, bytes_total)
 
 
+def torrent_finished(row: object) -> bool:
+    """Whether a qBittorrent info row's download is done: complete by its state, or at full progress."""
+
+    complete = getattr(getattr(row, "state_enum", None), "is_complete", False)
+    return complete is True or sanitize_torrent_telemetry(row).progress >= 1.0
+
+
+def torrent_errored(row: object) -> bool:
+    """Whether a qBittorrent info row is in an error state, missing files included."""
+
+    return getattr(getattr(row, "state_enum", None), "is_errored", False) is True
+
+
 def _as_float(value: object) -> float | None:
     """Best-effort float, or None for a non-numeric / NaN value."""
 
@@ -909,6 +922,10 @@ class PendingImport:
     the record is built, never a name the map holds, and a name here is never excluded. Empty on rows written before
     it was kept."""
 
+    cross_seed: bool = False
+    """Whether the torrent is a cross-seed: it held the release's files under another hash than SeaDex's
+    (`SeadexUrlItem.cross_seed_hash`), so Pearlarr never added it. A forced `move` import of it runs as `auto`."""
+
     def __post_init__(self) -> None:
         # Fold the map, the exclusions, the hand-import files and the by-name sizes so readers can take the names as
         # normalized, the map's ids as non-zero, and no name as two of mapped, excluded and left for a hand import.
@@ -1066,6 +1083,7 @@ class PendingImport:
             "awaiting_cleanup": self.awaiting_cleanup,
             "sizes_by_name": dict(self.sizes_by_name),
             "hand_import_files": list(self.hand_import_files),
+            "cross_seed": self.cross_seed,
         }
 
     @classmethod
@@ -1092,6 +1110,7 @@ class PendingImport:
                 if "hand_import_files" in raw
                 else _unplaced_listed_files(seadex_files, mapped, excluded)
             ),
+            cross_seed=raw.get("cross_seed", False),
         )
 
 

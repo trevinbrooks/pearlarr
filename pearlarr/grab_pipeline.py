@@ -95,7 +95,8 @@ class GrabRequest:
     coverage: str = ""
     """Sonarr's episode coverage string ("" for Radarr)."""
     pending_seeds: Mapping[str, PendingSeed] = NO_SEEDS
-    """One seed per flagged torrent with a video file, keyed by infohash (`NO_SEEDS` when the wait mode is off)."""
+    """One seed per flagged torrent with a video file, keyed by its hash in qBittorrent (`NO_SEEDS` when the wait
+    mode is off)."""
     input_missing_groups: tuple[str, ...] = ()
     """Groups with a url whose grab-time placement waited on a read that failed this run, so a run may have
     been held: the title is never cached as done and re-checks next run."""
@@ -276,17 +277,19 @@ class GrabPipeline:
                 ),
             )
 
-        # ALREADY_ADDED is a torrent already in qBittorrent, whoever added it, and it's tracked like a grab. The
-        # genuine "already own it" case is the any_to_download=False branch, which never reaches add_torrent.
+        # ALREADY_ADDED is the url's torrent already in qBittorrent, SeaDex's or a cross-seed holding its files,
+        # whoever added it, and it's tracked like a grab. The genuine "already own it" case is the
+        # any_to_download=False branch, which never reaches add_torrent.
         self._register_pending_import(url_item, req, result)
         return ReleaseOutcome(outcome=result.outcome, name=result.name, group=srg)
 
     def _seed_for(self, url_item: SeadexUrlItem, req: GrabRequest) -> PendingSeed | None:
         """The url's seed (the strategy seeds nothing when the wait mode is off), or None on a preview or no hash."""
 
-        if self._is_preview() or not url_item.infohash:
+        qbit_hash = url_item.qbit_hash
+        if self._is_preview() or not qbit_hash:
             return None
-        return req.pending_seeds.get(url_item.infohash)
+        return req.pending_seeds.get(qbit_hash)
 
     def _register_pending_import(self, url_item: SeadexUrlItem, req: GrabRequest, result: AddResult) -> None:
         """Persist a grabbed or already-present release: `ADDED` tracks, `ALREADY_ADDED` accretes or reacquires.

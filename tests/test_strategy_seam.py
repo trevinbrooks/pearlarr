@@ -2682,15 +2682,20 @@ class TestSonarrProcessAlIdOrdersUnread:
 
 
 class TestRadarrProcessAlIdSeeds:
-    """A Radarr grab seeds a `{infohash -> PendingSeed}` per download+hash, gated on wait mode."""
+    """A Radarr grab seeds a `PendingSeed` per download+hash, keyed by its hash in qBittorrent, gated on wait mode."""
 
     @staticmethod
-    def _run_process(mode: ImportWaitMode, *, store: FakeCacheStore | None = None) -> _FakeRunServices:
-        """Drive `process_al_id` to grab_and_cache and return the recording services hub."""
+    def _run_process(
+        mode: ImportWaitMode, *, store: FakeCacheStore | None = None, cross_seed: str | None = None
+    ) -> _FakeRunServices:
+        """Drive `process_al_id` to grab_and_cache and return the recording services hub.
 
-        seadex: SeadexDict = {
-            "NAN0": rg_group({"https://nyaa.si/1": url_item(url="https://nyaa.si/1", infohash="h1", download=True)}),
-        }
+        `cross_seed` marks the url as held by that torrent.
+        """
+
+        item = url_item(url="https://nyaa.si/1", infohash="h1", download=True)
+        item.cross_seed_hash = cross_seed
+        seadex: SeadexDict = {"NAN0": rg_group({"https://nyaa.si/1": item})}
         run = _FakeRunServices(
             prologue_entry=make_entry_record(url="https://releases.moe/9"),
             anilist_title="A Movie",
@@ -2747,6 +2752,18 @@ class TestRadarrProcessAlIdSeeds:
         (seed,) = req.pending_seeds.values()
         assert seed.stored == resident
         assert claim_al_ids(seed.record_at(_STAMP, fresh=False)) == (9, 42)
+
+    def test_a_marked_url_seeds_onto_its_cross_seeds_record(self) -> None:
+        store = FakeCacheStore()
+        resident = pending_import(infohash="c1", al_id=9, series_id=0, title="Other Movie", file_episode_map={})
+        store.put_pending(Arr.RADARR, "c1", resident.to_json())
+
+        run = self._run_process(ImportWaitMode.BLOCKING, store=store, cross_seed="c1")
+
+        (req,) = run.grab_requests
+        seed = req.pending_seeds["c1"]
+        assert seed.stored == resident
+        assert (seed.facts.infohash, seed.facts.cross_seed) == ("c1", True)
 
     def test_no_seeds_when_wait_mode_off(self) -> None:
         store = _CountingStore()

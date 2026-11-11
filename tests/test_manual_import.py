@@ -547,6 +547,7 @@ class TestPendingImportRoundTrip:
             awaiting_cleanup=True,
             sizes_by_name={"ep1.mkv": 700, "ep2.mkv": 710},
             hand_import_files=("ep3.mkv",),
+            cross_seed=True,
         )
 
         raw = pending.to_json()

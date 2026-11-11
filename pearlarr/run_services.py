@@ -92,9 +92,9 @@ class RunDeps:
 
     categories: ArrCategoryResolver
     """The run's effective qBittorrent categories: explicit config first, then
-    the arr's own download client - fetched lazily at first use (grab /
-    import scan / post-import move), where the arr is provably up. Also
-    says which categories the arr watches."""
+    the arr's own download client - fetched lazily at first use (the run's
+    first title checked, else an import scan or a post-import move), where
+    the arr is provably up. Also says which categories the arr watches."""
 
     clock: Clock
     """The time seam: the wait passes' clock and the per-title throttle (the run clock reads time directly)."""
@@ -389,6 +389,10 @@ class RunServices:
         self._filter.begin_run(ctx)
         self._grab_pipeline.begin_run(ctx)
         self._records.begin_run(ctx)
+        # Radarr imports its own downloads, and so does Sonarr with the wait off.
+        self._torrents.begin_run(
+            pearlarr_imports=self.arr is Arr.SONARR and ctx.import_wait_mode is not ImportWaitMode.OFF
+        )
 
     @property
     def records(self) -> PendingRecords:
@@ -491,9 +495,11 @@ class RunServices:
         return details
 
     def get_seadex_dict(self, sd_entry: EntryRecord) -> SeadexDict:
-        """Parse and filter a SeaDex entry into the run's release dict (delegates)."""
+        """Parse and filter a SeaDex entry into the run's release dict, each url marked with any cross-seed of it."""
 
-        return self._filter.build(sd_entry)
+        seadex_dict = self._filter.build(sd_entry)
+        self._torrents.mark_cross_seeds(seadex_dict)
+        return seadex_dict
 
     def filter_seadex_interactive(
         self,

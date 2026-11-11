@@ -3,8 +3,8 @@
 A category OMITTED in config adopts the matching category of the arr's own
 qBittorrent download client (`/api/v3/downloadclient`); an explicit blank
 string keeps no category at all. Resolution is lazy - the client fetch happens
-at first use (a grab, an import poll, a post-import move), where the arr is
-provably up - and every miss fails open to blank.
+at first use (the run's first title checked, an import poll, a post-import
+move), where the arr is provably up - and every miss fails open to blank.
 
 The same read says which categories the arr watches: each of its enabled
 qBittorrent clients lists only the torrents in its own category, and in that
@@ -91,11 +91,10 @@ def _explicit(value: str | None) -> str | None:
 class ArrCategoryResolver:
     """The two effective categories and which categories the arr watches, off one lazy client fetch a run.
 
-    Lazy on purpose: at first use the arr is provably up (a grab, an import scan
-    or a verified import just went through its API), where an eager boot-time fetch would
-    turn an arr restart into a run-long miss. A successful fetch is memoized;
-    a failed one is NOT - the next use retries, so a blip costs only the work
-    racing it. Every miss fails open to blank (the transport warns, coalesced).
+    Lazy on purpose: at first use the arr is provably up (the library fetch before the run's first title, an
+    import scan or a verified import just went through its API), where an eager boot-time fetch would turn an arr
+    restart into a run-long miss. A successful fetch is memoized; a failed one is NOT - the next use retries, so a
+    blip costs only the work racing it. Every miss fails open to blank (the transport warns, coalesced).
     """
 
     def __init__(self, arr: Arr, config: ArrSettings, sources: CategorySources | None) -> None:
@@ -119,6 +118,19 @@ class ArrCategoryResolver:
 
         value = self._configured.post_import
         return self._client_pair().post_import if value is None else _explicit(value)
+
+    def download_categories(self, *, with_post_import: bool) -> tuple[str, ...] | None:
+        """The grab category, and the post-import one when asked, for listing their torrents: no blank, each once.
+
+        None while one of them is left to the arr's download clients and those can't be read.
+        """
+
+        configured = self._configured
+        deferred = configured.grab is None or (with_post_import and configured.post_import is None)
+        if deferred and self._clients() is None:
+            return None
+        names = (self.grab(), self.post_import() if with_post_import else None)
+        return tuple(dict.fromkeys(name for name in names if name))
 
     def move_untracks(self, category: str) -> bool:
         """Whether moving a torrent to `category` takes it out of the categories the arr watches.

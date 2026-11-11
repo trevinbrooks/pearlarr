@@ -121,6 +121,56 @@ def test_a_lone_omitted_category_adopts_only_its_own_fallback() -> None:
     assert route.call_count == 1
 
 
+_ANIME_THEN_DONE = ArrSettings(torrent_category="anime", post_import_category="done")
+
+
+@respx.mock
+@pytest.mark.parametrize(
+    ("config", "with_post_import", "expected"),
+    [
+        pytest.param(_ANIME_THEN_DONE, True, ("anime", "done"), id="both"),
+        pytest.param(_ANIME_THEN_DONE, False, ("anime",), id="grab-alone"),
+        pytest.param(ArrSettings(torrent_category="anime"), False, ("anime",), id="an-omitted-one-not-asked-for"),
+        pytest.param(
+            ArrSettings(torrent_category="anime", post_import_category="anime"), True, ("anime",), id="one-name-once"
+        ),
+        pytest.param(ArrSettings(torrent_category="", post_import_category="done"), True, ("done",), id="blank-grab"),
+    ],
+)
+def test_download_categories_names_each_category_once_and_no_blank(
+    config: ArrSettings, with_post_import: bool, expected: tuple[str, ...]
+) -> None:
+    # None of these needs the arr's clients, which can't be read here.
+    respx.get(f"{_URL}/api/v3/downloadclient").respond(500)
+    resolver, _ = _resolver(config)
+
+    assert resolver.download_categories(with_post_import=with_post_import) == expected
+
+
+@respx.mock
+@pytest.mark.parametrize(
+    ("config", "with_post_import", "expected"),
+    [
+        # The configured grab category alone is no answer while the post-import one can't be read.
+        pytest.param(
+            ArrSettings(torrent_category="anime"), True, ("anime", "sonarr-done"), id="an-omitted-post-import"
+        ),
+        pytest.param(ArrSettings(post_import_category="done"), False, ("tv-sonarr",), id="an-omitted-grab"),
+    ],
+)
+def test_download_categories_waits_for_a_category_left_to_the_arrs_clients(
+    config: ArrSettings, with_post_import: bool, expected: tuple[str, ...]
+) -> None:
+    respx.get(f"{_URL}/api/v3/downloadclient").side_effect = [
+        httpx.Response(500),
+        httpx.Response(200, json=[download_client_json(sonarr_client_fields())]),
+    ]
+    resolver, _ = _resolver(config)
+
+    assert resolver.download_categories(with_post_import=with_post_import) is None
+    assert resolver.download_categories(with_post_import=with_post_import) == expected
+
+
 def test_no_transport_stays_blank_and_fetchless() -> None:
     # http=None (preview run, or missing connection keys): omitted categories
     # stay blank and the explicit value still passes through.
