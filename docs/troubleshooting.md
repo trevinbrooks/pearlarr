@@ -18,6 +18,7 @@ In the section headings, `...` stands for the parts of a message that change bet
 | qBittorrent is unreachable | [The qBittorrent connection fails](#the-qbittorrent-connection-fails) |
 | The whole run aborts before scanning any title | [The ID-mapping sources cannot be downloaded](#the-id-mapping-sources-cannot-be-downloaded) |
 | Titles keep showing up as needing action | [Private-only releases](#private-only-releases) |
+| A title names a torrent Pearlarr never added | [A torrent Pearlarr never added](#a-torrent-pearlarr-never-added) |
 | Releases are skipped over their tracker | [Tracker skips](#tracker-skips) |
 | A tracker filter seems ignored | [Unknown tracker names](#unknown-tracker-names) |
 | A warning about file permissions on the config | [The config file is world-readable](#the-config-file-is-world-readable) |
@@ -175,6 +176,20 @@ The run summary lists a title under "needs action" with "its files place under a
 ## A file named by number alone that was not imported
 
 The import warns "N files could not be matched to an episode and were not imported" beside the files it did import, or reports the download as "unmatched" ("no file matched an episode; import by hand in Sonarr") when none were, and the log names files such as "Show - 07.mkv": a bare number, no season or episode key, which Sonarr matched to no episode of the title, or to one outside it. Pearlarr places such a file by working out what the release group counted: the series' episodes from the first, the title's episodes from one, Sonarr's own episode numbers for the title's season, every title the release is listed under counted straight through, and TVDB's absolute numbers. When every way of counting that fits the release names the same episode, the file is imported there, so a second season's release numbered from one, or from the series' first episode, imports either way, and a release listed under a title of nothing but specials counts them from one. Only Sonarr's aired episode order is read this way. A file is left for a hand import when a title the release is listed under has an episode count on AniList that does not match the episodes Sonarr holds for it, when the release repeats a number under one title (two titles each numbered from one, K-ON! and K-ON!! in one release, are read apart when each names one listed title), when two ways of counting that both fit name different episodes (a second season's release numbered 14 to 22, say, where 14 can be the season's fourteenth episode or the series'), when the series title in the file name is not the series', one of its alternate titles in Sonarr, or an AniList title of a listed entry, or when an episode's absolute number in Sonarr is not its position in the series. Download the release and import those files by hand, matching each to its episode by content.
+
+## A torrent Pearlarr never added
+
+```text
+SeaDex's pick is already in qBittorrent
+recommended release already in qBittorrent
+Could not read qBittorrent's torrents (...) - this run may add a release that another torrent already holds
+```
+
+The first two lines are a title's status when qBittorrent already has its release. That can be a torrent Pearlarr never added: SeaDex's own torrent that someone else added, or one that holds exactly the files of SeaDex's pick, by name and size, under another hash, such as Sonarr's grab of the release from another tracker. Pearlarr treats that torrent as its own grab instead of adding SeaDex's torrent into the same download folder.
+
+A torrent under another hash counts when it is in the arr's download category (`torrent_category`), downloads every one of its files, is not in an error state, and has not finished. When Pearlarr imports for Sonarr (an `imports.wait_mode` other than `off`), a finished one counts too, as does one in `post_import_category`. If the torrent is removed from qBittorrent before its files are imported, a later run grabs SeaDex's release.
+
+The warning means qBittorrent could not be read when Pearlarr looked through those categories, so for the rest of that run a release is added even when another torrent holds its files. If one was added into a folder another torrent is using, remove it from qBittorrent and keep its files, which the other torrent shares.
 
 ## Tracker skips
 

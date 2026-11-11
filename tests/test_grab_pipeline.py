@@ -551,6 +551,16 @@ class TestReacquireRegistration:
         assert _guards(pipeline).keys() == {PENDING_AL_ID}
         assert [r.outcome for r in results] == [AddOutcome.ALREADY_ADDED]
 
+    def test_a_marked_url_is_tracked_under_its_cross_seed(self) -> None:
+        # The torrent already holding the url's files is tracked like one under SeaDex's hash.
+        pipeline = _pipeline(torrents=self._reacquire(datetime.now() - timedelta(days=3)))
+        seadex_dict = one_release_dict(srg="NAN0", infohash="h1")
+        seadex_dict["NAN0"].urls["https://nyaa.si/view/1"].cross_seed_hash = "c1"
+
+        pipeline.add_torrent(grab_request(seadex_dict=seadex_dict, pending_seeds={"c1": pending_seed("c1")}))
+
+        assert _pending(pipeline).keys() == {"c1"}
+
     def test_fresh_add_never_joins_reacquired_keys(self) -> None:
         # The fresh arm is outcome-keyed: an ADDED is a this-run grab, stamped now.
         pipeline = _pipeline(torrents=FakeTorrents({"h1": (AddOutcome.ADDED, "Show")}))

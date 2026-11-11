@@ -167,13 +167,13 @@ type KnownTorrents = Mapping[str, KnownTorrent]
 
 
 def entry_hashes(seadex_dict: SeadexDict) -> frozenset[str]:
-    """The infohashes among the entry's urls (a hash-less url has none)."""
+    """Each url's `qbit_hash`, the key of its stored record (a hash-less url has none)."""
 
     return frozenset(
-        url_item.infohash
+        qbit_hash
         for rg_item in seadex_dict.values()
         for url_item in rg_item.urls.values()
-        if url_item.infohash is not None
+        if (qbit_hash := url_item.qbit_hash) is not None
     )
 
 
@@ -182,7 +182,7 @@ class TorrentReads:
     """The run's reads of the entry's torrents, each folded once: the store, the series indexes, the listings."""
 
     stored: Mapping[str, PendingImport]
-    """The store-resident records among the entry's hashes."""
+    """The store-resident records among the entry's hashes (`entry_hashes`)."""
 
     indexes: Mapping[int, EpisodeIndex]
     """The series indexes read this run. A claim's series left out was not read, which places nothing."""
@@ -191,11 +191,14 @@ class TorrentReads:
     """The series' SeaDex listings, None when SeaDex was unreachable."""
 
     def known(self, seadex_dict: SeadexDict) -> KnownTorrents:
-        """What the run knows about each url's torrent, keyed by url."""
+        """What the run knows about each url's torrent, keyed by url.
+
+        The record is read by the url's `qbit_hash`, the listing by SeaDex's hash.
+        """
 
         return {
             url_item.url: KnownTorrent(
-                None if url_item.infohash is None else self.stored.get(url_item.infohash),
+                None if url_item.qbit_hash is None else self.stored.get(url_item.qbit_hash),
                 self.indexes,
                 self._evidence(url_item.infohash),
             )
@@ -532,7 +535,7 @@ class EntryFacts:
 
 
 class TorrentFacts(NamedTuple):
-    """What a listed torrent is, independent of any entry: the record's identity fields."""
+    """What a url's torrent is, independent of any entry: the record's identity fields."""
 
     infohash: str
     """The qBittorrent tracking key, lowercase."""
@@ -547,6 +550,8 @@ class TorrentFacts(NamedTuple):
     sizes_by_name: Mapping[str, int]
     """Normalized listing name -> its listed size, the file each placed episode should hold (a name listed at two
     sizes is left out)."""
+    cross_seed: bool = False
+    """Whether the torrent is a cross-seed of the listing's (`PendingImport.cross_seed`)."""
 
 
 class SeedRelease(NamedTuple):
@@ -558,8 +563,8 @@ class SeedRelease(NamedTuple):
     url_item: SeadexUrlItem
     """The flagged url record whole: the fold reads its sizes and dual-audio flag."""
 
-    infohash: str
-    """The qBittorrent tracking key (the url item's hash, already narrowed to `str`)."""
+    qbit_hash: str
+    """The qBittorrent tracking key (the url item's `qbit_hash`, already narrowed to `str`)."""
 
     placed: UrlPlacement
     """The url's files placed at grab time (`place_release`)."""
@@ -575,12 +580,13 @@ class SeedRelease(NamedTuple):
         """The torrent's identity fields as the record persists them."""
 
         return TorrentFacts(
-            self.infohash,
+            self.qbit_hash,
             self.release_group,
             self.url_item.is_dual_audio,
             tuple(f.basename for f in self.placed.files),
             self.own_group.sizes,
             self.placed.sizes_by_name,
+            cross_seed=self.url_item.cross_seed_hash is not None,
         )
 
 
@@ -642,6 +648,7 @@ class PendingSeed:
                 release_sizes=self.facts.release_sizes,
                 sizes_by_name=self.facts.sizes_by_name,
                 hand_import_files=self.hand_import_files,
+                cross_seed=self.facts.cross_seed,
             )
         return replace(joined, added_at=stamp) if fresh else joined
 
@@ -695,16 +702,17 @@ def build_pending_seed(release: SeedRelease, scope: SeedScope, entry: EntryFacts
 
 
 def build_unscoped_seed(flagged: FlaggedUrl, entry: EntryFacts, stored: PendingImport | None) -> PendingSeed:
-    """The seed of a torrent whose import reads nothing but its infohash (a Radarr grab): an id-less claim."""
+    """The seed of a torrent whose import reads nothing but its hash in qBittorrent (a Radarr grab): an id-less claim."""
 
     return PendingSeed(
         facts=TorrentFacts(
-            infohash=flagged.infohash,
+            infohash=flagged.qbit_hash,
             release_group=flagged.group,
             is_dual_audio=flagged.item.is_dual_audio,
             seadex_files=(),
             release_sizes=(),
             sizes_by_name=NO_SIZES_BY_NAME,
+            cross_seed=flagged.item.cross_seed_hash is not None,
         ),
         placements={},
         excluded=(),
@@ -719,13 +727,16 @@ def build_pending_seeds(
     placed: EntryPlacements,
     entry: EntryFacts,
 ) -> dict[str, PendingSeed]:
-    """Fold every flagged url carrying an infohash and a video file into its seed, keyed by infohash. Pure."""
+    """Fold every flagged url carrying an infohash and a video file into its seed, keyed by its hash in qBittorrent.
+
+    Pure.
+    """
 
     seeds: dict[str, PendingSeed] = {}
     for flagged in flagged_urls(seadex_dict):
         placement = placed.by_url[flagged.url]
         if not placement.files:
             continue
-        release = SeedRelease(flagged.group, flagged.item, flagged.infohash, placement)
-        seeds[flagged.infohash] = build_pending_seed(release, placed.scope, entry)
+        release = SeedRelease(flagged.group, flagged.item, flagged.qbit_hash, placement)
+        seeds[flagged.qbit_hash] = build_pending_seed(release, placed.scope, entry)
     return seeds

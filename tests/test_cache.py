@@ -245,7 +245,7 @@ def _v4_blob(infohash: str, al_id: int, **fields: Any) -> dict[str, Any]:
 def _assert_round_trips(records: dict[str, dict[str, Any]]) -> None:
     """Every migrated blob re-serializes byte-for-byte as a record, plus empty sizes and its unplaced listed files.
 
-    The listed files the blob neither mapped nor excluded come back as its hand imports.
+    The listed files the blob neither mapped nor excluded come back as its hand imports, and no row is a cross-seed.
     """
 
     for infohash, blob in records.items():
@@ -255,7 +255,12 @@ def _assert_round_trips(records: dict[str, dict[str, Any]]) -> None:
             for name in blob["seadex_files"]
             if name not in blob["file_episode_map"] and name not in blob["excluded_files"]
         ]
-        expected: dict[str, Any] = {**blob, "sizes_by_name": dict[str, int](), "hand_import_files": unplaced}
+        expected: dict[str, Any] = {
+            **blob,
+            "sizes_by_name": dict[str, int](),
+            "hand_import_files": unplaced,
+            "cross_seed": False,
+        }
         assert json.dumps(rebuilt) == json.dumps(expected), infohash
 
 

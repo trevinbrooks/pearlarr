@@ -198,11 +198,11 @@ class RadarrSync(ArrSync[RadarrItem]):
         pending_seeds: Mapping[str, PendingSeed] = NO_SEEDS
         if run.import_wait_mode is not ImportWaitMode.OFF:
             flagged = flagged_urls(seadex_dict)
-            stored = run.records.stored_records(f.infohash for f in flagged)
+            stored = run.records.stored_records(f.qbit_hash for f in flagged)
             facts = EntryFacts(
                 al_id=al_id, series_id=0, title=title.display, coverage=None, url=sd_url, guards=GuardFacts()
             )
-            pending_seeds = {f.infohash: build_unscoped_seed(f, facts, stored.get(f.infohash)) for f in flagged}
+            pending_seeds = {f.qbit_hash: build_unscoped_seed(f, facts, stored.get(f.qbit_hash)) for f in flagged}
 
         run.grab_and_cache(
             GrabRequest(

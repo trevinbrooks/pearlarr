@@ -620,6 +620,10 @@ class ImportExecutor:
             return ImportProbe.imported()
 
         import_mode = self._config.imports.mode
+        if pending.cross_seed and import_mode == "move":
+            # Pearlarr never added this torrent, so a forced move must not empty it: Sonarr decides, as for its
+            # own grabs.
+            import_mode = "auto"
         if not context.scan.by_id and import_mode == "auto":
             # A folder scan's files can reach Execute with no tracked download behind them, and Auto then
             # resolves to MOVE (no DownloadClientItem to report CanMoveFiles), ripping files from the seeding

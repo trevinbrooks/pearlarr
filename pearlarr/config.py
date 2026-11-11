@@ -463,8 +463,10 @@ class ImportsSettings(_ConfigBase):
 
     `auto` lets Sonarr choose between moving and copying (a still-seeding
     torrent is copied). When Pearlarr reads a download's folder itself,
-    because Sonarr isn't serving that download, `auto` copies. `move` and
-    `copy` force it.
+    because Sonarr isn't serving that download, `auto` copies. `copy` is
+    used as set. So is `move`, except for a torrent Pearlarr tracks instead
+    of adding SeaDex's (Sonarr's own grab of the same files, say): that one
+    is imported as `auto`.
     """
 
     remove_from_queue: bool = True

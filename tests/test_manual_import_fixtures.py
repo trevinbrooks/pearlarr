@@ -348,19 +348,23 @@ class TestCapturedSpecialsEndToEnd:
         assert all(f.seriesId == 213 for f in files)
 
     @pytest.mark.parametrize(
-        ("config", "mode"),
+        ("config", "cross_seed", "mode"),
         [
-            pytest.param(make_config(), "auto", id="the default"),
-            pytest.param(make_config(import_mode="move"), "move", id="move"),
+            pytest.param(make_config(), False, "auto", id="the default"),
+            pytest.param(make_config(import_mode="move"), False, "move", id="move"),
+            pytest.param(make_config(import_mode="move"), True, "auto", id="move-a-cross-seed"),
+            pytest.param(make_config(import_mode="copy"), True, "copy", id="copy-a-cross-seed"),
         ],
     )
-    def test_import_mode_propagates_from_config(self, config: AppConfig, mode: str) -> None:
-        # A "move" deletes the source files, so a wrong or ignored mode must never be silent.
+    def test_import_mode_propagates_from_config(self, config: AppConfig, cross_seed: bool, mode: str) -> None:
+        # A "move" deletes the source files, so a wrong or ignored mode must never be silent, and a cross-seed is
+        # never moved by force.
         specials = _specials(config)
         pending = specials.pending(
             infohash="1111111111111111111111111111111111111111",
             file_episode_map=specials.grab_map,
             ordered_episode_ids=[8030, 8031, 8032],
+            cross_seed=cross_seed,
         )
 
         specials.strat.import_completed(pending, "/downloads/yamada", AttemptKind.POLL)

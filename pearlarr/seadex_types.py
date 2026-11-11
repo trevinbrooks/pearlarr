@@ -127,6 +127,10 @@ class SeadexUrlItem:
     is_public: bool = True
     is_dual_audio: bool = False
     infohash: str | None = None
+    """SeaDex's hash for the url, the key of its listing."""
+    cross_seed_hash: str | None = None
+    """The hash of a torrent already in qBittorrent that holds exactly this url's files under another hash.
+    `TorrentService.mark_cross_seeds` sets it before anything reads the item."""
     download: bool = False
     is_fallback: bool = False
     """A public alternative added because the preferred release is private-only."""
@@ -140,6 +144,14 @@ class SeadexUrlItem:
 
     def __post_init__(self) -> None:
         self.infohash = normalized_infohash(self.infohash)
+
+    @property
+    def qbit_hash(self) -> str | None:
+        """The hash the url's torrent goes by in qBittorrent: the cross-seed's when one holds its files, else SeaDex's."""
+
+        # Invariant: a url's record is keyed by the torrent that holds its files in qBittorrent, which is SeaDex's
+        # torrent unless a cross-seed was already there. The wait and the import read the record by that key.
+        return self.cross_seed_hash or self.infohash
 
     @property
     def hand_import(self) -> bool:
@@ -184,18 +196,18 @@ class FlaggedUrl(NamedTuple):
     """The key under `SeadexReleaseGroupItem.urls`."""
     item: SeadexUrlItem
     """The url's item, the flag and file list the planner read."""
-    infohash: str
-    """The torrent's infohash, lowercase."""
+    qbit_hash: str
+    """The hash its torrent goes by in qBittorrent (`SeadexUrlItem.qbit_hash`), lowercase."""
 
 
 def flagged_urls(seadex_dict: SeadexDict) -> list[FlaggedUrl]:
     """The urls flagged to grab that carry an infohash. Narrow at the riders, never here."""
 
     return [
-        FlaggedUrl(srg, url, url_item, url_item.infohash)
+        FlaggedUrl(srg, url, url_item, url_item.qbit_hash)
         for srg, srg_item in seadex_dict.items()
         for url, url_item in srg_item.urls.items()
-        if url_item.download and url_item.infohash
+        if url_item.download and url_item.qbit_hash
     ]
 
 
