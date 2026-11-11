@@ -450,16 +450,20 @@ class ArrHttp:
     def download_clients(self) -> list[DownloadClientRecord] | None:
         """This arr's download-client definitions (`/api/v3/downloadclient`), or None.
 
-        Read lazily, at most once per run, by the omitted-category fallback
+        Read lazily, at most once per run, by the category resolver
         (`arr_categories.ArrCategoryResolver`), shared by both arr clients
         like `history_since`. Fails open to None through `get_json_list`'s
-        matrix with a warning stating the consequence: the fallback is a
-        nicety, so a miss just leaves blank categories blank.
+        matrix with a warning stating the consequence: a miss leaves blank
+        categories blank, calls no category unwatched, and holds a post-import
+        move that might carry a torrent into a watched one.
         """
 
         raw = self.get_json_list(
             "/api/v3/downloadclient",
-            warn=f"Could not fetch the {self.label} download clients ({{detail}}) - blank categories stay blank",
+            warn=(
+                f"Could not fetch the {self.label} download clients ({{detail}}) - blank categories stay blank, "
+                "and post-import moves and imports from unwatched categories wait"
+            ),
         )
         if raw is None:
             return None

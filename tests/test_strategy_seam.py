@@ -23,6 +23,7 @@ from seadex import EntryRecord
 
 from pearlarr import sonarr_import as sonarr_import_module
 from pearlarr.arr_activity import HISTORY_MAX_LOOKBACK_DAYS
+from pearlarr.arr_categories import ArrCategoryResolver
 from pearlarr.arr_http import DeleteOutcome
 from pearlarr.cache import CacheRecord
 from pearlarr.config import Arr
@@ -94,6 +95,7 @@ from .builders import (
     make_bare_instance,
     make_config,
     make_entry_record,
+    make_fetched_categories,
     make_import_wait_manager,
     make_logger,
     make_radarr_sync,
@@ -117,6 +119,7 @@ from .fakes import (
     FakeRadarrClient,
     FakeSonarrClient,
     HookedSonarrClient,
+    QbitCategoryReads,
     ScriptedEpisodes,
     debug_logger,
     diagnostic_messages,
@@ -611,6 +614,7 @@ def _make_sonarr_for_import(
     config_overrides: dict[str, list[str] | str] | None = None,
     cache_store: FakeCacheStore | None = None,
     clock: FakeClock | None = None,
+    categories: ArrCategoryResolver | None = None,
 ) -> tuple[SonarrSync, HookedSonarrClient]:
     """A bare `SonarrSync` plus its scripted `self.sonarr` `HookedSonarrClient`.
 
@@ -644,6 +648,7 @@ def _make_sonarr_for_import(
         config=make_config(**overrides),
         cache_store=cache_store or FakeCacheStore(),
         clock=clock,
+        categories=categories,
     )
     return strat, sonarr
 
@@ -1494,7 +1499,7 @@ class TestScratchResetParity:
         scratch.last_rescan_monotonic = 1.0
         scratch.rescanned.add("h")
         scratch.kept_scans["h"] = sonarr_import_module._KeptScan(
-            "/d", sonarr_import_module._CandidateScan([], history=None), 1.0
+            "/d", sonarr_import_module._CandidateScan(candidates=[], history=None), 1.0
         )
         scratch.issued_command_ids.add(42)
         scratch.completed_download_handling = False
@@ -3298,10 +3303,12 @@ class TestFolderScanFallback:
         [(_, mode)] = sonarr.execute_calls
         assert mode == "move"
 
-    def test_clean_probe_keeps_download_id_and_configured_mode(self) -> None:
+    def test_clean_probe_keeps_download_id_and_copies(self) -> None:
         # A transient blip on a genuinely-downloading torrent: the folder scan
-        # substitutes for the candidates, but the entries stay status-quo so the
-        # tracked lifecycle (copy-not-move, queue resolution) is preserved.
+        # substitutes for the candidates, and the entries keep the downloadId so
+        # the import still resolves the queue row. Auto becomes copy all the same:
+        # nothing here proves Sonarr tracks the download, and an untracked Auto
+        # import moves the files out of the seeding torrent.
         strat, sonarr = self._strat(
             history=_clean_history(),
             folder_candidates=[manual_candidate("/d/Show/Show - 01 [1080p].mkv")],
@@ -3311,7 +3318,7 @@ class TestFolderScanFallback:
 
         assert probe.command_issued is True
         [(files, mode)] = sonarr.execute_calls
-        assert mode == "auto"
+        assert mode == "copy"
         assert files[0].downloadId == "ABC123"
 
     def test_probe_failure_defaults_to_status_quo_and_is_not_memoized(self) -> None:
@@ -3769,6 +3776,100 @@ class TestFolderScanFallback:
 
         assert probe.command_issued is True
         assert [folder for folder, _ in sonarr.folder_candidate_calls] == ["/remote/tv/Show - 01 [1080p].mkv"]
+
+
+class TestUnwatchedTorrentImport:
+    """A finished torrent in a category Sonarr doesn't watch imports from its folder.
+
+    Sonarr never tracks such a torrent: its `downloadId=` scan answers `[]` for good and its history holds
+    nothing. Once the queue and a completed rescan show Sonarr isn't tracking it, the folder is read and the
+    record's map imports the files, with no downloadId and by copy.
+    """
+
+    @staticmethod
+    def _strat(
+        category: str = "manual",
+        *,
+        folder_candidates: list[ManualImportCandidate] | None = None,
+    ) -> tuple[SonarrSync, HookedSonarrClient, QbitCategoryReads]:
+        """Sonarr watching `tv-sonarr`, the record's torrent in `category`, and Sonarr not tracking it.
+
+        The downloadId scan answers `[]`, the queue is empty, a rescan finished after the add, and the
+        history holds only the neutral page.
+        """
+
+        qbit = QbitCategoryReads(category)
+        categories = make_fetched_categories(grab="tv-sonarr", post_import=None, qbit=qbit.client())
+        strat, sonarr = _make_sonarr_for_import(candidates=[], categories=categories)
+        sonarr.commands_return = [_RESCAN_AFTER_ADD]
+        sonarr.history_page_return = HistoryPage.model_validate({"records": []})
+        sonarr.folder_candidates_return = (
+            [manual_candidate("/d/Show/Show - 01 [1080p].mkv")] if folder_candidates is None else folder_candidates
+        )
+        sonarr.path_mappings_return = []
+        return strat, sonarr, qbit
+
+    def test_imports_from_the_folder_by_the_records_map_without_a_download_id(self) -> None:
+        strat, sonarr, _ = self._strat()
+
+        probe = strat.import_completed(pending_import(), "/d/Show", AttemptKind.POLL)
+
+        assert probe.command_issued is True
+        [(files, mode)] = sonarr.execute_calls
+        assert mode == "copy"
+        [entry] = files
+        assert entry.episodeIds == [101]
+        assert "downloadId" not in entry.model_dump(exclude_unset=True)
+
+    def test_a_torrent_in_the_watched_category_waits_for_sonarr(self) -> None:
+        strat, sonarr, _ = self._strat("tv-sonarr")
+
+        strat.import_completed(pending_import(), "/d/Show", AttemptKind.POLL)
+
+        assert sonarr.execute_calls == []
+
+    def test_a_download_sonarr_still_holds_a_queue_row_for_is_not_unwatched(self) -> None:
+        # Sonarr v4 goes on tracking a torrent moved out of its category until it restarts.
+        strat, sonarr, _ = self._strat()
+        sonarr.queue_return = [queue_record("ABC123", "importPending", status="warning")]
+
+        strat.import_completed(pending_import(), "/d/Show", AttemptKind.POLL)
+
+        assert sonarr.execute_calls == []
+
+    def test_the_category_is_asked_again_every_poll(self) -> None:
+        strat, sonarr, qbit = self._strat()
+        pending = pending_import()
+
+        strat.import_completed(pending, "/d/Show", AttemptKind.POLL)
+        strat.import_completed(pending, "/d/Show", AttemptKind.POLL)
+        qbit.category = "tv-sonarr"
+        strat.import_completed(pending, "/d/Show", AttemptKind.POLL)
+
+        # Moved into the watched category, the download gets its id back. Still a folder import, so it copies.
+        posted = [(files[0].downloadId, mode) for files, mode in sonarr.execute_calls]
+        assert posted == [(None, "copy"), (None, "copy"), ("ABC123", "copy")]
+
+    def test_a_failed_download_id_scan_of_an_unwatched_torrent_omits_the_id(self) -> None:
+        strat, sonarr, _ = self._strat()
+        sonarr.candidates_return = None
+
+        strat.import_completed(pending_import(), "/d/Show", AttemptKind.POLL)
+
+        [(files, mode)] = sonarr.execute_calls
+        assert (files[0].downloadId, mode) == (None, "copy")
+
+    def test_an_empty_folder_warns_at_the_deadline_with_the_folder_reason(self) -> None:
+        recording = install_recording_hub()
+        strat, sonarr, _ = self._strat(folder_candidates=[])
+
+        probe = strat.import_completed(pending_import(), "/d/Show", AttemptKind.DEADLINE)
+
+        assert probe.files_present is False
+        assert sonarr.execute_calls == []
+        [warning] = diagnostic_messages(recording, Severity.WARNING)
+        assert "1 intended file not visible to Sonarr" in warning
+        assert "a scan of /d/Show found no files" in warning
 
 
 class TestResolveLanguageObjects:

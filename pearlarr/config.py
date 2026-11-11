@@ -275,7 +275,12 @@ class ArrSettings(_ConfigBase):
     client; an explicit blank (`""`) keeps no category at all. The adopted
     client should be the qBittorrent instance Pearlarr itself talks to; with
     several enabled, the lowest priority number wins (the arr's own
-    per-download pick is not predictable from outside).
+    per-download pick is not predictable from outside). The arr never sees
+    a torrent in a category none of its qBittorrent clients watch. When
+    Sonarr has an enabled qBittorrent client, Pearlarr imports each
+    finished torrent in such a category from its download folder itself
+    (not with `imports.wait_mode: off`). Radarr imports nothing from such
+    a category.
     """
 
     # Applied by the wait machinery, so it only fires when the run's resolved
@@ -290,6 +295,8 @@ class ArrSettings(_ConfigBase):
     deleted data is re-downloaded. Omitted adopts the post-import category set
     on this arr's own qBittorrent download client (the same client pick as
     `torrent_category`); an explicit blank (`""`) keeps the add-time category.
+    A torrent in a category this arr doesn't watch is never moved into one
+    it does, where the arr would import it a second time its own way.
     Ignored when `imports.wait_mode` is `off`.
     """
 
@@ -455,8 +462,9 @@ class ImportsSettings(_ConfigBase):
     """How the import takes finished files into the library.
 
     `auto` lets Sonarr choose between moving and copying (a still-seeding
-    torrent is copied). `move` and `copy` force it. Forwarded to Sonarr
-    verbatim.
+    torrent is copied). When Pearlarr reads a download's folder itself,
+    because Sonarr isn't serving that download, `auto` copies. `move` and
+    `copy` force it.
     """
 
     remove_from_queue: bool = True

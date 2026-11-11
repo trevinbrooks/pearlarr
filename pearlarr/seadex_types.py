@@ -964,9 +964,10 @@ class DownloadClientRecord(_ApiModel):
         return _validate_skipping_junk(DownloadClientField, value)
 
     def field_value(self, name: str) -> str | None:
-        """The named settings field's value, or None when absent or blank."""
+        """The named settings field's value, or None when absent or blank (whitespace alone is blank)."""
 
-        return next((field.value or None for field in self.fields if field.name == name), None)
+        value = next((field.value for field in self.fields if field.name == name), None)
+        return value if value and value.strip() else None
 
 
 # --- Sonarr remote path mappings (`/api/v3/remotepathmapping`) --------------

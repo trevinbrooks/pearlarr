@@ -124,7 +124,7 @@
             }
           ],
           "default": null,
-          "description": "qBittorrent category applied to torrents grabbed for this arr. Omitted adopts the category set on this arr's own qBittorrent download client; an explicit blank (`\"\"`) keeps no category at all. The adopted client should be the qBittorrent instance Pearlarr itself talks to; with several enabled, the lowest priority number wins (the arr's own per-download pick is not predictable from outside).",
+          "description": "qBittorrent category applied to torrents grabbed for this arr. Omitted adopts the category set on this arr's own qBittorrent download client; an explicit blank (`\"\"`) keeps no category at all. The adopted client should be the qBittorrent instance Pearlarr itself talks to; with several enabled, the lowest priority number wins (the arr's own per-download pick is not predictable from outside). The arr never sees a torrent in a category none of its qBittorrent clients watch. When Sonarr has an enabled qBittorrent client, Pearlarr imports each finished torrent in such a category from its download folder itself (not with `imports.wait_mode: off`). Radarr imports nothing from such a category.",
           "title": "Torrent Category"
         },
         "post_import_category": {
@@ -137,7 +137,7 @@
             }
           ],
           "default": null,
-          "description": "qBittorrent category applied once every import using a torrent grabbed for this arr has completed. Lets finished torrents carry their own seeding rules. A torrent shared by several entries, or by Sonarr and Radarr, moves only after all of them have imported. Point delete-with-data cleanup scripts at this category alone - a SeaDex update can attach a new entry to an already-moved torrent, and deleted data is re-downloaded. Omitted adopts the post-import category set on this arr's own qBittorrent download client (the same client pick as `torrent_category`); an explicit blank (`\"\"`) keeps the add-time category. Ignored when `imports.wait_mode` is `off`.",
+          "description": "qBittorrent category applied once every import using a torrent grabbed for this arr has completed. Lets finished torrents carry their own seeding rules. A torrent shared by several entries, or by Sonarr and Radarr, moves only after all of them have imported. Point delete-with-data cleanup scripts at this category alone - a SeaDex update can attach a new entry to an already-moved torrent, and deleted data is re-downloaded. Omitted adopts the post-import category set on this arr's own qBittorrent download client (the same client pick as `torrent_category`); an explicit blank (`\"\"`) keeps the add-time category. A torrent in a category this arr doesn't watch is never moved into one it does, where the arr would import it a second time its own way. Ignored when `imports.wait_mode` is `off`.",
           "title": "Post Import Category"
         }
       },
@@ -194,7 +194,7 @@
         },
         "mode": {
           "default": "auto",
-          "description": "How the import takes finished files into the library. `auto` lets Sonarr choose between moving and copying (a still-seeding torrent is copied). `move` and `copy` force it. Forwarded to Sonarr verbatim.",
+          "description": "How the import takes finished files into the library. `auto` lets Sonarr choose between moving and copying (a still-seeding torrent is copied). When Pearlarr reads a download's folder itself, because Sonarr isn't serving that download, `auto` copies. `move` and `copy` force it.",
           "enum": [
             "auto",
             "move",

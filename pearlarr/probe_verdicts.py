@@ -103,7 +103,7 @@ def _norm_path(path: str) -> str:
 class ContentPaths(NamedTuple):
     """One download's import folder in both filesystem views the guard must match.
 
-    A dead-tracked folder import POSTs the TRANSLATED (Sonarr-visible) path, so
+    A folder import POSTs the TRANSLATED (Sonarr-visible) path, so
     a command read back carries that form while the durable record carries the
     raw qBittorrent one: the guard needs both prefixes.
     """

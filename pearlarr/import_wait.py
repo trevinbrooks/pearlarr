@@ -7,6 +7,7 @@ from typing import NamedTuple
 
 import qbittorrentapi
 
+from .arr_categories import Watch
 from .clock import Clock
 from .config import ImportsSettings
 from .manual_import import (
@@ -240,7 +241,8 @@ class PostImportCleanup:
         """Move a verified-imported torrent to `category` (the retire's one resolve).
 
         Gated on the other arr holding no record on the hash (a torrent both arrs grabbed moves once
-        the last of them imports). Creates the category (qBittorrent 409s an unknown one).
+        the last of them imports). Creates the category (qBittorrent 409s an unknown one). A torrent in
+        a category the arr can't see stays out of the ones it watches (`_move_hold`).
         """
 
         qbit = self._qbit
@@ -252,12 +254,15 @@ class PostImportCleanup:
                 "deferring the category move",
             )
             return EffectStatus.SKIPPED
-        return self._retry_effect(lambda: self._attempt_move(qbit, category, pending.infohash))
+        return self._retry_effect(lambda: self._attempt_move(pending, category, qbit))
 
-    def _attempt_move(self, qbit: qbittorrentapi.Client, category: str, infohash: str) -> EffectStatus:
+    def _attempt_move(self, pending: PendingImport, category: str, qbit: qbittorrentapi.Client) -> EffectStatus:
         """One category-move attempt (create-on-409), DEBUG-logging its own failure detail."""
 
+        infohash = pending.infohash
         try:
+            if (held := self._move_hold(pending, category)) is not None:
+                return held
             try:
                 qbit.torrents_set_category(category=category, torrent_hashes=infohash)
             except qbittorrentapi.Conflict409Error:
@@ -268,6 +273,37 @@ class PostImportCleanup:
             self._logger.debug(f"category move to {category!r} failed ({str(e) or type(e).__name__})")
             return EffectStatus.RETRY
         return EffectStatus.DONE
+
+    def _move_hold(self, pending: PendingImport, category: str) -> EffectStatus | None:
+        """The status that ends a move attempt before the move, or None when the torrent may go to `category`.
+
+        A move from a category the arr can't see into one it watches is skipped: the arr has no record of
+        that download, and would import it again by its own reading of the names. While that can't be
+        ruled out, the attempt is one to retry. A failed qBittorrent read raises `qbittorrentapi.APIError`.
+        """
+
+        target = self._categories.watch(category)
+        if target is Watch.UNWATCHED:
+            return None
+        current = self._categories.torrent_category(pending.infohash)
+        if current is None or current == category:
+            # Gone from qBittorrent, or already there: the move carries nothing anywhere.
+            return None
+        seen = self._categories.watch(current)
+        if seen is Watch.WATCHED:
+            return None
+        arr = self._ctx.arr.capitalize()
+        if target is Watch.WATCHED and seen is Watch.UNWATCHED:
+            self._logger.debug(
+                f"{pending.display_label}: its torrent is in {current!r}, a category {arr} doesn't watch, "
+                f"and {category!r} is one it does - leaving the torrent where it is"
+            )
+            return EffectStatus.SKIPPED
+        self._logger.debug(
+            f"{pending.display_label}: could not tell which categories {arr} watches - "
+            f"not moving its torrent from {current!r} to {category!r} yet"
+        )
+        return EffectStatus.RETRY
 
     def _heal_one(self, record: PendingImport) -> None:
         """Re-verify one flagged record's import, then run its owed cleanup effects.

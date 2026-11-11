@@ -13,12 +13,13 @@ from types import MappingProxyType
 from typing import Any, override
 
 import httpx
+import qbittorrentapi
 from pydantic import BaseModel
 from seadex import EntryRecord, File, Tag, TorrentRecord, Tracker
 
 from pearlarr.anilist_client import MAX_RETRIES, AniListBody, AniListCache, AniListClient
 from pearlarr.anilist_gateway import AniListGateway
-from pearlarr.arr_categories import ArrCategoryResolver, _CategoryPair
+from pearlarr.arr_categories import _CATEGORY_FIELDS, ArrCategoryResolver, CategorySources, _read_clients
 from pearlarr.arr_http import ArrHttp
 from pearlarr.cache import (
     _ENTRY_COLUMNS,
@@ -77,6 +78,7 @@ from pearlarr.seadex_sonarr import SonarrSync
 from pearlarr.seadex_types import (
     NO_ALIASES,
     ArrReleases,
+    DownloadClientRecord,
     EpisodeKey,
     EpisodeRecord,
     ManualImportCandidate,
@@ -620,15 +622,15 @@ def make_categories(
     config: AppConfig | None = None,
     arr: Arr = Arr.SONARR,
     *,
-    http: ArrHttp | None = None,
+    sources: CategorySources | None = None,
 ) -> ArrCategoryResolver:
-    """A category resolver, fetchless by default (no transport: config values pass through, omitted stays blank).
+    """A category resolver, fetchless by default (no sources: config values pass through, omitted stays blank).
 
-    `http` binds a real transport for the live-fetch mode.
+    `sources` binds a real transport and a qBittorrent stub for the live-fetch mode.
     """
 
     config = config or AppConfig()
-    return ArrCategoryResolver(arr, config.for_arr(arr), http)
+    return ArrCategoryResolver(arr, config.for_arr(arr), sources)
 
 
 def make_fetched_categories(
@@ -637,15 +639,24 @@ def make_fetched_categories(
     *,
     grab: str | None,
     post_import: str | None,
+    qbit: qbittorrentapi.Client | None = None,
 ) -> ArrCategoryResolver:
-    """A resolver seeded as if its one live fetch already returned `(grab, post_import)`.
+    """A resolver seeded as if its one live fetch already returned one client with `(grab, post_import)`.
 
-    Pokes the resolver's private `_fetched` state directly, as no test builds a transport for this mode.
+    Pokes the resolver's private `_fetched` state directly, with the production read of that one client.
+    `qbit` is the qBittorrent stub its torrent and settings reads go to. Without one it reads neither.
     """
 
     config = config or AppConfig()
-    resolver = ArrCategoryResolver(arr, config.for_arr(arr), None)
-    resolver._fetched = _CategoryPair(grab, post_import)
+    sources = None
+    if qbit is not None:
+        # Never fetched through: the read is seeded below.
+        http = ArrHttp.bind(client=httpx.Client(), url="http://arr.test", api_key="testkey", label=arr.capitalize())
+        sources = CategorySources(http, qbit)
+    resolver = ArrCategoryResolver(arr, config.for_arr(arr), sources)
+    names = _CATEGORY_FIELDS[arr]
+    fields = [{"name": names.grab, "value": grab or ""}, {"name": names.post_import, "value": post_import or ""}]
+    resolver._fetched = _read_clients(arr, [DownloadClientRecord.model_validate(download_client_json(fields))])
     return resolver
 
 
@@ -717,8 +728,12 @@ def make_run_deps(
     logger: logging.Logger | None = None,
     clock: Clock | None = None,
     skyhook_client: AbstractSkyHookClient | None = None,
+    categories: ArrCategoryResolver | None = None,
 ) -> RunDeps:
-    """A real `RunDeps` over typed fakes, with a Sonarr url and api_key set and `qbit` None (preview)."""
+    """A real `RunDeps` over typed fakes, with a Sonarr url and api_key set and `qbit` None (preview).
+
+    `categories` swaps in a resolver that reads Sonarr's clients, in place of the config passthrough.
+    """
 
     config = config or make_config(url="http://sonarr", api_key="key")
     cache_store = cache_store or FakeCacheStore()
@@ -727,7 +742,7 @@ def make_run_deps(
     http = httpx.Client()
     # No transport: the config passthrough (no download-client fetch under test). Shared with
     # torrents below, matching production's single resolver instance.
-    categories = make_categories(config)
+    categories = categories or make_categories(config)
     return RunDeps(
         config=config,
         arr_config=config.for_arr(Arr.SONARR),
@@ -917,6 +932,17 @@ def make_grab_pipeline(**overrides: Any) -> GrabPipeline:
     return make_bare_instance(GrabPipeline, **defaults)
 
 
+def _categories_like_config(config: AppConfig, qbit: qbittorrentapi.Client | None) -> ArrCategoryResolver:
+    """The Sonarr resolver for `config`: fetchless without `qbit`, else seeded with the config's own categories."""
+
+    if qbit is None:
+        return make_categories(config)
+    settings = config.for_arr(Arr.SONARR)
+    return make_fetched_categories(
+        config, grab=settings.torrent_category, post_import=settings.post_import_category, qbit=qbit
+    )
+
+
 def make_import_wait_manager(**overrides: Any) -> ImportWaitManager:
     """A bare `ImportWaitManager` over real sub-objects, config keys routed through `AppConfig`.
 
@@ -929,9 +955,9 @@ def make_import_wait_manager(**overrides: Any) -> ImportWaitManager:
     cache_store = overrides.pop("cache_store", None) or FakeCacheStore()
     qbit = overrides.pop("qbit", None)
     clock = overrides.pop("clock", None) or FakeClock()
-    # A fetchless resolver (`RunDeps.categories`): the config category passes through, the
-    # arr-client fallback being an `ArrCategoryResolver` concern.
-    categories = overrides.pop("categories", None) or make_categories(config)
+    # `RunDeps.categories` as a run would hold it. With no qBittorrent it is fetchless and the config
+    # category passes through. With one, it reads as if the arr's own client carried the config's categories.
+    categories = overrides.pop("categories", None) or _categories_like_config(config, qbit)
     # The production placeholder before a run binds one. Tests driving the import hook pass their own.
     strategy = overrides.pop("strategy", None)
     ctx = overrides.pop("ctx", None) or RunContext(arr=Arr.SONARR)
@@ -1458,10 +1484,13 @@ def make_sonarr_sync(
     ep_list_cache: dict[int, list[SonarrEpisode]] | None = None,
     clock: Clock | None = None,
     skyhook_client: AbstractSkyHookClient | None = None,
+    categories: ArrCategoryResolver | None = None,
 ) -> SonarrSync:
     """A `SonarrSync` built through its real `__init__`, injecting typed clients and seeding `ep_list_cache`."""
 
-    deps = make_run_deps(config=config, cache_store=cache_store, clock=clock, skyhook_client=skyhook_client)
+    deps = make_run_deps(
+        config=config, cache_store=cache_store, clock=clock, skyhook_client=skyhook_client, categories=categories
+    )
     services = RunServices(deps, Arr.SONARR)
     strat = SonarrSync(
         deps,
