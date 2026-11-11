@@ -87,6 +87,7 @@ The predecessor `cache.json` was rejected for having no atomicity, no partial-fa
 The wait pass treats Sonarr's *episode files and queue* as ground truth for what landed, but never trusts Sonarr's candidate parse for what a file *is*: the AniList-derived episode mapping assigns files to episodes (`ordered_episode_ids`), because SeaDex releases routinely carry specials and orderings Sonarr misparses.
 The import places nothing. It imports the map the grab placed, plus the files Sonarr's history placed for a download no scan saw, and reports a file on disk the map lacks: a warned skip, an unmatched outcome, or a file the grab left for a hand import.
 Sonarr is always given the chance to import first. The manual import only steps in for blocked or untracked downloads, and a clean `importPending` row always waits (see the invariants below).
+Two kinds of untracked download are never served by id: one Sonarr's history marks imported, failed, or ignored, and a torrent in a category none of Sonarr's qBittorrent clients watch. For those the import reads the download's folder instead and leaves the download id out. Every import from a folder copies under `imports.mode: auto`.
 Rejected: reusing Sonarr's manual-import candidates as the mapping source, the exact misparse the feature exists to correct.
 
 ## Glossary

@@ -256,7 +256,7 @@ def test_rundeps_build_category_handle_derives_from_arr_http(
     deps.close()
 
     assert deps.arr_http is not None
-    category_http = deps.categories._http
-    assert category_http is not None
-    assert category_http.retries == 0
-    assert category_http.streaks is deps.arr_http.streaks
+    sources = deps.categories._sources
+    assert sources is not None
+    assert sources.http.retries == 0
+    assert sources.http.streaks is deps.arr_http.streaks

@@ -18,7 +18,7 @@ from seadex import EntryRecord, SeaDexEntry
 
 from .anilist_client import AniListClient
 from .anilist_gateway import AniListGateway
-from .arr_categories import ArrCategoryResolver
+from .arr_categories import ArrCategoryResolver, CategorySources
 from .arr_http import ArrHttp, make_httpx_client
 from .boot_flow import BootFlow
 from .cache import AbstractCacheStore, CachedEntry, CacheRecord, CacheStore
@@ -93,7 +93,8 @@ class RunDeps:
     categories: ArrCategoryResolver
     """The run's effective qBittorrent categories: explicit config first, then
     the arr's own download client - fetched lazily at first use (grab /
-    post-import move), where the arr is provably up."""
+    import scan / post-import move), where the arr is provably up. Also
+    says which categories the arr watches."""
 
     clock: Clock
     """The time seam: the wait passes' clock and the per-title throttle (the run clock reads time directly)."""
@@ -216,11 +217,13 @@ class RunDeps:
         # still talk to the arr.
         arr_http = bind_arr_http(arr, app_config, http) if app_config.is_configured(arr) else None
 
-        # The category handle exists only when a real qbit does too (a preview
+        # The category sources exist only when a real qbit does too (a preview
         # run applies no category). A single attempt per use (retries=0): a
-        # nicety read whose miss fails open and is retried at the next use.
-        category_http = replace(arr_http, retries=0) if qbit is not None and arr_http is not None else None
-        categories = ArrCategoryResolver(arr, arr_config, category_http)
+        # miss fails open and is retried at the next use.
+        sources = (
+            CategorySources(replace(arr_http, retries=0), qbit) if qbit is not None and arr_http is not None else None
+        )
+        categories = ArrCategoryResolver(arr, arr_config, sources)
 
         # qBittorrent adapter: parses a release URL by tracker and adds it. A None
         # qbit is treated as a perpetual preview.

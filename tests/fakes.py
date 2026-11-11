@@ -5,10 +5,12 @@ import io
 import logging
 import re
 from collections.abc import Callable, Iterable, Mapping
+from dataclasses import dataclass
 from datetime import UTC, datetime
-from typing import override
+from typing import cast, override
 
 import httpx
+import qbittorrentapi
 
 from pearlarr.arr_http import ArrHttp, DeleteOutcome
 from pearlarr.clock import Clock
@@ -117,6 +119,52 @@ def bind_arr_http(url: str = "http://arr.test") -> tuple[ArrHttp, RecordingHub]:
     recording = install_recording_hub()
     http = ArrHttp.bind(client=httpx.Client(), url=url, api_key="testkey", label="Sonarr", sleep=lambda _s: None)
     return http, recording
+
+
+@dataclass(frozen=True)
+class _CategoryRow:
+    """One qBittorrent info row, as far as the category read goes."""
+
+    category: str
+
+
+class QbitCategoryReads:
+    """A qBittorrent stub for the two reads the category resolver makes.
+
+    Every torrent sits in `category`, which a test may change between reads: None is a torrent qBittorrent
+    doesn't hold, and an exception is a failed read. `preferences` answers the settings read, each answer
+    once and the last one from then on.
+    """
+
+    def __init__(
+        self,
+        category: str | Exception | None = None,
+        *preferences: dict[str, object] | Exception,
+    ) -> None:
+        self.category = category
+        self._preferences = list(preferences) or [{}]
+
+    def torrents_info(self, *, torrent_hashes: str) -> list[_CategoryRow]:
+        """The row for whichever hash is asked, in the category held now."""
+
+        del torrent_hashes
+        if isinstance(self.category, Exception):
+            raise self.category
+        return [] if self.category is None else [_CategoryRow(self.category)]
+
+    def app_preferences(self) -> dict[str, object]:
+        """The next scripted settings answer."""
+
+        answer = self._preferences.pop(0) if len(self._preferences) > 1 else self._preferences[0]
+        if isinstance(answer, Exception):
+            raise answer
+        return answer
+
+    def client(self) -> qbittorrentapi.Client:
+        """This stub as the SDK client it stands in for."""
+
+        # The sanctioned leaf-client hatch: the SDK client has no seam to subclass.
+        return cast("qbittorrentapi.Client", self)
 
 
 def diagnostic_messages(recording: RecordingHub, severity: Severity | None = None) -> list[str]:

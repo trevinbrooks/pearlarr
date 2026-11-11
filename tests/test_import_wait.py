@@ -22,13 +22,14 @@ the contracts are pinned by recorded state.
 import logging
 from collections.abc import Callable
 from dataclasses import dataclass, replace
-from typing import Any, override
+from typing import Any, cast, override
 
 import httpx
 import pytest
 import qbittorrentapi
 import respx
 
+from pearlarr.arr_categories import CategorySources
 from pearlarr.config import Arr
 from pearlarr.grab_pipeline import GrabPipeline
 from pearlarr.import_wait import ImportProbes, ImportWaitManager, MonitorPass
@@ -63,7 +64,6 @@ from .builders import (
     FakeCacheStore,
     FakeTorrents,
     claim_al_ids,
-    download_client_json,
     entry_claim,
     grab_request,
     import_probe,
@@ -79,7 +79,6 @@ from .builders import (
     one_release_dict,
     pending_import,
     pending_seed,
-    sonarr_client_fields,
     two_claim_record,
 )
 from .fakes import (
@@ -110,6 +109,8 @@ class FakeTorrent:
     by the batched `poll_telemetry` (which keys its result off it). A blank
     hash is filled in from the script key when served from a `FakeQbit`
     telemetry script, so only a deliberate-mismatch test needs to set it.
+    `category` is read by the post-import move alone, and blank is an
+    uncategorized torrent, as qBittorrent reports one.
     """
 
     def __init__(
@@ -124,8 +125,10 @@ class FakeTorrent:
         completed: int | None = None,
         size: int | None = None,
         torrent_hash: str = "",
+        category: str = "",
     ) -> None:
         self.state_enum = FakeStateEnum(is_complete=is_complete, is_errored=is_errored)
+        self.category = category
         self.progress = progress
         self.content_path = content_path
         self.dlspeed = dlspeed
@@ -215,6 +218,12 @@ class _InterruptOnHash(FakeQbit):
         if isinstance(torrent_hashes, str) and torrent_hashes.casefold() == self._interrupt_on:
             raise KeyboardInterrupt
         return super().torrents_info(torrent_hashes=torrent_hashes)
+
+
+def _sdk_client(qbit: FakeQbit) -> qbittorrentapi.Client:
+    """A fake as the SDK client it stands in for (the sanctioned leaf-client hatch: no seam to subclass)."""
+
+    return cast("qbittorrentapi.Client", qbit)
 
 
 def make_probes(qbit: FakeQbit | None) -> ImportProbes:
@@ -2757,6 +2766,7 @@ class CategoryQbit(FakeQbit):
 
     `set_errors` scripts per-call `torrents_set_category` failures (popped in
     order), so the create-on-409 retry and the best-effort warn path can be driven.
+    `preferences_error` fails every settings read. Without one, subcategories read as on.
     """
 
     def __init__(
@@ -2764,9 +2774,11 @@ class CategoryQbit(FakeQbit):
         torrents: dict[str, list[QbitStep]] | None = None,
         *,
         set_errors: list[Exception] | None = None,
+        preferences_error: Exception | None = None,
     ) -> None:
         super().__init__(torrents)
         self._set_errors = list(set_errors or [])
+        self._preferences_error = preferences_error
         self.set_category_calls: list[tuple[str, str]] = []
         self.created_categories: list[str] = []
 
@@ -2777,6 +2789,11 @@ class CategoryQbit(FakeQbit):
 
     def torrents_create_category(self, *, name: str) -> None:
         self.created_categories.append(name)
+
+    def app_preferences(self) -> dict[str, object]:
+        if self._preferences_error is not None:
+            raise self._preferences_error
+        return {"use_subcategories": True}
 
 
 class TestPostImportCategory:
@@ -3274,7 +3291,9 @@ class TestRetireCategoryResolve:
             qbit=qbit,
             strategy=strategy,
             store_records=[record],
-            categories=make_categories(make_config(), http=replace(http, retries=0)),
+            categories=make_categories(
+                make_config(), sources=CategorySources(replace(http, retries=0), _sdk_client(qbit))
+            ),
         )
 
         assert mgr._cleanup.retire(record) is True
@@ -3302,31 +3321,6 @@ class TestRetireCategoryResolve:
         assert [c.infohash for c in strategy.close_calls] == ["h"]
         assert mgr._records.rows() == {}
 
-    @respx.mock
-    def test_explicit_categories_and_no_queue_removal_never_fetch_the_client(self) -> None:
-        # Both categories explicit and the removal off: no gate may reach the client,
-        # or every retire pays a live fetch (and warns on a failing one).
-        route = respx.get(f"{_ARR_URL}/api/v3/downloadclient").respond(
-            json=[download_client_json(sonarr_client_fields("tv-sonarr", "sonarr-done"))],
-        )
-        record = pending_import(infohash="h")
-        qbit = CategoryQbit({"h": [FakeTorrent(is_complete=True, content_path="/d")]})
-        config = make_config(torrent_category="tv-sonarr", post_import_category="sonarr-done", remove_from_queue=False)
-        http, _ = bind_arr_http(_ARR_URL)
-        mgr = make_orchestration_manager(
-            qbit=qbit,
-            strategy=_RecordingStrategy(),
-            store_records=[record],
-            config=config,
-            categories=make_categories(config, http=http),
-        )
-
-        assert mgr._cleanup.retire(record) is True
-
-        assert route.call_count == 0
-        assert qbit.set_category_calls == [("sonarr-done", "h")]
-        assert mgr._records.rows() == {}
-
 
 class TestCloseSkipWhenMoveUntracks:
     """An untracking category move supersedes the explicit queue removal.
@@ -3350,7 +3344,9 @@ class TestCloseSkipWhenMoveUntracks:
             qbit=qbit,
             strategy=strategy,
             store_records=[pending_import(infohash="h", series_id=7)],
-            categories=make_fetched_categories(make_config(), grab=grab, post_import=post_import),
+            categories=make_fetched_categories(
+                make_config(), grab=grab, post_import=post_import, qbit=_sdk_client(qbit)
+            ),
         )
 
     def test_untracking_move_skips_the_explicit_close(self) -> None:
@@ -3397,7 +3393,7 @@ class TestCloseSkipWhenMoveUntracks:
     def test_post_equal_to_watched_keeps_the_explicit_close(self) -> None:
         # Moving within the watched category clears nothing: the entry stays.
         strategy = _RecordingStrategy(progress=ImportProgress(1, 1, determinate=True))
-        qbit = CategoryQbit({"h": [FakeTorrent(is_complete=True, content_path="/d")]})
+        qbit = CategoryQbit({"h": [FakeTorrent(is_complete=True, content_path="/d", category="shared")]})
         mgr = self._manager(grab="shared", post_import="shared", qbit=qbit, strategy=strategy)
 
         mgr.snapshot_pending_for_series(7)
@@ -3420,6 +3416,127 @@ class TestCloseSkipWhenMoveUntracks:
 
         assert qbit.set_category_calls == [("pearlarr-done", "h")]
         assert [c.infohash for c in strategy.close_calls] == ["h"]
+
+
+class TestMoveKeepsAnUnseenTorrentOut:
+    """The post-import move never carries a torrent Sonarr can't see into a category Sonarr watches.
+
+    Sonarr has no record of that download. Once the torrent showed up in its category, Sonarr would
+    import the files again by its own reading of their names.
+    """
+
+    @staticmethod
+    def _try_retire(qbit: CategoryQbit, *, post_import: str) -> tuple[bool, ImportWaitManager]:
+        """Try to retire one verified record, with Sonarr's one client read as watching `tv-sonarr`."""
+
+        record = pending_import(infohash="h")
+        mgr = make_orchestration_manager(
+            qbit=qbit,
+            strategy=_RecordingStrategy(),
+            store_records=[record],
+            categories=make_fetched_categories(
+                make_config(), grab="tv-sonarr", post_import=post_import, qbit=_sdk_client(qbit)
+            ),
+        )
+        return mgr._cleanup.retire(record), mgr
+
+    @classmethod
+    def _retire(cls, qbit: CategoryQbit, *, post_import: str) -> ImportWaitManager:
+        """`_try_retire`, for a record that retires."""
+
+        retired, mgr = cls._try_retire(qbit, post_import=post_import)
+        assert retired is True
+        return mgr
+
+    @pytest.mark.parametrize("post_import", ["tv-sonarr", "tv-sonarr/done"], ids=["watched", "its-subcategory"])
+    def test_a_torrent_outside_sonarrs_categories_is_not_moved_into_one(self, post_import: str) -> None:
+        qbit = CategoryQbit({"h": [FakeTorrent(is_complete=True, content_path="/d", category="manual")]})
+
+        mgr = self._retire(qbit, post_import=post_import)
+
+        assert qbit.set_category_calls == []
+        # The skip is no failure: the record is done.
+        assert mgr._records.rows() == {}
+
+    def test_a_torrent_sonarr_already_sees_still_moves_within_its_categories(self) -> None:
+        qbit = CategoryQbit({"h": [FakeTorrent(is_complete=True, content_path="/d", category="tv-sonarr")]})
+
+        self._retire(qbit, post_import="tv-sonarr/done")
+
+        assert qbit.set_category_calls == [("tv-sonarr/done", "h")]
+
+    def test_a_failed_category_read_is_retried_and_never_moves_blind(self) -> None:
+        unseen = FakeTorrent(is_complete=True, content_path="/d", category="manual")
+        qbit = CategoryQbit({"h": [qbittorrentapi.APIConnectionError("down"), unseen]})
+
+        mgr = self._retire(qbit, post_import="tv-sonarr")
+
+        assert qbit.set_category_calls == []
+        assert mgr._records.rows() == {}
+
+    @pytest.mark.parametrize(
+        ("held_in", "post_import"),
+        [("manual", "tv-sonarr/done"), ("tv-sonarr/sub", "tv-sonarr")],
+        ids=["into-a-subcategory", "out-of-a-subcategory"],
+    )
+    def test_an_unreadable_subcategory_setting_holds_the_move_it_would_decide(
+        self,
+        held_in: str,
+        post_import: str,
+    ) -> None:
+        qbit = CategoryQbit(
+            {"h": [FakeTorrent(is_complete=True, content_path="/d", category=held_in)]},
+            preferences_error=qbittorrentapi.APIConnectionError("down"),
+        )
+
+        retired, mgr = self._try_retire(qbit, post_import=post_import)
+
+        assert retired is False
+        assert qbit.set_category_calls == []
+        assert mgr._records.rows()["h"].get("awaiting_cleanup") is True
+
+    @staticmethod
+    def _retire_unread(qbit: CategoryQbit) -> tuple[bool, ImportWaitManager]:
+        """Retire one verified record bound for `sonarr-done` while Sonarr's clients can't be read."""
+
+        respx.get(f"{_ARR_URL}/api/v3/downloadclient").respond(status_code=500)
+        record = pending_import(infohash="h")
+        config = make_config(torrent_category="anime", post_import_category="sonarr-done")
+        http, _ = bind_arr_http(_ARR_URL)
+        mgr = make_orchestration_manager(
+            qbit=qbit,
+            strategy=_RecordingStrategy(),
+            store_records=[record],
+            config=config,
+            categories=make_categories(config, sources=CategorySources(http, _sdk_client(qbit))),
+        )
+        return mgr._cleanup.retire(record), mgr
+
+    @respx.mock
+    def test_unreadable_sonarr_clients_hold_the_move_for_a_later_run(self) -> None:
+        # Whether `sonarr-done` is watched can't be known, so the move waits and the record is kept.
+        qbit = CategoryQbit({"h": [FakeTorrent(is_complete=True, content_path="/d", category="manual")]})
+
+        retired, mgr = self._retire_unread(qbit)
+
+        assert retired is False
+        assert qbit.set_category_calls == []
+        assert mgr._records.rows()["h"].get("awaiting_cleanup") is True
+
+    @respx.mock
+    @pytest.mark.parametrize(
+        "torrents",
+        [{"h": [FakeTorrent(is_complete=True, content_path="/d", category="sonarr-done")]}, {}],
+        ids=["already-there", "gone-from-qbittorrent"],
+    )
+    def test_unreadable_sonarr_clients_never_hold_a_move_that_carries_nothing(
+        self,
+        torrents: dict[str, list[QbitStep]],
+    ) -> None:
+        retired, mgr = self._retire_unread(CategoryQbit(torrents))
+
+        assert retired is True
+        assert mgr._records.rows() == {}
 
 
 class TestCloseRetrySchedule:

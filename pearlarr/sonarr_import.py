@@ -1,9 +1,9 @@
 """Import-time subsystem: decide a download's state, then build/POST the import."""
 
-import logging
 from dataclasses import dataclass, field, replace
 from urllib.parse import urlsplit
 
+from .arr_categories import Watch
 from .arr_http import DeleteOutcome
 from .episode_state import EpisodeFileStatus, EpisodeSnapshot, GroupVotes, RecordSnapshot, TargetStatuses
 from .import_files import (
@@ -86,7 +86,7 @@ def _hostname(url: str | None) -> str | None:
     return urlsplit(url).hostname or urlsplit(f"//{url}").hostname
 
 
-@dataclass(frozen=True, slots=True)
+@dataclass(frozen=True, slots=True, kw_only=True)
 class _CandidateScan:
     """One poll's candidate fetch plus the history verdict behind the entry shape it implies."""
 
@@ -97,15 +97,21 @@ class _CandidateScan:
     """The dead-tracking import's rows that stand in for an empty folder scan."""
     by_id: bool = False
     """Whether the by-id scan answered with files."""
+    unwatched: bool = False
+    """Whether Sonarr isn't tracking the download and its torrent sits in a category Sonarr doesn't watch."""
 
     @property
     def omit_download_id(self) -> bool:
-        """ALL entries must omit the downloadId: Sonarr's Execute tail NREs on the poisoned download."""
+        """Whether every entry leaves the downloadId out.
 
-        return self.history is not None and self.history.dead_tracked
+        Sonarr holds no download under an unwatched torrent's id. A dead-tracked download's id is
+        poison: Sonarr's Execute tail NREs on it.
+        """
+
+        return self.unwatched or (self.history is not None and self.history.dead_tracked)
 
     @property
-    def dead_tracked_empty(self) -> bool:
+    def unserved_empty(self) -> bool:
         """Sonarr won't serve the download by id and its folder scan found nothing."""
 
         return self.omit_download_id and not self.candidates
@@ -166,6 +172,8 @@ class _ScanScratch:
     """The downloads pinned to their folder -> whether the downloadId scan before the pin failed."""
     history_verdicts: dict[str, DownloadHistoryVerdict] = field(default_factory=dict[str, DownloadHistoryVerdict])
     """The dead verdicts, with their import rows. A clean verdict or a probe failure re-probes next activation."""
+    noted_unwatched: set[str] = field(default_factory=set[str])
+    """The unwatched downloads already logged this run. The answer itself is read again every poll."""
     path_mappings: list[RemotePathMapping] | None = None
     """Sonarr's remote path mappings. None = unfetched."""
     translated_paths: dict[str, str] = field(default_factory=dict[str, str])
@@ -175,10 +183,11 @@ class _ScanScratch:
 class CandidateScanner:
     """Per-run candidate scans: the downloadId scan with the folder fallback."""
 
-    def __init__(self, sonarr: AbstractSonarrClient, qbit_host: str | None, logger: logging.Logger) -> None:
+    def __init__(self, deps: RunDeps, sonarr: AbstractSonarrClient) -> None:
         self.sonarr = sonarr
-        self._qbit_host = qbit_host
-        self.logger = logger
+        self._categories = deps.categories
+        self._qbit_host = _hostname(deps.config.qbittorrent.host)
+        self.logger = deps.logger
         self._scratch = _ScanScratch()
 
     def reset(self) -> None:
@@ -239,27 +248,52 @@ class CandidateScanner:
             )
         return verdict
 
-    def _dead_tracked(self, pending: PendingImport) -> bool:
-        """Whether Sonarr's history says it won't serve the download by id."""
+    def _unwatched(self, pending: PendingImport) -> bool:
+        """Whether the download's torrent sits in a category Sonarr is known not to watch.
 
-        verdict = self._probe_history(pending)
-        return verdict is not None and verdict.dead_tracked
+        Asked again every poll: once the torrent is moved into a watched category, the import carries
+        its download id again.
+        """
+
+        unwatched = self._categories.torrent_watch(pending.infohash) is Watch.UNWATCHED
+        if unwatched and pending.infohash not in self._scratch.noted_unwatched:
+            self._scratch.noted_unwatched.add(pending.infohash)
+            self.logger.debug(
+                f"{pending.display_label}: its torrent is in a category Sonarr doesn't watch, so Sonarr will never "
+                "import it - importing from its folder instead"
+            )
+        return unwatched
 
     def scan(self, pending: PendingImport, content_path: str, *, untracked: bool) -> _CandidateScan | None:
-        """The candidates for one poll: the downloadId scan, with the folder fallback. None when the scan failed."""
+        """The candidates for one poll: the downloadId scan, with the folder fallback. None when the scan failed.
+
+        The folder is read when the downloadId scan failed, when the download is pinned to its folder, and when
+        the scan answered empty for an `untracked` download Sonarr will never serve by id. That is one its
+        history calls dead-tracked, or one whose torrent sits in a category Sonarr doesn't watch.
+        """
 
         by_id_failed = self._scratch.folder_pinned.get(pending.infohash)
+        answered_empty = False
         if by_id_failed is None:
             candidates = self.sonarr.manual_import_candidates(pending=pending)
+            if candidates:
+                return _CandidateScan(candidates=candidates, history=None, by_id=True)
             by_id_failed = candidates is None
-            if candidates is None:
+            answered_empty = not by_id_failed
+            if by_id_failed:
                 self.logger.debug(
                     f"{content_path}: downloadId scan failed for {pending.display_label} - trying the folder fallback"
                 )
-            elif candidates or not (untracked and self._dead_tracked(pending)):
-                return _CandidateScan(candidates, history=None, by_id=bool(candidates))
+        # Sonarr still tracks the download, so an empty answer is final and its history isn't probed.
+        verdict = None if answered_empty and not untracked else self._probe_history(pending)
+        dead = verdict is not None and verdict.dead_tracked
+        # Asked on every path to the folder, so a failed or pinned scan of an unwatched download builds the same
+        # entries. `untracked` first: a download Sonarr holds a queue row for is never called unwatched. A
+        # dead-tracked one already goes to its folder without the id, so its category is never asked.
+        unwatched = untracked and not dead and self._unwatched(pending)
+        if answered_empty and not (dead or unwatched):
+            return _CandidateScan(candidates=[], history=None)
 
-        verdict = self._probe_history(pending)
         folder = self._sonarr_visible_path(content_path)
         folder_candidates = self.sonarr.manual_import_candidates_by_folder(
             folder=folder,
@@ -271,10 +305,10 @@ class CandidateScanner:
             # INVARIANT: pin folder mode on NONEMPTY success only. A 200 `[]` is exactly what an invisible or
             # untranslated folder returns, and pinning on it wedges the record blind to files, downloadId unretried.
             self._scratch.folder_pinned[pending.infohash] = by_id_failed
-            return _CandidateScan(folder_candidates, history=verdict)
+            return _CandidateScan(candidates=folder_candidates, history=verdict, unwatched=unwatched)
         # History stands in for an empty folder only after a failed downloadId scan.
         rows = verdict.import_rows if verdict is not None and by_id_failed else ()
-        return _CandidateScan([], history=verdict, import_rows=rows)
+        return _CandidateScan(candidates=[], history=verdict, import_rows=rows, unwatched=unwatched)
 
 
 @dataclass(frozen=True, slots=True)
@@ -317,7 +351,7 @@ class ImportExecutor:
         self._config = deps.config
         self.logger = deps.logger
         self._clock = deps.clock
-        self.scanner = CandidateScanner(sonarr, _hostname(deps.config.qbittorrent.host), deps.logger)
+        self.scanner = CandidateScanner(deps, sonarr)
         self._scratch = _ImportScratch()
 
     def reset(self) -> None:
@@ -531,8 +565,8 @@ class ImportExecutor:
             return ImportProbe.imported()
 
         if not authoritative_map:
-            if context.scan.dead_tracked_empty:
-                self._note_dead_tracked_empty(context)
+            if context.scan.unserved_empty:
+                self._note_unserved_empty(context)
             self.logger.debug(f"{content_path}: no mappable files for {pending.display_label} yet")
             return ImportProbe.waiting()
 
@@ -568,7 +602,7 @@ class ImportExecutor:
         if missing:
             # Absent files are expected on an early poll, so only the deadline attempt warns.
             reason = ""
-            if context.scan.dead_tracked_empty:
+            if context.scan.unserved_empty:
                 folder = self.scanner.content_paths(content_path).sonarr_visible
                 reason = f" (it won't serve the download by id and a scan of {folder} found no files)"
             message = (
@@ -586,9 +620,10 @@ class ImportExecutor:
             return ImportProbe.imported()
 
         import_mode = self._config.imports.mode
-        if context.scan.omit_download_id and import_mode == "auto":
-            # Untracked Execute with Auto resolves to MOVE (no DownloadClientItem to report CanMoveFiles),
-            # ripping files from the seeding torrent. An explicitly configured move/copy is honored as set.
+        if not context.scan.by_id and import_mode == "auto":
+            # A folder scan's files can reach Execute with no tracked download behind them, and Auto then
+            # resolves to MOVE (no DownloadClientItem to report CanMoveFiles), ripping files from the seeding
+            # torrent. So every folder import copies. An explicitly configured move/copy is honored as set.
             import_mode = "copy"
         if blocked := self._guard_before_post(context):
             return blocked
@@ -631,8 +666,8 @@ class ImportExecutor:
                 self.logger.debug(f"{context.pending.display_label}: {block.value}; waiting")
         return None if block is None else block.waiting()
 
-    def _note_dead_tracked_empty(self, context: _ImportContext) -> None:
-        """Surface a dead-tracked, empty-folder poll for an unmapped record.
+    def _note_unserved_empty(self, context: _ImportContext) -> None:
+        """Surface an empty folder scan of a download Sonarr won't serve by id, for an unmapped record.
 
         Debug until the deadline, then one warning a run.
         """
@@ -641,7 +676,7 @@ class ImportExecutor:
         # Read-only over the memo the fallback filled on this same poll, never a fetch.
         folder = self.scanner.content_paths(context.content_path).sonarr_visible
         # An empty folder right after completion is expected (Sonarr's mount lags), so only the deadline
-        # attempt says so, once a run. Without it a dead-tracked download whose folder stays empty would
+        # attempt says so, once a run. Without it such a download whose folder stays empty would
         # retry in silence every run.
         message = (
             f"{pending.display_label}: Sonarr won't serve this download by id and "
@@ -734,7 +769,7 @@ class ImportExecutor:
         )
         if context.scan.omit_download_id:
             # Left UNSET so the exclude_unset dump omits the key entirely (never null) and Execute takes the
-            # untracked branch. The tracked tail dereferences the poisoned download's null ImportItem.
+            # untracked branch. For a dead-tracked download the tracked tail dereferences its null ImportItem.
             return entry
         # model_copy marks the key set so it reaches the wire. Uppercased because Sonarr matches its tracked
         # downloads case-sensitively, and an unmatched import leaves the queue record open to a re-import.

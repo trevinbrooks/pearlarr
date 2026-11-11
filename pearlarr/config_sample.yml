@@ -29,7 +29,10 @@ sonarr:
   # on this arr's own qBittorrent download client; an explicit blank ("") keeps no category at all.
   # The adopted client should be the qBittorrent instance Pearlarr itself talks to; with several
   # enabled, the lowest priority number wins (the arr's own per-download pick is not predictable
-  # from outside).
+  # from outside). The arr never sees a torrent in a category none of its qBittorrent clients watch.
+  # When Sonarr has an enabled qBittorrent client, Pearlarr imports each finished torrent in such a
+  # category from its download folder itself (not with imports.wait_mode: off). Radarr imports
+  # nothing from such a category.
   torrent_category:
 
   # qBittorrent category applied once every import using a torrent grabbed for this arr has
@@ -38,8 +41,9 @@ sonarr:
   # delete-with-data cleanup scripts at this category alone - a SeaDex update can attach a new entry
   # to an already-moved torrent, and deleted data is re-downloaded. Omitted adopts the post-import
   # category set on this arr's own qBittorrent download client (the same client pick as
-  # torrent_category); an explicit blank ("") keeps the add-time category. Ignored when
-  # imports.wait_mode is off.
+  # torrent_category); an explicit blank ("") keeps the add-time category. A torrent in a category
+  # this arr doesn't watch is never moved into one it does, where the arr would import it a second
+  # time its own way. Ignored when imports.wait_mode is off.
   post_import_category:
 
 # Radarr connection and behavior. url and api_key are required only when a Radarr run actually
@@ -65,7 +69,10 @@ radarr:
   # on this arr's own qBittorrent download client; an explicit blank ("") keeps no category at all.
   # The adopted client should be the qBittorrent instance Pearlarr itself talks to; with several
   # enabled, the lowest priority number wins (the arr's own per-download pick is not predictable
-  # from outside).
+  # from outside). The arr never sees a torrent in a category none of its qBittorrent clients watch.
+  # When Sonarr has an enabled qBittorrent client, Pearlarr imports each finished torrent in such a
+  # category from its download folder itself (not with imports.wait_mode: off). Radarr imports
+  # nothing from such a category.
   torrent_category:
 
   # qBittorrent category applied once every import using a torrent grabbed for this arr has
@@ -74,8 +81,9 @@ radarr:
   # delete-with-data cleanup scripts at this category alone - a SeaDex update can attach a new entry
   # to an already-moved torrent, and deleted data is re-downloaded. Omitted adopts the post-import
   # category set on this arr's own qBittorrent download client (the same client pick as
-  # torrent_category); an explicit blank ("") keeps the add-time category. Ignored when
-  # imports.wait_mode is off.
+  # torrent_category); an explicit blank ("") keeps the add-time category. A torrent in a category
+  # this arr doesn't watch is never moved into one it does, where the arr would import it a second
+  # time its own way. Ignored when imports.wait_mode is off.
   post_import_category:
 
 # qBittorrent connection. All of host, username, and password are needed to grab. Leave any blank to
@@ -168,8 +176,8 @@ imports:
   progress_poll_interval: 5
 
   # How the import takes finished files into the library. auto lets Sonarr choose between moving and
-  # copying (a still-seeding torrent is copied). move and copy force it. Forwarded to Sonarr
-  # verbatim.
+  # copying (a still-seeding torrent is copied). When Pearlarr reads a download's folder itself,
+  # because Sonarr isn't serving that download, auto copies. move and copy force it.
   # Values: auto / move / copy
   mode: auto
 

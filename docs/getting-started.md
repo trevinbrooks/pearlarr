@@ -112,7 +112,7 @@ A real run adds at most `advanced.max_torrents_to_add` torrents (default 10) and
 
 The summary's "added" lines name each grabbed release. You will find torrents with those names in qBittorrent.
 From there the usual arr flow takes over: Sonarr sees the finished download and imports it like any other.
-Set `sonarr.torrent_category` if you want Pearlarr's grabs grouped under their own qBittorrent category, and `notifications.discord_url` if you want each grab posted to Discord.
+Set `sonarr.torrent_category` if you want Pearlarr's grabs grouped under their own qBittorrent category (Sonarr's qBittorrent client doesn't watch that category, so Pearlarr imports those downloads itself), and `notifications.discord_url` if you want each grab posted to Discord.
 
 ## 8. Keep it running
 
