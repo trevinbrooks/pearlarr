@@ -14,7 +14,7 @@ from ..episode_titles import EpisodeTitles, spells_title
 from ..parse_reading import Reading, glued_counts, read_parse, spans_multiple, widen_range_key
 from ..placement_types import EpisodeIndex, Placement, PlacementBatch, PlacementVerdict, TargetScope
 from ..release_names import FileIdentity, NameRead, is_consecutive
-from ..seadex_types import ParsedFileInfo
+from ..seadex_types import OrderOnlyKey, ParsedFileInfo
 
 
 @dataclass(slots=True, eq=False, kw_only=True)
@@ -24,7 +24,7 @@ class TorrentFile:
     Versions of one file are separate records. Records hash by identity, so passes keep sets of them. The fields
     through `seeded_on` are set once in `Placer.start`. Placements change only through `Placer.place*` and
     `Placer.set_aside*`, and vetoes through `veto`, except that pass 5 re-reads or ties a run's readings. Passes 2
-    and 3 set the flags and `runner_up_for`.
+    and 3 set the flags and `runner_up_for`. Pass 16 alone gives a judged file a new verdict.
     """
 
     name: str
@@ -72,6 +72,12 @@ class TorrentFile:
         """Whether a pass has judged the file."""
 
         return self.placement is not None
+
+    @property
+    def verdict(self) -> PlacementVerdict | None:
+        """The verdict a pass gave the file, else None."""
+
+        return None if self.placement is None else self.placement.verdict
 
     @property
     def remaining(self) -> bool:
@@ -420,6 +426,16 @@ class Placer:
         """Record a verdict that carries no ids (held, excluded, or skipped)."""
 
         file.placement = Placement(file.name, (), verdict)
+
+    def set_aside_order_only(self, file: TorrentFile, key: OrderOnlyKey) -> None:
+        """Record `ORDER_ONLY` with the order and the key that read the file."""
+
+        file.placement = Placement(file.name, (), PlacementVerdict.ORDER_ONLY, key)
+
+    def set_aside_elsewhere(self, file: TorrentFile, ids: tuple[int, ...]) -> None:
+        """Record `OTHER_ORDER_ELSEWHERE` with the episodes the order reads the file onto."""
+
+        file.placement = Placement(file.name, (), PlacementVerdict.OTHER_ORDER_ELSEWHERE, read_onto=ids)
 
     def set_aside_each(self, files: Iterable[TorrentFile], verdict: PlacementVerdict) -> None:
         """Record one id-less verdict for each file."""

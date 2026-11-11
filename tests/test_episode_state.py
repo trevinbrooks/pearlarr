@@ -9,6 +9,8 @@ from pearlarr.episode_state import (
     GroupVotes,
     RecordSnapshot,
     Route,
+    TargetStatuses,
+    UnfilledTargets,
 )
 from pearlarr.manual_import import GuardFacts, OwnGroup, normalize_group
 from pearlarr.placement_types import episode_index
@@ -197,6 +199,21 @@ class TestEpisodeFileStatuses:
     def test_filled_by_hand_needs_a_target(self) -> None:
         assert target_statuses({1: EpisodeFileStatus.RECOMMENDED}).filled_by_hand() is True
         assert target_statuses({}).filled_by_hand() is False
+
+    def test_unfilled_splits_the_targets_left_by_whether_they_hold_a_file(self) -> None:
+        statuses = TargetStatuses(
+            {
+                401: EpisodeFileStatus.ABSENT,
+                402: EpisodeFileStatus.RECOMMENDED,
+                403: EpisodeFileStatus.OTHER_GROUP,
+                404: EpisodeFileStatus.UNKNOWN_GROUP,
+                405: EpisodeFileStatus.UNKNOWN_GROUP,
+            },
+            holding_own_copy=frozenset({405}),
+            holding_untagged_copy=frozenset({405}),
+        )
+
+        assert statuses.unfilled() == UnfilledTargets(missing=(401,), not_recommended=(403, 404))
 
     def test_needing_import_excludes_only_recommended(self) -> None:
         statuses = target_statuses(

@@ -3,7 +3,6 @@
 import logging
 from collections.abc import Callable
 from dataclasses import dataclass, field, replace
-from typing import NamedTuple
 
 import qbittorrentapi
 
@@ -12,12 +11,15 @@ from .clock import Clock
 from .config import ImportsSettings
 from .manual_import import (
     LEAVE_PROBE,
+    NO_HELD_BACK,
     NO_PROGRESS,
     PENDING_STATE_FOR_OUTCOME,
     AttemptKind,
     CleanupEffect,
     Deferral,
     EffectStatus,
+    HeldBack,
+    HeldFile,
     ImportProbe,
     ImportProgress,
     Outcome,
@@ -672,6 +674,12 @@ class _ReadyClock:
         return True
 
 
+def _unmatched(probe: ImportProbe) -> HeldBack:
+    """The files the probe matched to no episode, as the download's held-back files."""
+
+    return HeldBack(files=tuple(HeldFile(name) for name in probe.unmatched_files))
+
+
 def _exhausted_outcome(probe: ImportProbe) -> Outcome:
     """The truthful label for a row graduating with its wait uncredited (the deadline, or the credit cap)."""
 
@@ -683,11 +691,12 @@ def _exhausted_outcome(probe: ImportProbe) -> Outcome:
     return Outcome.NOT_READY
 
 
-class _TerminalDetail(NamedTuple):
+@dataclass(frozen=True, slots=True)
+class _TerminalDetail:
     """The coda facts a terminal outcome carries: the imported files count, or the files a hand import places."""
 
     files: int | None = None
-    unmatched_files: tuple[str, ...] = ()
+    held_back: HeldBack = NO_HELD_BACK
 
 
 _NO_DETAIL = _TerminalDetail()
@@ -732,7 +741,7 @@ class _MonitorRow:
             outcome=outcome,
             import_done=detail.files,
             import_total=detail.files,
-            unmatched_files=detail.unmatched_files,
+            held_back=detail.held_back,
             phase_elapsed_s=now - self.dl_start,
         )
 
@@ -877,7 +886,7 @@ class MonitorPass:
                 label=record.display_label,
                 outcome=outcome,
                 carried_over=row.carried_over,
-                unmatched_files=row.view.unmatched_files,
+                held_back=row.view.held_back,
             )
         )
 
@@ -952,10 +961,10 @@ class MonitorPass:
             self._terminal(Outcome.IMPORTED, row, _TerminalDetail(files=probe.target_count or None))
         elif probe.unmatched_files:
             # Nothing to wait for: the deadline would only repeat the answer. Kept for a human, re-reported next run.
-            self._terminal(Outcome.UNMATCHED, row, _TerminalDetail(unmatched_files=probe.unmatched_files))
-        elif probe.hand_import_files:
+            self._terminal(Outcome.UNMATCHED, row, _TerminalDetail(held_back=_unmatched(probe)))
+        elif probe.held_back.files:
             # The placed files are in and the rest wait on a hand import: kept, re-reported next run.
-            self._terminal(Outcome.PARTIAL, row, _TerminalDetail(unmatched_files=probe.hand_import_files))
+            self._terminal(Outcome.PARTIAL, row, _TerminalDetail(held_back=probe.held_back))
         elif at_deadline and not landed and not deferred:
             self._terminal(_exhausted_outcome(probe), row)
         elif not probe.attempted:

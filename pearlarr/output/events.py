@@ -13,7 +13,7 @@ from typing import TYPE_CHECKING, assert_never
 from .trace import CapturedTrace
 from ..config import Arr
 from ..log import EntryState
-from ..manual_import import Outcome, OutcomeCategory
+from ..manual_import import NO_HELD_BACK, HeldBack, Outcome, OutcomeCategory
 from ..seadex_types import NO_ELSEWHERE, ElsewhereCounts
 
 if TYPE_CHECKING:
@@ -491,7 +491,7 @@ class TorrentView:
     """"Files inserted" bar: both set = determinate, both None = indeterminate."""
     import_total: int | None = None
     """On a TERMINAL imported row, the ledger's final files count (`phase_elapsed_s` freezes as its wait clock)."""
-    unmatched_files: tuple[str, ...] = ()
+    held_back: HeldBack = NO_HELD_BACK
     """On a TERMINAL unmatched or partial row, the on-disk files left for a hand import."""
     speed_history: tuple[int, ...] = ()
     """Speed samples (bytes/s, stalled = 0), newest last, bounded to `SPARK_SAMPLES`."""
@@ -592,7 +592,7 @@ class TorrentGraduated:
     outcome: Outcome
     files: int | None
     waited_s: float
-    unmatched_files: tuple[str, ...] = ()
+    held_back: HeldBack = NO_HELD_BACK
     """On the `UNMATCHED` and `PARTIAL` outcomes, the on-disk files left for a hand import."""
     scope: ScopeId | None = None
 
@@ -811,7 +811,7 @@ def severity_of(event: Event) -> Severity:
             # itself, so an outcome-based tally would double-count it.
             return Severity.INFO
         case TorrentGraduated(outcome=outcome):
-            # Category-based. wait_graduation_line carries the same level.
+            # Category-based. wait_graduation_lines carries the same level.
             return _category_severity(outcome.category)
         case (
             RunStarted()

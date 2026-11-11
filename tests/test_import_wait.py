@@ -66,6 +66,7 @@ from .builders import (
     claim_al_ids,
     entry_claim,
     grab_request,
+    held_files,
     import_probe,
     make_bare_instance,
     make_categories,
@@ -77,6 +78,7 @@ from .builders import (
     make_radarr_sync,
     make_services,
     one_release_dict,
+    order_only_held_back,
     pending_import,
     pending_seed,
     two_claim_record,
@@ -1095,9 +1097,9 @@ class TestUnmatchedGraduation:
         result = mgr.check_once(view=view)
 
         assert result is not None
-        assert [(row.outcome, row.unmatched_files) for row in result.rows] == [(Outcome.UNMATCHED, self._NAMES)]
+        assert [(row.outcome, row.held_back) for row in result.rows] == [(Outcome.UNMATCHED, held_files(*self._NAMES))]
         assert [call.attempt for call in strategy.import_calls] == [AttemptKind.POLL]
-        assert view.final("h").unmatched_files == self._NAMES
+        assert view.final("h").held_back.names == self._NAMES
         assert mgr._ctx.pending_states["h"] is PendingState.DOWNLOADED
         assert set(mgr._records.rows()) == {"h"}
 
@@ -1112,7 +1114,7 @@ class TestUnmatchedGraduation:
 
         final = view.final("h")
         assert final.outcome is Outcome.UNMATCHED
-        assert final.unmatched_files == self._NAMES
+        assert final.held_back.names == self._NAMES
         assert final.phase_elapsed_s < 600
         assert [call.attempt for call in strategy.import_calls] == [AttemptKind.POLL]
         assert set(mgr._records.rows()) == {"h"}
@@ -1150,12 +1152,12 @@ class TestUnmatchedGraduation:
 class TestHeldBackGraduation:
     """A probe naming hand-import files graduates as a partial import: kept for the hand import, never retired."""
 
-    _NAMES = ("show - 03 [grp].mkv",)
+    _HELD = order_only_held_back()
 
     def _run(self, store: FakeCacheStore, qbit: FakeQbit) -> tuple[ImportWaitManager, WaitResult | None]:
-        """One run's check pass over the shared store, every poll naming the hand-import file."""
+        """One run's check pass over the shared store, every poll naming the hand-import files."""
 
-        strategy = _RecordingStrategy(completed=import_probe(files_present=False, hand_import_files=self._NAMES))
+        strategy = _RecordingStrategy(completed=import_probe(files_present=False, held_back=self._HELD))
         mgr = make_orchestration_manager(
             qbit=qbit, strategy=strategy, store=store, post_import_category="pearlarr-done"
         )
@@ -1171,7 +1173,7 @@ class TestHeldBackGraduation:
 
         for result in (first, second):
             assert result is not None
-            assert [(row.outcome, row.unmatched_files) for row in result.rows] == [(Outcome.PARTIAL, self._NAMES)]
+            assert [(row.outcome, row.held_back) for row in result.rows] == [(Outcome.PARTIAL, self._HELD)]
         assert mgr._ctx.pending_states["h"] is PendingState.DOWNLOADED
         assert set(mgr._records.rows()) == {"h"}
         assert qbit.set_category_calls == []

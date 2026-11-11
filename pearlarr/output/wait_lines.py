@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import logging
+import textwrap
 from collections import Counter
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, final
@@ -19,9 +20,13 @@ from .events import (
     clamp01,
     severity_of,
 )
-from .scan_lines import LegacyLine
+from .scan_lines import LegacyLine, kv_line
+from ..coverage import coverage_string
 from ..log import (
+    DETAIL_INDENT,
+    DETAIL_KEY_WIDTH,
     STATE_WIDTH,
+    KvLine,
     SectionRule,
     StyledLine,
     compact_duration,
@@ -31,7 +36,9 @@ from ..log import (
     indent_string,
     rule_string,
 )
-from ..manual_import import Outcome, OutcomeCategory
+from ..manual_import import HeldBack, Outcome, OutcomeCategory
+from ..seadex_types import EpisodeKey, EpisodeRecord
+from ..tvdb_orders import order_display_name
 
 if TYPE_CHECKING:
     from ..console_caps import Capabilities
@@ -46,17 +53,92 @@ MIN_LIVE_ROWS = 4
 _RESERVED_ROWS = 8
 # The sparkline needs unicode blocks and enough width not to crowd the label.
 MIN_SPARK_WIDTH = 80
+# The console names this many of a download's held-back files. The log and the notification name them all.
+_MAX_FILE_ROWS = 5
+# The console wraps an order-only record's reason at this many columns, so its rows fit a 100-column terminal.
+_REASON_WIDTH = 78
+# A ledger row's label starts two columns past an entry row's, behind the glyph and its space.
+_ROW_KEY_WIDTH = DETAIL_KEY_WIDTH + 2
+
+
+def _episodes(keys: tuple[EpisodeKey, ...]) -> str:
+    """Episode keys in a row label's notation, as "S04 E01, E05-E08"."""
+
+    return coverage_string([EpisodeRecord(season=key.season, episode=key.episode) for key in keys])
+
+
+def _order_only_reason(held: HeldBack) -> str:
+    """Why the order-only files are held, as a sentence with no capital and no closing mark."""
+
+    keys = [file.order_only for file in held.files if file.order_only is not None]
+    names = list(dict.fromkeys(order_display_name(key.order) for key in keys))
+    orders = " and ".join(names)
+    noun = "order" if len(names) == 1 else "orders"
+    if len(keys) == 1:
+        return (
+            f"this pack is numbered by the {orders} {noun}, and 1 of its files is one of the {orders} episodes "
+            "that aren't in Sonarr's list, so Pearlarr can't tell where it belongs"
+        )
+    return (
+        f"this pack is numbered by the {orders} {noun}, and {len(keys)} of its files are {orders} episodes "
+        "that aren't in Sonarr's list, so Pearlarr can't tell where they belong"
+    )
+
+
+def held_back_names(held: HeldBack, *, sep: str = ": ", quote: str = "") -> list[str]:
+    """Each held-back file's name, an order-only one behind its order's number, as "DVD S07E01: NAME"."""
+
+    names: list[str] = []
+    for file in held.files:
+        quoted = f"{quote}{file.name}{quote}"
+        names.append(quoted if file.order_only is None else f"{file.order_only.label}{sep}{quoted}")
+    return names
+
+
+def held_back_sentences(held: HeldBack) -> tuple[str, str]:
+    """A record explained by its order, in words: a sentence per kind of unfilled episode, then why its files are held.
+
+    The reason has no closing mark.
+    """
+
+    lead: list[str] = []
+    if held.missing:
+        verb = "is" if len(held.missing) == 1 else "are"
+        lead.append(f"{_episodes(held.missing)} {verb} still missing in Sonarr.")
+    if len(held.not_recommended) == 1:
+        lead.append(f"{_episodes(held.not_recommended)} has a file in Sonarr, but it isn't from a recommended release.")
+    elif held.not_recommended:
+        lead.append(
+            f"{_episodes(held.not_recommended)} have files in Sonarr, but they aren't from a recommended release."
+        )
+    reason = _order_only_reason(held)
+    return " ".join(lead), reason[0].upper() + reason[1:]
+
+
+def _unfilled_coda(held: HeldBack) -> str:
+    """The unfilled episodes of a record explained by its order, as its ledger row's coda."""
+
+    parts: list[str] = []
+    if held.missing:
+        parts.append(f"{_episodes(held.missing)} still missing in Sonarr")
+    if len(held.not_recommended) == 1:
+        parts.append(f"{_episodes(held.not_recommended)} has a file that isn't from a recommended release")
+    elif held.not_recommended:
+        parts.append(f"{_episodes(held.not_recommended)} have files that aren't from a recommended release")
+    return " · ".join(parts)
 
 
 def graduation_tail(event: TorrentGraduated) -> str:
     """The ledger line's parenthesized coda. "" when there is nothing to say."""
 
     outcome = event.outcome
+    held = event.held_back
     if outcome is Outcome.UNMATCHED:
-        # The names ride the structured log and the notification. The console gets the count and the action.
-        return f"{count_noun(len(event.unmatched_files), 'file')} matched no episode · import by hand in Sonarr"
+        return f"{count_noun(len(held.files), 'file')} matched no episode · import by hand in Sonarr"
     if outcome is Outcome.PARTIAL:
-        return f"{count_noun(len(event.unmatched_files), 'file')} held back · import by hand in Sonarr"
+        if held.explained_by_order:
+            return _unfilled_coda(held)
+        return f"{count_noun(len(held.files), 'file')} held back · import by hand in Sonarr"
     if outcome is Outcome.IMPORTED:
         parts: list[str] = []
         if event.files:
@@ -94,19 +176,43 @@ def wait_pulse_line(snapshot: WaitSnapshot) -> LegacyLine:
     return LegacyLine(logging.INFO, message)
 
 
-def wait_graduation_line(event: TorrentGraduated, caps: Capabilities) -> LegacyLine:
-    """A finished torrent's durable ledger line: glyph + word + label + coda, at `severity_of`'s level."""
+def _detail(key: str, value: str, style: str | None = None) -> KvLine:
+    """A labeled row under a ledger row: the key in the gutter, the value under the row's label."""
 
+    return KvLine(key=key, value=value, key_width=_ROW_KEY_WIDTH, value_style=style, indent=DETAIL_INDENT, sep="")
+
+
+def _held_back_details(held: HeldBack, caps: Capabilities, style: str) -> list[KvLine]:
+    """The rows under a held-back ledger row: the reason, when the order explains it, then `_MAX_FILE_ROWS` files."""
+
+    rows: list[KvLine] = []
+    if held.explained_by_order:
+        reason = textwrap.wrap(_order_only_reason(held), width=_REASON_WIDTH)
+        rows += [_detail("" if row else "reason", text, style) for row, text in enumerate(reason)]
+    names = held_back_names(held, sep="  ")
+    rows += [_detail("" if row else "files", name) for row, name in enumerate(names[:_MAX_FILE_ROWS])]
+    if len(names) > _MAX_FILE_ROWS:
+        rows.append(_detail("", f"{'…' if caps.unicode else '...'} +{len(names) - _MAX_FILE_ROWS} more"))
+    return rows
+
+
+def wait_graduation_lines(event: TorrentGraduated, caps: Capabilities) -> list[LegacyLine]:
+    """A finished torrent's durable ledger line (glyph + word + label + coda), then its held-back files' rows.
+
+    Every line is at `severity_of`'s level.
+    """
+
+    level = int(severity_of(event))
+    style = event.outcome.style if caps.color else ""
     glyph = event.outcome.glyph(use_unicode=caps.unicode)
     line = f"{glyph} {event.outcome.word.ljust(STATE_WIDTH)} {event.label}"
     tail = graduation_tail(event)
     if tail:
         line += f"  ({tail})"
-    return LegacyLine(
-        int(severity_of(event)),
-        indent_string(line),
-        StyledLine(style=event.outcome.style if caps.color else ""),
-    )
+    return [
+        LegacyLine(level, indent_string(line), StyledLine(style=style)),
+        *(kv_line(detail, level=level) for detail in _held_back_details(event.held_back, caps, style)),
+    ]
 
 
 def wait_tally_lines(event: WaitFinished) -> list[LegacyLine]:

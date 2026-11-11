@@ -27,6 +27,7 @@ from pearlarr.grab_placement import (
     place_release,
 )
 from pearlarr.manual_import import (
+    NO_ORDER_ONLY,
     EntryNames,
     EntryWindow,
     FileEpisodeMap,
@@ -38,6 +39,7 @@ from pearlarr.placement_types import (
     EMPTY_LISTING,
     NO_EVIDENCE,
     EpisodeAssignment,
+    EpisodeIndex,
     ListingEvidence,
     ListingsRead,
     PlacementVerdict,
@@ -51,10 +53,12 @@ from pearlarr.seadex_types import (
     FlaggedUrl,
     GrabHold,
     MatchedEpisode,
+    OrderOnlyKey,
     ParsedFileInfo,
     SeadexDict,
     SonarrEpisode,
 )
+from pearlarr.tvdb_orders import OrderRow, SeriesOrdering
 
 from .builders import (
     ALIASED_PACK,
@@ -550,6 +554,63 @@ class TestPlaceHeld:
 
         assert placement.hold is GrabHold.MISNUMBERED
         assert placement.assignment.assigned == {"show - s01e01.mkv": (101,), "show - s01e02.mkv": (102,)}
+        assert placement.records == ()
+
+    _DVD: ClassVar[tuple[OrderRow, ...]] = (
+        OrderRow(1, 1, 101, None),
+        OrderRow(1, 2, 102, None),
+        OrderRow(1, 3, 501, None),
+        OrderRow(1, 4, 103, None),
+    )
+    """A DVD order that counts the special as the season's third episode, so the aired third is its fourth."""
+
+    @staticmethod
+    def _counted_special(dvd: tuple[OrderRow, ...]) -> tuple[list[SonarrEpisode], SonarrEpisode, EpisodeIndex]:
+        """A three-episode season whose absolutes count a special between E02 and E03, with `dvd` as its DVD order.
+
+        Returns the season, the special, and the series index, which also has the next season's opener. Each
+        episode's TVDB id is its Sonarr id.
+        """
+
+        season = [
+            sonarr_ep(1, 1, ep_id=101, episode_file_id=0, absolute=1, tvdb_id=101),
+            sonarr_ep(1, 2, ep_id=102, episode_file_id=0, absolute=2, tvdb_id=102),
+            sonarr_ep(1, 3, ep_id=103, episode_file_id=0, absolute=4, tvdb_id=103),
+        ]
+        special = sonarr_ep(0, 1, ep_id=501, episode_file_id=0, absolute=3, tvdb_id=501)
+        opener = sonarr_ep(2, 1, ep_id=201, episode_file_id=0, absolute=5, tvdb_id=201)
+        return season, special, episode_index([*season, special, opener], SeriesOrdering({"dvd": dvd}, None))
+
+    def test_a_pack_numbered_by_the_dvd_order_is_grabbed_for_the_season_and_for_the_special(self) -> None:
+        # The pack is keyed on past the season's end because it follows the DVD order. The aired reading refuses
+        # its last two files. The order puts the third on the special and the fourth on the aired third episode.
+        season, special, series = self._counted_special(self._DVD)
+        files = [
+            SeedFile(name, 10 * n, _matched(1, n) if n < 4 else _bare_key(1, n)) for n, name in enumerate(_PACK, 1)
+        ]
+        listed = torrent_evidence(entry_window(1, (101, 102, 103)), entry_window(2, (501,)))
+        torrent = known_torrent(indexes={7: series}, evidence=listed)
+
+        for_season = place_release(files, seed_scope(episode_index(season), series), torrent)
+        for_special = place_release(files, seed_scope(episode_index([special]), series, al_id=2), torrent)
+
+        assert (for_season.hold, for_special.hold) == (None, None)
+        assert for_season.claimed_ids == {101, 102, 103}
+        assert for_season.records[-1] == EpisodeRecord(season=1, episode=3, size=40)
+        assert for_special.claimed_ids == {501}
+        assert for_special.records == (EpisodeRecord(season=0, episode=1, size=30),)
+
+    def test_a_pack_the_order_reads_onto_episodes_no_title_holds_is_held_for_a_hand_import(self) -> None:
+        # The pack's two files are keyed from the special's position on. This DVD order reads the first as the
+        # special and the second as the next season's opener, and nothing lists the torrent under either.
+        season, _special, series = self._counted_special((*self._DVD[:3], OrderRow(1, 4, 201, None)))
+        files = [SeedFile(_PACK[2], 30, _matched(1, 3)), SeedFile(_PACK[3], 40, _bare_key(1, 4))]
+        scope = seed_scope(episode_index(season), series)
+
+        placement = place_release(files, scope, known_torrent(indexes={7: series}))
+
+        assert verdicts_of(placement.assignment) == {PlacementVerdict.OTHER_ORDER_ELSEWHERE}
+        assert placement.hold is GrabHold.MISNUMBERED
         assert placement.records == ()
 
     @staticmethod
@@ -1362,6 +1423,37 @@ class TestEntryPlacements:
         assert dict(seeds["h1"].placements) == {"show - s01e03.mkv": (103,), "show - s01e04.mkv": (104,)}
 
 
+class TestOrderOnlySeed:
+    """A bare-numbered pack one file longer than its season: the DVD order splits the opener in two halves."""
+
+    _RUN: ClassVar[list[str]] = [f"[grp] Show Ending S1 - {n:02d} [ABCD1234].mkv" for n in range(1, 14)]
+    _DVD: ClassVar[tuple[OrderRow, ...]] = (
+        OrderRow(7, 1, 9001, None),
+        OrderRow(7, 2, 9002, None),
+        *(OrderRow(7, n + 1, 400 + n, None) for n in range(2, 13)),
+        OrderRow(7, 14, 501, None),
+        OrderRow(7, 21, 401, None),
+    )
+    """The DVD order: two halves Sonarr doesn't list, the aired second episode on, then the whole opener."""
+
+    def test_the_seed_carries_the_halves_dvd_keys_onto_the_record(self) -> None:
+        season = [sonarr_ep(4, n, ep_id=400 + n, episode_file_id=0, tvdb_id=400 + n) for n in range(1, 13)]
+        opener = sonarr_ep(5, 1, ep_id=501, episode_file_id=0, tvdb_id=501)
+        series = episode_index([*season, opener], SeriesOrdering({"dvd": self._DVD}, None))
+        scope = seed_scope(episode_index(season), series, names=EntryNames("Show", ("Show Ending",)))
+        files = [SeedFile(name, 10 * n, parsed_info()) for n, name in enumerate(self._RUN, 1)]
+        placement = place_release(files, scope, new_torrent(scope))
+        release = SeedRelease("grp", url_item(url="u", infohash="h1"), "h1", placement)
+
+        seed = build_pending_seed(release, scope, entry_facts())
+
+        assert seed.order_only == {
+            normalize_basename(self._RUN[0]): OrderOnlyKey("dvd", EpisodeKey(7, 1)),
+            normalize_basename(self._RUN[1]): OrderOnlyKey("dvd", EpisodeKey(7, 2)),
+        }
+        assert seed.record_at(_STAMP, fresh=True).order_only == seed.order_only
+
+
 class TestPendingSeedRecordAt:
     """The record a seed persists: a new one, or an accretion onto the stored one."""
 
@@ -1372,6 +1464,7 @@ class TestPendingSeedRecordAt:
             placements={"show - 01.mkv": (101,)},
             excluded=("show - 02.mkv",),
             hand_import_files=(),
+            order_only=NO_ORDER_ONLY,
             claim=claim,
             stored=None,
         )
@@ -1409,6 +1502,7 @@ class TestPendingSeedRecordAt:
             placements={"show - 02.mkv": (102,)},
             excluded=("show - 03.mkv",),
             hand_import_files=(),
+            order_only=NO_ORDER_ONLY,
             claim=claim,
             stored=stored,
         )
@@ -1440,6 +1534,7 @@ class TestPendingSeedRecordAt:
             placements={},
             excluded=(),
             hand_import_files=(),
+            order_only=NO_ORDER_ONLY,
             claim=entry_claim(),
             stored=stored,
         )
@@ -1453,6 +1548,7 @@ class TestPendingSeedRecordAt:
             placements={},
             excluded=(),
             hand_import_files=(),
+            order_only=NO_ORDER_ONLY,
             claim=entry_claim(),
             stored=stored,
         )
@@ -1472,6 +1568,17 @@ class TestPendingSeedRecordAt:
 
         assert kept.hand_import_files == ("show - 02.mkv",)
         assert joined.hand_import_files == ("show - 02.mkv", "show - 03.mkv")
+
+    def test_accreted_joins_the_order_only_keys(self) -> None:
+        halves = [normalize_basename(f"[grp] Show Ending S1 - {n:02d} [ABCD1234].mkv") for n in (1, 2)]
+        keys = {halves[0]: OrderOnlyKey("dvd", EpisodeKey(7, 1)), halves[1]: OrderOnlyKey("dvd", EpisodeKey(7, 2))}
+        stored = pending_import(infohash="h1", hand_import_files=halves[:1], order_only={halves[0]: keys[halves[0]]})
+
+        joined = pending_seed(
+            "h1", stored=stored, hand_import_files=(halves[1],), order_only={halves[1]: keys[halves[1]]}
+        ).record_at(_STAMP, fresh=False)
+
+        assert joined.order_only == keys
 
     def test_fresh_restarts_the_stored_record(self) -> None:
         stored = pending_import(infohash="h1", added_at="2026-01-01 00:00:00")
@@ -1496,7 +1603,7 @@ class TestBuildUnscopedSeed:
 
         assert seed.stored is None
         assert seed.facts == torrent_facts(is_dual_audio=True)
-        assert seed.placements == {} and seed.excluded == ()
+        assert seed.placements == {} and seed.excluded == () and seed.order_only == {}
         assert seed.claim == entry_claim(
             al_id=9, series_id=0, title="Movie", url="https://releases.moe/9", guards=facts.guards
         )

@@ -38,6 +38,8 @@ from pearlarr.manual_import import (
     EntryNames,
     FileEpisodeMap,
     GuardFacts,
+    HeldBack,
+    HeldFile,
     ImportProbe,
     ImportProgress,
     ImportWaitMode,
@@ -62,6 +64,7 @@ from pearlarr.seadex_types import (
     AlternateTitle,
     ArrReleases,
     CommandResource,
+    EpisodeKey,
     EpisodeRecord,
     GrabHold,
     HistoryPage,
@@ -69,6 +72,7 @@ from pearlarr.seadex_types import (
     Language,
     ManualImportCandidate,
     MovieFile,
+    OrderOnlyKey,
     ProgressSink,
     QualityDefinition,
     QueueRecord,
@@ -81,7 +85,7 @@ from pearlarr.seadex_types import (
 )
 from pearlarr.sonarr_episodes import sonarr_series_fingerprint
 from pearlarr.stamps import parse_stamp, stamp_of
-from pearlarr.tvdb_orders import NO_ORDERING, OFFICIAL_ORDER
+from pearlarr.tvdb_orders import NO_ORDERING, OFFICIAL_ORDER, OrderRow, SeriesOrdering
 
 from .builders import (
     PENDING_ADDED,
@@ -2654,6 +2658,30 @@ class TestPlacementDebugLine:
         assert placement.hold is GrabHold.INPUT_UNREAD
         assert [r.message for r in caplog.records] == [f"{_SEED_URL}: placed nothing (not grabbed: a read failed)"]
 
+    def test_a_file_left_for_a_hand_import_is_named_with_why(self, caplog: pytest.LogCaptureFixture) -> None:
+        # A Blu-ray pack numbers 13 files for a 12-episode season: the DVD order splits the opener in two halves
+        # Sonarr doesn't list, numbers the aired second episode on after them, and keeps the whole opener last.
+        season = [sonarr_ep(4, n, ep_id=400 + n, episode_file_id=0, tvdb_id=400 + n) for n in range(1, 13)]
+        dvd = (OrderRow(7, 1, 9001, None), OrderRow(7, 2, 9002, None))
+        dvd += (*(OrderRow(7, n + 1, 400 + n, None) for n in range(2, 13)), OrderRow(7, 21, 401, None))
+        series = episode_index(season, SeriesOrdering({"dvd": dvd}, None))
+        names = [f"[grp] Show Ending S1 - {n:02d} [ABCD1234].mkv" for n in range(1, 14)]
+        scope = seed_scope(series, series, names=EntryNames("Show", ("Show Ending",)))
+        logger = debug_logger("pearlarr-placement-line-orders")
+        strat = make_bare_instance(SonarrSync, logger=logger)
+        placement = place_release([SeedFile(name, 1000, parsed_info()) for name in names], scope, new_torrent(scope))
+
+        with caplog.at_level("DEBUG"):
+            strat._log_placements(EntryPlacements(scope, {_SEED_URL: placement}))
+
+        halves = ", ".join(
+            f"{normalize_basename(names[n - 1])} (another TVDB order, not in Sonarr's list: DVD S07E0{n})"
+            for n in (1, 2)
+        )
+        assert [r.message for r in caplog.records] == [
+            f"{_SEED_URL}: placed S04 E02-E12; left for a hand import: {halves}"
+        ]
+
 
 class TestSonarrProcessAlIdOrdersUnread:
     """A grab reads the title's series and every stored record's series, and asks whether any has no order record."""
@@ -3067,7 +3095,7 @@ class TestHeldBackFiles:
         first = strat.import_completed(self._record(), "/d", AttemptKind.POLL)
         second = strat.import_completed(self._record(), "/d", AttemptKind.POLL)
 
-        assert first.hand_import_files == (self._NAMES[2],)
+        assert first.held_back.names == (self._NAMES[2],)
         assert first.files_present is False
         assert second == first
         assert sonarr.execute_calls == []
@@ -3082,7 +3110,7 @@ class TestHeldBackFiles:
 
         probe = strat.import_completed(stored, "/d", AttemptKind.POLL)
 
-        assert probe.hand_import_files == (self._NAMES[2],)
+        assert probe.held_back.names == (self._NAMES[2],)
         assert probe.files_present is False
         assert sonarr.execute_calls == []
 
@@ -3093,9 +3121,9 @@ class TestHeldBackFiles:
 
         done = strat.import_completed(self._record(), "/d", AttemptKind.POLL)
 
-        assert held.hand_import_files == (self._NAMES[2],)
+        assert held.held_back.names == (self._NAMES[2],)
         assert done.files_present is True
-        assert done.hand_import_files == ()
+        assert done.held_back.names == ()
 
     def test_an_untagged_hand_import_at_a_listed_size_retires_the_record(self) -> None:
         strat, sonarr = self._strat()
@@ -3105,7 +3133,7 @@ class TestHeldBackFiles:
         done = strat.import_completed(self._record(), "/d", AttemptKind.POLL)
 
         assert done.files_present is True
-        assert done.hand_import_files == ()
+        assert done.held_back.names == ()
 
     def test_a_plain_skip_beside_the_held_back_file_warns_once_for_itself_alone(self) -> None:
         strat, _ = self._strat("Extras.mkv")
@@ -3114,7 +3142,7 @@ class TestHeldBackFiles:
         probe = strat.import_completed(self._record(), "/d", AttemptKind.POLL)
         strat.import_completed(self._record(), "/d", AttemptKind.POLL)
 
-        assert probe.hand_import_files == (self._NAMES[2],)
+        assert probe.held_back.names == (self._NAMES[2],)
         warnings = [m for m in diagnostic_messages(recording, Severity.WARNING) if "could not be matched" in m]
         assert len(warnings) == 1
         assert ": 1 file could not be matched" in warnings[0]
@@ -3129,7 +3157,43 @@ class TestHeldBackFiles:
         probe = strat.import_completed(pending, "/d", AttemptKind.POLL)
 
         assert probe.files_present is True
-        assert probe.hand_import_files == ()
+        assert probe.held_back.names == ()
+
+
+class TestOrderOnlyHalves:
+    """A bare-numbered pack whose split opener's halves only the DVD order numbers, its other eleven files in."""
+
+    _RUN: ClassVar[list[str]] = [f"[grp] Show Ending S1 - {n:02d} [ABCD1234].mkv" for n in range(1, 14)]
+    _KEYS: ClassVar[tuple[OrderOnlyKey, ...]] = (
+        OrderOnlyKey("dvd", EpisodeKey(7, 1)),
+        OrderOnlyKey("dvd", EpisodeKey(7, 2)),
+    )
+
+    def test_the_probe_keys_each_half_by_its_leaf_and_names_the_empty_opener(self) -> None:
+        run = [normalize_basename(name) for name in self._RUN]
+        pending = pending_import(
+            release_group="grp",
+            seadex_files=self._RUN,
+            file_episode_map={name: [400 + n] for n, name in enumerate(run[2:], start=2)},
+            hand_import_files=run[:2],
+            order_only=dict(zip(run[:2], self._KEYS, strict=True)),
+            ordered_episode_ids=[400 + n for n in range(1, 13)],
+        )
+        strat, sonarr = _make_sonarr_for_import(
+            candidates=[manual_candidate(f"/d/{name}") for name in self._RUN],
+            episodes=[
+                sonarr_ep(4, 1, ep_id=401, episode_file_id=0),
+                *(sonarr_ep(4, n, ep_id=400 + n, release_group="grp") for n in range(2, 13)),
+            ],
+        )
+
+        probe = strat.import_completed(pending, "/d", AttemptKind.POLL)
+
+        assert probe.held_back == HeldBack(
+            files=tuple(HeldFile(name, key) for name, key in zip(self._RUN[:2], self._KEYS, strict=True)),
+            missing=(EpisodeKey(4, 1),),
+        )
+        assert sonarr.execute_calls == []
 
 
 class TestDefaultQualityWarning:

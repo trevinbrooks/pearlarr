@@ -29,7 +29,7 @@ from pydantic import (
 )
 from seadex import Tag, TorrentRecord, Tracker
 
-from .tvdb_orders import OFFICIAL_ORDER
+from .tvdb_orders import OFFICIAL_ORDER, order_display_name
 
 
 @dataclass
@@ -71,7 +71,9 @@ class GrabHold(StrEnum):
     MISNUMBERED = "misnumbered"
     """A pack with a `PlacementVerdict.MISNUMBERED` file of the entry's own window: a file whose own numbers
     disagree, or a specials pack numbered another way than its listing. Grabbed, it would import onto the wrong
-    episodes, so it's left for a hand import."""
+    episodes, so it's left for a hand import. Also a pack with a file another TVDB order reads outside the entry's
+    window, where no listed title placed it (`PlacementVerdict.OTHER_ORDER_ELSEWHERE`), and nothing of it placed on
+    the entry."""
     INPUT_UNREAD = "a read failed"
     """A SeaDex listing for the series, Sonarr's parse of any of the url's video files while one is left to place,
     or the episode list of a series the record claims couldn't be read this run. Without the listing nothing is
@@ -214,7 +216,7 @@ def flagged_urls(seadex_dict: SeadexDict) -> list[FlaggedUrl]:
 # Folded into the config's selection digest: bump when the release-selection
 # rules change in code, or a fix leaves earlier verdicts in doubt, so every
 # cached verdict re-checks once after an upgrade.
-SELECTION_RULES_VERSION: int = 14
+SELECTION_RULES_VERSION: int = 15
 
 SONARR_MISSING_KEY: int = 999
 """Out-of-range stand-in for a missing Sonarr `seasonNumber`/`episodeNumber`, never colliding with a real one."""
@@ -231,6 +233,38 @@ class EpisodeKey(NamedTuple):
         """The key as `S01E02`."""
 
         return f"S{self.season:02d}E{self.episode:02d}"
+
+
+@dataclass(frozen=True, slots=True)
+class OrderOnlyKey:
+    """An episode that another TVDB order of a series numbers and Sonarr doesn't list: one half of a split episode, say."""
+
+    order: str
+    """The order's type name, as TVDB and SkyHook spell it (`dvd`, `alternate`, ...)."""
+
+    key: EpisodeKey
+    """The `(season, episode)` the order gives it."""
+
+    @property
+    def label(self) -> str:
+        """The key under its order's name, as `DVD S07E01`."""
+
+        return f"{order_display_name(self.order)} {self.key.label}"
+
+    def to_json(self) -> dict[str, Any]:
+        """The plain dict persisted inside a pending record."""
+
+        return {"order": self.order, "season": self.key.season, "episode": self.key.episode}
+
+    @classmethod
+    def from_json(cls, raw: Any) -> "OrderOnlyKey | None":
+        """Rebuild from the persisted dict, or None when `raw` isn't one."""
+
+        match raw:
+            case {"order": str(order), "season": int(season), "episode": int(episode)}:
+                return cls(order, EpisodeKey(season, episode))
+            case _:
+                return None
 
 
 def season_episode_key(season: int | None, episode: int | None) -> EpisodeKey:

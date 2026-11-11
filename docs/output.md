@@ -456,7 +456,7 @@ The end-of-run pass opened, watching `total` torrents. `kind` is `monitor` (wait
 
 ### `torrent_graduated`
 
-One watched torrent reached a terminal outcome. `message` is the outcome word. `unmatched_files` names the files left for a hand import, only on the `unmatched` and `partial` outcomes.
+One watched torrent reached a terminal outcome. `message` is the outcome word. `unmatched_files` names the files left for a hand import, only on the `unmatched` and `partial` outcomes. On `partial`, a file numbered by another TVDB order as an episode Sonarr doesn't list is named behind that number, as `DVD S07E01: name`, and when every file is, `detail` says which episodes are still unfilled and why the files are held.
 
 ```json
 {

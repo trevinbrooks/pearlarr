@@ -67,6 +67,17 @@ class TargetJudgment(NamedTuple):
 _NO_FILE = TargetJudgment(EpisodeFileStatus.ABSENT, own_copy=False)
 
 
+@dataclass(frozen=True, slots=True, kw_only=True)
+class UnfilledTargets:
+    """The targets holding neither a recommended file nor an untagged copy of this torrent's, in target order."""
+
+    missing: tuple[int, ...]
+    """The ones holding no file (`EpisodeFileStatus.ABSENT`)."""
+
+    not_recommended: tuple[int, ...]
+    """The ones holding a file."""
+
+
 @dataclass(frozen=True, slots=True)
 class TargetStatuses:
     """Each intended target's file status, plus the targets holding a copy of one of this torrent's files."""
@@ -104,16 +115,27 @@ class TargetStatuses:
 
         return bool(self.by_id) and all(s is EpisodeFileStatus.RECOMMENDED for s in self.by_id.values())
 
+    def unfilled(self) -> UnfilledTargets:
+        """The targets a hand import has yet to fill, split by whether they hold a file."""
+
+        unfilled = [
+            (ep_id, status)
+            for ep_id, status in self.by_id.items()
+            if status is not EpisodeFileStatus.RECOMMENDED and ep_id not in self.holding_untagged_copy
+        ]
+        return UnfilledTargets(
+            missing=tuple(ep_id for ep_id, status in unfilled if status is EpisodeFileStatus.ABSENT),
+            not_recommended=tuple(ep_id for ep_id, status in unfilled if status is not EpisodeFileStatus.ABSENT),
+        )
+
     def filled_by_hand(self) -> bool:
         """Whether every target holds a recommended file or an untagged copy of this torrent's: a hand import done.
 
         Sonarr reads no group off a file name that carries none, so `all_done` alone never sees that hand import.
         """
 
-        return bool(self.by_id) and all(
-            status is EpisodeFileStatus.RECOMMENDED or ep_id in self.holding_untagged_copy
-            for ep_id, status in self.by_id.items()
-        )
+        unfilled = self.unfilled()
+        return bool(self.by_id) and not unfilled.missing and not unfilled.not_recommended
 
     def needing_import(self) -> set[int]:
         """The never-skip set: every intended id NOT already holding a recommended file."""

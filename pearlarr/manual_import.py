@@ -24,7 +24,7 @@ from enum import Enum, StrEnum, auto
 from types import MappingProxyType
 from typing import Any, NamedTuple
 
-from .seadex_types import RemotePathMapping, SonarrEpisode, coerce_int, unambiguous
+from .seadex_types import EpisodeKey, OrderOnlyKey, RemotePathMapping, SonarrEpisode, coerce_int, unambiguous
 
 
 def normalize_basename(name: str) -> str:
@@ -274,6 +274,50 @@ type FileEpisodeMap = Mapping[str, tuple[int, ...]]
 """A read view of normalized basename -> episode ids: a record's map, a placement's, or both joined (`joined_map`).
 Producers normalize the keys, and readers take them as given."""
 
+NO_ORDER_ONLY: Mapping[str, OrderOnlyKey] = MappingProxyType({})
+"""No file keyed by another TVDB order."""
+
+
+@dataclass(frozen=True, slots=True)
+class HeldFile:
+    """One of a download's on-disk files left for a hand import."""
+
+    name: str
+    """Its on-disk leaf."""
+
+    order_only: OrderOnlyKey | None = None
+    """Its key, when only another TVDB order numbers it (`PendingImport.order_only`)."""
+
+
+@dataclass(frozen=True, slots=True, kw_only=True)
+class HeldBack:
+    """A download's on-disk files left for a hand import, and the record's window episodes still unfilled."""
+
+    files: tuple[HeldFile, ...] = ()
+
+    missing: tuple[EpisodeKey, ...] = ()
+    """The record's unfilled window episodes that hold no file (`UnfilledTargets.missing`)."""
+
+    not_recommended: tuple[EpisodeKey, ...] = ()
+    """The record's unfilled window episodes that hold a file (`UnfilledTargets.not_recommended`)."""
+
+    @property
+    def names(self) -> tuple[str, ...]:
+        """The files' on-disk leaves."""
+
+        return tuple(file.name for file in self.files)
+
+    @property
+    def explained_by_order(self) -> bool:
+        """Whether the order explains the record: it has files, each with an order-only key, and an unfilled episode."""
+
+        keyed = bool(self.files) and all(file.order_only is not None for file in self.files)
+        return keyed and bool(self.missing or self.not_recommended)
+
+
+NO_HELD_BACK = HeldBack()
+"""No file left for a hand import."""
+
 
 @dataclass(frozen=True, slots=True, kw_only=True)
 class ImportProbe:
@@ -310,10 +354,10 @@ class ImportProbe:
     """The download's on-disk files no episode claimed (one per distinct basename), when that is all the poll
     found. Non-empty only from `unmatched()`: `files_present` and `command_issued` False, `deferral` NONE."""
 
-    hand_import_files: tuple[str, ...] = ()
+    held_back: HeldBack = NO_HELD_BACK
     """The download's on-disk files the grab left for a hand import (`PendingImport.hand_import_files`), once every
-    placed file is in and the hand import isn't. Non-empty only from `hand_import()`: `files_present` and
-    `command_issued` False."""
+    placed file is in and the hand import isn't. Its names are non-empty only from `hand_import()`: `files_present`
+    and `command_issued` False."""
 
     def __post_init__(self) -> None:
         object.__setattr__(self, "placements", MappingProxyType(dict(self.placements)))
@@ -343,10 +387,10 @@ class ImportProbe:
         return cls(files_present=False, command_issued=False, unmatched_files=names)
 
     @classmethod
-    def hand_import(cls, names: tuple[str, ...]) -> "ImportProbe":
+    def hand_import(cls, held: HeldBack) -> "ImportProbe":
         """Every placed file is in, but files the grab left for a hand import keep the record pending."""
 
-        return cls(files_present=False, command_issued=False, hand_import_files=names)
+        return cls(files_present=False, command_issued=False, held_back=held)
 
 
 LEAVE_PROBE = ImportProbe(attempted=False, files_present=False, command_issued=False)
@@ -628,11 +672,11 @@ def _normalized_map(entries: FileEpisodeMap) -> dict[str, tuple[int, ...]]:
     return normalized
 
 
-def _normalized_keys(by_name: Mapping[str, int]) -> dict[str, int]:
+def _normalized_keys[V](by_name: Mapping[str, V]) -> dict[str, V]:
     """`by_name` keyed by normalized leaf.
 
     A name whose spellings disagree on the value is dropped, unlike the map's first-wins fold: a file with no size
-    is never read as misplaced, where a guessed size could misjudge it.
+    is never read as misplaced and one with no key prints its bare name, where a guessed value could misjudge it.
     """
 
     return unambiguous((normalized_leaf(name), value) for name, value in by_name.items())
@@ -917,21 +961,27 @@ class PendingImport:
     never reads a file as misplaced."""
 
     hand_import_files: tuple[str, ...] = ()
-    """Normalized basenames of the video files the grab left for a hand import (misnumbered, or refuted by their
-    run's titles), which keep the record pending once the placed files are in. Folded and deduplicated in order as
+    """Normalized basenames of the video files the grab left for a hand import (misnumbered, refuted by their
+    run's titles, or numbered by another TVDB order onto no episode it could place), which keep the record pending
+    once the placed files are in. Folded and deduplicated in order as
     the record is built, never a name the map holds, and a name here is never excluded. Empty on rows written before
     it was kept."""
+
+    order_only: Mapping[str, OrderOnlyKey] = NO_ORDER_ONLY
+    """Normalized basename -> its key, for each hand-import file that only another TVDB order numbers. Folded as the
+    record is built to names among `hand_import_files`, and wrapped read-only. Empty on rows written before it was
+    kept."""
 
     cross_seed: bool = False
     """Whether the torrent is a cross-seed: it held the release's files under another hash than SeaDex's
     (`SeadexUrlItem.cross_seed_hash`), so Pearlarr never added it. A forced `move` import of it runs as `auto`."""
 
     def __post_init__(self) -> None:
-        # Fold the map, the exclusions, the hand-import files and the by-name sizes so readers can take the names as
-        # normalized, the map's ids as non-zero, and no name as two of mapped, excluded and left for a hand import.
-        # The map wins, then the hand import: a title's own window can leave a file for a hand import that a
-        # sibling's earlier grab excluded as another title's, and the record must still say so. Detach the maps and
-        # wrap them read-only.
+        # Fold the map, the exclusions, the hand-import files, their order-only keys and the by-name sizes so readers
+        # can take the names as normalized, the map's ids as non-zero, and no name as two of mapped, excluded and left
+        # for a hand import. The map wins, then the hand import: a title's own window can leave a file for a hand
+        # import that a sibling's earlier grab excluded as another title's, and the record must still say so. Detach
+        # the maps and wrap them read-only.
         mapped = _normalized_map(self.file_episode_map)
         hand_import = tuple(name for name in _normalized_names_in_order(self.hand_import_files) if name not in mapped)
         excluded = (
@@ -939,9 +989,11 @@ class PendingImport:
             for name in _normalized_names_in_order(self.excluded_files)
             if name not in mapped and name not in hand_import
         )
+        order_only = {name: key for name, key in _normalized_keys(self.order_only).items() if name in hand_import}
         object.__setattr__(self, "file_episode_map", MappingProxyType(mapped))
         object.__setattr__(self, "excluded_files", tuple(excluded))
         object.__setattr__(self, "hand_import_files", hand_import)
+        object.__setattr__(self, "order_only", MappingProxyType(order_only))
         object.__setattr__(self, "sizes_by_name", MappingProxyType(_normalized_keys(self.sizes_by_name)))
 
     @property
@@ -1047,10 +1099,18 @@ class PendingImport:
 
         return self._or_self(replace(self, sizes_by_name=self.sizes_by_name or sizes))
 
-    def with_hand_import_files(self, names: Iterable[str]) -> "PendingImport":
-        """The record with `names` joined to its hand-import files and lifted out of its exclusions."""
+    def with_hand_import_files(self, names: Iterable[str], order_only: Mapping[str, OrderOnlyKey]) -> "PendingImport":
+        """The record with `names` joined to its hand-import files and lifted out of its exclusions.
 
-        return self._or_self(replace(self, hand_import_files=(*self.hand_import_files, *names)))
+        `order_only` holds their keys. A name the record already keys keeps its own.
+        """
+
+        joined = replace(
+            self,
+            hand_import_files=(*self.hand_import_files, *names),
+            order_only={**_normalized_keys(order_only), **self.order_only},
+        )
+        return self._or_self(joined)
 
     def with_claim(self, claim: EntryClaim) -> "PendingImport":
         """The record with `claim` joined and its cleanup flag cleared (new files to import make it active again).
@@ -1083,6 +1143,7 @@ class PendingImport:
             "awaiting_cleanup": self.awaiting_cleanup,
             "sizes_by_name": dict(self.sizes_by_name),
             "hand_import_files": list(self.hand_import_files),
+            "order_only": {name: key.to_json() for name, key in self.order_only.items()},
             "cross_seed": self.cross_seed,
         }
 
@@ -1110,6 +1171,11 @@ class PendingImport:
                 if "hand_import_files" in raw
                 else _unplaced_listed_files(seadex_files, mapped, excluded)
             ),
+            order_only={
+                name: key
+                for name, entry in raw.get("order_only", {}).items()
+                if (key := OrderOnlyKey.from_json(entry)) is not None
+            },
             cross_seed=raw.get("cross_seed", False),
         )
 

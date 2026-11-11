@@ -8,6 +8,16 @@ from typing import Any, NamedTuple, Self
 OFFICIAL_ORDER = "official"
 """SkyHook's and Sonarr's name for TVDB's aired order, the order Sonarr numbers a series by default."""
 
+_DISPLAY_NAMES: Mapping[str, str] = MappingProxyType(
+    {"dvd": "DVD", "altdvd": "alternate DVD", "alttwo": "second alternate"}
+)
+
+
+def order_display_name(order: str) -> str:
+    """An order's type name as a message prints it (`dvd` as "DVD"). A type with no entry prints as stored."""
+
+    return _DISPLAY_NAMES.get(order, order)
+
 
 class OrderRow(NamedTuple):
     """One episode as one TVDB order numbers it."""

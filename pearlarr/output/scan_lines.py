@@ -130,7 +130,7 @@ def _info(message: str, payload: ConsoleRender) -> LegacyLine:
     return LegacyLine(logging.INFO, message, payload)
 
 
-def _kv_line(payload: KvLine, *, level: int = logging.INFO) -> LegacyLine:
+def kv_line(payload: KvLine, *, level: int = logging.INFO) -> LegacyLine:
     """One kv line: the KvLine payload plus the exact `kv_string` message it renders."""
 
     message = kv_string(payload.key, payload.value, key_width=payload.key_width, indent=payload.indent, sep=payload.sep)
@@ -156,7 +156,7 @@ def _detail_kv(
         sep="",
         tail=tail,
     )
-    return _kv_line(payload, level=level)
+    return kv_line(payload, level=level)
 
 
 def _ledger_line(state: EntryState, label: str, style: str) -> LegacyLine:
@@ -302,7 +302,7 @@ def cap_reached_lines(event: CapReached) -> tuple[LegacyLine, ...]:
 
 
 def _summary_kv(key: str, value: str, *, value_style: str | None = None) -> LegacyLine:
-    return _kv_line(KvLine(key=key, value=value, key_width=_SUMMARY_KEY_WIDTH, value_style=value_style, indent=1))
+    return kv_line(KvLine(key=key, value=value, key_width=_SUMMARY_KEY_WIDTH, value_style=value_style, indent=1))
 
 
 class SummaryRow(NamedTuple):
@@ -324,7 +324,7 @@ def _summary_block(
     for row in rows:
         if not row.value:
             continue
-        yield _kv_line(
+        yield kv_line(
             KvLine(
                 key=row.label, value=row.value, key_width=_BLOCK_KEY_WIDTH, value_style=row.accent, indent=3, sep=""
             ),

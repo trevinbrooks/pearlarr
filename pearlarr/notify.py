@@ -27,6 +27,7 @@ from .discord import (
 from .log import count_noun, format_elapsed, human_bytes
 from .manual_import import OutcomeCategory
 from .output import hub_warn
+from .output.wait_lines import held_back_names, held_back_sentences
 from .seadex_types import SeadexDict, SeadexUrlItem
 from .torrents import AddOutcome, ReleaseOutcome
 from .wait_view import WaitOutcomeRow, WaitResult
@@ -85,8 +86,13 @@ def _wait_row_text(row: WaitOutcomeRow) -> str:
 
     if row.outcome.category is OutcomeCategory.SUCCESS:
         return row.label
+    held = row.held_back
     # Discord strips leading whitespace and reads `_`, `*`, `[` as markdown, so each name rides in backticks.
-    return "\n".join((f"{row.label} - {row.outcome.detail}", *(f"`{name}`" for name in row.unmatched_files)))
+    names = held_back_names(held, quote="`")
+    if held.explained_by_order:
+        lead, reason = held_back_sentences(held)
+        return "\n".join((f"{row.label} - {lead}", f"{reason}:", *names))
+    return "\n".join((f"{row.label} - {row.outcome.detail}", *names))
 
 
 @dataclass(frozen=True, slots=True)

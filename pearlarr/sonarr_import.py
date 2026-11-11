@@ -5,9 +5,17 @@ from urllib.parse import urlsplit
 
 from .arr_categories import Watch
 from .arr_http import DeleteOutcome
-from .episode_state import EpisodeFileStatus, EpisodeSnapshot, GroupVotes, RecordSnapshot, TargetStatuses
+from .episode_state import (
+    EpisodeFileStatus,
+    EpisodeSnapshot,
+    GroupVotes,
+    RecordSnapshot,
+    TargetStatuses,
+    UnfilledTargets,
+)
 from .import_files import (
     CandidateFile,
+    DiskLeftover,
     ImportAction,
     ImportDecision,
     candidate_files,
@@ -30,6 +38,8 @@ from .manual_import import (
     Deferral,
     EffectStatus,
     FileEpisodeMap,
+    HeldBack,
+    HeldFile,
     ImportProbe,
     ImportProgress,
     PendingImport,
@@ -58,6 +68,7 @@ from .probe_verdicts import (
 from .run_services import RunDeps
 from .seadex_types import (
     CommandResource,
+    EpisodeKey,
     Language,
     ManualImportCandidate,
     ManualImportFile,
@@ -162,6 +173,31 @@ class _ImportContext:
         """The on-disk leaf of each normalized basename."""
 
         return tuple(path_leaf(self.candidates_by_basename[name].path) for name in names)
+
+    def window_statuses(self, file_map: FileEpisodeMap) -> TargetStatuses:
+        """Each episode of the record's windows judged against the file `file_map` puts on it."""
+
+        return self.snapshot.map_statuses(self.pending.resolved_ids(), file_map)
+
+    def held_back(self, leftover: DiskLeftover, unfilled: UnfilledTargets) -> HeldBack:
+        """The hand-import files on disk by leaf, with their order-only keys and the window episodes left unfilled."""
+
+        names, keys = leftover.hand_import_files, self.pending.order_only
+        return HeldBack(
+            files=tuple(HeldFile(leaf, keys.get(name)) for name, leaf in zip(names, self.leaves(names), strict=True)),
+            missing=self._episode_keys(unfilled.missing),
+            not_recommended=self._episode_keys(unfilled.not_recommended),
+        )
+
+    def _episode_keys(self, ep_ids: tuple[int, ...]) -> tuple[EpisodeKey, ...]:
+        """The `(season, episode)` key of each of `ep_ids` that the snapshot judging it indexes, in order."""
+
+        keys: list[EpisodeKey] = []
+        for ep_id in ep_ids:
+            snapshot = self.snapshot.snapshot_for(ep_id)
+            if snapshot is not None and (key := snapshot.episodes.key_by_id.get(ep_id)) is not None:
+                keys.append(key)
+        return tuple(keys)
 
 
 @dataclass
@@ -524,7 +560,7 @@ class ImportExecutor:
         authoritative = joined_map(pending.file_episode_map, recovered)
         leftover = disk_leftover(pending, context.candidates_by_basename, authoritative)
         if leftover.names and not authoritative:
-            if (by_hand := self._imported_by_hand(context, authoritative)) is not None:
+            if (by_hand := self._imported_by_hand(context, context.window_statuses(authoritative))) is not None:
                 # A hand import placed what the grab couldn't.
                 probe = by_hand
             else:
@@ -543,12 +579,13 @@ class ImportExecutor:
             if probe.files_present and leftover.hand_import_files:
                 # The fill is checked first, so a hand import in copy mode, which leaves the file on disk, retires
                 # the record.
-                by_hand = self._imported_by_hand(context, authoritative)
-                hand_import = ImportProbe.hand_import(context.leaves(leftover.hand_import_files))
+                window = context.window_statuses(authoritative)
+                by_hand = self._imported_by_hand(context, window)
+                hand_import = ImportProbe.hand_import(context.held_back(leftover, window.unfilled()))
                 probe = by_hand if by_hand is not None else hand_import
         # History's placements are kept only once they verified, so a row that never verifies is re-derived next
         # run, not pinned.
-        verified = probe.files_present or bool(probe.hand_import_files)
+        verified = probe.files_present or bool(probe.held_back.files)
         return replace(probe, placements=recovered if verified else {})
 
     def _verify_or_import(self, context: _ImportContext, authoritative_map: FileEpisodeMap) -> ImportProbe:
@@ -645,10 +682,10 @@ class ImportExecutor:
         self.logger.debug(f"{content_path}: queued {count_noun(len(files), 'file')} for import (command {cmd_id})")
         return ImportProbe.waiting(command_issued=True, deferral=Deferral.ISSUED)
 
-    def _imported_by_hand(self, context: _ImportContext, file_map: FileEpisodeMap) -> ImportProbe | None:
+    def _imported_by_hand(self, context: _ImportContext, window: TargetStatuses) -> ImportProbe | None:
         """The IMPORTED probe when every episode of the record's windows is filled (`filled_by_hand`), else None."""
 
-        if not context.snapshot.map_statuses(context.pending.resolved_ids(), file_map).filled_by_hand():
+        if not window.filled_by_hand():
             return None
         self.logger.debug(f"{context.content_path}: already imported (recommended files or untagged copies present)")
         return ImportProbe.imported()

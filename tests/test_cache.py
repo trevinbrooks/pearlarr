@@ -245,7 +245,8 @@ def _v4_blob(infohash: str, al_id: int, **fields: Any) -> dict[str, Any]:
 def _assert_round_trips(records: dict[str, dict[str, Any]]) -> None:
     """Every migrated blob re-serializes byte-for-byte as a record, plus empty sizes and its unplaced listed files.
 
-    The listed files the blob neither mapped nor excluded come back as its hand imports, and no row is a cross-seed.
+    The listed files the blob neither mapped nor excluded come back as its hand imports with no order-only keys, and
+    no row is a cross-seed.
     """
 
     for infohash, blob in records.items():
@@ -259,6 +260,7 @@ def _assert_round_trips(records: dict[str, dict[str, Any]]) -> None:
             **blob,
             "sizes_by_name": dict[str, int](),
             "hand_import_files": unplaced,
+            "order_only": dict[str, Any](),
             "cross_seed": False,
         }
         assert json.dumps(rebuilt) == json.dumps(expected), infohash
