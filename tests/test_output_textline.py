@@ -92,6 +92,8 @@ from pearlarr.output.trace import CapturedTrace
 from pearlarr.reporter import GrabRecord, NeedsActionKind, NeedsActionRecord, RunStats
 from pearlarr.seadex_types import ElsewhereCounts, Json
 
+from .builders import held_files, order_only_held_back
+
 _EPOCH = 1_751_990_000.0
 _WHEN = datetime.fromtimestamp(_EPOCH)
 _TS = _WHEN.strftime("%Y-%m-%d %H:%M:%S")
@@ -300,7 +302,7 @@ def test_unmatched_graduation_line_names_the_files() -> None:
         outcome=Outcome.UNMATCHED,
         files=None,
         waited_s=15.0,
-        unmatched_files=("a.mkv", "b.mkv"),
+        held_back=held_files("a.mkv", "b.mkv"),
         scope=_WAIT,
     )
     assert _format(graduated, *context) == (
@@ -315,11 +317,30 @@ def test_partial_graduation_line_names_the_files_left_for_a_hand_import() -> Non
         outcome=Outcome.PARTIAL,
         files=None,
         waited_s=15.0,
-        unmatched_files=("a.mkv", "b.mkv"),
+        held_back=held_files("a.mkv", "b.mkv"),
         scope=_WAIT,
     )
     assert _format(graduated, *context) == (
         f'{_TS} WARNING [sonarr › wait] partial title="Demo Batch" unmatched_files="a.mkv; b.mkv" waited_s=15.00'
+    )
+
+
+def test_order_only_graduation_line_says_why_and_keys_each_file() -> None:
+    context = (ScanStarted(arr=Arr.SONARR, total=182), ScopeOpened(scope=_WAIT, label="wait"))
+    graduated = TorrentGraduated(
+        label="Demo Batch",
+        outcome=Outcome.PARTIAL,
+        files=None,
+        waited_s=15.0,
+        held_back=order_only_held_back(),
+        scope=_WAIT,
+    )
+    assert _format(graduated, *context) == (
+        f'{_TS} WARNING [sonarr › wait] partial title="Demo Batch" '
+        'detail="S04 E01 is still missing in Sonarr. This pack is numbered by the DVD order, and 2 of its files are '
+        "DVD episodes that aren't in Sonarr's list, so Pearlarr can't tell where they belong.\" "
+        'unmatched_files="DVD S07E01: [grp] Show Ending S1 - 01 [ABCD1234].mkv; '
+        'DVD S07E02: [grp] Show Ending S1 - 02 [ABCD1234].mkv" waited_s=15.00'
     )
 
 

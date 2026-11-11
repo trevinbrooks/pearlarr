@@ -37,6 +37,8 @@ from pearlarr.grab_pipeline import GrabPipeline, GrabRequest
 from pearlarr.grab_placement import EntryFacts, KnownTorrent, PendingSeed, SeedScope, TorrentEvidence, TorrentFacts
 from pearlarr.import_wait import ImportProbes, ImportWaitManager, PostImportCleanup
 from pearlarr.manual_import import (
+    NO_HELD_BACK,
+    NO_ORDER_ONLY,
     NO_SIZES_BY_NAME,
     Deferral,
     EntryClaim,
@@ -44,6 +46,8 @@ from pearlarr.manual_import import (
     EntryWindow,
     FileEpisodeMap,
     GuardFacts,
+    HeldBack,
+    HeldFile,
     ImportProbe,
     ImportWaitMode,
     OwnGroup,
@@ -83,6 +87,7 @@ from pearlarr.seadex_types import (
     EpisodeRecord,
     ManualImportCandidate,
     MatchedEpisode,
+    OrderOnlyKey,
     ParsedFileInfo,
     ProgressSink,
     QueueRecord,
@@ -99,7 +104,7 @@ from pearlarr.sonarr_episodes import SonarrEpisodes
 from pearlarr.sonarr_parse import SonarrParseCache
 from pearlarr.stamps import UPDATED_AT_STR_FORMAT, parse_stamp, stamp_of
 from pearlarr.torrents import AddOutcome, AddResult, TorrentService
-from pearlarr.tvdb_orders import OrderRow, StoredOrders
+from pearlarr.tvdb_orders import NO_ORDERS, OrderRow, SeriesOrdering, SeriesOrders, StoredOrders
 
 from .fakes import FakeClock, FakeRadarrClient, FakeSkyHookClient, FakeSonarrClient
 
@@ -860,6 +865,7 @@ def pending_seed(
     stored: PendingImport | None = None,
     placements: FileEpisodeMap | None = None,
     hand_import_files: tuple[str, ...] = (),
+    order_only: Mapping[str, OrderOnlyKey] = NO_ORDER_ONLY,
     **claim: Any,
 ) -> PendingSeed:
     """A seed on `infohash` (group NAN0, no files) claimed by `entry_claim(**claim)`, new unless `stored` is given."""
@@ -869,6 +875,7 @@ def pending_seed(
         placements=placements or {},
         excluded=(),
         hand_import_files=hand_import_files,
+        order_only=order_only,
         claim=entry_claim(**claim),
         stored=stored,
     )
@@ -1233,18 +1240,29 @@ def series_index(
     *,
     absolutes: Mapping[int, int] | None = None,
     titles: Mapping[int, str] | None = None,
+    orders: SeriesOrders = NO_ORDERS,
 ) -> EpisodeIndex:
-    """A whole-series index synthesized from a `(season, episode) -> id` map, with the absolutes and titles given by id."""
+    """A whole-series index synthesized from a `(season, episode) -> id` map, with the absolutes and titles given by id.
+
+    Each episode's TVDB id is its Sonarr id, so a row of `orders` names an episode by that id, and a row with any
+    other TVDB id is an episode Sonarr doesn't list.
+    """
 
     absolute_of = absolutes or {}
     title_of = titles or {}
     return episode_index(
         [
             sonarr_ep(
-                key.season, key.episode, ep_id=ep_id, absolute=absolute_of.get(ep_id), title=title_of.get(ep_id, "")
+                key.season,
+                key.episode,
+                ep_id=ep_id,
+                absolute=absolute_of.get(ep_id),
+                title=title_of.get(ep_id, ""),
+                tvdb_id=ep_id,
             )
             for key, ep_id in id_by_key.items()
-        ]
+        ],
+        SeriesOrdering(orders, None),
     )
 
 
@@ -1399,6 +1417,23 @@ def pending_import(**overrides: Any) -> PendingImport:
     return PendingImport(**defaults)
 
 
+def order_only_held_back(
+    *, missing: tuple[EpisodeKey, ...] = (EpisodeKey(4, 1),), not_recommended: tuple[EpisodeKey, ...] = ()
+) -> HeldBack:
+    """A split opener's two halves held back under their DVD keys, the aired opener missing by default."""
+
+    halves = ("[grp] Show Ending S1 - 01 [ABCD1234].mkv", "[grp] Show Ending S1 - 02 [ABCD1234].mkv")
+    keys = (OrderOnlyKey("dvd", EpisodeKey(7, 1)), OrderOnlyKey("dvd", EpisodeKey(7, 2)))
+    files = tuple(HeldFile(half, key) for half, key in zip(halves, keys, strict=True))
+    return HeldBack(files=files, missing=missing, not_recommended=not_recommended)
+
+
+def held_files(*names: str) -> HeldBack:
+    """Files held back with no order-only key."""
+
+    return HeldBack(files=tuple(HeldFile(name) for name in names))
+
+
 def import_probe(
     *,
     files_present: bool = True,
@@ -1408,7 +1443,7 @@ def import_probe(
     deferral: Deferral = Deferral.NONE,
     placements: FileEpisodeMap | None = None,
     unmatched_files: tuple[str, ...] = (),
-    hand_import_files: tuple[str, ...] = (),
+    held_back: HeldBack = NO_HELD_BACK,
 ) -> ImportProbe:
     """An `ImportProbe` defaulting to the verified-import outcome (`files_present`)."""
 
@@ -1420,7 +1455,7 @@ def import_probe(
         deferral=deferral,
         placements=placements or {},
         unmatched_files=unmatched_files,
-        hand_import_files=hand_import_files,
+        held_back=held_back,
     )
 
 

@@ -38,7 +38,7 @@ from pearlarr.seadex_types import SeadexDict
 from pearlarr.torrents import AddOutcome, ReleaseOutcome
 from pearlarr.wait_view import WaitOutcomeRow, WaitResult
 
-from .builders import SEP, make_entry_record, rg_group, url_item
+from .builders import SEP, held_files, make_entry_record, order_only_held_back, rg_group, url_item
 from .fakes import diagnostic_messages, install_recording_hub
 
 
@@ -182,7 +182,7 @@ def test_push_wait_summary_says_a_gone_download_has_its_title_checked_again(push
 def test_push_wait_summary_lists_the_unmatched_files_under_their_row(pushes: list[DiscordEmbed]) -> None:
     # One backticked line per name: Discord strips leading whitespace and reads `_` as markdown.
     notifier = Notifier(discord_url="https://discord.example", web=httpx.Client())
-    row = WaitOutcomeRow("Demo Batch", Outcome.UNMATCHED, unmatched_files=("Part_1.mkv", "Part 2.mkv"))
+    row = WaitOutcomeRow("Demo Batch", Outcome.UNMATCHED, held_back=held_files("Part_1.mkv", "Part 2.mkv"))
 
     assert notifier.push_wait_summary(arr=Arr.SONARR, result=WaitResult((row,), elapsed_s=15)) is True
     [field] = pushes[0].fields
@@ -195,7 +195,7 @@ def test_push_wait_summary_lists_the_unmatched_files_under_their_row(pushes: lis
 
 def test_push_wait_summary_lists_the_held_back_files_under_their_row(pushes: list[DiscordEmbed]) -> None:
     notifier = Notifier(discord_url="https://discord.example", web=httpx.Client())
-    row = WaitOutcomeRow("Demo Batch", Outcome.PARTIAL, unmatched_files=("show - 03 [grp].mkv",))
+    row = WaitOutcomeRow("Demo Batch", Outcome.PARTIAL, held_back=held_files("show - 03 [grp].mkv"))
 
     assert notifier.push_wait_summary(arr=Arr.SONARR, result=WaitResult((row,), elapsed_s=15)) is True
     [field] = pushes[0].fields
@@ -205,11 +205,26 @@ def test_push_wait_summary_lists_the_held_back_files_under_their_row(pushes: lis
     )
 
 
+def test_push_wait_summary_says_why_order_only_files_are_held(pushes: list[DiscordEmbed]) -> None:
+    notifier = Notifier(discord_url="https://discord.example", web=httpx.Client())
+    row = WaitOutcomeRow("Show Ending · grp · S04 E01-E12", Outcome.PARTIAL, held_back=order_only_held_back())
+
+    assert notifier.push_wait_summary(arr=Arr.SONARR, result=WaitResult((row,), elapsed_s=15)) is True
+    [field] = pushes[0].fields
+    assert field.value == (
+        "Show Ending · grp · S04 E01-E12 - S04 E01 is still missing in Sonarr.\n"
+        "This pack is numbered by the DVD order, and 2 of its files are DVD episodes "
+        "that aren't in Sonarr's list, so Pearlarr can't tell where they belong:\n"
+        "DVD S07E01: `[grp] Show Ending S1 - 01 [ABCD1234].mkv`\n"
+        "DVD S07E02: `[grp] Show Ending S1 - 02 [ABCD1234].mkv`"
+    )
+
+
 def test_push_wait_summary_unmatched_names_stay_inside_the_value_clamp(pushes: list[DiscordEmbed]) -> None:
     # A full section of three-name rows overflows a field value. The payload clamp is the backstop.
     notifier = Notifier(discord_url="https://discord.example", web=httpx.Client())
     names = tuple(f"Demo Batch Part {n} (BD 1080p) [Group].mkv" for n in range(3))
-    rows = tuple(WaitOutcomeRow(f"Title {i}", Outcome.UNMATCHED, unmatched_files=names) for i in range(25))
+    rows = tuple(WaitOutcomeRow(f"Title {i}", Outcome.UNMATCHED, held_back=held_files(*names)) for i in range(25))
 
     assert notifier.push_wait_summary(arr=Arr.SONARR, result=WaitResult(rows, elapsed_s=15)) is True
     [field] = cast("list[dict[str, str]]", pushes[0].to_payload()["fields"])

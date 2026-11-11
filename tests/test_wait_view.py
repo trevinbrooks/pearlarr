@@ -18,7 +18,7 @@ import pytest
 from rich.console import Console
 
 from pearlarr.log import STATE_WIDTH, RichConsoleHandler
-from pearlarr.manual_import import Outcome, OutcomeCategory
+from pearlarr.manual_import import NO_HELD_BACK, HeldBack, Outcome, OutcomeCategory
 from pearlarr.output import (
     Event,
     Phase,
@@ -37,6 +37,7 @@ from pearlarr.output import (
 from pearlarr.output.recording import RecordingHub
 from pearlarr.wait_view import HubWaitView, WaitOutcomeRow, WaitResult, graduations, make_wait_view
 
+from .builders import held_files
 from .fakes import CaptureHandler
 
 
@@ -72,7 +73,7 @@ def _terminal(
     *,
     files: int | None = None,
     elapsed: float = 0.0,
-    unmatched_files: tuple[str, ...] = (),
+    held_back: HeldBack = NO_HELD_BACK,
 ) -> TorrentView:
     return TorrentView(
         key=key,
@@ -82,7 +83,7 @@ def _terminal(
         import_done=files,
         import_total=files,
         phase_elapsed_s=elapsed,
-        unmatched_files=unmatched_files,
+        held_back=held_back,
     )
 
 
@@ -207,12 +208,12 @@ class TestHubWaitViewNarration:
     def test_graduation_carries_the_unmatched_files(self) -> None:
         recording = RecordingHub()
         install_hub(recording.hub)
-        row = _terminal("h1", "A", Outcome.UNMATCHED, elapsed=15.0, unmatched_files=("a.mkv", "b.mkv"))
+        row = _terminal("h1", "A", Outcome.UNMATCHED, elapsed=15.0, held_back=held_files("a.mkv", "b.mkv"))
 
         self._view().update(WaitSnapshot((row,), elapsed_s=15))
 
         (graduated,) = recording.of_type(TorrentGraduated)
-        assert graduated.unmatched_files == ("a.mkv", "b.mkv")
+        assert graduated.held_back.names == ("a.mkv", "b.mkv")
         assert graduated.outcome is Outcome.UNMATCHED
 
     def test_first_snapshot_terminals_graduate_after_the_start(self) -> None:

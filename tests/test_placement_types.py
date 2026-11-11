@@ -217,6 +217,17 @@ class TestTargetScope:
 
         assert scope.using([12]).listing == listing
 
+    def test_after_keeps_every_earlier_placement_and_uses_the_ids_it_admits(self) -> None:
+        earlier = {"a.mkv": (11,), "b.mkv": (21,)}
+
+        later = TargetScope([11, 12], self._SERIES).after(earlier)
+        earlier["c.mkv"] = (12,)
+
+        assert later.used == {11}
+        assert dict(later.earlier) == {"a.mkv": (11,), "b.mkv": (21,)}
+        # Kept through the stored map's ids the placer adds next.
+        assert later.using([12]).earlier == later.earlier
+
 
 class TestTorrentListing:
     """The listing's windows, one per AniList id in id order, and its aliases copied from the caller."""
@@ -269,10 +280,23 @@ class TestPlacementVerdict:
         # Both decide a name without ids: no later window may place it by its numbers.
         assert {v for v in PlacementVerdict if v.refused} == {PlacementVerdict.HELD, PlacementVerdict.MISNUMBERED}
 
-    def test_a_hand_import_is_misnumbered_or_refuted_by_its_titles(self) -> None:
-        hand_import = {PlacementVerdict.MISNUMBERED, PlacementVerdict.TITLE_REFUTED}
+    def test_a_hand_import_is_misnumbered_refuted_or_read_by_another_order_onto_no_episode_it_can_take(self) -> None:
+        hand_import = {
+            PlacementVerdict.MISNUMBERED,
+            PlacementVerdict.TITLE_REFUTED,
+            PlacementVerdict.OTHER_ORDER_ELSEWHERE,
+            PlacementVerdict.ORDER_ONLY,
+        }
 
         assert {v for v in PlacementVerdict if v.hand_import} == hand_import
+        assert not any(v.refused or v.excluded or v.placed for v in hand_import - {PlacementVerdict.MISNUMBERED})
+
+    def test_another_orders_placement_carries_ids(self) -> None:
+        verdict = PlacementVerdict.OTHER_ORDER
+
+        assert verdict.placed
+        assert not verdict.excluded
+        assert not verdict.hand_import
 
     def test_another_listed_titles_file_is_excluded_and_no_hand_import(self) -> None:
         # It waits for the other title's own grab to claim the torrent, so this record skips it and it's no hand import.

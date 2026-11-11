@@ -67,7 +67,7 @@ from .events import (
     severity_of,
 )
 from .hub import Renderer
-from .wait_lines import PulseThrottle
+from .wait_lines import PulseThrottle, held_back_names, held_back_sentences
 from ..log import LOG_NAME
 from ..manual_import import OutcomeCategory
 
@@ -258,8 +258,12 @@ def _fields_graduated(event: TorrentGraduated) -> tuple[Field, ...]:
     fields: list[Field] = [Field("title", event.label)]
     if event.files is not None:
         fields.append(Field("files", event.files))
-    if event.unmatched_files:
-        fields.append(Field("unmatched_files", "; ".join(event.unmatched_files)))
+    held = event.held_back
+    if held.explained_by_order:
+        lead, reason = held_back_sentences(held)
+        fields.append(Field("detail", f"{lead} {reason}."))
+    if held.files:
+        fields.append(Field("unmatched_files", "; ".join(held_back_names(held))))
     fields.append(Field("waited_s", event.waited_s))
     return tuple(fields)
 

@@ -8,6 +8,7 @@ from typing import NamedTuple
 from .coverage import coverage_string, episodes_from_ep_list
 from .episode_state import EpisodeFileStatus, EpisodeSnapshot, GroupVotes
 from .manual_import import (
+    NO_ORDER_ONLY,
     NO_SIZES_BY_NAME,
     EntryClaim,
     EntryNames,
@@ -40,6 +41,7 @@ from .seadex_types import (
     EpisodeRecord,
     FlaggedUrl,
     GrabHold,
+    OrderOnlyKey,
     ParsedFileInfo,
     SeadexDict,
     SeadexUrlItem,
@@ -297,7 +299,7 @@ def place_release(files: Sequence[SeedFile], scope: SeedScope, torrent: KnownTor
     the window holding its ids deciding it. A file another title's window placed, or left for a hand import with no
     window the record imports party to it, is set aside as that title's. The url is held (`GrabHold`) when a file of
     the entry's own window is misnumbered, when a read the placement needs failed, or when nothing of it lands on the
-    entry and either its titles refute its numbers or some of it is another title's.
+    entry and either the entry's window claimed a file for a hand import or some of it is another title's.
     """
 
     seeded: FileEpisodeMap = NO_SEEDED if torrent.record is None else torrent.record.file_episode_map
@@ -320,10 +322,10 @@ def place_release(files: Sequence[SeedFile], scope: SeedScope, torrent: KnownTor
             facts = tuple(own if at == own_at else WindowFacts.of(batch, window) for at, window in enumerate(scopes))
             placed = placed.filled(batch, reading, facts)
         assignment = placed.for_record(order.imports)
-        misnumbered, refuted = placed.misnumbered_under(own_at), placed.refuted_under(own_at)
+        misnumbered, hand_claim = placed.misnumbered_under(own_at), placed.hand_claim_under(own_at)
         outside = placed.listed_elsewhere_under(own_at)
     else:
-        assignment, misnumbered, refuted, outside = EpisodeAssignment(()), False, False, frozenset[str]()
+        assignment, misnumbered, hand_claim, outside = EpisodeAssignment(()), False, None, frozenset[str]()
     mapped = joined_map(seeded, assignment.assigned)
     records: list[EpisodeRecord] = []
     claimed: set[int] = set()
@@ -353,7 +355,12 @@ def place_release(files: Sequence[SeedFile], scope: SeedScope, torrent: KnownTor
     elsewhere = frozenset[str]() if claimed else outside | mapped_elsewhere
     # A url with no video file (subs, fonts) places nothing and waits on nothing.
     hold = (
-        _hold_of(misnumbered=misnumbered, unread=unread, refuted=refuted and not claimed, elsewhere=bool(elsewhere))
+        _hold_of(
+            misnumbered=misnumbered,
+            unread=unread,
+            hand_claim=None if claimed else hand_claim,
+            elsewhere=bool(elsewhere),
+        )
         if files
         else None
     )
@@ -371,22 +378,28 @@ def place_release(files: Sequence[SeedFile], scope: SeedScope, torrent: KnownTor
     )
 
 
-def _hold_of(*, misnumbered: bool, unread: bool, refuted: bool, elsewhere: bool) -> GrabHold | None:
+def _hold_of(
+    *, misnumbered: bool, unread: bool, hand_claim: PlacementVerdict | None, elsewhere: bool
+) -> GrabHold | None:
     """Why the url isn't grabbed: the first of these that holds, in this order.
 
-    Four flags, since their order is the rule. `misnumbered`: a file of the entry's own window is misnumbered
-    (`WindowedAssignment.misnumbered_under`). `unread`: a read the placement needs failed. `refuted`: the entry's
-    own window refuted a file no window placed, and nothing of the whole map lands on the entry. It outranks
-    `elsewhere`, since a file the entry's own window refuted is its own hand import, and saying it's another title's
-    would be wrong. `elsewhere`: nothing of the whole map lands on the entry, and some file is another title's.
+    Four inputs, since their order is the rule. `misnumbered`: a file of the entry's own window is misnumbered
+    (`WindowedAssignment.misnumbered_under`). `unread`: a read the placement needs failed. `hand_claim`: the claim
+    the entry's own window made for a hand import that no window placed (`WindowedAssignment.hand_claim_under`),
+    when nothing of the whole map lands on the entry. A title's refusal holds as refuted, and a file another TVDB
+    order reads outside every listed title as misnumbered. It outranks `elsewhere`, since a file the entry's own
+    window claimed is its own hand import, and saying it's another title's would be wrong. `elsewhere`: nothing of
+    the whole map lands on the entry, and some file is another title's.
     """
 
     if misnumbered:
         return GrabHold.MISNUMBERED
     if unread:
         return GrabHold.INPUT_UNREAD
-    if refuted:
+    if hand_claim is PlacementVerdict.TITLE_REFUTED:
         return GrabHold.TITLE_REFUTED
+    if hand_claim is not None:
+        return GrabHold.MISNUMBERED
     return GrabHold.PLACED_ELSEWHERE if elsewhere else None
 
 
@@ -607,6 +620,9 @@ class PendingSeed:
     """The names this placement left for a hand import (`EpisodeAssignment.hand_import_files`), which keep the
     record pending once the placed files are in."""
 
+    order_only: Mapping[str, OrderOnlyKey]
+    """The keys of those names that only another TVDB order numbers (`EpisodeAssignment.order_only`)."""
+
     claim: EntryClaim
     """This entry's fresh claim."""
 
@@ -623,7 +639,7 @@ class PendingSeed:
         return (
             self.stored.with_placements(self.placements)
             .with_exclusions(self.excluded)
-            .with_hand_import_files(self.hand_import_files)
+            .with_hand_import_files(self.hand_import_files, self.order_only)
             .with_claim(self.claim)
             .with_sizes_by_name(self.facts.sizes_by_name)
         )
@@ -648,6 +664,7 @@ class PendingSeed:
                 release_sizes=self.facts.release_sizes,
                 sizes_by_name=self.facts.sizes_by_name,
                 hand_import_files=self.hand_import_files,
+                order_only=self.order_only,
                 cross_seed=self.facts.cross_seed,
             )
         return replace(joined, added_at=stamp) if fresh else joined
@@ -696,6 +713,7 @@ def build_pending_seed(release: SeedRelease, scope: SeedScope, entry: EntryFacts
         placements=placed.assignment.assigned,
         excluded=tuple(placement.name for placement in placed.assignment.excluded),
         hand_import_files=placed.assignment.hand_import_files,
+        order_only=placed.assignment.order_only,
         claim=build_entry_claim(release, scope, entry),
         stored=placed.stored,
     )
@@ -717,6 +735,7 @@ def build_unscoped_seed(flagged: FlaggedUrl, entry: EntryFacts, stored: PendingI
         placements={},
         excluded=(),
         hand_import_files=(),
+        order_only=NO_ORDER_ONLY,
         claim=entry.claim(UNSCOPED),
         stored=stored,
     )

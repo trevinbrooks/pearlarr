@@ -15,11 +15,14 @@ import pytest
 
 from pearlarr.manual_import import (
     LEAVE_PROBE,
+    NO_ORDER_ONLY,
     Deferral,
     EntryClaim,
     EntryNames,
     EntryWindow,
     GuardFacts,
+    HeldBack,
+    HeldFile,
     ImportProbe,
     OwnedEpisode,
     PendingImport,
@@ -38,16 +41,23 @@ from pearlarr.manual_import import (
     sizes_by_episode,
     translate_download_path,
 )
-from pearlarr.seadex_types import RemotePathMapping
+from pearlarr.seadex_types import EpisodeKey, OrderOnlyKey, RemotePathMapping
 
 from .builders import (
     SEP,
     claim_al_ids,
     entry_claim,
     entry_window,
+    order_only_held_back,
     pending_import,
     sonarr_ep,
 )
+
+_HALVES = tuple(normalize_basename(f"[grp] Show Ending S1 - {n:02d} [ABCD1234].mkv") for n in (1, 2))
+"""The two halves of a split opener, which only the DVD order numbers."""
+
+_HALF_KEYS = (OrderOnlyKey("dvd", EpisodeKey(7, 1)), OrderOnlyKey("dvd", EpisodeKey(7, 2)))
+"""The halves' DVD-order keys."""
 
 
 class TestNormalize:
@@ -161,6 +171,15 @@ class TestPendingImportBuild:
         assert pending.hand_import_files == ("show - 04.mkv", "show - 02.mkv", "show - 03.mkv")
         assert pending.excluded_files == ("show - 05.mkv",)
 
+    def test_the_order_only_keys_fold_onto_the_hand_import_files(self) -> None:
+        pending = pending_import(
+            file_episode_map={_HALVES[0]: [401]},
+            hand_import_files=list(_HALVES),
+            order_only={_HALVES[0]: _HALF_KEYS[0], _HALVES[1].upper(): _HALF_KEYS[1]},
+        )
+
+        assert pending.order_only == {_HALVES[1]: _HALF_KEYS[1]}
+
     def test_the_map_is_detached_and_read_only(self) -> None:
         # The record copies the caller's map at construction and wraps it read-only, so neither the
         # caller's dict nor a holder of the record can mutate the map behind it. Built through `replace`: the
@@ -181,8 +200,8 @@ _NO_OP_CHANGES: dict[str, Callable[[PendingImport], PendingImport]] = {
     "no exclusions": lambda p: p.with_exclusions(()),
     "an exclusion already held": lambda p: p.with_exclusions(["SHOW - 02.MKV"]),
     "no sizes onto none": lambda p: p.with_sizes_by_name({}),
-    "no hand-import files": lambda p: p.with_hand_import_files(()),
-    "a hand-import file already held": lambda p: p.with_hand_import_files(["SHOW - 03.MKV"]),
+    "no hand-import files": lambda p: p.with_hand_import_files((), NO_ORDER_ONLY),
+    "a hand-import file already held": lambda p: p.with_hand_import_files(["SHOW - 03.MKV"], NO_ORDER_ONLY),
     "the stored claim again": lambda p: p.with_claim(p.claims[0]),
 }
 """Changes that leave a record equal: it holds `show - 01.mkv` on 101, excludes `show - 02.mkv`, and leaves
@@ -222,6 +241,15 @@ class TestPendingImportPlacements:
         healed = pending.with_placements({"show - 01.mkv": (111,), "show - 02.mkv": (102,)})
 
         assert dict(healed.file_episode_map) == {"show - 01.mkv": (101,), "show - 02.mkv": (102,)}
+
+    def test_with_hand_import_files_keeps_the_stored_key_of_a_name_it_keys(self) -> None:
+        pending = pending_import(hand_import_files=[_HALVES[0]], order_only={_HALVES[0]: _HALF_KEYS[0]})
+
+        healed = pending.with_hand_import_files(
+            [_HALVES[0].upper(), _HALVES[1]], {_HALVES[0].upper(): _HALF_KEYS[1], _HALVES[1]: _HALF_KEYS[1]}
+        )
+
+        assert healed.order_only == {_HALVES[0]: _HALF_KEYS[0], _HALVES[1]: _HALF_KEYS[1]}
 
     def test_with_placements_lifts_a_placed_name_out_of_the_exclusions(self) -> None:
         # A name an earlier poll excluded that a later import placed is a placement, never both.
@@ -547,6 +575,7 @@ class TestPendingImportRoundTrip:
             awaiting_cleanup=True,
             sizes_by_name={"ep1.mkv": 700, "ep2.mkv": 710},
             hand_import_files=("ep3.mkv",),
+            order_only={"ep3.mkv": _HALF_KEYS[0]},
             cross_seed=True,
         )
 
@@ -605,6 +634,7 @@ class TestPendingImportRoundTrip:
         # A record predating the cleanup flag owes nothing.
         assert rebuilt.awaiting_cleanup is False
         assert rebuilt.hand_import_files == ()
+        assert rebuilt.order_only == {}
 
     def test_a_row_without_hand_import_files_leaves_its_unplaced_listed_files_for_a_hand_import(self) -> None:
         record = pending_import(
@@ -628,6 +658,14 @@ class TestPendingImportRoundTrip:
         raw["hand_import_files"] = list[str]()
 
         assert PendingImport.from_json(raw, guards={}).hand_import_files == ()
+
+    def test_a_malformed_order_only_entry_reads_as_absent(self) -> None:
+        raw = pending_import(
+            hand_import_files=_HALVES, order_only=dict(zip(_HALVES, _HALF_KEYS, strict=True))
+        ).to_json()
+        raw["order_only"][_HALVES[1]] = {"order": "dvd", "season": 7}
+
+        assert PendingImport.from_json(raw, guards={}).order_only == {_HALVES[0]: _HALF_KEYS[0]}
 
     def test_a_record_predating_sizes_by_name_lists_no_sizes(self) -> None:
         # Its own group is then judged by listed size alone.
@@ -726,6 +764,29 @@ class TestPendingStateAndProbe:
         with pytest.raises(TypeError):
             mutable["show - 02.mkv"] = (102,)
         assert dict(probe.placements) == {"show - 01.mkv": (101,)}
+
+    @pytest.mark.parametrize(
+        ("held", "explained"),
+        [
+            pytest.param(order_only_held_back(), True, id="both keyed, an episode missing"),
+            pytest.param(
+                order_only_held_back(missing=(), not_recommended=(EpisodeKey(4, 1),)),
+                True,
+                id="both keyed, an episode holding another file",
+            ),
+            pytest.param(
+                HeldBack(files=(order_only_held_back().files[0], HeldFile(_HALVES[1])), missing=(EpisodeKey(4, 1),)),
+                False,
+                id="one of two keyed",
+            ),
+            pytest.param(order_only_held_back(missing=()), False, id="no unfilled episode to name"),
+            pytest.param(HeldBack(missing=(EpisodeKey(4, 1),)), False, id="no file"),
+        ],
+    )
+    def test_the_order_explains_only_keyed_files_with_an_unfilled_episode(
+        self, held: HeldBack, explained: bool
+    ) -> None:
+        assert held.explained_by_order is explained
 
 
 class TestClassifyPending:

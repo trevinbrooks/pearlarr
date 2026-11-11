@@ -9,7 +9,15 @@ from typing import Self
 
 from .episode_titles import EpisodeTitles
 from .manual_import import EntryNames, EntryWindow, FileEpisodeMap
-from .seadex_types import NO_ALIASES, EpisodeKey, ParsedFileInfo, SonarrEpisode, SpecialAliases, index_episodes_by_key
+from .seadex_types import (
+    NO_ALIASES,
+    EpisodeKey,
+    OrderOnlyKey,
+    ParsedFileInfo,
+    SonarrEpisode,
+    SpecialAliases,
+    index_episodes_by_key,
+)
 from .tvdb_orders import NO_ORDERING, OrderRow, SeriesOrdering
 
 
@@ -151,6 +159,9 @@ class PlacementVerdict(StrEnum):
     """Placed by file size even though the name's number points at a different episode. The caller logs a warning."""
     ALTERNATE = "alternate numbering"
     """A file of a misnumbered specials pack, placed on the special its number's alias points at."""
+    OTHER_ORDER = "another TVDB order"
+    """Onto the episode its own number names in another TVDB order of the series (DVD, alternate, and so on) that
+    explains the torrent's numbers where the aired order fails on them (`placer._orders`)."""
     NUMBERINGS_AGREE = "every numbering agrees"
     """A file named by number alone that no window placed or refused, placed where its numbers fall once every way
     the group could have counted them agrees (`numberings`). Given after the windows merge, never by a pass."""
@@ -180,6 +191,14 @@ class PlacementVerdict(StrEnum):
     TITLE_REFUTED = "refuted by its run's titles"
     """A plain member of a numbered run whose titled members contradict the run's numbers, when nothing else placed
     it. A claim, not a refusal: another window may still place it. Left for a hand import when none does."""
+    OTHER_ORDER_ELSEWHERE = "another TVDB order, outside the window"
+    """Not placed here: a misnumbered or refuted file that the TVDB order explaining the torrent reads onto an
+    episode outside this window. A claim, not a refusal, so the window that holds the episode may place it. Left for
+    a hand import when none does."""
+    ORDER_ONLY = "another TVDB order, not in Sonarr's list"
+    """A file whose number the TVDB order explaining the torrent gives to an episode Sonarr doesn't list (one half
+    of an episode that order splits in two, say). Not placed under its window, and left for a hand import unless
+    another window places it or proves it a duplicate. `Placement.order_only` names the order and the key."""
     SKIPPED = "skipped"
     """Nothing placed it and nothing proved it foreign."""
 
@@ -206,7 +225,11 @@ class PlacementVerdict(StrEnum):
 
     @property
     def hand_import(self) -> bool:
-        """Whether the verdict leaves the file for a hand import: misnumbered, or refuted by its run's titles."""
+        """Whether the verdict leaves the file for a hand import.
+
+        Misnumbered, refuted by its run's titles, or read by another TVDB order onto an episode outside the window
+        or one Sonarr doesn't list.
+        """
 
         return self in _HAND_IMPORT
 
@@ -224,6 +247,7 @@ _PLACED = frozenset(
         PlacementVerdict.IDENTIFIED,
         PlacementVerdict.OVERRIDDEN,
         PlacementVerdict.ALTERNATE,
+        PlacementVerdict.OTHER_ORDER,
         PlacementVerdict.NUMBERINGS_AGREE,
     }
 )
@@ -235,7 +259,14 @@ _EXCLUDED = frozenset(
         PlacementVerdict.EXTRA,
     }
 )
-_HAND_IMPORT = frozenset({PlacementVerdict.MISNUMBERED, PlacementVerdict.TITLE_REFUTED})
+_HAND_IMPORT = frozenset(
+    {
+        PlacementVerdict.MISNUMBERED,
+        PlacementVerdict.TITLE_REFUTED,
+        PlacementVerdict.OTHER_ORDER_ELSEWHERE,
+        PlacementVerdict.ORDER_ONLY,
+    }
+)
 _REFUSED = frozenset({PlacementVerdict.HELD, PlacementVerdict.MISNUMBERED})
 
 
@@ -249,6 +280,10 @@ class Placement:
     """The episode ids, in claim order (empty unless `verdict.placed`)."""
     verdict: PlacementVerdict
     """How the file left the passes."""
+    order_only: OrderOnlyKey | None = None
+    """The order and key that read the file, when the verdict is `ORDER_ONLY`."""
+    read_onto: tuple[int, ...] = ()
+    """The episodes the order reads the file onto, when the verdict is `OTHER_ORDER_ELSEWHERE`."""
 
 
 @dataclass(frozen=True, slots=True)
@@ -281,6 +316,12 @@ class EpisodeAssignment:
         """The skipped files left for a hand import (`PlacementVerdict.hand_import`)."""
 
         return tuple(p.name for p in self.placements if p.verdict.hand_import)
+
+    @property
+    def order_only(self) -> dict[str, OrderOnlyKey]:
+        """Normalized basename -> the order and key that read it, for every `ORDER_ONLY` file."""
+
+        return {p.name: p.order_only for p in self.placements if p.order_only is not None}
 
 
 NO_SEEDED: FileEpisodeMap = MappingProxyType({})
@@ -443,6 +484,10 @@ class TargetScope:
     listing: ListingEvidence = NO_EVIDENCE
     """What SeaDex's listings tell us about this torrent this run."""
 
+    earlier: FileEpisodeMap = field(default_factory=dict[str, tuple[int, ...]])
+    """Normalized name -> the ids an earlier window placed it on, whether or not this window admits them (`after`).
+    The other-orders pass reads them as settled."""
+
     real_ids: frozenset[int] = field(init=False, repr=False, compare=False)
     """The resolved ids that can be placed. A stray zero keeps the scope real but is never one."""
 
@@ -450,6 +495,7 @@ class TargetScope:
         # Detached from the caller's list: `real_ids` is derived from the list once.
         object.__setattr__(self, "resolved", tuple(self.resolved))
         object.__setattr__(self, "real_ids", frozenset(i for i in self.resolved if i))
+        object.__setattr__(self, "earlier", MappingProxyType(dict(self.earlier)))
 
     @property
     def id_by_key(self) -> Mapping[EpisodeKey, int]:
@@ -472,6 +518,11 @@ class TargetScope:
         """The scope with `ids` used too: the ones it admits (every one when unscoped)."""
 
         return replace(self, used=self.used | frozenset(i for i in ids if self.admits(i)))
+
+    def after(self, earlier: FileEpisodeMap) -> Self:
+        """The scope of a window placed after others: `earlier` are their placements, the ids used where admitted."""
+
+        return replace(self.using(ep_id for ids in earlier.values() for ep_id in ids), earlier=earlier)
 
     @property
     def specials_window(self) -> bool:

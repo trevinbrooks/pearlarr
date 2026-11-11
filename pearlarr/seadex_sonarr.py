@@ -29,7 +29,7 @@ from .manual_import import (
 )
 from .mappings import ExternalIds, MappingEntry, MappingSource
 from .output import hub_warn
-from .placement_types import EpisodeIndex, episode_index
+from .placement_types import EpisodeIndex, Placement, episode_index
 from .planner import get_episode_keys
 from .protocols import ArrSync
 from .run_services import RunDeps, RunServices, bind_arr_http
@@ -75,6 +75,13 @@ def get_overlapping_results(seadex_dict: SeadexDict) -> bool:
                 return True
 
     return False
+
+
+def _file_and_why(placement: Placement) -> str:
+    """One unplaced file for the debug line: its name and its verdict's words, with the order's key when it has one."""
+
+    key = "" if placement.order_only is None else f": {placement.order_only.label}"
+    return f"{placement.name} ({placement.verdict}{key})"
 
 
 def _override_line(url: str, override: IdentityOverride) -> str:
@@ -458,20 +465,23 @@ class SonarrSync(ArrSync[SonarrItem]):
                     self.logger.debug(_override_line(flagged.url, override))
 
     def _log_placements(self, placed: EntryPlacements) -> None:
-        """One debug line per url with video files: what placed (the coverage the plan reads), what was set aside."""
+        """One debug line per url with video files: its coverage, then each file set aside or held for a hand import."""
 
         for url, placement in placed.by_url.items():
             if not placement.files:
                 continue
             # The hold and the failed read explain an empty coverage on a listed release. A url held on the read
             # names it once, in its hold.
-            aside = ", ".join(p.name for p in placement.assignment.excluded)
+            assignment = placement.assignment
+            aside = ", ".join(_file_and_why(p) for p in assignment.excluded)
+            by_hand = ", ".join(_file_and_why(p) for p in assignment.placements if p.verdict.hand_import)
             hold = "" if placement.hold is None else f" (not grabbed: {placement.hold})"
             note_read_failed = not placement.inputs_known and placement.hold is not GrabHold.INPUT_UNREAD
             self.logger.debug(
                 f"{url}: placed {_coverage.coverage_string(list(placement.records)) or 'nothing'}"
                 f"{' (a read failed)' if note_read_failed else ''}{hold}"
-                f"{f'; set aside (other slice / another listed title / duplicate): {aside}' if aside else ''}"
+                f"{f'; set aside: {aside}' if aside else ''}"
+                f"{f'; left for a hand import: {by_hand}' if by_hand else ''}"
             )
 
     @override

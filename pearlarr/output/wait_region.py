@@ -21,7 +21,7 @@ from .wait_lines import (
     RowModel,
     WaitEvent,
     live_model,
-    wait_graduation_line,
+    wait_graduation_lines,
     wait_pulse_line,
     wait_start_line,
     wait_tally_lines,
@@ -139,7 +139,7 @@ class WaitRegion(LiveRegion):
                 elif self._throttle.fire(snapshot.elapsed_s):
                     self._durable(console, [wait_pulse_line(snapshot)])
             case TorrentGraduated():
-                self._durable(console, [wait_graduation_line(event, caps)])
+                self._durable(console, wait_graduation_lines(event, caps))
             case WaitFinished():
                 # Teardown before summary: stop the Live first so the tally prints to clean scrollback.
                 self._stop_live()

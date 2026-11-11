@@ -10,9 +10,13 @@ both could place is the kept title's to import, and the ignored title gets only 
 Every window places every file, not just the ones earlier windows left, because a numbered run cut short would read
 as a new run and could land wrong. Then the windows merge in order:
 
-- The first window to place or refuse a file decides it, and its ids are used under the later windows.
+- The first window to place or refuse a file decides it, and its ids are used under the later windows. A file a
+  window claimed for another TVDB order's episode (`OTHER_ORDER_ELSEWHERE`) is placed by a later one only there.
 - A file no window decides takes its strongest claim (`_CLAIM_RANK`).
 - A file the special aliases claim under one window but its numbers place elsewhere is always `MISNUMBERED`.
+
+The order of the season windows shows in what another TVDB order places (pass 16). A window that holds a key's
+aired episode places the file there, which settles it against the order under every later window.
 
 After the merge, the numberings reader (`numberings`) fills the gaps the windows left (`WindowedAssignment.filled`): a
 file named by number alone that every window skipped or read as another slice's, that no window was party to or read
@@ -206,8 +210,8 @@ class WindowedAssignment:
         """The merged verdicts, with each file that is another title's set aside as `LISTED_ELSEWHERE`.
 
         A file is another title's when a window outside `imports` placed it, or when it's left for a hand import
-        (misnumbered, or refuted by its titles) and no window in `imports` was party to that (`_party`). The record
-        neither imports nor hand-imports such a file: the title whose window judged it reports it under its own row.
+        (`PlacementVerdict.hand_import`) and no window in `imports` was party to that (`_party`). The record neither
+        imports nor hand-imports such a file: the title whose window judged it reports it under its own row.
         """
 
         elsewhere = PlacementVerdict.LISTED_ELSEWHERE
@@ -240,36 +244,49 @@ class WindowedAssignment:
             return not any(_party(self.windows[at].placements[index].verdict) for at in imports)
         return False
 
-    def refuted_under(self, own_at: int) -> bool:
-        """Whether a file the window at `own_at` refuted by its title is still `TITLE_REFUTED` after the merge."""
+    def hand_claim_under(self, own_at: int) -> PlacementVerdict | None:
+        """The hand-import claim a file of the window at `own_at` still carries after the merge, else None.
 
-        refuted = PlacementVerdict.TITLE_REFUTED
-        return self._left_as(refuted, {p.name for p in self.windows[own_at].placements if p.verdict is refuted})
+        The claims are `_HAND_CLAIMS`: refuted by its title, or read by another TVDB order outside the window. The
+        window made one for the file and no window placed or refused it. A title's refusal comes first when both
+        kinds are left.
+        """
+
+        own = {p.name for p in self.windows[own_at].placements if p.verdict in _HAND_CLAIMS}
+        left = {p.verdict for p in self.merged.placements if p.name in own and p.verdict in _HAND_CLAIMS}
+        return max(left, key=_CLAIM_RANK.__getitem__, default=None)
 
     def misnumbered_under(self, own_at: int) -> bool:
         """Whether a file the window at `own_at` was party to (`_party`) ended up `MISNUMBERED`."""
 
         own = {p.name for p in self.windows[own_at].placements if _party(p.verdict)}
-        return self._left_as(PlacementVerdict.MISNUMBERED, own)
+        return self._left_as({PlacementVerdict.MISNUMBERED}, own)
 
-    def _left_as(self, verdict: PlacementVerdict, names: Collection[str]) -> bool:
-        """Whether the merge left any of `names` with `verdict`."""
+    def _left_as(self, verdicts: Collection[PlacementVerdict], names: Collection[str]) -> bool:
+        """Whether the merge left any of `names` with one of `verdicts`."""
 
-        return any(p.verdict is verdict and p.name in names for p in self.merged.placements)
+        return any(p.verdict in verdicts and p.name in names for p in self.merged.placements)
 
 
 # A file no window decided ends with its highest-ranked claim. EXTRA is lowest because it rests on one window's
 # titles. SKIPPED beats FOREIGN and EXTRA, so a file some window couldn't place is never written off, and
-# ALIASED_ELSEWHERE beats FOREIGN because the aliases name the file as this series' special. TITLE_REFUTED is
-# highest, so a file whose title contradicts its numbers stays a hand import.
+# ALIASED_ELSEWHERE beats FOREIGN because the aliases name the file as this series' special. ORDER_ONLY beats
+# SKIPPED, so a file one window's order reads as no episode of Sonarr's stays a hand import where another window
+# only skipped it, and a window that proves it a duplicate still wins. OTHER_ORDER_ELSEWHERE and TITLE_REFUTED
+# are highest, so a file whose numbers a window refused or refuted stays a hand import.
 _CLAIM_RANK: Mapping[PlacementVerdict, int] = {
     PlacementVerdict.EXTRA: 0,
     PlacementVerdict.FOREIGN: 1,
     PlacementVerdict.ALIASED_ELSEWHERE: 2,
     PlacementVerdict.SKIPPED: 3,
-    PlacementVerdict.DUPLICATE: 4,
-    PlacementVerdict.TITLE_REFUTED: 5,
+    PlacementVerdict.ORDER_ONLY: 4,
+    PlacementVerdict.DUPLICATE: 5,
+    PlacementVerdict.OTHER_ORDER_ELSEWHERE: 6,
+    PlacementVerdict.TITLE_REFUTED: 7,
 }
+_HAND_CLAIMS = frozenset({PlacementVerdict.TITLE_REFUTED, PlacementVerdict.OTHER_ORDER_ELSEWHERE})
+"""The hand-import verdicts that are claims, not refusals: another window may still place the file, one claimed
+for another order only on the episodes that order reads it onto."""
 _BY_ALIAS = frozenset({PlacementVerdict.ALTERNATE, PlacementVerdict.ALIASED_ELSEWHERE})
 """The verdicts the special aliases give: placed on the aliased special, or claimed for the window that holds it."""
 _GAP = frozenset({PlacementVerdict.SKIPPED, PlacementVerdict.FOREIGN})
@@ -286,11 +303,11 @@ def _decides(verdict: PlacementVerdict) -> bool:
 def _party(verdict: PlacementVerdict) -> bool:
     """Whether a window giving this verdict is party to the file.
 
-    It placed, refused or refuted the file, or claimed it by alias. A window that wrote the file off (another
-    slice's, a duplicate, an extra, a skip) isn't.
+    It placed or refused the file, left it for a hand import, or claimed it by alias. A window that wrote the file
+    off (another slice's, a duplicate, an extra, a skip) isn't.
     """
 
-    return _decides(verdict) or verdict in _BY_ALIAS or verdict is PlacementVerdict.TITLE_REFUTED
+    return _decides(verdict) or verdict in _BY_ALIAS or verdict.hand_import
 
 
 def _merged(name: str, judged: Sequence[Placement], decided: Placement | None) -> Placement:
@@ -340,25 +357,35 @@ def windows_of(
 def place_across_windows(batch: PlacementBatch, windows: Sequence[TargetScope]) -> WindowedAssignment:
     """The batch placed under each window in turn, verdicts merged.
 
-    Under each window, the ids of files earlier windows decided are used, where the window admits them. With no
-    windows, every file is skipped.
+    Each window is handed the files earlier windows placed (`TargetScope.after`): their ids are used where the
+    window admits them. With no windows, every file is skipped.
+
+    A file a window refused and then claimed for another TVDB order's episode (`OTHER_ORDER_ELSEWHERE`) is placed
+    by a later window only on that episode. A placement of it anywhere else is dropped.
     """
 
     names = batch.names
-    used: list[int] = []
+    placed: dict[str, tuple[int, ...]] = {}
     decided: dict[str, Placement] = {}
     decided_by: dict[str, int] = {}
     judged: dict[str, list[Placement]] = {name: [] for name in names}
+    lifted: dict[str, tuple[int, ...]] = {}
     assignments: list[EpisodeAssignment] = []
     for position, window in enumerate(windows):
-        assignment = assign_episode_ids(batch, window.using(used))
+        assignment = assign_episode_ids(batch, window.after(placed))
         assignments.append(assignment)
         for placement in assignment.placements:
+            verdict = placement.verdict
+            if verdict.placed and lifted.get(placement.name, placement.ids) != placement.ids:
+                continue
+            if verdict is PlacementVerdict.OTHER_ORDER_ELSEWHERE:
+                lifted.setdefault(placement.name, placement.read_onto)
             judged[placement.name].append(placement)
             # A refusal decides the file too, so no later window can place it by its numbers.
-            if placement.name not in decided and _decides(placement.verdict):
+            if placement.name not in decided and _decides(verdict):
                 decided[placement.name] = placement
                 decided_by[placement.name] = position
-                used.extend(placement.ids)
+                if placement.ids:
+                    placed[placement.name] = placement.ids
     merged = EpisodeAssignment(tuple(_merged(name, judged[name], decided.get(name)) for name in names))
     return WindowedAssignment(merged, tuple(assignments), decided_by)
