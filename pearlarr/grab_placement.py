@@ -3,7 +3,7 @@
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, field, replace
 from types import MappingProxyType
-from typing import NamedTuple
+from typing import NamedTuple, Self
 
 from .coverage import coverage_string, episodes_from_ep_list
 from .episode_state import EpisodeFileStatus, EpisodeSnapshot, GroupVotes
@@ -217,15 +217,13 @@ class UrlPlacement:
     """Each mapped episode id to the listed size of the file placed on it.
     An id two files size differently is left out."""
 
+    sizes_by_name: Mapping[str, int] = field(init=False, repr=False, compare=False)
+    """Normalized listing name -> its listed size, read off `files` (see `_sizes_by_name`)."""
+
     def __post_init__(self) -> None:
         # Detach from the caller's dict, then wrap read-only.
         object.__setattr__(self, "intended_sizes", MappingProxyType(dict(self.intended_sizes)))
-
-    @property
-    def sizes_by_name(self) -> dict[str, int]:
-        """Normalized listing name -> its listed size (see `_sizes_by_name`)."""
-
-        return _sizes_by_name(self.files)
+        object.__setattr__(self, "sizes_by_name", MappingProxyType(_sizes_by_name(self.files)))
 
 
 def _sizes_by_name(files: Sequence[SeedFile]) -> dict[str, int]:
@@ -261,63 +259,54 @@ def place_release(files: Sequence[SeedFile], scope: SeedScope, torrent: KnownTor
     seeded: FileEpisodeMap = NO_SEEDED if torrent.record is None else torrent.record.file_episode_map
     batch = seed_batch(files, seeded=seeded)
     sizes = _sizes_by_name(files)
-    evidence = torrent.listing_evidence(sizes)
-    identities_unread = torrent.evidence.identities is None
     order = torrent.order(scope.window)
-    # Every video file's parse feeds the checks on the files being placed, the seeded ones' included, and nothing
-    # places a file after the grab, so an unknown parse holds the url while it has a file left to place. A url the
-    # record maps whole needs no parse.
-    parse_unread = bool(batch.names) and not batch.all_parses_known
-    # With no file left to place, the windows have nothing to judge.
+
+    # 1. Place under the torrent's windows.
     view = NOTHING_PLACED
+    # With no file left to place, the windows have nothing to judge.
     if batch.names and scope.can_place and order is not None:
-        placed = place_across_windows(batch, windows_of(order.windows, torrent.indexes, evidence))
-        reading = NumberingReader.of(scope, order.windows).read(batch, placed.facts[order.own_at].names)
-        view = placed.filled(batch, reading).seen_by(order.own_at, order.imports)
+        scopes = windows_of(order.windows, torrent.indexes, torrent.listing_evidence(sizes))
+        windowed = place_across_windows(batch, scopes)
+        reading = NumberingReader.of(scope, order.windows).read(batch, windowed.facts[order.own_at].names)
+        view = windowed.filled(batch, reading).seen_by(order.own_at, order.imports)
+
+    # 2. What the whole map puts on the entry.
     mapped = joined_map(seeded, view.assignment.assigned)
-    records: list[EpisodeRecord] = []
-    claimed: set[int] = set()
-    for f in files:
-        for ep_id in mapped.get(f.name, ()):
-            # A stored id on another series is not this entry's. One inside the entry counts toward its coverage.
-            episode = scope.entry.by_id.get(ep_id)
-            if episode is None:
-                continue
-            claimed.add(ep_id)
-            # An episode Sonarr sent without numbers fits no coverage key, so it adds no record.
-            if episode.season_number is None or episode.episode_number is None:
-                continue
-            records.append(EpisodeRecord(season=episode.season_number, episode=episode.episode_number, size=f.size))
+    on_entry = _OnEntry.of(files, scope.entry, mapped)
+    landed = bool(on_entry.claimed_ids)
+
+    # 3. Whether the url is held.
+    unread = (
+        # An order that couldn't be built is a read that failed, since the url's windows are unknown.
+        order is None
+        or torrent.evidence.identities is None
+        # Every video file's parse feeds the checks on the files being placed, the seeded ones' included, and nothing
+        # places a file after the grab, so an unknown parse holds the url while it has a file left to place. A url
+        # the record maps whole needs no parse.
+        or (bool(batch.names) and not batch.all_parses_known)
+    )
+    # With nothing of the whole map on the entry, a file another title's window placed or left for a hand import is
+    # that title's, and so is a mapped file on an episode another title's window holds.
+    elsewhere = frozenset[str]() if landed else view.outside | _mapped_elsewhere(batch, mapped, order)
+    # A url with no video file (subs, fonts) places nothing and waits on nothing.
+    hold = None
+    if files:
+        hold = _hold_of(
+            misnumbered=view.misnumbered,
+            unread=unread,
+            hand_claim=None if landed else view.hand_claim,
+            elsewhere=bool(elsewhere),
+        )
     # With every window's series read, a scope that can't place (`SeedScope.can_place`) still places nothing. A new
     # torrent is then judged by group and size. A stored one's claim joins with nothing placed, a grab-time verdict
     # that would be final, so its title is re-checked.
     known = order is not None and (torrent.record is None or scope.can_place)
-    # An order that couldn't be built is a read that failed, since the url's windows are unknown.
-    unread = order is None or identities_unread or parse_unread
-    # With nothing of the whole map on the entry, a file another title's window placed or left for a hand import is
-    # that title's, and so is a mapped file on an episode another title's window holds. A mapped file on an episode
-    # no listed title's window holds is nobody's and doesn't hold the url. Judged on the whole map, so a sibling's
-    # stored files count as its fresh ones would.
-    other_ids = frozenset[int]() if order is None else order.other_ids
-    mapped_elsewhere = frozenset(name for name in batch.to_place if not other_ids.isdisjoint(mapped.get(name, ())))
-    elsewhere = frozenset[str]() if claimed else view.outside | mapped_elsewhere
-    # A url with no video file (subs, fonts) places nothing and waits on nothing.
-    hold = (
-        _hold_of(
-            misnumbered=view.misnumbered,
-            unread=unread,
-            hand_claim=None if claimed else view.hand_claim,
-            elsewhere=bool(elsewhere),
-        )
-        if files
-        else None
-    )
     return UrlPlacement(
         files=tuple(files),
         assignment=view.assignment,
         # A pack left for a hand import adds no records: the planner judges it by what its window holds.
-        records=() if hold is not None and hold.hand_import else tuple(records),
-        claimed_ids=frozenset(claimed),
+        records=() if hold is not None and hold.hand_import else on_entry.records,
+        claimed_ids=on_entry.claimed_ids,
         inputs_known=not files or (known and not unread),
         hold=hold,
         hold_counts=(
@@ -326,6 +315,47 @@ def place_release(files: Sequence[SeedFile], scope: SeedScope, torrent: KnownTor
         stored=torrent.record,
         intended_sizes=sizes_by_episode(mapped, sizes),
     )
+
+
+def _mapped_elsewhere(batch: PlacementBatch, mapped: FileEpisodeMap, order: WindowOrder | None) -> frozenset[str]:
+    """The files to place that the whole map puts on an episode another listed title's window holds.
+
+    A mapped file on an episode no listed title's window holds is nobody's and isn't among them. Judged on the whole
+    map, so a sibling's stored files count as its fresh ones would.
+    """
+
+    if order is None:
+        return frozenset()
+    return frozenset(name for name in batch.to_place if not order.other_ids.isdisjoint(mapped.get(name, ())))
+
+
+@dataclass(frozen=True, slots=True)
+class _OnEntry:
+    """What the whole map puts on the entry."""
+
+    records: tuple[EpisodeRecord, ...]
+    """One `(season, episode, size)` per file and episode of the map inside the entry, in file order."""
+    claimed_ids: frozenset[int]
+    """The entry's episode ids the map covers."""
+
+    @classmethod
+    def of(cls, files: Sequence[SeedFile], entry: EpisodeIndex, mapped: FileEpisodeMap) -> Self:
+        """What `mapped` puts on `entry`, read in `files` order."""
+
+        records: list[EpisodeRecord] = []
+        claimed: set[int] = set()
+        for f in files:
+            for ep_id in mapped.get(f.name, ()):
+                # A stored id on another series is not this entry's. One inside the entry counts toward its coverage.
+                episode = entry.by_id.get(ep_id)
+                if episode is None:
+                    continue
+                claimed.add(ep_id)
+                # An episode Sonarr sent without numbers fits no coverage key, so it adds no record.
+                if episode.season_number is None or episode.episode_number is None:
+                    continue
+                records.append(EpisodeRecord(season=episode.season_number, episode=episode.episode_number, size=f.size))
+        return cls(tuple(records), frozenset(claimed))
 
 
 def _hold_of(
