@@ -27,7 +27,7 @@ from pearlarr.output import Severity
 from pearlarr.seadex_types import AniListAiring, SonarrEpisode
 from pearlarr.sonarr_episodes import SonarrEpisodes, check_ep_by_anibridge, check_ep_by_anime_ids
 
-from .builders import make_sonarr_episodes, sonarr_ep
+from .builders import ScriptedAniListClient, anilist_body, make_anilist_gateway, make_sonarr_episodes, sonarr_ep
 from .fakes import diagnostic_messages, install_recording_hub
 
 _NO_AIRING = AniListAiring(start=None, end=None, episodes=None, duration=None)
@@ -124,6 +124,18 @@ def test_the_episode_count_is_the_gateways() -> None:
 
     assert episodes.episode_count(123) == 12
     assert anilist.n_eps_calls == [123]
+
+
+def test_an_entry_the_gateway_left_unread_is_unread() -> None:
+    # AniList goes down on entry 5. Entry 4 is looked up after that, from its record in the run cache.
+    down = make_anilist_gateway(ScriptedAniListClient(failing=frozenset({5})))
+    down.al_cache[4] = anilist_body(4)
+    down.n_eps(5)
+    down.n_eps(4)
+    episodes = make_sonarr_episodes(_anilist=down)
+
+    assert episodes.entries_unread([4, 5]) is True
+    assert episodes.entries_unread([4]) is False
 
 
 def test_empty_anibridge_season_map_resolves_to_no_episodes() -> None:

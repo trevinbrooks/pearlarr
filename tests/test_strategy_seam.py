@@ -215,6 +215,7 @@ class _FakeRunServices(RunServices):
         self.filter_downloads_calls: list[tuple[SeadexDict, ArrReleases]] = []
         self.grab_requests: list[GrabRequest] = []
         self.no_releases_calls: list[tuple[int, CacheRecord]] = []
+        self.no_releases_unread: list[int] = []
         self.invalid_selection_skips = 0
         self.pauses_owed = 0
 
@@ -297,8 +298,10 @@ class _FakeRunServices(RunServices):
         return self._import_wait_mode
 
     @override
-    def no_releases_skip(self, al_id: int, cache_details: CacheRecord) -> None:
+    def no_releases_skip(self, al_id: int, cache_details: CacheRecord, *, metadata_unread: bool = False) -> None:
         self.no_releases_calls.append((al_id, cache_details))
+        if metadata_unread:
+            self.no_releases_unread.append(al_id)
 
     @override
     def invalid_selection_skip(self) -> None:
@@ -2385,19 +2388,32 @@ _EP2 = sonarr_ep(1, 2, ep_id=102, episode_file_id=0)
 _STAMP = "2026-01-01 00:00:00"
 
 
-def _seed_episodes(sonarr: FakeSonarrClient, *, unread: frozenset[int] = frozenset()) -> ScriptedEpisodes:
-    """Entry 5's window is episode 102 of `sonarr`'s series, and the `unread` series have no order record."""
+def _seed_episodes(
+    sonarr: FakeSonarrClient,
+    *,
+    unread_series: frozenset[int] = frozenset(),
+    unread_entries: frozenset[int] = frozenset(),
+) -> ScriptedEpisodes:
+    """Entry 5's window is episode 102 of `sonarr`'s series.
 
-    return ScriptedEpisodes(sonarr, windows={5: [_EP2]}, unread=unread)
+    The `unread_series` have no order record, and the `unread_entries` no AniList record.
+    """
+
+    return ScriptedEpisodes(sonarr, windows={5: [_EP2]}, unread_series=unread_series, unread_entries=unread_entries)
 
 
 def _sonarr_seed_run(mode: ImportWaitMode, *, store: FakeCacheStore, episodes: ScriptedEpisodes) -> _FakeRunServices:
-    """Drive a Sonarr `process_al_id` for entry 5 (series 7) listing one two-file torrent."""
+    """Drive a Sonarr `process_al_id` for entry 5 (series 7) listing one two-file torrent.
+
+    The series maps to entries 4 and 5 and to the ignored entry 6.
+    """
 
     seadex: SeadexDict = {
         "NAN0": rg_group({_SEED_URL: url_item(url=_SEED_URL, infohash="h1", download=True, files=list(_SEED_FILES))}),
     }
     run = _FakeRunServices(
+        anilist_ids={4: MappingEntry(anilist_id=4), 5: MappingEntry(anilist_id=5)},
+        ignored={6: MappingEntry(anilist_id=6)},
         prologue_entry=make_entry_record(url="https://releases.moe/5"),
         anilist_title="Show Cour 2",
         seadex_dict=seadex,
@@ -2685,30 +2701,68 @@ class TestPlacementDebugLine:
         ]
 
 
-class TestSonarrProcessAlIdOrdersUnread:
-    """A grab reads the title's series and every stored record's series, and asks whether any has no order record."""
+class TestSonarrProcessAlIdMetadataUnread:
+    """A grab asks whether its check read an entry without its AniList record or a series without its TVDB orders.
+
+    The entries are every entry of the title's series, the series are the title's and every stored record's.
+    """
 
     @pytest.mark.parametrize(
-        ("unread", "expected"),
+        ("unread_series", "unread_entries", "expected"),
         [
-            pytest.param(frozenset[int](), False, id="all-read"),
-            pytest.param(frozenset({7}), True, id="its-own-series"),
-            pytest.param(frozenset({8}), True, id="a-stored-records-series"),
+            pytest.param(frozenset[int](), frozenset[int](), False, id="all-read"),
+            pytest.param(frozenset({7}), frozenset[int](), True, id="its-own-series"),
+            pytest.param(frozenset({8}), frozenset[int](), True, id="a-stored-records-series"),
+            pytest.param(frozenset[int](), frozenset({5}), True, id="its-own-entry"),
+            pytest.param(frozenset[int](), frozenset({4}), True, id="another-entry-of-its-series"),
+            pytest.param(frozenset[int](), frozenset({6}), True, id="an-ignored-entry-of-its-series"),
         ],
     )
-    def test_the_grab_request_carries_whether_any_series_is_unread(
-        self, unread: frozenset[int], expected: bool
+    def test_the_grab_request_carries_whether_its_metadata_is_unread(
+        self, unread_series: frozenset[int], unread_entries: frozenset[int], expected: bool
     ) -> None:
         # Series 8's record already holds the torrent entry 5 lists, so the grab places it under that record too.
         store = FakeCacheStore()
         resident = pending_import(infohash="h1", al_id=22, series_id=8, seadex_files=list(_SEED_FILES))
         store.put_pending(Arr.SONARR, "h1", resident.to_json())
-        episodes = _seed_episodes(FakeSonarrClient(episodes=[_EP1, _EP2]), unread=unread)
+        episodes = _seed_episodes(
+            FakeSonarrClient(episodes=[_EP1, _EP2]), unread_series=unread_series, unread_entries=unread_entries
+        )
 
         run = _sonarr_seed_run(ImportWaitMode.BLOCKING, store=store, episodes=episodes)
 
         (req,) = run.grab_requests
-        assert req.orders_unread is expected
+        assert req.metadata_unread is expected
+
+    @pytest.mark.parametrize(
+        ("unread_entries", "unread"),
+        [
+            pytest.param(frozenset({5}), [5], id="its-own-entry"),
+            pytest.param(frozenset({4}), [], id="another-entry-of-its-series"),
+        ],
+    )
+    def test_a_title_with_no_suitable_release_asks_about_its_own_entry_alone(
+        self, unread_entries: frozenset[int], unread: list[int]
+    ) -> None:
+        run = _FakeRunServices(
+            anilist_ids={4: MappingEntry(anilist_id=4), 5: MappingEntry(anilist_id=5)},
+            prologue_entry=make_entry_record(url="https://releases.moe/5"),
+            anilist_title="Show Cour 2",
+            seadex_dict={},
+            cache_store=FakeCacheStore(),
+        )
+        strat = make_bare_instance(
+            SonarrSync,
+            _services=run,
+            _episodes=_seed_episodes(FakeSonarrClient(episodes=[_EP1, _EP2]), unread_entries=unread_entries),
+            _config=make_config(sleep_time=0),
+            logger=make_logger(),
+        )
+
+        strat.process_al_id(_Item(id=7, title="Show", tvdbId=70, imdbId=None), 5, MappingEntry(anilist_id=5))
+
+        assert [al_id for al_id, _ in run.no_releases_calls] == [5]
+        assert run.no_releases_unread == unread
 
 
 class TestRadarrProcessAlIdSeeds:

@@ -553,18 +553,22 @@ class RunServices:
         self,
         al_id: int,
         cache_details: CacheRecord,
+        *,
+        metadata_unread: bool = False,
     ) -> None:
         """Shared no-suitable-releases tail both Arr strategies fall into.
 
         When SeaDex yields no usable releases for an id, every strategy does the same three things: log the
         outcome, persist what it knows into the cache, and owe the pacing pause. Hoisted here so the two strategies
-        share one definition instead of a byte-for-byte duplicated block.
+        share one definition instead of a byte-for-byte duplicated block. A title whose check read its entry
+        without its AniList record (`metadata_unread`) is not cached, so the next run checks it again.
         """
 
         self._log_no_seadex_releases()
-        # Never fallback-satisfied: overwrite any stale True from a prior fallback run.
-        cache_details["fallback_satisfied"] = False
-        self._update_cache(al_id=al_id, cache_details=cache_details)
+        if not metadata_unread:
+            # Never fallback-satisfied: overwrite any stale True from a prior fallback run.
+            cache_details["fallback_satisfied"] = False
+            self._update_cache(al_id=al_id, cache_details=cache_details)
         self.owe_pause()
 
     def invalid_selection_skip(self) -> None:
@@ -620,8 +624,8 @@ class RunServices:
         """The cached-entry gate both strategies pass each id through: True skips it, False sends it on to a check.
 
         A skip backfills what an older row lacks and logs the cached block. A title sent on has its row's stamp
-        cleared here, before anything in the check can fail: `grab_and_cache` (when the outcome may be
-        cached as done) and `no_releases_skip` are the two writes that stamp it again.
+        cleared here, before anything in the check can fail: `grab_and_cache` and `no_releases_skip` are the two
+        writes that stamp it again, each only when the outcome may be cached as done.
 
         `coverage` stays a callable so the (for Sonarr, episode-fetching) lookup runs only on the
         one-time url backfill, never on the common already-backfilled path.

@@ -190,9 +190,9 @@ class PerTitleState:
     run, and a hand-import hold re-warns until the import covers it. `GrabHold.INPUT_UNREAD` also carries the
     groups whose placement waited on a failed read, though a url of such a group may have been grabbed. Filled by
     `add_held`."""
-    orders_unread: bool = False
-    """A series the placement read has no stored TVDB orders, so the title stays uncached and re-checks. Nothing
-    for the user to do."""
+    metadata_unread: bool = False
+    """An entry of the series was looked up without its AniList record, or a series was read without its TVDB
+    orders, so the title stays uncached and re-checks. Nothing for the user to do."""
     current_title: str | None = None
     """Title of the entry currently being processed, so grabs and the summary can attribute what they grab."""
     current_url: str | None = None

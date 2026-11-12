@@ -338,6 +338,11 @@ class SonarrEpisodes:
 
         return self._anilist.n_eps(al_id)
 
+    def entries_unread(self, al_ids: Iterable[int]) -> bool:
+        """Whether AniList left any of the entries unread (`AniListGateway.unread`)."""
+
+        return any(self._anilist.unread(al_id) for al_id in al_ids)
+
     def orders_unread(self, series_ids: Iterable[int]) -> bool:
         """Whether any of the series has no stored order record, as when SkyHook was down before its first fetch.
 
