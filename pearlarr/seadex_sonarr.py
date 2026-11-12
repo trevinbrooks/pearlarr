@@ -12,7 +12,6 @@ from .grab_placement import (
     EntryPlacements,
     IdentityOverride,
     PendingSeed,
-    SeedScope,
     TorrentReads,
     build_pending_seeds,
     entry_hashes,
@@ -29,7 +28,7 @@ from .manual_import import (
 )
 from .mappings import ExternalIds, MappingEntry, MappingSource
 from .output import hub_warn
-from .placement_types import EpisodeIndex, Placement, episode_index
+from .placement_types import EpisodeIndex, Placement, SeedScope, episode_index
 from .planner import get_episode_keys
 from .protocols import ArrSync
 from .run_services import RunDeps, RunServices, bind_arr_http

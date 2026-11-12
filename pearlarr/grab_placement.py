@@ -31,6 +31,7 @@ from .placement_types import (
     ListingsRead,
     PlacementBatch,
     PlacementVerdict,
+    SeedScope,
     SizeIdentities,
     TorrentListing,
 )
@@ -52,11 +53,12 @@ from .seadex_types import (
 from .window_placement import WindowOrder, ordered_windows, place_across_windows, windows_of
 
 
-class SeedFile(NamedTuple):
+@dataclass(frozen=True, slots=True)
+class SeedFile:
     """One listed video file, its size and its cached grab-time `/parse`, as the placement reads it."""
 
     basename: str
-    """The raw SeaDex basename (normalized only where the placement keys the batch)."""
+    """The raw SeaDex basename."""
 
     size: int
     """The listed size, carried onto the records the planner compares by size."""
@@ -65,56 +67,11 @@ class SeedFile(NamedTuple):
     """Sonarr's parse of the name, or None when no fresh parse record exists. An unknown parse keeps the count-based
     passes from placing, and holds the url while it has a file left to place (`GrabHold.INPUT_UNREAD`)."""
 
+    name: str = field(init=False, repr=False, compare=False)
+    """The normalized basename (`normalized_leaf`): what the batch, the sizes and the stored map key a file by."""
 
-@dataclass(frozen=True, slots=True, kw_only=True)
-class SeedScope:
-    """What one entry's files are placed against: its indexes, its names, and what AniList and Sonarr say of it."""
-
-    al_id: int
-    """The entry claiming the placement: a stored claim of its own is replaced by the fresh window."""
-
-    series_id: int
-    """The Sonarr series the entry's episodes belong to."""
-
-    entry: EpisodeIndex
-    """The entry's episodes: the resolved set, and what the slice and preowned reads cover."""
-
-    series: EpisodeIndex
-    """The WHOLE series (empty when the series list could not be read, which places nothing)."""
-
-    names: EntryNames
-    """The series and AniList titles the placement breaks ties by, persisted onto every seed."""
-
-    episode_count: int | None
-    """AniList's episode count for the entry (`SonarrEpisodes.episode_count`), None when AniList gives none."""
-
-    alternate_titles: tuple[str, ...]
-    """The series' other titles in Sonarr (`SonarrSeries.alternateTitles`), in Sonarr's order."""
-
-    aired_numbering: bool
-    """Whether Sonarr numbers the series by TVDB's aired order (`SonarrEpisodes.numbers_aired`)."""
-
-    @property
-    def can_place(self) -> bool:
-        """Whether there is an entry index and a served series map to place against.
-
-        An empty entry index must not pass as "no scope" (which places against the whole series map), and an
-        unread map places nothing: a grab-time verdict is final.
-        """
-
-        return bool(self.entry.by_id and self.series.id_by_key)
-
-    @property
-    def window(self) -> EntryWindow:
-        """The entry's own window, built as a listing builds an entry's (`EntryWindow.of`)."""
-
-        return EntryWindow.of(
-            al_id=self.al_id,
-            series_id=self.series_id,
-            ep_list=self.entry.by_id.values(),
-            names=self.names,
-            episode_count=self.episode_count,
-        )
+    def __post_init__(self) -> None:
+        object.__setattr__(self, "name", normalized_leaf(self.basename))
 
 
 class TorrentEvidence(NamedTuple):
@@ -274,7 +231,7 @@ class UrlPlacement:
 def _sizes_by_name(files: Sequence[SeedFile]) -> dict[str, int]:
     """Normalized listing name -> its listed size, a name listed at two sizes left out."""
 
-    return unambiguous((normalized_leaf(f.basename), f.size) for f in files)
+    return unambiguous((f.name, f.size) for f in files)
 
 
 def seed_batch(files: Sequence[SeedFile], seeded: FileEpisodeMap = NO_SEEDED) -> PlacementBatch:
@@ -284,11 +241,10 @@ def seed_batch(files: Sequence[SeedFile], seeded: FileEpisodeMap = NO_SEEDED) ->
     `seeded` is the stored record's map (`PendingImport.file_episode_map`), whose names are never placed.
     """
 
-    to_place = list(dict.fromkeys(normalized_leaf(f.basename) for f in files))
     parsed: dict[str, ParsedFileInfo | None] = {}
     for f in files:
-        parsed.setdefault(normalized_leaf(f.basename), f.parse)
-    return PlacementBatch(to_place, parsed, seeded)
+        parsed.setdefault(f.name, f.parse)
+    return PlacementBatch(list(parsed), parsed, seeded)
 
 
 def place_release(files: Sequence[SeedFile], scope: SeedScope, torrent: KnownTorrent) -> UrlPlacement:
@@ -327,7 +283,7 @@ def place_release(files: Sequence[SeedFile], scope: SeedScope, torrent: KnownTor
     records: list[EpisodeRecord] = []
     claimed: set[int] = set()
     for f in files:
-        for ep_id in mapped.get(normalized_leaf(f.basename), ()):
+        for ep_id in mapped.get(f.name, ()):
             # A stored id on another series is not this entry's. One inside the entry counts toward its coverage.
             episode = scope.entry.by_id.get(ep_id)
             if episode is None:
