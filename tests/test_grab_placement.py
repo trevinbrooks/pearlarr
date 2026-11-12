@@ -14,7 +14,6 @@ from pearlarr.grab_placement import (
     PendingSeed,
     SeedFile,
     SeedRelease,
-    SeedScope,
     TorrentEvidence,
     TorrentReads,
     UrlPlacement,
@@ -43,6 +42,7 @@ from pearlarr.placement_types import (
     ListingEvidence,
     ListingsRead,
     PlacementVerdict,
+    SeedScope,
     episode_index,
 )
 from pearlarr.seadex_types import (

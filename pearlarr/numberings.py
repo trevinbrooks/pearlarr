@@ -22,16 +22,12 @@ from dataclasses import dataclass
 from enum import Enum
 from itertools import pairwise
 from types import MappingProxyType
-from typing import TYPE_CHECKING, Self
+from typing import Self
 
 from .manual_import import EntryWindow
-from .placement_types import EpisodeIndex, PlacementBatch
+from .placement_types import EpisodeIndex, PlacementBatch, SeedScope
 from .placer import NameFacts
 from .seadex_types import ParsedFileInfo, SonarrEpisode, season_episode_key
-
-if TYPE_CHECKING:
-    # Annotation-only: grab_placement imports this module at runtime (cycle).
-    from .grab_placement import SeedScope
 
 
 class Numbering(Enum):
@@ -136,10 +132,16 @@ def _ordered(episodes: Iterable[SonarrEpisode]) -> list[SonarrEpisode]:
     return sorted(episodes, key=lambda ep: season_episode_key(ep.season_number, ep.episode_number))
 
 
+def _is_regular(ep: SonarrEpisode) -> bool:
+    """Whether the episode is in a season above 0: a row a group counts."""
+
+    return ep.season_number is not None and ep.season_number > 0
+
+
 def _regular(episodes: Iterable[SonarrEpisode]) -> list[SonarrEpisode]:
     """The episodes of a season above 0, in season and episode order: the rows a group counts."""
 
-    return _ordered(ep for ep in episodes if ep.season_number is not None and ep.season_number > 0)
+    return _ordered(filter(_is_regular, episodes))
 
 
 def _absolutes_increase(episodes: Iterable[SonarrEpisode]) -> bool:
@@ -180,7 +182,7 @@ class _Window:
 
         by_id = index.by_id
         rows = _ordered(by_id[ep_id] for ep_id in window.ordered_episode_ids if ep_id in by_id)
-        regs = _regular(rows)
+        regs = [ep for ep in rows if _is_regular(ep)]
         first_season = regs[0].season_number if regs else None
         count = window.episode_count
         titles = window.names.anilist
@@ -338,7 +340,7 @@ class NumberingReader:
     not the rows a group counts."""
 
     @classmethod
-    def of(cls, scope: "SeedScope", windows: Iterable[EntryWindow]) -> Self:
+    def of(cls, scope: SeedScope, windows: Iterable[EntryWindow]) -> Self:
         """The reader for one torrent: `windows` are the torrent's (`WindowOrder.windows`), any series."""
 
         index = scope.series

@@ -1,4 +1,4 @@
-"""Types the placement modules share: the episode index, verdicts, one file's placement, the batch, and the scope."""
+"""Types the placement modules share: the episode index, verdicts, one file's placement, the batch, and the scopes."""
 
 from collections import Counter
 from collections.abc import Iterable, Mapping, Sequence
@@ -346,6 +346,17 @@ class PlacementBatch:
     """The stored record's map, normalized name -> episode ids, the ids held as tuples. Its ids count as used wherever
     the scope admits them, and the misnumbered pack pass checks each seeded member sits on its aliased special."""
 
+    names: tuple[str, ...] = field(init=False, repr=False, compare=False)
+    """The distinct names to place, batch order: `to_place` less the names the map holds."""
+
+    torrent_names: tuple[str, ...] = field(init=False, repr=False, compare=False)
+    """The distinct names the placer reads: the names to place, then the rest of `parsed` (seeded, gone). A mapped
+    name with no parse entry is left out."""
+
+    all_parses_known: bool = field(init=False, repr=False, compare=False)
+    """Every parse came from Sonarr this run: no miss (None). Seeded and gone files are parsed by name too, so a miss
+    on any of them counts, as does a file to place that has no parse entry."""
+
     def __post_init__(self) -> None:
         # Detach from the caller's collections, then wrap read-only. The ids are tupled whatever the type says: a
         # cast or an untyped script can hand lists, and a list never equals `(ep_id,)` in `_aliased_specials`, so a
@@ -353,31 +364,11 @@ class PlacementBatch:
         object.__setattr__(self, "to_place", tuple(self.to_place))
         object.__setattr__(self, "parsed", MappingProxyType(dict(self.parsed)))
         object.__setattr__(self, "seeded", MappingProxyType({name: tuple(ids) for name, ids in self.seeded.items()}))
-
-    @property
-    def names(self) -> tuple[str, ...]:
-        """The distinct names to place, batch order: `to_place` less the names the map holds."""
-
-        return tuple(name for name in dict.fromkeys(self.to_place) if name not in self.seeded)
-
-    @property
-    def torrent_names(self) -> tuple[str, ...]:
-        """The distinct names the placer reads: the names to place, then the rest of `parsed` (seeded, gone).
-
-        A mapped name with no parse entry is left out.
-        """
-
-        return tuple(dict.fromkeys([*self.names, *self.parsed]))
-
-    @property
-    def all_parses_known(self) -> bool:
-        """Every parse came from Sonarr this run: no miss (None).
-
-        Seeded and gone files are parsed by name too, so a miss on any of them counts, as
-        does a file to place that has no parse entry.
-        """
-
-        return all(self.parsed.get(name) is not None for name in self.torrent_names)
+        names = tuple(name for name in dict.fromkeys(self.to_place) if name not in self.seeded)
+        torrent_names = tuple(dict.fromkeys([*names, *self.parsed]))
+        object.__setattr__(self, "names", names)
+        object.__setattr__(self, "torrent_names", torrent_names)
+        object.__setattr__(self, "all_parses_known", all(self.parsed.get(name) is not None for name in torrent_names))
 
 
 type SizeIdentities = Mapping[int, int]
@@ -540,6 +531,58 @@ class TargetScope:
         if not (self.specials_window and listed and self.real_ids <= listed):
             return None
         return listed if all_specials(self.series, listed) else None
+
+
+@dataclass(frozen=True, slots=True, kw_only=True)
+class SeedScope:
+    """What one entry's files are placed against: its indexes, its names, and what AniList and Sonarr say of it."""
+
+    al_id: int
+    """The entry claiming the placement: a stored claim of its own is replaced by the fresh window."""
+
+    series_id: int
+    """The Sonarr series the entry's episodes belong to."""
+
+    entry: EpisodeIndex
+    """The entry's episodes: the resolved set, and what the slice and preowned reads cover."""
+
+    series: EpisodeIndex
+    """The WHOLE series (empty when the series list could not be read, which places nothing)."""
+
+    names: EntryNames
+    """The series and AniList titles the placement breaks ties by, persisted onto every seed."""
+
+    episode_count: int | None
+    """AniList's episode count for the entry (`SonarrEpisodes.episode_count`), None when AniList gives none."""
+
+    alternate_titles: tuple[str, ...]
+    """The series' other titles in Sonarr (`SonarrSeries.alternateTitles`), in Sonarr's order."""
+
+    aired_numbering: bool
+    """Whether Sonarr numbers the series by TVDB's aired order (`SonarrEpisodes.numbers_aired`)."""
+
+    window: EntryWindow = field(init=False, repr=False, compare=False)
+    """The entry's own window, built as a listing builds an entry's (`EntryWindow.of`)."""
+
+    def __post_init__(self) -> None:
+        window = EntryWindow.of(
+            al_id=self.al_id,
+            series_id=self.series_id,
+            ep_list=self.entry.by_id.values(),
+            names=self.names,
+            episode_count=self.episode_count,
+        )
+        object.__setattr__(self, "window", window)
+
+    @property
+    def can_place(self) -> bool:
+        """Whether there is an entry index and a served series map to place against.
+
+        An empty entry index must not pass as "no scope" (which places against the whole series map), and an
+        unread map places nothing: a grab-time verdict is final.
+        """
+
+        return bool(self.entry.by_id and self.series.id_by_key)
 
 
 @dataclass(frozen=True, slots=True)

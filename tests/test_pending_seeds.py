@@ -19,12 +19,11 @@ from pearlarr.grab_placement import (
     EntryFacts,
     EntryPlacements,
     PendingSeed,
-    SeedScope,
     build_pending_seeds,
 )
 from pearlarr.manual_import import EntryNames, GuardFacts, OwnedEpisode, PendingImport, normalize_basename
 from pearlarr.parse_records import to_parse_record
-from pearlarr.placement_types import episode_index
+from pearlarr.placement_types import SeedScope, episode_index
 from pearlarr.seadex_sonarr import SonarrSync
 from pearlarr.seadex_types import EpisodeRecord, Json, ParsedFileInfo, SeadexDict, SonarrEpisode
 from pearlarr.stamps import now_stamp

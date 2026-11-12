@@ -14,9 +14,9 @@ from pathlib import Path
 import pytest
 from pydantic import BaseModel, RootModel
 
-from pearlarr.grab_placement import SeedFile, SeedScope, place_release
+from pearlarr.grab_placement import SeedFile, place_release
 from pearlarr.manual_import import EntryNames, normalize_basename
-from pearlarr.placement_types import episode_index
+from pearlarr.placement_types import SeedScope, episode_index
 from pearlarr.seadex_types import (
     EpisodeRecord,
     Json,

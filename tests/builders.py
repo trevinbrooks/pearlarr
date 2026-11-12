@@ -34,7 +34,7 @@ from pearlarr.clock import Clock
 from pearlarr.config import AppConfig, Arr
 from pearlarr.episode_state import EpisodeFileStatus, EpisodeSnapshot, TargetStatuses, TrustPolicy
 from pearlarr.grab_pipeline import GrabPipeline, GrabRequest
-from pearlarr.grab_placement import EntryFacts, KnownTorrent, PendingSeed, SeedScope, TorrentEvidence, TorrentFacts
+from pearlarr.grab_placement import EntryFacts, KnownTorrent, PendingSeed, TorrentEvidence, TorrentFacts
 from pearlarr.import_wait import ImportProbes, ImportWaitManager, PostImportCleanup
 from pearlarr.manual_import import (
     NO_HELD_BACK,
@@ -65,6 +65,7 @@ from pearlarr.placement_types import (
     EpisodeIndex,
     PlacementBatch,
     PlacementVerdict,
+    SeedScope,
     SizeIdentities,
     TargetScope,
     TorrentListing,
