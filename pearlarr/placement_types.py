@@ -3,7 +3,7 @@
 from collections import Counter
 from collections.abc import Iterable, Mapping, Sequence
 from dataclasses import dataclass, field, replace
-from enum import StrEnum
+from enum import Enum, StrEnum, auto
 from types import MappingProxyType
 from typing import Self
 
@@ -134,7 +134,11 @@ def all_specials(series: EpisodeIndex, ids: Iterable[int]) -> bool:
 
 
 class PlacementVerdict(StrEnum):
-    """How one file left `assign_episode_ids`: placed by which pass, excluded, or unplaced."""
+    """How one file was judged: placed by which pass, excluded, or unplaced.
+
+    `assign_episode_ids` gives every verdict but two, which are given once the windows merge: `NUMBERINGS_AGREE`
+    and `LISTED_ELSEWHERE`.
+    """
 
     EXACT = "exact"
     """Its own `(season, episode)`, or Sonarr's matched pair, resolved inside the scope."""
@@ -206,7 +210,7 @@ class PlacementVerdict(StrEnum):
     def placed(self) -> bool:
         """Whether the verdict carries episode ids."""
 
-        return self in _PLACED
+        return isinstance(_KIND[self], _Places)
 
     @property
     def excluded(self) -> bool:
@@ -215,13 +219,14 @@ class PlacementVerdict(StrEnum):
         A later claim's window can still place a foreign file or another listed title's.
         """
 
-        return self in _EXCLUDED
+        row = _KIND[self]
+        return not isinstance(row, _Places) and row.leaves is _Unplaced.EXCLUDED
 
     @property
     def refused(self) -> bool:
         """Whether the verdict settles the file with no ids: held for a re-ask, or misnumbered for a hand import."""
 
-        return self in _REFUSED
+        return isinstance(_KIND[self], _Refuses)
 
     @property
     def hand_import(self) -> bool:
@@ -231,43 +236,142 @@ class PlacementVerdict(StrEnum):
         or one Sonarr doesn't list.
         """
 
-        return self in _HAND_IMPORT
+        row = _KIND[self]
+        return not isinstance(row, _Places) and row.leaves is _Unplaced.HAND_IMPORT
+
+    @property
+    def decides(self) -> bool:
+        """Whether a window that gives this verdict decides the file: it placed or refused it."""
+
+        return self.placed or self.refused
+
+    @property
+    def by_alias(self) -> bool:
+        """Whether the special aliases gave the verdict.
+
+        Placed on the aliased special, or claimed for the window that holds it.
+        """
+
+        row = _KIND[self]
+        return isinstance(row, _Places | _Claims) and row.by_alias
+
+    @property
+    def party(self) -> bool:
+        """Whether a window giving this verdict is party to the file.
+
+        It placed or refused the file, left it for a hand import, or claimed it by alias. A window that wrote the file
+        off (another slice's, a duplicate, an extra, a skip) isn't.
+        """
+
+        return self.decides or self.by_alias or self.hand_import
+
+    @property
+    def claim_rank(self) -> int:
+        """How strong a claim the verdict is: a file no window decides ends with its highest-ranked claim.
+
+        Read it only on a claim, a verdict a window gives without deciding the file.
+        """
+
+        row = _KIND[self]
+        assert isinstance(row, _Claims)
+        return row.rank
+
+    @property
+    def left_open(self) -> bool:
+        """Whether another TVDB order (pass 16) may still place the file.
+
+        Nothing placed it, and nothing proved it a duplicate or an extra.
+        """
+
+        row = _KIND[self]
+        return isinstance(row, _Refuses | _Claims) and row.left_open
 
 
-_PLACED = frozenset(
+class _Unplaced(Enum):
+    """What a verdict that carries no ids means for the record."""
+
+    EXCLUDED = auto()
+    """The file isn't this record's to import under its current claims."""
+    HAND_IMPORT = auto()
+    """The file is left for a hand import."""
+    NEITHER = auto()
+    """Neither: the file stays with the record as one nothing placed, and the caller warns of it."""
+
+
+@dataclass(frozen=True, slots=True)
+class _Places:
+    """The verdict carries ids. A window that gives it decides the file."""
+
+    by_alias: bool = False
+    """Whether the special aliases placed it."""
+
+
+@dataclass(frozen=True, slots=True)
+class _Refuses:
+    """The verdict settles the file with no ids. A window that gives it decides the file."""
+
+    leaves: _Unplaced
+    left_open: bool = False
+    """Whether another TVDB order may still place the file (pass 16)."""
+
+
+@dataclass(frozen=True, slots=True, kw_only=True)
+class _Claims:
+    """One window's view of a file it neither placed nor refused. A later window may still decide the file."""
+
+    leaves: _Unplaced
+    rank: int
+    """A file no window decides ends with its highest-ranked claim."""
+    by_alias: bool = False
+    """Whether the special aliases claimed it for another window."""
+    left_open: bool = False
+    """Whether another TVDB order may still place the file (pass 16)."""
+
+
+@dataclass(frozen=True, slots=True)
+class _AfterMerge:
+    """No window gives the verdict: it is set once the windows have merged."""
+
+    leaves: _Unplaced
+
+
+type _Kind = _Places | _Refuses | _Claims | _AfterMerge
+
+_KIND: Mapping[PlacementVerdict, _Kind] = MappingProxyType(
     {
-        PlacementVerdict.EXACT,
-        PlacementVerdict.RELEASE_RUN,
-        PlacementVerdict.ABSOLUTE,
-        PlacementVerdict.SINGLE,
-        PlacementVerdict.ORDERED,
-        PlacementVerdict.NUMBERED_RUN,
-        PlacementVerdict.TITLED,
-        PlacementVerdict.EPISODE_TITLE,
-        PlacementVerdict.IDENTIFIED,
-        PlacementVerdict.OVERRIDDEN,
-        PlacementVerdict.ALTERNATE,
-        PlacementVerdict.OTHER_ORDER,
-        PlacementVerdict.NUMBERINGS_AGREE,
+        PlacementVerdict.EXACT: _Places(),
+        PlacementVerdict.RELEASE_RUN: _Places(),
+        PlacementVerdict.ABSOLUTE: _Places(),
+        PlacementVerdict.SINGLE: _Places(),
+        PlacementVerdict.ORDERED: _Places(),
+        PlacementVerdict.NUMBERED_RUN: _Places(),
+        PlacementVerdict.TITLED: _Places(),
+        PlacementVerdict.EPISODE_TITLE: _Places(),
+        PlacementVerdict.IDENTIFIED: _Places(),
+        PlacementVerdict.OVERRIDDEN: _Places(),
+        PlacementVerdict.ALTERNATE: _Places(by_alias=True),
+        PlacementVerdict.OTHER_ORDER: _Places(),
+        PlacementVerdict.NUMBERINGS_AGREE: _Places(),
+        PlacementVerdict.HELD: _Refuses(_Unplaced.NEITHER),
+        PlacementVerdict.MISNUMBERED: _Refuses(_Unplaced.HAND_IMPORT, left_open=True),
+        # The claims, weakest first. EXTRA is lowest because it rests on one window's titles. SKIPPED beats FOREIGN
+        # and EXTRA, so a file some window couldn't place is never written off, and ALIASED_ELSEWHERE beats FOREIGN
+        # because the aliases name the file as this series' special. ORDER_ONLY beats SKIPPED, so a file one
+        # window's order reads as no episode of Sonarr's stays a hand import where another window only skipped it,
+        # and a window that proves it a duplicate still wins. OTHER_ORDER_ELSEWHERE and TITLE_REFUTED are highest,
+        # so a file whose numbers a window refused or refuted stays a hand import.
+        PlacementVerdict.EXTRA: _Claims(leaves=_Unplaced.EXCLUDED, rank=0),
+        PlacementVerdict.FOREIGN: _Claims(leaves=_Unplaced.EXCLUDED, rank=1, left_open=True),
+        PlacementVerdict.ALIASED_ELSEWHERE: _Claims(leaves=_Unplaced.NEITHER, rank=2, by_alias=True),
+        PlacementVerdict.SKIPPED: _Claims(leaves=_Unplaced.NEITHER, rank=3, left_open=True),
+        PlacementVerdict.ORDER_ONLY: _Claims(leaves=_Unplaced.HAND_IMPORT, rank=4),
+        PlacementVerdict.DUPLICATE: _Claims(leaves=_Unplaced.EXCLUDED, rank=5),
+        PlacementVerdict.OTHER_ORDER_ELSEWHERE: _Claims(leaves=_Unplaced.HAND_IMPORT, rank=6),
+        PlacementVerdict.TITLE_REFUTED: _Claims(leaves=_Unplaced.HAND_IMPORT, rank=7, left_open=True),
+        PlacementVerdict.LISTED_ELSEWHERE: _AfterMerge(_Unplaced.EXCLUDED),
     }
 )
-_EXCLUDED = frozenset(
-    {
-        PlacementVerdict.FOREIGN,
-        PlacementVerdict.LISTED_ELSEWHERE,
-        PlacementVerdict.DUPLICATE,
-        PlacementVerdict.EXTRA,
-    }
-)
-_HAND_IMPORT = frozenset(
-    {
-        PlacementVerdict.MISNUMBERED,
-        PlacementVerdict.TITLE_REFUTED,
-        PlacementVerdict.OTHER_ORDER_ELSEWHERE,
-        PlacementVerdict.ORDER_ONLY,
-    }
-)
-_REFUSED = frozenset({PlacementVerdict.HELD, PlacementVerdict.MISNUMBERED})
+"""What each verdict is: one row per verdict, of one of four kinds."""
 
 
 @dataclass(frozen=True, slots=True)
