@@ -19,7 +19,7 @@ class _OrderFit:
     order_only: Mapping[TorrentFile, OrderOnlyKey]
     """File -> the order and the key of its number, which the order gives to an episode Sonarr doesn't list."""
     silent: bool = False
-    """Whether a keyed fit places nothing, though it still counts among the explaining orders (`pass_other_orders`)."""
+    """Whether a keyed fit places nothing, though it still counts among the explaining orders (`_place_keyed`)."""
 
     def judges(self, file: TorrentFile) -> bool:
         """Whether the fit reads the file, onto episodes or onto a key Sonarr doesn't list."""
@@ -81,6 +81,9 @@ class _KeyedFiles:
 def pass_other_orders(state: Placer) -> None:
     """Place left-open keyed files where their own keys land in another TVDB order that explains the torrent.
 
+    It is the only pass that gives a judged file a new verdict, and it moves no file an earlier pass, a seed or an
+    earlier window placed.
+
     The keyed files are the names that spell their own `SxxEyy`. Home is an episode the window holds or SeaDex
     lists for the torrent. A stray is a keyed file not settled whose keys the aired order reads, any of them onto
     an episode away from home. An order explains the torrent when:
@@ -98,12 +101,26 @@ def pass_other_orders(state: Placer) -> None:
       window placed it ("S10E01 (0337)" where the order's S10E01 is episode 337).
 
     So a pack the aired order reads whole onto episodes at home is never read another way, and an order that reads
-    the files as the aired order does explains nothing.
+    the files as the aired order does explains nothing. `_place_keyed` places the left-open files by the explaining
+    orders.
 
-    When two explaining orders read a left-open file onto different episodes, only the orders whose readings of the
-    left-open files SeaDex lists for the torrent are kept. A file the kept orders don't judge alike stays as it was:
-    they read it onto different episodes, or one reads it onto an episode and another gives its key to an episode
-    Sonarr doesn't list.
+    Then the skipped bare-numbered runs: `_place_bare_runs`.
+    """
+
+    if not state.series.orders:
+        return
+    _place_keyed(state)
+    _place_bare_runs(state)
+
+
+def _place_keyed(state: Placer) -> None:
+    """Place the left-open keyed files by the orders that explain the torrent (`pass_other_orders`).
+
+    A left-open file is placed where its keys land in the explaining orders (`OTHER_ORDER`), when the window holds
+    those episodes and no file has them yet. When two explaining orders read a left-open file onto different
+    episodes, only the orders whose readings of the left-open files SeaDex lists for the torrent are kept. A file
+    the kept orders don't judge alike stays as it was: they read it onto different episodes, or one reads it onto
+    an episode and another gives its key to an episode Sonarr doesn't list.
 
     Two kinds of explaining order are silent. One reads a settled file off the episodes it sits on, and no settled
     file moves. The other reads a misnumbered file onto the episodes the earlier passes read it as, which doesn't
@@ -122,18 +139,7 @@ def pass_other_orders(state: Placer) -> None:
     A skipped or foreign file whose key the one explaining order gives to an episode Sonarr doesn't list (a split
     half, a merged pair) is `ORDER_ONLY`: left for a hand import, unless another window places it or proves it a
     duplicate.
-
-    Then the skipped bare-numbered runs: `_place_bare_runs`.
     """
-
-    if not state.series.orders:
-        return
-    _place_keyed(state)
-    _place_bare_runs(state)
-
-
-def _place_keyed(state: Placer) -> None:
-    """Place the left-open keyed files by an order that explains the torrent (the rules of `pass_other_orders`)."""
 
     files = _KeyedFiles.of(state)
     if not files.left_open:

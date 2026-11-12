@@ -55,7 +55,7 @@ class TorrentFile:
     """The verdict and ids, once a pass judges the file."""
     disputed: bool = False
     """Whether the file's own numbers disagree over an episode of this window (`_passes._pass_refuse_disputed`), or
-    no title confirms its count (`_passes._pass_refuse_refuted`): `MISNUMBERED` unless a run places it."""
+    no title confirms its count (`_passes._pass_refuse_refuted`): `MISNUMBERED` unless a later pass places it."""
     disputed_by_position: bool = False
     """Whether the file is a `disputed` member of a keyed run numbered past an interleaved special
     (`_passes._positions_disputed`): no run places it."""
@@ -64,7 +64,8 @@ class TorrentFile:
     read as they are, never numberless."""
     run_refuted: bool = False
     """Whether a mate's title refutes the numbers of the file's run and its own name carries no such title
-    (`_passes._pass_refuse_refuted`): `TITLE_REFUTED` unless a later pass places it."""
+    (`_passes._pass_refuse_refuted`): `TITLE_REFUTED` when no pass places it and pass 15 reads it no other way
+    (`_passes._pass_classify`)."""
     runner_up_for: frozenset[int] = frozenset()
     """The ids a disputed reading would have taken first in the exact pass's order (`_passes._pass_refuse_disputed`):
     the file is their runner-up."""
