@@ -321,6 +321,42 @@ class TestPlacementVerdict:
         assert not verdict.excluded
         assert not verdict.hand_import
 
+    _CLAIMS = frozenset(
+        {
+            PlacementVerdict.EXTRA,
+            PlacementVerdict.FOREIGN,
+            PlacementVerdict.ALIASED_ELSEWHERE,
+            PlacementVerdict.SKIPPED,
+            PlacementVerdict.ORDER_ONLY,
+            PlacementVerdict.DUPLICATE,
+            PlacementVerdict.OTHER_ORDER_ELSEWHERE,
+            PlacementVerdict.TITLE_REFUTED,
+        }
+    )
+    """The verdicts a window gives without deciding the file."""
+
+    def test_every_verdict_decides_a_file_or_is_a_claim_but_another_listed_titles(self) -> None:
+        # Every property reads the verdict's kind, so a verdict with none raises here. No window gives
+        # LISTED_ELSEWHERE: it is set once the windows merge.
+        undecided = {v for v in PlacementVerdict if not v.decides}
+
+        assert undecided == {*self._CLAIMS, PlacementVerdict.LISTED_ELSEWHERE}
+
+    def test_no_two_claims_share_a_rank(self) -> None:
+        assert len({v.claim_rank for v in self._CLAIMS}) == len(self._CLAIMS)
+
+    def test_the_numbering_fill_may_place_only_a_skipped_or_foreign_file(self) -> None:
+        # `WindowedAssignment.filled` fills a merged verdict left open that is no hand import.
+        gaps = {v for v in PlacementVerdict if v.left_open and not v.hand_import}
+
+        assert gaps == {PlacementVerdict.SKIPPED, PlacementVerdict.FOREIGN}
+
+    def test_only_a_misnumbered_or_refuted_file_is_left_open_for_a_hand_import(self) -> None:
+        # Pass 16 claims only such a file for another window: a count or a title in the names refused it.
+        refused_by_name = {v for v in PlacementVerdict if v.left_open and v.hand_import}
+
+        assert refused_by_name == {PlacementVerdict.MISNUMBERED, PlacementVerdict.TITLE_REFUTED}
+
 
 class TestAllSpecials:
     """Whether every id is one of the series' specials: the shape a listing must have to judge a specials pack."""

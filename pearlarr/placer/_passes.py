@@ -58,6 +58,8 @@ Terms used across the placement modules:
   another slice is `FOREIGN`.
 - Stored record: the pending import record already saved for a torrent, one per infohash.
 - Claim: one entry's part of a stored record (`EntryClaim`). In `parse_reading`: a `(season, episode)` a parse names.
+  In `window_placement`: one window's verdict on a file it neither placed nor refused, which a later window may still
+  decide. A file no window decides ends with its strongest claim (`PlacementVerdict.claim_rank`).
 - Lone-number file: a file Sonarr parsed to absolute numbers alone ("Show - 07"), no own key, no season above 0,
   neither a special nor a season pack. Not an extra, and not counted by its own title.
 - Numberings reader (`numberings`): reads a torrent's lone-number files under every way the release group could
@@ -71,7 +73,7 @@ Terms used across the placement modules:
 - Order-only key: a `(season, episode)` an other order gives to an episode Sonarr doesn't list, such as one half of
   an episode that order splits in two.
 - Left open: a file no earlier window placed that reaches pass 16 `SKIPPED`, `MISNUMBERED`, `TITLE_REFUTED` or
-  `FOREIGN`. Nothing placed it, and nothing proved it a duplicate or an extra.
+  `FOREIGN` (`PlacementVerdict.left_open`). Nothing placed it, and nothing proved it a duplicate or an extra.
 
 The passes run in this order. Each places files only onto the ids that earlier passes left open:
 
@@ -587,8 +589,8 @@ def _natural_order(
     return sorted(open_files, key=lambda file: natural_key(file.name)) if pristine else None
 
 
-# Verdicts for files placed by size.
 _BY_SIZE = frozenset({PlacementVerdict.IDENTIFIED, PlacementVerdict.OVERRIDDEN})
+"""The verdicts of a file placed by size."""
 
 
 @dataclass(frozen=True, slots=True)

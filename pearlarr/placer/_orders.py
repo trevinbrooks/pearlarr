@@ -9,14 +9,6 @@ from ..placement_types import PlacementVerdict
 from ..release_names import sole_title_match
 from ..seadex_types import EpisodeKey, OrderOnlyKey
 
-_LEFT_OPEN = frozenset(
-    {PlacementVerdict.SKIPPED, PlacementVerdict.MISNUMBERED, PlacementVerdict.TITLE_REFUTED, PlacementVerdict.FOREIGN}
-)
-"""The verdicts another order may still place: nothing placed the file or proved it a duplicate or an extra."""
-
-_REFUSED_BY_NAME = frozenset({PlacementVerdict.MISNUMBERED, PlacementVerdict.TITLE_REFUTED})
-"""The left-open verdicts a count or a title in the names gave. Only these are claimed for another window."""
-
 
 @dataclass(frozen=True, slots=True)
 class _OrderFit:
@@ -68,9 +60,7 @@ class _KeyedFiles:
                 del keys[file]
         aired = {file: _aired(state, named) for file, named in keys.items()}
         settled = {file: ids for file in keys if (ids := _settled_ids(state, file)) is not None}
-        left_open = tuple(
-            file for file in state.placing if file in keys and file not in settled and file.verdict in _LEFT_OPEN
-        )
+        left_open = tuple(file for file in state.placing if file in keys and file not in settled and _left_open(file))
         strays = tuple(
             file for file, ids in aired.items() if file not in settled and ids is not None and not _at_home(state, ids)
         )
@@ -144,13 +134,14 @@ def _place_keyed(state: Placer) -> None:
     # Only the one explaining order names a key Sonarr doesn't list, and only when it reads a file onto an episode.
     sole = fits[0] if len(fits) == 1 and speaking and fits[0].readings else None
     for file in files.left_open:
-        refused = file.verdict in _REFUSED_BY_NAME
+        # Only a file a count or a title refused is claimed for another window.
+        refused_by_name = _refused_by_name(file)
         judged = {fit.readings.get(file) for fit in fits if fit.judges(file)}
         if len(judged) != 1:
             continue
         (ids,) = judged
         if ids is None:
-            if sole is not None and not refused:
+            if sole is not None and not refused_by_name:
                 state.set_aside_order_only(file, sole.order_only[file])
             continue
         if not any(file in fit.readings for fit in speaking):
@@ -159,7 +150,7 @@ def _place_keyed(state: Placer) -> None:
             continue
         if all(state.scope.admits(ep_id) and ep_id not in state.used for ep_id in ids):
             state.place(file, ids, PlacementVerdict.OTHER_ORDER)
-        elif refused and not any(state.scope.admits(ep_id) for ep_id in ids):
+        elif refused_by_name and not any(state.scope.admits(ep_id) for ep_id in ids):
             state.set_aside_elsewhere(file, ids)
 
 
@@ -176,6 +167,18 @@ def _read_apart(fits: Sequence[_OrderFit], left_open: Sequence[TorrentFile]) -> 
     """Whether two fits read some left-open file onto different episodes."""
 
     return any(len({fit.readings[file] for fit in fits if file in fit.readings}) > 1 for file in left_open)
+
+
+def _left_open(file: TorrentFile) -> bool:
+    """Whether the passes left the file open for another order (`PlacementVerdict.left_open`)."""
+
+    return (verdict := file.verdict) is not None and verdict.left_open
+
+
+def _refused_by_name(file: TorrentFile) -> bool:
+    """Whether a count or a title in the names refused the file: left open, and for a hand import."""
+
+    return (verdict := file.verdict) is not None and verdict.left_open and verdict.hand_import
 
 
 def _settled_ids(state: Placer, file: TorrentFile) -> tuple[int, ...] | None:
@@ -219,7 +222,7 @@ def _keyed_fit(state: Placer, files: _KeyedFiles, name: str) -> _OrderFit | None
             return None
         if _refused_special(file, files.keys[file]) and listed and not listed.issuperset(ids):
             return None
-        if file.verdict in _LEFT_OPEN:
+        if _left_open(file):
             confirmed |= any(ep_id in ids for ep_id in counted) or file.confirms(ids)
     if not (whole or confirmed):
         return None
@@ -235,7 +238,7 @@ def _refused_special(file: TorrentFile, keys: Sequence[EpisodeKey]) -> bool:
     special in, whether or not SeaDex lists that special.
     """
 
-    return file.verdict in _REFUSED_BY_NAME and all(key.season == 0 for key in keys)
+    return _refused_by_name(file) and all(key.season == 0 for key in keys)
 
 
 def _answers(files: _KeyedFiles, file: TorrentFile, ids: tuple[int, ...] | None) -> bool:
@@ -252,7 +255,7 @@ def _answers(files: _KeyedFiles, file: TorrentFile, ids: tuple[int, ...] | None)
         return True
     if ids is None or ids == aired:
         return False
-    return file.verdict in _REFUSED_BY_NAME or file.contradicts(aired)
+    return _refused_by_name(file) or file.contradicts(aired)
 
 
 def _brings_home(state: Placer, files: _KeyedFiles, readings: Mapping[TorrentFile, tuple[int, ...]]) -> bool:
