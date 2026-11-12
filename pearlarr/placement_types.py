@@ -488,6 +488,9 @@ class TargetScope:
     """Normalized name -> the ids an earlier window placed it on, whether or not this window admits them (`after`).
     The other-orders pass reads them as settled."""
 
+    episode_count: int | None = None
+    """AniList's episode count for the title, None when the window carries none (`EntryWindow.episode_count`)."""
+
     real_ids: frozenset[int] = field(init=False, repr=False, compare=False)
     """The resolved ids that can be placed. A stray zero keeps the scope real but is never one."""
 

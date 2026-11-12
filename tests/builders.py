@@ -1250,16 +1250,19 @@ def series_index(
     *,
     absolutes: Mapping[int, int] | None = None,
     titles: Mapping[int, str] | None = None,
+    aired: Mapping[int, str | None] | None = None,
     orders: SeriesOrders = NO_ORDERS,
 ) -> EpisodeIndex:
     """A whole-series index synthesized from a `(season, episode) -> id` map, with the absolutes and titles given by id.
 
-    Each episode's TVDB id is its Sonarr id, so a row of `orders` names an episode by that id, and a row with any
-    other TVDB id is an episode Sonarr doesn't list.
+    `aired` gives air dates by id, as `YYYY-MM-DD`, None for an episode without one. Each episode's TVDB id is its
+    Sonarr id, so a row of `orders` names an episode by that id, and a row with any other TVDB id is an episode
+    Sonarr doesn't list.
     """
 
     absolute_of = absolutes or {}
     title_of = titles or {}
+    aired_on = aired or {}
     return episode_index(
         [
             sonarr_ep(
@@ -1269,6 +1272,7 @@ def series_index(
                 absolute=absolute_of.get(ep_id),
                 title=title_of.get(ep_id, ""),
                 tvdb_id=ep_id,
+                air_date=aired_on.get(ep_id),
             )
             for key, ep_id in id_by_key.items()
         ],

@@ -2017,16 +2017,102 @@ class TestAssignReleaseRun:
 
         assert by_name(result) == {self._RUN[0]: ((501,), PlacementVerdict.SINGLE)}
 
-    def test_a_gappy_window_refuses(self) -> None:
-        # Episodes 1, 2, 4 are not a run's worth of consecutive slots.
+    def test_specials_numbered_apart_that_are_not_the_whole_title_refuse(self) -> None:
+        # The title also holds S01E01, so specials 1, 2 and 4 aren't its whole order, though they aired in turn.
         gappy = {EpisodeKey(0, 1): 501, EpisodeKey(0, 2): 502, EpisodeKey(0, 4): 504, EpisodeKey(1, 1): 601}
+        aired = {501: "2016-01-01", 502: "2016-02-01", 504: "2016-04-01"}
         parsed = blind(self._RUN)
         parsed["pack.mkv"] = parsed_info(season=1, episodes=(1,))
 
-        result = place(parsed, TargetScope([601, 501, 502, 504], series_index(gappy)))
+        result = place(parsed, TargetScope([601, 501, 502, 504], series_index(gappy, aired=aired)))
 
         assert result.assigned == {"pack.mkv": (601,)}
         assert sorted(result.skipped) == sorted(self._RUN)
+
+    # A title's three files beside two shorts of another title: more files than the title has episodes, so only
+    # the title's own run can place them.
+    _TRIO: ClassVar[list[str]] = numbered_names("sp", 3)
+    _BESIDE_SHORTS: ClassVar[list[str]] = [*_TRIO, *numbered_names("short", 2)]
+
+    @staticmethod
+    def _apart(season: int, aired: Mapping[int, str | None] | None = None) -> EpisodeIndex:
+        """Six episodes of one season: the first, third and sixth aired three months apart, unless `aired` says."""
+
+        ids = {EpisodeKey(season, n): 500 + n for n in range(1, 7)}
+        return series_index(ids, aired={501: "2016-03-01", 503: "2016-06-01", 506: "2016-09-01"} | dict(aired or {}))
+
+    @pytest.mark.parametrize(
+        ("resolved", "episode_count"),
+        [
+            pytest.param([501, 503, 506], None, id="anilist-gives-no-count"),
+            pytest.param([501, 503, 506], 3, id="anilist-counts-the-scopes-episodes"),
+            pytest.param([506, 501, 503], None, id="a-scope-out-of-number-order"),
+        ],
+    )
+    def test_a_titles_specials_numbered_apart_take_its_run(
+        self, resolved: list[int], episode_count: int | None
+    ) -> None:
+        # The title is specials 1, 3 and 6, aired months apart.
+        scope = TargetScope(resolved, self._apart(0), episode_count=episode_count)
+
+        result = place(blind(self._BESIDE_SHORTS), scope)
+
+        placed = by_name(result)
+        assert result.assigned == {self._TRIO[0]: (501,), self._TRIO[1]: (503,), self._TRIO[2]: (506,)}
+        assert {placed[name][1] for name in self._TRIO} == {PlacementVerdict.RELEASE_RUN}
+
+    @pytest.mark.parametrize(
+        "aired",
+        [
+            pytest.param({506: "2016-06-01"}, id="the-last-tied"),
+            pytest.param({506: "2016-05-01"}, id="the-last-earlier"),
+            pytest.param({506: None}, id="the-last-undated"),
+            pytest.param({501: None}, id="the-first-undated"),
+        ],
+    )
+    def test_specials_numbered_apart_that_did_not_air_in_turn_refuse(self, aired: dict[int, str | None]) -> None:
+        # Nothing but the air dates says the higher numbers came out later.
+        result = place(blind(self._BESIDE_SHORTS), TargetScope([501, 503, 506], self._apart(0, aired)))
+
+        assert result.assigned == {}
+
+    @pytest.mark.parametrize("episode_count", [4, 2], ids=["an-episode-sonarr-lacks", "fewer-than-the-scope"])
+    def test_specials_numbered_apart_refuse_when_anilist_counts_another_number_of_episodes(
+        self, episode_count: int
+    ) -> None:
+        # With a count of four, the title has an episode Sonarr lacks, and nothing says where in its order it falls.
+        scope = TargetScope([501, 503, 506], self._apart(0), episode_count=episode_count)
+
+        assert place(blind(self._BESIDE_SHORTS), scope).assigned == {}
+
+    def test_specials_numbered_apart_take_a_run_keyed_as_its_own_season(self) -> None:
+        # The release numbers the title as a first season of its own. Over specials that key doesn't refuse the run.
+        ids = {EpisodeKey(0, n): 500 + n for n in range(1, 7)} | {EpisodeKey(1, n): 600 + n for n in range(1, 4)}
+        index = series_index(ids, aired={501: "2016-03-01", 503: "2016-06-01", 506: "2016-09-01"})
+        keyed = [f"Spin.S01E{n:02d}.mkv" for n in range(1, 4)]
+        parsed = blind(numbered_names("short", 2))
+        parsed.update({name: parsed_info(season=1, episodes=(n,)) for n, name in enumerate(keyed, start=1)})
+
+        result = place(parsed, TargetScope([501, 503, 506], index))
+
+        assert result.assigned == {keyed[0]: (501,), keyed[1]: (503,), keyed[2]: (506,)}
+
+    def test_a_seasons_episodes_numbered_apart_refuse(self) -> None:
+        # Episodes 1, 3 and 6 of a season: the run would have to count the episodes between them.
+        result = place(blind(self._BESIDE_SHORTS), TargetScope([501, 503, 506], self._apart(1)))
+
+        assert result.assigned == {}
+
+    def test_specials_numbered_apart_with_consecutive_absolutes_follow_the_absolutes(self) -> None:
+        # Special 1 is absolute 14 and special 3 is absolute 13, so the pack's 13 and 14 go where the absolutes say.
+        ids = {EpisodeKey(0, n): 500 + n for n in (1, 2, 3)}
+        index = series_index(ids, absolutes={501: 14, 503: 13}, aired={501: "2016-03-01", 503: "2016-06-01"})
+        names = ["show - 13 [grp].mkv", "show - 14 [grp].mkv"]
+        parsed = {names[0]: parsed_info(absolutes=(13,)), names[1]: parsed_info(absolutes=(14,))}
+
+        result = place(parsed, TargetScope([501, 503], index))
+
+        assert result.assigned == {names[0]: (503,), names[1]: (501,)}
 
     def test_a_two_season_window_refuses(self) -> None:
         # The extra parse keeps the numberless zip out, so the refusal is what is pinned.
@@ -3348,7 +3434,7 @@ class TestRangeKey:
 
 
 class TestAssignNumberedRun:
-    """The numbered-run pass: one `1..N` run indexes a contiguous one-season window among files Sonarr read blind."""
+    """The numbered-run pass: one `1..N` run indexes the run window among files Sonarr read blind."""
 
     _WINDOW: ClassVar[list[int]] = [10370, 10371, 10372]
     _MAP: ClassVar[dict[EpisodeKey, int]] = {
@@ -3415,7 +3501,6 @@ class TestAssignNumberedRun:
             # Only a 1..N run indexes a window: a 2..4 run says nothing about where it starts.
             pytest.param(_run("extra ", range(2, 5)), _WINDOW, id="a run not starting at one"),
             pytest.param(_run("extra ", range(1, 6)), _WINDOW, id="a run wider than the window"),
-            pytest.param(_run("extra ", range(1, 4)), [10370, 10371, 10374], id="a gappy window"),
         ],
     )
     def test_a_run_that_cannot_index_the_window_refuses(self, run: list[str], window: list[int]) -> None:

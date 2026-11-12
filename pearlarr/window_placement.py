@@ -349,7 +349,13 @@ def windows_of(
     """
 
     return tuple(
-        TargetScope(window.ordered_episode_ids, indexes[window.series_id], names=window.names, listing=listing)
+        TargetScope(
+            window.ordered_episode_ids,
+            indexes[window.series_id],
+            names=window.names,
+            listing=listing,
+            episode_count=window.episode_count,
+        )
         for window in windows
     )
 
