@@ -38,7 +38,9 @@ Terms used across the placement modules:
 - Numbered run (`NumberedRun`): the files whose names share the text before their release number, in number
   order. Of two versions of one number, the higher `vN` is the member and the lower is superseded.
 - Tail: the words of a run member's name after its release number.
-- Run window (`RunWindow`): the open ids, when they are consecutive episodes, in airing order.
+- Run window (`RunWindow`): the open ids, in number order, when they are consecutive episodes of one season or
+  carry consecutive absolute numbers. Specials numbered apart are one too when they are every episode of the
+  title and each aired after the one before it.
 - Covering run: a run numbered `1..N` for a whole season when the run window holds only part of that season.
 - Tied file: a run file the season re-read (pass 5) fits to a season and the specials equally well (`Reading.tied`).
 - Open file: a file with no verdict yet whose trusted reading does not lie wholly outside the scope.

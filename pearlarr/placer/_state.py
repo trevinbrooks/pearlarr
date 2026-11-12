@@ -7,6 +7,7 @@ helper of one pass sits with that pass.
 
 from collections.abc import Iterable, Mapping, Sequence
 from dataclasses import dataclass, field, replace
+from itertools import pairwise
 from typing import Self
 
 from ._names import TorrentNames
@@ -184,14 +185,15 @@ class NumberedRun:
 
 @dataclass(frozen=True, slots=True)
 class RunWindow:
-    """The open ids as consecutive episodes, in airing order: the run window."""
+    """The open ids as one run of episodes, in number order: the run window (`Placer.run_window`)."""
 
     season: int | None
-    """The season every id belongs to, or None when the ids span seasons and absolute numbers order them."""
+    """The season every id belongs to, or None when absolute numbers order the ids."""
     ids: tuple[int, ...]
-    """The open ids, in airing order."""
+    """The open ids, by episode number, or by absolute number when `season` is None."""
     numbers: tuple[int, ...]
-    """The ids' episode numbers (absolute numbers when `season` is None), in the same order."""
+    """The ids' episode numbers (absolute numbers when `season` is None), in the same order. Consecutive, except
+    over a scope's own specials numbered apart."""
     id_set: frozenset[int] = field(init=False, repr=False, compare=False)
     """The ids as a set, built once for membership checks."""
 
@@ -369,7 +371,9 @@ class Placer:
         """The open ids as a run window, else None. It needs at least two open ids.
 
         The ids must be consecutive episodes of one season, or else all carry consecutive absolute numbers (a
-        special in between, or two seasons' cours). The ids are sorted by their numbers, never taken in scope order.
+        special in between, or two seasons' cours). Failing both, specials whose numbers aren't consecutive form
+        one when they are every episode of the title and aired in number order (`_whole_scope_aired_in_turn`).
+        The ids are sorted by their numbers, never taken in scope order.
         """
 
         open_ids = self.open_ids()
@@ -380,14 +384,32 @@ class Placer:
         if len(keyed) != len(open_ids):
             return None
         seasons = {key.season for key, _ in keyed}
-        episodes = [key.episode for key, _ in keyed]
+        episodes = tuple(key.episode for key, _ in keyed)
+        ids = tuple(ep_id for _, ep_id in keyed)
         if len(seasons) == 1 and is_consecutive(episodes):
-            return RunWindow(seasons.pop(), tuple(ep_id for _, ep_id in keyed), tuple(episodes))
+            return RunWindow(seasons.pop(), ids, episodes)
         absolute_of = self.series.absolute_of
         absolute = sorted((absolute_of[ep_id], ep_id) for ep_id in open_ids if ep_id in absolute_of)
-        if len(absolute) != len(open_ids) or not is_consecutive([number for number, _ in absolute]):
-            return None
-        return RunWindow(None, tuple(ep_id for _, ep_id in absolute), tuple(number for number, _ in absolute))
+        if len(absolute) == len(open_ids) and is_consecutive([number for number, _ in absolute]):
+            return RunWindow(None, tuple(ep_id for _, ep_id in absolute), tuple(number for number, _ in absolute))
+        if seasons == {0} and self._whole_scope_aired_in_turn(ids):
+            return RunWindow(0, ids, episodes)
+        return None
+
+    def _whole_scope_aired_in_turn(self, ids: Sequence[int]) -> bool:
+        """Whether the open ids, in number order, are every episode of the title in the order they aired.
+
+        None of the scope may be taken, and a scope that carries AniList's episode count must hold that many
+        episodes: nothing says where in the title's order an episode Sonarr lacks falls. Each episode must have
+        aired after the one before it. Two that share an air date are numbered in no order a release has to count
+        them in.
+        """
+
+        scope = self.scope
+        if len(ids) != len(scope.resolved) or scope.episode_count not in (None, len(ids)):
+            return False
+        aired = [self.series.by_id[ep_id].air_date for ep_id in ids]
+        return all(first is not None and then is not None and first < then for first, then in pairwise(aired))
 
     def remaining(self) -> list[TorrentFile]:
         """The files to place without a verdict yet, batch order."""

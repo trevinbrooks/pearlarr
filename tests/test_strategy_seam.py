@@ -107,6 +107,7 @@ from .builders import (
     make_sonarr_sync,
     manual_candidate,
     new_torrent,
+    numbered_names,
     parsed_info,
     pending_import,
     plan_result,
@@ -2436,9 +2437,16 @@ def _sonarr_seed_run(mode: ImportWaitMode, *, store: FakeCacheStore, episodes: S
 
 
 def _entry_run(
-    files: tuple[SeedFile, ...], window: list[SonarrEpisode], listings: _ScriptedListings
+    files: tuple[SeedFile, ...],
+    window: list[SonarrEpisode],
+    listings: _ScriptedListings,
+    *,
+    episode_count: int | None = None,
 ) -> _FakeRunServices:
-    """Drive a Sonarr `process_al_id` for entry 5 over `window` (all of series 7), listing one torrent of `files`."""
+    """Drive a Sonarr `process_al_id` for entry 5 over `window` (all of series 7), listing one torrent of `files`.
+
+    `episode_count` is AniList's count for entry 5, None when it gives none.
+    """
 
     seadex: SeadexDict = {
         "NAN0": rg_group(
@@ -2456,7 +2464,11 @@ def _entry_run(
     strat = make_bare_instance(
         SonarrSync,
         _services=run,
-        _episodes=ScriptedEpisodes(FakeSonarrClient(episodes=window), windows={5: window}),
+        _episodes=ScriptedEpisodes(
+            FakeSonarrClient(episodes=window),
+            windows={5: window},
+            counts={} if episode_count is None else {5: episode_count},
+        ),
         _parse=_ScriptedParse({_SEED_URL: files}),
         _listings=listings,
         _config=make_config(sleep_time=0),
@@ -2560,6 +2572,29 @@ class TestSonarrProcessAlIdSeeds:
                 " (1 more file in the debug log)"
             )
         ]
+
+    @pytest.mark.parametrize(
+        ("episode_count", "placed"),
+        [
+            pytest.param(2, {"ova - 01 [grp].mkv": (501,), "ova - 02 [grp].mkv": (504,)}, id="the-windows-two"),
+            pytest.param(3, {}, id="an-episode-sonarr-lacks"),
+        ],
+    )
+    def test_the_entrys_anilist_episode_count_reaches_its_placement(
+        self, episode_count: int, placed: dict[str, tuple[int, ...]]
+    ) -> None:
+        # Two specials numbered apart take the run only when they are the title's every episode.
+        specials = [
+            sonarr_ep(0, 1, ep_id=501, episode_file_id=0, air_date="2016-03-01"),
+            sonarr_ep(0, 4, ep_id=504, episode_file_id=0, air_date="2016-06-01"),
+        ]
+        names = [*numbered_names("ova", 2), *numbered_names("short", 3)]
+        files = tuple(SeedFile(name, 1000, parsed_info()) for name in names)
+
+        run = _entry_run(files, specials, _ScriptedListings(), episode_count=episode_count)
+
+        (req,) = run.grab_requests
+        assert req.pending_seeds["h1"].placements == placed
 
     def test_an_unread_listing_places_nothing_and_holds_the_url(self) -> None:
         # SeaDex is down, so the windows the torrent runs under and the size identities are both unknown. Nothing

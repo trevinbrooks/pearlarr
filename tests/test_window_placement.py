@@ -740,17 +740,20 @@ class TestFilled:
 
 
 class TestWindowsOf:
-    """`windows_of`: one scope per entry window in order, over its series' index, with its names and the listing."""
+    """`windows_of`: one scope per entry window in order, over its series' index, with its names, count and listing."""
 
     def test_one_scope_per_window_over_its_series_index(self) -> None:
         names = EntryNames("Show", ("Show Alpha",))
-        entries = (entry_window(1, (601, 602), series_id=7, names=names), entry_window(2, (201,), series_id=8))
+        entries = (
+            entry_window(1, (601, 602), series_id=7, names=names, episode_count=2),
+            entry_window(2, (201,), series_id=8),
+        )
         listing = ListingEvidence(torrent_listing(entry_window(1, (601,))), {"a.mkv": 601})
 
         windows = windows_of(entries, {7: _SERIES, 8: _OTHER_SERIES}, listing)
 
         assert windows == (
-            TargetScope([601, 602], _SERIES, names=names, listing=listing),
+            TargetScope([601, 602], _SERIES, names=names, listing=listing, episode_count=2),
             TargetScope([201], _OTHER_SERIES, names=EntryNames(), listing=listing),
         )
 
