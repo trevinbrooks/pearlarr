@@ -58,12 +58,27 @@ class AniListGateway:
         self._stale: set[int] = set()
         # Fetched this run: exactly what the save writes.
         self._fetched: set[int] = set()
+        # Looked up this run by `_media`, whatever answered.
+        self._looked_up: set[int] = set()
 
     @property
     def outage(self) -> bool:
         """True once AniList has been declared unavailable for this run."""
 
         return self._client.outage
+
+    def unread(self, al_id: int) -> bool:
+        """Whether a lookup of an id this run went without its air dates because AniList couldn't be asked.
+
+        The id was looked up, AniList is down, and no stored record with its air dates answers. A record stored by
+        a query that didn't ask for them counts as none (`lacks_air_dates`). An id nothing looked up isn't unread,
+        and neither is one whose lookup AniList answered, with a record or with no such id.
+        """
+
+        if not self.outage or al_id not in self._looked_up:
+            return False
+        body = self.al_cache.get(al_id)
+        return body is None or lacks_air_dates(body)
 
     def _store(self, al_id: int, body: AniListBody) -> None:
         """Put a freshly fetched body in the run cache and queue it for the save."""
@@ -130,10 +145,13 @@ class AniListGateway:
     ) -> int:
         """Batch-fetch the missing and stale ids, then persist. Returns how many needed fetching.
 
-        `progress` is the boot cockpit step fed per-batch fraction + "done/total".
+        A stored record that lacks air dates is fetched whether or not `al_ids` names it. `progress` is the boot
+        cockpit step fed per-batch fraction + "done/total".
         """
 
-        wanted = sorted({i for i in al_ids if i not in self.al_cache or i in self._stale})
+        # A title the run doesn't check is still read when one it checks shares its series.
+        dateless = {i for i in self._stale if lacks_air_dates(self.al_cache[i])}
+        wanted = sorted({i for i in al_ids if i not in self.al_cache or i in self._stale} | dateless)
         total = len(wanted)
         if not total:
             return 0
@@ -157,6 +175,7 @@ class AniListGateway:
     def _media(self, al_id: int) -> AniListMediaNode:
         """Resolve the typed Media node for an id: the run cache, then one wire query. All-None on a miss."""
 
+        self._looked_up.add(al_id)
         body = self.al_cache.get(al_id)
         if body is not None:
             return media_from(body)

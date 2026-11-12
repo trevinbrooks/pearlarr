@@ -598,8 +598,9 @@ class ScriptedEpisodes:
     """A `SonarrEpisodes` stand-in scripted by hand: the series list off `sonarr`, one window per AniList id.
 
     `get_ep_list` records its calls, raises for an `ambiguous` id, and serves `windows[al_id]` when windows are
-    given, else the whole series list. Without a client every read is None, a failed fetch. The `unread` series have
-    no stored order record. `counts` are AniList's episode counts by AniList id, None for an id left out.
+    given, else the whole series list. Without a client every read is None, a failed fetch. The `unread_series` have
+    no stored order record, and the `unread_entries` no AniList record. `counts` are AniList's episode counts by
+    AniList id, None for an id left out.
     """
 
     series_fp = "fp"
@@ -610,13 +611,15 @@ class ScriptedEpisodes:
         *,
         windows: Mapping[int, list[SonarrEpisode] | None] | None = None,
         ambiguous: frozenset[int] = frozenset(),
-        unread: frozenset[int] = frozenset(),
+        unread_series: frozenset[int] = frozenset(),
+        unread_entries: frozenset[int] = frozenset(),
         counts: Mapping[int, int] | None = None,
     ) -> None:
         self._sonarr = sonarr
         self._windows = windows
         self._ambiguous = ambiguous
-        self._unread = unread
+        self._unread_series = unread_series
+        self._unread_entries = unread_entries
         self._counts: Mapping[int, int] = counts or {}
         self.calls: list[tuple[int, int]] = []
         """Each `get_ep_list` call's (series id, AniList id), in call order."""
@@ -658,10 +661,15 @@ class ScriptedEpisodes:
 
         return self._counts.get(al_id)
 
-    def orders_unread(self, series_ids: Iterable[int]) -> bool:
-        """Whether any of the series is one of the `unread`."""
+    def entries_unread(self, al_ids: Iterable[int]) -> bool:
+        """Whether any of the entries is one of the `unread_entries`."""
 
-        return any(sid in self._unread for sid in series_ids)
+        return not self._unread_entries.isdisjoint(al_ids)
+
+    def orders_unread(self, series_ids: Iterable[int]) -> bool:
+        """Whether any of the series is one of the `unread_series`."""
+
+        return not self._unread_series.isdisjoint(series_ids)
 
 
 class CaptureHandler(logging.Handler):

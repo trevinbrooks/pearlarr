@@ -346,7 +346,8 @@ class SonarrSync(ArrSync[SonarrItem]):
         seadex_dict = run.get_seadex_dict(sd_entry=sd_entry)
 
         if len(seadex_dict) == 0:
-            run.no_releases_skip(al_id, cache_details)
+            # Nothing is placed here, so only the entry whose window gave the coverage counts.
+            run.no_releases_skip(al_id, cache_details, metadata_unread=self._episodes.entries_unread([al_id]))
             return
 
         self.logger.debug(f"SeaDex: {', '.join(seadex_dict)}")
@@ -359,7 +360,8 @@ class SonarrSync(ArrSync[SonarrItem]):
         stored: dict[str, PendingImport] = run.records.stored_records(hashes) if waits_on_imports else {}
         series_ids = {sonarr_series_id, *(sid for record in stored.values() for sid in record.series_ids)}
         indexes = self._series_indexes(series_ids)
-        listings = self._listings.read(sonarr_series_id, self._services.listing_mappings(ExternalIds.of_series(item)))
+        resolved = self._services.listing_mappings(ExternalIds.of_series(item))
+        listings = self._listings.read(sonarr_series_id, resolved)
         scope = SeedScope(
             al_id=al_id,
             series_id=sonarr_series_id,
@@ -436,7 +438,10 @@ class SonarrSync(ArrSync[SonarrItem]):
                 coverage=coverage,
                 pending_seeds=pending_seeds,
                 input_missing_groups=placed.input_missing_groups(seadex_dict),
-                orders_unread=self._episodes.orders_unread(series_ids),
+                # Every entry of the series: the placement reads the window of each one SeaDex has a record for.
+                metadata_unread=(
+                    self._episodes.entries_unread(resolved.every_entry) or self._episodes.orders_unread(series_ids)
+                ),
             ),
         )
 

@@ -115,7 +115,7 @@ Every host Pearlarr talks to, and why:
 | Host | Purpose |
 | --- | --- |
 | `seadex.moe` (SeaDex) | Entry lookups: which releases are tagged for each AniList ID. |
-| `graphql.anilist.co` | AniList titles, formats, and episode counts. Cached responses serve while the host is unreachable. |
+| `graphql.anilist.co` | AniList titles, formats, episode counts, and air dates. Cached responses serve while the host is unreachable, and a Sonarr title read without one that has its air dates is checked again on the next run. |
 | `skyhook.sonarr.tv` (Sonarr's metadata service) | The TVDB episode orders of each Sonarr series a run checks or a pending import waits on, one request per order. A series is refetched after a week, or a month once it has ended and gone quiet, and on Sonarr v5 sooner when Sonarr's episode count for one of its orders changes. Stored orders serve while the host is unreachable. |
 | `github.com` -> `objects.githubusercontent.com` | The primary ID-mapping source (`anibridge-mappings`, a GitHub release asset that 302-redirects to the asset CDN). |
 | `raw.githubusercontent.com` | The two fallback ID-mapping sources (Kometa `Anime-IDs`, anime-lists XML). |

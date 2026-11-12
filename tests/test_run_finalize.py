@@ -616,7 +616,7 @@ class TestSelectionRecheck:
             items=[FakeArrItem(item_id=3, title="A")],
             anilist_ids={11: MappingEntry(anilist_id=11)},
             held_through=engine._services if held else None,
-            history=[_IMPORT_EVENT] if held else None,
+            history=[_IMPORT_EVENT],
         )
         engine._services._selection_stale = stale
         engine.run_sync(strategy, item_id=item_id, dry_run=True, boot=BootFlow())
@@ -681,13 +681,14 @@ class TestSelectionRecheck:
 
         assert self._vouched_any(engine) is False
 
-    def test_an_anilist_outage_run_neither_vouches_nor_commits_the_checkpoint(self, logger: logging.Logger) -> None:
+    def test_an_anilist_outage_run_vouches_and_commits_the_checkpoint(self, logger: logging.Logger) -> None:
+        # A title AniList left unread isn't cached as done, so the outage keeps neither back.
         outage = _FakeGateway()
         outage.outage = True
         engine, _ = self._run(logger, anilist=outage)
 
-        assert self._vouched_any(engine) is False
-        assert engine.cache_store.get_history_checkpoint(Arr.SONARR) is None
+        assert self._vouched_any(engine) is True
+        assert engine.cache_store.get_history_checkpoint(Arr.SONARR) is not None
 
 
 class _OrderFetchingStrategy(FakeStrategy):

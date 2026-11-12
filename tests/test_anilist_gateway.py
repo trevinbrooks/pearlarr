@@ -10,6 +10,8 @@ import logging
 from datetime import date, datetime, timedelta
 from typing import Any
 
+import pytest
+
 from pearlarr.anilist_client import ANILIST_BATCH_SIZE
 from pearlarr.anilist_gateway import ANILIST_REFRESH_AGE_DAYS, AniListGateway
 from pearlarr.seadex_types import AniListAiring
@@ -41,6 +43,14 @@ def _stale_record(al_id: int) -> dict[str, Any]:
     """A populated store record stamped past the refresh age."""
 
     return {"fetched_at": _stamp(days_ago=ANILIST_REFRESH_AGE_DAYS + 1), "data": anilist_body(al_id)}
+
+
+def _dateless_record(al_id: int) -> dict[str, Any]:
+    """A store record stamped inside the refresh age, with a Media that has no `startDate` key."""
+
+    body = anilist_body(al_id)
+    del body["data"]["Media"]["startDate"]
+    return {"fetched_at": _stamp(days_ago=1), "data": body}
 
 
 class _RecordingSink:
@@ -187,18 +197,16 @@ class TestPrefetch:
         assert gateway.n_eps(1) == 12
         assert client.query_calls == []
 
-    def test_a_fresh_record_stored_without_dates_is_refetched(self) -> None:
+    @pytest.mark.parametrize("asked", [pytest.param([1, 2], id="asked-for"), pytest.param([2], id="not-asked-for")])
+    def test_a_fresh_record_stored_without_dates_is_refetched(self, asked: list[int]) -> None:
         client = ScriptedAniListClient()
         store = FakeCacheStore()
         gateway = make_anilist_gateway(client, store)
-        # Stamped inside the refresh age, with a Media that has no `startDate` key.
-        dateless = anilist_body(1)
-        del dateless["data"]["Media"]["startDate"]
-        store.put_anilist_meta(1, {"fetched_at": _stamp(days_ago=1), "data": dateless})
+        store.put_anilist_meta(1, _dateless_record(1))
         store.put_anilist_meta(2, _fresh_record(2))
         gateway.load_cache()
 
-        assert gateway.prefetch([1, 2], preview=False) == 1
+        assert gateway.prefetch(asked, preview=False) == 1
 
         assert client.batch_calls == [[1]]
         written = store.get_anilist_meta(1)
@@ -291,6 +299,50 @@ class TestMediaResolution:
         assert gateway.outage is True
         # No answer is not a miss: the id stays unknown instead of remembered as absent.
         assert gateway.al_cache == {}
+
+
+class TestUnread:
+    """An id is unread only when an outage left a lookup of it without a record that holds its air dates."""
+
+    @pytest.mark.parametrize(
+        ("al_id", "unread"),
+        [
+            pytest.param(2, True, id="no-record"),
+            pytest.param(3, True, id="stored-without-dates"),
+            pytest.param(4, False, id="stored-with-dates"),
+            pytest.param(5, False, id="answered-unknown"),
+        ],
+    )
+    def test_an_outage_leaves_unread_a_looked_up_id_with_no_dated_record(self, al_id: int, unread: bool) -> None:
+        store = FakeCacheStore()
+        store.put_anilist_meta(3, _dateless_record(3))
+        store.put_anilist_meta(4, _stale_record(4))
+        gateway = make_anilist_gateway(ScriptedAniListClient(absent=frozenset({5}), failing=frozenset({1})), store)
+        gateway.load_cache()
+        # AniList answers that it doesn't have id 5, then fails on id 1.
+        gateway.n_eps(5)
+        gateway.n_eps(1)
+        gateway.n_eps(al_id)
+
+        assert gateway.outage is True
+        assert gateway.unread(al_id) is unread
+
+    def test_an_id_nothing_looked_up_is_not_unread(self) -> None:
+        gateway = make_anilist_gateway(ScriptedAniListClient(failing=frozenset({1})))
+        gateway.n_eps(1)
+
+        assert gateway.unread(1) is True
+        assert gateway.unread(2) is False
+
+    def test_a_record_stored_without_dates_is_not_unread_while_anilist_answers(self) -> None:
+        # The stored record without dates serves the lookup, and AniList was never down.
+        store = FakeCacheStore()
+        store.put_anilist_meta(3, _dateless_record(3))
+        gateway = make_anilist_gateway(ScriptedAniListClient(), store)
+        gateway.load_cache()
+        gateway.n_eps(3)
+
+        assert gateway.unread(3) is False
 
 
 class TestLogPluralization:

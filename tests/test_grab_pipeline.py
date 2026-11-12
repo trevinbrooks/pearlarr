@@ -1156,12 +1156,12 @@ class TestPlacementInputMissing:
         assert [r.kind for r in pipeline._ctx.stats.needs_action] == [NeedsActionKind.GRAB_FAILED]
 
 
-def test_a_title_read_without_its_tvdb_orders_stays_uncached_with_nothing_to_do() -> None:
-    # SkyHook was down before the series' first fetch: the title re-checks next run, and no row asks for a hand.
+def test_a_title_read_without_its_metadata_stays_uncached_with_nothing_to_do() -> None:
+    # AniList or SkyHook was down before the first fetch: the title re-checks next run, and no row asks for a hand.
     seadex_dict: SeadexDict = {"RG": rg_group({"u1": url_item(url="u1", infohash="h1", download=False)})}
     pipeline = _on_entry(_pipeline(torrents=FakeTorrents({}), sleep_time=0))
 
-    pipeline.grab_and_cache(replace(_entry_request(seadex_dict), orders_unread=True))
+    pipeline.grab_and_cache(replace(_entry_request(seadex_dict), metadata_unread=True))
 
     assert pipeline.cache_store.get_entry(Arr.SONARR, 42) is None
     assert pipeline._ctx.stats.needs_action == []

@@ -100,9 +100,10 @@ class GrabRequest:
     input_missing_groups: tuple[str, ...] = ()
     """Groups with a url whose grab-time placement waited on a read that failed this run, so a run may have
     been held: the title is never cached as done and re-checks next run."""
-    orders_unread: bool = False
-    """A series the placement read has no stored TVDB orders (SkyHook was down before its first fetch): the title
-    is never cached as done and re-checks next run."""
+    metadata_unread: bool = False
+    """An entry of the series was looked up without its AniList record (`SonarrEpisodes.entries_unread`), or a
+    series was read without its TVDB orders (`SonarrEpisodes.orders_unread`): the title is never cached as done and
+    re-checks next run."""
 
 
 def _reacquire_stamp(added_on: datetime | None) -> str:
@@ -326,8 +327,8 @@ class GrabPipeline:
         """Whether this title's outcome may be cached as done.
 
         Only if something was grabbed or nothing was skipped. A url held by the run cap, a fallback hold, a failed
-        grab, a failed read under a placement, a url the placement held, or a series without its TVDB orders
-        vetoes it.
+        grab, a failed read under a placement, a url the placement held, or a check that read an entry without its
+        AniList record or a series without its TVDB orders vetoes it.
         """
 
         per_title = self._ctx.per_title
@@ -345,7 +346,7 @@ class GrabPipeline:
             and not fallback_hold
             and not per_title.grab_failed_groups
             and not per_title.held_groups
-            and not per_title.orders_unread
+            and not per_title.metadata_unread
             and (added_this_title > 0 or not (per_title.private_only_skipped or per_title.unsupported_tracker_skipped))
         )
 
@@ -427,7 +428,7 @@ class GrabPipeline:
         any_to_download = self._planner.get_any_to_download(req.seadex_dict)
         # The strategy's placement facts land on the title's flags beside the add loop's own.
         self._ctx.per_title.add_held(GrabHold.INPUT_UNREAD, req.input_missing_groups)
-        self._ctx.per_title.orders_unread |= req.orders_unread
+        self._ctx.per_title.metadata_unread |= req.metadata_unread
 
         added_this_title = 0
 

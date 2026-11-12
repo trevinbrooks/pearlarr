@@ -424,6 +424,16 @@ class TestNoReleasesSkip:
         assert (persisted.name, persisted.url) == ("Title", "u")
         assert len(reporter.no_releases_ctxs) == 1
 
+    def test_a_title_read_without_its_metadata_is_logged_and_left_uncached(self) -> None:
+        cache = FakeCacheStore()
+        reporter = _TailReporter()
+        run = make_services(cache_store=cache, _reporter=reporter, sleep_time=0)
+
+        run.no_releases_skip(7, {"name": "Title", "url": "u"}, metadata_unread=True)
+
+        assert cache.get_entry(Arr.SONARR, 7) is None
+        assert len(reporter.no_releases_ctxs) == 1
+
 
 class TestAlIdPrologue:
     """`al_id_prologue` reports a missing entry vs an outage distinctly, and resets skip flags/tallies on a hit."""
