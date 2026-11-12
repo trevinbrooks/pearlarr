@@ -106,6 +106,7 @@ from pearlarr.sonarr_parse import SonarrParseCache
 from pearlarr.stamps import UPDATED_AT_STR_FORMAT, parse_stamp, stamp_of
 from pearlarr.torrents import AddOutcome, AddResult, TorrentService
 from pearlarr.tvdb_orders import NO_ORDERS, OrderRow, SeriesOrdering, SeriesOrders, StoredOrders
+from pearlarr.window_placement import WindowedAssignment
 
 from .fakes import FakeClock, FakeRadarrClient, FakeSkyHookClient, FakeSonarrClient
 
@@ -1314,6 +1315,24 @@ def verdicts_of(result: EpisodeAssignment) -> set[PlacementVerdict]:
     """The distinct verdicts an assignment gave, for the tests that pin what kind of verdict a batch got."""
 
     return {p.verdict for p in result.placements}
+
+
+def merged_of(result: WindowedAssignment) -> EpisodeAssignment:
+    """Each file's verdict over every window, batch order (`WindowedFile.merged`)."""
+
+    return EpisodeAssignment(tuple(file.merged for file in result.files))
+
+
+def under_window(result: WindowedAssignment, at: int) -> EpisodeAssignment:
+    """What the placer gave each file under the window at `at`, batch order (`WindowedFile.per_window`)."""
+
+    return EpisodeAssignment(tuple(file.per_window[at] for file in result.files))
+
+
+def decided_by(result: WindowedAssignment) -> dict[str, int]:
+    """Each decided file's name -> the position of the window that decided it (`WindowedFile.decided_at`)."""
+
+    return {file.name: file.decided_at for file in result.files if file.decided_at is not None}
 
 
 def blind(names: Iterable[str]) -> dict[str, ParsedFileInfo | None]:

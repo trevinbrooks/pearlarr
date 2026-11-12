@@ -50,7 +50,7 @@ from .seadex_types import (
     season_episode_key,
     unambiguous,
 )
-from .window_placement import WindowOrder, ordered_windows, place_across_windows, windows_of
+from .window_placement import NOTHING_PLACED, WindowOrder, ordered_windows, place_across_windows, windows_of
 
 
 @dataclass(frozen=True, slots=True)
@@ -188,7 +188,7 @@ class UrlPlacement:
     assignment: EpisodeAssignment
     """This placement's verdicts, one per distinct normalized file name: the whole batch when the torrent
     is new, else the files the stored record's map does not cover. A file that is another listed title's is
-    `LISTED_ELSEWHERE` (`WindowedAssignment.for_record`)."""
+    `LISTED_ELSEWHERE` (`EntryView.assignment`)."""
 
     records: tuple[EpisodeRecord, ...]
     """One `(season, episode, size)` per file and episode of the whole map inside the entry, in file order.
@@ -269,17 +269,12 @@ def place_release(files: Sequence[SeedFile], scope: SeedScope, torrent: KnownTor
     # record maps whole needs no parse.
     parse_unread = bool(batch.names) and not batch.all_parses_known
     # With no file left to place, the windows have nothing to judge.
+    view = NOTHING_PLACED
     if batch.names and scope.can_place and order is not None:
-        own_at = order.at(scope.al_id)
         placed = place_across_windows(batch, windows_of(order.windows, torrent.indexes, evidence))
-        reading = NumberingReader.of(scope, order.windows).read(batch, placed.facts[own_at].names)
-        placed = placed.filled(batch, reading)
-        assignment = placed.for_record(order.imports)
-        misnumbered, hand_claim = placed.misnumbered_under(own_at), placed.hand_claim_under(own_at)
-        outside = placed.listed_elsewhere_under(own_at)
-    else:
-        assignment, misnumbered, hand_claim, outside = EpisodeAssignment(()), False, None, frozenset[str]()
-    mapped = joined_map(seeded, assignment.assigned)
+        reading = NumberingReader.of(scope, order.windows).read(batch, placed.facts[order.own_at].names)
+        view = placed.filled(batch, reading).seen_by(order.own_at, order.imports)
+    mapped = joined_map(seeded, view.assignment.assigned)
     records: list[EpisodeRecord] = []
     claimed: set[int] = set()
     for f in files:
@@ -303,15 +298,15 @@ def place_release(files: Sequence[SeedFile], scope: SeedScope, torrent: KnownTor
     # that title's, and so is a mapped file on an episode another title's window holds. A mapped file on an episode
     # no listed title's window holds is nobody's and doesn't hold the url. Judged on the whole map, so a sibling's
     # stored files count as its fresh ones would.
-    other_ids = frozenset[int]() if order is None else order.ids_outside(scope.al_id)
+    other_ids = frozenset[int]() if order is None else order.other_ids
     mapped_elsewhere = frozenset(name for name in batch.to_place if not other_ids.isdisjoint(mapped.get(name, ())))
-    elsewhere = frozenset[str]() if claimed else outside | mapped_elsewhere
+    elsewhere = frozenset[str]() if claimed else view.outside | mapped_elsewhere
     # A url with no video file (subs, fonts) places nothing and waits on nothing.
     hold = (
         _hold_of(
-            misnumbered=misnumbered,
+            misnumbered=view.misnumbered,
             unread=unread,
-            hand_claim=None if claimed else hand_claim,
+            hand_claim=None if claimed else view.hand_claim,
             elsewhere=bool(elsewhere),
         )
         if files
@@ -319,13 +314,15 @@ def place_release(files: Sequence[SeedFile], scope: SeedScope, torrent: KnownTor
     )
     return UrlPlacement(
         files=tuple(files),
-        assignment=assignment,
+        assignment=view.assignment,
         # A pack left for a hand import adds no records: the planner judges it by what its window holds.
         records=() if hold is not None and hold.hand_import else tuple(records),
         claimed_ids=frozenset(claimed),
         inputs_known=not files or (known and not unread),
         hold=hold,
-        hold_counts=_elsewhere_counts(elsewhere, assignment) if hold is GrabHold.PLACED_ELSEWHERE else NO_ELSEWHERE,
+        hold_counts=(
+            _elsewhere_counts(elsewhere, view.assignment) if hold is GrabHold.PLACED_ELSEWHERE else NO_ELSEWHERE
+        ),
         stored=torrent.record,
         intended_sizes=sizes_by_episode(mapped, sizes),
     )
@@ -337,8 +334,8 @@ def _hold_of(
     """Why the url isn't grabbed: the first of these that holds, in this order.
 
     Four inputs, since their order is the rule. `misnumbered`: a file of the entry's own window is misnumbered
-    (`WindowedAssignment.misnumbered_under`). `unread`: a read the placement needs failed. `hand_claim`: the claim
-    the entry's own window made for a hand import that no window placed (`WindowedAssignment.hand_claim_under`),
+    (`EntryView.misnumbered`). `unread`: a read the placement needs failed. `hand_claim`: the claim the entry's own
+    window made for a hand import that no window placed (`EntryView.hand_claim`),
     when nothing of the whole map lands on the entry. A title's refusal holds as refuted, and a file another TVDB
     order reads outside every listed title as misnumbered. It outranks `elsewhere`, since a file the entry's own
     window claimed is its own hand import, and saying it's another title's would be wrong. `elsewhere`: nothing of

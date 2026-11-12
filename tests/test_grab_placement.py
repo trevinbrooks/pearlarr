@@ -1282,7 +1282,7 @@ class TestKnownTorrent:
 
         assert order is not None
         assert [w.ordered_episode_ids for w in order.windows] == [(101, 102, 103, 104), (103, 104)]
-        assert (order.at(1), order.imports) == (0, {0, 1})
+        assert (order.own_at, order.imports) == (0, {0, 1})
 
     def test_the_entrys_own_window_carries_its_anilist_episode_count(self) -> None:
         scope = seed_scope(episode_index(_SEASON), episode_index(_SERIES), episode_count=4)
@@ -1294,14 +1294,14 @@ class TestKnownTorrent:
 
         assert order is not None
         assert [w.al_id for w in order.windows] == [1, 2, 3]
-        assert (order.at(3), order.imports) == (2, {0, 1, 2})
+        assert (order.own_at, order.imports) == (2, {0, 1, 2})
 
     def test_a_listed_entry_that_never_claimed_runs_but_is_not_imported(self) -> None:
         order = _torrent(listed=[entry_window(2, (103, 104))]).order(_scope(_SEASON).window)
 
         assert order is not None
         assert [w.al_id for w in order.windows] == [1, 2]
-        assert (order.at(1), order.imports) == (0, {0})
+        assert (order.own_at, order.imports) == (0, {0})
 
     def test_a_claim_moving_series_leaves_its_old_series_unread(self) -> None:
         # Entry 1's stored claim is on series 7; this grab claims series 8.
