@@ -214,6 +214,9 @@ def anilist_body(al_id: int, title: str = "Resolved") -> AniListBody:
                 "bannerImage": "https://img/banner",
                 "episodes": 12,
                 "format": "TV",
+                "startDate": {"year": 2020, "month": 1, "day": 4},
+                "endDate": {"year": 2020, "month": 3, "day": 21},
+                "duration": 24,
             },
         },
     }
@@ -1079,8 +1082,13 @@ def sonarr_ep(
     absolute: int | None = None,
     title: str = "",
     tvdb_id: int | None = None,
+    air_date: str | None = None,
+    runtime: int | None = None,
 ) -> SonarrEpisode:
-    """`episode_file_id=0` omits the `episodeFile` block, as in Sonarr's record for a missing episode."""
+    """`episode_file_id=0` omits the `episodeFile` block, as in Sonarr's record for a missing episode.
+
+    `air_date` is Sonarr's `YYYY-MM-DD` string and `runtime` its minutes.
+    """
 
     raw: dict[str, Any] = {
         "id": ep_id,
@@ -1089,6 +1097,8 @@ def sonarr_ep(
         "absoluteEpisodeNumber": absolute,
         "title": title,
         "tvdbId": tvdb_id,
+        "airDate": air_date,
+        "runtime": runtime,
         "episodeFileId": episode_file_id,
     }
     if episode_file_id:
@@ -1491,7 +1501,13 @@ def queue_record(
 def make_sonarr_episodes(**attrs: Any) -> SonarrEpisodes:
     """A bare `SonarrEpisodes` with `__init__` bypassed, its per-run caches defaulted empty."""
 
-    defaults: dict[str, Any] = {"_ep_list_cache": {}, "_series_fp": "", "_order_facts": {}, "_orderings": {}}
+    defaults: dict[str, Any] = {
+        "_ep_list_cache": {},
+        "_series_fp": "",
+        "_order_facts": {},
+        "_orderings": {},
+        "_picks_logged": set[int](),
+    }
     defaults.update(attrs)
     return make_bare_instance(SonarrEpisodes, **defaults)
 

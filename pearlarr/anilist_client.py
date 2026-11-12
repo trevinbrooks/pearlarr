@@ -75,6 +75,17 @@ _MEDIA_FIELDS = """
     bannerImage
     episodes
     format
+    startDate {
+        year
+        month
+        day
+    }
+    endDate {
+        year
+        month
+        day
+    }
+    duration
 """
 
 # Single-id query
@@ -181,6 +192,18 @@ def extract_path(body: dict[str, Any] | None, *path: str) -> dict[str, Any]:
     for key in path:
         node = node.get(key) or {}
     return node
+
+
+def lacks_air_dates(body: dict[str, Any]) -> bool:
+    """Whether a stored body holds a Media that was never asked for its air dates.
+
+    AniList answers every selected field, null when it has no value, so a Media with no `startDate` key came from
+    a query that didn't select it. A Media with no id is AniList's answer for an id it doesn't have, and lacks
+    nothing.
+    """
+
+    media = extract_path(body, "data", "Media")
+    return "id" in media and "startDate" not in media
 
 
 def media_node_from(raw: dict[str, Any]) -> AniListMediaNode:

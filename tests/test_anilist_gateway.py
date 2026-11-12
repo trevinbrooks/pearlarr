@@ -7,11 +7,12 @@ scripted `AniListClient` injected at construction.
 """
 
 import logging
-from datetime import datetime, timedelta
+from datetime import date, datetime, timedelta
 from typing import Any
 
 from pearlarr.anilist_client import ANILIST_BATCH_SIZE
 from pearlarr.anilist_gateway import ANILIST_REFRESH_AGE_DAYS, AniListGateway
+from pearlarr.seadex_types import AniListAiring
 from pearlarr.stamps import UPDATED_AT_STR_FORMAT
 
 from .builders import FakeCacheStore, ScriptedAniListClient, anilist_body, make_anilist_gateway
@@ -186,6 +187,24 @@ class TestPrefetch:
         assert gateway.n_eps(1) == 12
         assert client.query_calls == []
 
+    def test_a_fresh_record_stored_without_dates_is_refetched(self) -> None:
+        client = ScriptedAniListClient()
+        store = FakeCacheStore()
+        gateway = make_anilist_gateway(client, store)
+        # Stamped inside the refresh age, with a Media that has no `startDate` key.
+        dateless = anilist_body(1)
+        del dateless["data"]["Media"]["startDate"]
+        store.put_anilist_meta(1, {"fetched_at": _stamp(days_ago=1), "data": dateless})
+        store.put_anilist_meta(2, _fresh_record(2))
+        gateway.load_cache()
+
+        assert gateway.prefetch([1, 2], preview=False) == 1
+
+        assert client.batch_calls == [[1]]
+        written = store.get_anilist_meta(1)
+        assert written is not None
+        assert written["data"] == anilist_body(1)
+
     def test_healthy_refresh_writes_and_evicts(self) -> None:
         client = ScriptedAniListClient(absent=frozenset({2}))
         store = FakeCacheStore()
@@ -226,6 +245,18 @@ class TestMediaResolution:
         # were cache hits, so the wire saw exactly one query.
         assert client.query_calls == [42]
         assert 42 in gateway.al_cache
+
+    def test_airing_reads_the_dates_count_and_episode_length(self) -> None:
+        gateway = make_anilist_gateway()
+        gateway.al_cache = {
+            1: anilist_body(1),
+            2: {"data": {"Media": {"id": 2, "episodes": 12}}},
+        }
+
+        assert gateway.airing(1) == AniListAiring(
+            start=date(2020, 1, 4), end=date(2020, 3, 21), episodes=12, duration=24
+        )
+        assert gateway.airing(2) == AniListAiring(start=None, end=None, episodes=12, duration=None)
 
     def test_titles_list_english_then_romaji_once_each(self) -> None:
         gateway = make_anilist_gateway()

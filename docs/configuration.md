@@ -220,3 +220,7 @@ Setting one to `false` disables it. `anime_mappings` and `anibridge_mappings` al
 | `anidb_mappings` | *(blank)* |  | AniDB `anime-lists` XML source, a fallback used for specials. Blank auto-downloads it. `false` disables it. |
 | `anibridge_mappings` | *(blank)* |  | `anibridge-mappings` v3 graph, the primary source of IDs and per-season episode maps. Blank auto-downloads it. `false` disables it. An inline mapping is accepted. |
 <!-- /gen:group-mappings -->
+
+The sources sometimes put a movie or OVA on the wrong special of its series.
+When a title maps only to specials, and they aired more than two weeks from the dates AniList gives it, Pearlarr looks for the series' specials that aired between those dates, give or take a day, and run about as long as AniList says an episode does. If there are exactly as many as the title has episodes, it uses those instead. If not, a two-episode title takes the one such special that aired on its first date and the one on its last. Anything else keeps the mapping.
+An inline mapping is checked the same way. The debug log names each AniList ID matched like this.

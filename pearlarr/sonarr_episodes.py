@@ -3,9 +3,9 @@
 `SonarrEpisodes` owns the per-run episode cache (and the series-id fingerprint
 that pins unmatched `/parse` records) and the logic that turns a (series,
 AniList id, mapping) into the relevant episode list: season / AniBridge
-filtering, AniDB remaps, offset slicing, the existing-file release dict, and
-the concurrent prefetch warm. It also keeps each series' TVDB order facts and
-serves the orders its episode indexes are built with.
+filtering, AniDB remaps, offset slicing, the specials picked by air date, the
+existing-file release dict, and the concurrent prefetch warm. It also keeps each
+series' TVDB order facts and serves the orders its episode indexes are built with.
 """
 
 import concurrent.futures
@@ -16,7 +16,7 @@ from . import coverage as _coverage
 from .anime_filter import IdField, build_id_filters, collect_anime_items
 from .config import AppConfig
 from .mappings import ExternalIds, MappingEntry, MappingMode, MappingSource
-from .output import Accent, StyledValue
+from .output import Accent, Severity, StyledValue, hub_note
 from .run_services import RunDeps, RunServices
 from .seadex_types import (
     ArrReleases,
@@ -24,9 +24,11 @@ from .seadex_types import (
     SonarrEpisode,
     SonarrItem,
     TvdbMappings,
+    season_episode_key,
     season_holds,
 )
 from .sonarr_client import AbstractSonarrClient
+from .specials_by_date import specials_by_date
 from .tvdb_orders import NO_ORDERING, OFFICIAL_ORDER, SeriesOrderFacts, SeriesOrdering
 
 # Bounded concurrency for the episode/parse network fan-out. Only used when
@@ -102,6 +104,14 @@ def check_ep_by_anibridge(
     return season_holds(ranges, ep_episode)
 
 
+def _dated(episodes: Iterable[SonarrEpisode]) -> str:
+    """The episodes for a log line, each as its `S00E01` label and air date, comma-joined."""
+
+    return ", ".join(
+        f"{season_episode_key(ep.season_number, ep.episode_number).label} (aired {ep.air_date})" for ep in episodes
+    )
+
+
 class SonarrEpisodes:
     """Owns the per-run episode cache + the (series, al_id, mapping) -> episodes logic, and each series' orders.
 
@@ -151,6 +161,9 @@ class SonarrEpisodes:
         self._order_facts: dict[int, SeriesOrderFacts] = {}
         self._orderings: dict[int, SeriesOrdering] = {}
 
+        # The AniList ids whose pick of specials by air date this run already logged. Reset in collect_series.
+        self._picks_logged: set[int] = set()
+
     @property
     def series_fp(self) -> str:
         """The current run's series-id fingerprint (read by the parse cache)."""
@@ -167,6 +180,7 @@ class SonarrEpisodes:
 
         self._ep_list_cache = {}
         self._orderings = {}
+        self._picks_logged = set()
         series = self.get_all_sonarr_series()
         # Fingerprint the current series-id set once per run for unmatched-parse
         # cache invalidation (see sonarr_series_fingerprint).
@@ -367,7 +381,11 @@ class SonarrEpisodes:
         al_id: int,
         mapping: MappingEntry,
     ) -> list[SonarrEpisode] | None:
-        """Get a list of relevant episodes for an AniList mapping."""
+        """Get a list of relevant episodes for an AniList mapping.
+
+        They are the mapping's episodes, unless those are specials that aired off AniList's dates and
+        `specials_by_date` picks others of the series. None when the series' episodes couldn't be read.
+        """
 
         tvdb_season = mapping.tvdb_season
 
@@ -449,7 +467,28 @@ class SonarrEpisodes:
                 mapping=mapping,
             )
 
-        return final_ep_list
+        return self._picked_by_date(al_id, final_ep_list, ep_list)
+
+    def _picked_by_date(
+        self, al_id: int, mapped: list[SonarrEpisode], series_episodes: list[SonarrEpisode]
+    ) -> list[SonarrEpisode]:
+        """The entry's episodes: `mapped`, or the specials of `series_episodes` AniList's dates pick over them.
+
+        A pick is logged once per run, though a run resolves an entry several times.
+        """
+
+        airing = self._anilist.airing(al_id)
+        picked = specials_by_date(mapped, series_episodes, airing)
+        if picked is None:
+            return mapped
+        if al_id not in self._picks_logged:
+            self._picks_logged.add(al_id)
+            dates = f"{airing.start}" if airing.end in (None, airing.start) else f"{airing.start} to {airing.end}"
+            hub_note(
+                f"AniList {al_id} maps to {_dated(mapped)} but is dated {dates} - using {_dated(picked)}",
+                severity=Severity.DEBUG,
+            )
+        return picked
 
     def _apply_anime_id_offsets(
         self,
