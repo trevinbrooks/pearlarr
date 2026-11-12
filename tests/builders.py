@@ -1345,9 +1345,9 @@ def place(
     *,
     seeded: FileEpisodeMap = NO_SEEDED,
 ) -> EpisodeAssignment:
-    """`assign_episode_ids` under `scope` over `batch(parsed, to_place, seeded=seeded)`."""
+    """The verdicts `assign_episode_ids` gives under `scope` over `batch(parsed, to_place, seeded=seeded)`."""
 
-    return assign_episode_ids(batch(parsed, to_place, seeded=seeded), scope)
+    return assign_episode_ids(batch(parsed, to_place, seeded=seeded), scope).assignment
 
 
 def numbered_names(prefix: str, count: int, tails: Sequence[str] = ()) -> list[str]:

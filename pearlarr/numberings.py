@@ -361,10 +361,10 @@ class NumberingReader:
     def read(self, batch: PlacementBatch, facts: Mapping[str, NameFacts]) -> NumberingReading:
         """The ids proposed for each lone-number file of `batch` where every fitting numbering agrees.
 
-        `facts` are the grabbing entry's own window's (`name_facts`): they say which names are extras or counted by
-        their own title, which keeps those out of the pool. Nothing is proposed off the aired numbering, while a
-        parse of the torrent is unknown, with no window on the series, or when a window doesn't match AniList's
-        count. Two files proposed overlapping ids are both dropped: one id, one file.
+        `facts` are the grabbing entry's own window's (`PlacerResult.facts`): they say which names are extras or
+        counted by their own title, which keeps those out of the pool. Nothing is proposed off the aired numbering,
+        while a parse of the torrent is unknown, with no window on the series, or when a window doesn't match
+        AniList's count. Two files proposed overlapping ids are both dropped: one id, one file.
         """
 
         if not self.aired_numbering or not self.windows or not batch.all_parses_known:
@@ -511,7 +511,7 @@ class NumberingReader:
 def _lone_number_files(batch: PlacementBatch, facts: Mapping[str, NameFacts]) -> list[_LoneNumberFile]:
     """The pool's files: every file of the torrent named by number alone, seeded and gone names included.
 
-    `facts` must cover every name of the torrent (`name_facts` does).
+    `facts` must cover every name of the torrent (`PlacerResult.facts` does).
     """
 
     pool: list[_LoneNumberFile] = []

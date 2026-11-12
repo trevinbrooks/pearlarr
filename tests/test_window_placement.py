@@ -19,7 +19,6 @@ from pearlarr.placement_types import (
 from pearlarr.seadex_types import EpisodeKey, ParsedFileInfo
 from pearlarr.window_placement import (
     WindowedAssignment,
-    WindowFacts,
     WindowOrder,
     ordered_windows,
     place_across_windows,
@@ -621,9 +620,8 @@ def _filled(
     """The torrent placed under `windows`, before and after the reader's `proposals` fill it."""
 
     torrent = batch(parsed, seeded=seeded)
-    facts = [WindowFacts.of(torrent, window) for window in windows]
     before = place_across_windows(torrent, windows)
-    return before, before.filled(torrent, NumberingReading(proposals), facts)
+    return before, before.filled(torrent, NumberingReading(proposals))
 
 
 def _gap_and_placed() -> dict[str, ParsedFileInfo | None]:
