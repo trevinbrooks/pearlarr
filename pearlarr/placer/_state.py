@@ -1,13 +1,14 @@
 """The state one `assign_episode_ids` call runs its passes over: its files, their numbered runs, the run window.
 
 `TorrentFile` holds what one call knows and decides about one file, `NumberedRun` the files sharing one prefix,
-`RunWindow` the open ids the run passes read, and `Placer` every file plus the views two or more passes read. A
-helper of one pass sits with that pass.
+`RunWindow` the open ids the run passes read, `NameFacts` what one name reads as before the first pass, and `Placer`
+every file plus the views two or more passes read. A helper of one pass sits with that pass.
 """
 
 from collections.abc import Iterable, Mapping, Sequence
 from dataclasses import dataclass, field, replace
 from itertools import pairwise
+from types import MappingProxyType
 from typing import Self
 
 from ._names import TorrentNames
@@ -212,6 +213,22 @@ class RunWindow:
         return tuple(file for file in run.members if file.release_number in self.numbers)
 
 
+@dataclass(frozen=True, slots=True, kw_only=True)
+class NameFacts:
+    """What the passes read off one name under one scope, before the first pass."""
+
+    titled_as: int | None
+    """The episode the name is titled as (`TorrentFile.titled_as`), else None."""
+    reads_inside: bool
+    """Whether a trusted reading of the name resolves wholly inside the scope (`Reading.exact_ids`): the exact pass
+    would place it there, were its ids open and nothing disputing them."""
+    extra: bool
+    """Whether the name is an extra (an opening, an ending, and so on): never an episode."""
+    title_counted: bool
+    """Whether Sonarr counted the name by its own title's number and nothing confirms it (`Placer.counted_by_title`):
+    the number is the title's, not a count."""
+
+
 @dataclass(slots=True, kw_only=True)
 class Placer:
     """One `assign_episode_ids` call's state: every file of the torrent, and the ids used so far."""
@@ -230,6 +247,9 @@ class Placer:
     """Whether every parse of the torrent is known (`PlacementBatch.all_parses_known`)."""
     counted_runs: tuple[NumberedRun, ...] = field(init=False)
     """The `runs` among the `counted` files."""
+    facts: Mapping[str, NameFacts] = field(init=False)
+    """What every name of the torrent reads as before the first pass. Passes 2 to 5 reject and re-read readings, so
+    this is set once at the start and never read off the files later."""
     used: set[int] = field(default_factory=set[int])
     """Every id placed on so far, the scope's used ids included. Only `place` adds to it."""
     count_legs_barred: bool = False
@@ -241,6 +261,17 @@ class Placer:
 
     def __post_init__(self) -> None:
         self.counted_runs = tuple(self.runs(self.counted))
+        self.facts = MappingProxyType(
+            {
+                file.name: NameFacts(
+                    titled_as=file.titled_as,
+                    reads_inside=bool(file.reading.exact_ids),
+                    extra=file.extra,
+                    title_counted=self.counted_by_title(file),
+                )
+                for file in self.files
+            }
+        )
 
     @property
     def series(self) -> EpisodeIndex:

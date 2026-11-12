@@ -23,7 +23,7 @@ from pearlarr.placement_types import (
     TargetScope,
     TorrentListing,
 )
-from pearlarr.placer import NameFacts, name_facts
+from pearlarr.placer import NameFacts, assign_episode_ids
 from pearlarr.seadex_types import EpisodeKey, MatchedEpisode, ParsedFileInfo
 
 from .builders import (
@@ -3988,8 +3988,8 @@ class TestRefuseInterleavedSpecial:
         }
 
 
-class TestNameFacts:
-    """`name_facts` reads every name as the passes would, seeded and gone names included, and places nothing."""
+class TestPlacerFacts:
+    """`PlacerResult.facts`: every name as the passes read it before the first pass, seeded and gone names included."""
 
     def test_every_torrent_name_gets_the_facts_the_passes_judge_by(self) -> None:
         # The titled file carries episode 2's title; the extra is an NCOP; the seeded file is counted by its own
@@ -4006,7 +4006,7 @@ class TestNameFacts:
             _GONE: parsed_info(absolutes=(1,), matched=((1, 1),)),
         }
 
-        facts = name_facts(batch(parsed, [titled, extra], seeded={counted: (603,)}), _scope(_FIRST_THREE))
+        facts = assign_episode_ids(batch(parsed, [titled, extra], seeded={counted: (603,)}), _scope(_FIRST_THREE)).facts
 
         assert facts == {
             titled: NameFacts(titled_as=602, reads_inside=True, extra=False, title_counted=False),
@@ -4018,6 +4018,29 @@ class TestNameFacts:
     def test_a_reading_outside_the_scope_does_not_read_inside(self) -> None:
         parsed = {"show - 05 [grp].mkv": parsed_info(absolutes=(5,), matched=((2, 1),))}
 
-        facts = name_facts(batch(parsed), _scope(_FIRST_THREE))
+        facts = assign_episode_ids(batch(parsed), _scope(_FIRST_THREE)).facts
 
         assert facts["show - 05 [grp].mkv"].reads_inside is False
+
+    def test_a_reading_a_pass_rejects_still_reads_inside(self) -> None:
+        # Sonarr matched the name to episode 2, inside the scope, but it carries episode 3's title: the contradiction
+        # rejects the reading, and the episode-title pass places the file.
+        name = "show - 03 - Festival Night [grp].mkv"
+        parsed = {name: parsed_info(absolutes=(3,), matched=((1, 2),))}
+
+        result = assign_episode_ids(batch(parsed), _scope(_FIRST_THREE))
+
+        assert by_name(result.assignment) == {name: ((603,), PlacementVerdict.EPISODE_TITLE)}
+        assert result.facts[name].reads_inside is True
+
+    def test_a_reading_the_season_re_read_replaces_keeps_its_first_read(self) -> None:
+        # A special TVDB interleaved after the second episode shifted Sonarr's match: the third file onto the special,
+        # outside the scope. The season re-read reads it as the season's third episode, where the exact pass places it.
+        run = numbered_names("show", 4)
+        matched = ((1, 1), (1, 2), (0, 1), (1, 3))
+        parsed = {name: parsed_info(matched=(pair,)) for name, pair in zip(run, matched, strict=True)}
+
+        result = assign_episode_ids(batch(parsed), _scope([601, 602, 603, 604]))
+
+        assert by_name(result.assignment)[run[2]] == ((603,), PlacementVerdict.EXACT)
+        assert result.facts[run[2]].reads_inside is False

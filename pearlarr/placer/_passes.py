@@ -162,23 +162,31 @@ from ._run_passes import (
     pass_release_run,
     pass_reread_season_runs,
 )
-from ._state import NumberedRun, Placer, TorrentFile
+from ._state import NameFacts, NumberedRun, Placer, TorrentFile
 from ..parse_reading import glued_counts, numbers_miss_the_series, parse_has_no_number
 from ..placement_types import EpisodeAssignment, PlacementBatch, PlacementVerdict, TargetScope
 from ..release_names import FileIdentity, natural_key, sole_title_match
 from ..seadex_types import EpisodeKey
 
 
-def assign_episode_ids(batch: PlacementBatch, scope: TargetScope) -> EpisodeAssignment:
+@dataclass(frozen=True, slots=True)
+class PlacerResult:
+    """What one `assign_episode_ids` call gives: each file's verdict, and what the passes read off every name."""
+
+    assignment: EpisodeAssignment
+    """One verdict per name in `PlacementBatch.names`, batch order."""
+    facts: Mapping[str, NameFacts]
+    """Every name of the torrent, seeded and gone names included, as the names read before the first pass. Read-only
+    (`Placer.facts`)."""
+
+
+def assign_episode_ids(batch: PlacementBatch, scope: TargetScope) -> PlacerResult:
     """Place the files of `batch` onto the ids of `scope` by running the passes the module docstring lists, in order.
 
     One file name never overrides the scope. With an empty series map, every verdict that needs the map is
-    refused. The result holds one `Placement` per name of `PlacementBatch.names`, in batch order.
+    refused.
     """
 
-    if not batch.names:
-        # The passes would read every parse of the torrent only to return this same empty result.
-        return EpisodeAssignment(())
     state = Placer.start(batch, scope)
     _pass_extras(state)
     _pass_refuse_refuted(state)
@@ -194,7 +202,7 @@ def assign_episode_ids(batch: PlacementBatch, scope: TargetScope) -> EpisodeAssi
     pass_numbered_run(state)
     _pass_classify(state)
     pass_other_orders(state)
-    return EpisodeAssignment(state.placements())
+    return PlacerResult(EpisodeAssignment(state.placements()), state.facts)
 
 
 def _pass_extras(state: Placer) -> None:

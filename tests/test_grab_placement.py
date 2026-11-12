@@ -1143,46 +1143,77 @@ _SC_FILES = [
 ]
 
 
+# My Hero Academia (Sonarr 254): the Ikinokore OVA entry (AniList 122349) is specials 8 and 9. HorribleSubs' single
+# 01 reads S01E01 by the series' numbers, outside the window, so the passes skip it; the window counts its specials
+# from one.
+_MHA_SERIES = episode_index(
+    [
+        *(sonarr_ep(0, n, ep_id=9246 + n, episode_file_id=0) for n in range(7, 11)),
+        *(sonarr_ep(1, n, ep_id=9270 + n, episode_file_id=0, absolute=n) for n in range(1, 4)),
+    ]
+)
+_MHA_NAMES = EntryNames(
+    "My Hero Academia",
+    (
+        "My Hero Academia: Make It! Do-or-Die Survival Training",
+        "Boku no Hero Academia: Ikinokore! Kesshi no Survival Kunren",
+    ),
+)
+_MHA_SCOPE = seed_scope(
+    episode_index([_MHA_SERIES.by_id[9254], _MHA_SERIES.by_id[9255]]),
+    _MHA_SERIES,
+    al_id=122349,
+    names=_MHA_NAMES,
+    episode_count=2,
+    alternate_titles=("Boku no Hero Academia",),
+)
+_MHA_WINDOW = entry_window(122349, (9254, 9255), names=_MHA_NAMES, episode_count=2)
+_MHA_OVA = "[HorribleSubs] Boku no Hero Academia - Ikinokore! Kesshi no Survival Kunren - 01 [1080p].mkv"
+_MHA_FILES = (
+    SeedFile(_MHA_OVA, 1_400_000_000, _lone(1, "Boku no Hero Academia - Ikinokore! Kesshi no Survival Kunren")),
+)
+
+
 class TestPlaceWhereEveryNumberingAgrees:
     """A file named by number alone that the windows left is placed where every numbering agrees, after the merge."""
 
     def test_a_single_a_specials_only_entry_lists_places_on_its_first_special(self) -> None:
-        # My Hero Academia (Sonarr 254): the Ikinokore OVA entry (AniList 122349) is specials 8 and 9. HorribleSubs'
-        # 01 reads S01E01 by the series' numbers, outside the window, so the passes skip it; the window counts its
-        # specials from one.
-        series = episode_index(
-            [
-                *(sonarr_ep(0, n, ep_id=9246 + n, episode_file_id=0) for n in range(7, 11)),
-                *(sonarr_ep(1, n, ep_id=9270 + n, episode_file_id=0, absolute=n) for n in range(1, 4)),
-            ]
-        )
-        names = EntryNames(
-            "My Hero Academia",
-            (
-                "My Hero Academia: Make It! Do-or-Die Survival Training",
-                "Boku no Hero Academia: Ikinokore! Kesshi no Survival Kunren",
-            ),
-        )
-        window = entry_window(122349, (9254, 9255), names=names, episode_count=2)
-        scope = seed_scope(
-            episode_index([series.by_id[9254], series.by_id[9255]]),
-            series,
-            al_id=122349,
-            names=names,
-            episode_count=2,
-            alternate_titles=("Boku no Hero Academia",),
-        )
-        name = "[HorribleSubs] Boku no Hero Academia - Ikinokore! Kesshi no Survival Kunren - 01 [1080p].mkv"
-        files = [
-            SeedFile(name, 1_400_000_000, _lone(1, "Boku no Hero Academia - Ikinokore! Kesshi no Survival Kunren"))
-        ]
+        torrent = known_torrent(indexes={7: _MHA_SERIES}, evidence=torrent_evidence(_MHA_WINDOW))
 
-        placement = place_release(files, scope, known_torrent(indexes={7: series}, evidence=torrent_evidence(window)))
+        placement = place_release(_MHA_FILES, _MHA_SCOPE, torrent)
 
-        assert by_name(placement.assignment) == {normalize_basename(name): ((9254,), PlacementVerdict.NUMBERINGS_AGREE)}
+        assert by_name(placement.assignment) == {
+            normalize_basename(_MHA_OVA): ((9254,), PlacementVerdict.NUMBERINGS_AGREE)
+        }
         assert placement.claimed_ids == {9254}
         assert placement.records == (EpisodeRecord(0, 8, 1_400_000_000),)
         assert placement.hold is None
+
+    def test_a_url_the_record_maps_whole_places_nothing_and_records_the_map(self) -> None:
+        # The record holds the single where an earlier grab placed it. The reader would propose that special for it
+        # again, but no file is left to place.
+        record = pending_import(
+            infohash="h1",
+            al_id=122349,
+            file_episode_map={normalize_basename(_MHA_OVA): [9254]},
+            seadex_files=[_MHA_OVA],
+            ordered_episode_ids=(9254, 9255),
+        )
+        torrent = known_torrent(record, indexes={7: _MHA_SERIES}, evidence=torrent_evidence(_MHA_WINDOW))
+
+        placement = place_release(_MHA_FILES, _MHA_SCOPE, torrent)
+
+        assert placement == UrlPlacement(
+            files=_MHA_FILES,
+            assignment=EpisodeAssignment(()),
+            records=(EpisodeRecord(0, 8, 1_400_000_000),),
+            claimed_ids=frozenset({9254}),
+            inputs_known=True,
+            hold=None,
+            hold_counts=NO_ELSEWHERE,
+            stored=record,
+            intended_sizes={9254: 1_400_000_000},
+        )
 
     def test_a_batch_counted_from_one_places_on_the_seasons_entry(self) -> None:
         scope = seed_scope(episode_index(_SC_SEASON), _SC_SERIES, al_id=7590, names=_SC_MAIN, episode_count=13)

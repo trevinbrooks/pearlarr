@@ -46,7 +46,7 @@ from .placement_types import (
     TorrentListing,
     all_specials,
 )
-from .placer import NameFacts, assign_episode_ids, name_facts
+from .placer import NameFacts, assign_episode_ids
 
 
 @dataclass(frozen=True, slots=True)
@@ -131,7 +131,7 @@ def ordered_windows(
 
 @dataclass(frozen=True, slots=True)
 class WindowFacts:
-    """One window's scope, with what the passes read off each name of the torrent under it (`name_facts`)."""
+    """One window's scope, with what the passes read off each name of the torrent under it (`PlacerResult.facts`)."""
 
     scope: TargetScope
     names: Mapping[str, NameFacts]
@@ -140,12 +140,6 @@ class WindowFacts:
     def __post_init__(self) -> None:
         # Detach from the caller's dict, then wrap read-only.
         object.__setattr__(self, "names", MappingProxyType(dict(self.names)))
-
-    @classmethod
-    def of(cls, batch: PlacementBatch, scope: TargetScope) -> Self:
-        """The scope with the passes' reading of every name of `batch` under it."""
-
-        return cls(scope, name_facts(batch, scope))
 
 
 @dataclass(frozen=True, slots=True)
@@ -161,34 +155,38 @@ class WindowedAssignment:
     decided_by: Mapping[str, int]
     """Name -> the position of the window that placed or refused it, or, for a filled file, of the window that holds
     its ids. A file no window decided and no fill placed is absent."""
+    facts: tuple[WindowFacts, ...]
+    """Each window's scope, as `place_across_windows` was handed it, and what the passes read off every name under it,
+    in window order."""
 
     def __post_init__(self) -> None:
         # Detach from the caller's dict, then wrap read-only.
         object.__setattr__(self, "decided_by", MappingProxyType(dict(self.decided_by)))
 
-    def filled(self, batch: PlacementBatch, reading: NumberingReading, facts: Sequence[WindowFacts]) -> Self:
+    def filled(self, batch: PlacementBatch, reading: NumberingReading) -> Self:
         """The assignment with each gap the reader proposed ids for filled, in batch order.
 
         A gap is a merged `SKIPPED` or `FOREIGN` file no window was party to (`_party`) and no window's reading
         resolved inside (`NameFacts.reads_inside`): the passes never judged it by its own numbers, so a verdict on
         them is new, not a reversal. The proposed ids must be free, held by no merged placement, no name of the
         stored map, and no earlier fill. The receiving window is the earliest whose scope holds every id, and a name
-        titled under it as an episode outside them is left (the title veto the zips apply). `facts` are per window,
-        in window order, as `windows` is.
+        titled under it as an episode outside them is left (the title veto the zips apply).
         """
 
+        if not reading.ids:
+            return self
         used = {ep_id for ids in batch.seeded.values() for ep_id in ids}
         used.update(ep_id for placement in self.merged.placements for ep_id in placement.ids)
         placements = list(self.merged.placements)
         decided_by = dict(self.decided_by)
         for index, placement in enumerate(placements):
             ids = reading.ids.get(placement.name)
-            if ids is None or not self._gap(index, facts) or not used.isdisjoint(ids):
+            if ids is None or not self._gap(index) or not used.isdisjoint(ids):
                 continue
-            position = next((at for at, window in enumerate(facts) if window.scope.real_ids.issuperset(ids)), None)
+            position = next((at for at, window in enumerate(self.facts) if window.scope.real_ids.issuperset(ids)), None)
             if position is None:
                 continue
-            titled_as = facts[position].names[placement.name].titled_as
+            titled_as = self.facts[position].names[placement.name].titled_as
             if titled_as is not None and titled_as not in ids:
                 continue
             placements[index] = Placement(placement.name, ids, PlacementVerdict.NUMBERINGS_AGREE)
@@ -196,7 +194,7 @@ class WindowedAssignment:
             used.update(ids)
         return replace(self, merged=EpisodeAssignment(tuple(placements)), decided_by=decided_by)
 
-    def _gap(self, index: int, facts: Sequence[WindowFacts]) -> bool:
+    def _gap(self, index: int) -> bool:
         """Whether the file at `index` of the batch is a gap the windows left (`filled`)."""
 
         merged = self.merged.placements[index]
@@ -204,7 +202,7 @@ class WindowedAssignment:
             return False
         if any(_party(window.placements[index].verdict) for window in self.windows):
             return False
-        return not any(window.names[merged.name].reads_inside for window in facts)
+        return not any(window.names[merged.name].reads_inside for window in self.facts)
 
     def for_record(self, imports: Collection[int]) -> EpisodeAssignment:
         """The merged verdicts, with each file that is another title's set aside as `LISTED_ELSEWHERE`.
@@ -377,10 +375,12 @@ def place_across_windows(batch: PlacementBatch, windows: Sequence[TargetScope]) 
     judged: dict[str, list[Placement]] = {name: [] for name in names}
     lifted: dict[str, tuple[int, ...]] = {}
     assignments: list[EpisodeAssignment] = []
+    facts: list[WindowFacts] = []
     for position, window in enumerate(windows):
-        assignment = assign_episode_ids(batch, window.after(placed))
-        assignments.append(assignment)
-        for placement in assignment.placements:
+        result = assign_episode_ids(batch, window.after(placed))
+        assignments.append(result.assignment)
+        facts.append(WindowFacts(window, result.facts))
+        for placement in result.assignment.placements:
             verdict = placement.verdict
             if verdict.placed and lifted.get(placement.name, placement.ids) != placement.ids:
                 continue
@@ -394,4 +394,4 @@ def place_across_windows(batch: PlacementBatch, windows: Sequence[TargetScope]) 
                 if placement.ids:
                     placed[placement.name] = placement.ids
     merged = EpisodeAssignment(tuple(_merged(name, judged[name], decided.get(name)) for name in names))
-    return WindowedAssignment(merged, tuple(assignments), decided_by)
+    return WindowedAssignment(merged, tuple(assignments), decided_by, tuple(facts))

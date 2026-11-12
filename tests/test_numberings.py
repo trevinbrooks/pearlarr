@@ -15,7 +15,7 @@ from pearlarr.grab_placement import SeedScope
 from pearlarr.manual_import import EntryNames, EntryWindow
 from pearlarr.numberings import NumberingReader, _marked_title, _norm_title, _raw_title
 from pearlarr.placement_types import EpisodeIndex, TargetScope, episode_index
-from pearlarr.placer import name_facts
+from pearlarr.placer import assign_episode_ids
 from pearlarr.seadex_types import EpisodeKey, ParsedFileInfo
 
 from .builders import batch, entry_window, parsed_info, seed_scope, series_index
@@ -77,7 +77,7 @@ def _read(
 
     torrent = batch(parsed)
     own = next(window for window in windows if window.al_id == scope.al_id)
-    facts = name_facts(torrent, TargetScope(own.ordered_episode_ids, scope.series, names=own.names))
+    facts = assign_episode_ids(torrent, TargetScope(own.ordered_episode_ids, scope.series, names=own.names)).facts
     return dict(NumberingReader.of(scope, windows).read(torrent, facts).ids)
 
 
