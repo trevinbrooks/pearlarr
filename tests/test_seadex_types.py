@@ -8,6 +8,8 @@ contract the AniList gateway depends on), and the frozen-model violation shape
 (pydantic `ValidationError`, not `FrozenInstanceError`).
 """
 
+from datetime import date
+
 import pytest
 from pydantic import ValidationError
 
@@ -27,6 +29,7 @@ from pearlarr.seadex_types import (
     ParsedFileInfo,
     QueueRecord,
     SeasonTypeCount,
+    SonarrEpisode,
     SonarrHistoryRecord,
     SonarrSeries,
     normalized_infohash,
@@ -100,6 +103,51 @@ def test_anilist_media_node_empty_dict_is_the_all_none_miss_node() -> None:
     """`{}` (the reduced `Media: null` miss) validates to the all-None node."""
 
     assert AniListMediaNode.model_validate({}) == AniListMediaNode()
+
+
+@pytest.mark.parametrize(
+    "raw",
+    [
+        None,
+        {"year": None, "month": None, "day": None},
+        {"year": 2020, "month": 8, "day": None},
+        {"year": 2020, "month": 8},
+        # February has no 30th.
+        {"year": 2020, "month": 2, "day": 30},
+        "2020-08-29",
+    ],
+)
+def test_an_anilist_date_without_every_part_is_no_date(raw: object) -> None:
+    assert AniListMediaNode.model_validate({"id": 1, "startDate": raw}) == AniListMediaNode(id=1)
+
+
+def test_anilist_media_node_takes_a_date_by_field_name() -> None:
+    by_alias = AniListMediaNode.model_validate({"startDate": {"year": 2020, "month": 8, "day": 29}})
+    by_name = AniListMediaNode(start_date=date(2020, 8, 29))
+
+    assert by_alias.start_date == by_name.start_date == date(2020, 8, 29)
+
+
+def test_sonarr_episode_reads_its_air_date_and_runtime() -> None:
+    episode = SonarrEpisode.model_validate({"airDate": "2020-08-29", "runtime": 95})
+
+    assert (episode.air_date, episode.runtime) == (date(2020, 8, 29), 95)
+
+
+@pytest.mark.parametrize(
+    "raw",
+    [
+        {},
+        {"airDate": None, "runtime": None},
+        {"airDate": "", "runtime": ""},
+        {"airDate": "next summer", "runtime": "long"},
+        {"airDate": 20200829, "runtime": [95]},
+    ],
+)
+def test_sonarr_episode_folds_a_missing_or_junk_air_date_and_runtime_to_none(raw: dict[str, object]) -> None:
+    episode = SonarrEpisode.model_validate({"id": 7, **raw})
+
+    assert episode == SonarrEpisode(id=7)
 
 
 def test_frozen_model_mutation_raises_validation_error() -> None:

@@ -424,6 +424,7 @@ class TestRunStartHook:
         series: list[SonarrItem] = [_Item(id=5, tvdbId=50), _Item(id=7, tvdbId=70)]
         strat = make_sonarr_sync(ep_list_cache={5: [sonarr_ep(1, 1)]})
         strat._episodes._orderings = {5: NO_ORDERING}
+        strat._episodes._picks_logged = {11}
 
         def _all_series() -> list[SonarrItem]:
             return series
@@ -436,6 +437,7 @@ class TestRunStartHook:
         # The episode collaborator drops its caches + re-fingerprints as it enumerates.
         assert strat._episodes._ep_list_cache == {}
         assert strat._episodes._orderings == {}
+        assert strat._episodes._picks_logged == set()
         assert strat._episodes._series_fp == sonarr_series_fingerprint([5, 7])
 
 

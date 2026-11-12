@@ -59,7 +59,7 @@ from .fakes import FakeArrItem, FakeClock, FakeSkyHookClient, FakeStrategy, inst
 class _FakeGateway:
     """Stands in for the AniList/SeaDex gateways: a cache-warm no-op (0 fetched)."""
 
-    # The loop reads the SeaDex outage flag for the boot note. Never down here.
+    # The loop reads each gateway's outage flag. Never down unless a test sets it.
     outage: bool = False
 
     def load_cache(self) -> None:
@@ -144,7 +144,7 @@ def _engine(
     config: AppConfig | None = None,
     seadex: _FakeGateway | None = None,
     cache_store: AbstractCacheStore | None = None,
-    anilist: AniListGateway | None = None,
+    anilist: AniListGateway | _FakeGateway | None = None,
     services: RunServices | None = None,
     wait_manager: _FakeBound | ImportWaitManager | None = None,
     skyhook: SkyHookGateway | None = None,
@@ -159,7 +159,7 @@ def _engine(
     `is_preview` and `pay_pause`). The `cache_store` backs the activity scan's checkpoint.
     `config` overrides the loop's config (the activity-scan toggle tests).
     `cache_store` shares one store across engines (the checkpoint replay tests).
-    `anilist` swaps in a real gateway (the AniList boot-note tests).
+    `anilist` swaps in a real gateway (the AniList boot-note tests) or a fake that is down (the vouch test).
     `services` swaps the hub (the commit tests make it real and share its store).
     `wait_manager` swaps the ctx-bind wait manager (the contained-error commit test, the run-start test).
     `skyhook` swaps in a gateway over a failing client (the SkyHook outage tests).
@@ -607,10 +607,11 @@ class TestSelectionRecheck:
         item_id: int | None = None,
         config: AppConfig | None = None,
         seadex: _FakeGateway | None = None,
+        anilist: _FakeGateway | None = None,
         held: bool = False,
     ) -> tuple[RunLoop, RecordingHub]:
         recording = install_recording_hub()
-        engine = _engine(_FinalizeRecorder(), logger, config=config, seadex=seadex)
+        engine = _engine(_FinalizeRecorder(), logger, config=config, seadex=seadex, anilist=anilist)
         strategy = FakeStrategy(
             items=[FakeArrItem(item_id=3, title="A")],
             anilist_ids={11: MappingEntry(anilist_id=11)},
@@ -679,6 +680,14 @@ class TestSelectionRecheck:
         engine, _ = self._run(logger, seadex=outage)
 
         assert self._vouched_any(engine) is False
+
+    def test_an_anilist_outage_run_neither_vouches_nor_commits_the_checkpoint(self, logger: logging.Logger) -> None:
+        outage = _FakeGateway()
+        outage.outage = True
+        engine, _ = self._run(logger, anilist=outage)
+
+        assert self._vouched_any(engine) is False
+        assert engine.cache_store.get_history_checkpoint(Arr.SONARR) is None
 
 
 class _OrderFetchingStrategy(FakeStrategy):

@@ -15,13 +15,22 @@ The `has_anidb=True` path is pinned too: the lookup gate (non-TV format or
 season 0, with an AniDB id), the either/or with the offset slice (a non-empty
 AniDB map bypasses it entirely, while an empty one falls through to it), and the
 None-key skip (an episode without a season/episode number can't hit the map).
+
+Last, the mapped specials AniList's dates disagree with give way to the ones
+`specials_by_date` picks, logged once per run.
 """
 
+from datetime import date
+
 from pearlarr.mappings import MappingEntry
-from pearlarr.seadex_types import SonarrEpisode
-from pearlarr.sonarr_episodes import check_ep_by_anibridge, check_ep_by_anime_ids
+from pearlarr.output import Severity
+from pearlarr.seadex_types import AniListAiring, SonarrEpisode
+from pearlarr.sonarr_episodes import SonarrEpisodes, check_ep_by_anibridge, check_ep_by_anime_ids
 
 from .builders import make_sonarr_episodes, sonarr_ep
+from .fakes import diagnostic_messages, install_recording_hub
+
+_NO_AIRING = AniListAiring(start=None, end=None, episodes=None, duration=None)
 
 
 class _FakeSonarr:
@@ -43,9 +52,12 @@ class _FakeSonarr:
 class _RecordingAniList:
     """Records the gateway resolver calls `get_ep_list` routes through."""
 
-    def __init__(self, *, media_format: str | None = None, n_eps: int | None = None) -> None:
+    def __init__(
+        self, *, media_format: str | None = None, n_eps: int | None = None, airing: AniListAiring = _NO_AIRING
+    ) -> None:
         self._media_format = media_format
         self._n_eps = n_eps
+        self._airing = airing
         self.format_calls: list[int] = []
         self.n_eps_calls: list[int] = []
 
@@ -56,6 +68,10 @@ class _RecordingAniList:
     def n_eps(self, al_id: int) -> int | None:
         self.n_eps_calls.append(al_id)
         return self._n_eps
+
+    def airing(self, al_id: int) -> AniListAiring:
+        del al_id
+        return self._airing
 
 
 class _NoAniDbMappings:
@@ -245,3 +261,62 @@ def test_season_zero_is_grabbed_at_season_zero_but_dropped_at_minus_one() -> Non
     s0 = sonarr_ep(0, 1)
     assert check_ep_by_anime_ids(ep=s0, tvdb_season=0) is True  # grabbed as a special
     assert check_ep_by_anime_ids(ep=s0, tvdb_season=-1) is False  # the shadowing -1 drops it
+
+
+# The tables count every title below from S00E01, a short special from the year before it aired.
+_MAPPED_FROM_SPECIAL_ONE = MappingEntry(anilist_id=123, tvdb_season=0)
+_EARLIER_SPECIAL = sonarr_ep(0, 1, ep_id=1, air_date="2019-02-20", runtime=12)
+
+
+def _dated_specials(later: list[SonarrEpisode], airing: AniListAiring) -> SonarrEpisodes:
+    series = [_EARLIER_SPECIAL, *later, sonarr_ep(1, 1, ep_id=9, air_date="2019-01-05", runtime=24)]
+    anilist = _RecordingAniList(media_format="MOVIE", n_eps=airing.episodes, airing=airing)
+    return make_sonarr_episodes(sonarr=_FakeSonarr(series), _anilist=anilist, _mappings=_NoAniDbMappings())
+
+
+def _film() -> SonarrEpisodes:
+    # S00E02 is film-length and aired on AniList's date.
+    premiere = date(2020, 8, 29)
+    return _dated_specials(
+        [sonarr_ep(0, 2, ep_id=2, air_date="2020-08-29", runtime=95)],
+        AniListAiring(start=premiere, end=premiere, episodes=1, duration=95),
+    )
+
+
+def test_mapped_specials_give_way_to_the_ones_aired_on_anilists_date() -> None:
+    result = _film().get_ep_list(sonarr_series_id=10, al_id=123, mapping=_MAPPED_FROM_SPECIAL_ONE)
+
+    assert result is not None
+    assert [(ep.season_number, ep.episode_number) for ep in result] == [(0, 2)]
+
+
+def test_a_pick_by_date_is_logged_once_a_run() -> None:
+    recording = install_recording_hub()
+    episodes = _film()
+
+    episodes.get_ep_list(sonarr_series_id=10, al_id=123, mapping=_MAPPED_FROM_SPECIAL_ONE)
+    episodes.get_ep_list(sonarr_series_id=10, al_id=123, mapping=_MAPPED_FROM_SPECIAL_ONE)
+
+    assert diagnostic_messages(recording, Severity.DEBUG) == [
+        "AniList 123 maps to S00E01 (aired 2019-02-20) but is dated 2020-08-29 - using S00E02 (aired 2020-08-29)"
+    ]
+
+
+def test_a_logged_pick_of_several_specials_names_each_and_both_dates() -> None:
+    recording = install_recording_hub()
+    # Two 45-minute parts, aired a week apart on AniList's start and end dates.
+    episodes = _dated_specials(
+        [
+            sonarr_ep(0, 2, ep_id=2, air_date="2020-08-29", runtime=45),
+            sonarr_ep(0, 3, ep_id=3, air_date="2020-09-05", runtime=45),
+        ],
+        AniListAiring(start=date(2020, 8, 29), end=date(2020, 9, 5), episodes=2, duration=45),
+    )
+
+    episodes.get_ep_list(sonarr_series_id=10, al_id=123, mapping=_MAPPED_FROM_SPECIAL_ONE)
+
+    note = (
+        "AniList 123 maps to S00E01 (aired 2019-02-20), S00E02 (aired 2020-08-29) "
+        "but is dated 2020-08-29 to 2020-09-05 - using S00E02 (aired 2020-08-29), S00E03 (aired 2020-09-05)"
+    )
+    assert diagnostic_messages(recording, Severity.DEBUG) == [note]

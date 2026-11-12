@@ -2,9 +2,10 @@
 
 `AniListGateway` owns the per-run `al_cache` (AniList responses keyed by id)
 and the persisted `anilist_meta` block in the cache file: it seeds the cache
-from disk, batch-fetches whatever is missing or past the refresh age, persists
-what it fetched, and resolves titles / thumbnails. A record past the refresh
-age still serves, so an AniList outage never drains the cache.
+from disk, batch-fetches whatever is missing, past the refresh age, or stored
+without air dates, persists what it fetched, and resolves
+titles / thumbnails. A record due a refetch still serves, so an AniList outage
+never drains the cache.
 
 The gateway is deliberately side-effect-free with respect to run state - the
 caller owns the `current_title` attribution.
@@ -21,12 +22,13 @@ from .anilist_client import (
     AniListCache,
     AniListClient,
     extract_path,
+    lacks_air_dates,
     media_from,
     media_node_from,
 )
 from .cache import AbstractCacheStore, record_payload, stamp_is_fresh
 from .log import count_noun
-from .seadex_types import AniListMediaNode, ProgressSink
+from .seadex_types import AniListAiring, AniListMediaNode, ProgressSink
 from .stamps import stamp_of
 
 # How old a persisted AniList response gets before a run refetches it.
@@ -51,7 +53,8 @@ class AniListGateway:
         self.logger = logger
         self._client = client
         self.al_cache: AniListCache = {}
-        # Loaded past the refresh age: served as-is while the prefetch tries to refresh them.
+        # Loaded past the refresh age or stored without air dates: served as-is while the prefetch tries to
+        # refresh them.
         self._stale: set[int] = set()
         # Fetched this run: exactly what the save writes.
         self._fetched: set[int] = set()
@@ -70,7 +73,11 @@ class AniListGateway:
         self._fetched.add(al_id)
 
     def load_cache(self) -> None:
-        """Seed the run cache from every stored record, marking those past the refresh age stale."""
+        """Seed the run cache from every stored record.
+
+        One past the refresh age, or stored by a query that didn't ask for air dates (`lacks_air_dates`), is marked
+        stale.
+        """
 
         cutoff = datetime.now() - timedelta(days=ANILIST_REFRESH_AGE_DAYS)
         loaded = 0
@@ -79,8 +86,8 @@ class AniListGateway:
             if payload is None:
                 continue
             self.al_cache[al_id] = payload
-            # An aged or unreadable stamp still serves: refetch, never drop.
-            if not stamp_is_fresh(record, cutoff):
+            # A stale record still serves: refetch, never drop. An unreadable stamp counts as aged.
+            if not stamp_is_fresh(record, cutoff) or lacks_air_dates(payload):
                 self._stale.add(al_id)
             loaded += 1
 
@@ -193,3 +200,8 @@ class AniListGateway:
 
         # A stale count still answers: None downstream means "use every episode", which over-grabs.
         return self._media(al_id).episodes
+
+    def airing(self, al_id: int) -> AniListAiring:
+        """Resolve when AniList says an id aired, with its episode count and episode length (`AniListAiring`)."""
+
+        return self._media(al_id).airing

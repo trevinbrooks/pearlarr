@@ -30,6 +30,7 @@ from pearlarr.anilist_client import (
     _errors_are_retryable,
     _parse_errors,
     extract_path,
+    lacks_air_dates,
     media_from,
 )
 from pearlarr.log import LOG_NAME
@@ -194,6 +195,19 @@ def test_media_from_none_body_is_all_none() -> None:
     assert media_from(None) == AniListMediaNode()
 
 
+@pytest.mark.parametrize(
+    ("media", "lacks"),
+    [
+        pytest.param({"id": 7, "episodes": 12}, True, id="an id and no startDate key"),
+        # AniList answers a date it doesn't know with null parts, and the key is still there.
+        pytest.param({"id": 7, "startDate": {"year": None, "month": None, "day": None}}, False, id="null date parts"),
+        pytest.param({"episodes": 12}, False, id="no id"),
+    ],
+)
+def test_a_stored_media_without_a_start_date_key_lacks_its_air_dates(media: dict[str, object], lacks: bool) -> None:
+    assert lacks_air_dates({"data": {"Media": media}}) is lacks
+
+
 # --- constants sanity -------------------------------------------------------
 
 
@@ -201,13 +215,29 @@ def test_media_fields_fragment_covers_model_reads() -> None:
     """Every field `AniListMediaNode` reads is selected by the fragment.
 
     The read set below is derived from the model's fields: the top-level
-    `id`/`title`/`coverImage`/`episodes`/`format` keys plus the nested
-    `title.english`/`title.romaji`/`coverImage.large` selections. A field
-    dropped from `_MEDIA_FIELDS` would silently parse to `None` downstream,
-    so the shared fragment (not any full query string) is what's pinned here.
+    `id`/`title`/`coverImage`/`episodes`/`format`/`startDate`/`endDate`/`duration`
+    keys plus the nested `title.english`/`title.romaji`/`coverImage.large` and
+    date `year`/`month`/`day` selections. A field dropped from `_MEDIA_FIELDS`
+    would silently parse to `None` downstream, so the shared fragment (not any
+    full query string) is what's pinned here.
     """
 
-    read_fields = ("id", "title", "english", "romaji", "coverImage", "large", "episodes", "format")
+    read_fields = (
+        "id",
+        "title",
+        "english",
+        "romaji",
+        "coverImage",
+        "large",
+        "episodes",
+        "format",
+        "startDate",
+        "endDate",
+        "year",
+        "month",
+        "day",
+        "duration",
+    )
     for name in read_fields:
         assert re.search(rf"\b{name}\b", _MEDIA_FIELDS), f"fragment no longer selects {name!r}"
 

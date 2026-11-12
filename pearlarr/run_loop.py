@@ -201,10 +201,13 @@ class RunLoop:
         # ONE full-coverage predicate for both gates below: a checkpoint committed on an outage run would consume
         # drift events the run never acted on. A SkyHook outage counts too: a series it left unrefreshed was read by
         # its old order record, and with neither committed the next pass repeats the re-checks they drive (a settings
-        # change, a file change in the arr) against the refreshed one. A title held past the cap, or one whose check
-        # didn't cache it as done, holds back neither: `cached_entry_skip` cleared its stamp, so the next run checks
-        # it whatever is committed here.
-        full_pass = item_id is None and not self._seadex.outage and not self._skyhook.outage
+        # change, a file change in the arr) against the refreshed one. So does an AniList outage, on a Radarr run as
+        # well: a title it left unrefreshed was read by its stored record, which may lack the air dates a Sonarr
+        # title's specials are picked by. A title held past the cap, or one whose check didn't cache it as done, holds
+        # back neither: `cached_entry_skip` cleared its stamp, so the next run checks it whatever is committed here.
+        full_pass = (
+            item_id is None and not self._seadex.outage and not self._skyhook.outage and not self._anilist.outage
+        )
 
         # Held on outage so the next healthy run re-derives the same dirty ids (the query overlap and id
         # dedup absorb the replay). The staged write persists only at _finalize_run's non-preview save.

@@ -3,7 +3,7 @@
 import math
 from collections.abc import Iterable, Mapping, Sequence
 from dataclasses import dataclass, field
-from datetime import datetime
+from datetime import date, datetime
 from enum import StrEnum
 from types import MappingProxyType
 from typing import (
@@ -216,7 +216,7 @@ def flagged_urls(seadex_dict: SeadexDict) -> list[FlaggedUrl]:
 # Folded into the config's selection digest: bump when the release-selection
 # rules change in code, or a fix leaves earlier verdicts in doubt, so every
 # cached verdict re-checks once after an upgrade.
-SELECTION_RULES_VERSION: int = 15
+SELECTION_RULES_VERSION: int = 16
 
 SONARR_MISSING_KEY: int = 999
 """Out-of-range stand-in for a missing Sonarr `seasonNumber`/`episodeNumber`, never colliding with a real one."""
@@ -403,6 +403,39 @@ def _datetime_or_none(value: object) -> datetime | None:
     return parsed if isinstance(parsed, datetime) and parsed.tzinfo is not None else None
 
 
+def _day_or_none(value: object) -> date | None:
+    """Per-field lenient fold: a date, or an ISO date string such as `2020-08-29`, parses. Anything else folds to None."""
+
+    if isinstance(value, date):
+        return value
+    if isinstance(value, str):
+        try:
+            return date.fromisoformat(value)
+        except ValueError:
+            return None
+    return None
+
+
+def _fuzzy_date_or_none(value: object) -> date | None:
+    """Per-field lenient fold: AniList's `{year, month, day}` parses when it names a real day.
+
+    AniList sends null for a part it doesn't know, and a date with any part missing folds to None.
+    """
+
+    if isinstance(value, date):
+        return value
+    if not isinstance(value, dict):
+        return None
+    parts = cast("dict[str, object]", value)
+    year, month, day = parts.get("year"), parts.get("month"), parts.get("day")
+    if not (isinstance(year, int) and isinstance(month, int) and isinstance(day, int)):
+        return None
+    try:
+        return date(year, month, day)
+    except ValueError:
+        return None
+
+
 def _int_or_zero(value: object) -> int:
     """Per-field lenient fold: best-effort int, folding junk/None to 0."""
 
@@ -437,6 +470,9 @@ def _lax_bool(value: object) -> bool:
 type _LenientStr = Annotated[str | None, BeforeValidator(_str_or_none)]
 type _BlankStr = Annotated[str, BeforeValidator(_str_or_blank)]
 type _ZeroInt = Annotated[int, BeforeValidator(_int_or_zero)]
+type _LenientInt = Annotated[int | None, BeforeValidator(coerce_int)]
+type _LenientDay = Annotated[date | None, BeforeValidator(_day_or_none)]
+type _FuzzyDate = Annotated[date | None, BeforeValidator(_fuzzy_date_or_none)]
 type _LenientTime = Annotated[datetime | None, BeforeValidator(_datetime_or_none)]
 type _LaxBool = Annotated[bool, BeforeValidator(_lax_bool)]
 
@@ -610,6 +646,10 @@ class SonarrEpisode(_ApiModel):
     title: str = ""
     tvdb_id: int | None = Field(default=None, validation_alias="tvdbId")
     """TVDB's episode id, the key a TVDB order's rows join on."""
+    air_date: _LenientDay = Field(default=None, validation_alias="airDate")
+    """The day the episode aired, None when Sonarr gives none or a value that isn't a date."""
+    runtime: _LenientInt = None
+    """The episode's length in minutes, None when Sonarr gives none or a value that isn't a number."""
     episode_file_id: int = Field(default=0, validation_alias="episodeFileId")
     monitored: bool = True
     episode_file: Annotated[SonarrEpisodeFile | None, BeforeValidator(_none_if_falsy)] = Field(
@@ -735,6 +775,23 @@ class AniListError(_ApiModel):
 # --- AniList Media node (cached GraphQL `Media` record) --------------------
 
 
+@dataclass(frozen=True, slots=True, kw_only=True)
+class AniListAiring:
+    """When AniList says a title aired and how much of it there is. A part AniList doesn't give is None."""
+
+    start: date | None
+    """The day the title first aired."""
+
+    end: date | None
+    """The day its last episode aired."""
+
+    episodes: int | None
+    """How many episodes it has."""
+
+    duration: int | None
+    """The length of one episode in minutes."""
+
+
 class AniListMediaNode(_ApiModel):
     """One AniList `Media` node, validated at the cache read boundary.
 
@@ -748,6 +805,16 @@ class AniListMediaNode(_ApiModel):
     cover_image: str | None = Field(default=None, validation_alias=AliasPath("coverImage", "large"))
     banner_image: str | None = Field(default=None, validation_alias="bannerImage")
     format: str | None = None
+    start_date: _FuzzyDate = Field(default=None, validation_alias="startDate")
+    end_date: _FuzzyDate = Field(default=None, validation_alias="endDate")
+    duration: int | None = None
+    """The length of one episode in minutes."""
+
+    @property
+    def airing(self) -> AniListAiring:
+        """The node's dates, episode count and episode length as one record."""
+
+        return AniListAiring(start=self.start_date, end=self.end_date, episodes=self.episodes, duration=self.duration)
 
 
 # --- Sonarr manual-import (candidate read views + outgoing file payload) -----
