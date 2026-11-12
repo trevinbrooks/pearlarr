@@ -28,16 +28,25 @@ class _OrderFit:
 
 
 @dataclass(frozen=True, slots=True)
+class _KeyedFile:
+    """One file that spells its own key, as the keyed half judges every order against it."""
+
+    file: TorrentFile
+    keys: tuple[EpisodeKey, ...]
+    """The `(season, episode)` keys its parse names."""
+    aired: tuple[int, ...] | None
+    """The episodes the aired order reads the keys as, None when Sonarr's list lacks one."""
+    settled: tuple[int, ...] | None
+    """The episodes the file already sits on (`_settled_ids`), None when it sits on none."""
+
+
+@dataclass(frozen=True, slots=True)
 class _KeyedFiles:
     """The torrent's keyed files, as the keyed half judges every order against them."""
 
-    keys: Mapping[TorrentFile, tuple[EpisodeKey, ...]]
-    """Each file that spells its own key -> the `(season, episode)` keys its parse names. Extras are left out, and so
-    is a lower version of a number, which stays as the passes left it."""
-    aired: Mapping[TorrentFile, tuple[int, ...] | None]
-    """Each keyed file -> the episodes the aired order reads its keys as, None when Sonarr's list lacks one."""
-    settled: Mapping[TorrentFile, tuple[int, ...]]
-    """The keyed files already on their episodes -> those episodes (`_settled_ids`)."""
+    keyed: tuple[_KeyedFile, ...]
+    """Every file that spells its own key. Extras are left out, and so is a lower version of a number, which stays
+    as the passes left it."""
     left_open: tuple[TorrentFile, ...]
     """The keyed files to place that aren't settled and the passes left open, batch order."""
     strays: tuple[TorrentFile, ...]
@@ -58,13 +67,15 @@ class _KeyedFiles:
         for run in state.runs(keys):
             for file in run.superseded:
                 del keys[file]
-        aired = {file: _aired(state, named) for file, named in keys.items()}
-        settled = {file: ids for file in keys if (ids := _settled_ids(state, file)) is not None}
-        left_open = tuple(file for file in state.placing if file in keys and file not in settled and _left_open(file))
-        strays = tuple(
-            file for file, ids in aired.items() if file not in settled and ids is not None and not _at_home(state, ids)
+        keyed_files = tuple(
+            _KeyedFile(file, named, _aired(state, named), _settled_ids(state, file)) for file, named in keys.items()
         )
-        return cls(keys, aired, settled, left_open, strays)
+        unsettled = {keyed.file: keyed for keyed in keyed_files if keyed.settled is None}
+        left_open = tuple(file for file in state.placing if file in unsettled and _left_open(file))
+        strays = tuple(
+            keyed.file for keyed in unsettled.values() if keyed.aired is not None and not _at_home(state, keyed.aired)
+        )
+        return cls(keyed_files, left_open, strays)
 
 
 def pass_other_orders(state: Placer) -> None:
@@ -201,36 +212,42 @@ def _keyed_fit(state: Placer, files: _KeyedFiles, name: str) -> _OrderFit | None
     order_only: dict[TorrentFile, OrderOnlyKey] = {}
     whole = True
     answers = False
-    for file, keys in files.keys.items():
-        if not order.keys.issuperset(keys):
-            if file in files.settled:
+    for keyed in files.keyed:
+        file = keyed.file
+        if not order.keys.issuperset(keyed.keys):
+            if keyed.settled is not None:
                 return None
             whole = False
             continue
-        if order_only_keys := [key for key in keys if key not in order.id_by_key]:
+        if order_only_keys := [key for key in keyed.keys if key not in order.id_by_key]:
             order_only[file] = OrderOnlyKey(name, order_only_keys[0])
         else:
-            readings[file] = tuple(order.id_by_key[key] for key in keys)
-        answers |= _answers(files, file, readings.get(file))
+            readings[file] = tuple(order.id_by_key[key] for key in keyed.keys)
+        answers |= _answers(keyed, readings.get(file))
     placed = [ep_id for ids in readings.values() for ep_id in ids]
     if not (answers or _brings_home(state, files, readings)) or len(placed) != len(set(placed)):
         return None
     confirmed = False
-    for file, ids in readings.items():
+    for keyed in files.keyed:
+        file = keyed.file
+        if (ids := readings.get(file)) is None:
+            continue
         counted = _counted_episodes(state, file)
         if any(ep_id not in ids for ep_id in counted) or file.contradicts(ids):
             return None
-        if _refused_special(file, files.keys[file]) and listed and not listed.issuperset(ids):
+        if _refused_special(keyed) and listed and not listed.issuperset(ids):
             return None
         if _left_open(file):
             confirmed |= any(ep_id in ids for ep_id in counted) or file.confirms(ids)
     if not (whole or confirmed):
         return None
-    moves_settled = any(readings.get(file) != ids for file, ids in files.settled.items())
+    moves_settled = any(
+        keyed.settled is not None and readings.get(keyed.file) != keyed.settled for keyed in files.keyed
+    )
     return _OrderFit(readings, order_only, moves_settled or _rereads_misnumbered(readings, files.left_open))
 
 
-def _refused_special(file: TorrentFile, keys: Sequence[EpisodeKey]) -> bool:
+def _refused_special(keyed: _KeyedFile) -> bool:
     """Whether a count or a title refused the file and its keys are specials'.
 
     A special's number is refused for missing the listing, so an order has to put it on the listing to explain
@@ -238,10 +255,10 @@ def _refused_special(file: TorrentFile, keys: Sequence[EpisodeKey]) -> bool:
     special in, whether or not SeaDex lists that special.
     """
 
-    return _refused_by_name(file) and all(key.season == 0 for key in keys)
+    return _refused_by_name(keyed.file) and all(key.season == 0 for key in keyed.keys)
 
 
-def _answers(files: _KeyedFiles, file: TorrentFile, ids: tuple[int, ...] | None) -> bool:
+def _answers(keyed: _KeyedFile, ids: tuple[int, ...] | None) -> bool:
     """Whether an order's reading answers a keyed file the aired order can't read.
 
     `ids` is the order's reading, None when the order gives the file's key to an episode Sonarr doesn't list. The
@@ -250,12 +267,12 @@ def _answers(files: _KeyedFiles, file: TorrentFile, ids: tuple[int, ...] | None)
     doesn't list answers only a file whose key the aired list lacks.
     """
 
-    aired = files.aired[file]
+    aired = keyed.aired
     if aired is None:
         return True
     if ids is None or ids == aired:
         return False
-    return _refused_by_name(file) or file.contradicts(aired)
+    return _refused_by_name(keyed.file) or keyed.file.contradicts(aired)
 
 
 def _brings_home(state: Placer, files: _KeyedFiles, readings: Mapping[TorrentFile, tuple[int, ...]]) -> bool:
