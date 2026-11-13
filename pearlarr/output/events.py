@@ -335,8 +335,8 @@ class ScanFinished:
 
 
 @dataclass(frozen=True, slots=True)
-class GrabFact:
-    """One grab for the summary's "added" block."""
+class GrabbedRow:
+    """One grab, recorded for the end-of-run summary's "added" detail block."""
 
     title: str | None
     coverage: str | None
@@ -371,15 +371,17 @@ class NeedsActionCause(Enum):
 
 
 @dataclass(frozen=True, slots=True)
-class NeedsActionFact:
-    """One user-actionable skip for the summary."""
+class NeedsActionRow:
+    """One skip needing attention, recorded for the summary's "needs action" block."""
 
     title: str | None
     coverage: str | None
     group: str
     url: str | None
     reason: str
+    """The human display text."""
     cause: NeedsActionCause
+    """The closed classification the reporter's guidance gates on."""
 
 
 @dataclass(frozen=True, slots=True)
@@ -387,14 +389,14 @@ class ArrRunTally:
     """`RunStats` frozen at summary time."""
 
     checked: int
-    added: tuple[GrabFact, ...]
+    added: tuple[GrabbedRow, ...]
     up_to_date: int
     unchanged: int
     no_seadex_entry: int
     seadex_unreachable: int
     no_releases: int
     no_mappings: int
-    needs_action: tuple[NeedsActionFact, ...]
+    needs_action: tuple[NeedsActionRow, ...]
     unmonitored: int
     downloading: int
     downloaded: int
@@ -405,26 +407,14 @@ class ArrRunTally:
     def from_stats(cls, stats: ArrRunStats) -> ArrRunTally:
         return cls(
             checked=stats.checked,
-            added=tuple(
-                GrabFact(title=g.title, coverage=g.coverage, url=g.url, name=g.name, group=g.group) for g in stats.added
-            ),
+            added=tuple(stats.added),
             up_to_date=stats.up_to_date,
             unchanged=stats.unchanged,
             no_seadex_entry=stats.no_seadex_entry,
             seadex_unreachable=stats.seadex_unreachable,
             no_releases=stats.no_releases,
             no_mappings=stats.no_mappings,
-            needs_action=tuple(
-                NeedsActionFact(
-                    title=n.title,
-                    coverage=n.coverage,
-                    group=n.group,
-                    url=n.url,
-                    reason=n.reason,
-                    cause=n.cause,
-                )
-                for n in stats.needs_action
-            ),
+            needs_action=tuple(stats.needs_action),
             unmonitored=stats.unmonitored,
             downloading=stats.downloading,
             downloaded=stats.downloaded,

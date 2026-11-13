@@ -22,7 +22,7 @@ from typing import get_args, override
 
 import pytest
 
-from pearlarr.arr_run_state import ArrRunStats, GrabbedRow, NeedsActionRow
+from pearlarr.arr_run_state import ArrRunStats
 from pearlarr.boundary import Json
 from pearlarr.config import Arr
 from pearlarr.json_narrow import is_json_list, is_json_obj
@@ -50,12 +50,14 @@ from pearlarr.output import (
     Event,
     FileLogRenderer,
     GrabAction,
+    GrabbedRow,
     GrabFailed,
     GrabStatus,
     GroupLabel,
     ItemStarted,
     JsonRenderer,
     NeedsActionCause,
+    NeedsActionRow,
     NextRunScheduled,
     PathsShown,
     PearlarrStarted,

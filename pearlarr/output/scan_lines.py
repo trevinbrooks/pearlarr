@@ -31,12 +31,12 @@ from .events import (
     ArrRunSummaryReady,
     CapReached,
     GrabAction,
-    GrabFact,
+    GrabbedRow,
     GrabFailed,
     GrabStatus,
     ItemStarted,
     NeedsActionCause,
-    NeedsActionFact,
+    NeedsActionRow,
     ReleaseSkipped,
     ScanStarted,
     TitleDetail,
@@ -317,7 +317,7 @@ def _summary_block(
         )
 
 
-def _needs_block(item: NeedsActionFact) -> Iterator[ConsoleLine]:
+def _needs_block(item: NeedsActionRow) -> Iterator[ConsoleLine]:
     rows = [
         SummaryRow("files", item.coverage, "grey50"),
         SummaryRow("group", item.group, "yellow"),
@@ -327,7 +327,7 @@ def _needs_block(item: NeedsActionFact) -> Iterator[ConsoleLine]:
     yield from _summary_block(item.title or "(unknown title)", "yellow", rows)
 
 
-def _added_block(item: GrabFact, *, dry_run: bool) -> Iterator[ConsoleLine]:
+def _added_block(item: GrabbedRow, *, dry_run: bool) -> Iterator[ConsoleLine]:
     # A dry run dims the whole block (group accent included) so the would-be grabs don't read as real.
     torrent_value = group_highlight(
         item.name,

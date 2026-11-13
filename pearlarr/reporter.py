@@ -25,7 +25,7 @@ from .output import (
     GroupLabel,
     ItemStarted,
     NeedsActionCause,
-    NeedsActionFact,
+    NeedsActionRow,
     ReleaseLabel,
     ReleaseSkipped,
     ScanFinished,
@@ -54,7 +54,7 @@ _TIP_PRECEDENCE: tuple[NeedsActionCause, ...] = (
 )
 
 
-def _summary_tip(needs: tuple[NeedsActionFact, ...]) -> NeedsActionCause | None:
+def _summary_tip(needs: tuple[NeedsActionRow, ...]) -> NeedsActionCause | None:
     """The cause whose guidance tip the summary shows, or None (renderer maps text)."""
 
     for cause in _TIP_PRECEDENCE:

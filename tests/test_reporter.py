@@ -21,7 +21,7 @@ import pytest
 from seadex import Tag
 
 from pearlarr.anilist_client import AniListClient
-from pearlarr.arr_run_state import ArrRunState, GrabbedRow, NeedsActionRow
+from pearlarr.arr_run_state import ArrRunState
 from pearlarr.cache import AbstractCacheStore, CachedTitleUpdate
 from pearlarr.config import Arr
 from pearlarr.output import (
@@ -29,7 +29,9 @@ from pearlarr.output import (
     ArrRunSummaryReady,
     Event,
     GrabAction,
+    GrabbedRow,
     NeedsActionCause,
+    NeedsActionRow,
     ScanFinished,
     ScopeClosed,
     ScopeOpened,

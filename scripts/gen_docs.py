@@ -746,7 +746,7 @@ def _specimen_stream() -> tuple[ev.Event, ...]:
     tally = ev.ArrRunTally(
         checked=42,
         added=(
-            ev.GrabFact(
+            ev.GrabbedRow(
                 title="Sousou no Frieren",
                 coverage="S01",
                 url="https://seadex.moe/154587/",
@@ -761,7 +761,7 @@ def _specimen_stream() -> tuple[ev.Event, ...]:
         no_releases=1,
         no_mappings=1,
         needs_action=(
-            ev.NeedsActionFact(
+            ev.NeedsActionRow(
                 title="Made in Abyss",
                 coverage="S02",
                 group="Vodes",

@@ -9,12 +9,12 @@ from typing import TYPE_CHECKING
 from seadex import EntryRecord
 
 from . import coverage as _coverage
-from .arr_run_state import ArrRunState, GrabbedRow, NeedsActionRow, is_dry_run
+from .arr_run_state import ArrRunState, is_dry_run
 from .cache import CachedTitleUpdate
 from .config import PrivateReleaseAction
 from .grab_placement import PendingImportUpdate
 from .notify import GrabNotice
-from .output import Accent, GrabFailed, NeedsActionCause, ReleaseSkipped, StyledValue
+from .output import Accent, GrabbedRow, GrabFailed, NeedsActionCause, NeedsActionRow, ReleaseSkipped, StyledValue
 from .pending_import_store import PendingImportStore
 from .releases import Release, SeadexDict, SkipReason
 from .stamps import now_stamp, stamp_of

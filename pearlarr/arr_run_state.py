@@ -7,7 +7,7 @@ from typing import TYPE_CHECKING
 import qbittorrentapi
 
 from .config import Arr
-from .output import CountsMark, NeedsActionCause, SeverityCounter
+from .output import CountsMark, GrabbedRow, NeedsActionRow, SeverityCounter
 from .pending_import import PendingImport, TitleNames
 from .releases import SkipReason
 from .wait_types import ImportWaitMode, PendingImportState
@@ -52,31 +52,6 @@ def title_from_names(al_id: int, anilist_titles: tuple[str, ...], arr_title: str
     names = TitleNames(arr_title, tuple(title for title in anilist_titles if title))
     named = names.anilist[0] if names.anilist else arr_title
     return Title(al_id=al_id, name=named or unresolved_label(al_id), names=names)
-
-
-@dataclass(frozen=True, slots=True)
-class GrabbedRow:
-    """One grab, recorded for the end-of-run summary's "added" detail block."""
-
-    title: str | None
-    coverage: str | None
-    url: str | None
-    name: str | None
-    group: str
-
-
-@dataclass(frozen=True, slots=True)
-class NeedsActionRow:
-    """One skip needing attention, recorded for the summary's "needs action" block."""
-
-    title: str | None
-    coverage: str | None
-    group: str
-    url: str | None
-    reason: str
-    """The human display text."""
-    cause: NeedsActionCause
-    """The closed classification the reporter's guidance gates on."""
 
 
 @dataclass
