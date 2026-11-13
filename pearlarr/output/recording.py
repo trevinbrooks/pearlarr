@@ -15,7 +15,7 @@ class RecordingRenderer(Renderer):
     def __init__(self) -> None:
         self.events: list[Event] = []
         self.whens: list[float] = []
-        self.cycles = 0
+        self.runs_begun = 0
         self.levels: list[int] = []
         self.closed = False
 
@@ -26,7 +26,7 @@ class RecordingRenderer(Renderer):
 
     @override
     def begin_run(self) -> None:
-        self.cycles += 1
+        self.runs_begun += 1
 
     @override
     def set_level(self, level: int) -> None:

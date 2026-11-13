@@ -264,7 +264,7 @@ class CandidateScanner:
             self._scratch.translated_paths[content_path] = translated
         return translated
 
-    def _probe_history(self, pending: PendingImport) -> DownloadHistoryVerdict | None:
+    def _read_download_history(self, pending: PendingImport) -> DownloadHistoryVerdict | None:
         """Classify a download's Sonarr history (a dead verdict memoized), or None on probe failure."""
 
         verdict = self._scratch.history_verdicts.get(pending.infohash)
@@ -320,7 +320,7 @@ class CandidateScanner:
                     f"{content_path}: downloadId scan failed for {pending.display_label} - trying the folder fallback"
                 )
         # Sonarr still tracks the download, so an empty answer is final and its history isn't probed.
-        verdict = None if answered_empty and not untracked else self._probe_history(pending)
+        verdict = None if answered_empty and not untracked else self._read_download_history(pending)
         dead = verdict is not None and verdict.dead_tracked
         # Asked on every path to the folder, so a failed or pinned scan of an unwatched download builds the same
         # entries. `untracked` first: a download Sonarr holds a queue row for is never called unwatched. A
@@ -563,10 +563,10 @@ class ImportExecutor:
         if leftover.names and not authoritative:
             if (by_hand := self._all_done_result(context, context.window_statuses(authoritative))) is not None:
                 # A hand import placed what the grab couldn't.
-                probe = by_hand
+                result = by_hand
             else:
                 # Nothing to verify or import, and the same files come back next poll: an outcome, not a wait.
-                probe = AttemptResult.unmatched(context.names_in_folder(leftover.unmatched))
+                result = AttemptResult.unmatched(context.names_in_folder(leftover.unmatched))
         else:
             if leftover.quiet:
                 # A sibling's slice or a refused duplicate the grab excluded was reported then and stays quiet.
@@ -576,18 +576,18 @@ class ImportExecutor:
             if skips := leftover.skips:
                 # The hand-import files are named by the poll's outcome instead.
                 self._warn_unplaceable_files(pending, skips)
-            probe = self._verify_or_import(context, authoritative)
-            if probe.all_done and leftover.hand_import_files:
+            result = self._verify_or_import(context, authoritative)
+            if result.all_done and leftover.hand_import_files:
                 # The fill is checked first, so a hand import in copy mode, which leaves the file on disk, retires
                 # the record.
                 window = context.window_statuses(authoritative)
                 by_hand = self._all_done_result(context, window)
                 hand_import = AttemptResult.hand_import(context.left_for_hand_import(leftover, window.unfilled()))
-                probe = by_hand if by_hand is not None else hand_import
+                result = by_hand if by_hand is not None else hand_import
         # History's placements are kept only once they verified, so a row that never verifies is re-derived next
         # run, not pinned.
-        verified = probe.all_done or bool(probe.left_for_hand_import.files)
-        return replace(probe, placements=recovered if verified else {})
+        verified = result.all_done or bool(result.left_for_hand_import.files)
+        return replace(result, placements=recovered if verified else {})
 
     def _verify_or_import(self, context: _ImportContext, authoritative_map: FileEpisodeMap) -> AttemptResult:
         """Verify the mapped files, or plan and POST the import for the ones still needed."""
@@ -831,10 +831,10 @@ class _SeedStatuses:
     total: int
     """Seeded targets, net of the preowned ones."""
 
-    def with_counts(self, probe: AttemptResult) -> AttemptResult:
+    def with_counts(self, result: AttemptResult) -> AttemptResult:
         """`probe` carrying this seed's bar counts."""
 
-        return replace(probe, imported_count=self.done, target_count=self.total)
+        return replace(result, imported_count=self.done, target_count=self.total)
 
 
 @dataclass(frozen=True, slots=True)
@@ -941,10 +941,10 @@ class ImportReconciler:
         )
         if scan is None:
             return seed.with_counts(AttemptResult.waiting())
-        probe = self._auto_import(poll, scan, seed)
-        if kept is None and probe.deferral is PauseReason.BUSY:
+        result = self._auto_import(poll, scan, seed)
+        if kept is None and result.deferral is PauseReason.BUSY:
             self._executor.keep_scan(poll.pending.infohash, poll.content_path, scan)
-        return probe
+        return result
 
     def import_progress(self, pending: PendingImport) -> ImportProgress:
         """Read-only "files inserted" count: this path can promote, so it never trusts exclusions."""

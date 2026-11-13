@@ -647,8 +647,8 @@ class _IgnoredIdLog:
     def __init__(self) -> None:
         self.ids: list[int] = []
 
-    def log_ignored_anilist_id(self, ctx: ArrRunState, al_id: int) -> None:
-        del ctx
+    def log_ignored_anilist_id(self, state: ArrRunState, al_id: int) -> None:
+        del state
         self.ids.append(al_id)
 
 

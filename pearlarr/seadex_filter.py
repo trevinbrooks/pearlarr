@@ -66,7 +66,7 @@ class SeadexReleaseFilter:
         self,
         *,
         deps: "ArrRunDeps",
-        ctx: ArrRunState,
+        state: ArrRunState,
     ) -> None:
         self._config = deps.config
         self._planner = deps.planner
@@ -75,12 +75,12 @@ class SeadexReleaseFilter:
         # Seeded with the services hub's placeholder ctx, rebound each run via
         # bind_arr_run (the same object the hub holds, so a write here is seen by the
         # grab tail).
-        self._ctx = ctx
+        self._state = state
 
     def bind_arr_run(self, state: ArrRunState) -> None:
         """Bind the run context `filter_downloads` stamps private-only flags onto."""
 
-        self._ctx = state
+        self._state = state
 
     def build(self, sd_entry: EntryRecord) -> SeadexDict:
         """Parse and filter a SeaDex entry into the run's release dict."""
@@ -321,6 +321,6 @@ class SeadexReleaseFilter:
 
         # Carry the skip flags/groups onto the run context (reset per title in the
         # prologue. grab_releases may append more before grab_and_cache reads them).
-        self._ctx.per_title.add_private_only_notices(result.skips)
+        self._state.per_title.add_private_only_notices(result.skips)
 
         return result

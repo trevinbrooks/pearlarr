@@ -89,22 +89,22 @@ class _FakeReporter:
     def log_arr_item_start(self, arr: Arr, item_title: str, n_item: int, n_items: int) -> bool:
         return True
 
-    def log_arr_item_unmonitored(self, ctx: ArrRunState, item_title: str) -> bool:
+    def log_arr_item_unmonitored(self, state: ArrRunState, item_title: str) -> bool:
         return True
 
-    def log_no_anilist_mappings(self, ctx: ArrRunState, title: str) -> bool:
+    def log_no_anilist_mappings(self, state: ArrRunState, title: str) -> bool:
         return True
 
-    def log_no_seadex_releases(self, ctx: ArrRunState) -> bool:
+    def log_no_seadex_releases(self, state: ArrRunState) -> bool:
         return True
 
     def scan_finished(self, arr: Arr) -> bool:
         return True
 
-    def log_run_summary(self, ctx: ArrRunState, *, dry_run: bool, has_client: bool) -> bool:
+    def log_arr_run_summary(self, state: ArrRunState, *, dry_run: bool, has_client: bool) -> bool:
         return True
 
-    def run_finished(self, arr: Arr) -> bool:
+    def arr_run_finished(self, arr: Arr) -> bool:
         return True
 
 
@@ -169,7 +169,7 @@ def _engine(
     config = config if config is not None else make_config()
     store = cache_store if cache_store is not None else FakeCacheStore()
     services = services if services is not None else _services()
-    shadowed = {} if finalize is None else {"_finalize_run": finalize}
+    shadowed = {} if finalize is None else {"_finish_arr_run": finalize}
     return make_bare_instance(
         ArrRunLoop,
         qbit=services.qbit,
@@ -204,7 +204,7 @@ class TestHeldTitleKeepsScanning:
 
         # The hold on the first item never stopped the scan: the second item's id is still checked.
         assert strategy.process_calls == [1, 1]
-        assert engine._services.ctx.stats.held_by_cap == 2
+        assert engine._services.state.stats.held_by_cap == 2
         # ...and the single post-loop finalize ran exactly once.
         assert finalize.calls == 1
 
@@ -489,7 +489,7 @@ class TestNotifyWaitCompleteContainment:
             ArrRunLoop,
             _config=make_config(wait_notify=True),
             _notifier=_RaisingNotifier(),
-            _ctx=ArrRunState(arr=Arr.SONARR),
+            _state=ArrRunState(arr=Arr.SONARR),
         )
         recording = install_recording_hub()
         result = WaitResult((WaitOutcomeRow("Frieren", Outcome.IMPORTED),), elapsed_s=60)
@@ -582,7 +582,7 @@ class TestScanItemContext:
 
         engine.run_arr(strategy, item_id=None, dry_run=True, boot=BootFlow())
 
-        assert engine._ctx.arr_title == "A"
+        assert engine._state.arr_title == "A"
 
 
 # One import event on the scanned item, so the activity scan has a checkpoint to commit.

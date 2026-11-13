@@ -77,7 +77,7 @@ class _QueryWindow:
 
 
 @final
-class ArrActivityMonitor:
+class ArrActivityReader:
     """One arr's per-run history scan + checkpoint advance.
 
     `scan` reads the stored checkpoint, queries the overlapped window, dedups
@@ -93,7 +93,7 @@ class ArrActivityMonitor:
         self._logger = logger
         self._staged_checkpoint: HistoryCheckpoint | None = None
 
-    def scan(
+    def read(
         self,
         fetch: Callable[[str], list[HistoryRecord] | None],
         *,

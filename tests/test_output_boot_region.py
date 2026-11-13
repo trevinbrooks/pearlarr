@@ -28,12 +28,12 @@ from pearlarr.output import (
     BootStepProgressed,
     BootStepSlow,
     BootStepStarted,
-    CycleStarted,
     Diagnostic,
     Event,
+    PearlarrStarted,
     RichRenderer,
-    RunStarted,
     ScanStarted,
+    ScheduledRunStarted,
     ScopeClosed,
     ScopeId,
     ScopeKind,
@@ -142,7 +142,7 @@ class TestBootRegion:
     def test_banner_renders_title_blank_and_data_dir(self) -> None:
         renderer, stream = _renderer()
 
-        _feed(renderer, RunStarted(version="v9.9.9", data_dir="/data/dir"))
+        _feed(renderer, PearlarrStarted(version="v9.9.9", data_dir="/data/dir"))
 
         lines = _plain(stream).splitlines()
         assert "Pearlarr v9.9.9" in lines
@@ -251,7 +251,7 @@ class TestBootRegion:
 
     def test_run_and_cycle_boundaries_tear_down_the_live_slot(self) -> None:
         # Teardown keys on the frontier departure, not on WHICH event caused it.
-        for boundary in (RunStarted(version="v9.9.9", data_dir="/data"), CycleStarted(number=2)):
+        for boundary in (PearlarrStarted(version="v9.9.9", data_dir="/data"), ScheduledRunStarted(number=2)):
             renderer, _stream = _renderer()
             _feed(renderer, _opened(), _started("Fetching library"))
             live = renderer._boot._live
@@ -333,7 +333,7 @@ class TestBootRegion:
 
         _feed(
             renderer,
-            RunStarted(version="v9.9.9", data_dir="/data"),
+            PearlarrStarted(version="v9.9.9", data_dir="/data"),
             _opened(),
             _started("Reading config"),
             _finished("Reading config"),
@@ -382,7 +382,7 @@ class TestBootRegion:
 
         _feed(
             renderer,
-            RunStarted(version="v9.9.9", data_dir="/data"),
+            PearlarrStarted(version="v9.9.9", data_dir="/data"),
             _started("Reading config"),
             BootStepProgressed(scope=ScopeId(ScopeKind.BOOT_STEP, 1), fraction=0.5),
             BootStepSlow(scope=ScopeId(ScopeKind.BOOT_STEP, 1), label="Reading config"),

@@ -30,7 +30,7 @@ from .output import (
     BootReady,
     BootScope,
     CountsMark,
-    RunStarted,
+    PearlarrStarted,
     ScopeFactory,
     ScopeKind,
     StepScope,
@@ -76,7 +76,7 @@ class BootFlow:
         stale nodes on it), so the section mark opens after it.
         """
 
-        emit_to_hub(RunStarted(version=_app_version(), data_dir=self._data_dir))
+        emit_to_hub(PearlarrStarted(version=_app_version(), data_dir=self._data_dir))
         self._section.open()
 
     @contextlib.contextmanager

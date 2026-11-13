@@ -13,6 +13,7 @@ from .output import (
     Accent,
     ArrRunFinished,
     ArrRunSummary,
+    ArrRunSummaryReady,
     ArrRunTally,
     CapReached,
     CountsMark,
@@ -27,7 +28,6 @@ from .output import (
     NeedsActionFact,
     ReleaseLabel,
     ReleaseSkipped,
-    RunSummaryReady,
     ScanFinished,
     ScanStarted,
     ScopeFactory,
@@ -159,7 +159,7 @@ class RunReporter:
         self._close_title_scope()
         self._emit(ScanFinished(arr=arr))
 
-    def run_finished(self, arr: Arr) -> None:
+    def arr_run_finished(self, arr: Arr) -> None:
         """Close the run (the leg-close boundary). bootstrap emits it on unwind."""
 
         self._close_title_scope()
@@ -172,48 +172,48 @@ class RunReporter:
 
         self._ledger(TitleState.NO_EPISODES, title)
 
-    def log_arr_item_unmonitored(self, ctx: ArrRunState, item_title: str) -> None:
+    def log_arr_item_unmonitored(self, state: ArrRunState, item_title: str) -> None:
         """Report skipping an unmonitored item (bumps the tally, emits its row)."""
 
-        ctx.stats.unmonitored += 1
+        state.stats.unmonitored += 1
         self._ledger(TitleState.UNMONITORED, item_title)
 
-    def log_no_anilist_mappings(self, ctx: ArrRunState, title: str) -> None:
+    def log_no_anilist_mappings(self, state: ArrRunState, title: str) -> None:
         """Report a title with no AniList mappings (bumps the tally, emits its row)."""
 
-        ctx.stats.no_mappings += 1
+        state.stats.no_mappings += 1
         self._ledger(TitleState.NO_MAPPING, title)
 
-    def log_ignored_anilist_id(self, ctx: ArrRunState, al_id: int) -> None:
+    def log_ignored_anilist_id(self, state: ArrRunState, al_id: int) -> None:
         """Report an AniList ID skipped via the ignore list.
 
         No AniList lookup: an ignored id is dropped before the prefetch, so the arr's own title
         is the only one in hand and asking would cost a request per ignored id.
         """
 
-        self._titled_row(TitleState.IGNORED, title_from_names(al_id, (), ctx.arr_title))
+        self._titled_row(TitleState.IGNORED, title_from_names(al_id, (), state.arr_title))
 
-    def log_no_sd_entry(self, ctx: ArrRunState, al_id: int) -> None:
+    def log_no_sd_entry(self, state: ArrRunState, al_id: int) -> None:
         """Report an id with no SeaDex entry (bumps the tally, emits a titled row)."""
 
-        ctx.stats.no_seadex_entry += 1
-        self._titled_row(TitleState.NO_ENTRY, self._display_title(ctx, al_id, None))
+        state.stats.no_seadex_entry += 1
+        self._titled_row(TitleState.NO_ENTRY, self._display_title(state, al_id, None))
 
-    def log_seadex_unreachable(self, ctx: ArrRunState, al_id: int) -> None:
+    def log_seadex_unreachable(self, state: ArrRunState, al_id: int) -> None:
         """Report a title whose SeaDex lookup was skipped (SeaDex unreachable)."""
 
-        ctx.stats.seadex_unreachable += 1
+        state.stats.seadex_unreachable += 1
         # The stored name wins: a prior run resolved it, so no lookup is needed.
-        cached = self.cache_store.get_cached_title(ctx.arr, al_id)
-        title = self._display_title(ctx, al_id, cached.name if cached is not None else None)
+        cached = self.cache_store.get_cached_title(state.arr, al_id)
+        title = self._display_title(state, al_id, cached.name if cached is not None else None)
         self._titled_row(TitleState.SKIPPED, title)
         # Scope-free (the titled row closed the entry): the reason rides col-0.
         self.detail("status", StyledValue("lookup skipped (SeaDex unreachable)", Accent.DIM))
 
-    def _display_title(self, ctx: ArrRunState, al_id: int, stored: str | None) -> Title:
+    def _display_title(self, state: ArrRunState, al_id: int, stored: str | None) -> Title:
         """The entry's label: the stored name, else AniList, else the arr's own title, else the id form."""
 
-        return title_from_names(al_id, (stored,) if stored else self.anilist.titles(al_id), ctx.arr_title)
+        return title_from_names(al_id, (stored,) if stored else self.anilist.titles(al_id), state.arr_title)
 
     def _titled_row(self, state: TitleState, title: Title) -> None:
         """A ledger row for an id with no entry block, the id repeated only when the row shows a title."""
@@ -226,7 +226,7 @@ class RunReporter:
 
     def open_title_block(
         self,
-        ctx: ArrRunState,
+        state: ArrRunState,
         title: str,
         sd_entry: EntryRecord,
         coverage: str | None = None,
@@ -238,9 +238,9 @@ class RunReporter:
 
         # Remembered so grab_releases and the summary can attribute what they grab, and show the files we
         # mapped from the Arr even when a release's own file list can't be parsed.
-        ctx.per_title.title_name = title
-        ctx.per_title.entry_url = sd_entry.url
-        ctx.per_title.entry_coverage = coverage
+        state.per_title.title_name = title
+        state.per_title.entry_url = sd_entry.url
+        state.per_title.entry_coverage = coverage
 
         self._open_title_scope(
             TitleHeader(
@@ -253,13 +253,13 @@ class RunReporter:
             ),
         )
 
-    def log_cached_title(self, ctx: ArrRunState, al_id: int) -> None:
+    def log_cached_title(self, state: ArrRunState, al_id: int) -> None:
         """Emit a cached entry's self-contained block, read from the cache record."""
 
-        ctx.stats.unchanged += 1
+        state.stats.unchanged += 1
 
-        cached = self.cache_store.get_cached_title(ctx.arr, al_id)
-        title = self._display_title(ctx, al_id, cached.name if cached is not None else None)
+        cached = self.cache_store.get_cached_title(state.arr, al_id)
+        title = self._display_title(state, al_id, cached.name if cached is not None else None)
 
         # A complete block: self-close so a later diagnostic attributes to the open item, not to this row.
         self._block(
@@ -302,10 +302,10 @@ class RunReporter:
 
     # --- entry-block details -------------------------------------------------
 
-    def log_no_seadex_releases(self, ctx: ArrRunState) -> None:
+    def log_no_seadex_releases(self, state: ArrRunState) -> None:
         """Report no suitable SeaDex releases (a status detail on the open entry)."""
 
-        ctx.stats.no_releases += 1
+        state.stats.no_releases += 1
         self.detail("status", StyledValue("no suitable releases on SeaDex", Accent.DIM))
 
     def log_seadex_action(
@@ -376,29 +376,29 @@ class RunReporter:
 
         return self._counts().bound_mark()
 
-    def log_run_summary(self, ctx: ArrRunState, *, dry_run: bool, has_client: bool) -> None:
+    def log_arr_run_summary(self, state: ArrRunState, *, dry_run: bool, has_client: bool) -> None:
         """Emit the end-of-run scoreboard."""
 
         self._close_title_scope()
 
         # The mark carries the counter it was stamped on, so this diff can never read a different hub.
-        since = ctx.counts_mark.since()
+        since = state.counts_mark.since()
 
         dry_run_note = None
         if dry_run:
             dry_run_note = "nothing grabbed" if has_client else "qBittorrent not configured; nothing grabbed"
 
-        tally = ArrRunTally.from_stats(ctx.stats)
-        elapsed_s = (time.monotonic() - ctx.started_monotonic) if ctx.started_monotonic is not None else None
+        tally = ArrRunTally.from_stats(state.stats)
+        elapsed_s = (time.monotonic() - state.started_monotonic) if state.started_monotonic is not None else None
 
         self._emit(
-            RunSummaryReady(
+            ArrRunSummaryReady(
                 summary=ArrRunSummary(
-                    arr=ctx.arr,
+                    arr=state.arr,
                     dry_run_note=dry_run_note,
-                    added_count=ctx.torrents_added,
+                    added_count=state.torrents_added,
                     tally=tally,
-                    wait_mode_on=ctx.import_wait_mode is not ImportWaitMode.OFF,
+                    wait_mode_on=state.import_wait_mode is not ImportWaitMode.OFF,
                     warnings=since.warning,
                     # The errors property sums ERROR and CRITICAL.
                     errors=since.errors,

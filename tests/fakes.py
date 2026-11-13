@@ -36,6 +36,7 @@ from pearlarr.arr_strategy import ArrStrategy
 from pearlarr.clock import Clock
 from pearlarr.mappings import TitleMapping
 from pearlarr.output import (
+    ArrRunSummaryReady,
     CapReached,
     Diagnostic,
     Event,
@@ -43,7 +44,6 @@ from pearlarr.output import (
     GrabFailed,
     ItemStarted,
     ReleaseSkipped,
-    RunSummaryReady,
     ScanStarted,
     Severity,
     TitleDetail,
@@ -82,7 +82,7 @@ SCAN_EVENT_TYPES = (
     GrabFailed,
     GrabAction,
     CapReached,
-    RunSummaryReady,
+    ArrRunSummaryReady,
 )
 
 
@@ -238,7 +238,7 @@ class FakeStrategy(ArrStrategy[FakeArrItem]):
         held_through: ArrRunServices | None = None,
         process_raises_on: int | None = None,
         history: list[HistoryRecord] | None = None,
-        supports_blocking_monitor: bool = True,
+        supports_blocking_wait: bool = True,
     ) -> None:
         self._items = items
         self._anilist_ids = anilist_ids
@@ -246,7 +246,7 @@ class FakeStrategy(ArrStrategy[FakeArrItem]):
         # title's hold and the run tally.
         self._held_through = held_through
         self._process_raises_on = process_raises_on
-        self._supports_blocking_monitor = supports_blocking_monitor
+        self._supports_blocking_monitor = supports_blocking_wait
         self.process_calls: list[int] = []
         # Reassign to None mid-test to script the failure path.
         self.history: list[HistoryRecord] | None = [] if history is None else history
@@ -288,8 +288,8 @@ class FakeStrategy(ArrStrategy[FakeArrItem]):
         if self._process_raises_on is not None and al_id == self._process_raises_on:
             raise ValueError(f"boom on al_id {al_id}")
         if self._held_through is not None:
-            self._held_through.ctx.per_title.held_by_cap = True
-            self._held_through.ctx.stats.held_by_cap += 1
+            self._held_through.state.per_title.held_by_cap = True
+            self._held_through.state.stats.held_by_cap += 1
 
     @override
     def pending_import_series_id(self, item: FakeArrItem) -> int | None:
@@ -310,7 +310,7 @@ class FakeStrategy(ArrStrategy[FakeArrItem]):
 
     @property
     @override
-    def supports_blocking_monitor(self) -> bool:
+    def supports_blocking_wait(self) -> bool:
         return self._supports_blocking_monitor
 
 

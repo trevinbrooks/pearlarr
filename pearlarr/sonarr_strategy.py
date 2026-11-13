@@ -247,9 +247,9 @@ class SonarrStrategy(ArrStrategy[SonarrItem]):
         episodes, then hand off to the shared grab/cache tail.
         """
 
-        run = self._services
+        services = self._services
 
-        sd_entry = run.begin_check(al_id)
+        sd_entry = services.begin_check(al_id)
         if sd_entry is None:
             return
         sd_url = sd_entry.url
@@ -258,7 +258,7 @@ class SonarrStrategy(ArrStrategy[SonarrItem]):
         # Skip if already cached. The one-time backfill on a legacy record adds
         # the URL and the season/episode coverage. The coverage needs the episode
         # list, so it's resolved lazily, only when the backfill actually runs.
-        if run.is_unchanged(
+        if services.is_unchanged(
             al_id,
             sd_entry,
             lambda: _coverage.coverage_string(
@@ -274,10 +274,10 @@ class SonarrStrategy(ArrStrategy[SonarrItem]):
             return
 
         # Resolved now, logged once the episode coverage is known.
-        title = run.resolve_title(al_id)
+        title = services.resolve_title(al_id)
 
         # Setup info for cache
-        update = run.new_cache_details(title, sd_entry)
+        update = services.new_cache_details(title, sd_entry)
 
         # Get the episode list for all relevant episodes
         ep_list = self._episodes.mapping_episodes(
@@ -292,7 +292,7 @@ class SonarrStrategy(ArrStrategy[SonarrItem]):
         if not ep_list:
             # Resolved zero episodes (season not in Sonarr, offset past the end, or
             # AniBridge with no ranges): skip, don't mislabel "unmonitored" or grab orphans.
-            run.log_no_episodes(title.name)
+            services.log_no_episodes(title.name)
             if mapping.source is MappingSource.ANIBRIDGE and not mapping.tvdb_mappings:
                 # Surface any AniBridge no-usable-ranges case LOUDLY (distinct from a
                 # Sonarr-library gap): a WARNING under the skip row naming the cause.
@@ -300,15 +300,15 @@ class SonarrStrategy(ArrStrategy[SonarrItem]):
                 # ANIBRIDGE) and a degraded imdb/tmdb-resolved entry (mode ANIME_IDS),
                 # while a legit Kometa whole-series entry (source ANIME_IDS) stays quiet.
                 hub_warn(f"AniBridge has no usable season ranges for {title.name} - skipping")
-            run.owe_pause()
+            services.owe_pause()
             return
 
         # If all episodes are unmonitored, then skip if ignore_unmonitored is switched on
         if self._config.sonarr.ignore_unmonitored and not any(ep.monitored for ep in ep_list):
-            run.log_anilist_item_unmonitored(
+            services.log_anilist_item_unmonitored(
                 item_title=title.name,
             )
-            run.owe_pause()
+            services.owe_pause()
             return
 
         # Now that we have the episodes, log the active entry with its
@@ -317,7 +317,7 @@ class SonarrStrategy(ArrStrategy[SonarrItem]):
         coverage = _coverage.coverage_string(
             _coverage.episodes_from_ep_list(ep_list),
         )
-        run.open_title_block(
+        services.open_title_block(
             title=title.name,
             sd_entry=sd_entry,
             coverage=coverage,
@@ -332,11 +332,11 @@ class SonarrStrategy(ArrStrategy[SonarrItem]):
         )
 
         # Produce a dictionary of info from the SeaDex request
-        seadex_dict = run.get_seadex_dict(sd_entry=sd_entry)
+        seadex_dict = services.get_seadex_dict(sd_entry=sd_entry)
 
         if len(seadex_dict) == 0:
             # Nothing is placed here, so only the entry whose window gave the coverage counts.
-            run.report_no_releases(al_id, update, metadata_unread=self._episodes.any_air_dates_unread([al_id]))
+            services.report_no_releases(al_id, update, metadata_unread=self._episodes.any_air_dates_unread([al_id]))
             return
 
         self.logger.debug(f"SeaDex: {', '.join(seadex_dict)}")
@@ -344,10 +344,10 @@ class SonarrStrategy(ArrStrategy[SonarrItem]):
         # Place every listed file now: the import imports this map and places nothing, so the grab is judged by
         # it. Placed under every listing entry's window and every stored claim's, a stored torrent as its record's
         # leftover. The series maps are the whole-series lists (a per-run cache hit each).
-        waits_on_imports = run.import_wait_mode is not ImportWaitMode.OFF
+        waits_on_imports = services.import_wait_mode is not ImportWaitMode.OFF
         hashes = entry_hashes(seadex_dict)
         stored: dict[str, PendingImport] = (
-            run.pending_imports.stored_pending_imports(hashes) if waits_on_imports else {}
+            services.pending_imports.stored_pending_imports(hashes) if waits_on_imports else {}
         )
         series_ids = {sonarr_series_id, *(sid for pending in stored.values() for sid in pending.series_ids)}
         indexes = self._series_indexes(series_ids)
@@ -373,7 +373,7 @@ class SonarrStrategy(ArrStrategy[SonarrItem]):
 
         # If we're in interactive mode and there are multiple equivalent options here, then select
         if self._config.advanced.interactive and len(seadex_dict) > 1 and releases_overlap(seadex_dict=seadex_dict):
-            seadex_dict = run.filter_seadex_interactive(
+            seadex_dict = services.filter_seadex_interactive(
                 seadex_dict=seadex_dict,
                 sd_entry=sd_entry,
             )
@@ -381,12 +381,12 @@ class SonarrStrategy(ArrStrategy[SonarrItem]):
             # cache the title as done and suppress it forever) so it re-prompts
             # next run.
             if len(seadex_dict) == 0:
-                run.report_invalid_selection()
+                services.report_invalid_selection()
                 return
 
         # Filter downloads by whether the episodes in each torrent match the release
         # group we have in Sonarr
-        plan = run.filter_seadex_downloads(
+        plan = services.filter_seadex_downloads(
             seadex_dict=seadex_dict,
             arr_releases=sonarr_releases,
             ep_list=ep_list,
@@ -413,7 +413,7 @@ class SonarrStrategy(ArrStrategy[SonarrItem]):
                 ),
             )
 
-        run.grab_and_cache(
+        services.grab_and_cache(
             GrabRequest(
                 al_id=al_id,
                 arr_title=item.title,
@@ -516,7 +516,7 @@ class SonarrStrategy(ArrStrategy[SonarrItem]):
 
     @property
     @override
-    def supports_blocking_monitor(self) -> bool:
+    def supports_blocking_wait(self) -> bool:
         """Sonarr owns the interleaved end-of-run wait/import monitor cockpit."""
 
         return True

@@ -29,6 +29,7 @@ from pearlarr.json_narrow import is_json_list, is_json_obj
 from pearlarr.output import (
     ArrRunFinished,
     ArrRunSummary,
+    ArrRunSummaryReady,
     ArrRunTally,
     BootReady,
     BootStepFinished,
@@ -44,7 +45,6 @@ from pearlarr.output import (
     ConfigMigrated,
     ConfigUpToDate,
     ConfigValidated,
-    CycleStarted,
     Diagnostic,
     EffectiveConfigShown,
     Event,
@@ -58,16 +58,16 @@ from pearlarr.output import (
     NeedsActionCause,
     NextRunScheduled,
     PathsShown,
+    PearlarrStarted,
     Phase,
     PlacedBy,
     PlainRenderer,
     ReleaseLabel,
     ReleaseSkipped,
     RowFinished,
-    RunStarted,
-    RunSummaryReady,
     ScanFinished,
     ScanStarted,
+    ScheduledRunStarted,
     ScopeClosed,
     ScopeId,
     ScopeKind,
@@ -138,12 +138,12 @@ def _entry_context() -> tuple[Event, Event, Event]:
 
 
 def test_run_started_line() -> None:
-    line = _format(RunStarted(version="v1.0.0", data_dir="/data/pearlarr"))
+    line = _format(PearlarrStarted(version="v1.0.0", data_dir="/data/pearlarr"))
     assert line == f"{_TS} INFO [run] Pearlarr started version=v1.0.0 data_dir=/data/pearlarr"
 
 
 def test_run_started_omits_an_empty_version() -> None:
-    line = _format(RunStarted(version="", data_dir="/data"))
+    line = _format(PearlarrStarted(version="", data_dir="/data"))
     assert line == f"{_TS} INFO [run] Pearlarr started data_dir=/data"
 
 
@@ -407,7 +407,7 @@ def test_pure_boundaries_and_ephemerals_have_no_text_form() -> None:
 # --- the summary block -------------------------------------------------------------
 
 
-def _summary_ready() -> RunSummaryReady:
+def _summary_ready() -> ArrRunSummaryReady:
     stats = ArrRunStats(checked=182, up_to_date=161, unchanged=14)
     stats.queued = 1
     stats.added.append(
@@ -429,7 +429,7 @@ def _summary_ready() -> RunSummaryReady:
             kind=NeedsActionKind.PRIVATE_ONLY,
         ),
     )
-    return RunSummaryReady(
+    return ArrRunSummaryReady(
         ArrRunSummary(
             arr=Arr.SONARR,
             dry_run_note=None,
@@ -444,10 +444,10 @@ def _summary_ready() -> RunSummaryReady:
     )
 
 
-def _quiet_summary_ready() -> RunSummaryReady:
+def _quiet_summary_ready() -> ArrRunSummaryReady:
     """A summary with nothing actionable and no errors (stays plain INFO)."""
 
-    return RunSummaryReady(
+    return ArrRunSummaryReady(
         ArrRunSummary(
             arr=Arr.SONARR,
             dry_run_note=None,
@@ -553,7 +553,7 @@ def test_file_only_diagnostics_reach_the_file_but_not_stdout(tmp_path: Path) -> 
 
 def test_line_and_file_output_are_byte_identical(tmp_path: Path) -> None:
     events: list[Event] = [
-        RunStarted(version="v1.0.0", data_dir="/data"),
+        PearlarrStarted(version="v1.0.0", data_dir="/data"),
         *_entry_context(),
         TitleHeader(state=TitleState.CHECKING, title="Frieren", scope=_ENTRY),
         Diagnostic(severity=Severity.WARNING, message="rate limited", origin="anilist"),
@@ -618,15 +618,15 @@ def test_file_rotation_names_the_backup_after_the_run_s_mtime(tmp_path: Path) ->
     sink = FileLogRenderer(str(tmp_path))
     log = tmp_path / "Pearlarr.log"
 
-    sink.handle(RunStarted(version="one", data_dir="/d"), _EPOCH)
+    sink.handle(PearlarrStarted(version="one", data_dir="/d"), _EPOCH)
     first_run = datetime(2026, 1, 1, 10, 0, 0)
     _pin_mtime(log, first_run)
     sink.begin_run()
-    sink.handle(RunStarted(version="two", data_dir="/d"), _EPOCH)  # rotates "one"
+    sink.handle(PearlarrStarted(version="two", data_dir="/d"), _EPOCH)  # rotates "one"
     second_run = datetime(2026, 1, 2, 11, 30, 15)
     _pin_mtime(log, second_run)
     sink.begin_run()
-    sink.handle(RunStarted(version="three", data_dir="/d"), _EPOCH)  # rotates "two"
+    sink.handle(PearlarrStarted(version="three", data_dir="/d"), _EPOCH)  # rotates "two"
     sink.close()
 
     assert "three" in log.read_text(encoding="utf-8")
@@ -641,13 +641,13 @@ def test_rotate_same_second_collision_gets_a_numeric_suffix(tmp_path: Path) -> N
     log = tmp_path / "Pearlarr.log"
     when = datetime(2026, 1, 1, 10, 0, 0)
 
-    sink.handle(RunStarted(version="one", data_dir="/d"), _EPOCH)
+    sink.handle(PearlarrStarted(version="one", data_dir="/d"), _EPOCH)
     _pin_mtime(log, when)
     sink.begin_run()
-    sink.handle(RunStarted(version="two", data_dir="/d"), _EPOCH)  # rotates "one" to the bare stamp
+    sink.handle(PearlarrStarted(version="two", data_dir="/d"), _EPOCH)  # rotates "one" to the bare stamp
     _pin_mtime(log, when)  # same second as "one"
     sink.begin_run()
-    sink.handle(RunStarted(version="three", data_dir="/d"), _EPOCH)  # collides, falls to ".1"
+    sink.handle(PearlarrStarted(version="three", data_dir="/d"), _EPOCH)  # collides, falls to ".1"
     sink.close()
 
     stamp = when.strftime(_BACKUP_STAMP_FORMAT)
@@ -660,7 +660,7 @@ def test_an_idle_cycle_never_churns_a_backup(tmp_path: Path) -> None:
     sink = FileLogRenderer(str(tmp_path))
     sink.begin_run()
     sink.begin_run()  # no writes in between: nothing to rotate
-    sink.handle(RunStarted(version="only", data_dir="/d"), _EPOCH)
+    sink.handle(PearlarrStarted(version="only", data_dir="/d"), _EPOCH)
     sink.close()
 
     assert (tmp_path / "Pearlarr.log").exists()
@@ -676,14 +676,14 @@ def test_pre_cycle_writes_append_and_rotation_fires_once_per_begin_cycle(tmp_pat
     _pin_mtime(log, when)
     sink = FileLogRenderer(str(tmp_path))
 
-    sink.handle(RunStarted(version="pre-cycle", data_dir="/d"), _EPOCH)
+    sink.handle(PearlarrStarted(version="pre-cycle", data_dir="/d"), _EPOCH)
     assert list(tmp_path.glob("Pearlarr.log.*")) == []  # appended, no rotation
     log_text = log.read_text(encoding="utf-8")
     assert log_text.startswith("previous run\n") and "pre-cycle" in log_text
     _pin_mtime(log, when)  # the append above bumped mtime, re-pin for a deterministic stamp
 
     sink.begin_run()
-    sink.handle(RunStarted(version="cycle-one", data_dir="/d"), _EPOCH)
+    sink.handle(PearlarrStarted(version="cycle-one", data_dir="/d"), _EPOCH)
     sink.close()
 
     backups = list(tmp_path.glob("Pearlarr.log.*"))
@@ -695,9 +695,9 @@ def test_pre_cycle_writes_append_and_rotation_fires_once_per_begin_cycle(tmp_pat
 
 def test_a_reopened_file_sink_appends_after_close(tmp_path: Path) -> None:
     sink = FileLogRenderer(str(tmp_path))
-    sink.handle(RunStarted(version="one", data_dir="/d"), _EPOCH)
+    sink.handle(PearlarrStarted(version="one", data_dir="/d"), _EPOCH)
     sink.close()
-    sink.handle(RunStarted(version="two", data_dir="/d"), _EPOCH)
+    sink.handle(PearlarrStarted(version="two", data_dir="/d"), _EPOCH)
     sink.close()
 
     # Reopen without a pending rotation appends - never a silent truncate.
@@ -713,11 +713,11 @@ def test_backstop_deletes_oldest_backups_beyond_the_cap(tmp_path: Path, monkeypa
     log = tmp_path / "Pearlarr.log"
     stamps = [datetime(2026, 1, day, 0, 0, 0) for day in (1, 2, 3, 4)]
 
-    sink.handle(RunStarted(version="seed", data_dir="/d"), _EPOCH)
+    sink.handle(PearlarrStarted(version="seed", data_dir="/d"), _EPOCH)
     for i, when in enumerate(stamps):
         _pin_mtime(log, when)
         sink.begin_run()
-        sink.handle(RunStarted(version=f"run-{i}", data_dir="/d"), _EPOCH)
+        sink.handle(PearlarrStarted(version=f"run-{i}", data_dir="/d"), _EPOCH)
     sink.close()
 
     backups = list(tmp_path.glob("Pearlarr.log.*"))
@@ -795,10 +795,10 @@ def test_backstop_survives_an_undeletable_oldest_backup(tmp_path: Path, monkeypa
         real_remove(path)
 
     monkeypatch.setattr(os, "remove", remove_unless_stuck)
-    sink.handle(RunStarted(version="one", data_dir="/d"), _EPOCH)
+    sink.handle(PearlarrStarted(version="one", data_dir="/d"), _EPOCH)
     _pin_mtime(log, datetime(2026, 1, 1, 10, 0, 0))
     sink.begin_run()
-    sink.handle(RunStarted(version="two", data_dir="/d"), _EPOCH)  # rotates past the cap
+    sink.handle(PearlarrStarted(version="two", data_dir="/d"), _EPOCH)  # rotates past the cap
     sink.close()
 
     assert stuck.exists()  # left behind, but the write - and the cycle's log - survived
@@ -821,7 +821,7 @@ def test_every_line_is_on_disk_immediately(tmp_path: Path) -> None:
     sink = FileLogRenderer(str(tmp_path))
     log = tmp_path / "Pearlarr.log"
 
-    sink.handle(RunStarted(version="v1.0.0", data_dir="/d"), _EPOCH)
+    sink.handle(PearlarrStarted(version="v1.0.0", data_dir="/d"), _EPOCH)
     assert "Pearlarr started" in log.read_text(encoding="utf-8")
 
     sink.handle(Diagnostic(severity=Severity.WARNING, message="crash imminent", origin="app"), _EPOCH)
@@ -1012,7 +1012,7 @@ def _json_lines(events: list[Event]) -> list[dict[str, Json]]:
 
 
 def test_json_emits_one_object_per_event_with_stable_key_order() -> None:
-    (payload,) = _json_lines([RunStarted(version="v1.0.0", data_dir="/data")])
+    (payload,) = _json_lines([PearlarrStarted(version="v1.0.0", data_dir="/data")])
     assert list(payload) == ["schema_version", "time", "event", "level", "message", "component", "version", "data_dir"]
     assert payload["schema_version"] == 1
     assert payload["event"] == "run_started"
@@ -1022,7 +1022,7 @@ def test_json_emits_one_object_per_event_with_stable_key_order() -> None:
 
 
 def test_json_time_carries_a_utc_offset() -> None:
-    (payload,) = _json_lines([RunStarted(version="", data_dir="/d")])
+    (payload,) = _json_lines([PearlarrStarted(version="", data_dir="/d")])
     time_value = payload["time"]
     assert isinstance(time_value, str)
     offset_part = time_value[10:]
@@ -1100,7 +1100,7 @@ def test_json_summary_carries_held_by_cap_only_when_the_run_held_titles() -> Non
 
     stats = ArrRunStats(checked=3)
     stats.held_by_cap = 2
-    held = RunSummaryReady(
+    held = ArrRunSummaryReady(
         ArrRunSummary(
             arr=Arr.SONARR,
             dry_run_note=None,
@@ -1136,8 +1136,8 @@ def _exemplars() -> list[Event]:
     except ValueError as exc:
         trace = CapturedTrace.from_exception(exc)
     return [
-        RunStarted(version="v1.0.0", data_dir="/d"),
-        CycleStarted(number=1),
+        PearlarrStarted(version="v1.0.0", data_dir="/d"),
+        ScheduledRunStarted(number=1),
         NextRunScheduled(at=_WHEN.astimezone()),
         ScopeOpened(scope=_ENTRY, label="T"),
         ScopeClosed(scope=_ENTRY),

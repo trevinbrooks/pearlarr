@@ -177,9 +177,9 @@ class TestStepInGuard:
 
         sonarr.on_scan = start_a_pass
 
-        probe = strat.import_completed(pending_import(), "/d", AttemptKind.ORDINARY)
+        result = strat.import_completed(pending_import(), "/d", AttemptKind.ORDINARY)
 
-        assert probe.deferral is PauseReason.BUSY
+        assert result.deferral is PauseReason.BUSY
         assert sonarr.execute_calls == []
 
     def test_pass_started_during_an_empty_scan_reads_busy(self) -> None:
@@ -190,9 +190,9 @@ class TestStepInGuard:
 
         sonarr.on_scan = start_a_pass
 
-        probe = strat.import_completed(pending_import(), "/d", AttemptKind.ORDINARY)
+        result = strat.import_completed(pending_import(), "/d", AttemptKind.ORDINARY)
 
-        assert probe.deferral is PauseReason.BUSY
+        assert result.deferral is PauseReason.BUSY
 
     def test_pass_completed_during_the_scan_does_not_block_the_post(self) -> None:
         strat, sonarr = _strategy([_blocked_row()])
@@ -218,9 +218,9 @@ class TestStepInGuard:
 
         sonarr.on_episodes = run_a_pass_on_the_re_read
 
-        probe = strat.import_completed(pending_import(), "/d", AttemptKind.ORDINARY)
+        result = strat.import_completed(pending_import(), "/d", AttemptKind.ORDINARY)
 
-        assert probe.deferral is PauseReason.BUSY
+        assert result.deferral is PauseReason.BUSY
         assert sonarr.execute_calls == []
 
     def test_pass_started_before_the_post_defers_the_step_in(self) -> None:
@@ -231,9 +231,9 @@ class TestStepInGuard:
 
         sonarr.on_languages = start_a_pass
 
-        probe = strat.import_completed(pending_import(), "/d", AttemptKind.ORDINARY)
+        result = strat.import_completed(pending_import(), "/d", AttemptKind.ORDINARY)
 
-        assert probe.deferral is PauseReason.BUSY
+        assert result.deferral is PauseReason.BUSY
         assert sonarr.execute_calls == []
 
     def test_pass_completed_before_the_post_defers_the_step_in(self) -> None:
@@ -262,10 +262,10 @@ class TestStepInGuard:
 
         sonarr.on_languages = start_an_import
 
-        probe = strat.import_completed(pending_import(), "/d", AttemptKind.ORDINARY)
+        result = strat.import_completed(pending_import(), "/d", AttemptKind.ORDINARY)
 
-        assert probe.deferral is PauseReason.IMPORT
-        assert probe.command_issued is True
+        assert result.deferral is PauseReason.IMPORT
+        assert result.command_issued is True
         assert sonarr.execute_calls == []
 
     def test_restart_before_the_post_waits(self) -> None:
@@ -276,9 +276,9 @@ class TestStepInGuard:
 
         sonarr.on_languages = restart
 
-        probe = strat.import_completed(pending_import(), "/d", AttemptKind.ORDINARY)
+        result = strat.import_completed(pending_import(), "/d", AttemptKind.ORDINARY)
 
-        assert probe.deferral is PauseReason.NONE
+        assert result.deferral is PauseReason.NONE
         assert sonarr.execute_calls == []
 
     def test_folder_import_in_flight_matches_its_translated_path_on_the_first_poll(self) -> None:
@@ -300,19 +300,19 @@ class TestStepInGuard:
 
         sonarr.on_scan = start_a_folder_import
 
-        probe = strat.import_completed(pending_import(), "/d/Show", AttemptKind.ORDINARY)
+        result = strat.import_completed(pending_import(), "/d/Show", AttemptKind.ORDINARY)
 
-        assert probe.deferral is PauseReason.IMPORT
-        assert probe.command_issued is False
+        assert result.deferral is PauseReason.IMPORT
+        assert result.command_issued is False
         assert sonarr.execute_calls == []
 
     def test_unreadable_command_list_waits(self) -> None:
         strat, sonarr = _strategy([])
         sonarr.commands_return = None
 
-        probe = strat.import_completed(pending_import(), "/d", AttemptKind.ORDINARY)
+        result = strat.import_completed(pending_import(), "/d", AttemptKind.ORDINARY)
 
-        assert probe.deferral is PauseReason.NONE
+        assert result.deferral is PauseReason.NONE
         assert sonarr.execute_calls == []
         assert sonarr.refresh_calls == 0
 
@@ -328,9 +328,9 @@ class TestStepInGuard:
         sonarr.on_scan = fail_the_next_read
         sonarr.on_languages = recover
 
-        probe = strat.import_completed(pending_import(), "/d", AttemptKind.ORDINARY)
+        result = strat.import_completed(pending_import(), "/d", AttemptKind.ORDINARY)
 
-        assert probe.deferral is PauseReason.NONE
+        assert result.deferral is PauseReason.NONE
         assert sonarr.execute_calls == []
 
     def test_unreadable_command_list_before_the_post_waits(self) -> None:
@@ -341,9 +341,9 @@ class TestStepInGuard:
 
         sonarr.on_languages = fail_the_next_read
 
-        probe = strat.import_completed(pending_import(), "/d", AttemptKind.ORDINARY)
+        result = strat.import_completed(pending_import(), "/d", AttemptKind.ORDINARY)
 
-        assert probe.deferral is PauseReason.NONE
+        assert result.deferral is PauseReason.NONE
         assert sonarr.execute_calls == []
 
 
@@ -359,10 +359,10 @@ class TestEpisodeReads:
 
         sonarr.on_scan = import_our_file
 
-        probe = strat.import_completed(pending_import(), "/d", AttemptKind.ORDINARY)
+        result = strat.import_completed(pending_import(), "/d", AttemptKind.ORDINARY)
 
-        assert probe.all_done is True
-        assert probe.imported_count == 1
+        assert result.all_done is True
+        assert result.imported_count == 1
         assert sonarr.execute_calls == []
 
     def test_unreadable_re_seed_waits(self) -> None:
@@ -373,10 +373,10 @@ class TestEpisodeReads:
 
         sonarr.on_episodes = fail_the_next_read
 
-        probe = strat.import_completed(pending_import(), "/d", AttemptKind.ORDINARY)
+        result = strat.import_completed(pending_import(), "/d", AttemptKind.ORDINARY)
 
-        assert probe.all_done is False
-        assert probe.deferral is PauseReason.NONE
+        assert result.all_done is False
+        assert result.deferral is PauseReason.NONE
         assert sonarr.execute_calls == []
 
     def test_stale_cache_never_reads_as_imported(self) -> None:
@@ -386,10 +386,10 @@ class TestEpisodeReads:
 
         imported = strat.import_completed(pending, "/d", AttemptKind.ORDINARY)
         sonarr.episodes_return = None
-        probe = strat.import_completed(pending, "/d", AttemptKind.ORDINARY)
+        result = strat.import_completed(pending, "/d", AttemptKind.ORDINARY)
 
         assert imported.all_done is True
-        assert probe.all_done is False
+        assert result.all_done is False
         assert sonarr.execute_calls == []
 
     def test_failed_read_keeps_the_last_read_counts(self) -> None:
@@ -399,9 +399,9 @@ class TestEpisodeReads:
 
         strat.import_completed(pending, "/d", AttemptKind.ORDINARY)
         sonarr.episodes_return = None
-        probe = strat.import_completed(pending, "/d", AttemptKind.ORDINARY)
+        result = strat.import_completed(pending, "/d", AttemptKind.ORDINARY)
 
-        assert (probe.imported_count, probe.target_count) == (1, 2)
+        assert (result.imported_count, result.target_count) == (1, 2)
 
     def test_import_progress_is_indeterminate_on_a_failed_read(self) -> None:
         strat, sonarr = _strategy([])

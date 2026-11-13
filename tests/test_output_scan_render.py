@@ -41,11 +41,11 @@ from pearlarr.output.console_text import KeyValue, SectionRule, StyledLine, Titl
 from pearlarr.output.events import TitleState
 from pearlarr.output.scan_lines import (
     accent_style,
+    arr_run_summary_lines,
     cap_reached_lines,
     grab_action_lines,
     item_started_lines,
     ledger_row_lines,
-    run_summary_lines,
     scan_started_lines,
     title_detail_lines,
     title_header_lines,
@@ -238,7 +238,7 @@ class TestBuilders:
             (SUMMARY_MINIMAL, SUMMARY_MINIMAL_LINES),
             (SUMMARY_WAIT_OFF, SUMMARY_WAIT_OFF_LINES),
         ):
-            assert _as_lines(run_summary_lines(event)) == expected
+            assert _as_lines(arr_run_summary_lines(event)) == expected
 
     def test_accent_style_covers_every_accent(self) -> None:
         assert {accent: accent_style(accent) for accent in Accent} == {

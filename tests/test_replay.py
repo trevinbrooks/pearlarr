@@ -30,7 +30,7 @@ from pearlarr.output import (
     Event,
     ItemStarted,
     JsonRenderer,
-    RunStarted,
+    PearlarrStarted,
     ScanStarted,
     ScopeId,
     ScopeKind,
@@ -90,7 +90,7 @@ def test_golden_round_trip_reproduces_the_text_grammar(
     except ValueError as exc:
         trace = CapturedTrace.from_exception(exc)
     events: list[Event] = [
-        RunStarted(version="v1.0.0", data_dir="/data"),
+        PearlarrStarted(version="v1.0.0", data_dir="/data"),
         Diagnostic(severity=Severity.ERROR, message="boom", origin="anilist", trace=trace),
         ScanStarted(arr=Arr.SONARR, total=182),
         ItemStarted(arr=Arr.SONARR, index=3, total=182, title="Frieren"),

@@ -275,7 +275,7 @@ class SonarrEpisodes:
         one under `ignore_unmonitored`.
         """
 
-        run = self._services
+        services = self._services
         series_ids: list[int] = []
         seen: set[int] = set()
         for item in items:
@@ -283,10 +283,10 @@ class SonarrEpisodes:
                 continue
             if not item.monitored and self._config.sonarr.ignore_unmonitored:
                 continue
-            al_ids = run.title_mappings(ExternalIds.of_series(item), log_ignored=False)
+            al_ids = services.title_mappings(ExternalIds.of_series(item), log_ignored=False)
             if not al_ids:
                 continue
-            if not any(run.title_needs_check(aid) for aid in al_ids):
+            if not any(services.title_needs_check(aid) for aid in al_ids):
                 continue
             seen.add(item.id)
             series_ids.append(item.id)

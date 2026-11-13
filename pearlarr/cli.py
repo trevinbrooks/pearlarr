@@ -41,7 +41,6 @@ from .output import (
     ConfigMigrated,
     ConfigUpToDate,
     ConfigValidated,
-    CycleStarted,
     EffectiveConfigShown,
     FileLogRenderer,
     JsonRenderer,
@@ -51,6 +50,7 @@ from .output import (
     PathsShown,
     PlainRenderer,
     Renderer,
+    ScheduledRunStarted,
     StarterConfigWritten,
     emit_to_hub,
     hub_error,
@@ -491,7 +491,7 @@ def run_scheduled(
     # before the logger, see _install_output_hub.
     hub, file_sink = _install_output_hub(paths)
 
-    for cycle in itertools.count(1):
+    for run_number in itertools.count(1):
         # The config's console format is re-resolved each cycle (like the
         # cadence below), so a config edit takes effect without a restart.
         console_format = _run_format(paths.config_file)
@@ -499,7 +499,7 @@ def run_scheduled(
         # The config level lands mid-cycle via apply_log_level -> hub.set_level.
         hub.begin_run(console_format=console_format, level=logger.level)
         # Post-begin_run, so the boundary lands in the fresh cycle's file.
-        emit_to_hub(CycleStarted(number=cycle))
+        emit_to_hub(ScheduledRunStarted(number=run_number))
 
         # Re-read the cadence each cycle so a config edit takes effect without a
         # restart.
