@@ -15,9 +15,9 @@ from collections.abc import Iterable
 from . import coverage as _coverage
 from .anibridge import TvdbMappings, season_holds
 from .anime_filter import IdField, build_id_filters, collect_anime_items
-from .arr_models import ArrReleases, SonarrEpisode, SonarrItem
+from .arr_models import ArrFiles, SonarrEpisode, SonarrItem
 from .config import AppConfig
-from .mappings import ExternalIds, MappingEntry, MappingMode, MappingSource
+from .mappings import ExternalIds, MappingMode, MappingSource, TitleMapping
 from .output import Accent, Severity, StyledValue, hub_note
 from .progress import ProgressSink
 from .releases import season_episode_key
@@ -379,7 +379,7 @@ class SonarrEpisodes:
         self,
         sonarr_series_id: int,
         al_id: int,
-        mapping: MappingEntry,
+        mapping: TitleMapping,
     ) -> list[SonarrEpisode] | None:
         """Get a list of relevant episodes for an AniList mapping.
 
@@ -494,7 +494,7 @@ class SonarrEpisodes:
         self,
         final_ep_list: list[SonarrEpisode],
         al_id: int,
-        mapping: MappingEntry,
+        mapping: TitleMapping,
     ) -> list[SonarrEpisode]:
         """Slice an anime-id episode list down by its TVDB offset / AniList count.
 
@@ -523,7 +523,7 @@ class SonarrEpisodes:
     def get_sonarr_releases(
         self,
         ep_list: list[SonarrEpisode],
-    ) -> ArrReleases:
+    ) -> ArrFiles:
         """Fold the episodes' existing files into an `ArrReleases`, reporting missing episodes."""
 
         missing = _coverage.episodes_from_ep_list(ep_list, missing_only=True)
@@ -539,7 +539,7 @@ class SonarrEpisodes:
 
         # keep_untagged=False: untagged episode files ride the episode list
         # into the planner's identity pass instead (pinned).
-        return ArrReleases.from_files(
+        return ArrFiles.from_files(
             [f for ep in ep_list if ep.episode_file_id != 0 and (f := ep.episode_file) is not None],
             keep_untagged=False,
         )

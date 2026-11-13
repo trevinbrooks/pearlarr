@@ -23,7 +23,7 @@ from pearlarr.anilist_gateway import AniListGateway
 from pearlarr.arr_categories import _CATEGORY_FIELDS, ArrCategoryResolver, CategorySources, _read_clients
 from pearlarr.arr_http import ArrHttp
 from pearlarr.arr_models import (
-    ArrReleases,
+    ArrFiles,
     DownloadClientRecord,
     ManualImportCandidate,
     MatchedEpisode,
@@ -34,8 +34,8 @@ from pearlarr.arr_models import (
 from pearlarr.cache import (
     _ENTRY_COLUMNS,
     AbstractCacheStore,
-    CachedEntry,
-    CacheRecord,
+    CachedTitle,
+    CachedTitleUpdate,
     CacheStats,
     HistoryCheckpoint,
     selection_digest_key,
@@ -62,7 +62,7 @@ from pearlarr.pending_import import (
     OwnGroup,
     PendingImport,
 )
-from pearlarr.pending_records import PendingRecords
+from pearlarr.pending_records import PendingImportStore
 from pearlarr.placement_types import (
     EMPTY_LISTING,
     NO_SEEDED,
@@ -80,7 +80,7 @@ from pearlarr.placer import assign_episode_ids
 from pearlarr.planner import DownloadPlanner, PlanResult, PrivateOnlySkips
 from pearlarr.progress import ProgressSink
 from pearlarr.radarr_client import AbstractRadarrClient
-from pearlarr.releases import EpisodeKey, EpisodeRecord, OrderOnlyKey, SeadexDict, SeadexReleaseGroupItem, SeadexUrlItem
+from pearlarr.releases import EpisodeKey, EpisodeRecord, GroupReleases, OrderOnlyKey, Release, SeadexDict
 from pearlarr.reporter import RunReporter
 from pearlarr.run_services import RunDeps, RunServices
 from pearlarr.seadex_filter import SeadexReleaseFilter
@@ -307,7 +307,7 @@ class FakeCacheStore(AbstractCacheStore):
         self,
         arr: Arr,
         al_id: int,
-        cache_details: CacheRecord,
+        cache_details: CachedTitleUpdate,
     ) -> None:
         """Partial-merge the supplied columns. An empty record adds no row."""
 
@@ -329,13 +329,13 @@ class FakeCacheStore(AbstractCacheStore):
             entry.pop("updated_at", None)
 
     @override
-    def get_entry(self, arr: Arr, al_id: int) -> CachedEntry | None:
+    def get_entry(self, arr: Arr, al_id: int) -> CachedTitle | None:
         """The entry as a `CachedEntry`, or None."""
 
         entry = self._entries.get((str(arr), al_id))
         if entry is None:
             return None
-        return CachedEntry(
+        return CachedTitle(
             updated_at=entry.get("updated_at"),
             name=entry.get("name"),
             url=entry.get("url"),
@@ -528,7 +528,7 @@ def make_config(**overrides: Any) -> AppConfig:
     return AppConfig.model_validate(nested)
 
 
-def cached_as_done(row: CachedEntry | None, sd_entry: EntryRecord) -> bool:
+def cached_as_done(row: CachedTitle | None, sd_entry: EntryRecord) -> bool:
     """Whether a cache row has its title cached as done under SeaDex's current update time."""
 
     return row is not None and row.cached_under(sd_entry.updated_at)
@@ -818,7 +818,7 @@ class FakeTorrents:
     def add(
         self,
         *,
-        item: SeadexUrlItem,
+        item: Release,
         preview: bool,
     ) -> AddResult:
         """Return the scripted `AddResult` for the url item's infohash, or raise its scripted error."""
@@ -937,7 +937,7 @@ def make_grab_pipeline(**overrides: Any) -> GrabPipeline:
     defaults.update(overrides)
     if "_records" not in defaults:
         # The record seam binds the FINAL store + ctx, exactly as the real ctor + begin_run do.
-        records = PendingRecords(defaults["cache_store"])
+        records = PendingImportStore(defaults["cache_store"])
         records.begin_run(defaults["_ctx"])
         defaults["_records"] = records
     return make_bare_instance(GrabPipeline, **defaults)
@@ -977,7 +977,7 @@ def make_import_wait_manager(**overrides: Any) -> ImportWaitManager:
         msg = f"unknown make_import_wait_manager overrides: {sorted(overrides)}"
         raise TypeError(msg)
 
-    records = PendingRecords(cache_store)
+    records = PendingImportStore(cache_store)
     records.begin_run(ctx)
     probes = make_bare_instance(ImportProbes, _qbit=qbit, _logger=logger, strategy=None)
     cleanup = make_bare_instance(
@@ -1031,10 +1031,10 @@ def url_item(
     is_fallback: bool = False,
     upgrade: bool = False,
     episodes: list[EpisodeRecord] | None = None,
-) -> SeadexUrlItem:
+) -> Release:
     """One SeaDex URL record, matching `get_seadex_dict`'s `url_item` shape."""
 
-    return SeadexUrlItem(
+    return Release(
         url=url,
         files=files or [],
         size=size or [],
@@ -1056,15 +1056,15 @@ def plan_result(seadex_dict: SeadexDict) -> PlanResult:
 
 
 def rg_group(
-    urls: dict[str, SeadexUrlItem],
+    urls: dict[str, Release],
     *,
     tags: frozenset[Tag] | None = None,
     all_episodes: list[EpisodeRecord] | None = None,
-) -> SeadexReleaseGroupItem:
+) -> GroupReleases:
     """`all_episodes` is tri-state: `None` skips parsing, `[]` is unparsed, populated is the coverage frozenset."""
 
-    return SeadexReleaseGroupItem(
-        urls=urls,
+    return GroupReleases(
+        releases=urls,
         tags=tags or frozenset(),
         all_episodes=all_episodes,
     )
@@ -1105,10 +1105,10 @@ def sonarr_ep(
     return SonarrEpisode.model_validate(raw)
 
 
-def arr_releases(ep_list: Iterable[SonarrEpisode]) -> ArrReleases:
+def arr_releases(ep_list: Iterable[SonarrEpisode]) -> ArrFiles:
     """The episodes' files folded per tagged group, as `get_sonarr_releases` reports them."""
 
-    return ArrReleases.from_files(
+    return ArrFiles.from_files(
         [f for ep in ep_list if ep.episode_file_id != 0 and (f := ep.episode_file) is not None], keep_untagged=False
     )
 

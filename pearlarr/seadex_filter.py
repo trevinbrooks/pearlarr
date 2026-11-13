@@ -8,14 +8,14 @@ from typing import TYPE_CHECKING
 from rich.console import Console
 from seadex import EntryRecord, TorrentRecord
 
-from .arr_models import ArrReleases, SonarrEpisode
+from .arr_models import ArrFiles, SonarrEpisode
 from .config import PRIVATE_TRACKERS, PrivateReleaseAction
 from .console_caps import console_of
 from .leg_state import RunContext
 from .output import Accent, StyledValue, hub_warn
 from .output.console_text import indent_string
 from .planner import PlanResult
-from .releases import SeadexDict, SeadexReleaseGroupItem, SeadexUrlItem, carries_ignored_tag, ignore_tag_set
+from .releases import GroupReleases, Release, SeadexDict, carries_ignored_tag, ignore_tag_set
 
 if TYPE_CHECKING:
     # Annotation-only: run_services imports this module at runtime (cycle).
@@ -108,9 +108,9 @@ class SeadexReleaseFilter:
         seadex_release_groups: SeadexDict = {}
         for t in candidates:
             if t.release_group not in seadex_release_groups:
-                seadex_release_groups[t.release_group] = SeadexReleaseGroupItem(urls={}, tags=t.tags)
+                seadex_release_groups[t.release_group] = GroupReleases(releases={}, tags=t.tags)
 
-            seadex_release_groups[t.release_group].urls[t.url] = SeadexUrlItem(
+            seadex_release_groups[t.release_group].releases[t.url] = Release(
                 url=t.url,
                 files=[f.name for f in t.files],
                 size=_file_sizes(t),
@@ -197,13 +197,13 @@ class SeadexReleaseFilter:
         """
 
         for release_group_item in seadex_release_groups.values():
-            urls = release_group_item.urls
+            urls = release_group_item.releases
             # The gate is a public URL's existence, not the cover's truthiness:
             # an empty-fileset public url covers (cross-seed) while folding nothing.
             if not any(u.is_public for u in urls.values()):
                 continue
             group_public_cover = file_size_cover(u.size for u in urls.values() if u.is_public)
-            release_group_item.urls = {
+            release_group_item.releases = {
                 url: u for url, u in urls.items() if u.is_public or not Counter(u.size) <= group_public_cover
             }
 
@@ -257,7 +257,7 @@ class SeadexReleaseFilter:
         for s_i, s in enumerate(all_srgs):
             # Flag the non-preferred public stand-ins (private_releases: fallback)
             # so the pick is informed. A picked private release is refused later.
-            fallback_tag = " (public fallback)" if any(u.is_fallback for u in seadex_dict[s].urls.values()) else ""
+            fallback_tag = " (public fallback)" if any(u.is_fallback for u in seadex_dict[s].releases.values()) else ""
             say(indent_string(f"[{s_i}]: {s}{fallback_tag}"))
 
         raw = input(
@@ -291,7 +291,7 @@ class SeadexReleaseFilter:
     def filter_downloads(
         self,
         seadex_dict: SeadexDict,
-        arr_releases: ArrReleases,
+        arr_releases: ArrFiles,
         ep_list: list[SonarrEpisode] | None = None,
     ) -> PlanResult:
         """Flip the switch on whether we're downloading each torrent or not.

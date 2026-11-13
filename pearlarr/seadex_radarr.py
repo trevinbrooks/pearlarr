@@ -6,11 +6,11 @@ from datetime import UTC, datetime, timedelta
 from typing import override
 
 from .arr_activity import HISTORY_MAX_LOOKBACK_DAYS, IMPORT_EVENTS, format_history_date
-from .arr_models import ArrReleases, HistoryRecord, RadarrItem
+from .arr_models import ArrFiles, HistoryRecord, RadarrItem
 from .config import Arr
 from .grab_pipeline import NO_SEEDS, GrabRequest
 from .grab_placement import EntryFacts, PendingSeed, build_unscoped_seed
-from .mappings import ExternalIds, MappingEntry
+from .mappings import ExternalIds, TitleMapping
 from .output import hub_warn
 from .output.console_text import pluralize
 from .pending_import import GuardFacts, PendingImport, added_at_of
@@ -94,7 +94,7 @@ class RadarrSync(ArrSync[RadarrItem]):
         self,
         item: RadarrItem,
         log_ignored: bool = True,
-    ) -> dict[int, MappingEntry]:
+    ) -> dict[int, TitleMapping]:
         """Resolve AniList ids for a Radarr movie (by TMDB / IMDb id)."""
 
         return self._services.get_anilist_ids(
@@ -132,7 +132,7 @@ class RadarrSync(ArrSync[RadarrItem]):
         self,
         item: RadarrItem,
         al_id: int,
-        mapping: MappingEntry,
+        mapping: TitleMapping,
     ) -> None:
         """Process one AniList id for a Radarr movie."""
 
@@ -148,7 +148,7 @@ class RadarrSync(ArrSync[RadarrItem]):
             return
 
         title = run.resolve_title(al_id)
-        run.log_al_title(title=title.display, sd_entry=sd_entry)
+        run.log_al_title(title=title.name, sd_entry=sd_entry)
 
         cache_details = run.new_cache_details(title, sd_entry)
         cache_details["url"] = sd_url
@@ -194,7 +194,7 @@ class RadarrSync(ArrSync[RadarrItem]):
             flagged = flagged_urls(seadex_dict)
             stored = run.records.stored_records(f.qbit_hash for f in flagged)
             facts = EntryFacts(
-                al_id=al_id, series_id=0, title=title.display, coverage=None, url=sd_url, guards=GuardFacts()
+                al_id=al_id, series_id=0, title=title.name, coverage=None, url=sd_url, guards=GuardFacts()
             )
             pending_seeds = {f.qbit_hash: build_unscoped_seed(f, facts, stored.get(f.qbit_hash)) for f in flagged}
 
@@ -202,7 +202,7 @@ class RadarrSync(ArrSync[RadarrItem]):
             GrabRequest(
                 al_id=al_id,
                 arr_title=item.title,
-                entry_title=title.display,
+                entry_title=title.name,
                 entry=sd_entry,
                 seadex_dict=seadex_dict,
                 cache_details=cache_details,
@@ -301,11 +301,11 @@ class RadarrSync(ArrSync[RadarrItem]):
     def get_radarr_releases(
         self,
         radarr_movie_id: int,
-    ) -> ArrReleases:
+    ) -> ArrFiles:
         """Fold the movie's existing files into an `ArrReleases`."""
 
         # A movie can carry several files (an upgrade or a multi-edition), so every size is kept.
-        return ArrReleases.from_files(
+        return ArrFiles.from_files(
             self.radarr.movie_files(radarr_movie_id),
             keep_untagged=True,
         )

@@ -16,7 +16,7 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any
 
-from pearlarr.cache import AbstractCacheStore, CacheRecord, CacheStore, HistoryCheckpoint
+from pearlarr.cache import AbstractCacheStore, CachedTitleUpdate, CacheStore, HistoryCheckpoint
 from pearlarr.config import Arr
 from pearlarr.pending_import import GuardFacts
 from pearlarr.tvdb_orders import OrderRow, StoredOrders
@@ -49,7 +49,7 @@ def _apply_ops(store: AbstractCacheStore) -> None:
     store.update_cache(
         Arr.SONARR,
         7,
-        CacheRecord(
+        CachedTitleUpdate(
             name="Show",
             url="https://releases.moe/7",
             coverage="S1",
@@ -60,15 +60,15 @@ def _apply_ops(store: AbstractCacheStore) -> None:
     )
     # Partial re-update of the SAME entry (omits name/url/updated_at/marker): pins the
     # partial merge (absent columns untouched - incl. the fallback marker, still True).
-    store.update_cache(Arr.SONARR, 7, CacheRecord(coverage="S2"))
+    store.update_cache(Arr.SONARR, 7, CachedTitleUpdate(coverage="S2"))
     # A cross-arr row. No fallback_satisfied key, pinning the default-False parity.
-    store.update_cache(Arr.RADARR, 99, CacheRecord(name="Movie"))
+    store.update_cache(Arr.RADARR, 99, CachedTitleUpdate(name="Movie"))
     # A row whose stamp is cleared loses its timestamp and nothing else. Clearing an id with no row adds none, and
     # neither does an empty record.
-    store.update_cache(Arr.SONARR, 8, CacheRecord(name="Cleared", updated_at=_ENTRY_STAMP))
+    store.update_cache(Arr.SONARR, 8, CachedTitleUpdate(name="Cleared", updated_at=_ENTRY_STAMP))
     store.clear_entry_stamp(Arr.SONARR, 8)
     store.clear_entry_stamp(Arr.SONARR, 4242)
-    store.update_cache(Arr.SONARR, 4242, CacheRecord())
+    store.update_cache(Arr.SONARR, 4242, CachedTitleUpdate())
 
     store.put_anilist_meta(7, {"fetched_at": _NEW, "data": {"title": "Show"}})
     store.put_anilist_meta(8, {"fetched_at": _OLD, "data": {"title": "Old"}})

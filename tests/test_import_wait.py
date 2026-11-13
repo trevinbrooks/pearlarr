@@ -461,7 +461,7 @@ class _RecordingStrategy(FakeStrategy):
         return LEAVE_PROBE
 
     @override
-    def close_tracked(self, pending: PendingImport) -> EffectStatus:
+    def remove_from_queue(self, pending: PendingImport) -> EffectStatus:
         self.close_calls.append(pending)
         if self._close_sequence is not None:
             idx = min(self._close_index, len(self._close_sequence) - 1)
@@ -535,7 +535,7 @@ def make_orchestration_manager(
         reporter=reporter or _RecordingReporter(),
         clock=clock if clock is not None else FakeClock(),
         strategy=strategy,
-        ctx=RunContext(arr=Arr.SONARR, pending_imports={p.infohash: p for p in pending or []}),
+        ctx=RunContext(arr=Arr.SONARR, grabbed_this_run={p.infohash: p for p in pending or []}),
         **config_overrides,
     )
     for record in store_records or []:
@@ -2690,7 +2690,7 @@ class TestPendingRecordWrites:
         assert healed is not record
         assert dict(healed.file_episode_map) == {"show - 01 [1080p].mkv": (101,), "show - 02 [1080p].mkv": (102,)}
         assert mgr._records.rows()["h"]["file_episode_map"] == expected
-        assert mgr._ctx.pending_imports[record.infohash] is healed
+        assert mgr._ctx.grabbed_this_run[record.infohash] is healed
 
     def test_absorb_probe_adding_nothing_is_a_no_op(self) -> None:
         # Placements the record already holds: an exploding store proves no write fires.
@@ -2721,7 +2721,7 @@ class TestPendingRecordWrites:
         mgr._records.drop(drop.infohash)
 
         assert set(mgr._records.rows()) == {"keep"}
-        assert mgr._ctx.pending_imports == {keep.infohash: keep}
+        assert mgr._ctx.grabbed_this_run == {keep.infohash: keep}
 
     def test_save_refreshes_the_run_list_copy(self) -> None:
         # The write twin: a saved record replaces its stale `pending_imports`
@@ -2737,7 +2737,7 @@ class TestPendingRecordWrites:
         mgr._records.save(replace(record, awaiting_cleanup=True))
 
         assert mgr._records.rows()["h"].get("awaiting_cleanup") is True
-        assert [p.awaiting_cleanup for p in mgr._ctx.pending_imports.values()] == [True]
+        assert [p.awaiting_cleanup for p in mgr._ctx.grabbed_this_run.values()] == [True]
 
     def test_save_never_inserts_an_absent_run_list_key(self) -> None:
         # A dict upsert here would silently convert a reacquire or demote into a
@@ -2748,7 +2748,7 @@ class TestPendingRecordWrites:
         mgr._records.save(record)
 
         assert set(mgr._records.rows()) == {"h"}
-        assert mgr._ctx.pending_imports == {}
+        assert mgr._ctx.grabbed_this_run == {}
 
     def test_save_writes_no_guard_row(self) -> None:
         # A claim's guard row is its grab's to write: a record saved from a hydrated copy never re-puts one.
@@ -3254,9 +3254,9 @@ class TestRetireEffectOrder:
 
         class _OrderStrategy(_RecordingStrategy):
             @override
-            def close_tracked(self, pending: PendingImport) -> EffectStatus:
+            def remove_from_queue(self, pending: PendingImport) -> EffectStatus:
                 order.append("close")
-                return super().close_tracked(pending)
+                return super().remove_from_queue(pending)
 
         qbit = _OrderQbit({"h": [FakeTorrent(is_complete=True, content_path="/d")]})
         strategy = _OrderStrategy(progress=ImportProgress(1, 1, determinate=True))

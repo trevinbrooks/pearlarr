@@ -29,7 +29,7 @@ from pearlarr.arr_models import HistoryRecord
 from pearlarr.boot_flow import BootFlow
 from pearlarr.cache import HistoryCheckpoint
 from pearlarr.config import AppConfig, Arr
-from pearlarr.mappings import MappingEntry
+from pearlarr.mappings import TitleMapping
 from pearlarr.run_loop import RunLoop
 
 from .builders import FakeCacheStore, make_config, make_logger
@@ -319,7 +319,7 @@ class TestRunLoopActivityWiring:
     def _strategy(*, history: list[HistoryRecord] | None = None) -> FakeStrategy:
         return FakeStrategy(
             items=[FakeArrItem(item_id=3, title="A")],
-            anilist_ids={11: MappingEntry(anilist_id=11)},
+            anilist_ids={11: TitleMapping(anilist_id=11)},
             history=history,
         )
 

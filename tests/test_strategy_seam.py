@@ -27,7 +27,7 @@ from pearlarr.arr_categories import ArrCategoryResolver
 from pearlarr.arr_http import DeleteOutcome
 from pearlarr.arr_models import (
     AlternateTitle,
-    ArrReleases,
+    ArrFiles,
     CommandResource,
     HistoryPage,
     HistoryRecord,
@@ -42,19 +42,19 @@ from pearlarr.arr_models import (
     SonarrEpisode,
     SonarrItem,
 )
-from pearlarr.cache import CacheRecord
+from pearlarr.cache import CachedTitleUpdate
 from pearlarr.config import Arr
 from pearlarr.episode_state import EpisodeFileStatus, GroupVotes, RecordSnapshot, trusted_groups
 from pearlarr.file_paths import normalize_basename
 from pearlarr.grab_pipeline import NO_SEEDS, GrabRequest
 from pearlarr.grab_placement import EntryPlacements, SeedFile, place_release
 from pearlarr.import_quality import resolve_language_objects
-from pearlarr.leg_state import EntryTitle, RunContext
-from pearlarr.mappings import ExternalIds, MappingEntry, MappingSource, ResolvedMappings
+from pearlarr.leg_state import RunContext, Title
+from pearlarr.mappings import ExternalIds, MappingSource, ResolvedMappings, TitleMapping
 from pearlarr.output import Severity
 from pearlarr.output.recording import RecordingHub
 from pearlarr.pending_import import EntryNames, FileEpisodeMap, GuardFacts, OwnedEpisode, OwnGroup, PendingImport
-from pearlarr.pending_records import PendingRecords
+from pearlarr.pending_records import PendingImportStore
 from pearlarr.placement_types import ListingsRead, TorrentListing, episode_index
 from pearlarr.planner import PlanResult
 from pearlarr.probe_verdicts import DownloadHistoryVerdict, HistoryImport, placements_from_history
@@ -170,8 +170,8 @@ class _FakeRunServices(RunServices):
     def __init__(
         self,
         *,
-        anilist_ids: dict[int, MappingEntry] | None = None,
-        ignored: dict[int, MappingEntry] | None = None,
+        anilist_ids: dict[int, TitleMapping] | None = None,
+        ignored: dict[int, TitleMapping] | None = None,
         prologue_entry: EntryRecord | None = None,
         anilist_title: str = "Title",
         cached_skip: bool = False,
@@ -185,7 +185,7 @@ class _FakeRunServices(RunServices):
     ) -> None:
         # The record seam the strategies read stored records through, bound as a run would bind it.
         self.cache_store = cache_store if cache_store is not None else FakeCacheStore()
-        self._records = PendingRecords(self.cache_store)
+        self._records = PendingImportStore(self.cache_store)
         self._records.begin_run(RunContext(arr=arr, import_wait_mode=import_wait_mode))
         self._anilist_ids = anilist_ids or {}
         self._ignored = ignored or {}
@@ -204,16 +204,16 @@ class _FakeRunServices(RunServices):
         self.cached_skip_coverages: list[Callable[[], str]] = []
         self.get_seadex_dict_calls: list[EntryRecord] = []
         self.interactive_calls: list[SeadexDict] = []
-        self.filter_downloads_calls: list[tuple[SeadexDict, ArrReleases]] = []
+        self.filter_downloads_calls: list[tuple[SeadexDict, ArrFiles]] = []
         self.grab_requests: list[GrabRequest] = []
-        self.no_releases_calls: list[tuple[int, CacheRecord]] = []
+        self.no_releases_calls: list[tuple[int, CachedTitleUpdate]] = []
         self.no_releases_unread: list[int] = []
         self.invalid_selection_skips = 0
         self.pauses_owed = 0
 
     @property
     @override
-    def records(self) -> PendingRecords:
+    def records(self) -> PendingImportStore:
         return self._records
 
     @override
@@ -222,7 +222,7 @@ class _FakeRunServices(RunServices):
         return self._needs_scan
 
     @override
-    def get_anilist_ids(self, ids: ExternalIds, log_ignored: bool = True) -> dict[int, MappingEntry]:
+    def get_anilist_ids(self, ids: ExternalIds, log_ignored: bool = True) -> dict[int, TitleMapping]:
         self.get_anilist_ids_calls.append(GetAniListIdsCall(ids, log_ignored))
         return self._anilist_ids
 
@@ -248,11 +248,11 @@ class _FakeRunServices(RunServices):
         return self._cached_skip
 
     @override
-    def resolve_title(self, al_id: int) -> EntryTitle:
-        return EntryTitle(al_id=al_id, display=self._anilist_title, names=EntryNames(anilist=(self._anilist_title,)))
+    def resolve_title(self, al_id: int) -> Title:
+        return Title(al_id=al_id, name=self._anilist_title, names=EntryNames(anilist=(self._anilist_title,)))
 
     @override
-    def new_cache_details(self, title: EntryTitle, sd_entry: EntryRecord) -> CacheRecord:
+    def new_cache_details(self, title: Title, sd_entry: EntryRecord) -> CachedTitleUpdate:
         # A pure builder over its arguments (no hub state), so the real one serves the fake.
         return super().new_cache_details(title, sd_entry)
 
@@ -275,7 +275,7 @@ class _FakeRunServices(RunServices):
     def filter_seadex_downloads(
         self,
         seadex_dict: SeadexDict,
-        arr_releases: ArrReleases,
+        arr_releases: ArrFiles,
         ep_list: list[SonarrEpisode] | None = None,
     ) -> PlanResult:
         del ep_list
@@ -290,7 +290,7 @@ class _FakeRunServices(RunServices):
         return self._import_wait_mode
 
     @override
-    def no_releases_skip(self, al_id: int, cache_details: CacheRecord, *, metadata_unread: bool = False) -> None:
+    def no_releases_skip(self, al_id: int, cache_details: CachedTitleUpdate, *, metadata_unread: bool = False) -> None:
         self.no_releases_calls.append((al_id, cache_details))
         if metadata_unread:
             self.no_releases_unread.append(al_id)
@@ -367,19 +367,21 @@ class _ScriptedParse:
 
     def parsed_files(self, seadex_dict: SeadexDict, *, series_fp: str) -> dict[str, tuple[SeedFile, ...]]:
         del series_fp
-        return {url: self._files.get(url, ()) for rg_item in seadex_dict.values() for url in rg_item.urls}
+        return {
+            url: self._files.get(url, ()) for group_releases in seadex_dict.values() for url in group_releases.releases
+        }
 
 
 class TestItemAnilistIdsDelegates:
     """item_anilist_ids resolves through the held services, with arr-specific ids."""
 
     def test_radarr_uses_tmdb_and_imdb(self) -> None:
-        run = _FakeRunServices(anilist_ids={7: MappingEntry(anilist_id=7)})
+        run = _FakeRunServices(anilist_ids={7: TitleMapping(anilist_id=7)})
         strat = make_bare_instance(RadarrSync, _services=run)
 
         result = strat.item_anilist_ids(_Item(tmdbId=42, imdbId="tt7"), log_ignored=False)
 
-        assert result == {7: MappingEntry(anilist_id=7)}
+        assert result == {7: TitleMapping(anilist_id=7)}
         assert run.get_anilist_ids_calls == [GetAniListIdsCall(ExternalIds(tmdb=42, imdb="tt7"), log_ignored=False)]
 
     def test_sonarr_uses_tvdb_and_imdb(self) -> None:
@@ -480,14 +482,14 @@ class TestProcessAlIdThreadsServices:
         run = _FakeRunServices()
         strat = make_bare_instance(RadarrSync, _services=run)
 
-        strat.process_al_id(_Item(id=1, title="Title"), 5, MappingEntry(anilist_id=5))
+        strat.process_al_id(_Item(id=1, title="Title"), 5, TitleMapping(anilist_id=5))
         assert run.al_id_prologue_calls == [5]
 
     def test_sonarr_no_seadex_entry_stops_at_the_prologue(self) -> None:
         run = _FakeRunServices()
         strat = make_bare_instance(SonarrSync, _services=run)
 
-        strat.process_al_id(_Item(id=1, title="Title"), 5, MappingEntry(anilist_id=5))
+        strat.process_al_id(_Item(id=1, title="Title"), 5, TitleMapping(anilist_id=5))
         assert run.al_id_prologue_calls == [5]
 
     def test_sonarr_no_episodes_resolved_skips_explicitly(self) -> None:
@@ -505,7 +507,7 @@ class TestProcessAlIdThreadsServices:
             logger=make_logger(),
         )
 
-        strat.process_al_id(_Item(id=1, title="Title"), 5, MappingEntry(anilist_id=5))
+        strat.process_al_id(_Item(id=1, title="Title"), 5, TitleMapping(anilist_id=5))
         assert run.no_episodes_titles == ["Title"]
         assert run.log_al_title_calls == []
         assert run.pauses_owed == 1
@@ -532,7 +534,7 @@ class TestProcessAlIdThreadsServices:
         strat.process_al_id(
             _Item(id=1, title="Title"),
             5,
-            MappingEntry(anilist_id=5, tvdb_mappings={}, source=MappingSource.ANIBRIDGE),
+            TitleMapping(anilist_id=5, tvdb_mappings={}, source=MappingSource.ANIBRIDGE),
         )
         assert run.no_episodes_titles == ["Title"]
         assert run.log_al_title_calls == []
@@ -564,7 +566,7 @@ class TestProcessAlIdThreadsServices:
             logger=make_logger(),
         )
 
-        strat.process_al_id(_Item(id=1, title="Title", tvdbId=10, imdbId=None), 5, MappingEntry(anilist_id=5))
+        strat.process_al_id(_Item(id=1, title="Title", tvdbId=10, imdbId=None), 5, TitleMapping(anilist_id=5))
         assert run.invalid_selection_skips == 1
         assert run.grab_requests == []
         assert run.no_releases_calls == []
@@ -1396,7 +1398,7 @@ class TestCloseTracked:
             ],
         )
 
-        assert strat.close_tracked(pending) is EffectStatus.DONE
+        assert strat.remove_from_queue(pending) is EffectStatus.DONE
         assert sonarr.queue_delete_calls == [11]
 
     def test_other_downloads_rows_are_not_touched(self) -> None:
@@ -1406,7 +1408,7 @@ class TestCloseTracked:
             queue=[queue_record("FFFF", "importPending", queue_id=9)],
         )
 
-        assert strat.close_tracked(pending) is EffectStatus.SKIPPED
+        assert strat.remove_from_queue(pending) is EffectStatus.SKIPPED
         assert sonarr.queue_delete_calls == []
 
     def test_unknown_series_rows_are_left_for_sonarr(self) -> None:
@@ -1419,7 +1421,7 @@ class TestCloseTracked:
             queue=[queue_record("ABC123", "importPending", status="warning", queue_id=11, series_id=0)],
         )
 
-        assert strat.close_tracked(pending) is EffectStatus.SKIPPED
+        assert strat.remove_from_queue(pending) is EffectStatus.SKIPPED
         assert sonarr.queue_delete_calls == []
 
     def test_already_clear_queue_is_a_no_op(self) -> None:
@@ -1427,7 +1429,7 @@ class TestCloseTracked:
         pending = pending_import(infohash="abc123")
         strat, sonarr = _make_sonarr_for_import(candidates=None)
 
-        assert strat.close_tracked(pending) is EffectStatus.SKIPPED
+        assert strat.remove_from_queue(pending) is EffectStatus.SKIPPED
         assert sonarr.queue_delete_calls == []
 
     def test_queue_outage_fails_the_effect_without_a_guessed_delete(self) -> None:
@@ -1437,7 +1439,7 @@ class TestCloseTracked:
         strat, sonarr = _make_sonarr_for_import(candidates=None)
         sonarr.queue_return = None
 
-        assert strat.close_tracked(pending) is EffectStatus.FAILED
+        assert strat.remove_from_queue(pending) is EffectStatus.FAILED
         assert sonarr.queue_calls == 1
         assert sonarr.queue_delete_calls == []
 
@@ -1448,7 +1450,7 @@ class TestCloseTracked:
             queue=[queue_record("ABC123", "importPending", queue_id=11)],
         )
 
-        status = strat.close_tracked(pending_import(infohash="abc123", title="Show"))
+        status = strat.remove_from_queue(pending_import(infohash="abc123", title="Show"))
 
         assert status is EffectStatus.DONE
         assert any("from Sonarr's queue" in m for m in diagnostic_messages(recording, Severity.INFO))
@@ -1462,7 +1464,7 @@ class TestCloseTracked:
         )
         sonarr.queue_delete_return = DeleteOutcome.FAILED
 
-        status = strat.close_tracked(pending_import(infohash="abc123"))
+        status = strat.remove_from_queue(pending_import(infohash="abc123"))
 
         assert status is EffectStatus.RETRY
         assert sonarr.queue_delete_calls == [11]
@@ -1478,7 +1480,7 @@ class TestCloseTracked:
         )
         sonarr.queue_delete_return = DeleteOutcome.GONE
 
-        status = strat.close_tracked(pending_import(infohash="abc123"))
+        status = strat.remove_from_queue(pending_import(infohash="abc123"))
 
         assert status is EffectStatus.DONE
         assert sonarr.queue_delete_calls == [11]
@@ -2404,8 +2406,8 @@ def _sonarr_seed_run(mode: ImportWaitMode, *, store: FakeCacheStore, episodes: S
         "NAN0": rg_group({_SEED_URL: url_item(url=_SEED_URL, infohash="h1", download=True, files=list(_SEED_FILES))}),
     }
     run = _FakeRunServices(
-        anilist_ids={4: MappingEntry(anilist_id=4), 5: MappingEntry(anilist_id=5)},
-        ignored={6: MappingEntry(anilist_id=6)},
+        anilist_ids={4: TitleMapping(anilist_id=4), 5: TitleMapping(anilist_id=5)},
+        ignored={6: TitleMapping(anilist_id=6)},
         prologue_entry=make_entry_record(url="https://releases.moe/5"),
         anilist_title="Show Cour 2",
         seadex_dict=seadex,
@@ -2423,7 +2425,7 @@ def _sonarr_seed_run(mode: ImportWaitMode, *, store: FakeCacheStore, episodes: S
         _config=make_config(sleep_time=0),
         logger=make_logger(),
     )
-    strat.process_al_id(_Item(id=7, title="Show", tvdbId=70, imdbId=None), 5, MappingEntry(anilist_id=5))
+    strat.process_al_id(_Item(id=7, title="Show", tvdbId=70, imdbId=None), 5, TitleMapping(anilist_id=5))
     return run
 
 
@@ -2465,7 +2467,7 @@ def _entry_run(
         _config=make_config(sleep_time=0),
         logger=make_logger(),
     )
-    strat.process_al_id(_Item(id=7, title="Show", tvdbId=70, imdbId=None), 5, MappingEntry(anilist_id=5))
+    strat.process_al_id(_Item(id=7, title="Show", tvdbId=70, imdbId=None), 5, TitleMapping(anilist_id=5))
     return run
 
 
@@ -2502,7 +2504,7 @@ class TestSonarrProcessAlIdSeeds:
             normalize_basename(name): (ep,) for name, ep in zip(_SEED_FILES, (101, 102), strict=True)
         }
         # The planner judges the url by the whole map's episodes inside this entry.
-        assert req.seadex_dict["NAN0"].urls[_SEED_URL].episodes == [EpisodeRecord(season=1, episode=2, size=1000)]
+        assert req.seadex_dict["NAN0"].releases[_SEED_URL].episodes == [EpisodeRecord(season=1, episode=2, size=1000)]
         assert req.input_missing_groups == ()
         # The stored claim's window came off the per-run whole-series read.
         assert sonarr.episodes_calls == [7]
@@ -2534,11 +2536,11 @@ class TestSonarrProcessAlIdSeeds:
             logger=make_logger(),
         )
 
-        strat.process_al_id(_Item(id=7, title="Show", tvdbId=70, imdbId=None), 5, MappingEntry(anilist_id=5))
+        strat.process_al_id(_Item(id=7, title="Show", tvdbId=70, imdbId=None), 5, TitleMapping(anilist_id=5))
 
         (req,) = run.grab_requests
-        assert req.seadex_dict["NAN0"].urls[_SEED_URL].hold is GrabHold.MISNUMBERED
-        assert req.seadex_dict["NAN0"].urls[_SEED_URL].episodes == []
+        assert req.seadex_dict["NAN0"].releases[_SEED_URL].hold is GrabHold.MISNUMBERED
+        assert req.seadex_dict["NAN0"].releases[_SEED_URL].episodes == []
         assert req.pending_seeds["h1"].placements == {}
         assert req.input_missing_groups == ()
 
@@ -2597,14 +2599,14 @@ class TestSonarrProcessAlIdSeeds:
         run = _entry_run(files, [_EP1, _EP2], _ScriptedListings(outage=True))
 
         (req,) = run.grab_requests
-        assert req.seadex_dict["NAN0"].urls[_SEED_URL].hold is GrabHold.INPUT_UNREAD
+        assert req.seadex_dict["NAN0"].releases[_SEED_URL].hold is GrabHold.INPUT_UNREAD
         assert req.pending_seeds["h1"].placements == {}
         assert req.input_missing_groups == ("NAN0",)
 
     def test_the_listing_read_gets_the_ignored_entries_too(self) -> None:
         # Entry 6 shares the series but is on the ignore list. It's never processed, but a torrent it lists is
         # still its files, so the series' listing read gets it beside the entries the run processes.
-        kept, ignored = {5: MappingEntry(anilist_id=5)}, {6: MappingEntry(anilist_id=6)}
+        kept, ignored = {5: TitleMapping(anilist_id=5)}, {6: TitleMapping(anilist_id=6)}
         seadex: SeadexDict = {
             "NAN0": rg_group({_SEED_URL: url_item(url=_SEED_URL, infohash="h1", download=True, files=["a.mkv"])}),
         }
@@ -2646,8 +2648,8 @@ class TestSonarrProcessAlIdSeeds:
             ),
         }
         run = _FakeRunServices(
-            anilist_ids={6: MappingEntry(anilist_id=6)},
-            ignored={5: MappingEntry(anilist_id=5)},
+            anilist_ids={6: TitleMapping(anilist_id=6)},
+            ignored={5: TitleMapping(anilist_id=5)},
             prologue_entry=make_entry_record(url="https://releases.moe/6"),
             seadex_dict=seadex,
             filter_downloads_result=plan_result(seadex),
@@ -2666,13 +2668,13 @@ class TestSonarrProcessAlIdSeeds:
             logger=make_logger(),
         )
 
-        strat.process_al_id(_Item(id=7, title="Show", tvdbId=70, imdbId=None), 6, MappingEntry(anilist_id=6))
+        strat.process_al_id(_Item(id=7, title="Show", tvdbId=70, imdbId=None), 6, TitleMapping(anilist_id=6))
 
         (req,) = run.grab_requests
         seed = req.pending_seeds["h1"]
         assert seed.placements == {}
         assert seed.excluded == tuple(normalize_basename(name) for name in _SEED_FILES)
-        assert req.seadex_dict["NAN0"].urls[_SEED_URL].hold is GrabHold.PLACED_ELSEWHERE
+        assert req.seadex_dict["NAN0"].releases[_SEED_URL].hold is GrabHold.PLACED_ELSEWHERE
 
     def test_wait_mode_off_reads_no_record_and_seeds_nothing(self) -> None:
         store = _CountingStore()
@@ -2684,7 +2686,7 @@ class TestSonarrProcessAlIdSeeds:
         assert req.pending_seeds == NO_SEEDS
         assert store.get_pending_record_calls == 0
         # The placement still runs: the planner's coverage never depends on the wait mode.
-        assert req.seadex_dict["NAN0"].urls[_SEED_URL].episodes == [EpisodeRecord(season=1, episode=2, size=1000)]
+        assert req.seadex_dict["NAN0"].releases[_SEED_URL].episodes == [EpisodeRecord(season=1, episode=2, size=1000)]
 
 
 class TestPlacementDebugLine:
@@ -2771,7 +2773,7 @@ class TestSonarrProcessAlIdMetadataUnread:
         self, unread_entries: frozenset[int], unread: list[int]
     ) -> None:
         run = _FakeRunServices(
-            anilist_ids={4: MappingEntry(anilist_id=4), 5: MappingEntry(anilist_id=5)},
+            anilist_ids={4: TitleMapping(anilist_id=4), 5: TitleMapping(anilist_id=5)},
             prologue_entry=make_entry_record(url="https://releases.moe/5"),
             anilist_title="Show Cour 2",
             seadex_dict={},
@@ -2785,7 +2787,7 @@ class TestSonarrProcessAlIdMetadataUnread:
             logger=make_logger(),
         )
 
-        strat.process_al_id(_Item(id=7, title="Show", tvdbId=70, imdbId=None), 5, MappingEntry(anilist_id=5))
+        strat.process_al_id(_Item(id=7, title="Show", tvdbId=70, imdbId=None), 5, TitleMapping(anilist_id=5))
 
         assert [al_id for al_id, _ in run.no_releases_calls] == [5]
         assert run.no_releases_unread == unread
@@ -2822,7 +2824,7 @@ class TestRadarrProcessAlIdSeeds:
             logger=make_logger(),
             _config=make_config(),
         )
-        strat.process_al_id(_Item(id=5, title="Movie"), 42, MappingEntry(anilist_id=42))
+        strat.process_al_id(_Item(id=5, title="Movie"), 42, TitleMapping(anilist_id=42))
         return run
 
     def test_seeds_the_record_with_empty_sonarr_fields(self) -> None:
@@ -4103,7 +4105,7 @@ class TestRadarrProcessAlIdSeam:
         run = _FakeRunServices(prologue_entry=make_entry_record(), cached_skip=True)
         strat, radarr = self._make_strat(run)
 
-        strat.process_al_id(_Item(id=1, title="Title"), 5, MappingEntry(anilist_id=5))
+        strat.process_al_id(_Item(id=1, title="Title"), 5, TitleMapping(anilist_id=5))
         # Neither the SeaDex parse nor the movie files were reached.
         assert run.get_seadex_dict_calls == []
         assert radarr.movie_files_calls == []
@@ -4120,8 +4122,8 @@ class TestRadarrProcessAlIdSeam:
         )
         strat, _ = self._make_strat(run)
 
-        strat.process_al_id(_Item(id=1, title="Title"), 5, MappingEntry(anilist_id=5))
-        expected: CacheRecord = {
+        strat.process_al_id(_Item(id=1, title="Title"), 5, TitleMapping(anilist_id=5))
+        expected: CachedTitleUpdate = {
             "name": "Movie Title",
             "updated_at": entry.updated_at,
             "url": "https://releases.moe/5",
@@ -4142,9 +4144,9 @@ class TestRadarrProcessAlIdSeam:
         )
         strat, _ = self._make_strat(run, files=[MovieFile(release_group="OldGroup", size=100)])
 
-        strat.process_al_id(_Item(id=3, title="Item Title"), 5, MappingEntry(anilist_id=5))
+        strat.process_al_id(_Item(id=3, title="Item Title"), 5, TitleMapping(anilist_id=5))
         # The download filter received the movie's accumulated releases.
-        assert run.filter_downloads_calls == [(seadex_dict, ArrReleases(tagged={"OldGroup": (100,)}))]
+        assert run.filter_downloads_calls == [(seadex_dict, ArrFiles(tagged={"OldGroup": (100,)}))]
         [req] = run.grab_requests
         assert req.al_id == 5
         assert req.arr_title == "Item Title"
@@ -4175,7 +4177,7 @@ class TestRadarrProcessAlIdSeam:
             ],
         )
 
-        strat.process_al_id(_Item(id=3, title="Item Title"), 5, MappingEntry(anilist_id=5))
+        strat.process_al_id(_Item(id=3, title="Item Title"), 5, TitleMapping(anilist_id=5))
 
         [req] = run.grab_requests
         assert req.replaced_groups == ("GroupA", "GroupB")
@@ -4189,7 +4191,7 @@ class TestRadarrProcessAlIdSeam:
         run = _FakeRunServices(prologue_entry=make_entry_record(), seadex_dict=seadex_dict)
         strat, _ = self._make_strat(run, interactive=interactive)
 
-        strat.process_al_id(_Item(id=1, title="Title"), 5, MappingEntry(anilist_id=5))
+        strat.process_al_id(_Item(id=1, title="Title"), 5, TitleMapping(anilist_id=5))
         return len(run.interactive_calls)
 
     def test_interactive_prompts_only_for_multi_release_interactive(self) -> None:
@@ -4207,7 +4209,7 @@ class TestRadarrReleases:
         radarr = _FakeRadarr([MovieFile(release_group="A", size=100), MovieFile(release_group="B", size=200)])
         strat = make_bare_instance(RadarrSync, radarr=radarr)
 
-        assert strat.get_radarr_releases(7) == ArrReleases(tagged={"A": (100,), "B": (200,)})
+        assert strat.get_radarr_releases(7) == ArrFiles(tagged={"A": (100,), "B": (200,)})
 
     def test_same_group_sizes_accumulate(self) -> None:
         # CB6: two files of one group keep BOTH sizes (the old comprehension collapsed
@@ -4215,7 +4217,7 @@ class TestRadarrReleases:
         radarr = _FakeRadarr([MovieFile(release_group="A", size=100), MovieFile(release_group="A", size=200)])
         strat = make_bare_instance(RadarrSync, radarr=radarr)
 
-        assert strat.get_radarr_releases(7) == ArrReleases(tagged={"A": (100, 200)})
+        assert strat.get_radarr_releases(7) == ArrFiles(tagged={"A": (100, 200)})
 
     def test_untagged_files_fold_to_untagged_sizes(self) -> None:
         # No {None: [None]} placeholder and no null key: untagged files carry
@@ -4223,13 +4225,13 @@ class TestRadarrReleases:
         radarr = _FakeRadarr([MovieFile(release_group=None, size=100), MovieFile(release_group="A", size=200)])
         strat = make_bare_instance(RadarrSync, radarr=radarr)
 
-        assert strat.get_radarr_releases(7) == ArrReleases(tagged={"A": (200,)}, untagged=(100,))
+        assert strat.get_radarr_releases(7) == ArrFiles(tagged={"A": (200,)}, untagged=(100,))
 
     def test_no_files_returns_empty_record(self) -> None:
         radarr = _FakeRadarr([])
         strat = make_bare_instance(RadarrSync, radarr=radarr)
 
-        assert strat.get_radarr_releases(7) == ArrReleases()
+        assert strat.get_radarr_releases(7) == ArrFiles()
 
     def test_untagged_unreadable_size_folds_to_zero(self) -> None:
         # An unreadable untagged size folds to 0, which disqualifies the whole
@@ -4238,7 +4240,7 @@ class TestRadarrReleases:
         radarr = _FakeRadarr([MovieFile(release_group=None, size=500), MovieFile(release_group=None, size=None)])
         strat = make_bare_instance(RadarrSync, radarr=radarr)
 
-        assert strat.get_radarr_releases(7) == ArrReleases(untagged=(500, 0))
+        assert strat.get_radarr_releases(7) == ArrFiles(untagged=(500, 0))
 
 
 class TestSonarrReleases:
@@ -4258,7 +4260,7 @@ class TestSonarrReleases:
             ]
         )
 
-        assert releases == ArrReleases(tagged={"RG": (800,)})
+        assert releases == ArrFiles(tagged={"RG": (800,)})
         assert releases.untagged == ()
 
 
@@ -4267,7 +4269,7 @@ class TestArrReleasesRecord:
 
     def test_tagged_detaches_and_rejects_mutation(self) -> None:
         source = {"RG": (100,)}
-        releases = ArrReleases(tagged=source)
+        releases = ArrFiles(tagged=source)
 
         source["Other"] = (5,)
 
@@ -4277,8 +4279,8 @@ class TestArrReleasesRecord:
 
     def test_equal_records_hash_equal_across_key_order(self) -> None:
         # dict eq ignores insertion order, so the hash must too.
-        first = ArrReleases(tagged={"A": (1,), "B": (2,)}, untagged=(3,))
-        second = ArrReleases(tagged={"B": (2,), "A": (1,)}, untagged=(3,))
+        first = ArrFiles(tagged={"A": (1,), "B": (2,)}, untagged=(3,))
+        second = ArrFiles(tagged={"B": (2,), "A": (1,)}, untagged=(3,))
 
         assert first == second
         assert hash(first) == hash(second)
@@ -4292,17 +4294,17 @@ class TestArrReleasesRecord:
             MovieFile(release_group="RG", size=None),
         ]
 
-        assert ArrReleases.from_files(files, keep_untagged=True) == ArrReleases(tagged={"RG": (800,)}, untagged=(700,))
-        assert ArrReleases.from_files(files, keep_untagged=False) == ArrReleases(tagged={"RG": (800,)})
+        assert ArrFiles.from_files(files, keep_untagged=True) == ArrFiles(tagged={"RG": (800,)}, untagged=(700,))
+        assert ArrFiles.from_files(files, keep_untagged=False) == ArrFiles(tagged={"RG": (800,)})
 
     def test_groups_label_renders_untagged_and_empty(self) -> None:
-        assert ArrReleases(tagged={"A": (1,)}, untagged=(2,)).groups_label() == "A, (none)"
-        assert ArrReleases().groups_label() == "(no files)"
+        assert ArrFiles(tagged={"A": (1,)}, untagged=(2,)).groups_label() == "A, (none)"
+        assert ArrFiles().groups_label() == "(no files)"
 
     def test_group_count_matches_the_rendered_entries(self) -> None:
         # Untagged files fold to the single `(none)` entry, so they count once.
-        assert ArrReleases(tagged={"A": (1,), "B": (2,)}, untagged=(3,)).group_count() == 3
-        assert ArrReleases().group_count() == 0
+        assert ArrFiles(tagged={"A": (1,), "B": (2,)}, untagged=(3,)).group_count() == 3
+        assert ArrFiles().group_count() == 0
 
     def test_replaced_groups_lists_every_tagged_name(self) -> None:
-        assert ArrReleases(tagged={"A": (1,), "B": ()}).replaced_groups() == ("A", "B")
+        assert ArrFiles(tagged={"A": (1,), "B": ()}).replaced_groups() == ("A", "B")

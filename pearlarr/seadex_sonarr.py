@@ -18,7 +18,7 @@ from .grab_placement import (
     entry_hashes,
     identity_overrides,
 )
-from .mappings import ExternalIds, MappingEntry, MappingSource
+from .mappings import ExternalIds, MappingSource, TitleMapping
 from .output import hub_warn
 from .output.console_text import count_noun, pluralize
 from .pending_import import PendingImport
@@ -45,8 +45,8 @@ def get_overlapping_results(seadex_dict: SeadexDict) -> bool:
     # keeps it separate (so we never drop content we couldn't verify). Keep both
     # consistent if the coverage semantics change.
     episode_sets: dict[str, set[tuple[int | None, int | None]]] = {}
-    for rg, rg_item in seadex_dict.items():
-        all_episodes = rg_item.all_episodes or []
+    for rg, group_releases in seadex_dict.items():
+        all_episodes = group_releases.all_episodes or []
         episode_sets[rg] = get_episode_keys(all_episodes)
 
     release_groups: list[str] = list(episode_sets.keys())
@@ -189,7 +189,7 @@ class SonarrSync(ArrSync[SonarrItem]):
         self,
         item: SonarrItem,
         log_ignored: bool = True,
-    ) -> dict[int, MappingEntry]:
+    ) -> dict[int, TitleMapping]:
         """Resolve AniList ids for a Sonarr series (by TVDB / IMDb id)."""
 
         return self._services.get_anilist_ids(
@@ -236,7 +236,7 @@ class SonarrSync(ArrSync[SonarrItem]):
         self,
         item: SonarrItem,
         al_id: int,
-        mapping: MappingEntry,
+        mapping: TitleMapping,
     ) -> None:
         """Process one AniList id for a Sonarr series.
 
@@ -290,21 +290,21 @@ class SonarrSync(ArrSync[SonarrItem]):
         if not ep_list:
             # Resolved zero episodes (season not in Sonarr, offset past the end, or
             # AniBridge with no ranges): skip, don't mislabel "unmonitored" or grab orphans.
-            run.log_no_episodes(title.display)
+            run.log_no_episodes(title.name)
             if mapping.source is MappingSource.ANIBRIDGE and not mapping.tvdb_mappings:
                 # Surface any AniBridge no-usable-ranges case LOUDLY (distinct from a
                 # Sonarr-library gap): a WARNING under the skip row naming the cause.
                 # Keys off source, so it covers BOTH an empty-{} tvdb entry (mode
                 # ANIBRIDGE) and a degraded imdb/tmdb-resolved entry (mode ANIME_IDS),
                 # while a legit Kometa whole-series entry (source ANIME_IDS) stays quiet.
-                hub_warn(f"AniBridge has no usable season ranges for {title.display} - skipping")
+                hub_warn(f"AniBridge has no usable season ranges for {title.name} - skipping")
             run.owe_pause()
             return
 
         # If all episodes are unmonitored, then skip if ignore_unmonitored is switched on
         if self._config.sonarr.ignore_unmonitored and not any(ep.monitored for ep in ep_list):
             run.log_anilist_item_unmonitored(
-                item_title=title.display,
+                item_title=title.name,
             )
             run.owe_pause()
             return
@@ -316,7 +316,7 @@ class SonarrSync(ArrSync[SonarrItem]):
             _coverage.episodes_from_ep_list(ep_list),
         )
         run.log_al_title(
-            title=title.display,
+            title=title.name,
             sd_entry=sd_entry,
             coverage=coverage,
         )
@@ -406,7 +406,7 @@ class SonarrSync(ArrSync[SonarrItem]):
                 EntryFacts(
                     al_id=al_id,
                     series_id=sonarr_series_id,
-                    title=title.display,
+                    title=title.name,
                     coverage=coverage,
                     url=sd_url,
                     guards=plan.guards,
@@ -417,7 +417,7 @@ class SonarrSync(ArrSync[SonarrItem]):
             GrabRequest(
                 al_id=al_id,
                 arr_title=item.title,
-                entry_title=title.display,
+                entry_title=title.name,
                 entry=sd_entry,
                 seadex_dict=seadex_dict,
                 cache_details=cache_details,
@@ -508,10 +508,10 @@ class SonarrSync(ArrSync[SonarrItem]):
         return self._reconciler.import_progress(pending)
 
     @override
-    def close_tracked(self, pending: PendingImport) -> EffectStatus:
+    def remove_from_queue(self, pending: PendingImport) -> EffectStatus:
         """Dismiss the torrent's leftover Sonarr queue entry (see `ImportExecutor.close_tracked`)."""
 
-        return self._executor.close_tracked(pending)
+        return self._executor.remove_from_queue(pending)
 
     @property
     @override

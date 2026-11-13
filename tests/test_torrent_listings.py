@@ -8,7 +8,7 @@ from seadex import EntryRecord
 
 from pearlarr.anibridge import SpecialAliasing
 from pearlarr.arr_models import SonarrEpisode
-from pearlarr.mappings import MappingEntry, ResolvedMappings
+from pearlarr.mappings import ResolvedMappings, TitleMapping
 from pearlarr.pending_import import EntryNames, EntryWindow
 from pearlarr.placement_types import EMPTY_LISTING
 from pearlarr.torrent_listings import SeriesListings
@@ -43,11 +43,11 @@ def _entry(al_id: int, *hashes: str | None) -> EntryRecord:
 def _mappings(*al_ids: int, ignored: Iterable[int] = ()) -> ResolvedMappings:
     """The series' resolved mappings: `al_ids` kept, `ignored` on the ignore list, each a bare mapping."""
 
-    return _resolved({al_id: MappingEntry(anilist_id=al_id) for al_id in al_ids}, ignored=ignored)
+    return _resolved({al_id: TitleMapping(anilist_id=al_id) for al_id in al_ids}, ignored=ignored)
 
 
-def _resolved(kept: dict[int, MappingEntry], *, ignored: Iterable[int] = ()) -> ResolvedMappings:
-    return ResolvedMappings(mappings=kept, ignored={al_id: MappingEntry(anilist_id=al_id) for al_id in ignored})
+def _resolved(kept: dict[int, TitleMapping], *, ignored: Iterable[int] = ()) -> ResolvedMappings:
+    return ResolvedMappings(mappings=kept, ignored={al_id: TitleMapping(anilist_id=al_id) for al_id in ignored})
 
 
 def _episodes(*numbers: int) -> list[SonarrEpisode]:
@@ -112,8 +112,8 @@ class TestRead:
     def test_each_entrys_aliases_reach_the_hashes_it_lists(self) -> None:
         seadex = FakeSeaDexSource({1: _entry(1, _H1), 2: _entry(2, _H1, _H2)})
         mappings = {
-            1: MappingEntry(anilist_id=1, special_aliasing=SpecialAliasing(900, {2: 1})),
-            2: MappingEntry(anilist_id=2, special_aliasing=SpecialAliasing(900, {4: 3})),
+            1: TitleMapping(anilist_id=1, special_aliasing=SpecialAliasing(900, {2: 1})),
+            2: TitleMapping(anilist_id=2, special_aliasing=SpecialAliasing(900, {4: 3})),
         }
 
         read = _reader(seadex, _windows({1: _episodes(1), 2: _episodes(3)})).read(7, _resolved(mappings))
@@ -126,8 +126,8 @@ class TestRead:
         # A season Sonarr lacks reads as an empty list. The entry still lists its hash, aliases included.
         seadex = FakeSeaDexSource({1: _entry(1, _H1), 2: _entry(2, _H1)})
         mappings = {
-            1: MappingEntry(anilist_id=1, special_aliasing=SpecialAliasing(900, {2: 1})),
-            2: MappingEntry(anilist_id=2),
+            1: TitleMapping(anilist_id=1, special_aliasing=SpecialAliasing(900, {2: 1})),
+            2: TitleMapping(anilist_id=2),
         }
 
         read = _reader(seadex, _windows({1: [], 2: _episodes(3)})).read(7, _resolved(mappings))

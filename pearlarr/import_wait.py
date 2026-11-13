@@ -12,7 +12,7 @@ from .config import ImportsSettings
 from .leg_state import RunContext
 from .output import SPARK_SAMPLES, Phase, TorrentView, WaitKind, WaitSnapshot, hub_error, hub_note, hub_warn
 from .pending_import import PendingImport, is_awaiting_cleanup
-from .pending_records import PendingRecords
+from .pending_records import PendingImportStore
 from .protocols import ImportCompleter
 from .run_services import RunDeps
 from .wait_types import (
@@ -143,7 +143,7 @@ class PostImportCleanup:
     _ctx: RunContext
     """The current run's context. Never bound at construction: `begin_run` rebinds it every run."""
 
-    def __init__(self, deps: RunDeps, records: PendingRecords, probes: ImportProbes) -> None:
+    def __init__(self, deps: RunDeps, records: PendingImportStore, probes: ImportProbes) -> None:
         self._imports = deps.config.imports
         self._categories = deps.categories
         self._qbit = deps.qbit
@@ -238,7 +238,7 @@ class PostImportCleanup:
             )
             return EffectStatus.SKIPPED
         # Each retry re-runs the whole close: the fresh queue read self-corrects an entry cleared meanwhile.
-        return self._retry_effect(lambda: strategy.close_tracked(pending))
+        return self._retry_effect(lambda: strategy.remove_from_queue(pending))
 
     def _apply_post_import_category(self, pending: PendingImport, category: str | None) -> EffectStatus:
         """Move a verified-imported torrent to `category` (the retire's one resolve).
@@ -364,7 +364,7 @@ class ImportWaitManager:
     _ctx: RunContext
     """The current run's context. `__init__` seeds it through the first `begin_run`, which rebinds every run."""
 
-    def __init__(self, *, deps: RunDeps, ctx: RunContext, records: PendingRecords) -> None:
+    def __init__(self, *, deps: RunDeps, ctx: RunContext, records: PendingImportStore) -> None:
         self.imports = deps.config.imports
         self.clock = deps.clock
         self.logger = deps.logger
@@ -602,7 +602,7 @@ class ImportWaitManager:
         No dedup needed: `records` excludes the fresh keys, so the in-memory copy always wins.
         """
 
-        records = [pending for pending in self._ctx.pending_imports.values() if pending.infohash]
+        records = [pending for pending in self._ctx.grabbed_this_run.values() if pending.infohash]
         records.extend(self._records.active_records().values())
         return records
 

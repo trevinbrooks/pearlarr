@@ -180,7 +180,7 @@ def index_episodes_by_key(ep_list: Iterable[SonarrEpisode]) -> dict[EpisodeKey, 
 
 
 @dataclass(frozen=True, slots=True)
-class ArrReleases:
+class ArrFiles:
     """The Arr's existing files for one entry, folded by release group.
 
     Keys hold the tag as the arr wrote it, and only an EMPTY tag makes a file untagged.

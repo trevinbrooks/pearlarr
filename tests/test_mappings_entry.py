@@ -19,10 +19,10 @@ from pearlarr.anibridge import AniBridgeGraph, SpecialAliasing
 from pearlarr.mappings import (
     AnimeIdsMap,
     ExternalIds,
-    MappingEntry,
     MappingMode,
     MappingResolver,
     MappingSources,
+    TitleMapping,
 )
 
 
@@ -64,7 +64,7 @@ class TestKometaPath:
         assert resolved.ignored == {}
         assert list(mappings) == [100]
         entry = mappings[100]
-        assert isinstance(entry, MappingEntry)
+        assert isinstance(entry, TitleMapping)
         assert entry.mode is MappingMode.ANIME_IDS
         assert entry.tvdb_mappings is None
         assert (entry.anilist_id, entry.tvdb_season, entry.tvdb_epoffset) == (100, 2, 3)
@@ -119,11 +119,11 @@ class TestSpecialAliasing:
     """An entry's `special_aliasing` defaults to None and holds a read-only copy of the producer's aliases."""
 
     def test_an_entry_defaults_to_no_aliasing(self) -> None:
-        assert MappingEntry(anilist_id=1).special_aliasing is None
+        assert TitleMapping(anilist_id=1).special_aliasing is None
 
     def test_the_aliases_are_a_read_only_copy_of_the_producers_dict(self) -> None:
         aliases = {13: 12}
-        entry = MappingEntry(anilist_id=1, special_aliasing=SpecialAliasing(900, aliases))
+        entry = TitleMapping(anilist_id=1, special_aliasing=SpecialAliasing(900, aliases))
 
         aliases[14] = 13
 
@@ -147,19 +147,19 @@ class TestModeDiscriminant:
 
     def test_empty_tvdb_mappings_is_still_anibridge(self) -> None:
         # The former "tvdb_mappings" in mapping was True even for an empty dict.
-        assert MappingEntry(anilist_id=1, tvdb_mappings={}).mode is MappingMode.ANIBRIDGE
+        assert TitleMapping(anilist_id=1, tvdb_mappings={}).mode is MappingMode.ANIBRIDGE
 
     def test_populated_tvdb_mappings_is_anibridge(self) -> None:
-        assert MappingEntry(anilist_id=1, tvdb_mappings={2: [(1, 3)]}).mode is MappingMode.ANIBRIDGE
+        assert TitleMapping(anilist_id=1, tvdb_mappings={2: [(1, 3)]}).mode is MappingMode.ANIBRIDGE
 
     def test_absent_tvdb_mappings_is_anime_ids(self) -> None:
-        assert MappingEntry(anilist_id=1).mode is MappingMode.ANIME_IDS
-        assert MappingEntry(anilist_id=1, tvdb_mappings=None).mode is MappingMode.ANIME_IDS
+        assert TitleMapping(anilist_id=1).mode is MappingMode.ANIME_IDS
+        assert TitleMapping(anilist_id=1, tvdb_mappings=None).mode is MappingMode.ANIME_IDS
 
 
 def test_entry_is_frozen() -> None:
     # Immutability is what makes sharing entries across the resolver's memo safe.
-    entry = MappingEntry(anilist_id=1)
+    entry = TitleMapping(anilist_id=1)
     # Attribute name kept in a var so ruff's B010 (constant setattr) doesn't fire
     # and the type checker doesn't flag a static frozen-field assignment.
     field = "tvdb_season"

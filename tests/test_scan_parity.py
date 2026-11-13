@@ -25,9 +25,9 @@ import pytest
 from rich.text import Span, Text
 from seadex import Tag
 
-from pearlarr.cache import AbstractCacheStore, CacheRecord
+from pearlarr.cache import AbstractCacheStore, CachedTitleUpdate
 from pearlarr.config import Arr
-from pearlarr.leg_state import GrabRecord, NeedsActionKind, NeedsActionRecord, RunContext, RunStats
+from pearlarr.leg_state import GrabbedRow, NeedsActionKind, NeedsActionRow, RunContext, RunStats
 from pearlarr.output import (
     Accent,
     CapReached,
@@ -449,14 +449,14 @@ def _rich_stats() -> RunStats:
     return RunStats(
         checked=8,
         added=[
-            GrabRecord(
+            GrabbedRow(
                 title="Frieren",
                 coverage="S01 E01-E28",
                 url="https://releases.moe/111852",
                 name="[GroupA] Frieren S01 1080p.mkv",
                 group="GroupA",
             ),
-            GrabRecord(
+            GrabbedRow(
                 title="Hashless Movie",
                 coverage=None,
                 url="https://releases.moe/900",
@@ -471,7 +471,7 @@ def _rich_stats() -> RunStats:
         no_releases=1,
         no_mappings=1,
         needs_action=[
-            NeedsActionRecord(
+            NeedsActionRow(
                 title="Private Show",
                 coverage="S02 E01-E24",
                 group="PrivGrp",
@@ -479,7 +479,7 @@ def _rich_stats() -> RunStats:
                 reason="private-only release; private releases not supported",
                 kind=NeedsActionKind.PRIVATE_ONLY,
             ),
-            NeedsActionRecord(
+            NeedsActionRow(
                 title=None,
                 coverage=None,
                 group="OddTracker",
@@ -564,7 +564,7 @@ def _dry_stats() -> RunStats:
     return RunStats(
         checked=2,
         added=[
-            GrabRecord(
+            GrabbedRow(
                 title="Dry Show",
                 coverage="S01 E01-E12",
                 url="https://releases.moe/5",
@@ -573,7 +573,7 @@ def _dry_stats() -> RunStats:
             ),
         ],
         needs_action=[
-            NeedsActionRecord(
+            NeedsActionRow(
                 title="NoFallback Show",
                 coverage="S01 E01-E12",
                 group="PrivGrp",
@@ -641,7 +641,7 @@ def _preview_stats() -> RunStats:
     return RunStats(
         checked=1,
         added=[
-            GrabRecord(
+            GrabbedRow(
                 title="Preview Movie",
                 coverage=None,
                 url="https://releases.moe/12",
@@ -723,7 +723,7 @@ def _wait_off_stats() -> RunStats:
         checked=6,
         up_to_date=5,
         needs_action=[
-            NeedsActionRecord(
+            NeedsActionRow(
                 title="Stale Show",
                 coverage="S03 E01-E12",
                 group="PrivGrp",
@@ -806,9 +806,9 @@ def _seeded_store() -> FakeCacheStore:
     store.update_cache(
         Arr.SONARR,
         1,
-        CacheRecord(name="Cached Show", coverage="S01 E01-E12", url="https://releases.moe/20997"),
+        CachedTitleUpdate(name="Cached Show", coverage="S01 E01-E12", url="https://releases.moe/20997"),
     )
-    store.update_cache(Arr.SONARR, 2, CacheRecord(name="Bare Show"))
+    store.update_cache(Arr.SONARR, 2, CachedTitleUpdate(name="Bare Show"))
     return store
 
 

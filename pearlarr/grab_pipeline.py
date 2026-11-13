@@ -9,14 +9,14 @@ from typing import TYPE_CHECKING
 from seadex import EntryRecord
 
 from . import coverage as _coverage
-from .cache import CacheRecord
+from .cache import CachedTitleUpdate
 from .config import PrivateReleaseAction
 from .grab_placement import PendingSeed
-from .leg_state import GrabRecord, NeedsActionKind, NeedsActionRecord, RunContext, is_preview
+from .leg_state import GrabbedRow, NeedsActionKind, NeedsActionRow, RunContext, is_preview
 from .notify import GrabNotice
 from .output import Accent, GrabFailed, ReleaseSkipped, SkipReason, StyledValue
-from .pending_records import PendingRecords
-from .releases import GrabHold, SeadexDict, SeadexUrlItem
+from .pending_records import PendingImportStore
+from .releases import GrabHold, Release, SeadexDict
 from .stamps import now_stamp, stamp_of
 from .torrents import GRAB_FAILURES, PARSEABLE_TRACKERS, AddOutcome, AddResult, ReleaseOutcome
 from .wait_types import ImportWaitMode
@@ -82,7 +82,7 @@ class GrabRequest:
     entry: EntryRecord
     """The SeaDex entry whole: the notification renders its url, notes, comparison links, and incomplete flag."""
     seadex_dict: SeadexDict
-    cache_details: CacheRecord
+    cache_details: CachedTitleUpdate
     """The run's mutable `CacheRecord` accumulator: the frozen field pins the reference, not the dict's contents."""
     replaced_groups: tuple[str, ...]
     """The existing arr release groups this grab is replacing (the notifier's "Replacing" field)."""
@@ -117,7 +117,7 @@ class GrabPipeline:
         *,
         deps: "RunDeps",
         ctx: RunContext,
-        records: PendingRecords,
+        records: PendingImportStore,
     ) -> None:
         self._config = deps.config
         self._planner = deps.planner
@@ -165,14 +165,14 @@ class GrabPipeline:
         results: list[ReleaseOutcome] = []
 
         for srg, srg_item in req.seadex_dict.items():
-            for url_item in srg_item.urls.values():
-                if not self._screen_url(srg, url_item):
+            for release in srg_item.releases.values():
+                if not self._screen_url(srg, release):
                     continue
                 if self._cap_reached():
-                    self._hold_capped(url_item, req)
+                    self._hold_capped(release, req)
                     continue
 
-                add_result = self._add_one_url(srg, url_item, req)
+                add_result = self._add_one_url(srg, release, req)
                 if add_result is None:
                     continue
 
@@ -183,19 +183,19 @@ class GrabPipeline:
 
         return n_torrents_added, results
 
-    def _screen_url(self, srg: str, url_item: SeadexUrlItem) -> bool:
+    def _screen_url(self, srg: str, release: Release) -> bool:
         """Whether a SeaDex url may be grabbed: flagged, public, on a selected tracker with a parser, and not held.
 
         A refused url posts its skip line and flags the title.
         """
 
-        if not url_item.download:
+        if not release.download:
             return False
 
-        url = url_item.url
-        tracker = url_item.tracker
+        url = release.url
+        tracker = release.tracker
 
-        if not url_item.is_public:
+        if not release.is_public:
             self._reporter.post(ReleaseSkipped(group=srg, tracker=tracker, reason=SkipReason.PRIVATE_ONLY, url=url))
             self._ctx.per_title.private_only_skipped = True
             self._ctx.per_title.private_only_groups.append(srg)
@@ -217,42 +217,42 @@ class GrabPipeline:
             self._ctx.per_title.unsupported_tracker_groups.append(srg)
             return False
 
-        hold = url_item.hold
+        hold = release.hold
         if hold is None:
             return True
         # Never added, and the title stays uncached for the next run.
         self._ctx.per_title.add_held(hold, (srg,))
         self._reporter.post(
             ReleaseSkipped(
-                group=srg, tracker=tracker, reason=_HOLD_ROWS[hold].skip, url=url, counts=url_item.hold_counts
+                group=srg, tracker=tracker, reason=_HOLD_ROWS[hold].skip, url=url, counts=release.hold_counts
             )
         )
         return False
 
-    def _hold_capped(self, url_item: SeadexUrlItem, req: GrabRequest) -> None:
+    def _hold_capped(self, release: Release, req: GrabRequest) -> None:
         """Hold a grabbable url past the cap: the title stays uncached, and a resident torrent keeps its claim."""
 
         if not self._ctx.per_title.held_by_cap:
             self._ctx.per_title.held_by_cap = True
             self._ctx.stats.held_by_cap += 1
-        seed = self._seed_for(url_item, req)
+        seed = self._seed_for(release, req)
         if seed is not None and (joined := seed.joined()) is not None:
             self._records.save_with_claim(joined, seed.claim)
 
     def _add_one_url(
         self,
         srg: str,
-        url_item: SeadexUrlItem,
+        release: Release,
         req: GrabRequest,
     ) -> ReleaseOutcome | None:
         """Add one screened url and register its pending import: its outcome, or None on a contained failure."""
 
-        url = url_item.url
+        url = release.url
 
         # An expected external failure (tracker or qBittorrent down) is contained to one warning here, so the loop
         # moves on and grab_and_cache leaves the title uncached for a retry next run.
         try:
-            result = self._torrents.add(item=url_item, preview=self._is_preview())
+            result = self._torrents.add(item=release, preview=self._is_preview())
         except GRAB_FAILURES as e:
             self._reporter.post(GrabFailed(group=srg, url=url, error=str(e)))
             self._ctx.per_title.grab_failed_groups.append(srg)
@@ -261,9 +261,9 @@ class GrabPipeline:
         if result.outcome is AddOutcome.ADDED:
             # Prefer the release's own parsed file list, falling back to the entry-level coverage so the summary's
             # files are never blank when a release's filenames couldn't be parsed.
-            coverage_str = _coverage.coverage_string(url_item.episodes) or self._ctx.per_title.current_coverage
+            coverage_str = _coverage.coverage_string(release.episodes) or self._ctx.per_title.current_coverage
             self._ctx.stats.added.append(
-                GrabRecord(
+                GrabbedRow(
                     title=self._ctx.per_title.current_title,
                     coverage=coverage_str,
                     url=self._ctx.per_title.current_url,
@@ -275,18 +275,18 @@ class GrabPipeline:
         # ALREADY_ADDED is the url's torrent already in qBittorrent, SeaDex's or a cross-seed holding its files,
         # whoever added it, and it's tracked like a grab. The genuine "already own it" case is the
         # any_to_download=False branch, which never reaches add_torrent.
-        self._register_pending_import(url_item, req, result)
+        self._register_pending_import(release, req, result)
         return ReleaseOutcome(outcome=result.outcome, name=result.name, group=srg)
 
-    def _seed_for(self, url_item: SeadexUrlItem, req: GrabRequest) -> PendingSeed | None:
+    def _seed_for(self, release: Release, req: GrabRequest) -> PendingSeed | None:
         """The url's seed (the strategy seeds nothing when the wait mode is off), or None on a preview or no hash."""
 
-        qbit_hash = url_item.qbit_hash
+        qbit_hash = release.qbit_hash
         if self._is_preview() or not qbit_hash:
             return None
         return req.pending_seeds.get(qbit_hash)
 
-    def _register_pending_import(self, url_item: SeadexUrlItem, req: GrabRequest, result: AddResult) -> None:
+    def _register_pending_import(self, release: Release, req: GrabRequest, result: AddResult) -> None:
         """Persist a grabbed or already-present release: `ADDED` tracks, `ALREADY_ADDED` accretes or reacquires.
 
         A fresh add enters the run list stamped now. A torrent already in qBittorrent, whoever added it, joins its
@@ -294,7 +294,7 @@ class GrabPipeline:
         entries list in one run).
         """
 
-        seed = self._seed_for(url_item, req)
+        seed = self._seed_for(release, req)
         if seed is None:
             return
         if result.outcome is AddOutcome.ADDED:
@@ -302,13 +302,13 @@ class GrabPipeline:
             return
         record = seed.record_at(_reacquire_stamp(result.added_on), fresh=False)
         self._records.save_with_claim(record, seed.claim)
-        if record.infohash not in self._ctx.pending_imports:
+        if record.infohash not in self._ctx.grabbed_this_run:
             self._ctx.reacquired_keys.add(record.infohash)
 
-    def _needs_action(self, groups: list[str], reason: str, kind: NeedsActionKind) -> NeedsActionRecord:
+    def _needs_action(self, groups: list[str], reason: str, kind: NeedsActionKind) -> NeedsActionRow:
         """A needs-action record for the current title."""
 
-        return NeedsActionRecord(
+        return NeedsActionRow(
             title=self._ctx.per_title.current_title,
             coverage=self._ctx.per_title.current_coverage,
             group=", ".join(dict.fromkeys(groups)),
@@ -344,7 +344,7 @@ class GrabPipeline:
             and (added_this_title > 0 or not (per_title.private_only_skipped or per_title.unsupported_tracker_skipped))
         )
 
-    def _classify_needs_action(self) -> NeedsActionRecord | None:
+    def _classify_needs_action(self) -> NeedsActionRow | None:
         """The single needs-action row for a title NOT cached as done, or None.
 
         Flat guard-returns keep the precedence private-only > unsupported-tracker > hand-import holds > grab-failed >
@@ -379,7 +379,7 @@ class GrabPipeline:
 
         return self._held_row(hold for hold in _HOLD_ROWS if not hold.hand_import)
 
-    def _held_row(self, holds: Iterable[GrabHold]) -> NeedsActionRecord | None:
+    def _held_row(self, holds: Iterable[GrabHold]) -> NeedsActionRow | None:
         """The row of the first of `holds` that held a group of this title, or None."""
 
         held_groups = self._ctx.per_title.held_groups
@@ -440,7 +440,9 @@ class GrabPipeline:
         if self._should_cache_as_done(added_this_title=added_this_title):
             # Always written: the partial-merge upsert would otherwise preserve a stale True.
             req.cache_details["fallback_satisfied"] = any(
-                u.is_fallback and u.download for rg_item in req.seadex_dict.values() for u in rg_item.urls.values()
+                u.is_fallback and u.download
+                for group_releases in req.seadex_dict.values()
+                for u in group_releases.releases.values()
             )
             self.cache_store.update_cache(
                 self._ctx.arr,

@@ -21,9 +21,9 @@ import pytest
 from seadex import Tag
 
 from pearlarr.anilist_client import AniListClient
-from pearlarr.cache import AbstractCacheStore, CacheRecord
+from pearlarr.cache import AbstractCacheStore, CachedTitleUpdate
 from pearlarr.config import Arr
-from pearlarr.leg_state import GrabRecord, NeedsActionKind, NeedsActionRecord, RunContext
+from pearlarr.leg_state import GrabbedRow, NeedsActionKind, NeedsActionRow, RunContext
 from pearlarr.output import (
     EntryHeader,
     Event,
@@ -94,7 +94,7 @@ def _seeded_store(*, name: str, coverage: str, url: str) -> FakeCacheStore:
     """A FakeCacheStore with one entry row (arr=Sonarr, al_id=1) preseeded."""
 
     store = FakeCacheStore()
-    store.update_cache(Arr.SONARR, 1, CacheRecord(name=name, coverage=coverage, url=url))
+    store.update_cache(Arr.SONARR, 1, CachedTitleUpdate(name=name, coverage=coverage, url=url))
     return store
 
 
@@ -143,7 +143,7 @@ class TestStatsCounters:
         # A legacy record predating name storage: the title fallback routes
         # through the gateway too, never a bare wire query.
         store = FakeCacheStore()
-        store.update_cache(Arr.SONARR, 1, CacheRecord(coverage="S01", url="u"))
+        store.update_cache(Arr.SONARR, 1, CachedTitleUpdate(coverage="S01", url="u"))
         client = ScriptedAniListClient()
         reporter = _make_reporter(store, client=client)
         ctx = RunContext(arr=Arr.SONARR)
@@ -185,7 +185,7 @@ class TestStatsCounters:
     def test_cached_without_a_name_falls_back_to_the_arr_title(self) -> None:
         # The stored name is empty and AniList still has none: the arr's own title labels the block.
         store = FakeCacheStore()
-        store.update_cache(Arr.SONARR, 1, CacheRecord(coverage="S01", url="u"))
+        store.update_cache(Arr.SONARR, 1, CachedTitleUpdate(coverage="S01", url="u"))
         client = ScriptedAniListClient(None)
         reporter, events = _record(store, client=client)
         ctx = RunContext(arr=Arr.SONARR)
@@ -225,7 +225,7 @@ class TestEntryHeaderAlId:
 
     def test_log_cached_entry_carries_the_al_id_param(self) -> None:
         store = FakeCacheStore()
-        store.update_cache(Arr.SONARR, 4242, CacheRecord(name="Cached", coverage="S01", url="u"))
+        store.update_cache(Arr.SONARR, 4242, CachedTitleUpdate(name="Cached", coverage="S01", url="u"))
         reporter, events = _record(store)
         reporter.log_cached_entry(RunContext(arr=Arr.SONARR), 4242)
         assert self._header(events).al_id == 4242
@@ -299,10 +299,10 @@ class TestRunSummary:
         ctx.torrents_added = 1
         ctx.started_monotonic = time.monotonic() - 1.0  # exercise the elapsed line
         ctx.stats.added = [
-            GrabRecord(title="A", coverage="S01", url="u", name="A.mkv", group="G"),
+            GrabbedRow(title="A", coverage="S01", url="u", name="A.mkv", group="G"),
         ]
         ctx.stats.needs_action = [
-            NeedsActionRecord(
+            NeedsActionRow(
                 title="B",
                 coverage="S02",
                 group="Priv",
@@ -480,7 +480,7 @@ class TestSummaryPendingCounters:
         ctx = RunContext(arr=Arr.SONARR)
         ctx.torrents_added = 1
         ctx.stats.added = [
-            GrabRecord(title="A", coverage="S01", url="u", name="A.mkv", group="G"),
+            GrabbedRow(title="A", coverage="S01", url="u", name="A.mkv", group="G"),
         ]
         # counters stay 0 -> no queued/importing rows
 
@@ -540,7 +540,7 @@ class TestPrivateOnlyTip:
     def _needs_ctx(self, kind: NeedsActionKind) -> RunContext:
         ctx = RunContext(arr=Arr.SONARR)
         ctx.stats.needs_action = [
-            NeedsActionRecord(
+            NeedsActionRow(
                 title="B",
                 coverage="S02",
                 group="Priv",

@@ -21,7 +21,7 @@ import pearlarr
 from pearlarr.arr_models import ParsedFileInfo
 from pearlarr.cache import (
     SCHEMA_VERSION,
-    CacheRecord,
+    CachedTitleUpdate,
     CacheSchemaError,
     CacheStore,
     HistoryCheckpoint,
@@ -750,7 +750,7 @@ class TestEntries:
             assert (entry.name, entry.url, entry.coverage) == ("Title", "u", "S01")
 
     def test_clear_entry_stamp_clears_the_timestamp_and_nothing_else(self, tmp_path: Path) -> None:
-        stamped: CacheRecord = {"name": "Title", "url": "u", "updated_at": datetime(2021, 6, 5)}
+        stamped: CachedTitleUpdate = {"name": "Title", "url": "u", "updated_at": datetime(2021, 6, 5)}
         with _open(tmp_path) as store:
             store.update_cache(Arr.SONARR, 7, stamped)
             store.update_cache(Arr.RADARR, 7, stamped)

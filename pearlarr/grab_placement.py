@@ -45,8 +45,8 @@ from .releases import (
     FlaggedUrl,
     GrabHold,
     OrderOnlyKey,
+    Release,
     SeadexDict,
-    SeadexUrlItem,
     flagged_urls,
     season_episode_key,
 )
@@ -131,9 +131,9 @@ def entry_hashes(seadex_dict: SeadexDict) -> frozenset[str]:
 
     return frozenset(
         qbit_hash
-        for rg_item in seadex_dict.values()
-        for url_item in rg_item.urls.values()
-        if (qbit_hash := url_item.qbit_hash) is not None
+        for group_releases in seadex_dict.values()
+        for release in group_releases.releases.values()
+        if (qbit_hash := release.qbit_hash) is not None
     )
 
 
@@ -157,13 +157,13 @@ class TorrentReads:
         """
 
         return {
-            url_item.url: KnownTorrent(
-                None if url_item.qbit_hash is None else self.stored.get(url_item.qbit_hash),
+            release.url: KnownTorrent(
+                None if release.qbit_hash is None else self.stored.get(release.qbit_hash),
                 self.indexes,
-                self._evidence(url_item.infohash),
+                self._evidence(release.infohash),
             )
-            for rg_item in seadex_dict.values()
-            for url_item in rg_item.urls.values()
+            for group_releases in seadex_dict.values()
+            for release in group_releases.releases.values()
         }
 
     def _evidence(self, infohash: str | None) -> TorrentEvidence:
@@ -461,21 +461,23 @@ class EntryPlacements:
     def attach_placements(self, seadex_dict: SeadexDict) -> None:
         """Write each url's records, hold, and hold counts onto its item, and the records' union onto its group."""
 
-        for rg_item in seadex_dict.values():
+        for group_releases in seadex_dict.values():
             all_episodes: list[EpisodeRecord] = []
-            for url, url_item in rg_item.urls.items():
+            for url, release in group_releases.releases.items():
                 placement = self.by_url[url]
-                url_item.episodes = list(placement.records)
-                url_item.hold = placement.hold
-                url_item.hold_counts = placement.hold_counts
-                all_episodes.extend(url_item.episodes)
-            rg_item.all_episodes = all_episodes
+                release.episodes = list(placement.records)
+                release.hold = placement.hold
+                release.hold_counts = placement.hold_counts
+                all_episodes.extend(release.episodes)
+            group_releases.all_episodes = all_episodes
 
     def input_missing_groups(self, seadex_dict: SeadexDict) -> tuple[str, ...]:
         """The groups with a url whose placement waits on a read that failed."""
 
         return tuple(
-            group for group, item in seadex_dict.items() if not all(self.by_url[url].inputs_known for url in item.urls)
+            group
+            for group, item in seadex_dict.items()
+            if not all(self.by_url[url].inputs_known for url in item.releases)
         )
 
 
@@ -558,7 +560,7 @@ class SeedRelease:
     release_group: str
     """The SeaDex release group (authoritative)."""
 
-    url_item: SeadexUrlItem
+    release: Release
     """The flagged url record whole: the fold reads its sizes and dual-audio flag."""
 
     qbit_hash: str
@@ -571,7 +573,7 @@ class SeedRelease:
     def own_group(self) -> OwnGroup:
         """The release's group at its listing's sizes, the trust policy's last vote."""
 
-        return OwnGroup(self.release_group, tuple(self.url_item.size))
+        return OwnGroup(self.release_group, tuple(self.release.size))
 
     @property
     def facts(self) -> TorrentFacts:
@@ -580,11 +582,11 @@ class SeedRelease:
         return TorrentFacts(
             infohash=self.qbit_hash,
             release_group=self.release_group,
-            is_dual_audio=self.url_item.is_dual_audio,
+            is_dual_audio=self.release.is_dual_audio,
             seadex_files=tuple(f.basename for f in self.placed.files),
             release_sizes=self.own_group.sizes,
             sizes_by_name=self.placed.sizes_by_name,
-            cross_seed=self.url_item.cross_seed_hash is not None,
+            cross_seed=self.release.cross_seed_hash is not None,
         )
 
 

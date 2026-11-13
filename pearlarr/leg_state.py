@@ -25,11 +25,11 @@ def unresolved_label(al_id: int) -> str:
 
 
 @dataclass(frozen=True, slots=True)
-class EntryTitle:
+class Title:
     """An entry's resolved title: what the run shows, and the AniList title when one resolved."""
 
     al_id: int
-    display: str
+    name: str
     """The AniList title, else the arr item's own title, else the id form."""
     names: EntryNames = field(default_factory=EntryNames)
     """The arr title and every AniList title, the placement's tie-break between look-alike files."""
@@ -44,19 +44,19 @@ class EntryTitle:
     def resolved(self) -> bool:
         """False when nothing named the entry and `display` fell back to the id form."""
 
-        return self.display != unresolved_label(self.al_id)
+        return self.name != unresolved_label(self.al_id)
 
 
-def resolve_entry_title(al_id: int, anilist_titles: tuple[str, ...], arr_title: str) -> EntryTitle:
+def resolve_entry_title(al_id: int, anilist_titles: tuple[str, ...], arr_title: str) -> Title:
     """The title ladder: the first AniList title, else the arr item's own title, else the id form."""
 
     names = EntryNames(arr_title, tuple(title for title in anilist_titles if title))
     named = names.anilist[0] if names.anilist else arr_title
-    return EntryTitle(al_id=al_id, display=named or unresolved_label(al_id), names=names)
+    return Title(al_id=al_id, name=named or unresolved_label(al_id), names=names)
 
 
 @dataclass(frozen=True, slots=True)
-class GrabRecord:
+class GrabbedRow:
     """One grab, recorded for the end-of-run summary's "added" detail block."""
 
     title: str | None
@@ -92,7 +92,7 @@ class NeedsActionKind(Enum):
 
 
 @dataclass(frozen=True, slots=True)
-class NeedsActionRecord:
+class NeedsActionRow:
     """One skip needing attention, recorded for the summary's "needs action" block."""
 
     title: str | None
@@ -110,7 +110,7 @@ class RunStats:
     """The per-run tally rendered by the end-of-run summary."""
 
     checked: int = 0
-    added: list[GrabRecord] = field(default_factory=list[GrabRecord])
+    added: list[GrabbedRow] = field(default_factory=list[GrabbedRow])
     up_to_date: int = 0
     cached: int = 0
     no_seadex_entry: int = 0
@@ -118,8 +118,8 @@ class RunStats:
     """Lookups skipped this run, counted apart from `no_seadex_entry`."""
     no_releases: int = 0
     no_mappings: int = 0
-    needs_action: list[NeedsActionRecord] = field(
-        default_factory=list[NeedsActionRecord],
+    needs_action: list[NeedsActionRow] = field(
+        default_factory=list[NeedsActionRow],
     )
     unmonitored: int = 0
     queued: int = 0
@@ -200,7 +200,7 @@ class RunContext:
     """Run clock (monotonic, so an NTP or DST step cannot move it)."""
     counts_mark: CountsMark = field(default_factory=lambda: SeverityCounts().bound_mark())
     """Stamped at run start and diffed for the summary's issues row (an unstamped ctx diffs to zero)."""
-    pending_imports: dict[str, PendingImport] = field(default_factory=dict[str, PendingImport])
+    grabbed_this_run: dict[str, PendingImport] = field(default_factory=dict[str, PendingImport])
     """Records written THIS run, keyed by infohash for the run-list writes. The durable copies live in
     `cache_store`."""
     reacquired_keys: set[str] = field(default_factory=set[str])

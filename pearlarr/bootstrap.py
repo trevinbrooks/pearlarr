@@ -361,7 +361,7 @@ def _run_leg(target: ArrTarget, ctx: LegContext) -> bool:
     from .seadex_sonarr import SonarrSync
 
     arr_name = target.arr
-    item_id = target.item_id
+    item_id = target.external_id
     # Bound before the try so a RunDeps.build failure can't hit an
     # UnboundLocalError in the finally's close.
     deps: RunDeps | None = None

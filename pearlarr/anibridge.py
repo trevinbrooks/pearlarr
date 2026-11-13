@@ -73,12 +73,12 @@ class SpecialAliasing(NamedTuple):
 type AniBridgeGraph = dict[str, dict[str, dict[str, str]]]
 """Raw anibridge-mappings JSON: descriptor -> {target_descriptor -> {src: tgt}}."""
 
-type AniBridgeEntry = dict[str, Any]
+type AniBridgeRawMapping = dict[str, Any]
 """One consumer-facing mapping entry (mixed-typed). `mappings` reads it via
 `_entry_from_raw`. Stays a loose `dict` - it is the raw->typed boundary,
 not the typed domain."""
 
-type AniBridgeLookup = dict[int, AniBridgeEntry]
+type AniBridgeLookup = dict[int, AniBridgeRawMapping]
 """A `lookup_by_*` result: AniList id -> its consumer entry."""
 
 
@@ -518,7 +518,7 @@ class AniBridge:
         imdb_id: str | None,
         tmdb_movie_id: int | None,
         tvdb: TvdbShowMaps | None = None,
-    ) -> AniBridgeEntry:
+    ) -> AniBridgeRawMapping:
         """The consumer-facing mapping dict, the single shape both backings build.
 
         "tvdb_mappings" attaches ONLY when `tvdb` is given (never by truthiness): an empty {}
@@ -543,7 +543,7 @@ class AniBridge:
         self,
         anilist_id: int,
         tvdb_id: int | None = None,
-    ) -> AniBridgeEntry:
+    ) -> AniBridgeRawMapping:
         """Build the mapping dict consumed by the Sonarr/Radarr pipeline.
 
         The entry mirrors the field names the rest of the code already reads.

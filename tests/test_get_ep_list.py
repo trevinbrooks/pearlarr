@@ -24,7 +24,7 @@ from datetime import date
 
 from pearlarr.anilist_client import AniListAiring
 from pearlarr.arr_models import SonarrEpisode
-from pearlarr.mappings import MappingEntry
+from pearlarr.mappings import TitleMapping
 from pearlarr.output import Severity
 from pearlarr.sonarr_episodes import SonarrEpisodes, check_ep_by_anibridge, check_ep_by_anime_ids
 
@@ -107,7 +107,7 @@ def test_anime_ids_lookups_route_through_the_gateway() -> None:
     anilist = _RecordingAniList(n_eps=1)
     episodes = make_sonarr_episodes(sonarr=sonarr, _anilist=anilist, _mappings=_NoAniDbMappings())
 
-    mapping = MappingEntry(anilist_id=123, tvdb_season=1)
+    mapping = TitleMapping(anilist_id=123, tvdb_season=1)
     result = episodes.get_ep_list(sonarr_series_id=10, al_id=123, mapping=mapping)
 
     assert anilist.format_calls == [123]
@@ -145,7 +145,7 @@ def test_empty_anibridge_season_map_resolves_to_no_episodes() -> None:
     sonarr = _FakeSonarr([sonarr_ep(1, 1)])
     episodes = make_sonarr_episodes(sonarr=sonarr)
 
-    mapping = MappingEntry(anilist_id=123, tvdb_mappings={})
+    mapping = TitleMapping(anilist_id=123, tvdb_mappings={})
     result = episodes.get_ep_list(sonarr_series_id=10, al_id=123, mapping=mapping)
 
     assert result == []
@@ -176,7 +176,7 @@ def test_anidb_map_filters_episodes_and_bypasses_the_offset_slice() -> None:
     mappings = _FakeAniDbMappings({0: {1: 100, 3: 300}})
     episodes = make_sonarr_episodes(sonarr=sonarr, _anilist=anilist, _mappings=mappings)
 
-    mapping = MappingEntry(anilist_id=123, tvdb_season=0, anidb_id=99)
+    mapping = TitleMapping(anilist_id=123, tvdb_season=0, anidb_id=99)
     result = episodes.get_ep_list(sonarr_series_id=10, al_id=123, mapping=mapping)
 
     assert mappings.calls == [(99, 0)]
@@ -197,7 +197,7 @@ def test_tv_format_outside_season_zero_never_consults_anidb() -> None:
     mappings = _FakeAniDbMappings({1: {1: 1}})
     episodes = make_sonarr_episodes(sonarr=sonarr, _anilist=anilist, _mappings=mappings)
 
-    mapping = MappingEntry(anilist_id=123, tvdb_season=1, anidb_id=99)
+    mapping = TitleMapping(anilist_id=123, tvdb_season=1, anidb_id=99)
     result = episodes.get_ep_list(sonarr_series_id=10, al_id=123, mapping=mapping)
 
     assert mappings.calls == []
@@ -213,7 +213,7 @@ def test_missing_anidb_id_never_consults_anidb() -> None:
     mappings = _FakeAniDbMappings({0: {1: 100}})
     episodes = make_sonarr_episodes(sonarr=sonarr, _anilist=anilist, _mappings=mappings)
 
-    mapping = MappingEntry(anilist_id=123, tvdb_season=0)
+    mapping = TitleMapping(anilist_id=123, tvdb_season=0)
     result = episodes.get_ep_list(sonarr_series_id=10, al_id=123, mapping=mapping)
 
     assert mappings.calls == []
@@ -233,7 +233,7 @@ def test_episodes_without_numbers_are_skipped_on_the_anidb_path() -> None:
     mappings = _FakeAniDbMappings({1: {1: 100}})
     episodes = make_sonarr_episodes(sonarr=sonarr, _anilist=anilist, _mappings=mappings)
 
-    mapping = MappingEntry(anilist_id=123, tvdb_season=-1, anidb_id=99)
+    mapping = TitleMapping(anilist_id=123, tvdb_season=-1, anidb_id=99)
     result = episodes.get_ep_list(sonarr_series_id=10, al_id=123, mapping=mapping)
 
     assert mappings.calls == [(99, -1)]
@@ -253,7 +253,7 @@ def test_empty_anidb_map_falls_through_to_the_offset_slice() -> None:
     mappings = _FakeAniDbMappings({})
     episodes = make_sonarr_episodes(sonarr=sonarr, _anilist=anilist, _mappings=mappings)
 
-    mapping = MappingEntry(anilist_id=123, tvdb_season=0, anidb_id=99)
+    mapping = TitleMapping(anilist_id=123, tvdb_season=0, anidb_id=99)
     result = episodes.get_ep_list(sonarr_series_id=10, al_id=123, mapping=mapping)
 
     assert mappings.calls == [(99, 0)]
@@ -277,7 +277,7 @@ def test_season_zero_is_grabbed_at_season_zero_but_dropped_at_minus_one() -> Non
 
 
 # The tables count every title below from S00E01, a short special from the year before it aired.
-_MAPPED_FROM_SPECIAL_ONE = MappingEntry(anilist_id=123, tvdb_season=0)
+_MAPPED_FROM_SPECIAL_ONE = TitleMapping(anilist_id=123, tvdb_season=0)
 _EARLIER_SPECIAL = sonarr_ep(0, 1, ep_id=1, air_date="2019-02-20", runtime=12)
 
 

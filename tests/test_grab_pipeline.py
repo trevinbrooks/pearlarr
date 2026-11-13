@@ -47,7 +47,7 @@ from pearlarr.output import (
 )
 from pearlarr.output.recording import RecordingHub
 from pearlarr.pending_import import GuardFacts, PendingImport
-from pearlarr.releases import ElsewhereCounts, GrabHold, SeadexDict, SeadexUrlItem
+from pearlarr.releases import ElsewhereCounts, GrabHold, Release, SeadexDict
 from pearlarr.stamps import now_stamp, stamp_of
 from pearlarr.torrent import TorrentParseError
 from pearlarr.torrents import AddResult, ReleaseOutcome, TorrentAddError
@@ -282,7 +282,7 @@ class TestAddOneUrlRegistersPending:
         # newest plan, never a frozen per-record copy.
         assert _guards(pipeline) == {PENDING_AL_ID: facts}
         assert pipeline._ctx.reacquired_keys == {"h1"}
-        assert pipeline._ctx.pending_imports == {}
+        assert pipeline._ctx.grabbed_this_run == {}
         assert n_added == 0
         assert pipeline._ctx.torrents_added == 0
         assert pipeline._ctx.stats.added == []
@@ -300,7 +300,7 @@ class TestAddOneUrlRegistersPending:
 
         assert set(_pending(pipeline)) == {"h1"}
         assert _guards(pipeline) == {PENDING_AL_ID: facts}
-        assert [p.infohash for p in pipeline._ctx.pending_imports.values()] == ["h1"]
+        assert [p.infohash for p in pipeline._ctx.grabbed_this_run.values()] == ["h1"]
         assert n_added == 1
         assert pipeline._ctx.torrents_added == 1
         assert len(pipeline._ctx.stats.added) == 1
@@ -369,7 +369,7 @@ class TestAddOneUrlRegistersPending:
         )
 
         assert claim_al_ids(_stored(second, "h1")) == (11, 22)
-        assert claim_al_ids(ctx.pending_imports["h1"]) == (11, 22)
+        assert claim_al_ids(ctx.grabbed_this_run["h1"]) == (11, 22)
         assert ctx.reacquired_keys == set()
         assert _guards(second).keys() == {11, 22}
 
@@ -382,7 +382,7 @@ class TestAddOneUrlRegistersPending:
         )
 
         assert _pending(pipeline) == {}
-        assert pipeline._ctx.pending_imports == {}
+        assert pipeline._ctx.grabbed_this_run == {}
 
     def test_off_mode_registers_nothing_off_the_strategys_empty_seeds(self) -> None:
         # The wait-mode gate is the strategy's: it seeds nothing when the mode is off, and the
@@ -396,7 +396,7 @@ class TestAddOneUrlRegistersPending:
 
         assert _pending(pipeline) == {}
         assert _guards(pipeline) == {}
-        assert pipeline._ctx.pending_imports == {}
+        assert pipeline._ctx.grabbed_this_run == {}
 
     def test_preview_does_not_register_but_returns_outcome(self) -> None:
         # No client -> preview: nothing persisted, but the outcome still surfaces.
@@ -410,7 +410,7 @@ class TestAddOneUrlRegistersPending:
 
         assert _pending(pipeline) == {}
         assert _guards(pipeline) == {}
-        assert pipeline._ctx.pending_imports == {}
+        assert pipeline._ctx.grabbed_this_run == {}
         assert [r.outcome for r in results] == [AddOutcome.ALREADY_ADDED]
 
     def test_radarr_registration_writes_no_guard_row(self) -> None:
@@ -468,13 +468,13 @@ class TestReacquireRegistration:
         assert record.added_at == self._STORED_AT
         assert [c.al_id for c in record.claims] == [PENDING_AL_ID, 22]
         assert pipeline._ctx.reacquired_keys == {"h1"}
-        assert pipeline._ctx.pending_imports == {}
+        assert pipeline._ctx.grabbed_this_run == {}
 
     def test_this_runs_own_grab_is_never_a_reacquire(self) -> None:
         # One entry listing a torrent twice: the second add meets this run's fresh record, and the
         # torrent stays the run's grab.
         pipeline = _pipeline(torrents=self._reacquire(None))
-        pipeline._ctx.pending_imports["h1"] = pending_import(infohash="h1")
+        pipeline._ctx.grabbed_this_run["h1"] = pending_import(infohash="h1")
 
         self._add(pipeline, pending_seed("h1"))
 
@@ -534,7 +534,7 @@ class TestReacquireRegistration:
         record = _stored(pipeline, "h1")
         assert before <= record.added_at <= now_stamp()
         assert pipeline._ctx.reacquired_keys == {"h1"}
-        assert pipeline._ctx.pending_imports == {}
+        assert pipeline._ctx.grabbed_this_run == {}
         assert _guards(pipeline).keys() == {PENDING_AL_ID}
 
     def test_a_torrent_long_in_qbittorrent_is_tracked_at_its_add_time(self) -> None:
@@ -549,7 +549,7 @@ class TestReacquireRegistration:
         assert diagnostic_messages(recording, Severity.WARNING) == []
         assert _stored(pipeline, "h1").added_at == stamp_of(added_on)
         assert pipeline._ctx.reacquired_keys == {"h1"}
-        assert pipeline._ctx.pending_imports == {}
+        assert pipeline._ctx.grabbed_this_run == {}
         assert _guards(pipeline).keys() == {PENDING_AL_ID}
         assert [r.outcome for r in results] == [AddOutcome.ALREADY_ADDED]
 
@@ -557,7 +557,7 @@ class TestReacquireRegistration:
         # The torrent already holding the url's files is tracked like one under SeaDex's hash.
         pipeline = _pipeline(torrents=self._reacquire(datetime.now() - timedelta(days=3)))
         seadex_dict = one_release_dict(srg="NAN0", infohash="h1")
-        seadex_dict["NAN0"].urls["https://nyaa.si/view/1"].cross_seed_hash = "c1"
+        seadex_dict["NAN0"].releases["https://nyaa.si/view/1"].cross_seed_hash = "c1"
 
         pipeline.add_torrent(grab_request(seadex_dict=seadex_dict, pending_seeds={"c1": pending_seed("c1")}))
 
@@ -571,7 +571,7 @@ class TestReacquireRegistration:
         self._add(pipeline, pending_seed("h1"))
 
         assert pipeline._ctx.reacquired_keys == set()
-        assert [p.infohash for p in pipeline._ctx.pending_imports.values()] == ["h1"]
+        assert [p.infohash for p in pipeline._ctx.grabbed_this_run.values()] == ["h1"]
         assert before <= _stored(pipeline, "h1").added_at <= now_stamp()
 
     def test_fresh_add_of_a_stored_record_restamps_the_start(self) -> None:
@@ -588,10 +588,10 @@ class TestReacquireRegistration:
         assert [c.al_id for c in record.claims] == [PENDING_AL_ID, 22]
         assert before <= record.added_at <= now_stamp()
         assert pipeline._ctx.reacquired_keys == set()
-        assert list(pipeline._ctx.pending_imports) == ["h1"]
+        assert list(pipeline._ctx.grabbed_this_run) == ["h1"]
 
 
-def _nyaa_release(*, url: str, infohash: str) -> SeadexUrlItem:
+def _nyaa_release(*, url: str, infohash: str) -> Release:
     """A download-flagged Nyaa release that clears every add-path filter."""
 
     item = url_item(url=url, infohash=infohash, download=True)
@@ -685,7 +685,7 @@ class TestAddTorrentCap:
         assert torrents.calls == []
         assert claim_al_ids(_stored(pipeline, "h1")) == (11, 22)
         assert pipeline._ctx.reacquired_keys == set()
-        assert pipeline._ctx.pending_imports == {}
+        assert pipeline._ctx.grabbed_this_run == {}
 
     def test_a_held_seed_for_a_new_torrent_stores_nothing(self) -> None:
         u1 = _nyaa_release(url="https://nyaa.si/view/1", infohash="h1")
@@ -830,7 +830,7 @@ class TestUpToDateTally:
         assert pipeline._ctx.stats.up_to_date == 2
 
 
-def _anidex_release(*, url: str, infohash: str) -> SeadexUrlItem:
+def _anidex_release(*, url: str, infohash: str) -> Release:
     """A download-flagged release on AniDex: public (clears the private-only gate), in the default tracker set.
 
     It has no parser, so it hits `_add_one_url`'s new skip.
@@ -1178,7 +1178,7 @@ class TestPlacementHolds:
     """A url the placement refused is never added: the title stays uncached, and the summary says why."""
 
     @staticmethod
-    def _held(*, url: str, infohash: str, hold: GrabHold) -> SeadexUrlItem:
+    def _held(*, url: str, infohash: str, hold: GrabHold) -> Release:
         """A flagged Nyaa release the placement refused to grab for `hold`."""
 
         item = _nyaa_release(url=url, infohash=infohash)
@@ -1230,7 +1230,7 @@ class TestPlacementHolds:
         # Another entry's record holds the torrent.
         resident = pending_import(infohash="h1")
         seadex_dict = one_release_dict(srg="RG", infohash="h1")
-        seadex_dict["RG"].urls["https://nyaa.si/view/1"].hold = GrabHold.TITLE_REFUTED
+        seadex_dict["RG"].releases["https://nyaa.si/view/1"].hold = GrabHold.TITLE_REFUTED
         torrents = FakeTorrents({"h1": AddResult(AddOutcome.ALREADY_ADDED, "Show", None)})
         pipeline = _pipeline(torrents=torrents, sleep_time=0)
         pipeline.cache_store.put_pending(Arr.SONARR, resident.infohash, resident.to_json())
