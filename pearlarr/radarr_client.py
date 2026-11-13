@@ -103,7 +103,7 @@ class RadarrClient(AbstractRadarrClient):
 
 def collect_anime_movies(
     radarr_client: AbstractRadarrClient,
-    mappings: KnownExternalIds,
+    known_ids: KnownExternalIds,
     anibridge: AniBridge | None,
 ) -> list[RadarrItem]:
     """Radarr movies that have an AniList mapping, sorted by title.
@@ -113,7 +113,7 @@ def collect_anime_movies(
 
     Args:
         radarr_client: Client to fetch the movie list from.
-        mappings: Resolver exposing `anime_id_set(column)` for the
+        known_ids: Resolver exposing `anime_id_set(column)` for the
             Anime-IDs candidate sets.
         anibridge: AniBridge view, exposing `id_set(mapping_key)`
             for its precomputed candidate sets.
@@ -122,5 +122,5 @@ def collect_anime_movies(
     fields = (IdField("tmdb_movie_id", "tmdbId"), IdField("imdb_id", "imdbId"))
     return collect_anime_items(
         radarr_client.all_movies,
-        build_id_filters(fields, mappings, anibridge),
+        build_id_filters(fields, known_ids, anibridge),
     )

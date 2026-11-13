@@ -36,7 +36,7 @@ from .planner import GrabPlan, GrabPlanner
 from .releases import SeadexDict
 from .reporter import RunReporter
 from .seadex_filter import SeadexReleaseFilter
-from .seadex_gateway import SeaDexGateway, SeaDexMiss, SeaDexSource
+from .seadex_gateway import SeaDexGateway, SeaDexNoEntry, SeaDexSource
 from .skyhook_client import SkyHookClient
 from .skyhook_gateway import SkyHookGateway
 from .torrent_service import TorrentService
@@ -120,7 +120,7 @@ class ArrRunDeps:
         cache: str = "cache.db",
         *,
         logger: logging.Logger,
-        mappings: MappingResolver,
+        resolver: MappingResolver,
         app_config: AppConfig,
         web: httpx.Client,
         boot: BootFlow,
@@ -132,7 +132,7 @@ class ArrRunDeps:
             cache: Path to the cache database.
             logger: Logger to use (the CLI builds it before the
                 config file can even be read, so config errors are loggable).
-            mappings: The id-mapping resolver, built once by the
+            resolver: The id-mapping resolver, built once by the
                 CLI and shared across a scheduled Radarr->Sonarr cycle so the three
                 large mapping sources are downloaded, parsed and indexed once.
             app_config: The loaded config, read and validated once by
@@ -242,7 +242,7 @@ class ArrRunDeps:
             parse_cache_rows=ParseCacheRows(cache_store),
             http=http,
             qbit=qbit,
-            resolver=mappings,
+            resolver=resolver,
             logger=logger,
             # SeaDex API gateway (entry lookups, with connection-error handling)
             seadex=SeaDexGateway(client=SeaDexEntry()),
@@ -408,7 +408,7 @@ class ArrRunServices:
         """
 
         sd_entry = self._seadex.entry(al_id)  # warmed cache, no network
-        if isinstance(sd_entry, SeaDexMiss):
+        if isinstance(sd_entry, SeaDexNoEntry):
             return False
         return self._unchanged_cached_title(al_id, sd_entry) is None
 
@@ -479,17 +479,17 @@ class ArrRunServices:
 
         return title_from_names(al_id, self._anilist.titles(al_id), self._state.arr_title)
 
-    def new_cache_details(self, title: Title, sd_entry: EntryRecord) -> CachedTitleUpdate:
+    def new_cached_title_update(self, title: Title, sd_entry: EntryRecord) -> CachedTitleUpdate:
         """The seed record a processed id accumulates into.
 
         `name` rides only when AniList resolved: `update_cache` merges partially, so an omitted
         name keeps what an earlier run stored instead of clobbering it with a fallback label.
         """
 
-        details: CachedTitleUpdate = {"updated_at": sd_entry.updated_at}
+        update: CachedTitleUpdate = {"updated_at": sd_entry.updated_at}
         if title.anilist is not None:
-            details["name"] = title.anilist
-        return details
+            update["name"] = title.anilist
+        return update
 
     def get_seadex_dict(self, sd_entry: EntryRecord) -> SeadexDict:
         """Parse and filter a SeaDex entry into the run's release dict, each url marked with any cross-seed of it."""
@@ -534,7 +534,7 @@ class ArrRunServices:
 
         return self._state.import_wait_mode
 
-    def _update_cache(
+    def _update_cached_title(
         self,
         al_id: int,
         update: CachedTitleUpdate,
@@ -565,7 +565,7 @@ class ArrRunServices:
         if not metadata_unread:
             # Never fallback-satisfied: overwrite any stale True from a prior fallback run.
             update["fallback_satisfied"] = False
-            self._update_cache(al_id=al_id, update=update)
+            self._update_cached_title(al_id=al_id, update=update)
         self.owe_pause()
 
     def report_invalid_selection(self) -> None:
@@ -603,8 +603,8 @@ class ArrRunServices:
 
         # Get the SeaDex entry if it exists
         sd_entry = self._seadex.entry(al_id)
-        if isinstance(sd_entry, SeaDexMiss):
-            if sd_entry is SeaDexMiss.UNREACHABLE:
+        if isinstance(sd_entry, SeaDexNoEntry):
+            if sd_entry is SeaDexNoEntry.UNREACHABLE:
                 self._reporter.log_seadex_unreachable(self._state, al_id)
             else:
                 self._reporter.log_no_sd_entry(self._state, al_id)
@@ -644,7 +644,7 @@ class ArrRunServices:
         if not cached.name and (name := self.resolve_title(al_id).anilist):
             backfill["name"] = name
         if backfill:
-            self._update_cache(al_id=al_id, update=backfill)
+            self._update_cached_title(al_id=al_id, update=backfill)
         self._reporter.log_cached_title(self._state, al_id)
         return True
 

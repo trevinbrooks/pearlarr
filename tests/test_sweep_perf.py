@@ -32,12 +32,12 @@ from pearlarr.parse_cache import (
     parse_to_json,
 )
 from pearlarr.releases import SeadexDict
-from pearlarr.seadex_gateway import SeaDexMiss
+from pearlarr.seadex_gateway import SeaDexNoEntry
 from pearlarr.sonarr_episodes import (
     SONARR_FETCH_WORKERS,
     SonarrEpisodes,
     fetch_workers,
-    sonarr_series_fingerprint,
+    sonarr_series_hash,
 )
 from pearlarr.sonarr_parse import SonarrParseCache
 from pearlarr.stamps import STAMP_FORMAT
@@ -112,13 +112,13 @@ class TestSeriesFingerprint:
     """`sonarr_series_fingerprint` is order- and duplicate-independent, differs across different id sets, and is stable for the empty set."""
 
     def test_order_and_duplicate_independent(self) -> None:
-        assert sonarr_series_fingerprint([3, 1, 2]) == sonarr_series_fingerprint([2, 2, 1, 3])
+        assert sonarr_series_hash([3, 1, 2]) == sonarr_series_hash([2, 2, 1, 3])
 
     def test_different_sets_differ(self) -> None:
-        assert sonarr_series_fingerprint([1, 2]) != sonarr_series_fingerprint([1, 2, 3])
+        assert sonarr_series_hash([1, 2]) != sonarr_series_hash([1, 2, 3])
 
     def test_empty_is_stable(self) -> None:
-        assert sonarr_series_fingerprint([]) == sonarr_series_fingerprint(iter(()))
+        assert sonarr_series_hash([]) == sonarr_series_hash(iter(()))
 
 
 class TestParseIsFresh:
@@ -496,9 +496,9 @@ class _Seadex:
     def __init__(self, entry: EntryRecord | None) -> None:
         self._entry = entry
 
-    def entry(self, al_id: int) -> EntryRecord | SeaDexMiss:
+    def entry(self, al_id: int) -> EntryRecord | SeaDexNoEntry:
         del al_id
-        return self._entry if self._entry is not None else SeaDexMiss.NO_ENTRY
+        return self._entry if self._entry is not None else SeaDexNoEntry.NOT_FOUND
 
 
 class TestAlIdNeedsScan:

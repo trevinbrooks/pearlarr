@@ -34,7 +34,7 @@ class TorrentFile:
     """The normalized file name."""
     to_place: bool
     """Whether the batch places this name. False for a seeded or gone name, which is evidence only."""
-    in_parse_map: bool
+    in_parsed: bool
     """Whether the batch's parse map has an entry for the name, a None entry included."""
     parse: ParsedFileInfo | None
     """The widened parse (`widen_range_key`), else None when the batch has no parse for the name."""
@@ -302,7 +302,7 @@ class PlacerState:
             name: TorrentFile(
                 name=name,
                 to_place=name in names_to_place,
-                in_parse_map=name in widened,
+                in_parsed=name in widened,
                 parse=widened.get(name),
                 name_parts=title.read,
                 episode_by_title=title.episode_by_title,

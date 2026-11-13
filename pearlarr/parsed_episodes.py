@@ -284,15 +284,15 @@ def glued_numbers(info: ParsedFileInfo) -> frozenset[int]:
     return frozenset(season * 100 + episode for episode in info.episode_numbers)
 
 
-def numbers_miss_the_series(info: ParsedFileInfo, ep_id_map: Mapping[EpisodeKey, int]) -> bool:
+def numbers_miss_the_series(info: ParsedFileInfo, id_by_key: Mapping[EpisodeKey, int]) -> bool:
     """Whether every key the name parsed misses the series map and the name has no absolutes: a year read as SxxEyy.
 
     False with an empty map.
     """
 
-    if not ep_id_map or not info.episode_numbers or info.absolute_episode_numbers:
+    if not id_by_key or not info.episode_numbers or info.absolute_episode_numbers:
         return False
-    return all(not ep_id_map.get(season_episode_key(info.season_number, episode)) for episode in info.episode_numbers)
+    return all(not id_by_key.get(season_episode_key(info.season_number, episode)) for episode in info.episode_numbers)
 
 
 def names_several_episodes(info: ParsedFileInfo) -> bool:

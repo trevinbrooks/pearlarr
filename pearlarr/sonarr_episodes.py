@@ -47,7 +47,7 @@ def fetch_workers(config: AppConfig) -> int:
     return SONARR_FETCH_WORKERS
 
 
-def sonarr_series_fingerprint(series_ids: Iterable[int]) -> str:
+def sonarr_series_hash(series_ids: Iterable[int]) -> str:
     """Stable fingerprint of the current Sonarr series-id set.
 
     Invalidates unmatched `/parse` records: an unmatched parse almost always means
@@ -149,7 +149,7 @@ class SonarrEpisodes:
         # Fingerprint of the current Sonarr series-id set, recomputed each run in
         # refresh_library. Pins unmatched `/parse` cache records to the library
         # state so they self-heal when a missing series is added.
-        self._series_fp: str = ""
+        self._series_hash: str = ""
 
         # Each series row's order facts, and the orderings built from them and the order cache. Both reset in
         # refresh_library, so a run reads each series' orders once.
@@ -163,7 +163,7 @@ class SonarrEpisodes:
     def series_hash(self) -> str:
         """The current run's series-id fingerprint (read by the parse cache)."""
 
-        return self._series_fp
+        return self._series_hash
 
     def refresh_library(self) -> list[SonarrItem]:
         """Enumerate the AniList-mapped Sonarr series. The run-start reset point.
@@ -178,8 +178,8 @@ class SonarrEpisodes:
         self._picks_logged = set()
         series = self.get_all_sonarr_series()
         # Fingerprint the current series-id set once per run for unmatched-parse
-        # cache invalidation (see sonarr_series_fingerprint).
-        self._series_fp = sonarr_series_fingerprint(s.id for s in series)
+        # cache invalidation (see sonarr_series_hash).
+        self._series_hash = sonarr_series_hash(s.id for s in series)
         self._order_facts = {
             s.id: SonarrSeriesOrders(
                 tvdb_id=s.tvdbId,
@@ -394,7 +394,7 @@ class SonarrEpisodes:
 
         anidb_id = mapping.anidb_id
 
-        mode = mapping.mode
+        mode = mapping.kind
 
         # Get all the episodes for the whole series. The fetch is per-series (not
         # per-AniList-id), so a multi-season series resolving to several ids would

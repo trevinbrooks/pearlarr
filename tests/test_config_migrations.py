@@ -22,10 +22,10 @@ from pearlarr import config_migrations
 from pearlarr.boundary import Json
 from pearlarr.config import (
     AppConfig,
+    ConfigMigration,
     ConfigRewriteError,
-    ConfigUpgrade,
+    migrate_config_file,
     starter_template_text,
-    upgrade_config_file,
 )
 from pearlarr.config_migrations import (
     CONFIG_VERSION,
@@ -343,7 +343,7 @@ class TestUpgradeConfigFile:
         before = AppConfig.load(path)
 
         # The run path passes the loaded checksum; matching bytes must not refuse.
-        upgrade = upgrade_config_file(path, expected_hash=before.config_hash())
+        upgrade = migrate_config_file(path, expected_hash=before.config_hash())
 
         assert upgrade.migration is not None
         assert upgrade.migration.from_version == 0
@@ -364,7 +364,7 @@ class TestUpgradeConfigFile:
     def test_rewrite_and_backup_are_owner_only(self, tmp_path: Path) -> None:
         # Both files carry API keys. Neither may land group/other-readable.
         path = self._write(tmp_path, "seadex:\n  private_releases: allow\n")
-        upgrade = upgrade_config_file(path)
+        upgrade = migrate_config_file(path)
         assert upgrade.backup_path is not None
         assert (Path(path).stat().st_mode & 0o777) == 0o600
         assert (Path(upgrade.backup_path).stat().st_mode & 0o777) == 0o600
@@ -372,7 +372,7 @@ class TestUpgradeConfigFile:
     def test_current_file_is_left_byte_identical(self, tmp_path: Path) -> None:
         text = f"config_version: {CONFIG_VERSION}\nsonarr:\n  url: http://s\n"
         path = self._write(tmp_path, text)
-        assert upgrade_config_file(path) == ConfigUpgrade(migration=None, backup_path=None)
+        assert migrate_config_file(path) == ConfigMigration(migration=None, backup_path=None)
         assert Path(path).read_text(encoding="utf-8") == text
         assert not os.path.exists(path + ".bak")
 
@@ -382,7 +382,7 @@ class TestUpgradeConfigFile:
         for text in ("seadex:\n  public_only: true\ntypo_key: 1\n", "just a scalar\n"):
             path = self._write(tmp_path, text)
             with pytest.raises(ValidationError):
-                upgrade_config_file(path)
+                migrate_config_file(path)
             assert Path(path).read_text(encoding="utf-8") == text
             assert not os.path.exists(path + ".bak")
 
@@ -392,7 +392,7 @@ class TestUpgradeConfigFile:
         # corruption the success message would have papered over.
         password = "correct horse battery staple " * 5 + "end"
         path = self._write(tmp_path, f"seadex:\n  public_only: true\nqbittorrent:\n  password: '{password}'\n")
-        upgrade = upgrade_config_file(path)
+        upgrade = migrate_config_file(path)
         assert upgrade.migration is not None
         loaded = AppConfig.load(path)
         assert loaded.qbittorrent.password is not None
@@ -413,7 +413,7 @@ class TestUpgradeConfigFile:
 
         monkeypatch.setattr(config_mod, "render_migrated_config", corrupt_render)
         with pytest.raises(ConfigRewriteError, match="left untouched"):
-            upgrade_config_file(path)
+            migrate_config_file(path)
         assert Path(path).read_text(encoding="utf-8") == text
         assert not os.path.exists(path + ".bak")
         assert not os.path.exists(path + ".tmp")
@@ -435,7 +435,7 @@ class TestUpgradeConfigFile:
 
         monkeypatch.setattr(config_mod.os, "replace", refuse_replace)
         with pytest.raises(OSError, match="disk full"):
-            upgrade_config_file(path)
+            migrate_config_file(path)
         assert Path(path).read_text(encoding="utf-8") == text
         assert sorted(p.name for p in tmp_path.iterdir()) == ["config.yml"]
 
@@ -449,7 +449,7 @@ class TestUpgradeConfigFile:
         Path(path).write_bytes(torn.encode())
 
         with pytest.raises(ConfigRewriteError, match="changed while"):
-            upgrade_config_file(path, expected_hash=loaded.config_hash())
+            migrate_config_file(path, expected_hash=loaded.config_hash())
         assert Path(path).read_text(encoding="utf-8") == torn
         assert sorted(p.name for p in tmp_path.iterdir()) == ["config.yml"]
 
@@ -467,7 +467,7 @@ class TestUpgradeConfigFile:
         text = "config_version: 2\nseadex:\n  private_releases: junk\nsonarr:\n  url: http://s\n"
         path = self._write(tmp_path, text)
 
-        upgrade = upgrade_config_file(path)
+        upgrade = migrate_config_file(path)
 
         assert upgrade.migration is not None
         assert upgrade.migration.from_version == 2
@@ -489,7 +489,7 @@ class TestUpgradeConfigFile:
         link = tmp_path / "config.yml"
         link.symlink_to(target)
 
-        upgrade = upgrade_config_file(str(link))
+        upgrade = migrate_config_file(str(link))
 
         assert upgrade.migration is not None
         assert link.is_symlink()

@@ -571,7 +571,7 @@ def _natural_order(
     nothing_judged = (
         not state.pairing_off
         and len(candidate_files) == len(unused_ids)
-        and all(file.in_parse_map == (file in unused_set or file.extra) for file in state.files)
+        and all(file.in_parsed == (file in unused_set or file.extra) for file in state.files)
         and state.nothing_judged
         and all(
             (info := state.single_parse(file)) is not None and parse_has_no_number(info) for file in candidate_files

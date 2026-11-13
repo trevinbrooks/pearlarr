@@ -82,7 +82,7 @@ type AniBridgeLookup = dict[int, AniBridgeRawMapping]
 """A `lookup_by_*` result: AniList id -> its consumer entry."""
 
 
-class TvdbShowMaps(NamedTuple):
+class TvdbShowFields(NamedTuple):
     """The per-show fields a TVDB lookup adds to an entry, named as the entry dict keys them."""
 
     tvdb_mappings: TvdbMappings
@@ -203,17 +203,17 @@ class SpecialsTarget(NamedTuple):
     """One season-0 target of a record: its show id (None if not a number) and its source -> target range map."""
 
     show_id: int | None
-    ep_map: Mapping[str, str]
+    episode_ranges: Mapping[str, str]
 
 
-def _specials_maps(targets: Mapping[str, Mapping[str, str]], provider: str) -> list[SpecialsTarget]:
+def _specials_targets(targets: Mapping[str, Mapping[str, str]], provider: str) -> list[SpecialsTarget]:
     """The record's season-0 targets on `provider` (`tvdb_show` or `tmdb_show`)."""
 
     found: list[SpecialsTarget] = []
-    for target, ep_map in targets.items():
+    for target, episode_ranges in targets.items():
         kind, pid, scope = _parse_descriptor(target)
         if kind == provider and _parse_season(scope) == 0:
-            found.append(SpecialsTarget(coerce_int(pid), ep_map or {}))
+            found.append(SpecialsTarget(coerce_int(pid), episode_ranges or {}))
     return found
 
 
@@ -225,15 +225,15 @@ def _special_aliasing(targets: Mapping[str, Mapping[str, str]]) -> dict[int, Spe
     (`_plain_ranges`). A TMDB number that pairs two ways is dropped.
     """
 
-    tvdb, tmdb = _specials_maps(targets, "tvdb_show"), _specials_maps(targets, "tmdb_show")
+    tvdb, tmdb = _specials_targets(targets, "tvdb_show"), _specials_targets(targets, "tmdb_show")
     if len(tvdb) != 1 or len(tmdb) != 1:
         return {}
-    (tvdb_id, tvdb_map), (tmdb_id, tmdb_map) = tvdb[0], tmdb[0]
+    (tvdb_id, tvdb_episode_ranges), (tmdb_id, tmdb_episode_ranges) = tvdb[0], tmdb[0]
     if tvdb_id is None or tmdb_id is None:
         return {}
     pairs: list[tuple[int, int]] = []
-    for source, tvdb_range in tvdb_map.items():
-        if (tmdb_range := tmdb_map.get(source)) is None:
+    for source, tvdb_range in tvdb_episode_ranges.items():
+        if (tmdb_range := tmdb_episode_ranges.get(source)) is None:
             continue
         source_ranges, tvdb_ranges, tmdb_ranges = (_plain_ranges(text) for text in (source, tvdb_range, tmdb_range))
         if source_ranges is None or tvdb_ranges is None or tmdb_ranges is None:
@@ -425,8 +425,8 @@ class AniBridge:
 
             title = AniBridgeTitle()
 
-            for target, ep_map in targets.items():
-                self._add_target(title, anilist_id, target, ep_map)
+            for target, episode_ranges in targets.items():
+                self._add_target(title, anilist_id, target, episode_ranges)
             title.special_aliasing = _special_aliasing(targets)
 
             self.by_anilist[anilist_id] = title
@@ -463,7 +463,7 @@ class AniBridge:
         title: AniBridgeTitle,
         anilist_id: int,
         target: str,
-        ep_map: dict[str, str],
+        episode_ranges: dict[str, str],
     ) -> None:
         """Fold a single target descriptor into an AniList record.
 
@@ -471,7 +471,7 @@ class AniBridge:
             title: The AniList record being built
             anilist_id: AniList id owning this record
             target: Target descriptor (e.g. "tvdb_show:74796:s2")
-            ep_map: {source_range: target_range} for this target
+            episode_ranges: {source_range: target_range} for this target
         """
 
         provider, pid, scope = _parse_descriptor(target)
@@ -498,7 +498,7 @@ class AniBridge:
                 return
 
             ranges = seasons.setdefault(season, [])
-            for tgt in (ep_map or {}).values():
+            for tgt in (episode_ranges or {}).values():
                 ranges.extend(_parse_ranges(tgt))
 
         elif provider == "tmdb_movie":
@@ -517,7 +517,7 @@ class AniBridge:
         anidb_id: int | None,
         imdb_id: str | None,
         tmdb_movie_id: int | None,
-        tvdb: TvdbShowMaps | None = None,
+        tvdb: TvdbShowFields | None = None,
     ) -> AniBridgeRawMapping:
         """The consumer-facing mapping dict, the single shape both backings build.
 
@@ -556,7 +556,7 @@ class AniBridge:
         title = self.by_anilist[anilist_id]
         tvdb = None
         if tvdb_id is not None and tvdb_id in title.tvdb_shows:
-            tvdb = TvdbShowMaps(title.tvdb_shows[tvdb_id], title.special_aliasing.get(tvdb_id))
+            tvdb = TvdbShowFields(title.tvdb_shows[tvdb_id], title.special_aliasing.get(tvdb_id))
         return self._raw_mapping(
             anidb_id=title.anidb_id,
             imdb_id=_first(title.imdb_ids),
@@ -617,7 +617,7 @@ class AniBridge:
             tvdb = None
             if tvdb_id is not None:
                 tvdb_mappings = self._ranges_to_mappings(ranges_by_anilist.get(row.anilist_id, []))
-                tvdb = TvdbShowMaps(tvdb_mappings, aliasing_by_anilist.get(row.anilist_id))
+                tvdb = TvdbShowFields(tvdb_mappings, aliasing_by_anilist.get(row.anilist_id))
             result[row.anilist_id] = self._raw_mapping(
                 anidb_id=row.anidb_id,
                 imdb_id=row.imdb_id,

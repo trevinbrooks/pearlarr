@@ -321,7 +321,7 @@ def test_rundeps_build_warns_deferred_when_qbit_unconfigured(tmp_path: Path) -> 
         Arr.SONARR,
         cache=str(tmp_path / "cache.db"),
         logger=logging.getLogger("boot-flow-qbit"),
-        mappings=make_bare_instance(MappingResolver),
+        resolver=make_bare_instance(MappingResolver),
         app_config=make_config(),  # no qbittorrent credentials
         web=httpx.Client(),
         boot=flow,

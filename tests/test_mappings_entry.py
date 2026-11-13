@@ -17,7 +17,7 @@ import pytest
 
 from pearlarr.anibridge import AniBridgeGraph, SpecialAliasing
 from pearlarr.mappings import (
-    AnimeIdsMap,
+    AnimeIdsByName,
     ExternalIds,
     MappingKind,
     MappingResolver,
@@ -28,7 +28,7 @@ from pearlarr.mappings import (
 
 def _resolver(
     *,
-    anime: AnimeIdsMap | bool | None = False,
+    anime: AnimeIdsByName | bool | None = False,
     anibridge: AniBridgeGraph | bool | None = False,
 ) -> MappingResolver:
     """Build a resolver from in-memory configs, all on-disk sources disabled."""
@@ -65,7 +65,7 @@ class TestKometaPath:
         assert list(mappings) == [100]
         mapping = mappings[100]
         assert isinstance(mapping, TitleMapping)
-        assert mapping.mode is MappingKind.SEASON_OFFSET
+        assert mapping.kind is MappingKind.SEASON_OFFSET
         assert mapping.tvdb_mappings is None
         assert (mapping.anilist_id, mapping.tvdb_season, mapping.tvdb_epoffset) == (100, 2, 3)
         assert mapping.imdb_id == "tt100"
@@ -86,7 +86,7 @@ class TestKometaPath:
         assert mapping.tmdb_movie_id is None
         assert mapping.imdb_id is None
         assert mapping.anidb_id is None
-        assert mapping.mode is MappingKind.SEASON_OFFSET
+        assert mapping.kind is MappingKind.SEASON_OFFSET
 
 
 class TestAniBridgePath:
@@ -106,7 +106,7 @@ class TestAniBridgePath:
         mappings = resolver.resolve(ExternalIds(tvdb=74796)).kept
 
         mapping = mappings[269]
-        assert mapping.mode is MappingKind.EPISODE_RANGES
+        assert mapping.kind is MappingKind.EPISODE_RANGES
         assert mapping.tvdb_mappings == {2: [(1, 21)]}
         assert mapping.anilist_id == 269
         assert mapping.anidb_id == 1234
@@ -147,14 +147,14 @@ class TestModeDiscriminant:
 
     def test_empty_tvdb_mappings_is_still_anibridge(self) -> None:
         # The former "tvdb_mappings" in mapping was True even for an empty dict.
-        assert TitleMapping(anilist_id=1, tvdb_mappings={}).mode is MappingKind.EPISODE_RANGES
+        assert TitleMapping(anilist_id=1, tvdb_mappings={}).kind is MappingKind.EPISODE_RANGES
 
     def test_populated_tvdb_mappings_is_anibridge(self) -> None:
-        assert TitleMapping(anilist_id=1, tvdb_mappings={2: [(1, 3)]}).mode is MappingKind.EPISODE_RANGES
+        assert TitleMapping(anilist_id=1, tvdb_mappings={2: [(1, 3)]}).kind is MappingKind.EPISODE_RANGES
 
     def test_absent_tvdb_mappings_is_anime_ids(self) -> None:
-        assert TitleMapping(anilist_id=1).mode is MappingKind.SEASON_OFFSET
-        assert TitleMapping(anilist_id=1, tvdb_mappings=None).mode is MappingKind.SEASON_OFFSET
+        assert TitleMapping(anilist_id=1).kind is MappingKind.SEASON_OFFSET
+        assert TitleMapping(anilist_id=1, tvdb_mappings=None).kind is MappingKind.SEASON_OFFSET
 
 
 def test_entry_is_frozen() -> None:

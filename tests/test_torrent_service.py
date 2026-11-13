@@ -395,7 +395,7 @@ def test_qbit_login_failure_maps_to_qbit_connection_error(monkeypatch: pytest.Mo
             Arr.SONARR,
             app_config=config,
             logger=logging.getLogger("pearlarr.test"),
-            mappings=make_bare_instance(MappingResolver),
+            resolver=make_bare_instance(MappingResolver),
             web=httpx.Client(),
             boot=BootFlow(),
         )

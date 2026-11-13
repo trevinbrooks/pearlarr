@@ -150,7 +150,7 @@ class RadarrStrategy(ArrStrategy[RadarrItem]):
         title = services.resolve_title(al_id)
         services.open_title_block(title=title.name, sd_entry=sd_entry)
 
-        update = services.new_cache_details(title, sd_entry)
+        update = services.new_cached_title_update(title, sd_entry)
         update["url"] = sd_url
         update["coverage"] = ""
 

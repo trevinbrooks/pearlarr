@@ -26,8 +26,8 @@ from .config import (
     ArrTarget,
     ConfigRewriteError,
     LogFormat,
+    migrate_config_file,
     redact_userinfo,
-    upgrade_config_file,
     write_starter_config,
 )
 from .console_caps import DetectedFeatures
@@ -739,17 +739,19 @@ def config_migrate(json_output: Annotated[bool, typer.Option("--json", help=_JSO
             if _refused_by_active_run(acquired, paths.data_dir, what="the config"):
                 return False
 
-            upgrade = _run_config_action(paths.config_file, upgrade_config_file)
-            if upgrade is None:
+            migrated = _run_config_action(paths.config_file, migrate_config_file)
+            if migrated is None:
                 return False
-            if upgrade.migration is None:
+            if migrated.migration is None:
                 emit_to_hub(ConfigUpToDate(path=paths.config_file))
                 return True
 
-            # backup_path is set in lockstep with a non-None migration (ConfigUpgrade).
-            assert upgrade.backup_path is not None
+            # backup_path is set in lockstep with a non-None migration (ConfigMigration).
+            assert migrated.backup_path is not None
             emit_to_hub(
-                ConfigMigrated(path=paths.config_file, backup_path=upgrade.backup_path, notes=upgrade.migration.notes),
+                ConfigMigrated(
+                    path=paths.config_file, backup_path=migrated.backup_path, notes=migrated.migration.notes
+                ),
             )
             return True
 

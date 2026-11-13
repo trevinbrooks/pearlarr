@@ -277,7 +277,7 @@ class SonarrStrategy(ArrStrategy[SonarrItem]):
         title = services.resolve_title(al_id)
 
         # Setup info for cache
-        update = services.new_cache_details(title, sd_entry)
+        update = services.new_cached_title_update(title, sd_entry)
 
         # Get the episode list for all relevant episodes
         ep_list = self._episodes.mapping_episodes(

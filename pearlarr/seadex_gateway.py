@@ -30,14 +30,14 @@ from .web_client import failure_detail
 SEADEX_BATCH_SIZE = 50
 
 
-class SeaDexMiss(Enum):
+class SeaDexNoEntry(Enum):
     """Why `SeaDexSource.entry` has no record for an id.
 
     The caller must report the two members distinctly: an outage skip is not a
     missing entry.
     """
 
-    NO_ENTRY = auto()
+    NOT_FOUND = auto()
     """SeaDex's answer: the id genuinely has no entry."""
     UNREACHABLE = auto()
     """The lookup was skipped because SeaDex is unreachable this run."""
@@ -57,7 +57,7 @@ class SeaDexSource(ABC):
     def prefetch(self, al_ids: Iterable[int], *, progress: ProgressSink | None = None) -> int: ...
 
     @abstractmethod
-    def entry(self, al_id: int) -> EntryRecord | SeaDexMiss: ...
+    def entry(self, al_id: int) -> EntryRecord | SeaDexNoEntry: ...
 
     @property
     @abstractmethod
@@ -95,21 +95,21 @@ class SeaDexGateway(SeaDexSource):
         # Set once a request has failed twice (batch and single-id lookups both
         # get one immediate retry): SeaDex is down for this run, so every later
         # batch/lookup short-circuits instead of re-timing-out per id.
-        self._outage = False
+        self._unreachable = False
 
     @property
     @override
     def unreachable(self) -> bool:
         """True once SeaDex has been declared unreachable for this run."""
 
-        return self._outage
+        return self._unreachable
 
-    def _note_outage(self, e: httpx.HTTPError) -> None:
+    def _note_unreachable(self, e: httpx.HTTPError) -> None:
         """Warn ONCE that SeaDex is unreachable, muting every later call via the flag."""
 
-        if not self._outage:
+        if not self._unreachable:
             hub_warn(f"SeaDex request failed ({failure_detail(e)}) - affected titles will be skipped this run")
-        self._outage = True
+        self._unreachable = True
 
     @override
     def prefetch(self, al_ids: Iterable[int], *, progress: ProgressSink | None = None) -> int:
@@ -143,7 +143,7 @@ class SeaDexGateway(SeaDexSource):
         for chunk in batched(missing, SEADEX_BATCH_SIZE, strict=False):
             # A failed chunk's ids are NOT marked prefetched (never "absent"), so a
             # transient miss stays a skip, not a remembered no-entry.
-            if not self._outage:
+            if not self._unreachable:
                 fetched = self._fetch_chunk(chunk)
                 if fetched is not None:
                     self._entry_cache.update(fetched)
@@ -168,7 +168,7 @@ class SeaDexGateway(SeaDexSource):
         try:
             return self._fetch_batch(chunk)
         except httpx.HTTPError as e:
-            self._note_outage(e)
+            self._note_unreachable(e)
             return None
 
     def _fetch_batch(self, al_ids: Sequence[int]) -> dict[int, EntryRecord]:
@@ -178,7 +178,7 @@ class SeaDexGateway(SeaDexSource):
         return {record.anilist_id: record for record in self._client.from_filter(filter_str)}
 
     @override
-    def entry(self, al_id: int) -> EntryRecord | SeaDexMiss:
+    def entry(self, al_id: int) -> EntryRecord | SeaDexNoEntry:
         """Get the SeaDex entry for an AniList id, or a typed miss.
 
         Served from the bulk-prefetch cache when warm. A prefetched-but-absent id
@@ -191,12 +191,12 @@ class SeaDexGateway(SeaDexSource):
         if cached is not None:
             return cached
         if al_id in self._prefetched:
-            return SeaDexMiss.NO_ENTRY
-        if self._outage:
-            return SeaDexMiss.UNREACHABLE
+            return SeaDexNoEntry.NOT_FOUND
+        if self._unreachable:
+            return SeaDexNoEntry.UNREACHABLE
         return self._entry_single(al_id)
 
-    def _entry_single(self, al_id: int) -> EntryRecord | SeaDexMiss:
+    def _entry_single(self, al_id: int) -> EntryRecord | SeaDexNoEntry:
         """Single by-id lookup with the orchestrator's graceful degradation.
 
         A missing entry (`EntryNotFoundError`) is NO_ENTRY, immediately - that's
@@ -211,13 +211,13 @@ class SeaDexGateway(SeaDexSource):
         try:
             return self._client.from_id(al_id)
         except EntryNotFoundError:
-            return SeaDexMiss.NO_ENTRY
+            return SeaDexNoEntry.NOT_FOUND
         except httpx.HTTPError:
             pass
         try:
             return self._client.from_id(al_id)
         except EntryNotFoundError:
-            return SeaDexMiss.NO_ENTRY
+            return SeaDexNoEntry.NOT_FOUND
         except httpx.HTTPError as e:
-            self._note_outage(e)
-            return SeaDexMiss.UNREACHABLE
+            self._note_unreachable(e)
+            return SeaDexNoEntry.UNREACHABLE

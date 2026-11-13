@@ -332,23 +332,23 @@ class ManualImportCandidate(ApiModel):
 
     @field_validator("rejections", mode="before")
     @classmethod
-    def _fold_rejections(cls, value: object) -> object:
+    def _convert_rejections(cls, value: object) -> object:
         """Fold str/dict rejection entries to `ImportRejection`, skipping junk."""
 
         if not isinstance(value, list):
             return ()
-        folded: list[ImportRejection] = []
+        converted: list[ImportRejection] = []
         for rejection in cast("list[object]", value):
             if isinstance(rejection, str):
-                folded.append(ImportRejection(reason=rejection))
+                converted.append(ImportRejection(reason=rejection))
             elif isinstance(rejection, dict):
                 try:
-                    folded.append(ImportRejection.model_validate(rejection))
+                    converted.append(ImportRejection.model_validate(rejection))
                 except ValidationError:
                     continue  # junk reason: skip the entry, keep the candidate
             elif isinstance(rejection, ImportRejection):
-                folded.append(rejection)  # field-name construction passes models
-        return folded
+                converted.append(rejection)  # field-name construction passes models
+        return converted
 
 
 class ManualImportFile(WireModel):

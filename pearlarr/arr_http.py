@@ -36,7 +36,7 @@ GET_RETRIES = 3
 BACKOFF_BASE_S = 0.5
 # Streak re-warn cadence default. The Sonarr client swaps in the configured
 # `imports.digest_interval` (same default) via `replace`; everything else keeps this.
-HEARTBEAT_INTERVAL_S = 300.0
+REWARN_INTERVAL_S = 300.0
 
 # Coalesced-repeat breadcrumbs ride the stdlib channel (first-party child of
 # the app logger, so the bridge adopts them into the file sink at DEBUG).
@@ -154,7 +154,7 @@ class ArrHttp:
     """In-call GET retry budget. The wait-path poll handle rides `replace(http,
     retries=0)` - its monitor loop IS the retry mechanism, so in-call backoff
     would only stretch each poll."""
-    rewarn_s: float = HEARTBEAT_INTERVAL_S
+    rewarn_s: float = REWARN_INTERVAL_S
     """Seconds between "still failing" re-warns while a streak runs (the Sonarr
     client swaps in `imports.digest_interval` via `replace` - ArrHttp knows no config)."""
     clock: Callable[[], float] = time.monotonic  # injectable streak clock (faked in tests)
@@ -499,18 +499,18 @@ class ArrHttp:
             streak = self.streaks.active.get((warn, detail))
             if streak is None:
                 self.streaks.active[(warn, detail)] = _Streak(count=1, first_at=now, last_warned_at=now)
-                count, age, heartbeat_due = 1, 0.0, False
+                count, age, rewarn_due = 1, 0.0, False
             else:
                 streak.count += 1
                 count = streak.count
                 age = now - streak.first_at
-                heartbeat_due = now - streak.last_warned_at >= self.rewarn_s
-                if heartbeat_due:
+                rewarn_due = now - streak.last_warned_at >= self.rewarn_s
+                if rewarn_due:
                     streak.last_warned_at = now
         # Emit OUTSIDE the lock: hub/render work must not serialize sweep threads.
         if count == 1:
             hub_warn(warn.replace("{detail}", detail))
-        elif heartbeat_due:
+        elif rewarn_due:
             hub_warn(warn.replace("{detail}", f"{detail}; still failing - attempt {count}, {compact_duration(age)}"))
         else:
             _LOG.debug(f"{warn.replace('{detail}', detail)} - failure {count} in a row")

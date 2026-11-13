@@ -57,7 +57,7 @@ from pearlarr.output.scan_lines import scan_event_lines
 from pearlarr.pending_import import PendingImport
 from pearlarr.progress import ProgressSink
 from pearlarr.radarr_client import AbstractRadarrClient
-from pearlarr.skyhook_client import AbstractSkyHookClient, SkyHookMiss, SkyHookReply
+from pearlarr.skyhook_client import AbstractSkyHookClient, SkyHookNoReply, SkyHookReply
 from pearlarr.sonarr_client import AbstractSonarrClient
 from pearlarr.tvdb_orders import NO_INDEX_ORDERS, IndexOrders
 from pearlarr.wait_types import AttemptKind, AttemptResult, ImportProgress
@@ -580,19 +580,19 @@ class FakeSkyHookClient(AbstractSkyHookClient):
     ) -> None:
         self._replies = dict(replies or {})
         self._failing = failing
-        self._outage = False
+        self._unreachable = False
 
     @property
     @override
     def unreachable(self) -> bool:
-        return self._outage
+        return self._unreachable
 
     @override
-    def fetch(self, tvdb_id: int, order_type: str) -> SkyHookReply | SkyHookMiss:
-        if self._outage or (tvdb_id, order_type) in self._failing:
-            self._outage = True
-            return SkyHookMiss.OUTAGE
-        return self._replies.get((tvdb_id, order_type), SkyHookMiss.NOT_FOUND)
+    def fetch(self, tvdb_id: int, order_type: str) -> SkyHookReply | SkyHookNoReply:
+        if self._unreachable or (tvdb_id, order_type) in self._failing:
+            self._unreachable = True
+            return SkyHookNoReply.UNREACHABLE
+        return self._replies.get((tvdb_id, order_type), SkyHookNoReply.NOT_FOUND)
 
 
 class ScriptedEpisodes:

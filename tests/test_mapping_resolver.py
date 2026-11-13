@@ -44,7 +44,7 @@ from pearlarr.arr_run_services import ArrRunServices
 from pearlarr.arr_run_state import ArrRunState
 from pearlarr.mapping_store import AnidbMappingRow, AnimeIdRow, MappingStore
 from pearlarr.mappings import (
-    AnimeIdsMap,
+    AnimeIdsByName,
     AnimeIdsRawMapping,
     ExternalIds,
     MappingKind,
@@ -490,7 +490,7 @@ class TestSpecialAliases:
 # anime_ids: SQL lookups must equal the former reverse-index merge
 # --------------------------------------------------------------------------- #
 
-AMAP: AnimeIdsMap = {
+AMAP: AnimeIdsByName = {
     "A": {"anilist_id": 100, "tvdb_id": 200, "tvdb_season": 2, "tvdb_epoffset": 3, "imdb_id": "tt100", "anidb_id": 50},
     "B": {"anilist_id": 101, "tvdb_id": 200},  # same tvdb id, 2nd anilist
     "C": {"anilist_id": 100, "tvdb_id": 200, "tvdb_season": 9},  # dup anilist -> first wins
@@ -500,7 +500,7 @@ AMAP: AnimeIdsMap = {
 }
 
 
-def _anime_oracle(amap: AnimeIdsMap, ids: ExternalIds) -> dict[int, TitleMapping]:
+def _anime_oracle(amap: AnimeIdsByName, ids: ExternalIds) -> dict[int, TitleMapping]:
     """Inline twin of the former reverse-index + no-clobber merge (the oracle)."""
 
     index: dict[str, dict[object, list[AnimeIdsRawMapping]]] = {
@@ -635,7 +635,7 @@ class TestGetAnilistIdsMerge:
             mappings = resolved.kept
             assert list(mappings) == [269]  # 270 set aside, sorted
             # AniBridge won for 269 -> ANIBRIDGE mode (not the anime-ids season 7).
-            assert mappings[269].mode is MappingKind.EPISODE_RANGES
+            assert mappings[269].kind is MappingKind.EPISODE_RANGES
             assert mappings[269].tvdb_mappings == {2: [(1, 21)], 3: [(1, 9), (11, 12)]}
         finally:
             resolver.close()
@@ -784,7 +784,7 @@ class TestVu1DegradedAniBridge:
             resolver.close()
         degraded = mappings[500]
         assert degraded.source is MappingSource.ANIBRIDGE
-        assert degraded.mode is MappingKind.SEASON_OFFSET  # no tvdb ranges -> would have grabbed wrong eps
+        assert degraded.kind is MappingKind.SEASON_OFFSET  # no tvdb ranges -> would have grabbed wrong eps
         assert degraded.tvdb_mappings is None
 
         episodes = make_bare_instance(
@@ -995,7 +995,7 @@ class TestDigestGate:
         calls = {"n": 0}
         real_parse = m._parse_anime_mappings
 
-        def counting_parse(path: str) -> AnimeIdsMap:
+        def counting_parse(path: str) -> AnimeIdsByName:
             calls["n"] += 1
             return real_parse(path)
 
@@ -1045,7 +1045,7 @@ class TestConstructionFailureClosesStore:
 
         monkeypatch.setattr(MappingStore, "close", spy_close)
 
-        def boom(_amap: AnimeIdsMap) -> list[AnimeIdRow]:
+        def boom(_amap: AnimeIdsByName) -> list[AnimeIdRow]:
             raise ValueError("parse blew up")
 
         monkeypatch.setattr(m, "_anime_ids_rows", boom)

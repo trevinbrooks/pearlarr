@@ -26,7 +26,7 @@ def normalize_name(name: str) -> str:
     return unicodedata.normalize("NFC", folded)
 
 
-def fold_path_separators(path: str) -> str:
+def to_forward_slashes(path: str) -> str:
     r"""Fold `\` to `/` for cross-platform comparison."""
 
     return path.replace("\\", "/")
@@ -35,7 +35,7 @@ def fold_path_separators(path: str) -> str:
 def _path_segments(path: str) -> list[str]:
     """Split a path into non-empty segments for the boundary-aware compare (separators folded)."""
 
-    return [segment for segment in fold_path_separators(path).split("/") if segment]
+    return [segment for segment in to_forward_slashes(path).split("/") if segment]
 
 
 def translate_download_path(
@@ -91,7 +91,7 @@ def file_name(name: str) -> str:
 
     # posixpath on purpose: the separators are already `/`, and on Windows `os.path` reads a leaf whose second
     # character is a colon (`K: Return of Kings - 01.mkv`) as a drive and cuts those two characters off.
-    return posixpath.basename(fold_path_separators(name).rstrip("/"))
+    return posixpath.basename(to_forward_slashes(name).rstrip("/"))
 
 
 def normalized_leaf(name: str) -> str:

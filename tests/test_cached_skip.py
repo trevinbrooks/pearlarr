@@ -277,7 +277,7 @@ class TestACheckedTitleLosesItsStamp:
                 al_id=7,
                 entry=self._ENTRY,
                 seadex_dict=one_release_dict(srg="RG", infohash="h1"),
-                update=run.new_cache_details(run.resolve_title(7), self._ENTRY),
+                update=run.new_cached_title_update(run.resolve_title(7), self._ENTRY),
             )
         )
 
@@ -511,6 +511,6 @@ class TestNewCacheDetails:
 
         title = Title(al_id=5, name="Series", names=TitleNames("Series", (anilist,) if anilist else ()))
 
-        details = run.new_cache_details(title, entry)
+        details = run.new_cached_title_update(title, entry)
 
         assert details == {**name, "updated_at": entry.updated_at}

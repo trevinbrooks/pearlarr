@@ -7,7 +7,7 @@ from enum import Enum, auto
 from typing import NamedTuple
 
 from .arr_models import CommandResource, HistoryPage, QueueRecord
-from .file_paths import fold_path_separators, normalized_leaf
+from .file_paths import normalized_leaf, to_forward_slashes
 from .pending_import import PendingImport
 from .stamps import parse_stamp_aware
 from .wait_types import AttemptResult, PauseReason
@@ -99,7 +99,7 @@ _COMMAND_IN_FLIGHT_STATES = frozenset({"queued", "started"})
 def _norm_path(path: str) -> str:
     """Normalize a path for a pure (no-disk) prefix compare: separators folded, casefolded."""
 
-    return fold_path_separators(path).casefold()
+    return to_forward_slashes(path).casefold()
 
 
 class ContentPaths(NamedTuple):
