@@ -27,6 +27,7 @@ from seadex import Tag
 
 from pearlarr.cache import AbstractCacheStore, CacheRecord
 from pearlarr.config import Arr
+from pearlarr.leg_state import GrabRecord, NeedsActionKind, NeedsActionRecord, RunContext, RunStats
 from pearlarr.log import (
     ConsoleRender,
     EntryState,
@@ -64,15 +65,7 @@ from pearlarr.output import (
 )
 from pearlarr.output.scan_lines import _TIP_TEXTS, ScanEvent
 from pearlarr.releases import ElsewhereCounts, SeadexDict
-from pearlarr.reporter import (
-    _TIP_PRECEDENCE,
-    GrabRecord,
-    NeedsActionKind,
-    NeedsActionRecord,
-    RunContext,
-    RunReporter,
-    RunStats,
-)
+from pearlarr.reporter import _TIP_PRECEDENCE, RunReporter
 from pearlarr.torrents import AddOutcome, ReleaseOutcome
 from pearlarr.wait_types import ImportWaitMode, PendingState
 

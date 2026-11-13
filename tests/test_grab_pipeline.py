@@ -33,6 +33,7 @@ from pearlarr.grab_pipeline import (
     HoldRow,
 )
 from pearlarr.grab_placement import PendingSeed
+from pearlarr.leg_state import NeedsActionKind, PerTitleState, RunContext
 from pearlarr.notify import Notifier
 from pearlarr.output import (
     CapReached,
@@ -47,7 +48,6 @@ from pearlarr.output import (
 from pearlarr.output.recording import RecordingHub
 from pearlarr.pending_import import GuardFacts, PendingImport
 from pearlarr.releases import ElsewhereCounts, GrabHold, SeadexDict, SeadexUrlItem
-from pearlarr.reporter import NeedsActionKind, PerTitleState, RunContext
 from pearlarr.stamps import now_stamp, stamp_of
 from pearlarr.torrent import TorrentParseError
 from pearlarr.torrents import AddResult, ReleaseOutcome, TorrentAddError

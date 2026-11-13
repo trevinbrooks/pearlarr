@@ -17,7 +17,7 @@ from ..releases import NO_ELSEWHERE, ElsewhereCounts
 from ..wait_types import NO_HELD_BACK, HeldBack, Outcome, OutcomeCategory
 
 if TYPE_CHECKING:
-    from ..reporter import RunStats
+    from ..leg_state import RunStats
 
 
 class Severity(IntEnum):
@@ -343,7 +343,7 @@ class GrabFact:
 
 
 class NeedsActionCause(Enum):
-    """Why a title needs attention. Member names must equal `reporter.NeedsActionKind`'s (mapped by name)."""
+    """Why a title needs attention. Member names must equal `leg_state.NeedsActionKind`'s (mapped by name)."""
 
     PRIVATE_ONLY = auto()
     PRIVATE_ONLY_NO_FALLBACK = auto()

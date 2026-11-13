@@ -12,6 +12,7 @@ from typing import Final
 import pytest
 
 from pearlarr.config import Arr
+from pearlarr.leg_state import GrabRecord, NeedsActionKind, NeedsActionRecord, RunStats
 from pearlarr.log import EntryState
 from pearlarr.output import (
     Accent,
@@ -40,7 +41,6 @@ from pearlarr.output import (
     TorrentGraduated,
     severity_of,
 )
-from pearlarr.reporter import GrabRecord, NeedsActionKind, NeedsActionRecord, RunStats
 from pearlarr.wait_types import Outcome, OutcomeCategory
 
 # --- value model -----------------------------------------------------------------

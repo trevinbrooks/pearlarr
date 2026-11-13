@@ -40,6 +40,7 @@ from pearlarr.anibridge import (
     TvdbMappings,
     _parse_ranges,
 )
+from pearlarr.leg_state import RunContext
 from pearlarr.mapping_store import AnidbMappingRow, AnimeIdRow, MappingStore
 from pearlarr.mappings import (
     AnimeIdsMap,
@@ -54,7 +55,6 @@ from pearlarr.mappings import (
 )
 from pearlarr.output import Severity
 from pearlarr.paths import resolve_paths
-from pearlarr.reporter import RunContext
 from pearlarr.run_services import RunServices
 from pearlarr.sonarr_episodes import SonarrEpisodes, check_ep_by_anibridge
 

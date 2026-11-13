@@ -46,6 +46,7 @@ from pearlarr.episode_state import EpisodeFileStatus, EpisodeSnapshot, TargetSta
 from pearlarr.grab_pipeline import GrabPipeline, GrabRequest
 from pearlarr.grab_placement import EntryFacts, KnownTorrent, PendingSeed, TorrentEvidence, TorrentFacts
 from pearlarr.import_wait import ImportProbes, ImportWaitManager, PostImportCleanup
+from pearlarr.leg_state import RunContext
 from pearlarr.mappings import MappingResolver, MappingSources
 from pearlarr.notify import Notifier
 from pearlarr.output import SeverityCounts, emit_to_hub
@@ -80,7 +81,7 @@ from pearlarr.planner import DownloadPlanner, PlanResult, PrivateOnlySkips
 from pearlarr.progress import ProgressSink
 from pearlarr.radarr_client import AbstractRadarrClient
 from pearlarr.releases import EpisodeKey, EpisodeRecord, OrderOnlyKey, SeadexDict, SeadexReleaseGroupItem, SeadexUrlItem
-from pearlarr.reporter import RunContext, RunReporter
+from pearlarr.reporter import RunReporter
 from pearlarr.run_services import RunDeps, RunServices
 from pearlarr.seadex_filter import SeadexReleaseFilter
 from pearlarr.seadex_gateway import SeaDexMiss, SeaDexSource

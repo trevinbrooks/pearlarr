@@ -20,8 +20,8 @@ import pytest
 
 from pearlarr.cache import CacheRecord
 from pearlarr.config import Arr
+from pearlarr.leg_state import EntryTitle, RunContext
 from pearlarr.pending_import import EntryNames
-from pearlarr.reporter import EntryTitle, RunContext
 from pearlarr.run_services import RunServices
 
 from .builders import (

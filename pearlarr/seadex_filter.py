@@ -11,11 +11,11 @@ from seadex import EntryRecord, TorrentRecord
 from .arr_models import ArrReleases, SonarrEpisode
 from .config import PRIVATE_TRACKERS, PrivateReleaseAction
 from .console_caps import console_of
+from .leg_state import RunContext
 from .log import indent_string
 from .output import Accent, StyledValue, hub_warn
 from .planner import PlanResult
 from .releases import SeadexDict, SeadexReleaseGroupItem, SeadexUrlItem, carries_ignored_tag, ignore_tag_set
-from .reporter import RunContext
 
 if TYPE_CHECKING:
     # Annotation-only: run_services imports this module at runtime (cycle).

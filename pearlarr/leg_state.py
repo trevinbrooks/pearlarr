@@ -1,0 +1,219 @@
+"""A leg's state: the run context and stats, the grab and needs-action records, per-title flags, and entry titles."""
+
+from collections.abc import Sequence
+from dataclasses import dataclass, field
+from enum import Enum, auto
+from typing import TYPE_CHECKING
+
+import qbittorrentapi
+
+from .config import Arr
+from .output import CountsMark, SeverityCounts
+from .pending_import import EntryNames, PendingImport
+from .releases import GrabHold
+from .wait_types import ImportWaitMode, PendingState
+
+if TYPE_CHECKING:
+    # Annotation-only (PerTitleState.absorb_skips). planner doesn't import us.
+    from .planner import PrivateOnlySkips
+
+
+def unresolved_label(al_id: int) -> str:
+    """The id-form label an entry falls back to when no title resolved."""
+
+    return f"AniList #{al_id}"
+
+
+@dataclass(frozen=True, slots=True)
+class EntryTitle:
+    """An entry's resolved title: what the run shows, and the AniList title when one resolved."""
+
+    al_id: int
+    display: str
+    """The AniList title, else the arr item's own title, else the id form."""
+    names: EntryNames = field(default_factory=EntryNames)
+    """The arr title and every AniList title, the placement's tie-break between look-alike files."""
+
+    @property
+    def anilist(self) -> str | None:
+        """The first AniList title alone, the only value the cache stores as the entry's name."""
+
+        return self.names.anilist[0] if self.names.anilist else None
+
+    @property
+    def resolved(self) -> bool:
+        """False when nothing named the entry and `display` fell back to the id form."""
+
+        return self.display != unresolved_label(self.al_id)
+
+
+def resolve_entry_title(al_id: int, anilist_titles: tuple[str, ...], arr_title: str) -> EntryTitle:
+    """The title ladder: the first AniList title, else the arr item's own title, else the id form."""
+
+    names = EntryNames(arr_title, tuple(title for title in anilist_titles if title))
+    named = names.anilist[0] if names.anilist else arr_title
+    return EntryTitle(al_id=al_id, display=named or unresolved_label(al_id), names=names)
+
+
+@dataclass(frozen=True, slots=True)
+class GrabRecord:
+    """One grab, recorded for the end-of-run summary's "added" detail block."""
+
+    title: str | None
+    coverage: str | None
+    url: str | None
+    name: str | None
+    group: str
+
+
+class NeedsActionKind(Enum):
+    """Why a title landed in "needs action". The summary's tips key off this, never the display reason text."""
+
+    PRIVATE_ONLY = auto()
+    """The warn-mode skip: a private-only recommended release with no fallback attempted."""
+    PRIVATE_ONLY_NO_FALLBACK = auto()
+    """Fallback mode that couldn't or wouldn't fall back."""
+    PRIVATE_ONLY_STALE = auto()
+    """Fallback mode refusing to replace an owned stale copy of the preferred private release."""
+    UNSUPPORTED_TRACKER = auto()
+    """A recommended release is on a tracker we have no parser for."""
+    GRAB_FAILED = auto()
+    """A contained transient failure (tracker/qBittorrent down)."""
+    PLACEMENT_INPUT_MISSING = auto()
+    """A read the grab-time placement needs failed: the grab was judged without it, or held until it answers."""
+    MISNUMBERED = auto()
+    """A recommended release's file numbers disagree, or it's a specials pack numbered another way than its
+    listing: a hand import."""
+    TITLE_REFUTED = auto()
+    """A recommended release's file titles contradict its numbering and none of it places on the entry."""
+    PLACED_ELSEWHERE = auto()
+    """None of a recommended release's files place on the entry, and some place under another title SeaDex lists
+    it with."""
+
+
+@dataclass(frozen=True, slots=True)
+class NeedsActionRecord:
+    """One skip needing attention, recorded for the summary's "needs action" block."""
+
+    title: str | None
+    coverage: str | None
+    group: str
+    url: str | None
+    reason: str
+    """The human display text."""
+    kind: NeedsActionKind
+    """The closed classification the reporter's guidance gates on."""
+
+
+@dataclass
+class RunStats:
+    """The per-run tally rendered by the end-of-run summary."""
+
+    checked: int = 0
+    added: list[GrabRecord] = field(default_factory=list[GrabRecord])
+    up_to_date: int = 0
+    cached: int = 0
+    no_seadex_entry: int = 0
+    seadex_unreachable: int = 0
+    """Lookups skipped this run, counted apart from `no_seadex_entry`."""
+    no_releases: int = 0
+    no_mappings: int = 0
+    needs_action: list[NeedsActionRecord] = field(
+        default_factory=list[NeedsActionRecord],
+    )
+    unmonitored: int = 0
+    queued: int = 0
+    """Carried-over `QUEUED` records (a this-run grab stays in `added`)."""
+    downloaded: int = 0
+    """Carried-over `DOWNLOADED` records (a this-run grab stays in `added`)."""
+    imported: int = 0
+    """Carried-over `IMPORTED` records (a this-run grab stays in `added`)."""
+    held_by_cap: int = 0
+    """Titles with a grabbable release held past the run cap (re-checked and grabbed next run)."""
+
+
+@dataclass
+class PerTitleState:
+    """Per-title scratch flags, reset at the top of each title."""
+
+    held_by_cap: bool = False
+    """A grabbable release was held by the run cap, so the title must not be cached as done."""
+    private_only_skipped: bool = False
+    """A private-only release forced a skip, so the title must not be cached as done."""
+    private_only_groups: list[str] = field(default_factory=list[str])
+    """Group names of the private-only skip, riding along for the run summary's "needs action" list."""
+    private_only_stale_held: bool = False
+    """A stale owned private pick is held because only a fallback covers it."""
+    unsupported_tracker_skipped: bool = False
+    """The tracker has no parser, so the title must not be cached as done."""
+    unsupported_tracker_groups: list[str] = field(default_factory=list[str])
+    """Group names of the unsupported-tracker skip, riding along for the summary."""
+    grab_failed_groups: list[str] = field(default_factory=list[str])
+    """Groups whose release hit a contained grab failure (tracker or client down), so the title stays uncached."""
+    held_groups: dict[GrabHold, list[str]] = field(default_factory=dict[GrabHold, list[str]])
+    """The groups a hold stopped, by hold. While any are here the title stays uncached and is checked again next
+    run, and a hand-import hold re-warns until the import covers it. `GrabHold.INPUT_UNREAD` also carries the
+    groups whose placement waited on a failed read, though a url of such a group may have been grabbed. Filled by
+    `add_held`."""
+    metadata_unread: bool = False
+    """An entry of the series was looked up without its AniList record, or a series was read without its TVDB
+    orders, so the title stays uncached and re-checks. Nothing for the user to do."""
+    current_title: str | None = None
+    """Title of the entry currently being processed, so grabs and the summary can attribute what they grab."""
+    current_url: str | None = None
+    """SeaDex URL of the entry currently being processed, so grabs and the summary can link what they grab."""
+    current_coverage: str | None = None
+    """Coverage of the entry currently being processed, so grabs and the summary can attribute what they grab."""
+
+    def add_held(self, hold: GrabHold, groups: Sequence[str]) -> None:
+        """List `groups` under `hold` in `held_groups`.
+
+        No groups adds no key, so an empty `held_groups` means nothing held the title.
+        """
+
+        if groups:
+            self.held_groups.setdefault(hold, []).extend(groups)
+
+    def absorb_skips(self, skips: "PrivateOnlySkips") -> None:
+        """Fold a planner private-only skip result onto this title's flags."""
+
+        self.private_only_skipped |= skips.skipped
+        self.private_only_groups.extend(skips.groups)
+        self.private_only_stale_held |= skips.stale_held
+
+
+@dataclass
+class RunContext:
+    """Per-run state."""
+
+    arr: Arr
+    dry_run: bool = False
+    import_wait_mode: ImportWaitMode = ImportWaitMode.OFF
+    """The run's resolved wait mode (cli > config > default). `OFF` makes every pending-import path a no-op."""
+    stats: RunStats = field(default_factory=RunStats)
+    torrents_added: int = 0
+    per_title: PerTitleState = field(default_factory=PerTitleState)
+    """Per-title scratch flags, reassigned fresh at the top of each title so none leak into the next."""
+    arr_title: str = ""
+    """The arr item under scan, the display fallback for its ids when AniList names none."""
+    started_monotonic: float | None = None
+    """Run clock (monotonic, so an NTP or DST step cannot move it)."""
+    counts_mark: CountsMark = field(default_factory=lambda: SeverityCounts().bound_mark())
+    """Stamped at run start and diffed for the summary's issues row (an unstamped ctx diffs to zero)."""
+    pending_imports: dict[str, PendingImport] = field(default_factory=dict[str, PendingImport])
+    """Records written THIS run, keyed by infohash for the run-list writes. The durable copies live in
+    `cache_store`."""
+    reacquired_keys: set[str] = field(default_factory=set[str])
+    """Store-resident records this run re-saw (`ALREADY_ADDED`) without grabbing them, skipped by the snapshot
+    but counted by the tally. Never also a `pending_imports` record."""
+    pending_states: dict[str, PendingState] = field(default_factory=dict[str, PendingState])
+    """Observed status of each carried-over record, keyed by infohash. Never a this-run grab, which stays
+    `added`."""
+    pause_owed: bool = False
+    """An id's queries owe the `advanced.sleep_time` pause. The run loop sleeps it before the next id."""
+
+
+def is_preview(ctx: RunContext, qbit: qbittorrentapi.Client | None) -> bool:
+    """A run is a no-op preview when a dry run was requested OR qBittorrent is not configured."""
+
+    return ctx.dry_run or qbit is None
