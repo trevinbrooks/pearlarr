@@ -1,42 +1,42 @@
 # pyright: strict
-"""Offline end-to-end pins for the manual-import folder-scan fallback.
+"""Offline end-to-end pins for the folder fetch when Sonarr won't serve a download by id.
 
 These drive the REAL CLI composition root (`cli.run_single`) against live
 loopback HTTP servers - a mock Sonarr and a mock qBittorrent, the same wire
 surface `scripts/demo/demo_mocks.py` serves - so every hop is the production
 stack: `ArrHttp` over httpx to the Sonarr mock, `qbittorrentapi` over its own
-session to the qBittorrent mock. The carried-over pending record is seeded
+session to the qBittorrent mock. The carried-over pending import is stored
 straight into cache.db and every mapping source is disabled, so the scan finds
-zero series, nothing leaves loopback, and the end-of-run blocking monitor is
+zero series, nothing leaves loopback, and the end-of-run blocking wait pass is
 the only thing driving the import.
 
 Seven scenarios pin the import wait end to end:
 
-* DEAD-TRACKED: the downloadId scan 500s forever (Sonarr's poisoned tracked
+* HISTORY-CLOSED: the downloadId fetch 500s forever (Sonarr's poisoned tracked
   download), history's newest relevant event is `downloadFolderImported`, and
   the ManualImport command reports `failed` - yet the run converges to
   IMPORTED, because the episode FILES are the source of truth (the poisoned
   Execute tail in real Sonarr fails the command AFTER the per-file imports
-  land). The POSTed entries omit `downloadId` and force `importMode: copy`.
-* TRANSIENT: the downloadId scan fails once and heals. The folder scan's one
+  land). The POSTed files omit `downloadId` and force `importMode: copy`.
+* TRANSIENT: the downloadId fetch fails once and recovers. The folder fetch's one
   activation returns `[]`, which must NOT pin folder mode - the next poll goes
-  back to the downloadId scan and imports through the normal tracked shape.
-* UNSCANNABLE: both scans fail every poll. The record defers (never drops)
-  and the folder-scan warn template fires.
-* ABSOLUTE-BATCH: dead-tracked with the real Thighs incident's file shape -
-  absolute-only names the grab mapped, an out-of-entry sibling episode it
-  excluded, and an NC extra sharing the folder. The map imports as is, with
+  back to the downloadId fetch and imports through the normal tracked shape.
+* UNSCANNABLE: both fetches fail every poll. The pending import is left (never dropped)
+  and the folder-fetch warn template fires.
+* ABSOLUTE-BATCH: history closed, with the real Thighs incident's file shape -
+  absolute-only names the grab mapped, a sibling episode outside the window it
+  excluded, and an NC extra sharing the folder. The file map imports as is, with
   no `/parse`, and the sibling and the extra never warn or reach the wire.
-* IMPORTED-UNSEEN: Sonarr imported the download before any scan saw its
-  files. The by-id scan is dead, the folder is empty, and the history rows
-  rebuild the empty grab-time map, which the episode files verify at once.
-* NUMBERLESS: dead-tracked with three numberless names for a two-episode
-  record. The grab placed none, so the first poll ends the wait with the
-  `unmatched` outcome naming the files, and the record stays for a human.
-* NUMBERLESS-BY-HAND: the same download after its files were imported by
-  hand in Sonarr (a copy import, so the folder still holds them). The map
-  still lacks them, but every intended episode holds the record's own group,
-  so the first poll verifies it imported and the torrent moves category.
+* IMPORTED-UNSEEN: Sonarr imported the download before any fetch saw its
+  files. The by-id fetch is dead, the folder is empty, and the history rows
+  rebuild the empty grab-time file map, which the episode files show done at once.
+* NO-NUMBERS: history closed, with three names with no number for a two-episode
+  pending import. The grab placed none, so the first poll ends the wait with the
+  `unmatched` outcome naming the files, and the pending import stays for a human.
+* NO-NUMBERS-BY-HAND: the same download after its files were imported by
+  hand in Sonarr (a copy import, so the folder still has them). The file map
+  still lacks them, but every intended episode has a file of this torrent's group,
+  so the first poll finds it imported and the torrent moves category.
 """
 
 import json
@@ -82,15 +82,15 @@ _EPISODES: tuple[tuple[int, str], ...] = (
     (301001, "Demo Batch - S01E01 (BD 1080p) [Thighs].mkv"),
     (301002, "Demo Batch - S01E02 (BD 1080p) [Thighs].mkv"),
 )
-# The absolute-batch incident shape: two in-entry episodes (absolute names,
-# no SxxExx), an out-of-entry sibling, and an NC extra the video filter drops.
+# The absolute-batch incident shape: two of the title's episodes (absolute names,
+# no SxxExx), a sibling outside the window, and an NC extra the video filter drops.
 _ABS_FILES: tuple[tuple[int, str], ...] = (
     (301001, "Demo Batch - 01 (BD 1080p) [Thighs].mkv"),
     (301002, "Demo Batch - 02 (BD 1080p) [Thighs].mkv"),
 )
 _ABS_SIBLING = "Demo Batch - 03 (BD 1080p) [Thighs].mkv"
 _ABS_EXTRA = "Demo Batch - NCED1 (BD 1080p) [Thighs].mkv"
-# Three names carrying no episode number, for the two-episode record: the grab placed none.
+# Three names carrying no episode number, for the two-episode pending import: the grab placed none.
 _NO_NUMBER_FILES = (
     "Demo Batch - Movie Part One (BD 1080p) [Thighs].mkv",
     "Demo Batch - Movie Part Two (BD 1080p) [Thighs].mkv",
@@ -105,7 +105,7 @@ _HISTORY_CLOSED_NOTE = (
 _JP_EN: Json = [{"id": 8, "name": "Japanese"}, {"id": 1, "name": "English"}]
 
 # The arr's own download-client definition. The config omits both categories,
-# so the fallback adopts these - fetched lazily at the post-import move (no
+# so the run adopts these - fetched lazily at the post-import move (no
 # grabs happen in these runs, so the move is the fetch's only trigger).
 _IMPORTED_CATEGORY = "anime-imported"
 _DOWNLOAD_CLIENTS: Json = [
@@ -124,55 +124,55 @@ _DOWNLOAD_CLIENTS: Json = [
 
 
 class _Listing(StrEnum):
-    """The file names a scenario's download carries, which decides what the grab's map holds."""
+    """The file names a scenario's download carries, which decides what the grab's file map holds."""
 
     EPISODES = "episodes"
     """`SxxExx` names, mapped at grab time."""
     ABSOLUTE = "absolute"
-    """Absolute-only names the grab mapped, with an out-of-entry sibling it excluded and an NC extra on disk."""
+    """Absolute-only names the grab mapped, an excluded sibling outside the window, and an NC extra in the folder."""
     NO_NUMBERS = "numberless"
     """Three names with no episode number for two episodes: nothing can place them."""
 
 
 @dataclass(frozen=True)
 class _Scenario:
-    """One mock-Sonarr behavior matrix for the poisoned download's scans."""
+    """One mock-Sonarr behavior matrix for the poisoned download's fetches."""
 
     download_fetch_recovers: bool
-    """Whether the downloadId scan heals (200 + candidates) once the folder
-    scan has been consulted - the transient-blip timeline. False keeps it
-    unhealed."""
+    """Whether the downloadId fetch recovers (200 + candidates) once the folder
+    fetch has been consulted - the transient-blip timeline. False keeps it
+    failing."""
 
     folder_fetch: Literal["candidates", "empty", "error"]
-    """What the folder scan serves: real candidates, a 200 `[]` (folder not
+    """What the folder fetch serves: real candidates, a 200 `[]` (folder not
     visible), or a 500."""
 
     history_event: str
-    """The newest relevant `/api/v3/history` eventType (decides the probe
-    verdict: `downloadFolderImported` -> dead-tracked, `grabbed` -> clean)."""
+    """The newest relevant `/api/v3/history` eventType (decides the history
+    read: `downloadFolderImported` -> history closed, `grabbed` -> clean)."""
 
     failing_download_fetch: Literal["error", "empty"] = "error"
-    """What an unhealed downloadId scan serves: a 500 (v4) or a 200 `[]` (v5)."""
+    """What a failing downloadId fetch serves: a 500 (v4) or a 200 `[]` (v5)."""
 
     ready_timeout: int = 30
     """The run's `imports.ready_timeout`. Small for the deadline scenario."""
 
     listing: _Listing = _Listing.EPISODES
     """The download's file names. ABSOLUTE replays the real Thighs incident
-    shape: absolute-only names the grab mapped, and an out-of-entry sibling it
-    excluded + an NC extra in the folder. The import must carry the map alone,
-    the sibling quiet. NUMBERLESS serves names nothing can place."""
+    shape: absolute-only names the grab mapped, and a sibling outside the window it
+    excluded + an NC extra in the folder. The import must carry the file map alone,
+    the sibling quiet. NO_NUMBERS serves names nothing can place."""
 
     imported_unseen: bool = False
-    """Sonarr imported the download before any scan saw its files: an EMPTY
-    grab-time map, the episode files present from the start, and one history
-    row per listing file carrying its episode id and dropped path. The map
-    must rebuild from those rows and verify on the first poll, nothing POSTed."""
+    """Sonarr imported the download before any fetch saw its files: an EMPTY
+    grab-time file map, the episode files present from the start, and one history
+    row per torrent file carrying its episode id and dropped path. The file map
+    must rebuild from those rows and be done on the first poll, nothing POSTed."""
 
     imported_by_hand: bool = False
     """The episode files are present from the start while the download folder
-    still holds the files: an import done by hand in Sonarr, copy mode. The
-    record must verify without placing anything."""
+    still has the files: an import done by hand in Sonarr, copy mode. The
+    pending import must be done without placing anything."""
 
 
 _HISTORY_CLOSED = _Scenario(
@@ -256,7 +256,7 @@ class _World:
     def next_command(self, name: str, body: dict[str, Json]) -> int:
         """Allocate a command id, landing a ManualImport's files and stamping a rescan.
 
-        Landing on POST is the real timeline the dead-tracked pin relies on:
+        Landing on POST is the real timeline the history-closed pin relies on:
         Sonarr's per-file imports land BEFORE the poisoned Execute tail fails
         the command, so the mock lands files while the command reads `failed`.
         """
@@ -275,12 +275,12 @@ class _World:
             return {cid for cid, _ in self.manual_commands}
 
     def download_fetch_response(self) -> list[Json] | None:
-        """The next downloadId-scan body (None = serve a 500) - and count it.
+        """The next downloadId-fetch body (None = serve a 500) - and count it.
 
-        The transient heal is keyed on "the folder scan ran", not an attempt
+        The transient recovery is keyed on "the folder fetch ran", not an attempt
         count, so the fixture stays valid across in-call retry policy changes:
-        one POLL fails (however many attempts that takes), the fallback's
-        folder scan activates once, and the NEXT poll's scan is healthy.
+        one POLL fails (however many attempts that takes), the
+        folder fetch activates once, and the NEXT poll's fetch is healthy.
         """
 
         with self.lock:
@@ -291,7 +291,7 @@ class _World:
             return body
 
     def folder_fetch_response(self) -> list[Json] | None:
-        """The next folder-scan body (None = serve a 500) - and count the activation."""
+        """The next folder-fetch body (None = serve a 500) - and count the activation."""
 
         with self.lock:
             self.folder_fetches += 1
@@ -328,8 +328,8 @@ class _World:
                 }
             rows.append(row)
         if self.scenario.listing is _Listing.ABSOLUTE:
-            # The sibling's episode EXISTS in the series but not in the entry,
-            # so its rejection exercises the resolved-set scope gate.
+            # The sibling's episode EXISTS in the series but not in the title,
+            # so its rejection exercises the window gate.
             rows.append(
                 {
                     "id": 301003,
@@ -347,8 +347,8 @@ class _World:
         """The paged `/api/v3/history` envelope, date-descending.
 
         The newest row is an irrelevant `episodeFileDeleted` the classifier
-        must skip. The scenario's event decides the verdict beneath it: one
-        bare row, or (imported unseen) one import row per listing file.
+        must skip. The scenario's event decides what lies beneath it: one
+        bare row, or (imported unseen) one import row per torrent file.
         """
 
         rows: list[Json] = [{"id": 913, "eventType": "episodeFileDeleted", "date": "2026-07-15T06:10:00Z"}]
@@ -404,7 +404,7 @@ class _World:
 
 
 def _scenario_files(listing: _Listing) -> list[str]:
-    """The on-disk file names a scan serves (sibling + extra exist on disk only)."""
+    """The file names a fetch serves from the folder (sibling + extra exist in the folder only)."""
 
     match listing:
         case _Listing.EPISODES:
@@ -416,7 +416,7 @@ def _scenario_files(listing: _Listing) -> list[str]:
 
 
 def _candidates(listing: _Listing) -> list[Json]:
-    """The on-disk candidates either scan mode serves for the download folder."""
+    """The candidates either fetch mode serves for the download folder."""
 
     out: list[Json] = []
     for number, name in enumerate(_scenario_files(listing), start=1):
@@ -499,7 +499,7 @@ class _JsonHandler(BaseHTTPRequestHandler):
 
 
 class _SonarrHandler(_JsonHandler):
-    """The slice of the Sonarr v3 API a monitor-only offline run touches."""
+    """The slice of the Sonarr v3 API a wait-only offline run touches."""
 
     def do_GET(self) -> None:
         request = self._record()
@@ -532,7 +532,7 @@ class _SonarrHandler(_JsonHandler):
             self._send_json({}, 404)
 
     def _manual_import(self, request: _Request) -> None:
-        """Route the two scan modes by their query shape."""
+        """Route the two fetch modes by their query shape."""
 
         if "downloadId" in request.params:
             body = self.world.download_fetch_response()
@@ -559,7 +559,7 @@ class _SonarrHandler(_JsonHandler):
 
 
 class _QbitHandler(_JsonHandler):
-    """The slice of the qBittorrent WebUI API the wait monitor touches."""
+    """The slice of the qBittorrent WebUI API the wait pass touches."""
 
     def _info_rows(self) -> list[Json]:
         return [
@@ -644,14 +644,14 @@ def _serve(world: _World) -> Generator[tuple[str, str]]:
 
 
 def _plant_pending_import(cache_path: Path, config_hash: str, scenario: _Scenario) -> None:
-    """Plant the carried-over record a prior run's grab would have left behind.
+    """Plant the carried-over pending import a prior run's grab would have left behind.
 
-    The absolute-batch scenario's record maps its two episode files and
-    excludes the sibling as another slice's. Its `seadex_files` name all three,
-    never the extra, which only exists on disk. The imported-unseen record's
-    map is empty: the rebuild from Sonarr's history has to fill it. The
-    numberless record's map is empty as well, and its listing names the three
-    files nothing can place.
+    The absolute-batch scenario's pending import maps its two episode files and
+    excludes the sibling as outside the window. Its `seadex_files` name all three,
+    never the extra, which only exists in the folder. The imported-unseen pending
+    import's file map is empty: the rebuild from Sonarr's history has to build it. The
+    no-numbers pending import's file map is empty as well, and its `seadex_files` name
+    the three files nothing can place.
     """
 
     named = _ABS_FILES if scenario.listing is _Listing.ABSOLUTE else _EPISODES
@@ -690,7 +690,7 @@ def _plant_pending_import(cache_path: Path, config_hash: str, scenario: _Scenari
 
 
 def _pending_imports_after(cache_path: Path, config_hash: str) -> frozenset[str]:
-    """The pending infohashes still in the durable store after the run."""
+    """The pending import hashes still in the durable store after the run."""
 
     store = CacheStore.load(str(cache_path), config_hash=config_hash)
     try:
@@ -712,14 +712,14 @@ def _drive(tmp_path: Path, monkeypatch: pytest.MonkeyPatch, scenario: _Scenario)
 
     monkeypatch.setenv(DATA_DIR_ENV, str(tmp_path))
     # Keep the in-call GET retries but drop their backoff base (jitter stays),
-    # so a deliberately-failing scan doesn't stretch each poll by seconds.
+    # so a deliberately-failing fetch doesn't stretch each poll by seconds.
     monkeypatch.setattr(arr_http, "BACKOFF_BASE_S", 0.0)
 
     # Imported unseen: the episode files are already there when the run starts.
     world = _World(scenario, files_imported=scenario.imported_unseen or scenario.imported_by_hand)
     with _serve(world) as (sonarr_url, qbit_url):
-        # qBittorrent configured -> a real (non-preview) run whose blocking
-        # monitor drives the carried-over record. 1s polls keep it quick.
+        # qBittorrent configured -> a real run (not a dry run) whose blocking
+        # wait pass drives the carried-over pending import. 1s polls keep it quick.
         config = make_config(
             url=sonarr_url,
             api_key="testkey",
@@ -738,8 +738,8 @@ def _drive(tmp_path: Path, monkeypatch: pytest.MonkeyPatch, scenario: _Scenario)
         config_path.write_bytes(yaml.safe_dump(config.model_dump(mode="json")).encode())
         # Owner-only, or the boot warns about a world-readable API key.
         config_path.chmod(0o600)
-        # The run's own checksum (file bytes + env overlay), so the seeded
-        # descriptor matches what the run will stamp.
+        # The run's own config hash (file bytes + env override), so the stored
+        # config hash matches what the run will store.
         config_hash = AppConfig.load(str(config_path)).config_hash()
         cache_path = tmp_path / "cache.db"
         _plant_pending_import(cache_path, config_hash, scenario)
@@ -765,7 +765,7 @@ def _body_files(body: dict[str, Json]) -> list[dict[str, Json]]:
 
 
 def _assert_converged_imported(outcome: _RunOutcome, out: str) -> None:
-    """Assert that a record converged to imported state with no errors."""
+    """Assert that a pending import converged to imported state with no errors."""
 
     assert outcome.ok is True
     assert outcome.pending_imports_after == frozenset()
@@ -773,8 +773,8 @@ def _assert_converged_imported(outcome: _RunOutcome, out: str) -> None:
     assert "complete kind=monitor imported=1 pending=0 deferred=0 failed=0" in out
     assert current_hub().counts.mark().errors == 0
     # The unified done-bucket: whichever path imported (Sonarr-tracked or the
-    # folder-scan rescue), the confirmed site moves the torrent to the arr's
-    # own imported category, adopted by the omitted-category fallback.
+    # folder-fetch rescue), the confirmed site moves the torrent to the arr's
+    # own imported category, adopted when the config omits the category.
     assert outcome.world.category_moves == [(_INFOHASH, _IMPORTED_CATEGORY)]
 
 
@@ -788,7 +788,7 @@ def test_dead_tracked_download_imports_via_folder_scan(
     outcome = _drive(tmp_path, monkeypatch, scenario)
     out = _flat(capsys.readouterr().out)
 
-    # Converged to IMPORTED although no downloadId scan served a file AND the
+    # Converged to IMPORTED although no downloadId fetch served a file AND the
     # ManualImport command reported `failed`: the episode FILES decided.
     _assert_converged_imported(outcome, out)
 
@@ -805,7 +805,7 @@ def test_dead_tracked_download_imports_via_folder_scan(
         assert "downloadId" not in request.params
         assert "seriesId" not in request.params
 
-    # The probe hit the paged history endpoint with the paging pinned explicitly.
+    # The history read hit the paged history endpoint with the paging pinned explicitly.
     history = outcome.world.requests_for("/api/v3/history")
     assert history
     assert history[0].params == {
@@ -820,7 +820,7 @@ def test_dead_tracked_download_imports_via_folder_scan(
     assert outcome.world.requests_for("/api/v3/remotepathmapping")
 
     # ONE ManualImport, importMode forced to copy (config `auto`), and every
-    # file entry OMITS downloadId - the dead-tracked untracked-branch shape.
+    # file entry OMITS downloadId - the history-closed untracked-branch shape.
     commands = outcome.world.manual_commands
     assert len(commands) == 1
     body = commands[0][1]
@@ -847,14 +847,14 @@ def test_transient_scan_blip_does_not_pin_folder_mode(
     # Converged through the NORMAL path after the one-poll blip.
     _assert_converged_imported(outcome, out)
 
-    # The empty folder scan ran exactly once - no pin, so the next poll went
-    # straight back to the downloadId scan, which had healed.
+    # The empty folder fetch ran exactly once - no pin, so the next poll went
+    # straight back to the downloadId fetch, which had recovered.
     assert outcome.world.folder_fetches == 1
     statuses = outcome.world.download_fetch_statuses
     assert statuses[0] == 500
     assert statuses[-1] == 200
 
-    # The probe ran once (clean verdict), and no dead-tracked note was emitted.
+    # The history read ran once (clean answer), and no history-closed note was emitted.
     assert len(outcome.world.requests_for("/api/v3/history")) == 1
     assert "won't serve it by id" not in out
 
@@ -879,7 +879,7 @@ def test_absolute_batch_imports_the_grabs_map_and_the_excluded_sibling_stays_qui
     outcome = _drive(tmp_path, monkeypatch, _ABSOLUTE_BATCH)
     out = _flat(capsys.readouterr().out)
 
-    # The grab mapped the entry's own files and excluded the out-of-entry sibling as another slice's.
+    # The grab mapped the title's files and excluded the sibling as outside the window.
     _assert_converged_imported(outcome, out)
     assert "could not be matched to an episode" not in out
     assert outcome.world.requests_for("/api/v3/parse") == []
@@ -902,19 +902,19 @@ def test_never_scanned_record_lands_from_history_on_the_first_check(
     outcome = _drive(tmp_path, monkeypatch, _IMPORTED_UNSEEN)
     out = _flat(capsys.readouterr().out)
 
-    # Sonarr imported the download before any scan saw it: the by-id scan is
-    # dead, the folder is empty, and the grab-time map is empty. The history
-    # rows rebuild the map and the episode files verify it on the first poll.
+    # Sonarr imported the download before any fetch saw it: the by-id fetch is
+    # dead, the folder is empty, and the grab-time file map is empty. The history
+    # rows rebuild the file map and the episode files show it done on the first poll.
     assert outcome.ok is True
     assert outcome.pending_imports_after == frozenset()
-    # The seeded target count is 0 (nothing was mapped at grab time), so the
+    # The stored file map's episode count is 0 (nothing was mapped at grab time), so the
     # line carries no file count: the indeterminate bar, not a wrong number.
     assert 'imported title="Demo Batch · Thighs"' in out
     assert 'imported title="Demo Batch · Thighs" files=' not in out
     assert "complete kind=monitor imported=1 pending=0 deferred=0 failed=0" in out
     assert current_hub().counts.mark().errors == 0
 
-    # Nothing was POSTed, the one empty folder scan was enough, and the
+    # Nothing was POSTed, the one empty folder fetch was enough, and the
     # confirmed site still moved the torrent to the imported category.
     assert outcome.world.manual_commands == []
     assert outcome.world.folder_fetches == 1
@@ -929,9 +929,9 @@ def test_numberless_files_graduate_unmatched_on_the_first_poll(
     outcome = _drive(tmp_path, monkeypatch, _NO_NUMBERS)
     out = _flat(capsys.readouterr().out)
 
-    # Three numberless files for two episodes: no leg can place them, on this
-    # poll or any later one. The verdict ends the wait on the first poll,
-    # names the files, and leaves the record for a human.
+    # Three files with no numbers for two episodes: no pass can place them, on this
+    # poll or any later one. The outcome ends the wait on the first poll,
+    # names the files, and leaves the pending import for a human.
     assert outcome.ok is True
     assert outcome.pending_imports_after == frozenset({_INFOHASH})
     assert out.count('unmatched title="Demo Batch · Thighs"') == 1
@@ -939,8 +939,8 @@ def test_numberless_files_graduate_unmatched_on_the_first_poll(
     assert "complete kind=monitor imported=0 pending=0 deferred=1 failed=0" in out
     assert current_hub().counts.mark().errors == 0
 
-    # One folder scan was the whole wait: nothing was POSTed or moved, no
-    # readiness deadline ran, and the partial-batch warning never fired.
+    # One folder fetch was the whole wait: nothing was POSTed or moved, no
+    # readiness deadline ran, and the partial warning never fired.
     assert outcome.world.folder_fetches == 1
     assert outcome.world.manual_commands == []
     assert outcome.world.category_moves == []
@@ -956,9 +956,9 @@ def test_numberless_files_imported_by_hand_verify_on_the_first_poll(
     outcome = _drive(tmp_path, monkeypatch, _NO_NUMBERS_BY_HAND)
     out = _flat(capsys.readouterr().out)
 
-    # The folder still holds the three files a copy import left behind, and
-    # no leg can place them now either. The episode files are the truth: both
-    # intended episodes hold the record's group, so the record is done.
+    # The folder still has the three files a copy import left behind, and
+    # no pass can place them now either. The episode files are the truth: both
+    # intended episodes have a file of this torrent's group, so the pending import is done.
     assert outcome.ok is True
     assert outcome.pending_imports_after == frozenset()
     assert 'imported title="Demo Batch · Thighs"' in out
@@ -966,8 +966,8 @@ def test_numberless_files_imported_by_hand_verify_on_the_first_poll(
     assert "complete kind=monitor imported=1 pending=0 deferred=0 failed=0" in out
     assert current_hub().counts.mark().errors == 0
 
-    # One folder scan, nothing POSTed, the torrent moved to the imported
-    # category, and neither the unmatched verdict nor the partial warning fired.
+    # One folder fetch, nothing POSTed, the torrent moved to the imported
+    # category, and neither the unmatched outcome nor the partial warning fired.
     assert outcome.world.folder_fetches == 1
     assert outcome.world.manual_commands == []
     assert outcome.world.category_moves == [(_INFOHASH, _IMPORTED_CATEGORY)]
@@ -983,7 +983,7 @@ def test_unscannable_download_defers_with_folder_warn(
     outcome = _drive(tmp_path, monkeypatch, _UNSCANNABLE)
     out = _flat(capsys.readouterr().out)
 
-    # Both scans failing is a DEFERRAL, not a drop or a crash: the record
+    # Both fetches failing LEAVES the pending import, not a drop or a crash: it
     # survives for a later run and the run itself still completes.
     assert outcome.ok is True
     assert outcome.pending_imports_after == frozenset({_INFOHASH})
@@ -991,10 +991,10 @@ def test_unscannable_download_defers_with_folder_warn(
     assert "complete kind=monitor imported=0 pending=0 deferred=1 failed=0" in out
     assert current_hub().counts.mark().errors == 0
 
-    # The folder-mode warn template fired, naming the record.
+    # The folder-mode warn template fired, naming the pending import.
     assert f"Could not fetch folder-scan import candidates for {_TITLE}" in out
 
-    # The dead-tracked note stays debug-only, nothing was ever POSTed, and no
+    # The history-closed note stays debug-only, nothing was ever POSTed, and no
     # category move happened.
     assert _HISTORY_CLOSED_NOTE not in out
     assert outcome.world.manual_commands == []

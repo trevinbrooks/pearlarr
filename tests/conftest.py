@@ -52,7 +52,7 @@ def close_leaked_handles(monkeypatch: pytest.MonkeyPatch) -> Iterator[None]:
     removed, level back to NOTSET): a test that ran `setup_logger` /
     `apply_log_level` would otherwise leak a console handler bound to its own
     captured stdout and a raised level into whichever test runs next under
-    randomized ordering. The output seam gets the same treatment: a test that
+    randomized ordering. The output hub gets the same treatment: a test that
     installed the hub/bridge (the cli run commands do) would otherwise leave the
     bridge on the ROOT logger, echoing every later test's third-party warnings.
     `setup_logger`/`apply_log_level` also open the ROOT logger's level (the

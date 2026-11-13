@@ -1,8 +1,8 @@
 """Arr-neutral anime-library id filtering.
 
 Builds the candidate id sets for a library and keeps the items that carry an
-AniList mapping - shared by both Arr sync paths (Sonarr series and Radarr
-movies), so it lives here rather than inside either client module.
+AniList mapping - shared by both Arrs (Sonarr series and Radarr movies), so
+it lives here rather than inside either client module.
 """
 
 from collections.abc import Callable
@@ -20,7 +20,7 @@ from .mappings import KnownExternalIds
 class IdField:
     """One id space to filter an Arr library by.
 
-    Pairs the Kometa Anime-IDs map key with the live Arr item attribute that
+    Pairs the Kometa Anime-IDs mapping key with the live Arr item attribute that
     holds the same id, so `collect_anime_items` matches each item against the
     candidate set built for that id space.
     """
@@ -44,7 +44,7 @@ def collect_anime_items[ItemT: ArrItem](
     list_fn: Callable[[], list[ItemT]],
     filters: tuple[IdFilter, ...],
 ) -> list[ItemT]:
-    """Arr library items that have an AniList mapping, sorted by title.
+    """Arr library items that have an AniList mapping, sorted by name.
 
     Per filter, unions the precomputed Anime-IDs and AniBridge candidate sets
     (the Anime-IDs sets come from `MappingResolver.known_external_ids`), then keeps

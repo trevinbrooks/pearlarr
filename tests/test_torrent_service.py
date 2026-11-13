@@ -5,7 +5,7 @@
 These tests monkeypatch the tracker parsers (the HTML/feed scrapers, covered in
 `test_torrent_parsers`) so each test drives only the qbit side, against a typed
 recording fake qBittorrent client built inline here. `qbittorrentapi.Client` is
-a concrete SDK class with no Protocol seam, so the fake is cast to it at the one
+a concrete SDK class with no Protocol interface, so the fake is cast to it at the one
 injection boundary (the sanctioned leaf-client hatch).
 
 The `QbitConnectionError` mapping itself lives in `ArrRunDeps.build` (where the
@@ -168,7 +168,7 @@ def _service(
 ) -> TorrentService:
     """A `TorrentService` over the fake qbit (cast at the leaf-client boundary).
 
-    `category` rides a fetchless resolver (no transport), so the explicit
+    `category` goes through a fetchless resolver (no transport), so the explicit
     value passes through to the add exactly as configured. The post-import category is `_POST`.
     `categories` swaps in a resolver that reads the arr's clients.
     """
@@ -184,7 +184,7 @@ def _service(
 
 
 def _patch_nyaa_parser(monkeypatch: pytest.MonkeyPatch) -> None:
-    """Drive only the qbit side: the Nyaa parser returns a fixed (url, title)."""
+    """Drive only the qbit side: the Nyaa parser returns a fixed (url, torrent name)."""
 
     def _fixed_nyaa(url: str, client: httpx.Client) -> tuple[str, str]:
         del url, client
@@ -193,11 +193,11 @@ def _patch_nyaa_parser(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(torrents, "fetch_nyaa_link", _fixed_nyaa)
 
 
-# --- TorrentService.add (non-preview qbit path) -----------------------------
+# --- TorrentService.add (qbit path, not a dry run) --------------------------
 
 
 def test_add_new_torrent_with_hash_prefers_qbit_name(monkeypatch: pytest.MonkeyPatch) -> None:
-    """A fresh add hands the parsed URL to `torrents_add` and reports the name qBittorrent reads back (which wins over the scraped source title)."""
+    """A fresh add hands the parsed URL to `torrents_add` and reports the name qBittorrent reads back (which wins over the scraped torrent name)."""
 
     _patch_nyaa_parser(monkeypatch)
     qbit = _FakeQbit(register_on_add=(_HASH, "Qbit Reported Name"))
@@ -215,7 +215,7 @@ def test_add_new_torrent_with_hash_prefers_qbit_name(monkeypatch: pytest.MonkeyP
 
 
 def test_add_already_present_dedups_by_hash(monkeypatch: pytest.MonkeyPatch) -> None:
-    """A hash already in qBittorrent is ALREADY_ADDED with the existing name, and its tracker page is never fetched."""
+    """A hash already in qBittorrent is ALREADY_IN_QBIT with the existing name, and its tracker page is never fetched."""
 
     def _page_gone(url: str, client: httpx.Client) -> tuple[str, str]:
         del client
@@ -235,7 +235,7 @@ def test_add_already_present_dedups_by_hash(monkeypatch: pytest.MonkeyPatch) -> 
 
 
 def test_add_hashless_falls_back_to_source_title(monkeypatch: pytest.MonkeyPatch) -> None:
-    """A hashless torrent skips the dedup/name lookup, so the reported name falls back to the scraped source title."""
+    """A hashless torrent skips the dedup/name lookup, so the reported name is the scraped torrent name."""
 
     _patch_nyaa_parser(monkeypatch)
     qbit = _FakeQbit()
@@ -253,7 +253,7 @@ def test_add_hashless_falls_back_to_source_title(monkeypatch: pytest.MonkeyPatch
 
 @pytest.mark.parametrize(("raw", "expected"), [("", None), ("   ", None), (_HASH, _HASH), (f"  {_HASH}  ", _HASH)])
 def test_seadex_url_item_normalizes_infohash(raw: str, expected: str | None) -> None:
-    """`Release` strips its infohash and folds an empty/blank one to None (a real hash is never empty)."""
+    """`Release` strips its infohash and converts an empty/blank one to None (a real hash is never empty)."""
 
     assert Release(infohash=raw).infohash == expected
 
@@ -262,8 +262,8 @@ def test_add_empty_infohash_is_treated_as_hashless(monkeypatch: pytest.MonkeyPat
     """An empty-string infohash is grabbed, not falsely deduped against every torrent.
 
     qBittorrent returns *all* torrents for an empty `hashes` filter, so a bare
-    truthiness dedup would report ALREADY_ADDED against an unrelated torrent.
-    `Release` folds "" -> None at construction, so the dedup lookup is
+    truthiness dedup would report ALREADY_IN_QBIT against an unrelated torrent.
+    `Release` converts "" -> None at construction, so the dedup lookup is
     skipped and the release is added.
     """
 
@@ -294,7 +294,7 @@ def test_add_qbit_rejects_add_raises(monkeypatch: pytest.MonkeyPatch) -> None:
 
 
 def test_add_unparseable_url_raises(monkeypatch: pytest.MonkeyPatch) -> None:
-    """When the tracker parser yields no download URL, the add raises before qbit."""
+    """When the tracker parser yields no .torrent link, the add raises before qbit."""
 
     def _none_animetosho(url: str, client: httpx.Client) -> tuple[str | None, str]:
         del url, client
@@ -314,7 +314,7 @@ def test_add_unparseable_url_raises(monkeypatch: pytest.MonkeyPatch) -> None:
 
 
 def _patch_all_parsers(monkeypatch: pytest.MonkeyPatch) -> None:
-    """Stub all three tracker parsers to a fixed (url, title), so the parseable branch of `add` reaches the qbit path without a real scrape."""
+    """Stub all three tracker parsers to a fixed (url, torrent name), so the parseable branch of `add` reaches the qbit path without a real scrape."""
 
     def _nyaa(url: str, client: httpx.Client) -> tuple[str | None, str]:
         del url, client
@@ -356,7 +356,7 @@ def test_grab_failures_covers_every_expected_boundary_error() -> None:
     """Drift guard: the containment tuple catches each boundary's failure mode.
 
     The modes are the parse/add raises, an httpx blip (the tracker scrapes and
-    the seadex transport all ride httpx), and any qbittorrentapi error.
+    the seadex transport all use httpx), and any qbittorrentapi error.
     """
 
     expected = (
@@ -414,7 +414,7 @@ def test_qbit_login_failure_maps_to_qbit_connection_error(monkeypatch: pytest.Mo
 def test_add_already_present_reads_the_add_time(
     monkeypatch: pytest.MonkeyPatch, added_on: object, expected: datetime | None
 ) -> None:
-    """A reacquire carries qBittorrent's add time through, folding junk readings to None."""
+    """A reacquire carries qBittorrent's add time through, converting junk readings to None."""
 
     _patch_nyaa_parser(monkeypatch)
     qbit = _FakeQbit(present={_HASH: "Existing Name"}, added_on=added_on)
@@ -429,7 +429,7 @@ def test_add_already_present_reads_the_add_time(
 
 
 def test_add_preview_with_the_torrent_in_qbit_reports_it_without_fetching(monkeypatch: pytest.MonkeyPatch) -> None:
-    """A dry run checks qBittorrent first too: a torrent it has is ALREADY_ADDED and its page is never fetched."""
+    """A dry run checks qBittorrent first too: a torrent it has is ALREADY_IN_QBIT and its page is never fetched."""
 
     fetched: list[str] = []
 
@@ -450,7 +450,7 @@ def test_add_preview_with_the_torrent_in_qbit_reports_it_without_fetching(monkey
 
 
 def test_add_a_torrent_two_entries_list_is_fetched_once(monkeypatch: pytest.MonkeyPatch) -> None:
-    """The second entry listing a torrent finds it in qBittorrent, so its page is fetched once in all."""
+    """The second title listing a torrent finds it in qBittorrent, so its page is fetched once in all."""
 
     fetched: list[str] = []
 
@@ -471,18 +471,18 @@ def test_add_a_torrent_two_entries_list_is_fetched_once(monkeypatch: pytest.Monk
     assert fetched == ["https://nyaa.si/view/1"]
 
 
-# --- TorrentService.mark_cross_seeds and a marked url's add -------------------
+# --- TorrentService.mark_cross_seeds and a marked release's add ---------------
 
 _SEADEX = "b" * 40
 _CROSS = "c" * 40
 _NEWER = "d" * 40
 _EPISODES = [_TorrFile("Show/Show - 01.mkv", 100), _TorrFile("Show/Show - 02.mkv", 200)]
-"""The url's files as qBittorrent lists them inside a torrent's folder."""
+"""The release's files as qBittorrent lists them inside a torrent's folder."""
 _ALREADY_IN_QBIT: Mapping[str, list[_TorrFile] | Exception] = {_CROSS: _EPISODES}
 
 
 def _seadex_release() -> Release:
-    """SeaDex's public url for `_EPISODES`, under its own hash."""
+    """SeaDex's public release for `_EPISODES`, under its own hash."""
 
     return make_release(
         files=["Show - 01.mkv", "Show - 02.mkv"], size=[100, 200], tracker=Tracker.NYAA, infohash=_SEADEX
@@ -514,7 +514,7 @@ def _marked(service: TorrentService, item: Release, *, pearlarr_imports: bool = 
     ],
 )
 def test_mark_cross_seeds_marks_a_torrent_holding_the_urls_files(row: _TorrInfo, pearlarr_imports: bool) -> None:
-    """A counted torrent holding exactly the url's files under another hash marks the url with that hash."""
+    """A counted torrent with exactly the release's files under another hash marks the release with that hash."""
 
     qbit = _FakeQbit(rows=(row,), files=_ALREADY_IN_QBIT)
 
@@ -547,7 +547,7 @@ def test_mark_cross_seeds_marks_a_torrent_holding_the_urls_files(row: _TorrInfo,
 def test_mark_cross_seeds_leaves_a_url_no_counted_torrent_holds(
     rows: tuple[_TorrInfo, ...], files: Mapping[str, list[_TorrFile] | Exception], pearlarr_imports: bool
 ) -> None:
-    """A url stays SeaDex's when no counted torrent holds exactly its files, or SeaDex's own is in qBittorrent."""
+    """A release stays SeaDex's when no counted torrent has exactly its files, or SeaDex's own is in qBittorrent."""
 
     qbit = _FakeQbit(rows=rows, files=files)
 
@@ -562,7 +562,7 @@ def test_mark_cross_seeds_leaves_a_url_no_counted_torrent_holds(
     ],
 )
 def test_mark_cross_seeds_skips_a_url_without_reading_a_file_list(item: Release, rows: tuple[_TorrInfo, ...]) -> None:
-    """A url SeaDex's own torrent holds, or one with no hash (every private url), is left before any file-list read."""
+    """A release SeaDex's own torrent has, or one with no hash (every private release), is left before any file-list read."""
 
     qbit = _FakeQbit(rows=rows, files=_ALREADY_IN_QBIT)
 
@@ -571,7 +571,7 @@ def test_mark_cross_seeds_skips_a_url_without_reading_a_file_list(item: Release,
 
 
 def test_mark_cross_seeds_lists_once_a_run_and_reads_a_file_list_once() -> None:
-    """The categories are listed at the run's first title, and only a torrent at a url's total size has its files read."""
+    """The categories are listed at the run's first title, and only a torrent at a release's total size has its files read."""
 
     other_size = replace(_row(_NEWER), total_size=999)
     qbit = _FakeQbit(rows=(_row(_CROSS), other_size), files=_ALREADY_IN_QBIT)
@@ -600,7 +600,7 @@ def test_mark_cross_seeds_looks_again_after_a_title_whose_grab_category_could_no
 
 
 def test_mark_cross_seeds_takes_the_oldest_holder() -> None:
-    """Of two torrents holding the url's files, the oldest marks it, though the newer one has finished."""
+    """Of two torrents with the release's files, the oldest marks it, though the newer one has finished."""
 
     newer = replace(_row(_NEWER, state="stalledUP", progress=1.0), added_on=1_700_000_500)
     qbit = _FakeQbit(rows=(newer, _row(_CROSS)), files={_CROSS: _EPISODES, _NEWER: _EPISODES})
@@ -670,7 +670,7 @@ def test_a_runs_seadex_dict_carries_a_finished_cross_seed_only_when_pearlarr_imp
 
 
 def test_add_a_marked_url_is_its_cross_seed() -> None:
-    """A marked url is ALREADY_ADDED as the torrent holding its files, and SeaDex's is never added."""
+    """A marked release is ALREADY_IN_QBIT as the torrent with its files, and SeaDex's is never added."""
 
     qbit = _FakeQbit(present={_CROSS: "Cross"})
     item = replace(_seadex_release(), cross_seed_hash=_CROSS)
@@ -682,7 +682,7 @@ def test_add_a_marked_url_is_its_cross_seed() -> None:
 
 
 def test_add_a_marked_url_whose_cross_seed_left_raises(monkeypatch: pytest.MonkeyPatch) -> None:
-    """A marked url whose torrent left qBittorrent fails its grab instead of adding SeaDex's under its record."""
+    """A marked release whose torrent left qBittorrent fails its grab instead of adding SeaDex's under its pending import."""
 
     _patch_nyaa_parser(monkeypatch)
     qbit = _FakeQbit()

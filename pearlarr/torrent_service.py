@@ -28,7 +28,7 @@ from .wait_types import torrent_errored, torrent_finished
 
 
 class TorrentAddError(Exception):
-    """A failed add: qBittorrent rejected it (a non-`"Ok."` `torrents_add` result), or the url's cross-seed left."""
+    """A failed add: qBittorrent rejected it (a non-`"Ok."` `torrents_add` result), or the release's cross-seed left."""
 
 
 # The expected external failures a grab can hit. Anything else is a bug and propagates.
@@ -78,9 +78,9 @@ class AddResult(NamedTuple):
 
     outcome: AddStatus
     name: str | None
-    """The qBittorrent-reported name. A new add falls back to the tracker's release title. None when neither exists."""
+    """The qBittorrent-reported name. A new add uses the tracker's torrent name instead. None when neither exists."""
     added_on: datetime | None = None
-    """qBittorrent's own add time for an `ALREADY_IN_QBIT` torrent (local-naive, like `now_stamp`), else None."""
+    """qBittorrent's add time for an `ALREADY_IN_QBIT` torrent (local-naive, like `now_stamp`), else None."""
 
 
 def _row_added_on(row: object) -> datetime | None:
@@ -109,7 +109,7 @@ class GrabResult:
 
 
 type _FileSet = Counter[tuple[str, int | None]]
-"""A torrent's files as (normalized leaf name, size) pairs, counted."""
+"""A torrent's files as (normalized file name, size) pairs, counted."""
 
 
 def _file_set(files: Iterable[tuple[str, int | None]]) -> _FileSet:
@@ -120,7 +120,7 @@ def _file_set(files: Iterable[tuple[str, int | None]]) -> _FileSet:
 
 @dataclass(frozen=True, slots=True)
 class _Candidate:
-    """A torrent in this arr's categories that could be a url's cross-seed."""
+    """A torrent in this arr's categories that could be a release's cross-seed."""
 
     infohash: str
     name: str
@@ -157,20 +157,20 @@ class _CategoryLook:
         return cls(qbit, by_size)
 
     def cross_seed_of(self, item: Release) -> _Candidate | None:
-        """The oldest torrent that counts and holds exactly the url's files, by name and size, under another hash.
+        """The oldest torrent that counts and has exactly the release's files, by name and size, under another hash.
 
-        The oldest, so every run picks the same one: the url's record is keyed by its hash. None when there's
-        none, or SeaDex's own torrent is anywhere in qBittorrent. Names count, not sizes alone: sizes are the
-        planner's identity for one release (`GrabPlanner.reduce_overlapping_grabs`), but a record finds its
-        files on disk by name, so a torrent is usable only when the url's names are in it.
+        The oldest, so every run chooses the same one: the release's pending import is keyed by its hash. None when
+        there's none, or SeaDex's torrent is anywhere in qBittorrent. Names count, not sizes alone: sizes are the
+        planner's identity for one release (`GrabPlanner.reduce_overlapping_grabs`), but a pending import finds its
+        files in the torrent's folder by name, so a torrent is usable only when the release's names are in it.
         """
 
-        # No hash means a private url. Those are never marked: the planner's private and fallback handling knows
+        # No hash means a private release. Those are never marked: the planner's private and fallback handling knows
         # nothing of a cross-seed.
         if item.infohash is None:
             return None
         candidates = self.by_size.get(sum(item.file_sizes), ())
-        # SeaDex's own torrent in a listed category settles it with no file list read.
+        # SeaDex's torrent in a listed category settles it with no file list read.
         if any(candidate.infohash == item.infohash for candidate in candidates):
             return None
         wanted = _file_set(zip(item.files, item.file_sizes, strict=True))
@@ -191,7 +191,7 @@ class _CategoryLook:
             files = self.qbit.torrents_files(torrent_hash=infohash)
         except qbittorrentapi.NotFound404Error:
             return None
-        # Priority 0 is "do not download": the torrent will never hold that file.
+        # Priority 0 is "do not download": the torrent will never have that file.
         if any(getattr(f, "priority", None) == 0 for f in files):
             return None
         return _file_set((str(getattr(f, "name", "")), coerce_int(getattr(f, "size", None))) for f in files)
@@ -221,14 +221,14 @@ class TorrentService:
         self._look: _CategoryLook | None = None
 
     def bind_arr_run(self, *, pearlarr_imports: bool) -> None:
-        """Say who imports this run's downloads: Pearlarr, or the arr itself."""
+        """Say who imports this arr run's torrents: Pearlarr, or the arr itself."""
 
         self._pearlarr_imports = pearlarr_imports
 
     def mark_cross_seeds(self, seadex_dict: SeadexDict) -> None:
-        """Mark each url whose exact files a cross-seed in this arr's categories holds with that torrent's hash.
+        """Mark each release whose exact files a cross-seed in this arr's categories has, with that torrent's hash.
 
-        Which torrents count depends on who imports them (`begin_run`). When Pearlarr does, it's any torrent in the
+        Which torrents count depends on who imports them (`bind_arr_run`). When Pearlarr does, it's any torrent in the
         grab or post-import category, finished or not. Otherwise it's an unfinished one in the grab category, the
         only kind the arr imports itself. An errored torrent never counts. The categories are listed once a run. A
         failed qBittorrent read warns once and marks nothing more this run.
@@ -265,10 +265,10 @@ class TorrentService:
         item: Release,
         dry_run: bool,
     ) -> AddResult:
-        """Add a release to qBittorrent, parsing its tracker page only when qBittorrent doesn't have it yet.
+        """Add a release's torrent to qBittorrent, parsing its tracker page only when qBittorrent doesn't have it yet.
 
-        A url marked with a cross-seed is never added. Its torrent is the cross-seed, and the add raises when that
-        torrent has left qBittorrent.
+        A release marked with a cross-seed never has a torrent added. Its torrent is the cross-seed, and the add
+        raises when that torrent has left qBittorrent.
         """
 
         parser = _PARSERS.get(item.tracker)
@@ -288,7 +288,7 @@ class TorrentService:
         return AddResult(AddStatus.ADDED, name or source_name)
 
     def _already_added(self, item: Release) -> AddResult | None:
-        """The `ALREADY_IN_QBIT` result when qBittorrent has the url's torrent (`Release.qbit_hash`), else None."""
+        """The `ALREADY_IN_QBIT` result when qBittorrent has the release's torrent (`Release.qbit_hash`), else None."""
 
         qbit_hash = item.qbit_hash
         # A private torrent has no info hash to dedup by, so qBittorrent dedups it internally.
@@ -309,7 +309,7 @@ class TorrentService:
     ) -> str | None:
         """Add `torrent_url` to qBittorrent and return the name it reports.
 
-        None in preview, without a hash to read it by, or when qBittorrent doesn't list the torrent yet.
+        None in a dry run, without a hash to read it by, or when qBittorrent doesn't list the torrent yet.
         """
 
         infohash = item.infohash
@@ -317,7 +317,7 @@ class TorrentService:
         if dry_run:
             return None
 
-        # Past the preview gate there is always a client, so this raise is defensive.
+        # Past the dry run gate there is always a client, so this raise is defensive.
         if self.qbit is None:
             raise RuntimeError("qBittorrent client not configured")
 

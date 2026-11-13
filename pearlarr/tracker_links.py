@@ -1,4 +1,4 @@
-"""Per-tracker parsers: turn a tracker page/feed URL into a download link and release title."""
+"""Per-tracker parsers: turn a tracker page/feed URL into a torrent link and torrent name."""
 
 import re
 from typing import NamedTuple
@@ -20,24 +20,23 @@ _DISPOSITION_NAME_PLAIN = re.compile(r'(?<![\w*])filename\s*=\s*("[^"]*"|[^;]*)'
 
 
 class TrackerPageError(Exception):
-    """A tracker page/feed didn't yield the release's torrent link or title."""
+    """A tracker page/feed didn't yield the release's torrent link or torrent name."""
 
 
 class TrackerLink(NamedTuple):
-    """A parsed tracker result: the download/magnet link and the release title."""
+    """A parsed tracker result: the .torrent/magnet link and the torrent name."""
 
     link: str | None
-    """The .torrent download link or magnet URI, or None when the source yields
+    """The .torrent link or magnet URI, or None when the source yields
     no matching link."""
     title: str
 
 
 def fetch_nyaa_link(url: str, client: httpx.Client) -> TrackerLink:
-    """Get the Nyaa download link and release title from a Nyaa release URL.
+    """Get the Nyaa .torrent link and torrent name from a Nyaa release URL.
 
-    The link is built from the release number in the URL, the way Nyaa serves every .torrent. One HEAD request on
-    it checks the file is there and reads the title from its download filename, so neither the page nor the file is
-    downloaded.
+    The link is built from the Nyaa id in the URL, the way Nyaa serves every .torrent. One HEAD request on it checks
+    the file is there and reads the torrent name from its filename, so neither the page nor the file is fetched.
     """
 
     match = _NYAA_VIEW_PATH.fullmatch(urlsplit(url).path)
@@ -60,7 +59,7 @@ def fetch_animetosho_link(
     url: str,
     client: httpx.Client,
 ) -> TrackerLink:
-    """Get the AnimeTosho download link and release title from a URL.
+    """Get the AnimeTosho .torrent link and torrent name from a URL.
 
     Args:
         url: URL of the AnimeTosho release page
@@ -68,12 +67,12 @@ def fetch_animetosho_link(
             same host.
 
     Returns:
-        The .torrent download link (None if no matching link is found in the
-        feed) and the human-readable release title scraped from the page.
+        The .torrent link (None if no matching link is found in the
+        feed) and the human-readable torrent name scraped from the page.
     """
 
-    # Start by getting the webpage, so we can get a title. A 5xx/Cloudflare page
-    # would otherwise scrape as a misleading "no title" parse error.
+    # Start by getting the webpage, so we can get the torrent name. A 5xx/Cloudflare
+    # page would otherwise scrape as a misleading "no title" page error.
     r = get_with_retries(client, url)
     r.raise_for_status()
     soup = BeautifulSoup(r.content, "html.parser")
@@ -87,7 +86,7 @@ def fetch_animetosho_link(
 
     title = titles[0].text
 
-    # Query the feed API for the matching release (encode the title so reserved
+    # Query the feed API for the matching release (encode the name so reserved
     # characters in it don't malform the query string)
     query_url = urljoin(ANIMETOSHO_FEED_URL, "?" + urlencode({"t": "search", "q": title}))
     r = get_with_retries(client, query_url)
@@ -95,7 +94,7 @@ def fetch_animetosho_link(
     try:
         j = r.json()
     except ValueError as e:
-        # An HTML error body (e.g. an interstitial) isn't JSON: a parse miss.
+        # An HTML error body (e.g. an interstitial) isn't JSON: a `TrackerPageError`.
         raise TrackerPageError(f"AnimeTosho feed returned a non-JSON response from {query_url}") from e
 
     # A JSON error object (rate limit / interstitial) instead of the expected
@@ -103,8 +102,8 @@ def fetch_animetosho_link(
     if not is_json_list(j):
         raise TrackerPageError(f"AnimeTosho feed returned unexpected JSON (not a list) from {query_url}")
 
-    # Find the feed entry whose link matches the page URL, skipping non-object
-    # entries. A non-str torrent_url folds to None (no link found).
+    # Find the feed element whose link matches the page URL, skipping non-object
+    # elements. A non-str torrent_url converts to None (no link found).
     parsed_url: str | None = None
     for entry in j:
         if not is_json_obj(entry):
@@ -122,7 +121,7 @@ def fetch_rutracker_link(
     infohash: str | None,
     client: httpx.Client,
 ) -> TrackerLink:
-    """Get the RuTracker magnet link and torrent title from a URL.
+    """Get the RuTracker magnet link and torrent name from a URL.
 
     Args:
         url: URL of the RuTracker topic
@@ -130,20 +129,20 @@ def fetch_rutracker_link(
         client: Client to reuse for the page fetch.
 
     Returns:
-        The magnet link and the human-readable torrent title scraped from
+        The magnet link and the human-readable torrent name scraped from
         the page.
 
     Raises:
         TrackerPageError: If `infohash` is None (a magnet needs the hash) or
-            the page carries no title.
+            the page carries no torrent name.
     """
 
     # No hash means no valid magnet ("urn:btih:None" is garbage). Fail as the
-    # usual parse miss before fetching anything.
+    # usual `TrackerPageError` before fetching anything.
     if infohash is None:
         raise TrackerPageError("RuTracker release has no infohash to build a magnet link from")
 
-    # Pull the torrent title from souping the URL. Use the stdlib html.parser
+    # Pull the torrent name from souping the URL. Use the stdlib html.parser
     # (as the AnimeTosho scraper does) - lxml is not a dependency, and the page
     # only needs a single class lookup, so the built-in parser is plenty.
     r = get_with_retries(client, url)

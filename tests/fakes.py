@@ -197,7 +197,7 @@ class QbitCategoryReads:
     """A qBittorrent stub for the two reads the category resolver makes.
 
     Every torrent sits in `category`, which a test may change between reads: None is a torrent qBittorrent
-    doesn't hold, and an exception is a failed read. `preferences` answers the settings read, each answer
+    doesn't have, and an exception is a failed read. `preferences` answers the settings read, each answer
     once and the last one from then on.
     """
 
@@ -210,7 +210,7 @@ class QbitCategoryReads:
         self._preferences = list(preferences) or [{}]
 
     def torrents_info(self, *, torrent_hashes: str) -> list[_CategoryRow]:
-        """The row for whichever hash is asked, in the category held now."""
+        """The row for whichever hash is asked, in the category set now."""
 
         del torrent_hashes
         if isinstance(self.category, Exception):
@@ -228,7 +228,7 @@ class QbitCategoryReads:
     def client(self) -> qbittorrentapi.Client:
         """This stub as the SDK client it stands in for."""
 
-        # The sanctioned leaf-client hatch: the SDK client has no seam to subclass.
+        # The sanctioned leaf-client hatch: the SDK client has no interface to subclass.
         return cast("qbittorrentapi.Client", self)
 
 
@@ -247,7 +247,7 @@ class TtyStringIO(io.StringIO):
 
 
 class AsciiStringIO(io.StringIO):
-    """An in-memory stream whose claimed encoding can't hold glyphs."""
+    """An in-memory stream whose claimed encoding can't encode glyphs."""
 
     encoding = "ascii"
 
@@ -292,7 +292,7 @@ class FakeArrItem:
 
 
 class FakeStrategy(ArrStrategy[FakeArrItem]):
-    """A typed `ArrStrategy` with scripted returns, for engine-orchestration tests."""
+    """A typed `ArrStrategy` with scripted returns, for arr-run-loop tests."""
 
     def __init__(
         self,
@@ -306,7 +306,7 @@ class FakeStrategy(ArrStrategy[FakeArrItem]):
     ) -> None:
         self._items = items
         self._anilist_ids = anilist_ids
-        # Every processed id is held past the cap on this hub's run context, as the grab pipeline holds one: the
+        # Every processed id is held past the cap on these services' run state, as the grab pipeline keeps one: the
         # title's hold and the run tally.
         self._cap_services = services
         self._process_raises_on = process_raises_on
@@ -417,7 +417,7 @@ class FakeSonarrClient(AbstractSonarrClient):
         self.candidates_return: list[ManualImportCandidate] | None = candidates
         self.quality_defs_return: list[QualityDefinition] = quality_defs or []
         self.languages_return: list[Language] = languages or []
-        # The scripted `/parse` reading per filename (None = Sonarr could not parse it this call).
+        # The scripted `/parse` result per filename (None = Sonarr could not parse it this call).
         self.parse_fn: Callable[[str], ParsedFileInfo | None] = parse_fn or (lambda _f: None)
         self.execute_command_id = execute_command_id
         self.command_status_return = (
@@ -426,7 +426,7 @@ class FakeSonarrClient(AbstractSonarrClient):
         self.command_status_script: list[CommandResource] = command_status_script or []
         self.refresh_count = refresh_count
         self.history_since_return: list[HistoryRecord] | None = [] if history_since is None else history_since
-        # The fallback trio defaults to None (the "failed" reads).
+        # The folder-fetch trio defaults to None (the "failed" reads).
         self.folder_candidates_return: list[ManualImportCandidate] | None = folder_candidates
         self.history_page_return: HistoryPage | None = history_page
         self.path_mappings_return: list[RemotePathMapping] | None = path_mappings
@@ -632,8 +632,8 @@ class FakeSkyHookClient(AbstractSkyHookClient):
     """SkyHook scripted per (TVDB id, order type).
 
     An unscripted pair answers `SkyHookNoReply.NOT_FOUND`, as SkyHook does for a series TVDB lacks. A fetch of a
-    `failing` pair trips the outage, and every fetch after it is `SkyHookNoReply.UNREACHABLE`, as the real client's latch
-    makes it.
+    `failing` pair marks SkyHook unreachable, and every fetch after it is `SkyHookNoReply.UNREACHABLE`, as the real
+    client makes it.
     """
 
     def __init__(
@@ -664,7 +664,7 @@ class ScriptedEpisodes:
 
     `mapping_episodes` records its calls, raises for an `ambiguous` id, and serves `windows[al_id]` when windows are
     given, else the whole series list. Without a client every read is None, a failed fetch. The `unread_series` have
-    no stored order record, and the `unread_al_ids` no AniList record. `counts` are AniList's episode counts by
+    no stored order answer, and the `unread_al_ids` no AniList answer. `counts` are AniList's episode counts by
     AniList id, None for an id left out.
     """
 
@@ -695,7 +695,7 @@ class ScriptedEpisodes:
         return None if self._sonarr is None else self._sonarr.episodes(series_id)
 
     def mapping_episodes(self, sonarr_series_id: int, al_id: int, mapping: TitleMapping) -> list[SonarrEpisode] | None:
-        """The entry's window, recorded. Raises for an `ambiguous` id as the real resolver does."""
+        """The title's window, recorded. Raises for an `ambiguous` id as the real resolver does."""
 
         del mapping
         self.calls.append((sonarr_series_id, al_id))
@@ -704,7 +704,7 @@ class ScriptedEpisodes:
         return self.cached_episodes(sonarr_series_id) if self._windows is None else self._windows.get(al_id)
 
     def sonarr_files(self, ep_list: list[SonarrEpisode]) -> ArrFiles:
-        """No release is on disk."""
+        """The arr has no files."""
 
         del ep_list
         return ArrFiles()
@@ -727,7 +727,7 @@ class ScriptedEpisodes:
         return self._counts.get(al_id)
 
     def any_air_dates_unread(self, al_ids: Iterable[int]) -> bool:
-        """Whether any of the entries is one of the `unread_al_ids`."""
+        """Whether any of the titles is one of the `unread_al_ids`."""
 
         return not self._unread_al_ids.isdisjoint(al_ids)
 
