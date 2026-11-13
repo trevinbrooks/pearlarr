@@ -52,25 +52,25 @@ from pearlarr.releases import (
 from pearlarr.tvdb_orders import IndexOrders, OrderRow
 
 from .builders import (
-    ALIASED_PACK,
+    ALIASED_SPECIALS_LISTING,
     UNREAD_EVIDENCE,
     by_name,
-    entry_claim,
-    entry_facts,
-    entry_window,
     known_torrent,
+    make_grabbing_title,
+    make_release,
     new_torrent,
     parsed_info,
     pending_import,
-    pending_seed,
+    pending_import_update,
     rg_group,
-    seed_scope,
     sonarr_ep,
+    title_claim,
+    title_facts,
+    title_window,
     torrent_evidence,
     torrent_facts,
     torrent_listing,
-    two_claim_record,
-    url_item,
+    two_claim_pending_import,
     verdicts_of,
 )
 
@@ -83,7 +83,7 @@ _SERIES = [
     sonarr_ep(2, 2, ep_id=202, episode_file_id=0),
 ]
 _RUN = [f"Show - {n:02d}.mkv" for n in range(1, 5)]
-_PACK = [f"Show - S01E{n:02d}.mkv" for n in range(1, 5)]
+_SEASON_NAMES = [f"Show - S01E{n:02d}.mkv" for n in range(1, 5)]
 _INDEXES = {7: episode_index(_SERIES)}
 _STAMP = "2026-06-24 00:00:00"
 _SPECIALS = [sonarr_ep(0, n, ep_id=500 + n, episode_file_id=0) for n in range(1, 7)]
@@ -92,11 +92,15 @@ _FACTS = torrent_facts(
 )
 
 
-def _scope(entry: list[SonarrEpisode], names: TitleNames | None = None, *, al_id: int = 1) -> GrabbingTitle:
-    return seed_scope(episode_index(entry), episode_index(_SERIES), al_id=al_id, names=names or TitleNames())
+def _grabbing_title(
+    window_episodes: list[SonarrEpisode], names: TitleNames | None = None, *, al_id: int = 1
+) -> GrabbingTitle:
+    return make_grabbing_title(
+        episode_index(window_episodes), episode_index(_SERIES), al_id=al_id, names=names or TitleNames()
+    )
 
 
-def _bare(number: int) -> ParsedFileInfo:
+def _number_with_no_match(number: int) -> ParsedFileInfo:
     """A `- 01` name Sonarr matched nothing for."""
 
     return ParsedFileInfo(episode_numbers=(number,))
@@ -110,16 +114,16 @@ def _matched(season: int, episode: int) -> ParsedFileInfo:
     )
 
 
-def _bare_key(season: int, episode: int) -> ParsedFileInfo:
+def _season_episode_with_no_match(season: int, episode: int) -> ParsedFileInfo:
     """A spelled key Sonarr matched nothing for."""
 
     return ParsedFileInfo(season_number=season, episode_numbers=(episode,))
 
 
-def _pack(count: int = 4) -> list[ListedFile]:
+def _season_files(count: int = 4) -> list[ListedFile]:
     """The season pack's first `count` files, each matched by Sonarr and sized `10 * n`."""
 
-    return [ListedFile(name, 10 * n, _matched(1, n)) for n, name in enumerate(_PACK[:count], start=1)]
+    return [ListedFile(name, 10 * n, _matched(1, n)) for n, name in enumerate(_SEASON_NAMES[:count], start=1)]
 
 
 def _torrent(pending: PendingImport | None = None, *, listed: Sequence[TitleWindow] | None = ()) -> KnownTorrent:
@@ -135,14 +139,14 @@ def _torrent(pending: PendingImport | None = None, *, listed: Sequence[TitleWind
 _NEW = _torrent()
 
 
-def _resident_record() -> PendingImport:
+def _stored_pending_import() -> PendingImport:
     """A stored record mapping the pack's first two files, its one claim over the season on series 7."""
 
     return pending_import(
         infohash="h1",
         series_id=7,
         file_episode_map={"show - s01e01.mkv": [101], "show - s01e02.mkv": [102]},
-        seadex_files=_PACK,
+        seadex_files=_SEASON_NAMES,
         ordered_episode_ids=(101, 102, 103, 104),
     )
 
@@ -151,9 +155,9 @@ class TestPlaceRelease:
     """One url's files placed by the import's own passes, its records the planner's coverage vocabulary."""
 
     def test_a_run_sonarr_read_nothing_of_records_the_window(self) -> None:
-        files = [ListedFile(name, 10 * n, _bare(n)) for n, name in enumerate(_RUN, start=1)]
+        files = [ListedFile(name, 10 * n, _number_with_no_match(n)) for n, name in enumerate(_RUN, start=1)]
 
-        placement = place_release(files, _scope(_SEASON), _NEW)
+        placement = place_release(files, _grabbing_title(_SEASON), _NEW)
 
         assert placement.episodes == tuple(ReleaseEpisode(1, n, 10 * n) for n in range(1, 5))
         assert placement.placements.placed == {normalized_leaf(name): (100 + n,) for n, name in enumerate(_RUN, 1)}
@@ -162,9 +166,9 @@ class TestPlaceRelease:
         assert placement.pending_import is None
 
     def test_each_placed_episode_intends_its_files_listed_size(self) -> None:
-        files = [ListedFile(name, 10 * n, _bare(n)) for n, name in enumerate(_RUN, start=1)]
+        files = [ListedFile(name, 10 * n, _number_with_no_match(n)) for n, name in enumerate(_RUN, start=1)]
 
-        placement = place_release(files, _scope(_SEASON), _NEW)
+        placement = place_release(files, _grabbing_title(_SEASON), _NEW)
 
         assert placement.intended_sizes == {100 + n: 10 * n for n in range(1, 5)}
 
@@ -173,7 +177,7 @@ class TestPlaceRelease:
         parses = [_matched(1, n) for n in range(1, 5)] + [_matched(2, 1), _matched(2, 2)]
         files = [ListedFile(name, 1, parse) for name, parse in zip(names, parses, strict=True)]
 
-        placement = place_release(files, _scope(_SEASON), _NEW)
+        placement = place_release(files, _grabbing_title(_SEASON), _NEW)
 
         assert placement.episodes == tuple(ReleaseEpisode(1, n, 1) for n in range(1, 5))
         assert {p.name for p in placement.placements.excluded} == {"show - s02e01.mkv", "show - s02e02.mkv"}
@@ -181,15 +185,17 @@ class TestPlaceRelease:
     def test_a_file_placed_nowhere_leaves_no_record(self) -> None:
         files = [ListedFile("Show - S02E01.mkv", 1, _matched(2, 1))]
 
-        placement = place_release(files, _scope(_SEASON), _NEW)
+        placement = place_release(files, _grabbing_title(_SEASON), _NEW)
 
         assert placement.episodes == ()
         assert verdicts_of(placement.placements) == {PlacementVerdict.OUTSIDE_WINDOW}
 
     def test_a_held_run_records_nothing_holds_the_url_and_its_inputs_are_not_known(self) -> None:
-        files = [ListedFile(name, 1, None if n == 3 else _bare(n)) for n, name in enumerate(_RUN, start=1)]
+        files = [
+            ListedFile(name, 1, None if n == 3 else _number_with_no_match(n)) for n, name in enumerate(_RUN, start=1)
+        ]
 
-        placement = place_release(files, _scope(_SEASON), _NEW)
+        placement = place_release(files, _grabbing_title(_SEASON), _NEW)
 
         assert placement.episodes == ()
         assert placement.skip_reason is PlacementSkip.INPUT_UNREAD
@@ -198,10 +204,10 @@ class TestPlaceRelease:
 
     def test_a_file_beside_a_held_run_still_places(self) -> None:
         files = [ListedFile("Show - OVA.mkv", 5, _matched(0, 1))] + [
-            ListedFile(name, 1, None if n == 3 else _bare(n)) for n, name in enumerate(_RUN, start=1)
+            ListedFile(name, 1, None if n == 3 else _number_with_no_match(n)) for n, name in enumerate(_RUN, start=1)
         ]
 
-        placement = place_release(files, _scope([_SPECIAL, *_SEASON]), _NEW)
+        placement = place_release(files, _grabbing_title([_SPECIAL, *_SEASON]), _NEW)
 
         assert placement.episodes == (ReleaseEpisode(0, 1, 5),)
         assert placement.skip_reason is PlacementSkip.INPUT_UNREAD
@@ -214,7 +220,7 @@ class TestPlaceRelease:
             ListedFile("Show - S01E01.mkv", 20, _matched(1, 1)),
         ]
 
-        placement = place_release(files, _scope(_SEASON), _NEW)
+        placement = place_release(files, _grabbing_title(_SEASON), _NEW)
 
         assert placement.episodes == (ReleaseEpisode(1, 1, 10), ReleaseEpisode(1, 1, 20))
         assert placement.placements.placed == {"show - s01e01.mkv": (101,)}
@@ -226,14 +232,14 @@ class TestPlaceRelease:
             ListedFile("Show - S01E01.mkv", 20, _matched(1, 1)),
         ]
 
-        placement = place_release(files, _scope(_SEASON), _NEW)
+        placement = place_release(files, _grabbing_title(_SEASON), _NEW)
 
         assert placement.intended_sizes == {}
 
     def test_an_unread_series_map_places_nothing_and_holds_the_url_as_unread(self) -> None:
         # The series list did not serve, so the scope has no map and the entry's window can't be ordered.
-        files = [ListedFile(name, 1, _bare(n)) for n, name in enumerate(_RUN, start=1)]
-        grabbing_title = seed_scope(episode_index(_SEASON), episode_index([]))
+        files = [ListedFile(name, 1, _number_with_no_match(n)) for n, name in enumerate(_RUN, start=1)]
+        grabbing_title = make_grabbing_title(episode_index(_SEASON), episode_index([]))
 
         placement = place_release(files, grabbing_title, known_torrent())
 
@@ -244,7 +250,7 @@ class TestPlaceRelease:
         assert not placement.inputs_read
 
     def test_no_files_is_an_empty_placement_with_its_inputs_known(self) -> None:
-        placement = place_release([], _scope(_SEASON), _NEW)
+        placement = place_release([], _grabbing_title(_SEASON), _NEW)
 
         assert placement == PlacedRelease(
             files=(),
@@ -267,7 +273,7 @@ class TestPlaceIdentified:
     def test_a_numberless_file_is_placed_by_its_listed_size(self) -> None:
         torrent = known_torrent(indexes=_INDEXES, evidence=torrent_evidence(episode_by_size={70: 103}))
 
-        placement = place_release([self._LOST, *_pack(2)], _scope(_SEASON), torrent)
+        placement = place_release([self._LOST, *_season_files(2)], _grabbing_title(_SEASON), torrent)
 
         assert placement.placements.placed["show - lost tape.mkv"] == (103,)
         assert PlacementVerdict.SIZE_MATCH in verdicts_of(placement.placements)
@@ -275,10 +281,10 @@ class TestPlaceIdentified:
 
     def test_a_hash_less_url_is_placed_by_the_series_identities(self) -> None:
         # No listing matches a torrent without a hash, but the series' size identities still apply to it.
-        seadex_dict: SeadexDict = {"RG": rg_group({"u1": url_item(url="u1", infohash=None, download=True)})}
+        seadex_dict: SeadexDict = {"RG": rg_group({"u1": make_release(url="u1", infohash=None, download=True)})}
         known = TorrentFetches({}, _INDEXES, FetchedListings({}, {70: 103})).known(seadex_dict)
 
-        placement = place_release([self._LOST, *_pack(2)], _scope(_SEASON), known["u1"])
+        placement = place_release([self._LOST, *_season_files(2)], _grabbing_title(_SEASON), known["u1"])
 
         assert placement.placements.placed["show - lost tape.mkv"] == (103,)
         assert placement.skip_reason is None
@@ -289,7 +295,7 @@ class TestPlaceIdentified:
         # but the url is held, since anything the grab seeds is never placed again.
         torrent = known_torrent(indexes=_INDEXES, evidence=FetchedSeadex(EMPTY_LISTING, None))
 
-        placement = place_release([self._LOST, *_pack(2)], _scope(_SEASON), torrent)
+        placement = place_release([self._LOST, *_season_files(2)], _grabbing_title(_SEASON), torrent)
 
         assert placement.placements.placed == {"show - s01e01.mkv": (101,), "show - s01e02.mkv": (102,)}
         assert placement.skip_reason is PlacementSkip.INPUT_UNREAD
@@ -306,7 +312,7 @@ class TestPlaceIdentified:
             20,
             ParsedFileInfo(matched_episodes=(MatchedEpisode(season_number=1, episode_number=2),)),
         )
-        placement = place_release([self._LOST, _pack(1)[0], matched], _scope(_SEASON), torrent)
+        placement = place_release([self._LOST, _season_files(1)[0], matched], _grabbing_title(_SEASON), torrent)
 
         assert size_over_name_files(placement, episode_index(_SERIES)) == (
             SizeOverName("show - s01e01.mkv", "S01E01", EpisodeKey(1, 2)),
@@ -318,9 +324,9 @@ class TestPlaceOntoResident:
     """A listed torrent with a stored record: only the map's leftover is placed, the whole map is recorded."""
 
     def test_the_leftover_is_placed_and_the_whole_map_recorded(self) -> None:
-        pending = _resident_record()
+        pending = _stored_pending_import()
 
-        placement = place_release(_pack(), _scope(_SEASON), _torrent(pending))
+        placement = place_release(_season_files(), _grabbing_title(_SEASON), _torrent(pending))
 
         # The record's two mapped names are not re-placed, and the records and claim read the full map.
         assert placement.placements.placed == {"show - s01e03.mkv": (103,), "show - s01e04.mkv": (104,)}
@@ -332,22 +338,22 @@ class TestPlaceOntoResident:
     def test_a_seeded_parse_miss_on_a_wholly_mapped_torrent_holds_nothing(self) -> None:
         pending = pending_import(
             infohash="h1",
-            file_episode_map={normalize_name(name): [100 + n] for n, name in enumerate(_PACK, start=1)},
-            seadex_files=_PACK,
+            file_episode_map={normalize_name(name): [100 + n] for n, name in enumerate(_SEASON_NAMES, start=1)},
+            seadex_files=_SEASON_NAMES,
             ordered_episode_ids=(101, 102, 103, 104),
         )
-        files = [ListedFile(_PACK[0], 10, None), *_pack()[1:]]
+        files = [ListedFile(_SEASON_NAMES[0], 10, None), *_season_files()[1:]]
 
-        placement = place_release(files, _scope(_SEASON), _torrent(pending))
+        placement = place_release(files, _grabbing_title(_SEASON), _torrent(pending))
 
         assert placement.skip_reason is None
         assert placement.inputs_read
         assert placement.covered_ids == {101, 102, 103, 104}
 
     def test_a_seeded_parse_miss_holds_the_url_while_a_file_is_left_to_place(self) -> None:
-        files = [ListedFile(_PACK[0], 10, None), *_pack()[1:]]
+        files = [ListedFile(_SEASON_NAMES[0], 10, None), *_season_files()[1:]]
 
-        placement = place_release(files, _scope(_SEASON), _torrent(_resident_record()))
+        placement = place_release(files, _grabbing_title(_SEASON), _torrent(_stored_pending_import()))
 
         assert placement.skip_reason is PlacementSkip.INPUT_UNREAD
         assert not placement.inputs_read
@@ -360,9 +366,12 @@ class TestPlaceOntoResident:
             seadex_files=["Show - S02E01.mkv", "Other - 01.mkv"],
             ordered_episode_ids=(201, 202),
         )
-        files = [ListedFile("Show - S02E01.mkv", 5, _matched(2, 1)), ListedFile("Other - 01.mkv", 6, _bare(1))]
+        files = [
+            ListedFile("Show - S02E01.mkv", 5, _matched(2, 1)),
+            ListedFile("Other - 01.mkv", 6, _number_with_no_match(1)),
+        ]
 
-        placement = place_release(files, _scope(_SEASON, al_id=2), _torrent(pending))
+        placement = place_release(files, _grabbing_title(_SEASON, al_id=2), _torrent(pending))
 
         assert placement.placements.placements == ()
         assert placement.episodes == ()
@@ -375,13 +384,13 @@ class TestPlaceOntoResident:
         pending = pending_import(
             infohash="h1",
             file_episode_map={"show - s01e01.mkv": [101]},
-            seadex_files=_PACK[:3],
+            seadex_files=_SEASON_NAMES[:3],
             ordered_episode_ids=(101, 102),
         )
-        files = _pack(3)
+        files = _season_files(3)
 
-        stale = place_release(files, _scope(_SEASON[:2]), _torrent(pending))
-        fresh = place_release(files, _scope(_SEASON), _torrent(pending))
+        stale = place_release(files, _grabbing_title(_SEASON[:2]), _torrent(pending))
+        fresh = place_release(files, _grabbing_title(_SEASON), _torrent(pending))
 
         assert stale.placements.placed == {"show - s01e02.mkv": (102,)}
         assert fresh.placements.placed == {"show - s01e02.mkv": (102,), "show - s01e03.mkv": (103,)}
@@ -394,9 +403,9 @@ class TestPlaceOntoResident:
         pending = pending_import(
             infohash="h1", file_episode_map={}, seadex_files=_RUN[:2], ordered_episode_ids=(103, 104)
         )
-        files = [ListedFile(name, 10 * n, _bare(n)) for n, name in enumerate(_RUN[:2], start=1)]
+        files = [ListedFile(name, 10 * n, _number_with_no_match(n)) for n, name in enumerate(_RUN[:2], start=1)]
 
-        placement = place_release(files, _scope(_SEASON[:2]), _torrent(pending))
+        placement = place_release(files, _grabbing_title(_SEASON[:2]), _torrent(pending))
 
         assert placement.placements.placed == {"show - 01.mkv": (101,), "show - 02.mkv": (102,)}
         assert placement.covered_ids == {101, 102}
@@ -409,14 +418,14 @@ class TestPlaceOntoResident:
             series_id=8,
             al_id=2,
             file_episode_map={"show - s01e01.mkv": [901], "show - s01e02.mkv": [902]},
-            seadex_files=_PACK,
+            seadex_files=_SEASON_NAMES,
             ordered_episode_ids=(901, 902, 903, 904),
         )
         torrent = _torrent(pending)
 
-        placement = place_release(_pack(), _scope(_SEASON), torrent)
+        placement = place_release(_season_files(), _grabbing_title(_SEASON), torrent)
 
-        assert torrent.order(_scope(_SEASON).window) is None
+        assert torrent.order(_grabbing_title(_SEASON).window) is None
         assert placement.placements.placements == ()
         assert placement.skip_reason is PlacementSkip.INPUT_UNREAD
         assert not placement.inputs_read
@@ -426,10 +435,10 @@ class TestPlaceOntoResident:
     def test_a_stored_record_under_an_unread_own_series_leaves_the_inputs_unknown(self) -> None:
         # The entry's own series list did not serve, so its window can't be ordered and the title is re-checked.
         # The stored map is still the record's: its in-entry ids record and count as claimed.
-        unread = seed_scope(episode_index(_SEASON), episode_index([]))
-        torrent = known_torrent(_resident_record(), evidence=torrent_evidence())
+        unread = make_grabbing_title(episode_index(_SEASON), episode_index([]))
+        torrent = known_torrent(_stored_pending_import(), evidence=torrent_evidence())
 
-        placement = place_release(_pack(), unread, torrent)
+        placement = place_release(_season_files(), unread, torrent)
 
         assert placement.placements.placements == ()
         assert not placement.inputs_read
@@ -453,8 +462,8 @@ class TestPlaceUnderAnotherEntrysRefutal:
     """A torrent entry 1's record holds, whose run its titles refute under entry 1's window, placed for another entry."""
 
     @staticmethod
-    def _place(files: dict[str, ParsedFileInfo], mapped: FileEpisodeMap, entry: list[int]) -> PlacedRelease:
-        """Entry 2 places `files` onto entry 1's record of `mapped` over season 1, its own window `entry`."""
+    def _place(files: dict[str, ParsedFileInfo], mapped: FileEpisodeMap, window_episodes: list[int]) -> PlacedRelease:
+        """Entry 2 places `files` onto entry 1's record of `mapped` over season 1, its own window `window_episodes`."""
 
         pending = pending_import(
             infohash="h1",
@@ -463,10 +472,12 @@ class TestPlaceUnderAnotherEntrysRefutal:
             seadex_files=tuple(files),
             ordered_episode_ids=(101, 102, 103),
         )
-        grabbing_title = seed_scope(episode_index([ep for ep in _TITLED if ep.id in entry]), _TITLED_INDEX, al_id=2)
-        seeds = [ListedFile(name, 1000 + i, info) for i, (name, info) in enumerate(files.items())]
+        grabbing_title = make_grabbing_title(
+            episode_index([ep for ep in _TITLED if ep.id in window_episodes]), _TITLED_INDEX, al_id=2
+        )
+        listed_files = [ListedFile(name, 1000 + i, info) for i, (name, info) in enumerate(files.items())]
         torrent = known_torrent(pending, indexes={7: _TITLED_INDEX}, evidence=torrent_evidence())
-        return place_release(seeds, grabbing_title, torrent)
+        return place_release(listed_files, grabbing_title, torrent)
 
     def test_the_sequel_entry_places_the_run_entry_1s_window_refutes(self) -> None:
         # Sonarr read the sequel's bare numbers as first-season absolutes, and its titled member names a sequel
@@ -513,22 +524,22 @@ class TestPlaceHeld:
         return [ListedFile(f"Show.S00E{n:02d}.mkv", 10 * n, _matched(0, n)) for n in range(1, count + 1)]
 
     @staticmethod
-    def _specials_scope(*numbers: int) -> GrabbingTitle:
+    def _specials_grabbing_title(*numbers: int) -> GrabbingTitle:
         """Entry 1 over the specials `numbers`, within the all-specials series."""
 
-        return seed_scope(episode_index([_SPECIALS[n - 1] for n in numbers]), episode_index(_SPECIALS))
+        return make_grabbing_title(episode_index([_SPECIALS[n - 1] for n in numbers]), episode_index(_SPECIALS))
 
     @staticmethod
     def _listing(listed: tuple[int, ...] | None) -> KnownTorrent:
         """A new torrent listed over `listed` in the specials series. None means SeaDex couldn't be read."""
 
-        evidence = UNREAD_EVIDENCE if listed is None else torrent_evidence(entry_window(1, listed))
+        evidence = UNREAD_EVIDENCE if listed is None else torrent_evidence(title_window(1, listed))
         return known_torrent(indexes={7: episode_index(_SPECIALS)}, evidence=evidence)
 
     def test_a_misnumbered_pack_holds_the_url_and_records_nothing(self) -> None:
         # The entries list the pack over specials 2, 4 and 6, three as the pack is wide: its `1` is no listed
         # special, so the pack counts by another TVDB state. Nothing places, and the planner sees no coverage.
-        placement = place_release(self._specials(), self._specials_scope(2, 4), self._listing((502, 504, 506)))
+        placement = place_release(self._specials(), self._specials_grabbing_title(2, 4), self._listing((502, 504, 506)))
 
         assert verdicts_of(placement.placements) == {PlacementVerdict.MISNUMBERED}
         assert placement.skip_reason is PlacementSkip.MISNUMBERED
@@ -545,9 +556,10 @@ class TestPlaceHeld:
         ]
         series = episode_index([*season, sonarr_ep(0, 1, ep_id=501, episode_file_id=0, absolute=3)])
         files = [
-            ListedFile(name, 10 * n, _matched(1, n) if n < 4 else _bare_key(1, n)) for n, name in enumerate(_PACK, 1)
+            ListedFile(name, 10 * n, _matched(1, n) if n < 4 else _season_episode_with_no_match(1, n))
+            for n, name in enumerate(_SEASON_NAMES, 1)
         ]
-        grabbing_title = seed_scope(episode_index(season), series)
+        grabbing_title = make_grabbing_title(episode_index(season), series)
 
         placement = place_release(files, grabbing_title, known_torrent(indexes={7: series}))
 
@@ -585,13 +597,14 @@ class TestPlaceHeld:
         # its last two files. The order puts the third on the special and the fourth on the aired third episode.
         season, special, series = self._counted_special(self._DVD)
         files = [
-            ListedFile(name, 10 * n, _matched(1, n) if n < 4 else _bare_key(1, n)) for n, name in enumerate(_PACK, 1)
+            ListedFile(name, 10 * n, _matched(1, n) if n < 4 else _season_episode_with_no_match(1, n))
+            for n, name in enumerate(_SEASON_NAMES, 1)
         ]
-        listed = torrent_evidence(entry_window(1, (101, 102, 103)), entry_window(2, (501,)))
+        listed = torrent_evidence(title_window(1, (101, 102, 103)), title_window(2, (501,)))
         torrent = known_torrent(indexes={7: series}, evidence=listed)
 
-        for_season = place_release(files, seed_scope(episode_index(season), series), torrent)
-        for_special = place_release(files, seed_scope(episode_index([special]), series, al_id=2), torrent)
+        for_season = place_release(files, make_grabbing_title(episode_index(season), series), torrent)
+        for_special = place_release(files, make_grabbing_title(episode_index([special]), series, al_id=2), torrent)
 
         assert (for_season.skip_reason, for_special.skip_reason) == (None, None)
         assert for_season.covered_ids == {101, 102, 103}
@@ -603,8 +616,11 @@ class TestPlaceHeld:
         # The pack's two files are keyed from the special's position on. This DVD order reads the first as the
         # special and the second as the next season's opener, and nothing lists the torrent under either.
         season, _special, series = self._counted_special((*self._DVD[:3], OrderRow(1, 4, 201, None)))
-        files = [ListedFile(_PACK[2], 30, _matched(1, 3)), ListedFile(_PACK[3], 40, _bare_key(1, 4))]
-        grabbing_title = seed_scope(episode_index(season), series)
+        files = [
+            ListedFile(_SEASON_NAMES[2], 30, _matched(1, 3)),
+            ListedFile(_SEASON_NAMES[3], 40, _season_episode_with_no_match(1, 4)),
+        ]
+        grabbing_title = make_grabbing_title(episode_index(season), series)
 
         placement = place_release(files, grabbing_title, known_torrent(indexes={7: series}))
 
@@ -613,21 +629,21 @@ class TestPlaceHeld:
         assert placement.episodes == ()
 
     @staticmethod
-    def _titled_scope(*numbers: int) -> GrabbingTitle:
+    def _titled_grabbing_title(*numbers: int) -> GrabbingTitle:
         """Entry 1 over season 1's episodes `numbers`, within a titled four-episode season."""
 
         titles = ("Pilot Flight", "The Return", "Festival Night", "Final Bell")
         season = [sonarr_ep(1, n, ep_id=100 + n, episode_file_id=0, title=t) for n, t in enumerate(titles, 1)]
-        return seed_scope(episode_index([season[n - 1] for n in numbers]), episode_index(season))
+        return make_grabbing_title(episode_index([season[n - 1] for n in numbers]), episode_index(season))
 
     def test_a_pack_its_titles_refute_that_places_nothing_holds_the_url_and_records_nothing(self) -> None:
         # The titled file is the third episode's, under the plain file's key.
         files = [
-            ListedFile("show - 02 - Festival Night [grp].mkv", 10, _bare_key(1, 2)),
-            ListedFile("show - 03 [grp].mkv", 20, _bare_key(1, 3)),
+            ListedFile("show - 02 - Festival Night [grp].mkv", 10, _season_episode_with_no_match(1, 2)),
+            ListedFile("show - 03 [grp].mkv", 20, _season_episode_with_no_match(1, 3)),
         ]
 
-        grabbing_title = self._titled_scope(1, 2, 3)
+        grabbing_title = self._titled_grabbing_title(1, 2, 3)
 
         placement = place_release(files, grabbing_title, new_torrent(grabbing_title))
 
@@ -640,13 +656,13 @@ class TestPlaceHeld:
         season = [sonarr_ep(1, n, ep_id=100 + n, episode_file_id=0, title=t) for n, t in enumerate(titles, 1)]
         series = episode_index([sonarr_ep(0, 1, ep_id=501, episode_file_id=0), *season])
         files = [
-            ListedFile("show - 02 - Festival Night [grp].mkv", 10, _bare_key(1, 2)),
-            ListedFile("show - 03 [grp].mkv", 20, _bare_key(1, 3)),
+            ListedFile("show - 02 - Festival Night [grp].mkv", 10, _season_episode_with_no_match(1, 2)),
+            ListedFile("show - 03 [grp].mkv", 20, _season_episode_with_no_match(1, 3)),
             ListedFile("show - OVA [grp].mkv", 30, _matched(0, 1)),
         ]
-        torrent = known_torrent(indexes={7: series}, evidence=torrent_evidence(entry_window(2, (501,))))
+        torrent = known_torrent(indexes={7: series}, evidence=torrent_evidence(title_window(2, (501,))))
 
-        placement = place_release(files, seed_scope(episode_index(season[:3]), series), torrent)
+        placement = place_release(files, make_grabbing_title(episode_index(season[:3]), series), torrent)
 
         assert by_name(placement.placements)["show - ova [grp].mkv"] == ((), PlacementVerdict.ANOTHER_TITLES)
         assert placement.skip_reason is PlacementSkip.TITLE_REFUTED
@@ -661,7 +677,7 @@ class TestPlaceHeld:
 
     def _place_early_keys(self) -> tuple[PlacedRelease, GrabbingTitle]:
         files = [ListedFile(name, 10 * n, _matched(1, n)) for n, name in enumerate(self._EARLY_KEYS, 1)]
-        grabbing_title = self._titled_scope(1, 2, 3)
+        grabbing_title = self._titled_grabbing_title(1, 2, 3)
         return place_release(files, grabbing_title, new_torrent(grabbing_title)), grabbing_title
 
     def test_a_pack_its_titles_refute_that_places_some_files_is_not_held(self) -> None:
@@ -677,14 +693,14 @@ class TestPlaceHeld:
 
     def test_the_seed_keeps_the_file_left_for_a_hand_import(self) -> None:
         placement, grabbing_title = self._place_early_keys()
-        release = PlacedGrab("grp", url_item(url="u", infohash="h1"), "h1", placement)
+        release = PlacedGrab("grp", make_release(url="u", infohash="h1"), "h1", placement)
 
-        update = build_pending_import_update(release, grabbing_title, entry_facts())
+        update = build_pending_import_update(release, grabbing_title, title_facts())
 
         assert update.hand_import_files == (normalize_name(self._EARLY_KEYS[2]),)
 
     def test_a_pack_the_listing_agrees_with_places_and_is_not_held(self) -> None:
-        placement = place_release(self._specials(), self._specials_scope(1, 2), self._listing((501, 502, 503)))
+        placement = place_release(self._specials(), self._specials_grabbing_title(1, 2), self._listing((501, 502, 503)))
 
         assert placement.skip_reason is None
         assert placement.placements.placed == {"show.s00e01.mkv": (501,), "show.s00e02.mkv": (502,)}
@@ -696,11 +712,11 @@ class TestPlaceHeld:
         torrent = known_torrent(
             indexes={7: episode_index(_SPECIALS)},
             evidence=torrent_evidence(
-                entry_window(1, (502, 504)), entry_window(2, (506,)), aliases=ALIASED_PACK.special_aliases
+                title_window(1, (502, 504)), title_window(2, (506,)), aliases=ALIASED_SPECIALS_LISTING.special_aliases
             ),
         )
 
-        placement = place_release(self._specials(), self._specials_scope(2, 4), torrent)
+        placement = place_release(self._specials(), self._specials_grabbing_title(2, 4), torrent)
 
         assert placement.skip_reason is None
         assert placement.placements.placed == {"show.s00e01.mkv": (502,), "show.s00e02.mkv": (504,)}
@@ -715,9 +731,11 @@ class TestPlaceHeld:
         """The aliased pack, claimed for entry 1 over specials 2 and 4 and for entry 2 over `numbered` of `_OTHER`."""
 
         return known_torrent(
-            two_claim_record(series_ids=(7, 8), windows=((502, 504), numbered)),
+            two_claim_pending_import(series_ids=(7, 8), windows=((502, 504), numbered)),
             indexes={7: episode_index(_SPECIALS), 8: cls._OTHER},
-            evidence=torrent_evidence(*ALIASED_PACK.windows, aliases=ALIASED_PACK.special_aliases),
+            evidence=torrent_evidence(
+                *ALIASED_SPECIALS_LISTING.windows, aliases=ALIASED_SPECIALS_LISTING.special_aliases
+            ),
         )
 
     @pytest.mark.parametrize("al_id", [1, 2])
@@ -726,7 +744,9 @@ class TestPlaceHeld:
         # against what the aliases say, so the pack waits for a hand import. Either entry holds it: the aliases
         # placed or claimed its files under the first, the second placed them.
         grabbing_title = (
-            self._specials_scope(2, 4) if al_id == 1 else seed_scope(self._OTHER, self._OTHER, al_id=2, series_id=8)
+            self._specials_grabbing_title(2, 4)
+            if al_id == 1
+            else make_grabbing_title(self._OTHER, self._OTHER, al_id=2, series_id=8)
         )
 
         placement = place_release(self._specials(), grabbing_title, self._aliased_against((901, 902, 903)))
@@ -738,7 +758,7 @@ class TestPlaceHeld:
     def test_a_file_the_aliases_claim_that_another_series_places_holds_the_url(self) -> None:
         # The aliases claim the third file for special 6, outside this window, and the other series places it by
         # its number. The first two still place.
-        placement = place_release(self._specials(), self._specials_scope(2, 4), self._aliased_against((903,)))
+        placement = place_release(self._specials(), self._specials_grabbing_title(2, 4), self._aliased_against((903,)))
 
         assert placement.skip_reason is PlacementSkip.MISNUMBERED
         assert placement.placements.placed == {"show.s00e01.mkv": (502,), "show.s00e02.mkv": (504,)}
@@ -757,7 +777,7 @@ class TestPlaceHeld:
         pending = pending_import(
             infohash="h1", seadex_files=[f.file_name for f in files], ordered_episode_ids=(101, 102, 103)
         )
-        grabbing_title = seed_scope(episode_index(second), series, al_id=2)
+        grabbing_title = make_grabbing_title(episode_index(second), series, al_id=2)
 
         placement = place_release(files, grabbing_title, known_torrent(pending, indexes={7: series}))
 
@@ -766,7 +786,7 @@ class TestPlaceHeld:
         assert placement.episodes == (ReleaseEpisode(2, 1, 20), ReleaseEpisode(2, 2, 30))
 
     def test_an_unread_listing_holds_the_url_and_places_nothing(self) -> None:
-        placement = place_release(self._specials(), self._specials_scope(1, 2), self._listing(None))
+        placement = place_release(self._specials(), self._specials_grabbing_title(1, 2), self._listing(None))
 
         assert placement.skip_reason is PlacementSkip.INPUT_UNREAD
         assert placement.placements.placements == ()
@@ -776,7 +796,7 @@ class TestPlaceHeld:
     def test_a_parse_miss_under_a_specials_listing_holds_the_url(self) -> None:
         files = [ListedFile(f"Show.S00E{n:02d}.mkv", 10 * n, None if n == 2 else _matched(0, n)) for n in (1, 2, 3)]
 
-        placement = place_release(files, self._specials_scope(1, 2), self._listing((501, 502, 503)))
+        placement = place_release(files, self._specials_grabbing_title(1, 2), self._listing((501, 502, 503)))
 
         assert placement.skip_reason is PlacementSkip.INPUT_UNREAD
         assert not placement.inputs_read
@@ -784,14 +804,14 @@ class TestPlaceHeld:
     def test_an_unread_listing_over_a_seasoned_window_places_nothing_and_holds(self) -> None:
         # Another title the listing names could own some of the pack, so nothing is placed until it's read. The
         # size identities weren't read either, so the url is held until they are.
-        placement = place_release(_pack(), _scope(_SEASON), _torrent(listed=None))
+        placement = place_release(_season_files(), _grabbing_title(_SEASON), _torrent(listed=None))
 
         assert placement.skip_reason is PlacementSkip.INPUT_UNREAD
         assert not placement.inputs_read
         assert placement.placements.placements == ()
 
     def test_a_file_less_url_under_an_unread_listing_waits_on_nothing(self) -> None:
-        placement = place_release([], self._specials_scope(1, 2), self._listing(None))
+        placement = place_release([], self._specials_grabbing_title(1, 2), self._listing(None))
 
         assert placement.inputs_read
         assert placement.skip_reason is None
@@ -800,10 +820,10 @@ class TestPlaceHeld:
         # The third url's listing is two wide against a three-file pack: the listing stands down, no hold.
         urls = ("u1", "u2", "u3")
         seadex_dict: SeadexDict = {
-            "RG": rg_group({u: url_item(url=u, infohash=f"h{i}", download=True) for i, u in enumerate(urls, 1)})
+            "RG": rg_group({u: make_release(url=u, infohash=f"h{i}", download=True) for i, u in enumerate(urls, 1)})
         }
         placed = EntryPlacements.place(
-            self._specials_scope(2, 4),
+            self._specials_grabbing_title(2, 4),
             dict.fromkeys(urls, self._specials()),
             {
                 "u1": self._listing((502, 504, 506)),
@@ -823,9 +843,9 @@ class TestPlaceBesideAnotherListedTitle:
     """A url another listed title shares: held as that title's only when none of it lands on the entry."""
 
     def test_an_entry_placing_some_beside_a_sibling_placing_the_rest_is_not_held(self) -> None:
-        torrent = _torrent(listed=[entry_window(1, (101, 102)), entry_window(2, (103, 104))])
+        torrent = _torrent(listed=[title_window(1, (101, 102)), title_window(2, (103, 104))])
 
-        placement = place_release(_pack(), _scope(_SEASON[:2]), torrent)
+        placement = place_release(_season_files(), _grabbing_title(_SEASON[:2]), torrent)
 
         assert by_name(placement.placements) == {
             "show - s01e01.mkv": ((101,), PlacementVerdict.EXACT),
@@ -844,8 +864,8 @@ class TestPlaceBesideAnotherListedTitle:
             ListedFile("Show - S01E02 (0003).mkv", 10, _matched(1, 2)),
             ListedFile("Show - S01E03 (0003).mkv", 20, _matched(1, 3)),
         ]
-        grabbing_title = seed_scope(episode_index([_SPECIAL]), series, al_id=2)
-        torrent = known_torrent(indexes={7: series}, evidence=torrent_evidence(entry_window(1, (101, 102, 103))))
+        grabbing_title = make_grabbing_title(episode_index([_SPECIAL]), series, al_id=2)
+        torrent = known_torrent(indexes={7: series}, evidence=torrent_evidence(title_window(1, (101, 102, 103))))
 
         placement = place_release(files, grabbing_title, torrent)
 
@@ -855,9 +875,9 @@ class TestPlaceBesideAnotherListedTitle:
 
     def test_attach_writes_each_urls_hold_counts(self) -> None:
         # Entry 3's specials window places nothing of the season pack the two season entries take.
-        seadex_dict: SeadexDict = {"RG": rg_group({"u1": url_item(url="u1", infohash="h1", download=True)})}
-        torrent = _torrent(listed=[entry_window(1, (101, 102)), entry_window(2, (103, 104))])
-        placed = EntryPlacements.place(_scope([_SPECIAL], al_id=3), {"u1": _pack()}, {"u1": torrent})
+        seadex_dict: SeadexDict = {"RG": rg_group({"u1": make_release(url="u1", infohash="h1", download=True)})}
+        torrent = _torrent(listed=[title_window(1, (101, 102)), title_window(2, (103, 104))])
+        placed = EntryPlacements.place(_grabbing_title([_SPECIAL], al_id=3), {"u1": _season_files()}, {"u1": torrent})
 
         placed.attach_placements(seadex_dict)
 
@@ -870,10 +890,10 @@ class TestPlaceBesideAnotherListedTitle:
     def test_a_stored_file_on_an_episode_no_other_window_holds_is_nobodys(self) -> None:
         # The record maps the pack's last two files past this entry's window, and no other listed title holds
         # those episodes, so nothing is another title's and the url isn't held.
-        pending = self._record_mapping_3_and_4()
+        pending = self._pending_import_of_3_and_4()
 
         placement = place_release(
-            _pack()[2:], _scope(_SEASON[:2]), _torrent(pending, listed=[entry_window(1, (101, 102))])
+            _season_files()[2:], _grabbing_title(_SEASON[:2]), _torrent(pending, listed=[title_window(1, (101, 102))])
         )
 
         assert placement.skip_reason is None
@@ -881,10 +901,10 @@ class TestPlaceBesideAnotherListedTitle:
         assert placement.covered_ids == frozenset()
 
     def test_a_stored_file_on_an_episode_a_sibling_window_holds_is_the_siblings(self) -> None:
-        pending = self._record_mapping_3_and_4()
-        listed = [entry_window(1, (101, 102)), entry_window(2, (103, 104))]
+        pending = self._pending_import_of_3_and_4()
+        listed = [title_window(1, (101, 102)), title_window(2, (103, 104))]
 
-        placement = place_release(_pack()[2:], _scope(_SEASON[:2]), _torrent(pending, listed=listed))
+        placement = place_release(_season_files()[2:], _grabbing_title(_SEASON[:2]), _torrent(pending, listed=listed))
 
         assert placement.skip_reason is PlacementSkip.PLACED_ELSEWHERE
         assert placement.another_titles_counts == AnotherTitlesCounts(another_titles=2, unplaced=0)
@@ -894,9 +914,9 @@ class TestPlaceBesideAnotherListedTitle:
         # the kept title's window places first, so the run is the kept title's and nothing is held.
         second = [sonarr_ep(2, n, ep_id=200 + n, episode_file_id=0) for n in range(1, 5)]
         series = episode_index([*_SEASON, *second])
-        files = [ListedFile(name, 10 * n, _bare(n)) for n, name in enumerate(_RUN, 1)]
-        grabbing_title = seed_scope(episode_index(_SEASON), series, al_id=2)
-        listed = torrent_evidence(entry_window(1, (ep.id for ep in second), ignored=True))
+        files = [ListedFile(name, 10 * n, _number_with_no_match(n)) for n, name in enumerate(_RUN, 1)]
+        grabbing_title = make_grabbing_title(episode_index(_SEASON), series, al_id=2)
+        listed = torrent_evidence(title_window(1, (ep.id for ep in second), ignored=True))
 
         placement = place_release(files, grabbing_title, known_torrent(indexes={7: series}, evidence=listed))
 
@@ -908,14 +928,14 @@ class TestPlaceBesideAnotherListedTitle:
         # listed window, so its claim's window runs after the kept title's: the run is entry 2's and nothing is held.
         second = [sonarr_ep(2, n, ep_id=200 + n, episode_file_id=0) for n in range(1, 5)]
         series = episode_index([*_SEASON, *second])
-        files = [ListedFile(name, 10 * n, _bare(n)) for n, name in enumerate(_RUN, 1)]
+        files = [ListedFile(name, 10 * n, _number_with_no_match(n)) for n, name in enumerate(_RUN, 1)]
         pending = pending_import(
             infohash="h1", al_id=1, ordered_episode_ids=(101, 102, 103, 104), file_episode_map={}, seadex_files=_RUN
         )
         listed = torrent_evidence(
-            entry_window(1, (101, 102, 103, 104), ignored=True), entry_window(2, (ep.id for ep in second))
+            title_window(1, (101, 102, 103, 104), ignored=True), title_window(2, (ep.id for ep in second))
         )
-        grabbing_title = seed_scope(episode_index(second), series, al_id=2)
+        grabbing_title = make_grabbing_title(episode_index(second), series, al_id=2)
 
         placement = place_release(files, grabbing_title, known_torrent(pending, indexes={7: series}, evidence=listed))
 
@@ -923,14 +943,14 @@ class TestPlaceBesideAnotherListedTitle:
         assert placement.skip_reason is None
 
     @staticmethod
-    def _record_mapping_3_and_4() -> PendingImport:
+    def _pending_import_of_3_and_4() -> PendingImport:
         """A stored record of the pack's last two files, mapped onto the season's third and fourth episodes."""
 
         return pending_import(
             infohash="h1",
             series_id=7,
             file_episode_map={"show - s01e03.mkv": [103], "show - s01e04.mkv": [104]},
-            seadex_files=_PACK[2:],
+            seadex_files=_SEASON_NAMES[2:],
             ordered_episode_ids=(101, 102, 103, 104),
         )
 
@@ -938,9 +958,9 @@ class TestPlaceBesideAnotherListedTitle:
         # The run fits entry 1's window; the NCOP's parse is unread.
         files = [ListedFile(name, 10 * n, ParsedFileInfo()) for n, name in enumerate(_RUN, 1)]
         files.append(ListedFile("Show - NCOP.mkv", 50, None))
-        torrent = _torrent(listed=[entry_window(1, (101, 102, 103, 104)), entry_window(2, (201, 202))])
+        torrent = _torrent(listed=[title_window(1, (101, 102, 103, 104)), title_window(2, (201, 202))])
 
-        placement = place_release(files, _scope(_SERIES[-2:], al_id=2), torrent)
+        placement = place_release(files, _grabbing_title(_SERIES[-2:], al_id=2), torrent)
 
         assert by_name(placement.placements) == {
             **{normalize_name(name): ((), PlacementVerdict.WAITING_ON_PARSE) for name in _RUN},
@@ -990,8 +1010,8 @@ _RG_SPECIALS = [
 _RG_SERIES = episode_index([*_RG_SPECIALS, *_RG_SEASON])
 _RG_MAIN = TitleNames(series="The Rolling Girls", anilist=("The Rolling Girls", "Rolling☆Girls"))
 _RG_CHIBI = TitleNames(series="The Rolling Girls", anilist=("Rolling☆Girls: Chibi☆Rolling☆Girls Korokoro Gekijou",))
-_RG_SEASON_WINDOW = entry_window(20815, (ep.id for ep in _RG_SEASON), series_id=919, names=_RG_MAIN)
-_RG_CHIBI_WINDOW = entry_window(102077, (ep.id for ep in _RG_SPECIALS), series_id=919, names=_RG_CHIBI)
+_RG_SEASON_WINDOW = title_window(20815, (ep.id for ep in _RG_SEASON), series_id=919, names=_RG_MAIN)
+_RG_CHIBI_WINDOW = title_window(102077, (ep.id for ep in _RG_SPECIALS), series_id=919, names=_RG_CHIBI)
 _RG_EVIDENCE = torrent_evidence(_RG_SEASON_WINDOW, _RG_CHIBI_WINDOW)
 
 
@@ -1054,7 +1074,7 @@ class TestRollingGirlsBatch:
         al_id: int, pending: PendingImport | None = None, evidence: FetchedSeadex = _RG_EVIDENCE
     ) -> PlacedRelease:
         main = al_id == 20815
-        grabbing_title = seed_scope(
+        grabbing_title = make_grabbing_title(
             episode_index(_RG_SEASON if main else _RG_SPECIALS),
             _RG_SERIES,
             al_id=al_id,
@@ -1128,7 +1148,7 @@ class TestRollingGirlsBatch:
         assert placement.another_titles_counts == AnotherTitlesCounts(another_titles=12, unplaced=6)
 
 
-def _lone(number: int, title: str) -> ParsedFileInfo:
+def _absolute_only(number: int, title: str) -> ParsedFileInfo:
     """Sonarr's parse of a name carrying `number` alone: season 0, the absolute, and the series title it lifted."""
 
     return parsed_info(season=0, absolutes=(number,), series_title=title)
@@ -1141,14 +1161,17 @@ _SC_SEASON = [sonarr_ep(1, n, ep_id=32768 + n, episode_file_id=0, absolute=n) fo
 _SC_SERIES = episode_index([*_SC_SPECIALS, *_SC_SEASON])
 _SC_MAIN = TitleNames("Stray Cats Overrun!", ("Mayoi Neko Overrun!",))
 _SC_EXTRAS = TitleNames("Stray Cats Overrun!", ("Mayoi Neko Overrun! Specials",))
-_SC_SEASON_WINDOW = entry_window(7590, (ep.id for ep in _SC_SEASON), names=_SC_MAIN, episode_count=13)
-_SC_SPECIALS_WINDOW = entry_window(8599, (ep.id for ep in _SC_SPECIALS[:6]), names=_SC_EXTRAS, episode_count=6)
+_SC_SEASON_WINDOW = title_window(7590, (ep.id for ep in _SC_SEASON), names=_SC_MAIN, episode_count=13)
+_SC_SPECIALS_WINDOW = title_window(8599, (ep.id for ep in _SC_SPECIALS[:6]), names=_SC_EXTRAS, episode_count=6)
 _SC_EPISODES = [
     f"[Tsundere] Mayoi Neko Overrun! - {n:02d} [BDRip h264 1920x1080 FLAC][746CE979].mkv" for n in range(1, 13)
 ]
 _SC_SPS = [f"[Tsundere] Mayoi Neko Overrun! - SP{n} [BDRip h264 1920x1080 FLAC][B66672E2].mkv" for n in range(1, 7)]
 _SC_FILES = [
-    *(ListedFile(name, 1_000_000_000 + n, _lone(n, "Mayoi Neko Overrun!")) for n, name in enumerate(_SC_EPISODES, 1)),
+    *(
+        ListedFile(name, 1_000_000_000 + n, _absolute_only(n, "Mayoi Neko Overrun!"))
+        for n, name in enumerate(_SC_EPISODES, 1)
+    ),
     *(ListedFile(name, 100_000_000 + n, ParsedFileInfo()) for n, name in enumerate(_SC_SPS, 1)),
 ]
 
@@ -1169,7 +1192,7 @@ _MHA_NAMES = TitleNames(
         "Boku no Hero Academia: Ikinokore! Kesshi no Survival Kunren",
     ),
 )
-_MHA_SCOPE = seed_scope(
+_MHA_GRABBING_TITLE = make_grabbing_title(
     episode_index([_MHA_SERIES.by_id[9254], _MHA_SERIES.by_id[9255]]),
     _MHA_SERIES,
     al_id=122349,
@@ -1177,10 +1200,12 @@ _MHA_SCOPE = seed_scope(
     episode_count=2,
     alternate_titles=("Boku no Hero Academia",),
 )
-_MHA_WINDOW = entry_window(122349, (9254, 9255), names=_MHA_NAMES, episode_count=2)
+_MHA_WINDOW = title_window(122349, (9254, 9255), names=_MHA_NAMES, episode_count=2)
 _MHA_OVA = "[HorribleSubs] Boku no Hero Academia - Ikinokore! Kesshi no Survival Kunren - 01 [1080p].mkv"
 _MHA_FILES = (
-    ListedFile(_MHA_OVA, 1_400_000_000, _lone(1, "Boku no Hero Academia - Ikinokore! Kesshi no Survival Kunren")),
+    ListedFile(
+        _MHA_OVA, 1_400_000_000, _absolute_only(1, "Boku no Hero Academia - Ikinokore! Kesshi no Survival Kunren")
+    ),
 )
 
 
@@ -1190,7 +1215,7 @@ class TestPlaceWhereEveryNumberingAgrees:
     def test_a_single_a_specials_only_entry_lists_places_on_its_first_special(self) -> None:
         torrent = known_torrent(indexes={7: _MHA_SERIES}, evidence=torrent_evidence(_MHA_WINDOW))
 
-        placement = place_release(_MHA_FILES, _MHA_SCOPE, torrent)
+        placement = place_release(_MHA_FILES, _MHA_GRABBING_TITLE, torrent)
 
         assert by_name(placement.placements) == {normalize_name(_MHA_OVA): ((9254,), PlacementVerdict.NUMBERINGS_AGREE)}
         assert placement.covered_ids == {9254}
@@ -1209,7 +1234,7 @@ class TestPlaceWhereEveryNumberingAgrees:
         )
         torrent = known_torrent(pending, indexes={7: _MHA_SERIES}, evidence=torrent_evidence(_MHA_WINDOW))
 
-        placement = place_release(_MHA_FILES, _MHA_SCOPE, torrent)
+        placement = place_release(_MHA_FILES, _MHA_GRABBING_TITLE, torrent)
 
         assert placement == PlacedRelease(
             files=_MHA_FILES,
@@ -1224,7 +1249,9 @@ class TestPlaceWhereEveryNumberingAgrees:
         )
 
     def test_a_batch_counted_from_one_places_on_the_seasons_entry(self) -> None:
-        grabbing_title = seed_scope(episode_index(_SC_SEASON), _SC_SERIES, al_id=7590, names=_SC_MAIN, episode_count=13)
+        grabbing_title = make_grabbing_title(
+            episode_index(_SC_SEASON), _SC_SERIES, al_id=7590, names=_SC_MAIN, episode_count=13
+        )
         torrent = known_torrent(
             indexes={7: _SC_SERIES}, evidence=torrent_evidence(_SC_SEASON_WINDOW, _SC_SPECIALS_WINDOW)
         )
@@ -1244,7 +1271,7 @@ class TestPlaceWhereEveryNumberingAgrees:
     def test_under_the_specials_entry_the_batch_is_the_seasons_and_the_url_is_held(self) -> None:
         # The fill places the twelve under the season's window, so for the specials' entry they're another title's,
         # as a file the season's window had placed would be: no hand import, and nothing of the url lands here.
-        grabbing_title = seed_scope(
+        grabbing_title = make_grabbing_title(
             episode_index(_SC_SPECIALS[:6]), _SC_SERIES, al_id=8599, names=_SC_EXTRAS, episode_count=6
         )
         torrent = known_torrent(
@@ -1265,7 +1292,7 @@ class TestKnownTorrent:
     """The windows a torrent is placed under: every listed entry's, every stored claim's, and the entry's own."""
 
     def test_an_unread_listing_orders_nothing(self) -> None:
-        assert _torrent(listed=None).order(_scope(_SEASON).window) is None
+        assert _torrent(listed=None).order(_grabbing_title(_SEASON).window) is None
 
     def test_an_unread_listing_gives_no_evidence(self) -> None:
         # Whether the unread listing holds the url is `place_release`'s call: the windows build as if listed nowhere.
@@ -1275,41 +1302,41 @@ class TestKnownTorrent:
 
     def test_the_evidence_maps_matched_sizes_to_episodes(self) -> None:
         torrent = known_torrent(
-            evidence=torrent_evidence(entry_window(1, (101, 102)), episode_by_size={10: 101, 30: 103})
+            evidence=torrent_evidence(title_window(1, (101, 102)), episode_by_size={10: 101, 30: 103})
         )
 
         evidence = torrent.seadex_evidence({"show - 01.mkv": 10, "show - 02.mkv": 20})
 
-        assert evidence == SeadexEvidence(torrent_listing(entry_window(1, (101, 102))), {"show - 01.mkv": 101})
+        assert evidence == SeadexEvidence(torrent_listing(title_window(1, (101, 102))), {"show - 01.mkv": 101})
 
     def test_the_evidence_carries_the_listings_aliases(self) -> None:
-        torrent = known_torrent(evidence=torrent_evidence(entry_window(1, (501, 502)), aliases={1: 2}))
+        torrent = known_torrent(evidence=torrent_evidence(title_window(1, (501, 502)), aliases={1: 2}))
 
         assert torrent.seadex_evidence({}) == SeadexEvidence(
-            torrent_listing(entry_window(1, (501, 502)), aliases={1: 2})
+            torrent_listing(title_window(1, (501, 502)), aliases={1: 2})
         )
 
     def test_the_entrys_own_window_replaces_its_claims(self) -> None:
-        order = _torrent(two_claim_record()).order(_scope(_SEASON).window)
+        order = _torrent(two_claim_pending_import()).order(_grabbing_title(_SEASON).window)
 
         assert order is not None
         assert [w.ordered_episode_ids for w in order.windows] == [(101, 102, 103, 104), (103, 104)]
         assert (order.grabbing_window_at, order.imports) == (0, {0, 1})
 
     def test_the_entrys_own_window_carries_its_anilist_episode_count(self) -> None:
-        grabbing_title = seed_scope(episode_index(_SEASON), episode_index(_SERIES), episode_count=4)
+        grabbing_title = make_grabbing_title(episode_index(_SEASON), episode_index(_SERIES), episode_count=4)
 
-        assert grabbing_title.window == entry_window(1, (101, 102, 103, 104), episode_count=4)
+        assert grabbing_title.window == title_window(1, (101, 102, 103, 104), episode_count=4)
 
     def test_a_new_entrys_own_window_takes_its_anilist_ids_place(self) -> None:
-        order = _torrent(two_claim_record()).order(_scope(_SEASON, al_id=3).window)
+        order = _torrent(two_claim_pending_import()).order(_grabbing_title(_SEASON, al_id=3).window)
 
         assert order is not None
         assert [w.al_id for w in order.windows] == [1, 2, 3]
         assert (order.grabbing_window_at, order.imports) == (2, {0, 1, 2})
 
     def test_a_listed_entry_that_never_claimed_runs_but_is_not_imported(self) -> None:
-        order = _torrent(listed=[entry_window(2, (103, 104))]).order(_scope(_SEASON).window)
+        order = _torrent(listed=[title_window(2, (103, 104))]).order(_grabbing_title(_SEASON).window)
 
         assert order is not None
         assert [w.al_id for w in order.windows] == [1, 2]
@@ -1322,13 +1349,13 @@ class TestKnownTorrent:
             al_id=1,
             ordered_episode_ids=(101, 102, 103, 104),
             file_episode_map={},
-            seadex_files=_PACK,
+            seadex_files=_SEASON_NAMES,
         )
         other = episode_index([sonarr_ep(1, n, ep_id=800 + n, episode_file_id=0) for n in range(1, 5)])
-        fresh = torrent_evidence(entry_window(1, (801, 802, 803, 804), series_id=8))
+        fresh = torrent_evidence(title_window(1, (801, 802, 803, 804), series_id=8))
         torrent = known_torrent(pending, indexes={8: other}, evidence=fresh)
 
-        order = torrent.order(seed_scope(other, other, al_id=1, series_id=8).window)
+        order = torrent.order(make_grabbing_title(other, other, al_id=1, series_id=8).window)
 
         assert order is not None
         assert [(w.al_id, w.series_id) for w in order.windows] == [(1, 8)]
@@ -1343,9 +1370,9 @@ class TestTorrentReads:
         return {
             "RG": rg_group(
                 {
-                    "u1": url_item(url="u1", infohash="h1", download=True),
-                    "u2": url_item(url="u2", infohash=None, download=True),
-                    "u3": url_item(url="u3", infohash="h3", download=True),
+                    "u1": make_release(url="u1", infohash="h1", download=True),
+                    "u2": make_release(url="u2", infohash=None, download=True),
+                    "u3": make_release(url="u3", infohash="h3", download=True),
                 }
             ),
         }
@@ -1354,8 +1381,8 @@ class TestTorrentReads:
         assert entry_hashes(self._dict()) == {"h1", "h3"}
 
     def test_known_by_url_over_the_stored_records_and_listings(self) -> None:
-        pending = _resident_record()
-        listing = torrent_listing(entry_window(1, (101,)))
+        pending = _stored_pending_import()
+        listing = torrent_listing(title_window(1, (101,)))
         reads = TorrentFetches({"h1": pending}, _INDEXES, FetchedListings({"h1": listing, "h3": None}, None))
 
         known = reads.known(self._dict())
@@ -1371,8 +1398,8 @@ class TestTorrentReads:
     def test_a_marked_url_reads_its_record_by_its_cross_seed_and_its_listing_by_seadexs_hash(self) -> None:
         seadex_dict = self._dict()
         seadex_dict["RG"].releases["u1"].cross_seed_hash = "c1"
-        pending = _resident_record()
-        listing = torrent_listing(entry_window(1, (101,)))
+        pending = _stored_pending_import()
+        listing = torrent_listing(title_window(1, (101,)))
         reads = TorrentFetches({"c1": pending}, _INDEXES, FetchedListings({"h1": listing, "h3": None}, None))
 
         assert entry_hashes(seadex_dict) == {"c1", "h3"}
@@ -1393,16 +1420,22 @@ class TestEntryPlacements:
 
     @staticmethod
     def _entry(names: TitleNames | None = None) -> tuple[EntryPlacements, SeadexDict]:
-        grabbing_title = _scope(_SEASON, names)
-        run = [ListedFile(name, 10 * n, _bare(n)) for n, name in enumerate(_RUN, start=1)]
-        held = [ListedFile(name, 1, None if n == 1 else _bare(n)) for n, name in enumerate(_RUN, start=1)]
+        grabbing_title = _grabbing_title(_SEASON, names)
+        run = [ListedFile(name, 10 * n, _number_with_no_match(n)) for n, name in enumerate(_RUN, start=1)]
+        listed_files = [
+            ListedFile(name, 1, None if n == 1 else _number_with_no_match(n)) for n, name in enumerate(_RUN, start=1)
+        ]
         placed = EntryPlacements.place(
-            grabbing_title, {"u1": run, "u2": held, "u3": []}, dict.fromkeys(("u1", "u2", "u3"), _NEW)
+            grabbing_title, {"u1": run, "u2": listed_files, "u3": []}, dict.fromkeys(("u1", "u2", "u3"), _NEW)
         )
         seadex_dict: SeadexDict = {
-            "RG": rg_group({"u1": url_item(url="u1", files=_RUN, size=[10, 20, 30, 40], infohash="h1", download=True)}),
-            "Held": rg_group({"u2": url_item(url="u2", files=_RUN, size=[1] * 4, infohash="h2", download=True)}),
-            "Subs": rg_group({"u3": url_item(url="u3", files=["Show.ass"], size=[1], infohash="h3", download=True)}),
+            "RG": rg_group(
+                {"u1": make_release(url="u1", files=_RUN, size=[10, 20, 30, 40], infohash="h1", download=True)}
+            ),
+            "Held": rg_group({"u2": make_release(url="u2", files=_RUN, size=[1] * 4, infohash="h2", download=True)}),
+            "Subs": rg_group(
+                {"u3": make_release(url="u3", files=["Show.ass"], size=[1], infohash="h3", download=True)}
+            ),
         }
         return placed, seadex_dict
 
@@ -1411,9 +1444,9 @@ class TestEntryPlacements:
 
         placed.attach_placements(seadex_dict)
 
-        run_records = [ReleaseEpisode(1, n, 10 * n) for n in range(1, 5)]
-        assert seadex_dict["RG"].releases["u1"].episodes == run_records
-        assert seadex_dict["RG"].all_episodes == run_records
+        sequence_episodes = [ReleaseEpisode(1, n, 10 * n) for n in range(1, 5)]
+        assert seadex_dict["RG"].releases["u1"].episodes == sequence_episodes
+        assert seadex_dict["RG"].all_episodes == sequence_episodes
         assert seadex_dict["Held"].releases["u2"].episodes == []
         assert seadex_dict["Held"].all_episodes == []
         assert seadex_dict["Subs"].all_episodes == []
@@ -1426,44 +1459,44 @@ class TestEntryPlacements:
     def test_seeds_fold_the_placement_and_carry_the_scopes_names(self) -> None:
         names = TitleNames("Show", ("Show", "Shou"))
         placed, seadex_dict = self._entry(names)
-        facts = entry_facts()
+        facts = title_facts()
 
-        seeds = build_pending_import_updates(seadex_dict, placed, facts)
+        listed_files = build_pending_import_updates(seadex_dict, placed, facts)
 
-        assert set(seeds) == {"h1", "h2"}
-        assert dict(seeds["h1"].file_map) == {normalize_name(name): (100 + n,) for n, name in enumerate(_RUN, 1)}
+        assert set(listed_files) == {"h1", "h2"}
+        assert dict(listed_files["h1"].file_map) == {normalize_name(name): (100 + n,) for n, name in enumerate(_RUN, 1)}
         listed = {normalize_name(name): 10 * n for n, name in enumerate(_RUN, 1)}
-        assert seeds["h1"].facts == torrent_facts(
+        assert listed_files["h1"].facts == torrent_facts(
             seadex_files=tuple(_RUN), release_sizes=(10, 20, 30, 40), sizes_by_name=listed
         )
-        assert seeds["h1"].claim.names == names
-        assert seeds["h1"].pending_import is None
-        assert dict(seeds["h2"].file_map) == {}
+        assert listed_files["h1"].claim.names == names
+        assert listed_files["h1"].pending_import is None
+        assert dict(listed_files["h2"].file_map) == {}
 
     def test_a_marked_url_seeds_under_its_cross_seed(self) -> None:
         placed, seadex_dict = self._entry()
         seadex_dict["RG"].releases["u1"].cross_seed_hash = "c1"
 
-        seeds = build_pending_import_updates(seadex_dict, placed, entry_facts())
+        listed_files = build_pending_import_updates(seadex_dict, placed, title_facts())
 
-        assert set(seeds) == {"c1", "h2"}
-        pending_imports = {key: update.pending_import_at(_STAMP, fresh=True) for key, update in seeds.items()}
+        assert set(listed_files) == {"c1", "h2"}
+        pending_imports = {key: update.pending_import_at(_STAMP, fresh=True) for key, update in listed_files.items()}
         assert (pending_imports["c1"].infohash, pending_imports["c1"].is_cross_seed) == ("c1", True)
         assert pending_imports["h2"].is_cross_seed is False
 
     def test_a_url_with_a_stored_record_seeds_onto_it(self) -> None:
-        pending = _resident_record()
-        placed = EntryPlacements.place(_scope(_SEASON), {"u1": _pack()}, {"u1": _torrent(pending)})
+        pending = _stored_pending_import()
+        placed = EntryPlacements.place(_grabbing_title(_SEASON), {"u1": _season_files()}, {"u1": _torrent(pending)})
         seadex_dict: SeadexDict = {
             "RG": rg_group(
-                {"u1": url_item(url="u1", files=_PACK, size=[10, 20, 30, 40], infohash="h1", download=True)}
+                {"u1": make_release(url="u1", files=_SEASON_NAMES, size=[10, 20, 30, 40], infohash="h1", download=True)}
             ),
         }
 
-        seeds = build_pending_import_updates(seadex_dict, placed, entry_facts())
+        listed_files = build_pending_import_updates(seadex_dict, placed, title_facts())
 
-        assert seeds["h1"].pending_import is pending
-        assert dict(seeds["h1"].file_map) == {"show - s01e03.mkv": (103,), "show - s01e04.mkv": (104,)}
+        assert listed_files["h1"].pending_import is pending
+        assert dict(listed_files["h1"].file_map) == {"show - s01e03.mkv": (103,), "show - s01e04.mkv": (104,)}
 
 
 class TestOrderOnlySeed:
@@ -1483,12 +1516,12 @@ class TestOrderOnlySeed:
         season = [sonarr_ep(4, n, ep_id=400 + n, episode_file_id=0, tvdb_id=400 + n) for n in range(1, 13)]
         opener = sonarr_ep(5, 1, ep_id=501, episode_file_id=0, tvdb_id=501)
         series = episode_index([*season, opener], IndexOrders({"dvd": self._DVD}, None))
-        grabbing_title = seed_scope(episode_index(season), series, names=TitleNames("Show", ("Show Ending",)))
+        grabbing_title = make_grabbing_title(episode_index(season), series, names=TitleNames("Show", ("Show Ending",)))
         files = [ListedFile(name, 10 * n, parsed_info()) for n, name in enumerate(self._RUN, 1)]
         placement = place_release(files, grabbing_title, new_torrent(grabbing_title))
-        release = PlacedGrab("grp", url_item(url="u", infohash="h1"), "h1", placement)
+        release = PlacedGrab("grp", make_release(url="u", infohash="h1"), "h1", placement)
 
-        update = build_pending_import_update(release, grabbing_title, entry_facts())
+        update = build_pending_import_update(release, grabbing_title, title_facts())
 
         assert update.order_only == {
             normalize_name(self._RUN[0]): OrderOnlyKey("dvd", EpisodeKey(7, 1)),
@@ -1501,7 +1534,7 @@ class TestPendingSeedRecordAt:
     """The record a seed persists: a new one, or an accretion onto the stored one."""
 
     def test_a_new_record_starts_at_the_stamp(self) -> None:
-        claim = entry_claim()
+        claim = title_claim()
         update = PendingImportUpdate(
             facts=_FACTS,
             file_map={"show - 01.mkv": (101,)},
@@ -1539,7 +1572,7 @@ class TestPendingSeedRecordAt:
             preowned_episode_ids=(101,),
             awaiting_cleanup=True,
         )
-        claim = entry_claim(ordered_episode_ids=(101, 102, 103), preowned_episode_ids=(102,))
+        claim = title_claim(ordered_episode_ids=(101, 102, 103), preowned_episode_ids=(102,))
         update = PendingImportUpdate(
             facts=_FACTS,
             file_map={"show - 02.mkv": (102,)},
@@ -1564,7 +1597,7 @@ class TestPendingSeedRecordAt:
 
     def test_accreted_appends_a_new_entrys_claim(self) -> None:
         stored = pending_import(infohash="h1", added_at="2026-01-01 00:00:00")
-        update = pending_seed("h1", stored=stored, al_id=2)
+        update = pending_import_update("h1", stored=stored, al_id=2)
 
         pending = update.pending_import_at(_STAMP, fresh=False)
 
@@ -1578,7 +1611,7 @@ class TestPendingSeedRecordAt:
             excluded=(),
             hand_import_files=(),
             order_only=NO_ORDER_ONLY,
-            claim=entry_claim(),
+            claim=title_claim(),
             pending_import=stored,
         )
 
@@ -1592,22 +1625,22 @@ class TestPendingSeedRecordAt:
             excluded=(),
             hand_import_files=(),
             order_only=NO_ORDER_ONLY,
-            claim=entry_claim(),
+            claim=title_claim(),
             pending_import=stored,
         )
 
         assert update.pending_import_at(_STAMP, fresh=False).sizes_by_name == {"show - 01.mkv": 99}
 
     def test_a_new_record_keeps_the_hand_import_files(self) -> None:
-        update = pending_seed("h1", hand_import_files=("show - 02.mkv",))
+        update = pending_import_update("h1", hand_import_files=("show - 02.mkv",))
 
         assert update.pending_import_at(_STAMP, fresh=True).hand_import_files == ("show - 02.mkv",)
 
     def test_accreted_joins_the_hand_import_files(self) -> None:
         stored = pending_import(infohash="h1", hand_import_files=("show - 02.mkv",))
 
-        kept = pending_seed("h1", stored=stored).pending_import_at(_STAMP, fresh=False)
-        joined = pending_seed("h1", stored=stored, hand_import_files=("show - 03.mkv",)).pending_import_at(
+        kept = pending_import_update("h1", stored=stored).pending_import_at(_STAMP, fresh=False)
+        joined = pending_import_update("h1", stored=stored, hand_import_files=("show - 03.mkv",)).pending_import_at(
             _STAMP, fresh=False
         )
 
@@ -1619,7 +1652,7 @@ class TestPendingSeedRecordAt:
         keys = {halves[0]: OrderOnlyKey("dvd", EpisodeKey(7, 1)), halves[1]: OrderOnlyKey("dvd", EpisodeKey(7, 2))}
         stored = pending_import(infohash="h1", hand_import_files=halves[:1], order_only={halves[0]: keys[halves[0]]})
 
-        joined = pending_seed(
+        joined = pending_import_update(
             "h1", stored=stored, hand_import_files=(halves[1],), order_only={halves[1]: keys[halves[1]]}
         ).pending_import_at(_STAMP, fresh=False)
 
@@ -1627,7 +1660,7 @@ class TestPendingSeedRecordAt:
 
     def test_fresh_restarts_the_stored_record(self) -> None:
         stored = pending_import(infohash="h1", added_at="2026-01-01 00:00:00")
-        update = pending_seed("h1", stored=stored, al_id=2)
+        update = pending_import_update("h1", stored=stored, al_id=2)
 
         pending = update.pending_import_at(_STAMP, fresh=True)
 
@@ -1638,18 +1671,18 @@ class TestBuildUnscopedSeed:
     """A Radarr grab's seed: the listing's facts, no files or window, an id-less claim on the entry."""
 
     @staticmethod
-    def _flagged() -> PlannedGrab:
-        return PlannedGrab("RG", "https://nyaa.si/view/1", url_item(infohash="h1", is_dual_audio=True), "h1")
+    def _planned_grab() -> PlannedGrab:
+        return PlannedGrab("RG", "https://nyaa.si/view/1", make_release(infohash="h1", is_dual_audio=True), "h1")
 
     def test_a_new_torrent_seeds_an_id_less_claim(self) -> None:
-        facts = entry_facts(al_id=9, series_id=0, title="Movie", url="https://releases.moe/9")
+        facts = title_facts(al_id=9, series_id=0, title="Movie", url="https://releases.moe/9")
 
-        update = build_update_without_window(self._flagged(), facts, None)
+        update = build_update_without_window(self._planned_grab(), facts, None)
 
         assert update.pending_import is None
         assert update.facts == torrent_facts(is_dual_audio=True)
         assert update.file_map == {} and update.excluded == () and update.order_only == {}
-        assert update.claim == entry_claim(
+        assert update.claim == title_claim(
             al_id=9, series_id=0, title="Movie", url="https://releases.moe/9", guards=facts.guards
         )
 
@@ -1657,7 +1690,7 @@ class TestBuildUnscopedSeed:
         stored = pending_import(infohash="h1", al_id=1, series_id=0)
 
         pending = build_update_without_window(
-            self._flagged(), entry_facts(al_id=2, series_id=0), stored
+            self._planned_grab(), title_facts(al_id=2, series_id=0), stored
         ).pending_import_at(_STAMP, fresh=False)
 
         assert pending.release_group == stored.release_group
@@ -1671,13 +1704,15 @@ class TestEntryClaim:
     def _release(files: list[ListedFile], placed: PlacedRelease) -> PlacedGrab:
         names = [f.file_name for f in files]
         sizes = [f.size for f in files]
-        return PlacedGrab("RG", url_item(url="u1", files=names, size=sizes, infohash="h1", download=True), "h1", placed)
+        return PlacedGrab(
+            "RG", make_release(url="u1", files=names, size=sizes, infohash="h1", download=True), "h1", placed
+        )
 
     def test_ids_come_from_the_whole_map_inside_the_entry(self) -> None:
-        files = _pack(3)
-        placed = place_release(files, _scope(_SEASON), _torrent(_resident_record()))
+        files = _season_files(3)
+        placed = place_release(files, _grabbing_title(_SEASON), _torrent(_stored_pending_import()))
 
-        claim = build_title_claim(self._release(files, placed), _scope(_SEASON), entry_facts())
+        claim = build_title_claim(self._release(files, placed), _grabbing_title(_SEASON), title_facts())
 
         # This call placed E03 alone, yet the slice also carries the record's E01 and E02.
         assert placed.placements.placed == {"show - s01e03.mkv": (103,)}
@@ -1686,20 +1721,20 @@ class TestEntryClaim:
 
     def test_preowned_reads_every_claimed_id(self) -> None:
         # E01 (the record's, not this call's) already holds the own group's file at a listed size.
-        entry = [sonarr_ep(1, 1, ep_id=101, size=10, release_group="RG"), *_SEASON[1:]]
-        files = _pack(3)
-        placed = place_release(files, _scope(entry), _torrent(_resident_record()))
+        window_episodes = [sonarr_ep(1, 1, ep_id=101, size=10, release_group="RG"), *_SEASON[1:]]
+        files = _season_files(3)
+        placed = place_release(files, _grabbing_title(window_episodes), _torrent(_stored_pending_import()))
 
-        claim = build_title_claim(self._release(files, placed), _scope(entry), entry_facts())
+        claim = build_title_claim(self._release(files, placed), _grabbing_title(window_episodes), title_facts())
 
         assert claim.preowned_episode_ids == (101,)
 
     def test_a_misplaced_own_file_is_not_preowned(self) -> None:
         # E01 holds the own group's E02 file (a listed size, not E01's): the grab still owes E01 its file.
-        entry = [sonarr_ep(1, 1, ep_id=101, size=20, release_group="RG"), *_SEASON[1:]]
-        files = _pack(3)
-        placed = place_release(files, _scope(entry), _NEW)
+        window_episodes = [sonarr_ep(1, 1, ep_id=101, size=20, release_group="RG"), *_SEASON[1:]]
+        files = _season_files(3)
+        placed = place_release(files, _grabbing_title(window_episodes), _NEW)
 
-        claim = build_title_claim(self._release(files, placed), _scope(entry), entry_facts())
+        claim = build_title_claim(self._release(files, placed), _grabbing_title(window_episodes), title_facts())
 
         assert claim.preowned_episode_ids == ()

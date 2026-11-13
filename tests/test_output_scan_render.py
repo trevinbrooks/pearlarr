@@ -90,15 +90,11 @@ from .test_scan_parity import (
     NO_MAPPING_ROW,
     NO_RELEASES_DETAIL,
     NO_RELEASES_LINES,
-    OUTAGE_ANILIST_DETAIL,
-    OUTAGE_LINES,
-    OUTAGE_ROW,
-    OUTAGE_STATUS_DETAIL,
-    PENDING_DOWNLOADED,
     PENDING_DOWNLOADED_LINES,
-    PENDING_IMPORTED,
+    PENDING_IMPORT_DOWNLOADED,
+    PENDING_IMPORT_IMPORTED,
+    PENDING_IMPORT_QUEUED,
     PENDING_IMPORTED_LINES,
-    PENDING_QUEUED,
     PENDING_QUEUED_LINES,
     SCAN_STARTED_RADARR,
     SCAN_STARTED_RADARR_LINES,
@@ -116,6 +112,10 @@ from .test_scan_parity import (
     SUMMARY_WAIT_OFF_LINES,
     UNMONITORED_LINES,
     UNMONITORED_ROW,
+    UNREACHABLE_ANILIST_DETAIL,
+    UNREACHABLE_LINES,
+    UNREACHABLE_ROW,
+    UNREACHABLE_STATUS_DETAIL,
     Line,
 )
 
@@ -160,9 +160,9 @@ class TestBuilders:
             (CHECKING_URL_ONLY, CHECKING_URL_ONLY_LINES),
             (CACHED_FULL, CACHED_FULL_LINES),
             (CACHED_BARE, CACHED_BARE_LINES),
-            (PENDING_QUEUED, PENDING_QUEUED_LINES),
-            (PENDING_DOWNLOADED, PENDING_DOWNLOADED_LINES),
-            (PENDING_IMPORTED, PENDING_IMPORTED_LINES),
+            (PENDING_IMPORT_QUEUED, PENDING_QUEUED_LINES),
+            (PENDING_IMPORT_DOWNLOADED, PENDING_DOWNLOADED_LINES),
+            (PENDING_IMPORT_IMPORTED, PENDING_IMPORTED_LINES),
         ):
             assert _as_lines(title_header_lines(event)) == expected
 
@@ -175,11 +175,11 @@ class TestBuilders:
 
     def test_entry_details(self) -> None:
         composed = (
-            _as_lines(title_row_lines(OUTAGE_ROW))
-            + _as_lines(title_detail_lines(OUTAGE_ANILIST_DETAIL))
-            + _as_lines(title_detail_lines(OUTAGE_STATUS_DETAIL))
+            _as_lines(title_row_lines(UNREACHABLE_ROW))
+            + _as_lines(title_detail_lines(UNREACHABLE_ANILIST_DETAIL))
+            + _as_lines(title_detail_lines(UNREACHABLE_STATUS_DETAIL))
         )
-        assert composed == OUTAGE_LINES
+        assert composed == UNREACHABLE_LINES
         resolved = _as_lines(title_row_lines(NO_ENTRY_RESOLVED_ROW)) + _as_lines(
             title_detail_lines(NO_ENTRY_RESOLVED_DETAIL),
         )
@@ -349,7 +349,7 @@ class TestEntryIndentedDiagnostics:
     Under RUN alone it stays column-0.
     """
 
-    _ENTRY = ScopeId(ScopeKind.ENTRY, 1)
+    _TITLE_SCOPE = ScopeId(ScopeKind.ENTRY, 1)
 
     def _open_item(self, renderer: RichRenderer) -> None:
         renderer.handle(ScanStarted(arr=Arr.SONARR, total=1), 0.0)
@@ -358,7 +358,7 @@ class TestEntryIndentedDiagnostics:
     def test_diagnostic_indents_inside_an_open_entry_block(self) -> None:
         renderer, stream = _renderer()
         self._open_item(renderer)
-        renderer.handle(ScopeOpened(scope=self._ENTRY, label="entry"), 0.0)
+        renderer.handle(ScopeOpened(scope=self._TITLE_SCOPE, label="entry"), 0.0)
         renderer.handle(Diagnostic(severity=Severity.WARNING, message="tracker down", origin=LOG_NAME), 0.0)
         assert "  ⚠ tracker down" in _plain_lines(stream)
 
@@ -375,8 +375,8 @@ class TestEntryIndentedDiagnostics:
         # after the listing sits back at the run margin.
         renderer, stream = _renderer()
         self._open_item(renderer)
-        renderer.handle(ScopeOpened(scope=self._ENTRY, label="entry"), 0.0)
-        renderer.handle(ScopeClosed(scope=self._ENTRY), 0.0)
+        renderer.handle(ScopeOpened(scope=self._TITLE_SCOPE, label="entry"), 0.0)
+        renderer.handle(ScopeClosed(scope=self._TITLE_SCOPE), 0.0)
         renderer.handle(ScanFinished(arr=Arr.SONARR), 0.0)
         renderer.handle(Diagnostic(severity=Severity.WARNING, message="tracker down", origin=LOG_NAME), 0.0)
         assert "⚠ tracker down" in _plain_lines(stream)

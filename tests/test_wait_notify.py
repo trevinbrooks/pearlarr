@@ -38,7 +38,14 @@ from pearlarr.torrent_service import AddStatus, GrabResult
 from pearlarr.wait_types import Outcome
 from pearlarr.wait_view import WaitOutcomeRow, WaitResult
 
-from .builders import SEP, held_files, make_entry_record, order_only_held_back, rg_group, url_item
+from .builders import (
+    SEP,
+    files_left_for_hand_import,
+    make_entry_record,
+    make_release,
+    order_only_hand_import_files,
+    rg_group,
+)
 from .fakes import diagnostic_messages, install_recording_hub
 
 
@@ -182,7 +189,9 @@ def test_push_wait_summary_says_a_gone_download_has_its_title_checked_again(push
 def test_push_wait_summary_lists_the_unmatched_files_under_their_row(pushes: list[DiscordEmbed]) -> None:
     # One backticked line per name: Discord strips leading whitespace and reads `_` as markdown.
     notifier = Notifier(discord_url="https://discord.example", web=httpx.Client())
-    row = WaitOutcomeRow("Demo Batch", Outcome.UNMATCHED, left_for_hand_import=held_files("Part_1.mkv", "Part 2.mkv"))
+    row = WaitOutcomeRow(
+        "Demo Batch", Outcome.UNMATCHED, left_for_hand_import=files_left_for_hand_import("Part_1.mkv", "Part 2.mkv")
+    )
 
     assert notifier.push_wait_summary(arr=Arr.SONARR, result=WaitResult((row,), elapsed_s=15)) is True
     [field] = pushes[0].fields
@@ -195,7 +204,9 @@ def test_push_wait_summary_lists_the_unmatched_files_under_their_row(pushes: lis
 
 def test_push_wait_summary_lists_the_held_back_files_under_their_row(pushes: list[DiscordEmbed]) -> None:
     notifier = Notifier(discord_url="https://discord.example", web=httpx.Client())
-    row = WaitOutcomeRow("Demo Batch", Outcome.PARTIAL, left_for_hand_import=held_files("show - 03 [grp].mkv"))
+    row = WaitOutcomeRow(
+        "Demo Batch", Outcome.PARTIAL, left_for_hand_import=files_left_for_hand_import("show - 03 [grp].mkv")
+    )
 
     assert notifier.push_wait_summary(arr=Arr.SONARR, result=WaitResult((row,), elapsed_s=15)) is True
     [field] = pushes[0].fields
@@ -208,7 +219,7 @@ def test_push_wait_summary_lists_the_held_back_files_under_their_row(pushes: lis
 def test_push_wait_summary_says_why_order_only_files_are_held(pushes: list[DiscordEmbed]) -> None:
     notifier = Notifier(discord_url="https://discord.example", web=httpx.Client())
     row = WaitOutcomeRow(
-        "Show Ending · grp · S04 E01-E12", Outcome.PARTIAL, left_for_hand_import=order_only_held_back()
+        "Show Ending · grp · S04 E01-E12", Outcome.PARTIAL, left_for_hand_import=order_only_hand_import_files()
     )
 
     assert notifier.push_wait_summary(arr=Arr.SONARR, result=WaitResult((row,), elapsed_s=15)) is True
@@ -227,7 +238,8 @@ def test_push_wait_summary_unmatched_names_stay_inside_the_value_clamp(pushes: l
     notifier = Notifier(discord_url="https://discord.example", web=httpx.Client())
     names = tuple(f"Demo Batch Part {n} (BD 1080p) [Group].mkv" for n in range(3))
     rows = tuple(
-        WaitOutcomeRow(f"Title {i}", Outcome.UNMATCHED, left_for_hand_import=held_files(*names)) for i in range(25)
+        WaitOutcomeRow(f"Title {i}", Outcome.UNMATCHED, left_for_hand_import=files_left_for_hand_import(*names))
+        for i in range(25)
     )
 
     assert notifier.push_wait_summary(arr=Arr.SONARR, result=WaitResult(rows, elapsed_s=15)) is True
@@ -474,7 +486,7 @@ class TestGrabLayout:
         seadex_dict = {
             "PMR": rg_group(
                 {
-                    "https://nyaa.si/view/1": url_item(
+                    "https://nyaa.si/view/1": make_release(
                         url="https://nyaa.si/view/1",
                         tracker=Tracker.NYAA,
                         download=True,
@@ -517,7 +529,7 @@ class TestGrabLayout:
         # mid-download says so. A contained add failure (no outcome) reads
         # "Failed". A group whose releases were never attempted reads "Skipped".
         seadex_dict = {
-            srg: rg_group({f"https://nyaa.si/view/{i}": url_item(url=f"https://nyaa.si/view/{i}", download=True)})
+            srg: rg_group({f"https://nyaa.si/view/{i}": make_release(url=f"https://nyaa.si/view/{i}", download=True)})
             for i, srg in enumerate(("Fresh", "InFlight", "Errored", "Held"))
         }
 
@@ -546,7 +558,7 @@ class TestGrabLayout:
         ]
 
     def test_unflagged_group_contributes_nothing(self, pushes: list[DiscordEmbed]) -> None:
-        seadex_dict = {"Quiet": rg_group({"https://nyaa.si/view/9": url_item(url="https://nyaa.si/view/9")})}
+        seadex_dict = {"Quiet": rg_group({"https://nyaa.si/view/9": make_release(url="https://nyaa.si/view/9")})}
 
         embed = self._embed(pushes, _notice(seadex_dict=seadex_dict))
 

@@ -52,18 +52,18 @@ from pearlarr.wait_types import OutcomeKind
 from .builders import SEP
 from .fakes import strip_ansi
 
-_SECTION = ScopeId(ScopeKind.BOOT_SECTION, 900)
-_SECTION_TWO = ScopeId(ScopeKind.BOOT_SECTION, 901)
+_BOOT_SCOPE = ScopeId(ScopeKind.BOOT_SECTION, 900)
+_BOOT_SCOPE_TWO = ScopeId(ScopeKind.BOOT_SECTION, 901)
 
 
-def _opened(scope: ScopeId = _SECTION) -> ScopeOpened:
+def _opened(scope: ScopeId = _BOOT_SCOPE) -> ScopeOpened:
     """Production shape: the section opens via ScopeOpened before any step."""
 
     return ScopeOpened(scope=scope, label="boot")
 
 
-_ASCII_CAPS = ConsoleFeatures(can_redraw=False, can_color=False, can_unicode=False, width=80, height=24)
-_UNICODE_CAPS = ConsoleFeatures(can_redraw=False, can_color=True, can_unicode=True, width=100, height=40)
+_ASCII_FEATURES = ConsoleFeatures(can_redraw=False, can_color=False, can_unicode=False, width=80, height=24)
+_UNICODE_FEATURES = ConsoleFeatures(can_redraw=False, can_color=True, can_unicode=True, width=100, height=40)
 
 
 def _started(label: str, serial: int = 1) -> BootStepStarted:
@@ -109,21 +109,21 @@ def _plain(stream: io.StringIO) -> str:
 
 def test_graduation_line_unicode_and_ascii_glyphs() -> None:
     event = _finished("Reading config", detail="config.yml")
-    assert step_finished_line(event, _UNICODE_CAPS) == f"  ✔ Reading config{SEP}config.yml{SEP}0.61s"
-    assert step_finished_line(event, _ASCII_CAPS) == f"  ok Reading config{SEP}config.yml{SEP}0.61s"
+    assert step_finished_line(event, _UNICODE_FEATURES) == f"  ✔ Reading config{SEP}config.yml{SEP}0.61s"
+    assert step_finished_line(event, _ASCII_FEATURES) == f"  ok Reading config{SEP}config.yml{SEP}0.61s"
 
     warned = _finished("Connecting to qBittorrent", outcome=OutcomeKind.LEFT, elapsed_s=0.05)
-    assert step_finished_line(warned, _UNICODE_CAPS) == f"  ⚠ Connecting to qBittorrent{SEP}0.05s"
-    assert step_finished_line(warned, _ASCII_CAPS) == f"  ~ Connecting to qBittorrent{SEP}0.05s"
+    assert step_finished_line(warned, _UNICODE_FEATURES) == f"  ⚠ Connecting to qBittorrent{SEP}0.05s"
+    assert step_finished_line(warned, _ASCII_FEATURES) == f"  ~ Connecting to qBittorrent{SEP}0.05s"
 
     failed = _finished("Opening cache", outcome=OutcomeKind.FAILED, elapsed_s=0.01)
-    assert step_finished_line(failed, _UNICODE_CAPS) == f"  ✖ Opening cache{SEP}0.01s"
-    assert step_finished_line(failed, _ASCII_CAPS) == f"  x Opening cache{SEP}0.01s"
+    assert step_finished_line(failed, _UNICODE_FEATURES) == f"  ✖ Opening cache{SEP}0.01s"
+    assert step_finished_line(failed, _ASCII_FEATURES) == f"  x Opening cache{SEP}0.01s"
 
 
 def test_slow_line_ellipsis_degrades_to_ascii_dots() -> None:
-    assert slow_line("Refreshing mappings", _UNICODE_CAPS) == "  Refreshing mappings…"
-    assert slow_line("Refreshing mappings", _ASCII_CAPS) == "  Refreshing mappings..."
+    assert slow_line("Refreshing mappings", _UNICODE_FEATURES) == "  Refreshing mappings…"
+    assert slow_line("Refreshing mappings", _ASCII_FEATURES) == "  Refreshing mappings..."
 
 
 def test_format_step_secs_bands() -> None:
@@ -165,7 +165,7 @@ class TestBootRegion:
                 elapsed_s=0.05,
             ),
             BootReady(elapsed_s=1.27),
-            ScopeClosed(scope=_SECTION),
+            ScopeClosed(scope=_BOOT_SCOPE),
         )
 
         out = _plain(stream)
@@ -181,7 +181,7 @@ class TestBootRegion:
             _opened(),
             _started("[1/2] weird [bold]label[/bold]"),
             _finished("[1/2] weird [bold]label[/bold]"),
-            ScopeClosed(scope=_SECTION),
+            ScopeClosed(scope=_BOOT_SCOPE),
         )
 
         assert "[1/2] weird [bold]label[/bold]" in _plain(stream)
@@ -197,7 +197,7 @@ class TestBootRegion:
             _started("Refreshing mappings"),
             BootStepSlow(scope=ScopeId(ScopeKind.BOOT_STEP, 1), label="Refreshing mappings"),
             _finished("Refreshing mappings"),
-            ScopeClosed(scope=_SECTION),
+            ScopeClosed(scope=_BOOT_SCOPE),
         )
 
         assert "  Refreshing mappings…" in _plain(narrow).splitlines()
@@ -209,7 +209,7 @@ class TestBootRegion:
             _started("Refreshing mappings"),
             BootStepSlow(scope=ScopeId(ScopeKind.BOOT_STEP, 1), label="Refreshing mappings"),
             _finished("Refreshing mappings"),
-            ScopeClosed(scope=_SECTION),
+            ScopeClosed(scope=_BOOT_SCOPE),
         )
         # The live spinner shows liveness. No bare heads-up LINE lands in
         # scrollback (spinner frames carry a glyph + padding, never this form).
@@ -221,16 +221,16 @@ class TestBootRegion:
         _feed(renderer, _opened(), _started("One"), _finished("One"))
         live = renderer._boot._live
         assert live is not None and live.is_started
-        _feed(renderer, ScopeClosed(scope=_SECTION))
+        _feed(renderer, ScopeClosed(scope=_BOOT_SCOPE))
         assert renderer._boot._live is None and not live.is_started
         # A second section must start a FRESH Live: rich refuses two concurrent
         # Lives on one console, so a leaked slot would raise LiveError here.
         _feed(
             renderer,
-            _opened(_SECTION_TWO),
+            _opened(_BOOT_SCOPE_TWO),
             _started("Two", serial=2),
             _finished("Two", serial=2),
-            ScopeClosed(scope=_SECTION_TWO),
+            ScopeClosed(scope=_BOOT_SCOPE_TWO),
         )
 
         out = _plain(stream)
@@ -273,7 +273,7 @@ class TestBootRegion:
         _feed(renderer, ArrRunFinished(arr=Arr.SONARR))
         assert renderer._boot._live is None and not first_arr_run_live.is_started
 
-        _feed(renderer, _opened(_SECTION_TWO), _started("Two", serial=2), _finished("Two", serial=2))
+        _feed(renderer, _opened(_BOOT_SCOPE_TWO), _started("Two", serial=2), _finished("Two", serial=2))
         second_arr_run_live = renderer._boot._live
         assert second_arr_run_live is not None and second_arr_run_live.is_started
         assert second_arr_run_live is not first_arr_run_live  # a fresh slot, never the stale one
@@ -291,7 +291,7 @@ class TestBootRegion:
         renderer.begin_run()
         _feed(renderer, _opened(), _started("Two", serial=2))
         renderer.close()
-        _feed(renderer, _opened(), _started("Three", serial=3), ScopeClosed(scope=_SECTION))
+        _feed(renderer, _opened(), _started("Three", serial=3), ScopeClosed(scope=_BOOT_SCOPE))
 
     def test_a_raising_live_stop_still_prints_the_capstone(self, monkeypatch: pytest.MonkeyPatch) -> None:
         # The shared spine (LiveRegion._stop_live) contains a stop() raise so a
@@ -319,7 +319,7 @@ class TestBootRegion:
             _started("Refreshing mappings"),
             BootStepProgressed(scope=ScopeId(ScopeKind.BOOT_STEP, 1), fraction=0.5, detail="1/2 MB"),
             _finished("Refreshing mappings", detail="1/2 MB"),
-            ScopeClosed(scope=_SECTION),
+            ScopeClosed(scope=_BOOT_SCOPE),
         )
 
         # The durable line carries the final detail. The bar frames were transient.
@@ -338,7 +338,7 @@ class TestBootRegion:
             _started("Reading config"),
             _finished("Reading config"),
             BootReady(elapsed_s=0.61),
-            ScopeClosed(scope=_SECTION),
+            ScopeClosed(scope=_BOOT_SCOPE),
         )
 
         out = _plain(stream)
@@ -359,7 +359,7 @@ class TestBootRegion:
             _started("Reading config"),
             _finished("Reading config"),
             Diagnostic(severity=Severity.INFO, message="Radarr not configured", origin=LOG_NAME),
-            ScopeClosed(scope=_SECTION),
+            ScopeClosed(scope=_BOOT_SCOPE),
         )
 
         out = _plain(stream)
@@ -371,7 +371,7 @@ class TestBootRegion:
 
         _feed(renderer, _opened(), _started("One"), _finished("One"))
         renderer.set_level(logging.WARNING)
-        _feed(renderer, _started("Two", serial=2), _finished("Two", serial=2), ScopeClosed(scope=_SECTION))
+        _feed(renderer, _started("Two", serial=2), _finished("Two", serial=2), ScopeClosed(scope=_BOOT_SCOPE))
 
         out = _plain(stream)
         assert "✔ One" in out
@@ -388,7 +388,7 @@ class TestBootRegion:
             BootStepSlow(scope=ScopeId(ScopeKind.BOOT_STEP, 1), label="Reading config"),
             _finished("Reading config"),
             BootReady(elapsed_s=0.61),
-            ScopeClosed(scope=_SECTION),
+            ScopeClosed(scope=_BOOT_SCOPE),
         )
 
 
@@ -405,15 +405,15 @@ class TestFrameText:
     """The pure spinner-frame builder draws a unicode percent bar, degrading to ASCII without unicode support."""
 
     def test_unicode_frame_draws_a_bar_with_percent_and_detail(self) -> None:
-        text = _frame("Refreshing mappings", _UNICODE_CAPS, 0.5, "anime_ids.json")
+        text = _frame("Refreshing mappings", _UNICODE_FEATURES, 0.5, "anime_ids.json")
         assert "50%" in text
         assert "█" in text and "░" in text  # half-filled unicode bar
         assert "anime_ids.json" in text
 
     def test_ascii_frame_degrades_the_bar(self) -> None:
-        text = _frame("Refreshing mappings", _ASCII_CAPS, 0.5, None)
+        text = _frame("Refreshing mappings", _ASCII_FEATURES, 0.5, None)
         assert "#" in text and "-" in text  # ascii fallback bar
         assert "█" not in text
 
     def test_bare_frame_degrades_the_ellipsis_to_ascii_dots(self) -> None:
-        assert _frame("Reading config", _ASCII_CAPS, None, None) == "Reading config..."
+        assert _frame("Reading config", _ASCII_FEATURES, None, None) == "Reading config..."

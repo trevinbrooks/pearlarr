@@ -70,7 +70,7 @@ class _Fetch:
         return self.records
 
 
-def _monitor(cache: FakeCacheStore | None = None) -> tuple[ArrActivityReader, FakeCacheStore]:
+def _activity_reader(cache: FakeCacheStore | None = None) -> tuple[ArrActivityReader, FakeCacheStore]:
     cache = cache if cache is not None else FakeCacheStore()
     return ArrActivityReader(Arr.SONARR, cache, make_logger()), cache
 
@@ -98,7 +98,7 @@ class TestScan:
     """`ArrActivityMonitor.scan` windows/dedups history queries off the stored checkpoint, clamping bad or future dates to a full rescan, and filters touched ids by event type."""
 
     def test_bootstrap_queries_lookback_window_and_stores_max_id_checkpoint(self) -> None:
-        activity, cache = _monitor()
+        activity, cache = _activity_reader()
         fetch = _Fetch([_rec(5, item_id=3), _rec(7, item_id=4, date="2026-07-06T11:00:00Z")])
 
         scan = activity.read(fetch, now=_NOW)
@@ -110,14 +110,14 @@ class TestScan:
         assert cache.get_history_checkpoint(Arr.SONARR) == HistoryCheckpoint("2026-07-06T11:00:00Z", 7)
 
     def test_id_cursor_dedup_skips_already_seen_records(self) -> None:
-        activity, cache = _monitor()
+        activity, cache = _activity_reader()
         cache.put_history_checkpoint(Arr.SONARR, HistoryCheckpoint(format_history_date(_NOW), 10))
         fetch = _Fetch([_rec(9, item_id=1), _rec(10, item_id=1), _rec(11, item_id=2)])
 
         assert activity.read(fetch, now=_NOW).touched == frozenset({2})
 
     def test_query_date_overlaps_behind_the_checkpoint(self) -> None:
-        activity, cache = _monitor()
+        activity, cache = _activity_reader()
         since = _NOW - timedelta(hours=2)
         cache.put_history_checkpoint(Arr.SONARR, HistoryCheckpoint(format_history_date(since), 1))
         fetch = _Fetch([])
@@ -128,7 +128,7 @@ class TestScan:
     def test_checkpoint_beyond_lookback_clamps_and_signals_rescan(self) -> None:
         # A gap the clamp truncates: the un-queried stretch may hide changes,
         # so the scan demands a full re-check while the cursor still advances.
-        activity, cache = _monitor()
+        activity, cache = _activity_reader()
         since = _NOW - timedelta(days=40)
         cache.put_history_checkpoint(Arr.SONARR, HistoryCheckpoint(format_history_date(since), 1))
         fetch = _Fetch([_rec(50, item_id=3, date="2026-07-06T09:00:00Z")])
@@ -144,7 +144,7 @@ class TestScan:
     def test_gap_with_empty_window_still_signals_rescan(self) -> None:
         # No fresh records to advance the cursor: coverage stays broken, so the
         # rescan repeats next pass until history produces a new stamp.
-        activity, cache = _monitor()
+        activity, cache = _activity_reader()
         since = _NOW - timedelta(days=40)
         stored = HistoryCheckpoint(format_history_date(since), 1)
         cache.put_history_checkpoint(Arr.SONARR, stored)
@@ -156,7 +156,7 @@ class TestScan:
         assert cache.get_history_checkpoint(Arr.SONARR) == stored
 
     def test_future_checkpoint_date_clamped_to_now(self) -> None:
-        activity, cache = _monitor()
+        activity, cache = _activity_reader()
         cache.put_history_checkpoint(
             Arr.SONARR,
             HistoryCheckpoint(format_history_date(_NOW + timedelta(hours=1)), 1),
@@ -167,7 +167,7 @@ class TestScan:
         assert fetch.calls == [format_history_date(_NOW - timedelta(hours=HISTORY_QUERY_OVERLAP_HOURS))]
 
     def test_unparseable_checkpoint_date_replays_lookback_and_rescans(self) -> None:
-        activity, cache = _monitor()
+        activity, cache = _activity_reader()
         cache.put_history_checkpoint(Arr.SONARR, HistoryCheckpoint("garbage", 1))
         fetch = _Fetch([])
 
@@ -177,7 +177,7 @@ class TestScan:
         assert fetch.calls == [format_history_date(_NOW - timedelta(days=HISTORY_MAX_LOOKBACK_DAYS))]
 
     def test_event_type_filtering(self) -> None:
-        activity, _ = _monitor()
+        activity, _ = _activity_reader()
         fetch = _Fetch(
             [
                 _rec(1, item_id=1, event="grabbed"),
@@ -195,7 +195,7 @@ class TestScan:
         assert activity.read(fetch, now=_NOW).touched == frozenset({5, 6, 7, 8, 9})
 
     def test_upgrade_reason_delete_suppressed_both_casings(self) -> None:
-        activity, cache = _monitor()
+        activity, cache = _activity_reader()
         fetch = _Fetch(
             [
                 _rec(1, item_id=1, event="episodeFileDeleted", reason="upgrade"),
@@ -230,17 +230,17 @@ class TestScan:
 
     def test_committed_own_grab_import_is_not_touched_again(self) -> None:
         # The committed cursor dedups the overlap's replay, so the next run re-checks nothing.
-        activity, cache = _monitor()
+        activity, cache = _activity_reader()
         cache.put_pending_import_row(Arr.SONARR, "beef01", {"infohash": "beef01"})
         records = [_rec(1, item_id=2, download_id="BEEF01")]
 
         assert activity.read(_Fetch(records), now=_NOW).touched == frozenset({2})
         activity.stage_checkpoint()
-        next_run, _ = _monitor(cache)
+        next_run, _ = _activity_reader(cache)
         assert next_run.read(_Fetch(records), now=_NOW).touched == frozenset()
 
     def test_item_id_zero_dropped(self) -> None:
-        activity, _ = _monitor()
+        activity, _ = _activity_reader()
         fetch = _Fetch([_rec(1, item_id=0), _rec(2, item_id=6)])
 
         assert activity.read(fetch, now=_NOW).touched == frozenset({6})
@@ -270,7 +270,7 @@ class TestScan:
     def test_fetch_failure_on_a_gap_keeps_the_gap_detectable(self) -> None:
         # Fail-open beats rescan: nothing this run, but the untouched checkpoint
         # re-detects the gap next pass.
-        activity, cache = _monitor()
+        activity, cache = _activity_reader()
         stored = HistoryCheckpoint(format_history_date(_NOW - timedelta(days=40)), 1)
         cache.put_history_checkpoint(Arr.SONARR, stored)
 
@@ -281,7 +281,7 @@ class TestScan:
         assert cache.get_history_checkpoint(Arr.SONARR) == stored
 
     def test_empty_response_leaves_checkpoint_unchanged(self) -> None:
-        activity, cache = _monitor()
+        activity, cache = _activity_reader()
         stored = HistoryCheckpoint(format_history_date(_NOW - timedelta(hours=3)), 12)
         cache.put_history_checkpoint(Arr.SONARR, stored)
 
@@ -290,7 +290,7 @@ class TestScan:
         assert cache.get_history_checkpoint(Arr.SONARR) == stored
 
     def test_stale_only_window_leaves_checkpoint_unchanged(self) -> None:
-        activity, cache = _monitor()
+        activity, cache = _activity_reader()
         stored = HistoryCheckpoint(format_history_date(_NOW - timedelta(hours=3)), 12)
         cache.put_history_checkpoint(Arr.SONARR, stored)
 
@@ -301,7 +301,7 @@ class TestScan:
     def test_empty_date_record_does_not_stash_a_checkpoint(self) -> None:
         # An empty stored date would collapse the next window to the overlap.
         # keep the old cursor and let the id dedup absorb the re-delivery.
-        activity, cache = _monitor()
+        activity, cache = _activity_reader()
         stored = HistoryCheckpoint(format_history_date(_NOW - timedelta(hours=3)), 12)
         cache.put_history_checkpoint(Arr.SONARR, stored)
 
@@ -381,7 +381,7 @@ class TestRunLoopActivityWiring:
         assert engine.cache_store.get_history_checkpoint(Arr.SONARR) is None
 
     @staticmethod
-    def _outage_engine(logger: logging.Logger, cache: FakeCacheStore) -> ArrRunLoop:
+    def _engine_with_seadex_unreachable(logger: logging.Logger, cache: FakeCacheStore) -> ArrRunLoop:
         gateway = _FakeGateway()
         gateway.unreachable = True
         return _engine(_FinalizeRecorder(), logger, seadex=gateway, cache_store=cache)
@@ -390,7 +390,7 @@ class TestRunLoopActivityWiring:
         # A SeaDex-outage run skips every lookup, so committing would consume
         # drift events the run never acted on.
         cache = FakeCacheStore()
-        engine = self._outage_engine(logger, cache)
+        engine = self._engine_with_seadex_unreachable(logger, cache)
         engine.run_arr(self._strategy(history=[_rec(1, item_id=3)]), item_id=None, dry_run=True, boot=BootFlow())
 
         assert engine._services._dirty_al_ids == {11}  # detection itself still ran
@@ -399,7 +399,7 @@ class TestRunLoopActivityWiring:
     def test_consecutive_outage_runs_keep_holding(self, logger: logging.Logger) -> None:
         cache = FakeCacheStore()
         for _ in range(2):
-            engine = self._outage_engine(logger, cache)
+            engine = self._engine_with_seadex_unreachable(logger, cache)
             engine.run_arr(self._strategy(history=[_rec(1, item_id=3)]), item_id=None, dry_run=True, boot=BootFlow())
 
         assert cache.get_history_checkpoint(Arr.SONARR) is None
@@ -407,8 +407,8 @@ class TestRunLoopActivityWiring:
     def test_held_checkpoint_replays_dirty_on_the_next_healthy_run(self, logger: logging.Logger) -> None:
         # Outage run first: dirty derived but unactionable, checkpoint held.
         cache = FakeCacheStore()
-        outage = self._outage_engine(logger, cache)
-        outage.run_arr(self._strategy(history=[_rec(1, item_id=3)]), item_id=None, dry_run=True, boot=BootFlow())
+        engine = self._engine_with_seadex_unreachable(logger, cache)
+        engine.run_arr(self._strategy(history=[_rec(1, item_id=3)]), item_id=None, dry_run=True, boot=BootFlow())
 
         # Healthy run over the SAME store: the held cursor replays the same
         # records through the id dedup, re-derives the dirty mark, and commits.

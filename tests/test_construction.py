@@ -33,7 +33,7 @@ from .builders import FakeCacheStore, make_bare_instance, make_config, make_run_
 from .fakes import FakeRadarrClient, FakeSonarrClient
 
 
-def _ctx_holders(runner: ArrRunLoop, services: ArrRunServices) -> list[object]:
+def _state_holders(loop: ArrRunLoop, services: ArrRunServices) -> list[object]:
     """Structurally discover every rebindable ctx-holder hanging off the pair.
 
     Introspective on purpose: a hand-enumerated holder list silently passes when
@@ -43,7 +43,7 @@ def _ctx_holders(runner: ArrRunLoop, services: ArrRunServices) -> list[object]:
 
     return [
         attr
-        for owner in (runner, services)
+        for owner in (loop, services)
         for attr in vars(owner).values()
         if hasattr(attr, "bind_arr_run") and hasattr(attr, "_state")
     ]
@@ -52,26 +52,26 @@ def _ctx_holders(runner: ArrRunLoop, services: ArrRunServices) -> list[object]:
 def test_runner_adopts_placeholder_then_rebinds_fresh_ctx() -> None:
     deps = make_run_deps()
     services = ArrRunServices(deps, Arr.SONARR)
-    runner = ArrRunLoop(deps, services)
+    loop = ArrRunLoop(deps, services)
 
     # Phase 1 (adoption): the runner adopts the hub's single placeholder - no
     # second mint - and every ctx-holding collaborator is bound to that object.
-    holders = _ctx_holders(runner, services)
+    holders = _state_holders(loop, services)
     # The discovery itself is load-bearing: wait manager + hub + filter + pipeline.
     assert len(holders) >= 4
-    assert runner._state is services.state
-    assert all(vars(c)["_state"] is runner._state for c in holders)
+    assert loop._state is services.state
+    assert all(vars(c)["_state"] is loop._state for c in holders)
 
     # Phase 2 (fresh mint): start_arr_run swaps a fresh ArrRunState AND rebinds
     # every ctx-holding collaborator to it. A missed rebind would route a
     # collaborator's writes into the orphaned prior context (the drift the
     # bind_arr_run fold guards against).
-    first_ctx = runner._state
-    runner.start_arr_run(dry_run=False)
+    first_state = loop._state
+    loop.start_arr_run(dry_run=False)
 
-    assert runner._state is not first_ctx  # a fresh ctx was swapped in
-    assert services.state is runner._state  # the hub rebound to it
-    assert all(vars(c)["_state"] is runner._state for c in holders)
+    assert loop._state is not first_state  # a fresh ctx was swapped in
+    assert services.state is loop._state  # the hub rebound to it
+    assert all(vars(c)["_state"] is loop._state for c in holders)
 
 
 def test_services_read_selection_staleness_from_the_store_at_construction() -> None:

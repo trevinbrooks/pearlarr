@@ -346,7 +346,7 @@ class _LifecycleEmitter(Renderer):
     def __init__(self) -> None:
         self.hub: OutputHub | None = None
         self.events: list[Event] = []
-        self.seen_during_cycle: int | None = None
+        self.seen_during_run: int | None = None
 
     @override
     def handle(self, event: Event, when: float) -> None:
@@ -356,7 +356,7 @@ class _LifecycleEmitter(Renderer):
     def begin_run(self) -> None:
         if self.hub is not None:
             self.hub.emit(Diagnostic(severity=Severity.INFO, message="mid-lifecycle"))
-            self.seen_during_cycle = len(self.events)
+            self.seen_during_run = len(self.events)
 
     @override
     def set_level(self, level: int) -> None:
@@ -601,7 +601,7 @@ def test_a_lifecycle_reentrant_emit_enqueues_and_drains_after_the_turnover() -> 
 
     hub.begin_run(console_format="plain", level=logging.INFO)
 
-    assert emitter.seen_during_cycle == 0  # enqueued, not dispatched mid-lifecycle
+    assert emitter.seen_during_run == 0  # enqueued, not dispatched mid-lifecycle
     assert [d.message for d in emitter.events if isinstance(d, Diagnostic)] == ["mid-lifecycle"]
 
 
@@ -842,15 +842,15 @@ def test_overflow_sheds_diagnostics_and_re_arms_the_note_per_episode(
 
 def test_once_keys_dedup_and_clear_per_cycle() -> None:
     recording = RecordingHub()
-    outage = Diagnostic(severity=Severity.WARNING, message="SeaDex unreachable", once_key="seadex-outage")
+    warning = Diagnostic(severity=Severity.WARNING, message="SeaDex unreachable", once_key="seadex-outage")
 
-    recording.emit(outage)
-    recording.emit(outage)
+    recording.emit(warning)
+    recording.emit(warning)
     assert len(recording.of_type(Diagnostic)) == 1
     assert recording.hub.counts.mark().warning == 1  # the dropped copy is not counted
 
     recording.hub.begin_run(console_format="plain", level=logging.INFO)
-    recording.emit(outage)
+    recording.emit(warning)
     assert len(recording.of_type(Diagnostic)) == 2
 
 
@@ -1059,8 +1059,8 @@ def test_begin_cycle_swaps_the_console_renderer_only_on_format_change() -> None:
         built.append((console_format, renderer))
         return renderer
 
-    sink = RecordingRenderer()
-    hub = OutputHub([sink], console_factory=factory)
+    stable_renderer = RecordingRenderer()
+    hub = OutputHub([stable_renderer], console_factory=factory)
 
     hub.begin_run(console_format="rich", level=logging.INFO)
     hub.emit(_EVENT)
@@ -1073,22 +1073,22 @@ def test_begin_cycle_swaps_the_console_renderer_only_on_format_change() -> None:
     assert rich_console.events == [_EVENT]
     assert rich_console.closed  # the replaced console is torn down
     assert plain_console.events == [_EVENT]
-    assert sink.events == [_EVENT, _EVENT]  # the stable sink saw both
+    assert stable_renderer.events == [_EVENT, _EVENT]  # the stable sink saw both
 
 
 def test_a_failing_console_factory_keeps_the_old_seat_and_notes_file_only() -> None:
-    console, sink = RecordingRenderer(), _FileishRecorder()
+    console, renderer = RecordingRenderer(), _FileishRecorder()
 
     def factory(console_format: LogFormat) -> Renderer:
         raise RuntimeError("no tty")
 
-    hub = OutputHub([sink], console=console, console_factory=factory)
+    hub = OutputHub([renderer], console=console, console_factory=factory)
     hub.begin_run(console_format="plain", level=logging.INFO)
     hub.emit(_EVENT)
 
     assert not console.closed
     assert _EVENT in console.events  # the old seat keeps rendering
-    notes = [e for e in sink.events if isinstance(e, Diagnostic)]
+    notes = [e for e in renderer.events if isinstance(e, Diagnostic)]
     assert notes[0].file_only
     assert "console factory failed" in notes[0].message
     assert "keeping the current console" in notes[0].message
@@ -1109,36 +1109,36 @@ def test_cli_hub_seats_the_file_sink_first() -> None:
 
 
 def test_install_hub_closes_the_previously_installed_hub() -> None:
-    first_sink, second_sink = RecordingRenderer(), RecordingRenderer()
-    first, second = OutputHub([first_sink]), OutputHub([second_sink])
+    first_renderer, second_renderer = RecordingRenderer(), RecordingRenderer()
+    first, second = OutputHub([first_renderer]), OutputHub([second_renderer])
 
     install_hub(first)
     install_hub(second)
     try:
         # A repeat run single in one process must not leak the prior hub's
         # open FileLogRenderer. A re-install of the SAME hub never self-closes.
-        assert first_sink.closed
+        assert first_renderer.closed
         install_hub(second)
         second.emit(_EVENT)
-        assert second_sink.events == [_EVENT]
+        assert second_renderer.events == [_EVENT]
     finally:
         uninstall_hub()
 
 
 def test_uninstall_hub_closes_the_outgoing_hub_but_never_the_default() -> None:
-    sink = RecordingRenderer()
-    hub = OutputHub([sink])
+    renderer = RecordingRenderer()
+    hub = OutputHub([renderer])
     install_hub(hub)
 
     uninstall_hub()
 
-    assert sink.closed
+    assert renderer.closed
     # The renderer-less default survives repeated uninstalls (never closed):
     # a post-uninstall emit still silently drops rather than raising.
     uninstall_hub()
     emit_to_hub(_EVENT)
     hub.emit(_EVENT)  # drop-after-close is silent
-    assert sink.events == []
+    assert renderer.events == []
 
 
 # --- hub_note (the raw first-party logging replacement) -------------------------------
@@ -1326,16 +1326,16 @@ def test_close_hands_teardown_chatter_to_the_file_sink_before_closing_it() -> No
                     Diagnostic(severity=Severity.WARNING, message="teardown failed", file_only=True),
                 )
 
-    file_sink, noisy = _FileRecorder(), _NoisyCloser()
-    hub = OutputHub([file_sink, noisy])
+    file_recorder, noisy = _FileRecorder(), _NoisyCloser()
+    hub = OutputHub([file_recorder, noisy])
     noisy.hub = hub
 
     hub.close()
 
-    assert [d.message for d in file_sink.handled if isinstance(d, Diagnostic)] == ["teardown failed"]
-    assert file_sink.closed
+    assert [d.message for d in file_recorder.handled if isinstance(d, Diagnostic)] == ["teardown failed"]
+    assert file_recorder.closed
     hub.emit(_EVENT)  # fully closed: drops silently
-    assert not any(isinstance(e, PearlarrStarted) for e in file_sink.handled)
+    assert not any(isinstance(e, PearlarrStarted) for e in file_recorder.handled)
 
 
 def test_begin_cycle_applies_the_level_to_a_fresh_console_exactly_once() -> None:

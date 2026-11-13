@@ -32,19 +32,19 @@ def _now_str() -> str:
     return datetime.now().strftime(STAMP_FORMAT)
 
 
-def _fresh_record(al_id: int) -> dict[str, Any]:
+def _fresh_answer(al_id: int) -> dict[str, Any]:
     """A populated store record stamped inside the refresh age."""
 
     return {"fetched_at": _stamp(days_ago=1), "data": anilist_body(al_id)}
 
 
-def _stale_record(al_id: int) -> dict[str, Any]:
+def _stale_answer(al_id: int) -> dict[str, Any]:
     """A populated store record stamped past the refresh age."""
 
     return {"fetched_at": _stamp(days_ago=ANILIST_REFRESH_AGE_DAYS + 1), "data": anilist_body(al_id)}
 
 
-def _dateless_record(al_id: int) -> dict[str, Any]:
+def _dateless_answer(al_id: int) -> dict[str, Any]:
     """A store record stamped inside the refresh age, with a Media that has no `startDate` key."""
 
     body = anilist_body(al_id)
@@ -52,7 +52,7 @@ def _dateless_record(al_id: int) -> dict[str, Any]:
     return {"fetched_at": _stamp(days_ago=1), "data": body}
 
 
-class _RecordingSink:
+class _RecordingProgress:
     """Typed recording ProgressSink: captures each (fraction, detail) update."""
 
     def __init__(self) -> None:
@@ -69,8 +69,8 @@ class TestLoadCache:
         client = ScriptedAniListClient()
         store = FakeCacheStore()
         gateway = make_anilist_gateway(client, store)
-        store.put_anilist_meta(1, _fresh_record(1))
-        store.put_anilist_meta(2, _stale_record(2))
+        store.put_anilist_meta(1, _fresh_answer(1))
+        store.put_anilist_meta(2, _stale_answer(2))
         store.put_anilist_meta(3, {"data": anilist_body(3)})  # stamp-less -> unreadable age
         store.put_anilist_meta(4, {"fetched_at": _stamp(days_ago=1)})  # no payload -> nothing to serve
 
@@ -90,7 +90,7 @@ class TestPrefetch:
         store = FakeCacheStore()
         gateway = make_anilist_gateway(client, store)
         for al_id in (1, 2):
-            store.put_anilist_meta(al_id, _fresh_record(al_id))
+            store.put_anilist_meta(al_id, _fresh_answer(al_id))
         gateway.load_cache()
 
         assert gateway.prefetch([1, 2], dry_run=True) == 0
@@ -102,10 +102,10 @@ class TestPrefetch:
         client = ScriptedAniListClient(absent=frozenset({7}))
         store = FakeCacheStore()
         gateway = make_anilist_gateway(client, store)
-        sink = _RecordingSink()
+        progress = _RecordingProgress()
         ids = list(range(1, ANILIST_BATCH_SIZE + 2))
 
-        fetched = gateway.prefetch(ids, dry_run=False, progress=sink)
+        fetched = gateway.prefetch(ids, dry_run=False, progress=progress)
 
         # Returns how many NEEDED fetching (the absent id still counted as work).
         assert fetched == len(ids)
@@ -118,7 +118,7 @@ class TestPrefetch:
         assert store.get_anilist_meta(ids[-1]) is not None
         assert store.get_anilist_meta(7) is None
         # The cockpit sink saw one (fraction, "done/total") update per batch.
-        assert sink.updates == [(50 / 51, "50/51"), (1.0, "51/51")]
+        assert progress.updates == [(50 / 51, "50/51"), (1.0, "51/51")]
 
     def test_writes_exactly_the_fetched_ids(self) -> None:
         client = ScriptedAniListClient(absent=frozenset({2}))
@@ -150,7 +150,7 @@ class TestPrefetch:
         client = ScriptedAniListClient()
         store = FakeCacheStore()
         gateway = make_anilist_gateway(client, store)
-        store.put_anilist_meta(1, _stale_record(1))
+        store.put_anilist_meta(1, _stale_answer(1))
 
         gateway.prefetch([3], dry_run=True)
 
@@ -163,17 +163,17 @@ class TestPrefetch:
         client = ScriptedAniListClient(failing=frozenset({1}))
         store = FakeCacheStore()
         gateway = make_anilist_gateway(client, store)
-        sink = _RecordingSink()
+        progress = _RecordingProgress()
         ids = list(range(1, ANILIST_BATCH_SIZE + 2))
 
-        fetched = gateway.prefetch(ids, dry_run=False, progress=sink)
+        fetched = gateway.prefetch(ids, dry_run=False, progress=progress)
 
         assert fetched == len(ids)
         assert gateway.unreachable is True
         # The first chunk tripped the breaker, so the second was never requested.
         assert client.batch_calls == [ids[:ANILIST_BATCH_SIZE]]
         # The tripped chunk fetched nothing, so the cockpit never claimed it as progress.
-        assert sink.updates == []
+        assert progress.updates == []
         assert gateway.al_cache == {}
         assert store.get_anilist_meta(1) is None
 
@@ -181,8 +181,8 @@ class TestPrefetch:
         client = ScriptedAniListClient(failing=frozenset({1}))
         store = FakeCacheStore()
         gateway = make_anilist_gateway(client, store)
-        store.put_anilist_meta(1, _stale_record(1))
-        store.put_anilist_meta(9, _stale_record(9))
+        store.put_anilist_meta(1, _stale_answer(1))
+        store.put_anilist_meta(9, _stale_answer(9))
         gateway.load_cache()
 
         gateway.prefetch([1], dry_run=False)
@@ -201,8 +201,8 @@ class TestPrefetch:
         client = ScriptedAniListClient()
         store = FakeCacheStore()
         gateway = make_anilist_gateway(client, store)
-        store.put_anilist_meta(1, _dateless_record(1))
-        store.put_anilist_meta(2, _fresh_record(2))
+        store.put_anilist_meta(1, _dateless_answer(1))
+        store.put_anilist_meta(2, _fresh_answer(2))
         gateway.load_cache()
 
         assert gateway.prefetch(asked, dry_run=False) == 1
@@ -216,8 +216,8 @@ class TestPrefetch:
         client = ScriptedAniListClient(absent=frozenset({2}))
         store = FakeCacheStore()
         gateway = make_anilist_gateway(client, store)
-        store.put_anilist_meta(1, _stale_record(1))
-        store.put_anilist_meta(2, _stale_record(2))
+        store.put_anilist_meta(1, _stale_answer(1))
+        store.put_anilist_meta(2, _stale_answer(2))
         gateway.load_cache()
 
         before = _now_str()
@@ -314,8 +314,8 @@ class TestUnread:
     )
     def test_an_outage_leaves_unread_a_looked_up_id_with_no_dated_record(self, al_id: int, unread: bool) -> None:
         store = FakeCacheStore()
-        store.put_anilist_meta(3, _dateless_record(3))
-        store.put_anilist_meta(4, _stale_record(4))
+        store.put_anilist_meta(3, _dateless_answer(3))
+        store.put_anilist_meta(4, _stale_answer(4))
         gateway = make_anilist_gateway(ScriptedAniListClient(absent=frozenset({5}), failing=frozenset({1})), store)
         gateway.load_cache()
         # AniList answers that it doesn't have id 5, then fails on id 1.
@@ -336,7 +336,7 @@ class TestUnread:
     def test_a_record_stored_without_dates_is_not_unread_while_anilist_answers(self) -> None:
         # The stored record without dates serves the lookup, and AniList was never down.
         store = FakeCacheStore()
-        store.put_anilist_meta(3, _dateless_record(3))
+        store.put_anilist_meta(3, _dateless_answer(3))
         gateway = make_anilist_gateway(ScriptedAniListClient(), store)
         gateway.load_cache()
         gateway.episode_count(3)
@@ -356,7 +356,7 @@ class TestLogPluralization:
     def test_load_cache_singular(self) -> None:
         store = FakeCacheStore()
         gateway = make_anilist_gateway(store=store)
-        store.put_anilist_meta(1, _fresh_record(1))
+        store.put_anilist_meta(1, _fresh_answer(1))
         handler = self._captured(gateway)
 
         gateway.load_cache()
@@ -367,7 +367,7 @@ class TestLogPluralization:
         store = FakeCacheStore()
         gateway = make_anilist_gateway(store=store)
         for al_id in (1, 2):
-            store.put_anilist_meta(al_id, _fresh_record(al_id))
+            store.put_anilist_meta(al_id, _fresh_answer(al_id))
         handler = self._captured(gateway)
 
         gateway.load_cache()
@@ -377,7 +377,7 @@ class TestLogPluralization:
     def test_evict_singular(self) -> None:
         store = FakeCacheStore()
         gateway = make_anilist_gateway(store=store)
-        store.put_anilist_meta(1, _stale_record(1))
+        store.put_anilist_meta(1, _stale_answer(1))
         handler = self._captured(gateway)
 
         gateway.save_cache(dry_run=False)

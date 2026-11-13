@@ -93,14 +93,14 @@ from pearlarr.output.trace import CapturedTrace
 from pearlarr.releases import AnotherTitlesCounts
 from pearlarr.wait_types import Outcome, OutcomeKind
 
-from .builders import held_files, order_only_held_back
+from .builders import files_left_for_hand_import, order_only_hand_import_files
 
 _EPOCH = 1_751_990_000.0
 _WHEN = datetime.fromtimestamp(_EPOCH)
 _TS = _WHEN.strftime("%Y-%m-%d %H:%M:%S")
 
 _STEP = ScopeId(ScopeKind.BOOT_STEP, 1)
-_ENTRY = ScopeId(ScopeKind.ENTRY, 2)
+_TITLE_SCOPE = ScopeId(ScopeKind.ENTRY, 2)
 _WAIT = ScopeId(ScopeKind.WAIT_REGION, 3)
 
 
@@ -116,21 +116,21 @@ def _format(event: Event, *events_before: Event) -> str | None:
     """
 
     stream = io.StringIO()
-    sink = PlainRenderer(stream)
-    sink.set_level(logging.DEBUG)
+    renderer = PlainRenderer(stream)
+    renderer.set_level(logging.DEBUG)
     for before in events_before:
-        sink.handle(before, _EPOCH)
+        renderer.handle(before, _EPOCH)
     mark = len(stream.getvalue())
-    sink.handle(event, _EPOCH)
+    renderer.handle(event, _EPOCH)
     text = stream.getvalue()[mark:]
     return text.removesuffix("\n") if text else None
 
 
-def _entry_context() -> tuple[Event, Event, Event]:
+def _open_title_scope_events() -> tuple[Event, Event, Event]:
     return (
         ScanStarted(arr=Arr.SONARR, total=182),
         ItemStarted(arr=Arr.SONARR, index=3, total=182, title="Frieren"),
-        ScopeOpened(scope=_ENTRY, label="Frieren: Beyond Journey's End"),
+        ScopeOpened(scope=_TITLE_SCOPE, label="Frieren: Beyond Journey's End"),
     )
 
 
@@ -210,9 +210,9 @@ def test_entry_header_line_reads_the_full_breadcrumb() -> None:
         coverage="S01 E01-E28",
         url="https://releases.moe/154587",
         incomplete=True,
-        scope=_ENTRY,
+        scope=_TITLE_SCOPE,
     )
-    line = _format(header, *_entry_context())
+    line = _format(header, *_open_title_scope_events())
     assert line == (
         f"{_TS} INFO [sonarr › [3/182] Frieren › entry] checking "
         f'title="Frieren: Beyond Journey\'s End" al_id=154587 files="S01 E01-E28" '
@@ -226,9 +226,9 @@ def test_grab_action_line_joins_groups_and_names_sink_side() -> None:
         groups=(GroupLabel("SubsPlease", ("dual audio",)), GroupLabel("Kowo")),
         added=(ReleaseLabel("[SubsPlease] Sousou no Frieren", "SubsPlease"),),
         in_qbit=(ReleaseLabel("", "Kowo"),),
-        scope=_ENTRY,
+        scope=_TITLE_SCOPE,
     )
-    line = _format(action, *_entry_context())
+    line = _format(action, *_open_title_scope_events())
     assert line == (
         f"{_TS} INFO [sonarr › [3/182] Frieren › entry] adding recommended release "
         f'groups="SubsPlease [dual audio]; Kowo" added="[SubsPlease] Sousou no Frieren" downloading=Kowo'
@@ -242,9 +242,9 @@ def test_release_skipped_line_carries_its_counts() -> None:
         reason=SkipReason.PLACED_ELSEWHERE,
         url="https://x",
         counts=AnotherTitlesCounts(another_titles=12, unplaced=0),
-        scope=_ENTRY,
+        scope=_TITLE_SCOPE,
     )
-    line = _format(skipped, *_entry_context())
+    line = _format(skipped, *_open_title_scope_events())
     assert line == (
         f"{_TS} WARNING [sonarr › [3/182] Frieren › entry] release skipped "
         "group=G tracker=Nyaa reason=placed_elsewhere elsewhere=12 unplaced=0 link=https://x"
@@ -252,8 +252,8 @@ def test_release_skipped_line_carries_its_counts() -> None:
 
 
 def test_grab_failed_line_escapes_embedded_quotes() -> None:
-    failed = GrabFailed(group="G", url="https://x", error='tracker said "denied"', scope=_ENTRY)
-    line = _format(failed, *_entry_context())
+    failed = GrabFailed(group="G", url="https://x", error='tracker said "denied"', scope=_TITLE_SCOPE)
+    line = _format(failed, *_open_title_scope_events())
     assert line == (
         f"{_TS} WARNING [sonarr › [3/182] Frieren › entry] grab failed "
         f'group=G link=https://x error="tracker said \\"denied\\""'
@@ -303,7 +303,7 @@ def test_unmatched_graduation_line_names_the_files() -> None:
         outcome=Outcome.UNMATCHED,
         files=None,
         waited_s=15.0,
-        left_for_hand_import=held_files("a.mkv", "b.mkv"),
+        left_for_hand_import=files_left_for_hand_import("a.mkv", "b.mkv"),
         scope=_WAIT,
     )
     assert _format(row_finished, *context) == (
@@ -318,7 +318,7 @@ def test_partial_graduation_line_names_the_files_left_for_a_hand_import() -> Non
         outcome=Outcome.PARTIAL,
         files=None,
         waited_s=15.0,
-        left_for_hand_import=held_files("a.mkv", "b.mkv"),
+        left_for_hand_import=files_left_for_hand_import("a.mkv", "b.mkv"),
         scope=_WAIT,
     )
     assert _format(row_finished, *context) == (
@@ -333,7 +333,7 @@ def test_order_only_graduation_line_says_why_and_keys_each_file() -> None:
         outcome=Outcome.PARTIAL,
         files=None,
         waited_s=15.0,
-        left_for_hand_import=order_only_held_back(),
+        left_for_hand_import=order_only_hand_import_files(),
         scope=_WAIT,
     )
     assert _format(row_finished, *context) == (
@@ -374,7 +374,7 @@ def test_handle_demoted_diagnostic_never_claims_frontier_placement() -> None:
         origin="output.late.entry",
         placed_by=PlacedBy.HANDLE,
     )
-    line = _format(diag, *_entry_context())
+    line = _format(diag, *_open_title_scope_events())
     assert line == f"{_TS} INFO [output.late.entry] x [after entry 'T' closed]"
 
 
@@ -394,8 +394,8 @@ def test_diagnostic_trace_appends_the_full_plain_traceback() -> None:
 
 def test_pure_boundaries_and_ephemerals_have_no_text_form() -> None:
     silent: list[Event] = [
-        ScopeOpened(scope=_ENTRY, label="x"),
-        ScopeClosed(scope=_ENTRY),
+        ScopeOpened(scope=_TITLE_SCOPE, label="x"),
+        ScopeClosed(scope=_TITLE_SCOPE),
         BootStepStarted(scope=_STEP, label="x"),
         ScanFinished(arr=Arr.SONARR),
         ArrRunFinished(arr=Arr.SONARR),
@@ -485,19 +485,19 @@ def test_summary_renders_one_head_line_plus_one_line_per_record() -> None:
 # --- sinks: thresholds, routing, parity, rotation --------------------------------------
 
 
-def _line_sink() -> tuple[PlainRenderer, io.StringIO]:
+def _plain_renderer() -> tuple[PlainRenderer, io.StringIO]:
     stream = io.StringIO()
     return PlainRenderer(stream), stream
 
 
 def test_file_sink_honors_the_configured_level_but_still_folds(tmp_path: Path) -> None:
-    sink = FileLogRenderer(str(tmp_path))
-    sink.set_level(logging.WARNING)
+    renderer = FileLogRenderer(str(tmp_path))
+    renderer.set_level(logging.WARNING)
 
-    for event in _entry_context():
-        sink.handle(event, _EPOCH)  # all INFO: filtered, but the fold must still advance
-    sink.handle(Diagnostic(severity=Severity.WARNING, message="late warning", origin="anilist"), _EPOCH)
-    sink.close()
+    for event in _open_title_scope_events():
+        renderer.handle(event, _EPOCH)  # all INFO: filtered, but the fold must still advance
+    renderer.handle(Diagnostic(severity=Severity.WARNING, message="late warning", origin="anilist"), _EPOCH)
+    renderer.close()
 
     content = (tmp_path / "Pearlarr.log").read_text(encoding="utf-8")
     assert content == (
@@ -508,12 +508,12 @@ def test_file_sink_honors_the_configured_level_but_still_folds(tmp_path: Path) -
 def test_a_failed_graduation_admits_through_a_warning_level_sink(tmp_path: Path) -> None:
     # P6: severity_of(RowFinished) is category-based, so a FAILED
     # graduation (ERROR) survives a raised file level while a success drops.
-    sink = FileLogRenderer(str(tmp_path))
-    sink.set_level(logging.WARNING)
+    renderer = FileLogRenderer(str(tmp_path))
+    renderer.set_level(logging.WARNING)
 
-    sink.handle(RowFinished(label="Ok Show", outcome=Outcome.IMPORTED, files=1, waited_s=5.0), _EPOCH)
-    sink.handle(RowFinished(label="Bad Show", outcome=Outcome.DOWNLOAD_ERRORED, files=None, waited_s=5.0), _EPOCH)
-    sink.close()
+    renderer.handle(RowFinished(label="Ok Show", outcome=Outcome.IMPORTED, files=1, waited_s=5.0), _EPOCH)
+    renderer.handle(RowFinished(label="Bad Show", outcome=Outcome.DOWNLOAD_ERRORED, files=None, waited_s=5.0), _EPOCH)
+    renderer.close()
 
     content = (tmp_path / "Pearlarr.log").read_text(encoding="utf-8")
     assert "Ok Show" not in content
@@ -521,11 +521,11 @@ def test_a_failed_graduation_admits_through_a_warning_level_sink(tmp_path: Path)
 
 
 def test_a_warning_file_level_admits_per_line_within_the_summary(tmp_path: Path) -> None:
-    sink = FileLogRenderer(str(tmp_path))
-    sink.set_level(logging.WARNING)
+    renderer = FileLogRenderer(str(tmp_path))
+    renderer.set_level(logging.WARNING)
 
-    sink.handle(_summary_ready(), _EPOCH)
-    sink.close()
+    renderer.handle(_summary_ready(), _EPOCH)
+    renderer.close()
 
     # Line-granular admission: the WARNING needs-action row lands. The INFO
     # head line and the INFO added row drop.
@@ -540,10 +540,10 @@ def test_a_warning_file_level_admits_per_line_within_the_summary(tmp_path: Path)
 
 def test_file_only_diagnostics_reach_the_file_but_not_stdout(tmp_path: Path) -> None:
     note = Diagnostic(severity=Severity.WARNING, message="renderer failed", origin="output.hub", file_only=True)
-    line_sink, stream = _line_sink()
+    plain_renderer, stream = _plain_renderer()
     file_log_renderer = FileLogRenderer(str(tmp_path))
 
-    line_sink.handle(note, _EPOCH)
+    plain_renderer.handle(note, _EPOCH)
     file_log_renderer.handle(note, _EPOCH)
     file_log_renderer.close()
 
@@ -554,18 +554,18 @@ def test_file_only_diagnostics_reach_the_file_but_not_stdout(tmp_path: Path) -> 
 def test_line_and_file_output_are_byte_identical(tmp_path: Path) -> None:
     events: list[Event] = [
         PearlarrStarted(version="v1.0.0", data_dir="/data"),
-        *_entry_context(),
-        TitleHeader(state=TitleState.CHECKING, title="Frieren", scope=_ENTRY),
+        *_open_title_scope_events(),
+        TitleHeader(state=TitleState.CHECKING, title="Frieren", scope=_TITLE_SCOPE),
         Diagnostic(severity=Severity.WARNING, message="rate limited", origin="anilist"),
         ScanFinished(arr=Arr.SONARR),
         _summary_ready(),
         ArrRunFinished(arr=Arr.SONARR),
     ]
-    line_sink, stream = _line_sink()
+    plain_renderer, stream = _plain_renderer()
     file_log_renderer = FileLogRenderer(str(tmp_path))
 
     for event in events:
-        line_sink.handle(event, _EPOCH)
+        plain_renderer.handle(event, _EPOCH)
         file_log_renderer.handle(event, _EPOCH)
     file_log_renderer.close()
 
@@ -578,16 +578,16 @@ def test_line_and_file_parity_holds_at_a_warning_level(tmp_path: Path) -> None:
     # divergence is the file_only carve-out.
     events: list[Event] = [
         Diagnostic(severity=Severity.WARNING, message="rate limited", origin="anilist"),
-        *_entry_context(),  # INFO scan events: dropped by both surfaces
+        *_open_title_scope_events(),  # INFO scan events: dropped by both surfaces
         Diagnostic(severity=Severity.WARNING, message="renderer failed", origin="output.hub", file_only=True),
     ]
-    line_sink, stream = _line_sink()
+    plain_renderer, stream = _plain_renderer()
     file_log_renderer = FileLogRenderer(str(tmp_path))
-    line_sink.set_level(logging.WARNING)
+    plain_renderer.set_level(logging.WARNING)
     file_log_renderer.set_level(logging.WARNING)
 
     for event in events:
-        line_sink.handle(event, _EPOCH)
+        plain_renderer.handle(event, _EPOCH)
         file_log_renderer.handle(event, _EPOCH)
     file_log_renderer.close()
 
@@ -615,19 +615,19 @@ def _make_backup(tmp_path: Path, name: str, age_days: float) -> Path:
 
 
 def test_file_rotation_names_the_backup_after_the_run_s_mtime(tmp_path: Path) -> None:
-    sink = FileLogRenderer(str(tmp_path))
+    renderer = FileLogRenderer(str(tmp_path))
     log = tmp_path / "Pearlarr.log"
 
-    sink.handle(PearlarrStarted(version="one", data_dir="/d"), _EPOCH)
+    renderer.handle(PearlarrStarted(version="one", data_dir="/d"), _EPOCH)
     first_run = datetime(2026, 1, 1, 10, 0, 0)
     _pin_mtime(log, first_run)
-    sink.begin_run()
-    sink.handle(PearlarrStarted(version="two", data_dir="/d"), _EPOCH)  # rotates "one"
+    renderer.begin_run()
+    renderer.handle(PearlarrStarted(version="two", data_dir="/d"), _EPOCH)  # rotates "one"
     second_run = datetime(2026, 1, 2, 11, 30, 15)
     _pin_mtime(log, second_run)
-    sink.begin_run()
-    sink.handle(PearlarrStarted(version="three", data_dir="/d"), _EPOCH)  # rotates "two"
-    sink.close()
+    renderer.begin_run()
+    renderer.handle(PearlarrStarted(version="three", data_dir="/d"), _EPOCH)  # rotates "two"
+    renderer.close()
 
     assert "three" in log.read_text(encoding="utf-8")
     one = tmp_path / f"Pearlarr.log.{first_run.strftime(_BACKUP_STAMP_FORMAT)}"
@@ -637,18 +637,18 @@ def test_file_rotation_names_the_backup_after_the_run_s_mtime(tmp_path: Path) ->
 
 
 def test_rotate_same_second_collision_gets_a_numeric_suffix(tmp_path: Path) -> None:
-    sink = FileLogRenderer(str(tmp_path))
+    renderer = FileLogRenderer(str(tmp_path))
     log = tmp_path / "Pearlarr.log"
     when = datetime(2026, 1, 1, 10, 0, 0)
 
-    sink.handle(PearlarrStarted(version="one", data_dir="/d"), _EPOCH)
+    renderer.handle(PearlarrStarted(version="one", data_dir="/d"), _EPOCH)
     _pin_mtime(log, when)
-    sink.begin_run()
-    sink.handle(PearlarrStarted(version="two", data_dir="/d"), _EPOCH)  # rotates "one" to the bare stamp
+    renderer.begin_run()
+    renderer.handle(PearlarrStarted(version="two", data_dir="/d"), _EPOCH)  # rotates "one" to the bare stamp
     _pin_mtime(log, when)  # same second as "one"
-    sink.begin_run()
-    sink.handle(PearlarrStarted(version="three", data_dir="/d"), _EPOCH)  # collides, falls to ".1"
-    sink.close()
+    renderer.begin_run()
+    renderer.handle(PearlarrStarted(version="three", data_dir="/d"), _EPOCH)  # collides, falls to ".1"
+    renderer.close()
 
     stamp = when.strftime(_BACKUP_STAMP_FORMAT)
     assert "one" in (tmp_path / f"Pearlarr.log.{stamp}").read_text(encoding="utf-8")
@@ -657,11 +657,11 @@ def test_rotate_same_second_collision_gets_a_numeric_suffix(tmp_path: Path) -> N
 
 
 def test_an_idle_cycle_never_churns_a_backup(tmp_path: Path) -> None:
-    sink = FileLogRenderer(str(tmp_path))
-    sink.begin_run()
-    sink.begin_run()  # no writes in between: nothing to rotate
-    sink.handle(PearlarrStarted(version="only", data_dir="/d"), _EPOCH)
-    sink.close()
+    renderer = FileLogRenderer(str(tmp_path))
+    renderer.begin_run()
+    renderer.begin_run()  # no writes in between: nothing to rotate
+    renderer.handle(PearlarrStarted(version="only", data_dir="/d"), _EPOCH)
+    renderer.close()
 
     assert (tmp_path / "Pearlarr.log").exists()
     assert list(tmp_path.glob("Pearlarr.log.*")) == []
@@ -674,17 +674,17 @@ def test_pre_cycle_writes_append_and_rotation_fires_once_per_begin_cycle(tmp_pat
     log.write_text("previous run\n", encoding="utf-8")
     when = datetime(2026, 1, 1, 10, 0, 0)
     _pin_mtime(log, when)
-    sink = FileLogRenderer(str(tmp_path))
+    renderer = FileLogRenderer(str(tmp_path))
 
-    sink.handle(PearlarrStarted(version="pre-cycle", data_dir="/d"), _EPOCH)
+    renderer.handle(PearlarrStarted(version="pre-cycle", data_dir="/d"), _EPOCH)
     assert list(tmp_path.glob("Pearlarr.log.*")) == []  # appended, no rotation
     log_text = log.read_text(encoding="utf-8")
     assert log_text.startswith("previous run\n") and "pre-cycle" in log_text
     _pin_mtime(log, when)  # the append above bumped mtime, re-pin for a deterministic stamp
 
-    sink.begin_run()
-    sink.handle(PearlarrStarted(version="cycle-one", data_dir="/d"), _EPOCH)
-    sink.close()
+    renderer.begin_run()
+    renderer.handle(PearlarrStarted(version="cycle-one", data_dir="/d"), _EPOCH)
+    renderer.close()
 
     backups = list(tmp_path.glob("Pearlarr.log.*"))
     assert len(backups) == 1  # exactly one rotation
@@ -694,11 +694,11 @@ def test_pre_cycle_writes_append_and_rotation_fires_once_per_begin_cycle(tmp_pat
 
 
 def test_a_reopened_file_sink_appends_after_close(tmp_path: Path) -> None:
-    sink = FileLogRenderer(str(tmp_path))
-    sink.handle(PearlarrStarted(version="one", data_dir="/d"), _EPOCH)
-    sink.close()
-    sink.handle(PearlarrStarted(version="two", data_dir="/d"), _EPOCH)
-    sink.close()
+    renderer = FileLogRenderer(str(tmp_path))
+    renderer.handle(PearlarrStarted(version="one", data_dir="/d"), _EPOCH)
+    renderer.close()
+    renderer.handle(PearlarrStarted(version="two", data_dir="/d"), _EPOCH)
+    renderer.close()
 
     # Reopen without a pending rotation appends - never a silent truncate.
     content = (tmp_path / "Pearlarr.log").read_text(encoding="utf-8")
@@ -709,16 +709,16 @@ def test_a_reopened_file_sink_appends_after_close(tmp_path: Path) -> None:
 
 def test_backstop_deletes_oldest_backups_beyond_the_cap(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(line_renderers, "_BACKSTOP_MAX_BACKUPS", 2)
-    sink = FileLogRenderer(str(tmp_path))
+    renderer = FileLogRenderer(str(tmp_path))
     log = tmp_path / "Pearlarr.log"
     stamps = [datetime(2026, 1, day, 0, 0, 0) for day in (1, 2, 3, 4)]
 
-    sink.handle(PearlarrStarted(version="seed", data_dir="/d"), _EPOCH)
+    renderer.handle(PearlarrStarted(version="seed", data_dir="/d"), _EPOCH)
     for i, when in enumerate(stamps):
         _pin_mtime(log, when)
-        sink.begin_run()
-        sink.handle(PearlarrStarted(version=f"run-{i}", data_dir="/d"), _EPOCH)
-    sink.close()
+        renderer.begin_run()
+        renderer.handle(PearlarrStarted(version=f"run-{i}", data_dir="/d"), _EPOCH)
+    renderer.close()
 
     backups = list(tmp_path.glob("Pearlarr.log.*"))
     assert len(backups) == 2  # capped by the monkeypatched backstop
@@ -727,7 +727,7 @@ def test_backstop_deletes_oldest_backups_beyond_the_cap(tmp_path: Path, monkeypa
 
 
 def test_apply_retention_days_prunes_older_backups_keeps_younger_never_the_live_file(tmp_path: Path) -> None:
-    sink = FileLogRenderer(str(tmp_path))
+    renderer = FileLogRenderer(str(tmp_path))
     live = tmp_path / "Pearlarr.log"
     live.write_text("live\n", encoding="utf-8")
     _pin_mtime(live, datetime.now() - timedelta(days=999))  # an ancient mtime must never matter for the live file
@@ -735,7 +735,7 @@ def test_apply_retention_days_prunes_older_backups_keeps_younger_never_the_live_
     old_backup = _make_backup(tmp_path, "Pearlarr.log.2025-01-01_000000", age_days=30)
     young_backup = _make_backup(tmp_path, "Pearlarr.log.2026-01-01_000000", age_days=1)
 
-    sink.apply_retention_days(14)
+    renderer.apply_retention_days(14)
 
     assert not old_backup.exists()
     assert young_backup.exists()
@@ -743,20 +743,20 @@ def test_apply_retention_days_prunes_older_backups_keeps_younger_never_the_live_
 
 
 def test_apply_retention_days_prunes_legacy_numbered_backups_by_age_too(tmp_path: Path) -> None:
-    sink = FileLogRenderer(str(tmp_path))
+    renderer = FileLogRenderer(str(tmp_path))
     legacy_old = _make_backup(tmp_path, "Pearlarr.log.9", age_days=30)
     legacy_young = _make_backup(tmp_path, "Pearlarr.log.1", age_days=1)
 
-    sink.apply_retention_days(14)
+    renderer.apply_retention_days(14)
 
     assert not legacy_old.exists()
     assert legacy_young.exists()
 
 
 def test_apply_retention_days_before_any_rotation_is_a_no_op(tmp_path: Path) -> None:
-    sink = FileLogRenderer(str(tmp_path))
+    renderer = FileLogRenderer(str(tmp_path))
 
-    sink.apply_retention_days(14)  # nothing exists yet - must not raise or create anything
+    renderer.apply_retention_days(14)  # nothing exists yet - must not raise or create anything
 
     assert list(tmp_path.iterdir()) == []
 
@@ -765,7 +765,7 @@ def test_apply_retention_days_survives_an_undeletable_backup_and_prunes_the_rest
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     # Retention runs outside hub dispatch. A read-only backup must not kill the run.
-    sink = FileLogRenderer(str(tmp_path))
+    renderer = FileLogRenderer(str(tmp_path))
     stuck = _make_backup(tmp_path, "Pearlarr.log.2025-01-01_000000", age_days=30)
     doomed = _make_backup(tmp_path, "Pearlarr.log.2025-02-01_000000", age_days=29)
     real_remove = os.remove
@@ -776,7 +776,7 @@ def test_apply_retention_days_survives_an_undeletable_backup_and_prunes_the_rest
         real_remove(path)
 
     monkeypatch.setattr(os, "remove", remove_unless_stuck)
-    sink.apply_retention_days(14)
+    renderer.apply_retention_days(14)
 
     assert stuck.exists()
     assert not doomed.exists()
@@ -784,7 +784,7 @@ def test_apply_retention_days_survives_an_undeletable_backup_and_prunes_the_rest
 
 def test_backstop_survives_an_undeletable_oldest_backup(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(line_renderers, "_BACKSTOP_MAX_BACKUPS", 1)
-    sink = FileLogRenderer(str(tmp_path))
+    renderer = FileLogRenderer(str(tmp_path))
     log = tmp_path / "Pearlarr.log"
     stuck = _make_backup(tmp_path, "Pearlarr.log.2025-01-01_000000", age_days=30)
     real_remove = os.remove
@@ -795,11 +795,11 @@ def test_backstop_survives_an_undeletable_oldest_backup(tmp_path: Path, monkeypa
         real_remove(path)
 
     monkeypatch.setattr(os, "remove", remove_unless_stuck)
-    sink.handle(PearlarrStarted(version="one", data_dir="/d"), _EPOCH)
+    renderer.handle(PearlarrStarted(version="one", data_dir="/d"), _EPOCH)
     _pin_mtime(log, datetime(2026, 1, 1, 10, 0, 0))
-    sink.begin_run()
-    sink.handle(PearlarrStarted(version="two", data_dir="/d"), _EPOCH)  # rotates past the cap
-    sink.close()
+    renderer.begin_run()
+    renderer.handle(PearlarrStarted(version="two", data_dir="/d"), _EPOCH)  # rotates past the cap
+    renderer.close()
 
     assert stuck.exists()  # left behind, but the write - and the cycle's log - survived
     assert "two" in log.read_text(encoding="utf-8")
@@ -808,34 +808,34 @@ def test_backstop_survives_an_undeletable_oldest_backup(tmp_path: Path, monkeypa
 def test_backups_are_found_when_the_log_dir_contains_glob_metacharacters(tmp_path: Path) -> None:
     weird = tmp_path / "logs [seedbox]"
     weird.mkdir()
-    sink = FileLogRenderer(str(weird))
+    renderer = FileLogRenderer(str(weird))
     old_backup = _make_backup(weird, "Pearlarr.log.2025-01-01_000000", age_days=30)
 
-    sink.apply_retention_days(14)
+    renderer.apply_retention_days(14)
 
     assert not old_backup.exists()
 
 
 def test_every_line_is_on_disk_immediately(tmp_path: Path) -> None:
     # Per-line flush (crash fidelity): the tail is on disk before close or any WARNING.
-    sink = FileLogRenderer(str(tmp_path))
+    renderer = FileLogRenderer(str(tmp_path))
     log = tmp_path / "Pearlarr.log"
 
-    sink.handle(PearlarrStarted(version="v1.0.0", data_dir="/d"), _EPOCH)
+    renderer.handle(PearlarrStarted(version="v1.0.0", data_dir="/d"), _EPOCH)
     assert "Pearlarr started" in log.read_text(encoding="utf-8")
 
-    sink.handle(Diagnostic(severity=Severity.WARNING, message="crash imminent", origin="app"), _EPOCH)
+    renderer.handle(Diagnostic(severity=Severity.WARNING, message="crash imminent", origin="app"), _EPOCH)
     assert "crash imminent" in log.read_text(encoding="utf-8")
-    sink.close()
+    renderer.close()
 
 
 def test_probe_leaves_no_file_behind_and_keeps_existing_content(tmp_path: Path) -> None:
-    sink = FileLogRenderer(str(tmp_path))
-    sink.probe()
+    renderer = FileLogRenderer(str(tmp_path))
+    renderer.probe()
     assert not (tmp_path / "Pearlarr.log").exists()  # the probe's own file is removed
 
     (tmp_path / "Pearlarr.log").write_text("previous run\n", encoding="utf-8")
-    sink.probe()
+    renderer.probe()
     assert (tmp_path / "Pearlarr.log").read_text(encoding="utf-8") == "previous run\n"
 
 
@@ -844,33 +844,33 @@ def test_probe_raises_on_an_unwritable_log_file(tmp_path: Path) -> None:
     log = tmp_path / "Pearlarr.log"
     log.write_text("root-owned\n", encoding="utf-8")
     log.chmod(0o400)
-    sink = FileLogRenderer(str(tmp_path))
+    renderer = FileLogRenderer(str(tmp_path))
     try:
         with pytest.raises(OSError):
-            sink.probe()
+            renderer.probe()
     finally:
         log.chmod(0o644)
 
 
 def test_file_sink_writes_utf8(tmp_path: Path) -> None:
-    sink = FileLogRenderer(str(tmp_path))
-    sink.handle(
+    renderer = FileLogRenderer(str(tmp_path))
+    renderer.handle(
         TitleHeader(state=TitleState.CHECKING, title="Pokémon — ポケモン", scope=None),
         _EPOCH,
     )
-    sink.close()
+    renderer.close()
 
     content = (tmp_path / "Pearlarr.log").read_text(encoding="utf-8")
     assert "Pokémon — ポケモン" in content
 
 
 def test_wait_progress_stays_silent_below_the_pulse_cadence() -> None:
-    line_sink, stream = _line_sink()
-    line_sink.handle(WaitStarted(total=1, progress_line_s=300.0, kind=WaitKind.MONITOR, scope=None), _EPOCH)
-    line_sink.handle(Diagnostic(severity=Severity.DEBUG, message="hidden", origin="app"), _EPOCH)
+    plain_renderer, stream = _plain_renderer()
+    plain_renderer.handle(WaitStarted(total=1, progress_line_s=300.0, kind=WaitKind.MONITOR, scope=None), _EPOCH)
+    plain_renderer.handle(Diagnostic(severity=Severity.DEBUG, message="hidden", origin="app"), _EPOCH)
     before = stream.getvalue()
 
-    line_sink.handle(WaitProgress(snapshot=WaitSnapshot(torrents=(), elapsed_s=1.0)), _EPOCH)
+    plain_renderer.handle(WaitProgress(snapshot=WaitSnapshot(torrents=(), elapsed_s=1.0)), _EPOCH)
     assert stream.getvalue() == before
     assert "hidden" not in before  # DEBUG below the default INFO floor
 
@@ -890,15 +890,15 @@ def _wait_progress(elapsed: float) -> WaitProgress:
 def test_grammar_sinks_pulse_still_waiting_on_the_event_cadence() -> None:
     # The anti-hang heartbeat: cadence is pure event content (progress_line_s/elapsed_s,
     # never wall clock), and the start snapshot never pulses.
-    line_sink, stream = _line_sink()
+    plain_renderer, stream = _plain_renderer()
     context = (ScanStarted(arr=Arr.SONARR, total=182), ScopeOpened(scope=_WAIT, label="wait"))
     for event in (*context, WaitStarted(total=3, progress_line_s=300.0, kind=WaitKind.MONITOR, scope=_WAIT)):
-        line_sink.handle(event, _EPOCH)
-    line_sink.handle(_wait_progress(0.0), _EPOCH)  # the start snapshot never pulses
-    line_sink.handle(_wait_progress(299.0), _EPOCH)  # within the interval
+        plain_renderer.handle(event, _EPOCH)
+    plain_renderer.handle(_wait_progress(0.0), _EPOCH)  # the start snapshot never pulses
+    plain_renderer.handle(_wait_progress(299.0), _EPOCH)  # within the interval
     before = stream.getvalue()
 
-    line_sink.handle(_wait_progress(300.0), _EPOCH)  # due at progress_line_s
+    plain_renderer.handle(_wait_progress(300.0), _EPOCH)  # due at progress_line_s
     assert stream.getvalue() == before + (
         f"{_TS} INFO [sonarr › wait] still waiting downloading=1 importing=1 queued=1 elapsed_s=300.00\n"
     )
@@ -914,10 +914,10 @@ def test_pulse_lines_keep_line_and_file_byte_parity(tmp_path: Path) -> None:
         _wait_progress(650.0),
         WaitFinished(imported=1, left=0, failed=0, elapsed_s=700.0, in_progress=0, kind=WaitKind.MONITOR, scope=_WAIT),
     ]
-    line_sink, stream = _line_sink()
+    plain_renderer, stream = _plain_renderer()
     file_log_renderer = FileLogRenderer(str(tmp_path))
     for event in events:
-        line_sink.handle(event, _EPOCH)
+        plain_renderer.handle(event, _EPOCH)
         file_log_renderer.handle(event, _EPOCH)
     file_log_renderer.close()
 
@@ -927,44 +927,44 @@ def test_pulse_lines_keep_line_and_file_byte_parity(tmp_path: Path) -> None:
 
 
 def test_a_new_wait_pass_rearms_the_pulse_skip_first() -> None:
-    line_sink, stream = _line_sink()
-    line_sink.handle(WaitStarted(total=1, progress_line_s=300.0, kind=WaitKind.MONITOR), _EPOCH)
-    line_sink.handle(_wait_progress(300.0), _EPOCH)  # skip-first: even a late start snapshot never pulses
-    line_sink.handle(_wait_progress(300.0), _EPOCH)  # due
+    plain_renderer, stream = _plain_renderer()
+    plain_renderer.handle(WaitStarted(total=1, progress_line_s=300.0, kind=WaitKind.MONITOR), _EPOCH)
+    plain_renderer.handle(_wait_progress(300.0), _EPOCH)  # skip-first: even a late start snapshot never pulses
+    plain_renderer.handle(_wait_progress(300.0), _EPOCH)  # due
 
-    line_sink.handle(
+    plain_renderer.handle(
         WaitStarted(total=1, progress_line_s=300.0, kind=WaitKind.MONITOR), _EPOCH
     )  # a second pass this run
-    line_sink.handle(_wait_progress(900.0), _EPOCH)  # skip-first again
-    line_sink.handle(_wait_progress(900.0), _EPOCH)  # due again
+    plain_renderer.handle(_wait_progress(900.0), _EPOCH)  # skip-first again
+    plain_renderer.handle(_wait_progress(900.0), _EPOCH)  # due again
 
     assert stream.getvalue().count("still waiting") == 2
 
 
 def test_begin_cycle_disarms_the_pulse_until_the_next_wait_pass() -> None:
-    line_sink, stream = _line_sink()
-    line_sink.handle(WaitStarted(total=1, progress_line_s=300.0, kind=WaitKind.MONITOR), _EPOCH)
-    line_sink.begin_run()
+    plain_renderer, stream = _plain_renderer()
+    plain_renderer.handle(WaitStarted(total=1, progress_line_s=300.0, kind=WaitKind.MONITOR), _EPOCH)
+    plain_renderer.begin_run()
 
-    line_sink.handle(_wait_progress(10_000.0), _EPOCH)
-    line_sink.handle(_wait_progress(10_000.0), _EPOCH)  # disarmed: not even a late fire
+    plain_renderer.handle(_wait_progress(10_000.0), _EPOCH)
+    plain_renderer.handle(_wait_progress(10_000.0), _EPOCH)  # disarmed: not even a late fire
     assert "still waiting" not in stream.getvalue()
 
 
 def test_pulse_lines_drop_below_a_raised_threshold_but_the_cadence_advances() -> None:
     # Line-granular admission applies to the pulse like any INFO line. The
     # throttle state advances regardless of level (the ProgressLineThrottle contract).
-    line_sink, stream = _line_sink()
-    line_sink.set_level(logging.WARNING)
-    line_sink.handle(WaitStarted(total=1, progress_line_s=300.0, kind=WaitKind.MONITOR), _EPOCH)
-    line_sink.handle(_wait_progress(0.0), _EPOCH)
-    line_sink.handle(_wait_progress(300.0), _EPOCH)  # due, but INFO drops at WARNING
+    plain_renderer, stream = _plain_renderer()
+    plain_renderer.set_level(logging.WARNING)
+    plain_renderer.handle(WaitStarted(total=1, progress_line_s=300.0, kind=WaitKind.MONITOR), _EPOCH)
+    plain_renderer.handle(_wait_progress(0.0), _EPOCH)
+    plain_renderer.handle(_wait_progress(300.0), _EPOCH)  # due, but INFO drops at WARNING
     assert stream.getvalue() == ""
 
-    line_sink.set_level(logging.INFO)
-    line_sink.handle(_wait_progress(400.0), _EPOCH)  # the dropped pulse still re-armed at 600
+    plain_renderer.set_level(logging.INFO)
+    plain_renderer.handle(_wait_progress(400.0), _EPOCH)  # the dropped pulse still re-armed at 600
     assert stream.getvalue() == ""
-    line_sink.handle(_wait_progress(600.0), _EPOCH)
+    plain_renderer.handle(_wait_progress(600.0), _EPOCH)
     assert "still waiting" in stream.getvalue()
 
 
@@ -984,16 +984,16 @@ class _ExplodingStream(io.StringIO):
 
 def test_the_fold_advances_even_when_the_write_blows_up() -> None:
     stream = _ExplodingStream()
-    sink = PlainRenderer(stream)
-    scan, item, opened = _entry_context()
+    renderer = PlainRenderer(stream)
+    scan, item, opened = _open_title_scope_events()
     with pytest.raises(RuntimeError):
-        sink.handle(scan, _EPOCH)
+        renderer.handle(scan, _EPOCH)
     with pytest.raises(RuntimeError):
-        sink.handle(item, _EPOCH)
-    sink.handle(opened, _EPOCH)  # no text form: folds without writing
+        renderer.handle(item, _EPOCH)
+    renderer.handle(opened, _EPOCH)  # no text form: folds without writing
 
     stream.armed = False
-    sink.handle(Diagnostic(severity=Severity.WARNING, message="late", origin="app"), _EPOCH)
+    renderer.handle(Diagnostic(severity=Severity.WARNING, message="late", origin="app"), _EPOCH)
     assert stream.getvalue() == (f'{_TS} WARNING [app] late during="Frieren: Beyond Journey\'s End" placed=frontier\n')
 
 
@@ -1038,7 +1038,7 @@ def test_json_diagnostic_shape_with_placement_and_trace() -> None:
     except ValueError as exc:
         trace = CapturedTrace.from_exception(exc)
     events: list[Event] = [
-        *_entry_context(),
+        *_open_title_scope_events(),
         Diagnostic(severity=Severity.WARNING, message="rate limited", origin="anilist", trace=trace),
     ]
     payloads = _json_lines(events)
@@ -1066,10 +1066,10 @@ def test_json_diagnostic_shape_with_placement_and_trace() -> None:
 
 def test_json_includes_scope_boundaries_but_not_ephemerals() -> None:
     events: list[Event] = [
-        ScopeOpened(scope=_ENTRY, label="Frieren"),
+        ScopeOpened(scope=_TITLE_SCOPE, label="Frieren"),
         BootStepStarted(scope=_STEP, label="x"),
         WaitProgress(snapshot=WaitSnapshot(torrents=(), elapsed_s=1.0)),
-        ScopeClosed(scope=_ENTRY),
+        ScopeClosed(scope=_TITLE_SCOPE),
         ArrRunFinished(arr=Arr.SONARR),
     ]
     payloads = _json_lines(events)
@@ -1102,7 +1102,7 @@ def test_json_summary_carries_held_by_cap_only_when_the_run_held_titles() -> Non
 
     stats = ArrRunStats(checked=3)
     stats.held_by_cap = 2
-    held = ArrRunSummaryReady(
+    summary = ArrRunSummaryReady(
         ArrRunSummary(
             arr=Arr.SONARR,
             dry_run_note=None,
@@ -1115,14 +1115,14 @@ def test_json_summary_carries_held_by_cap_only_when_the_run_held_titles() -> Non
             tip=None,
         ),
     )
-    (payload,) = _json_lines([held])
+    (payload,) = _json_lines([summary])
     assert payload["held_by_cap"] == 2
 
 
 def test_json_scoped_events_carry_their_breadcrumb_path() -> None:
     events: list[Event] = [
-        *_entry_context(),
-        TitleHeader(state=TitleState.CHECKING, title="Frieren", scope=_ENTRY),
+        *_open_title_scope_events(),
+        TitleHeader(state=TitleState.CHECKING, title="Frieren", scope=_TITLE_SCOPE),
     ]
     payloads = _json_lines(events)
     header = payloads[-1]
@@ -1141,8 +1141,8 @@ def _exemplars() -> list[Event]:
         PearlarrStarted(version="v1.0.0", data_dir="/d"),
         ScheduledRunStarted(number=1),
         NextRunScheduled(at=_WHEN.astimezone()),
-        ScopeOpened(scope=_ENTRY, label="T"),
-        ScopeClosed(scope=_ENTRY),
+        ScopeOpened(scope=_TITLE_SCOPE, label="T"),
+        ScopeClosed(scope=_TITLE_SCOPE),
         BootStepStarted(scope=_STEP, label="Reading config"),
         BootStepProgressed(scope=_STEP, fraction=0.5),
         BootStepSlow(scope=_STEP, label="Reading config"),
@@ -1211,9 +1211,9 @@ def test_a_newline_in_a_breadcrumb_label_cannot_break_the_line_grammar() -> None
     context = (
         ScanStarted(arr=Arr.SONARR, total=1),
         ItemStarted(arr=Arr.SONARR, index=1, total=1, title="evil\ntitle"),
-        ScopeOpened(scope=_ENTRY, label="entry"),
+        ScopeOpened(scope=_TITLE_SCOPE, label="entry"),
     )
-    detail = TitleDetail(label="files", value=StyledValue("S01"), scope=_ENTRY)
+    detail = TitleDetail(label="files", value=StyledValue("S01"), scope=_TITLE_SCOPE)
     line = _format(detail, *context)
     assert line is not None
     assert "\n" not in line  # ONE physical line, the escape in place

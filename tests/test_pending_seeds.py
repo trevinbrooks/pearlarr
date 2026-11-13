@@ -34,15 +34,15 @@ from pearlarr.stamps import now_stamp
 from .builders import (
     SEP,
     FakeCacheStore,
-    entry_facts,
+    make_grabbing_title,
+    make_release,
     make_sonarr_sync,
     new_torrent,
     parsed_info,
     pending_import,
     rg_group,
-    seed_scope,
     sonarr_ep,
-    url_item,
+    title_facts,
 )
 from .fakes import FakeSonarrClient
 
@@ -84,7 +84,7 @@ def _build(
     """Place the entry's files under `scope` (by default the strat's whole series), then fold the seeds."""
 
     series = strat._episodes.cached_episodes(facts.series_id) or []
-    grabbing_title = grabbing_title or _scope(series, series)
+    grabbing_title = grabbing_title or _grabbing_title(series, series)
     files = strat._parse.parsed_files(seadex_dict, series_hash="")
     placed = EntryPlacements.place(grabbing_title, files, dict.fromkeys(files, new_torrent(grabbing_title)))
     return build_pending_import_updates(seadex_dict, placed, facts)
@@ -96,10 +96,12 @@ def _record(update: PendingImportUpdate) -> PendingImport:
     return update.pending_import_at(_ADDED_AT, fresh=True)
 
 
-def _scope(ep_list: list[SonarrEpisode], series: list[SonarrEpisode], names: TitleNames | None = None) -> GrabbingTitle:
+def _grabbing_title(
+    ep_list: list[SonarrEpisode], series: list[SonarrEpisode], names: TitleNames | None = None
+) -> GrabbingTitle:
     """The grab-time scope: entry 1's own list over the whole-series map."""
 
-    return seed_scope(episode_index(ep_list), episode_index(series), names=names or TitleNames())
+    return make_grabbing_title(episode_index(ep_list), episode_index(series), names=names or TitleNames())
 
 
 def _trust(own: PendingImport, siblings: Sequence[PendingImport] = ()) -> TrustedGroups:
@@ -121,9 +123,9 @@ class TestBuildPendingSeeds:
         seadex_dict = {
             "RG": rg_group(
                 {
-                    "u1": url_item(files=["Show - 01.mkv"], size=[1000], infohash="h1", download=True),
-                    "u2": url_item(files=["Show - 02.mkv"], size=[2000], infohash="h2", download=False),
-                    "u3": url_item(files=["Show - 03.mkv"], size=[3000], infohash=None, download=True),
+                    "u1": make_release(files=["Show - 01.mkv"], size=[1000], infohash="h1", download=True),
+                    "u2": make_release(files=["Show - 02.mkv"], size=[2000], infohash="h2", download=False),
+                    "u3": make_release(files=["Show - 03.mkv"], size=[3000], infohash=None, download=True),
                 },
             ),
         }
@@ -131,8 +133,8 @@ class TestBuildPendingSeeds:
         updates = _build(
             _strat(parses, ep_list),
             seadex_dict,
-            facts=entry_facts(),
-            grabbing_title=_scope(ep_list, ep_list, TitleNames("Show", ("Show", "Shou"))),
+            facts=title_facts(),
+            grabbing_title=_grabbing_title(ep_list, ep_list, TitleNames("Show", ("Show", "Shou"))),
         )
 
         # Only the download+hash url is seeded (no download / no hash are skipped).
@@ -168,13 +170,13 @@ class TestBuildPendingSeeds:
             ep_list_cache={7: ep_list},
         )
         seadex_dict = {
-            "RG": rg_group({"u1": url_item(files=["Show - 01.mkv"], size=[1000], infohash="h1", download=True)}),
+            "RG": rg_group({"u1": make_release(files=["Show - 01.mkv"], size=[1000], infohash="h1", download=True)}),
         }
 
         updates = _build(
             strat,
             seadex_dict,
-            facts=entry_facts(),
+            facts=title_facts(),
         )
 
         assert dict(updates["h1"].file_map) == {}
@@ -186,13 +188,13 @@ class TestBuildPendingSeeds:
         ep_list = [sonarr_ep(1, 1, ep_id=101, episode_file_id=0)]
         parses = {"Show - 01.mkv": parsed_info(season=1, episodes=(1,))}
         seadex_dict = {
-            "RG": rg_group({"u1": url_item(files=["Show - 01.mkv"], size=[1000], infohash="h1", download=True)}),
+            "RG": rg_group({"u1": make_release(files=["Show - 01.mkv"], size=[1000], infohash="h1", download=True)}),
         }
 
         updates = _build(
             _strat(parses, ep_list),
             seadex_dict,
-            facts=entry_facts(
+            facts=title_facts(
                 guards=OwnedAtGrab(entry_groups=("RG", "Kept"), stale_groups=("Stale",)),
             ),
         )
@@ -208,14 +210,14 @@ class TestBuildPendingSeeds:
         parses = {"Show - 01.mkv": parsed_info(season=1, episodes=(1,))}
         seadex_dict = {
             "RG": rg_group(
-                {"u1": url_item(files=["Show - 01.mkv"], size=[1000, 50], infohash="h1", download=True)},
+                {"u1": make_release(files=["Show - 01.mkv"], size=[1000, 50], infohash="h1", download=True)},
             ),
         }
 
         updates = _build(
             _strat(parses, ep_list),
             seadex_dict,
-            facts=entry_facts(),
+            facts=title_facts(),
         )
 
         assert updates["h1"].facts.release_sizes == (1000, 50)
@@ -237,7 +239,7 @@ class TestBuildPendingSeeds:
         seadex_dict = {
             "RG": rg_group(
                 {
-                    "u1": url_item(
+                    "u1": make_release(
                         files=["Show - 01.mkv", "Show - 02.mkv"],
                         size=[1000, 2000],
                         infohash="h1",
@@ -250,7 +252,7 @@ class TestBuildPendingSeeds:
         updates = _build(
             _strat(parses, ep_list),
             seadex_dict,
-            facts=entry_facts(
+            facts=title_facts(
                 guards=OwnedAtGrab(entry_groups=("RG", "Kept")),
             ),
         )
@@ -267,7 +269,7 @@ class TestBuildPendingSeeds:
         seadex_dict = {
             "RG": rg_group(
                 {
-                    "u1": url_item(
+                    "u1": make_release(
                         files=["Show - 02.mkv"],
                         size=[2000],
                         infohash="h1",
@@ -281,7 +283,7 @@ class TestBuildPendingSeeds:
         updates = _build(
             _strat(parses, ep_list),
             seadex_dict,
-            facts=entry_facts(
+            facts=title_facts(
                 guards=OwnedAtGrab(owned_episodes=(SizeMatchedEpisode(101, 1000),)),
             ),
         )
@@ -297,7 +299,7 @@ class TestBuildPendingSeeds:
         seadex_dict = {
             "RG": rg_group(
                 {
-                    "u1": url_item(
+                    "u1": make_release(
                         files=["Show - 01.mkv", "Show - 02.mkv"],
                         size=[1000, 2000],
                         infohash="h1",
@@ -310,7 +312,7 @@ class TestBuildPendingSeeds:
         updates = _build(
             _strat(parses, ep_list),
             seadex_dict,
-            facts=entry_facts(),
+            facts=title_facts(),
         )
 
         update = updates["h1"]
@@ -329,14 +331,14 @@ class TestBuildPendingSeeds:
         series = [sonarr_ep(1, 1, ep_id=101, episode_file_id=0)]
         parses = {"Show - 01.mkv": parsed_info(season=1, episodes=(1,))}
         seadex_dict = {
-            "RG": rg_group({"u1": url_item(files=["Show - 01.mkv"], size=[1000], infohash="h1", download=True)}),
+            "RG": rg_group({"u1": make_release(files=["Show - 01.mkv"], size=[1000], infohash="h1", download=True)}),
         }
 
         updates = _build(
             _strat(parses, series),
             seadex_dict,
-            facts=entry_facts(),
-            grabbing_title=_scope([], series),
+            facts=title_facts(),
+            grabbing_title=_grabbing_title([], series),
         )
 
         assert dict(updates["h1"].file_map) == {}
@@ -349,7 +351,9 @@ class TestBuildPendingSeeds:
         ep_list = [sonarr_ep(1, 1, ep_id=101, episode_file_id=0), sonarr_ep(1, 2, ep_id=102, episode_file_id=0)]
         files = ["Show - Special A.mkv", "Show - Special B.mkv"]
         parses = {name: parsed_info() for name in files}
-        seadex_dict = {"RG": rg_group({"u1": url_item(files=files, size=[1000, 1000], infohash="h1", download=True)})}
+        seadex_dict = {
+            "RG": rg_group({"u1": make_release(files=files, size=[1000, 1000], infohash="h1", download=True)})
+        }
         sonarr = FakeSonarrClient()
         sonarr.episodes_return = None
         strat = make_sonarr_sync(
@@ -359,8 +363,8 @@ class TestBuildPendingSeeds:
         updates = _build(
             strat,
             seadex_dict,
-            facts=entry_facts(),
-            grabbing_title=_scope(ep_list, []),
+            facts=title_facts(),
+            grabbing_title=_grabbing_title(ep_list, []),
         )
 
         assert dict(updates["h1"].file_map) == {}
@@ -382,7 +386,7 @@ class TestBuildPendingSeeds:
         seadex_dict = {
             "RG": rg_group(
                 {
-                    "u1": url_item(
+                    "u1": make_release(
                         files=["Show - S03E01.mkv", "Show - S03E02.mkv", "Show - S03E13.mkv"],
                         size=[1000, 1000, 1000],
                         infohash="h1",
@@ -395,8 +399,8 @@ class TestBuildPendingSeeds:
         updates = _build(
             _strat(parses, series),
             seadex_dict,
-            facts=entry_facts(),
-            grabbing_title=_scope(ep_list, series),
+            facts=title_facts(),
+            grabbing_title=_grabbing_title(ep_list, series),
         )
 
         update = updates["h1"]
@@ -412,13 +416,15 @@ class TestBuildPendingSeeds:
         ep_list = [sonarr_ep(1, 1, ep_id=101, episode_file_id=0), sonarr_ep(1, 2, ep_id=102, episode_file_id=0)]
         parses = {"Show - S09E09.mkv": parsed_info(season=9, episodes=(9,))}
         seadex_dict = {
-            "RG": rg_group({"u1": url_item(files=["Show - S09E09.mkv"], size=[1000], infohash="h1", download=True)}),
+            "RG": rg_group(
+                {"u1": make_release(files=["Show - S09E09.mkv"], size=[1000], infohash="h1", download=True)}
+            ),
         }
 
         updates = _build(
             _strat(parses, ep_list),
             seadex_dict,
-            facts=entry_facts(),
+            facts=title_facts(),
         )
 
         assert dict(updates["h1"].file_map) == {}
@@ -436,7 +442,7 @@ class TestBuildPendingSeeds:
         seadex_dict = {
             "RG": rg_group(
                 {
-                    "u1": url_item(
+                    "u1": make_release(
                         files=["Show - 01.mkv", "Show - 01v2.mkv"],
                         size=[1000, 1000],
                         infohash="h1",
@@ -449,7 +455,7 @@ class TestBuildPendingSeeds:
         updates = _build(
             _strat(parses, ep_list),
             seadex_dict,
-            facts=entry_facts(),
+            facts=title_facts(),
         )
 
         update = updates["h1"]
@@ -469,7 +475,7 @@ class TestBuildPendingSeeds:
         seadex_dict = {
             "RG": rg_group(
                 {
-                    "u1": url_item(
+                    "u1": make_release(
                         files=["Show - 01.mkv", "Show - Extra.mkv", "Show - Zip.mkv"],
                         size=[1000, 1000, 1000],
                         infohash="h1",
@@ -482,7 +488,7 @@ class TestBuildPendingSeeds:
         updates = _build(
             _strat(parses, ep_list),
             seadex_dict,
-            facts=entry_facts(),
+            facts=title_facts(),
         )
 
         update = updates["h1"]
@@ -501,8 +507,8 @@ class TestBuildPendingSeeds:
         seadex_dict = {
             "RG": rg_group(
                 {
-                    "u1": url_item(files=["Show - S02E06.mkv"], size=[1000], infohash="h1", download=True),
-                    "u2": url_item(files=["Show - S02E07.mkv"], size=[1000], infohash="h2", download=True),
+                    "u1": make_release(files=["Show - S02E06.mkv"], size=[1000], infohash="h1", download=True),
+                    "u2": make_release(files=["Show - S02E07.mkv"], size=[1000], infohash="h2", download=True),
                 },
             ),
         }
@@ -510,7 +516,7 @@ class TestBuildPendingSeeds:
         updates = _build(
             _strat(parses, ep_list),
             seadex_dict,
-            facts=entry_facts(),
+            facts=title_facts(),
         )
 
         assert _record(updates["h1"]).display_label == f"Show{SEP}RG{SEP}S02 E06"
@@ -521,7 +527,7 @@ class TestBuildPendingSeeds:
         seadex_dict = {
             "RG": rg_group(
                 {
-                    "u1": url_item(files=["Show - 01.mkv"], size=[1000], infohash="h1", download=True),
+                    "u1": make_release(files=["Show - 01.mkv"], size=[1000], infohash="h1", download=True),
                 },
             ),
         }
@@ -529,7 +535,7 @@ class TestBuildPendingSeeds:
         updates = _build(
             _strat({}, ep_list),
             seadex_dict,
-            facts=entry_facts(),
+            facts=title_facts(),
         )
 
         assert set(updates) == {"h1"}
@@ -547,8 +553,8 @@ class TestBuildPendingSeeds:
         seadex_dict = {
             "RG": rg_group(
                 {
-                    "u1": url_item(files=["Show - S01E01.mkv"], size=[1000], infohash="h1", download=True),
-                    "u2": url_item(files=["Show - Extra.mkv"], size=[1000], infohash="h2", download=True),
+                    "u1": make_release(files=["Show - S01E01.mkv"], size=[1000], infohash="h1", download=True),
+                    "u2": make_release(files=["Show - Extra.mkv"], size=[1000], infohash="h2", download=True),
                 },
             ),
         }
@@ -556,7 +562,7 @@ class TestBuildPendingSeeds:
         updates = _build(
             _strat(parses, ep_list),
             seadex_dict,
-            facts=entry_facts(),
+            facts=title_facts(),
         )
 
         assert _record(updates["h1"]).display_label == f"Show{SEP}RG{SEP}S01 E01"
@@ -569,7 +575,7 @@ class TestBuildPendingSeeds:
         seadex_dict = {
             "RG": rg_group(
                 {
-                    "u1": url_item(files=["Show - 01.ass"], size=[10], infohash="h1", download=True),
+                    "u1": make_release(files=["Show - 01.ass"], size=[10], infohash="h1", download=True),
                 },
             ),
         }
@@ -577,7 +583,7 @@ class TestBuildPendingSeeds:
         updates = _build(
             _strat({}, ep_list),
             seadex_dict,
-            facts=entry_facts(),
+            facts=title_facts(),
         )
 
         assert updates == {}
@@ -603,14 +609,14 @@ class TestSeedGuards:
         }
         seadex_dict = {
             "RG": rg_group(
-                {"u1": url_item(files=["Show S05 Ending.mkv"], size=[1000], infohash="h1", download=True)},
+                {"u1": make_release(files=["Show S05 Ending.mkv"], size=[1000], infohash="h1", download=True)},
             ),
         }
 
         updates = _build(
             _strat(parses, ep_list),
             seadex_dict,
-            facts=entry_facts(),
+            facts=title_facts(),
         )
 
         # Still tracked (it carries a video file), just never pre-assigned.
@@ -631,14 +637,14 @@ class TestSeedGuards:
         }
         seadex_dict = {
             "RG": rg_group(
-                {"u1": url_item(files=["Show S01 Opening.mkv"], size=[1000], infohash="h1", download=True)},
+                {"u1": make_release(files=["Show S01 Opening.mkv"], size=[1000], infohash="h1", download=True)},
             ),
         }
 
         updates = _build(
             _strat(parses, ep_list),
             seadex_dict,
-            facts=entry_facts(),
+            facts=title_facts(),
         )
 
         # Still tracked (it carries a video file), just never pre-assigned.
@@ -650,14 +656,14 @@ class TestSeedGuards:
         parses = {"Show - 01-02.mkv": parsed_info(season=1, episodes=(1, 2))}
         seadex_dict = {
             "RG": rg_group(
-                {"u1": url_item(files=["Show - 01-02.mkv"], size=[1000], infohash="h1", download=True)},
+                {"u1": make_release(files=["Show - 01-02.mkv"], size=[1000], infohash="h1", download=True)},
             ),
         }
 
         updates = _build(
             _strat(parses, ep_list),
             seadex_dict,
-            facts=entry_facts(),
+            facts=title_facts(),
         )
 
         assert dict(updates["h1"].file_map) == {normalize_name("Show - 01-02.mkv"): (101, 102)}
@@ -670,15 +676,15 @@ class TestSeedGuards:
         parses = {"Show - 01-02.mkv": parsed_info(season=1, episodes=(1, 2))}
         seadex_dict = {
             "RG": rg_group(
-                {"u1": url_item(files=["Show - 01-02.mkv"], size=[1000], infohash="h1", download=True)},
+                {"u1": make_release(files=["Show - 01-02.mkv"], size=[1000], infohash="h1", download=True)},
             ),
         }
 
         updates = _build(
             _strat(parses, series),
             seadex_dict,
-            facts=entry_facts(),
-            grabbing_title=_scope(ep_list, series),
+            facts=title_facts(),
+            grabbing_title=_grabbing_title(ep_list, series),
         )
 
         assert dict(updates["h1"].file_map) == {}
@@ -694,7 +700,7 @@ class TestSeedGuards:
         seadex_dict = {
             "RG": rg_group(
                 {
-                    "u1": url_item(
+                    "u1": make_release(
                         files=["Show - 13.mkv", "Show - 13v2.mkv"],
                         size=[1000, 1001],
                         infohash="h1",
@@ -707,7 +713,7 @@ class TestSeedGuards:
         updates = _build(
             _strat(parses, ep_list),
             seadex_dict,
-            facts=entry_facts(),
+            facts=title_facts(),
         )
 
         assert dict(updates["h1"].file_map) == {normalize_name("Show - 13v2.mkv"): (213,)}
@@ -724,7 +730,7 @@ class TestSeedGuards:
         seadex_dict = {
             "RG": rg_group(
                 {
-                    "u1": url_item(
+                    "u1": make_release(
                         files=["Show - 01.mkv", "Show - 01-02.mkv"],
                         size=[1000, 2000],
                         infohash="h1",
@@ -737,7 +743,7 @@ class TestSeedGuards:
         updates = _build(
             _strat(parses, ep_list),
             seadex_dict,
-            facts=entry_facts(),
+            facts=title_facts(),
         )
 
         assert dict(updates["h1"].file_map) == {normalize_name("Show - 01.mkv"): (101,)}
@@ -751,7 +757,7 @@ class TestSeedGuards:
         seadex_dict = {
             "RG": rg_group(
                 {
-                    "u1": url_item(
+                    "u1": make_release(
                         files=["FolderA/Show - 01.mkv", "FolderB/Show - 01.mkv"],
                         size=[1000, 1000],
                         infohash="h1",
@@ -764,7 +770,7 @@ class TestSeedGuards:
         updates = _build(
             _strat(parses, ep_list),
             seadex_dict,
-            facts=entry_facts(),
+            facts=title_facts(),
         )
 
         assert dict(updates["h1"].file_map) == {normalize_name("Show - 01.mkv"): (101,)}
@@ -788,14 +794,14 @@ class TestParseWriteFeedsSeeds:
         strat, sonarr = self._cold(parse, ep_list)
         seadex_dict = {
             "RG": rg_group(
-                {"u1": url_item(files=["Show - 01.mkv"], size=[1000], infohash="h1", download=True)},
+                {"u1": make_release(files=["Show - 01.mkv"], size=[1000], infohash="h1", download=True)},
             ),
         }
 
         updates = _build(
             strat,
             seadex_dict,
-            facts=entry_facts(),
+            facts=title_facts(),
         )
 
         assert dict(updates["h1"].file_map) == {normalize_name("Show - 01.mkv"): (101,)}
@@ -817,14 +823,14 @@ class TestParseWriteFeedsSeeds:
         strat, _ = self._cold(parse, ep_list)
         seadex_dict = {
             "RG": rg_group(
-                {"u1": url_item(files=["Show S01 Opening.mkv"], size=[1000], infohash="h1", download=True)},
+                {"u1": make_release(files=["Show S01 Opening.mkv"], size=[1000], infohash="h1", download=True)},
             ),
         }
 
         updates = _build(
             strat,
             seadex_dict,
-            facts=entry_facts(),
+            facts=title_facts(),
         )
 
         assert dict(updates["h1"].file_map) == {}

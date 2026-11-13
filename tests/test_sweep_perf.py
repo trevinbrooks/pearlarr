@@ -49,12 +49,12 @@ from .builders import (
     make_config,
     make_entry_record,
     make_logger,
+    make_release,
     make_services,
     make_sonarr_episodes,
     make_sonarr_parse,
     rg_group,
     sonarr_ep,
-    url_item,
 )
 
 _NOW = datetime(2026, 6, 28, 12, 0, 0)
@@ -159,12 +159,12 @@ class TestParseRecords:
     """The parse-cache leaf: fresh-only reads and shape-owning writes."""
 
     @staticmethod
-    def _records() -> tuple[ParseCacheRows, FakeCacheStore]:
+    def _parse_cache_rows() -> tuple[ParseCacheRows, FakeCacheStore]:
         store = FakeCacheStore()
         return ParseCacheRows(store), store
 
     def test_round_trip_keeps_the_matched_ids(self) -> None:
-        rows, _ = self._records()
+        rows, _ = self._parse_cache_rows()
         info = ParsedFileInfo(
             season_number=1,
             episode_numbers=(1,),
@@ -176,7 +176,7 @@ class TestParseRecords:
         assert rows.read("show - 01.mkv", window=_window()) == info
 
     def test_unmatched_write_is_pinned_to_the_fingerprint(self) -> None:
-        rows, store = self._records()
+        rows, store = self._parse_cache_rows()
 
         rows.write("show - 01.mkv", _UNMATCHED, window=_window("fp"))
 
@@ -186,7 +186,7 @@ class TestParseRecords:
         assert rows.read("show - 01.mkv", window=_window("other")) is None
 
     def test_matched_write_carries_no_fingerprint(self) -> None:
-        rows, store = self._records()
+        rows, store = self._parse_cache_rows()
 
         rows.write("show - 01.mkv", _matched(1, 1), window=_window("fp"))
 
@@ -668,7 +668,7 @@ class TestParsedFilesUnmatchedCache:
 
     @staticmethod
     def _dict(*files: str) -> SeadexDict:
-        return {"GroupA": rg_group({"u": url_item(files=list(files), size=[100] * len(files))})}
+        return {"GroupA": rg_group({"u": make_release(files=list(files), size=[100] * len(files))})}
 
     @staticmethod
     def _assert_pinned(parse: SonarrParseCache, name: str) -> None:

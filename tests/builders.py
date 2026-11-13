@@ -184,7 +184,7 @@ def make_bare_instance[T](cls: type[T], **attrs: Any) -> T:
 
 # The entry columns `update_cached_title` merges, aliased from the real store's tuple so the fake
 # can't drift from `CacheStore`.
-_FAKE_ENTRY_FIELDS: tuple[str, ...] = _CACHED_TITLE_COLUMNS
+_FAKE_CACHED_TITLE_FIELDS: tuple[str, ...] = _CACHED_TITLE_COLUMNS
 
 
 def _evict_stale[K](store: dict[K, dict[str, Any]], cutoff: datetime) -> int:
@@ -282,7 +282,7 @@ class FakeCacheStore(AbstractCacheStore):
         self._sonarr_parse: dict[str, dict[str, Any]] = dict(sonarr_parse or {})
         self._pending: dict[str, dict[str, dict[str, Any]]] = {arr: dict(recs) for arr, recs in (pending or {}).items()}
         # The entries, keyed by (arr, al_id). The existence checks key on membership, never the dict's truthiness.
-        self._entries: dict[tuple[str, int], dict[str, Any]] = {}
+        self._cached_titles: dict[tuple[str, int], dict[str, Any]] = {}
         self._anilist_meta: dict[int, dict[str, Any]] = {}
         self._guards: dict[str, dict[int, OwnedAtGrab]] = {}
         self._history_checkpoints: dict[str, HistoryCheckpoint] = {}
@@ -323,15 +323,15 @@ class FakeCacheStore(AbstractCacheStore):
         if isinstance(updated_at, datetime):
             details["updated_at"] = updated_at.strftime(STAMP_FORMAT)
 
-        supplied = {column: details[column] for column in _FAKE_ENTRY_FIELDS if column in details}
+        supplied = {column: details[column] for column in _FAKE_CACHED_TITLE_FIELDS if column in details}
         if supplied:
-            self._entries.setdefault((str(arr), al_id), {}).update(supplied)
+            self._cached_titles.setdefault((str(arr), al_id), {}).update(supplied)
 
     @override
     def uncache_title(self, arr: Arr, al_id: int) -> None:
         """Drop the entry's stored timestamp. No row, no effect."""
 
-        cached = self._entries.get((str(arr), al_id))
+        cached = self._cached_titles.get((str(arr), al_id))
         if cached is not None:
             cached.pop("updated_at", None)
 
@@ -339,7 +339,7 @@ class FakeCacheStore(AbstractCacheStore):
     def get_cached_title(self, arr: Arr, al_id: int) -> CachedTitle | None:
         """The entry as a `CachedEntry`, or None."""
 
-        cached = self._entries.get((str(arr), al_id))
+        cached = self._cached_titles.get((str(arr), al_id))
         if cached is None:
             return None
         return CachedTitle(
@@ -453,7 +453,7 @@ class FakeCacheStore(AbstractCacheStore):
     @override
     def stats(self) -> CacheStats:
         return CacheStats(
-            entries=len(self._entries),
+            entries=len(self._cached_titles),
             anilist_meta=len(self._anilist_meta),
             sonarr_parse=len(self._sonarr_parse),
             pending_imports=sum(len(recs) for recs in self._pending.values()),
@@ -470,9 +470,9 @@ class FakeCacheStore(AbstractCacheStore):
 class FakeSeaDexSource(SeaDexSource):
     """In-memory `SeaDexSource` stand-in: serves preset entries, no network."""
 
-    def __init__(self, entries: dict[int, EntryRecord] | None = None, *, outage: bool = False) -> None:
+    def __init__(self, entries: dict[int, EntryRecord] | None = None, *, unreachable: bool = False) -> None:
         self._entries: dict[int, EntryRecord] = dict(entries or {})
-        self._unreachable = outage
+        self._unreachable = unreachable
         self.prefetch_calls: list[list[int]] = []
         self.entry_calls: list[int] = []
 
@@ -842,7 +842,7 @@ class FakeTorrents:
 def one_release_dict(*, srg: str, infohash: str, url: str = "https://nyaa.si/view/1") -> SeadexDict:
     """A one-release `SeadexDict` flagged for download, its tracker pinned to `NYAA`."""
 
-    item = url_item(url=url, infohash=infohash, download=True)
+    item = make_release(url=url, infohash=infohash, download=True)
     item.tracker = Tracker.NYAA
     return {srg: rg_group({url: item})}
 
@@ -868,7 +868,7 @@ def torrent_facts(
     )
 
 
-def pending_seed(
+def pending_import_update(
     infohash: str,
     *,
     stored: PendingImport | None = None,
@@ -885,12 +885,12 @@ def pending_seed(
         excluded=(),
         hand_import_files=hand_import_files,
         order_only=order_only,
-        claim=entry_claim(**claim),
+        claim=title_claim(**claim),
         pending_import=stored,
     )
 
 
-def entry_facts(**overrides: Any) -> TitleFacts:
+def title_facts(**overrides: Any) -> TitleFacts:
     """Entry 1 on series 7 titled Show, with no coverage, url, or guard facts unless given."""
 
     defaults: dict[str, Any] = {
@@ -1025,7 +1025,7 @@ def make_planner(**overrides: Any) -> GrabPlanner:
     return GrabPlanner(**defaults)
 
 
-def url_item(
+def make_release(
     *,
     url: str = "https://nyaa.si/view/1",
     files: list[str] | None = None,
@@ -1056,7 +1056,7 @@ def url_item(
     )
 
 
-def plan_result(seadex_dict: SeadexDict) -> GrabPlan:
+def grab_plan(seadex_dict: SeadexDict) -> GrabPlan:
     """A `PlanResult` carrying just the dict, with no skips and no guard evidence."""
 
     return GrabPlan(seadex_dict=seadex_dict, skips=PrivateOnlyNotices(), guards=OwnedAtGrab())
@@ -1120,11 +1120,11 @@ def arr_releases(ep_list: Iterable[SonarrEpisode]) -> ArrFiles:
     )
 
 
-_NO_OWN_RELEASE = TorrentGroup("", ())
+_NO_TORRENT_GROUP = TorrentGroup("", ())
 """An own release listing no sizes: no file is judged misplaced against it."""
 
 
-def target_statuses(
+def episode_statuses(
     by_id: Mapping[int, EpisodeFileStatus], holding_own_copy: frozenset[int] = frozenset()
 ) -> EpisodeStatuses:
     """`TargetStatuses` over `by_id`, where `holding_own_copy` are the targets holding a copy of our own file."""
@@ -1136,7 +1136,7 @@ def episode_snapshot(
     *,
     episodes: EpisodeIndex | None = None,
     trusted: TrustedGroups | None = None,
-    torrent_group: TorrentGroup = _NO_OWN_RELEASE,
+    torrent_group: TorrentGroup = _NO_TORRENT_GROUP,
     owned_episode_sizes: Mapping[int, int] | None = None,
 ) -> EpisodeSnapshot:
     """An empty series index trusting no group, with no owned sizes unless given.
@@ -1167,7 +1167,7 @@ _NO_NAMES = TitleNames()
 """An entry with no series or AniList titles."""
 
 
-def entry_window(
+def title_window(
     al_id: int,
     ids: Iterable[int],
     *,
@@ -1194,7 +1194,7 @@ def torrent_listing(*windows: TitleWindow, aliases: SpecialAliases = NO_ALIASES)
     return TorrentListing(windows, aliases)
 
 
-ALIASED_PACK = torrent_listing(entry_window(1, (502, 504, 506)), aliases={1: 2, 2: 4, 3: 6})
+ALIASED_SPECIALS_LISTING = torrent_listing(title_window(1, (502, 504, 506)), aliases={1: 2, 2: 4, 3: 6})
 """A listing of specials 2, 4 and 6 whose aliases map a pack's 1, 2 and 3 onto them."""
 
 
@@ -1217,8 +1217,8 @@ def known_torrent(
     return KnownTorrent(pending, indexes or {}, evidence)
 
 
-def seed_scope(
-    entry: EpisodeIndex,
+def make_grabbing_title(
+    title_index: EpisodeIndex,
     series: EpisodeIndex,
     *,
     al_id: int = 1,
@@ -1228,7 +1228,7 @@ def seed_scope(
     alternate_titles: tuple[str, ...] = (),
     aired_order: bool = True,
 ) -> GrabbingTitle:
-    """Entry `al_id`'s grab scope over `entry`, within `series` on `series_id` (series 7, as `entry_claim`'s).
+    """Entry `al_id`'s grab scope over `title_index`, within `series` on `series_id` (series 7, as `entry_claim`'s).
 
     Unless given, the series has no alternate titles and Sonarr numbers it as aired.
     """
@@ -1236,7 +1236,7 @@ def seed_scope(
     return GrabbingTitle(
         al_id=al_id,
         series_id=series_id,
-        title_index=entry,
+        title_index=title_index,
         series_index=series,
         title_names=names,
         episode_count=episode_count,
@@ -1345,7 +1345,7 @@ def blind(names: Iterable[str]) -> dict[str, ParsedFileInfo | None]:
     return dict.fromkeys(names, parsed_info())
 
 
-def specials_pack(*numbers: int) -> dict[str, ParsedFileInfo | None]:
+def parsed_specials(*numbers: int) -> dict[str, ParsedFileInfo | None]:
     """`Show.S00Exx.mkv` per number, each read by Sonarr as that special."""
 
     return {f"Show.S00E{n:02d}.mkv": parsed_info(season=0, episodes=(n,), matched=((0, n),)) for n in numbers}
@@ -1385,18 +1385,18 @@ def numbered_names(prefix: str, count: int, tails: Sequence[str] = ()) -> list[s
 
 # The `al_id` every `pending_import` record's claim carries unless overridden, exported so tests can
 # spell a builder record's guard-row key without magic ints.
-PENDING_AL_ID = 1
+PENDING_IMPORT_AL_ID = 1
 
 _CLAIM_KEYS = frozenset(TitleClaim.__dataclass_fields__)
-PENDING_STAMP = "2026-06-24 00:00:00"
-PENDING_ADDED = parse_stamp(PENDING_STAMP).astimezone()
+PENDING_IMPORT_STAMP = "2026-06-24 00:00:00"
+PENDING_IMPORT_ADDED = parse_stamp(PENDING_IMPORT_STAMP).astimezone()
 
 
-def entry_claim(**overrides: Any) -> TitleClaim:
+def title_claim(**overrides: Any) -> TitleClaim:
     """An `EntryClaim` on series 7 by entry `PENDING_AL_ID`, unscoped unless `ordered_episode_ids` is given."""
 
     defaults: dict[str, Any] = {
-        "al_id": PENDING_AL_ID,
+        "al_id": PENDING_IMPORT_AL_ID,
         "series_id": 7,
         "title": "Show",
         "window_coverage": None,
@@ -1412,21 +1412,21 @@ def entry_claim(**overrides: Any) -> TitleClaim:
     return TitleClaim(**defaults)
 
 
-def two_claim_record(
+def two_claim_pending_import(
     *,
     al_ids: tuple[int, int] = (1, 2),
     series_ids: tuple[int, int] = (7, 7),
     windows: tuple[tuple[int, ...], tuple[int, ...]] = ((101, 102), (103, 104)),
     titles: tuple[str, str] = ("Show", "Show"),
-    **record: Any,
+    **overrides: Any,
 ) -> PendingImport:
-    """A `pending_import(**record)` claimed by two entries, each on its series over its window."""
+    """A `pending_import(**overrides)` claimed by two entries, each on its series over its window."""
 
     claims = tuple(
-        entry_claim(al_id=al_id, series_id=series_id, ordered_episode_ids=window, title=title)
+        title_claim(al_id=al_id, series_id=series_id, ordered_episode_ids=window, title=title)
         for al_id, series_id, window, title in zip(al_ids, series_ids, windows, titles, strict=True)
     )
-    return pending_import(claims=claims, **record)
+    return pending_import(claims=claims, **overrides)
 
 
 def pending_import(**overrides: Any) -> PendingImport:
@@ -1443,11 +1443,11 @@ def pending_import(**overrides: Any) -> PendingImport:
         "release_group": "SubGroup",
         "is_dual_audio": False,
         "seadex_files": ("Show - 01 [1080p].mkv",),
-        "added_at": PENDING_STAMP,
+        "added_at": PENDING_IMPORT_STAMP,
     }
     defaults.update(overrides)
     if "claims" not in defaults:
-        defaults["claims"] = (entry_claim(**claim_overrides),)
+        defaults["claims"] = (title_claim(**claim_overrides),)
     for key in ("seadex_files", "excluded_files", "release_sizes"):
         if key in defaults:
             defaults[key] = tuple(defaults[key])
@@ -1455,7 +1455,7 @@ def pending_import(**overrides: Any) -> PendingImport:
     return PendingImport(**defaults)
 
 
-def order_only_held_back(
+def order_only_hand_import_files(
     *, missing: tuple[EpisodeKey, ...] = (EpisodeKey(4, 1),), untrusted: tuple[EpisodeKey, ...] = ()
 ) -> LeftForHandImport:
     """A split opener's two halves held back under their DVD keys, the aired opener missing by default."""
@@ -1466,13 +1466,13 @@ def order_only_held_back(
     return LeftForHandImport(files=files, missing=missing, untrusted=untrusted)
 
 
-def held_files(*names: str) -> LeftForHandImport:
+def files_left_for_hand_import(*names: str) -> LeftForHandImport:
     """Files held back with no order-only key."""
 
     return LeftForHandImport(files=tuple(HandImportFile(name) for name in names))
 
 
-def import_probe(
+def attempt_result(
     *,
     all_done: bool = True,
     command_issued: bool = False,

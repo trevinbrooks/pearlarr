@@ -14,7 +14,7 @@ from .fakes import FakeClock, HookedSonarrClient
 from .test_strategy_seam import (
     _RESCAN_AFTER_ADD,
     _RESCAN_BEFORE_ADD,
-    _dead_history,
+    _closed_history,
     _inflight_manual_import,
     _make_sonarr_for_import,
     _started_process_pass,
@@ -40,13 +40,13 @@ def _process_pass(command_id: int, status: str) -> CommandResource:
     return CommandResource.model_validate({"id": command_id, "name": "ProcessMonitoredDownloads", "status": status})
 
 
-def _our_file_placed() -> list[SonarrEpisode]:
+def _episode_with_torrent_file() -> list[SonarrEpisode]:
     """The record's one target episode holding its own file."""
 
     return [sonarr_ep(1, 1, ep_id=101, release_group="SubGroup")]
 
 
-def _strategy_whose_scan_meets_a_pass(clock: FakeClock) -> tuple[SonarrStrategy, HookedSonarrClient]:
+def _strategy_whose_fetch_meets_a_pass(clock: FakeClock) -> tuple[SonarrStrategy, HookedSonarrClient]:
     """A tracked record's strategy whose by-id scan starts a pass and leaves every later by-id scan failing."""
 
     strat, sonarr = _strategy([_blocked_row()], clock)
@@ -55,7 +55,7 @@ def _strategy_whose_scan_meets_a_pass(clock: FakeClock) -> tuple[SonarrStrategy,
         sonarr.commands_return = [_RESCAN_BEFORE_ADD, _started_process_pass()]
         sonarr.candidates_return = None
 
-    sonarr.on_scan = start_a_pass
+    sonarr.on_fetch = start_a_pass
     return strat, sonarr
 
 
@@ -175,7 +175,7 @@ class TestStepInGuard:
         def start_a_pass() -> None:
             sonarr.commands_return = [_RESCAN_BEFORE_ADD, _process_pass(9, "started")]
 
-        sonarr.on_scan = start_a_pass
+        sonarr.on_fetch = start_a_pass
 
         result = strat.import_completed(pending_import(), "/d", AttemptKind.ORDINARY)
 
@@ -188,7 +188,7 @@ class TestStepInGuard:
         def start_a_pass() -> None:
             sonarr.commands_return = [_RESCAN_BEFORE_ADD, _process_pass(9, "started")]
 
-        sonarr.on_scan = start_a_pass
+        sonarr.on_fetch = start_a_pass
 
         result = strat.import_completed(pending_import(), "/d", AttemptKind.ORDINARY)
 
@@ -200,7 +200,7 @@ class TestStepInGuard:
         def run_a_pass() -> None:
             sonarr.commands_return = [_RESCAN_BEFORE_ADD, _process_pass(9, "completed")]
 
-        sonarr.on_scan = run_a_pass
+        sonarr.on_fetch = run_a_pass
 
         strat.import_completed(pending_import(), "/d", AttemptKind.ORDINARY)
 
@@ -283,7 +283,7 @@ class TestStepInGuard:
 
     def test_folder_import_in_flight_matches_its_translated_path_on_the_first_poll(self) -> None:
         strat, sonarr = _make_sonarr_for_import(candidates=None)
-        sonarr.history_page_return = _dead_history()
+        sonarr.history_page_return = _closed_history()
         sonarr.folder_candidates_return = [manual_candidate("/remote/tv/Show/Show - 01 [1080p].mkv")]
         sonarr.path_mappings_return = [_tv_mapping()]
         folder_import = CommandResource.model_validate(
@@ -298,7 +298,7 @@ class TestStepInGuard:
         def start_a_folder_import() -> None:
             sonarr.commands_return = [_RESCAN_BEFORE_ADD, folder_import]
 
-        sonarr.on_scan = start_a_folder_import
+        sonarr.on_fetch = start_a_folder_import
 
         result = strat.import_completed(pending_import(), "/d/Show", AttemptKind.ORDINARY)
 
@@ -325,7 +325,7 @@ class TestStepInGuard:
         def recover() -> None:
             sonarr.commands_return = [_RESCAN_BEFORE_ADD]
 
-        sonarr.on_scan = fail_the_next_read
+        sonarr.on_fetch = fail_the_next_read
         sonarr.on_languages = recover
 
         result = strat.import_completed(pending_import(), "/d", AttemptKind.ORDINARY)
@@ -353,11 +353,11 @@ class TestEpisodeReads:
     def test_files_a_pass_imports_during_the_scan_read_as_imported(self) -> None:
         strat, sonarr = _strategy([_blocked_row()])
 
-        def import_our_file() -> None:
-            sonarr.episodes_return = _our_file_placed()
+        def import_torrent_file() -> None:
+            sonarr.episodes_return = _episode_with_torrent_file()
             sonarr.commands_return = [_RESCAN_BEFORE_ADD, _started_process_pass()]
 
-        sonarr.on_scan = import_our_file
+        sonarr.on_fetch = import_torrent_file
 
         result = strat.import_completed(pending_import(), "/d", AttemptKind.ORDINARY)
 
@@ -381,7 +381,7 @@ class TestEpisodeReads:
 
     def test_stale_cache_never_reads_as_imported(self) -> None:
         strat, sonarr = _strategy([])
-        sonarr.episodes_return = _our_file_placed()
+        sonarr.episodes_return = _episode_with_torrent_file()
         pending = pending_import()
 
         imported = strat.import_completed(pending, "/d", AttemptKind.ORDINARY)
@@ -394,7 +394,7 @@ class TestEpisodeReads:
 
     def test_failed_read_keeps_the_last_read_counts(self) -> None:
         strat, sonarr = _strategy([queue_record("ABC123", "downloading")])
-        sonarr.episodes_return = [*_our_file_placed(), sonarr_ep(1, 2, ep_id=102, episode_file_id=0)]
+        sonarr.episodes_return = [*_episode_with_torrent_file(), sonarr_ep(1, 2, ep_id=102, episode_file_id=0)]
         pending = pending_import(file_episode_map={"Show - 01 [1080p].mkv": [101], "Show - 02 [1080p].mkv": [102]})
 
         strat.import_completed(pending, "/d", AttemptKind.ORDINARY)
@@ -415,7 +415,7 @@ class TestKeptScan:
 
     def test_blocked_poll_keeps_its_scan_for_the_next_poll(self) -> None:
         clock = FakeClock()
-        strat, sonarr = _strategy_whose_scan_meets_a_pass(clock)
+        strat, sonarr = _strategy_whose_fetch_meets_a_pass(clock)
         pending = pending_import()
 
         blocked = strat.import_completed(pending, "/d", AttemptKind.ORDINARY)
@@ -433,11 +433,11 @@ class TestKeptScan:
         def start_a_pass() -> None:
             sonarr.commands_return = [_RESCAN_BEFORE_ADD, _started_process_pass()]
 
-        sonarr.on_scan = start_a_pass
+        sonarr.on_fetch = start_a_pass
         pending = pending_import()
 
         strat.import_completed(pending, "/d", AttemptKind.ORDINARY)
-        sonarr.on_scan = None
+        sonarr.on_fetch = None
         sonarr.commands_return = [_RESCAN_BEFORE_ADD]
         sonarr.candidates_return = [manual_candidate("/d/Show - 01 [1080p].mkv")]
         clock.tick(30)
@@ -452,11 +452,11 @@ class TestKeptScan:
         def start_a_pass() -> None:
             sonarr.commands_return = [_RESCAN_BEFORE_ADD, _started_process_pass()]
 
-        sonarr.on_scan = start_a_pass
+        sonarr.on_fetch = start_a_pass
         pending = pending_import()
 
         strat.import_completed(pending, "/d", AttemptKind.ORDINARY)
-        sonarr.on_scan = None
+        sonarr.on_fetch = None
         sonarr.commands_return = [_RESCAN_BEFORE_ADD]
         sonarr.queue_return = []
         clock.tick(30)
@@ -469,7 +469,7 @@ class TestKeptScan:
 
     def test_kept_scan_is_not_used_without_a_queue_row(self) -> None:
         clock = FakeClock()
-        strat, sonarr = _strategy_whose_scan_meets_a_pass(clock)
+        strat, sonarr = _strategy_whose_fetch_meets_a_pass(clock)
         pending = pending_import()
 
         strat.import_completed(pending, "/d", AttemptKind.ORDINARY)
@@ -482,7 +482,7 @@ class TestKeptScan:
 
     def test_kept_scan_expires_after_two_poll_intervals(self) -> None:
         clock = FakeClock()
-        strat, sonarr = _strategy_whose_scan_meets_a_pass(clock)
+        strat, sonarr = _strategy_whose_fetch_meets_a_pass(clock)
         pending = pending_import()
 
         strat.import_completed(pending, "/d", AttemptKind.ORDINARY)
@@ -494,7 +494,7 @@ class TestKeptScan:
 
     def test_kept_scan_is_not_used_under_another_content_path(self) -> None:
         clock = FakeClock()
-        strat, sonarr = _strategy_whose_scan_meets_a_pass(clock)
+        strat, sonarr = _strategy_whose_fetch_meets_a_pass(clock)
         pending = pending_import()
 
         strat.import_completed(pending, "/d", AttemptKind.ORDINARY)
@@ -506,7 +506,7 @@ class TestKeptScan:
 
     def test_kept_scan_serves_one_poll_only(self) -> None:
         clock = FakeClock()
-        strat, sonarr = _strategy_whose_scan_meets_a_pass(clock)
+        strat, sonarr = _strategy_whose_fetch_meets_a_pass(clock)
         pending = pending_import()
 
         def start_a_pass() -> None:

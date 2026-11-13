@@ -21,13 +21,13 @@ from pearlarr.config import Arr
 from pearlarr.pending_import import OwnedAtGrab
 from pearlarr.tvdb_orders import CachedOrders, OrderRow
 
-from .builders import FakeCacheStore, entry_claim, pending_import
+from .builders import FakeCacheStore, pending_import, title_claim
 
 # fetched_at stamps straddling the eviction cutoff (STAMP_FORMAT strings).
 _OLD = "2020-01-01 00:00:00"
 _NEW = "2030-01-01 00:00:00"
 _CUTOFF = datetime(2025, 1, 1)
-_ENTRY_STAMP = datetime(2026, 1, 1)
+_CACHED_TITLE_STAMP = datetime(2026, 1, 1)
 
 
 @contextmanager
@@ -53,7 +53,7 @@ def _apply_ops(store: AbstractCacheStore) -> None:
             name="Show",
             url="https://releases.moe/7",
             coverage="S1",
-            updated_at=_ENTRY_STAMP,
+            updated_at=_CACHED_TITLE_STAMP,
             fallback_satisfied=True,
             season_type="dvd",
         ),
@@ -65,7 +65,7 @@ def _apply_ops(store: AbstractCacheStore) -> None:
     store.update_cached_title(Arr.RADARR, 99, CachedTitleUpdate(name="Movie"))
     # A row whose stamp is cleared loses its timestamp and nothing else. Clearing an id with no row adds none, and
     # neither does an empty record.
-    store.update_cached_title(Arr.SONARR, 8, CachedTitleUpdate(name="Cleared", updated_at=_ENTRY_STAMP))
+    store.update_cached_title(Arr.SONARR, 8, CachedTitleUpdate(name="Cleared", updated_at=_CACHED_TITLE_STAMP))
     store.uncache_title(Arr.SONARR, 8)
     store.uncache_title(Arr.SONARR, 4242)
     store.update_cached_title(Arr.SONARR, 4242, CachedTitleUpdate())
@@ -84,7 +84,7 @@ def _apply_ops(store: AbstractCacheStore) -> None:
         "hashA",
         pending_import(
             infohash="hashA",
-            claims=(entry_claim(al_id=7, series_id=7, title="A"), entry_claim(al_id=9, series_id=8, title="A2")),
+            claims=(title_claim(al_id=7, series_id=7, title="A"), title_claim(al_id=9, series_id=8, title="A2")),
         ).to_json(),
     )
     store.put_pending_import_row(
@@ -174,7 +174,7 @@ class _JsonbBlock:
     name: str
     put: Callable[[AbstractCacheStore, dict[str, Any]], None]
     get: Callable[[AbstractCacheStore], dict[str, Any] | None]
-    iter_records: Callable[[AbstractCacheStore], list[dict[str, Any]]]
+    iter_rows: Callable[[AbstractCacheStore], list[dict[str, Any]]]
 
 
 _ISO_KEY = "hiso"
@@ -183,7 +183,7 @@ _ISO_FILE = "iso.mkv"
 _ISO_SID = 7
 
 
-def _sonarr_parse_records(store: AbstractCacheStore) -> list[dict[str, Any]]:
+def _sonarr_parse_rows(store: AbstractCacheStore) -> list[dict[str, Any]]:
     """The sonarr_parse block's collection read (per-filename - it has no iterator)."""
 
     rec = store.get_sonarr_parse(_ISO_FILE)
@@ -199,7 +199,7 @@ _JSONB_BLOCKS: tuple[_JsonbBlock, ...] = (
         "pending",
         put=lambda s, r: s.put_pending_import_row(Arr.SONARR, _ISO_KEY, r),
         get=lambda s: s.get_pending_import_row(Arr.SONARR, _ISO_KEY),
-        iter_records=lambda s: [
+        iter_rows=lambda s: [
             *s.get_pending_import_rows(Arr.SONARR).values(),
             *s.get_pending_import_rows_for_series(Arr.SONARR, _ISO_SID).values(),
         ],
@@ -208,13 +208,13 @@ _JSONB_BLOCKS: tuple[_JsonbBlock, ...] = (
         "anilist_meta",
         put=lambda s, r: s.put_anilist_meta(_ISO_AL, r),
         get=lambda s: s.get_anilist_meta(_ISO_AL),
-        iter_records=lambda s: [rec for _al, rec in s.iter_anilist_meta()],
+        iter_rows=lambda s: [rec for _al, rec in s.iter_anilist_meta()],
     ),
     _JsonbBlock(
         "sonarr_parse",
         put=lambda s, r: s.put_sonarr_parse(_ISO_FILE, r),
         get=lambda s: s.get_sonarr_parse(_ISO_FILE),
-        iter_records=_sonarr_parse_records,
+        iter_rows=_sonarr_parse_rows,
     ),
 )
 
@@ -230,7 +230,7 @@ def _scribble(rec: dict[str, Any], marker: str) -> None:
     rec["injected"] = True
 
 
-def _assert_pristine(rec: dict[str, Any] | None, block: str) -> dict[str, Any]:
+def _assert_not_mutated(rec: dict[str, Any] | None, block: str) -> dict[str, Any]:
     """The record is present and none of `_scribble`'s mutations reached it."""
 
     assert rec is not None, block
@@ -251,17 +251,17 @@ def _assert_block_snapshot_isolated(store: AbstractCacheStore, block: _JsonbBloc
 
     # write side: mutate the caller's own dict after the put.
     _scribble(row, "leaked-via-put")
-    after_put = _assert_pristine(block.get(store), block.name)
+    after_put = _assert_not_mutated(block.get(store), block.name)
 
     # read side (get): mutate the returned copy.
     _scribble(after_put, "leaked-via-get")
-    _assert_pristine(block.get(store), block.name)
+    _assert_not_mutated(block.get(store), block.name)
 
     # read side (iter): mutate each iterated record.
-    for rec in block.iter_records(store):
+    for rec in block.iter_rows(store):
         _scribble(rec, "leaked-via-iter")
-    for rec in block.iter_records(store):
-        _assert_pristine(rec, block.name)
+    for rec in block.iter_rows(store):
+        _assert_not_mutated(rec, block.name)
 
 
 def test_jsonb_record_snapshot_mutation_does_not_leak(tmp_path: Path) -> None:

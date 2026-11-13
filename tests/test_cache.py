@@ -38,14 +38,14 @@ from pearlarr.sqlite_util import is_corruption
 from pearlarr.stamps import parse_stamp_or_none
 from pearlarr.tvdb_orders import CachedOrders, OrderRow
 
-from .builders import cached_as_done, claim_al_ids, entry_claim, make_entry_record, pending_import
+from .builders import cached_as_done, claim_al_ids, make_entry_record, pending_import, title_claim
 
 # Stand-in for a config-file checksum. `CacheStore` only stamps and compares the
 # value it is handed. It never computes one, so any string works here.
-CHECKSUM = "0123456789abcdef0123456789abcdef"
+CONFIG_HASH = "0123456789abcdef0123456789abcdef"
 
 
-def _entry_name(store: CacheStore, al_id: int, arr: Arr = Arr.SONARR) -> str | None:
+def _cached_title_name(store: CacheStore, al_id: int, arr: Arr = Arr.SONARR) -> str | None:
     """The entry's stored name via `get_entry` (None when the row is absent)."""
 
     cached = store.get_cached_title(arr, al_id)
@@ -71,7 +71,7 @@ def _row(pending: PendingImport) -> dict[str, Any]:
 
 
 def _open(tmp_path: Path) -> contextlib.closing[CacheStore]:
-    return contextlib.closing(CacheStore.load(str(tmp_path / "cache.db"), config_hash=CHECKSUM))
+    return contextlib.closing(CacheStore.load(str(tmp_path / "cache.db"), config_hash=CONFIG_HASH))
 
 
 class TestSchemaAndDescriptor:
@@ -98,7 +98,7 @@ class TestSchemaAndDescriptor:
         finally:
             raw.close()
         assert rows.get("pearlarr_version") == pearlarr.__version__
-        assert rows.get("config_checksum") == CHECKSUM
+        assert rows.get("config_checksum") == CONFIG_HASH
 
 
 # `torrent_hashes` as every schema through v6 declared it. The v6 -> v7 step drops it.
@@ -471,9 +471,9 @@ class TestSchemaVersionGate:
         raw.close()
 
         with _open(tmp_path) as store:
-            assert _entry_name(store, 1) is None
-            assert _entry_name(store, 2) == "Frieren"
-            assert _entry_name(store, 3, Arr.RADARR) is None
+            assert _cached_title_name(store, 1) is None
+            assert _cached_title_name(store, 2) == "Frieren"
+            assert _cached_title_name(store, 3, Arr.RADARR) is None
         assert _user_version(db) == SCHEMA_VERSION
 
     def test_v4_rows_of_one_torrent_fold_into_one_record(self, tmp_path: Path) -> None:
@@ -641,8 +641,8 @@ class TestSchemaVersionGate:
         # its map, and the stored names dict rides as is, never re-encoded through
         # the live class.
         db = tmp_path / "cache.db"
-        unscoped = _v4_blob("u", 5, ordered_episode_ids=[], names={"series": "Series"})
-        _seed_v4_db(db, [("sonarr", "u", 5, json.dumps(unscoped))])
+        no_window_blob = _v4_blob("u", 5, ordered_episode_ids=[], names={"series": "Series"})
+        _seed_v4_db(db, [("sonarr", "u", 5, json.dumps(no_window_blob))])
 
         with _open(tmp_path) as store:
             rows = store.get_pending_import_rows(Arr.SONARR)
@@ -677,7 +677,7 @@ class TestSchemaVersionGate:
         raw.execute("PRAGMA user_version=4")
         raw.commit()
         raw.close()
-        with contextlib.closing(CacheStore.load(str(folded), config_hash=CHECKSUM)) as store:
+        with contextlib.closing(CacheStore.load(str(folded), config_hash=CONFIG_HASH)) as store:
             assert store.get_pending_import_rows(Arr.SONARR) == rows
         assert _user_version(folded) == SCHEMA_VERSION
 
@@ -736,7 +736,7 @@ class TestSchemaVersionGate:
         raw.close()
 
         with pytest.raises(CacheSchemaError):
-            CacheStore.load(str(db), config_hash=CHECKSUM)
+            CacheStore.load(str(db), config_hash=CONFIG_HASH)
         # Fail closed: the healthy newer db is left exactly where it was.
         assert db.exists()
         assert not list(tmp_path.glob("cache.db.corrupt-*"))
@@ -786,8 +786,8 @@ class TestEntries:
         with _open(tmp_path) as store:
             store.update_cached_title(Arr.SONARR, 7, {"name": "S"})
             store.update_cached_title(Arr.RADARR, 7, {"name": "R"})
-            assert _entry_name(store, 7, Arr.SONARR) == "S"
-            assert _entry_name(store, 7, Arr.RADARR) == "R"
+            assert _cached_title_name(store, 7, Arr.SONARR) == "S"
+            assert _cached_title_name(store, 7, Arr.RADARR) == "R"
 
     def test_get_entry_reads_all_columns_at_once(self, tmp_path: Path) -> None:
         with _open(tmp_path) as store:
@@ -865,7 +865,7 @@ class TestPreviewGate:
 
         assert (tmp_path / "cache.db").exists()
         with _open(tmp_path) as reopened:
-            assert _entry_name(reopened, 7) == "Title"
+            assert _cached_title_name(reopened, 7) == "Title"
 
     def test_preview_on_existing_db_does_not_mutate_committed_state(self, tmp_path: Path) -> None:
         # Establish a real, committed db.
@@ -880,7 +880,7 @@ class TestPreviewGate:
             dry_run_store.save(dry_run=True)
 
         with _open(tmp_path) as reopened:
-            assert _entry_name(reopened, 7) == "Original"  # not "Changed"
+            assert _cached_title_name(reopened, 7) == "Original"  # not "Changed"
             assert reopened.get_cached_title(Arr.SONARR, 8) is None  # never added
 
 
@@ -1035,7 +1035,7 @@ class TestPendingImports:
             both = _row(
                 pending_import(
                     infohash="h",
-                    claims=(entry_claim(al_id=11, series_id=5), entry_claim(al_id=22, series_id=5)),
+                    claims=(title_claim(al_id=11, series_id=5), title_claim(al_id=22, series_id=5)),
                 )
             )
             store.put_pending_import_row(Arr.SONARR, "h", both)
@@ -1080,7 +1080,7 @@ class TestPendingImports:
             both = _row(
                 pending_import(
                     infohash="t",
-                    claims=(entry_claim(al_id=6, series_id=5), entry_claim(al_id=7, series_id=9)),
+                    claims=(title_claim(al_id=6, series_id=5), title_claim(al_id=7, series_id=9)),
                 )
             )
             store.put_pending_import_row(Arr.SONARR, "a", a)
@@ -1159,7 +1159,7 @@ class TestGuardFacts:
             store.put_guards(Arr.SONARR, 7, seven)
             store.put_guards(Arr.SONARR, 8, eight)
             store.put_guards(Arr.SONARR, 9, OwnedAtGrab(entry_groups=("C",)))
-            shared = pending_import(infohash="h", claims=(entry_claim(al_id=7), entry_claim(al_id=8, series_id=8)))
+            shared = pending_import(infohash="h", claims=(title_claim(al_id=7), title_claim(al_id=8, series_id=8)))
             store.put_pending_import_row(Arr.SONARR, "h", shared.to_json())
 
             assert store.get_guards(Arr.SONARR) == {7: seven, 8: eight}
@@ -1256,7 +1256,7 @@ class TestPromoteFailure:
         assert (tmp_path / "cache.db").exists()
 
         with _open(tmp_path) as reopened:
-            assert _entry_name(reopened, 7) == "T"
+            assert _cached_title_name(reopened, 7) == "T"
 
 
 class TestRunLifecycle:
@@ -1381,7 +1381,7 @@ class TestCorruptStore:
             mp.setattr("pearlarr.sqlite_util.connect", _raise_locked)
             raised = False
             try:
-                CacheStore.load(str(db), config_hash=CHECKSUM)
+                CacheStore.load(str(db), config_hash=CONFIG_HASH)
             except sqlite3.OperationalError:
                 raised = True
 
@@ -1404,7 +1404,7 @@ class TestCorruptStore:
         # The corrupt file was moved aside. A fresh, working db took its place.
         assert len(list(tmp_path.glob("cache.db.corrupt-*"))) == 1
         with _open(tmp_path) as reopened:
-            assert _entry_name(reopened, 7) == "Recovered"
+            assert _cached_title_name(reopened, 7) == "Recovered"
 
         # The recovery notice names the state that was lost, not just "fresh cache".
         [notice] = [d for d in recording.of_type(Diagnostic) if d.severity is Severity.WARNING]

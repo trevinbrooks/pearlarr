@@ -38,19 +38,19 @@ from pearlarr.wait_types import OutcomeKind
 
 _BOOT = ScopeId(ScopeKind.BOOT_SECTION, 1)
 _STEP = ScopeId(ScopeKind.BOOT_STEP, 2)
-_ENTRY = ScopeId(ScopeKind.ENTRY, 3)
+_TITLE_SCOPE = ScopeId(ScopeKind.ENTRY, 3)
 _WAIT = ScopeId(ScopeKind.WAIT_REGION, 4)
 
 
-def _fold(*events: Event) -> OpenScopes:
-    fold = OpenScopes()
+def _open_scopes(*events: Event) -> OpenScopes:
+    open_scopes = OpenScopes()
     for event in events:
-        fold.apply(event)
-    return fold
+        open_scopes.apply(event)
+    return open_scopes
 
 
-def _kinds(fold: OpenScopes) -> list[ScopeKind]:
-    return [open_scope.kind for open_scope in fold.scopes()]
+def _kinds(open_scopes: OpenScopes) -> list[ScopeKind]:
+    return [open_scope.kind for open_scope in open_scopes.scopes()]
 
 
 def _summary_ready() -> ArrRunSummaryReady:
@@ -73,24 +73,24 @@ def _summary_ready() -> ArrRunSummaryReady:
 
 
 def test_scope_opened_pushes_and_scope_closed_pops() -> None:
-    fold = _fold(ScopeOpened(scope=_BOOT, label="boot"))
-    assert fold.path_text() == "boot"
-    assert fold.during() == "boot"
+    open_scopes = _open_scopes(ScopeOpened(scope=_BOOT, label="boot"))
+    assert open_scopes.path_text() == "boot"
+    assert open_scopes.during() == "boot"
 
-    fold.apply(ScopeClosed(scope=_BOOT))
-    assert fold.path_text() == ""
-    assert fold.during() is None
+    open_scopes.apply(ScopeClosed(scope=_BOOT))
+    assert open_scopes.path_text() == ""
+    assert open_scopes.during() is None
 
 
 def test_boot_step_events_open_and_close_the_step_node() -> None:
-    fold = _fold(
+    open_scopes = _open_scopes(
         ScopeOpened(scope=_BOOT, label="boot"),
         BootStepStarted(scope=_STEP, label="Reading config"),
     )
-    assert fold.path_text() == "boot › Reading config"
-    assert fold.during() == "Reading config"
+    assert open_scopes.path_text() == "boot › Reading config"
+    assert open_scopes.during() == "Reading config"
 
-    fold.apply(
+    open_scopes.apply(
         BootStepFinished(
             scope=_STEP,
             label="Reading config",
@@ -100,155 +100,155 @@ def test_boot_step_events_open_and_close_the_step_node() -> None:
         ),
     )
     # Between steps the BOOT node still spans the gap (B2: the motivating warnings).
-    assert fold.path_text() == "boot"
+    assert open_scopes.path_text() == "boot"
 
 
 def test_a_second_step_auto_closes_a_leaked_sibling() -> None:
     other = ScopeId(ScopeKind.BOOT_STEP, 9)
-    fold = _fold(
+    open_scopes = _open_scopes(
         ScopeOpened(scope=_BOOT, label="boot"),
         BootStepStarted(scope=_STEP, label="one"),
         BootStepStarted(scope=other, label="two"),
     )
-    assert fold.path_text() == "boot › two"
+    assert open_scopes.path_text() == "boot › two"
 
 
 def test_entry_path_reads_run_item_entry() -> None:
-    fold = _fold(
+    open_scopes = _open_scopes(
         ScanStarted(arr=Arr.SONARR, total=182),
         ItemStarted(arr=Arr.SONARR, index=3, total=182, title="Frieren"),
-        ScopeOpened(scope=_ENTRY, label="Frieren: Beyond Journey's End"),
+        ScopeOpened(scope=_TITLE_SCOPE, label="Frieren: Beyond Journey's End"),
     )
-    assert fold.path_text() == "sonarr › [3/182] Frieren › entry"
-    assert fold.during() == "Frieren: Beyond Journey's End"
+    assert open_scopes.path_text() == "sonarr › [3/182] Frieren › entry"
+    assert open_scopes.during() == "Frieren: Beyond Journey's End"
 
 
 # --- boundary events close strictly-deeper nodes deterministically --------------------
 
 
 def test_scan_started_closes_the_boot_section() -> None:
-    fold = _fold(
+    open_scopes = _open_scopes(
         ScopeOpened(scope=_BOOT, label="boot"),
         ScanStarted(arr=Arr.SONARR, total=182),
     )
-    assert _kinds(fold) == [ScopeKind.RUN]
-    assert fold.path_text() == "sonarr"
+    assert _kinds(open_scopes) == [ScopeKind.RUN]
+    assert open_scopes.path_text() == "sonarr"
 
 
 def test_item_started_closes_the_previous_item_and_entry() -> None:
-    fold = _fold(
+    open_scopes = _open_scopes(
         ScanStarted(arr=Arr.SONARR, total=182),
         ItemStarted(arr=Arr.SONARR, index=1, total=182, title="A"),
-        ScopeOpened(scope=_ENTRY, label="A"),
+        ScopeOpened(scope=_TITLE_SCOPE, label="A"),
         ItemStarted(arr=Arr.SONARR, index=2, total=182, title="B"),
     )
-    assert _kinds(fold) == [ScopeKind.RUN, ScopeKind.ITEM]
-    assert fold.path_text() == "sonarr › [2/182] B"
+    assert _kinds(open_scopes) == [ScopeKind.RUN, ScopeKind.ITEM]
+    assert open_scopes.path_text() == "sonarr › [2/182] B"
 
 
 def test_scan_finished_closes_item_and_entry_but_keeps_the_run_node() -> None:
-    fold = _fold(
+    open_scopes = _open_scopes(
         ScanStarted(arr=Arr.SONARR, total=182),
         ItemStarted(arr=Arr.SONARR, index=182, total=182, title="Last"),
-        ScopeOpened(scope=_ENTRY, label="Last"),
+        ScopeOpened(scope=_TITLE_SCOPE, label="Last"),
         ScanFinished(arr=Arr.SONARR),
     )
     # Reconcile-time diagnostics render at run level, never inside series #182 (B4.2).
-    assert _kinds(fold) == [ScopeKind.RUN]
+    assert _kinds(open_scopes) == [ScopeKind.RUN]
 
 
 def test_run_summary_ready_closes_to_run_level() -> None:
-    fold = _fold(
+    open_scopes = _open_scopes(
         ScanStarted(arr=Arr.SONARR, total=1),
         ItemStarted(arr=Arr.SONARR, index=1, total=1, title="A"),
         _summary_ready(),
     )
-    assert _kinds(fold) == [ScopeKind.RUN]
+    assert _kinds(open_scopes) == [ScopeKind.RUN]
 
 
 def test_wait_started_closes_only_entry_depth() -> None:
-    fold = _fold(
+    open_scopes = _open_scopes(
         ScanStarted(arr=Arr.SONARR, total=1),
         ScopeOpened(scope=_WAIT, label="wait"),
         WaitStarted(total=4, progress_line_s=300.0, kind=WaitKind.MONITOR, scope=_WAIT),
     )
-    assert _kinds(fold) == [ScopeKind.RUN, ScopeKind.WAIT_REGION]
-    assert fold.path_text() == "sonarr › wait"
+    assert _kinds(open_scopes) == [ScopeKind.RUN, ScopeKind.WAIT_REGION]
+    assert open_scopes.path_text() == "sonarr › wait"
 
 
 def test_run_finished_closes_everything_and_is_idempotent() -> None:
-    fold = _fold(
+    open_scopes = _open_scopes(
         ScanStarted(arr=Arr.SONARR, total=1),
         ItemStarted(arr=Arr.SONARR, index=1, total=1, title="A"),
-        ScopeOpened(scope=_ENTRY, label="A"),
+        ScopeOpened(scope=_TITLE_SCOPE, label="A"),
         ArrRunFinished(arr=Arr.SONARR),
     )
-    assert fold.scopes() == ()
+    assert open_scopes.scopes() == ()
 
     # The defensive teardown close re-emits it, a no-op on an empty stack.
-    fold.apply(ArrRunFinished(arr=Arr.SONARR))
-    assert fold.scopes() == ()
+    open_scopes.apply(ArrRunFinished(arr=Arr.SONARR))
+    assert open_scopes.scopes() == ()
 
 
 def test_run_and_cycle_starts_close_everything() -> None:
-    fold = _fold(ScopeOpened(scope=_BOOT, label="boot"), PearlarrStarted(version="", data_dir="/d"))
-    assert fold.scopes() == ()
+    open_scopes = _open_scopes(ScopeOpened(scope=_BOOT, label="boot"), PearlarrStarted(version="", data_dir="/d"))
+    assert open_scopes.scopes() == ()
 
-    fold = _fold(ScanStarted(arr=Arr.SONARR, total=1), ScheduledRunStarted(number=2))
-    assert fold.scopes() == ()
+    open_scopes = _open_scopes(ScanStarted(arr=Arr.SONARR, total=1), ScheduledRunStarted(number=2))
+    assert open_scopes.scopes() == ()
 
 
 # --- unwind + defensive closes ---------------------------------------------------------
 
 
 def test_closing_a_mid_stack_scope_closes_everything_deeper() -> None:
-    fold = _fold(
+    open_scopes = _open_scopes(
         ScopeOpened(scope=_BOOT, label="boot"),
         BootStepStarted(scope=_STEP, label="Fetching library"),
         ScopeClosed(scope=_BOOT),
     )
-    assert fold.scopes() == ()
+    assert open_scopes.scopes() == ()
 
 
 def test_closing_an_unknown_scope_is_a_no_op() -> None:
-    fold = _fold(
+    open_scopes = _open_scopes(
         ScanStarted(arr=Arr.SONARR, total=1),
         ScopeClosed(scope=ScopeId(ScopeKind.ENTRY, 99)),
     )
-    assert _kinds(fold) == [ScopeKind.RUN]
+    assert _kinds(open_scopes) == [ScopeKind.RUN]
 
 
 def test_content_events_never_move_the_fold() -> None:
-    fold = _fold(
+    open_scopes = _open_scopes(
         ScanStarted(arr=Arr.SONARR, total=1),
         ItemStarted(arr=Arr.SONARR, index=1, total=1, title="A"),
-        ScopeOpened(scope=_ENTRY, label="A"),
+        ScopeOpened(scope=_TITLE_SCOPE, label="A"),
     )
-    entry_nodes = fold.scopes()
+    scopes_at_title = open_scopes.scopes()
 
-    fold.apply(Diagnostic(severity=Severity.WARNING, message="w"))
-    fold.apply(TitleHeader(state=TitleState.CHECKING, title="A", scope=_ENTRY))
-    assert fold.scopes() == entry_nodes
+    open_scopes.apply(Diagnostic(severity=Severity.WARNING, message="w"))
+    open_scopes.apply(TitleHeader(state=TitleState.CHECKING, title="A", scope=_TITLE_SCOPE))
+    assert open_scopes.scopes() == scopes_at_title
 
 
 # --- read APIs ---------------------------------------------------------------------------
 
 
 def test_path_for_returns_the_breadcrumb_down_to_that_scope() -> None:
-    fold = _fold(
+    open_scopes = _open_scopes(
         ScanStarted(arr=Arr.SONARR, total=182),
         ItemStarted(arr=Arr.SONARR, index=3, total=182, title="Frieren"),
-        ScopeOpened(scope=_ENTRY, label="Frieren"),
+        ScopeOpened(scope=_TITLE_SCOPE, label="Frieren"),
     )
-    assert fold.path_for(_ENTRY) == "sonarr › [3/182] Frieren › entry"
-    assert fold.path_for(ScopeId(ScopeKind.ENTRY, 99)) is None
+    assert open_scopes.path_for(_TITLE_SCOPE) == "sonarr › [3/182] Frieren › entry"
+    assert open_scopes.path_for(ScopeId(ScopeKind.ENTRY, 99)) is None
 
 
 def test_reset_clears_all_open_nodes() -> None:
-    fold = _fold(ScanStarted(arr=Arr.SONARR, total=1))
-    fold.reset()
-    assert fold.scopes() == ()
-    assert fold.path_text() == ""
+    open_scopes = _open_scopes(ScanStarted(arr=Arr.SONARR, total=1))
+    open_scopes.reset()
+    assert open_scopes.scopes() == ()
+    assert open_scopes.path_text() == ""
 
 
 # --- dual-list drift pin: KIND_DEPTH <-> ScopeKind -----------------------------------

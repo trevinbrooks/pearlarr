@@ -55,7 +55,7 @@ from pearlarr.wait_types import ImportWaitMode
 
 from .builders import (
     CLIENT_SENTINEL,
-    PENDING_AL_ID,
+    PENDING_IMPORT_AL_ID,
     AddStatus,
     FakeCacheStore,
     FakeTorrents,
@@ -63,11 +63,11 @@ from .builders import (
     grab_request,
     make_entry_record,
     make_grab_pipeline,
+    make_release,
     one_release_dict,
     pending_import,
-    pending_seed,
+    pending_import_update,
     rg_group,
-    url_item,
 )
 from .fakes import diagnostic_messages, install_recording_hub
 
@@ -101,7 +101,7 @@ def _pipeline(
     )
 
 
-def _pending(pipeline: GrabPipeline) -> Mapping[str, dict[str, Any]]:
+def _pending_import_rows(pipeline: GrabPipeline) -> Mapping[str, dict[str, Any]]:
     """The pipeline's durable per-arr pending store, keyed by infohash (what the engine reads back)."""
 
     return pipeline.cache_store.get_pending_import_rows(Arr.SONARR)
@@ -271,16 +271,16 @@ class TestAddOneUrlRegistersPending:
         torrents = FakeTorrents({"h1": (AddStatus.ALREADY_IN_QBIT, "Show-NAN0")})
         pipeline = _pipeline(torrents=torrents)
         facts = OwnedAtGrab(entry_groups=("NAN0",))
-        updates = {"h1": pending_seed("h1", guards=facts)}
+        updates = {"h1": pending_import_update("h1", guards=facts)}
 
         n_added, results = pipeline.grab_releases(
             grab_request(seadex_dict=one_release_dict(srg="NAN0", infohash="h1"), pending_import_updates=updates),
         )
 
-        assert claim_al_ids(_stored(pipeline, "h1")) == (PENDING_AL_ID,)
+        assert claim_al_ids(_stored(pipeline, "h1")) == (PENDING_IMPORT_AL_ID,)
         # A registration writes the entry's guard row too: evidence follows the
         # newest plan, never a frozen per-record copy.
-        assert _guards(pipeline) == {PENDING_AL_ID: facts}
+        assert _guards(pipeline) == {PENDING_IMPORT_AL_ID: facts}
         assert pipeline._state.reacquired_keys == {"h1"}
         assert pipeline._state.grabbed_this_run == {}
         assert n_added == 0
@@ -292,14 +292,14 @@ class TestAddOneUrlRegistersPending:
         torrents = FakeTorrents({"h1": (AddStatus.ADDED, "Show-NAN0")})
         pipeline = _pipeline(torrents=torrents)
         facts = OwnedAtGrab(entry_groups=("NAN0",), stale_groups=("OldPick",))
-        updates = {"h1": pending_seed("h1", guards=facts)}
+        updates = {"h1": pending_import_update("h1", guards=facts)}
 
         n_added, _ = pipeline.grab_releases(
             grab_request(seadex_dict=one_release_dict(srg="NAN0", infohash="h1"), pending_import_updates=updates),
         )
 
-        assert set(_pending(pipeline)) == {"h1"}
-        assert _guards(pipeline) == {PENDING_AL_ID: facts}
+        assert set(_pending_import_rows(pipeline)) == {"h1"}
+        assert _guards(pipeline) == {PENDING_IMPORT_AL_ID: facts}
         assert [p.infohash for p in pipeline._state.grabbed_this_run.values()] == ["h1"]
         assert n_added == 1
         assert pipeline._state.torrents_added == 1
@@ -318,7 +318,7 @@ class TestAddOneUrlRegistersPending:
             **one_release_dict(srg="OLD", infohash="already", url="https://nyaa.si/view/1"),
             **one_release_dict(srg="NEW", infohash="fresh", url="https://nyaa.si/view/2"),
         }
-        updates = {"already": pending_seed("already"), "fresh": pending_seed("fresh")}
+        updates = {"already": pending_import_update("already"), "fresh": pending_import_update("fresh")}
 
         n_added, _ = pipeline.grab_releases(grab_request(seadex_dict=seadex_dict, pending_import_updates=updates))
 
@@ -330,8 +330,8 @@ class TestAddOneUrlRegistersPending:
         # without the record reacquires and overwrites it (one record per torrent, the last writer's).
         torrents = FakeTorrents({"h1": (AddStatus.ALREADY_IN_QBIT, "Show")})
         pipeline = _pipeline(torrents=torrents)
-        first = pending_seed("h1", al_id=11, title="Cour 1")
-        second = pending_seed("h1", al_id=22, title="Cour 2")
+        first = pending_import_update("h1", al_id=11, title="Cour 1")
+        second = pending_import_update("h1", al_id=22, title="Cour 2")
 
         pipeline.grab_releases(
             grab_request(seadex_dict=one_release_dict(srg="NAN0", infohash="h1"), pending_import_updates={"h1": first})
@@ -340,7 +340,7 @@ class TestAddOneUrlRegistersPending:
             grab_request(seadex_dict=one_release_dict(srg="NAN0", infohash="h1"), pending_import_updates={"h1": second})
         )
 
-        assert set(_pending(pipeline)) == {"h1"}
+        assert set(_pending_import_rows(pipeline)) == {"h1"}
         assert pipeline._state.reacquired_keys == {"h1"}
         assert claim_al_ids(_stored(pipeline, "h1")) == (22,)
 
@@ -356,13 +356,13 @@ class TestAddOneUrlRegistersPending:
         first.grab_releases(
             grab_request(
                 seadex_dict=one_release_dict(srg="NAN0", infohash="h1"),
-                pending_import_updates={"h1": pending_seed("h1", al_id=11, title="Cour 1")},
+                pending_import_updates={"h1": pending_import_update("h1", al_id=11, title="Cour 1")},
             )
         )
         second = make_grab_pipeline(
             _torrents=FakeTorrents({"h1": (AddStatus.ALREADY_IN_QBIT, "Show")}), cache_store=store, _state=state
         )
-        update = pending_seed("h1", al_id=22, title="Cour 2", stored=_stored(first, "h1"))
+        update = pending_import_update("h1", al_id=22, title="Cour 2", stored=_stored(first, "h1"))
 
         second.grab_releases(
             grab_request(seadex_dict=one_release_dict(srg="NAN0", infohash="h1"), pending_import_updates={"h1": update})
@@ -381,7 +381,7 @@ class TestAddOneUrlRegistersPending:
             grab_request(seadex_dict=one_release_dict(srg="NAN0", infohash="h1"), pending_import_updates={}),
         )
 
-        assert _pending(pipeline) == {}
+        assert _pending_import_rows(pipeline) == {}
         assert pipeline._state.grabbed_this_run == {}
 
     def test_off_mode_registers_nothing_off_the_strategys_empty_seeds(self) -> None:
@@ -397,7 +397,7 @@ class TestAddOneUrlRegistersPending:
             ),
         )
 
-        assert _pending(pipeline) == {}
+        assert _pending_import_rows(pipeline) == {}
         assert _guards(pipeline) == {}
         assert pipeline._state.grabbed_this_run == {}
 
@@ -405,13 +405,13 @@ class TestAddOneUrlRegistersPending:
         # No client -> preview: nothing persisted, but the outcome still surfaces.
         torrents = FakeTorrents({"h1": (AddStatus.ALREADY_IN_QBIT, "x")})
         pipeline = _pipeline(torrents=torrents, qbit=None)
-        updates = {"h1": pending_seed("h1")}
+        updates = {"h1": pending_import_update("h1")}
 
         _, results = pipeline.grab_releases(
             grab_request(seadex_dict=one_release_dict(srg="NAN0", infohash="h1"), pending_import_updates=updates),
         )
 
-        assert _pending(pipeline) == {}
+        assert _pending_import_rows(pipeline) == {}
         assert _guards(pipeline) == {}
         assert pipeline._state.grabbed_this_run == {}
         assert [r.outcome for r in results] == [AddStatus.ALREADY_IN_QBIT]
@@ -424,7 +424,7 @@ class TestAddOneUrlRegistersPending:
             _torrents=torrents,
             _state=ArrRunState(arr=Arr.RADARR, import_wait_mode=ImportWaitMode.BLOCKING),
         )
-        updates = {"h1": pending_seed("h1", series_id=0)}
+        updates = {"h1": pending_import_update("h1", series_id=0)}
 
         pipeline.grab_releases(
             grab_request(seadex_dict=one_release_dict(srg="NAN0", infohash="h1"), pending_import_updates=updates)
@@ -469,11 +469,11 @@ class TestReacquireRegistration:
         pipeline = _pipeline(torrents=self._reacquire(datetime.now() - timedelta(days=100)))
         resident = self._resident(pipeline)
 
-        self._add(pipeline, pending_seed("h1", al_id=22, stored=resident))
+        self._add(pipeline, pending_import_update("h1", al_id=22, stored=resident))
 
         pending = _stored(pipeline, "h1")
         assert pending.added_at == self._STORED_AT
-        assert [c.al_id for c in pending.claims] == [PENDING_AL_ID, 22]
+        assert [c.al_id for c in pending.claims] == [PENDING_IMPORT_AL_ID, 22]
         assert pipeline._state.reacquired_keys == {"h1"}
         assert pipeline._state.grabbed_this_run == {}
 
@@ -483,7 +483,7 @@ class TestReacquireRegistration:
         pipeline = _pipeline(torrents=self._reacquire(None))
         pipeline._state.grabbed_this_run["h1"] = pending_import(infohash="h1")
 
-        self._add(pipeline, pending_seed("h1"))
+        self._add(pipeline, pending_import_update("h1"))
 
         assert pipeline._state.reacquired_keys == set()
 
@@ -494,9 +494,9 @@ class TestReacquireRegistration:
         resident = self._resident(pipeline)
         facts = OwnedAtGrab(entry_groups=("NAN0",))
 
-        self._add(pipeline, pending_seed("h1", guards=facts, stored=resident))
+        self._add(pipeline, pending_import_update("h1", guards=facts, stored=resident))
 
-        assert _guards(pipeline) == {PENDING_AL_ID: facts}
+        assert _guards(pipeline) == {PENDING_IMPORT_AL_ID: facts}
 
     def test_accretion_writes_only_the_joining_claims_guard_row(self) -> None:
         # The stored claim's row is the evidence its own grab wrote. A second entry joining the record
@@ -505,18 +505,18 @@ class TestReacquireRegistration:
         resident = self._resident(pipeline)
         newer = OwnedAtGrab(entry_groups=("NewPick",))
         joining = OwnedAtGrab(entry_groups=("NAN0",))
-        pipeline.cache_store.put_guards(Arr.SONARR, PENDING_AL_ID, newer)
+        pipeline.cache_store.put_guards(Arr.SONARR, PENDING_IMPORT_AL_ID, newer)
 
-        self._add(pipeline, pending_seed("h1", al_id=22, guards=joining, stored=resident))
+        self._add(pipeline, pending_import_update("h1", al_id=22, guards=joining, stored=resident))
 
-        assert _guards(pipeline) == {PENDING_AL_ID: newer, 22: joining}
+        assert _guards(pipeline) == {PENDING_IMPORT_AL_ID: newer, 22: joining}
 
     def test_accretion_replaces_the_entrys_own_claim_and_merges_the_map(self) -> None:
         # A re-flag by the entry already claiming the record: its claim is replaced and
         # the fresh placements fold into the map.
         pipeline = _pipeline(torrents=self._reacquire(None))
         resident = self._resident(pipeline)
-        update = pending_seed(
+        update = pending_import_update(
             "h1", ordered_episode_ids=(101, 102), placements={"Show - 02 [1080p].mkv": (102,)}, stored=resident
         )
 
@@ -536,13 +536,13 @@ class TestReacquireRegistration:
         pipeline = _pipeline(torrents=self._reacquire(None))
         before = now_stamp()
 
-        self._add(pipeline, pending_seed("h1"))
+        self._add(pipeline, pending_import_update("h1"))
 
         pending = _stored(pipeline, "h1")
         assert before <= pending.added_at <= now_stamp()
         assert pipeline._state.reacquired_keys == {"h1"}
         assert pipeline._state.grabbed_this_run == {}
-        assert _guards(pipeline).keys() == {PENDING_AL_ID}
+        assert _guards(pipeline).keys() == {PENDING_IMPORT_AL_ID}
 
     def test_a_torrent_long_in_qbittorrent_is_tracked_at_its_add_time(self) -> None:
         # No stored record: the new one starts at qBittorrent's add time. A torrent's age refuses nothing
@@ -551,13 +551,13 @@ class TestReacquireRegistration:
         pipeline = _pipeline(torrents=self._reacquire(added_on))
         recording = install_recording_hub()
 
-        results = self._add(pipeline, pending_seed("h1"))
+        results = self._add(pipeline, pending_import_update("h1"))
 
         assert diagnostic_messages(recording, Severity.WARNING) == []
         assert _stored(pipeline, "h1").added_at == stamp_of(added_on)
         assert pipeline._state.reacquired_keys == {"h1"}
         assert pipeline._state.grabbed_this_run == {}
-        assert _guards(pipeline).keys() == {PENDING_AL_ID}
+        assert _guards(pipeline).keys() == {PENDING_IMPORT_AL_ID}
         assert [r.outcome for r in results] == [AddStatus.ALREADY_IN_QBIT]
 
     def test_a_marked_url_is_tracked_under_its_cross_seed(self) -> None:
@@ -566,16 +566,18 @@ class TestReacquireRegistration:
         seadex_dict = one_release_dict(srg="NAN0", infohash="h1")
         seadex_dict["NAN0"].releases["https://nyaa.si/view/1"].cross_seed_hash = "c1"
 
-        pipeline.grab_releases(grab_request(seadex_dict=seadex_dict, pending_import_updates={"c1": pending_seed("c1")}))
+        pipeline.grab_releases(
+            grab_request(seadex_dict=seadex_dict, pending_import_updates={"c1": pending_import_update("c1")})
+        )
 
-        assert _pending(pipeline).keys() == {"c1"}
+        assert _pending_import_rows(pipeline).keys() == {"c1"}
 
     def test_fresh_add_never_joins_reacquired_keys(self) -> None:
         # The fresh arm is outcome-keyed: an ADDED is a this-run grab, stamped now.
         pipeline = _pipeline(torrents=FakeTorrents({"h1": (AddStatus.ADDED, "Show")}))
         before = now_stamp()
 
-        self._add(pipeline, pending_seed("h1"))
+        self._add(pipeline, pending_import_update("h1"))
 
         assert pipeline._state.reacquired_keys == set()
         assert [p.infohash for p in pipeline._state.grabbed_this_run.values()] == ["h1"]
@@ -589,10 +591,10 @@ class TestReacquireRegistration:
         resident = self._resident(pipeline)
         before = now_stamp()
 
-        self._add(pipeline, pending_seed("h1", al_id=22, stored=resident))
+        self._add(pipeline, pending_import_update("h1", al_id=22, stored=resident))
 
         pending = _stored(pipeline, "h1")
-        assert [c.al_id for c in pending.claims] == [PENDING_AL_ID, 22]
+        assert [c.al_id for c in pending.claims] == [PENDING_IMPORT_AL_ID, 22]
         assert before <= pending.added_at <= now_stamp()
         assert pipeline._state.reacquired_keys == set()
         assert list(pipeline._state.grabbed_this_run) == ["h1"]
@@ -601,7 +603,7 @@ class TestReacquireRegistration:
 def _nyaa_release(*, url: str, infohash: str) -> Release:
     """A download-flagged Nyaa release that clears every add-path filter."""
 
-    item = url_item(url=url, infohash=infohash, download=True)
+    item = make_release(url=url, infohash=infohash, download=True)
     item.tracker = Tracker.NYAA
     return item
 
@@ -664,7 +666,7 @@ class TestAddTorrentCap:
 
     def test_a_screened_out_url_past_the_cap_is_not_held(self) -> None:
         # The private skip still lands (its flag and line), and no hold forms for a url that could not be grabbed.
-        private = url_item(url="https://private.example/1", infohash="h1", download=True, is_public=False)
+        private = make_release(url="https://private.example/1", infohash="h1", download=True, is_public=False)
         seadex_dict: SeadexDict = {"RG": rg_group({private.url: private})}
         pipeline = _pipeline(torrents=FakeTorrents({}), max_torrents_to_add=1)
         pipeline._state.torrents_added = 1
@@ -685,7 +687,7 @@ class TestAddTorrentCap:
         pipeline._state.torrents_added = 1
         resident = pending_import(infohash="h1", al_id=11)
         pipeline.cache_store.put_pending_import_row(Arr.SONARR, "h1", resident.to_json())
-        updates = {"h1": pending_seed("h1", al_id=22, stored=resident)}
+        updates = {"h1": pending_import_update("h1", al_id=22, stored=resident)}
 
         pipeline.grab_releases(grab_request(seadex_dict=seadex_dict, pending_import_updates=updates))
 
@@ -700,7 +702,9 @@ class TestAddTorrentCap:
         pipeline = _pipeline(torrents=FakeTorrents({"h1": (AddStatus.ADDED, "one")}), max_torrents_to_add=1)
         pipeline._state.torrents_added = 1
 
-        pipeline.grab_releases(grab_request(seadex_dict=seadex_dict, pending_import_updates={"h1": pending_seed("h1")}))
+        pipeline.grab_releases(
+            grab_request(seadex_dict=seadex_dict, pending_import_updates={"h1": pending_import_update("h1")})
+        )
 
         assert pipeline.cache_store.get_pending_import_row(Arr.SONARR, "h1") is None
         assert pipeline._state.per_title.held_by_cap is True
@@ -843,7 +847,7 @@ def _anidex_release(*, url: str, infohash: str) -> Release:
     It has no parser, so it hits `_add_one_url`'s new skip.
     """
 
-    item = url_item(url=url, infohash=infohash, download=True)
+    item = make_release(url=url, infohash=infohash, download=True)
     item.tracker = Tracker.ANIDEX
     return item
 
@@ -859,13 +863,13 @@ class TestUnsupportedTrackerSkip:
         # url loop - dropping the grabbable Nyaa release too. Now AniDex is skipped and
         # the loop continues. Default config: private_releases warn, all trackers selected.
         anidex = _anidex_release(url="https://anidex.info/torrent/1", infohash="ha")
-        nyaa = url_item(url="https://nyaa.si/view/2", infohash="hn", download=True)
+        nyaa = make_release(url="https://nyaa.si/view/2", infohash="hn", download=True)
         nyaa.tracker = Tracker.NYAA
         seadex_dict: SeadexDict = {"NAN0": rg_group({anidex.url: anidex, nyaa.url: nyaa})}
 
         torrents = FakeTorrents({"hn": (AddStatus.ADDED, "Show-NAN0")})
         pipeline = _pipeline(torrents=torrents, private_releases="warn")
-        updates = {"hn": pending_seed("hn")}
+        updates = {"hn": pending_import_update("hn")}
 
         n_added, results = pipeline.grab_releases(grab_request(seadex_dict=seadex_dict, pending_import_updates=updates))
 
@@ -908,7 +912,7 @@ class TestUnsupportedTrackerSkip:
         # Both a private-only skip AND an unsupported-tracker skip on one title,
         # nothing grabbed: exactly ONE needs-action reason (private-only wins) - the
         # two reasons are either/or, never both.
-        private = url_item(url="https://ab.example/1", infohash="hp", is_public=False, download=True)
+        private = make_release(url="https://ab.example/1", infohash="hp", is_public=False, download=True)
         private.tracker = Tracker.ANIMEBYTES
         anidex = _anidex_release(url="https://anidex.info/torrent/1", infohash="ha")
         seadex_dict: SeadexDict = {"NAN0": rg_group({private.url: private, anidex.url: anidex})}
@@ -944,7 +948,7 @@ class TestUnsupportedTrackerSkip:
         # alternative covered the entry's files: the needs-action row says that
         # (its own kind, so the summary tip doesn't suggest the fallback that's
         # already on).
-        private = url_item(url="https://ab.example/1", infohash="hp", is_public=False, download=True)
+        private = make_release(url="https://ab.example/1", infohash="hp", is_public=False, download=True)
         private.tracker = Tracker.ANIMEBYTES
         seadex_dict: SeadexDict = {"Priv": rg_group({private.url: private})}
 
@@ -975,7 +979,7 @@ class TestUnsupportedTrackerSkip:
         # The planner held an owned-at-stale-size pick a fallback must not
         # replace (the stale ctx bit rides in): the needs-action row gets its
         # own kind + reason, and the title stays uncached.
-        private = url_item(url="https://ab.example/1", infohash="hp", is_public=False, download=True)
+        private = make_release(url="https://ab.example/1", infohash="hp", is_public=False, download=True)
         private.tracker = Tracker.ANIMEBYTES
         seadex_dict: SeadexDict = {"Priv": rg_group({private.url: private})}
 
@@ -1010,7 +1014,7 @@ class TestUnsupportedTrackerSkip:
         # Interactive + fallback: a hold here is a hand-picked private pick, so
         # the reason says so - but the kind stays NO_FALLBACK so the summary tip
         # never suggests enabling the fallback that's already on.
-        private = url_item(url="https://ab.example/1", infohash="hp", is_public=False, download=True)
+        private = make_release(url="https://ab.example/1", infohash="hp", is_public=False, download=True)
         private.tracker = Tracker.ANIMEBYTES
         seadex_dict: SeadexDict = {"Priv": rg_group({private.url: private})}
 
@@ -1043,9 +1047,9 @@ class TestFallbackMarker:
         # The fallback happy path: the planner already unflagged the private pick
         # (public fallback kept), the fallback adds fine -> the title caches as
         # done with no needs-action row, unlike warn mode's uncached hold.
-        private = url_item(url="https://ab.example/1", infohash="hp", is_public=False, download=False)
+        private = make_release(url="https://ab.example/1", infohash="hp", is_public=False, download=False)
         private.tracker = Tracker.ANIMEBYTES
-        fall = url_item(url="https://nyaa.si/view/9", infohash="hf", download=True, is_fallback=True)
+        fall = make_release(url="https://nyaa.si/view/9", infohash="hf", download=True, is_fallback=True)
         fall.tracker = Tracker.NYAA
         seadex_dict: SeadexDict = {
             "Priv": rg_group({private.url: private}),
@@ -1080,7 +1084,7 @@ class TestFallbackMarker:
         # A prior fallback run left fallback_satisfied=True. A later genuine grab
         # recomputes False and clears it (the marker is always written - the
         # partial-merge upsert would otherwise preserve the stale True forever).
-        nyaa = url_item(url="https://nyaa.si/view/2", infohash="hn", download=True)
+        nyaa = make_release(url="https://nyaa.si/view/2", infohash="hn", download=True)
         nyaa.tracker = Tracker.NYAA
         seadex_dict: SeadexDict = {"Pub": rg_group({nyaa.url: nyaa})}
 
@@ -1107,7 +1111,7 @@ class TestFallbackMarker:
         assert cached.fallback_satisfied is False
 
 
-def _entry_request(seadex_dict: SeadexDict, *, input_missing: bool = False) -> GrabRequest:
+def _grab_request(seadex_dict: SeadexDict, *, input_missing: bool = False) -> GrabRequest:
     """Entry 42's request over `seadex_dict`, its one group among the failed reads when `input_missing`."""
 
     return grab_request(
@@ -1119,7 +1123,7 @@ def _entry_request(seadex_dict: SeadexDict, *, input_missing: bool = False) -> G
     )
 
 
-def _on_entry(pipeline: GrabPipeline) -> GrabPipeline:
+def _on_title(pipeline: GrabPipeline) -> GrabPipeline:
     """The pipeline mid-run on entry 42's title, its AniList record warm."""
 
     pipeline._anilist.al_cache.update({42: {}})
@@ -1133,9 +1137,9 @@ class TestPlacementInputMissing:
     def test_a_grabbed_title_stays_uncached_with_a_retry_row(self) -> None:
         nyaa = _nyaa_release(url="https://nyaa.si/view/1", infohash="h1")
         seadex_dict: SeadexDict = {"RG": rg_group({nyaa.url: nyaa})}
-        pipeline = _on_entry(_pipeline(torrents=FakeTorrents({"h1": (AddStatus.ADDED, "Show-RG")}), sleep_time=0))
+        pipeline = _on_title(_pipeline(torrents=FakeTorrents({"h1": (AddStatus.ADDED, "Show-RG")}), sleep_time=0))
 
-        pipeline.grab_and_cache(_entry_request(seadex_dict, input_missing=True))
+        pipeline.grab_and_cache(_grab_request(seadex_dict, input_missing=True))
         assert pipeline._state.torrents_added == 1
         assert pipeline.cache_store.get_cached_title(Arr.SONARR, 42) is None
         rows = pipeline._state.stats.needs_action
@@ -1145,10 +1149,10 @@ class TestPlacementInputMissing:
 
     def test_a_title_nothing_was_flagged_for_is_neither_up_to_date_nor_cached(self) -> None:
         # The placement may have held a run, so the coverage judgment was coarse: no "already have it".
-        seadex_dict: SeadexDict = {"RG": rg_group({"u1": url_item(url="u1", infohash="h1", download=False)})}
-        pipeline = _on_entry(_pipeline(torrents=FakeTorrents({}), sleep_time=0))
+        seadex_dict: SeadexDict = {"RG": rg_group({"u1": make_release(url="u1", infohash="h1", download=False)})}
+        pipeline = _on_title(_pipeline(torrents=FakeTorrents({}), sleep_time=0))
 
-        pipeline.grab_and_cache(_entry_request(seadex_dict, input_missing=True))
+        pipeline.grab_and_cache(_grab_request(seadex_dict, input_missing=True))
 
         assert pipeline._state.stats.up_to_date == 0
         assert pipeline.cache_store.get_cached_title(Arr.SONARR, 42) is None
@@ -1158,19 +1162,19 @@ class TestPlacementInputMissing:
         nyaa = _nyaa_release(url="https://nyaa.si/view/1", infohash="h1")
         seadex_dict: SeadexDict = {"RG": rg_group({nyaa.url: nyaa})}
         torrents = FakeTorrents({}, raises={"h1": httpx.ConnectError("nyaa down")})
-        pipeline = _on_entry(_pipeline(torrents=torrents, sleep_time=0))
+        pipeline = _on_title(_pipeline(torrents=torrents, sleep_time=0))
 
-        pipeline.grab_and_cache(_entry_request(seadex_dict, input_missing=True))
+        pipeline.grab_and_cache(_grab_request(seadex_dict, input_missing=True))
 
         assert [r.kind for r in pipeline._state.stats.needs_action] == [NeedsActionKind.GRAB_FAILED]
 
 
 def test_a_title_read_without_its_metadata_stays_uncached_with_nothing_to_do() -> None:
     # AniList or SkyHook was down before the first fetch: the title re-checks next run, and no row asks for a hand.
-    seadex_dict: SeadexDict = {"RG": rg_group({"u1": url_item(url="u1", infohash="h1", download=False)})}
-    pipeline = _on_entry(_pipeline(torrents=FakeTorrents({}), sleep_time=0))
+    seadex_dict: SeadexDict = {"RG": rg_group({"u1": make_release(url="u1", infohash="h1", download=False)})}
+    pipeline = _on_title(_pipeline(torrents=FakeTorrents({}), sleep_time=0))
 
-    pipeline.grab_and_cache(replace(_entry_request(seadex_dict), metadata_unread=True))
+    pipeline.grab_and_cache(replace(_grab_request(seadex_dict), metadata_unread=True))
 
     assert pipeline.cache_store.get_cached_title(Arr.SONARR, 42) is None
     assert pipeline._state.stats.needs_action == []
@@ -1185,7 +1189,7 @@ class TestPlacementHolds:
     """A url the placement refused is never added: the title stays uncached, and the summary says why."""
 
     @staticmethod
-    def _held(*, url: str, infohash: str, skip_reason: PlacementSkip) -> Release:
+    def _skipped_release(*, url: str, infohash: str, skip_reason: PlacementSkip) -> Release:
         """A flagged Nyaa release the placement refused to grab for `hold`."""
 
         item = _nyaa_release(url=url, infohash=infohash)
@@ -1218,12 +1222,12 @@ class TestPlacementHolds:
         self, skip_reason: PlacementSkip, expected: SkipReport
     ) -> None:
         recording = install_recording_hub()
-        nyaa = self._held(url="https://nyaa.si/view/1", infohash="h1", skip_reason=skip_reason)
+        nyaa = self._skipped_release(url="https://nyaa.si/view/1", infohash="h1", skip_reason=skip_reason)
         seadex_dict: SeadexDict = {"RG": rg_group({nyaa.url: nyaa})}
         torrents = FakeTorrents({"h1": (AddStatus.ADDED, "Show-RG")})
-        pipeline = _on_entry(_pipeline(torrents=torrents, sleep_time=0))
+        pipeline = _on_title(_pipeline(torrents=torrents, sleep_time=0))
 
-        pipeline.grab_and_cache(_entry_request(seadex_dict))
+        pipeline.grab_and_cache(_grab_request(seadex_dict))
 
         assert torrents.calls == []
         assert pipeline._state.torrents_added == 0
@@ -1244,22 +1248,25 @@ class TestPlacementHolds:
 
         pipeline.grab_releases(
             grab_request(
-                seadex_dict=seadex_dict, pending_import_updates={"h1": pending_seed("h1", al_id=22, stored=resident)}
+                seadex_dict=seadex_dict,
+                pending_import_updates={"h1": pending_import_update("h1", al_id=22, stored=resident)},
             )
         )
 
         assert torrents.calls == []
-        assert [c.al_id for c in _stored(pipeline, "h1").claims] == [PENDING_AL_ID]
+        assert [c.al_id for c in _stored(pipeline, "h1").claims] == [PENDING_IMPORT_AL_ID]
 
     def test_an_unread_listing_holds_the_url_until_the_next_run(self) -> None:
         # The url names its group among the reads that failed: the row is the retry row, not a hand import.
         recording = install_recording_hub()
-        nyaa = self._held(url="https://nyaa.si/view/1", infohash="h1", skip_reason=PlacementSkip.INPUT_UNREAD)
+        nyaa = self._skipped_release(
+            url="https://nyaa.si/view/1", infohash="h1", skip_reason=PlacementSkip.INPUT_UNREAD
+        )
         seadex_dict: SeadexDict = {"RG": rg_group({nyaa.url: nyaa})}
         torrents = FakeTorrents({"h1": (AddStatus.ADDED, "Show-RG")})
-        pipeline = _on_entry(_pipeline(torrents=torrents, sleep_time=0))
+        pipeline = _on_title(_pipeline(torrents=torrents, sleep_time=0))
 
-        pipeline.grab_and_cache(_entry_request(seadex_dict))
+        pipeline.grab_and_cache(_grab_request(seadex_dict))
 
         assert torrents.calls == []
         assert pipeline.cache_store.get_cached_title(Arr.SONARR, 42) is None
@@ -1269,13 +1276,15 @@ class TestPlacementHolds:
 
     def test_a_url_whose_files_are_another_titles_is_never_added_and_its_skip_carries_the_counts(self) -> None:
         recording = install_recording_hub()
-        nyaa = self._held(url="https://nyaa.si/view/1", infohash="h1", skip_reason=PlacementSkip.PLACED_ELSEWHERE)
+        nyaa = self._skipped_release(
+            url="https://nyaa.si/view/1", infohash="h1", skip_reason=PlacementSkip.PLACED_ELSEWHERE
+        )
         nyaa.another_titles_counts = AnotherTitlesCounts(another_titles=12, unplaced=6)
         seadex_dict: SeadexDict = {"RG": rg_group({nyaa.url: nyaa})}
         torrents = FakeTorrents({"h1": (AddStatus.ADDED, "Show-RG")})
-        pipeline = _on_entry(_pipeline(torrents=torrents, sleep_time=0))
+        pipeline = _on_title(_pipeline(torrents=torrents, sleep_time=0))
 
-        pipeline.grab_and_cache(_entry_request(seadex_dict))
+        pipeline.grab_and_cache(_grab_request(seadex_dict))
 
         assert torrents.calls == []
         assert pipeline.cache_store.get_cached_title(Arr.SONARR, 42) is None
@@ -1291,22 +1300,24 @@ class TestPlacementHolds:
 
     def test_the_another_titles_row_outranks_a_failed_read(self) -> None:
         # A failed read clears next run. A url whose files are another title's stays held until the entry has them.
-        another_titles = self._held(
+        another_titles = self._skipped_release(
             url="https://nyaa.si/view/1", infohash="h1", skip_reason=PlacementSkip.PLACED_ELSEWHERE
         )
-        unread = self._held(url="https://nyaa.si/view/2", infohash="h2", skip_reason=PlacementSkip.INPUT_UNREAD)
+        unread = self._skipped_release(
+            url="https://nyaa.si/view/2", infohash="h2", skip_reason=PlacementSkip.INPUT_UNREAD
+        )
         seadex_dict: SeadexDict = {
             "RG": rg_group({another_titles.url: another_titles}),
             "Other": rg_group({unread.url: unread}),
         }
-        pipeline = _on_entry(_pipeline(torrents=FakeTorrents({}), sleep_time=0))
+        pipeline = _on_title(_pipeline(torrents=FakeTorrents({}), sleep_time=0))
 
-        pipeline.grab_and_cache(_entry_request(seadex_dict))
+        pipeline.grab_and_cache(_grab_request(seadex_dict))
 
         assert [r.kind for r in pipeline._state.stats.needs_action] == [NeedsActionKind.PLACED_ELSEWHERE]
 
     def test_a_failed_grab_outranks_the_another_titles_row(self) -> None:
-        another_titles = self._held(
+        another_titles = self._skipped_release(
             url="https://nyaa.si/view/1", infohash="h1", skip_reason=PlacementSkip.PLACED_ELSEWHERE
         )
         failing = _nyaa_release(url="https://nyaa.si/view/2", infohash="h2")
@@ -1315,20 +1326,22 @@ class TestPlacementHolds:
             "Other": rg_group({failing.url: failing}),
         }
         torrents = FakeTorrents({}, raises={"h2": httpx.ConnectError("nyaa down")})
-        pipeline = _on_entry(_pipeline(torrents=torrents, sleep_time=0))
+        pipeline = _on_title(_pipeline(torrents=torrents, sleep_time=0))
 
-        pipeline.grab_and_cache(_entry_request(seadex_dict))
+        pipeline.grab_and_cache(_grab_request(seadex_dict))
 
         assert [r.kind for r in pipeline._state.stats.needs_action] == [NeedsActionKind.GRAB_FAILED]
 
     def test_a_held_url_beside_a_grabbable_one_lets_the_other_grab(self) -> None:
-        held = self._held(url="https://nyaa.si/view/1", infohash="h1", skip_reason=PlacementSkip.MISNUMBERED)
+        skipped = self._skipped_release(
+            url="https://nyaa.si/view/1", infohash="h1", skip_reason=PlacementSkip.MISNUMBERED
+        )
         other = _nyaa_release(url="https://nyaa.si/view/2", infohash="h2")
-        seadex_dict: SeadexDict = {"RG": rg_group({held.url: held}), "Other": rg_group({other.url: other})}
+        seadex_dict: SeadexDict = {"RG": rg_group({skipped.url: skipped}), "Other": rg_group({other.url: other})}
         torrents = FakeTorrents({"h2": (AddStatus.ADDED, "Show-Other")})
-        pipeline = _on_entry(_pipeline(torrents=torrents, sleep_time=0))
+        pipeline = _on_title(_pipeline(torrents=torrents, sleep_time=0))
 
-        pipeline.grab_and_cache(_entry_request(seadex_dict))
+        pipeline.grab_and_cache(_grab_request(seadex_dict))
 
         assert torrents.calls == ["h2"]
         assert pipeline._state.torrents_added == 1
@@ -1339,8 +1352,10 @@ class TestPlacementHolds:
     def test_a_held_url_past_the_cap_posts_its_skip_and_no_cap_hold(self) -> None:
         # The refusal screens the url before the cap: its skip line lands, and no hold forms for it.
         recording = install_recording_hub()
-        held = self._held(url="https://nyaa.si/view/1", infohash="h1", skip_reason=PlacementSkip.MISNUMBERED)
-        seadex_dict: SeadexDict = {"RG": rg_group({held.url: held})}
+        skipped = self._skipped_release(
+            url="https://nyaa.si/view/1", infohash="h1", skip_reason=PlacementSkip.MISNUMBERED
+        )
+        seadex_dict: SeadexDict = {"RG": rg_group({skipped.url: skipped})}
         pipeline = _pipeline(torrents=FakeTorrents({}), max_torrents_to_add=1, sleep_time=0)
         pipeline._state.torrents_added = 1
 
@@ -1354,12 +1369,14 @@ class TestPlacementHolds:
     def test_an_unflagged_held_url_is_not_skipped_and_the_title_caches(self) -> None:
         # The planner found the pack in place (a hand import done): the refusal is moot, the title is up to date.
         recording = install_recording_hub()
-        held = self._held(url="https://nyaa.si/view/1", infohash="h1", skip_reason=PlacementSkip.MISNUMBERED)
-        held.to_grab = False
-        seadex_dict: SeadexDict = {"RG": rg_group({held.url: held})}
-        pipeline = _on_entry(_pipeline(torrents=FakeTorrents({}), sleep_time=0))
+        skipped = self._skipped_release(
+            url="https://nyaa.si/view/1", infohash="h1", skip_reason=PlacementSkip.MISNUMBERED
+        )
+        skipped.to_grab = False
+        seadex_dict: SeadexDict = {"RG": rg_group({skipped.url: skipped})}
+        pipeline = _on_title(_pipeline(torrents=FakeTorrents({}), sleep_time=0))
 
-        pipeline.grab_and_cache(_entry_request(seadex_dict))
+        pipeline.grab_and_cache(_grab_request(seadex_dict))
 
         assert recording.of_type(ReleaseSkipped) == []
         assert pipeline._state.per_title.skipped_groups == {}
@@ -1368,47 +1385,55 @@ class TestPlacementHolds:
 
     def test_an_unsupported_tracker_outranks_the_misnumbered_row(self) -> None:
         anidex = _anidex_release(url="https://anidex.info/torrent/1", infohash="ha")
-        nyaa = self._held(url="https://nyaa.si/view/2", infohash="h1", skip_reason=PlacementSkip.MISNUMBERED)
+        nyaa = self._skipped_release(url="https://nyaa.si/view/2", infohash="h1", skip_reason=PlacementSkip.MISNUMBERED)
         seadex_dict: SeadexDict = {"RG": rg_group({anidex.url: anidex, nyaa.url: nyaa})}
-        pipeline = _on_entry(_pipeline(torrents=FakeTorrents({}), private_releases="warn", sleep_time=0))
+        pipeline = _on_title(_pipeline(torrents=FakeTorrents({}), private_releases="warn", sleep_time=0))
 
-        pipeline.grab_and_cache(_entry_request(seadex_dict))
+        pipeline.grab_and_cache(_grab_request(seadex_dict))
 
         assert [r.kind for r in pipeline._state.stats.needs_action] == [NeedsActionKind.UNSUPPORTED_TRACKER]
 
     def test_the_misnumbered_row_outranks_a_failed_grab(self) -> None:
-        held = self._held(url="https://nyaa.si/view/1", infohash="h1", skip_reason=PlacementSkip.MISNUMBERED)
+        skipped = self._skipped_release(
+            url="https://nyaa.si/view/1", infohash="h1", skip_reason=PlacementSkip.MISNUMBERED
+        )
         failing = _nyaa_release(url="https://nyaa.si/view/2", infohash="h2")
-        seadex_dict: SeadexDict = {"RG": rg_group({held.url: held}), "Other": rg_group({failing.url: failing})}
+        seadex_dict: SeadexDict = {"RG": rg_group({skipped.url: skipped}), "Other": rg_group({failing.url: failing})}
         torrents = FakeTorrents({}, raises={"h2": httpx.ConnectError("nyaa down")})
-        pipeline = _on_entry(_pipeline(torrents=torrents, sleep_time=0))
+        pipeline = _on_title(_pipeline(torrents=torrents, sleep_time=0))
 
-        pipeline.grab_and_cache(_entry_request(seadex_dict))
+        pipeline.grab_and_cache(_grab_request(seadex_dict))
 
         assert [r.kind for r in pipeline._state.stats.needs_action] == [NeedsActionKind.MISNUMBERED]
 
     def test_the_misnumbered_row_outranks_the_titles_refute_row(self) -> None:
         # The table's order decides between two hand-import holds.
-        contradicted = self._held(url="https://nyaa.si/view/1", infohash="h1", skip_reason=PlacementSkip.TITLE_REFUTED)
-        misnumbered = self._held(url="https://nyaa.si/view/2", infohash="h2", skip_reason=PlacementSkip.MISNUMBERED)
+        contradicted = self._skipped_release(
+            url="https://nyaa.si/view/1", infohash="h1", skip_reason=PlacementSkip.TITLE_REFUTED
+        )
+        misnumbered = self._skipped_release(
+            url="https://nyaa.si/view/2", infohash="h2", skip_reason=PlacementSkip.MISNUMBERED
+        )
         seadex_dict: SeadexDict = {
             "RG": rg_group({contradicted.url: contradicted}),
             "Other": rg_group({misnumbered.url: misnumbered}),
         }
-        pipeline = _on_entry(_pipeline(torrents=FakeTorrents({}), sleep_time=0))
+        pipeline = _on_title(_pipeline(torrents=FakeTorrents({}), sleep_time=0))
 
-        pipeline.grab_and_cache(_entry_request(seadex_dict))
+        pipeline.grab_and_cache(_grab_request(seadex_dict))
 
         assert [r.kind for r in pipeline._state.stats.needs_action] == [NeedsActionKind.MISNUMBERED]
 
     def test_the_titles_refute_row_outranks_a_failed_grab(self) -> None:
-        held = self._held(url="https://nyaa.si/view/1", infohash="h1", skip_reason=PlacementSkip.TITLE_REFUTED)
+        skipped = self._skipped_release(
+            url="https://nyaa.si/view/1", infohash="h1", skip_reason=PlacementSkip.TITLE_REFUTED
+        )
         failing = _nyaa_release(url="https://nyaa.si/view/2", infohash="h2")
-        seadex_dict: SeadexDict = {"RG": rg_group({held.url: held}), "Other": rg_group({failing.url: failing})}
+        seadex_dict: SeadexDict = {"RG": rg_group({skipped.url: skipped}), "Other": rg_group({failing.url: failing})}
         torrents = FakeTorrents({}, raises={"h2": httpx.ConnectError("nyaa down")})
-        pipeline = _on_entry(_pipeline(torrents=torrents, sleep_time=0))
+        pipeline = _on_title(_pipeline(torrents=torrents, sleep_time=0))
 
-        pipeline.grab_and_cache(_entry_request(seadex_dict))
+        pipeline.grab_and_cache(_grab_request(seadex_dict))
 
         assert [r.kind for r in pipeline._state.stats.needs_action] == [NeedsActionKind.TITLE_REFUTED]
 
@@ -1569,9 +1594,9 @@ class TestFallbackHoldNeverCaches:
     def _mixed_seadex_dict(self) -> SeadexDict:
         """A refused private group next to a grabbable public group."""
 
-        private = url_item(url="https://ab.example/1", infohash="hp", is_public=False, download=True)
+        private = make_release(url="https://ab.example/1", infohash="hp", is_public=False, download=True)
         private.tracker = Tracker.ANIMEBYTES
-        nyaa = url_item(url="https://nyaa.si/view/2", infohash="hn", download=True)
+        nyaa = make_release(url="https://nyaa.si/view/2", infohash="hn", download=True)
         nyaa.tracker = Tracker.NYAA
         return {"Priv": rg_group({private.url: private}), "Pub": rg_group({nyaa.url: nyaa})}
 

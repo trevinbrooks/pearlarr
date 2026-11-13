@@ -20,7 +20,7 @@ from pearlarr.wait_types import (
     download_progress_of,
 )
 
-from .builders import order_only_held_back
+from .builders import order_only_hand_import_files
 from .test_pending_import import HALVES
 
 
@@ -76,20 +76,21 @@ class TestPendingStateAndProbe:
     @pytest.mark.parametrize(
         ("left", "explained"),
         [
-            pytest.param(order_only_held_back(), True, id="both keyed, an episode missing"),
+            pytest.param(order_only_hand_import_files(), True, id="both keyed, an episode missing"),
             pytest.param(
-                order_only_held_back(missing=(), untrusted=(EpisodeKey(4, 1),)),
+                order_only_hand_import_files(missing=(), untrusted=(EpisodeKey(4, 1),)),
                 True,
                 id="both keyed, an episode holding another file",
             ),
             pytest.param(
                 LeftForHandImport(
-                    files=(order_only_held_back().files[0], HandImportFile(HALVES[1])), missing=(EpisodeKey(4, 1),)
+                    files=(order_only_hand_import_files().files[0], HandImportFile(HALVES[1])),
+                    missing=(EpisodeKey(4, 1),),
                 ),
                 False,
                 id="one of two keyed",
             ),
-            pytest.param(order_only_held_back(missing=()), False, id="no unfilled episode to name"),
+            pytest.param(order_only_hand_import_files(missing=()), False, id="no unfilled episode to name"),
             pytest.param(LeftForHandImport(missing=(EpisodeKey(4, 1),)), False, id="no file"),
         ],
     )

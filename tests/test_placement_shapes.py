@@ -22,7 +22,7 @@ from pearlarr.pending_import import TitleNames
 from pearlarr.placement_types import GrabbingTitle, episode_index
 from pearlarr.releases import ReleaseEpisode
 
-from .builders import new_torrent, seed_scope
+from .builders import make_grabbing_title, new_torrent
 
 _CATALOG = Path(__file__).parent / "fixtures" / "sonarr" / "placement_shapes.json"
 
@@ -121,11 +121,11 @@ def _names(case: ShapeCase) -> TitleNames:
     return TitleNames(case.series_title, case.titles)
 
 
-def _scope(case: ShapeCase) -> GrabbingTitle:
+def _grabbing_title(case: ShapeCase) -> GrabbingTitle:
     """The grab-time scope: the entry's slice of the whole-series index, and the names."""
 
     index = episode_index(case.episodes)
-    return seed_scope(
+    return make_grabbing_title(
         episode_index([index.by_id[episode_id] for episode_id in case.entry_ids]), index, names=_names(case)
     )
 
@@ -143,7 +143,7 @@ def test_the_grab_places_the_captured_shape(case: ShapeCase) -> None:
     The records the planner judges coverage by are the placed episodes' numbers, sized per file.
     """
 
-    grabbing_title = _scope(case)
+    grabbing_title = _grabbing_title(case)
     parsed = _parsed(case)
     files = [ListedFile(name, size, parsed[name]) for size, name in enumerate(case.parses, start=1)]
 

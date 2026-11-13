@@ -8,12 +8,12 @@ from pearlarr.listing_fold import ListedTitle, build_listings, single_episode_si
 from pearlarr.pending_import import TitleWindow
 from pearlarr.placement_types import EMPTY_LISTING
 
-from .builders import entry_window, make_entry_record, make_torrent_record, torrent_listing
+from .builders import make_entry_record, make_torrent_record, title_window, torrent_listing
 
 _H1 = "a" * 40
 _H2 = "b" * 40
 _NO_TAGS: frozenset[str] = frozenset()
-_ONE_SPECIAL = entry_window(1, (7898,))
+_ONE_SPECIAL = title_window(1, (7898,))
 """A window of the one special 7898."""
 
 
@@ -30,7 +30,7 @@ def _entry(al_id: int, *torrents: TorrentRecord) -> EntryRecord:
 def _window(entry: EntryRecord, *ids: int) -> TitleWindow:
     """The entry's window over `ids`."""
 
-    return entry_window(entry.anilist_id, ids)
+    return title_window(entry.anilist_id, ids)
 
 
 def _listed(entry: EntryRecord, *ids: int) -> ListedTitle:
@@ -127,10 +127,10 @@ class TestFoldListings:
     def test_single_file_copies_identify_a_packs_specials(self) -> None:
         # One pack listed under three entries, and a hash-less single-file copy of each special under its own.
         # The sizes identify the specials, whatever the pack's names say.
-        pack = _torrent(_H1, ("Show - S00E02.mkv", 700), ("Show - S00E03.mkv", 800))
-        season = _entry(1, pack)
-        special_b = _entry(2, pack, _torrent(None, ("Show - Special B.mkv", 800)))
-        special_a = _entry(3, pack, _torrent(None, ("Show - Special A.mkv", 700)))
+        torrent = _torrent(_H1, ("Show - S00E02.mkv", 700), ("Show - S00E03.mkv", 800))
+        season = _entry(1, torrent)
+        special_b = _entry(2, torrent, _torrent(None, ("Show - Special B.mkv", 800)))
+        special_a = _entry(3, torrent, _torrent(None, ("Show - Special A.mkv", 700)))
 
         read = build_listings([_listed(season, 101, 102), _listed(special_b, 502), _listed(special_a, 501)], _NO_TAGS)
 
@@ -178,7 +178,7 @@ class TestSizeIdentities:
     def test_a_wider_window_identifies_nothing(self) -> None:
         entry = _entry(1, _torrent(_H1, ("Show - Special.mkv", 700)))
 
-        assert list(single_episode_sizes(entry, entry_window(1, (7897, 7898)), _NO_TAGS)) == []
+        assert list(single_episode_sizes(entry, title_window(1, (7897, 7898)), _NO_TAGS)) == []
 
     def test_a_torrent_with_an_ignored_tag_identifies_nothing(self) -> None:
         tagged = _torrent(_H1, ("Show - Special.mkv", 700), tags=frozenset({Tag.DOLBY_VISION}))

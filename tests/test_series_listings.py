@@ -15,12 +15,12 @@ from pearlarr.series_listings import SeriesListings
 
 from .builders import (
     FakeSeaDexSource,
-    entry_window,
     make_bare_instance,
     make_entry_record,
     make_sonarr_episodes,
     make_torrent_record,
     sonarr_ep,
+    title_window,
     torrent_listing,
 )
 from .fakes import ScriptedEpisodes
@@ -71,7 +71,7 @@ def _names(al_id: int) -> TitleNames:
 def _window(al_id: int, *ids: int) -> TitleWindow:
     """Entry `al_id`'s window over `ids` on series 7, named by the resolver."""
 
-    return entry_window(al_id, ids, series_id=7, names=_names(al_id))
+    return title_window(al_id, ids, series_id=7, names=_names(al_id))
 
 
 def _reader(seadex: FakeSeaDexSource, episodes: ScriptedEpisodes) -> SeriesListings:
@@ -168,7 +168,7 @@ class TestRead:
         assert read.listing(_H1) == torrent_listing(_window(1, 501))
 
     def test_an_outage_reads_nothing_and_is_not_asked_again_this_run(self) -> None:
-        seadex = FakeSeaDexSource({1: _entry(1, _H1)}, outage=True)
+        seadex = FakeSeaDexSource({1: _entry(1, _H1)}, unreachable=True)
         reader = _reader(seadex, _windows({1: _episodes(1)}))
 
         assert reader.read(7, _mappings(1, 2)) is None

@@ -39,7 +39,7 @@ from pearlarr.output import Severity
 from pearlarr.pending_import import PendingImport
 from pearlarr.sonarr_client import SonarrClient
 
-from .builders import entry_claim
+from .builders import title_claim
 from .fakes import diagnostic_messages, install_recording_hub
 from .http_mock import sonarr_fixture
 
@@ -68,7 +68,7 @@ def _make_client() -> SonarrClient:
     )
 
 
-def _make_pending(*, infohash: str, title: str) -> PendingImport:
+def _make_pending_import(*, infohash: str, title: str) -> PendingImport:
     """A minimal `PendingImport` carrying only the fields the scan reads."""
 
     return PendingImport(
@@ -78,7 +78,7 @@ def _make_pending(*, infohash: str, title: str) -> PendingImport:
         seadex_files=(),
         added_at="",
         file_episode_map={},
-        claims=(entry_claim(title=title),),
+        claims=(title_claim(title=title),),
     )
 
 
@@ -228,16 +228,16 @@ def test_queue_later_page_failure_fails_the_whole_read() -> None:
 
 @respx.mock
 @pytest.mark.parametrize(
-    "outage",
+    "failure",
     [pytest.param(httpx.Response(500), id="non-200"), pytest.param(httpx.ConnectError("boom"), id="request-error")],
 )
-def test_queue_outage_returns_none(outage: httpx.Response | Exception) -> None:
+def test_queue_outage_returns_none(failure: httpx.Response | Exception) -> None:
     """A failed queue read reports None (fail closed): it never reads as an empty, untracked queue.
 
     It also never unwinds the poll loop.
     """
 
-    respx.get(f"{_BASE}/queue").mock(side_effect=[outage] * 10)
+    respx.get(f"{_BASE}/queue").mock(side_effect=[failure] * 10)
     assert _make_client().queue() is None
 
 
@@ -560,7 +560,7 @@ def test_manual_import_candidates_decodes_and_uppercases_downloadid() -> None:
     It narrows each candidate to its `path` / `quality` / `rejections`.
     """
 
-    pending = _make_pending(
+    pending = _make_pending_import(
         infohash="abcdef0123456789abcdef0123456789abcdef01",
         title="Yamada-kun",
     )
@@ -594,7 +594,7 @@ def test_manual_import_candidates_non_200_returns_none_silently() -> None:
     """
 
     recording = install_recording_hub()
-    pending = _make_pending(infohash="a" * 40, title="Yamada-kun")
+    pending = _make_pending_import(infohash="a" * 40, title="Yamada-kun")
     respx.get(f"{_BASE}/manualimport").respond(status_code=500)
     assert _make_client().manual_import_candidates_by_download_id(pending=pending) is None
     assert diagnostic_messages(recording, Severity.WARNING) == []
@@ -604,7 +604,7 @@ def test_manual_import_candidates_non_200_returns_none_silently() -> None:
 def test_manual_import_candidates_request_error_returns_none() -> None:
     """A transient request error (slow mount / drop) returns None, not []."""
 
-    pending = _make_pending(infohash="a" * 40, title="Yamada-kun")
+    pending = _make_pending_import(infohash="a" * 40, title="Yamada-kun")
     respx.get(f"{_BASE}/manualimport").mock(side_effect=httpx.ConnectError("boom"))
     assert _make_client().manual_import_candidates_by_download_id(pending=pending) is None
 
@@ -766,7 +766,7 @@ def test_wait_path_polls_make_exactly_one_attempt() -> None:
     manualimport = respx.get(f"{_BASE}/manualimport").respond(status_code=500)
     history = respx.get(f"{_BASE}/history").respond(status_code=500)
     client = _make_client()
-    pending = _make_pending(infohash="a" * 40, title="Yamada-kun")
+    pending = _make_pending_import(infohash="a" * 40, title="Yamada-kun")
 
     assert client.manual_import_candidates_by_download_id(pending=pending) is None
     assert manualimport.call_count == 1

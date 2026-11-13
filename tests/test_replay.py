@@ -47,7 +47,7 @@ _TS = datetime.fromtimestamp(_EPOCH).strftime("%Y-%m-%d %H:%M:%S")
 _FIXED_TIME = "2026-01-01T18:00:00+00:00"
 _FIXED_TS = "2026-01-01 18:00:00"
 
-_ENTRY = ScopeId(ScopeKind.ENTRY, 2)
+_TITLE_SCOPE = ScopeId(ScopeKind.ENTRY, 2)
 
 
 def _json_capture(events: list[Event]) -> str:
@@ -94,8 +94,8 @@ def test_golden_round_trip_reproduces_the_text_grammar(
         Diagnostic(severity=Severity.ERROR, message="boom", origin="anilist", trace=trace),
         ScanStarted(arr=Arr.SONARR, total=182),
         ItemStarted(arr=Arr.SONARR, index=3, total=182, title="Frieren"),
-        ScopeOpened(scope=_ENTRY, label="Frieren"),
-        TitleHeader(state=TitleState.CHECKING, title="Frieren", scope=_ENTRY),
+        ScopeOpened(scope=_TITLE_SCOPE, label="Frieren"),
+        TitleHeader(state=TitleState.CHECKING, title="Frieren", scope=_TITLE_SCOPE),
         CacheStatsReported(
             entries=1,
             anilist_meta=1,

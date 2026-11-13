@@ -25,7 +25,7 @@ from pearlarr.sonarr_state import (
 )
 from pearlarr.wait_types import PauseReason
 
-from .builders import PENDING_ADDED, PENDING_STAMP, entry_claim, pending_import, queue_record
+from .builders import PENDING_IMPORT_ADDED, PENDING_IMPORT_STAMP, pending_import, queue_record, title_claim
 
 
 class TestClassifyQueue:
@@ -258,33 +258,37 @@ class TestRescannedSinceAdd:
     """The untracked proof: a completed rescan that started a minute or more after the add."""
 
     def test_a_minute_after_the_add_proves(self) -> None:
-        assert rescanned_since_add([_rescan(started=PENDING_ADDED + timedelta(seconds=60))], PENDING_STAMP)
+        assert rescanned_since_add(
+            [_rescan(started=PENDING_IMPORT_ADDED + timedelta(seconds=60))], PENDING_IMPORT_STAMP
+        )
 
     def test_under_a_minute_after_the_add_does_not_prove(self) -> None:
-        assert not rescanned_since_add([_rescan(started=PENDING_ADDED + timedelta(seconds=59))], PENDING_STAMP)
+        assert not rescanned_since_add(
+            [_rescan(started=PENDING_IMPORT_ADDED + timedelta(seconds=59))], PENDING_IMPORT_STAMP
+        )
 
     def test_a_junk_stamp_does_not_prove(self) -> None:
-        assert not rescanned_since_add([_rescan(started=PENDING_ADDED + timedelta(days=1))], "junk")
+        assert not rescanned_since_add([_rescan(started=PENDING_IMPORT_ADDED + timedelta(days=1))], "junk")
 
     def test_a_rescan_without_a_start_does_not_prove(self) -> None:
-        assert not rescanned_since_add([_rescan(started=None)], PENDING_STAMP)
+        assert not rescanned_since_add([_rescan(started=None)], PENDING_IMPORT_STAMP)
 
     def test_a_running_rescan_does_not_prove(self) -> None:
         assert not rescanned_since_add(
-            [_rescan(started=PENDING_ADDED + timedelta(days=1), status="started")], PENDING_STAMP
+            [_rescan(started=PENDING_IMPORT_ADDED + timedelta(days=1), status="started")], PENDING_IMPORT_STAMP
         )
 
     def test_another_completed_command_does_not_prove(self) -> None:
-        rss = _command(name="RssSync", status="completed", started=PENDING_ADDED + timedelta(days=1))
-        assert not rescanned_since_add([rss], PENDING_STAMP)
+        rss = _command(name="RssSync", status="completed", started=PENDING_IMPORT_ADDED + timedelta(days=1))
+        assert not rescanned_since_add([rss], PENDING_IMPORT_STAMP)
 
 
 @pytest.mark.parametrize(
     ("commands", "restarted"),
     [
         ([], True),
-        ([_rescan(started=PENDING_ADDED, status="started")], True),
-        ([_rescan(started=PENDING_ADDED)], False),
+        ([_rescan(started=PENDING_IMPORT_ADDED, status="started")], True),
+        ([_rescan(started=PENDING_IMPORT_ADDED)], False),
     ],
     ids=["empty", "started-only", "completed"],
 )
@@ -502,8 +506,8 @@ class TestPlacementsFromHistory:
         pending = _unplaced(
             seadex_files=["Show - 01.mkv", "Show - 02.mkv"],
             claims=(
-                entry_claim(al_id=1, series_id=7, ordered_episode_ids=[101]),
-                entry_claim(al_id=2, series_id=8, ordered_episode_ids=[201]),
+                title_claim(al_id=1, series_id=7, ordered_episode_ids=[101]),
+                title_claim(al_id=2, series_id=8, ordered_episode_ids=[201]),
             ),
         )
         rows = [HistoryImport("/d/Show - 01.mkv", 201, 8), HistoryImport("/d/Show - 02.mkv", 201, 7)]
