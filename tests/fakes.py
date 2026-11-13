@@ -300,7 +300,7 @@ class FakeStrategy(ArrStrategy[FakeArrItem]):
         self,
         pending: PendingImport,
         content_path: str,
-        attempt: AttemptKind,
+        attempt_kind: AttemptKind,
     ) -> AttemptResult:
         raise NotImplementedError  # override in a test that drives the import hook
 

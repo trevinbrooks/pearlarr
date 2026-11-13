@@ -238,7 +238,7 @@ def import_started_at(role: Role) -> float | None:
     return done + QUEUE_LAG_S + FMAB_PENDING_S
 
 
-def files_landed(role: Role) -> int:
+def files_imported(role: Role) -> int:
     t0 = import_started_at(role)
     if t0 is None or now() < t0:
         return 0
@@ -251,20 +251,20 @@ def episodes_response(series_key: str) -> Json:
     role = _world.by_series(series_key)
     if role is None:
         return list(base)
-    landed = files_landed(role)
-    if landed == 0:
+    imported = files_imported(role)
+    if imported == 0:
         return list(base)
-    numbers = sorted(role.import_files)[:landed]
-    landed_set = set(numbers)
+    numbers = sorted(role.import_files)[:imported]
+    imported_set = set(numbers)
     out: list[Json] = []
     for ep in base:
         n = int_field(ep, "episodeNumber")
         # Landed episodes get the NEW file even when one already exists - the
         # upgrade path (FMAB) replaces files, and the landing check must see it.
-        if n not in landed_set:
+        if n not in imported_set:
             out.append(ep)
             continue
-        landed_file = role.import_files[n]
+        imported_file = role.import_files[n]
         sid = int_field(ep, "seriesId")
         updated = dict(ep)
         updated["hasFile"] = True
@@ -272,9 +272,9 @@ def episodes_response(series_key: str) -> Json:
         episode_file: dict[str, Json] = {
             "seriesId": sid,
             "seasonNumber": 1,
-            "relativePath": f"Season 01/{landed_file.name}",
-            "path": f"/tv/imported/Season 01/{landed_file.name}",
-            "size": landed_file.size,
+            "relativePath": f"Season 01/{imported_file.name}",
+            "path": f"/tv/imported/Season 01/{imported_file.name}",
+            "size": imported_file.size,
             "dateAdded": "2026-01-01T00:00:00Z",
             "releaseGroup": role.import_group,
             "languages": JP_EN,

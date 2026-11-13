@@ -226,14 +226,14 @@ class RadarrStrategy(ArrStrategy[RadarrItem]):
         self,
         pending: PendingImport,
         content_path: str,
-        attempt: AttemptKind,
+        attempt_kind: AttemptKind,
     ) -> AttemptResult:
         """Reconcile one completed Radarr download against Radarr's import history.
 
         Radarr imports its own completed downloads, so this only reads evidence and never drives an import.
         """
 
-        del content_path, attempt
+        del content_path, attempt_kind
         evidence = self._import_evidence()
         # An outage is no evidence, so wait. Never move a torrent on a missing read.
         imported = evidence.readable and pending.infohash.casefold() in evidence.imported_hashes

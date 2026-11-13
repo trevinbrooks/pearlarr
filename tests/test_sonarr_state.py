@@ -10,7 +10,7 @@ from pearlarr.pending_import import PendingImport
 from pearlarr.sonarr_state import (
     CommandBlock,
     ContentPaths,
-    DownloadMatch,
+    DownloadIdentifiers,
     HistoryImport,
     QueueState,
     classify_commands,
@@ -35,25 +35,25 @@ class TestClassifyQueue:
         assert classify_queue([]) is QueueState.NOT_IN_QUEUE
 
     def test_import_blocked_steps_in(self) -> None:
-        assert classify_queue([queue_record("A", "importBlocked")]) is QueueState.STEP_IN
+        assert classify_queue([queue_record("A", "importBlocked")]) is QueueState.STUCK
 
     def test_failed_steps_in(self) -> None:
-        assert classify_queue([queue_record("A", "failed")]) is QueueState.STEP_IN
+        assert classify_queue([queue_record("A", "failed")]) is QueueState.STUCK
 
     def test_clean_pending_is_pending_clean(self) -> None:
-        assert classify_queue([queue_record("A", "importPending", status="ok")]) is QueueState.PENDING_CLEAN
+        assert classify_queue([queue_record("A", "importPending", status="ok")]) is QueueState.IMPORT_PENDING_OK
 
     def test_statusless_pending_is_pending_clean(self) -> None:
         # No reported status folds to clean: only an explicit warning/error flag
         # routes a pending record away from the defer-to-Sonarr path.
-        assert classify_queue([queue_record("A", "importPending", status=None)]) is QueueState.PENDING_CLEAN
+        assert classify_queue([queue_record("A", "importPending", status=None)]) is QueueState.IMPORT_PENDING_OK
 
     def test_flagged_pending_steps_in(self) -> None:
         # warning/error on importPending = Sonarr's own import attempt failed and
         # it won't reliably retry (observed live: flagged-pending torrents sat
         # 10+ minutes untouched) - so waiting only burns the readiness deadline.
-        assert classify_queue([queue_record("A", "importPending", status="warning")]) is QueueState.STEP_IN
-        assert classify_queue([queue_record("A", "importPending", status="error")]) is QueueState.STEP_IN
+        assert classify_queue([queue_record("A", "importPending", status="warning")]) is QueueState.STUCK
+        assert classify_queue([queue_record("A", "importPending", status="error")]) is QueueState.STUCK
 
     def test_downloading_waits(self) -> None:
         assert classify_queue([queue_record("A", "downloading")]) is QueueState.WAIT
@@ -76,8 +76,8 @@ class TestClassifyQueue:
         assert classify_queue(records) is QueueState.WAIT
 
     def test_case_insensitive(self) -> None:
-        assert classify_queue([queue_record("A", "IMPORTBLOCKED")]) is QueueState.STEP_IN
-        assert classify_queue([queue_record("A", "importPending", status="WARNING")]) is QueueState.STEP_IN
+        assert classify_queue([queue_record("A", "IMPORTBLOCKED")]) is QueueState.STUCK
+        assert classify_queue([queue_record("A", "importPending", status="WARNING")]) is QueueState.STUCK
 
 
 def _command(
@@ -108,28 +108,28 @@ class TestManualImportInFlight:
     def test_matching_download_id_is_in_flight(self) -> None:
         cmds = [_command(files=[{"downloadId": "ABC", "episodeIds": [1]}])]
         # Case-insensitive match on the infohash.
-        assert manual_import_in_flight(cmds, DownloadMatch("abc", _paths("/d"), set()))
+        assert manual_import_in_flight(cmds, DownloadIdentifiers("abc", _paths("/d"), set()))
 
     def test_completed_command_is_not_in_flight(self) -> None:
         cmds = [_command(status="completed", files=[{"downloadId": "ABC"}])]
-        assert not manual_import_in_flight(cmds, DownloadMatch("abc", _paths("/d"), set()))
+        assert not manual_import_in_flight(cmds, DownloadIdentifiers("abc", _paths("/d"), set()))
 
     def test_non_manual_import_command_ignored(self) -> None:
         cmds = [_command(name="ProcessMonitoredDownloads", files=[{"downloadId": "ABC"}])]
-        assert not manual_import_in_flight(cmds, DownloadMatch("abc", _paths("/d"), set()))
+        assert not manual_import_in_flight(cmds, DownloadIdentifiers("abc", _paths("/d"), set()))
 
     def test_unrelated_download_id_not_in_flight(self) -> None:
         cmds = [_command(files=[{"downloadId": "OTHER"}])]
-        assert not manual_import_in_flight(cmds, DownloadMatch("abc", _paths("/d"), set()))
+        assert not manual_import_in_flight(cmds, DownloadIdentifiers("abc", _paths("/d"), set()))
 
     def test_queued_status_counts_as_in_flight(self) -> None:
         cmds = [_command(status="queued", files=[{"downloadId": "ABC"}])]
-        assert manual_import_in_flight(cmds, DownloadMatch("abc", _paths("/d"), set()))
+        assert manual_import_in_flight(cmds, DownloadIdentifiers("abc", _paths("/d"), set()))
 
     def test_folder_import_matches_by_path_prefix(self) -> None:
         # No downloadId on the files -> fall back to the content_path prefix.
         cmds = [_command(files=[{"path": "/d/folder/ep.mkv", "episodeIds": [9]}])]
-        assert manual_import_in_flight(cmds, DownloadMatch("no-hash", _paths("/d/folder"), set()))
+        assert manual_import_in_flight(cmds, DownloadIdentifiers("no-hash", _paths("/d/folder"), set()))
 
     def test_folder_import_matches_by_translated_prefix(self) -> None:
         # A dead-tracked folder import POSTs the TRANSLATED path. The raw
@@ -137,60 +137,60 @@ class TestManualImportInFlight:
         cmds = [_command(files=[{"path": "/remote/tv/folder/ep.mkv", "episodeIds": []}])]
         assert manual_import_in_flight(
             cmds,
-            DownloadMatch("no-hash", _paths("/home/u/torrents/tv/folder", "/remote/tv/folder"), set()),
+            DownloadIdentifiers("no-hash", _paths("/home/u/torrents/tv/folder", "/remote/tv/folder"), set()),
         )
 
     def test_folder_import_matches_by_episode_overlap(self) -> None:
         cmds = [_command(files=[{"path": "/elsewhere/ep.mkv", "episodeIds": [9]}])]
-        assert manual_import_in_flight(cmds, DownloadMatch("no-hash", _paths("/other"), {9}))
+        assert manual_import_in_flight(cmds, DownloadIdentifiers("no-hash", _paths("/other"), {9}))
 
     def test_translated_command_with_empty_seed_matches_by_episode_arm(self) -> None:
         # The empty-seed edge: nothing to match by path (both views miss), the
         # episode-id arm still guards - it is translation-immune.
         cmds = [_command(files=[{"path": "/remote/tv/folder/ep.mkv", "episodeIds": [9]}])]
-        assert manual_import_in_flight(cmds, DownloadMatch("no-hash", _paths("/nowhere"), {9}))
+        assert manual_import_in_flight(cmds, DownloadIdentifiers("no-hash", _paths("/nowhere"), {9}))
 
     def test_download_id_command_not_swept_by_path_overlap(self) -> None:
         # A command that DOES carry a (different) downloadId is never matched by
         # path/episode overlap - only the no-downloadId folder case falls back.
         cmds = [_command(files=[{"downloadId": "OTHER", "path": "/d/x.mkv", "episodeIds": [9]}])]
-        assert not manual_import_in_flight(cmds, DownloadMatch("abc", _paths("/d"), {9}))
+        assert not manual_import_in_flight(cmds, DownloadIdentifiers("abc", _paths("/d"), {9}))
 
     def test_empty_command_list_not_in_flight(self) -> None:
-        assert not manual_import_in_flight([], DownloadMatch("abc", _paths("/d"), {9}))
+        assert not manual_import_in_flight([], DownloadIdentifiers("abc", _paths("/d"), {9}))
 
 
 class TestClassifyCommands:
     """The verdict layer: precedence + ownership over one command snapshot."""
 
     def test_clear_snapshot_steps_in(self) -> None:
-        assert classify_commands([], DownloadMatch("abc", _paths("/d"), set()), lambda _: False) is None
+        assert classify_commands([], DownloadIdentifiers("abc", _paths("/d"), set()), lambda _: False) is None
 
     def test_download_id_match_is_our_import_without_issued_ids(self) -> None:
         # The download-id proof alone owns the copy (survives restarts).
         cmds = [_command(files=[{"downloadId": "ABC"}])]
-        block = classify_commands(cmds, DownloadMatch("abc", _paths("/d"), set()), lambda _: False)
+        block = classify_commands(cmds, DownloadIdentifiers("abc", _paths("/d"), set()), lambda _: False)
         assert block is CommandBlock.AUTO_IMPORT
 
     def test_unproven_folder_match_blocks_without_a_claim(self) -> None:
         # Possibly foreign: it blocks (and the wait is credited) but never claims the import.
         cmds = [_command(files=[{"path": "/d/ep.mkv", "episodeIds": []}])]
-        block = classify_commands(cmds, DownloadMatch("abc", _paths("/d"), set()), lambda _: False)
+        block = classify_commands(cmds, DownloadIdentifiers("abc", _paths("/d"), set()), lambda _: False)
         assert block is CommandBlock.IN_FLIGHT_IMPORT
 
     def test_issued_id_owns_an_unproven_folder_match(self) -> None:
         cmds = [_command(command_id=7, files=[{"path": "/d/ep.mkv", "episodeIds": []}])]
-        block = classify_commands(cmds, DownloadMatch("abc", _paths("/d"), set()), lambda cid: cid == 7)
+        block = classify_commands(cmds, DownloadIdentifiers("abc", _paths("/d"), set()), lambda cid: cid == 7)
         assert block is CommandBlock.AUTO_IMPORT
 
     def test_own_disk_command_blocks_without_claiming_the_import(self) -> None:
         cmds = [_command(command_id=7, name="RenameFiles")]
-        block = classify_commands(cmds, DownloadMatch("abc", _paths("/d"), set()), lambda cid: cid == 7)
+        block = classify_commands(cmds, DownloadIdentifiers("abc", _paths("/d"), set()), lambda cid: cid == 7)
         assert block is CommandBlock.DISK_COMMAND
 
     def test_foreign_disk_command_blocks(self) -> None:
         cmds = [_command(command_id=9, name="ProcessMonitoredDownloads")]
-        block = classify_commands(cmds, DownloadMatch("abc", _paths("/d"), set()), lambda _: False)
+        block = classify_commands(cmds, DownloadIdentifiers("abc", _paths("/d"), set()), lambda _: False)
         assert block is CommandBlock.DISK_COMMAND
 
 
@@ -210,7 +210,7 @@ class TestCommandBlock:
     def test_waiting(self, block: CommandBlock) -> None:
         probe = block.waiting()
 
-        assert (probe.command_issued, probe.deferral) == _BLOCK_WAITS[block]
+        assert (probe.command_issued, probe.pause_reason) == _BLOCK_WAITS[block]
 
 
 class TestInFlightDiskCommands:
@@ -350,18 +350,18 @@ class TestClassifyDownloadHistory:
         verdict = classify_download_history(
             _history(("downloadFolderImported", "2026-06-20T06:15:30Z"), ("grabbed", "2026-06-19T00:00:00Z")),
         )
-        assert verdict.dead_tracked
+        assert verdict.history_closed
         assert verdict.event == "imported"
         assert verdict.date == "2026-06-20T06:15:30Z"
 
     def test_newest_failed_is_dead_tracked(self) -> None:
         verdict = classify_download_history(_history(("downloadFailed", "2026-01-01T00:00:00Z")))
-        assert verdict.dead_tracked
+        assert verdict.history_closed
         assert verdict.event == "failed"
 
     def test_newest_ignored_is_dead_tracked(self) -> None:
         verdict = classify_download_history(_history(("downloadIgnored", "2026-01-01T00:00:00Z")))
-        assert verdict.dead_tracked
+        assert verdict.history_closed
         assert verdict.event == "ignored"
 
     def test_grabbed_after_old_failure_is_clean(self) -> None:
@@ -370,7 +370,7 @@ class TestClassifyDownloadHistory:
         verdict = classify_download_history(
             _history(("grabbed", "2026-07-01T00:00:00Z"), ("downloadFailed", "2026-01-01T00:00:00Z")),
         )
-        assert not verdict.dead_tracked
+        assert not verdict.history_closed
         assert verdict.event is None
 
     def test_irrelevant_events_are_skipped_not_decided_on(self) -> None:
@@ -382,18 +382,18 @@ class TestClassifyDownloadHistory:
                 ("downloadFolderImported", "2026-06-20T00:00:00Z"),
             ),
         )
-        assert verdict.dead_tracked
+        assert verdict.history_closed
         assert verdict.event == "imported"
 
     def test_none_of_the_four_is_clean(self) -> None:
         verdict = classify_download_history(_history(("episodeFileDeleted", "2026-07-15T00:00:00Z")))
-        assert not verdict.dead_tracked
+        assert not verdict.history_closed
 
     def test_empty_history_is_clean(self) -> None:
-        assert not classify_download_history(HistoryPage()).dead_tracked
+        assert not classify_download_history(HistoryPage()).history_closed
 
     def test_event_type_matches_casefolded(self) -> None:
-        assert classify_download_history(_history(("DOWNLOADFOLDERIMPORTED", "d"))).dead_tracked
+        assert classify_download_history(_history(("DOWNLOADFOLDERIMPORTED", "d"))).history_closed
 
     def test_imported_verdict_carries_its_rows(self) -> None:
         # The newer file-deleted row is skipped over; the import rows above the
@@ -406,7 +406,7 @@ class TestClassifyDownloadHistory:
                 ("grabbed", "2026-01-02T00:00:00Z"),
             ),
         )
-        assert verdict.dead_tracked
+        assert verdict.history_closed
         assert verdict.import_rows == (
             HistoryImport("/d/Show/Show - 02.mkv", 102, 7),
             HistoryImport("/d/Show/Show - 01.mkv", 101, 7),
@@ -440,14 +440,14 @@ class TestClassifyDownloadHistory:
     def test_failed_and_bare_import_rows_carry_nothing(self) -> None:
         failed = classify_download_history(_history(("downloadFailed", "d"), ("grabbed", "d")))
         bare = classify_download_history(_history(("downloadFolderImported", "d"), ("grabbed", "d")))
-        assert (failed.dead_tracked, failed.import_rows) == (True, ())
-        assert (bare.dead_tracked, bare.import_rows) == (True, ())
+        assert (failed.history_closed, failed.import_rows) == (True, ())
+        assert (bare.history_closed, bare.import_rows) == (True, ())
 
     def test_a_cut_page_without_the_grab_carries_nothing(self) -> None:
         # The page holds fewer rows than the envelope counts and no grab bounds
         # the cycle: the rows may go on past the page, so none are trusted.
         verdict = classify_download_history(_history(_import_row(101, "/d/a.mkv", "d"), total_records=150))
-        assert verdict.dead_tracked
+        assert verdict.history_closed
         assert verdict.import_rows == ()
 
     def test_a_cut_page_with_the_grab_inside_is_trusted(self) -> None:

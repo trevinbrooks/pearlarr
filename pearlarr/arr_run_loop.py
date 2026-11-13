@@ -293,7 +293,7 @@ class ArrRunLoop:
         try:
             if self._wait_active:
                 # Heal earlier runs' kept-for-cleanup records before this run's passes read the store.
-                self._wait_manager.heal_flagged()
+                self._wait_manager.finish_cleanups()
                 if not end_pass_waits:
                     check = self._wait_manager.run_deferred()
                     if check is not None:

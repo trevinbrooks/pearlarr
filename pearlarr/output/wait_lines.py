@@ -68,10 +68,10 @@ def _episodes(keys: tuple[EpisodeKey, ...]) -> str:
     return coverage_string([ReleaseEpisode(season=key.season, episode=key.episode) for key in keys])
 
 
-def _order_only_reason(held: LeftForHandImport) -> str:
+def _order_only_reason(left: LeftForHandImport) -> str:
     """Why the order-only files are held, as a sentence with no capital and no closing mark."""
 
-    keys = [file.order_only for file in held.files if file.order_only is not None]
+    keys = [file.order_only for file in left.files if file.order_only is not None]
     names = list(dict.fromkeys(order_display_name(key.order) for key in keys))
     orders = " and ".join(names)
     noun = "order" if len(names) == 1 else "orders"
@@ -86,58 +86,58 @@ def _order_only_reason(held: LeftForHandImport) -> str:
     )
 
 
-def held_back_names(held: LeftForHandImport, *, sep: str = ": ", quote: str = "") -> list[str]:
+def hand_import_names(left: LeftForHandImport, *, sep: str = ": ", quote: str = "") -> list[str]:
     """Each held-back file's name, an order-only one behind its order's number, as "DVD S07E01: NAME"."""
 
     names: list[str] = []
-    for file in held.files:
+    for file in left.files:
         quoted = f"{quote}{file.name}{quote}"
         names.append(quoted if file.order_only is None else f"{file.order_only.label}{sep}{quoted}")
     return names
 
 
-def held_back_sentences(held: LeftForHandImport) -> tuple[str, str]:
+def hand_import_sentences(left: LeftForHandImport) -> tuple[str, str]:
     """A record explained by its order, in words: a sentence per kind of unfilled episode, then why its files are held.
 
     The reason has no closing mark.
     """
 
     lead: list[str] = []
-    if held.missing:
-        verb = "is" if len(held.missing) == 1 else "are"
-        lead.append(f"{_episodes(held.missing)} {verb} still missing in Sonarr.")
-    if len(held.untrusted) == 1:
-        lead.append(f"{_episodes(held.untrusted)} has a file in Sonarr, but it isn't from a recommended release.")
-    elif held.untrusted:
-        lead.append(f"{_episodes(held.untrusted)} have files in Sonarr, but they aren't from a recommended release.")
-    reason = _order_only_reason(held)
+    if left.missing:
+        verb = "is" if len(left.missing) == 1 else "are"
+        lead.append(f"{_episodes(left.missing)} {verb} still missing in Sonarr.")
+    if len(left.untrusted) == 1:
+        lead.append(f"{_episodes(left.untrusted)} has a file in Sonarr, but it isn't from a recommended release.")
+    elif left.untrusted:
+        lead.append(f"{_episodes(left.untrusted)} have files in Sonarr, but they aren't from a recommended release.")
+    reason = _order_only_reason(left)
     return " ".join(lead), reason[0].upper() + reason[1:]
 
 
-def _unfilled_coda(held: LeftForHandImport) -> str:
+def _still_needed_note(left: LeftForHandImport) -> str:
     """The unfilled episodes of a record explained by its order, as its ledger row's coda."""
 
     parts: list[str] = []
-    if held.missing:
-        parts.append(f"{_episodes(held.missing)} still missing in Sonarr")
-    if len(held.untrusted) == 1:
-        parts.append(f"{_episodes(held.untrusted)} has a file that isn't from a recommended release")
-    elif held.untrusted:
-        parts.append(f"{_episodes(held.untrusted)} have files that aren't from a recommended release")
+    if left.missing:
+        parts.append(f"{_episodes(left.missing)} still missing in Sonarr")
+    if len(left.untrusted) == 1:
+        parts.append(f"{_episodes(left.untrusted)} has a file that isn't from a recommended release")
+    elif left.untrusted:
+        parts.append(f"{_episodes(left.untrusted)} have files that aren't from a recommended release")
     return " · ".join(parts)
 
 
-def graduation_tail(event: RowFinished) -> str:
+def row_finished_note(event: RowFinished) -> str:
     """The ledger line's parenthesized coda. "" when there is nothing to say."""
 
     outcome = event.outcome
-    held = event.left_for_hand_import
+    left = event.left_for_hand_import
     if outcome is Outcome.UNMATCHED:
-        return f"{count_noun(len(held.files), 'file')} matched no episode · import by hand in Sonarr"
+        return f"{count_noun(len(left.files), 'file')} matched no episode · import by hand in Sonarr"
     if outcome is Outcome.PARTIAL:
-        if held.explained_by_order:
-            return _unfilled_coda(held)
-        return f"{count_noun(len(held.files), 'file')} held back · import by hand in Sonarr"
+        if left.explained_by_order:
+            return _still_needed_note(left)
+        return f"{count_noun(len(left.files), 'file')} held back · import by hand in Sonarr"
     if outcome is Outcome.IMPORTED:
         parts: list[str] = []
         if event.files:
@@ -145,7 +145,7 @@ def graduation_tail(event: RowFinished) -> str:
         if event.waited_s >= 1.0:
             parts.append(long_duration(event.waited_s))
         return " · ".join(parts)
-    if outcome.category is OutcomeKind.IN_PROGRESS:
+    if outcome.kind is OutcomeKind.IN_PROGRESS:
         return "checked again next run"
     if not outcome.dropped:
         return "retries next run"
@@ -181,21 +181,21 @@ def _detail(key: str, value: str, style: str | None = None) -> KeyValue:
     return KeyValue(key=key, value=value, key_width=_ROW_KEY_WIDTH, value_style=style, indent=DETAIL_INDENT, sep="")
 
 
-def _held_back_details(held: LeftForHandImport, features: ConsoleFeatures, style: str) -> list[KeyValue]:
+def _hand_import_details(left: LeftForHandImport, features: ConsoleFeatures, style: str) -> list[KeyValue]:
     """The rows under a held-back ledger row: the reason, when the order explains it, then `_MAX_FILE_ROWS` files."""
 
     rows: list[KeyValue] = []
-    if held.explained_by_order:
-        reason = textwrap.wrap(_order_only_reason(held), width=_REASON_WIDTH)
+    if left.explained_by_order:
+        reason = textwrap.wrap(_order_only_reason(left), width=_REASON_WIDTH)
         rows += [_detail("" if row else "reason", text, style) for row, text in enumerate(reason)]
-    names = held_back_names(held, sep="  ")
+    names = hand_import_names(left, sep="  ")
     rows += [_detail("" if row else "files", name) for row, name in enumerate(names[:_MAX_FILE_ROWS])]
     if len(names) > _MAX_FILE_ROWS:
         rows.append(_detail("", f"{'…' if features.can_unicode else '...'} +{len(names) - _MAX_FILE_ROWS} more"))
     return rows
 
 
-def wait_graduation_lines(event: RowFinished, features: ConsoleFeatures) -> list[ConsoleLine]:
+def row_finished_lines(event: RowFinished, features: ConsoleFeatures) -> list[ConsoleLine]:
     """A finished torrent's durable ledger line (glyph + word + label + coda), then its held-back files' rows.
 
     Every line is at `severity_of`'s level.
@@ -205,12 +205,12 @@ def wait_graduation_lines(event: RowFinished, features: ConsoleFeatures) -> list
     style = event.outcome.style if features.can_color else ""
     glyph = event.outcome.glyph(use_unicode=features.can_unicode)
     line = f"{glyph} {event.outcome.word.ljust(STATE_WIDTH)} {event.label}"
-    tail = graduation_tail(event)
+    tail = row_finished_note(event)
     if tail:
         line += f"  ({tail})"
     return [
         ConsoleLine(level, indent_string(line), StyledLine(style=style)),
-        *(kv_line(detail, level=level) for detail in _held_back_details(event.left_for_hand_import, features, style)),
+        *(kv_line(detail, level=level) for detail in _hand_import_details(event.left_for_hand_import, features, style)),
     ]
 
 

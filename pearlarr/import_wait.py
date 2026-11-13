@@ -17,14 +17,15 @@ from .pending_import import PendingImport, is_awaiting_cleanup
 from .pending_import_store import PendingImportStore
 from .wait_types import (
     NO_ATTEMPT,
-    NO_HELD_BACK,
+    NO_HAND_IMPORT_FILES,
     NO_PROGRESS,
     PENDING_IMPORT_STATE_FOR_OUTCOME,
     AttemptKind,
     AttemptResult,
     CleanupEffect,
+    DownloadProgress,
     EffectStatus,
-    HeldFile,
+    HandImportFile,
     ImportProgress,
     LeftForHandImport,
     Outcome,
@@ -32,9 +33,8 @@ from .wait_types import (
     PendingImportState,
     TorrentPoll,
     TorrentStatus,
-    TorrentTelemetry,
     classify_pending_import,
-    sanitize_torrent_telemetry,
+    download_progress_of,
     torrent_errored,
     torrent_finished,
 )
@@ -78,14 +78,14 @@ class WaitPollers:
             return TorrentPoll(TorrentStatus.GONE, None)
 
         t = info[0]
-        telemetry = sanitize_torrent_telemetry(t)
+        progress = download_progress_of(t)
         if torrent_errored(t):
-            return TorrentPoll(TorrentStatus.ERRORED, None, telemetry)
+            return TorrentPoll(TorrentStatus.ERRORED, None, progress)
         if torrent_finished(t):
-            return TorrentPoll(TorrentStatus.COMPLETE, t.content_path, telemetry)
-        return TorrentPoll(None, None, telemetry)
+            return TorrentPoll(TorrentStatus.COMPLETE, t.content_path, progress)
+        return TorrentPoll(None, None, progress)
 
-    def poll_telemetry(self, infohashes: list[str]) -> dict[str, TorrentTelemetry]:
+    def poll_download_progress(self, infohashes: list[str]) -> dict[str, DownloadProgress]:
         """One batched, read-only qBittorrent info read for the fast cockpit refresh.
 
         Response hashes are matched case-insensitively (qBittorrent lowercases them).
@@ -98,19 +98,19 @@ class WaitPollers:
         except qbittorrentapi.APIError:
             return {}
         keys = {infohash.casefold(): infohash for infohash in infohashes}
-        telemetry: dict[str, TorrentTelemetry] = {}
+        progress: dict[str, DownloadProgress] = {}
         for t in infos:
             key = keys.get(str(getattr(t, "hash", "")).casefold())
             if key is None:
                 continue
-            telemetry[key] = sanitize_torrent_telemetry(t)
-        return telemetry
+            progress[key] = download_progress_of(t)
+        return progress
 
     def try_import_completed(
         self,
         pending: PendingImport,
         path: str,
-        attempt: AttemptKind,
+        attempt_kind: AttemptKind,
     ) -> AttemptResult:
         """Drive the strategy's `import_completed`, swallowing any error.
 
@@ -120,7 +120,7 @@ class WaitPollers:
         if self.strategy is None:
             return NO_ATTEMPT
         try:
-            return self.strategy.import_completed(pending, path, attempt)
+            return self.strategy.import_completed(pending, path, attempt_kind)
         except Exception as e:
             hub_error(f"Manual import failed for {pending.display_label} - leaving it for a later run", exc=e)
             return NO_ATTEMPT
@@ -152,15 +152,15 @@ class PostImportCleanup:
         self._pending_imports = pending_imports
         # Also the strategy source: the queue close drives the hook bound on the probes.
         self._pollers = pollers
-        self._kept_keys: set[str] = set()
+        self._awaiting_cleanup_keys: set[str] = set()
 
     def bind_arr_run(self, state: ArrRunState) -> None:
         """Bind the fresh run context, forgetting the prior run's keeps."""
 
         self._state = state
-        self._kept_keys = set()
+        self._awaiting_cleanup_keys = set()
 
-    def retire(self, pending: PendingImport) -> bool:
+    def clean_up_and_drop(self, pending: PendingImport) -> bool:
         """Retire a verified-imported record: run both cleanup effects, then drop it.
 
         Effects-first, drop-last: a FAILED effect keeps the record (flagged
@@ -172,16 +172,16 @@ class PostImportCleanup:
         # Both effects run regardless of the other's outcome, in pinned order (move, then close).
         statuses = (
             (CleanupEffect.CATEGORY_MOVE, self._apply_post_import_category(pending, category)),
-            (CleanupEffect.QUEUE_REMOVAL, self._close_tracked_download(pending, category)),
+            (CleanupEffect.QUEUE_REMOVAL, self._remove_from_queue(pending, category)),
         )
         failed = tuple(effect for effect, status in statuses if status is EffectStatus.FAILED)
         if failed:
-            self._keep_for_cleanup(pending, failed)
+            self._mark_awaiting_cleanup(pending, failed)
             return False
         self._pending_imports.drop(pending.infohash)
         return True
 
-    def heal_flagged(self) -> None:
+    def finish_cleanups(self) -> None:
         """Heal records whose import verified in an earlier run but whose cleanup is still owed.
 
         Runs once per run, at the top of the finalize tail, re-verifying each record through the
@@ -190,11 +190,15 @@ class PostImportCleanup:
         """
 
         # Raw-flag filter first: the common case has no flagged rows, so nothing rehydrates.
-        flagged = {key: raw for key, raw in self._pending_imports.flagged().items() if key not in self._kept_keys}
-        for pending in self._pending_imports.load(flagged).values():
-            self._heal_one(pending)
+        awaiting_cleanup = {
+            key: raw
+            for key, raw in self._pending_imports.awaiting_cleanup_rows().items()
+            if key not in self._awaiting_cleanup_keys
+        }
+        for pending in self._pending_imports.load(awaiting_cleanup).values():
+            self._retry_cleanup(pending)
 
-    def _keep_for_cleanup(self, pending: PendingImport, failed: tuple[CleanupEffect, ...]) -> None:
+    def _mark_awaiting_cleanup(self, pending: PendingImport, failed: tuple[CleanupEffect, ...]) -> None:
         """Keep a record whose import verified but whose `failed` effects have not finished.
 
         `heal_flagged` retries the cleanup on later runs until it finishes.
@@ -202,25 +206,25 @@ class PostImportCleanup:
 
         kept = replace(pending, awaiting_cleanup=True)
         self._pending_imports.save(kept)
-        self._kept_keys.add(kept.infohash)
+        self._awaiting_cleanup_keys.add(kept.infohash)
         hub_warn(
             f"Could not finish the post-import cleanup for {pending.display_label} "
             f"({' and '.join(effect.value for effect in failed)}) - "
             "keeping its record to retry next run"
         )
 
-    def _retry_effect(self, attempt: Callable[[], EffectStatus]) -> EffectStatus:
+    def _retry_effect(self, attempt_kind: Callable[[], EffectStatus]) -> EffectStatus:
         """Drive one cleanup effect through the bounded in-run retry schedule."""
 
         for pause in _EFFECT_BACKOFF_S:
-            status = attempt()
+            status = attempt_kind()
             if status is not EffectStatus.RETRY:
                 return status
             self._clock.sleep(pause)
-        status = attempt()
+        status = attempt_kind()
         return EffectStatus.FAILED if status is EffectStatus.RETRY else status
 
-    def _close_tracked_download(self, pending: PendingImport, moved_to: str | None) -> EffectStatus:
+    def _remove_from_queue(self, pending: PendingImport, moved_to: str | None) -> EffectStatus:
         """Dismiss the arr's leftover queue entry once `pending`'s torrent is fully imported.
 
         Import-only: a MISSING drop closes nothing. Skipped outright whenever the post-import move
@@ -264,8 +268,8 @@ class PostImportCleanup:
 
         infohash = pending.infohash
         try:
-            if (held := self._move_hold(pending, category)) is not None:
-                return held
+            if (blocked := self._move_blocked_by(pending, category)) is not None:
+                return blocked
             try:
                 qbit.torrents_set_category(category=category, torrent_hashes=infohash)
             except qbittorrentapi.Conflict409Error:
@@ -277,7 +281,7 @@ class PostImportCleanup:
             return EffectStatus.RETRY
         return EffectStatus.DONE
 
-    def _move_hold(self, pending: PendingImport, category: str) -> EffectStatus | None:
+    def _move_blocked_by(self, pending: PendingImport, category: str) -> EffectStatus | None:
         """The status that ends a move attempt before the move, or None when the torrent may go to `category`.
 
         A move from a category the arr can't see into one it watches is skipped: the arr has no record of
@@ -308,7 +312,7 @@ class PostImportCleanup:
         )
         return EffectStatus.RETRY
 
-    def _heal_one(self, pending: PendingImport) -> None:
+    def _retry_cleanup(self, pending: PendingImport) -> None:
         """Re-verify one flagged record's import, then run its owed cleanup effects.
 
         The flag's evidence is a prior run's: no effect fires without a fresh files check, except
@@ -335,7 +339,7 @@ class PostImportCleanup:
         pending = self._pending_imports.save_history_placements(pending, result)
         if result.all_done:
             self._finish_cleanup(pending)
-        elif result.deferral is PauseReason.ISSUED:
+        elif result.pause_reason is PauseReason.ISSUED:
             # A fresh re-import just started, so the "import done" premise is dead: demote to
             # an ordinary carryover and let this run's end pass track and recount it. Only a
             # fresh issue demotes. A blip or an own command still in flight holds the flag.
@@ -348,7 +352,7 @@ class PostImportCleanup:
     def _finish_cleanup(self, pending: PendingImport) -> None:
         """Run a flagged record's owed effects through `retire`, noting a completed heal."""
 
-        if self.retire(pending):
+        if self.clean_up_and_drop(pending):
             hub_note(f"Completed the deferred post-import cleanup for {pending.display_label}")
 
 
@@ -409,7 +413,7 @@ class ImportWaitManager:
 
         return self._pending_imports.save_history_placements(pending, result)
 
-    def resolve_terminal(self, pending: PendingImport, outcome: Outcome, *, carried_over: bool) -> None:
+    def apply_outcome(self, pending: PendingImport, outcome: Outcome, *, carried_over: bool) -> None:
         """One terminal outcome's store effects: retire on IMPORTED, drop on MISSING, else fold the state.
 
         A MISSING drop also clears its titles' stamps, so the next run checks them again.
@@ -421,7 +425,7 @@ class ImportWaitManager:
         if outcome is Outcome.IMPORTED:
             # A failed retire keeps the record flagged: the result row still counts the import,
             # and the flag keeps every later counter off the key.
-            self._cleanup.retire(pending)
+            self._cleanup.clean_up_and_drop(pending)
         elif outcome is Outcome.MISSING:
             self._pending_imports.drop_unimported(pending)
         elif carried_over:
@@ -440,7 +444,7 @@ class ImportWaitManager:
         if state is PendingImportState.IMPORTED:
             # _finish_arr_run counts the IMPORTED entry into stats. No local bump.
             # A kept-for-cleanup record still counts here: the import happened this run.
-            self._cleanup.retire(pending)
+            self._cleanup.clean_up_and_drop(pending)
         elif state is PendingImportState.GONE:
             self._pending_imports.drop_unimported(pending)
             hub_warn(
@@ -483,12 +487,12 @@ class ImportWaitManager:
             if state is PendingImportState.DOWNLOADED:
                 self._state.stats.downloaded += 1
             elif state is PendingImportState.DOWNLOADING:
-                self._state.stats.queued += 1
+                self._state.stats.downloading += 1
 
-    def heal_flagged(self) -> None:
+    def finish_cleanups(self) -> None:
         """The finalize tail's heal pass over earlier runs' kept-for-cleanup records."""
 
-        self._cleanup.heal_flagged()
+        self._cleanup.finish_cleanups()
 
     def run_blocking(self, *, view: WaitView | None = None) -> WaitResult | None:
         """The blocking/hybrid end-of-run pass: interleaved wait+import over every pending record."""
@@ -541,7 +545,7 @@ class ImportWaitManager:
         Ctrl-C ends the pass and the run goes on. A SIGTERM stop gets the same note, then propagates.
         """
 
-        own_view = view is None
+        made_view = view is None
         if view is None:
             view = make_wait_view(
                 self.logger,
@@ -559,7 +563,7 @@ class ImportWaitManager:
                 self._note_interrupted(wait_pass, view)
                 raise
         finally:
-            if own_view:
+            if made_view:
                 view.close()
         return WaitResult(tuple(wait_pass.results), elapsed_s=wait_pass.elapsed())
 
@@ -592,8 +596,8 @@ class ImportWaitManager:
                 return
             # The import bar first: it can promote or retire rows.
             progressed = wait_pass.refresh_progress()
-            telemetry_moved = view.wants_telemetry and wait_pass.refresh_telemetry()
-            if progressed or telemetry_moved:
+            progress_moved = view.wants_download_progress and wait_pass.refresh_download_progress()
+            if progressed or progress_moved:
                 view.update(wait_pass.snapshot())
 
     def _imports_to_wait_on(self) -> list[PendingImport]:
@@ -609,7 +613,7 @@ class ImportWaitManager:
 
 # Cap on deferral credit, in ready timeouts per row: Sonarr work wedged forever (a command in flight, a pass that
 # never ends) cannot hold the watch open, yet a long serial backlog rides through.
-_DEFERRAL_CREDIT_CAP_MULT = 6
+_PAUSE_CAP_MULT = 6
 
 
 @dataclass(slots=True)
@@ -627,8 +631,8 @@ class _ImportClock:
     _seen: int | None = None
     _poll_gap: float = 0.0
     _poll_at: float | None = None
-    _credited: float = 0.0
-    _issued_credited: bool = False
+    _paused_s: float = 0.0
+    _paused_for_issued: bool = False
 
     def mark_poll(self, now: float) -> None:
         """Stamp a heavy poll, remembering the interval a deferral may credit back."""
@@ -641,24 +645,24 @@ class _ImportClock:
 
         return now - self.anchor >= self.timeout
 
-    def can_defer(self, reason: PauseReason) -> bool:
+    def can_pause(self, reason: PauseReason) -> bool:
         """Whether this deferral earns credit: none past the cap, and a fresh POST only once per row."""
 
         # A POST whose files all fail inside Sonarr completes within the poll gap and is re-POSTed next poll.
         # Credited every time, that retry loop would run to the cap. Credited once, it retries at the ordinary
         # cadence and graduates at the ordinary deadline (a second POST for a remainder follows a landing anyway).
-        if reason is PauseReason.ISSUED and self._issued_credited:
+        if reason is PauseReason.ISSUED and self._paused_for_issued:
             return False
-        return self._credited < self.timeout * _DEFERRAL_CREDIT_CAP_MULT
+        return self._paused_s < self.timeout * _PAUSE_CAP_MULT
 
-    def credit_deferral(self, now: float, reason: PauseReason) -> None:
+    def pause(self, now: float, reason: PauseReason) -> None:
         """Pause the clock by the last poll interval."""
 
         if reason is PauseReason.ISSUED:
-            self._issued_credited = True
-        credit = min(self._poll_gap, self.timeout * _DEFERRAL_CREDIT_CAP_MULT - self._credited)
-        self._credited += credit
-        self.anchor = min(self.anchor + credit, now)
+            self._paused_for_issued = True
+        pause_s = min(self._poll_gap, self.timeout * _PAUSE_CAP_MULT - self._paused_s)
+        self._paused_s += pause_s
+        self.anchor = min(self.anchor + pause_s, now)
 
     def note_progress(self, done: int, total: int, now: float) -> bool:
         """Re-anchor on a rising determinate done-count, True when another file landed."""
@@ -673,32 +677,32 @@ class _ImportClock:
         return True
 
 
-def _unmatched(result: AttemptResult) -> LeftForHandImport:
+def _unplaced_as_hand_import_files(result: AttemptResult) -> LeftForHandImport:
     """The files the probe matched to no episode, as the download's held-back files."""
 
-    return LeftForHandImport(files=tuple(HeldFile(name) for name in result.unmatched_files))
+    return LeftForHandImport(files=tuple(HandImportFile(name) for name in result.unplaced_files))
 
 
-def _exhausted_outcome(result: AttemptResult) -> Outcome:
+def _timed_out_outcome(result: AttemptResult) -> Outcome:
     """The truthful label for a row graduating with its wait uncredited (the deadline, or the credit cap)."""
 
     # `command_issued` alone covers scripted probes: the reconciler pairs it with a deferral.
-    if result.command_issued or result.deferral in (PauseReason.ISSUED, PauseReason.IMPORT):
+    if result.command_issued or result.pause_reason in (PauseReason.ISSUED, PauseReason.IMPORT):
         return Outcome.STILL_IMPORTING
-    if result.deferral is PauseReason.BUSY:
+    if result.pause_reason is PauseReason.BUSY:
         return Outcome.SONARR_BUSY
     return Outcome.NOT_READY
 
 
 @dataclass(frozen=True, slots=True)
-class _TerminalDetail:
+class _FinishDetail:
     """The coda facts a terminal outcome carries: the imported files count, or the files a hand import places."""
 
     files: int | None = None
-    left_for_hand_import: LeftForHandImport = NO_HELD_BACK
+    left_for_hand_import: LeftForHandImport = NO_HAND_IMPORT_FILES
 
 
-_NO_DETAIL = _TerminalDetail()
+_NO_DETAIL = _FinishDetail()
 
 
 @dataclass(slots=True)
@@ -732,7 +736,7 @@ class _WaitRow:
 
         return self.clock.started if self.clock is not None else self.dl_start
 
-    def view_terminal(self, outcome: Outcome, now: float, detail: _TerminalDetail = _NO_DETAIL) -> None:
+    def view_finished(self, outcome: Outcome, now: float, detail: _FinishDetail = _NO_DETAIL) -> None:
         """Freeze the terminal frame (`phase_elapsed_s` becomes the row's final wait clock)."""
 
         self.view = TorrentView(
@@ -746,7 +750,7 @@ class _WaitRow:
             phase_elapsed_s=now - self.dl_start,
         )
 
-    def view_downloading(self, telemetry: TorrentTelemetry, now: float) -> None:
+    def view_downloading(self, progress: DownloadProgress, now: float) -> None:
         """The heavy poll's downloading frame, appending ONE speed-history sample.
 
         Only this method samples the history, so the sparkline window stays minutes wide.
@@ -757,13 +761,13 @@ class _WaitRow:
             key=self.pending.infohash,
             label=self.pending.display_label,
             phase=Phase.DOWNLOADING,
-            fraction=telemetry.progress,
-            speed_bps=telemetry.speed_bps,
-            eta_s=telemetry.eta_s,
-            bytes_done=telemetry.bytes_done,
-            bytes_total=telemetry.bytes_total,
+            fraction=progress.progress,
+            speed_bps=progress.speed_bps,
+            eta_s=progress.eta_s,
+            bytes_done=progress.bytes_done,
+            bytes_total=progress.bytes_total,
             phase_elapsed_s=now - self.dl_start,
-            speed_history=(*history, telemetry.speed_bps or 0)[-SPARK_SAMPLES:],
+            speed_history=(*history, progress.speed_bps or 0)[-SPARK_SAMPLES:],
         )
 
     def view_tick(self, now: float) -> None:
@@ -775,7 +779,7 @@ class _WaitRow:
     def view_importing(self, result: AttemptResult, now: float) -> None:
         """The heavy poll's importing frame. The bar is determinate only when the seed map is whole."""
 
-        total = result.target_count
+        total = result.file_map_episode_count
         done = result.imported_count
         self.view = TorrentView(
             key=self.pending.infohash,
@@ -799,20 +803,20 @@ class _WaitRow:
             phase_elapsed_s=now - self._import_started(),
         )
 
-    def view_telemetry(self, telemetry: TorrentTelemetry, now: float) -> bool:
+    def view_download_progress(self, progress: DownloadProgress, now: float) -> bool:
         """Apply one fast-lane reading, returning whether the frame moved. Never a history sample."""
 
         view = self.view
-        current = TorrentTelemetry(view.fraction, view.speed_bps, view.eta_s, view.bytes_done, view.bytes_total)
-        if telemetry == current:
+        current = DownloadProgress(view.fraction, view.speed_bps, view.eta_s, view.bytes_done, view.bytes_total)
+        if progress == current:
             return False
         self.view = replace(
             view,
-            fraction=telemetry.progress,
-            speed_bps=telemetry.speed_bps,
-            eta_s=telemetry.eta_s,
-            bytes_done=telemetry.bytes_done,
-            bytes_total=telemetry.bytes_total,
+            fraction=progress.progress,
+            speed_bps=progress.speed_bps,
+            eta_s=progress.eta_s,
+            bytes_done=progress.bytes_done,
+            bytes_total=progress.bytes_total,
             phase_elapsed_s=now - self.dl_start,
         )
         return True
@@ -874,13 +878,13 @@ class WaitPass:
 
         return WaitSnapshot(tuple(row.view for row in self.rows.values()), elapsed_s=self.elapsed())
 
-    def _terminal(self, outcome: Outcome, row: _WaitRow, detail: _TerminalDetail = _NO_DETAIL) -> None:
+    def _finish_row(self, outcome: Outcome, row: _WaitRow, detail: _FinishDetail = _NO_DETAIL) -> None:
         """Record a terminal outcome: the drop or retire it implies, the frozen frame, then the result row."""
 
         pending = row.pending
-        # Store effects precede the frozen frame and the result row (resolve_terminal's contract).
-        self._mgr.resolve_terminal(pending, outcome, carried_over=row.carried_over)
-        row.view_terminal(outcome, self._clock.monotonic(), detail)
+        # Store effects precede the frozen frame and the result row (apply_outcome's contract).
+        self._mgr.apply_outcome(pending, outcome, carried_over=row.carried_over)
+        row.view_finished(outcome, self._clock.monotonic(), detail)
         # Read back from the frozen frame, so the frame stays the one source of the row's facts.
         self.results.append(
             WaitOutcomeRow(
@@ -904,7 +908,7 @@ class WaitPass:
                 outcome = Outcome.STILL_DOWNLOADING
             else:
                 outcome = Outcome.NOT_CHECKED
-            self._terminal(outcome, row)
+            self._finish_row(outcome, row)
 
     def _advance(self, row: _WaitRow) -> None:
         """Advance one row one monitor cycle (download, or drive and verify the import)."""
@@ -917,7 +921,7 @@ class WaitPass:
             # Monitor-only: `dl_start` is this pass's construction, so a check-pass timeout would
             # mislabel a still-downloading record. `_finish_active_rows` words it truthfully there.
             if self.kind is WaitKind.MONITOR and self._clock.monotonic() - row.dl_start >= self._dl_timeout:
-                self._terminal(Outcome.DOWNLOAD_TIMED_OUT, row)
+                self._finish_row(Outcome.DOWNLOAD_TIMED_OUT, row)
                 return
             if not poll.observed:
                 # Transient qBittorrent error: the zeroed probe is a placeholder, not a reading. Keep the row's
@@ -927,15 +931,15 @@ class WaitPass:
             row.view_downloading(poll.telemetry, self._clock.monotonic())
             return
         if poll.outcome is TorrentStatus.GONE:
-            self._terminal(Outcome.MISSING, row)
+            self._finish_row(Outcome.MISSING, row)
             return
         if poll.outcome is TorrentStatus.ERRORED:
-            self._terminal(Outcome.DOWNLOAD_ERRORED, row)
+            self._finish_row(Outcome.DOWNLOAD_ERRORED, row)
             return
         path = poll.ready_path
         if path is None:
             # COMPLETE but qBittorrent reported no save path: its own outcome, not a misleading "timed out".
-            self._terminal(Outcome.NO_CONTENT_PATH, row)
+            self._finish_row(Outcome.NO_CONTENT_PATH, row)
             return
 
         # COMPLETE: drive and verify our import.
@@ -952,24 +956,26 @@ class WaitPass:
         )
         # The placements land before any outcome: the retire, the keep, the next poll, and the Tier-2 bar read them.
         pending = row.pending = self._mgr.save_history_placements(pending, result)
-        landed = clock.note_progress(result.imported_count, result.target_count, now_ts)
+        progressed = clock.note_progress(result.imported_count, result.file_map_episode_count, now_ts)
         # Waiting on Sonarr's import work is not this record stalling (a landed poll already re-anchored
         # harder than a pause would).
-        deferred = result.deferred and clock.can_defer(result.deferral)
-        if deferred and not landed:
-            clock.credit_deferral(now_ts, result.deferral)
+        paused = result.paused and clock.can_pause(result.pause_reason)
+        if paused and not progressed:
+            clock.pause(now_ts, result.pause_reason)
         if result.all_done:
-            self._terminal(Outcome.IMPORTED, row, _TerminalDetail(files=result.target_count or None))
-        elif result.unmatched_files:
+            self._finish_row(Outcome.IMPORTED, row, _FinishDetail(files=result.file_map_episode_count or None))
+        elif result.unplaced_files:
             # Nothing to wait for: the deadline would only repeat the answer. Kept for a human, re-reported next run.
-            self._terminal(Outcome.UNMATCHED, row, _TerminalDetail(left_for_hand_import=_unmatched(result)))
+            self._finish_row(
+                Outcome.UNMATCHED, row, _FinishDetail(left_for_hand_import=_unplaced_as_hand_import_files(result))
+            )
         elif result.left_for_hand_import.files:
             # The placed files are in and the rest wait on a hand import: kept, re-reported next run.
-            self._terminal(Outcome.PARTIAL, row, _TerminalDetail(left_for_hand_import=result.left_for_hand_import))
-        elif at_deadline and not landed and not deferred:
-            self._terminal(_exhausted_outcome(result), row)
+            self._finish_row(Outcome.PARTIAL, row, _FinishDetail(left_for_hand_import=result.left_for_hand_import))
+        elif at_deadline and not progressed and not paused:
+            self._finish_row(_timed_out_outcome(result), row)
         elif not result.attempted:
-            self._terminal(Outcome.ATTEMPT_FAILED, row)
+            self._finish_row(Outcome.ATTEMPT_FAILED, row)
         else:
             # Still waiting, or our copy is in flight.
             row.view_importing(result, now_ts)
@@ -995,14 +1001,14 @@ class WaitPass:
                 continue
             clock.note_progress(progress.done, progress.total, self._clock.monotonic())
             if progress.all_done:
-                self._terminal(Outcome.IMPORTED, row, _TerminalDetail(files=progress.total))
+                self._finish_row(Outcome.IMPORTED, row, _FinishDetail(files=progress.total))
                 changed = True
             elif (progress.done, progress.total) != (row.view.import_done, row.view.import_total):
                 row.view_import_progress(progress, self._clock.monotonic())
                 changed = True
         return changed
 
-    def refresh_telemetry(self) -> bool:
+    def refresh_download_progress(self) -> bool:
         """Cheap fast-lane pass: refresh each downloading row's live telemetry, returning whether it moved.
 
         Telemetry only: no outcomes, no phase transitions, and no speed-history sample.
@@ -1011,10 +1017,10 @@ class WaitPass:
         downloading = [row for row in self.rows.values() if row.active and row.view.phase is Phase.DOWNLOADING]
         # One batch read for every downloading row (one row per torrent).
         hashes = [row.pending.infohash for row in downloading]
-        by_hash = self._mgr.pollers.poll_telemetry(hashes)
+        by_hash = self._mgr.pollers.poll_download_progress(hashes)
         changed = False
         for row in downloading:
-            telemetry = by_hash.get(row.pending.infohash)
-            if telemetry is not None and row.view_telemetry(telemetry, self._clock.monotonic()):
+            progress = by_hash.get(row.pending.infohash)
+            if progress is not None and row.view_download_progress(progress, self._clock.monotonic()):
                 changed = True
         return changed

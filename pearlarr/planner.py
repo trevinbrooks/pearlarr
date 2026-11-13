@@ -424,7 +424,7 @@ def _window_in_place(ctx: _PlanContext, seadex_norm: str | None, listed_sizes: C
     return True
 
 
-class _GroupVerdicts(NamedTuple):
+class _GroupOwnership(NamedTuple):
     """The plan's size-evidence verdicts per pick group, feeding `GuardFacts` by name."""
 
     owned: tuple[str, ...]
@@ -434,7 +434,7 @@ class _GroupVerdicts(NamedTuple):
     """Groups with an attributed file at a size no sized listing carries."""
 
 
-def _group_verdicts(seadex_dict: SeadexDict, ctx: _PlanContext) -> _GroupVerdicts:
+def _group_ownership(seadex_dict: SeadexDict, ctx: _PlanContext) -> _GroupOwnership:
     """Judge each pick group's on-disk copy by size evidence: `(current, stale)` names.
 
     Disk-centric: a group is CURRENT only when every on-disk file attributed to
@@ -481,7 +481,7 @@ def _group_verdicts(seadex_dict: SeadexDict, ctx: _PlanContext) -> _GroupVerdict
         elif any(size is not None and size not in listed for size in files):
             outdated.append(rg)
         # A group whose only disagreements are unknown sizes stays unverifiable.
-    return _GroupVerdicts(tuple(owned), tuple(outdated))
+    return _GroupOwnership(tuple(owned), tuple(outdated))
 
 
 class GrabPlanner:
@@ -613,13 +613,13 @@ class GrabPlanner:
         # Arr has none of them, only grab one (preferring a public group)
         skips = self.reduce_overlapping_grabs(seadex_dict=seadex_dict)
 
-        verdicts = _group_verdicts(seadex_dict, ctx)
+        ownership = _group_ownership(seadex_dict, ctx)
         return GrabPlan(
             seadex_dict=seadex_dict,
             skips=skips,
             guards=OwnedAtGrab(
-                entry_groups=verdicts.owned,
-                stale_groups=verdicts.outdated,
+                entry_groups=ownership.owned,
+                stale_groups=ownership.outdated,
                 # Resolved to (episode id, size) pairs here so the import seeds
                 # inherit the exact files the grab decision just called ours -
                 # and can re-verify them by size before honoring the claim.
@@ -833,7 +833,7 @@ class GrabPlanner:
 
         # Of the episodes we matched by group: EVERY one at an unlisted size
         # means the whole release is a size upgrade to grab. (Partly stale
-        # copies are the group verdicts' business - see `_group_verdicts`.)
+        # copies are the group verdicts' business - see `_group_ownership`.)
         matched_sizes = list(compress(size_matches, rg_matches))
         if matched_sizes and not any(matched_sizes):
             self.logger.debug(f"File sizes all differ for release group {seadex_rg} - will download {url}")

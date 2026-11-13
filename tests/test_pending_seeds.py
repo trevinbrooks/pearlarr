@@ -105,7 +105,7 @@ def _scope(ep_list: list[SonarrEpisode], series: list[SonarrEpisode], names: Tit
 def _trust(own: PendingImport, siblings: Sequence[PendingImport] = ()) -> TrustedGroups:
     """The trust policy of `own`'s one claim: its plan's guards, the record's own group, the series' siblings."""
 
-    return trusted_groups(own.claims[0].guards, GrabbedGroups(own.own_group, [s.own_group for s in siblings]))
+    return trusted_groups(own.claims[0].guards, GrabbedGroups(own.torrent_group, [s.torrent_group for s in siblings]))
 
 
 class TestBuildPendingSeeds:
@@ -921,7 +921,7 @@ class TestTrustedGroups:
         strat = make_sonarr_sync(sonarr=sonarr, cache_store=store)
         own = pending_import(release_group="Ours", file_episode_map={"Show - 01.mkv": [101]})
 
-        update = strat._reconciler._read_seed(own, [101])
+        update = strat._reconciler._read_statuses(own, [101])
 
         assert update is not None
         assert update.statuses.by_id == {101: EpisodeFileStatus.TRUSTED}

@@ -42,9 +42,9 @@ from pearlarr.output import (
 )
 from pearlarr.output.boot_region import (
     BootRegion,
-    graduation_line,
     ready_line,
     slow_line,
+    step_finished_line,
     step_seconds,
 )
 from pearlarr.wait_types import OutcomeKind
@@ -109,16 +109,16 @@ def _plain(stream: io.StringIO) -> str:
 
 def test_graduation_line_unicode_and_ascii_glyphs() -> None:
     event = _finished("Reading config", detail="config.yml")
-    assert graduation_line(event, _UNICODE_CAPS) == f"  ✔ Reading config{SEP}config.yml{SEP}0.61s"
-    assert graduation_line(event, _ASCII_CAPS) == f"  ok Reading config{SEP}config.yml{SEP}0.61s"
+    assert step_finished_line(event, _UNICODE_CAPS) == f"  ✔ Reading config{SEP}config.yml{SEP}0.61s"
+    assert step_finished_line(event, _ASCII_CAPS) == f"  ok Reading config{SEP}config.yml{SEP}0.61s"
 
     warned = _finished("Connecting to qBittorrent", outcome=OutcomeKind.LEFT, elapsed_s=0.05)
-    assert graduation_line(warned, _UNICODE_CAPS) == f"  ⚠ Connecting to qBittorrent{SEP}0.05s"
-    assert graduation_line(warned, _ASCII_CAPS) == f"  ~ Connecting to qBittorrent{SEP}0.05s"
+    assert step_finished_line(warned, _UNICODE_CAPS) == f"  ⚠ Connecting to qBittorrent{SEP}0.05s"
+    assert step_finished_line(warned, _ASCII_CAPS) == f"  ~ Connecting to qBittorrent{SEP}0.05s"
 
     failed = _finished("Opening cache", outcome=OutcomeKind.FAILED, elapsed_s=0.01)
-    assert graduation_line(failed, _UNICODE_CAPS) == f"  ✖ Opening cache{SEP}0.01s"
-    assert graduation_line(failed, _ASCII_CAPS) == f"  x Opening cache{SEP}0.01s"
+    assert step_finished_line(failed, _UNICODE_CAPS) == f"  ✖ Opening cache{SEP}0.01s"
+    assert step_finished_line(failed, _ASCII_CAPS) == f"  x Opening cache{SEP}0.01s"
 
 
 def test_slow_line_ellipsis_degrades_to_ascii_dots() -> None:

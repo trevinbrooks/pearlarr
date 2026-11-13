@@ -86,15 +86,15 @@ NON_VIDEO_EXTENSIONS = {
 }
 
 
-def is_video_candidate(basename: str) -> bool:
+def is_video_candidate(file_name: str) -> bool:
     """Whether a filename is an importable video (not a sub, font, or creditless OP/ED).
 
     The skip rules live only here, so the seed, the import, and the parse agree on what could be an episode.
     """
 
-    if any(skip in basename for skip in CREDITLESS_MARKERS):
+    if any(skip in file_name for skip in CREDITLESS_MARKERS):
         return False
-    return os.path.splitext(basename)[1].lower() not in NON_VIDEO_EXTENSIONS
+    return os.path.splitext(file_name)[1].lower() not in NON_VIDEO_EXTENSIONS
 
 
 def indexed_video_files(files: Sequence[str]) -> Iterator[tuple[int, str]]:

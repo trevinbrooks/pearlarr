@@ -147,7 +147,7 @@ class PauseReason(Enum):
 
 
 @dataclass(frozen=True, slots=True)
-class HeldFile:
+class HandImportFile:
     """One of a download's on-disk files left for a hand import."""
 
     name: str
@@ -161,7 +161,7 @@ class HeldFile:
 class LeftForHandImport:
     """A download's on-disk files left for a hand import, and the record's window episodes still unfilled."""
 
-    files: tuple[HeldFile, ...] = ()
+    files: tuple[HandImportFile, ...] = ()
 
     missing: tuple[EpisodeKey, ...] = ()
     """The record's unfilled window episodes that hold no file (`UnfilledTargets.missing`)."""
@@ -183,7 +183,7 @@ class LeftForHandImport:
         return keyed and bool(self.missing or self.untrusted)
 
 
-NO_HELD_BACK = LeftForHandImport()
+NO_HAND_IMPORT_FILES = LeftForHandImport()
 """No file left for a hand import."""
 
 
@@ -208,21 +208,21 @@ class AttemptResult:
     imported_count: int = 0
     """How many of the intended episodes already hold the recommended file"""
 
-    target_count: int = 0
+    file_map_episode_count: int = 0
     """The intended episodes we mapped, 0 means the seed map is incomplete (indeterminate)."""
 
-    deferral: PauseReason = PauseReason.NONE
+    pause_reason: PauseReason = PauseReason.NONE
     """Why this poll waited on Sonarr's work instead of this record's."""
 
     placements: FileEpisodeMap = field(default_factory=dict[str, tuple[int, ...]])
     """The files Sonarr's history placed for a download no scan saw (normalized basename -> ids), once they
     verified, copied and wrapped read-only for the record seam to persist. Empty otherwise."""
 
-    unmatched_files: tuple[str, ...] = ()
+    unplaced_files: tuple[str, ...] = ()
     """The download's on-disk files no episode claimed (one per distinct basename), when that is all the poll
     found. Non-empty only from `unmatched()`: `files_present` and `command_issued` False, `deferral` NONE."""
 
-    left_for_hand_import: LeftForHandImport = NO_HELD_BACK
+    left_for_hand_import: LeftForHandImport = NO_HAND_IMPORT_FILES
     """The download's on-disk files the grab left for a hand import (`PendingImport.hand_import_files`), once every
     placed file is in and the hand import isn't. Its names are non-empty only from `hand_import()`: `files_present`
     and `command_issued` False."""
@@ -231,10 +231,10 @@ class AttemptResult:
         object.__setattr__(self, "placements", MappingProxyType(dict(self.placements)))
 
     @property
-    def deferred(self) -> bool:
+    def paused(self) -> bool:
         """Whether this poll waited on Sonarr's work (the monitor credits the interval back)."""
 
-        return self.deferral is not PauseReason.NONE
+        return self.pause_reason is not PauseReason.NONE
 
     @classmethod
     def imported(cls) -> "AttemptResult":
@@ -243,22 +243,22 @@ class AttemptResult:
         return cls(all_done=True, command_issued=False)
 
     @classmethod
-    def waiting(cls, *, command_issued: bool = False, deferral: PauseReason = PauseReason.NONE) -> "AttemptResult":
+    def waiting(cls, *, command_issued: bool = False, pause_reason: PauseReason = PauseReason.NONE) -> "AttemptResult":
         """Not imported yet: poll again until the readiness deadline."""
 
-        return cls(all_done=False, command_issued=command_issued, deferral=deferral)
+        return cls(all_done=False, command_issued=command_issued, pause_reason=pause_reason)
 
     @classmethod
-    def unmatched(cls, names: tuple[str, ...]) -> "AttemptResult":
+    def nothing_placed(cls, names: tuple[str, ...]) -> "AttemptResult":
         """Nothing to import or verify: every file on disk matched no episode."""
 
-        return cls(all_done=False, command_issued=False, unmatched_files=names)
+        return cls(all_done=False, command_issued=False, unplaced_files=names)
 
     @classmethod
-    def hand_import(cls, held: LeftForHandImport) -> "AttemptResult":
+    def needs_hand_import(cls, left: LeftForHandImport) -> "AttemptResult":
         """Every placed file is in, but files the grab left for a hand import keep the record pending."""
 
-        return cls(all_done=False, command_issued=False, left_for_hand_import=held)
+        return cls(all_done=False, command_issued=False, left_for_hand_import=left)
 
 
 NO_ATTEMPT = AttemptResult(attempted=False, all_done=False, command_issued=False)
@@ -357,7 +357,7 @@ class Outcome(Enum):
     detail: str
     """The longer human phrase the run report / notification use."""
 
-    category: OutcomeKind
+    kind: OutcomeKind
     """The `OutcomeCategory` driving glyph + color + tally."""
 
     dropped: bool
@@ -368,24 +368,24 @@ class Outcome(Enum):
         self,
         word: str,
         detail: str,
-        category: OutcomeKind,
+        kind: OutcomeKind,
         dropped: bool,
     ) -> None:
         self.word = word
         self.detail = detail
-        self.category = category
+        self.kind = kind
         self.dropped = dropped
 
     @property
     def style(self) -> str:
         """The rich style for this outcome's ledger row (from its category)."""
 
-        return self.category.style
+        return self.kind.style
 
     def glyph(self, *, use_unicode: bool) -> str:
         """The leading ledger glyph: unicode `✔/⚠/✖/·` or its ASCII fallback."""
 
-        return self.category.glyph_for(use_unicode=use_unicode)
+        return self.kind.glyph_for(use_unicode=use_unicode)
 
 
 # Each non-dropped Outcome's tally bucket. Dropped outcomes (IMPORTED, MISSING) leave the store,
@@ -414,7 +414,7 @@ _QBIT_ETA_INFINITE = 8_640_000
 
 
 @dataclass(frozen=True, slots=True)
-class TorrentTelemetry:
+class DownloadProgress:
     """One info row's sanitized live telemetry: download fraction, speed, ETA, and byte counts."""
 
     progress: float
@@ -424,7 +424,7 @@ class TorrentTelemetry:
     bytes_total: int | None
 
 
-_ZERO_TELEMETRY = TorrentTelemetry(0.0, None, None, None, None)
+_NO_DOWNLOAD_PROGRESS = DownloadProgress(0.0, None, None, None, None)
 """The unread placeholder (no client, or a transient qBittorrent error)."""
 
 
@@ -438,7 +438,7 @@ class TorrentPoll:
     content_path: str | None
     """The completed download's path (COMPLETE only)."""
 
-    telemetry: TorrentTelemetry = _ZERO_TELEMETRY
+    telemetry: DownloadProgress = _NO_DOWNLOAD_PROGRESS
     """The poll's sanitized live reading (zeroed when nothing was read)."""
 
     observed: bool = True
@@ -453,7 +453,7 @@ class TorrentPoll:
         return None
 
 
-def sanitize_torrent_telemetry(row: object) -> TorrentTelemetry:
+def download_progress_of(row: object) -> DownloadProgress:
     """Fold one qBittorrent info row into sanitized telemetry (fields read best-effort off the row)."""
 
     frac = _as_float(getattr(row, "progress", None))
@@ -471,14 +471,14 @@ def sanitize_torrent_telemetry(row: object) -> TorrentTelemetry:
     bytes_done = raw_done if raw_done is not None and raw_done > 0 else None
     if bytes_done is not None and bytes_total is not None:
         bytes_done = min(bytes_done, bytes_total)
-    return TorrentTelemetry(frac, speed_bps, eta_s, bytes_done, bytes_total)
+    return DownloadProgress(frac, speed_bps, eta_s, bytes_done, bytes_total)
 
 
 def torrent_finished(row: object) -> bool:
     """Whether a qBittorrent info row's download is done: complete by its state, or at full progress."""
 
     complete = getattr(getattr(row, "state_enum", None), "is_complete", False)
-    return complete is True or sanitize_torrent_telemetry(row).progress >= 1.0
+    return complete is True or download_progress_of(row).progress >= 1.0
 
 
 def torrent_errored(row: object) -> bool:

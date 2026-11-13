@@ -255,11 +255,11 @@ class WaitScope(_ScopeBase):
             return
         self._emit(WaitProgress(snapshot=snapshot, scope=self._scope))
 
-    def graduated(self, graduation: RowFinished) -> None:
+    def row_finished(self, event: RowFinished) -> None:
         if not self._open:
-            self._late(f"{graduation.outcome.word} {graduation.label}", severity_of(graduation))
+            self._late(f"{event.outcome.word} {event.label}", severity_of(event))
             return
-        self._emit(replace(graduation, scope=self._scope))
+        self._emit(replace(event, scope=self._scope))
 
     def finish(self, finished: WaitFinished) -> None:
         """Emit the wait tally stamped whole, then close (demotes when already closed)."""

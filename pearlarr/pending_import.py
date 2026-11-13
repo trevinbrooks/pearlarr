@@ -74,7 +74,7 @@ def joined_file_map(base: FileEpisodeMap, added: FileEpisodeMap) -> dict[str, tu
 
 
 @dataclass(frozen=True, slots=True, kw_only=True)
-class SeedCoverage:
+class FileMapCoverage:
     """How far a record's map and exclusions account for its listed files. Both False when it lists none."""
 
     file_map: bool
@@ -382,7 +382,7 @@ class PendingImport:
         object.__setattr__(self, "sizes_by_name", MappingProxyType(_normalized_keys(self.sizes_by_name)))
 
     @property
-    def own_group(self) -> TorrentGroup:
+    def torrent_group(self) -> TorrentGroup:
         """The torrent's own group at its listing's sizes, the trust policy's last vote."""
 
         return TorrentGroup(self.release_group, self.release_sizes)
@@ -441,17 +441,17 @@ class PendingImport:
             entry_groups=tuple(entry_groups), stale_groups=tuple(stale_groups), owned_episodes=tuple(owned)
         )
 
-    def seed_coverage(self) -> SeedCoverage:
+    def file_map_coverage(self) -> FileMapCoverage:
         """Coverage from normalized-name SUPERSETS (never lengths): a healed extra can't fake it."""
 
         needed = _normalized_names(self.seadex_files)
         if not needed:
-            return SeedCoverage(file_map=False, accounted=False)
+            return FileMapCoverage(file_map=False, accounted=False)
         mapped_names = self.file_episode_map.keys()
         if mapped_names >= needed:
-            return SeedCoverage(file_map=True, accounted=True)
+            return FileMapCoverage(file_map=True, accounted=True)
         covered = mapped_names | set(self.excluded_files)
-        return SeedCoverage(file_map=False, accounted=covered >= needed)
+        return FileMapCoverage(file_map=False, accounted=covered >= needed)
 
     def unplaced_names(self) -> set[str]:
         """Normalized listing names the map does not cover and no exclusion claims: what a rebuild may still place."""

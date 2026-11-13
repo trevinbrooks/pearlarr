@@ -57,7 +57,7 @@ from .window_placement import NOTHING_PLACED, WindowOrder, ordered_windows, plac
 class ListedFile:
     """One listed video file, its size and its cached grab-time `/parse`, as the placement reads it."""
 
-    basename: str
+    file_name: str
     """The raw SeaDex basename."""
 
     size: int
@@ -71,7 +71,7 @@ class ListedFile:
     """The normalized basename (`normalized_leaf`): what the batch, the sizes and the stored map key a file by."""
 
     def __post_init__(self) -> None:
-        object.__setattr__(self, "name", normalized_leaf(self.basename))
+        object.__setattr__(self, "name", normalized_leaf(self.file_name))
 
 
 @dataclass(frozen=True, slots=True)
@@ -589,7 +589,7 @@ class PlacedGrab:
     """The url's files placed at grab time (`place_release`)."""
 
     @property
-    def own_group(self) -> TorrentGroup:
+    def torrent_group(self) -> TorrentGroup:
         """The release's group at its listing's sizes, the trust policy's last vote."""
 
         return TorrentGroup(self.release_group, tuple(self.release.file_sizes))
@@ -602,8 +602,8 @@ class PlacedGrab:
             infohash=self.qbit_hash,
             release_group=self.release_group,
             is_dual_audio=self.release.is_dual_audio,
-            seadex_files=tuple(f.basename for f in self.placed.files),
-            release_sizes=self.own_group.sizes,
+            seadex_files=tuple(f.file_name for f in self.placed.files),
+            release_sizes=self.torrent_group.sizes,
             sizes_by_name=self.placed.sizes_by_name,
             is_cross_seed=self.release.cross_seed_hash is not None,
         )
@@ -687,7 +687,7 @@ def build_title_claim(release: PlacedGrab, grabbing_title: GrabbingTitle, facts:
     # Targets that already hold a recommended file at grab time were never this torrent's to insert:
     # classify them against the claim's own trust slice (no sibling votes yet) so the wait's inserted
     # counts start at 0. A replaced claim keeps its first preowned ids (`PendingImport.with_claim`).
-    grab_snapshot = EpisodeSnapshot.guarded(index, facts.guards, GrabbedGroups(release.own_group))
+    grab_snapshot = EpisodeSnapshot.guarded(index, facts.guards, GrabbedGroups(release.torrent_group))
     preowned = tuple(
         ep_id
         for ep_id, status in grab_snapshot.statuses(sorted(claimed), release.placed.intended_sizes).by_id.items()

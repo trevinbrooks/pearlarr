@@ -22,10 +22,10 @@ class QueueState(Enum):
     IMPORTING = auto()
     """An `importing` record: Sonarr's pass has the download in hand, copying it or re-checking it."""
 
-    PENDING_CLEAN = auto()
+    IMPORT_PENDING_OK = auto()
     """A clean (status `ok`) `importPending` record."""
 
-    STEP_IN = auto()
+    STUCK = auto()
     """A record Sonarr won't progress: `importBlocked`, `failed`, `failedPending`, `ignored`, or `importPending`
     flagged warning or error."""
 
@@ -36,11 +36,11 @@ class QueueState(Enum):
 # trackedDownloadState values compared case-folded: `importing`, and the transients Sonarr surfaces in the same field.
 _QUEUE_IMPORTING_STATES = frozenset({"importing"})
 _QUEUE_IN_MOTION_STATES = _QUEUE_IMPORTING_STATES | {"downloading", "queued", "delay", "paused"}
-_QUEUE_STEP_IN_STATES = frozenset(
+_QUEUE_STUCK_STATES = frozenset(
     {"importblocked", "failed", "failedpending", "ignored"},
 )
 # The `status` values that mark an importPending record as a failed Sonarr attempt.
-_QUEUE_FLAGGED_STATUSES = frozenset({"warning", "error"})
+_QUEUE_PROBLEM_STATUSES = frozenset({"warning", "error"})
 
 
 def classify_queue(records: Sequence[QueueRecord]) -> QueueState:
@@ -66,13 +66,13 @@ def classify_queue(records: Sequence[QueueRecord]) -> QueueState:
             importing = True
         elif state in _QUEUE_IN_MOTION_STATES:
             in_motion = True
-        elif state in _QUEUE_STEP_IN_STATES:
+        elif state in _QUEUE_STUCK_STATES:
             troubled = True
         elif state == "importpending":
             # Invariant: only a CLEAN importPending defers to Sonarr. A
             # warning/error-flagged one is a failed Sonarr import attempt it
             # won't reliably retry, so waiting would burn the readiness deadline.
-            if (record.status or "").casefold() in _QUEUE_FLAGGED_STATUSES:
+            if (record.status or "").casefold() in _QUEUE_PROBLEM_STATUSES:
                 troubled = True
             else:
                 clean_pending = True
@@ -82,10 +82,10 @@ def classify_queue(records: Sequence[QueueRecord]) -> QueueState:
     if in_motion:
         return QueueState.WAIT
     if troubled:
-        return QueueState.STEP_IN
+        return QueueState.STUCK
     if clean_pending:
-        return QueueState.PENDING_CLEAN
-    return QueueState.STEP_IN
+        return QueueState.IMPORT_PENDING_OK
+    return QueueState.STUCK
 
 
 # A command counts as a ManualImport only under this name (Sonarr's command
@@ -132,7 +132,7 @@ class InFlightImport(NamedTuple):
     """True for the primary `download_id` match. False for the path/episode fallback."""
 
 
-class DownloadMatch(NamedTuple):
+class DownloadIdentifiers(NamedTuple):
     """The identity facets a running command is matched against for one download."""
 
     infohash: str
@@ -141,20 +141,22 @@ class DownloadMatch(NamedTuple):
     content_paths: ContentPaths
     """The import folder in both filesystem views, for the no-download-id fallback."""
 
-    target_ep_ids: set[int]
+    file_map_episode_ids: set[int]
     """Our intended episode ids, for the same fallback."""
 
 
-def manual_import_in_flight(commands: Sequence[CommandResource], match: DownloadMatch) -> InFlightImport | None:
+def manual_import_in_flight(
+    commands: Sequence[CommandResource], identifiers: DownloadIdentifiers
+) -> InFlightImport | None:
     """The queued or started ManualImport covering this download, or None.
 
     Matched by its files' download id (case-insensitive), or, for a command whose files carry no download id, by a
     `content_paths` prefix or a `target_ep_ids` overlap.
     """
 
-    target_hash = match.infohash.casefold()
-    paths = match.content_paths
-    target_ep_ids = match.target_ep_ids
+    target_hash = identifiers.infohash.casefold()
+    paths = identifiers.content_paths
+    file_map_episode_ids = identifiers.file_map_episode_ids
     content_prefixes = {_norm_path(paths.raw), _norm_path(paths.sonarr_visible)}
     for command in _with_status(commands, _MANUAL_IMPORT_COMMAND_NAMES, _COMMAND_IN_FLIGHT_STATES):
         file_hashes = {f.download_id.casefold() for f in command.files if f.download_id is not None}
@@ -166,7 +168,7 @@ def manual_import_in_flight(commands: Sequence[CommandResource], match: Download
         for file in command.files:
             if file.path is not None and any(_norm_path(file.path).startswith(p) for p in content_prefixes):
                 return InFlightImport(command, by_download_id=False)
-            if any(ep_id in target_ep_ids for ep_id in file.episode_ids):
+            if any(ep_id in file_map_episode_ids for ep_id in file.episode_ids):
                 return InFlightImport(command, by_download_id=False)
     return None
 
@@ -253,13 +255,13 @@ class CommandBlock(Enum):
     SONARR_RESTARTED = "Sonarr lists no completed rescan (just restarted)"
 
     @property
-    def claims_import(self) -> bool:
+    def is_auto_import(self) -> bool:
         """Whether the in-flight import is provably ours (the probe reads `command_issued`)."""
 
         return self is CommandBlock.AUTO_IMPORT
 
     @property
-    def deferral(self) -> PauseReason:
+    def pause_reason(self) -> PauseReason:
         """The wait's reason for the probe: an import in flight, a busy Sonarr, or none after a restart."""
 
         if self in _IMPORT_BLOCKS:
@@ -269,7 +271,7 @@ class CommandBlock(Enum):
     def waiting(self) -> AttemptResult:
         """The wait this block calls for."""
 
-        return AttemptResult.waiting(command_issued=self.claims_import, deferral=self.deferral)
+        return AttemptResult.waiting(command_issued=self.is_auto_import, pause_reason=self.pause_reason)
 
 
 _IMPORT_BLOCKS = frozenset({CommandBlock.AUTO_IMPORT, CommandBlock.IN_FLIGHT_IMPORT})
@@ -277,17 +279,17 @@ _IMPORT_BLOCKS = frozenset({CommandBlock.AUTO_IMPORT, CommandBlock.IN_FLIGHT_IMP
 
 def classify_commands(
     commands: Sequence[CommandResource],
-    match: DownloadMatch,
-    is_own: Callable[[int], bool],
+    identifiers: DownloadIdentifiers,
+    is_auto_import: Callable[[int], bool],
 ) -> CommandBlock | None:
     """Reduce one `/api/v3/command` snapshot to the block holding a step-in, or None when clear.
 
     `is_own` says whether a command id is one this run POSTed.
     """
 
-    in_flight = manual_import_in_flight(commands, match)
+    in_flight = manual_import_in_flight(commands, identifiers)
     if in_flight:
-        owned = in_flight.by_download_id or is_own(in_flight.command.id)
+        owned = in_flight.by_download_id or is_auto_import(in_flight.command.id)
         return CommandBlock.AUTO_IMPORT if owned else CommandBlock.IN_FLIGHT_IMPORT
     if in_flight_disk_commands(commands):
         return CommandBlock.DISK_COMMAND
@@ -299,7 +301,7 @@ def classify_commands(
 # completed-download Check on, so `manualimport?downloadId=` never serves them
 # (a 500 on v4, `[]` on v5). Keyed by casefolded eventType, valued by the label
 # the debug note renders. `grabbed` (or none of the four) means genuinely Downloading.
-_DEAD_TRACKED_HISTORY_EVENTS = {
+_HISTORY_CLOSING_EVENTS = {
     "downloadfolderimported": "imported",
     "downloadfailed": "failed",
     "downloadignored": "ignored",
@@ -320,13 +322,13 @@ class HistoryImport(NamedTuple):
 
 
 @dataclass(frozen=True, slots=True)
-class DownloadHistoryVerdict:
+class DownloadHistoryState:
     """What a download's newest relevant Sonarr history event says about its state.
 
     An imported verdict also carries the rows of that import.
     """
 
-    dead_tracked: bool
+    history_closed: bool
     """True when Sonarr's history maps the download to a queue-hidden state it
     will never serve by id. Import from its folder instead."""
 
@@ -343,7 +345,7 @@ class DownloadHistoryVerdict:
     one, and when the page cannot bound the import."""
 
 
-def classify_download_history(page: HistoryPage) -> DownloadHistoryVerdict:
+def classify_download_history(page: HistoryPage) -> DownloadHistoryState:
     """Classify a download's tracked state from its newest relevant history event.
 
     The episode-history mirror of Sonarr's own `GetStateFromHistory`
@@ -362,12 +364,12 @@ def classify_download_history(page: HistoryPage) -> DownloadHistoryVerdict:
     for index, record in enumerate(page.records):
         event = record.event_type.casefold()
         if event == _GRABBED_HISTORY_EVENT:
-            return DownloadHistoryVerdict(dead_tracked=False)
-        label = _DEAD_TRACKED_HISTORY_EVENTS.get(event)
+            return DownloadHistoryState(history_closed=False)
+        label = _HISTORY_CLOSING_EVENTS.get(event)
         if label is not None:
             rows = _import_rows(page, index) if event == _IMPORTED_HISTORY_EVENT else ()
-            return DownloadHistoryVerdict(dead_tracked=True, event=label, date=record.date, import_rows=rows)
-    return DownloadHistoryVerdict(dead_tracked=False)
+            return DownloadHistoryState(history_closed=True, event=label, date=record.date, import_rows=rows)
+    return DownloadHistoryState(history_closed=False)
 
 
 def _import_rows(page: HistoryPage, start: int) -> tuple[HistoryImport, ...]:

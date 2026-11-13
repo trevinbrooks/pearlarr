@@ -48,7 +48,7 @@ class PendingImportStore:
 
         return load_pending_imports(self.rows_for_series(series_id), guards)
 
-    def flagged(self) -> dict[str, dict[str, Any]]:
+    def awaiting_cleanup_rows(self) -> dict[str, dict[str, Any]]:
         """The cleanup-flagged rows, raw (the heal pass's working set)."""
 
         return {key: raw for key, raw in self.rows().items() if is_awaiting_cleanup(raw)}

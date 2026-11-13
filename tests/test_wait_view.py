@@ -35,8 +35,8 @@ from pearlarr.output import (
 )
 from pearlarr.output.console_text import STATE_WIDTH
 from pearlarr.output.recording import RecordingHub
-from pearlarr.wait_types import NO_HELD_BACK, LeftForHandImport, Outcome, OutcomeKind
-from pearlarr.wait_view import HubWaitView, WaitOutcomeRow, WaitResult, graduations, make_wait_view
+from pearlarr.wait_types import NO_HAND_IMPORT_FILES, LeftForHandImport, Outcome, OutcomeKind
+from pearlarr.wait_view import HubWaitView, WaitOutcomeRow, WaitResult, make_wait_view, newly_finished
 
 from .builders import held_files
 from .fakes import CaptureHandler
@@ -67,14 +67,14 @@ def _downloading(key: str, label: str, frac: float = 0.5) -> TorrentView:
     return TorrentView(key=key, label=label, phase=Phase.DOWNLOADING, fraction=frac)
 
 
-def _terminal(
+def _finished_view(
     key: str,
     label: str,
     outcome: Outcome,
     *,
     files: int | None = None,
     elapsed: float = 0.0,
-    left_for_hand_import: LeftForHandImport = NO_HELD_BACK,
+    left_for_hand_import: LeftForHandImport = NO_HAND_IMPORT_FILES,
 ) -> TorrentView:
     return TorrentView(
         key=key,
@@ -100,23 +100,23 @@ def _make_view(logger: logging.Logger, *, poll_s: int, digest_interval: int = 30
 def test_factory_wants_telemetry_on_a_live_tty() -> None:
     view = _make_view(_logger_with_console(force_terminal=True), poll_s=30)
 
-    assert view.wants_telemetry is True
+    assert view.wants_download_progress is True
 
 
 def test_factory_skips_telemetry_on_a_non_tty() -> None:
     # The non-TTY digest renders no per-row telemetry, so the engine's fast-lane
     # qBittorrent read is skipped for it (pure waste on Docker/cron).
-    assert _make_view(_logger_with_console(force_terminal=False), poll_s=30).wants_telemetry is False
+    assert _make_view(_logger_with_console(force_terminal=False), poll_s=30).wants_download_progress is False
 
 
 def test_factory_skips_telemetry_without_a_console() -> None:
     # plain/json logging: no rich console handler at all.
-    assert _make_view(_quiet_logger("wait-view-null"), poll_s=30).wants_telemetry is False
+    assert _make_view(_quiet_logger("wait-view-null"), poll_s=30).wants_download_progress is False
 
 
 def test_factory_skips_telemetry_when_too_narrow() -> None:
     # A real TTY too narrow for a legible cockpit folds to the digest path.
-    assert _make_view(_logger_with_console(force_terminal=True, width=20), poll_s=30).wants_telemetry is False
+    assert _make_view(_logger_with_console(force_terminal=True, width=20), poll_s=30).wants_download_progress is False
 
 
 def test_factory_pulse_is_the_max_of_poll_and_digest_as_a_float() -> None:
@@ -141,7 +141,7 @@ class TestHubWaitViewNarration:
 
     @staticmethod
     def _view(*, pulse_s: float = 300.0, kind: WaitKind = WaitKind.MONITOR) -> HubWaitView:
-        return HubWaitView(_quiet_logger(), pulse_s=pulse_s, wants_telemetry=True, kind=kind)
+        return HubWaitView(_quiet_logger(), pulse_s=pulse_s, wants_download_progress=True, kind=kind)
 
     def test_first_update_opens_starts_and_progresses_exactly_once(self) -> None:
         recording = RecordingHub()
@@ -182,11 +182,11 @@ class TestHubWaitViewNarration:
         recording = RecordingHub()
         install_hub(recording.hub)
         view = self._view()
-        done = _terminal("h1", "Bocchi the Rock!", Outcome.IMPORTED, files=12, elapsed=192.0)
+        done = _finished_view("h1", "Bocchi the Rock!", Outcome.IMPORTED, files=12, elapsed=192.0)
 
         view.update(WaitSnapshot((done, _downloading("h2", "B")), elapsed_s=200))
         # h1 stays terminal in the next snapshot: it must NOT graduate twice.
-        view.update(WaitSnapshot((done, _terminal("h2", "B", Outcome.DOWNLOAD_TIMED_OUT)), elapsed_s=500))
+        view.update(WaitSnapshot((done, _finished_view("h2", "B", Outcome.DOWNLOAD_TIMED_OUT)), elapsed_s=500))
 
         (opened,) = recording.of_type(ScopeOpened)
         assert recording.of_type(RowFinished) == [
@@ -209,13 +209,15 @@ class TestHubWaitViewNarration:
     def test_graduation_carries_the_unmatched_files(self) -> None:
         recording = RecordingHub()
         install_hub(recording.hub)
-        row = _terminal("h1", "A", Outcome.UNMATCHED, elapsed=15.0, left_for_hand_import=held_files("a.mkv", "b.mkv"))
+        row = _finished_view(
+            "h1", "A", Outcome.UNMATCHED, elapsed=15.0, left_for_hand_import=held_files("a.mkv", "b.mkv")
+        )
 
         self._view().update(WaitSnapshot((row,), elapsed_s=15))
 
-        (graduated,) = recording.of_type(RowFinished)
-        assert graduated.left_for_hand_import.names == ("a.mkv", "b.mkv")
-        assert graduated.outcome is Outcome.UNMATCHED
+        (row_finished,) = recording.of_type(RowFinished)
+        assert row_finished.left_for_hand_import.names == ("a.mkv", "b.mkv")
+        assert row_finished.outcome is Outcome.UNMATCHED
 
     def test_first_snapshot_terminals_graduate_after_the_start(self) -> None:
         # A documented divergence, pinned deliberately: the old views
@@ -224,7 +226,7 @@ class TestHubWaitViewNarration:
         recording = RecordingHub()
         install_hub(recording.hub)
 
-        self._view().update(WaitSnapshot((_terminal("h1", "A", Outcome.IMPORTED),), elapsed_s=10))
+        self._view().update(WaitSnapshot((_finished_view("h1", "A", Outcome.IMPORTED),), elapsed_s=10))
 
         assert [type(e) for e in recording.events] == [ScopeOpened, WaitStarted, RowFinished, WaitProgress]
 
@@ -235,10 +237,10 @@ class TestHubWaitViewNarration:
         view.update(
             WaitSnapshot(
                 (
-                    _terminal("h1", "A", Outcome.IMPORTED),
-                    _terminal("h2", "B", Outcome.DOWNLOAD_TIMED_OUT),
-                    _terminal("h3", "C", Outcome.DOWNLOAD_ERRORED),
-                    _terminal("h4", "D", Outcome.AWAITING_IMPORT),
+                    _finished_view("h1", "A", Outcome.IMPORTED),
+                    _finished_view("h2", "B", Outcome.DOWNLOAD_TIMED_OUT),
+                    _finished_view("h3", "C", Outcome.DOWNLOAD_ERRORED),
+                    _finished_view("h4", "D", Outcome.AWAITING_IMPORT),
                 ),
                 elapsed_s=200,
             ),
@@ -340,7 +342,7 @@ class TestHubWaitViewNarration:
         view.close()
         emitted = len(recording.events)
 
-        view.update(WaitSnapshot((_terminal("h1", "A", Outcome.IMPORTED),), elapsed_s=60))
+        view.update(WaitSnapshot((_finished_view("h1", "A", Outcome.IMPORTED),), elapsed_s=60))
 
         assert len(recording.events) == emitted
 
@@ -369,7 +371,7 @@ def test_narrator_is_total_when_emission_raises(monkeypatch: pytest.MonkeyPatch)
     logger.setLevel(logging.DEBUG)
     capture = CaptureHandler()
     logger.addHandler(capture)
-    view = HubWaitView(logger, pulse_s=300.0, wants_telemetry=True, kind=WaitKind.MONITOR)
+    view = HubWaitView(logger, pulse_s=300.0, wants_download_progress=True, kind=WaitKind.MONITOR)
 
     view.update(WaitSnapshot((_downloading("h1", "A"),), elapsed_s=5))  # open+start+progress: the 3 allowed
     view.update(WaitSnapshot((_downloading("h1", "A"),), elapsed_s=35))  # progress raises -> swallowed
@@ -382,18 +384,18 @@ def test_narrator_is_total_when_emission_raises(monkeypatch: pytest.MonkeyPatch)
 
 
 def test_graduations_returns_only_unseen_terminals() -> None:
-    # frozenset inputs also prove purity: graduations() can never mutate seen.
+    # frozenset inputs also prove purity: newly_finished() can never mutate seen.
     snap = WaitSnapshot(
         (
-            _terminal("h1", "A", Outcome.IMPORTED),
+            _finished_view("h1", "A", Outcome.IMPORTED),
             _downloading("h2", "B", 0.3),
-            _terminal("h3", "C", Outcome.DOWNLOAD_ERRORED),
+            _finished_view("h3", "C", Outcome.DOWNLOAD_ERRORED),
         ),
     )
 
-    assert [g.view.key for g in graduations(frozenset(), snap)] == ["h1", "h3"]  # snapshot order
-    assert [g.view.key for g in graduations(frozenset({"h1"}), snap)] == ["h3"]
-    assert graduations(frozenset({"h1", "h3"}), snap) == []
+    assert [g.view.key for g in newly_finished(frozenset(), snap)] == ["h1", "h3"]  # snapshot order
+    assert [g.view.key for g in newly_finished(frozenset({"h1"}), snap)] == ["h3"]
+    assert newly_finished(frozenset({"h1", "h3"}), snap) == []
 
 
 # --- WaitResult ----------------------------------------------------------------
@@ -430,4 +432,4 @@ def test_outcome_dropped_is_exactly_imported_and_missing() -> None:
 def test_outcome_glyph_falls_back_to_ascii() -> None:
     assert Outcome.IMPORTED.glyph(use_unicode=True) == "✔"
     assert Outcome.IMPORTED.glyph(use_unicode=False) == "ok"
-    assert Outcome.IMPORTED.category is OutcomeKind.IMPORTED
+    assert Outcome.IMPORTED.kind is OutcomeKind.IMPORTED

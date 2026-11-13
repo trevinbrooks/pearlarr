@@ -231,7 +231,7 @@ class SonarrEpisodes:
             still counts.
         """
 
-        series_ids = self.needs_scan_ids(items)
+        series_ids = self.titles_needing_check(items)
         if not series_ids:
             return 0
 
@@ -268,7 +268,7 @@ class SonarrEpisodes:
                 raise
         return total
 
-    def needs_scan_ids(self, items: Iterable[SonarrItem]) -> list[int]:
+    def titles_needing_check(self, items: Iterable[SonarrItem]) -> list[int]:
         """The ids of the series the per-id loop will process, in item order, each once.
 
         Skips a series whose every AniList id the loop short-circuits on (`al_id_needs_scan`), and an unmonitored

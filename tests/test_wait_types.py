@@ -10,14 +10,14 @@ from pearlarr.releases import EpisodeKey
 from pearlarr.wait_types import (
     NO_ATTEMPT,
     AttemptResult,
-    HeldFile,
+    DownloadProgress,
+    HandImportFile,
     LeftForHandImport,
     PauseReason,
     PendingImportState,
     TorrentStatus,
-    TorrentTelemetry,
     classify_pending_import,
-    sanitize_torrent_telemetry,
+    download_progress_of,
 )
 
 from .builders import order_only_held_back
@@ -46,17 +46,17 @@ class TestPendingStateAndProbe:
         assert result.command_issued is False
 
     def test_waiting_probe_carries_the_attempt_flags(self) -> None:
-        result = AttemptResult.waiting(command_issued=True, deferral=PauseReason.IMPORT)
+        result = AttemptResult.waiting(command_issued=True, pause_reason=PauseReason.IMPORT)
         assert result.all_done is False
         assert result.command_issued is True
-        assert result.deferral is PauseReason.IMPORT
-        assert result.deferred is True
+        assert result.pause_reason is PauseReason.IMPORT
+        assert result.paused is True
         assert result.attempted is True
 
     def test_waiting_probe_defaults_to_no_deferral(self) -> None:
         result = AttemptResult.waiting()
-        assert result.deferral is PauseReason.NONE
-        assert result.deferred is False
+        assert result.pause_reason is PauseReason.NONE
+        assert result.paused is False
 
     def test_leave_probe_records_no_attempt(self) -> None:
         assert NO_ATTEMPT.attempted is False
@@ -74,7 +74,7 @@ class TestPendingStateAndProbe:
         assert dict(result.placements) == {"show - 01.mkv": (101,)}
 
     @pytest.mark.parametrize(
-        ("held", "explained"),
+        ("left", "explained"),
         [
             pytest.param(order_only_held_back(), True, id="both keyed, an episode missing"),
             pytest.param(
@@ -84,7 +84,7 @@ class TestPendingStateAndProbe:
             ),
             pytest.param(
                 LeftForHandImport(
-                    files=(order_only_held_back().files[0], HeldFile(HALVES[1])), missing=(EpisodeKey(4, 1),)
+                    files=(order_only_held_back().files[0], HandImportFile(HALVES[1])), missing=(EpisodeKey(4, 1),)
                 ),
                 False,
                 id="one of two keyed",
@@ -94,9 +94,9 @@ class TestPendingStateAndProbe:
         ],
     )
     def test_the_order_explains_only_keyed_files_with_an_unfilled_episode(
-        self, held: LeftForHandImport, explained: bool
+        self, left: LeftForHandImport, explained: bool
     ) -> None:
-        assert held.explained_by_order is explained
+        assert left.explained_by_order is explained
 
 
 class TestClassifyPending:
@@ -130,33 +130,33 @@ class TestSanitizeTorrentTelemetry:
         ("progress", "dlspeed", "eta", "completed", "size", "expected"),
         [
             # All-None getattr reads fold to the empty telemetry.
-            (None, None, None, None, None, TorrentTelemetry(0.0, None, None, None, None)),
+            (None, None, None, None, None, DownloadProgress(0.0, None, None, None, None)),
             # A clean row passes through untouched.
-            (0.64, 3_200_000, 130, 1_800, 2_900, TorrentTelemetry(0.64, 3_200_000, 130, 1_800, 2_900)),
+            (0.64, 3_200_000, 130, 1_800, 2_900, DownloadProgress(0.64, 3_200_000, 130, 1_800, 2_900)),
             # NaN progress (float and string) folds to 0.0, not a poisoned bar.
-            (float("nan"), 100, 130, 50, 200, TorrentTelemetry(0.0, 100, 130, 50, 200)),
-            ("nan", None, None, None, None, TorrentTelemetry(0.0, None, None, None, None)),
+            (float("nan"), 100, 130, 50, 200, DownloadProgress(0.0, 100, 130, 50, 200)),
+            ("nan", None, None, None, None, DownloadProgress(0.0, None, None, None, None)),
             # Numeric-string progress parses. Junk folds to 0.0.
-            ("0.75", None, None, None, None, TorrentTelemetry(0.75, None, None, None, None)),
-            ("fast", None, None, None, None, TorrentTelemetry(0.0, None, None, None, None)),
+            ("0.75", None, None, None, None, DownloadProgress(0.75, None, None, None, None)),
+            ("fast", None, None, None, None, DownloadProgress(0.0, None, None, None, None)),
             # Progress clamps to [0, 1] on both ends.
-            (1.5, None, None, None, None, TorrentTelemetry(1.0, None, None, None, None)),
-            (-0.25, None, None, None, None, TorrentTelemetry(0.0, None, None, None, None)),
+            (1.5, None, None, None, None, DownloadProgress(1.0, None, None, None, None)),
+            (-0.25, None, None, None, None, DownloadProgress(0.0, None, None, None, None)),
             # Idle (0) and negative speeds read as "no speed", never a 0 B/s row.
-            (0.5, 0, None, None, None, TorrentTelemetry(0.5, None, None, None, None)),
-            (0.5, -5, None, None, None, TorrentTelemetry(0.5, None, None, None, None)),
+            (0.5, 0, None, None, None, DownloadProgress(0.5, None, None, None, None)),
+            (0.5, -5, None, None, None, DownloadProgress(0.5, None, None, None, None)),
             # qBittorrent's 8_640_000 "infinite" eta and a 0/negative eta are unknown.
             # The last finite second still renders.
-            (0.5, 100, 8_640_000, None, None, TorrentTelemetry(0.5, 100, None, None, None)),
-            (0.5, 100, 0, None, None, TorrentTelemetry(0.5, 100, None, None, None)),
-            (0.5, 100, 8_639_999, None, None, TorrentTelemetry(0.5, 100, 8_639_999, None, None)),
+            (0.5, 100, 8_640_000, None, None, DownloadProgress(0.5, 100, None, None, None)),
+            (0.5, 100, 0, None, None, DownloadProgress(0.5, 100, None, None, None)),
+            (0.5, 100, 8_639_999, None, None, DownloadProgress(0.5, 100, 8_639_999, None, None)),
             # Zero/negative byte counts are unknown, not empty-progress readings.
-            (0.5, None, None, 0, 0, TorrentTelemetry(0.5, None, None, None, None)),
-            (0.5, None, None, -3, -1, TorrentTelemetry(0.5, None, None, None, None)),
+            (0.5, None, None, 0, 0, DownloadProgress(0.5, None, None, None, None)),
+            (0.5, None, None, -3, -1, DownloadProgress(0.5, None, None, None, None)),
             # An over-count clamps done to the total, never a >100% bar.
-            (0.5, None, None, 500, 200, TorrentTelemetry(0.5, None, None, 200, 200)),
+            (0.5, None, None, 500, 200, DownloadProgress(0.5, None, None, 200, 200)),
             # Bytes done without a known total still renders.
-            (0.5, None, None, 100, None, TorrentTelemetry(0.5, None, None, 100, None)),
+            (0.5, None, None, 100, None, DownloadProgress(0.5, None, None, 100, None)),
         ],
     )
     def test_edge_inputs(
@@ -166,15 +166,15 @@ class TestSanitizeTorrentTelemetry:
         eta: object,
         completed: object,
         size: object,
-        expected: TorrentTelemetry,
+        expected: DownloadProgress,
     ) -> None:
         row = SimpleNamespace(progress=progress, dlspeed=dlspeed, eta=eta, completed=completed, size=size)
 
-        assert sanitize_torrent_telemetry(row) == expected
+        assert download_progress_of(row) == expected
 
     def test_attrless_row_folds_to_the_zero_reading(self) -> None:
         # The fields are read best-effort off the row: a row missing them all is the empty telemetry.
-        assert sanitize_torrent_telemetry(object()) == TorrentTelemetry(0.0, None, None, None, None)
+        assert download_progress_of(object()) == DownloadProgress(0.0, None, None, None, None)
 
 
 def test_wait_outcome_members_exist() -> None:

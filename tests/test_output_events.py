@@ -132,13 +132,13 @@ def test_boot_step_finished_tallies_info_regardless_of_outcome() -> None:
 
 
 def test_torrent_graduated_severity_follows_its_outcome_category() -> None:
-    def graduated(outcome: Outcome) -> RowFinished:
+    def row_finished(outcome: Outcome) -> RowFinished:
         return RowFinished(label="T", outcome=outcome, files=None, waited_s=1.0)
 
-    assert severity_of(graduated(Outcome.IMPORTED)) is Severity.INFO
-    assert severity_of(graduated(Outcome.DOWNLOAD_TIMED_OUT)) is Severity.WARNING
-    assert severity_of(graduated(Outcome.UNMATCHED)) is Severity.WARNING
-    assert severity_of(graduated(Outcome.MISSING)) is Severity.ERROR
+    assert severity_of(row_finished(Outcome.IMPORTED)) is Severity.INFO
+    assert severity_of(row_finished(Outcome.DOWNLOAD_TIMED_OUT)) is Severity.WARNING
+    assert severity_of(row_finished(Outcome.UNMATCHED)) is Severity.WARNING
+    assert severity_of(row_finished(Outcome.MISSING)) is Severity.ERROR
 
 
 def test_structural_events_default_to_info() -> None:
@@ -170,7 +170,7 @@ def test_run_tally_freezes_run_stats_whole() -> None:
     stats.seadex_unreachable = 4
     stats.no_releases = 5
     stats.unmonitored = 6
-    stats.queued = 1
+    stats.downloading = 1
     stats.downloaded = 2
     stats.imported = 3
     grab = GrabbedRow(title="T", coverage="S01", url="u", name="n", group="G")
@@ -207,7 +207,7 @@ def test_run_tally_freezes_run_stats_whole() -> None:
         no_mappings=2,
         needs_action=(needs_fact,),
         unmonitored=6,
-        queued=1,
+        downloading=1,
         downloaded=2,
         imported=3,
         held_by_cap=0,

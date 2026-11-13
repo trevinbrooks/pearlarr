@@ -376,8 +376,8 @@ def arr_run_summary_lines(event: ArrRunSummaryReady) -> tuple[ConsoleLine, ...]:
         lines.append(_summary_kv("held by cap", str(tally.held_by_cap), value_style="yellow"))
 
     if summary.wait_mode_on:
-        if tally.queued:
-            lines.append(_summary_kv("queued", str(tally.queued), value_style="grey50"))
+        if tally.downloading:
+            lines.append(_summary_kv("queued", str(tally.downloading), value_style="grey50"))
         if tally.downloaded:
             lines.append(_summary_kv("downloaded", str(tally.downloaded), value_style="yellow"))
         if tally.imported:

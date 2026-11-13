@@ -283,14 +283,14 @@ def test_wait_start_lines_word_and_stamp_the_pass_kind(kind: WaitKind, words: st
 
 def test_graduation_lines_ride_the_wait_breadcrumb() -> None:
     context = (ScanStarted(arr=Arr.SONARR, total=182), ScopeOpened(scope=_WAIT, label="wait"))
-    graduated = RowFinished(
+    row_finished = RowFinished(
         label="Sousou no Frieren",
         outcome=Outcome.DOWNLOAD_TIMED_OUT,
         files=None,
         waited_s=600.0,
         scope=_WAIT,
     )
-    assert _format(graduated, *context) == (
+    assert _format(row_finished, *context) == (
         f'{_TS} WARNING [sonarr › wait] timed out title="Sousou no Frieren" waited_s=600.00'
     )
 
@@ -298,7 +298,7 @@ def test_graduation_lines_ride_the_wait_breadcrumb() -> None:
 def test_unmatched_graduation_line_names_the_files() -> None:
     # The names ride the structured line as one joined string, the run-event field policy, only on this outcome.
     context = (ScanStarted(arr=Arr.SONARR, total=182), ScopeOpened(scope=_WAIT, label="wait"))
-    graduated = RowFinished(
+    row_finished = RowFinished(
         label="Demo Batch",
         outcome=Outcome.UNMATCHED,
         files=None,
@@ -306,14 +306,14 @@ def test_unmatched_graduation_line_names_the_files() -> None:
         left_for_hand_import=held_files("a.mkv", "b.mkv"),
         scope=_WAIT,
     )
-    assert _format(graduated, *context) == (
+    assert _format(row_finished, *context) == (
         f'{_TS} WARNING [sonarr › wait] unmatched title="Demo Batch" unmatched_files="a.mkv; b.mkv" waited_s=15.00'
     )
 
 
 def test_partial_graduation_line_names_the_files_left_for_a_hand_import() -> None:
     context = (ScanStarted(arr=Arr.SONARR, total=182), ScopeOpened(scope=_WAIT, label="wait"))
-    graduated = RowFinished(
+    row_finished = RowFinished(
         label="Demo Batch",
         outcome=Outcome.PARTIAL,
         files=None,
@@ -321,14 +321,14 @@ def test_partial_graduation_line_names_the_files_left_for_a_hand_import() -> Non
         left_for_hand_import=held_files("a.mkv", "b.mkv"),
         scope=_WAIT,
     )
-    assert _format(graduated, *context) == (
+    assert _format(row_finished, *context) == (
         f'{_TS} WARNING [sonarr › wait] partial title="Demo Batch" unmatched_files="a.mkv; b.mkv" waited_s=15.00'
     )
 
 
 def test_order_only_graduation_line_says_why_and_keys_each_file() -> None:
     context = (ScanStarted(arr=Arr.SONARR, total=182), ScopeOpened(scope=_WAIT, label="wait"))
-    graduated = RowFinished(
+    row_finished = RowFinished(
         label="Demo Batch",
         outcome=Outcome.PARTIAL,
         files=None,
@@ -336,7 +336,7 @@ def test_order_only_graduation_line_says_why_and_keys_each_file() -> None:
         left_for_hand_import=order_only_held_back(),
         scope=_WAIT,
     )
-    assert _format(graduated, *context) == (
+    assert _format(row_finished, *context) == (
         f'{_TS} WARNING [sonarr › wait] partial title="Demo Batch" '
         'detail="S04 E01 is still missing in Sonarr. This pack is numbered by the DVD order, and 2 of its files are '
         "DVD episodes that aren't in Sonarr's list, so Pearlarr can't tell where they belong.\" "
@@ -409,7 +409,7 @@ def test_pure_boundaries_and_ephemerals_have_no_text_form() -> None:
 
 def _summary_ready() -> ArrRunSummaryReady:
     stats = ArrRunStats(checked=182, up_to_date=161, unchanged=14)
-    stats.queued = 1
+    stats.downloading = 1
     stats.added.append(
         GrabbedRow(
             title="Frieren: Beyond Journey's End",

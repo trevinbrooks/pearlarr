@@ -755,7 +755,7 @@ class TestPlaceHeld:
             ListedFile("Show - S02E02 (0005).mkv", 30, _matched(2, 2)),
         ]
         pending = pending_import(
-            infohash="h1", seadex_files=[f.basename for f in files], ordered_episode_ids=(101, 102, 103)
+            infohash="h1", seadex_files=[f.file_name for f in files], ordered_episode_ids=(101, 102, 103)
         )
         grabbing_title = seed_scope(episode_index(second), series, al_id=2)
 
@@ -1038,11 +1038,11 @@ _RG_FILES = (
     ListedFile(_rg_name(" - OP"), 305872174, ParsedFileInfo()),
     ListedFile(_rg_name(" - ED"), 541996641, ParsedFileInfo()),
 )
-_RG_EPISODE_NAMES = [normalize_name(f.basename) for f in _RG_FILES[:12]]
+_RG_EPISODE_NAMES = [normalize_name(f.file_name) for f in _RG_FILES[:12]]
 # Under either window the shorts place nowhere, and the OP and ED are extras.
 _RG_REST = {
-    **{normalize_name(f.basename): ((), PlacementVerdict.NO_EPISODE_FOUND) for f in _RG_FILES[12:18]},
-    **{normalize_name(f.basename): ((), PlacementVerdict.EXTRA) for f in _RG_FILES[18:]},
+    **{normalize_name(f.file_name): ((), PlacementVerdict.NO_EPISODE_FOUND) for f in _RG_FILES[12:18]},
+    **{normalize_name(f.file_name): ((), PlacementVerdict.EXTRA) for f in _RG_FILES[18:]},
 }
 
 
@@ -1113,7 +1113,7 @@ class TestRollingGirlsBatch:
             al_id=20815,
             series_id=919,
             file_episode_map={name: (ep.id,) for name, ep in zip(_RG_EPISODE_NAMES, _RG_SEASON, strict=True)},
-            seadex_files=[f.basename for f in _RG_FILES],
+            seadex_files=[f.file_name for f in _RG_FILES],
             ordered_episode_ids=tuple(ep.id for ep in _RG_SEASON),
         )
 
@@ -1669,7 +1669,7 @@ class TestEntryClaim:
 
     @staticmethod
     def _release(files: list[ListedFile], placed: PlacedRelease) -> PlacedGrab:
-        names = [f.basename for f in files]
+        names = [f.file_name for f in files]
         sizes = [f.size for f in files]
         return PlacedGrab("RG", url_item(url="u1", files=names, size=sizes, infohash="h1", download=True), "h1", placed)
 
