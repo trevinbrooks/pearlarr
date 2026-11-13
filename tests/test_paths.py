@@ -39,8 +39,8 @@ class TestResolvePaths:
         paths = resolve_paths(str(tmp_path))
         base = str(tmp_path)
         assert paths.data_dir == base
-        assert paths.config == os.path.join(base, "config.yml")
-        assert paths.cache == os.path.join(base, "cache.db")
+        assert paths.config_file == os.path.join(base, "config.yml")
+        assert paths.cache_db == os.path.join(base, "cache.db")
         assert paths.cache_backup == os.path.join(base, "cache.backup.db")
         assert paths.mappings_db == os.path.join(base, "mappings.db")
         assert paths.log_dir == os.path.join(base, "logs")

@@ -8,7 +8,7 @@ from .cache import AbstractCacheStore
 from .progress import ProgressSink
 from .skyhook_client import AbstractSkyHookClient, SkyHookMiss, SkyHookReply
 from .stamps import parse_stamp_or_none, stamp_of
-from .tvdb_orders import AIRED_ORDER, NO_ORDERS, OrderRow, SeriesOrderFacts, SeriesOrders, StoredOrders
+from .tvdb_orders import AIRED_ORDER, NO_ORDERS, CachedOrders, OrderRow, OrdersByName, SonarrSeriesOrders
 
 QUIET_AFTER_DAYS = 30
 """An ended series whose newest episode aired longer ago than this is quiet."""
@@ -28,7 +28,7 @@ class SkyHookGateway:
 
         self._client = client
         self._cache = cache_store
-        self._records: dict[int, StoredOrders | None] = {}
+        self._records: dict[int, CachedOrders | None] = {}
 
     @property
     def unreachable(self) -> bool:
@@ -38,7 +38,7 @@ class SkyHookGateway:
 
     def prefetch(
         self,
-        series: Sequence[SeriesOrderFacts],
+        series: Sequence[SonarrSeriesOrders],
         *,
         preview: bool,
         progress: ProgressSink | None = None,
@@ -64,17 +64,17 @@ class SkyHookGateway:
                 progress.progress(done / len(due), f"{done}/{len(due)}")
         return written
 
-    def orders(self, tvdb_id: int) -> StoredOrders | None:
+    def cached_orders(self, tvdb_id: int) -> CachedOrders | None:
         """The series' stored record at any age, or None when it has never been fetched."""
 
         if tvdb_id not in self._records:
             self._records[tvdb_id] = self._cache.get_tvdb_orders(tvdb_id)
         return self._records[tvdb_id]
 
-    def other_orders(self, tvdb_id: int) -> SeriesOrders:
+    def other_orders(self, tvdb_id: int) -> OrdersByName:
         """Every stored order of the series except official, empty orders left out."""
 
-        stored = self.orders(tvdb_id)
+        stored = self.cached_orders(tvdb_id)
         if stored is None:
             return NO_ORDERS
         return MappingProxyType({name: rows for name, rows in stored.orders.items() if name != AIRED_ORDER and rows})
@@ -82,12 +82,12 @@ class SkyHookGateway:
     def has_record(self, tvdb_id: int) -> bool:
         """Whether the series has a stored record, even one with no orders."""
 
-        return self.orders(tvdb_id) is not None
+        return self.cached_orders(tvdb_id) is not None
 
-    def _due(self, facts: SeriesOrderFacts, now: datetime) -> bool:
+    def _due(self, facts: SonarrSeriesOrders, now: datetime) -> bool:
         """Whether the series needs a fetch: no record, a record past its `fresh_until`, or Sonarr's counts moved."""
 
-        stored = self.orders(facts.tvdb_id)
+        stored = self.cached_orders(facts.tvdb_id)
         if stored is None:
             return True
         fresh_until = parse_stamp_or_none(stored.fresh_until)
@@ -97,7 +97,7 @@ class SkyHookGateway:
         # would otherwise read as new on every run.
         return facts.counts is not None and dict(facts.counts) != stored.sonarr_counts
 
-    def _fetch_series(self, facts: SeriesOrderFacts, now: datetime) -> StoredOrders | None:
+    def _fetch_series(self, facts: SonarrSeriesOrders, now: datetime) -> CachedOrders | None:
         """The series' new record: official first, then each other order it lists. None on an outage."""
 
         official = self._client.fetch(facts.tvdb_id, AIRED_ORDER)
@@ -116,7 +116,7 @@ class SkyHookGateway:
                     return None
                 orders[listed.type] = () if reply is SkyHookMiss.NOT_FOUND else _rows(reply)
         fresh_for = timedelta(days=QUIET_FRESH_DAYS if quiet else ACTIVE_FRESH_DAYS)
-        return StoredOrders(
+        return CachedOrders(
             fetched_at=stamp_of(now),
             fresh_until=stamp_of(now + fresh_for),
             orders=orders,

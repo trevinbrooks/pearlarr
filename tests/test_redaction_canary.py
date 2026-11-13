@@ -16,7 +16,7 @@ import pytest
 import respx
 from typer.testing import CliRunner
 
-from pearlarr.arr_http import ArrConnectionError, ArrHttp
+from pearlarr.arr_http import ArrHttp, ArrUnreachableError
 from pearlarr.cli import pearlarr_cli
 from pearlarr.config import Arr
 from pearlarr.notify import Notifier
@@ -73,7 +73,7 @@ def _assert_clean(text: str) -> None:
 def _write_canary_config(*, log_format: str = "auto") -> None:
     paths = resolve_paths()
     os.makedirs(paths.data_dir, exist_ok=True)
-    Path(paths.config).write_text(CANARY_CONFIG + f"  log_format: {log_format}\n", encoding="utf-8")
+    Path(paths.config_file).write_text(CANARY_CONFIG + f"  log_format: {log_format}\n", encoding="utf-8")
 
 
 def _data_dir_text() -> str:
@@ -106,7 +106,7 @@ class TestCliSurfaces:
         paths = resolve_paths()
         os.makedirs(paths.data_dir, exist_ok=True)
         pasted = "CANARY-pasted-secret-0d11f3"
-        Path(paths.config).write_text(f"advanced:\n  sleep_time: {pasted}\n", encoding="utf-8")
+        Path(paths.config_file).write_text(f"advanced:\n  sleep_time: {pasted}\n", encoding="utf-8")
         result = CliRunner().invoke(pearlarr_cli, ["config", "validate"])
         assert result.exit_code == 1
         assert "sleep_time" in result.output
@@ -147,7 +147,7 @@ class TestEnvOverrideSurfaces:
     def _write_min_config(text: str) -> None:
         paths = resolve_paths()
         os.makedirs(paths.data_dir, exist_ok=True)
-        Path(paths.config).write_text(text, encoding="utf-8")
+        Path(paths.config_file).write_text(text, encoding="utf-8")
 
     def test_config_show_redacts_an_env_supplied_secret(self, monkeypatch: pytest.MonkeyPatch) -> None:
         # An env-supplied api_key lands in the same SecretStr field a file value
@@ -183,7 +183,7 @@ class TestArrClientMessages:
         with respx.mock:
             respx.route().mock(side_effect=httpx.ConnectError("blocked"))
             arr = ArrHttp.bind(client=httpx.Client(), url=url, api_key="k", label="Sonarr", sleep=lambda _: None)
-            with pytest.raises(ArrConnectionError) as excinfo:
+            with pytest.raises(ArrUnreachableError) as excinfo:
                 arr.get_json_list_strict("/api/v3/series")
         message = str(excinfo.value)
         _assert_clean(message)

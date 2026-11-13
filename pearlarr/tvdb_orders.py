@@ -30,14 +30,14 @@ class OrderRow(NamedTuple):
     """TVDB's absolute number. Only the official order carries one."""
 
 
-type SeriesOrders = Mapping[str, Sequence[OrderRow]]
+type OrdersByName = Mapping[str, Sequence[OrderRow]]
 """Order type name -> that order's rows."""
 
-NO_ORDERS: SeriesOrders = MappingProxyType({})
+NO_ORDERS: OrdersByName = MappingProxyType({})
 
 
 @dataclass(frozen=True, slots=True)
-class StoredOrders:
+class CachedOrders:
     """One series' cached orders, replaced whole on each fetch."""
 
     fetched_at: str
@@ -87,7 +87,7 @@ class StoredOrders:
 
 
 @dataclass(frozen=True, slots=True)
-class SeriesOrderFacts:
+class SonarrSeriesOrders:
     """What one Sonarr series row says about its orders."""
 
     tvdb_id: int
@@ -108,14 +108,14 @@ class OrderTranslation(NamedTuple):
     """The stored official order (empty when it isn't stored)."""
 
 
-class SeriesOrdering(NamedTuple):
+class IndexOrders(NamedTuple):
     """The orders one series' episode index is built with."""
 
-    others: SeriesOrders
+    others: OrdersByName
     """Every stored order except official, empty orders left out."""
 
     translation: OrderTranslation | None
     """None when Sonarr's rows are already in aired order."""
 
 
-NO_ORDERING = SeriesOrdering(NO_ORDERS, None)
+NO_INDEX_ORDERS = IndexOrders(NO_ORDERS, None)

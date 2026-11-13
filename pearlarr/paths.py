@@ -29,8 +29,8 @@ class AppPaths:
     """
 
     data_dir: str
-    config: str
-    cache: str
+    config_file: str
+    cache_db: str
     cache_backup: str
     mappings_db: str
     log_dir: str
@@ -49,8 +49,8 @@ def resolve_paths(data_dir: str | None = None) -> AppPaths:
     base = os.path.abspath(base)
     return AppPaths(
         data_dir=base,
-        config=os.path.join(base, "config.yml"),
-        cache=os.path.join(base, "cache.db"),
+        config_file=os.path.join(base, "config.yml"),
+        cache_db=os.path.join(base, "cache.db"),
         cache_backup=os.path.join(base, "cache.backup.db"),
         mappings_db=os.path.join(base, "mappings.db"),
         log_dir=os.path.join(base, "logs"),

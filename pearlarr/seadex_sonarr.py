@@ -275,7 +275,7 @@ class SonarrStrategy(ArrStrategy[SonarrItem]):
         title = run.resolve_title(al_id)
 
         # Setup info for cache
-        cache_details = run.new_cache_details(title, sd_entry)
+        update = run.new_cache_details(title, sd_entry)
 
         # Get the episode list for all relevant episodes
         ep_list = self._episodes.mapping_episodes(
@@ -320,8 +320,8 @@ class SonarrStrategy(ArrStrategy[SonarrItem]):
             sd_entry=sd_entry,
             coverage=coverage,
         )
-        cache_details["coverage"] = coverage
-        cache_details["url"] = sd_url
+        update["coverage"] = coverage
+        update["url"] = sd_url
 
         sonarr_releases = self._episodes.get_sonarr_releases(ep_list=ep_list)
 
@@ -334,7 +334,7 @@ class SonarrStrategy(ArrStrategy[SonarrItem]):
 
         if len(seadex_dict) == 0:
             # Nothing is placed here, so only the entry whose window gave the coverage counts.
-            run.report_no_releases(al_id, cache_details, metadata_unread=self._episodes.entries_unread([al_id]))
+            run.report_no_releases(al_id, update, metadata_unread=self._episodes.entries_unread([al_id]))
             return
 
         self.logger.debug(f"SeaDex: {', '.join(seadex_dict)}")
@@ -416,7 +416,7 @@ class SonarrStrategy(ArrStrategy[SonarrItem]):
                 entry_title=title.name,
                 entry=sd_entry,
                 seadex_dict=seadex_dict,
-                cache_details=cache_details,
+                update=update,
                 replaced_groups=sonarr_releases.groups(),
                 coverage=coverage,
                 pending_seeds=pending_seeds,

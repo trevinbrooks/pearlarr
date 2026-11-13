@@ -128,7 +128,7 @@ def _grab_request(al_id: int, seadex_dict: SeadexDict, entry: EntryRecord) -> Gr
         entry_title="Show",
         entry=entry,
         seadex_dict=seadex_dict,
-        cache_details={"name": "Show", "updated_at": entry.updated_at},
+        update={"name": "Show", "updated_at": entry.updated_at},
         replaced_groups=(),
     )
 

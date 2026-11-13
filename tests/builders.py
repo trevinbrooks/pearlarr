@@ -18,7 +18,7 @@ from pydantic import BaseModel
 from seadex import EntryRecord, File, Tag, TorrentRecord, Tracker
 
 from pearlarr.anibridge import NO_ALIASES, SpecialAliases
-from pearlarr.anilist_client import MAX_RETRIES, AniListBody, AniListCache, AniListClient
+from pearlarr.anilist_client import MAX_RETRIES, AniListAnswers, AniListBody, AniListClient
 from pearlarr.anilist_gateway import AniListGateway
 from pearlarr.arr_categories import _CATEGORY_FIELDS, ArrCategoryResolver, CategorySources, _read_clients
 from pearlarr.arr_http import ArrHttp
@@ -94,7 +94,7 @@ from pearlarr.sonarr_episodes import SonarrEpisodes
 from pearlarr.sonarr_parse import SonarrParseCache
 from pearlarr.stamps import STAMP_FORMAT, parse_stamp, stamp_of
 from pearlarr.torrents import AddResult, AddStatus, TorrentService
-from pearlarr.tvdb_orders import NO_ORDERS, OrderRow, SeriesOrdering, SeriesOrders, StoredOrders
+from pearlarr.tvdb_orders import NO_ORDERS, CachedOrders, IndexOrders, OrderRow, OrdersByName
 from pearlarr.wait_types import NO_HELD_BACK, AttemptResult, HeldFile, ImportWaitMode, LeftForHandImport, PauseReason
 from pearlarr.window_placement import WindowedAssignment
 
@@ -175,7 +175,7 @@ def make_bare_instance[T](cls: type[T], **attrs: Any) -> T:
     return obj
 
 
-# The entry columns `update_cache` merges, aliased from the real store's tuple so the fake
+# The entry columns `update_cached_title` merges, aliased from the real store's tuple so the fake
 # can't drift from `CacheStore`.
 _FAKE_ENTRY_FIELDS: tuple[str, ...] = _ENTRY_COLUMNS
 
@@ -251,7 +251,7 @@ class ScriptedAniListClient(AniListClient):
         return anilist_body(al_id, self._title)
 
     @override
-    def query_batch(self, al_ids: list[int]) -> AniListCache:
+    def query_batch(self, al_ids: list[int]) -> AniListAnswers:
         if self.unreachable:
             return {}
         self.batch_calls.append(list(al_ids))
@@ -279,7 +279,7 @@ class FakeCacheStore(AbstractCacheStore):
         self._anilist_meta: dict[int, dict[str, Any]] = {}
         self._guards: dict[str, dict[int, OwnedAtGrab]] = {}
         self._history_checkpoints: dict[str, HistoryCheckpoint] = {}
-        self._tvdb_orders: dict[int, StoredOrders] = {}
+        self._tvdb_orders: dict[int, CachedOrders] = {}
         self._kv: dict[str, str] = {}
 
     # -- lifecycle --
@@ -303,15 +303,15 @@ class FakeCacheStore(AbstractCacheStore):
 
     # -- per-entry records (entries) --
     @override
-    def update_cache(
+    def update_cached_title(
         self,
         arr: Arr,
         al_id: int,
-        cache_details: CachedTitleUpdate,
+        update: CachedTitleUpdate,
     ) -> None:
         """Partial-merge the supplied columns. An empty record adds no row."""
 
-        details: dict[str, Any] = dict(cache_details)
+        details: dict[str, Any] = dict(update)
         updated_at = details.get("updated_at")
         if isinstance(updated_at, datetime):
             details["updated_at"] = updated_at.strftime(STAMP_FORMAT)
@@ -423,14 +423,14 @@ class FakeCacheStore(AbstractCacheStore):
 
     # -- TVDB orders --
     @override
-    def get_tvdb_orders(self, tvdb_id: int) -> StoredOrders | None:
+    def get_tvdb_orders(self, tvdb_id: int) -> CachedOrders | None:
         """Round-trips through the stored JSON shape, as the real store's column does."""
 
         stored = self._tvdb_orders.get(tvdb_id)
-        return None if stored is None else StoredOrders.from_json(json.loads(json.dumps(stored.to_json())))
+        return None if stored is None else CachedOrders.from_json(json.loads(json.dumps(stored.to_json())))
 
     @override
-    def put_tvdb_orders(self, tvdb_id: int, record: StoredOrders) -> None:
+    def put_tvdb_orders(self, tvdb_id: int, record: CachedOrders) -> None:
         self._tvdb_orders[tvdb_id] = record
 
     # -- history checkpoints --
@@ -759,7 +759,7 @@ def make_run_deps(
         qbit=None,
         # A real resolver over empty in-memory mappings (no network). It carries a real (empty)
         # `anibridge` the strategy reads at construction.
-        mappings=MappingResolver(
+        resolver=MappingResolver(
             cache_time=1,
             ignore_anilist_ids=set(),
             web=http,
@@ -907,7 +907,7 @@ def grab_request(**overrides: Any) -> GrabRequest:
         "entry_title": "Show",
         "entry": make_entry_record(url="https://releases.moe/1"),
         "seadex_dict": {},
-        "cache_details": {},
+        "update": {},
         "replaced_groups": (),
     }
     defaults.update(overrides)
@@ -1250,7 +1250,7 @@ def series_index(
     absolutes: Mapping[int, int] | None = None,
     titles: Mapping[int, str] | None = None,
     aired: Mapping[int, str | None] | None = None,
-    orders: SeriesOrders = NO_ORDERS,
+    orders: OrdersByName = NO_ORDERS,
 ) -> EpisodeIndex:
     """A whole-series index synthesized from a `(season, episode) -> id` map, with the absolutes and titles given by id.
 
@@ -1275,7 +1275,7 @@ def series_index(
             )
             for key, ep_id in id_by_key.items()
         ],
-        SeriesOrdering(orders, None),
+        IndexOrders(orders, None),
     )
 
 
@@ -1538,11 +1538,11 @@ def stored_orders(
     *,
     fresh_for: timedelta = timedelta(days=1),
     sonarr_counts: Mapping[str, int] | None = None,
-) -> StoredOrders:
+) -> CachedOrders:
     """A series' order record fetched a day ago, fresh for `fresh_for` from now (past it when negative)."""
 
     now = datetime.now()
-    return StoredOrders(
+    return CachedOrders(
         fetched_at=stamp_of(now - timedelta(days=1)),
         fresh_until=stamp_of(now + fresh_for),
         orders=orders,

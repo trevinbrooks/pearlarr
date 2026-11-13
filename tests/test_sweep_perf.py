@@ -523,13 +523,13 @@ class TestAlIdNeedsScan:
 
     def test_cached_and_matching_does_not_need_scan(self) -> None:
         cache = FakeCacheStore()
-        cache.update_cache(Arr.SONARR, 7, {"updated_at": datetime(2021, 1, 1)})
+        cache.update_cached_title(Arr.SONARR, 7, {"updated_at": datetime(2021, 1, 1)})
         run = self._run(entry=_entry(datetime(2021, 1, 1)), cache=cache)
         assert run.title_needs_check(7) is False
 
     def test_cached_but_stale_needs_scan(self) -> None:
         cache = FakeCacheStore()
-        cache.update_cache(Arr.SONARR, 7, {"updated_at": datetime(2021, 1, 1)})
+        cache.update_cached_title(Arr.SONARR, 7, {"updated_at": datetime(2021, 1, 1)})
         run = self._run(entry=_entry(datetime(2022, 6, 6)), cache=cache)
         assert run.title_needs_check(7) is True
 
@@ -537,7 +537,7 @@ class TestAlIdNeedsScan:
         # A matching cached entry is normally skipped. ignore_seadex_update_times
         # makes the loop re-process it, so the predicate must report needs-scan.
         cache = FakeCacheStore()
-        cache.update_cache(Arr.SONARR, 7, {"updated_at": datetime(2021, 1, 1)})
+        cache.update_cached_title(Arr.SONARR, 7, {"updated_at": datetime(2021, 1, 1)})
         run = self._run(
             entry=_entry(datetime(2021, 1, 1)),
             cache=cache,
@@ -553,7 +553,7 @@ class TestAlIdNeedsScan:
     def test_dirty_id_needs_scan_despite_matching_cache(self) -> None:
         # An arr-side file change re-warms the id even when the cache matches.
         cache = FakeCacheStore()
-        cache.update_cache(Arr.SONARR, 7, {"updated_at": datetime(2021, 1, 1)})
+        cache.update_cached_title(Arr.SONARR, 7, {"updated_at": datetime(2021, 1, 1)})
         run = self._run(entry=_entry(datetime(2021, 1, 1)), cache=cache)
         run.mark_dirty([7])
         assert run.title_needs_check(7) is True
@@ -567,7 +567,7 @@ class TestAlIdNeedsScan:
     @staticmethod
     def _marked_cache() -> FakeCacheStore:
         cache = FakeCacheStore()
-        cache.update_cache(Arr.SONARR, 7, {"updated_at": datetime(2021, 1, 1), "fallback_satisfied": True})
+        cache.update_cached_title(Arr.SONARR, 7, {"updated_at": datetime(2021, 1, 1), "fallback_satisfied": True})
         return cache
 
     def test_warn_mode_fallback_marker_needs_scan(self) -> None:

@@ -24,7 +24,7 @@ from .releases import season_episode_key
 from .run_services import LegDeps, LegServices
 from .sonarr_client import AbstractSonarrClient
 from .specials_by_date import specials_by_date
-from .tvdb_orders import AIRED_ORDER, NO_ORDERING, SeriesOrderFacts, SeriesOrdering
+from .tvdb_orders import AIRED_ORDER, NO_INDEX_ORDERS, IndexOrders, SonarrSeriesOrders
 
 # Bounded concurrency for the episode/parse network fan-out. Only used when
 # advanced.sleep_time == 0. Must stay <= the session's pool_maxsize (LegDeps.build).
@@ -131,8 +131,8 @@ class SonarrEpisodes:
         self.sonarr = sonarr
         self._services = services
         self._config = deps.config
-        self._mappings = deps.mappings
-        self.anibridge = deps.mappings.anibridge
+        self._resolver = deps.resolver
+        self.anibridge = deps.resolver.anibridge
         # Episode counts / formats resolve through the gateway (shared with the
         # engine), so its warm cache and retry narration apply here too.
         self._anilist = deps.anilist
@@ -153,8 +153,8 @@ class SonarrEpisodes:
 
         # Each series row's order facts, and the orderings built from them and the order cache. Both reset in
         # refresh_library, so a run reads each series' orders once.
-        self._order_facts: dict[int, SeriesOrderFacts] = {}
-        self._orderings: dict[int, SeriesOrdering] = {}
+        self._order_facts: dict[int, SonarrSeriesOrders] = {}
+        self._orderings: dict[int, IndexOrders] = {}
 
         # The AniList ids whose pick of specials by air date this run already logged. Reset in refresh_library.
         self._picks_logged: set[int] = set()
@@ -181,7 +181,7 @@ class SonarrEpisodes:
         # cache invalidation (see sonarr_series_fingerprint).
         self._series_fp = sonarr_series_fingerprint(s.id for s in series)
         self._order_facts = {
-            s.id: SeriesOrderFacts(
+            s.id: SonarrSeriesOrders(
                 tvdb_id=s.tvdbId,
                 season_type=s.seasonType,
                 counts={listed.type: listed.episode_count for listed in s.seasonTypes} if s.seasonTypes else None,
@@ -196,7 +196,7 @@ class SonarrEpisodes:
         fields = (IdField("tvdb_id", "tvdbId"), IdField("imdb_id", "imdbId"))
         return collect_anime_items(
             self.sonarr.all_series,
-            build_id_filters(fields, self._mappings, self.anibridge),
+            build_id_filters(fields, self._resolver, self.anibridge),
         )
 
     def prefetch(self, items: list[SonarrItem], *, progress: ProgressSink | None = None) -> int:
@@ -305,7 +305,7 @@ class SonarrEpisodes:
         }
         return self._skyhook.prefetch(list(by_tvdb.values()), preview=self._services.is_dry_run(), progress=progress)
 
-    def orders_for(self, series_id: int) -> SeriesOrdering:
+    def orders_for(self, series_id: int) -> IndexOrders:
         """The orders the series' episode indexes are built with, read once per run.
 
         `NO_ORDERING` for a series Sonarr numbers by another order than official, and for one this run didn't read.
@@ -316,9 +316,9 @@ class SonarrEpisodes:
             # Every index reads Sonarr's rows as aired, so another order can't be read onto a series numbered by
             # one of them yet.
             if self.aired_order(series_id):
-                ordering = SeriesOrdering(self._skyhook.other_orders(self._order_facts[series_id].tvdb_id), None)
+                ordering = IndexOrders(self._skyhook.other_orders(self._order_facts[series_id].tvdb_id), None)
             else:
-                ordering = NO_ORDERING
+                ordering = NO_INDEX_ORDERS
             self._orderings[series_id] = ordering
         return ordering
 
@@ -331,12 +331,12 @@ class SonarrEpisodes:
     def episode_count(self, al_id: int) -> int | None:
         """AniList's episode count for the entry, None when AniList gives none."""
 
-        return self._anilist.n_eps(al_id)
+        return self._anilist.episode_count(al_id)
 
     def entries_unread(self, al_ids: Iterable[int]) -> bool:
         """Whether AniList left any of the entries unread (`AniListGateway.unread`)."""
 
-        return any(self._anilist.unread(al_id) for al_id in al_ids)
+        return any(self._anilist.air_dates_unread(al_id) for al_id in al_ids)
 
     def orders_unread(self, series_ids: Iterable[int]) -> bool:
         """Whether any of the series has no stored order record, as when SkyHook was down before its first fetch.
@@ -431,12 +431,12 @@ class SonarrEpisodes:
         # being in Season 0. The resolver owns the AniDB parse: it returns the
         # season's {tvdb_ep: anidb_ep} map ({} when none) and raises on an
         # ambiguous id.
-        anidb_mapping_dict: dict[int, dict[int, int]] = {}
-        if self._mappings.has_anidb and anidb_id is not None and (al_format != "TV" or tvdb_season == 0):
-            anidb_mapping_dict = self._mappings.anidb_mapping_dict(anidb_id, tvdb_season)
+        anidb_episode_by_tvdb: dict[int, dict[int, int]] = {}
+        if self._resolver.has_anidb and anidb_id is not None and (al_format != "TV" or tvdb_season == 0):
+            anidb_episode_by_tvdb = self._resolver.anidb_episode_by_tvdb(anidb_id, tvdb_season)
 
         # Prefer the AniDB mapping dict over any offsets
-        if len(anidb_mapping_dict) > 0:
+        if len(anidb_episode_by_tvdb) > 0:
             anidb_final_ep_list: list[SonarrEpisode] = []
 
             # See if we have the mapping for each entry
@@ -446,7 +446,7 @@ class SonarrEpisodes:
                 if season_number is None or episode_number is None:
                     continue
 
-                anidb_mapping_dict_entry = anidb_mapping_dict.get(
+                anidb_mapping_dict_entry = anidb_episode_by_tvdb.get(
                     season_number,
                     {},
                 ).get(episode_number, None)
@@ -507,18 +507,18 @@ class SonarrEpisodes:
 
         # Slice the list to get the correct episodes, so any potential offsets
         ep_offset = mapping.tvdb_epoffset
-        n_eps = self.episode_count(al_id)
+        episode_count = self.episode_count(al_id)
 
         # If we don't get a number of episodes, use them all
-        if n_eps is None:
-            n_eps = len(final_ep_list) - ep_offset
+        if episode_count is None:
+            episode_count = len(final_ep_list) - ep_offset
 
         # Check that we're including this by the episode number. This only
         # works for single-seasons, so be careful!
         if mapping.tvdb_season != -1:
-            return [ep for ep in final_ep_list if 1 <= (ep.episode_number or 0) - ep_offset <= n_eps]
+            return [ep for ep in final_ep_list if 1 <= (ep.episode_number or 0) - ep_offset <= episode_count]
 
-        return final_ep_list[ep_offset : n_eps + ep_offset]
+        return final_ep_list[ep_offset : episode_count + ep_offset]
 
     def get_sonarr_releases(
         self,

@@ -178,7 +178,7 @@ def secret_value(secret: SecretStr | None) -> str | None:
     return secret.get_secret_value() if secret is not None else None
 
 
-def strip_userinfo(value: str) -> str:
+def redact_userinfo(value: str) -> str:
     """Mask a `user:pass@` login embedded in a URL/host value.
 
     Every user-facing rendering of a configured URL (`config show`, arr

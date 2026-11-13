@@ -20,7 +20,7 @@ from pearlarr.placement_types import (
     episode_index,
 )
 from pearlarr.releases import SONARR_MISSING_KEY, EpisodeKey
-from pearlarr.tvdb_orders import OrderRow, SeriesOrdering
+from pearlarr.tvdb_orders import IndexOrders, OrderRow
 
 from .builders import entry_window, parsed_info, series_index, sonarr_ep, torrent_listing
 
@@ -83,7 +83,7 @@ class TestEpisodeIndex:
             OrderRow(1, 2, 903, None),
         )
 
-        index = episode_index(eps, SeriesOrdering({"dvd": dvd}, None))
+        index = episode_index(eps, IndexOrders({"dvd": dvd}, None))
 
         assert index.orders["dvd"].id_by_key == {(1, 1): 12}
         assert index.orders["dvd"].keys == {(1, 1), (1, 2)}

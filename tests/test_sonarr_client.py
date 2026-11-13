@@ -550,7 +550,7 @@ def test_parse_request_error_returns_none() -> None:
     assert _make_client().parse("Cool.Anime.S01E01.mkv") is None
 
 
-# --- manual_import_candidates() ---------------------------------------------
+# --- manual_import_candidates_by_download_id() ---------------------------------------------
 
 
 @respx.mock
@@ -565,7 +565,7 @@ def test_manual_import_candidates_decodes_and_uppercases_downloadid() -> None:
         title="Yamada-kun",
     )
     route = respx.get(f"{_BASE}/manualimport").respond(json=sonarr_fixture("manualimport_yamada.json"))
-    candidates = _make_client().manual_import_candidates(pending=pending)
+    candidates = _make_client().manual_import_candidates_by_download_id(pending=pending)
 
     assert candidates is not None
     assert len(candidates) == 2
@@ -596,7 +596,7 @@ def test_manual_import_candidates_non_200_returns_none_silently() -> None:
     recording = install_recording_hub()
     pending = _make_pending(infohash="a" * 40, title="Yamada-kun")
     respx.get(f"{_BASE}/manualimport").respond(status_code=500)
-    assert _make_client().manual_import_candidates(pending=pending) is None
+    assert _make_client().manual_import_candidates_by_download_id(pending=pending) is None
     assert diagnostic_messages(recording, Severity.WARNING) == []
 
 
@@ -606,7 +606,7 @@ def test_manual_import_candidates_request_error_returns_none() -> None:
 
     pending = _make_pending(infohash="a" * 40, title="Yamada-kun")
     respx.get(f"{_BASE}/manualimport").mock(side_effect=httpx.ConnectError("boom"))
-    assert _make_client().manual_import_candidates(pending=pending) is None
+    assert _make_client().manual_import_candidates_by_download_id(pending=pending) is None
 
 
 # --- manual_import_candidates_by_folder() (GET /manualimport?folder=) --------
@@ -768,7 +768,7 @@ def test_wait_path_polls_make_exactly_one_attempt() -> None:
     client = _make_client()
     pending = _make_pending(infohash="a" * 40, title="Yamada-kun")
 
-    assert client.manual_import_candidates(pending=pending) is None
+    assert client.manual_import_candidates_by_download_id(pending=pending) is None
     assert manualimport.call_count == 1
     assert client.manual_import_candidates_by_folder(folder="/downloads/x", title="Yamada-kun") is None
     assert manualimport.call_count == 2

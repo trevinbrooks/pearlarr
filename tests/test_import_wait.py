@@ -360,7 +360,7 @@ class _AutoTickClock(FakeClock):
     """Time passing between reads: every `now` reading advances by `step`."""
 
     @override
-    def now(self) -> float:
+    def monotonic(self) -> float:
         t = self.t
         self.t += self._step
         return t
@@ -790,7 +790,7 @@ class TestGoneTorrentHasItsTitlesCheckedAgain:
 
         store = FakeCacheStore()
         for al_id in (5, 6, 9):
-            store.update_cache(Arr.SONARR, al_id, {"updated_at": cls._CACHED_ON})
+            store.update_cached_title(Arr.SONARR, al_id, {"updated_at": cls._CACHED_ON})
         return store
 
     @staticmethod
@@ -857,7 +857,7 @@ class TestGoneTorrentHasItsTitlesCheckedAgain:
 
     def test_the_other_arrs_row_keeps_its_stamp(self) -> None:
         store = self._store()
-        store.update_cache(Arr.RADARR, 5, {"updated_at": self._CACHED_ON})
+        store.update_cached_title(Arr.RADARR, 5, {"updated_at": self._CACHED_ON})
         mgr = make_orchestration_manager(
             qbit=FakeQbit({}), strategy=_RecordingStrategy(), store=store, store_records=[self._record()]
         )

@@ -82,7 +82,7 @@ class GrabRequest:
     entry: EntryRecord
     """The SeaDex entry whole: the notification renders its url, notes, comparison links, and incomplete flag."""
     seadex_dict: SeadexDict
-    cache_details: CachedTitleUpdate
+    update: CachedTitleUpdate
     """The run's mutable `CacheRecord` accumulator: the frozen field pins the reference, not the dict's contents."""
     replaced_groups: tuple[str, ...]
     """The existing arr release groups this grab is replacing (the notifier's "Replacing" field)."""
@@ -439,15 +439,15 @@ class GrabPipeline:
 
         if self._should_cache_as_done(added_this_title=added_this_title):
             # Always written: the partial-merge upsert would otherwise preserve a stale True.
-            req.cache_details["fallback_satisfied"] = any(
+            req.update["fallback_satisfied"] = any(
                 u.is_fallback and u.to_grab
                 for group_releases in req.seadex_dict.values()
                 for u in group_releases.releases.values()
             )
-            self.cache_store.update_cache(
+            self.cache_store.update_cached_title(
                 self._ctx.arr,
                 req.al_id,
-                req.cache_details,
+                req.update,
             )
         else:
             rec = self._classify_needs_action()

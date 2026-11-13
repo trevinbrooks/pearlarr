@@ -9,7 +9,7 @@ class Clock(ABC):
     """Time faculties for code that waits or throttles, injected so tests drive them."""
 
     @abstractmethod
-    def now(self) -> float:
+    def monotonic(self) -> float:
         """A monotonic reading in seconds, comparable only against this clock's own readings."""
 
     @abstractmethod
@@ -21,7 +21,7 @@ class SystemClock(Clock):
     """The real clock: `time.monotonic` readings and `time.sleep` waits."""
 
     @override
-    def now(self) -> float:
+    def monotonic(self) -> float:
         return time.monotonic()
 
     @override

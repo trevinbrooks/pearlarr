@@ -72,7 +72,7 @@ from pearlarr.seadex_radarr import _HISTORY_SKEW_HOURS, RadarrStrategy
 from pearlarr.seadex_sonarr import SonarrStrategy
 from pearlarr.sonarr_episodes import sonarr_series_fingerprint
 from pearlarr.stamps import parse_stamp, stamp_of
-from pearlarr.tvdb_orders import AIRED_ORDER, NO_ORDERING, OrderRow, SeriesOrdering
+from pearlarr.tvdb_orders import AIRED_ORDER, NO_INDEX_ORDERS, IndexOrders, OrderRow
 from pearlarr.wait_types import (
     AttemptKind,
     AttemptResult,
@@ -236,7 +236,7 @@ class _FakeRunServices(LegServices):
     @override
     def mappings_with_ignored(self, ids: ExternalIds) -> ResolvedMappings:
         del ids
-        return ResolvedMappings(mappings=self._anilist_ids, ignored=self._ignored)
+        return ResolvedMappings(kept=self._anilist_ids, ignored=self._ignored)
 
     @override
     def begin_check(self, al_id: int) -> EntryRecord | None:
@@ -297,10 +297,8 @@ class _FakeRunServices(LegServices):
         return self._import_wait_mode
 
     @override
-    def report_no_releases(
-        self, al_id: int, cache_details: CachedTitleUpdate, *, metadata_unread: bool = False
-    ) -> None:
-        self.no_releases_calls.append((al_id, cache_details))
+    def report_no_releases(self, al_id: int, update: CachedTitleUpdate, *, metadata_unread: bool = False) -> None:
+        self.no_releases_calls.append((al_id, update))
         if metadata_unread:
             self.no_releases_unread.append(al_id)
 
@@ -391,7 +389,9 @@ class TestItemAnilistIdsDelegates:
         result = strat.item_mappings(_Item(tmdbId=42, imdbId="tt7"), log_ignored=False)
 
         assert result == {7: TitleMapping(anilist_id=7)}
-        assert run.get_anilist_ids_calls == [GetAniListIdsCall(ExternalIds(tmdb=42, imdb="tt7"), log_ignored=False)]
+        assert run.get_anilist_ids_calls == [
+            GetAniListIdsCall(ExternalIds(tmdb_movie=42, imdb="tt7"), log_ignored=False)
+        ]
 
     def test_sonarr_uses_tvdb_and_imdb(self) -> None:
         run = _FakeRunServices()
@@ -429,7 +429,7 @@ class TestRunStartHook:
     def test_sonarr_get_items_clears_ep_list_cache(self, monkeypatch: pytest.MonkeyPatch) -> None:
         series: list[SonarrItem] = [_Item(id=5, tvdbId=50), _Item(id=7, tvdbId=70)]
         strat = make_sonarr_sync(ep_list_cache={5: [sonarr_ep(1, 1)]})
-        strat._episodes._orderings = {5: NO_ORDERING}
+        strat._episodes._orderings = {5: NO_INDEX_ORDERS}
         strat._episodes._picks_logged = {11}
 
         def _all_series() -> list[SonarrItem]:
@@ -2640,7 +2640,7 @@ class TestSonarrProcessAlIdSeeds:
 
         strat.check_title(_Item(id=7, title="Show", tvdbId=70, imdbId=None), 5, kept[5])
 
-        assert listings.reads == [(7, ResolvedMappings(mappings=kept, ignored=ignored))]
+        assert listings.reads == [(7, ResolvedMappings(kept=kept, ignored=ignored))]
 
     def test_an_ignored_entrys_listed_files_are_never_grabbed_onto_a_sibling(self) -> None:
         # Entry 5, the season, is on the ignore list, and entry 6 is the specials. The torrent is the season's
@@ -2719,7 +2719,7 @@ class TestPlacementDebugLine:
         season = [sonarr_ep(4, n, ep_id=400 + n, episode_file_id=0, tvdb_id=400 + n) for n in range(1, 13)]
         dvd = (OrderRow(7, 1, 9001, None), OrderRow(7, 2, 9002, None))
         dvd += (*(OrderRow(7, n + 1, 400 + n, None) for n in range(2, 13)), OrderRow(7, 21, 401, None))
-        series = episode_index(season, SeriesOrdering({"dvd": dvd}, None))
+        series = episode_index(season, IndexOrders({"dvd": dvd}, None))
         names = [f"[grp] Show Ending S1 - {n:02d} [ABCD1234].mkv" for n in range(1, 14)]
         scope = seed_scope(series, series, names=TitleNames("Show", ("Show Ending",)))
         logger = debug_logger("pearlarr-placement-line-orders")

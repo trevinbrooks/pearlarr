@@ -49,7 +49,7 @@ from pearlarr.releases import (
     PlannedGrab,
     SeadexDict,
 )
-from pearlarr.tvdb_orders import OrderRow, SeriesOrdering
+from pearlarr.tvdb_orders import IndexOrders, OrderRow
 
 from .builders import (
     ALIASED_PACK,
@@ -576,7 +576,7 @@ class TestPlaceHeld:
         ]
         special = sonarr_ep(0, 1, ep_id=501, episode_file_id=0, absolute=3, tvdb_id=501)
         opener = sonarr_ep(2, 1, ep_id=201, episode_file_id=0, absolute=5, tvdb_id=201)
-        return season, special, episode_index([*season, special, opener], SeriesOrdering({"dvd": dvd}, None))
+        return season, special, episode_index([*season, special, opener], IndexOrders({"dvd": dvd}, None))
 
     def test_a_pack_numbered_by_the_dvd_order_is_grabbed_for_the_season_and_for_the_special(self) -> None:
         # The pack is keyed on past the season's end because it follows the DVD order. The aired reading refuses
@@ -1468,7 +1468,7 @@ class TestOrderOnlySeed:
     def test_the_seed_carries_the_halves_dvd_keys_onto_the_record(self) -> None:
         season = [sonarr_ep(4, n, ep_id=400 + n, episode_file_id=0, tvdb_id=400 + n) for n in range(1, 13)]
         opener = sonarr_ep(5, 1, ep_id=501, episode_file_id=0, tvdb_id=501)
-        series = episode_index([*season, opener], SeriesOrdering({"dvd": self._DVD}, None))
+        series = episode_index([*season, opener], IndexOrders({"dvd": self._DVD}, None))
         scope = seed_scope(episode_index(season), series, names=TitleNames("Show", ("Show Ending",)))
         files = [ListedFile(name, 10 * n, parsed_info()) for n, name in enumerate(self._RUN, 1)]
         placement = place_release(files, scope, new_torrent(scope))

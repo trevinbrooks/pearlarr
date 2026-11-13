@@ -12,7 +12,7 @@ from .arr_models import ParsedFileInfo, SonarrEpisode, index_episodes_by_key
 from .episode_titles import EpisodeTitles
 from .pending_import import FileEpisodeMap, TitleNames, TitleWindow
 from .releases import EpisodeKey, OrderOnlyKey
-from .tvdb_orders import NO_ORDERING, OrderRow, SeriesOrdering
+from .tvdb_orders import NO_INDEX_ORDERS, IndexOrders, OrderRow
 
 
 @dataclass(frozen=True, slots=True)
@@ -96,7 +96,7 @@ class EpisodeIndex:
         return titles
 
 
-def episode_index(ep_list: Iterable[SonarrEpisode], ordering: SeriesOrdering = NO_ORDERING) -> EpisodeIndex:
+def episode_index(ep_list: Iterable[SonarrEpisode], ordering: IndexOrders = NO_INDEX_ORDERS) -> EpisodeIndex:
     """Fold one `/api/v3/episode` fetch into the `EpisodeIndex` facets, with `ordering.others` read onto it."""
 
     with_ids = [ep for ep in ep_list if ep.id]

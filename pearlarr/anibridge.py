@@ -331,7 +331,7 @@ class AniBridge:
         self.all_imdb_ids = store.anibridge_distinct("imdb")
         # Entry count, fetched once: the store is immutable for this view's lifetime
         # (populated before from_store, read-only after), so a per-call COUNT(*) - an
-        # O(rows) scan that get_anilist_ids would trigger twice per item - is wasteful.
+        # O(rows) scan that resolve would trigger twice per item - is wasteful.
         self._len = store.anibridge_len()
         return self
 
@@ -637,7 +637,7 @@ class AniBridge:
             for anilist_id in self.tvdb_index.get(tvdb_id, ())
         }
 
-    def lookup_by_tmdb(self, tmdb_id: int) -> AniBridgeLookup:
+    def lookup_by_tmdb_movie(self, tmdb_id: int) -> AniBridgeLookup:
         """Return "{anilist_id: entry}" for AniList ids mapped to a TMDB movie id."""
 
         if self._store is not None:

@@ -56,8 +56,8 @@ class RadarrStrategy(ArrStrategy[RadarrItem]):
         self._evidence: _ImportEvidence | None = None
         # Two id sources for collect_anime_movies: the resolver's Anime-IDs candidate sets
         # (from SQL), and the AniBridge view's own.
-        self._mappings = deps.mappings
-        self.anibridge = deps.mappings.anibridge
+        self._resolver = deps.resolver
+        self.anibridge = deps.resolver.anibridge
 
         # An injected client (tests) is used as-is. Otherwise the connection keys are required
         # only now, when a Radarr run actually runs.
@@ -98,7 +98,7 @@ class RadarrStrategy(ArrStrategy[RadarrItem]):
         """Resolve AniList ids for a Radarr movie (by TMDB / IMDb id)."""
 
         return self._services.title_mappings(
-            ExternalIds(tmdb=item.tmdbId, imdb=item.imdbId),
+            ExternalIds(tmdb_movie=item.tmdbId, imdb=item.imdbId),
             log_ignored=log_ignored,
         )
 
@@ -150,9 +150,9 @@ class RadarrStrategy(ArrStrategy[RadarrItem]):
         title = run.resolve_title(al_id)
         run.open_title_block(title=title.name, sd_entry=sd_entry)
 
-        cache_details = run.new_cache_details(title, sd_entry)
-        cache_details["url"] = sd_url
-        cache_details["coverage"] = ""
+        update = run.new_cache_details(title, sd_entry)
+        update["url"] = sd_url
+        update["coverage"] = ""
 
         radarr_releases = self.get_radarr_releases(
             radarr_movie_id=item.id,
@@ -165,7 +165,7 @@ class RadarrStrategy(ArrStrategy[RadarrItem]):
         seadex_dict = run.get_seadex_dict(sd_entry=sd_entry)
 
         if len(seadex_dict) == 0:
-            run.report_no_releases(al_id, cache_details)
+            run.report_no_releases(al_id, update)
             return
 
         self.logger.debug(f"SeaDex: {', '.join(seadex_dict)}")
@@ -205,7 +205,7 @@ class RadarrStrategy(ArrStrategy[RadarrItem]):
                 entry_title=title.name,
                 entry=sd_entry,
                 seadex_dict=seadex_dict,
-                cache_details=cache_details,
+                update=update,
                 # Every edition's tagged group, not just the first file's.
                 replaced_groups=radarr_releases.groups(),
                 pending_seeds=pending_seeds,
@@ -294,7 +294,7 @@ class RadarrStrategy(ArrStrategy[RadarrItem]):
 
         return collect_anime_movies(
             self.radarr,
-            self._mappings,
+            self._resolver,
             self.anibridge,
         )
 

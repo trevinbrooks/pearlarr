@@ -127,7 +127,7 @@ def _build_cache(tmp_path: Path) -> None:
     """
 
     store = CacheStore.load(str(tmp_path / "cache.db"), config_hash="x")
-    store.update_cache(Arr.SONARR, 7, {"name": "X"})
+    store.update_cached_title(Arr.SONARR, 7, {"name": "X"})
     store.save(preview=False)
     store.close()
 
@@ -593,7 +593,9 @@ def _write_runnable_config() -> None:
 
     paths = resolve_paths()
     os.makedirs(paths.data_dir)
-    Path(paths.config).write_text("sonarr:\n  url: http://sonarr:8989\n  api_key: k\n" + _NO_MAPPINGS, encoding="utf-8")
+    Path(paths.config_file).write_text(
+        "sonarr:\n  url: http://sonarr:8989\n  api_key: k\n" + _NO_MAPPINGS, encoding="utf-8"
+    )
 
 
 class TestRunFailuresAreCleanAndNonzero:
@@ -627,13 +629,13 @@ class TestRunFailuresAreCleanAndNonzero:
         monkeypatch: pytest.MonkeyPatch,
         capsys: pytest.CaptureFixture[str],
     ) -> None:
-        from pearlarr.arr_http import ArrAuthError, ArrConnectionError
+        from pearlarr.arr_http import ArrAuthError, ArrUnreachableError
         from pearlarr.boundary import BoundaryContractError
         from pearlarr.run_services import LegDeps, QbitConnectionError
 
         exceptions: dict[str, Exception] = {
             "qbit": QbitConnectionError("qBittorrent connection failed - check the host and credentials"),
-            "unreachable": ArrConnectionError(
+            "unreachable": ArrUnreachableError(
                 "Could not reach Sonarr at http://sonarr:8989 (request failed (ConnectError))",
             ),
             "unauthorized": ArrAuthError("Sonarr at http://sonarr:8989 rejected the API key (status code 401)"),
@@ -659,7 +661,7 @@ class TestRunFailuresAreCleanAndNonzero:
         # snippet, which would quote the api key back to the console/log.
         paths = resolve_paths()
         os.makedirs(paths.data_dir)
-        Path(paths.config).write_text('sonarr:\n  api_key: "hunter2\n', encoding="utf-8")
+        Path(paths.config_file).write_text('sonarr:\n  api_key: "hunter2\n', encoding="utf-8")
 
         assert run_single(sonarr=True) is False
         out = capsys.readouterr().out
@@ -713,7 +715,7 @@ class TestRunFailuresAreCleanAndNonzero:
     ) -> None:
         paths = resolve_paths()
         os.makedirs(paths.data_dir)
-        Path(paths.config).write_text("sonar:\n  url: x\n", encoding="utf-8")
+        Path(paths.config_file).write_text("sonar:\n  url: x\n", encoding="utf-8")
 
         assert run_single(sonarr=True) is False
         out = capsys.readouterr().out
@@ -737,7 +739,7 @@ class TestSelectionSettlesBeforeMappingFetch:
         monkeypatch.setattr("pearlarr.bootstrap.build_resolver", fail_build)
         paths = resolve_paths()
         os.makedirs(paths.data_dir)
-        Path(paths.config).write_text("", encoding="utf-8")  # valid config, neither arr configured
+        Path(paths.config_file).write_text("", encoding="utf-8")  # valid config, neither arr configured
 
         assert run_single() is False
         capsys.readouterr()  # swallow the boot banner + error line
@@ -752,12 +754,12 @@ class TestConfigInspection:
     ) -> None:
         assert config_validate() is False
         assert "config init" in capsys.readouterr().err
-        assert not os.path.exists(resolve_paths().config)
+        assert not os.path.exists(resolve_paths().config_file)
 
     def test_validate_lists_the_bad_keys(self, capsys: pytest.CaptureFixture[str]) -> None:
         paths = resolve_paths()
         os.makedirs(paths.data_dir)
-        Path(paths.config).write_text("sonar:\n  url: x\n", encoding="utf-8")
+        Path(paths.config_file).write_text("sonar:\n  url: x\n", encoding="utf-8")
         assert config_validate() is False
         err = capsys.readouterr().err
         assert "Invalid configuration" in err
@@ -766,7 +768,7 @@ class TestConfigInspection:
     def test_validate_reports_malformed_yaml_cleanly(self, capsys: pytest.CaptureFixture[str]) -> None:
         paths = resolve_paths()
         os.makedirs(paths.data_dir)
-        Path(paths.config).write_text('sonarr:\n  api_key: "hunter2\n', encoding="utf-8")
+        Path(paths.config_file).write_text('sonarr:\n  api_key: "hunter2\n', encoding="utf-8")
         assert config_validate() is False
         captured = capsys.readouterr()
         assert "Unreadable YAML" in captured.err
@@ -776,7 +778,7 @@ class TestConfigInspection:
     def test_validate_reports_what_a_run_would_use(self, capsys: pytest.CaptureFixture[str]) -> None:
         paths = resolve_paths()
         os.makedirs(paths.data_dir)
-        Path(paths.config).write_text("sonarr:\n  url: http://sonarr:8989\n  api_key: k\n", encoding="utf-8")
+        Path(paths.config_file).write_text("sonarr:\n  url: http://sonarr:8989\n  api_key: k\n", encoding="utf-8")
         assert config_validate() is True
         out = capsys.readouterr().out
         assert "OK" in out
@@ -790,7 +792,7 @@ class TestConfigInspection:
     ) -> None:
         paths = resolve_paths()
         os.makedirs(paths.data_dir)
-        Path(paths.config).write_text(
+        Path(paths.config_file).write_text(
             "sonarr:\n  url: http://sonarr:8989\n  api_key: hunter2\n"
             "notifications:\n  discord_url: https://discord.com/api/webhooks/1/tok\n",
             encoding="utf-8",
@@ -809,7 +811,7 @@ class TestConfigInspection:
         # memory, and validate names the command that updates the file itself.
         paths = resolve_paths()
         os.makedirs(paths.data_dir)
-        Path(paths.config).write_text("seadex:\n  private_releases: allow\n", encoding="utf-8")
+        Path(paths.config_file).write_text("seadex:\n  private_releases: allow\n", encoding="utf-8")
         assert config_validate() is True
         out = capsys.readouterr().out
         assert "OK" in out
@@ -823,7 +825,7 @@ class TestConfigInspection:
     ) -> None:
         paths = resolve_paths()
         os.makedirs(paths.data_dir)
-        Path(paths.config).write_text("radarr:\n  url: http://radarr:7878\n", encoding="utf-8")
+        Path(paths.config_file).write_text("radarr:\n  url: http://radarr:7878\n", encoding="utf-8")
         assert config_validate() is True  # the file itself is valid
         assert "radarr.api_key is not set" in capsys.readouterr().out
 
@@ -833,7 +835,7 @@ class TestConfigInspection:
     ) -> None:
         paths = resolve_paths()
         os.makedirs(paths.data_dir)
-        Path(paths.config).write_text(
+        Path(paths.config_file).write_text(
             "sonarr:\n  url: http://user:basicpass@sonarr:8989\n  api_key: k\n"
             "qbittorrent:\n"
             "  host: http://qbit:8080\n"
@@ -876,7 +878,7 @@ class TestConfigMigrate:
         paths = resolve_paths()
         os.makedirs(paths.data_dir)
         text = "seadex:\n  public_only: true\nsonarr:\n  url: http://s\n  api_key: hunter2\n"
-        Path(paths.config).write_text(text, encoding="utf-8")
+        Path(paths.config_file).write_text(text, encoding="utf-8")
 
         assert config_migrate() is True
 
@@ -885,8 +887,8 @@ class TestConfigMigrate:
         assert "public_only" in out
         # The command echoes paths and notes, never config values.
         assert "hunter2" not in out
-        assert Path(paths.config + ".bak").read_text(encoding="utf-8") == text
-        migrated = Path(paths.config).read_text(encoding="utf-8")
+        assert Path(paths.config_file + ".bak").read_text(encoding="utf-8") == text
+        migrated = Path(paths.config_file).read_text(encoding="utf-8")
         assert "api_key: hunter2" in migrated
         assert "public_only" not in migrated
         assert f"config_version: {CONFIG_VERSION}" in migrated
@@ -895,13 +897,13 @@ class TestConfigMigrate:
         paths = resolve_paths()
         os.makedirs(paths.data_dir)
         text = f"config_version: {CONFIG_VERSION}\nsonarr:\n  url: http://s\n"
-        Path(paths.config).write_text(text, encoding="utf-8")
+        Path(paths.config_file).write_text(text, encoding="utf-8")
 
         assert config_migrate() is True
 
         assert "nothing to do" in capsys.readouterr().out
-        assert Path(paths.config).read_text(encoding="utf-8") == text
-        assert not os.path.exists(paths.config + ".bak")
+        assert Path(paths.config_file).read_text(encoding="utf-8") == text
+        assert not os.path.exists(paths.config_file + ".bak")
 
     def test_missing_file_points_at_init_and_writes_nothing(
         self,
@@ -909,7 +911,7 @@ class TestConfigMigrate:
     ) -> None:
         assert config_migrate() is False
         assert "config init" in capsys.readouterr().err
-        assert not os.path.exists(resolve_paths().config)
+        assert not os.path.exists(resolve_paths().config_file)
 
     def test_an_invalid_file_reports_and_stays_untouched(
         self,
@@ -918,15 +920,15 @@ class TestConfigMigrate:
         paths = resolve_paths()
         os.makedirs(paths.data_dir)
         text = "seadex:\n  public_only: true\ntypo_key: 1\n"
-        Path(paths.config).write_text(text, encoding="utf-8")
+        Path(paths.config_file).write_text(text, encoding="utf-8")
 
         assert config_migrate() is False
 
         err = capsys.readouterr().err
         assert "Invalid configuration" in err
         assert "typo_key" in err
-        assert Path(paths.config).read_text(encoding="utf-8") == text
-        assert not os.path.exists(paths.config + ".bak")
+        assert Path(paths.config_file).read_text(encoding="utf-8") == text
+        assert not os.path.exists(paths.config_file + ".bak")
 
 
 class TestVersionAndHelp:
@@ -997,7 +999,7 @@ class TestLogLevelWiring:
     def _write_config_with_level() -> None:
         paths = resolve_paths()
         os.makedirs(paths.data_dir)
-        Path(paths.config).write_text("advanced:\n  log_level: ERROR\n", encoding="utf-8")
+        Path(paths.config_file).write_text("advanced:\n  log_level: ERROR\n", encoding="utf-8")
 
     def test_the_config_level_is_applied_to_a_run(
         self,
@@ -1126,7 +1128,7 @@ class TestLogFormatWiring:
     def _write_config_with_format() -> None:
         paths = resolve_paths()
         os.makedirs(paths.data_dir)
-        Path(paths.config).write_text("advanced:\n  log_format: json\n", encoding="utf-8")
+        Path(paths.config_file).write_text("advanced:\n  log_format: json\n", encoding="utf-8")
 
     def test_run_single_threads_the_config_format(
         self,
@@ -1287,7 +1289,7 @@ class TestMissingConfigExitsNonzero:
         result = CliRunner().invoke(pearlarr_cli, ["run", "single"])
         assert result.exit_code == 1
 
-        config = Path(resolve_paths().config)
+        config = Path(resolve_paths().config_file)
         assert config.read_text(encoding="utf-8") == _starter_text()
         assert "starter template was written" in result.output
         # This arm exits now. The skip-and-retry wording belongs to the others.
@@ -1612,7 +1614,7 @@ class TestUnwritableDataDir:
         # catch it before the traceback arm. Skip + retry, never exit.
         paths = resolve_paths()
         os.makedirs(paths.data_dir)
-        config = Path(paths.config)
+        config = Path(paths.config_file)
         config.write_text("sonarr:\n  url: http://s\n  api_key: k\n", encoding="utf-8")
         config.chmod(0o000)
         try:
@@ -1657,7 +1659,7 @@ class TestScheduledLifecycle:
         recording = install_recording_hub()
         paths = resolve_paths()
         os.makedirs(paths.data_dir)
-        Path(paths.config).write_text("sonar:\n  url: x\n", encoding="utf-8")
+        Path(paths.config_file).write_text("sonar:\n  url: x\n", encoding="utf-8")
 
         result = run_arrs(
             [ArrTarget(Arr.SONARR)],
@@ -1681,7 +1683,7 @@ class TestScheduledLifecycle:
         recording = install_recording_hub()
         paths = resolve_paths()
         os.makedirs(paths.data_dir)
-        Path(paths.config).write_text(_OLD_SCHEMA_CONFIG, encoding="utf-8")
+        Path(paths.config_file).write_text(_OLD_SCHEMA_CONFIG, encoding="utf-8")
         self._stub_resolver(monkeypatch)
 
         assert (
@@ -1689,10 +1691,10 @@ class TestScheduledLifecycle:
             is False
         )
 
-        assert f"config_version: {CONFIG_VERSION}" in Path(paths.config).read_text(encoding="utf-8")
+        assert f"config_version: {CONFIG_VERSION}" in Path(paths.config_file).read_text(encoding="utf-8")
         notice = next(d for d in recording.of_type(Diagnostic) if "Config migrated" in d.message)
         assert notice.severity is Severity.INFO
-        assert f"{paths.config}.bak" in notice.message
+        assert f"{paths.config_file}.bak" in notice.message
         assert not any("older schema" in d.message for d in recording.of_type(Diagnostic))
 
     def test_a_dry_run_never_rewrites_the_config_file(
@@ -1706,7 +1708,7 @@ class TestScheduledLifecycle:
         paths = resolve_paths()
         os.makedirs(paths.data_dir)
         old = _OLD_SCHEMA_CONFIG
-        Path(paths.config).write_text(old, encoding="utf-8")
+        Path(paths.config_file).write_text(old, encoding="utf-8")
         self._stub_resolver(monkeypatch)
 
         run_arrs(
@@ -1717,8 +1719,8 @@ class TestScheduledLifecycle:
             dry_run=True,
         )
 
-        assert Path(paths.config).read_text(encoding="utf-8") == old
-        assert not os.path.exists(paths.config + ".bak")
+        assert Path(paths.config_file).read_text(encoding="utf-8") == old
+        assert not os.path.exists(paths.config_file + ".bak")
         assert any("left unchanged on a dry run" in d.message for d in recording.of_type(Diagnostic))
 
     def test_run_arrs_applies_the_configured_log_retention(
@@ -1730,7 +1732,7 @@ class TestScheduledLifecycle:
         install_recording_hub()
         paths = resolve_paths()
         os.makedirs(paths.data_dir)
-        Path(paths.config).write_text(
+        Path(paths.config_file).write_text(
             "sonarr:\n  url: http://s\n  api_key: k\nadvanced:\n  log_retention_days: 3\n",
             encoding="utf-8",
         )

@@ -154,7 +154,7 @@ def _rewrite_old_config(config: str, loaded: AppConfig, *, dry_run: bool) -> Non
 def load_shared_config(
     config: str,
     boot: BootFlow,
-    retry: str,
+    retry_note: str,
 ) -> AppConfig | None:
     """Read + validate the config file, once per run (both arrs reuse it).
 
@@ -164,7 +164,7 @@ def load_shared_config(
     in progress). A MISSING file instead writes the starter template (inside
     `AppConfig.load`) and exits 1: no retry can succeed until it is filled
     in, so a scheduled/container run must stop and say so rather than sleep
-    on it. `retry` is the pre-formatted scheduled-mode note (empty for a
+    on it. `retry_note` is the pre-formatted scheduled-mode note (empty for a
     single run) stating when the loop retries.
     """
 
@@ -202,23 +202,23 @@ def load_shared_config(
         # Must sit after FileNotFoundError (its subclass) and before Exception.
         hub_error(
             f"Could not access config {config} ({e}) - check permissions on it and the data directory - "
-            f"skipping this run{retry}"
+            f"skipping this run{retry_note}"
         )
     except ValidationError as e:
         # Surface the specific bad keys (nested path -> message) without a traceback,
         # then skip + retry next cycle - same contract as the missing-file branch.
         hub_error(
             f"Invalid configuration in {config}:\n{format_validation_errors(e)}\n"
-            f"Fix the listed keys and re-run - skipping this run{retry}"
+            f"Fix the listed keys and re-run - skipping this run{retry_note}"
         )
     except yaml.YAMLError as e:
         # Malformed YAML is a user-facing config problem like a failed validation:
         # a clean report + retry, not the unexpected-error traceback arm below.
         hub_error(
-            f"Unreadable YAML in {config} ({format_yaml_error(e)}) - fix the file and re-run - skipping this run{retry}"
+            f"Unreadable YAML in {config} ({format_yaml_error(e)}) - fix the file and re-run - skipping this run{retry_note}"
         )
     except Exception as e:
-        hub_error(f"Could not load config {config} - skipping this run{retry}", exc=e)
+        hub_error(f"Could not load config {config} - skipping this run{retry_note}", exc=e)
     return None
 
 
@@ -227,7 +227,7 @@ def build_resolver(
     mappings_db: str,
     logger: logging.Logger,
     boot: BootFlow,
-    retry: str,
+    retry_note: str,
     web: httpx.Client,
 ) -> MappingResolver | None:
     """Build the id-mapping resolver both arrs share (settings are arr-independent).
@@ -266,11 +266,11 @@ def build_resolver(
         # one-liner, not a traceback.
         hub_error(
             f"Could not download the id-mapping sources ({e}) - check your network connection - "
-            f"skipping this run{retry}"
+            f"skipping this run{retry_note}"
         )
         return None
     except Exception as e:
-        hub_error(f"Could not fetch/parse the id-mapping sources - skipping this run{retry}", exc=e)
+        hub_error(f"Could not fetch/parse the id-mapping sources - skipping this run{retry_note}", exc=e)
         return None
 
     return resolver
@@ -333,7 +333,7 @@ class LegContext:
 
     cache: str
     logger: logging.Logger
-    mappings: MappingResolver
+    resolver: MappingResolver
     app_config: AppConfig
     web: httpx.Client
     boot: BootFlow
@@ -350,7 +350,7 @@ def _run_leg(target: ArrTarget, ctx: LegContext) -> bool:
     try/finally chain unwinds exactly as before.
     """
 
-    from .arr_http import ArrAuthError, ArrConnectionError
+    from .arr_http import ArrAuthError, ArrUnreachableError
     from .arr_models import ArrItem
     from .boundary import BoundaryContractError
     from .cache import CacheSchemaError
@@ -375,7 +375,7 @@ def _run_leg(target: ArrTarget, ctx: LegContext) -> bool:
                 arr_name,
                 ctx.cache,
                 logger=ctx.logger,
-                mappings=ctx.mappings,
+                mappings=ctx.resolver,
                 app_config=ctx.app_config,
                 web=ctx.web,
                 boot=ctx.boot,
@@ -412,7 +412,7 @@ def _run_leg(target: ArrTarget, ctx: LegContext) -> bool:
         # arms below get the same treatment.
         hub_error(str(e))
         return False
-    except ArrConnectionError as e:
+    except ArrUnreachableError as e:
         hub_error(f"{arr_name.capitalize()} run failed - {e} - check {arr_name}.url in your config")
         return False
     except BoundaryContractError as e:
@@ -506,7 +506,7 @@ def run_arrs(
             # In scheduled mode retry_note states the loop's next move on every
             # skip (a single run just exits, so there is nothing to append).
             retry = f" - {retry_note}" if retry_note else ""
-            app_config = load_shared_config(paths.config, boot, retry)
+            app_config = load_shared_config(paths.config_file, boot, retry)
             if app_config is None:
                 return False
             apply_log_level(logger, log_level or app_config.advanced.log_level)
@@ -514,7 +514,7 @@ def run_arrs(
 
             # An old-schema file loads via the in-memory migration; the file on
             # disk catches up here - never on a dry run.
-            _rewrite_old_config(paths.config, app_config, dry_run=dry_run)
+            _rewrite_old_config(paths.config_file, app_config, dry_run=dry_run)
 
             # Selection is settled before the mapping fetch, so a refused or
             # empty selection fails fast instead of downloading sources first.
@@ -522,7 +522,7 @@ def run_arrs(
                 arrs,
                 app_config,
                 explicit=explicit_selection,
-                config_path=paths.config,
+                config_path=paths.config_file,
             )
             if runnable is None:
                 return False
@@ -533,9 +533,9 @@ def run_arrs(
                 return False
             all_arrs_completed = True
             ctx = LegContext(
-                cache=paths.cache,
+                cache=paths.cache_db,
                 logger=logger,
-                mappings=mappings,
+                resolver=mappings,
                 app_config=app_config,
                 web=web,
                 boot=boot,

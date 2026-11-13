@@ -19,7 +19,7 @@ from seadex import EntryRecord, SeaDexEntry
 from .anilist_client import AniListClient
 from .anilist_gateway import AniListGateway
 from .arr_categories import ArrCategoryResolver, CategorySources
-from .arr_http import ARR_REQUEST_TIMEOUT_S, ArrHttp, make_httpx_client
+from .arr_http import ARR_REQUEST_TIMEOUT_S, ArrHttp, make_arr_client
 from .arr_models import ArrFiles, SonarrEpisode
 from .boot_flow import BootFlow
 from .cache import AbstractCacheStore, CachedTitle, CachedTitleUpdate, CacheStore
@@ -99,7 +99,7 @@ class LegDeps:
     web: httpx.Client
     http: httpx.Client
     qbit: qbittorrentapi.Client | None
-    mappings: MappingResolver
+    resolver: MappingResolver
     logger: logging.Logger
     seadex: SeaDexSource
     cache_store: AbstractCacheStore
@@ -152,7 +152,7 @@ class LegDeps:
         # The httpx client every raw arr endpoint rides (ArrHttp binds it per
         # arr). Pinned timeouts / no-redirects / pool sizing live in its factory.
         # Verification follows THIS arr's knob (the client is per-run, per-arr).
-        http = make_httpx_client(verify=arr_config.verify_ssl)
+        http = make_arr_client(verify=arr_config.verify_ssl)
 
         # qbit. None unless host/username/password are all set. With any unset, no
         # client is created and the app treats `qbit is None` as "no client ->
@@ -242,7 +242,7 @@ class LegDeps:
             parse_cache_rows=ParseCacheRows(cache_store),
             http=http,
             qbit=qbit,
-            mappings=mappings,
+            resolver=mappings,
             logger=logger,
             # SeaDex API gateway (entry lookups, with connection-error handling)
             seadex=SeaDexGateway(client=SeaDexEntry()),
@@ -312,7 +312,7 @@ class LegServices:
         # through the shared resolver (self._mappings), which owns them.
         self._config = deps.config
         self.qbit = deps.qbit
-        self._mappings = deps.mappings
+        self._resolver = deps.resolver
         self.logger = deps.logger
         self._seadex = deps.seadex
         self.cache_store = deps.cache_store
@@ -451,14 +451,14 @@ class LegServices:
         `log_ignored=False` on the prefetch pass keeps an ignored id from being logged twice.
         """
 
-        resolved = self._mappings.get_anilist_ids(ids)
+        resolved = self._resolver.resolve(ids)
 
         # Logged per call, not only on the cache-filling one, so the main loop still logs every ignored id.
         if log_ignored:
             for al_id in resolved.ignored:
                 self._reporter.log_ignored_anilist_id(self._ctx, al_id)
 
-        return resolved.mappings
+        return resolved.kept
 
     def mappings_with_ignored(self, ids: ExternalIds) -> ResolvedMappings:
         """The entries mapped to the external ids, the ignored ones set apart, for the series' listing read.
@@ -468,7 +468,7 @@ class LegServices:
         `get_anilist_ids` logs the ignored ids.
         """
 
-        return self._mappings.get_anilist_ids(ids)
+        return self._resolver.resolve(ids)
 
     def resolve_title(self, al_id: int) -> Title:
         """Resolve the entry's title through the ladder (resolves only: no logging, no attribution).
@@ -537,19 +537,19 @@ class LegServices:
     def _update_cache(
         self,
         al_id: int,
-        cache_details: CachedTitleUpdate,
+        update: CachedTitleUpdate,
     ) -> None:
         """Merge `cache_details` into an entry's cache record (in-memory only).
 
         The run's save points flush it. See `CacheStore.update_cache`.
         """
 
-        self.cache_store.update_cache(self._ctx.arr, al_id, cache_details)
+        self.cache_store.update_cached_title(self._ctx.arr, al_id, update)
 
     def report_no_releases(
         self,
         al_id: int,
-        cache_details: CachedTitleUpdate,
+        update: CachedTitleUpdate,
         *,
         metadata_unread: bool = False,
     ) -> None:
@@ -564,8 +564,8 @@ class LegServices:
         self._log_no_seadex_releases()
         if not metadata_unread:
             # Never fallback-satisfied: overwrite any stale True from a prior fallback run.
-            cache_details["fallback_satisfied"] = False
-            self._update_cache(al_id=al_id, cache_details=cache_details)
+            update["fallback_satisfied"] = False
+            self._update_cache(al_id=al_id, update=update)
         self.owe_pause()
 
     def report_invalid_selection(self) -> None:
@@ -644,7 +644,7 @@ class LegServices:
         if not entry.name and (name := self.resolve_title(al_id).anilist):
             backfill["name"] = name
         if backfill:
-            self._update_cache(al_id=al_id, cache_details=backfill)
+            self._update_cache(al_id=al_id, update=backfill)
         self._reporter.log_cached_entry(self._ctx, al_id)
         return True
 

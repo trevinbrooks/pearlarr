@@ -493,7 +493,7 @@ def test_rejections_fold_strings_and_dicts_and_skip_other_shapes() -> None:
         ],
     )
 
-    candidates = _make_sonarr_client().manual_import_candidates(pending=pending_import())
+    candidates = _make_sonarr_client().manual_import_candidates_by_download_id(pending=pending_import())
     assert candidates is not None
     [candidate] = candidates
     assert candidate.path == "/d/x.mkv"
@@ -520,7 +520,7 @@ def test_junk_path_drops_the_candidate_but_keeps_siblings() -> None:
         ],
     )
 
-    candidates = _make_sonarr_client().manual_import_candidates(pending=pending_import())
+    candidates = _make_sonarr_client().manual_import_candidates_by_download_id(pending=pending_import())
     assert candidates is not None
     [candidate] = candidates
     assert candidate.path == "/d/kept.mkv"

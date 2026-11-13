@@ -82,7 +82,7 @@ REQUEST_HEADERS = {"Referer": PROJECT_URL}
 type AniListBody = dict[str, dict[str, Any]]
 """One raw GraphQL body `{"data": {"Media": {...}}}`, stored verbatim."""
 
-type AniListCache = dict[int, AniListBody]
+type AniListAnswers = dict[int, AniListBody]
 """In-memory AniList cache: id -> raw GraphQL body `{"data": {"Media": {...}}}`.
 
 The cached value is the *whole* response body (what `AniListClient.query`
@@ -266,7 +266,7 @@ def lacks_air_dates(body: dict[str, Any]) -> bool:
     return "id" in media and "startDate" not in media
 
 
-def media_node_from(raw: dict[str, Any]) -> AniListMediaNode:
+def media_from_node(raw: dict[str, Any]) -> AniListMediaNode:
     """Validate a raw `Media` dict into the typed node (single-object fail-open).
 
     A miss (`{}`) validates to the all-`None` node. A malformed node
@@ -280,7 +280,7 @@ def media_node_from(raw: dict[str, Any]) -> AniListMediaNode:
         return AniListMediaNode()
 
 
-def media_from(body: dict[str, Any] | None) -> AniListMediaNode:
+def media_from_body(body: dict[str, Any] | None) -> AniListMediaNode:
     """Parse the Media node from a single-id body into an AniListMediaNode.
 
     The raw `{"data": {"Media": {...}}}` body is the dynamic GraphQL boundary,
@@ -289,7 +289,7 @@ def media_from(body: dict[str, Any] | None) -> AniListMediaNode:
     `media_node_from`).
     """
 
-    return media_node_from(extract_path(body, "data", "Media"))
+    return media_from_node(extract_path(body, "data", "Media"))
 
 
 class AniListClient:
@@ -324,7 +324,7 @@ class AniListClient:
 
         return self._post_with_retry(QUERY, {"id": al_id})
 
-    def query_batch(self, al_ids: list[int]) -> AniListCache:
+    def query_batch(self, al_ids: list[int]) -> AniListAnswers:
         """Fetch up to ANILIST_BATCH_SIZE AniList Media in a single request via id_in.
 
         Returns "{id: {"data": {"Media": {...}}}}" mirroring the single-id shape,
@@ -336,7 +336,7 @@ class AniListClient:
         # The cache stores each Media body verbatim (re-parsed on read into an
         # AniListMediaNode). Keep each Media OBJECT carrying an int id, skipping
         # junk entries in the array.
-        out: AniListCache = {}
+        out: AniListAnswers = {}
         media_list = extract_path(j, "data", "Page").get("media")
         for raw in media_list if is_json_list(media_list) else []:
             if not is_json_obj(raw):

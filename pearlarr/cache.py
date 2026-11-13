@@ -25,7 +25,7 @@ from .output import hub_note
 from .pending_import import OwnedAtGrab
 from .sqlite_util import connect, open_or_quarantine, rollback_and_close
 from .stamps import parse_stamp, parse_stamp_or_none, stamp_of
-from .tvdb_orders import StoredOrders
+from .tvdb_orders import CachedOrders
 
 # `CREATE TABLE IF NOT EXISTS` never alters an existing table: shape changes need a SCHEMA_VERSION bump + migration.
 # anilist_meta / sonarr_parse expose `fetched_at` as a VIRTUAL generated column, indexed for the TTL sweep's DELETE.
@@ -452,7 +452,7 @@ class AbstractCacheStore(ABC):
     @abstractmethod
     def get_entry(self, arr: Arr, al_id: int) -> CachedTitle | None: ...
     @abstractmethod
-    def update_cache(self, arr: Arr, al_id: int, cache_details: CachedTitleUpdate) -> None: ...
+    def update_cached_title(self, arr: Arr, al_id: int, update: CachedTitleUpdate) -> None: ...
     @abstractmethod
     def uncache_title(self, arr: Arr, al_id: int) -> None: ...
     @abstractmethod
@@ -486,9 +486,9 @@ class AbstractCacheStore(ABC):
     @abstractmethod
     def get_guards(self, arr: Arr) -> dict[int, OwnedAtGrab]: ...
     @abstractmethod
-    def get_tvdb_orders(self, tvdb_id: int) -> StoredOrders | None: ...
+    def get_tvdb_orders(self, tvdb_id: int) -> CachedOrders | None: ...
     @abstractmethod
-    def put_tvdb_orders(self, tvdb_id: int, record: StoredOrders) -> None: ...
+    def put_tvdb_orders(self, tvdb_id: int, record: CachedOrders) -> None: ...
     @abstractmethod
     def get_history_checkpoint(self, arr: Arr) -> HistoryCheckpoint | None: ...
     @abstractmethod
@@ -637,18 +637,18 @@ class CacheStore(AbstractCacheStore):
         return None if row is None else CachedTitle(row[0], row[1], row[2], row[3], bool(row[4]), row[5])
 
     @override
-    def update_cache(
+    def update_cached_title(
         self,
         arr: Arr,
         al_id: int,
-        cache_details: CachedTitleUpdate,
+        update: CachedTitleUpdate,
     ) -> None:
         """Merge fields into an entry's record: only supplied ones, staged until a save point.
 
         An empty record writes nothing.
         """
 
-        details: dict[str, Any] = dict(cache_details)
+        details: dict[str, Any] = dict(update)
 
         updated_at = details.get("updated_at")
         if isinstance(updated_at, datetime):
@@ -827,14 +827,14 @@ class CacheStore(AbstractCacheStore):
     # -- TVDB orders -----------------------------------------------------------
 
     @override
-    def get_tvdb_orders(self, tvdb_id: int) -> StoredOrders | None:
+    def get_tvdb_orders(self, tvdb_id: int) -> CachedOrders | None:
         """The series' stored orders at any age, or None (also for a record that no longer reads)."""
 
         raw = self._json_get(_TVDB_ORDERS, (tvdb_id,))
-        return None if raw is None else StoredOrders.from_json(raw)
+        return None if raw is None else CachedOrders.from_json(raw)
 
     @override
-    def put_tvdb_orders(self, tvdb_id: int, record: StoredOrders) -> None:
+    def put_tvdb_orders(self, tvdb_id: int, record: CachedOrders) -> None:
         """Replace the series' stored orders (staged, persisted at a save point)."""
 
         self._json_put(_TVDB_ORDERS, (tvdb_id,), record.to_json())
