@@ -12,8 +12,8 @@ from .arr_models import ArrReleases, SonarrEpisode
 from .config import PRIVATE_TRACKERS, PrivateReleaseAction
 from .console_caps import console_of
 from .leg_state import RunContext
-from .log import indent_string
 from .output import Accent, StyledValue, hub_warn
+from .output.console_text import indent_string
 from .planner import PlanResult
 from .releases import SeadexDict, SeadexReleaseGroupItem, SeadexUrlItem, carries_ignored_tag, ignore_tag_set
 

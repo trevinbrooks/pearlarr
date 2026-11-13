@@ -17,7 +17,7 @@ import logging
 import pytest
 from rich.console import Console
 
-from pearlarr.log import STATE_WIDTH, RichConsoleHandler
+from pearlarr.log import RichConsoleHandler
 from pearlarr.output import (
     Event,
     Phase,
@@ -33,6 +33,7 @@ from pearlarr.output import (
     WaitStarted,
     install_hub,
 )
+from pearlarr.output.console_text import STATE_WIDTH
 from pearlarr.output.recording import RecordingHub
 from pearlarr.wait_types import NO_HELD_BACK, HeldBack, Outcome, OutcomeCategory
 from pearlarr.wait_view import HubWaitView, WaitOutcomeRow, WaitResult, graduations, make_wait_view

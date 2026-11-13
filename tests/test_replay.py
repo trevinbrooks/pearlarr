@@ -23,7 +23,6 @@ from typer.testing import CliRunner
 from pearlarr.cli import pearlarr_cli
 from pearlarr.cli import replay as cli_replay
 from pearlarr.config import Arr
-from pearlarr.log import EntryState
 from pearlarr.output import (
     CacheStatsReported,
     CapturedTrace,
@@ -39,6 +38,7 @@ from pearlarr.output import (
     ScopeOpened,
     Severity,
 )
+from pearlarr.output.events import EntryState
 
 _EPOCH = 1_751_990_000.0
 _TS = datetime.fromtimestamp(_EPOCH).strftime("%Y-%m-%d %H:%M:%S")

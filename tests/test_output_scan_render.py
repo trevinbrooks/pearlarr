@@ -15,14 +15,7 @@ import logging
 from rich.console import Console
 
 from pearlarr.config import Arr
-from pearlarr.log import (
-    LOG_NAME,
-    EntryState,
-    KvLine,
-    SectionRule,
-    StyledLine,
-    TitledRule,
-)
+from pearlarr.log import LOG_NAME
 from pearlarr.output import (
     Accent,
     Diagnostic,
@@ -43,8 +36,10 @@ from pearlarr.output import (
     Severity,
     StyledValue,
 )
+from pearlarr.output.console_lines import LegacyLine
+from pearlarr.output.console_text import KvLine, SectionRule, StyledLine, TitledRule
+from pearlarr.output.events import EntryState
 from pearlarr.output.scan_lines import (
-    LegacyLine,
     accent_style,
     cap_reached_lines,
     entry_detail_lines,

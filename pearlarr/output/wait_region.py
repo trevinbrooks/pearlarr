@@ -12,9 +12,10 @@ from rich.spinner import Spinner
 from rich.table import Table
 from rich.text import Text
 
+from .console_lines import LegacyLine, render_legacy_lines
+from .console_text import INDENT, indent_string
 from .events import Phase, TorrentGraduated, WaitFinished, WaitKind, WaitProgress, WaitSnapshot, WaitStarted
 from .live_region import LiveRegion
-from .scan_lines import LegacyLine, render_legacy_lines
 from .wait_lines import (
     LiveModel,
     PulseThrottle,
@@ -34,7 +35,6 @@ from ..console_caps import (
     make_live,
     spinner_name,
 )
-from ..log import INDENT, indent_string
 
 
 @dataclass(frozen=True, slots=True)

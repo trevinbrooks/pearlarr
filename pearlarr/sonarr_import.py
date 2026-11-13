@@ -43,8 +43,8 @@ from .import_quality import (
     resolve_language_objects,
     resolve_quality,
 )
-from .log import count_noun, pluralize
 from .output import hub_note, hub_warn
+from .output.console_text import count_noun, pluralize
 from .pending_import import FileEpisodeMap, PendingImport, joined_map
 from .pending_records import PendingRecords
 from .placement_types import episode_index

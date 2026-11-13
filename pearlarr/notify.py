@@ -24,8 +24,8 @@ from .discord import (
     EmbedField,
     discord_push,
 )
-from .log import count_noun, format_elapsed, human_bytes
 from .output import hub_warn
+from .output.console_text import count_noun, format_elapsed, human_bytes
 from .output.wait_lines import held_back_names, held_back_sentences
 from .releases import SeadexDict, SeadexUrlItem
 from .torrents import AddOutcome, ReleaseOutcome

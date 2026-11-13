@@ -20,6 +20,7 @@ from rich.padding import Padding
 from rich.spinner import Spinner
 from rich.text import Text
 
+from .console_text import INDENT, format_elapsed, indent_string, print_titled_rule
 from .events import (
     BootReady,
     BootStepFinished,
@@ -30,7 +31,7 @@ from .events import (
 )
 from .live_region import LiveRegion
 from ..console_caps import Capabilities, CapsCache, block_bar, make_live, spinner_name
-from ..log import INDENT, format_elapsed, indent_string, print_literal, print_titled_rule
+from ..log import print_literal
 
 # Width of the live download bar (mapping refresh). Only the live cockpit draws
 # it, so it doesn't need to scale with the terminal like the wait cockpit's does.

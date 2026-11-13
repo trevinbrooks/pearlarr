@@ -26,7 +26,6 @@ from pearlarr.boundary import Json
 from pearlarr.config import Arr
 from pearlarr.json_narrow import is_json_list, is_json_obj
 from pearlarr.leg_state import GrabRecord, NeedsActionKind, NeedsActionRecord, RunStats
-from pearlarr.log import EntryState
 from pearlarr.output import (
     BootReady,
     BootStepFinished,
@@ -88,6 +87,7 @@ from pearlarr.output import (
     WaitStarted,
     textline,
 )
+from pearlarr.output.events import EntryState
 from pearlarr.output.textline import _BACKUP_STAMP_FORMAT, _JSON_SKIP, _TEXT_SKIP
 from pearlarr.output.trace import CapturedTrace
 from pearlarr.releases import ElsewhereCounts

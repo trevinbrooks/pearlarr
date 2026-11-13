@@ -14,7 +14,7 @@ from collections.abc import Sequence
 
 from .arr_models import ParsedFileInfo
 from .grab_placement import SeedFile
-from .log import count_noun
+from .output.console_text import count_noun
 from .parse_records import ParseWindow
 from .releases import SeadexDict
 from .run_services import RunDeps

@@ -49,8 +49,9 @@ from pearlarr.output import (
     Severity,
     install_hub,
 )
+from pearlarr.output.console_lines import LegacyLine
 from pearlarr.output.recording import RecordingHub
-from pearlarr.output.scan_lines import LegacyLine, scan_event_lines
+from pearlarr.output.scan_lines import scan_event_lines
 from pearlarr.pending_import import PendingImport
 from pearlarr.progress import ProgressSink
 from pearlarr.protocols import ArrSync

@@ -18,9 +18,9 @@ from .grab_placement import (
     entry_hashes,
     identity_overrides,
 )
-from .log import count_noun, pluralize
 from .mappings import ExternalIds, MappingEntry, MappingSource
 from .output import hub_warn
+from .output.console_text import count_noun, pluralize
 from .pending_import import PendingImport
 from .placement_types import EpisodeIndex, Placement, SeedScope, episode_index
 from .planner import get_episode_keys

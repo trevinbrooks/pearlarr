@@ -21,8 +21,9 @@ import httpx
 from .arr_models import DownloadClientRecord, HistoryRecord
 from .boundary import Json, validate_each
 from .config import strip_userinfo
-from .log import LOG_NAME, compact_duration
+from .log import LOG_NAME
 from .output import hub_note, hub_warn
+from .output.console_text import compact_duration
 
 # (connect, read) seconds, shared by the arr http client and the qBittorrent adapter.
 # A hung service then surfaces as a transient miss instead of blocking the run.

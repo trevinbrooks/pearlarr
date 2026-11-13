@@ -13,7 +13,6 @@ import pytest
 
 from pearlarr.config import Arr
 from pearlarr.leg_state import GrabRecord, NeedsActionKind, NeedsActionRecord, RunStats
-from pearlarr.log import EntryState
 from pearlarr.output import (
     Accent,
     BootStepFinished,
@@ -41,6 +40,7 @@ from pearlarr.output import (
     TorrentGraduated,
     severity_of,
 )
+from pearlarr.output.events import EntryState
 from pearlarr.wait_types import Outcome, OutcomeCategory
 
 # --- value model -----------------------------------------------------------------

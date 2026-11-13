@@ -8,8 +8,8 @@ from .arr_models import ArrItem
 from .boot_flow import BootFlow
 from .import_wait import ImportWaitManager
 from .leg_state import RunContext, unresolved_label
-from .log import arr_item_noun, count_noun
 from .output import hub_error, hub_note, hub_warn
+from .output.console_text import arr_item_noun, count_noun
 from .protocols import ArrSync, ImportCompleter
 from .run_services import RunDeps, RunServices
 from .wait_types import ImportWaitMode, PendingState

@@ -19,7 +19,7 @@ from datetime import datetime, timedelta, timezone
 from rich.console import Console
 
 from pearlarr.config import Arr
-from pearlarr.log import INDENT, LOG_NAME
+from pearlarr.log import LOG_NAME
 from pearlarr.output import (
     CapturedTrace,
     Diagnostic,
@@ -40,6 +40,7 @@ from pearlarr.output import (
     diagnostic_text,
     diagnostic_threshold,
 )
+from pearlarr.output.console_text import INDENT
 
 from .fakes import AsciiStringIO, strip_ansi
 
