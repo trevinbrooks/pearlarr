@@ -861,7 +861,14 @@ def torrent_facts(
 ) -> TorrentFacts:
     """Torrent h1 by group RG, single-audio, with no listed files or sizes unless given."""
 
-    return TorrentFacts(infohash, release_group, is_dual_audio, seadex_files, release_sizes, sizes_by_name)
+    return TorrentFacts(
+        infohash=infohash,
+        release_group=release_group,
+        is_dual_audio=is_dual_audio,
+        seadex_files=seadex_files,
+        release_sizes=release_sizes,
+        sizes_by_name=sizes_by_name,
+    )
 
 
 def pending_seed(
