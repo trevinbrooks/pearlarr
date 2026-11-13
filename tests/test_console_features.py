@@ -11,7 +11,7 @@ import io
 
 from rich.console import Console
 
-from pearlarr.console_caps import DetectedFeatures, detect_features
+from pearlarr.console_features import DetectedFeatures, detect_features
 
 
 def _console(width: int = 100) -> Console:

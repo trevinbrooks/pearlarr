@@ -11,7 +11,7 @@ from seadex import EntryRecord, TorrentRecord
 from .arr_models import ArrFiles, SonarrEpisode
 from .arr_run_state import ArrRunState
 from .config import PRIVATE_TRACKERS, PrivateReleaseAction
-from .console_caps import console_of
+from .console_features import console_of
 from .output import Accent, StyledValue, hub_warn
 from .output.console_text import indent_string
 from .planner import GrabPlan

@@ -8,7 +8,7 @@ from collections.abc import Set as AbstractSet
 from dataclasses import dataclass
 from typing import NamedTuple, final, override
 
-from .console_caps import console_of, detect_features
+from .console_features import console_of, detect_features
 from .output import (
     Phase,
     RowFinished,

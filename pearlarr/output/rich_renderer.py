@@ -85,7 +85,7 @@ from .scan_lines import ScanEvent, scan_event_lines
 from .scope_path import OpenScopes
 from .trace import CapturedTrace
 from .wait_region import WaitRegion
-from ..console_caps import DetectedFeatures, console_of
+from ..console_features import DetectedFeatures, console_of
 from ..log import LEVEL_BADGES, LOG_NAME, badge_line, console_level, print_literal
 
 

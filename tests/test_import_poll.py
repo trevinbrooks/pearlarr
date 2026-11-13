@@ -11,7 +11,7 @@ from pearlarr.wait_types import NO_PROGRESS, AttemptKind, PauseReason
 
 from .builders import manual_candidate, pending_import, queue_record, sonarr_ep
 from .fakes import FakeClock, HookedSonarrClient
-from .test_strategy_seam import (
+from .test_strategy_contract import (
     _RESCAN_AFTER_ADD,
     _RESCAN_BEFORE_ADD,
     _closed_history,

@@ -63,8 +63,8 @@ def test_the_scan_catches_outside_reaches_and_allows_the_package_its_own() -> No
     assert _reaches("from .placer._state import PlacerState\n", outside) == [
         "pearlarr/window_placement.py:1 imports pearlarr.placer._state",
     ]
-    assert _reaches("import pearlarr.placer._run_passes\n", Path("tests/x.py")) == [
-        "tests/x.py:1 imports pearlarr.placer._run_passes",
+    assert _reaches("import pearlarr.placer._sequence_passes\n", Path("tests/x.py")) == [
+        "tests/x.py:1 imports pearlarr.placer._sequence_passes",
     ]
     assert _reaches("from pearlarr.placer import _passes\n", Path("scripts/x.py")) == [
         "scripts/x.py:1 imports pearlarr.placer._passes",

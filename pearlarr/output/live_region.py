@@ -18,7 +18,7 @@ from rich.spinner import Spinner
 from .events import Diagnostic, Severity
 from .process_hub import emit_to_hub
 from .trace import CapturedTrace
-from ..console_caps import DetectedFeatures
+from ..console_features import DetectedFeatures
 
 
 class LiveRegion:

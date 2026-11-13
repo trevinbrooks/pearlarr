@@ -83,7 +83,7 @@ from pearlarr.cli import (
 )
 from pearlarr.config import AppConfig, Arr, ArrTarget, LogFormat, template_path
 from pearlarr.config_migrations import CONFIG_VERSION
-from pearlarr.console_caps import DetectedFeatures
+from pearlarr.console_features import DetectedFeatures
 from pearlarr.log import LOG_NAME, HubBridgeBase, LogLevel, RichConsoleHandler, apply_log_level, setup_logger
 from pearlarr.output import (
     Diagnostic,

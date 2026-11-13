@@ -2,7 +2,7 @@
 
 from collections.abc import Callable
 
-from .listing_fold import ListedTitle, build_listings
+from .listing_builder import ListedTitle, build_listings
 from .mappings import ResolvedMappings
 from .pending_import import TitleNames, TitleWindow
 from .placement_types import FetchedListings

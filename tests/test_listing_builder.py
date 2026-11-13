@@ -4,7 +4,7 @@
 from seadex import EntryRecord, Tag, TorrentRecord, Tracker
 
 from pearlarr.anibridge import SpecialAliasing
-from pearlarr.listing_fold import ListedTitle, build_listings, single_episode_sizes
+from pearlarr.listing_builder import ListedTitle, build_listings, single_episode_sizes
 from pearlarr.pending_import import TitleWindow
 from pearlarr.placement_types import EMPTY_LISTING
 

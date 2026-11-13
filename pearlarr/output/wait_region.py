@@ -27,7 +27,7 @@ from .wait_lines import (
     wait_start_line,
     wait_tally_lines,
 )
-from ..console_caps import (
+from ..console_features import (
     ConsoleFeatures,
     DetectedFeatures,
     block_bar,

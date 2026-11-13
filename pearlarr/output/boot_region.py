@@ -30,7 +30,7 @@ from .events import (
     PearlarrStarted,
 )
 from .live_region import LiveRegion
-from ..console_caps import ConsoleFeatures, DetectedFeatures, block_bar, make_live, spinner_name
+from ..console_features import ConsoleFeatures, DetectedFeatures, block_bar, make_live, spinner_name
 from ..log import print_literal
 
 # Width of the live download bar (mapping refresh). Only the live cockpit draws

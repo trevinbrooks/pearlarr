@@ -42,7 +42,7 @@ from ..tvdb_orders import order_display_name
 from ..wait_types import LeftForHandImport, Outcome, OutcomeKind
 
 if TYPE_CHECKING:
-    from ..console_caps import ConsoleFeatures
+    from ..console_features import ConsoleFeatures
 
 type WaitEvent = WaitStarted | WaitProgress | RowFinished | WaitFinished
 
