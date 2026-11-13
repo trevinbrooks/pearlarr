@@ -44,7 +44,7 @@ _SONARR_ICON = "https://raw.githubusercontent.com/Sonarr/Sonarr/develop/Logo/512
 _RADARR_ICON = "https://raw.githubusercontent.com/Radarr/Radarr/develop/Logo/512.png"
 
 # Cap the comma-separated "Replacing" list so its inline field stays one short
-# row. The remainder collapses into a "… +N more" tail.
+# row. The remainder collapses into a trailing "… +N more".
 _MAX_REPLACING = 3
 
 # Taste limit for the SeaDex notes blockquote (the 1024 field-value clamp is
@@ -72,7 +72,7 @@ def _retry_after_seconds(exc: httpx.HTTPError) -> float:
 
 
 def _wait_color(result: WaitResult) -> int:
-    """The summary accent: red if anything failed, orange if deferred, else green."""
+    """The summary accent: red if anything failed, orange if any were left, else green."""
 
     if result.failed > 0:
         return COLOR_FAILED
@@ -82,12 +82,12 @@ def _wait_color(result: WaitResult) -> int:
 
 
 def _wait_row_text(row: WaitOutcomeRow) -> str:
-    """One summary row: the title alone for an import, else with its detail and any file left for a hand import."""
+    """One summary row: the name alone for an import, else with its detail and any file left for a hand import."""
 
     if row.outcome.kind is OutcomeKind.IMPORTED:
         return row.label
     left = row.left_for_hand_import
-    # Discord strips leading whitespace and reads `_`, `*`, `[` as markdown, so each name rides in backticks.
+    # Discord strips leading whitespace and reads `_`, `*`, `[` as markdown, so each name goes in backticks.
     names = hand_import_names(left, quote="`")
     if left.explained_by_order:
         lead, reason = hand_import_sentences(left)
@@ -102,7 +102,7 @@ class GrabNotice:
     arr: Arr
     arr_title: str
     title_name: str
-    """The entry's display title (AniList's when it resolved), the embed's title."""
+    """The title's display name (AniList's when it resolved), the embed's title."""
     entry: EntryRecord
     """The SeaDex entry whole (url / notes / comparisons / incomplete flag)."""
     thumb_url: str | None
@@ -112,11 +112,11 @@ class GrabNotice:
     The caller passes them clean, so the notifier renders them verbatim."""
     seadex_dict: SeadexDict
     results: Sequence[GrabResult]
-    """The torrent-client add outcomes, so the embed can label a group whose releases
+    """The torrent-client grab results, so the embed can label a group whose releases
     were already in the client accordingly rather than claiming a fresh grab."""
     failed_groups: frozenset[str]
     """Groups whose add failed at the client (contained, retried next run) - a
-    failed add produces no outcome, so the label needs the explicit note."""
+    failed add produces no result, so the label needs the explicit note."""
     coverage: str
 
 
@@ -132,11 +132,11 @@ def _md_escape(text: str) -> str:
 
 
 def _arr_title_redundant(arr_title: str, title_name: str) -> bool:
-    """True when the Arr title repeats what the entry title already says.
+    """True when the Arr's series name repeats what the title's name already says.
 
-    The two are near-duplicates for most entries: identical up to case or
-    apostrophe style, or the entry title extends the Arr's with a season
-    suffix ("Show Season 2" vs "Show"). The embed shows the Arr's own title
+    The two are near-duplicates for most titles: identical up to case or
+    apostrophe style, or the title's name extends the Arr's with a season
+    suffix ("Show Season 2" vs "Show"). The embed shows the Arr's series name
     only when it adds information. The prefix must end on a word boundary so a
     merely shared beginning ("Showtime") still counts as informative.
     """
@@ -149,7 +149,7 @@ def _arr_title_redundant(arr_title: str, title_name: str) -> bool:
 
 
 def _notes_block(notes: str) -> str:
-    """The SeaDex entry notes as one blockquote - the "why this pick" line.
+    """The SeaDex entry notes as one blockquote - the "why this release" line.
 
     Notes are plain text. They are NOT markdown-escaped (a stray emphasis is
     cosmetic, mangled escape backslashes are worse). Blank lines drop so the
@@ -172,8 +172,8 @@ def _notes_block(notes: str) -> str:
 def _grab_notes(notice: GrabNotice) -> str:
     """The trailing notes stack: subtitle, entry notes, comparison links, caveats.
 
-    The Arr's own title appears as a muted `-#` subtext byline only when it
-    adds information over the entry title. Each piece is omitted when it has
+    The Arr's series name appears as a muted `-#` subtext byline only when it
+    adds information over the title's name. Each piece is omitted when it has
     nothing to say.
     """
 
@@ -212,7 +212,7 @@ def _release_line(item: Release) -> str:
 
 
 class _GroupBlock(NamedTuple):
-    """One group's rendered pick: the outcome label, the group name, the release lines."""
+    """One group's rendered grab: the outcome label, the group name, the release lines."""
 
     label: str
     group: str
@@ -220,7 +220,7 @@ class _GroupBlock(NamedTuple):
 
 
 def _group_blocks(notice: GrabNotice) -> list[_GroupBlock]:
-    """One block per group with anything flagged for download.
+    """One block per group with anything to grab.
 
     The label reflects what actually happened at the torrent client: "Grabbed"
     when anything was added, "Already downloading" when every acted release was
@@ -266,10 +266,10 @@ def _meta_fields(notice: GrabNotice) -> list[EmbedField]:
 
 
 def _grab_embed(notice: GrabNotice) -> DiscordEmbed:
-    """The grab embed: the entry title (AniList, else the arr's own) and AniList art framing the pick(s).
+    """The grab embed: the title's name (AniList, else the arr's) and AniList art framing the grabbed releases.
 
-    A single-group grab (the common case) reads as one compact card: its pick
-    rides the description directly under the title, markdown intact. Several
+    A single-group grab (the common case) reads as one compact card: its releases
+    go in the description directly under the embed title, markdown intact. Several
     groups each keep a full-width field. Either way the episodes/replacing
     pair follows side by side and the notes stack trails headerless.
     """
@@ -314,7 +314,7 @@ class Notifier:
             discord_url: Discord webhook url, or None to disable.
             webhook_url: A generic outbound webhook POSTed the
                 wait-complete report JSON (ntfy/gotify/Home-Assistant), or None.
-            web: The shared web client every POST rides.
+            web: The shared web client every POST goes through.
         """
 
         self.discord_url = discord_url
@@ -325,15 +325,15 @@ class Notifier:
 
     @property
     def enabled(self) -> bool:
-        """True when a Discord webhook is configured (and not disabled by a dead-webhook 4xx)."""
+        """True when a Discord webhook is configured (and not disabled by a bad-webhook 4xx)."""
 
         return self.discord_url is not None
 
     def push_grab(self, notice: GrabNotice) -> bool:
-        """Post a grab notification: the entry title (AniList, else the arr's own) linking to the SeaDex entry.
+        """Post a grab notification: the title's name (AniList, else the arr's) linking to the SeaDex entry.
 
         The author line names the event ("Sonarr · SeaDex grab") under the
-        arr's own logo. A single-group grab carries its pick in the
+        arr's logo. A single-group grab carries its releases in the
         description, a multi-group grab stacks one field per group. The
         AniList art frames it (cover thumbnail + wide banner).
         """
@@ -367,10 +367,10 @@ class Notifier:
 
     @staticmethod
     def _wait_fields(result: WaitResult) -> tuple[EmbedField, ...]:
-        """One counted field per outcome class (imported / left / failed), if any.
+        """One counted field per outcome kind (imported / left / failed), if any.
 
-        Deferred and failed rows carry the outcome's human detail (the reason
-        the torrent didn't land). Imported rows list just the title.
+        Left and failed rows carry the outcome's human detail (the reason
+        the torrent didn't import). Imported rows list just the name.
         """
 
         sections = (
@@ -411,7 +411,7 @@ class Notifier:
         """Keep burst pushes >= 1s apart and stamp this push's instant.
 
         Sleeps only when a prior push happened under the spacing ago, so a
-        single (or final) push never pays a trailing dead second.
+        single (or final) push never pays a trailing idle second.
         """
 
         now = time.monotonic()
@@ -427,7 +427,7 @@ class Notifier:
 
         A no-op (returns False) when no webhook is configured. A request failure
         is contained here (warn, return False): a notification failure must never
-        abort a grab or skip the cache-update tail. A 4xx means the webhook
+        abort a grab or skip the cache update at the end. A 4xx means the webhook
         itself is bad (e.g. deleted -> 404), so Discord pushes are disabled for
         the rest of the run instead of warning once per grab - EXCEPT a 429,
         which is Discord throttling a healthy webhook (a burst can outrun the 1s
@@ -460,7 +460,7 @@ class Notifier:
     def _retry_rate_limited(self, *, url: str, embed: DiscordEmbed, exc: httpx.HTTPError) -> bool:
         """Honor a 429's Retry-After with one retry, or drop the push truthfully.
 
-        A 429 is Discord throttling a healthy webhook, not a dead one, so pushes
+        A 429 is Discord throttling a healthy webhook, not a bad one, so pushes
         stay enabled and the config is never blamed. A short Retry-After
         (<= 5s) is slept out and the push retried once. A longer one - or a
         retry that fails too - drops THIS notification and says so.

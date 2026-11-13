@@ -147,7 +147,7 @@ def test_push_wait_summary_posts_to_webhook() -> None:
 @respx.mock
 def test_push_wait_summary_webhook_failure_warns_and_returns_false() -> None:
     # The generic-webhook twin of the Discord containment: a request failure is
-    # warned about and swallowed, never propagated to the finalize tail.
+    # warned about and swallowed, never propagated to the cache save at the end of the run.
     respx.post("https://hook.example").mock(side_effect=httpx.ConnectError("webhook down"))
     notifier = Notifier(discord_url=None, webhook_url="https://hook.example", web=httpx.Client())
 
@@ -172,7 +172,7 @@ def test_push_wait_summary_builds_discord_embed(pushes: list[DiscordEmbed]) -> N
     names = [field.name for field in embed.fields]
     assert names == ["Imported (2)", "Left pending (1)", "Failed (1)"]
     assert "Frieren" in embed.fields[0].value
-    # Deferred/failed rows carry the outcome detail. A failure colors the embed red.
+    # Left/failed rows carry the outcome detail. A failure colors the embed red.
     assert embed.fields[2].value == "Bleach TYBW - download errored; left pending"
     assert embed.color == COLOR_FAILED
 
@@ -234,7 +234,7 @@ def test_push_wait_summary_says_why_order_only_files_are_held(pushes: list[Disco
 
 
 def test_push_wait_summary_unmatched_names_stay_inside_the_value_clamp(pushes: list[DiscordEmbed]) -> None:
-    # A full section of three-name rows overflows a field value. The payload clamp is the backstop.
+    # A full set of three-name rows overflows a field value. The payload clamp is the backstop.
     notifier = Notifier(discord_url="https://discord.example", web=httpx.Client())
     names = tuple(f"Demo Batch Part {n} (BD 1080p) [Group].mkv" for n in range(3))
     rows = tuple(
@@ -349,8 +349,8 @@ def test_push_grab_builds_linked_embed(pushes: list[DiscordEmbed]) -> None:
 
     assert posted is True
     embed = pushes[0]
-    # The author line names the event, with the arr's own logo beside it. The
-    # title is the AniList title linking to the entry page.
+    # The author line names the event, with the arr's logo beside it. The
+    # title is the AniList name linking to the entry page.
     assert embed.author_name == "Sonarr · SeaDex grab"
     assert embed.author_icon_url == "https://raw.githubusercontent.com/Sonarr/Sonarr/develop/Logo/512.png"
     assert embed.title == "Frieren: Beyond Journey's End"
@@ -358,9 +358,9 @@ def test_push_grab_builds_linked_embed(pushes: list[DiscordEmbed]) -> None:
     assert embed.color == COLOR_GRAB
     assert embed.thumb_url == "https://img.anili.st/cover.png"
     assert embed.image_url == "https://img.anili.st/banner.png"
-    # A genuinely different Arr title becomes the muted subtext byline, riding
+    # A genuinely different Arr series name becomes the muted subtext byline, going in
     # the trailing nameless notes field (an empty field name renders as no
-    # header at all - verified live against the webhook API).
+    # header at all - checked live against the webhook API).
     assert embed.description == ""
     assert embed.fields == (EmbedField(name="", value="-# Sousou no Frieren"),)
 
@@ -382,7 +382,7 @@ class TestGrabNotes:
         return fields[-1].value if fields and fields[-1].name == "" else ""
 
     def test_near_duplicate_titles_render_no_subtitle(self, pushes: list[DiscordEmbed]) -> None:
-        # Apostrophe style and case are not information: Sonarr's ASCII title
+        # Apostrophe style and case are not information: Sonarr's ASCII name
         # vs AniList's typographic one must not produce a duplicate byline.
         notes = self._notes(
             pushes,
@@ -392,7 +392,7 @@ class TestGrabNotes:
         assert notes == ""
 
     def test_season_suffix_title_renders_no_subtitle(self, pushes: list[DiscordEmbed]) -> None:
-        # The usual per-season AniList entry merely extends the series title,
+        # The usual per-season AniList title merely extends the series name,
         # so a byline would repeat the embed title directly above the notes.
         notes = self._notes(
             pushes,
@@ -402,8 +402,8 @@ class TestGrabNotes:
         assert notes == ""
 
     def test_shared_prefix_short_of_a_word_keeps_the_subtitle(self, pushes: list[DiscordEmbed]) -> None:
-        # A prefix that splits a word is not a season suffix: the Arr title
-        # names a different show and stays informative.
+        # A prefix that splits a word is not a season suffix: the Arr series name
+        # names a different series and stays informative.
         notes = self._notes(pushes, _notice(arr_title="Show", entry_title="Showtime Season 1"))
 
         assert notes == "-# Show"
@@ -476,7 +476,7 @@ class TestGrabNotes:
 
 
 class TestGrabLayout:
-    """The pick layout: single-group grabs ride the description, several stack fields."""
+    """The grab layout: single-group grabs go in the description, several stack fields."""
 
     def _embed(self, pushes: list[DiscordEmbed], notice: GrabNotice) -> DiscordEmbed:
         assert _grab_notifier().push_grab(notice) is True
@@ -511,7 +511,7 @@ class TestGrabLayout:
             ),
         )
 
-        # The lone pick hoists into the description (bold label, group as a code
+        # The single group's grab hoists into the description (bold label, group as a code
         # span, then the release line + tags subtext). Episodes and the replaced
         # groups pair up as side-by-side inline fields (the caller passes them clean).
         assert embed.description == (
@@ -525,8 +525,8 @@ class TestGrabLayout:
         )
 
     def test_multiple_groups_keep_the_field_stack(self, pushes: list[DiscordEmbed]) -> None:
-        # "Grabbed" only when the client actually added something. A pick already
-        # mid-download says so. A contained add failure (no outcome) reads
+        # "Grabbed" only when the client actually added something. A release already
+        # mid-download says so. A contained add failure (no result) reads
         # "Failed". A group whose releases were never attempted reads "Skipped".
         seadex_dict = {
             srg: rg_group({f"https://nyaa.si/view/{i}": make_release(url=f"https://nyaa.si/view/{i}", download=True)})
@@ -579,7 +579,7 @@ def _push_grab(notifier: Notifier) -> bool:
 
 
 def test_push_grab_discord_failure_warns_and_returns_false(monkeypatch: pytest.MonkeyPatch) -> None:
-    # The invariant the engine relies on: a Discord failure is contained in
+    # The invariant the grab relies on: a Discord failure is contained in
     # _push (warn, False) - it must never abort the grab that triggered it.
     def raising_discord_push(*, url: str, embed: DiscordEmbed, client: httpx.Client) -> None:
         del url, embed, client
@@ -616,7 +616,7 @@ def test_push_grab_4xx_disables_discord_for_the_run(monkeypatch: pytest.MonkeyPa
     assert _push_grab(notifier) is False
     assert _push_grab(notifier) is False
 
-    assert posts == ["https://discord.example"]  # the dead webhook is POSTed once
+    assert posts == ["https://discord.example"]  # the bad webhook is POSTed once
     assert notifier.enabled is False
     warnings = diagnostic_messages(recording, Severity.WARNING)
     assert warnings == [
@@ -641,7 +641,7 @@ def test_push_grab_429_retry_delivers_after_default_delay(monkeypatch: pytest.Mo
     assert _push_grab(notifier) is True
 
     assert push.posts == ["https://discord.example"] * 2  # original + retry
-    assert sleeps == [1.0]  # missing header -> the 1s default
+    assert sleeps == [1.0]  # absent header -> the 1s default
     assert diagnostic_messages(recording, Severity.WARNING) == []
 
 
@@ -668,7 +668,7 @@ def test_push_grab_429_honors_retry_after(
 def test_push_grab_429_retry_exhausted_drops_and_stays_enabled(monkeypatch: pytest.MonkeyPatch) -> None:
     # A 429 whose retry 429s again drops THIS notification with one truthful
     # warning - never an optimistic "later notifications" claim. The webhook is
-    # healthy (throttled, not dead), so pushes stay enabled, the config is not
+    # healthy (throttled, not bad), so pushes stay enabled, the config is not
     # blamed, and a later push still attempts (and drops the same way).
     posts: list[str] = []
 

@@ -11,25 +11,25 @@ from .wait_types import AttemptResult
 
 
 class PendingImportStore:
-    """One seam for the pending-import store: raw and hydrated views, run-list-aware writes.
+    """One interface for the pending-import store: raw and loaded views, run-list-aware writes.
 
-    Binds the cache store once. The run context (whose `arr` scopes every read and whose
-    `pending_imports` is the run list) arrives via `begin_run` each run. Every key is a torrent's infohash.
+    Binds the cache store once. The arr run's context (whose `arr` every read filters on and whose
+    `grabbed_this_run` is the run list) arrives via `bind_arr_run` each arr run. Every key is a torrent's hash.
     """
 
     _state: ArrRunState
-    """The current run's context. Never bound at construction: `begin_run` rebinds it every run."""
+    """The arr run's context. Never bound at construction: `bind_arr_run` rebinds it every arr run."""
 
     def __init__(self, cache_store: AbstractCacheStore) -> None:
         self._store = cache_store
 
     def bind_arr_run(self, state: ArrRunState) -> None:
-        """Bind the fresh run context the views and writes read."""
+        """Bind the fresh arr run context the views and writes read."""
 
         self._state = state
 
     def fresh_keys(self) -> set[str]:
-        """Keys of the records written THIS run, tallied as `added` and never carried-over."""
+        """Keys of the pending imports written THIS run, tallied as `added` and never carried-over."""
 
         return set(self._state.grabbed_this_run)
 
@@ -39,45 +39,45 @@ class PendingImportStore:
         return self._store.get_pending_import_rows(self._state.arr)
 
     def rows_for_series(self, series_id: int) -> dict[str, dict[str, Any]]:
-        """The raw rows with a claim on `series_id` (the store's own filter, not a full-table read)."""
+        """The raw rows with a claim on `series_id` (a filter in the store, not a full-table read)."""
 
         return self._store.get_pending_import_rows_for_series(self._state.arr, series_id)
 
     def imports_for_series(self, series_id: int, guards: Mapping[int, OwnedAtGrab]) -> dict[str, PendingImport]:
-        """The records claiming `series_id`, keyed by infohash, rehydrated under the guards the caller already read."""
+        """The pending imports claiming `series_id`, keyed by hash, loaded under the guards the caller already read."""
 
         return load_pending_imports(self.rows_for_series(series_id), guards)
 
     def awaiting_cleanup_rows(self) -> dict[str, dict[str, Any]]:
-        """The cleanup-flagged rows, raw (the heal pass's working set)."""
+        """The rows awaiting cleanup, raw (the working set for finishing their cleanup)."""
 
         return {key: raw for key, raw in self.rows().items() if is_awaiting_cleanup(raw)}
 
     def active_rows(self) -> dict[str, dict[str, Any]]:
-        """Raw rows minus this-run grabs and cleanup-flagged leftovers."""
+        """Raw rows minus this-run grabs and rows awaiting cleanup."""
 
         fresh = self.fresh_keys()
         return {key: raw for key, raw in self.rows().items() if key not in fresh and not is_awaiting_cleanup(raw)}
 
     def load(self, rows: Mapping[str, dict[str, Any]]) -> dict[str, PendingImport]:
-        """Rehydrate `rows`, each claim fed its entry's guard row (an empty `rows` skips the guard read)."""
+        """Load `rows`, each claim fed its title's guard row (an empty `rows` skips the guard read)."""
 
         if not rows:
             return {}
         return load_pending_imports(rows, self.guards())
 
     def guards(self) -> dict[int, OwnedAtGrab]:
-        """The arr's guard rows for the entries with live records (one read, shared by a poll's hydrations)."""
+        """The arr's guard rows for the titles with live pending imports (one read, shared by a poll's loads)."""
 
         return self._store.get_guards(self._state.arr)
 
     def active_imports(self) -> dict[str, PendingImport]:
-        """The `active` rows rehydrated: the carried-over working set of the end-of-run passes."""
+        """The `active` rows loaded: the carried-over working set of the wait passes."""
 
         return self.load(self.active_rows())
 
     def stored_pending_imports(self, hashes: Iterable[str]) -> dict[str, PendingImport]:
-        """The store-resident records among `hashes`, rehydrated under one guards read."""
+        """The stored pending imports among `hashes`, loaded under one guards read."""
 
         rows = {
             infohash: raw
@@ -94,16 +94,16 @@ class PendingImportStore:
         self._state.grabbed_this_run[pending.infohash] = pending
 
     def save_with_claim(self, pending: PendingImport, claim: TitleClaim) -> None:
-        """`save` plus `claim`'s guard row: the write of a grab whose claim joins or refreshes a stored record."""
+        """`save` + `claim`'s guard row: the write of a grab whose claim joins or refreshes a stored pending import."""
 
         self.save(pending)
         self._put_guards(claim)
 
     def save(self, pending: PendingImport) -> None:
-        """Persist ONE record (no guard row), refreshing any run-list copy but NEVER inserting one.
+        """Persist ONE pending import (no guard row), refreshing any run-list copy but NEVER inserting one.
 
-        A run-list upsert would silently convert a reacquire or accretion into a fresh
-        grab, skewing the carried-over tally and the heal's recount.
+        A run-list upsert would silently convert a reacquire or a joined claim into a fresh
+        grab, skewing the carried-over tally and the recount when a cleanup finishes.
         """
 
         self._put(pending)
@@ -111,14 +111,14 @@ class PendingImportStore:
             self._state.grabbed_this_run[pending.infohash] = pending
 
     def _put(self, pending: PendingImport) -> None:
-        """The record's row write."""
+        """The pending import's row write."""
 
         self._store.put_pending_import_row(self._state.arr, pending.infohash, pending.to_json())
 
     def _put_guards(self, claim: TitleClaim) -> None:
         """The claim's guard row (Sonarr only: Radarr's import reads no guards).
 
-        Written only by the grab that produced the evidence, never re-put from a hydrated copy that
+        Written only by the grab that produced the evidence, never re-put from a loaded copy that
         may trail a newer write.
         """
 
@@ -126,9 +126,9 @@ class PendingImportStore:
             self._store.put_guards(self._state.arr, claim.al_id, claim.guards)
 
     def save_history_placements(self, pending: PendingImport, result: AttemptResult) -> PendingImport:
-        """Persist the files a poll's Sonarr history placed onto the record and return the healed copy.
+        """Persist the files a poll's Sonarr history placed onto the pending import and return the updated copy.
 
-        Writes only when the poll added something: the record hands itself back on a no-op.
+        Writes only when the poll added something: the pending import hands itself back on a no-op.
         """
 
         healed = pending.with_placements(result.placements)
@@ -138,16 +138,16 @@ class PendingImportStore:
         return healed
 
     def drop(self, infohash: str) -> None:
-        """Remove one torrent's record from the store and the run list."""
+        """Remove one torrent's pending import from the store and the run list."""
 
         self._store.drop_pending_import_row(self._state.arr, infohash)
         self._state.grabbed_this_run.pop(infohash, None)
 
     def drop_unimported(self, pending: PendingImport) -> None:
-        """Remove the record of a torrent that left qBittorrent unimported, and have the next run check its titles.
+        """Drop the pending import of a torrent that left qBittorrent unimported, so the next run checks its titles.
 
-        A title is cached as done once its torrent is added, so each claiming title's stamp is cleared. The check
-        grabs the release again when the arr still lacks it.
+        A title is cached once its torrent is added, so each claiming title is uncached. The check grabs the release
+        again when the arr still lacks it.
         """
 
         self.drop(pending.infohash)
@@ -155,6 +155,6 @@ class PendingImportStore:
             self._store.uncache_title(self._state.arr, claim.al_id)
 
     def other_arr_holds(self, infohash: str) -> bool:
-        """Whether the other arr still holds a record on the torrent (the category move defers on it)."""
+        """Whether the other arr still has a pending import on the torrent (the category move is put off for it)."""
 
         return self._store.other_arr_holds(self._state.arr, infohash)

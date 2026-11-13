@@ -1,4 +1,4 @@
-"""Pure layered quality and language resolution for the manual-import payload (the quality key is never omitted)."""
+"""Pure layered quality and language resolution for the ManualImport payload (the quality key is never omitted)."""
 
 import re
 from collections.abc import Sequence
@@ -8,7 +8,7 @@ from .arr_models import Language, Quality, QualityDefinition, QualityModel, Qual
 
 # Filename source tokens -> QualitySource, ordered most-specific first so a
 # "BluRay Remux" name resolves to BLURAY_RAW (not BLURAY), "BD" counts as BluRay,
-# and "WEB-DL" wins over a bare "WEB". A token that matches nothing leaves the
+# and "WEB-DL" wins over a plain "WEB". A token that matches nothing leaves the
 # source axis undetermined (None). It is NEVER defaulted to WEB here. The
 # configured default fills it.
 _SOURCE_PATTERNS: list[tuple[re.Pattern[str], QualitySource]] = [
@@ -29,10 +29,10 @@ class QualityParts:
     """Quality as two independent axes: `source` and `resolution`.
 
     Either axis is `None` when it could not be authoritatively determined, which
-    is what lets the quality decision layer the axes across Sonarr's parse, our
+    is what lets the quality decision layer the axes across Sonarr's parse, pearlarr's
     filename parse, and the configured default (each fills only the axes the
     higher-precedence layers left `None`). The resulting `(source, resolution)`
-    pair is matched against Sonarr's quality definitions to pick the real quality.
+    pair is matched against Sonarr's quality definitions to find the real quality.
     """
 
     source: QualitySource | None = None
@@ -66,14 +66,14 @@ def quality_parts_from_model(model: QualityModel | None) -> QualityParts:
     Reads the canonical schema path `model.quality.source` /
     `model.quality.resolution` (every field defaults to None on the partial
     models the helpers build). An `"unknown"` source or a `0`/absent
-    resolution maps to `None` (undetermined), so an unparsed candidate
+    resolution becomes `None` (undetermined), so an unparsed candidate
     cleanly yields `QualityParts()` and falls through to the next
     precedence layer.
     """
 
     if model is None:
         return QualityParts()
-    quality = model.quality  # an empty/null wire quality already folded to None
+    quality = model.quality  # an empty/null wire quality already converted to None
     if quality is None:
         return QualityParts()
     resolution = quality.resolution
@@ -131,7 +131,7 @@ def _find_definition(
     return None
 
 
-# A RAW source degrades to its base when no remux/raw definition exists at that
+# A RAW source falls back to its base when no remux/raw definition exists at that
 # resolution (try the raw definition first, then this base).
 _RAW_DOWNGRADE: dict[QualitySource, QualitySource] = {
     QualitySource.BLURAY_RAW: QualitySource.BLURAY,
@@ -154,10 +154,10 @@ def resolve_quality(
     quality_defs: Sequence[QualityDefinition],
     candidate_model: QualityModel | None,
 ) -> QualityModel:
-    """Resolve the final manual-import `QualityModel`, never omitted.
+    """Resolve the final ManualImport `QualityModel`, never omitted.
 
     The source and resolution axes are decided independently, each taking the
-    first authoritative value in precedence order: Sonarr's parse, then our
+    first authoritative value in precedence order: Sonarr's parse, then pearlarr's
     filename parse, then the configured default. When both axes are determined the
     quality definition matching the `(source, resolution)` pair is emitted, so
     the payload always carries a quality Sonarr actually defines (a valid id+name).
@@ -188,8 +188,8 @@ def resolve_quality(
 
     # No confident match: re-emit Sonarr's own candidate (valid by construction)
     # rather than omit the quality, else synthesize an explicit Unknown. An
-    # EMPTY candidate quality already folded to None at the parse boundary, so
-    # this None test guards the already-folded empty quality.
+    # EMPTY candidate quality already converted to None at the parse boundary, so
+    # this None test guards the already-converted empty quality.
     if candidate_model is not None and candidate_model.quality is not None:
         return candidate_model
     unknown = Quality(id=0, name="Unknown", source="unknown", resolution=0)
@@ -201,7 +201,7 @@ def derive_languages(
     dual: Sequence[str],
     single: Sequence[str],
 ) -> Sequence[str]:
-    """Pick the import language list: `dual` when dual-audio, else `single`."""
+    """Choose the import language list: `dual` when dual-audio, else `single`."""
 
     return dual if is_dual_audio else single
 

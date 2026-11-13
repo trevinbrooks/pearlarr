@@ -1,5 +1,5 @@
 # pyright: strict
-"""Direct tests for the wait pass's types: the pending states, the import probe, poll classification, and telemetry."""
+"""Direct tests of the wait types: pending import states, the attempt result, poll classification, download progress."""
 
 from types import SimpleNamespace
 from typing import cast
@@ -25,7 +25,7 @@ from .test_pending_import import HALVES
 
 
 class TestPendingStateAndProbe:
-    """The shared carried-over status vocabulary + the import probe value object."""
+    """The shared carried-over status vocabulary + the attempt result value object."""
 
     def test_pending_state_members(self) -> None:
         assert {s.name for s in PendingImportState} == {
@@ -101,7 +101,7 @@ class TestPendingStateAndProbe:
 
 
 class TestClassifyPending:
-    """`classify_pending_import` folds a poll's outcome + the files-present flag into a state."""
+    """`classify_pending_import` reduces a poll's torrent status + `all_done` to a state."""
 
     def test_missing(self) -> None:
         assert classify_pending_import(TorrentStatus.GONE, False) is PendingImportState.GONE
@@ -117,12 +117,12 @@ class TestClassifyPending:
 
     def test_complete_without_files_is_importing(self) -> None:
         # The copy is still in flight -> downloaded, never imported, until the
-        # files are verified present.
+        # files are confirmed done.
         assert classify_pending_import(TorrentStatus.COMPLETE, False) is PendingImportState.DOWNLOADED
 
 
 class TestSanitizeTorrentTelemetry:
-    """MUTATION PIN: pins the pure telemetry sanitizer's clamps and sentinel folds.
+    """MUTATION PIN: pins the pure download progress sanitizer's clamps and sentinel conversions.
 
     Covers the numeric-string `_as_float` path too - a cluster of ~10 surviving mutants.
     """
@@ -130,14 +130,14 @@ class TestSanitizeTorrentTelemetry:
     @pytest.mark.parametrize(
         ("progress", "dlspeed", "eta", "completed", "size", "expected"),
         [
-            # All-None getattr reads fold to the empty telemetry.
+            # All-None getattr reads reduce to the empty download progress.
             (None, None, None, None, None, DownloadProgress(0.0, None, None, None, None)),
             # A clean row passes through untouched.
             (0.64, 3_200_000, 130, 1_800, 2_900, DownloadProgress(0.64, 3_200_000, 130, 1_800, 2_900)),
-            # NaN progress (float and string) folds to 0.0, not a poisoned bar.
+            # NaN progress (float and string) converts to 0.0, not a poisoned bar.
             (float("nan"), 100, 130, 50, 200, DownloadProgress(0.0, 100, 130, 50, 200)),
             ("nan", None, None, None, None, DownloadProgress(0.0, None, None, None, None)),
-            # Numeric-string progress parses. Junk folds to 0.0.
+            # Numeric-string progress parses. Junk converts to 0.0.
             ("0.75", None, None, None, None, DownloadProgress(0.75, None, None, None, None)),
             ("fast", None, None, None, None, DownloadProgress(0.0, None, None, None, None)),
             # Progress clamps to [0, 1] on both ends.
@@ -174,7 +174,7 @@ class TestSanitizeTorrentTelemetry:
         assert download_progress_of(row) == expected
 
     def test_attrless_row_folds_to_the_zero_reading(self) -> None:
-        # The fields are read best-effort off the row: a row missing them all is the empty telemetry.
+        # The fields are read best-effort off the row: a row lacking them all is the empty download progress.
         assert download_progress_of(object()) == DownloadProgress(0.0, None, None, None, None)
 
 

@@ -1,4 +1,4 @@
-"""The wait-pass producer: engine snapshots in, hub events out. Nothing renders here."""
+"""The wait pass's view: wait pass snapshots in, hub events out. Nothing renders here."""
 
 import contextlib
 import logging
@@ -25,14 +25,14 @@ from .wait_types import NO_HAND_IMPORT_FILES, LeftForHandImport, Outcome, Outcom
 
 @dataclass(frozen=True, slots=True)
 class WaitOutcomeRow:
-    """One torrent's terminal result."""
+    """One finished torrent's result."""
 
     label: str
     outcome: Outcome
     carried_over: bool = False
-    """Whether the record predates this run. A fresh grab tallies as `added`, never `imported`."""
+    """Whether the pending import predates this run. A fresh grab tallies as `added`, never `imported`."""
     left_for_hand_import: LeftForHandImport = NO_HAND_IMPORT_FILES
-    """On the `UNMATCHED` and `PARTIAL` outcomes, the on-disk files left for a hand import."""
+    """On the `UNMATCHED` and `PARTIAL` outcomes, the files in the folder left for a hand import."""
 
 
 @dataclass(frozen=True, slots=True)
@@ -44,13 +44,13 @@ class WaitResult:
 
     @property
     def waited(self) -> int:
-        """How many torrents the pass reached a terminal outcome for."""
+        """How many torrents the pass finished."""
 
         return len(self.rows)
 
     @property
     def imported(self) -> int:
-        """Count of imported (SUCCESS) torrents."""
+        """Count of imported torrents."""
 
         return self._count(OutcomeKind.IMPORTED)
 
@@ -62,7 +62,7 @@ class WaitResult:
 
     @property
     def left(self) -> int:
-        """Count of deferred (left pending) torrents."""
+        """Count of torrents left for a later run."""
 
         return self._count(OutcomeKind.LEFT)
 
@@ -77,14 +77,14 @@ class WaitResult:
 
 
 class FinishedRow(NamedTuple):
-    """A newly-terminal torrent paired with its outcome."""
+    """A newly finished torrent paired with its outcome."""
 
     view: TorrentView
     outcome: Outcome
 
 
 def newly_finished(seen: AbstractSet[str], snapshot: WaitSnapshot) -> list[FinishedRow]:
-    """The terminal torrents not yet emitted, in snapshot order."""
+    """The finished torrents not yet emitted, in snapshot order."""
 
     return [
         FinishedRow(torrent, torrent.outcome)
@@ -94,14 +94,14 @@ def newly_finished(seen: AbstractSet[str], snapshot: WaitSnapshot) -> list[Finis
 
 
 class WaitView(ABC):
-    """The interface the engine drives while waiting. Every method MUST be total (never raise)."""
+    """The interface the wait pass drives while waiting. Every method MUST be total (never raise)."""
 
     wants_download_progress: bool = True
-    """Whether the render surfaces show per-row download telemetry."""
+    """Whether the renderers show per-row download progress."""
 
     @abstractmethod
     def update(self, snapshot: WaitSnapshot) -> None:
-        """Narrate the latest snapshot (graduating any newly-terminal torrents)."""
+        """Narrate the latest snapshot (finishing the rows of newly finished torrents)."""
 
     @abstractmethod
     def close(self) -> None:
@@ -110,7 +110,7 @@ class WaitView(ABC):
 
 @final
 class HubWaitView(WaitView):
-    """The wait-pass narrator: turns engine snapshots into hub events."""
+    """The wait-pass narrator: turns wait pass snapshots into hub events."""
 
     def __init__(
         self,
@@ -124,7 +124,7 @@ class HubWaitView(WaitView):
         self._progress_line_s = progress_line_s
         self._kind = kind
         self.wants_download_progress = wants_download_progress
-        # Process-global ids through the late-resolving hub seam.
+        # Process-global ids through the late-resolving `emit_to_hub`.
         self._factory = ScopeFactory(emit_to_hub)
         self._scope: WaitScope | None = None
         self._seen: set[str] = set()
@@ -135,12 +135,12 @@ class HubWaitView(WaitView):
     @override
     def update(self, snapshot: WaitSnapshot) -> None:
         try:
-            if self._closed:  # Defensive: the engine never updates after close.
+            if self._closed:  # Defensive: the wait pass never updates after close.
                 return
             # Stamped first, so an interrupted narration still reports fresh elapsed.
             self._last_elapsed = snapshot.elapsed_s
             if self._scope is None:
-                # WaitStarted precedes any first-snapshot graduations.
+                # WaitStarted precedes any finished rows of the first snapshot.
                 self._scope = self._factory.wait(
                     total=snapshot.total(), progress_line_s=self._progress_line_s, kind=self._kind
                 )
@@ -159,8 +159,8 @@ class HubWaitView(WaitView):
                 )
             scope.progress(snapshot)
         except Exception:
-            # Total by contract: a narration bug degrades to a no-op, never aborting the engine's
-            # wait loop or the end-of-run cache save.
+            # Total by contract: a narration bug becomes a no-op, never aborting the wait pass's
+            # loop or the end-of-run cache save.
             self._logger.debug("wait view update failed", exc_info=True)
 
     @override
@@ -200,7 +200,7 @@ def make_wait_view(
     progress_line_interval: int = 300,
     kind: WaitKind,
 ) -> WaitView:
-    """The production narrator, probed off the logger's console."""
+    """The production narrator, set up from the logger's console."""
 
     console = console_of(logger)
     features = detect_features(console)

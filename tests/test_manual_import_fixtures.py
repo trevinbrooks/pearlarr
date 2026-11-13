@@ -47,7 +47,7 @@ def _read(name: str) -> str:
 
 
 def _load_models[M: BaseModel](name: str, model: type[M]) -> list[M]:
-    """One captured list body, each item validated as the client boundary does."""
+    """One captured list body, each element validated as the client boundary does."""
 
     items: list[object] = json.loads(_read(name))
     return [model.model_validate(item) for item in items]
@@ -139,7 +139,7 @@ class TestParsedFileInfoFromRealBodies:
         assert info.full_season is True
 
     def test_junk_matched_entry_poisons_the_whole_array(self) -> None:
-        # One malformed episodes[] entry folds the WHOLE array to (): dropping
+        # One malformed episodes[] element reduces the WHOLE array to (): dropping
         # just the bad one would shorten a span into a partial placement.
         body: dict[str, object] = {
             "episodes": [
@@ -152,7 +152,7 @@ class TestParsedFileInfoFromRealBodies:
 
 
 class TestResolvedIds:
-    """`window_episode_ids`: the claim's window when the record carries one, else the seeds' ids sorted."""
+    """`window_episode_ids`: the claim's window when the pending import carries one, else the file map's ids sorted."""
 
     def test_the_claims_window_wins(self) -> None:
         pending = pending_import(file_episode_map={"a.mkv": [7]}, ordered_episode_ids=[3, 1, 2])
@@ -174,7 +174,7 @@ class TestResolvedIds:
 
 
 class TestClassifyRealQueue:
-    """The real queue had a paused download (wait) + two importBlocked (step in)."""
+    """The real queue had a paused download (wait) + two importBlocked (stuck)."""
 
     @staticmethod
     def _records_by_download() -> dict[str, list[QueueRecord]]:
@@ -197,7 +197,7 @@ class TestClassifyRealQueue:
 class TestPendingImportOrderedIds:
     """The claim's `ordered_episode_ids` round-trips through JSON.
 
-    A claim missing the key rehydrates unscoped.
+    A claim lacking the key loads with no window.
     """
 
     def test_round_trip_preserves_ordered_episode_ids(self) -> None:
@@ -278,7 +278,7 @@ class TestManualImportInFlightFixture:
         )
 
     def test_folder_import_matches_by_episode_id(self) -> None:
-        # The folder import carries no downloadId. Episode 5645 is ours.
+        # The folder import carries no downloadId. Episode 5645 is this pending import's.
         assert manual_import_in_flight(
             _commands(),
             DownloadIdentifiers("no-such-hash", ContentPaths(raw="/nowhere", sonarr_visible="/nowhere"), {5645}),
@@ -292,21 +292,21 @@ class TestManualImportInFlightFixture:
 
 
 class _Specials(NamedTuple):
-    """The captured specials download wired into a bare `SonarrStrategy` and its scripted fake."""
+    """The captured specials download wired into a plain `SonarrStrategy` and its scripted fake."""
 
     strat: SonarrStrategy
     sonarr: FakeSonarrClient
     files: list[str]
-    """The on-disk basenames of the captured candidates."""
+    """The file names of the captured candidates in the folder."""
 
     @property
     def grab_file_map(self) -> dict[str, list[int]]:
-        """The map the grab writes for the download: S00E01 and S00E02, the first two of the entry's three specials."""
+        """The download's file map from the grab: S00E01 and S00E02, the first two of the title's three specials."""
 
         return {name: [8030 + i] for i, name in enumerate(self.files)}
 
     def pending(self, **overrides: Any) -> PendingImport:
-        """A record for the download (its series, group, and files) with `overrides` applied."""
+        """A pending import for the download (its series, group, and files) with `overrides` applied."""
 
         defaults: dict[str, Any] = {"series_id": 213, "release_group": "Headpatter", "seadex_files": self.files}
         return pending_import(**{**defaults, **overrides})
@@ -317,7 +317,7 @@ def _specials(config: AppConfig | None = None) -> _Specials:
 
     candidates = _load_models("manualimport_yamada.json", ManualImportCandidate)
     sonarr = FakeSonarrClient(
-        queue=[],  # not tracked, so the poll steps in
+        queue=[],  # not tracked, so the poll runs an auto import
         episodes=_load_models("episodes_213_yamada.json", SonarrEpisode),
         candidates=candidates,
         refresh_count=7,
@@ -343,7 +343,7 @@ class TestCapturedSpecialsEndToEnd:
 
         result = specials.strat.import_completed(pending, "/downloads/yamada", AttemptKind.ORDINARY)
 
-        # The copy is async, so nothing is present yet.
+        # The copy is async, so nothing is done yet.
         assert result.all_done is False
         assert result.command_issued is True
         assert len(specials.sonarr.execute_calls) == 1
@@ -361,7 +361,7 @@ class TestCapturedSpecialsEndToEnd:
         ],
     )
     def test_import_mode_propagates_from_config(self, config: AppConfig, cross_seed: bool, mode: str) -> None:
-        # A "move" deletes the source files, so a wrong or ignored mode must never be silent, and a cross-seed is
+        # A "move" deletes the source files, so a wrong or ignored import mode must never be silent, and a cross-seed is
         # never moved by force.
         specials = _specials(config)
         pending = specials.pending(
@@ -377,7 +377,7 @@ class TestCapturedSpecialsEndToEnd:
         assert specials.sonarr.execute_calls[0][1] == mode
 
     def test_import_completed_probe_carries_seed_complete_counts(self) -> None:
-        # A complete seed map gives the probe determinate counts over the seed set, none landed yet.
+        # A complete file map gives the attempt result determinate counts over the file map episodes, none done yet.
         specials = _specials()
         ep_map = specials.grab_file_map
         pending = specials.pending(
@@ -392,7 +392,7 @@ class TestCapturedSpecialsEndToEnd:
         assert result.imported_count == 0
 
     def test_import_progress_is_read_only_and_counts_seed_targets(self) -> None:
-        # The fast poll: a determinate count over the seed targets, reading ONLY the episode files,
+        # The progress poll: a determinate count over the file map episodes, reading ONLY the episode files,
         # never the refresh, queue, or execute pipeline.
         specials = _specials()
         ep_map = specials.grab_file_map
@@ -413,7 +413,7 @@ class TestCapturedSpecialsEndToEnd:
         assert specials.sonarr.queue_calls == 0
 
     def test_import_progress_indeterminate_when_seed_map_incomplete(self) -> None:
-        # No seed map gives an indeterminate zero without a fetch: promotion is left to the heavy poll.
+        # No file map gives an indeterminate zero without a fetch: promotion is left to the poll.
         specials = _specials()
         pending = specials.pending(
             infohash="3333333333333333333333333333333333333333",
@@ -428,7 +428,7 @@ class TestCapturedSpecialsEndToEnd:
         assert specials.sonarr.execute_calls == []
 
     def test_import_progress_indeterminate_for_a_listless_record(self) -> None:
-        # A window with no SeaDex file list (a migrated legacy row folds its flat ids into the window)
+        # A window with no SeaDex file list (a migrated legacy row merges its flat ids into the window)
         # has nothing to measure completeness against, so the row stays indeterminate.
         specials = _specials()
         pending = specials.pending(
@@ -444,8 +444,9 @@ class TestCapturedSpecialsEndToEnd:
         assert specials.sonarr.execute_calls == []
 
     def test_excluded_files_make_the_heavy_counts_determinate_but_never_promote(self) -> None:
-        # Map and exclusions account for every file of a pack carrying another slice's files, so the heavy
-        # probe counts OUR slice. The fast poll can promote, so a grab-time exclusion keeps it indeterminate.
+        # File map and exclusions account for every file of a torrent carrying another title's files, so the
+        # attempt counts THIS claim's files. The progress poll can promote, so a grab-time exclusion keeps it
+        # indeterminate.
         specials = _specials()
         pending = specials.pending(
             infohash="5555555555555555555555555555555555555555",

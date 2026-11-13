@@ -16,7 +16,7 @@ from .builders import episode_statuses, manual_candidate, pending_import
 
 
 def _candidate(basename: str, *, sample: bool = False, already: bool = False) -> CandidateFile:
-    """A file Sonarr found under the download, flagged as a sample or as already imported on request."""
+    """A file Sonarr found under the download, marked as a sample or as already imported on request."""
 
     return CandidateFile(
         normalized_name=basename,
@@ -28,7 +28,7 @@ def _candidate(basename: str, *, sample: bool = False, already: bool = False) ->
 
 
 class TestPlanImportFiles:
-    """`plan_import_files` decides each candidate's action from the file->episode map and the target statuses.
+    """`plan_import_files` decides each candidate's action from the file map and the episode statuses.
 
     Actions: import, skip_done, missing, sample, already.
     """
@@ -36,7 +36,7 @@ class TestPlanImportFiles:
     def test_imports_only_needing_episodes(self) -> None:
         amap = {"a.mkv": (11,), "b.mkv": (12,)}
         cands = {"a.mkv": _candidate("a.mkv"), "b.mkv": _candidate("b.mkv")}
-        # episode 12 already holds a recommended file -> only 11 needs import.
+        # episode 12 already has a trusted file -> only 11 needs import.
         decisions = plan_import_files(
             amap, cands, episode_statuses({11: EpisodeFileStatus.ABSENT, 12: EpisodeFileStatus.TRUSTED})
         )
@@ -49,7 +49,7 @@ class TestPlanImportFiles:
         amap = {"a.mkv": (11,)}
         cands = {"a.mkv": _candidate("a.mkv"), "rogue.mkv": _candidate("rogue.mkv")}
         decisions = plan_import_files(amap, cands, episode_statuses({11: EpisodeFileStatus.ABSENT}))
-        # Only our mapped file is decided on. The rogue on-disk file is ignored.
+        # Only the file map's file is decided on. The rogue file in the folder is ignored.
         assert {d.normalized_name for d in decisions} == {"a.mkv"}
 
     def test_intended_file_missing_from_disk_is_flagged_not_dropped(self) -> None:
@@ -63,7 +63,7 @@ class TestPlanImportFiles:
         assert by_base["b.mkv"].action == "missing"
 
     def test_sample_is_not_imported(self) -> None:
-        # A sample is never our intended file regardless of need.
+        # A sample is never an intended file regardless of need.
         amap = {"s.mkv": (11,)}
         cands = {"s.mkv": _candidate("s.mkv", sample=True)}
         decisions = plan_import_files(amap, cands, episode_statuses({11: EpisodeFileStatus.ABSENT}))
@@ -71,8 +71,8 @@ class TestPlanImportFiles:
 
     def test_already_imported_does_not_skip_a_needed_target(self) -> None:
         # Bug fix: Sonarr's "already imported" rejection fires whenever the episode
-        # already holds ANY file (including a missing-group one we grabbed to
-        # replace). It must NOT veto importing a target that still needs our file.
+        # already has ANY file (including a no-group one pearlarr grabbed to
+        # replace). It must NOT block importing an episode that still needs this torrent's file.
         amap = {"i.mkv": (12,)}
         cands = {"i.mkv": _candidate("i.mkv", already=True)}
         decisions = plan_import_files(amap, cands, episode_statuses({12: EpisodeFileStatus.UNKNOWN_GROUP}))
@@ -80,8 +80,8 @@ class TestPlanImportFiles:
         assert decisions[0].episode_ids == (12,)
 
     def test_already_imported_skips_only_when_no_target_needs_us(self) -> None:
-        # When every target already holds a recommended file (none in needing),
-        # Sonarr's rejection and our episode-file check agree -> the more specific
+        # When every episode already has a trusted file (none in needing),
+        # Sonarr's rejection and pearlarr's episode-file check agree -> the more specific
         # `already` (never overwrite).
         amap = {"i.mkv": (12,)}
         cands = {"i.mkv": _candidate("i.mkv", already=True)}
@@ -96,9 +96,9 @@ class TestPlanImportFiles:
 
 
 class TestOwnCopyAlongside:
-    """A needed file also goes onto its episodes holding a copy of our own, so Sonarr replaces the copy.
+    """A needed file also goes onto its episodes with a copy of this torrent's, so Sonarr replaces the copy.
 
-    An episode holding any other recommended file is left alone.
+    An episode with any other trusted file is left alone.
     """
 
     _FILE_MAP: ClassVar[dict[str, tuple[int, ...]]] = {"range.mkv": (21, 22)}
@@ -134,10 +134,11 @@ class TestOwnCopyAlongside:
 
 
 class TestDiskLeftover:
-    """`unplaced_in_folder`: the scan's video files the map lacks, split by what the record says of them."""
+    """`unplaced_in_folder`: fetched video files the file map lacks, split by what the pending import says of them."""
 
     def test_the_leftover_runs_in_seadex_order_then_disk_order_split_by_the_record(self) -> None:
-        # On disk: an unlisted file first, a subtitle, a duplicate leaf in a second folder, and four listed files.
+        # In the folder: an unlisted file first, a subtitle, a duplicate file name in a second folder, and four listed
+        # files.
         scan = candidate_files(
             manual_candidate(f"/d/{path}")
             for path in ("extra.mkv", "c.ass", "sub/b.mkv", "c.mkv", "b.mkv", "a.mkv", "mapped.mkv")

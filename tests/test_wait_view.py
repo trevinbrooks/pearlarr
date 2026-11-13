@@ -1,13 +1,13 @@
 # pyright: strict
 """Tests for the wait-pass narrator (`wait_view`).
 
-The engine pushes one immutable `WaitSnapshot` per poll cycle. The view
+The wait pass pushes one immutable `WaitSnapshot` per poll. The view
 side is a single narrator (`HubWaitView`) that turns those pushes into
 hub events - rendering lives behind the hub (WaitRegion for the console, the
-textline sinks for file/plain/json, pinned in test_output_wait_region /
+textline renderers for file/plain/json, pinned in test_output_wait_region /
 test_output_textline). These pin the narrator's event grammar (lazy open,
-graduation dedup + exact field mapping, the close tally), the `make_wait_view`
-probe (wants_telemetry + the pulse interval), the pure `newly_finished` helper,
+finished-row dedup + exact field mapping, the close tally), the `make_wait_view`
+setup (`wants_download_progress` + the progress line interval), the pure `newly_finished` helper,
 the WaitResult counting, and the no-throw contract.
 """
 
@@ -87,7 +87,7 @@ def _finished_view(
     )
 
 
-# --- factory / capability probe ------------------------------------------------
+# --- factory / capability check ------------------------------------------------
 
 
 def _make_view(logger: logging.Logger, *, poll_s: int, progress_line_interval: int = 300) -> HubWaitView:
@@ -103,8 +103,8 @@ def test_factory_wants_telemetry_on_a_live_tty() -> None:
 
 
 def test_factory_skips_telemetry_on_a_non_tty() -> None:
-    # The non-TTY digest renders no per-row telemetry, so the engine's fast-lane
-    # qBittorrent read is skipped for it (pure waste on Docker/cron).
+    # The non-TTY progress line renders no per-row download progress, so the wait pass's
+    # download progress read from qBittorrent is skipped for it (pure waste on Docker/cron).
     assert _make_view(_logger_with_console(force_terminal=False), poll_s=30).wants_download_progress is False
 
 
@@ -114,7 +114,7 @@ def test_factory_skips_telemetry_without_a_console() -> None:
 
 
 def test_factory_skips_telemetry_when_too_narrow() -> None:
-    # A real TTY too narrow for a legible cockpit folds to the digest path.
+    # A real TTY too narrow for a legible wait region falls back to the progress line path.
     assert _make_view(_logger_with_console(force_terminal=True, width=20), poll_s=30).wants_download_progress is False
 
 
@@ -124,7 +124,7 @@ def test_factory_pulse_is_the_max_of_poll_and_digest_as_a_float() -> None:
     logger = _quiet_logger()
 
     _make_view(logger, poll_s=600, progress_line_interval=300).update(WaitSnapshot(()))  # the poll floor rules
-    _make_view(logger, poll_s=30, progress_line_interval=300).update(WaitSnapshot(()))  # the digest target rules
+    _make_view(logger, poll_s=30, progress_line_interval=300).update(WaitSnapshot(()))  # the line interval rules
 
     floor, target = recording.of_type(WaitStarted)
     assert floor.progress_line_s == 600.0
@@ -184,7 +184,7 @@ class TestHubWaitViewNarration:
         done = _finished_view("h1", "Bocchi the Rock!", Outcome.IMPORTED, files=12, elapsed=192.0)
 
         view.update(WaitSnapshot((done, _downloading("h2", "B")), elapsed_s=200))
-        # h1 stays terminal in the next snapshot: it must NOT graduate twice.
+        # h1 stays finished in the next snapshot: it must NOT finish twice.
         view.update(WaitSnapshot((done, _finished_view("h2", "B", Outcome.DOWNLOAD_TIMED_OUT)), elapsed_s=500))
 
         (opened,) = recording.of_type(ScopeOpened)
@@ -224,7 +224,7 @@ class TestHubWaitViewNarration:
 
     def test_first_snapshot_terminals_graduate_after_the_start(self) -> None:
         # A documented divergence, pinned deliberately: the old views
-        # logged a first-snapshot graduation BEFORE their start line. The
+        # logged a first-snapshot finished row BEFORE their start line. The
         # narrator opens (ScopeOpened + WaitStarted) first.
         recording = RecordingHub()
         install_hub(recording.hub)
@@ -282,7 +282,7 @@ class TestHubWaitViewNarration:
 
     def test_zero_tally_close_still_emits_the_finish(self) -> None:
         # The renderers show nothing for an empty tally (the builders return []),
-        # but the event MUST flow: the scope needs its close on every surface.
+        # but the event MUST flow: the scope needs its close on every renderer.
         recording = RecordingHub()
         install_hub(recording.hub)
         view = self._view()
@@ -299,7 +299,7 @@ class TestHubWaitViewNarration:
         assert len(recording.of_type(ScopeClosed)) == 1
 
     def test_finish_elapsed_is_the_last_snapshots(self) -> None:
-        # The narrator has no clock: elapsed rides the snapshots, so the tally
+        # The narrator has no clock: elapsed comes with the snapshots, so the tally
         # reports the LAST pushed elapsed_s (the Ctrl-C partial close relies on it).
         recording = RecordingHub()
         install_hub(recording.hub)
@@ -314,7 +314,7 @@ class TestHubWaitViewNarration:
 
     def test_interrupted_finish_still_closes_the_scope(self) -> None:
         # A KeyboardInterrupt inside finish's synchronous dispatch propagates
-        # (never swallowed), but the placement scope still closes on the way out
+        # (never swallowed), but the wait scope still closes on the way out
         # (the finally), so WAIT_REGION can't leak open behind the unwind.
         recording = RecordingHub()
         install_hub(recording.hub)
@@ -336,7 +336,7 @@ class TestHubWaitViewNarration:
         assert len(recording.of_type(ScopeClosed)) == 1  # the finally's fallback close
 
     def test_update_after_close_emits_nothing(self) -> None:
-        # Defensive: the engine never updates a closed view, but a bug there must
+        # Defensive: the wait pass never updates a closed view, but a bug there must
         # not re-open the scope or emit past the finish.
         recording = RecordingHub()
         install_hub(recording.hub)
@@ -367,8 +367,8 @@ class _FlakyEmit:
 
 
 def test_narrator_is_total_when_emission_raises(monkeypatch: pytest.MonkeyPatch) -> None:
-    # An emission raise must degrade to a debug no-op, never propagate (which
-    # would abort the engine's wait loop or the end-of-run cache save).
+    # An emission raise must become a debug no-op, never propagate (which
+    # would abort the wait pass's loop or the end-of-run cache save).
     monkeypatch.setattr("pearlarr.wait_view.emit_to_hub", _FlakyEmit(allow=3))
     logger = _quiet_logger("wait-narrator-boom")
     logger.setLevel(logging.DEBUG)
@@ -422,13 +422,13 @@ def test_wait_result_counts_by_category() -> None:
 
 
 def test_every_outcome_word_fits_the_state_column() -> None:
-    # The ledger prints the word in a fixed column, so a new outcome's word must fit it.
+    # The outcome line prints the word in a fixed column, so a new outcome's word must fit it.
     assert all(len(outcome.word) <= STATE_WIDTH for outcome in Outcome)
 
 
 def test_outcome_dropped_is_exactly_imported_and_missing() -> None:
-    # Pins the word<->drop parity the engine relies on (outcome.dropped drives
-    # _drop_pending), so a displayed word can never diverge from the store mutation.
+    # Pins the word<->drop parity the wait pass relies on (`apply_outcome` drops on
+    # the same two outcomes), so a displayed word can never diverge from the store mutation.
     assert {o for o in Outcome if o.dropped} == {Outcome.IMPORTED, Outcome.MISSING}
 
 

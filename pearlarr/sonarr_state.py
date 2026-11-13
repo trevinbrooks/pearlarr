@@ -1,4 +1,4 @@
-"""Pure verdicts over the import probes' Sonarr reads: queue, in-flight import, commands, history rows."""
+"""Pure states over the import attempts' Sonarr reads: queue, in-flight import, commands, history rows."""
 
 from collections.abc import Callable, Sequence
 from dataclasses import dataclass
@@ -17,34 +17,34 @@ class QueueState(Enum):
     """What Sonarr's queue says to do with a download THIS poll."""
 
     WAIT = auto()
-    """A record in motion (downloading, queued, delay, paused)."""
+    """A queue record in motion (downloading, queued, delay, paused)."""
 
     IMPORTING = auto()
-    """An `importing` record: Sonarr's pass has the download in hand, copying it or re-checking it."""
+    """An `importing` queue record: Sonarr's import has the download in hand, copying it or re-checking it."""
 
     IMPORT_PENDING_OK = auto()
-    """A clean (status `ok`) `importPending` record."""
+    """A clean (status `ok`) `importPending` queue record."""
 
     STUCK = auto()
-    """A record Sonarr won't progress: `importBlocked`, `failed`, `failedPending`, `ignored`, or `importPending`
-    flagged warning or error."""
+    """A queue record Sonarr won't progress: `importBlocked`, `failed`, `failedPending`, `ignored`, or
+    `importPending` marked warning or error."""
 
     NOT_IN_QUEUE = auto()
     """No queue record: Sonarr isn't tracking the download, or hasn't rescanned since it appeared."""
 
 
-# trackedDownloadState values compared case-folded: `importing`, and the transients Sonarr surfaces in the same field.
+# trackedDownloadState values compared case-folded: `importing`, and the transients Sonarr reports in the same field.
 _QUEUE_IMPORTING_STATES = frozenset({"importing"})
 _QUEUE_IN_MOTION_STATES = _QUEUE_IMPORTING_STATES | {"downloading", "queued", "delay", "paused"}
 _QUEUE_STUCK_STATES = frozenset(
     {"importblocked", "failed", "failedpending", "ignored"},
 )
-# The `status` values that mark an importPending record as a failed Sonarr attempt.
+# The `status` values that mark an importPending queue record as a failed Sonarr attempt.
 _QUEUE_PROBLEM_STATUSES = frozenset({"warning", "error"})
 
 
 def classify_queue(records: Sequence[QueueRecord]) -> QueueState:
-    """Reduce a download's queue records to one verdict.
+    """Reduce a download's queue records to one state.
 
     1. no records -> `NOT_IN_QUEUE`
     2. any record `importing` -> `IMPORTING`
@@ -90,14 +90,14 @@ def classify_queue(records: Sequence[QueueRecord]) -> QueueState:
 
 # A command counts as a ManualImport only under this name (Sonarr's command
 # `name`, compared case-folded), and only these statuses mean it is still
-# running. A terminal command (completed / failed / aborted / cancelled /
+# running. A finished command (completed / failed / aborted / cancelled /
 # orphaned) is no longer in flight, so it never wedges a re-import.
 _MANUAL_IMPORT_COMMAND_NAMES = frozenset({"manualimport"})
 _COMMAND_IN_FLIGHT_STATES = frozenset({"queued", "started"})
 
 
 def _norm_path(path: str) -> str:
-    """Normalize a path for a pure (no-disk) prefix compare: separators folded, casefolded."""
+    """Normalize a path for a pure (no-disk) prefix compare: separators converted, casefolded."""
 
     return to_forward_slashes(path).casefold()
 
@@ -106,7 +106,7 @@ class ContentPaths(NamedTuple):
     """One download's import folder in both filesystem views the guard must match.
 
     A folder import POSTs the TRANSLATED (Sonarr-visible) path, so
-    a command read back carries that form while the durable record carries the
+    a command read back carries that form while the durable pending import carries the
     raw qBittorrent one: the guard needs both prefixes.
     """
 
@@ -121,8 +121,8 @@ class ContentPaths(NamedTuple):
 class InFlightImport(NamedTuple):
     """The in-flight ManualImport `manual_import_in_flight` matched, plus HOW.
 
-    Only a provable (`by_download_id`) or own-issued match may be credited back
-    to the ready deadline. An unproven one stays a plain deadline-bounded wait.
+    Only a provable (`by_download_id`) or pearlarr-issued match counts as an auto
+    import. An unproven one still pauses the import clock but never claims the import.
     """
 
     command: CommandResource
@@ -142,7 +142,7 @@ class DownloadIdentifiers(NamedTuple):
     """The import folder in both filesystem views, for the no-download-id fallback."""
 
     file_map_episode_ids: set[int]
-    """Our intended episode ids, for the same fallback."""
+    """The intended episode ids, for the same fallback."""
 
 
 def manual_import_in_flight(
@@ -218,7 +218,7 @@ def _completed_rescans(commands: Sequence[CommandResource]) -> list[CommandResou
 
 
 def sonarr_restarted(commands: Sequence[CommandResource]) -> bool:
-    """Whether the list holds no completed rescan at all."""
+    """Whether the list has no completed rescan at all."""
 
     return not _completed_rescans(commands)
 
@@ -236,7 +236,7 @@ def rescanned_since_add(commands: Sequence[CommandResource], added_at: str) -> b
 def _with_status(
     commands: Sequence[CommandResource], names: frozenset[str], statuses: frozenset[str]
 ) -> list[CommandResource]:
-    """The named commands in one of `statuses`, casefolded on both axes."""
+    """The named commands in one of `statuses`, casefolded on name and status."""
 
     return [
         command
@@ -246,7 +246,7 @@ def _with_status(
 
 
 class CommandBlock(Enum):
-    """Why the command list blocks a step-in this poll (values are the log phrases)."""
+    """Why the command list blocks an auto import this poll (values are the log phrases)."""
 
     AUTO_IMPORT = "our ManualImport is in flight"
     IN_FLIGHT_IMPORT = "a ManualImport is already in flight"
@@ -256,20 +256,20 @@ class CommandBlock(Enum):
 
     @property
     def is_auto_import(self) -> bool:
-        """Whether the in-flight import is provably ours (the probe reads `command_issued`)."""
+        """Whether the in-flight import is provably pearlarr's (the attempt result reads `command_issued`)."""
 
         return self is CommandBlock.AUTO_IMPORT
 
     @property
     def pause_reason(self) -> PauseReason:
-        """The wait's reason for the probe: an import in flight, a busy Sonarr, or none after a restart."""
+        """The attempt's pause reason: an import in flight, a busy Sonarr, or none after a restart."""
 
         if self in _IMPORT_BLOCKS:
             return PauseReason.IMPORT
         return PauseReason.NONE if self is CommandBlock.SONARR_RESTARTED else PauseReason.BUSY
 
     def waiting(self) -> AttemptResult:
-        """The wait this block calls for."""
+        """The waiting attempt result this block calls for."""
 
         return AttemptResult.waiting(command_issued=self.is_auto_import, pause_reason=self.pause_reason)
 
@@ -282,7 +282,7 @@ def classify_commands(
     identifiers: DownloadIdentifiers,
     is_auto_import: Callable[[int], bool],
 ) -> CommandBlock | None:
-    """Reduce one `/api/v3/command` snapshot to the block holding a step-in, or None when clear.
+    """Reduce one `/api/v3/command` snapshot to the block stopping an auto import, or None when clear.
 
     `is_auto_import` says whether a command id is one this run POSTed.
     """
@@ -296,7 +296,7 @@ def classify_commands(
     return None
 
 
-# The episode-history events that map a re-appeared download to a queue-hidden
+# The episode-history events that put a re-appeared download in a queue-hidden
 # tracked state (Imported / Failed / Ignored), states Sonarr never runs its
 # completed-download Check on, so `manualimport?downloadId=` never serves them
 # (a 500 on v4, `[]` on v5). Keyed by casefolded eventType, valued by the label
@@ -316,33 +316,33 @@ class HistoryImport(NamedTuple):
     path: str
     """The imported file's download-folder path, `data.droppedPath`."""
     episode_id: int
-    """The episode the row landed on."""
+    """The episode Sonarr imported the row's file onto."""
     series_id: int
-    """The row's `seriesId`, so a record never claims another series' import."""
+    """The row's `seriesId`, so a pending import never claims another series' import."""
 
 
 @dataclass(frozen=True, slots=True)
 class DownloadHistoryState:
     """What a download's newest relevant Sonarr history event says about its state.
 
-    An imported verdict also carries the rows of that import.
+    An imported state also carries the rows of that import.
     """
 
     history_closed: bool
-    """True when Sonarr's history maps the download to a queue-hidden state it
+    """True when Sonarr's history puts the download in a queue-hidden state it
     will never serve by id. Import from its folder instead."""
 
     event: str | None = None
-    """The dead-tracked event label (`imported`/`failed`/`ignored`), for the
+    """The label of the event that closed the history (`imported`/`failed`/`ignored`), for the
     fallback's debug note. None when clean."""
 
     date: str | None = None
-    """The dead-tracked event's raw ISO date, for the fallback's debug note."""
+    """The closing event's raw ISO date, for the fallback's debug note."""
 
     import_rows: tuple[HistoryImport, ...] = ()
-    """The rows of the import that dead-tracked the download, one per file and episode, for
-    rebuilding a never-scanned record's map. Empty for a failed or ignored verdict, for a clean
-    one, and when the page cannot bound the import."""
+    """The rows of the import that closed the download's history, one per file and episode, for
+    rebuilding the file map of a pending import no fetch saw. Empty for a failed or ignored state, for a
+    clean one, and when the page cannot bound the import."""
 
 
 def classify_download_history(page: HistoryPage) -> DownloadHistoryState:
@@ -353,12 +353,12 @@ def classify_download_history(page: HistoryPage) -> DownloadHistoryState:
     `history_for_download` returns them) and decide on the first event among
     `grabbed` / `downloadFolderImported` / `downloadFailed` /
     `downloadIgnored`, skipping every other type (e.g. `episodeFileDeleted`).
-    Imported/failed/ignored -> dead-tracked. `grabbed` -> clean (a hash Sonarr
+    Imported/failed/ignored -> history closed. `grabbed` -> clean (a hash Sonarr
     itself re-grabbed after an old failure is genuinely Downloading). None of
-    the four found -> clean. Probing only for prior imports would misroute
-    re-grabs of previously-FAILED/IGNORED hashes, which the by-id scan can't
-    serve either. A partly imported download reads dead too. An imported
-    verdict carries its cycle's import rows.
+    the four found -> clean. Looking only for prior imports would misroute
+    re-grabs of previously-FAILED/IGNORED hashes, which the by-id fetch can't
+    serve either. A partly imported download reads closed too. An imported
+    state carries the rows of its import.
     """
 
     for index, record in enumerate(page.records):
@@ -373,10 +373,10 @@ def classify_download_history(page: HistoryPage) -> DownloadHistoryState:
 
 
 def _import_rows(page: HistoryPage, start: int) -> tuple[HistoryImport, ...]:
-    """The rows of the import cycle starting at `start`, or none when the page cannot bound it.
+    """The rows of the import starting at `start`, or none when the page cannot bound it.
 
     Every `downloadFolderImported` row down to the next `grabbed`, skipping rows with no path or
-    episode id. Empty when the page ends before that grab and is cut, since the cycle may go on.
+    episode id. Empty when the page ends before that grab and is cut, since the import may go on.
     """
 
     rows: list[HistoryImport] = []
@@ -392,10 +392,10 @@ def _import_rows(page: HistoryPage, start: int) -> tuple[HistoryImport, ...]:
 
 
 def placements_from_history(imports: Sequence[HistoryImport], pending: PendingImport) -> dict[str, tuple[int, ...]]:
-    """Sonarr's import rows as placements for the record's unplaced listing files, normalized leaf -> sorted ids.
+    """Sonarr's import rows placing the pending import's unplaced listing files, normalized name -> sorted ids.
 
-    Our seed stays authoritative, and a row lands only where some claim admits it: by name
-    (`excluded_files`) and by id (a claim on the row's series whose window holds the episode).
+    The file map stays authoritative, and a row goes only where some claim admits it: by name
+    (`excluded_files`) and by id (a claim on the row's series whose window has the episode).
     """
 
     wanted = pending.unplaced_names()
