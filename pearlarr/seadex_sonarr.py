@@ -173,7 +173,7 @@ class SonarrStrategy(ArrStrategy[SonarrItem]):
 
         self._executor.reset()
         self._listings.reset()
-        return self._episodes.collect_series()
+        return self._episodes.refresh_library()
 
     @override
     def filter_to_single(self, items: list[SonarrItem], item_id: int) -> list[SonarrItem]:
@@ -261,7 +261,7 @@ class SonarrStrategy(ArrStrategy[SonarrItem]):
             sd_entry,
             lambda: _coverage.coverage_string(
                 _coverage.episodes_from_ep_list(
-                    self._episodes.get_ep_list(
+                    self._episodes.mapping_episodes(
                         sonarr_series_id=sonarr_series_id,
                         al_id=al_id,
                         mapping=mapping,
@@ -278,7 +278,7 @@ class SonarrStrategy(ArrStrategy[SonarrItem]):
         cache_details = run.new_cache_details(title, sd_entry)
 
         # Get the episode list for all relevant episodes
-        ep_list = self._episodes.get_ep_list(
+        ep_list = self._episodes.mapping_episodes(
             sonarr_series_id=sonarr_series_id,
             al_id=al_id,
             mapping=mapping,

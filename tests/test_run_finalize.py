@@ -319,7 +319,7 @@ class _StagingStrategy(FakeStrategy):
 class _RaisingSnapshots(_FakeBound):
     """A wait manager whose per-item pending snapshot raises, after that item's ids staged their rows."""
 
-    def snapshot_pending_for_series(self, series_id: int) -> None:
+    def report_imports_for_series(self, series_id: int) -> None:
         raise RuntimeError(f"snapshot failed for series {series_id}")
 
 

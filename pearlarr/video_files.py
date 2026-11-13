@@ -3,7 +3,7 @@
 import os
 from collections.abc import Iterator, Sequence
 
-from .file_paths import path_leaf
+from .file_paths import file_name
 
 CREDITLESS_MARKERS = [
     "NCED",
@@ -101,6 +101,6 @@ def indexed_video_files(files: Sequence[str]) -> Iterator[tuple[int, str]]:
     """Yield `(index, basename)` for each importable video file in `files`, the index keying a size list."""
 
     for idx, name in enumerate(files):
-        base = path_leaf(name)
+        base = file_name(name)
         if is_video_candidate(base):
             yield idx, base

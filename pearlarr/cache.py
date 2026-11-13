@@ -22,7 +22,7 @@ from .config import Arr
 from .json_narrow import is_json_obj
 from .log import LOG_NAME
 from .output import hub_note
-from .pending_import import GuardFacts
+from .pending_import import OwnedAtGrab
 from .sqlite_util import connect, open_or_quarantine, rollback_and_close
 from .stamps import parse_stamp, parse_stamp_or_none, stamp_of
 from .tvdb_orders import StoredOrders
@@ -482,9 +482,9 @@ class AbstractCacheStore(ABC):
     @abstractmethod
     def other_arr_holds(self, arr: Arr, infohash: str) -> bool: ...
     @abstractmethod
-    def put_guards(self, arr: Arr, al_id: int, guards: GuardFacts) -> None: ...
+    def put_guards(self, arr: Arr, al_id: int, guards: OwnedAtGrab) -> None: ...
     @abstractmethod
-    def get_guards(self, arr: Arr) -> dict[int, GuardFacts]: ...
+    def get_guards(self, arr: Arr) -> dict[int, OwnedAtGrab]: ...
     @abstractmethod
     def get_tvdb_orders(self, tvdb_id: int) -> StoredOrders | None: ...
     @abstractmethod
@@ -806,17 +806,17 @@ class CacheStore(AbstractCacheStore):
         return row is not None
 
     @override
-    def put_guards(self, arr: Arr, al_id: int, guards: GuardFacts) -> None:
+    def put_guards(self, arr: Arr, al_id: int, guards: OwnedAtGrab) -> None:
         """Upsert the entry's guard-evidence row (staged, persisted at a save point)."""
 
         self._json_put(_GUARD_FACTS, (_arr_key(arr), al_id), asdict(guards))
 
     @override
-    def get_guards(self, arr: Arr) -> dict[int, GuardFacts]:
+    def get_guards(self, arr: Arr) -> dict[int, OwnedAtGrab]:
         """The arr's guard rows for entries with LIVE pending records. Rows are immortal, nothing deletes one."""
 
         return {
-            al_id: GuardFacts.from_json(json.loads(rec_json))
+            al_id: OwnedAtGrab.from_json(json.loads(rec_json))
             for al_id, rec_json in self._conn.execute(
                 "SELECT al_id, json(record) FROM guard_facts WHERE arr = ? AND al_id IN ("
                 "SELECT e.value ->> 'al_id' FROM pending_imports p, json_each(p.record, '$.claims') e WHERE p.arr = ?)",

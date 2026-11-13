@@ -13,7 +13,7 @@ from .grab_placement import PendingImportUpdate, TitleFacts, build_unscoped_seed
 from .mappings import ExternalIds, TitleMapping
 from .output import hub_warn
 from .output.console_text import pluralize
-from .pending_import import GuardFacts, PendingImport, added_at_of
+from .pending_import import OwnedAtGrab, PendingImport, added_at_of
 from .progress import ProgressSink
 from .protocols import ArrStrategy
 from .radarr_client import AbstractRadarrClient, RadarrClient, collect_anime_movies
@@ -194,7 +194,7 @@ class RadarrStrategy(ArrStrategy[RadarrItem]):
             flagged = releases_to_grab(seadex_dict)
             stored = run.records.stored_records(f.qbit_hash for f in flagged)
             facts = TitleFacts(
-                al_id=al_id, series_id=0, title=title.name, coverage=None, url=sd_url, guards=GuardFacts()
+                al_id=al_id, series_id=0, title=title.name, coverage=None, url=sd_url, guards=OwnedAtGrab()
             )
             pending_seeds = {f.qbit_hash: build_unscoped_seed(f, facts, stored.get(f.qbit_hash)) for f in flagged}
 

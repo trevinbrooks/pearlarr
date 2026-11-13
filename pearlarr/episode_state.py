@@ -8,7 +8,7 @@ from types import MappingProxyType
 from typing import NamedTuple, Self
 
 from .arr_models import SonarrEpisodeFile
-from .pending_import import FileEpisodeMap, GuardFacts, PendingImport, TitleClaim, TorrentGroup, sizes_by_episode
+from .pending_import import FileEpisodeMap, OwnedAtGrab, PendingImport, TitleClaim, TorrentGroup, sizes_by_episode
 from .placement_types import EpisodeIndex
 from .releases import normalize_group, normalize_rg
 
@@ -48,15 +48,15 @@ class TargetJudgment(NamedTuple):
     """A target's current file, read once: its status, and whether it's a copy of one of this torrent's files."""
 
     status: EpisodeFileStatus
-    own_copy: bool
+    has_torrent_size: bool
     """The file is at one of this torrent's listed sizes. Size alone decides, not the group or the status."""
-    untagged_copy: bool = False
+    has_torrent_size_no_group: bool = False
     """The file has no group and is a copy of the one intended here, or of any of this torrent's files when nothing
     is intended here: what a hand import of the torrent's own file leaves."""
 
 
 # How a target with no file reads. `ImportSnapshot.status_of` also gives it for an id no snapshot covers.
-_NO_FILE = TargetJudgment(EpisodeFileStatus.ABSENT, own_copy=False)
+_NO_FILE = TargetJudgment(EpisodeFileStatus.ABSENT, has_torrent_size=False)
 
 
 @dataclass(frozen=True, slots=True, kw_only=True)
@@ -95,8 +95,8 @@ class EpisodeStatuses:
         by_target = {ep_id: judge(ep_id, intended_sizes.get(ep_id)) for ep_id in dict.fromkeys(targets)}
         return cls(
             {ep_id: judgment.status for ep_id, judgment in by_target.items()},
-            frozenset(ep_id for ep_id, judgment in by_target.items() if judgment.own_copy),
-            frozenset(ep_id for ep_id, judgment in by_target.items() if judgment.untagged_copy),
+            frozenset(ep_id for ep_id, judgment in by_target.items() if judgment.has_torrent_size),
+            frozenset(ep_id for ep_id, judgment in by_target.items() if judgment.has_torrent_size_no_group),
         )
 
     def all_trusted(self) -> bool:
@@ -120,7 +120,7 @@ class EpisodeStatuses:
             untrusted=tuple(ep_id for ep_id, status in unfilled if status is not EpisodeFileStatus.ABSENT),
         )
 
-    def filled_by_hand(self) -> bool:
+    def all_done(self) -> bool:
         """Whether every target holds a recommended file or an untagged copy of this torrent's: a hand import done.
 
         Sonarr reads no group off a file name that carries none, so `all_done` alone never sees that hand import.
@@ -175,7 +175,7 @@ class EpisodeSnapshot(NamedTuple):
     only while the file still sits at that size. Anything else untagged classifies as unidentifiable."""
 
     @classmethod
-    def guarded(cls, episodes: EpisodeIndex, guards: GuardFacts, votes: GrabbedGroups) -> Self:
+    def guarded(cls, episodes: EpisodeIndex, guards: OwnedAtGrab, votes: GrabbedGroups) -> Self:
         """The snapshot under one claim's guard evidence: its trust policy and its recorded untagged sizes."""
 
         return cls(
@@ -206,10 +206,12 @@ class EpisodeSnapshot(NamedTuple):
             return _NO_FILE
         file = ep.episode_file
         if file is None:
-            return TargetJudgment(self._status(ep_id, file, intended_size), own_copy=False)
-        own_copy = self._own_size(file.size)
-        untagged_copy = own_copy and not file.release_group and not self._misplaced(file.size, intended_size)
-        return TargetJudgment(self._status(ep_id, file, intended_size), own_copy, untagged_copy)
+            return TargetJudgment(self._status(ep_id, file, intended_size), has_torrent_size=False)
+        has_torrent_size = self._own_size(file.size)
+        has_torrent_size_no_group = (
+            has_torrent_size and not file.release_group and not self._misplaced(file.size, intended_size)
+        )
+        return TargetJudgment(self._status(ep_id, file, intended_size), has_torrent_size, has_torrent_size_no_group)
 
     def _status(self, ep_id: int, file: SonarrEpisodeFile | None, intended_size: int | None) -> EpisodeFileStatus:
         """Classify a target's current file. `file` is None when Sonarr gives the episode a file id but no record."""
@@ -332,7 +334,7 @@ class ImportSnapshot:
         )
 
 
-def trusted_groups(guards: GuardFacts, votes: GrabbedGroups) -> TrustedGroups:
+def trusted_groups(guards: OwnedAtGrab, votes: GrabbedGroups) -> TrustedGroups:
     """One claim's trust policy: entry picks and non-stale siblings by name, the own group last at its listed sizes.
 
     Same-group siblings union their sizes into the own group's (None = no size gate), so a stale copy is replaced.

@@ -106,7 +106,7 @@ class TestScan:
         assert scan.touched == frozenset({3, 4})
         assert scan.rescan_all is False
         assert fetch.calls == [format_history_date(_NOW - timedelta(days=HISTORY_MAX_LOOKBACK_DAYS))]
-        monitor.commit_checkpoint()
+        monitor.stage_checkpoint()
         assert cache.get_history_checkpoint(Arr.SONARR) == HistoryCheckpoint("2026-07-06T11:00:00Z", 7)
 
     def test_id_cursor_dedup_skips_already_seen_records(self) -> None:
@@ -138,7 +138,7 @@ class TestScan:
         assert scan.rescan_all is True
         assert scan.touched == frozenset()
         assert fetch.calls == [format_history_date(_NOW - timedelta(days=HISTORY_MAX_LOOKBACK_DAYS))]
-        monitor.commit_checkpoint()
+        monitor.stage_checkpoint()
         assert cache.get_history_checkpoint(Arr.SONARR) == HistoryCheckpoint("2026-07-06T09:00:00Z", 50)
 
     def test_gap_with_empty_window_still_signals_rescan(self) -> None:
@@ -152,7 +152,7 @@ class TestScan:
         scan = monitor.scan(_Fetch([]), now=_NOW)
 
         assert scan.rescan_all is True
-        monitor.commit_checkpoint()
+        monitor.stage_checkpoint()
         assert cache.get_history_checkpoint(Arr.SONARR) == stored
 
     def test_future_checkpoint_date_clamped_to_now(self) -> None:
@@ -205,7 +205,7 @@ class TestScan:
 
         assert monitor.scan(fetch, now=_NOW).touched == frozenset()
         # The window was non-empty, so the cursor still advances on commit.
-        monitor.commit_checkpoint()
+        monitor.stage_checkpoint()
         checkpoint = cache.get_history_checkpoint(Arr.SONARR)
         assert checkpoint is not None
         assert checkpoint.last_id == 2
@@ -235,7 +235,7 @@ class TestScan:
         records = [_rec(1, item_id=2, download_id="BEEF01")]
 
         assert monitor.scan(_Fetch(records), now=_NOW).touched == frozenset({2})
-        monitor.commit_checkpoint()
+        monitor.stage_checkpoint()
         next_run, _ = _monitor(cache)
         assert next_run.scan(_Fetch(records), now=_NOW).touched == frozenset()
 
@@ -264,7 +264,7 @@ class TestScan:
         assert not any(r.levelno == logging.WARNING for r in capture.records)
         assert any(r.levelno == logging.DEBUG for r in capture.records)
         # No pending checkpoint either: commit is a no-op.
-        monitor.commit_checkpoint()
+        monitor.stage_checkpoint()
         assert cache.get_history_checkpoint(Arr.SONARR) is None
 
     def test_fetch_failure_on_a_gap_keeps_the_gap_detectable(self) -> None:
@@ -277,7 +277,7 @@ class TestScan:
         scan = monitor.scan(_Fetch(None), now=_NOW)
 
         assert scan.rescan_all is False
-        monitor.commit_checkpoint()
+        monitor.stage_checkpoint()
         assert cache.get_history_checkpoint(Arr.SONARR) == stored
 
     def test_empty_response_leaves_checkpoint_unchanged(self) -> None:
@@ -286,7 +286,7 @@ class TestScan:
         cache.put_history_checkpoint(Arr.SONARR, stored)
 
         assert monitor.scan(_Fetch([]), now=_NOW).touched == frozenset()
-        monitor.commit_checkpoint()
+        monitor.stage_checkpoint()
         assert cache.get_history_checkpoint(Arr.SONARR) == stored
 
     def test_stale_only_window_leaves_checkpoint_unchanged(self) -> None:
@@ -295,7 +295,7 @@ class TestScan:
         cache.put_history_checkpoint(Arr.SONARR, stored)
 
         assert monitor.scan(_Fetch([_rec(11), _rec(12)]), now=_NOW).touched == frozenset()
-        monitor.commit_checkpoint()
+        monitor.stage_checkpoint()
         assert cache.get_history_checkpoint(Arr.SONARR) == stored
 
     def test_empty_date_record_does_not_stash_a_checkpoint(self) -> None:
@@ -308,7 +308,7 @@ class TestScan:
         scan = monitor.scan(_Fetch([_rec(20, item_id=5, date="")]), now=_NOW)
 
         assert scan.touched == frozenset({5})
-        monitor.commit_checkpoint()
+        monitor.stage_checkpoint()
         assert cache.get_history_checkpoint(Arr.SONARR) == stored
 
 

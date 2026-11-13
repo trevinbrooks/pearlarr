@@ -25,7 +25,7 @@ from pearlarr.pending_import import TitleNames
 from pearlarr.run_services import LegServices
 
 from .builders import (
-    AddOutcome,
+    AddStatus,
     FakeCacheStore,
     FakeSeaDexSource,
     FakeTorrents,
@@ -312,7 +312,7 @@ class TestACheckedTitleLosesItsStamp:
 
     def test_a_recheck_held_past_the_add_cap_is_checked_again_next_run(self) -> None:
         cache = FakeCacheStore()
-        run = self._rechecking(cache, FakeTorrents({"h1": (AddOutcome.ADDED, "Show-RG")}), add_cap=1)
+        run = self._rechecking(cache, FakeTorrents({"h1": (AddStatus.ADDED, "Show-RG")}), add_cap=1)
         run.ctx.torrents_added = 1
 
         assert run.is_unchanged(7, self._ENTRY, lambda: "") is False
@@ -323,7 +323,7 @@ class TestACheckedTitleLosesItsStamp:
 
     def test_a_recheck_that_caches_the_title_as_done_is_skipped_next_run(self) -> None:
         cache = FakeCacheStore()
-        run = self._rechecking(cache, FakeTorrents({"h1": (AddOutcome.ADDED, "Show-RG")}))
+        run = self._rechecking(cache, FakeTorrents({"h1": (AddStatus.ADDED, "Show-RG")}))
 
         assert run.is_unchanged(7, self._ENTRY, lambda: "") is False
         self._grab(run)

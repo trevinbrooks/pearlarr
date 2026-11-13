@@ -45,7 +45,7 @@ from pearlarr.config import AppConfig, Arr
 from pearlarr.episode_state import EpisodeFileStatus, EpisodeSnapshot, EpisodeStatuses, TrustedGroups
 from pearlarr.grab_pipeline import GrabPipeline, GrabRequest
 from pearlarr.grab_placement import FetchedSeadex, KnownTorrent, PendingImportUpdate, TitleFacts, TorrentFacts
-from pearlarr.import_wait import ImportProbes, ImportWaitManager, PostImportCleanup
+from pearlarr.import_wait import ImportWaitManager, PostImportCleanup, WaitPollers
 from pearlarr.leg_state import ArrRunState
 from pearlarr.mappings import MappingResolver, MappingSources
 from pearlarr.notify import Notifier
@@ -55,7 +55,7 @@ from pearlarr.pending_import import (
     NO_ORDER_ONLY,
     NO_SIZES_BY_NAME,
     FileEpisodeMap,
-    GuardFacts,
+    OwnedAtGrab,
     PendingImport,
     TitleClaim,
     TitleNames,
@@ -93,7 +93,7 @@ from pearlarr.sonarr_client import AbstractSonarrClient
 from pearlarr.sonarr_episodes import SonarrEpisodes
 from pearlarr.sonarr_parse import SonarrParseCache
 from pearlarr.stamps import STAMP_FORMAT, parse_stamp, stamp_of
-from pearlarr.torrents import AddOutcome, AddResult, TorrentService
+from pearlarr.torrents import AddResult, AddStatus, TorrentService
 from pearlarr.tvdb_orders import NO_ORDERS, OrderRow, SeriesOrdering, SeriesOrders, StoredOrders
 from pearlarr.wait_types import NO_HELD_BACK, AttemptResult, HeldFile, ImportWaitMode, LeftForHandImport, PauseReason
 from pearlarr.window_placement import WindowedAssignment
@@ -277,7 +277,7 @@ class FakeCacheStore(AbstractCacheStore):
         # The entries, keyed by (arr, al_id). The existence checks key on membership, never the dict's truthiness.
         self._entries: dict[tuple[str, int], dict[str, Any]] = {}
         self._anilist_meta: dict[int, dict[str, Any]] = {}
-        self._guards: dict[str, dict[int, GuardFacts]] = {}
+        self._guards: dict[str, dict[int, OwnedAtGrab]] = {}
         self._history_checkpoints: dict[str, HistoryCheckpoint] = {}
         self._tvdb_orders: dict[int, StoredOrders] = {}
         self._kv: dict[str, str] = {}
@@ -409,11 +409,11 @@ class FakeCacheStore(AbstractCacheStore):
         return any(infohash in recs for arr_key, recs in self._pending.items() if arr_key != str(arr))
 
     @override
-    def put_guards(self, arr: Arr, al_id: int, guards: GuardFacts) -> None:
+    def put_guards(self, arr: Arr, al_id: int, guards: OwnedAtGrab) -> None:
         self._guards.setdefault(str(arr), {})[al_id] = guards
 
     @override
-    def get_guards(self, arr: Arr) -> dict[int, GuardFacts]:
+    def get_guards(self, arr: Arr) -> dict[int, OwnedAtGrab]:
         """Only entries with a live pending record (mirrors the real store's join)."""
 
         live = {
@@ -806,7 +806,7 @@ class FakeTorrents:
 
     def __init__(
         self,
-        by_hash: dict[str | None, tuple[AddOutcome, str | None] | AddResult],
+        by_hash: dict[str | None, tuple[AddStatus, str | None] | AddResult],
         *,
         raises: dict[str | None, Exception] | None = None,
     ) -> None:
@@ -892,7 +892,7 @@ def entry_facts(**overrides: Any) -> TitleFacts:
         "title": "Show",
         "coverage": None,
         "url": None,
-        "guards": GuardFacts(),
+        "guards": OwnedAtGrab(),
     }
     defaults.update(overrides)
     return TitleFacts(**defaults)
@@ -979,7 +979,7 @@ def make_import_wait_manager(**overrides: Any) -> ImportWaitManager:
 
     records = PendingImportStore(cache_store)
     records.bind_leg(ctx)
-    probes = make_bare_instance(ImportProbes, _qbit=qbit, _logger=logger, strategy=None)
+    probes = make_bare_instance(WaitPollers, _qbit=qbit, _logger=logger, strategy=None)
     cleanup = make_bare_instance(
         PostImportCleanup,
         _imports=config.imports,
@@ -1052,7 +1052,7 @@ def url_item(
 def plan_result(seadex_dict: SeadexDict) -> GrabPlan:
     """A `PlanResult` carrying just the dict, with no skips and no guard evidence."""
 
-    return GrabPlan(seadex_dict=seadex_dict, skips=PrivateOnlyNotices(), guards=GuardFacts())
+    return GrabPlan(seadex_dict=seadex_dict, skips=PrivateOnlyNotices(), guards=OwnedAtGrab())
 
 
 def rg_group(
@@ -1392,12 +1392,12 @@ def entry_claim(**overrides: Any) -> TitleClaim:
         "al_id": PENDING_AL_ID,
         "series_id": 7,
         "title": "Show",
-        "coverage": None,
+        "window_coverage": None,
         "url": None,
         "ordered_episode_ids": (),
         "names": TitleNames(),
         "preowned_episode_ids": (),
-        "slice_coverage": None,
+        "claimed_coverage": None,
     }
     defaults.update(overrides)
     for key in ("ordered_episode_ids", "preowned_episode_ids"):

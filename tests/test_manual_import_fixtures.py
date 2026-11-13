@@ -21,8 +21,8 @@ from pearlarr.arr_models import (
     SonarrEpisode,
 )
 from pearlarr.config import AppConfig
-from pearlarr.file_paths import normalize_basename
-from pearlarr.import_quality import ParsedQuality, quality_axes_from_model, resolve_quality
+from pearlarr.file_paths import normalize_name
+from pearlarr.import_quality import QualityParts, quality_parts_from_model, resolve_quality
 from pearlarr.pending_import import PendingImport
 from pearlarr.probe_verdicts import (
     ContentPaths,
@@ -86,11 +86,11 @@ class TestQualityResolution:
     def test_bd_remux_resolves_against_full_def_list(self) -> None:
         # Sonarr parses a 1080p BD remux as (blurayRaw, 1080): against the full list that pair
         # resolves to the "Bluray-1080p Remux" definition, never an omitted quality.
-        sonarr = ParsedQuality(source=QualitySource.BLURAY_RAW, resolution=1080)
+        sonarr = QualityParts(source=QualitySource.BLURAY_RAW, resolution=1080)
         model = resolve_quality(
             sonarr,
-            ParsedQuality(),
-            ParsedQuality(),
+            QualityParts(),
+            QualityParts(),
             _load_models("qualitydefinitions.json", QualityDefinition),
             candidate_model=None,
         )
@@ -107,7 +107,7 @@ class TestQualityResolution:
             for c in candidates
             if c.quality is not None and c.quality.quality is not None and c.quality.quality.name == "DVD"
         )
-        assert quality_axes_from_model(dvd.quality) == ParsedQuality(
+        assert quality_parts_from_model(dvd.quality) == QualityParts(
             source=QualitySource.DVD,
             resolution=480,
         )
@@ -366,7 +366,7 @@ class TestCapturedSpecialsEndToEnd:
             infohash="1111111111111111111111111111111111111111",
             file_episode_map=specials.grab_map,
             ordered_episode_ids=[8030, 8031, 8032],
-            cross_seed=cross_seed,
+            is_cross_seed=cross_seed,
         )
 
         specials.strat.import_completed(pending, "/downloads/yamada", AttemptKind.ORDINARY)
@@ -449,7 +449,7 @@ class TestCapturedSpecialsEndToEnd:
             infohash="5555555555555555555555555555555555555555",
             file_episode_map={specials.files[0]: [8030]},
             ordered_episode_ids=[8030],
-            excluded_files=[normalize_basename(name) for name in specials.files[1:]],
+            excluded_files=[normalize_name(name) for name in specials.files[1:]],
         )
 
         progress = specials.strat.import_progress(pending)

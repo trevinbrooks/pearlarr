@@ -34,7 +34,7 @@ from pearlarr.discord import (
 from pearlarr.notify import GrabNotice, Notifier
 from pearlarr.output import Severity
 from pearlarr.releases import SeadexDict
-from pearlarr.torrents import AddOutcome, ReleaseOutcome
+from pearlarr.torrents import AddStatus, GrabResult
 from pearlarr.wait_types import Outcome
 from pearlarr.wait_view import WaitOutcomeRow, WaitResult
 
@@ -299,7 +299,7 @@ def _notice(
     banner_url: str | None = None,
     replaced_groups: tuple[str, ...] = (),
     seadex_dict: SeadexDict | None = None,
-    results: Sequence[ReleaseOutcome] = (),
+    results: Sequence[GrabResult] = (),
     failed_groups: frozenset[str] = frozenset(),
     coverage: str = "",
 ) -> GrabNotice:
@@ -494,7 +494,7 @@ class TestGrabLayout:
             _notice(
                 replaced_groups=("Erai_raws",),
                 seadex_dict=seadex_dict,
-                results=[ReleaseOutcome(AddOutcome.ADDED, "PMR release", "PMR")],
+                results=[GrabResult(AddStatus.ADDED, "PMR release", "PMR")],
                 coverage="S01 E01-E12",
             ),
         )
@@ -526,8 +526,8 @@ class TestGrabLayout:
             _notice(
                 seadex_dict=seadex_dict,
                 results=[
-                    ReleaseOutcome(AddOutcome.ADDED, None, "Fresh"),
-                    ReleaseOutcome(AddOutcome.ALREADY_IN_QBIT, None, "InFlight"),
+                    GrabResult(AddStatus.ADDED, None, "Fresh"),
+                    GrabResult(AddStatus.ALREADY_IN_QBIT, None, "InFlight"),
                 ],
                 failed_groups=frozenset({"Errored"}),
                 replaced_groups=("Erai_raws",),

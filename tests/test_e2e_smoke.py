@@ -109,7 +109,7 @@ def test_sonarr_run_drives_real_composition_root(
         return ("magnet:?xt=urn:btih:" + "a" * 40, "Undefeated Bahamut Chronicle - S01E01 [1080p]")
 
     monkeypatch.setattr(run_services, "SeaDexEntry", _FakeSeaDexEntry)
-    monkeypatch.setattr(torrents, "get_nyaa_torrent", _fake_get_nyaa_torrent)
+    monkeypatch.setattr(torrents, "fetch_nyaa_link", _fake_get_nyaa_torrent)
 
     # A real config.yml on disk (run_single reads it via resolve_paths): Sonarr creds,
     # qBittorrent unset -> preview, and the one inline tvdb->anilist mapping that lets
@@ -250,7 +250,7 @@ def test_radarr_run_drives_real_composition_root(
         return ("magnet:?xt=urn:btih:" + "b" * 40, "Your Name (2016) [BD 1080p]")
 
     monkeypatch.setattr(run_services, "SeaDexEntry", _FakeSeaDexEntry)
-    monkeypatch.setattr(torrents, "get_nyaa_torrent", _fake_get_nyaa_torrent)
+    monkeypatch.setattr(torrents, "fetch_nyaa_link", _fake_get_nyaa_torrent)
 
     # A real config.yml on disk: Radarr creds, qBittorrent unset -> preview, and
     # the one inline tmdb->anilist mapping that lets the REAL resolver resolve a

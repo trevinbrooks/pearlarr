@@ -15,7 +15,7 @@ from .pending_import import (
     NO_ORDER_ONLY,
     NO_SIZES_BY_NAME,
     FileEpisodeMap,
-    GuardFacts,
+    OwnedAtGrab,
     PendingImport,
     TitleClaim,
     TitleNames,
@@ -514,7 +514,7 @@ class TitleFacts:
     """The entry's season/episode coverage at grab time (logging only)."""
     url: str | None
     """The SeaDex entry URL at grab time (logging only)."""
-    guards: GuardFacts
+    guards: OwnedAtGrab
     """The plan's overwrite-guard evidence, copied onto every claim unchanged (see `GuardFacts`)."""
 
     def claim(self, terms: ClaimTerms) -> TitleClaim:
@@ -524,12 +524,12 @@ class TitleFacts:
             al_id=self.al_id,
             series_id=self.series_id,
             title=self.title,
-            coverage=self.coverage,
+            window_coverage=self.coverage,
             url=self.url,
             ordered_episode_ids=terms.ordered_episode_ids,
             names=terms.names,
             preowned_episode_ids=terms.preowned_episode_ids,
-            slice_coverage=terms.slice_coverage,
+            claimed_coverage=terms.slice_coverage,
             guards=self.guards,
         )
 
@@ -654,7 +654,7 @@ class PendingImportUpdate:
                 sizes_by_name=self.facts.sizes_by_name,
                 hand_import_files=self.hand_import_files,
                 order_only=self.order_only,
-                cross_seed=self.facts.cross_seed,
+                is_cross_seed=self.facts.cross_seed,
             )
         return replace(joined, added_at=stamp) if fresh else joined
 

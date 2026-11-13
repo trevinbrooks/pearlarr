@@ -175,7 +175,7 @@ class TitleWindow:
 
 
 @dataclass(frozen=True, slots=True, kw_only=True)
-class GuardFacts:
+class OwnedAtGrab:
     """The plan's per-entry overwrite-guard evidence, carried whole."""
 
     entry_groups: tuple[str, ...] = ()
@@ -194,7 +194,7 @@ class GuardFacts:
         return dict(self.owned_episodes)
 
     @classmethod
-    def from_json(cls, raw: dict[str, Any]) -> "GuardFacts":
+    def from_json(cls, raw: dict[str, Any]) -> "OwnedAtGrab":
         """Rebuild from the persisted dict (missing keys fall back empty)."""
 
         return cls(
@@ -217,7 +217,7 @@ class TitleClaim:
     title: str | None
     """Display title (logging only)."""
 
-    coverage: str | None
+    window_coverage: str | None
     """The entry's season/episode coverage when it claimed (e.g. `"S01 E01-E13"`, logging only)."""
 
     url: str | None
@@ -232,10 +232,10 @@ class TitleClaim:
     preowned_episode_ids: tuple[int, ...]
     """Claimed ids that already held a recommended file at the FIRST claim (the wait bar's net-out)."""
 
-    slice_coverage: str | None
+    claimed_coverage: str | None
     """This claim's own ids as a coverage string (e.g. `"S02 E06"`)."""
 
-    guards: GuardFacts = field(default_factory=GuardFacts)
+    guards: OwnedAtGrab = field(default_factory=OwnedAtGrab)
     """The plan's overwrite-guard evidence. Not serialized: hydrated from `guard_facts` by `al_id`."""
 
     def admits(self, ep_id: int) -> bool:
@@ -267,16 +267,16 @@ class TitleClaim:
             "al_id": self.al_id,
             "series_id": self.series_id,
             "title": self.title,
-            "coverage": self.coverage,
+            "coverage": self.window_coverage,
             "url": self.url,
             "ordered_episode_ids": list(self.ordered_episode_ids),
             "names": self.names.to_json(),
             "preowned_episode_ids": list(self.preowned_episode_ids),
-            "slice_coverage": self.slice_coverage,
+            "slice_coverage": self.claimed_coverage,
         }
 
     @classmethod
-    def from_json(cls, raw: dict[str, Any], *, guards: Mapping[int, GuardFacts]) -> "TitleClaim":
+    def from_json(cls, raw: dict[str, Any], *, guards: Mapping[int, OwnedAtGrab]) -> "TitleClaim":
         """Rebuild a claim from its persisted dict, fed the arr's guard rows by entry."""
 
         al_id = raw.get("al_id", 0)
@@ -284,13 +284,13 @@ class TitleClaim:
             al_id=al_id,
             series_id=raw.get("series_id", 0),
             title=raw.get("title"),
-            coverage=raw.get("coverage"),
+            window_coverage=raw.get("coverage"),
             url=raw.get("url"),
             ordered_episode_ids=tuple(raw.get("ordered_episode_ids", [])),
             names=TitleNames.from_json(raw.get("names", {})),
             preowned_episode_ids=tuple(raw.get("preowned_episode_ids", [])),
-            slice_coverage=raw.get("slice_coverage"),
-            guards=guards.get(al_id, GuardFacts()),
+            claimed_coverage=raw.get("slice_coverage"),
+            guards=guards.get(al_id, OwnedAtGrab()),
         )
 
 
@@ -357,7 +357,7 @@ class PendingImport:
     record is built to names among `hand_import_files`, and wrapped read-only. Empty on rows written before it was
     kept."""
 
-    cross_seed: bool = False
+    is_cross_seed: bool = False
     """Whether the torrent is a cross-seed: it held the release's files under another hash than SeaDex's
     (`SeadexUrlItem.cross_seed_hash`), so Pearlarr never added it. A forced `move` import of it runs as `auto`."""
 
@@ -408,7 +408,7 @@ class PendingImport:
         base = " & ".join(dict.fromkeys(claim.title for claim in self.claims if claim.title)) or self.infohash
         if self.release_group:
             base = f"{base} · {self.release_group}"
-        if slices := ", ".join(dict.fromkeys(c.slice_coverage for c in self.claims if c.slice_coverage)):
+        if slices := ", ".join(dict.fromkeys(c.claimed_coverage for c in self.claims if c.claimed_coverage)):
             base = f"{base} · {slices}"
         return base
 
@@ -423,7 +423,7 @@ class PendingImport:
         windows = list(dict.fromkeys(ep_id for claim in self.claims for ep_id in claim.ordered_episode_ids))
         return windows or sorted(self.file_map_episode_ids())
 
-    def guards_for(self, series_id: int) -> GuardFacts:
+    def guards_for(self, series_id: int) -> OwnedAtGrab:
         """The guard evidence of every claim on `series_id` as one.
 
         The groups are unioned in claim order and the owned episodes concatenated.
@@ -437,7 +437,7 @@ class PendingImport:
                 entry_groups.update(dict.fromkeys(claim.guards.entry_groups))
                 stale_groups.update(dict.fromkeys(claim.guards.stale_groups))
                 owned.extend(claim.guards.owned_episodes)
-        return GuardFacts(
+        return OwnedAtGrab(
             entry_groups=tuple(entry_groups), stale_groups=tuple(stale_groups), owned_episodes=tuple(owned)
         )
 
@@ -529,11 +529,11 @@ class PendingImport:
             "sizes_by_name": dict(self.sizes_by_name),
             "hand_import_files": list(self.hand_import_files),
             "order_only": {name: key.to_json() for name, key in self.order_only.items()},
-            "cross_seed": self.cross_seed,
+            "cross_seed": self.is_cross_seed,
         }
 
     @classmethod
-    def from_json(cls, raw: dict[str, Any], *, guards: Mapping[int, GuardFacts]) -> "PendingImport":
+    def from_json(cls, raw: dict[str, Any], *, guards: Mapping[int, OwnedAtGrab]) -> "PendingImport":
         """Rebuild a record from its persisted cache-store dict, each claim fed its entry's guard row."""
 
         seadex_files = tuple(raw.get("seadex_files", []))
@@ -561,7 +561,7 @@ class PendingImport:
                 for name, entry in raw.get("order_only", {}).items()
                 if (key := OrderOnlyKey.from_json(entry)) is not None
             },
-            cross_seed=raw.get("cross_seed", False),
+            is_cross_seed=raw.get("cross_seed", False),
         )
 
 
@@ -591,7 +591,7 @@ def added_at_of(raw: dict[str, Any]) -> str:
     return stamp if isinstance(stamp, str) else ""
 
 
-def hydrate_pending(rows: Mapping[str, dict[str, Any]], guards: Mapping[int, GuardFacts]) -> dict[str, PendingImport]:
+def hydrate_pending(rows: Mapping[str, dict[str, Any]], guards: Mapping[int, OwnedAtGrab]) -> dict[str, PendingImport]:
     """Rehydrate stored rows into records, keyed by infohash, each claim fed its entry's guard row."""
 
     return {key: PendingImport.from_json(raw, guards=guards) for key, raw in rows.items()}

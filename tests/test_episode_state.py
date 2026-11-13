@@ -13,7 +13,7 @@ from pearlarr.episode_state import (
     Route,
     StillNeeded,
 )
-from pearlarr.pending_import import GuardFacts, TorrentGroup
+from pearlarr.pending_import import OwnedAtGrab, TorrentGroup
 from pearlarr.placement_types import episode_index
 from pearlarr.releases import normalize_group
 
@@ -174,7 +174,7 @@ class TestEpisodeFileStatuses:
     ) -> None:
         judgment = self._holding(size, group).status_of(5, intended)
 
-        assert judgment.untagged_copy is copy
+        assert judgment.has_torrent_size_no_group is copy
         if group is None and size == 1000:
             assert judgment.status is EpisodeFileStatus.UNKNOWN_GROUP
 
@@ -183,7 +183,7 @@ class TestEpisodeFileStatuses:
         """An empty index guarded by no facts, voting SubGroup's release at size 1000."""
 
         return EpisodeSnapshot.guarded(
-            episode_index([]), GuardFacts(), GrabbedGroups(TorrentGroup("-SubGroup-", (1000,)))
+            episode_index([]), OwnedAtGrab(), GrabbedGroups(TorrentGroup("-SubGroup-", (1000,)))
         )
 
     def test_guarded_carries_the_own_release(self) -> None:
@@ -200,8 +200,8 @@ class TestEpisodeFileStatuses:
         assert target_statuses({}).all_trusted() is False
 
     def test_filled_by_hand_needs_a_target(self) -> None:
-        assert target_statuses({1: EpisodeFileStatus.TRUSTED}).filled_by_hand() is True
-        assert target_statuses({}).filled_by_hand() is False
+        assert target_statuses({1: EpisodeFileStatus.TRUSTED}).all_done() is True
+        assert target_statuses({}).all_done() is False
 
     def test_unfilled_splits_the_targets_left_by_whether_they_hold_a_file(self) -> None:
         statuses = EpisodeStatuses(

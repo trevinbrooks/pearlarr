@@ -630,7 +630,7 @@ class ScriptedEpisodes:
 
         return None if self._sonarr is None else self._sonarr.episodes(series_id)
 
-    def get_ep_list(self, sonarr_series_id: int, al_id: int, mapping: TitleMapping) -> list[SonarrEpisode] | None:
+    def mapping_episodes(self, sonarr_series_id: int, al_id: int, mapping: TitleMapping) -> list[SonarrEpisode] | None:
         """The entry's window, recorded. Raises for an `ambiguous` id as the real resolver does."""
 
         del mapping

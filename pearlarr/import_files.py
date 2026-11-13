@@ -6,7 +6,7 @@ from enum import StrEnum
 
 from .arr_models import ManualImportCandidate, QualityModel
 from .episode_state import EpisodeStatuses
-from .file_paths import normalized_leaf, path_leaf
+from .file_paths import file_name, normalized_leaf
 from .pending_import import FileEpisodeMap, PendingImport
 from .video_files import is_video_candidate
 
@@ -115,7 +115,7 @@ def disk_leftover(
     """The video files among `candidates_by_basename` that `mapped` lacks, split by what `pending` says of them."""
 
     video = {
-        name for name, candidate in candidates_by_basename.items() if is_video_candidate(path_leaf(candidate.path))
+        name for name, candidate in candidates_by_basename.items() if is_video_candidate(file_name(candidate.path))
     }
     # SeaDex's order keeps the output stable from poll to poll. A file the list doesn't name follows in disk order.
     listed = dict.fromkeys(name for name in (normalized_leaf(f) for f in pending.seadex_files) if name in video)

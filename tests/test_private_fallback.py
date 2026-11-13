@@ -26,7 +26,7 @@ from pearlarr.output.recording import RecordingHub
 from pearlarr.releases import EpisodeRecord, SeadexDict
 
 from .builders import (
-    AddOutcome,
+    AddStatus,
     FakeCacheStore,
     FakeSeaDexSource,
     FakeTorrents,
@@ -484,7 +484,7 @@ class TestMixedGroupKeeperPreference:
         assert _warning_texts(recording) == []
         assert ctx.per_title.private_only_skipped is False
 
-        torrents = FakeTorrents({self.H_HASH: (AddOutcome.ADDED, "H S01+S02")})
+        torrents = FakeTorrents({self.H_HASH: (AddStatus.ADDED, "H S01+S02")})
         pipe = make_grab_pipeline(
             cache_store=cache,
             _ctx=ctx,
@@ -529,7 +529,7 @@ class TestMixedGroupKeeperPreference:
         assert plan.seadex_dict["G"].releases[PUB_URL].to_grab is True
         assert plan.seadex_dict["G"].releases[PRIV_URL].to_grab is True
 
-        torrents = FakeTorrents({PUB_HASH: (AddOutcome.ADDED, "G S01 web")})
+        torrents = FakeTorrents({PUB_HASH: (AddStatus.ADDED, "G S01 web")})
         pipe = make_grab_pipeline(
             cache_store=cache,
             _ctx=ctx,
@@ -604,7 +604,7 @@ class TestSurvivingPrivateCoverage:
         assert plan.seadex_dict["A"].releases[PRIV_URL].to_grab is True
         assert plan.seadex_dict["A"].releases[PUB_URL].to_grab is True
 
-        torrents = FakeTorrents({PUB_HASH: (AddOutcome.ADDED, "A S01 web")})
+        torrents = FakeTorrents({PUB_HASH: (AddStatus.ADDED, "A S01 web")})
         pipe = make_grab_pipeline(
             cache_store=cache,
             _ctx=ctx,
@@ -690,7 +690,7 @@ class TestPromotionGeneralization:
         assert _warning_texts(recording) == []
         assert ctx.per_title.private_only_skipped is False
 
-        torrents = FakeTorrents({PUB_HASH: (AddOutcome.ADDED, "Show S01 web")})
+        torrents = FakeTorrents({PUB_HASH: (AddStatus.ADDED, "Show S01 web")})
         pipe = make_grab_pipeline(
             cache_store=cache,
             _ctx=ctx,
@@ -899,8 +899,8 @@ class TestEqualUnionMixedGroups:
 
             torrents = FakeTorrents(
                 {
-                    self.A_PUB_HASH: (AddOutcome.ADDED, "A S01"),
-                    self.B_PUB_HASH: (AddOutcome.ADDED, "B S02"),
+                    self.A_PUB_HASH: (AddStatus.ADDED, "A S01"),
+                    self.B_PUB_HASH: (AddStatus.ADDED, "B S02"),
                 },
             )
             pipe = make_grab_pipeline(
@@ -961,7 +961,7 @@ class TestModeSwitchResurfacesFallbackSatisfied:
         plan = filt.filter_downloads(sd, ArrFiles(), [sonarr_ep(1, 1)])
         assert plan.seadex_dict["Fall"].releases[PUB_URL].to_grab is True
 
-        torrents = FakeTorrents({PUB_HASH: (AddOutcome.ADDED, "Fall S01")})
+        torrents = FakeTorrents({PUB_HASH: (AddStatus.ADDED, "Fall S01")})
         pipe = make_grab_pipeline(
             cache_store=cache,
             _ctx=ctx,

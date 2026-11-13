@@ -8,10 +8,10 @@ from typing import cast
 
 import pytest
 
-from pearlarr.file_paths import normalize_basename
+from pearlarr.file_paths import normalize_name
 from pearlarr.pending_import import (
     NO_ORDER_ONLY,
-    GuardFacts,
+    OwnedAtGrab,
     PendingImport,
     SizeMatchedEpisode,
     TitleClaim,
@@ -25,7 +25,7 @@ from pearlarr.releases import EpisodeKey, OrderOnlyKey
 
 from .builders import SEP, claim_al_ids, entry_claim, entry_window, pending_import, sonarr_ep
 
-HALVES = tuple(normalize_basename(f"[grp] Show Ending S1 - {n:02d} [ABCD1234].mkv") for n in (1, 2))
+HALVES = tuple(normalize_name(f"[grp] Show Ending S1 - {n:02d} [ABCD1234].mkv") for n in (1, 2))
 """The two halves of a split opener, which only the DVD order numbers."""
 
 _HALF_KEYS = (OrderOnlyKey("dvd", EpisodeKey(7, 1)), OrderOnlyKey("dvd", EpisodeKey(7, 2)))
@@ -270,12 +270,12 @@ class TestPendingImportClaims:
     def test_a_claim_persists_as_the_spelled_out_schema(self) -> None:
         # The persisted shape is pinned: a new field never enters a row without a migration.
         claim = entry_claim(
-            coverage="S1",
+            window_coverage="S1",
             url="https://example.invalid/1",
             ordered_episode_ids=(101, 102),
             names=TitleNames("Show", ("Show!",)),
             preowned_episode_ids=(101,),
-            slice_coverage="S1 E1-2",
+            claimed_coverage="S1 E1-2",
         )
 
         assert json.dumps(claim.to_json()) == (
@@ -311,20 +311,20 @@ class TestPendingImportClaims:
             claims=(
                 entry_claim(
                     al_id=1,
-                    guards=GuardFacts(
+                    guards=OwnedAtGrab(
                         entry_groups=("A", "B"), stale_groups=("S",), owned_episodes=(SizeMatchedEpisode(11, 700),)
                     ),
                 ),
                 entry_claim(
                     al_id=2,
                     series_id=8,
-                    guards=GuardFacts(
+                    guards=OwnedAtGrab(
                         entry_groups=("Z",), stale_groups=("Y",), owned_episodes=(SizeMatchedEpisode(11, 999),)
                     ),
                 ),
                 entry_claim(
                     al_id=3,
-                    guards=GuardFacts(
+                    guards=OwnedAtGrab(
                         entry_groups=("B", "C"),
                         stale_groups=("S", "T"),
                         owned_episodes=(SizeMatchedEpisode(11, 710), SizeMatchedEpisode(12, 720)),
@@ -335,13 +335,13 @@ class TestPendingImportClaims:
 
         merged = pending.guards_for(7)
 
-        assert merged == GuardFacts(
+        assert merged == OwnedAtGrab(
             entry_groups=("A", "B", "C"),
             stale_groups=("S", "T"),
             owned_episodes=(SizeMatchedEpisode(11, 700), SizeMatchedEpisode(11, 710), SizeMatchedEpisode(12, 720)),
         )
         assert merged.owned_sizes == {11: 710, 12: 720}
-        assert pending.guards_for(9) == GuardFacts()
+        assert pending.guards_for(9) == OwnedAtGrab()
 
     def test_resolved_ids_union_the_claims_windows_in_claim_order(self) -> None:
         pending = pending_import(
@@ -398,7 +398,7 @@ class TestDisplayLabel:
     def test_one_claim_is_title_group_slice(self) -> None:
         # The group tells apart a series that grabbed several torrents, the slice one group's
         # per-episode siblings.
-        pending = pending_import(release_group="Era-Raws", slice_coverage="S02 E06")
+        pending = pending_import(release_group="Era-Raws", claimed_coverage="S02 E06")
 
         assert pending.display_label == f"Show{SEP}Era-Raws{SEP}S02 E06"
 
@@ -406,8 +406,8 @@ class TestDisplayLabel:
         pending = pending_import(
             release_group="Era-Raws",
             claims=(
-                entry_claim(al_id=1, title="A", slice_coverage="S01 E01"),
-                entry_claim(al_id=2, series_id=8, title="B", slice_coverage="S02 E01"),
+                entry_claim(al_id=1, title="A", claimed_coverage="S01 E01"),
+                entry_claim(al_id=2, series_id=8, title="B", claimed_coverage="S02 E01"),
             ),
         )
 
@@ -417,8 +417,8 @@ class TestDisplayLabel:
         pending = pending_import(
             release_group="",
             claims=(
-                entry_claim(al_id=1, title="A", slice_coverage="S01 E01"),
-                entry_claim(al_id=2, title="A", slice_coverage="S01 E01"),
+                entry_claim(al_id=1, title="A", claimed_coverage="S01 E01"),
+                entry_claim(al_id=2, title="A", claimed_coverage="S01 E01"),
             ),
         )
 
@@ -450,13 +450,13 @@ def _guarded_claim() -> TitleClaim:
         al_id=990,
         series_id=55,
         title="Some Show",
-        coverage="S02 E01-E12",
+        window_coverage="S02 E01-E12",
         url="https://releases.moe/1",
         ordered_episode_ids=[11, 12],
         names=TitleNames("Some Show", ("Some Show", "Aru Show")),
         preowned_episode_ids=[11],
-        slice_coverage="S02 E01-E02",
-        guards=GuardFacts(entry_groups=("Era-Raws", "OtherPick"), owned_episodes=(SizeMatchedEpisode(11, 700),)),
+        claimed_coverage="S02 E01-E02",
+        guards=OwnedAtGrab(entry_groups=("Era-Raws", "OtherPick"), owned_episodes=(SizeMatchedEpisode(11, 700),)),
     )
 
 
@@ -479,7 +479,7 @@ class TestPendingImportRoundTrip:
             sizes_by_name={"ep1.mkv": 700, "ep2.mkv": 710},
             hand_import_files=("ep3.mkv",),
             order_only={"ep3.mkv": _HALF_KEYS[0]},
-            cross_seed=True,
+            is_cross_seed=True,
         )
 
         raw = pending.to_json()
@@ -490,16 +490,16 @@ class TestPendingImportRoundTrip:
         claims_raw: list[dict[str, object]] = raw["claims"]
         assert all("guards" not in claim_raw for claim_raw in claims_raw)
         bare = PendingImport.from_json(raw, guards={})
-        assert bare == replace(pending, claims=(replace(claim, guards=GuardFacts()),))
+        assert bare == replace(pending, claims=(replace(claim, guards=OwnedAtGrab()),))
         # The caller-supplied rows (the read seams' join) hydrate the claim back whole.
         assert PendingImport.from_json(raw, guards={claim.al_id: claim.guards}) == pending
 
     def test_from_json_rehydrates_each_claims_guards_by_al_id(self) -> None:
-        first, second = GuardFacts(entry_groups=("A",)), GuardFacts(stale_groups=("B",))
+        first, second = OwnedAtGrab(entry_groups=("A",)), OwnedAtGrab(stale_groups=("B",))
         pending = pending_import(
             claims=(entry_claim(al_id=1, guards=first), entry_claim(al_id=2, series_id=8, guards=second)),
         )
-        rows = {2: second, 1: first, 3: GuardFacts(entry_groups=("Unclaimed",))}
+        rows = {2: second, 1: first, 3: OwnedAtGrab(entry_groups=("Unclaimed",))}
 
         rebuilt = PendingImport.from_json(pending.to_json(), guards=rows)
 
@@ -522,7 +522,7 @@ class TestPendingImportRoundTrip:
         stale = {"entry_groups": ["Stale"]}
         raw = {"infohash": "h", "guards": stale, "claims": [{"al_id": 1, "series_id": 1, "guards": stale}]}
 
-        assert PendingImport.from_json(raw, guards={}).claims[0].guards == GuardFacts()
+        assert PendingImport.from_json(raw, guards={}).claims[0].guards == OwnedAtGrab()
 
     def test_from_json_tolerates_missing_keys(self) -> None:
         rebuilt = PendingImport.from_json({"infohash": "h"}, guards={})
@@ -584,12 +584,12 @@ class TestPendingImportRoundTrip:
                 al_id=0,
                 series_id=1,
                 title=None,
-                coverage=None,
+                window_coverage=None,
                 url=None,
                 ordered_episode_ids=(),
                 names=TitleNames(),
                 preowned_episode_ids=(),
-                slice_coverage=None,
+                claimed_coverage=None,
             ),
         )
 

@@ -6,7 +6,7 @@ from typing import Any
 from .cache import AbstractCacheStore
 from .config import Arr
 from .leg_state import ArrRunState
-from .pending_import import GuardFacts, PendingImport, TitleClaim, hydrate_pending, is_awaiting_cleanup
+from .pending_import import OwnedAtGrab, PendingImport, TitleClaim, hydrate_pending, is_awaiting_cleanup
 from .wait_types import AttemptResult
 
 
@@ -43,7 +43,7 @@ class PendingImportStore:
 
         return self._store.get_pending_for_series(self._ctx.arr, series_id)
 
-    def for_series(self, series_id: int, guards: Mapping[int, GuardFacts]) -> dict[str, PendingImport]:
+    def imports_for_series(self, series_id: int, guards: Mapping[int, OwnedAtGrab]) -> dict[str, PendingImport]:
         """The records claiming `series_id`, keyed by infohash, rehydrated under the guards the caller already read."""
 
         return hydrate_pending(self.rows_for_series(series_id), guards)
@@ -53,7 +53,7 @@ class PendingImportStore:
 
         return {key: raw for key, raw in self.rows().items() if is_awaiting_cleanup(raw)}
 
-    def active(self) -> dict[str, dict[str, Any]]:
+    def active_rows(self) -> dict[str, dict[str, Any]]:
         """Raw rows minus this-run grabs and cleanup-flagged leftovers."""
 
         fresh = self.fresh_keys()
@@ -66,15 +66,15 @@ class PendingImportStore:
             return {}
         return hydrate_pending(rows, self.guards())
 
-    def guards(self) -> dict[int, GuardFacts]:
+    def guards(self) -> dict[int, OwnedAtGrab]:
         """The arr's guard rows for the entries with live records (one read, shared by a poll's hydrations)."""
 
         return self._store.get_guards(self._ctx.arr)
 
-    def active_records(self) -> dict[str, PendingImport]:
+    def active_imports(self) -> dict[str, PendingImport]:
         """The `active` rows rehydrated: the carried-over working set of the end-of-run passes."""
 
-        return self.hydrate(self.active())
+        return self.hydrate(self.active_rows())
 
     def stored_records(self, hashes: Iterable[str]) -> dict[str, PendingImport]:
         """The store-resident records among `hashes`, rehydrated under one guards read."""
