@@ -669,7 +669,7 @@ class ArrRunServices:
         """Log a title whose mapping resolved no episodes (delegates to RunReporter)."""
         self._reporter.log_no_episodes(title)
 
-    def log_anilist_item_unmonitored(self, item_title: str) -> None:
+    def log_arr_item_unmonitored(self, item_title: str) -> None:
         """Log an unmonitored-item skip (delegates to RunReporter)."""
         self._reporter.log_arr_item_unmonitored(self._state, item_title)
 

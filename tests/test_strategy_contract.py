@@ -207,6 +207,7 @@ class _FakeRunServices(ArrRunServices):
         self.get_anilist_ids_calls: list[GetAniListIdsCall] = []
         self.al_id_prologue_calls: list[int] = []
         self.no_episodes_titles: list[str] = []
+        self.unmonitored_titles: list[str] = []
         self.log_al_title_calls: list[str] = []
         self.cached_skip_coverages: list[Callable[[], str]] = []
         self.get_seadex_dict_calls: list[EntryRecord] = []
@@ -319,8 +320,8 @@ class _FakeRunServices(ArrRunServices):
         self.no_episodes_titles.append(title)
 
     @override
-    def log_anilist_item_unmonitored(self, item_title: str) -> None:
-        del item_title
+    def log_arr_item_unmonitored(self, item_title: str) -> None:
+        self.unmonitored_titles.append(item_title)
 
     @override
     def open_title_block(self, title: str, sd_entry: EntryRecord, coverage: str | None = None) -> None:
@@ -552,6 +553,22 @@ class TestProcessAlIdThreadsServices:
             "AniBridge has no usable season ranges" in message
             for message in diagnostic_messages(recording, Severity.WARNING)
         )
+
+    def test_sonarr_all_unmonitored_episodes_skip_with_an_unmonitored_row(self) -> None:
+        run = _FakeRunServices(prologue_entry=make_entry_record(), anilist_title="Title")
+        unmonitored = sonarr_ep(1, 1).model_copy(update={"monitored": False})
+        strat = make_bare_instance(
+            SonarrStrategy,
+            _services=run,
+            _episodes=ScriptedEpisodes(FakeSonarrClient(episodes=[unmonitored])),
+            _config=make_config(sleep_time=0, ignore_unmonitored=True),
+            logger=make_logger(),
+        )
+
+        strat.check_title(_Item(id=1, title="Title"), 5, TitleMapping(anilist_id=5))
+        assert run.unmonitored_titles == ["Title"]
+        assert run.log_al_title_calls == []
+        assert run.pauses_owed == 1
 
     def test_sonarr_all_invalid_selection_routes_to_shared_skip(self) -> None:
         # The interactive pick rejected every token: the strategy must route to

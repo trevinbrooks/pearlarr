@@ -305,9 +305,7 @@ class SonarrStrategy(ArrStrategy[SonarrItem]):
 
         # If all episodes are unmonitored, then skip if ignore_unmonitored is switched on
         if self._config.sonarr.ignore_unmonitored and not any(ep.monitored for ep in ep_list):
-            services.log_anilist_item_unmonitored(
-                item_title=title.name,
-            )
+            services.log_arr_item_unmonitored(title.name)
             services.owe_pause()
             return
 
