@@ -391,10 +391,10 @@ class AniBridge:
     def __len__(self) -> int:
         return self._len
 
-    def id_set(self, mapping_key: IdKind) -> set[int] | set[str]:
-        """The precomputed candidate id set for a Kometa `mapping_key` axis.
+    def known_external_ids(self, kind: IdKind) -> set[int] | set[str]:
+        """The precomputed candidate id set for one Kometa id `kind`.
 
-        Mirrors `MappingResolver.anime_id_set` so `collect_anime_items` can
+        Mirrors `MappingResolver.known_external_ids` so `collect_anime_items` can
         build BOTH sources' candidate-set tuples from one comprehension over the same
         `fields` - instead of a hand-ordered literal that can silently drift out of
         positional alignment with `fields` (the `zip(strict=True)` only checks
@@ -406,7 +406,7 @@ class AniBridge:
             "tvdb_id": self.all_tvdb_ids,
             "tmdb_movie_id": self.all_tmdb_movie_ids,
             "imdb_id": self.all_imdb_ids,
-        }[mapping_key]
+        }[kind]
 
     def _parse(self, graph: AniBridgeGraph) -> None:
         """Build per-AniList records and reverse indexes from the graph."""

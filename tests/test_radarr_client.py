@@ -241,16 +241,16 @@ def test_all_movies_skips_non_dict_elements() -> None:
 
 
 class _RecordingIdSets(KnownExternalIds):
-    """Recording `AnimeIdSets`: preset per-column id sets, calls recorded."""
+    """Recording `KnownExternalIds`: preset per-kind id sets, calls recorded."""
 
     def __init__(self, sets: dict[str, set[int | str]]) -> None:
         self._sets = sets
         self.calls: list[str] = []
 
     @override
-    def anime_id_set(self, column: IdKind) -> AbstractSet[int | str]:
-        self.calls.append(column)
-        return self._sets.get(column, set())
+    def known_external_ids(self, kind: IdKind) -> AbstractSet[int | str]:
+        self.calls.append(kind)
+        return self._sets.get(kind, set())
 
 
 def test_collect_anime_movies_wires_id_spaces() -> None:
