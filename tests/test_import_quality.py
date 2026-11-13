@@ -112,7 +112,7 @@ class TestResolveQuality:
     when nothing resolves.
     """
 
-    def test_sonarr_wins_over_ours_and_default(self) -> None:
+    def test_sonarr_wins_over_pearlarrs_and_default(self) -> None:
         # Sonarr parsed (web, 1080). pearlarr's filename parse and the default disagree.
         sonarr = QualityParts(source=QualitySource.WEB, resolution=1080)
         ours = QualityParts(source=QualitySource.BLURAY, resolution=2160)

@@ -34,10 +34,10 @@ class TestClassifyQueue:
     def test_empty_is_not_in_queue(self) -> None:
         assert classify_queue([]) is QueueState.NOT_IN_QUEUE
 
-    def test_import_blocked_steps_in(self) -> None:
+    def test_import_blocked_gets_an_auto_import(self) -> None:
         assert classify_queue([queue_record("A", "importBlocked")]) is QueueState.STUCK
 
-    def test_failed_steps_in(self) -> None:
+    def test_failed_gets_an_auto_import(self) -> None:
         assert classify_queue([queue_record("A", "failed")]) is QueueState.STUCK
 
     def test_clean_pending_is_pending_clean(self) -> None:
@@ -48,7 +48,7 @@ class TestClassifyQueue:
         # routes an importPending queue record away from the leave-it-to-Sonarr path.
         assert classify_queue([queue_record("A", "importPending", status=None)]) is QueueState.IMPORT_PENDING_OK
 
-    def test_flagged_pending_steps_in(self) -> None:
+    def test_marked_pending_gets_an_auto_import(self) -> None:
         # warning/error on importPending = Sonarr's own import attempt failed and
         # it won't reliably retry (observed live: marked importPending torrents sat
         # 10+ minutes untouched) - so waiting only burns the import timeout.
@@ -144,7 +144,7 @@ class TestManualImportInFlight:
         cmds = [_command(files=[{"path": "/elsewhere/ep.mkv", "episodeIds": [9]}])]
         assert manual_import_in_flight(cmds, DownloadIdentifiers("no-hash", _paths("/other"), {9}))
 
-    def test_translated_command_with_empty_seed_matches_by_episode_arm(self) -> None:
+    def test_translated_command_with_empty_file_map_matches_by_episode_branch(self) -> None:
         # The empty-file-map edge: nothing to match by path (both views fail), the
         # episode-id branch still guards - it is translation-immune.
         cmds = [_command(files=[{"path": "/remote/tv/folder/ep.mkv", "episodeIds": [9]}])]
@@ -163,10 +163,10 @@ class TestManualImportInFlight:
 class TestClassifyCommands:
     """The state layer: precedence + ownership over one command snapshot."""
 
-    def test_clear_snapshot_steps_in(self) -> None:
+    def test_clear_snapshot_allows_the_auto_import(self) -> None:
         assert classify_commands([], DownloadIdentifiers("abc", _paths("/d"), set()), lambda _: False) is None
 
-    def test_download_id_match_is_our_import_without_issued_ids(self) -> None:
+    def test_download_id_match_is_an_auto_import_without_issued_ids(self) -> None:
         # The download-id proof alone owns the copy (survives restarts).
         cmds = [_command(files=[{"downloadId": "ABC"}])]
         block = classify_commands(cmds, DownloadIdentifiers("abc", _paths("/d"), set()), lambda _: False)
@@ -183,12 +183,12 @@ class TestClassifyCommands:
         block = classify_commands(cmds, DownloadIdentifiers("abc", _paths("/d"), set()), lambda cid: cid == 7)
         assert block is CommandBlock.AUTO_IMPORT
 
-    def test_own_disk_command_blocks_without_claiming_the_import(self) -> None:
+    def test_pearlarrs_disk_command_blocks_without_claiming_the_import(self) -> None:
         cmds = [_command(command_id=7, name="RenameFiles")]
         block = classify_commands(cmds, DownloadIdentifiers("abc", _paths("/d"), set()), lambda cid: cid == 7)
         assert block is CommandBlock.DISK_COMMAND
 
-    def test_foreign_disk_command_blocks(self) -> None:
+    def test_another_downloads_disk_command_blocks(self) -> None:
         cmds = [_command(command_id=9, name="ProcessMonitoredDownloads")]
         block = classify_commands(cmds, DownloadIdentifiers("abc", _paths("/d"), set()), lambda _: False)
         assert block is CommandBlock.DISK_COMMAND
@@ -216,23 +216,23 @@ class TestCommandBlock:
 class TestInFlightDiskCommands:
     """The pure disk-command guard over the same /api/v3/command list."""
 
-    def test_started_process_monitored_downloads_defers(self) -> None:
+    def test_started_process_monitored_downloads_blocks(self) -> None:
         assert in_flight_disk_commands([_command(name="ProcessMonitoredDownloads")])
 
-    def test_queued_pass_defers(self) -> None:
+    def test_queued_pass_blocks(self) -> None:
         assert in_flight_disk_commands([_command(name="ProcessMonitoredDownloads", status="queued")])
 
-    def test_completed_pass_never_defers(self) -> None:
+    def test_completed_pass_never_blocks(self) -> None:
         assert not in_flight_disk_commands([_command(name="ProcessMonitoredDownloads", status="completed")])
 
-    def test_legacy_folder_scan_defers(self) -> None:
+    def test_legacy_folder_scan_blocks(self) -> None:
         assert in_flight_disk_commands([_command(name="DownloadedEpisodesScan")])
 
-    def test_rename_sweep_defers(self) -> None:
+    def test_rename_sweep_blocks(self) -> None:
         # Any RequiresDiskAccess command blocks, not just the import commands.
         assert in_flight_disk_commands([_command(name="RenameFiles")])
 
-    def test_running_manual_import_defers(self) -> None:
+    def test_running_manual_import_blocks(self) -> None:
         # A foreign ManualImport blocks an auto import the same way (pearlarr's is also
         # caught by manual_import_in_flight; this guard needs no file match).
         assert in_flight_disk_commands([_command(name="ManualImport")])
@@ -350,7 +350,7 @@ def _history(*rows: tuple[str, str] | dict[str, object], total_records: int = 0)
 class TestClassifyDownloadHistory:
     """The history-closed check: the newest relevant event decides, others are skipped."""
 
-    def test_newest_imported_is_dead_tracked(self) -> None:
+    def test_newest_imported_closes_the_history(self) -> None:
         verdict = classify_download_history(
             _history(("downloadFolderImported", "2026-06-20T06:15:30Z"), ("grabbed", "2026-06-19T00:00:00Z")),
         )
@@ -358,12 +358,12 @@ class TestClassifyDownloadHistory:
         assert verdict.event == "imported"
         assert verdict.date == "2026-06-20T06:15:30Z"
 
-    def test_newest_failed_is_dead_tracked(self) -> None:
+    def test_newest_failed_closes_the_history(self) -> None:
         verdict = classify_download_history(_history(("downloadFailed", "2026-01-01T00:00:00Z")))
         assert verdict.history_closed
         assert verdict.event == "failed"
 
-    def test_newest_ignored_is_dead_tracked(self) -> None:
+    def test_newest_ignored_closes_the_history(self) -> None:
         verdict = classify_download_history(_history(("downloadIgnored", "2026-01-01T00:00:00Z")))
         assert verdict.history_closed
         assert verdict.event == "ignored"
@@ -488,7 +488,7 @@ class TestPlacementsFromHistory:
         )
         assert placements_from_history([HistoryImport("/d/Show - 02.mkv", 102, 7)], pending) == {}
 
-    def test_a_mapped_file_is_left_to_its_seed(self) -> None:
+    def test_a_mapped_file_is_left_to_the_file_map(self) -> None:
         pending = _unplaced(
             file_episode_map={"Show - 01.mkv": [101]},
             ordered_episode_ids=[101, 102],
@@ -526,7 +526,7 @@ class TestPlacementsFromHistory:
         rows = [HistoryImport("/d/Show - 01-02.mkv", 102, 7), HistoryImport("/d/Show - 01-02.mkv", 101, 7)]
         assert placements_from_history(rows, pending) == {"show - 01-02.mkv": (101, 102)}
 
-    def test_a_remote_path_folds_to_the_normalized_leaf(self) -> None:
+    def test_a_remote_path_converts_to_the_normalized_file_name(self) -> None:
         rows = [HistoryImport("C:\\downloads\\Show S01/SHOW - 01.MKV", 101, 7)]
         assert placements_from_history(rows, _unplaced()) == {"show - 01.mkv": (101,)}
 

@@ -805,7 +805,7 @@ class TestConfigInspection:
         # The unset radarr key stays null: "is it even set?" must stay answerable.
         assert "api_key: null" in out
 
-    def test_validate_reports_an_old_schema_with_its_folds(self, capsys: pytest.CaptureFixture[str]) -> None:
+    def test_validate_reports_an_old_schema_with_its_conversions(self, capsys: pytest.CaptureFixture[str]) -> None:
         # Valid-but-old is a status fact, not a failure: the run migrates it in
         # memory, and validate names the command that updates the file itself.
         paths = resolve_paths()
@@ -1157,7 +1157,7 @@ class TestLogFormatWiring:
 class TestConsoleFormat:
     """`_configured_format`: a silent pre-logger peek reducing every failure to "auto"."""
 
-    def test_missing_config_folds_to_auto_and_writes_nothing(self, tmp_path: Path) -> None:
+    def test_missing_config_reduces_to_auto_and_writes_nothing(self, tmp_path: Path) -> None:
         missing = tmp_path / "config.yml"
         assert _configured_format(str(missing)) == "auto"
         # No template-copy side effect: load_shared_config owns the first-run copy.
@@ -1169,12 +1169,12 @@ class TestConsoleFormat:
         path.write_text("advanced:\n  log_format: JSON\n", encoding="utf-8")
         assert _configured_format(str(path)) == "json"
 
-    def test_invalid_config_folds_to_auto(self, tmp_path: Path) -> None:
+    def test_invalid_config_reduces_to_auto(self, tmp_path: Path) -> None:
         path = tmp_path / "config.yml"
         path.write_text("advanced:\n  log_format: fancy\n", encoding="utf-8")
         assert _configured_format(str(path)) == "auto"
 
-    def test_malformed_yaml_folds_to_auto(self, tmp_path: Path) -> None:
+    def test_malformed_yaml_reduces_to_auto(self, tmp_path: Path) -> None:
         path = tmp_path / "config.yml"
         path.write_text("advanced: [unclosed\n", encoding="utf-8")
         assert _configured_format(str(path)) == "auto"
@@ -1186,11 +1186,11 @@ class TestResolvedFormat:
     The same resolved value feeds `setup_logger` and `hub.begin_run`, so the two can never disagree.
     """
 
-    def test_auto_folds_to_plain_off_a_tty(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    def test_auto_converts_to_plain_off_a_tty(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
         monkeypatch.setattr(sys, "stdout", io.StringIO())
         assert _run_format(str(tmp_path / "config.yml")) == "plain"  # missing config -> auto -> plain
 
-    def test_auto_folds_to_rich_on_a_tty(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    def test_auto_converts_to_rich_on_a_tty(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
         monkeypatch.setattr(sys, "stdout", TtyStringIO())
         assert _run_format(str(tmp_path / "config.yml")) == "rich"
 
@@ -1212,7 +1212,7 @@ def _drive_representative(hub: OutputHub) -> None:
     hub.emit(SUMMARY_MINIMAL)
 
 
-class TestHubSeats:
+class TestHubRenderers:
     """The REAL cli console renderer factory, pinned end-to-end.
 
     Plain stdout is the file's bytes minus exactly the file_only lines. json is
@@ -1409,7 +1409,7 @@ class TestConfigAutoMigrate:
             f"Config migrated to the current schema - previous file saved as {config}.bak (details in the log)"
         )
 
-    def test_the_fold_detail_goes_to_the_file_log(self, tmp_path: Path) -> None:
+    def test_the_conversion_detail_goes_to_the_file_log(self, tmp_path: Path) -> None:
         recording = install_recording_hub()
         config = self._write(tmp_path, _OLD_SCHEMA_CONFIG)
 
@@ -1772,7 +1772,7 @@ class TestScheduledLifecycle:
 
         assert recorder.registered == [(signal.SIGTERM, signal.SIG_IGN)]
 
-    def test_cycle_started_is_emitted_after_begin_cycle(self, monkeypatch: pytest.MonkeyPatch) -> None:
+    def test_scheduled_run_started_is_emitted_after_begin_run(self, monkeypatch: pytest.MonkeyPatch) -> None:
         # Post-begin (rotation): the boundary must land in the FRESH run's file.
         monkeypatch.setattr("pearlarr.cli.setup_logger", _SetupLoggerRecorder())
         monkeypatch.setattr("pearlarr.bootstrap.run_arrs", _stop_loop)

@@ -112,7 +112,7 @@ def test_a_series_numbers_aired_only_when_sonarr_numbers_it_by_official(
         pytest.param(4, False, id="not-in-the-library"),
     ],
 )
-def test_a_library_series_with_no_stored_record_is_unread(
+def test_a_library_series_with_no_stored_answer_is_unread(
     series_id: int, unread: bool, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     cache = FakeCacheStore()
@@ -131,7 +131,7 @@ def test_orders_are_fetched_once_per_tvdb_series(monkeypatch: pytest.MonkeyPatch
     assert cache.stats().tvdb_orders == 1
 
 
-def test_sonarr_v5_counts_ride_the_fetch_request(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_sonarr_v5_counts_are_sent_with_the_fetch_request(monkeypatch: pytest.MonkeyPatch) -> None:
     # The stored answer is fresh, so only the count Sonarr's series row carries can make it due.
     cache = FakeCacheStore()
     cache.put_tvdb_orders(50, stored_orders(_ORDERS, sonarr_counts={"official": 2}))
@@ -144,7 +144,7 @@ def test_sonarr_v5_counts_ride_the_fetch_request(monkeypatch: pytest.MonkeyPatch
     ("mode", "fetched"),
     [pytest.param(ImportWaitMode.BLOCKING, 1, id="waiting"), pytest.param(ImportWaitMode.OFF, 0, id="off")],
 )
-def test_a_stored_records_series_is_fetched_while_imports_are_waited_on(
+def test_a_pending_imports_series_is_fetched_while_imports_are_waited_on(
     mode: ImportWaitMode, fetched: int, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     # Nothing in the scan needs series 2, but grab and import read the pending import's series anyway.
@@ -156,7 +156,7 @@ def test_a_stored_records_series_is_fetched_while_imports_are_waited_on(
     assert strat.prefetch_orders([]) == fetched
 
 
-def test_an_outage_leaves_a_new_series_without_orders_and_serves_the_stored_ones(
+def test_an_unreachable_source_leaves_a_new_series_without_orders_and_serves_the_stored_ones(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     # Series 1's stored answer is due but SkyHook is unreachable: the stale answer still serves grab and import.

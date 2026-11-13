@@ -35,7 +35,7 @@ _HALF_KEYS = (OrderOnlyKey("dvd", EpisodeKey(7, 1)), OrderOnlyKey("dvd", Episode
 class TestPendingImportBuild:
     """Built from whatever the caller passed, the pending import normalizes its file map and exclusions, read-only."""
 
-    def test_the_map_folds_its_keys_and_drops_zero_ids(self) -> None:
+    def test_the_map_normalizes_its_keys_and_drops_zero_ids(self) -> None:
         pending = pending_import(
             file_episode_map={"Show - 01.MKV": [101], "Show - 02.mkv": [0], "Show - 03.mkv": [0, 103]}
         )
@@ -52,19 +52,19 @@ class TestPendingImportBuild:
 
         assert dict(pending.file_episode_map) == {"show - 01.mkv": (111,)}
 
-    def test_the_exclusions_fold_and_dedupe_in_order(self) -> None:
+    def test_the_exclusions_normalize_and_dedupe_in_order(self) -> None:
         pending = pending_import(excluded_files=["SHOW - 03.MKV", " Show - 02.mkv ", "show - 03.mkv"])
 
         assert pending.excluded_files == ("show - 03.mkv", "show - 02.mkv")
 
-    def test_the_sizes_fold_their_keys_and_drop_a_name_whose_spellings_disagree(self) -> None:
+    def test_the_sizes_normalize_their_keys_and_drop_a_name_whose_spellings_disagree(self) -> None:
         pending = pending_import(
             sizes_by_name={"Sub/Show - 01.MKV": 100, "Show - 02.mkv": 200, "show - 02.mkv": 201},
         )
 
         assert pending.sizes_by_name == {"show - 01.mkv": 100}
 
-    def test_the_fold_ranks_the_map_over_the_hand_import_files_over_the_exclusions(self) -> None:
+    def test_the_build_ranks_the_map_over_the_hand_import_files_over_the_exclusions(self) -> None:
         pending = pending_import(
             file_episode_map={"show - 01.mkv": [101]},
             excluded_files=["show - 01.mkv", "SHOW - 02.MKV", "show - 03.mkv", "show - 05.mkv"],
@@ -74,7 +74,7 @@ class TestPendingImportBuild:
         assert pending.hand_import_files == ("show - 04.mkv", "show - 02.mkv", "show - 03.mkv")
         assert pending.excluded_files == ("show - 05.mkv",)
 
-    def test_the_order_only_keys_fold_onto_the_hand_import_files(self) -> None:
+    def test_the_order_only_keys_reduce_to_the_hand_import_files(self) -> None:
         pending = pending_import(
             file_episode_map={HALVES[0]: [401]},
             hand_import_files=list(HALVES),
@@ -126,7 +126,7 @@ class TestPendingImportPlacements:
         assert healed.excluded_files == ("show - 01.mkv", "show - 03.mkv", "show - 02.mkv")
 
     @pytest.mark.parametrize("change", _NO_OP_CHANGES.values(), ids=list(_NO_OP_CHANGES))
-    def test_a_change_that_leaves_the_record_equal_returns_the_record(
+    def test_a_change_that_leaves_the_pending_import_equal_returns_it(
         self, change: Callable[[PendingImport], PendingImport]
     ) -> None:
         # One rule for every `with_*`: the pending import store gates its save on it.
@@ -190,7 +190,7 @@ class TestPendingImportPlacements:
             ({"Show - 01.mkv": [101], "Show - 02.mkv": [102]}, []),
         ],
     )
-    def test_seed_coverage_accounted_matches_unplaced_names(
+    def test_file_map_coverage_accounted_matches_unplaced_names(
         self,
         file_episode_map: dict[str, list[int]],
         excluded_files: list[str],
@@ -244,7 +244,7 @@ class TestListedSizes:
         with pytest.raises(TypeError):
             sizes["a.mkv"] = 1
 
-    def test_with_sizes_by_name_fills_an_empty_record(self) -> None:
+    def test_with_sizes_by_name_fills_an_empty_pending_import(self) -> None:
         assert pending_import().with_sizes_by_name({"a.mkv": 100}).sizes_by_name == {"a.mkv": 100}
 
     def test_with_sizes_by_name_keeps_a_recorded_map(self) -> None:
@@ -290,7 +290,7 @@ class TestPendingImportClaims:
 
         assert TitleClaim.from_json({**claim.to_json(), "claimed_at": "2026-06-24 00:00:00"}, guards={}) == claim
 
-    def test_a_claims_window_is_its_entry_series_ids_and_names(self) -> None:
+    def test_a_claims_window_is_its_title_series_ids_and_names(self) -> None:
         names = TitleNames("Show", ("Show!",))
         claim = title_claim(al_id=3, series_id=8, ordered_episode_ids=(102, 101), names=names)
 
@@ -354,7 +354,7 @@ class TestPendingImportClaims:
 
         assert pending.window_episode_ids() == [3, 1, 2]
 
-    def test_resolved_ids_fall_back_to_the_seeds_sorted_when_every_claim_is_unscoped(self) -> None:
+    def test_window_episode_ids_fall_back_to_the_file_map_episodes_sorted_when_every_claim_has_no_window(self) -> None:
         # The file map's ids alone, a zero id dropped: the specials shape with no window to check against.
         pending = pending_import(
             file_episode_map={"a.mkv": [7, 0], "b.mkv": [5]},
@@ -364,14 +364,14 @@ class TestPendingImportClaims:
         assert pending.window_episode_ids() == [5, 7]
         assert pending_import(file_episode_map={}).window_episode_ids() == []
 
-    def test_with_claim_appends_a_new_entry(self) -> None:
+    def test_with_claim_appends_a_new_claim(self) -> None:
         pending = pending_import()
         added = title_claim(al_id=2, series_id=8)
 
         assert pending.with_claim(added).claims == (*pending.claims, added)
         assert len(pending.claims) == 1
 
-    def test_with_claim_replaces_the_entrys_claim_in_place_keeping_its_preowned_ids(self) -> None:
+    def test_with_claim_replaces_the_titles_claim_in_place_keeping_its_preowned_ids(self) -> None:
         # A second grab plan refreshes the window, but the ids the wait bar leaves out stay the FIRST claim's.
         stored = title_claim(al_id=1, ordered_episode_ids=[101], preowned_episode_ids=[101])
         other = title_claim(al_id=2, series_id=8)
@@ -383,7 +383,7 @@ class TestPendingImportClaims:
         assert refreshed.claims == (replace(fresh, preowned_episode_ids=(101,)), other)
         assert pending.claims == (stored, other)
 
-    def test_with_claim_clears_the_cleanup_flag(self) -> None:
+    def test_with_claim_clears_awaiting_cleanup(self) -> None:
         # A claim joining (or planned again) means new files to import: the pending import is active again, so
         # its owed effects re-run at the eventual cleanup instead of the pass that finishes cleanups cleaning it up.
         flagged = pending_import(awaiting_cleanup=True)
@@ -395,7 +395,7 @@ class TestPendingImportClaims:
 class TestDisplayLabel:
     """`display_label`: each claim's name, the group, then distinct claimed coverages. The hash names a nameless one."""
 
-    def test_one_claim_is_title_group_slice(self) -> None:
+    def test_one_claim_is_title_group_coverage(self) -> None:
         # The group tells apart a series that grabbed several torrents, the claimed coverage one group's
         # per-episode siblings.
         pending = pending_import(release_group="Era-Raws", claimed_coverage="S02 E06")
@@ -413,7 +413,7 @@ class TestDisplayLabel:
 
         assert pending.display_label == f"A & B{SEP}Era-Raws{SEP}S01 E01, S02 E01"
 
-    def test_a_repeated_title_or_slice_shows_once(self) -> None:
+    def test_a_repeated_title_or_coverage_shows_once(self) -> None:
         pending = pending_import(
             release_group="",
             claims=(
@@ -424,15 +424,15 @@ class TestDisplayLabel:
 
         assert pending.display_label == f"A{SEP}S01 E01"
 
-    def test_a_groupless_record_shows_the_bare_title(self) -> None:
+    def test_a_groupless_pending_import_shows_the_bare_title(self) -> None:
         assert pending_import(release_group="").display_label == "Show"
 
-    def test_a_titleless_record_falls_back_to_its_infohash(self) -> None:
+    def test_a_titleless_pending_import_falls_back_to_its_infohash(self) -> None:
         assert pending_import(infohash="h", release_group="", title=None).display_label == "h"
         assert pending_import(infohash="h", release_group="Era-Raws", title=None).display_label == f"h{SEP}Era-Raws"
 
 
-class TestEntryWindow:
+class TestTitleWindow:
     """A window built from Sonarr's episodes."""
 
     def test_a_window_takes_each_episode_once_in_sonarrs_order(self) -> None:
@@ -494,7 +494,7 @@ class TestPendingImportRoundTrip:
         # The caller-supplied rows (the store reads' join) load the claim back whole.
         assert PendingImport.from_json(raw, guards={claim.al_id: claim.guards}) == pending
 
-    def test_from_json_rehydrates_each_claims_guards_by_al_id(self) -> None:
+    def test_from_json_loads_each_claims_guards_by_al_id(self) -> None:
         first, second = OwnedAtGrab(entry_groups=("A",)), OwnedAtGrab(stale_groups=("B",))
         pending = pending_import(
             claims=(title_claim(al_id=1, guards=first), title_claim(al_id=2, series_id=8, guards=second)),
@@ -506,7 +506,7 @@ class TestPendingImportRoundTrip:
         assert [claim.guards for claim in rebuilt.claims] == [first, second]
         assert rebuilt == pending
 
-    def test_healed_map_round_trips_and_flips_coverage(self) -> None:
+    def test_a_map_with_placements_round_trips_and_flips_coverage(self) -> None:
         # The placements live in the same blob field as the grab's, so an updated
         # pending import loads with them placed on the next run.
         pending = pending_import(file_episode_map={}, seadex_files=["Show - 01 [1080p].mkv"], ordered_episode_ids=[101])
@@ -568,7 +568,7 @@ class TestPendingImportRoundTrip:
 
         assert PendingImport.from_json(raw, guards={}).order_only == {HALVES[0]: _HALF_KEYS[0]}
 
-    def test_a_record_predating_sizes_by_name_lists_no_sizes(self) -> None:
+    def test_a_pending_import_predating_sizes_by_name_lists_no_sizes(self) -> None:
         # This torrent's group is then checked by listed size alone.
         rebuilt = PendingImport.from_json({"infohash": "h", "file_episode_map": {"a.mkv": [1]}}, guards={})
 
@@ -593,7 +593,7 @@ class TestPendingImportRoundTrip:
             ),
         )
 
-    def test_old_record_with_unknown_keys_rehydrates(self) -> None:
+    def test_old_pending_import_with_unknown_keys_loads(self) -> None:
         # Back-compat: a pending import persisted with since-removed keys still loads
         # (from_json reads only the known keys and ignores the rest).
         raw = {

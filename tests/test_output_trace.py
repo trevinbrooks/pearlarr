@@ -34,7 +34,7 @@ def test_plain_text_carries_the_full_stdlib_traceback() -> None:
     assert plain == trace.plain
 
 
-def test_frame_locals_never_ride_the_trace() -> None:
+def test_frame_locals_never_reach_the_trace() -> None:
     trace = _capture()
 
     assert _SECRET not in trace.plain

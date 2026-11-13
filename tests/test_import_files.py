@@ -69,7 +69,7 @@ class TestPlanImportFiles:
         decisions = plan_import_files(amap, cands, episode_statuses({11: EpisodeFileStatus.ABSENT}))
         assert decisions[0].action == "sample"
 
-    def test_already_imported_does_not_skip_a_needed_target(self) -> None:
+    def test_already_imported_does_not_skip_a_needed_file_map_episode(self) -> None:
         # Bug fix: Sonarr's "already imported" rejection fires whenever the episode
         # already has ANY file (including a no-group one pearlarr grabbed to
         # replace). It must NOT block importing an episode that still needs this torrent's file.
@@ -79,7 +79,7 @@ class TestPlanImportFiles:
         assert decisions[0].action == "import"
         assert decisions[0].episode_ids == (12,)
 
-    def test_already_imported_skips_only_when_no_target_needs_us(self) -> None:
+    def test_already_imported_skips_only_when_no_file_map_episode_needs_the_file(self) -> None:
         # When every episode already has a trusted file (none in needing),
         # Sonarr's rejection and pearlarr's episode-file check agree -> the more specific
         # `already` (never overwrite).
@@ -95,7 +95,7 @@ class TestPlanImportFiles:
         assert decisions[0].action == "skip_done"
 
 
-class TestOwnCopyAlongside:
+class TestThisTorrentsCopyAlongside:
     """A needed file also goes onto its episodes with a copy of this torrent's, so Sonarr replaces the copy.
 
     An episode with any other trusted file is left alone.
@@ -104,28 +104,28 @@ class TestOwnCopyAlongside:
     _FILE_MAP: ClassVar[dict[str, tuple[int, ...]]] = {"range.mkv": (21, 22)}
     _CANDIDATES: ClassVar[dict[str, CandidateFile]] = {"range.mkv": _candidate("range.mkv")}
 
-    def test_an_episode_holding_our_own_copy_is_posted_with_the_needing_one(self) -> None:
+    def test_an_episode_holding_this_torrents_copy_is_posted_with_the_needing_one(self) -> None:
         statuses = episode_statuses({21: EpisodeFileStatus.TRUSTED, 22: EpisodeFileStatus.ABSENT}, frozenset({21}))
 
         [decision] = plan_import_files(self._FILE_MAP, self._CANDIDATES, statuses)
 
         assert (decision.action, decision.episode_ids) == ("import", (21, 22))
 
-    def test_another_releases_recommended_file_is_left_alone(self) -> None:
+    def test_any_other_trusted_file_is_left_alone(self) -> None:
         statuses = episode_statuses({21: EpisodeFileStatus.TRUSTED, 22: EpisodeFileStatus.ABSENT})
 
         [decision] = plan_import_files(self._FILE_MAP, self._CANDIDATES, statuses)
 
         assert (decision.action, decision.episode_ids) == ("import", (22,))
 
-    def test_our_own_copies_alone_never_trigger_an_import(self) -> None:
+    def test_this_torrents_copies_alone_never_trigger_an_import(self) -> None:
         statuses = episode_statuses({21: EpisodeFileStatus.TRUSTED, 22: EpisodeFileStatus.TRUSTED}, frozenset({21, 22}))
 
         [decision] = plan_import_files(self._FILE_MAP, self._CANDIDATES, statuses)
 
         assert decision.action == "skip_done"
 
-    def test_our_copy_on_an_episode_the_file_isnt_placed_on_stays_put(self) -> None:
+    def test_this_torrents_copy_on_an_episode_the_file_isnt_placed_on_stays_put(self) -> None:
         statuses = episode_statuses({21: EpisodeFileStatus.ABSENT, 23: EpisodeFileStatus.TRUSTED}, frozenset({23}))
 
         [decision] = plan_import_files({"one.mkv": (21,)}, {"one.mkv": _candidate("one.mkv")}, statuses)
@@ -133,10 +133,10 @@ class TestOwnCopyAlongside:
         assert decision.episode_ids == (21,)
 
 
-class TestDiskLeftover:
+class TestUnplacedInFolder:
     """`unplaced_in_folder`: fetched video files the file map lacks, split by what the pending import says of them."""
 
-    def test_the_leftover_runs_in_seadex_order_then_disk_order_split_by_the_record(self) -> None:
+    def test_the_unplaced_files_run_in_seadex_order_then_disk_order_split_by_the_pending_import(self) -> None:
         # In the folder: an unlisted file first, a subtitle, a duplicate file name in a second folder, and four listed
         # files.
         scan = candidate_files(

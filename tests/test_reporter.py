@@ -141,7 +141,7 @@ class TestStatsCounters:
         assert 42 in reporter.anilist.al_cache
         assert client.query_calls == [42]
 
-    def test_cached_without_stored_name_falls_back_to_gateway_title(self) -> None:
+    def test_cached_without_stored_name_falls_back_to_gateway_name(self) -> None:
         # A legacy row predating name storage: the name fallback routes
         # through the gateway too, never a bare wire query.
         store = FakeCacheStore()
@@ -153,7 +153,7 @@ class TestStatsCounters:
         assert state.stats.unchanged == 1
         assert client.query_calls == [1]
 
-    def test_outage_skip_tallies_and_renders_distinctly(self) -> None:
+    def test_seadex_unreachable_tallies_and_renders_distinctly(self) -> None:
         # A title SeaDex was unreachable for lands in its own counter and its title row
         # reads "skipped" with the reason - never "no entry". An UNCACHED title has
         # no stored name, so the name still comes from the gateway lookup.
@@ -170,7 +170,7 @@ class TestStatsCounters:
         assert "no entry" not in joined
         assert client.query_calls == [42]
 
-    def test_outage_skip_prefers_cached_name_over_anilist(self) -> None:
+    def test_seadex_unreachable_prefers_cached_name_over_anilist(self) -> None:
         # A prior run resolved the name and stored it on the cache row, so the
         # SeaDex-unreachable row renders the stored name with no AniList lookup at all.
         client = ScriptedAniListClient()
@@ -201,7 +201,7 @@ class TestStatsCounters:
 class TestActiveTitle:
     """`open_title_block` sets the state's title name, url, and coverage for the open title."""
 
-    def test_log_al_title_sets_current(self) -> None:
+    def test_open_title_block_sets_the_active_title(self) -> None:
         state = ArrRunState(arr=Arr.SONARR)
         entry = make_entry_record(url="https://releases.moe/9")
         _make_reporter().open_title_block(state, "Steins;Gate", entry, coverage="S01 E01-E24")
@@ -210,7 +210,7 @@ class TestActiveTitle:
         assert state.per_title.entry_coverage == "S01 E01-E24"
 
 
-class TestEntryHeaderAlId:
+class TestTitleHeaderAlId:
     """`al_id` on the emitted `TitleHeader` is reporter-unverified.
 
     Garbage in either header-opening path passed the whole suite, so pin it on both.
@@ -219,13 +219,13 @@ class TestEntryHeaderAlId:
     def _header(self, events: list[Event]) -> TitleHeader:
         return next(e for e in events if isinstance(e, TitleHeader))
 
-    def test_log_al_title_carries_the_seadex_entrys_anilist_id(self) -> None:
+    def test_open_title_block_carries_the_seadex_entrys_anilist_id(self) -> None:
         reporter, events = _record()
         entry = make_entry_record(anilist_id=12345)
         reporter.open_title_block(ArrRunState(arr=Arr.SONARR), "Steins;Gate", entry)
         assert self._header(events).al_id == 12345
 
-    def test_log_cached_entry_carries_the_al_id_param(self) -> None:
+    def test_log_cached_title_carries_the_al_id_param(self) -> None:
         store = FakeCacheStore()
         store.update_cached_title(Arr.SONARR, 4242, CachedTitleUpdate(name="Cached", coverage="S01", url="u"))
         reporter, events = _record(store)
@@ -240,7 +240,7 @@ class TestCloseBoundaries:
     arr-run-fatal error) from rendering inside the title the scan happened to end on.
     """
 
-    def test_scan_finished_closes_the_open_entry_first(self) -> None:
+    def test_scan_finished_closes_the_open_title_first(self) -> None:
         reporter, events = _record()
         reporter.open_title_block(ArrRunState(arr=Arr.SONARR), "Steins;Gate", make_entry_record())
 
@@ -248,14 +248,14 @@ class TestCloseBoundaries:
 
         assert [type(e) for e in events] == [ScopeOpened, TitleHeader, ScopeClosed, ScanFinished]
 
-    def test_run_finished_without_an_open_entry_emits_only_the_boundary(self) -> None:
+    def test_arr_run_finished_without_an_open_title_emits_only_the_boundary(self) -> None:
         reporter, events = _record()
 
         reporter.arr_run_finished(Arr.SONARR)
 
         assert events == [ArrRunFinished(arr=Arr.SONARR)]
 
-    def test_the_boundaries_are_idempotent_about_the_entry(self) -> None:
+    def test_the_boundaries_are_idempotent_about_the_title(self) -> None:
         # scan_finished already closed it, so arr_run_finished's defensive close is a no-op:
         # a second ScopeClosed would demote every later fact on that closed scope.
         reporter, events = _record()
@@ -277,19 +277,19 @@ class TestCompleteBlocksSelfClose:
     accrues followers and stays open until a boundary.
     """
 
-    def test_cached_entry_emits_scope_closed_before_returning(self) -> None:
+    def test_cached_title_emits_scope_closed_before_returning(self) -> None:
         reporter, events = _record(_seeded_store(name="Cached", coverage="S01", url="u"))
         reporter.log_cached_title(ArrRunState(arr=Arr.SONARR), 1)
         assert [type(e) for e in events] == [ScopeOpened, TitleHeader, ScopeClosed]
 
-    def test_pending_snapshot_emits_scope_closed_before_returning(self) -> None:
+    def test_pending_import_snapshot_emits_scope_closed_before_returning(self) -> None:
         reporter, events = _record()
         pending = pending_import(title="My Show", window_coverage="S01 E01-E13", url="https://releases.moe/1")
         reporter.log_pending_import(PendingImportState.IMPORTED, pending, pending.claims[0].series_id)
         assert [type(e) for e in events] == [ScopeOpened, TitleHeader, ScopeClosed]
 
 
-class TestRunSummary:
+class TestArrRunSummary:
     """`log_arr_run_summary` emits a `ArrRunSummaryReady` summary from the arr run's stats.
 
     The dry-run note wording tracks whether a qBittorrent client is configured.
@@ -318,7 +318,7 @@ class TestRunSummary:
     def _summary_of(self, events: list[Event]) -> ArrRunSummaryReady:
         return next(e for e in events if isinstance(e, ArrRunSummaryReady))
 
-    def test_real_run_emits_the_scoreboard(self) -> None:
+    def test_real_run_emits_the_arr_run_summary(self) -> None:
         reporter, events = _record()
         reporter.log_arr_run_summary(self._state_with_data(), dry_run=False, has_client=True)
 
@@ -343,7 +343,7 @@ class TestRunSummary:
         reporter.log_arr_run_summary(self._state_with_data(), dry_run=True, has_client=True)
         assert self._summary_of(events).summary.dry_run_note == "nothing grabbed"
 
-    def test_counts_mark_stays_bound_to_the_counter_it_was_stamped_on(self) -> None:
+    def test_counts_mark_stays_bound_to_the_counter_it_was_taken_on(self) -> None:
         """A counter swapped in between mark and summary (a re-installed hub) can't feed the diff.
 
         The mark carries the ORIGINAL counter.
@@ -388,7 +388,7 @@ def _summary_messages(
     return _event_messages(events)
 
 
-class TestPendingSnapshot:
+class TestPendingImportSnapshot:
     """log_pending_import renders the inline carried-over row + bumps NO counter."""
 
     def test_renders_and_bumps_no_counter(self) -> None:
@@ -404,7 +404,7 @@ class TestPendingSnapshot:
         assert state.stats.downloading == 0
         assert state.stats.downloaded == 0
 
-    def test_missing_state_renders_nothing(self) -> None:
+    def test_gone_state_renders_nothing(self) -> None:
         reporter, events = _record()
         pending = pending_import(title="Gone")
 
@@ -435,7 +435,7 @@ class TestPendingSnapshot:
         assert (header.coverage, header.url) == ("S02 E01", "https://releases.moe/2")
 
 
-class TestSummaryPendingCounters:
+class TestSummaryPendingImportCounters:
     """The carried-over counters render only when feature-on and non-zero."""
 
     def test_counters_render_when_feature_on_and_non_zero(self) -> None:
@@ -516,7 +516,7 @@ class TestSummaryNoReleaseRow:
         assert any("no release" in m and "2" in m for m in messages)
 
 
-class TestSummarySeadexDownRow:
+class TestSummarySeadexUnreachableRow:
     """Titles SeaDex was unreachable for get their own gated "seadex down" row.
 
     It's never the alarming (and untrue) "no entry" count.
@@ -557,19 +557,19 @@ class TestPrivateOnlyTip:
         ]
         return state
 
-    def test_private_only_kind_renders_tip_despite_reworded_reason(self) -> None:
+    def test_private_only_cause_renders_tip_despite_reworded_reason(self) -> None:
         messages = _summary_messages(self._needs_ctx(NeedsActionCause.PRIVATE_ONLY))
         assert any("private_releases: fallback" in m for m in messages)
         assert not any("private_releases: allow" in m for m in messages)
 
-    def test_no_fallback_kind_tip_omits_the_fallback_suggestion(self) -> None:
+    def test_no_fallback_cause_tip_omits_the_fallback_suggestion(self) -> None:
         # The `fallback` setting found nothing public: suggesting private_releases: fallback
         # (already on) would be nonsense, so that cause's tip names no setting at all.
         messages = _summary_messages(self._needs_ctx(NeedsActionCause.PRIVATE_ONLY_NO_FALLBACK))
         assert not any("private_releases" in m for m in messages)
         assert any("re-checked every run" in m for m in messages)
 
-    def test_stale_kind_renders_the_owned_stale_tip(self) -> None:
+    def test_outdated_cause_renders_the_owned_outdated_tip(self) -> None:
         # The fallback-never-replaces-an-owned-copy skip: the tip names the two
         # ways out (update or delete) and, with fallback already on, no setting.
         messages = _summary_messages(self._needs_ctx(NeedsActionCause.PRIVATE_ONLY_STALE))
@@ -581,11 +581,11 @@ class TestPrivateOnlyTip:
             for m in messages
         )
 
-    def test_unsupported_tracker_kind_renders_no_tip(self) -> None:
+    def test_unsupported_tracker_cause_renders_no_tip(self) -> None:
         messages = _summary_messages(self._needs_ctx(NeedsActionCause.UNSUPPORTED_TRACKER))
         assert not any("private_releases" in m for m in messages)
 
-    def test_misnumbered_kind_renders_no_tip(self) -> None:
+    def test_misnumbered_cause_renders_no_tip(self) -> None:
         messages = _summary_messages(self._needs_ctx(NeedsActionCause.MISNUMBERED))
         assert not any("private_releases" in m for m in messages)
 
@@ -630,7 +630,7 @@ class TestLogSeadexAction:
 
         assert "None" not in joined  # the bug rendered "added : None"
 
-    def test_already_downloading_waiting_to_import(self) -> None:
+    def test_already_in_qbit_waiting_to_import(self) -> None:
         messages = _action_messages(
             [GrabResult(outcome=AddStatus.ALREADY_IN_QBIT, name="Show-NAN0", group="NAN0")],
             waiting_to_import=True,
@@ -645,7 +645,7 @@ class TestLogSeadexAction:
         assert "kept" not in joined
 
     @pytest.mark.parametrize("dry_run", [False, True], ids=["wait mode off", "preview"])
-    def test_already_downloading_not_waiting(self, dry_run: bool) -> None:
+    def test_already_in_qbit_not_waiting(self, dry_run: bool) -> None:
         # State the fact, but don't promise an import, and in a dry run don't say "would add".
         messages = _action_messages(
             [GrabResult(outcome=AddStatus.ALREADY_IN_QBIT, name="X", group="G")],
@@ -658,7 +658,7 @@ class TestLogSeadexAction:
         assert "waiting to import" not in joined
         assert "would add" not in joined
 
-    def test_mixed_added_and_already_added_reads_adding(self) -> None:
+    def test_mixed_added_and_already_in_qbit_reads_adding(self) -> None:
         # A fresh grab happened, so the headline is "adding". The per-release rows
         # disambiguate (one added, one already in qBittorrent).
         messages = _action_messages(
@@ -693,7 +693,7 @@ class TestLogSeadexAction:
 
         assert messages == []
 
-    def test_recommended_group_tags_are_sorted(self) -> None:
+    def test_preferred_group_tags_are_sorted(self) -> None:
         # The tags are carried in a frozenset (StrEnum hash is per-process random), so
         # the reporter sorts them. Feed several unordered and pin the emitted order.
         reporter, events = _record()

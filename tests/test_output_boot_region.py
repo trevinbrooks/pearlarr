@@ -107,7 +107,7 @@ def _plain(stream: io.StringIO) -> str:
 # --- the shared boot step line grammar ----------------------------------------------
 
 
-def test_graduation_line_unicode_and_ascii_glyphs() -> None:
+def test_boot_step_line_unicode_and_ascii_glyphs() -> None:
     event = _finished("Reading config", detail="config.yml")
     assert step_finished_line(event, _UNICODE_FEATURES) == f"  ✔ Reading config{SEP}config.yml{SEP}0.61s"
     assert step_finished_line(event, _ASCII_FEATURES) == f"  ok Reading config{SEP}config.yml{SEP}0.61s"
@@ -148,7 +148,7 @@ class TestBootRegion:
         assert "Pearlarr v9.9.9" in lines
         assert "  Data directory: /data/dir" in lines
 
-    def test_steps_graduate_to_durable_scrollback_lines(self) -> None:
+    def test_finished_steps_become_durable_scrollback_lines(self) -> None:
         renderer, stream = _renderer()
 
         _feed(
@@ -249,7 +249,7 @@ class TestBootRegion:
 
         assert renderer._boot._live is None and not live.is_started
 
-    def test_run_and_cycle_boundaries_tear_down_the_live_slot(self) -> None:
+    def test_process_and_scheduled_run_boundaries_tear_down_the_live_slot(self) -> None:
         # Teardown keys on the boot scope leaving the open scopes, not on WHICH event caused it.
         for boundary in (PearlarrStarted(version="v9.9.9", data_dir="/data"), ScheduledRunStarted(number=2)):
             renderer, _stream = _renderer()
@@ -259,7 +259,7 @@ class TestBootRegion:
             _feed(renderer, boundary)
             assert renderer._boot._live is None and not live.is_started
 
-    def test_run_finished_arr_run_boundary_evicts_the_live_and_the_next_arr_run_starts_fresh(self) -> None:
+    def test_arr_run_finished_boundary_evicts_the_live_and_the_next_arr_run_starts_fresh(self) -> None:
         # Within one scheduled run each arr run ends with ArrRunFinished (never a
         # begin_run). The arr run's close must evict the boot Live so the next arr run's boot
         # scope starts a FRESH slot - a leaked Live would be reused (leftover region,
@@ -284,7 +284,7 @@ class TestBootRegion:
         out = _plain(stream)
         assert f"  ✔ Two{SEP}0.61s" in out  # arr run two's boot step lines rendered under the fresh Live
 
-    def test_begin_cycle_and_close_stop_a_live_slot(self) -> None:
+    def test_begin_run_and_close_stop_a_live_slot(self) -> None:
         renderer, _stream = _renderer()
 
         _feed(renderer, _opened(), _started("One"))
@@ -293,7 +293,7 @@ class TestBootRegion:
         renderer.close()
         _feed(renderer, _opened(), _started("Three", serial=3), ScopeClosed(scope=_BOOT_SCOPE))
 
-    def test_a_raising_live_stop_still_prints_the_capstone(self, monkeypatch: pytest.MonkeyPatch) -> None:
+    def test_a_raising_live_stop_still_prints_the_ready_line(self, monkeypatch: pytest.MonkeyPatch) -> None:
         # The shared base class (LiveRegion._stop_live) contains a stop() raise so a
         # failed teardown can't eat the durable print that follows it.
         real_stop = Live.stop

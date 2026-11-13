@@ -92,7 +92,7 @@ def _recent(reply: SkyHookReply) -> SkyHookReply:
         pytest.param(_recent(_OFFICIAL), 7, id="ended-but-aired-lately"),
     ],
 )
-def test_a_record_stays_fresh_longer_once_the_series_is_quiet(official: SkyHookReply, fresh_days: int) -> None:
+def test_an_answer_stays_fresh_longer_once_the_series_is_quiet(official: SkyHookReply, fresh_days: int) -> None:
     gateway = _gateway({(_SERIES, "official"): official, (_SERIES, "dvd"): _DVD})
 
     _fetches(gateway)
@@ -104,7 +104,7 @@ def test_a_record_stays_fresh_longer_once_the_series_is_quiet(official: SkyHookR
     ("fresh_for", "fetched"),
     [pytest.param(timedelta(days=-1), 1, id="past-fresh-until"), pytest.param(timedelta(days=1), 0, id="fresh")],
 )
-def test_a_record_refetches_once_its_fresh_until_passes(fresh_for: timedelta, fetched: int) -> None:
+def test_an_answer_refetches_once_its_fresh_until_passes(fresh_for: timedelta, fetched: int) -> None:
     cache = FakeCacheStore()
     cache.put_tvdb_orders(_SERIES, stored_orders(_STORED, fresh_for=fresh_for))
 
@@ -121,14 +121,14 @@ def test_a_record_refetches_once_its_fresh_until_passes(fresh_for: timedelta, fe
         pytest.param({"official": 4, "dvd": 4}, 0, id="count-as-stored"),
     ],
 )
-def test_a_fresh_record_refetches_when_sonarr_counts_move(counts: dict[str, int], fetched: int) -> None:
+def test_a_fresh_answer_refetches_when_sonarr_counts_move(counts: dict[str, int], fetched: int) -> None:
     cache = FakeCacheStore()
     cache.put_tvdb_orders(_SERIES, stored_orders(_STORED, sonarr_counts={"official": 4, "dvd": 4}))
 
     assert _fetches(_gateway(cache=cache), counts) == fetched
 
 
-def test_a_record_stored_without_counts_refetches_once_sonarr_lists_them() -> None:
+def test_an_answer_stored_without_counts_refetches_once_sonarr_lists_them() -> None:
     cache = FakeCacheStore()
     cache.put_tvdb_orders(_SERIES, stored_orders(_STORED, sonarr_counts=None))
     gateway = _gateway(cache=cache)
@@ -172,14 +172,14 @@ def test_a_listed_order_skyhook_does_not_have_is_stored_empty() -> None:
     assert set(stored.orders) == {"official", "dvd"}
 
 
-def test_a_series_the_outage_cut_off_still_has_no_record() -> None:
+def test_a_series_the_unreachable_source_cut_off_still_has_no_answer() -> None:
     gateway = _gateway({}, failing=frozenset({(_SERIES, AIRED_ORDER)}))
 
     assert _fetches(gateway) == 0
     assert gateway.has_cached_answer(_SERIES) is False
 
 
-def test_an_outage_mid_series_keeps_the_stale_record_and_serves_it() -> None:
+def test_an_unreachable_source_mid_series_keeps_the_stale_answer_and_serves_it() -> None:
     cache = FakeCacheStore()
     stale = stored_orders(_STORED, fresh_for=timedelta(days=-1))
     cache.put_tvdb_orders(_SERIES, stale)
@@ -203,7 +203,7 @@ def test_other_orders_leave_out_official_and_empty_orders() -> None:
 @pytest.mark.parametrize(
     ("dry_run", "kept"), [pytest.param(False, True, id="real"), pytest.param(True, False, id="preview")]
 )
-def test_each_record_is_saved_as_it_is_written_unless_previewing(tmp_path: Path, dry_run: bool, kept: bool) -> None:
+def test_each_answer_is_saved_as_it_is_written_unless_in_a_dry_run(tmp_path: Path, dry_run: bool, kept: bool) -> None:
     path = str(tmp_path / "cache.db")
     store = CacheStore.load(path, config_hash="x")
     SkyHookGateway(client=FakeSkyHookClient(_REPLIES), cache_store=store).prefetch(

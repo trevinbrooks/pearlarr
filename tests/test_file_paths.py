@@ -35,7 +35,7 @@ class TestNormalize:
         # makes these two spellings of one name fold alike. With only the NFC after it, they fold apart.
         assert normalize_name("\u1fb4 - 01.mkv") == normalize_name("\u03b1\u0345\u0301 - 01.mkv")
 
-    def test_windows_paths_and_trailing_separators_still_fold_to_a_leaf(self) -> None:
+    def test_windows_paths_and_trailing_separators_still_reduce_to_a_file_name(self) -> None:
         # MUTATION PIN: a Windows arr's paths reach pearlarr verbatim, where posixpath.basename
         # sees no separator at all and would key the whole path.
         assert normalize_name(file_name("C:\\downloads\\Show\\Show - 01.mkv")) == "show - 01.mkv"
@@ -43,14 +43,14 @@ class TestNormalize:
         # unnamed thing would then collide with.
         assert normalize_name(file_name("Show/NC/")) == "nc"
 
-    def test_path_leaf_folds_separators_but_preserves_the_name(self) -> None:
+    def test_file_name_converts_separators_but_preserves_the_name(self) -> None:
         # The parser input, before normalize_name: same separator conversion, but
         # case/unicode intact - Sonarr's /parse and the video gate must see the
         # real filename, never a whole Windows path or a folded one.
         assert file_name("C:\\downloads\\Show\\Show - 01 [1080p].MKV") == "Show - 01 [1080p].MKV"
         assert file_name("Show/NC/") == "NC"
 
-    def test_path_leaf_keeps_a_leaf_that_looks_like_a_drive(self) -> None:
+    def test_file_name_keeps_a_name_that_looks_like_a_drive(self) -> None:
         # MUTATION PIN: catches a file_name on os.path only on the Windows CI job, where os.path is ntpath and
         # reads the leading "K:" as a drive, so the grab's key for the file never matches the one Sonarr's path
         # gives.

@@ -231,7 +231,7 @@ def test_queue_later_page_failure_fails_the_whole_read() -> None:
     "failure",
     [pytest.param(httpx.Response(500), id="non-200"), pytest.param(httpx.ConnectError("boom"), id="request-error")],
 )
-def test_queue_outage_returns_none(failure: httpx.Response | Exception) -> None:
+def test_queue_unreachable_returns_none(failure: httpx.Response | Exception) -> None:
     """A failed queue read reports None (fail closed): it never reads as an empty, untracked queue.
 
     It also never unwinds the poll loop.
@@ -613,7 +613,7 @@ def test_manual_import_candidates_request_error_returns_none() -> None:
 
 
 @respx.mock
-def test_folder_scan_sends_folder_and_never_download_or_series_id() -> None:
+def test_folder_fetch_sends_folder_and_never_download_or_series_id() -> None:
     """CONTRACT: the folder fetch carries NEITHER `downloadId` NOR `seriesId`.
 
     A `downloadId` re-enters the poisoned tracked branch (the NRE the fallback
@@ -640,7 +640,7 @@ def test_folder_scan_sends_folder_and_never_download_or_series_id() -> None:
 
 
 @respx.mock
-def test_folder_scan_non_200_returns_none_and_empty_stays_empty() -> None:
+def test_folder_fetch_non_200_returns_none_and_empty_stays_empty() -> None:
     """A non-200 folder fetch is None (retry). A 200 `[]` is a real empty answer."""
 
     respx.get(f"{_BASE}/manualimport").respond(status_code=500)
@@ -648,7 +648,7 @@ def test_folder_scan_non_200_returns_none_and_empty_stays_empty() -> None:
 
 
 @respx.mock
-def test_folder_scan_empty_list_decodes_to_empty() -> None:
+def test_folder_fetch_empty_list_decodes_to_empty() -> None:
     """200 `[]` (an invisible/untranslated folder) decodes to [], never None."""
 
     respx.get(f"{_BASE}/manualimport").respond(json=[])
@@ -656,7 +656,7 @@ def test_folder_scan_empty_list_decodes_to_empty() -> None:
 
 
 @respx.mock
-def test_folder_scan_request_error_returns_none() -> None:
+def test_folder_fetch_request_error_returns_none() -> None:
     respx.get(f"{_BASE}/manualimport").mock(side_effect=httpx.ConnectError("boom"))
     assert _make_client().manual_import_candidates_by_folder(folder="/d", title="t") is None
 
@@ -1131,7 +1131,7 @@ def test_quality_definitions_decodes_nested_quality_verbatim() -> None:
 
 
 @respx.mock
-def test_languages_decodes_id_name_records() -> None:
+def test_languages_decodes_id_name_objects() -> None:
     """Languages decode to the {id, name} objects the resolver matches/re-builds."""
 
     body: list[object] = [{"id": 1, "name": "English"}, {"id": 8, "name": "Japanese"}]

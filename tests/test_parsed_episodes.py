@@ -125,7 +125,7 @@ class TestWidenRangeKey:
 
         assert (widened.episode_numbers, widened.absolute_episode_numbers) == ((5, 6), (30,))
 
-    def test_a_matched_pair_on_the_first_episode_widens_with_the_range(self) -> None:
+    def test_a_matched_first_episode_widens_with_the_range(self) -> None:
         # Sonarr matched the first episode, so the rest of the range gets matched episodes too, with no Sonarr id.
         info = parsed_info(season=1, episodes=(5,), matched=((1, 5),))
 
@@ -133,7 +133,7 @@ class TestWidenRangeKey:
 
         assert _matched(widened) == [(1, 5, None), (1, 6, None), (1, 7, None)]
 
-    def test_an_alias_shifted_match_is_widened_in_its_own_season(self) -> None:
+    def test_a_season_shifted_match_is_widened_in_its_own_season(self) -> None:
         # A sequel numbered as season 1 that Sonarr matched into season 2, so the added matched episodes are in
         # season 2.
         info = parsed_info(season=1, episodes=(7,), matched=((2, 7),))
@@ -172,14 +172,14 @@ class TestWidenRangeKey:
 
         assert widened.episode_numbers == (5, 6)
 
-    def test_a_pair_sonarr_already_matched_is_not_added_again(self) -> None:
+    def test_an_episode_sonarr_already_matched_is_not_added_again(self) -> None:
         info = parsed_info(season=1, episodes=(7,), matched=((2, 7), (2, 8)))
 
         widened = widen_range_key("show s01e07-08.mkv", info, self._SERIES)
 
         assert _matched(widened) == [(2, 7, None), (2, 8, None)]
 
-    def test_a_matched_pair_off_the_first_episode_is_left_as_is(self) -> None:
+    def test_a_matched_episode_off_the_first_episode_is_left_as_is(self) -> None:
         # Sonarr matched the absolute it read off the range's end, not the first episode, so the match isn't widened.
         info = parsed_info(season=0, episodes=(3,), absolutes=(4,), matched=((1, 4),))
 

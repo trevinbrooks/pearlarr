@@ -35,7 +35,7 @@ class TestDottedNumber:
             "Zap.Pilot.100.S02.Ep01.1080p.WEB.H.264-grp.mkv",
         ],
     )
-    def test_a_title_or_codec_number_is_no_count(self, name: str) -> None:
+    def test_a_title_or_codec_number_is_no_name_number(self, name: str) -> None:
         assert split_name(name).member is None
 
     @pytest.mark.parametrize(
@@ -45,7 +45,7 @@ class TestDottedNumber:
             "Quillfox.101.v4.1080p.BluRay.10-bit.x265-grp.mkv",
         ],
     )
-    def test_the_count_before_the_quality_words_is_read(self, name: str) -> None:
+    def test_the_name_number_before_the_quality_words_is_read(self, name: str) -> None:
         member = split_name(name).member
 
         assert member is not None
@@ -60,7 +60,7 @@ class TestDottedNumber:
             "Quillfox.101.v4.480p.DVD.23.976fps.Dual-Audio.FLAC2.0.Hi10P.x264-grp.mkv",
         ],
     )
-    def test_a_number_in_the_quality_tail_is_no_later_count(self, name: str) -> None:
+    def test_a_number_in_the_quality_tail_is_no_later_name_number(self, name: str) -> None:
         member = split_name(name).member
 
         assert member is not None
@@ -75,10 +75,10 @@ class TestDottedNumber:
             "Quillfox.101.480p.DVD.x264-grp.S01.mkv",
         ],
     )
-    def test_a_count_with_another_count_or_a_key_behind_it_is_no_count(self, name: str) -> None:
+    def test_a_number_with_another_or_a_season_token_behind_it_is_no_name_number(self, name: str) -> None:
         assert split_name(name).member is None
 
-    def test_a_number_glued_to_a_hyphen_is_no_trailing_count(self) -> None:
+    def test_a_number_glued_to_a_hyphen_is_no_trailing_name_number(self) -> None:
         member = split_name("Quillfox.101.480p.DVD.x264-grp-25.mkv").member
 
         assert member is not None
@@ -96,11 +96,11 @@ class TestDottedNumber:
             "Star.Drums.12&13.1080p.WEB-grp.mkv",
         ],
     )
-    def test_a_number_a_joiner_ties_to_the_one_before_is_no_count(self, name: str) -> None:
+    def test_a_number_a_joiner_ties_to_the_one_before_is_no_name_number(self, name: str) -> None:
         assert split_name(name).member is None
         assert _read(name, "Star Drums!")[0] is None
 
-    def test_a_lone_season_token_is_no_trailing_count(self) -> None:
+    def test_a_lone_season_token_is_no_trailing_name_number(self) -> None:
         assert split_name("[grp] Show S01 (BD 1080p x265 FLAC).mkv").member is None
 
     @pytest.mark.parametrize(
@@ -111,7 +111,7 @@ class TestDottedNumber:
             ("Ba-Ko-Ru.GX.001.720p.DVD.x264-grp.mkv", "Ba-Ko-Ru.GX"),
         ],
     )
-    def test_a_title_ending_in_a_codec_letter_still_counts(self, name: str, prefix: str) -> None:
+    def test_a_title_ending_in_a_codec_letter_still_gets_a_name_number(self, name: str, prefix: str) -> None:
         member = split_name(name).member
 
         assert member is not None
@@ -125,7 +125,7 @@ class TestDottedNumber:
             "Comet.X.264.1080p.WEB.H.264-grp.mkv",
         ],
     )
-    def test_a_codec_number_behind_a_lone_letter_is_no_count(self, name: str) -> None:
+    def test_a_codec_number_behind_a_lone_letter_is_no_name_number(self, name: str) -> None:
         assert split_name(name).member is None
 
     @pytest.mark.parametrize(
@@ -135,7 +135,7 @@ class TestDottedNumber:
             ("Show.018.H.264.1080p.WEB-grp.mkv", 18),
         ],
     )
-    def test_a_codec_number_behind_the_count_is_no_later_count(self, name: str, number: int) -> None:
+    def test_a_codec_number_behind_the_name_number_is_no_later_one(self, name: str, number: int) -> None:
         member = split_name(name).member
 
         assert member is not None
@@ -149,7 +149,7 @@ class TestDottedNumber:
             ("Comet.X.264.001.1080p.WEB-grp.mkv", 1),
         ],
     )
-    def test_a_codec_number_before_the_count_is_skipped(self, name: str, number: int) -> None:
+    def test_a_codec_number_before_the_name_number_is_passed_over(self, name: str, number: int) -> None:
         member = split_name(name).member
 
         assert member is not None
@@ -165,7 +165,7 @@ class TestDottedNumber:
             ("Dark.Thistle.023.Vol.26.1080p.WEB.H.264-grp.mkv", 23),
         ],
     )
-    def test_a_padded_count_stands_before_an_unpadded_title_number(self, name: str, number: int) -> None:
+    def test_a_padded_name_number_stands_before_an_unpadded_title_number(self, name: str, number: int) -> None:
         member = split_name(name).member
 
         assert member is not None
@@ -180,7 +180,7 @@ class TestDottedNumber:
             "Dark.Thistle.123.Vol.26.1080p.WEB.H.264-grp.mkv",
         ],
     )
-    def test_a_padded_number_behind_the_count_or_an_unpadded_count_is_refused(self, name: str) -> None:
+    def test_a_padded_number_behind_the_number_or_an_unpadded_number_gives_no_name_number(self, name: str) -> None:
         assert split_name(name).member is None
 
     @pytest.mark.parametrize(
@@ -192,7 +192,7 @@ class TestDottedNumber:
             ("1000.mile.Road.001.1080p.WEB-grp.mkv", 1),
         ],
     )
-    def test_a_count_past_the_thousandth_episode_is_read_but_a_year_is_not(self, name: str, number: int) -> None:
+    def test_a_name_number_past_the_thousandth_episode_is_read_but_a_year_is_not(self, name: str, number: int) -> None:
         member = split_name(name).member
 
         assert member is not None
@@ -213,7 +213,7 @@ class TestSeasonTail:
             "[grp] Spikeball!! 2nd Season 2.mkv",
         ],
     )
-    def test_a_plain_season_number_is_no_count(self, name: str) -> None:
+    def test_a_plain_season_number_is_no_name_number(self, name: str) -> None:
         assert split_name(name).member is None
 
     @pytest.mark.parametrize(
@@ -229,14 +229,14 @@ class TestSeasonTail:
             ("[grp] Tetsu no Kyodai The Final Season - 2 (1080p).mkv", 2),
         ],
     )
-    def test_the_number_behind_an_ordinal_or_a_hyphen_is_the_count(self, name: str, number: int) -> None:
+    def test_the_number_behind_an_ordinal_or_a_hyphen_is_the_name_number(self, name: str, number: int) -> None:
         member = split_name(name).member
 
         assert member is not None
         assert member.number == number
 
 
-class TestReadNames:
+class TestSplitNames:
     """A torrent's lone-S set: "S1", "S2", "S3" behind one prefix number its specials. Anything less says a season."""
 
     _EPISODES: ClassVar[list[str]] = [f"[grp] Show - {n:02d} (BD 1080p).mkv" for n in (1, 2, 3, 4)]
@@ -272,18 +272,18 @@ class TestReadNames:
             ["Kidzone USA OP04 - Tom S3 [Bryn].mkv", "Kidzone USA OP06 - Tom S4 [Bryn].mkv"],
         ],
     )
-    def test_a_lone_s_alone_repeated_or_not_from_one_stays_unnumbered(self, names: list[str]) -> None:
+    def test_an_s_and_number_alone_repeated_or_not_from_one_gets_no_name_number(self, names: list[str]) -> None:
         assert self._numbers(self._EPISODES + names) == {**self._numbers(self._EPISODES), **dict.fromkeys(names)}
 
 
 class TestMiddleNumber:
     """The " - NN - " name number between a title's name and an episode title."""
 
-    def test_a_second_middle_segment_is_a_title_number_and_no_count(self) -> None:
+    def test_a_second_middle_segment_is_an_episode_titles_number_and_no_name_number(self) -> None:
         assert split_name("COG x CLAN - 277 - 10 - 1 = [WEBDL-1080p].mkv").member is None
 
 
-class TestPaddedCounts:
+class TestPaddedNameNumbers:
     """A name number of four digits: padded behind a zero, or past the thousandth episode."""
 
     @pytest.mark.parametrize(
@@ -294,14 +294,14 @@ class TestPaddedCounts:
             ("[grp] Pocketbeast - 1069 [1080p].mkv", 1069),
         ],
     )
-    def test_a_padded_middle_or_trailing_count_is_read(self, name: str, number: int) -> None:
+    def test_a_padded_middle_or_trailing_name_number_is_read(self, name: str, number: int) -> None:
         member = split_name(name).member
 
         assert member is not None
         assert member.number == number
 
 
-class TestBareNumbers:
+class TestStandaloneNumbers:
     """Every number standing alone in a name, less a codec's number in the quality tail."""
 
     @pytest.mark.parametrize(
@@ -316,7 +316,7 @@ class TestBareNumbers:
             ("[grp] Show - 046 - The 17 Years Old Truth [1080p].mkv", (46,)),
         ],
     )
-    def test_every_standalone_count_is_bare_but_a_tail_codecs(self, name: str, numbers: tuple[int, ...]) -> None:
+    def test_every_standalone_number_but_a_tail_codecs_is_kept(self, name: str, numbers: tuple[int, ...]) -> None:
         assert split_name(name).standalone_numbers == numbers
 
 
@@ -367,7 +367,7 @@ class TestDecimalTail:
             "[Cordelia-Raws] Meet A Star (Director's Cut Edition) PV ver.1.1 [BDRip 1920x1080 x264 FLAC].mkv",
         ],
     )
-    def test_a_fraction_is_no_count(self, name: str) -> None:
+    def test_a_fraction_is_no_name_number(self, name: str) -> None:
         assert split_name(name).member is None
 
     @pytest.mark.parametrize(
@@ -384,7 +384,7 @@ class TestDecimalTail:
         assert (member.number, member.version) == (number, 2)
 
 
-class TestTitledRead:
+class TestSplitUnderTitleNames:
     """The title's names tell their numbers apart from the name number: a name opening with one is numbered past it."""
 
     @pytest.mark.parametrize(
@@ -435,7 +435,7 @@ class TestTitledRead:
             ),
         ],
     )
-    def test_the_first_count_behind_the_title_is_the_count(
+    def test_the_first_number_behind_the_title_is_the_name_number(
         self, name: str, series: str, anilist: tuple[str, ...], number: int, bare: tuple[int, ...]
     ) -> None:
         assert _read(name, series, anilist) == (number, bare)
@@ -481,7 +481,7 @@ class TestTitledRead:
         assert member is not None
         assert (member.number, member.words_after_number) == (6, ("les", "voleurs"))
 
-    def test_the_title_check_keeps_the_prefix_a_form_would_read(self) -> None:
+    def test_the_title_names_keep_the_prefix_a_form_would_read(self) -> None:
         ground = TitleNameWords.of(TitleNames("Seeker x Seeker (2011)"))
         names = ["Seeker x Seeker (2011) - 04 - Title.mkv", "Seeker x Seeker (2011) - 05 (OVA) - Title.mkv"]
 
@@ -510,7 +510,7 @@ class TestTitledRead:
             ("&.mkv", "Steel Armor Titan", ()),
         ],
     )
-    def test_a_title_the_name_does_not_open_with_leaves_the_read_alone(
+    def test_a_title_the_name_does_not_open_with_leaves_the_name_parts_alone(
         self, name: str, series: str, anilist: tuple[str, ...]
     ) -> None:
         plain = split_name(name)
@@ -553,7 +553,7 @@ class TestTitledRead:
             ("Hex Academy 0 (2021) [v3].mkv", "Hex Academy 0", (), None),
         ],
     )
-    def test_a_count_equal_to_the_titles_season_digit_stands_when_set_off(
+    def test_a_name_number_equal_to_the_titles_season_digit_stands_when_set_off(
         self, name: str, series: str, anilist: tuple[str, ...], number: int | None
     ) -> None:
         assert _read(name, series, anilist)[0] == number
@@ -570,7 +570,7 @@ class TestTitledRead:
             ("[grp] Show - 12 Raw Deal [1080p].mkv", "Show"),
         ],
     )
-    def test_a_word_behind_the_count_makes_it_an_episode_titles_number(self, name: str, series: str) -> None:
+    def test_a_word_behind_the_number_makes_it_an_episode_titles_number(self, name: str, series: str) -> None:
         for anilist in ((), (series,), (series.upper(), series)):
             assert _read(name, series, anilist)[0] is None
         assert _read(name)[0] is None
@@ -617,7 +617,7 @@ class TestTitledRead:
             ("[grp] BX8 the Eternity - Episode 01 Preview [1080p].mkv", "BX8 the Eternity", (), None),
         ],
     )
-    def test_a_release_tag_behind_the_count_is_no_titles_word(
+    def test_a_release_tag_behind_the_name_number_is_no_episode_title_word(
         self, name: str, series: str, anilist: tuple[str, ...], number: int | None
     ) -> None:
         assert _read(name, series, anilist)[0] == number
@@ -630,7 +630,7 @@ class TestTitledRead:
             "SoLid.Charge.13.OAD.1080p.BluRay.x264-grp.mkv",
         ],
     )
-    def test_an_ova_tag_behind_the_count_marks_an_extra_with_no_count(self, name: str) -> None:
+    def test_an_ova_tag_behind_the_number_marks_an_extra_with_no_name_number(self, name: str) -> None:
         read = split_names([name], TitleNameWords.of(TitleNames("Magic Boy Lyrical Pip", ("SoLid Charge!",))))[name]
 
         assert (read.member, read.episode_title_number) == (None, None)
@@ -651,10 +651,10 @@ class TestTitledRead:
             "Show 2nd Season - Season 02.mkv",
         ],
     )
-    def test_a_refusal_the_title_does_not_explain_stands(self, name: str) -> None:
+    def test_a_blocked_name_number_the_title_does_not_explain_stays_blocked(self, name: str) -> None:
         assert _read(name, "Show", ("Silvertail", "Comet X"))[0] is None
 
-    def test_a_read_with_a_number_already_keeps_it(self) -> None:
+    def test_a_name_with_a_name_number_already_keeps_it(self) -> None:
         # "002" is the name number, and no "Pixie Saga 2".
         assert _read("[Fenwick] Pixie Saga - 002.mkv", "Pixie Saga", ("Pixie Saga 2",)) == (2, (2,))
         assert _read("Show 12 - 05.mkv", "Show") == (5, ())
@@ -678,7 +678,7 @@ class TestTitledRead:
             ("[grp] Show - 05 (BD 1080p).mkv", "Show", ()),
         ],
     )
-    def test_the_titles_numbers_in_the_name_ride_on_the_member(
+    def test_the_titles_numbers_in_the_name_are_on_the_member(
         self, name: str, series: str, numbers: tuple[int, ...]
     ) -> None:
         member = split_names([name], TitleNameWords.of(TitleNames(series)))[name].member
@@ -686,17 +686,17 @@ class TestTitledRead:
         assert member is not None
         assert member.title_numbers == numbers
 
-    def test_a_title_with_no_digits_leaves_every_count(self) -> None:
+    def test_a_title_with_no_digits_leaves_every_number(self) -> None:
         assert TitleNameWords.of(TitleNames("Show", ("Warden II", "Meet A Star IV"))).numbers == frozenset()
         assert TitleNameWords.of(TitleNames("Tinman 009", ("Seeker x Seeker (2011)",))).numbers == {9, 2011}
 
-    def test_the_series_words_are_the_series_titles_and_the_entry_words_add_the_anilist_titles(self) -> None:
+    def test_the_series_words_are_the_series_names_and_all_name_words_add_the_anilist_names(self) -> None:
         ground = TitleNameWords.of(TitleNames("Show Town", ("Machi Show",)))
 
         assert ground.series_words == {"show", "town"}
         assert ground.all_name_words == {"show", "town", "machi"}
 
-    def test_the_titles_numbers_leave_the_bare_numbers_only(self) -> None:
+    def test_the_titles_numbers_leave_the_standalone_numbers_only(self) -> None:
         assert _read("Tinman 009 - 009.mkv", "Tinman 009") == (9, (9,))
         assert _read("Zap Pilot 100 - 05.mkv", "Zap Pilot 100") == (5, ())
         assert _read("Zap Pilot 100 - 05.mkv") == (5, (100,))
@@ -720,7 +720,7 @@ class TestTitledRead:
             ("Sea Atlas - Garmo 66.mkv", 66),
         ],
     )
-    def test_a_trailing_number_behind_words_past_the_title_is_the_titles_when_a_count_leads(
+    def test_a_trailing_number_behind_words_past_the_title_is_the_titles_when_a_number_leads(
         self, name: str, number: int | None
     ) -> None:
         assert _read(name, "Sea Atlas")[0] == number
@@ -731,7 +731,7 @@ class TestTitledRead:
     def test_a_quality_tail_ahead_of_the_title_drops_just_the_titles_number(self) -> None:
         assert _read("[Grp][1080p][x.264] Show 100 - 05.mkv", "Show 100") == (5, ())
 
-    def test_a_quality_words_second_half_behind_the_count_opens_no_quality_tail(self) -> None:
+    def test_a_quality_words_second_half_behind_the_number_opens_no_quality_tail(self) -> None:
         name = "[grp] Show - 05 Ray of Hope [1080p].mkv"
         read = split_names([name], TitleNameWords.of(TitleNames("Show")))[name]
 
@@ -777,7 +777,7 @@ class TestTitledRead:
             ("[101] Quillfox - Title.mkv", "Quillfox", None, ("quillfox", "title")),
         ],
     )
-    def test_a_count_a_word_follows_is_kept_as_the_titled_count_with_the_words_behind_it(
+    def test_a_number_a_word_follows_is_kept_as_the_episode_title_number_with_the_words_behind_it(
         self, name: str, series: str, count: int | None, words: tuple[str, ...]
     ) -> None:
         read = split_names([name], TitleNameWords.of(TitleNames(series)))[name]

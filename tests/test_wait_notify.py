@@ -202,7 +202,7 @@ def test_push_wait_summary_lists_the_unmatched_files_under_their_row(pushes: lis
     assert pushes[0].color == COLOR_DEFERRED
 
 
-def test_push_wait_summary_lists_the_held_back_files_under_their_row(pushes: list[DiscordEmbed]) -> None:
+def test_push_wait_summary_lists_the_files_left_for_hand_import_under_their_row(pushes: list[DiscordEmbed]) -> None:
     notifier = Notifier(discord_url="https://discord.example", web=httpx.Client())
     row = WaitOutcomeRow(
         "Demo Batch", Outcome.PARTIAL, left_for_hand_import=files_left_for_hand_import("show - 03 [grp].mkv")
@@ -216,7 +216,7 @@ def test_push_wait_summary_lists_the_held_back_files_under_their_row(pushes: lis
     )
 
 
-def test_push_wait_summary_says_why_order_only_files_are_held(pushes: list[DiscordEmbed]) -> None:
+def test_push_wait_summary_says_why_order_only_files_are_left_for_hand_import(pushes: list[DiscordEmbed]) -> None:
     notifier = Notifier(discord_url="https://discord.example", web=httpx.Client())
     row = WaitOutcomeRow(
         "Show Ending · grp · S04 E01-E12", Outcome.PARTIAL, left_for_hand_import=order_only_hand_import_files()
@@ -258,7 +258,7 @@ def test_push_wait_summary_all_imported_is_green(pushes: list[DiscordEmbed]) -> 
     assert pushes[0].color == COLOR_SUCCESS
 
 
-def test_push_wait_summary_deferred_only_is_orange(pushes: list[DiscordEmbed]) -> None:
+def test_push_wait_summary_left_only_is_orange(pushes: list[DiscordEmbed]) -> None:
     notifier = Notifier(discord_url="https://discord.example", web=httpx.Client())
     result = WaitResult((WaitOutcomeRow("Frieren", Outcome.STILL_IMPORTING),), elapsed_s=60)
 
@@ -482,7 +482,7 @@ class TestGrabLayout:
         assert _grab_notifier().push_grab(notice) is True
         return pushes[0]
 
-    def test_single_group_rides_the_description(self, pushes: list[DiscordEmbed]) -> None:
+    def test_single_group_goes_in_the_description(self, pushes: list[DiscordEmbed]) -> None:
         seadex_dict = {
             "PMR": rg_group(
                 {

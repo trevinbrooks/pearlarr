@@ -17,7 +17,7 @@ from .fakes import RecordingHub
 # --- validate_each ------------------------------------------------------------
 
 
-def test_validate_each_skips_bad_records_and_scrubs_the_warning() -> None:
+def test_validate_each_skips_bad_elements_and_scrubs_the_warning() -> None:
     """A junk element is skipped with ONE warning naming the model, index, and failing field.
 
     It never includes the payload value itself (it may carry names/paths).

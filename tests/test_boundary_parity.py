@@ -140,7 +140,7 @@ _UNKNOWN_QUALITY: dict[str, object] = {
 
 
 @respx.mock
-def test_golden_body_dead_tracked_folder_import_omits_download_id() -> None:
+def test_golden_body_history_closed_folder_import_omits_download_id() -> None:
     """The wire shape when the download's history is closed: NO `downloadId` key at all, `importMode` forced to copy.
 
     Drives the REAL client end-to-end through the fallback: the downloadId fetch
@@ -313,7 +313,7 @@ def test_golden_body_empty_inner_quality_synthesizes_unknown() -> None:
 
 
 @respx.mock
-def test_queue_record_folds_junk_per_field_without_dropping_the_record() -> None:
+def test_queue_record_reduces_junk_per_field_without_dropping_the_record() -> None:
     """Junk in individual queue-record fields reduces that FIELD to None.
 
     The record itself (and its healthy siblings) always survives.
@@ -384,7 +384,7 @@ def test_import_pending_classifies_by_tracked_status() -> None:
 
 
 @respx.mock
-def test_history_junk_item_id_folds_to_zero_and_the_record_is_kept() -> None:
+def test_history_junk_item_id_reduces_to_zero_and_the_record_is_kept() -> None:
     """A junk `seriesId` reduces to 0 without dropping the record.
 
     A dropped record would be a missed dirty-mark and a lagging checkpoint.
@@ -449,7 +449,7 @@ def test_history_missing_item_id_defaults_to_zero() -> None:
 
 
 @respx.mock
-def test_radarr_history_item_id_reads_movie_id_and_junk_folds() -> None:
+def test_radarr_history_item_id_reads_movie_id_and_junk_reduces_to_zero() -> None:
     """Radarr's item id comes from `movieId`.
 
     A null one reduces to 0 with the record kept (same per-field posture as
@@ -473,7 +473,7 @@ def test_radarr_history_item_id_reads_movie_id_and_junk_folds() -> None:
 
 
 @respx.mock
-def test_rejections_fold_strings_and_dicts_and_skip_other_shapes() -> None:
+def test_rejections_convert_strings_and_dicts_and_skip_other_shapes() -> None:
     """One rejections list mixes several element shapes. The well-formed ones convert, the rest are skipped.
 
     The shapes are a bare string (older Sonarr), a proper `{reason}` object,

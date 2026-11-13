@@ -18,7 +18,7 @@ def _console(width: int = 100) -> Console:
     return Console(file=io.StringIO(), force_terminal=True, legacy_windows=False, width=width)
 
 
-def test_same_console_identity_returns_the_cached_probe() -> None:
+def test_same_console_identity_returns_the_cached_features() -> None:
     cache = DetectedFeatures()
     console = _console()
 
@@ -29,7 +29,7 @@ def test_same_console_identity_returns_the_cached_probe() -> None:
     assert cache.for_console(console) is first
 
 
-def test_a_new_console_identity_reprobes_and_replaces() -> None:
+def test_a_new_console_identity_detects_again_and_replaces() -> None:
     cache = DetectedFeatures()
     cache.for_console(_console(width=100))
 
@@ -39,7 +39,7 @@ def test_a_new_console_identity_reprobes_and_replaces() -> None:
     assert not narrow.can_redraw  # below MIN_LIVE_WIDTH: the fresh detection was used
 
 
-def test_reset_drops_the_cached_probe() -> None:
+def test_reset_drops_the_cached_features() -> None:
     cache = DetectedFeatures()
     console = _console()
     first = cache.for_console(console)

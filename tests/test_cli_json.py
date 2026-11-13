@@ -74,7 +74,7 @@ def data_dir(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setenv("PEARLARR_DATA_DIR", str(tmp_path))
 
 
-class TestJsonSuccessArms:
+class TestJsonSuccessCases:
     """Each command's success branch emits its event as one envelope line, stderr empty."""
 
     def test_paths(self, tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
@@ -175,7 +175,7 @@ class TestJsonSuccessArms:
         assert captured.err == ""
 
 
-class TestJsonErrorArms:
+class TestJsonErrorCases:
     """One error branch per command family: the failure is an ERROR envelope on stdout, stderr empty."""
 
     def test_missing_cache_file(self, capsys: pytest.CaptureFixture[str]) -> None:

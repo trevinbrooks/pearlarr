@@ -133,10 +133,10 @@ def _grab_request(al_id: int, seadex_dict: SeadexDict, entry: EntryRecord) -> Gr
     )
 
 
-class TestUpgradePendingHoldsForOwnedStale:
+class TestUpgradePendingSkipsForOwnedOutdated:
     """An owned private release at an outdated size warns and is skipped - a fallback never replaces it."""
 
-    def test_sonarr_upgrade_pending_warns_and_holds(self) -> None:
+    def test_sonarr_upgrade_pending_warns_and_skips(self) -> None:
         # The Arr has Priv's release at an OUTDATED size (the SeaDex entry updated):
         # a fallback (a cascade loser) must not supersede the owned preferred
         # copy, so nothing is promoted and the set warns with the outdated reason.
@@ -178,7 +178,7 @@ class TestUpgradePendingHoldsForOwnedStale:
         assert [n.cause for n in state.stats.needs_action] == [NeedsActionCause.PRIVATE_ONLY_STALE]
         assert [n.reason for n in state.stats.needs_action] == [OUTDATED_ROW_REASON]
 
-    def test_radarr_size_disjoint_warns_and_holds(self) -> None:
+    def test_radarr_size_disjoint_warns_and_skips(self) -> None:
         # The no-episode (Radarr) twin: the size-disjoint branch marks the private
         # release to grab again, and the same-set fallback stays un-promoted - a private-only skip.
         state = ArrRunState(arr=Arr.RADARR)
@@ -285,7 +285,7 @@ class TestOwnedPreferredPrivateAtMatchingSize:
         assert cached is not None
         assert cached.fallback_satisfied is False
 
-    def test_warn_mode_upgrade_pending_warns_and_holds(self) -> None:
+    def test_warn_mode_upgrade_pending_warns_and_skips(self) -> None:
         # Parity: warn mode on the same upgrade-pending state warns and leaves
         # the title uncached, surfacing the plain PRIVATE_ONLY needs-action row.
         state = ArrRunState(arr=Arr.SONARR)
@@ -318,7 +318,7 @@ class TestOwnedPreferredPrivateAtMatchingSize:
         assert [n.cause for n in state.stats.needs_action] == [NeedsActionCause.PRIVATE_ONLY]
 
 
-class TestFilterDownloadsNoticeSeam:
+class TestFilterGrabsNotice:
     """filter_downloads renders each PrivateOnlyNotice at its level and stamps the state."""
 
     PRIVA_URL = "https://animebytes.tv/torrents.php?id=10"
@@ -735,7 +735,7 @@ class TestPromotionGeneralization:
     F_URL = "https://nyaa.si/view/4"
     F_HASH = "d" * 40
 
-    def test_owned_mixed_group_holds_its_stale_batch(self) -> None:
+    def test_owned_mixed_group_skips_its_outdated_torrent(self) -> None:
         # Mixed group M: its public S1 release is OWNED (not marked to grab), its private
         # torrent's S2 is owned at an outdated size. The only other release is a FALLBACK,
         # which never replaces the owned outdated copy: nothing is promoted, the
@@ -1097,7 +1097,7 @@ class TestFolderLayoutCoverage:
         assert set(sd) == {"Pick"}
         assert set(sd["Pick"].releases) == {PUB_URL}
 
-    def test_a_listing_carrying_fewer_copies_is_not_coverage(self) -> None:
+    def test_a_torrent_carrying_fewer_copies_is_not_coverage(self) -> None:
         # Two files of one size are two files: a twin carrying only one does
         # not cover the private torrent, so the fallback is still offered and
         # the private release survives the prune.
@@ -1141,7 +1141,7 @@ class TestFolderLayoutCoverage:
 
         assert PRIV_URL in sd["Pick"].releases
 
-    def test_coverage_split_across_two_public_listings_still_covers(self) -> None:
+    def test_coverage_split_across_two_public_torrents_still_covers(self) -> None:
         # The public side genuinely carries both of the private release's files,
         # one torrent each. The elementwise-max merge must still read that as
         # covered - reading it as a gap grabs a fallback nobody needed.

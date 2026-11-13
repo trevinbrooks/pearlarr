@@ -138,12 +138,12 @@ def _open_title_scope_events() -> tuple[Event, Event, Event]:
 # --- golden lines -----------------------------------------------------------------
 
 
-def test_run_started_line() -> None:
+def test_pearlarr_started_line() -> None:
     line = _format(PearlarrStarted(version="v1.0.0", data_dir="/data/pearlarr"))
     assert line == f"{_TS} INFO [run] Pearlarr started version=v1.0.0 data_dir=/data/pearlarr"
 
 
-def test_run_started_omits_an_empty_version() -> None:
+def test_pearlarr_started_omits_an_empty_version() -> None:
     line = _format(PearlarrStarted(version="", data_dir="/data"))
     assert line == f"{_TS} INFO [run] Pearlarr started data_dir=/data"
 
@@ -203,7 +203,7 @@ def test_scan_and_item_lines() -> None:
     )
 
 
-def test_entry_header_line_reads_the_full_breadcrumb() -> None:
+def test_title_header_line_reads_the_full_scope_path() -> None:
     header = TitleHeader(
         state=TitleState.CHECKING,
         title="Frieren: Beyond Journey's End",
@@ -221,7 +221,7 @@ def test_entry_header_line_reads_the_full_breadcrumb() -> None:
     )
 
 
-def test_grab_action_line_joins_groups_and_names_sink_side() -> None:
+def test_grab_action_line_joins_groups_and_names_the_qbittorrent_side() -> None:
     action = GrabAction(
         status=GrabStatus.ADDING,
         groups=(GroupLabel("SubsPlease", ("dual audio",)), GroupLabel("Kowo")),
@@ -275,14 +275,14 @@ def test_multi_line_messages_and_field_values_stay_one_line() -> None:
     ("kind", "words"),
     [(WaitKind.MONITOR, "waiting kind=monitor"), (WaitKind.CHECK, "checking kind=check")],
 )
-def test_wait_start_lines_word_and_stamp_the_pass_kind(kind: WaitKind, words: str) -> None:
+def test_wait_start_lines_word_and_mark_the_pass_kind(kind: WaitKind, words: str) -> None:
     context = (ScanStarted(arr=Arr.SONARR, total=182), ScopeOpened(scope=_WAIT, label="wait"))
     assert _format(WaitStarted(total=4, progress_line_s=300.0, kind=kind, scope=_WAIT), *context) == (
         f"{_TS} INFO [sonarr › wait] {words} total=4"
     )
 
 
-def test_graduation_lines_ride_the_wait_breadcrumb() -> None:
+def test_outcome_lines_carry_the_wait_scope_path() -> None:
     context = (ScanStarted(arr=Arr.SONARR, total=182), ScopeOpened(scope=_WAIT, label="wait"))
     row_finished = RowFinished(
         label="Sousou no Frieren",
@@ -296,7 +296,7 @@ def test_graduation_lines_ride_the_wait_breadcrumb() -> None:
     )
 
 
-def test_unmatched_graduation_line_names_the_files() -> None:
+def test_unmatched_outcome_line_names_the_files() -> None:
     # The names go on the structured line as one joined string, the run-event field policy, only on this outcome.
     context = (ScanStarted(arr=Arr.SONARR, total=182), ScopeOpened(scope=_WAIT, label="wait"))
     row_finished = RowFinished(
@@ -312,7 +312,7 @@ def test_unmatched_graduation_line_names_the_files() -> None:
     )
 
 
-def test_partial_graduation_line_names_the_files_left_for_a_hand_import() -> None:
+def test_partial_outcome_line_names_the_files_left_for_a_hand_import() -> None:
     context = (ScanStarted(arr=Arr.SONARR, total=182), ScopeOpened(scope=_WAIT, label="wait"))
     row_finished = RowFinished(
         label="Demo Batch",
@@ -327,7 +327,7 @@ def test_partial_graduation_line_names_the_files_left_for_a_hand_import() -> Non
     )
 
 
-def test_order_only_graduation_line_says_why_and_keys_each_file() -> None:
+def test_order_only_outcome_line_says_why_and_keys_each_file() -> None:
     context = (ScanStarted(arr=Arr.SONARR, total=182), ScopeOpened(scope=_WAIT, label="wait"))
     row_finished = RowFinished(
         label="Demo Batch",
@@ -346,7 +346,7 @@ def test_order_only_graduation_line_says_why_and_keys_each_file() -> None:
     )
 
 
-def test_ambient_diagnostic_admits_its_placement_guess() -> None:
+def test_ambient_diagnostic_admits_its_position_guess() -> None:
     diag = Diagnostic(
         severity=Severity.WARNING,
         message="Config file /x/config.yml is readable by other users - chmod 600 /x/config.yml",
@@ -368,7 +368,7 @@ def test_top_level_diagnostic_has_no_during_tail() -> None:
     assert line == f"{_TS} ERROR [runlock] boom"
 
 
-def test_handle_demoted_diagnostic_never_claims_frontier_placement() -> None:
+def test_handle_demoted_diagnostic_never_claims_a_place_under_the_open_scopes() -> None:
     diag = Diagnostic(
         severity=Severity.INFO,
         message="x [after entry 'T' closed]",
@@ -463,7 +463,7 @@ def _quiet_summary_ready() -> ArrRunSummaryReady:
     )
 
 
-def test_summary_renders_one_head_line_plus_one_line_per_record() -> None:
+def test_summary_renders_one_head_line_plus_one_line_per_row() -> None:
     text = _format(_summary_ready())
     assert text == "\n".join(
         [
@@ -491,7 +491,7 @@ def _plain_renderer() -> tuple[PlainRenderer, io.StringIO]:
     return PlainRenderer(stream), stream
 
 
-def test_file_sink_honors_the_configured_level_but_still_folds(tmp_path: Path) -> None:
+def test_file_log_renderer_honors_the_configured_level_but_still_advances_the_open_scopes(tmp_path: Path) -> None:
     renderer = FileLogRenderer(str(tmp_path))
     renderer.set_level(logging.WARNING)
 
@@ -506,7 +506,7 @@ def test_file_sink_honors_the_configured_level_but_still_folds(tmp_path: Path) -
     )
 
 
-def test_a_failed_graduation_admits_through_a_warning_level_sink(tmp_path: Path) -> None:
+def test_a_failed_row_finish_admits_through_a_warning_level_renderer(tmp_path: Path) -> None:
     # severity_of(RowFinished) is category-based, so a FAILED
     # outcome line (ERROR) survives a raised file level while a success drops.
     renderer = FileLogRenderer(str(tmp_path))
@@ -657,7 +657,7 @@ def test_rotate_same_second_collision_gets_a_numeric_suffix(tmp_path: Path) -> N
     assert "three" in log.read_text(encoding="utf-8")
 
 
-def test_an_idle_cycle_never_churns_a_backup(tmp_path: Path) -> None:
+def test_an_idle_scheduled_run_never_churns_a_backup(tmp_path: Path) -> None:
     renderer = FileLogRenderer(str(tmp_path))
     renderer.begin_run()
     renderer.begin_run()  # no writes in between: nothing to rotate
@@ -668,7 +668,7 @@ def test_an_idle_cycle_never_churns_a_backup(tmp_path: Path) -> None:
     assert list(tmp_path.glob("Pearlarr.log.*")) == []
 
 
-def test_pre_cycle_writes_append_and_rotation_fires_once_per_begin_cycle(tmp_path: Path) -> None:
+def test_pre_scheduled_run_writes_append_and_rotation_fires_once_per_begin_run(tmp_path: Path) -> None:
     # Only begin_run enables rotation - construction must not, or a record in the
     # install→begin_run window would rotate twice and strand a one-line backup.
     log = tmp_path / "Pearlarr.log"
@@ -694,7 +694,7 @@ def test_pre_cycle_writes_append_and_rotation_fires_once_per_begin_cycle(tmp_pat
     assert "cycle-one" in log.read_text(encoding="utf-8")
 
 
-def test_a_reopened_file_sink_appends_after_close(tmp_path: Path) -> None:
+def test_a_reopened_file_log_renderer_appends_after_close(tmp_path: Path) -> None:
     renderer = FileLogRenderer(str(tmp_path))
     renderer.handle(PearlarrStarted(version="one", data_dir="/d"), _EPOCH)
     renderer.close()
@@ -853,7 +853,7 @@ def test_probe_raises_on_an_unwritable_log_file(tmp_path: Path) -> None:
         log.chmod(0o644)
 
 
-def test_file_sink_writes_utf8(tmp_path: Path) -> None:
+def test_file_log_renderer_writes_utf8(tmp_path: Path) -> None:
     renderer = FileLogRenderer(str(tmp_path))
     renderer.handle(
         TitleHeader(state=TitleState.CHECKING, title="Pokémon — ポケモン", scope=None),
@@ -865,7 +865,7 @@ def test_file_sink_writes_utf8(tmp_path: Path) -> None:
     assert "Pokémon — ポケモン" in content
 
 
-def test_wait_progress_stays_silent_below_the_pulse_cadence() -> None:
+def test_wait_progress_stays_silent_below_the_progress_line_cadence() -> None:
     plain_renderer, stream = _plain_renderer()
     plain_renderer.handle(WaitStarted(total=1, progress_line_s=300.0, kind=WaitKind.MONITOR, scope=None), _EPOCH)
     plain_renderer.handle(Diagnostic(severity=Severity.DEBUG, message="hidden", origin="app"), _EPOCH)
@@ -888,7 +888,7 @@ def _wait_progress(elapsed: float) -> WaitProgress:
     return WaitProgress(snapshot=WaitSnapshot(torrents=torrents, elapsed_s=elapsed), scope=_WAIT)
 
 
-def test_grammar_sinks_pulse_still_waiting_on_the_event_cadence() -> None:
+def test_text_renderers_print_still_waiting_on_the_event_cadence() -> None:
     # The anti-hang progress line: cadence is pure event content (progress_line_s/elapsed_s,
     # never wall clock), and the start snapshot never prints one.
     plain_renderer, stream = _plain_renderer()
@@ -905,7 +905,7 @@ def test_grammar_sinks_pulse_still_waiting_on_the_event_cadence() -> None:
     )
 
 
-def test_pulse_lines_keep_line_and_file_byte_parity(tmp_path: Path) -> None:
+def test_progress_lines_keep_line_and_file_byte_parity(tmp_path: Path) -> None:
     events: list[Event] = [
         ScanStarted(arr=Arr.SONARR, total=182),
         ScopeOpened(scope=_WAIT, label="wait"),
@@ -927,7 +927,7 @@ def test_pulse_lines_keep_line_and_file_byte_parity(tmp_path: Path) -> None:
     assert content.count("still waiting") == 2  # 300 and 650 print one, the start snapshot never does
 
 
-def test_a_new_wait_pass_rearms_the_pulse_skip_first() -> None:
+def test_a_new_wait_pass_restarts_the_progress_line_skip_first() -> None:
     plain_renderer, stream = _plain_renderer()
     plain_renderer.handle(WaitStarted(total=1, progress_line_s=300.0, kind=WaitKind.MONITOR), _EPOCH)
     plain_renderer.handle(_wait_progress(300.0), _EPOCH)  # skip-first: even a late start snapshot prints nothing
@@ -942,7 +942,7 @@ def test_a_new_wait_pass_rearms_the_pulse_skip_first() -> None:
     assert stream.getvalue().count("still waiting") == 2
 
 
-def test_begin_cycle_disarms_the_pulse_until_the_next_wait_pass() -> None:
+def test_begin_run_stops_the_progress_line_until_the_next_wait_pass() -> None:
     plain_renderer, stream = _plain_renderer()
     plain_renderer.handle(WaitStarted(total=1, progress_line_s=300.0, kind=WaitKind.MONITOR), _EPOCH)
     plain_renderer.begin_run()
@@ -952,7 +952,7 @@ def test_begin_cycle_disarms_the_pulse_until_the_next_wait_pass() -> None:
     assert "still waiting" not in stream.getvalue()
 
 
-def test_pulse_lines_drop_below_a_raised_threshold_but_the_cadence_advances() -> None:
+def test_progress_lines_drop_below_a_raised_threshold_but_the_cadence_advances() -> None:
     # Line-granular admission applies to the progress line like any INFO line. The
     # throttle state advances regardless of level (the ProgressLineThrottle contract).
     plain_renderer, stream = _plain_renderer()
@@ -983,7 +983,7 @@ class _ExplodingStream(io.StringIO):
         return super().write(s)
 
 
-def test_the_fold_advances_even_when_the_write_blows_up() -> None:
+def test_the_open_scopes_advance_even_when_the_write_blows_up() -> None:
     stream = _ExplodingStream()
     renderer = PlainRenderer(stream)
     scan, item, opened = _open_title_scope_events()
@@ -1033,7 +1033,7 @@ def test_json_time_carries_a_utc_offset() -> None:
     assert "+" in offset_part or "-" in offset_part
 
 
-def test_json_diagnostic_shape_with_placement_and_trace() -> None:
+def test_json_diagnostic_shape_with_position_and_trace() -> None:
     try:
         raise ValueError("x")
     except ValueError as exc:
@@ -1120,7 +1120,7 @@ def test_json_summary_carries_held_by_cap_only_when_the_run_held_titles() -> Non
     assert payload["held_by_cap"] == 2
 
 
-def test_json_scoped_events_carry_their_breadcrumb_path() -> None:
+def test_json_events_in_a_scope_carry_their_scope_path() -> None:
     events: list[Event] = [
         *_open_title_scope_events(),
         TitleHeader(state=TitleState.CHECKING, title="Frieren", scope=_TITLE_SCOPE),
@@ -1202,7 +1202,7 @@ def _exemplars() -> list[Event]:
     ]
 
 
-def test_a_newline_in_a_breadcrumb_label_cannot_break_the_line_grammar() -> None:
+def test_a_newline_in_a_scope_label_cannot_break_the_line_grammar() -> None:
     """Scope path labels carry external titles (Arr/AniList).
 
     A smuggled newline is escaped exactly like the message, so the one-line
@@ -1295,7 +1295,7 @@ _TEXT_SILENT = {
 _JSON_SILENT = {BootStepStarted, BootStepProgressed, BootStepSlow, WaitProgress}
 
 
-def test_every_event_type_has_a_decided_form_on_both_surfaces() -> None:
+def test_every_event_type_has_a_decided_form_on_both_renderers() -> None:
     exemplars = _exemplars()
     members: set[object] = set(get_args(Event.__value__))
     assert {type(event) for event in exemplars} == members  # the sweep can't rot

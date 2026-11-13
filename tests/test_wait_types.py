@@ -24,10 +24,10 @@ from .builders import order_only_hand_import_files
 from .test_pending_import import HALVES
 
 
-class TestPendingStateAndProbe:
+class TestPendingImportStateAndAttemptResult:
     """The shared carried-over status vocabulary + the attempt result value object."""
 
-    def test_pending_state_members(self) -> None:
+    def test_pending_import_state_members(self) -> None:
         assert {s.name for s in PendingImportState} == {
             "DOWNLOADING",
             "DOWNLOADED",
@@ -36,16 +36,16 @@ class TestPendingStateAndProbe:
             "GONE",
         }
 
-    def test_pending_state_is_its_string(self) -> None:
+    def test_pending_import_state_is_its_string(self) -> None:
         assert PendingImportState.DOWNLOADED == "downloaded"
         assert PendingImportState.DOWNLOADING == "queued"
 
-    def test_imported_probe_claims_the_files_without_a_command(self) -> None:
+    def test_imported_attempt_result_claims_the_files_without_a_command(self) -> None:
         result = AttemptResult.imported()
         assert result.all_done is True
         assert result.command_issued is False
 
-    def test_waiting_probe_carries_the_attempt_flags(self) -> None:
+    def test_waiting_attempt_result_carries_the_attempt_flags(self) -> None:
         result = AttemptResult.waiting(command_issued=True, pause_reason=PauseReason.IMPORT)
         assert result.all_done is False
         assert result.command_issued is True
@@ -53,17 +53,17 @@ class TestPendingStateAndProbe:
         assert result.paused is True
         assert result.attempted is True
 
-    def test_waiting_probe_defaults_to_no_deferral(self) -> None:
+    def test_waiting_attempt_result_defaults_to_no_pause(self) -> None:
         result = AttemptResult.waiting()
         assert result.pause_reason is PauseReason.NONE
         assert result.paused is False
 
-    def test_leave_probe_records_no_attempt(self) -> None:
+    def test_no_attempt_records_no_attempt(self) -> None:
         assert NO_ATTEMPT.attempted is False
         assert NO_ATTEMPT.all_done is False
         assert NO_ATTEMPT.command_issued is False
 
-    def test_a_probes_placements_are_detached_and_read_only(self) -> None:
+    def test_an_attempt_results_placements_are_detached_and_read_only(self) -> None:
         placed: dict[str, tuple[int, ...]] = {"show - 01.mkv": (101,)}
         result = AttemptResult(all_done=False, command_issued=True, placements=placed)
         placed["show - 02.mkv"] = (102,)
@@ -94,25 +94,25 @@ class TestPendingStateAndProbe:
             pytest.param(LeftForHandImport(missing=(EpisodeKey(4, 1),)), False, id="no file"),
         ],
     )
-    def test_the_order_explains_only_keyed_files_with_an_unfilled_episode(
+    def test_the_order_explains_only_files_with_order_only_keys_and_a_needed_episode(
         self, left: LeftForHandImport, explained: bool
     ) -> None:
         assert left.explained_by_order is explained
 
 
-class TestClassifyPending:
+class TestClassifyPendingImport:
     """`classify_pending_import` reduces a poll's torrent status + `all_done` to a state."""
 
-    def test_missing(self) -> None:
+    def test_gone(self) -> None:
         assert classify_pending_import(TorrentStatus.GONE, False) is PendingImportState.GONE
 
     def test_errored(self) -> None:
         assert classify_pending_import(TorrentStatus.ERRORED, False) is PendingImportState.ERRORED
 
-    def test_still_downloading_is_queued(self) -> None:
+    def test_unfinished_torrent_is_downloading(self) -> None:
         assert classify_pending_import(None, False) is PendingImportState.DOWNLOADING
 
-    def test_complete_and_files_present_is_imported(self) -> None:
+    def test_complete_and_all_done_is_imported(self) -> None:
         assert classify_pending_import(TorrentStatus.COMPLETE, True) is PendingImportState.IMPORTED
 
     def test_complete_without_files_is_importing(self) -> None:
@@ -121,7 +121,7 @@ class TestClassifyPending:
         assert classify_pending_import(TorrentStatus.COMPLETE, False) is PendingImportState.DOWNLOADED
 
 
-class TestSanitizeTorrentTelemetry:
+class TestSanitizeTorrentDownloadProgress:
     """MUTATION PIN: pins the pure download progress sanitizer's clamps and sentinel conversions.
 
     Covers the numeric-string `_as_float` path too - a cluster of ~10 surviving mutants.
@@ -173,7 +173,7 @@ class TestSanitizeTorrentTelemetry:
 
         assert download_progress_of(row) == expected
 
-    def test_attrless_row_folds_to_the_zero_reading(self) -> None:
+    def test_attrless_row_reduces_to_the_empty_download_progress(self) -> None:
         # The fields are read best-effort off the row: a row lacking them all is the empty download progress.
         assert download_progress_of(object()) == DownloadProgress(0.0, None, None, None, None)
 

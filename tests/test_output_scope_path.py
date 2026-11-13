@@ -82,7 +82,7 @@ def test_scope_opened_pushes_and_scope_closed_pops() -> None:
     assert open_scopes.during() is None
 
 
-def test_boot_step_events_open_and_close_the_step_node() -> None:
+def test_boot_step_events_open_and_close_the_step_scope() -> None:
     open_scopes = _open_scopes(
         ScopeOpened(scope=_BOOT, label="boot"),
         BootStepStarted(scope=_STEP, label="Reading config"),
@@ -113,7 +113,7 @@ def test_a_second_step_auto_closes_a_leaked_sibling() -> None:
     assert open_scopes.path_text() == "boot › two"
 
 
-def test_entry_path_reads_run_item_entry() -> None:
+def test_title_path_reads_run_item_title() -> None:
     open_scopes = _open_scopes(
         ScanStarted(arr=Arr.SONARR, total=182),
         ItemStarted(arr=Arr.SONARR, index=3, total=182, title="Frieren"),
@@ -126,7 +126,7 @@ def test_entry_path_reads_run_item_entry() -> None:
 # --- boundary events close strictly-deeper scopes deterministically -------------------
 
 
-def test_scan_started_closes_the_boot_section() -> None:
+def test_scan_started_closes_the_boot_scope() -> None:
     open_scopes = _open_scopes(
         ScopeOpened(scope=_BOOT, label="boot"),
         ScanStarted(arr=Arr.SONARR, total=182),
@@ -135,7 +135,7 @@ def test_scan_started_closes_the_boot_section() -> None:
     assert open_scopes.path_text() == "sonarr"
 
 
-def test_item_started_closes_the_previous_item_and_entry() -> None:
+def test_item_started_closes_the_previous_item_and_title() -> None:
     open_scopes = _open_scopes(
         ScanStarted(arr=Arr.SONARR, total=182),
         ItemStarted(arr=Arr.SONARR, index=1, total=182, title="A"),
@@ -146,7 +146,7 @@ def test_item_started_closes_the_previous_item_and_entry() -> None:
     assert open_scopes.path_text() == "sonarr › [2/182] B"
 
 
-def test_scan_finished_closes_item_and_entry_but_keeps_the_run_node() -> None:
+def test_scan_finished_closes_item_and_title_but_keeps_the_arr_run_scope() -> None:
     open_scopes = _open_scopes(
         ScanStarted(arr=Arr.SONARR, total=182),
         ItemStarted(arr=Arr.SONARR, index=182, total=182, title="Last"),
@@ -166,7 +166,7 @@ def test_run_summary_ready_closes_to_run_level() -> None:
     assert _kinds(open_scopes) == [ScopeKind.RUN]
 
 
-def test_wait_started_closes_only_entry_depth() -> None:
+def test_wait_started_closes_only_title_depth() -> None:
     open_scopes = _open_scopes(
         ScanStarted(arr=Arr.SONARR, total=1),
         ScopeOpened(scope=_WAIT, label="wait"),
@@ -176,7 +176,7 @@ def test_wait_started_closes_only_entry_depth() -> None:
     assert open_scopes.path_text() == "sonarr › wait"
 
 
-def test_run_finished_closes_everything_and_is_idempotent() -> None:
+def test_arr_run_finished_closes_everything_and_is_idempotent() -> None:
     open_scopes = _open_scopes(
         ScanStarted(arr=Arr.SONARR, total=1),
         ItemStarted(arr=Arr.SONARR, index=1, total=1, title="A"),
@@ -190,7 +190,7 @@ def test_run_finished_closes_everything_and_is_idempotent() -> None:
     assert open_scopes.scopes() == ()
 
 
-def test_run_and_cycle_starts_close_everything() -> None:
+def test_process_and_scheduled_run_starts_close_everything() -> None:
     open_scopes = _open_scopes(ScopeOpened(scope=_BOOT, label="boot"), PearlarrStarted(version="", data_dir="/d"))
     assert open_scopes.scopes() == ()
 
@@ -218,7 +218,7 @@ def test_closing_an_unknown_scope_is_a_no_op() -> None:
     assert _kinds(open_scopes) == [ScopeKind.RUN]
 
 
-def test_content_events_never_move_the_fold() -> None:
+def test_content_events_never_move_the_open_scopes() -> None:
     open_scopes = _open_scopes(
         ScanStarted(arr=Arr.SONARR, total=1),
         ItemStarted(arr=Arr.SONARR, index=1, total=1, title="A"),
@@ -234,7 +234,7 @@ def test_content_events_never_move_the_fold() -> None:
 # --- read APIs ---------------------------------------------------------------------------
 
 
-def test_path_for_returns_the_breadcrumb_down_to_that_scope() -> None:
+def test_path_for_returns_the_scope_path_down_to_that_scope() -> None:
     open_scopes = _open_scopes(
         ScanStarted(arr=Arr.SONARR, total=182),
         ItemStarted(arr=Arr.SONARR, index=3, total=182, title="Frieren"),
@@ -244,7 +244,7 @@ def test_path_for_returns_the_breadcrumb_down_to_that_scope() -> None:
     assert open_scopes.path_for(ScopeId(ScopeKind.ENTRY, 99)) is None
 
 
-def test_reset_clears_all_open_nodes() -> None:
+def test_reset_clears_all_open_scopes() -> None:
     open_scopes = _open_scopes(ScanStarted(arr=Arr.SONARR, total=1))
     open_scopes.reset()
     assert open_scopes.scopes() == ()

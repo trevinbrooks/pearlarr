@@ -74,7 +74,7 @@ def _open(tmp_path: Path) -> contextlib.closing[CacheStore]:
     return contextlib.closing(CacheStore.load(str(tmp_path / "cache.db"), config_hash=CONFIG_HASH))
 
 
-class TestSchemaAndDescriptor:
+class TestSchemaAndVersionText:
     """A missing db opens in-memory and reads empty. A saved db persists the version and config hash."""
 
     def test_missing_file_opens_in_memory(self, tmp_path: Path) -> None:
@@ -83,7 +83,7 @@ class TestSchemaAndDescriptor:
             assert not (tmp_path / "cache.db").exists()
             assert store.get_cached_title(Arr.SONARR, 7) is None
 
-    def test_descriptor_persists_version_and_checksum(self, tmp_path: Path) -> None:
+    def test_version_text_persists_version_and_config_hash(self, tmp_path: Path) -> None:
         with _open(tmp_path) as store:
             store.save(dry_run=False)
 
@@ -287,7 +287,7 @@ def _user_version(db: Path) -> int:
 class TestSchemaVersionGate:
     """The schema-version gate: older dbs migrate step-by-step, newer dbs are refused."""
 
-    def test_fresh_db_is_stamped_through_promote(self, tmp_path: Path) -> None:
+    def test_fresh_db_carries_its_schema_version_through_promote(self, tmp_path: Path) -> None:
         # The :memory: stand-in gets its schema version on create. The backup-API promote must
         # carry that version into the file it writes, or every fresh install would
         # look like a v0 db on its second run.
@@ -336,7 +336,7 @@ class TestSchemaVersionGate:
             assert store.get_cached_title(Arr.SONARR, 7) is None  # reads work after the migration
         assert _user_version(db) == SCHEMA_VERSION
 
-    def test_v1_pending_imports_walk_the_chain_to_torrent_records(self, tmp_path: Path) -> None:
+    def test_v1_pending_imports_walk_the_chain_to_one_row_per_torrent(self, tmp_path: Path) -> None:
         # The v1 -> v2 step grows the (arr, infohash) PK to (arr, infohash, al_id)
         # via a table rebuild, and the v4 -> v5 merge turns each row into a claim.
         # A legacy row with no al_id in its JSON lands under the 0 sentinel and
@@ -403,7 +403,7 @@ class TestSchemaVersionGate:
             assert all("guards" not in rec for rec in store.get_pending_import_rows(Arr.SONARR).values())
         assert _user_version(db) == SCHEMA_VERSION
 
-    def test_v2_guard_backfill_skips_ineligible_records(self, tmp_path: Path) -> None:
+    def test_v2_guard_backfill_skips_ineligible_rows(self, tmp_path: Path) -> None:
         # No row may come from: the legacy al_id=0 sentinel, a radarr row, a
         # guards-less blob, or a JSON-null guards value (a null row would poison
         # from_json at every read). The stray keys are still stripped everywhere.
@@ -476,7 +476,7 @@ class TestSchemaVersionGate:
             assert _cached_title_name(store, 3, Arr.RADARR) is None
         assert _user_version(db) == SCHEMA_VERSION
 
-    def test_v4_rows_of_one_torrent_fold_into_one_record(self, tmp_path: Path) -> None:
+    def test_v4_rows_of_one_torrent_merge_into_one_row(self, tmp_path: Path) -> None:
         # The v4 -> v5 step: one torrent's per-title rows become ONE row whose
         # claims sit in al_id order. The rows group by case fold and the key +
         # blob hash come out lowercase.
@@ -552,7 +552,7 @@ class TestSchemaVersionGate:
             assert _columns(db, "pending_imports") == ["arr", "infohash", "record"]
         assert _user_version(db) == SCHEMA_VERSION
 
-    def test_v4_fold_needs_every_cleanup_flag_and_keeps_the_arrs_apart(self, tmp_path: Path) -> None:
+    def test_v4_merge_needs_every_row_awaiting_cleanup_and_keeps_the_arrs_apart(self, tmp_path: Path) -> None:
         # One row not awaiting cleanup clears the merged `awaiting_cleanup`. The other arr's row on the
         # same hash stays its own row, and the guard rows survive the step
         # to be read through the merged claims (the orphan stays unread).
@@ -586,7 +586,7 @@ class TestSchemaVersionGate:
             _assert_round_trips(sonarr)
             _assert_round_trips(radarr)
 
-    def test_v4_fold_takes_the_oldest_parseable_stamp(self, tmp_path: Path) -> None:
+    def test_v4_merge_takes_the_oldest_parseable_stamp(self, tmp_path: Path) -> None:
         # `added_at` is the oldest row stamp that parses: a junk stamp is skipped,
         # and a torrent whose rows all carry junk gets an empty one.
         db = tmp_path / "cache.db"
@@ -606,7 +606,7 @@ class TestSchemaVersionGate:
             assert rows["j"]["added_at"] == ""
             _assert_round_trips(rows)
 
-    def test_v4_legacy_ids_fold_into_the_claims_window(self, tmp_path: Path) -> None:
+    def test_v4_legacy_ids_merge_into_the_claims_window(self, tmp_path: Path) -> None:
         # A row from before the ordered window (no `ordered_episode_ids`) claims
         # the ids its file map and legacy `episode_ids` list had, sorted, zeros
         # dropped. A row that carried its window keeps it as is, and the legacy
@@ -637,7 +637,7 @@ class TestSchemaVersionGate:
             assert new.claims[0].ordered_episode_ids == (9, 8)
             _assert_round_trips({"new": rows["new"]})
 
-    def test_v4_unscoped_row_stays_unscoped_and_carries_its_names_verbatim(self, tmp_path: Path) -> None:
+    def test_v4_row_with_no_window_stays_with_no_window_and_carries_its_names_verbatim(self, tmp_path: Path) -> None:
         # A v4 claim with no window (an empty window, no legacy list) claims nothing off
         # its file map, and the stored names dict goes as is, never re-encoded through
         # the live class.
@@ -682,7 +682,7 @@ class TestSchemaVersionGate:
             assert store.get_pending_import_rows(Arr.SONARR) == rows
         assert _user_version(folded) == SCHEMA_VERSION
 
-    def test_v5_entries_gain_a_season_type_column_left_null(self, tmp_path: Path) -> None:
+    def test_v5_cached_titles_gain_a_season_type_column_left_null(self, tmp_path: Path) -> None:
         # The v5 -> v6 step: a cached title keeps its columns and reads no season type, and the
         # `tvdb_orders` table the step relies on `_SCHEMA` for is there to write.
         db = tmp_path / "cache.db"
@@ -743,7 +743,7 @@ class TestSchemaVersionGate:
         assert not list(tmp_path.glob("cache.db.corrupt-*"))
 
 
-class TestEntries:
+class TestCachedTitles:
     """Cached title columns merge partially on update, format and clear timestamps, and stay isolated per arr."""
 
     def test_update_cache_is_a_partial_merge(self, tmp_path: Path) -> None:
@@ -755,7 +755,7 @@ class TestEntries:
             assert cached is not None
             assert (cached.name, cached.url, cached.coverage) == ("Title", "u", "S01")
 
-    def test_clear_entry_stamp_clears_the_timestamp_and_nothing_else(self, tmp_path: Path) -> None:
+    def test_uncache_title_clears_the_timestamp_and_nothing_else(self, tmp_path: Path) -> None:
         stamped: CachedTitleUpdate = {"name": "Title", "url": "u", "updated_at": datetime(2021, 6, 5)}
         with _open(tmp_path) as store:
             store.update_cached_title(Arr.SONARR, 7, stamped)
@@ -771,7 +771,7 @@ class TestEntries:
             assert other is not None
             assert other.updated_at == "2021-06-05 00:00:00"
 
-    def test_clear_entry_stamp_adds_no_row(self, tmp_path: Path) -> None:
+    def test_uncache_title_adds_no_row(self, tmp_path: Path) -> None:
         with _open(tmp_path) as store:
             store.uncache_title(Arr.SONARR, 7)
             assert store.get_cached_title(Arr.SONARR, 7) is None
@@ -790,7 +790,7 @@ class TestEntries:
             assert _cached_title_name(store, 7, Arr.SONARR) == "S"
             assert _cached_title_name(store, 7, Arr.RADARR) == "R"
 
-    def test_get_entry_reads_all_columns_at_once(self, tmp_path: Path) -> None:
+    def test_get_cached_title_reads_all_columns_at_once(self, tmp_path: Path) -> None:
         with _open(tmp_path) as store:
             store.update_cached_title(
                 Arr.SONARR,
@@ -850,10 +850,10 @@ class TestFallbackSatisfied:
             assert cached.fallback_satisfied is False
 
 
-class TestPreviewGate:
+class TestDryRunGate:
     """The staged-write dry-run gate: a dry-run save never persists, only a real save does."""
 
-    def test_preview_save_on_missing_file_writes_nothing(self, tmp_path: Path) -> None:
+    def test_dry_run_save_on_missing_file_writes_nothing(self, tmp_path: Path) -> None:
         with _open(tmp_path) as store:
             store.update_cached_title(Arr.SONARR, 7, {"name": "Title"})
             store.save(dry_run=True)
@@ -868,7 +868,7 @@ class TestPreviewGate:
         with _open(tmp_path) as reopened:
             assert _cached_title_name(reopened, 7) == "Title"
 
-    def test_preview_on_existing_db_does_not_mutate_committed_state(self, tmp_path: Path) -> None:
+    def test_dry_run_on_existing_db_does_not_mutate_committed_state(self, tmp_path: Path) -> None:
         # Establish a real, committed db.
         with _open(tmp_path) as store:
             store.update_cached_title(Arr.SONARR, 7, {"name": "Original"})
@@ -885,14 +885,14 @@ class TestPreviewGate:
             assert reopened.get_cached_title(Arr.SONARR, 8) is None  # never added
 
 
-class TestSelectionDigest:
+class TestSelectionHash:
     """`selection_changed`/`store_selection_hash`: missing-key-fresh, per-arr, commit-gated."""
 
-    def test_no_digest_on_record_reads_fresh(self, tmp_path: Path) -> None:
+    def test_no_stored_selection_hash_reads_fresh(self, tmp_path: Path) -> None:
         with _open(tmp_path) as store:
             assert store.selection_changed(Arr.SONARR, "d1") is False
 
-    def test_vouch_round_trips_through_a_real_save(self, tmp_path: Path) -> None:
+    def test_store_the_selection_hash_round_trips_through_a_real_save(self, tmp_path: Path) -> None:
         with _open(tmp_path) as store:
             store.store_selection_hash(Arr.SONARR, "d1")
             store.save(dry_run=False)
@@ -901,7 +901,7 @@ class TestSelectionDigest:
             assert reopened.selection_changed(Arr.SONARR, "d1") is False
             assert reopened.selection_changed(Arr.SONARR, "d2") is True
 
-    def test_preview_save_does_not_consume_a_pending_recheck(self, tmp_path: Path) -> None:
+    def test_dry_run_save_does_not_consume_a_due_recheck(self, tmp_path: Path) -> None:
         # Matching prefs changed (the committed selection hash is old). A dry run
         # stages the new one, but its rollback must leave the re-check due
         # on the next real run.
@@ -917,7 +917,7 @@ class TestSelectionDigest:
         with _open(tmp_path) as real:
             assert real.selection_changed(Arr.SONARR, "new") is True
 
-    def test_arrs_vouch_independently(self, tmp_path: Path) -> None:
+    def test_arrs_store_the_selection_hash_independently(self, tmp_path: Path) -> None:
         with _open(tmp_path) as store:
             store.store_selection_hash(Arr.SONARR, "d1")
             assert store.selection_changed(Arr.SONARR, "d2") is True
@@ -944,10 +944,10 @@ class TestAnilistMeta:
             assert meta["data"] == {"a": 2}
 
 
-class TestRecordFreshness:
+class TestRowFreshness:
     """The stored-row helpers: the payload half and the stamp half, split apart."""
 
-    def test_record_payload_wants_a_non_empty_object(self) -> None:
+    def test_row_payload_wants_a_non_empty_object(self) -> None:
         assert row_payload(None, "data") is None
         assert row_payload({"fetched_at": "2026-06-26 12:00:00"}, "data") is None
         assert row_payload({"data": {}}, "data") is None
@@ -984,7 +984,7 @@ class TestSonarrParse:
             assert parse_from_json(read_back) == info
             assert store.get_sonarr_parse("missing.mkv") is None
 
-    def test_series_fingerprint_key_round_trips(self, tmp_path: Path) -> None:
+    def test_series_hash_key_round_trips(self, tmp_path: Path) -> None:
         # The unmatched parse's pin: the freshness check dispatches on its presence.
         with _open(tmp_path) as store:
             rec = {
@@ -995,7 +995,7 @@ class TestSonarrParse:
             store.put_sonarr_parse("unmatched.mkv", rec)
             assert store.get_sonarr_parse("unmatched.mkv") == rec
 
-    def test_legacy_record_reads_back_unreadable(self, tmp_path: Path) -> None:
+    def test_legacy_row_reads_back_unreadable(self, tmp_path: Path) -> None:
         # A pre-existing row carries an episode list, not a whole parse: it reads
         # back verbatim and the parse check rejects it, so the file re-parses.
         with _open(tmp_path) as store:
@@ -1027,7 +1027,7 @@ class TestPendingImports:
             # Dropping a missing key is a no-op.
             store.drop_pending_import_row(Arr.SONARR, "nope")
 
-    def test_one_record_per_torrent_replaced_whole(self, tmp_path: Path) -> None:
+    def test_one_pending_import_per_torrent_replaced_whole(self, tmp_path: Path) -> None:
         # One torrent listed on two titles is ONE row carrying both
         # claims: a re-put under the hash replaces the row whole (never a
         # second row), and the drop takes every claim with it.
@@ -1056,7 +1056,7 @@ class TestPendingImports:
             assert store.other_arr_holds(Arr.SONARR, "ABCD") is False
             assert store.other_arr_holds(Arr.RADARR, "abcd") is False
 
-    def test_other_arr_holds_ignores_the_arrs_own_record(self, tmp_path: Path) -> None:
+    def test_other_arr_holds_ignores_the_arrs_own_pending_import(self, tmp_path: Path) -> None:
         # The category gate asks whether the OTHER arr still claims the torrent:
         # the same arr's row never counts, a missing hash reads False, and the
         # other arr's row flips the answer for as long as it lives.
@@ -1151,7 +1151,7 @@ class TestGuardFacts:
             assert store.get_guards(Arr.SONARR) == {}
             assert store.stats().guard_facts == 1
 
-    def test_reads_through_every_claim_of_a_record(self, tmp_path: Path) -> None:
+    def test_reads_through_every_claim_of_a_pending_import(self, tmp_path: Path) -> None:
         # The join walks every claim on a live pending import: both titles sharing one
         # torrent get their evidence back, a title claiming nothing stays unread.
         with _open(tmp_path) as store:
@@ -1181,7 +1181,7 @@ _ORDERS = CachedOrders(
 class TestTvdbOrders:
     """One row per series, replaced whole, and a row that no longer reads counts as uncached."""
 
-    def test_a_record_round_trips_and_a_put_replaces_it(self, tmp_path: Path) -> None:
+    def test_an_answer_round_trips_and_a_put_replaces_it(self, tmp_path: Path) -> None:
         with _open(tmp_path) as store:
             assert store.get_tvdb_orders(1) is None
 
@@ -1191,7 +1191,7 @@ class TestTvdbOrders:
             assert store.get_tvdb_orders(1) == _ORDERS
             assert store.stats().tvdb_orders == 1
 
-    def test_a_record_of_another_shape_reads_as_none(self, tmp_path: Path) -> None:
+    def test_an_answer_of_another_shape_reads_as_none(self, tmp_path: Path) -> None:
         db = tmp_path / "cache.db"
         with _open(tmp_path) as store:
             store.save(dry_run=False)
@@ -1220,7 +1220,7 @@ class TestHistoryCheckpoints:
             store.put_history_checkpoint(Arr.SONARR, HistoryCheckpoint("2026-07-03T10:00:00Z", 40))
             assert store.get_history_checkpoint(Arr.SONARR) == HistoryCheckpoint("2026-07-03T10:00:00Z", 40)
 
-    def test_preview_save_does_not_persist_checkpoint(self, tmp_path: Path) -> None:
+    def test_dry_run_save_does_not_persist_checkpoint(self, tmp_path: Path) -> None:
         # The dry-run gate: a previewed run must never advance the cursor.
         db = tmp_path / "cache.db"
         with _open(tmp_path) as store:
@@ -1318,7 +1318,7 @@ class TestMaintenance:
             assert store.get_sonarr_parse("old.mkv") is None
             assert store.get_sonarr_parse("new.mkv") is not None
 
-    def test_evict_sweeps_stampless_records(self, tmp_path: Path) -> None:
+    def test_evict_sweeps_stampless_rows(self, tmp_path: Path) -> None:
         # An answer with no fetched_at -> NULL generated column. It is unreadable
         # (stamp_is_fresh rejects it) and must not become un-evictable dead weight.
         with _open(tmp_path) as store:

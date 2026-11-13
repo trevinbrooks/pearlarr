@@ -85,7 +85,7 @@ def _reader(seadex: FakeSeaDexSource, episodes: ScriptedEpisodes) -> SeriesListi
 class TestRead:
     """Reads every title's entry and window and turns them into per-hash listings and episodes by size."""
 
-    def test_every_entry_is_read_into_a_window_and_folded(self) -> None:
+    def test_every_entry_is_read_into_a_window_and_built_into_the_listing(self) -> None:
         # Each window carries its title's ids on the series and the resolver's names for it.
         episodes = _windows({1: _episodes(1, 2), 2: _episodes(3), 3: _episodes(4)})
         seadex = FakeSeaDexSource({1: _entry(1, _H1), 2: _entry(2, _H1, _H2), 3: _entry(3, _H2)})
@@ -99,7 +99,7 @@ class TestRead:
         assert read.episode_by_size == {2: 503, 3: 504}
         assert episodes.calls == [(7, 1), (7, 2), (7, 3)]
 
-    def test_each_window_carries_its_entrys_anilist_episode_count(self) -> None:
+    def test_each_window_carries_its_titles_anilist_episode_count(self) -> None:
         # Title 2 has no count on AniList.
         episodes = ScriptedEpisodes(windows={1: _episodes(1, 2), 2: _episodes(3)}, counts={1: 2})
         seadex = FakeSeaDexSource({1: _entry(1, _H1), 2: _entry(2, _H1)})
@@ -109,7 +109,7 @@ class TestRead:
         assert read is not None
         assert read.listing(_H1) == torrent_listing(replace(_window(1, 501, 502), episode_count=2), _window(2, 503))
 
-    def test_each_entrys_aliases_reach_the_hashes_it_lists(self) -> None:
+    def test_each_titles_aliases_reach_the_hashes_its_entry_lists(self) -> None:
         seadex = FakeSeaDexSource({1: _entry(1, _H1), 2: _entry(2, _H1, _H2)})
         mappings = {
             1: TitleMapping(anilist_id=1, special_aliasing=SpecialAliasing(900, {2: 1})),
@@ -135,7 +135,7 @@ class TestRead:
         assert read is not None
         assert read.listing(_H1) == torrent_listing(_window(1), _window(2, 503), aliases={2: 1})
 
-    def test_an_ignored_entrys_window_is_read_like_a_siblings_and_carries_the_flag(self) -> None:
+    def test_an_ignored_titles_window_is_read_like_a_siblings_and_carries_the_flag(self) -> None:
         # Title 2 is on the ignore list: its entry and window are read like title 1's, in id order, and only its
         # window is flagged, so the placement takes it after the kept windows.
         episodes = _windows({1: _episodes(1), 2: _episodes(3)})
@@ -161,13 +161,13 @@ class TestRead:
         assert reader.read(7, _mappings(1)) == first
         assert seadex.entry_calls == [1, 1]
 
-    def test_a_mapped_id_without_an_entry_is_skipped(self) -> None:
+    def test_a_mapped_id_without_an_entry_is_left_out(self) -> None:
         read = _reader(FakeSeaDexSource({1: _entry(1, _H1)}), _windows({1: _episodes(1)})).read(7, _mappings(1, 2))
 
         assert read is not None
         assert read.listing(_H1) == torrent_listing(_window(1, 501))
 
-    def test_an_outage_reads_nothing_and_is_not_asked_again_this_run(self) -> None:
+    def test_an_unreachable_source_reads_nothing_and_is_not_asked_again_this_run(self) -> None:
         seadex = FakeSeaDexSource({1: _entry(1, _H1)}, unreachable=True)
         reader = _reader(seadex, _windows({1: _episodes(1)}))
 
@@ -175,7 +175,7 @@ class TestRead:
         assert reader.read(7, _mappings(1, 2)) is None
         assert seadex.entry_calls == [1, 2]
 
-    def test_an_unread_window_marks_its_hashes_and_the_identities_unread(self) -> None:
+    def test_an_unread_window_marks_its_hashes_and_the_episodes_by_size_unread(self) -> None:
         seadex = FakeSeaDexSource({1: _entry(1, _H1), 2: _entry(2, _H1, _H2)})
 
         read = _reader(seadex, _windows({1: None, 2: _episodes(3)})).read(7, _mappings(1, 2))
@@ -207,7 +207,7 @@ class TestRead:
         assert read.listing(_H1) == torrent_listing(_window(1, 501))
 
 
-def test_no_entry_asks_nothing_of_the_real_resolver() -> None:
+def test_no_mapping_asks_nothing_of_the_real_resolver() -> None:
     # Built over the real collaborator types: with no resolved mapping, every hash is listed nowhere and the
     # resolver (bare, no Sonarr behind it) is never asked.
     read = SeriesListings(FakeSeaDexSource(), make_sonarr_episodes(), frozenset(), _names).read(7, _mappings())

@@ -264,7 +264,7 @@ def _assert_block_snapshot_isolated(store: AbstractCacheStore, block: _JsonbBloc
         _assert_not_mutated(rec, block.name)
 
 
-def test_jsonb_record_snapshot_mutation_does_not_leak(tmp_path: Path) -> None:
+def test_jsonb_row_snapshot_mutation_does_not_leak(tmp_path: Path) -> None:
     """Every JSONB block isolates caller mutation on both ends.
 
     The real store (the json round-trip) is driven through the same assertion, so it

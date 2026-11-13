@@ -152,7 +152,7 @@ class TestGetSeadexDict:
         )
         assert set(filt.build(entry)) == {"DualBest"}
 
-    def test_falls_back_to_best_when_no_preferred_audio(self) -> None:
+    def test_takes_best_when_no_preferred_audio(self) -> None:
         filt = make_release_filter(want_best=True, prefer_dual_audio=True)
         entry = _entry(
             _torrent(release_group="Best", url="u1", tracker=Tracker.NYAA, is_best=True),
@@ -173,7 +173,7 @@ class TestGetSeadexDict:
         result = filt.build(entry)
         assert result["A"].releases["u1"].is_public is False
 
-    def test_drops_private_url_when_public_exists(self) -> None:
+    def test_drops_private_release_when_public_exists(self) -> None:
         filt = make_release_filter(private_releases="warn", want_best=False, prefer_dual_audio=False)
         entry = _entry(
             _torrent(release_group="A", url="pub", tracker=Tracker.NYAA),
@@ -275,7 +275,7 @@ class TestPrivateFallback:
         )
         assert set(filt.build(entry)) == {"Best", "AltDual"}
 
-    def test_same_group_private_url_with_uncovered_files_survives_the_drop(self) -> None:
+    def test_same_group_private_release_with_uncovered_files_survives_the_drop(self) -> None:
         # Group A: a private dual S1+S2 torrent (preferred) + a public S1-only copy
         # re-added as the fallback. The coverage-aware drop must NOT delete the
         # torrent - its S2 file isn't covered by the group's public releases.
@@ -604,7 +604,7 @@ class TestInteractivePick:
         assert cache.get_cached_title(Arr.RADARR, al_id) is None
 
 
-def test_file_size_cover_folds_listings_with_elementwise_max() -> None:
+def test_file_size_cover_merges_torrents_with_elementwise_max() -> None:
     """MUTATION PIN: `|` not `+`, and not a set union either.
 
     Two torrents carrying one copy of a size each cannot cover a torrent that

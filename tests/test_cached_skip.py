@@ -77,7 +77,7 @@ class _BackfillCase:
 _FRESH = datetime(2021, 1, 1)
 
 
-class TestCachedEntrySkip:
+class TestIsUnchanged:
     """`is_unchanged` is True only for a fresh cached title, backfilling url/coverage and the name once.
 
     It is bypassed by `ignore_seadex_update_times` or a dirty id, and the dirty set clears each run.
@@ -94,7 +94,7 @@ class TestCachedEntrySkip:
             _anilist=make_anilist_gateway(ScriptedAniListClient(None)),
         )
 
-    def test_skips_when_cached_and_timestamp_matches(self) -> None:
+    def test_unchanged_when_cached_and_timestamp_matches(self) -> None:
         cache = FakeCacheStore()
         cache.update_cached_title(Arr.SONARR, 7, {"url": "u", "updated_at": datetime(2021, 1, 1)})
         reporter = _RecordingReporter()
@@ -106,11 +106,11 @@ class TestCachedEntrySkip:
         assert run.is_unchanged(7, make_entry_record(updated_at=datetime(2021, 1, 1)), lambda: "") is True
         assert reporter.cached == [7]
 
-    def test_does_not_skip_when_entry_absent(self) -> None:
+    def test_checks_when_the_cached_title_is_absent(self) -> None:
         run = self._run(FakeCacheStore())
         assert run.is_unchanged(7, make_entry_record(updated_at=datetime(2021, 1, 1)), lambda: "") is False
 
-    def test_does_not_skip_when_timestamp_is_stale(self) -> None:
+    def test_checks_when_the_timestamp_changed(self) -> None:
         cache = FakeCacheStore()
         cache.update_cached_title(Arr.SONARR, 7, {"url": "u", "updated_at": datetime(2021, 1, 1)})
         run = self._run(cache)
@@ -208,14 +208,14 @@ class TestCachedEntrySkip:
         run.mark_dirty([7])
         assert run.is_unchanged(7, make_entry_record(updated_at=datetime(2021, 1, 1)), lambda: "") is False
 
-    def test_selection_stale_reprocesses_even_when_fresh(self) -> None:
+    def test_selection_changed_reprocesses_even_when_fresh(self) -> None:
         # A matching-preference change bypasses the unchanged check despite a matching timestamp.
         cache = FakeCacheStore()
         cache.update_cached_title(Arr.SONARR, 7, {"url": "u", "updated_at": datetime(2021, 1, 1)})
         run = make_services(cache_store=cache, _reporter=_RecordingReporter(), _selection_changed=True)
         assert run.is_unchanged(7, make_entry_record(updated_at=datetime(2021, 1, 1)), lambda: "") is False
 
-    def test_non_dirty_sibling_still_skips(self) -> None:
+    def test_non_dirty_sibling_stays_unchanged(self) -> None:
         # Marking one id dirty must not widen the bypass to other cached ids.
         cache = FakeCacheStore()
         cache.update_cached_title(Arr.SONARR, 7, {"url": "u", "updated_at": datetime(2021, 1, 1)})
@@ -293,7 +293,7 @@ class TestACheckedTitleLosesItsStamp:
         assert cached is not None
         assert cached.updated_at is None
 
-    def test_a_skipped_title_keeps_its_stamp(self) -> None:
+    def test_an_unchanged_title_keeps_its_stamp(self) -> None:
         cache = FakeCacheStore()
         cache.update_cached_title(Arr.SONARR, 7, {"url": "u", "updated_at": _CACHED_ON})
 
@@ -321,7 +321,7 @@ class TestACheckedTitleLosesItsStamp:
         assert run.state.stats.held_by_cap == 1
         assert self._run(cache).is_unchanged(7, self._ENTRY, lambda: "") is False
 
-    def test_a_recheck_that_caches_the_title_as_done_is_skipped_next_run(self) -> None:
+    def test_a_recheck_that_caches_the_title_is_unchanged_next_run(self) -> None:
         cache = FakeCacheStore()
         run = self._rechecking(cache, FakeTorrents({"h1": (AddStatus.ADDED, "Show-RG")}))
 
@@ -354,18 +354,18 @@ class TestFallbackSatisfiedResurfacing:
         )
         return run.is_unchanged(7, make_entry_record(updated_at=datetime(2021, 1, 1)), lambda: "")
 
-    def test_warn_mode_reprocesses_a_marked_entry(self) -> None:
+    def test_warn_mode_reprocesses_a_marked_title(self) -> None:
         # Fresh timestamp, but the title was satisfied by a fallback: warn mode
         # checks it again so the private-only warning resurfaces.
         assert self._skips(self._cache(marker=True), "warn") is False
 
-    def test_fallback_mode_still_skips_a_marked_entry(self) -> None:
+    def test_fallback_mode_still_finds_a_marked_title_unchanged(self) -> None:
         assert self._skips(self._cache(marker=True), "fallback") is True
 
-    def test_warn_mode_skips_an_unmarked_entry(self) -> None:
+    def test_warn_mode_finds_an_unmarked_title_unchanged(self) -> None:
         assert self._skips(self._cache(marker=False), "warn") is True
 
-    def test_no_releases_skip_clears_a_preseeded_marker(self) -> None:
+    def test_report_no_releases_clears_a_preseeded_marker(self) -> None:
         # A title that stops yielding usable releases is never fallback-satisfied:
         # the shared tail overwrites an old True.
         cache = self._cache(marker=True)
@@ -406,7 +406,7 @@ class _TailReporter:
         return True
 
 
-class TestNoReleasesSkip:
+class TestReportNoReleases:
     """`report_no_releases` runs the real four-step tail: log, cache write, throttle, then report not-grabbed."""
 
     def test_logs_persists_and_reports_not_grabbed(self) -> None:
@@ -435,7 +435,7 @@ class TestNoReleasesSkip:
         assert len(reporter.no_releases_ctxs) == 1
 
 
-class TestAlIdPrologue:
+class TestBeginCheck:
     """`begin_check` reports no entry vs an unreachable SeaDex distinctly, and resets skip flags/tallies on a hit."""
 
     def test_no_seadex_entry_reports_and_returns_none(self) -> None:
@@ -447,7 +447,7 @@ class TestAlIdPrologue:
         assert reporter.seadex_unreachable_ids == []
         assert run._state.stats.checked == 1
 
-    def test_outage_skip_reports_distinctly_and_returns_none(self) -> None:
+    def test_seadex_unreachable_reports_distinctly_and_returns_none(self) -> None:
         # A SeaDex-unreachable title must never be reported as "no entry" - it
         # takes the unreachable reporter hook and its own tally.
         reporter = _TailReporter()

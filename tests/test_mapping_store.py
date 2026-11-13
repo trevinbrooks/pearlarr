@@ -35,7 +35,7 @@ class TestFreshnessGate:
     `replace_*` swaps both the source hash and the rows atomically.
     """
 
-    def test_is_fresh_only_for_matching_digest(self) -> None:
+    def test_is_fresh_only_for_matching_source_hash(self) -> None:
         store = MappingStore.open(":memory:")
         assert not store.is_fresh(SOURCE_ANIME_IDS, "d1")
         store.replace_anime_ids("d1", [ROW])
@@ -43,7 +43,7 @@ class TestFreshnessGate:
         assert not store.is_fresh(SOURCE_ANIME_IDS, "d2")
         store.close()
 
-    def test_replace_swaps_digest_and_rows(self) -> None:
+    def test_replace_swaps_source_hash_and_rows(self) -> None:
         store = MappingStore.open(":memory:")
         store.replace_anime_ids("d1", [ROW])
         store.replace_anime_ids("d2", [])  # new content happens to be empty
@@ -52,7 +52,7 @@ class TestFreshnessGate:
         assert store.anime_ids_lookup("tvdb_id", 200) == []
         store.close()
 
-    def test_replace_marks_source_fresh_for_its_digest(self) -> None:
+    def test_replace_marks_source_fresh_for_its_source_hash(self) -> None:
         # An empty populate still stores the source hash, so the source reads fresh for
         # that hash (and not for any other) - the gate a re-parse decision hinges on.
         store = MappingStore.open(":memory:")

@@ -164,7 +164,7 @@ def test_warn_none_fails_open_silently() -> None:
 
 
 @respx.mock
-def test_get_timeout_override_rides_the_request() -> None:
+def test_get_timeout_override_is_sent_with_the_request() -> None:
     """`timeout=` overrides the client-level timeout for that request only.
 
     Used for the 120s ManualImport folder fetches. The default is the client's timeout.
@@ -250,7 +250,7 @@ def test_no_retry_handle_attempts_once_primary_keeps_the_budget() -> None:
     ]
 
 
-def test_replace_shares_the_streak_ledger() -> None:
+def test_replace_shares_the_failure_streaks() -> None:
     """The no-retry handle and the primary share ONE streak dict (`is`).
 
     Guards the init=False trap: `dataclasses.replace` re-runs `default_factory`
@@ -309,7 +309,7 @@ def test_interleaved_keys_keep_independent_streaks() -> None:
 
 
 @respx.mock
-def test_heartbeat_rewarns_at_the_bound_cadence() -> None:
+def test_rewarns_at_the_bound_cadence() -> None:
     """A long streak re-warns ("still failing") once per re-warn interval."""
 
     respx.get(f"{_URL}/api/v3/thing").respond(status_code=404)

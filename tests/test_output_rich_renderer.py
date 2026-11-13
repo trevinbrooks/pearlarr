@@ -68,17 +68,17 @@ def _warning(message: str, origin: str = LOG_NAME) -> Diagnostic:
     return Diagnostic(severity=Severity.WARNING, message=message, origin=origin)
 
 
-class TestPlacement:
+class TestPosition:
     """Ambient indent tracks the open scope: boot step and wait indents, column 0 otherwise, reset on `begin_run`."""
 
-    def test_open_boot_section_indents_to_the_ledger(self) -> None:
+    def test_open_boot_scope_indents_to_the_boot_step_lines(self) -> None:
         renderer, stream = _renderer()
 
         _feed(renderer, ScopeOpened(scope=_BOOT, label="boot"), _warning("perms loose"))
 
         assert _lines(stream) == [f"{INDENT}⚠ perms loose"]
 
-    def test_closed_boot_section_renders_at_column_zero(self) -> None:
+    def test_closed_boot_scope_renders_at_column_zero(self) -> None:
         renderer, stream = _renderer()
 
         _feed(renderer, ScopeOpened(scope=_BOOT, label="boot"), ScopeClosed(scope=_BOOT), _warning("late"))
@@ -123,7 +123,7 @@ class TestPlacement:
 
         assert _lines(stream)[-1] == "⚠ before the first item"
 
-    def test_begin_cycle_resets_the_fold(self) -> None:
+    def test_begin_run_resets_the_open_scopes(self) -> None:
         renderer, stream = _renderer()
 
         _feed(renderer, ScopeOpened(scope=_BOOT, label="boot"))
@@ -133,7 +133,7 @@ class TestPlacement:
         assert _lines(stream) == ["⚠ fresh cycle"]
 
 
-class TestUnwindPlacement:
+class TestUnwindPosition:
     """The other half of bootstrap's unwind emit: ArrRunFinished clears the open scopes.
 
     `bootstrap` emits ArrRunFinished from an inner finally, before its except handlers
@@ -142,7 +142,7 @@ class TestUnwindPlacement:
     arr run died in - and the regression it closes.
     """
 
-    def test_run_finished_clears_a_mid_scan_entry_to_column_zero(self) -> None:
+    def test_arr_run_finished_clears_a_mid_scan_title_to_column_zero(self) -> None:
         renderer, stream = _renderer()
 
         _feed(
@@ -157,7 +157,7 @@ class TestUnwindPlacement:
         # ArrRunFinished renders nothing itself. It just empties the open scopes.
         assert _lines(stream)[-1] == "⚠ Sonarr run failed"
 
-    def test_without_the_unwind_emit_the_error_indents_under_the_entry(self) -> None:
+    def test_without_the_unwind_emit_the_error_indents_under_the_title(self) -> None:
         # The negative control: what the unwind's ArrRunFinished prevents.
         renderer, stream = _renderer()
 
@@ -171,7 +171,7 @@ class TestUnwindPlacement:
 
         assert _lines(stream)[-1] == f"{INDENT}⚠ Sonarr run failed"
 
-    def test_run_finished_also_clears_an_open_boot_section(self) -> None:
+    def test_arr_run_finished_also_clears_an_open_boot_scope(self) -> None:
         # An arr run that dies inside ArrRunDeps.build never opens a scan: the boot scope
         # is depth-1 too, so the same close evicts it and the error lands at column 0.
         renderer, stream = _renderer()
@@ -185,7 +185,7 @@ class TestUnwindPlacement:
 
         assert _lines(stream) == ["⚠ cache.db was written by a newer Pearlarr"]
 
-    def test_a_repeat_run_finished_is_a_no_op(self) -> None:
+    def test_a_repeat_arr_run_finished_is_a_no_op(self) -> None:
         # A repeat close must not disturb an already-empty scope path (defense in
         # depth, production emits it once per arr run).
         renderer, stream = _renderer()
@@ -294,7 +294,7 @@ class TestDurableLoopLines:
 
         assert stream.getvalue() == ""
 
-    def test_release_skipped_and_grab_failed_render_on_the_scan_surface(self) -> None:
+    def test_release_skipped_and_grab_failed_render_as_scan_lines(self) -> None:
         # No longer the pass case: the flipped producers' events draw the same
         # detail rows the raw warnings did (bytes pinned in test_scan_parity).
         renderer, stream = _renderer()

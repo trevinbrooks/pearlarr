@@ -85,7 +85,7 @@ def _progress(*torrents: TorrentView, elapsed: float) -> WaitProgress:
     return WaitProgress(snapshot=WaitSnapshot(torrents=torrents, elapsed_s=elapsed))
 
 
-class TestWaitCockpitLifecycle:
+class TestWaitLiveRegionLifecycle:
     """The wait region's Live opens on the first WaitProgress and stops before the closing tally prints."""
 
     def test_live_starts_on_first_progress_not_on_started(self) -> None:
@@ -101,7 +101,7 @@ class TestWaitCockpitLifecycle:
         renderer.close()
         assert renderer._wait._live is None and not live.is_started
 
-    def test_graduation_prints_above_the_active_cockpit(self) -> None:
+    def test_row_finish_prints_above_the_active_live_region(self) -> None:
         renderer, stream = _live_renderer()
 
         _feed(
@@ -135,7 +135,7 @@ class TestWaitCockpitLifecycle:
         assert renderer._wait._live is None and not live.is_started
         assert "wait complete · 1 imported · 2m 30s" in _plain(stream)
 
-    def test_zero_graduation_finish_prints_no_tally(self) -> None:
+    def test_a_finish_with_no_rows_prints_no_tally(self) -> None:
         renderer, stream = _live_renderer()
 
         _feed(
@@ -147,7 +147,7 @@ class TestWaitCockpitLifecycle:
         assert renderer._wait._live is None
         assert "wait complete" not in _plain(stream)
 
-    def test_begin_cycle_stops_the_live(self) -> None:
+    def test_begin_run_stops_the_live(self) -> None:
         renderer, _stream = _live_renderer()
 
         _feed(
@@ -164,10 +164,10 @@ class TestWaitCockpitLifecycle:
         assert renderer._wait._live_frame is None
 
 
-class TestNonLiveDigest:
+class TestNonLiveProgressLine:
     """On a non-live console it degrades to a start line plus throttled progress lines, still honoring level gating."""
 
-    def test_prints_start_and_throttled_pulses_without_a_live(self) -> None:
+    def test_prints_start_and_throttled_progress_lines_without_a_live(self) -> None:
         renderer, stream = _live_renderer(width=20)  # width < MIN_LIVE_WIDTH -> not live
 
         _feed(
@@ -198,7 +198,7 @@ class TestNonLiveDigest:
         assert _plain(stream).strip() == ""
         assert renderer._wait._live is None
 
-    def test_failed_graduation_survives_a_raised_level(self) -> None:
+    def test_failed_row_finish_survives_a_raised_level(self) -> None:
         # The outcome line carries severity_of's category-based level,
         # so a FAILED outcome renders at ERROR through render_console_lines'
         # WARNING gate while the INFO wait lines around it vanish.
@@ -215,7 +215,7 @@ class TestNonLiveDigest:
         assert "Waiting on" not in out  # the INFO start line stayed suppressed
 
 
-class TestFrontierTeardown:
+class TestOpenScopesTeardown:
     """The wait Live slot tears down whenever the wait region leaves the open scopes, always starting fresh."""
 
     def test_scope_closed_tears_down_the_wait_live(self) -> None:
@@ -233,7 +233,7 @@ class TestFrontierTeardown:
         _feed(renderer, ScopeClosed(scope=_WAIT))
         assert renderer._wait._live is None and not live.is_started
 
-    def test_run_finished_unwind_tears_down_the_wait_live(self) -> None:
+    def test_arr_run_finished_unwind_tears_down_the_wait_live(self) -> None:
         renderer, _stream = _live_renderer()
 
         _feed(
@@ -278,7 +278,7 @@ class TestFrontierTeardown:
         renderer.close()
         assert renderer._wait._live is None and not second.is_started
 
-    def test_raised_level_keeps_the_cockpit_but_drops_the_durable_lines(self) -> None:
+    def test_raised_level_keeps_the_live_region_but_drops_the_durable_lines(self) -> None:
         renderer, stream = _live_renderer()
         renderer.set_level(logging.WARNING)
 
@@ -320,14 +320,14 @@ class TestWaitRegionDirect:
         console = Console(file=io.StringIO(), force_terminal=True, legacy_windows=False, width=100)
         return WaitRegion(lambda: console, level_source=lambda: logging.INFO, time_source=lambda: 0.0)
 
-    def test_section_left_no_ops_when_no_live_ever_started(self) -> None:
+    def test_scope_closed_no_ops_when_no_live_ever_started(self) -> None:
         region = self._region()
         region.scope_closed()  # the non-TTY progress line path never started a Live
         assert region._live is None
         region.scope_closed()  # idempotent
         assert region._live is None
 
-    def test_section_left_is_idempotent_after_a_live(self) -> None:
+    def test_scope_closed_is_idempotent_after_a_live(self) -> None:
         region = self._region()
         region.handle(WaitStarted(total=1, progress_line_s=300.0, kind=WaitKind.MONITOR))
         region.handle(_progress(_dl("Show"), elapsed=0))
