@@ -22,7 +22,6 @@ from pearlarr.output import (
     GrabAction,
     GrabFailed,
     GrabStatus,
-    LedgerRow,
     PlacedBy,
     ReleaseSkipped,
     RowFinished,
@@ -34,13 +33,14 @@ from pearlarr.output import (
     Severity,
     SkipReason,
     StyledValue,
+    TitleRow,
     WaitFinished,
     WaitKind,
     WaitProgress,
     WaitSnapshot,
     WaitStarted,
 )
-from pearlarr.output.events import EntryState
+from pearlarr.output.events import TitleState
 from pearlarr.wait_types import Outcome, OutcomeKind
 
 from .fakes import FakeClock
@@ -171,13 +171,13 @@ def test_late_step_calls_demote_to_attributed_diagnostics() -> None:
     assert late[1].severity is Severity.WARNING
 
 
-# --- EntryScope --------------------------------------------------------------------
+# --- TitleScope --------------------------------------------------------------------
 
 
 def test_entry_opens_with_its_header_stamped() -> None:
     factory, recorder, _ = _factory()
 
-    entry = factory.entry(EntryHeader(state=EntryState.CHECKING, title="Frieren", al_id=154587))
+    entry = factory.entry(EntryHeader(state=TitleState.CHECKING, title="Frieren", al_id=154587))
 
     opened = recorder.of_type(ScopeOpened)
     headers = recorder.of_type(EntryHeader)
@@ -189,7 +189,7 @@ def test_entry_opens_with_its_header_stamped() -> None:
 
 def test_entry_post_stamps_the_scope_id() -> None:
     factory, recorder, _ = _factory()
-    entry = factory.entry(EntryHeader(state=EntryState.CHECKING, title="T"))
+    entry = factory.entry(EntryHeader(state=TitleState.CHECKING, title="T"))
 
     entry.post(ReleaseSkipped(group="Okay-Subs", tracker="AB", reason=SkipReason.PRIVATE_ONLY))
 
@@ -199,7 +199,7 @@ def test_entry_post_stamps_the_scope_id() -> None:
 
 def test_entry_close_emits_scope_closed_once() -> None:
     factory, recorder, _ = _factory()
-    entry = factory.entry(EntryHeader(state=EntryState.CHECKING, title="T"))
+    entry = factory.entry(EntryHeader(state=TitleState.CHECKING, title="T"))
 
     entry.close()
     entry.close()
@@ -209,7 +209,7 @@ def test_entry_close_emits_scope_closed_once() -> None:
 
 def test_late_entry_post_demotes_and_keeps_the_severity() -> None:
     factory, recorder, _ = _factory()
-    entry = factory.entry(EntryHeader(state=EntryState.CHECKING, title="Frieren"))
+    entry = factory.entry(EntryHeader(state=TitleState.CHECKING, title="Frieren"))
     entry.close()
 
     entry.post(
@@ -234,10 +234,10 @@ def test_late_entry_post_demotes_and_keeps_the_severity() -> None:
 
 def test_every_late_fact_kind_describes_itself() -> None:
     factory, recorder, _ = _factory()
-    entry = factory.entry(EntryHeader(state=EntryState.CHECKING, title="T"))
+    entry = factory.entry(EntryHeader(state=TitleState.CHECKING, title="T"))
     entry.close()
 
-    entry.post(LedgerRow(state=EntryState.IGNORED, label="AniList #1"))
+    entry.post(TitleRow(state=TitleState.IGNORED, label="AniList #1"))
     entry.post(ReleaseSkipped(group="G", tracker="AB", reason=SkipReason.PRIVATE_ONLY))
     entry.post(GrabFailed(group="G", url="u", error="tracker down"))
 

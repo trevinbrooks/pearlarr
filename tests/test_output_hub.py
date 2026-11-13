@@ -23,7 +23,7 @@ from pearlarr.output import (
     STRIKE_LIMIT,
     Diagnostic,
     Event,
-    FileLogSink,
+    FileLogRenderer,
     LegFinished,
     NullRenderer,
     OutputHub,
@@ -1099,10 +1099,10 @@ def test_a_failing_console_factory_keeps_the_old_seat_and_notes_file_only() -> N
 
 def test_cli_hub_seats_the_file_sink_first() -> None:
     # The file-before-console dispatch pin: _subs[0] is the first-declared sink
-    # (the reader convention above), and cli declares FileLogSink first.
+    # (the reader convention above), and cli declares FileLogRenderer first.
     hub, _ = _install_output_hub(resolve_paths())
     try:
-        assert isinstance(hub._subs[0].renderer, FileLogSink)
+        assert isinstance(hub._subs[0].renderer, FileLogRenderer)
     finally:
         uninstall_hub()
         uninstall_bridge()
@@ -1116,7 +1116,7 @@ def test_install_hub_closes_the_previously_installed_hub() -> None:
     install_hub(second)
     try:
         # A repeat run single in one process must not leak the prior hub's
-        # open FileLogSink. A re-install of the SAME hub never self-closes.
+        # open FileLogRenderer. A re-install of the SAME hub never self-closes.
         assert first_sink.closed
         install_hub(second)
         second.emit(_EVENT)

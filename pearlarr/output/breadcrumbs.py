@@ -42,7 +42,6 @@ from .events import (
     GrabAction,
     GrabFailed,
     ItemStarted,
-    LedgerRow,
     LegFinished,
     NextRunScheduled,
     PathsShown,
@@ -57,6 +56,7 @@ from .events import (
     ScopeKind,
     ScopeOpened,
     StarterConfigWritten,
+    TitleRow,
     WaitFinished,
     WaitProgress,
     WaitStarted,
@@ -85,7 +85,7 @@ PATH_SEP: Final = " › "
 
 
 @dataclass(frozen=True, slots=True)
-class OpenNode:
+class OpenScope:
     """One open frontier node."""
 
     kind: ScopeKind
@@ -94,18 +94,18 @@ class OpenNode:
     """`None` for boundary-opened RUN/ITEM nodes."""
 
 
-def _segment(node: OpenNode) -> str:
+def _segment(node: OpenScope) -> str:
     """A node's path segment: fixed words for section kinds, the label otherwise."""
 
     return SEGMENT_WORD.get(node.kind, node.label)
 
 
 @final
-class BreadcrumbFold:
+class OpenScopes:
     """The open-path state, folded purely from the event stream (one per surface)."""
 
     def __init__(self) -> None:
-        self._stack: list[OpenNode] = []
+        self._stack: list[OpenScope] = []
 
     def apply(self, event: Event) -> None:
         """Advance the fold by one event, per the fixed transition table above."""
@@ -136,7 +136,7 @@ class BreadcrumbFold:
                 | BootReady()
                 | EntryHeader()
                 | EntryDetail()
-                | LedgerRow()
+                | TitleRow()
                 | ReleaseSkipped()
                 | GrabFailed()
                 | GrabAction()
@@ -167,7 +167,7 @@ class BreadcrumbFold:
 
     # -- read APIs (the only surface: labels/during only, never placement) ---------
 
-    def nodes(self) -> tuple[OpenNode, ...]:
+    def nodes(self) -> tuple[OpenScope, ...]:
         """The open nodes, root to top."""
 
         return tuple(self._stack)
@@ -200,7 +200,7 @@ class BreadcrumbFold:
     def _push(self, kind: ScopeKind, label: str, scope: ScopeId | None = None) -> None:
         # Closing >= own depth first keeps the stack strictly increasing in depth.
         self._close_at(KIND_DEPTH[kind])
-        self._stack.append(OpenNode(kind, label, scope))
+        self._stack.append(OpenScope(kind, label, scope))
 
     def _close_at(self, depth: int) -> None:
         while self._stack and KIND_DEPTH[self._stack[-1].kind] >= depth:

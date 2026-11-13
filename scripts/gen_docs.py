@@ -50,7 +50,7 @@ from pearlarr.env_registry import ENV_VARS
 from pearlarr.json_narrow import is_json_obj
 from pearlarr.output import JsonRenderer
 from pearlarr.output import events as ev
-from pearlarr.output.events import EntryState
+from pearlarr.output.events import TitleState
 from pearlarr.paths import PROJECT_URL
 from pearlarr.wait_types import Outcome, OutcomeKind
 
@@ -813,7 +813,7 @@ def _specimen_stream() -> tuple[ev.Event, ...]:
         ),
         ev.ScopeOpened(scope=_ENTRY_SCOPE, label="Sousou no Frieren"),
         ev.EntryHeader(
-            state=EntryState.CHECKING,
+            state=TitleState.CHECKING,
             title="Sousou no Frieren",
             al_id=154587,
             coverage="S01",
@@ -826,7 +826,7 @@ def _specimen_stream() -> tuple[ev.Event, ...]:
             tail="S01E27-E28",
             scope=_ENTRY_SCOPE,
         ),
-        ev.LedgerRow(state=EntryState.UNCHANGED, label="Sousou no Frieren", scope=_ENTRY_SCOPE),
+        ev.TitleRow(state=TitleState.UNCHANGED, label="Sousou no Frieren", scope=_ENTRY_SCOPE),
         ev.ReleaseSkipped(
             group="Vodes",
             tracker="AnimeBytes",

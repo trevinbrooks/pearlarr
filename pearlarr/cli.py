@@ -43,7 +43,7 @@ from .output import (
     ConfigValidated,
     CycleStarted,
     EffectiveConfigShown,
-    FileLogSink,
+    FileLogRenderer,
     JsonRenderer,
     JsonValue,
     LineRenderer,
@@ -391,7 +391,7 @@ def _console_seat(console_format: LogFormat, caps_cache: CapsCache) -> Renderer:
     return LineRenderer(sys.stdout)
 
 
-def _install_output_hub(paths: AppPaths) -> tuple[OutputHub, FileLogSink]:
+def _install_output_hub(paths: AppPaths) -> tuple[OutputHub, FileLogRenderer]:
     """Build + install the per-process OutputHub. Its sinks own file/plain/json.
 
     The FileLogSink is deliberately the first stable sink (`_subs[0]`):
@@ -410,7 +410,7 @@ def _install_output_hub(paths: AppPaths) -> tuple[OutputHub, FileLogSink]:
     only moment retention is known.
     """
 
-    file_sink = FileLogSink(paths.log_dir)
+    file_sink = FileLogRenderer(paths.log_dir)
     try:
         file_sink.probe()
     except OSError as e:

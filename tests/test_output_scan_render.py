@@ -24,7 +24,6 @@ from pearlarr.output import (
     GrabAction,
     GrabStatus,
     ItemStarted,
-    LedgerRow,
     RecommendedGroup,
     RichRenderer,
     ScanFinished,
@@ -35,10 +34,11 @@ from pearlarr.output import (
     ScopeOpened,
     Severity,
     StyledValue,
+    TitleRow,
 )
 from pearlarr.output.console_lines import LegacyLine
 from pearlarr.output.console_text import KvLine, SectionRule, StyledLine, TitledRule
-from pearlarr.output.events import EntryState
+from pearlarr.output.events import TitleState
 from pearlarr.output.scan_lines import (
     accent_style,
     cap_reached_lines,
@@ -149,9 +149,9 @@ class TestBuilders:
             assert _as_lines(ledger_row_lines(event)) == expected
 
     def test_ledger_row_accents(self) -> None:
-        plain = LedgerRow(state=EntryState.CHECKING, label="Focal", accent=Accent.PLAIN)
+        plain = TitleRow(state=TitleState.CHECKING, label="Focal", accent=Accent.PLAIN)
         assert ledger_row_lines(plain)[1].payload == StyledLine(style="")
-        good = LedgerRow(state=EntryState.IMPORTED, label="Done", accent=Accent.GOOD)
+        good = TitleRow(state=TitleState.IMPORTED, label="Done", accent=Accent.GOOD)
         assert ledger_row_lines(good)[1].payload == StyledLine(style="green")
 
     def test_entry_headers(self) -> None:
@@ -167,7 +167,7 @@ class TestBuilders:
             assert _as_lines(entry_header_lines(event)) == expected
 
     def test_incomplete_tail_rides_the_files_row_when_url_absent(self) -> None:
-        event = EntryHeader(state=EntryState.CHECKING, title="Frieren", coverage="S01 E01-E28", incomplete=True)
+        event = EntryHeader(state=TitleState.CHECKING, title="Frieren", coverage="S01 E01-E28", incomplete=True)
         last = entry_header_lines(event)[-1]
         assert last.message == "    files     S01 E01-E28"
         assert isinstance(last.payload, KvLine)

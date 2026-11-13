@@ -133,7 +133,7 @@ class TestLogRouting:
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
     ) -> None:
         # The complaint fires inside setup_logger. With the hub + bridge already
-        # installed (the cli order) it reaches the FileLogSink, never lastResort.
+        # installed (the cli order) it reaches the FileLogRenderer, never lastResort.
         log_file = self._install(tmp_path / "data", monkeypatch)
 
         logger = setup_logger(log_level="BOGUS", console_format="plain")

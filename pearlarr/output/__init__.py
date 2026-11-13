@@ -1,6 +1,6 @@
 """Pearlarr's output architecture: producers emit frozen events, the hub's sinks own every surface."""
 
-from .breadcrumbs import KIND_DEPTH, PATH_SEP, SEGMENT_WORD, BreadcrumbFold, OpenNode
+from .breadcrumbs import KIND_DEPTH, PATH_SEP, SEGMENT_WORD, OpenScope, OpenScopes
 from .bridge import HubBridgeHandler, attributed_message, install_bridge, is_first_party, uninstall_bridge
 from .events import (
     SPARK_SAMPLES,
@@ -31,7 +31,6 @@ from .events import (
     GrabStatus,
     ItemStarted,
     JsonValue,
-    LedgerRow,
     LegFinished,
     LegSummary,
     LegTally,
@@ -57,6 +56,7 @@ from .events import (
     SkipReason,
     StarterConfigWritten,
     StyledValue,
+    TitleRow,
     TorrentView,
     WaitFinished,
     WaitKind,
@@ -84,14 +84,14 @@ from .scopes import (
     CountsSource,
     Emit,
     EntryFact,
-    EntryScope,
     ScopeFactory,
     ScopeIds,
     ScopeMark,
     StepScope,
+    TitleScope,
     WaitScope,
 )
-from .textline import Field, FileLogSink, JsonRenderer, LineRenderer
+from .textline import Field, FileLogRenderer, JsonRenderer, LineRenderer
 from .trace import CapturedTrace
 
 __all__ = [
@@ -107,7 +107,6 @@ __all__ = [
     "BootStepProgressed",
     "BootStepSlow",
     "BootStepStarted",
-    "BreadcrumbFold",
     "CacheBackedUp",
     "CacheIntegrityReported",
     "CacheRemoved",
@@ -127,10 +126,9 @@ __all__ = [
     "EntryDetail",
     "EntryFact",
     "EntryHeader",
-    "EntryScope",
     "Event",
     "Field",
-    "FileLogSink",
+    "FileLogRenderer",
     "GrabAction",
     "GrabFact",
     "GrabFailed",
@@ -139,7 +137,6 @@ __all__ = [
     "ItemStarted",
     "JsonRenderer",
     "JsonValue",
-    "LedgerRow",
     "LegFinished",
     "LegSummary",
     "LegTally",
@@ -148,7 +145,8 @@ __all__ = [
     "NeedsActionFact",
     "NextRunScheduled",
     "NullRenderer",
-    "OpenNode",
+    "OpenScope",
+    "OpenScopes",
     "OutputHub",
     "PathsShown",
     "Phase",
@@ -177,6 +175,8 @@ __all__ = [
     "StarterConfigWritten",
     "StepScope",
     "StyledValue",
+    "TitleRow",
+    "TitleScope",
     "TorrentView",
     "WaitFinished",
     "WaitKind",

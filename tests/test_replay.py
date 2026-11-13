@@ -38,7 +38,7 @@ from pearlarr.output import (
     ScopeOpened,
     Severity,
 )
-from pearlarr.output.events import EntryState
+from pearlarr.output.events import TitleState
 
 _EPOCH = 1_751_990_000.0
 _TS = datetime.fromtimestamp(_EPOCH).strftime("%Y-%m-%d %H:%M:%S")
@@ -95,7 +95,7 @@ def test_golden_round_trip_reproduces_the_text_grammar(
         ScanStarted(arr=Arr.SONARR, total=182),
         ItemStarted(arr=Arr.SONARR, index=3, total=182, title="Frieren"),
         ScopeOpened(scope=_ENTRY, label="Frieren"),
-        EntryHeader(state=EntryState.CHECKING, title="Frieren", scope=_ENTRY),
+        EntryHeader(state=TitleState.CHECKING, title="Frieren", scope=_ENTRY),
         CacheStatsReported(
             entries=1,
             anilist_meta=1,

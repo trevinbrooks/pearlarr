@@ -31,7 +31,7 @@ from pearlarr.import_wait import ImportWaitManager
 from pearlarr.leg_state import RunContext
 from pearlarr.mappings import TitleMapping
 from pearlarr.output import BootStepFinished, CountsMark, Diagnostic, EntryHeader, Severity, SeverityCounts
-from pearlarr.output.events import EntryState
+from pearlarr.output.events import TitleState
 from pearlarr.output.recording import RecordingHub
 from pearlarr.progress import ProgressSink
 from pearlarr.protocols import ImportCompleter
@@ -443,7 +443,7 @@ class TestRunStartKeepsPendingRecords:
         _run(engine, _StagingStrategy(items=_TITLES[:1], services=services, stop_at=None), ImportWaitMode.BLOCKING)
 
         assert set(store.get_pending(Arr.SONARR)) == {"h"}
-        assert [(h.state, h.title) for h in recording.of_type(EntryHeader)] == [(EntryState.QUEUED, old.display_label)]
+        assert [(h.state, h.title) for h in recording.of_type(EntryHeader)] == [(TitleState.QUEUED, old.display_label)]
 
 
 class _GrabRecorder(_FakeBound):

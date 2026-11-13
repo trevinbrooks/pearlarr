@@ -32,7 +32,7 @@ from .config import (
 from .config_migrations import CONFIG_VERSION, MIGRATE_HINT
 from .log import apply_log_level
 from .output import (
-    FileLogSink,
+    FileLogRenderer,
     LegFinished,
     Severity,
     emit_to_hub,
@@ -444,7 +444,7 @@ def run_arrs(
     *,
     paths: AppPaths,
     logger: logging.Logger,
-    file_sink: FileLogSink,
+    file_sink: FileLogRenderer,
     explicit_selection: bool = False,
     dry_run: bool = False,
     import_wait_mode: ImportWaitMode | None = None,

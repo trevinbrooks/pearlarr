@@ -19,7 +19,7 @@ if TYPE_CHECKING:
     from ..leg_state import RunStats
 
 
-class EntryState(StrEnum):
+class TitleState(StrEnum):
     """The outcome word in an entry-ledger row's state column. The widest value fixes STATE_WIDTH."""
 
     UNCHANGED = "unchanged"
@@ -208,7 +208,7 @@ class ItemStarted:
 class EntryHeader:
     """One entry block's head."""
 
-    state: EntryState
+    state: TitleState
     title: str
     al_id: int | None = None
     coverage: str | None = None
@@ -229,10 +229,10 @@ class EntryDetail:
 
 
 @dataclass(frozen=True, slots=True)
-class LedgerRow:
+class TitleRow:
     """A one-line ledger row with no block body."""
 
-    state: EntryState
+    state: TitleState
     label: str
     accent: Accent = Accent.DIM
     scope: ScopeId | None = None
@@ -774,7 +774,7 @@ type Event = (
     | ItemStarted
     | EntryHeader
     | EntryDetail
-    | LedgerRow
+    | TitleRow
     | ReleaseSkipped
     | GrabFailed
     | GrabAction
@@ -841,7 +841,7 @@ def severity_of(event: Event) -> Severity:
             | ScanStarted()
             | ItemStarted()
             | EntryHeader()
-            | LedgerRow()
+            | TitleRow()
             | GrabAction()
             | CapReached()
             | ScanFinished()

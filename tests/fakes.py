@@ -42,11 +42,11 @@ from pearlarr.output import (
     GrabAction,
     GrabFailed,
     ItemStarted,
-    LedgerRow,
     ReleaseSkipped,
     RunSummaryReady,
     ScanStarted,
     Severity,
+    TitleRow,
     install_hub,
 )
 from pearlarr.output.console_lines import LegacyLine
@@ -77,7 +77,7 @@ SCAN_EVENT_TYPES = (
     ItemStarted,
     EntryHeader,
     EntryDetail,
-    LedgerRow,
+    TitleRow,
     ReleaseSkipped,
     GrabFailed,
     GrabAction,

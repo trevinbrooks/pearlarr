@@ -12,7 +12,7 @@ from dataclasses import dataclass
 from datetime import datetime
 from typing import ClassVar, Final, NamedTuple, TextIO, assert_never, final, override
 
-from .breadcrumbs import BreadcrumbFold
+from .breadcrumbs import OpenScopes
 from .events import (
     BootReady,
     BootStepFinished,
@@ -40,7 +40,6 @@ from .events import (
     GrabStatus,
     ItemStarted,
     JsonValue,
-    LedgerRow,
     LegFinished,
     LegSummary,
     NeedsActionFact,
@@ -61,6 +60,7 @@ from .events import (
     Severity,
     SkipReason,
     StarterConfigWritten,
+    TitleRow,
     WaitFinished,
     WaitProgress,
     WaitStarted,
@@ -359,7 +359,7 @@ def _fields_added(record: GrabFact) -> tuple[Field, ...]:
     return tuple(fields)
 
 
-def _placement_fields(event: Diagnostic, crumbs: BreadcrumbFold) -> tuple[Field, ...]:
+def _placement_fields(event: Diagnostic, crumbs: OpenScopes) -> tuple[Field, ...]:
     # Ambient placement is a guess. The record admits it (during=/placed=frontier).
     during = crumbs.during()
     if event.placed_by is PlacedBy.AMBIENT and during is not None:
@@ -413,7 +413,7 @@ def _fields_cache_stats(event: CacheStatsReported) -> tuple[Field, ...]:
     )
 
 
-def _fact_of(event: Event, crumbs: BreadcrumbFold, severity: Severity) -> _Fact | None:
+def _fact_of(event: Event, crumbs: OpenScopes, severity: Severity) -> _Fact | None:
     """The exhaustive per-event table. None means the event has no rendered form."""
 
     match event:
@@ -449,7 +449,7 @@ def _fact_of(event: Event, crumbs: BreadcrumbFold, severity: Severity) -> _Fact 
         case EntryDetail(scope=scope, label=label, value=value, tail=tail):
             fields = (Field("note", tail),) if tail is not None else ()
             return _Fact("entry_detail", severity, f"{label}: {value.text}", fields, scope, "entry")
-        case LedgerRow(scope=scope, state=state, label=label):
+        case TitleRow(scope=scope, state=state, label=label):
             return _Fact("ledger_row", severity, str(state), (Field("title", label),), scope, "entry")
         case ReleaseSkipped(scope=scope):
             return _Fact("release_skipped", severity, "release skipped", _fields_release_skipped(event), scope, "entry")
@@ -515,7 +515,7 @@ _TEXT_SKIP: Final = frozenset({ScopeOpened, ScopeClosed, ScanFinished, LegFinish
 _JSON_SKIP: Final = frozenset({BootStepSlow})
 
 
-def _scope_bracket(scope: ScopeId | None, crumbs: BreadcrumbFold, fallback: str) -> str:
+def _scope_bracket(scope: ScopeId | None, crumbs: OpenScopes, fallback: str) -> str:
     """The breadcrumb for a handle-carried ScopeId, or the fixed component word."""
 
     if scope is not None:
@@ -534,7 +534,7 @@ def _record_lines(summary: LegSummary) -> tuple[_Line, ...]:
     return (*needs, *added)
 
 
-def _lines_of(event: Event, crumbs: BreadcrumbFold, severity: Severity) -> tuple[_Line, ...]:
+def _lines_of(event: Event, crumbs: OpenScopes, severity: Severity) -> tuple[_Line, ...]:
     """The text grammar: the shared fact plus text-only decoration."""
 
     # Skip first: scope boundaries fire per entry on both grammar sinks, so building their facts just to drop
@@ -552,7 +552,7 @@ def _lines_of(event: Event, crumbs: BreadcrumbFold, severity: Severity) -> tuple
     return (head,)
 
 
-def _json_of(event: Event, crumbs: BreadcrumbFold, iso: str, severity: Severity) -> dict[str, JsonValue] | None:
+def _json_of(event: Event, crumbs: OpenScopes, iso: str, severity: Severity) -> dict[str, JsonValue] | None:
     """The json shape: the shared fact plus json-only decoration, stable key order."""
 
     fact = _fact_of(event, crumbs, severity)
@@ -670,7 +670,7 @@ class _TextLineSink(Renderer):
     """The shared sink chassis: admission, breadcrumb folding, per-second timestamps."""
 
     def __init__(self) -> None:
-        self._crumbs = BreadcrumbFold()
+        self._crumbs = OpenScopes()
         self._threshold: int = int(Severity.INFO)
 
     @override
@@ -706,7 +706,7 @@ class _TextLineSink(Renderer):
         pass
 
 
-class _GrammarSink(_TextLineSink):
+class _GrammarRenderer(_TextLineSink):
     """Chassis plus the text grammar, with line-granular admission."""
 
     def __init__(self) -> None:
@@ -748,7 +748,7 @@ class _GrammarSink(_TextLineSink):
 
 
 @final
-class LineRenderer(_GrammarSink):
+class LineRenderer(_GrammarRenderer):
     """Plain stdout: the file grammar on the console."""
 
     def __init__(self, stream: TextIO) -> None:
@@ -770,7 +770,7 @@ def _mtime_or_epoch(path: str) -> float:
 
 
 @final
-class FileLogSink(_GrammarSink):
+class FileLogRenderer(_GrammarRenderer):
     """The structured log file: dated per-run backups plus age-based retention.
 
     A reopen after close appends. Only a pending rotation truncates.

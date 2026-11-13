@@ -31,19 +31,19 @@ from .events import (
     CapReached,
     EntryDetail,
     EntryHeader,
-    EntryState,
     GrabAction,
     GrabFact,
     GrabFailed,
     GrabStatus,
     ItemStarted,
-    LedgerRow,
     NeedsActionCause,
     NeedsActionFact,
     ReleaseSkipped,
     RunSummaryReady,
     ScanStarted,
     SkipReason,
+    TitleRow,
+    TitleState,
     severity_of,
 )
 
@@ -52,7 +52,7 @@ type ScanEvent = (
     | ItemStarted
     | EntryHeader
     | EntryDetail
-    | LedgerRow
+    | TitleRow
     | ReleaseSkipped
     | GrabFailed
     | GrabAction
@@ -145,7 +145,7 @@ def _detail_kv(
     return kv_line(payload, level=level)
 
 
-def _ledger_line(state: EntryState, label: str, style: str) -> LegacyLine:
+def _ledger_line(state: TitleState, label: str, style: str) -> LegacyLine:
     """A fixed-column ledger row, indent baked into the message."""
 
     return _info(indent_string(entry_string(state, label), level=1), StyledLine(style=style))
@@ -171,9 +171,9 @@ def item_started_lines(event: ItemStarted) -> tuple[LegacyLine, ...]:
 def entry_header_lines(event: EntryHeader) -> tuple[LegacyLine, ...]:
     """An entry block's head (ledger row plus files/link rows), the incomplete note riding the last row."""
 
-    if event.state is EntryState.CHECKING:
+    if event.state is TitleState.CHECKING:
         style = ""
-    elif event.state is EntryState.IMPORTED:
+    elif event.state is TitleState.IMPORTED:
         style = "green"
     else:
         style = "grey50"
@@ -185,7 +185,7 @@ def entry_header_lines(event: EntryHeader) -> tuple[LegacyLine, ...]:
     return tuple(lines)
 
 
-def ledger_row_lines(event: LedgerRow) -> tuple[LegacyLine, ...]:
+def ledger_row_lines(event: TitleRow) -> tuple[LegacyLine, ...]:
     """A self-contained ledger row (unmonitored / no mapping / ignored / ...)."""
 
     return _BLANK, _ledger_line(event.state, event.label, accent_style(event.accent))
@@ -430,7 +430,7 @@ def scan_event_lines(event: ScanEvent) -> tuple[LegacyLine, ...]:
             return entry_header_lines(event)
         case EntryDetail():
             return entry_detail_lines(event)
-        case LedgerRow():
+        case TitleRow():
             return ledger_row_lines(event)
         case ReleaseSkipped():
             return release_skipped_lines(event)

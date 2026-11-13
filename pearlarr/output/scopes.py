@@ -24,7 +24,6 @@ from .events import (
     Event,
     GrabAction,
     GrabFailed,
-    LedgerRow,
     PlacedBy,
     ReleaseSkipped,
     RowFinished,
@@ -33,6 +32,7 @@ from .events import (
     ScopeKind,
     ScopeOpened,
     Severity,
+    TitleRow,
     WaitFinished,
     WaitKind,
     WaitProgress,
@@ -49,7 +49,7 @@ type Emit = Callable[[Event], None]
 
 type CountsSource = Callable[[], SeverityCounts]
 
-type EntryFact = EntryDetail | LedgerRow | ReleaseSkipped | GrabFailed | GrabAction
+type EntryFact = EntryDetail | TitleRow | ReleaseSkipped | GrabFailed | GrabAction
 
 
 @final
@@ -97,7 +97,7 @@ def _describe_fact(fact: EntryFact) -> str:
     match fact:
         case EntryDetail(label=label, value=value):
             return f"{label}: {value.text}"
-        case LedgerRow(state=state, label=label):
+        case TitleRow(state=state, label=label):
             return f"{state} {label}"
         case ReleaseSkipped(group=group, tracker=tracker, reason=reason):
             return f"release skipped: {group} on {tracker} ({reason.name.lower()})"
@@ -211,7 +211,7 @@ class StepScope(_ScopeBase):
 
 
 @final
-class EntryScope(_ScopeBase):
+class TitleScope(_ScopeBase):
     """One entry block, opened with its header."""
 
     _KIND_WORD: ClassVar[str] = "entry"
@@ -297,8 +297,8 @@ class ScopeFactory:
     def step(self, label: str) -> StepScope:
         return StepScope(self._emit, self._ids.mint(ScopeKind.BOOT_STEP), label, self._clock)
 
-    def entry(self, header: EntryHeader) -> EntryScope:
-        return EntryScope(self._emit, self._ids.mint(ScopeKind.ENTRY), header)
+    def entry(self, header: EntryHeader) -> TitleScope:
+        return TitleScope(self._emit, self._ids.mint(ScopeKind.ENTRY), header)
 
     def wait(self, total: int, *, pulse_s: float, kind: WaitKind) -> WaitScope:
         return WaitScope(self._emit, self._ids.mint(ScopeKind.WAIT_REGION), total, pulse_s=pulse_s, kind=kind)
