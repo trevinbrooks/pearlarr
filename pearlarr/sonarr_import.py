@@ -310,7 +310,7 @@ class CandidateScanner:
         by_id_failed = self._scratch.folder_pinned.get(pending.infohash)
         answered_empty = False
         if by_id_failed is None:
-            candidates = self.sonarr.manual_import_candidates(pending=pending)
+            candidates = self.sonarr.manual_import_candidates_by_download_id(pending=pending)
             if candidates:
                 return _CandidateScan(candidates=candidates, history=None, by_id=True)
             by_id_failed = candidates is None
@@ -418,12 +418,12 @@ class ImportExecutor:
         if infohash in self._scratch.rescanned:
             return False
         last = self._scratch.last_rescan_monotonic
-        if last is not None and self._clock.now() - last < self._config.imports.poll_interval:
+        if last is not None and self._clock.monotonic() - last < self._config.imports.poll_interval:
             return False
         try:
             completed = self._rescan()
         finally:
-            self._scratch.last_rescan_monotonic = self._clock.now()
+            self._scratch.last_rescan_monotonic = self._clock.monotonic()
         if completed:
             self._scratch.rescanned.add(infohash)
         return completed
@@ -437,7 +437,7 @@ class ImportExecutor:
         """Keep a by-id scan for the record's next poll."""
 
         if scan.by_id:
-            self._scratch.kept_scans[infohash] = _KeptScan(content_path, scan, self._clock.now())
+            self._scratch.kept_scans[infohash] = _KeptScan(content_path, scan, self._clock.monotonic())
 
     def take_kept_scan(self, infohash: str, content_path: str) -> _CandidateScan | None:
         """The by-id scan kept for this poll, taken once. None when there is none, it expired, or the path moved."""
@@ -445,7 +445,7 @@ class ImportExecutor:
         kept = self._scratch.kept_scans.pop(infohash, None)
         if kept is None or kept.content_path != content_path:
             return None
-        if self._clock.now() - kept.kept_at_monotonic > _KEPT_SCAN_POLLS * self._config.imports.poll_interval:
+        if self._clock.monotonic() - kept.kept_at_monotonic > _KEPT_SCAN_POLLS * self._config.imports.poll_interval:
             return None
         return kept.scan
 

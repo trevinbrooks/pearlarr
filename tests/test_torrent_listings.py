@@ -47,7 +47,7 @@ def _mappings(*al_ids: int, ignored: Iterable[int] = ()) -> ResolvedMappings:
 
 
 def _resolved(kept: dict[int, TitleMapping], *, ignored: Iterable[int] = ()) -> ResolvedMappings:
-    return ResolvedMappings(mappings=kept, ignored={al_id: TitleMapping(anilist_id=al_id) for al_id in ignored})
+    return ResolvedMappings(kept=kept, ignored={al_id: TitleMapping(anilist_id=al_id) for al_id in ignored})
 
 
 def _episodes(*numbers: int) -> list[SonarrEpisode]:

@@ -30,10 +30,10 @@ import respx
 from pearlarr.arr_http import (
     GET_RETRIES,
     ArrAuthError,
-    ArrConnectionError,
     ArrHttp,
+    ArrUnreachableError,
     DeleteOutcome,
-    make_httpx_client,
+    make_arr_client,
 )
 from pearlarr.log import LOG_NAME
 from pearlarr.output import Diagnostic, Severity
@@ -480,7 +480,7 @@ def test_strict_get_connection_error_raises_naming_the_url() -> None:
     route = respx.get(f"{_URL}/api/v3/series").mock(side_effect=httpx.ConnectError("boom"))
     http, _ = _bind()
 
-    with pytest.raises(ArrConnectionError) as excinfo:
+    with pytest.raises(ArrUnreachableError) as excinfo:
         http.get_json_list_strict("/api/v3/series")
 
     assert str(excinfo.value) == f"Could not reach Sonarr at {_URL} (request failed (ConnectError))"
@@ -492,7 +492,7 @@ def test_strict_get_non_json_200_raises() -> None:
     respx.get(f"{_URL}/api/v3/series").respond(content=b"<html>login</html>", content_type="text/html")
     http, _ = _bind()
 
-    with pytest.raises(ArrConnectionError) as excinfo:
+    with pytest.raises(ArrUnreachableError) as excinfo:
         http.get_json_list_strict("/api/v3/series")
 
     assert str(excinfo.value) == f"Could not reach Sonarr at {_URL} (non-JSON body)"
@@ -503,7 +503,7 @@ def test_strict_get_non_list_payload_raises() -> None:
     respx.get(f"{_URL}/api/v3/series").respond(json={"message": "not an array"})
     http, _ = _bind()
 
-    with pytest.raises(ArrConnectionError) as excinfo:
+    with pytest.raises(ArrUnreachableError) as excinfo:
         http.get_json_list_strict("/api/v3/series")
 
     assert str(excinfo.value) == f"Could not reach Sonarr at {_URL} (unexpected payload)"
@@ -526,7 +526,7 @@ def test_make_httpx_client_pins_the_transport_policy() -> None:
     It also fixes the (connect, read) timeout split every arr call used to pass per-request.
     """
 
-    client = make_httpx_client()
+    client = make_arr_client()
     try:
         assert client.follow_redirects is False
         assert client.timeout.connect == 5

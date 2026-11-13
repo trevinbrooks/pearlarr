@@ -803,12 +803,12 @@ class _Harness:
 
 def _seeded_store() -> FakeCacheStore:
     store = FakeCacheStore()
-    store.update_cache(
+    store.update_cached_title(
         Arr.SONARR,
         1,
         CachedTitleUpdate(name="Cached Show", coverage="S01 E01-E12", url="https://releases.moe/20997"),
     )
-    store.update_cache(Arr.SONARR, 2, CachedTitleUpdate(name="Bare Show"))
+    store.update_cached_title(Arr.SONARR, 2, CachedTitleUpdate(name="Bare Show"))
     return store
 
 

@@ -47,7 +47,7 @@ class AbstractSonarrClient(ABC):
     def parse(self, filename: str) -> ParsedFileInfo | None: ...
 
     @abstractmethod
-    def manual_import_candidates(
+    def manual_import_candidates_by_download_id(
         self,
         *,
         pending: PendingImport,
@@ -183,7 +183,7 @@ class SonarrClient(AbstractSonarrClient):
             return None
 
     @override
-    def manual_import_candidates(
+    def manual_import_candidates_by_download_id(
         self,
         *,
         pending: PendingImport,

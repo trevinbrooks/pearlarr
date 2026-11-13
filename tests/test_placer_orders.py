@@ -7,7 +7,7 @@ from pearlarr.arr_models import ParsedFileInfo
 from pearlarr.pending_import import TitleNames
 from pearlarr.placement_types import NO_EVIDENCE, BatchPlacements, PlacementTarget, PlacementVerdict, SeadexEvidence
 from pearlarr.releases import EpisodeKey, OrderOnlyKey
-from pearlarr.tvdb_orders import OrderRow, SeriesOrders
+from pearlarr.tvdb_orders import OrderRow, OrdersByName
 from pearlarr.window_placement import WindowedAssignment, place_across_windows
 
 from .builders import (
@@ -66,7 +66,7 @@ class TestInterleavedSpecialByOrder:
     def _scope(
         cls,
         resolved: list[int],
-        orders: SeriesOrders,
+        orders: OrdersByName,
         *,
         listed: tuple[int, ...] | None = None,
         absolutes: dict[int, int] | None = None,
@@ -78,7 +78,7 @@ class TestInterleavedSpecialByOrder:
         listing = NO_EVIDENCE if listed is None else SeadexEvidence(torrent_listing(entry_window(1, listed)))
         return PlacementTarget(resolved, index, title_names=TitleNames("Show"), seadex=listing)
 
-    def _place(self, orders: SeriesOrders, listed: tuple[int, ...] | None = None) -> BatchPlacements:
+    def _place(self, orders: OrdersByName, listed: tuple[int, ...] | None = None) -> BatchPlacements:
         """The run under the season's window alone."""
 
         return place(self._PARSED, self._scope(self._SEASON, orders, listed=listed))
@@ -728,14 +728,14 @@ class TestCountedKeyByOrder:
     """Sonarr's parse of the name: the key, matched as the second season's first episode."""
 
     @classmethod
-    def _scope(cls, orders: SeriesOrders) -> PlacementTarget:
+    def _scope(cls, orders: OrdersByName) -> PlacementTarget:
         """The second season's window."""
 
         index = series_index(cls._MAP, absolutes=cls._ABSOLUTES, titles=cls._TITLES, orders=orders)
         return PlacementTarget([701, 702], index, title_names=TitleNames("Show"))
 
     @classmethod
-    def _place(cls, orders: SeriesOrders, name: str = _NAME) -> BatchPlacements:
+    def _place(cls, orders: OrdersByName, name: str = _NAME) -> BatchPlacements:
         return place({name: cls._KEYED}, cls._scope(orders))
 
     def test_the_count_names_the_order_the_key_follows(self) -> None:
@@ -793,7 +793,7 @@ class TestBareRunByOrder:
 
     @classmethod
     def _scope(
-        cls, orders: SeriesOrders, names: TitleNames = _NAMES, *, titles: dict[int, str] | None = None
+        cls, orders: OrdersByName, names: TitleNames = _NAMES, *, titles: dict[int, str] | None = None
     ) -> PlacementTarget:
         return PlacementTarget(cls._SEASON, series_index(cls._MAP, titles=titles, orders=orders), title_names=names)
 

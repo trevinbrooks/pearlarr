@@ -78,7 +78,7 @@ class TestLoadCache:
 
         assert gateway.al_cache == {1: anilist_body(1), 2: anilist_body(2), 3: anilist_body(3)}
         # A week-old count beats withholding it: None downstream means "use every episode".
-        assert gateway.n_eps(2) == 12
+        assert gateway.episode_count(2) == 12
         assert client.query_calls == []
 
 
@@ -193,7 +193,7 @@ class TestPrefetch:
         assert store.get_anilist_meta(9) is not None
         assert gateway.titles(1) == ("Resolved",)
         # The aged count still answers: the alternative is grabbing every episode.
-        assert gateway.n_eps(1) == 12
+        assert gateway.episode_count(1) == 12
         assert client.query_calls == []
 
     @pytest.mark.parametrize("asked", [pytest.param([1, 2], id="asked-for"), pytest.param([2], id="not-asked-for")])
@@ -228,11 +228,11 @@ class TestPrefetch:
         record = store.get_anilist_meta(1)
         assert record is not None
         assert record["fetched_at"] >= before
-        assert gateway.n_eps(1) == 12
+        assert gateway.episode_count(1) == 12
         # Not returned: still served from memory this run, but evicted from disk.
         assert store.get_anilist_meta(2) is None
         assert gateway.titles(2) == ("Resolved",)
-        assert gateway.n_eps(2) == 12
+        assert gateway.episode_count(2) == 12
         assert client.query_calls == []
 
 
@@ -247,7 +247,7 @@ class TestMediaResolution:
         assert gateway.thumb(42) == "https://img/large"
         assert gateway.banner(42) == "https://img/banner"
         assert gateway.media_format(42) == "TV"
-        assert gateway.n_eps(42) == 12
+        assert gateway.episode_count(42) == 12
         # The first resolver fetched and stored the raw body. The other four
         # were cache hits, so the wire saw exactly one query.
         assert client.query_calls == [42]
@@ -285,7 +285,7 @@ class TestMediaResolution:
         gateway = make_anilist_gateway(client)
 
         assert gateway.titles(7) == ()
-        assert gateway.n_eps(7) is None
+        assert gateway.episode_count(7) is None
 
         assert gateway.al_cache[7] == {}
         assert client.query_calls == [7]
@@ -319,19 +319,19 @@ class TestUnread:
         gateway = make_anilist_gateway(ScriptedAniListClient(absent=frozenset({5}), failing=frozenset({1})), store)
         gateway.load_cache()
         # AniList answers that it doesn't have id 5, then fails on id 1.
-        gateway.n_eps(5)
-        gateway.n_eps(1)
-        gateway.n_eps(al_id)
+        gateway.episode_count(5)
+        gateway.episode_count(1)
+        gateway.episode_count(al_id)
 
         assert gateway.unreachable is True
-        assert gateway.unread(al_id) is unread
+        assert gateway.air_dates_unread(al_id) is unread
 
     def test_an_id_nothing_looked_up_is_not_unread(self) -> None:
         gateway = make_anilist_gateway(ScriptedAniListClient(failing=frozenset({1})))
-        gateway.n_eps(1)
+        gateway.episode_count(1)
 
-        assert gateway.unread(1) is True
-        assert gateway.unread(2) is False
+        assert gateway.air_dates_unread(1) is True
+        assert gateway.air_dates_unread(2) is False
 
     def test_a_record_stored_without_dates_is_not_unread_while_anilist_answers(self) -> None:
         # The stored record without dates serves the lookup, and AniList was never down.
@@ -339,9 +339,9 @@ class TestUnread:
         store.put_anilist_meta(3, _dateless_record(3))
         gateway = make_anilist_gateway(ScriptedAniListClient(), store)
         gateway.load_cache()
-        gateway.n_eps(3)
+        gateway.episode_count(3)
 
-        assert gateway.unread(3) is False
+        assert gateway.air_dates_unread(3) is False
 
 
 class TestLogPluralization:

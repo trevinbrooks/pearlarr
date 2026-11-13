@@ -96,7 +96,7 @@ def _write_config() -> None:
 
     paths = resolve_paths()
     os.makedirs(paths.data_dir)
-    config = Path(paths.config)
+    config = Path(paths.config_file)
     config.write_text(
         yaml.safe_dump(make_config(url="http://sonarr.test", api_key="k").model_dump(mode="json")),
         encoding="utf-8",

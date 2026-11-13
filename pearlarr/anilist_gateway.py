@@ -19,14 +19,14 @@ from itertools import batched
 from .anilist_client import (
     ANILIST_BATCH_SIZE,
     AniListAiring,
+    AniListAnswers,
     AniListBody,
-    AniListCache,
     AniListClient,
     AniListMediaNode,
     extract_path,
     lacks_air_dates,
-    media_from,
-    media_node_from,
+    media_from_body,
+    media_from_node,
 )
 from .cache import AbstractCacheStore, record_payload, stamp_is_fresh
 from .output.console_text import count_noun
@@ -54,7 +54,7 @@ class AniListGateway:
         self._cache = cache_store
         self.logger = logger
         self._client = client
-        self.al_cache: AniListCache = {}
+        self.al_cache: AniListAnswers = {}
         # Loaded past the refresh age or stored without air dates: served as-is while the prefetch tries to
         # refresh them.
         self._stale: set[int] = set()
@@ -69,7 +69,7 @@ class AniListGateway:
 
         return self._client.unreachable
 
-    def unread(self, al_id: int) -> bool:
+    def air_dates_unread(self, al_id: int) -> bool:
         """Whether a lookup of an id this run went without its air dates because AniList couldn't be asked.
 
         The id was looked up, AniList is down, and no stored record with its air dates answers. A record stored by
@@ -180,7 +180,7 @@ class AniListGateway:
         self._looked_up.add(al_id)
         body = self.al_cache.get(al_id)
         if body is not None:
-            return media_from(body)
+            return media_from_body(body)
 
         # A tripped breaker answers {} without a request.
         fetched = self._client.query(al_id)
@@ -190,7 +190,7 @@ class AniListGateway:
         elif not self.unreachable:
             # AniList answered and knows no such id: an empty body remembers that for the run.
             self.al_cache[al_id] = {}
-        return media_node_from(raw_media)
+        return media_from_node(raw_media)
 
     def titles(self, al_id: int) -> tuple[str, ...]:
         """Every distinct AniList title for an id (English first, then romaji, cached or queried live), empty on a miss.
@@ -216,7 +216,7 @@ class AniListGateway:
 
         return self._media(al_id).format
 
-    def n_eps(self, al_id: int) -> int | None:
+    def episode_count(self, al_id: int) -> int | None:
         """Resolve the AniList episode count for an id, or None."""
 
         # A stale count still answers: None downstream means "use every episode", which over-grabs.

@@ -19,7 +19,7 @@ from typing import Any
 from pearlarr.cache import AbstractCacheStore, CachedTitleUpdate, CacheStore, HistoryCheckpoint
 from pearlarr.config import Arr
 from pearlarr.pending_import import OwnedAtGrab
-from pearlarr.tvdb_orders import OrderRow, StoredOrders
+from pearlarr.tvdb_orders import CachedOrders, OrderRow
 
 from .builders import FakeCacheStore, entry_claim, pending_import
 
@@ -46,7 +46,7 @@ def _both_stores(tmp_path: Path) -> Generator[tuple[FakeCacheStore, CacheStore]]
 def _apply_ops(store: AbstractCacheStore) -> None:
     """One identical mutating sequence: entries, the two TTL caches, pending."""
 
-    store.update_cache(
+    store.update_cached_title(
         Arr.SONARR,
         7,
         CachedTitleUpdate(
@@ -60,15 +60,15 @@ def _apply_ops(store: AbstractCacheStore) -> None:
     )
     # Partial re-update of the SAME entry (omits name/url/updated_at/marker): pins the
     # partial merge (absent columns untouched - incl. the fallback marker, still True).
-    store.update_cache(Arr.SONARR, 7, CachedTitleUpdate(coverage="S2"))
+    store.update_cached_title(Arr.SONARR, 7, CachedTitleUpdate(coverage="S2"))
     # A cross-arr row. No fallback_satisfied key, pinning the default-False parity.
-    store.update_cache(Arr.RADARR, 99, CachedTitleUpdate(name="Movie"))
+    store.update_cached_title(Arr.RADARR, 99, CachedTitleUpdate(name="Movie"))
     # A row whose stamp is cleared loses its timestamp and nothing else. Clearing an id with no row adds none, and
     # neither does an empty record.
-    store.update_cache(Arr.SONARR, 8, CachedTitleUpdate(name="Cleared", updated_at=_ENTRY_STAMP))
+    store.update_cached_title(Arr.SONARR, 8, CachedTitleUpdate(name="Cleared", updated_at=_ENTRY_STAMP))
     store.uncache_title(Arr.SONARR, 8)
     store.uncache_title(Arr.SONARR, 4242)
-    store.update_cache(Arr.SONARR, 4242, CachedTitleUpdate())
+    store.update_cached_title(Arr.SONARR, 4242, CachedTitleUpdate())
 
     store.put_anilist_meta(7, {"fetched_at": _NEW, "data": {"title": "Show"}})
     store.put_anilist_meta(8, {"fetched_at": _OLD, "data": {"title": "Old"}})
@@ -112,9 +112,9 @@ def _apply_ops(store: AbstractCacheStore) -> None:
 
     # TVDB orders: a record replaced whole (the dvd order goes), an empty listed order, a series with no orders.
     row = (OrderRow(1, 1, 101, 1),)
-    store.put_tvdb_orders(5, StoredOrders(_OLD, _OLD, {"official": row, "dvd": row}, {"official": 1, "dvd": 1}))
-    store.put_tvdb_orders(5, StoredOrders(_NEW, _NEW, {"official": row, "alt": ()}, {"official": 1}))
-    store.put_tvdb_orders(6, StoredOrders(_NEW, _NEW, {}, None))
+    store.put_tvdb_orders(5, CachedOrders(_OLD, _OLD, {"official": row, "dvd": row}, {"official": 1, "dvd": 1}))
+    store.put_tvdb_orders(5, CachedOrders(_NEW, _NEW, {"official": row, "alt": ()}, {"official": 1}))
+    store.put_tvdb_orders(6, CachedOrders(_NEW, _NEW, {}, None))
 
 
 def _observe(store: AbstractCacheStore) -> dict[str, object]:

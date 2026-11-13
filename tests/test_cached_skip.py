@@ -47,9 +47,9 @@ class _RecordingCacheStore(FakeCacheStore):
         self.updates: list[CachedTitleUpdate] = []
 
     @override
-    def update_cache(self, arr: Arr, al_id: int, cache_details: CachedTitleUpdate) -> None:
-        self.updates.append(cache_details)
-        super().update_cache(arr, al_id, cache_details)
+    def update_cached_title(self, arr: Arr, al_id: int, update: CachedTitleUpdate) -> None:
+        self.updates.append(update)
+        super().update_cached_title(arr, al_id, update)
 
 
 class _RecordingReporter:
@@ -96,7 +96,7 @@ class TestCachedEntrySkip:
 
     def test_skips_when_cached_and_timestamp_matches(self) -> None:
         cache = FakeCacheStore()
-        cache.update_cache(Arr.SONARR, 7, {"url": "u", "updated_at": datetime(2021, 1, 1)})
+        cache.update_cached_title(Arr.SONARR, 7, {"url": "u", "updated_at": datetime(2021, 1, 1)})
         reporter = _RecordingReporter()
         run = make_services(
             cache_store=cache,
@@ -112,7 +112,7 @@ class TestCachedEntrySkip:
 
     def test_does_not_skip_when_timestamp_is_stale(self) -> None:
         cache = FakeCacheStore()
-        cache.update_cache(Arr.SONARR, 7, {"url": "u", "updated_at": datetime(2021, 1, 1)})
+        cache.update_cached_title(Arr.SONARR, 7, {"url": "u", "updated_at": datetime(2021, 1, 1)})
         run = self._run(cache)
         # SeaDex entry now carries a newer updated_at -> stale -> re-process.
         assert run.is_unchanged(7, make_entry_record(updated_at=datetime(2022, 6, 6)), lambda: "") is False
@@ -176,7 +176,7 @@ class TestCachedEntrySkip:
         # Nothing else re-processes a fresh entry, so the skip is where an older record
         # picks up its url/coverage and a record written during an outage picks up its name.
         cache = _RecordingCacheStore()
-        cache.update_cache(Arr.SONARR, 7, case.stored)
+        cache.update_cached_title(Arr.SONARR, 7, case.stored)
         cache.updates.clear()
         client = ScriptedAniListClient(case.anilist)
         run = make_services(cache_store=cache, _reporter=_RecordingReporter(), _anilist=make_anilist_gateway(client))
@@ -192,7 +192,7 @@ class TestCachedEntrySkip:
     def test_ignore_update_times_reprocesses_even_when_fresh(self) -> None:
         # The config escape hatch: a fresh, matching timestamp is still re-processed.
         cache = FakeCacheStore()
-        cache.update_cache(Arr.SONARR, 7, {"url": "u", "updated_at": datetime(2021, 1, 1)})
+        cache.update_cached_title(Arr.SONARR, 7, {"url": "u", "updated_at": datetime(2021, 1, 1)})
         run = make_services(
             cache_store=cache,
             _reporter=_RecordingReporter(),
@@ -203,7 +203,7 @@ class TestCachedEntrySkip:
     def test_dirty_id_reprocesses_even_when_fresh(self) -> None:
         # An arr-side file change bypasses the skip despite a matching timestamp.
         cache = FakeCacheStore()
-        cache.update_cache(Arr.SONARR, 7, {"url": "u", "updated_at": datetime(2021, 1, 1)})
+        cache.update_cached_title(Arr.SONARR, 7, {"url": "u", "updated_at": datetime(2021, 1, 1)})
         run = self._run(cache)
         run.mark_dirty([7])
         assert run.is_unchanged(7, make_entry_record(updated_at=datetime(2021, 1, 1)), lambda: "") is False
@@ -211,14 +211,14 @@ class TestCachedEntrySkip:
     def test_selection_stale_reprocesses_even_when_fresh(self) -> None:
         # A matching-preference change bypasses the skip despite a matching timestamp.
         cache = FakeCacheStore()
-        cache.update_cache(Arr.SONARR, 7, {"url": "u", "updated_at": datetime(2021, 1, 1)})
+        cache.update_cached_title(Arr.SONARR, 7, {"url": "u", "updated_at": datetime(2021, 1, 1)})
         run = make_services(cache_store=cache, _reporter=_RecordingReporter(), _selection_stale=True)
         assert run.is_unchanged(7, make_entry_record(updated_at=datetime(2021, 1, 1)), lambda: "") is False
 
     def test_non_dirty_sibling_still_skips(self) -> None:
         # Marking one id dirty must not widen the bypass to other cached ids.
         cache = FakeCacheStore()
-        cache.update_cache(Arr.SONARR, 7, {"url": "u", "updated_at": datetime(2021, 1, 1)})
+        cache.update_cached_title(Arr.SONARR, 7, {"url": "u", "updated_at": datetime(2021, 1, 1)})
         run = self._run(cache)
         run.mark_dirty([8])
         assert run.is_unchanged(7, make_entry_record(updated_at=datetime(2021, 1, 1)), lambda: "") is True
@@ -226,7 +226,7 @@ class TestCachedEntrySkip:
     def test_begin_run_clears_the_dirty_set(self) -> None:
         # Dirty ids are per-run state: the next run's rebind must reset them.
         cache = FakeCacheStore()
-        cache.update_cache(Arr.SONARR, 7, {"url": "u", "updated_at": datetime(2021, 1, 1)})
+        cache.update_cached_title(Arr.SONARR, 7, {"url": "u", "updated_at": datetime(2021, 1, 1)})
         run = make_services(
             cache_store=cache,
             _reporter=_RecordingReporter(),
@@ -261,7 +261,7 @@ class TestACheckedTitleLosesItsStamp:
     def _rechecking(self, cache: FakeCacheStore, torrents: FakeTorrents, *, add_cap: int = 0) -> LegServices:
         """A run made to check entry 7 again over its cached row, as a library change makes it."""
 
-        cache.update_cache(Arr.SONARR, 7, {"updated_at": _CACHED_ON})
+        cache.update_cached_title(Arr.SONARR, 7, {"updated_at": _CACHED_ON})
         pipeline = make_grab_pipeline(_torrents=torrents, cache_store=cache, sleep_time=0, max_torrents_to_add=add_cap)
         pipeline._anilist.al_cache.update({7: {}})
         pipeline._ctx.per_title.current_title = "Show"
@@ -277,13 +277,13 @@ class TestACheckedTitleLosesItsStamp:
                 al_id=7,
                 entry=self._ENTRY,
                 seadex_dict=one_release_dict(srg="RG", infohash="h1"),
-                cache_details=run.new_cache_details(run.resolve_title(7), self._ENTRY),
+                update=run.new_cache_details(run.resolve_title(7), self._ENTRY),
             )
         )
 
     def test_a_title_sent_on_to_a_check_loses_its_stamp(self) -> None:
         cache = FakeCacheStore()
-        cache.update_cache(Arr.SONARR, 7, {"url": "u", "updated_at": _CACHED_ON})
+        cache.update_cached_title(Arr.SONARR, 7, {"url": "u", "updated_at": _CACHED_ON})
         run = self._run(cache)
         run.mark_dirty([7])
 
@@ -295,7 +295,7 @@ class TestACheckedTitleLosesItsStamp:
 
     def test_a_skipped_title_keeps_its_stamp(self) -> None:
         cache = FakeCacheStore()
-        cache.update_cache(Arr.SONARR, 7, {"url": "u", "updated_at": _CACHED_ON})
+        cache.update_cached_title(Arr.SONARR, 7, {"url": "u", "updated_at": _CACHED_ON})
 
         assert self._run(cache).is_unchanged(7, self._ENTRY, lambda: "") is True
         assert self._run(cache).is_unchanged(7, self._ENTRY, lambda: "") is True
@@ -337,7 +337,7 @@ class TestFallbackSatisfiedResurfacing:
     @staticmethod
     def _cache(*, marker: bool) -> FakeCacheStore:
         cache = FakeCacheStore()
-        cache.update_cache(
+        cache.update_cached_title(
             Arr.SONARR,
             7,
             {"url": "u", "updated_at": datetime(2021, 1, 1), "fallback_satisfied": marker},

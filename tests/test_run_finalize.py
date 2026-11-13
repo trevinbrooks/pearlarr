@@ -38,7 +38,7 @@ from pearlarr.protocols import ImportCompleter
 from pearlarr.run_loop import LegLoop
 from pearlarr.run_services import LegServices
 from pearlarr.skyhook_gateway import SkyHookGateway
-from pearlarr.tvdb_orders import AIRED_ORDER, SeriesOrderFacts
+from pearlarr.tvdb_orders import AIRED_ORDER, SonarrSeriesOrders
 from pearlarr.wait_types import ImportWaitMode, Outcome, OutcomeKind
 from pearlarr.wait_view import WaitOutcomeRow, WaitResult
 
@@ -420,7 +420,7 @@ class TestPerTitleCommit:
         services = _services(qbit=qbit, cache_store=store)
         engine = _engine(None, logger, cache_store=store, services=services)
         # With no titles, the run tail's save is the run's only commit.
-        store.update_cache(Arr.SONARR, 1, {"name": "A"})
+        store.update_cached_title(Arr.SONARR, 1, {"name": "A"})
 
         _run(engine, _StagingStrategy(items=[], services=services, stop_at=None))
         store.close()
@@ -710,7 +710,7 @@ class _OrderFetchingStrategy(FakeStrategy):
 
     @override
     def prefetch_orders(self, items: list[FakeArrItem], *, progress: ProgressSink | None = None) -> int:
-        series = [SeriesOrderFacts(item.id, AIRED_ORDER, None) for item in items]
+        series = [SonarrSeriesOrders(item.id, AIRED_ORDER, None) for item in items]
         return self._skyhook.prefetch(series, preview=True, progress=progress)
 
 

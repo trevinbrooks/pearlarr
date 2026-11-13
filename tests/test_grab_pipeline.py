@@ -228,7 +228,7 @@ class TestGrabPushesNotice:
                 entry_title="Show Title",
                 entry=make_entry_record(url="https://releases.moe/7", notes="the why"),
                 seadex_dict=one_release_dict(srg="PMR", infohash="h1"),
-                cache_details={},
+                update={},
                 replaced_groups=("OldGroup",),
                 coverage="S01 E01-E12",
             ),
@@ -772,7 +772,7 @@ class TestGrabAndCacheAtTheCap:
             al_id=al_id,
             entry=make_entry_record(url=f"https://seadex.example/{al_id}"),
             seadex_dict=seadex_dict,
-            cache_details={"updated_at": "2026-01-01 00:00:00"},
+            update={"updated_at": "2026-01-01 00:00:00"},
         )
 
     def test_hitting_the_cap_exactly_caches_the_title(self) -> None:
@@ -889,7 +889,7 @@ class TestUnsupportedTrackerSkip:
             entry_title="Show",
             entry=make_entry_record(url="https://seadex.example/42"),
             seadex_dict=seadex_dict,
-            cache_details={},
+            update={},
             replaced_groups=(),
         )
 
@@ -918,7 +918,7 @@ class TestUnsupportedTrackerSkip:
             entry_title="Show",
             entry=make_entry_record(url="https://seadex.example/7"),
             seadex_dict=seadex_dict,
-            cache_details={},
+            update={},
             replaced_groups=(),
         )
 
@@ -953,7 +953,7 @@ class TestUnsupportedTrackerSkip:
             entry_title="Show",
             entry=make_entry_record(url="https://seadex.example/7"),
             seadex_dict=seadex_dict,
-            cache_details={},
+            update={},
             replaced_groups=(),
         )
 
@@ -985,7 +985,7 @@ class TestUnsupportedTrackerSkip:
             entry_title="Show",
             entry=make_entry_record(url="https://seadex.example/7"),
             seadex_dict=seadex_dict,
-            cache_details={},
+            update={},
             replaced_groups=(),
         )
 
@@ -1019,7 +1019,7 @@ class TestUnsupportedTrackerSkip:
             entry_title="Show",
             entry=make_entry_record(url="https://seadex.example/7"),
             seadex_dict=seadex_dict,
-            cache_details={},
+            update={},
             replaced_groups=(),
         )
 
@@ -1058,7 +1058,7 @@ class TestFallbackMarker:
             entry_title="Show",
             entry=make_entry_record(url="https://seadex.example/42"),
             seadex_dict=seadex_dict,
-            cache_details={"updated_at": "2026-01-01 00:00:00"},
+            update={"updated_at": "2026-01-01 00:00:00"},
             replaced_groups=(),
         )
 
@@ -1081,7 +1081,7 @@ class TestFallbackMarker:
 
         torrents = FakeTorrents({"hn": (AddStatus.ADDED, "Show-Pub")})
         pipeline = _pipeline(torrents=torrents, private_releases="warn", sleep_time=0)
-        pipeline.cache_store.update_cache(Arr.SONARR, 7, {"fallback_satisfied": True})
+        pipeline.cache_store.update_cached_title(Arr.SONARR, 7, {"fallback_satisfied": True})
         pipeline._anilist.al_cache.update({7: {}})
         pipeline._ctx.per_title.current_title = "Show S1"
 
@@ -1091,7 +1091,7 @@ class TestFallbackMarker:
             entry_title="Show",
             entry=make_entry_record(url="https://seadex.example/7"),
             seadex_dict=seadex_dict,
-            cache_details={"updated_at": "2026-01-01 00:00:00"},
+            update={"updated_at": "2026-01-01 00:00:00"},
             replaced_groups=(),
         )
 
@@ -1109,7 +1109,7 @@ def _entry_request(seadex_dict: SeadexDict, *, input_missing: bool = False) -> G
         al_id=42,
         entry=make_entry_record(url="https://seadex.example/42"),
         seadex_dict=seadex_dict,
-        cache_details={"updated_at": "2026-01-01 00:00:00"},
+        update={"updated_at": "2026-01-01 00:00:00"},
         input_missing_groups=("RG",) if input_missing else (),
     )
 
@@ -1412,7 +1412,7 @@ class TestGrabFailureContainment:
             al_id=al_id,
             entry=make_entry_record(url=f"https://seadex.example/{al_id}"),
             seadex_dict=seadex_dict,
-            cache_details={"updated_at": "2026-01-01 00:00:00"},
+            update={"updated_at": "2026-01-01 00:00:00"},
         )
 
     @pytest.mark.parametrize(
@@ -1566,7 +1566,7 @@ class TestFallbackHoldNeverCaches:
             al_id=al_id,
             entry=make_entry_record(url=f"https://seadex.example/{al_id}"),
             seadex_dict=self._mixed_seadex_dict(),
-            cache_details={"updated_at": "2026-01-01 00:00:00"},
+            update={"updated_at": "2026-01-01 00:00:00"},
         )
 
     def test_partial_grab_under_a_hold_stays_uncached_and_surfaces(self) -> None:

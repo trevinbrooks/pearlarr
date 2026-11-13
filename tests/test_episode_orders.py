@@ -13,7 +13,7 @@ from pearlarr.arr_models import SonarrItem, SonarrSeries
 from pearlarr.config import Arr
 from pearlarr.leg_state import ArrRunState
 from pearlarr.seadex_sonarr import SonarrStrategy
-from pearlarr.tvdb_orders import NO_ORDERING, OrderRow, SeriesOrdering
+from pearlarr.tvdb_orders import NO_INDEX_ORDERS, IndexOrders, OrderRow
 from pearlarr.wait_types import ImportWaitMode
 
 from .builders import FakeCacheStore, make_sonarr_sync, pending_import, sonarr_ep, stored_orders
@@ -69,20 +69,20 @@ def _sync(
 @pytest.mark.parametrize(
     ("season_type", "expected"),
     [
-        pytest.param("official", SeriesOrdering({"dvd": _DVD}, None), id="official"),
+        pytest.param("official", IndexOrders({"dvd": _DVD}, None), id="official"),
         # The index isn't translated yet, so another order can't be read onto a series numbered by one.
-        pytest.param("dvd", NO_ORDERING, id="dvd-ordered"),
+        pytest.param("dvd", NO_INDEX_ORDERS, id="dvd-ordered"),
     ],
 )
 def test_a_series_is_served_its_stored_orders_only_when_sonarr_numbers_it_by_official(
-    season_type: str, expected: SeriesOrdering, monkeypatch: pytest.MonkeyPatch
+    season_type: str, expected: IndexOrders, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     cache = FakeCacheStore()
     cache.put_tvdb_orders(50, stored_orders(_ORDERS))
     strat = _sync(monkeypatch, [_series(1, 50, season_type=season_type)], cache)
 
     assert strat._episodes.orders_for(1) == expected
-    assert strat._episodes.orders_for(2) == NO_ORDERING
+    assert strat._episodes.orders_for(2) == NO_INDEX_ORDERS
 
 
 @pytest.mark.parametrize(

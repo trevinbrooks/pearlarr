@@ -111,7 +111,7 @@ class TestAniBridgeParity:
             for tvdb in (74796, 600, 111, 222, 424242):
                 assert sql_ab.lookup_by_tvdb(tvdb) == graph_ab.lookup_by_tvdb(tvdb)
             for tmdb in (888, 4242):
-                assert sql_ab.lookup_by_tmdb(tmdb) == graph_ab.lookup_by_tmdb(tmdb)
+                assert sql_ab.lookup_by_tmdb_movie(tmdb) == graph_ab.lookup_by_tmdb_movie(tmdb)
             for imdb in ("tt0269", "tt300", "ttZZZ"):
                 assert sql_ab.lookup_by_imdb(imdb) == graph_ab.lookup_by_imdb(imdb)
 
@@ -293,7 +293,7 @@ class TestAniBridgeParityProperty:
             for tvdb in graph_ab.all_tvdb_ids:
                 assert sql_ab.lookup_by_tvdb(tvdb) == graph_ab.lookup_by_tvdb(tvdb)
             for tmdb_movie in graph_ab.all_tmdb_movie_ids:
-                assert sql_ab.lookup_by_tmdb(tmdb_movie) == graph_ab.lookup_by_tmdb(tmdb_movie)
+                assert sql_ab.lookup_by_tmdb_movie(tmdb_movie) == graph_ab.lookup_by_tmdb_movie(tmdb_movie)
             for imdb in graph_ab.all_imdb_ids:
                 assert sql_ab.lookup_by_imdb(imdb) == graph_ab.lookup_by_imdb(imdb)
         finally:
@@ -526,8 +526,8 @@ def _anime_oracle(amap: AnimeIdsMap, ids: ExternalIds) -> dict[int, TitleMapping
 
     if ids.tvdb is not None:
         merge("tvdb_id", ids.tvdb)
-    if ids.tmdb is not None:
-        merge("tmdb_movie_id", ids.tmdb)
+    if ids.tmdb_movie is not None:
+        merge("tmdb_movie_id", ids.tmdb_movie)
     if ids.imdb is not None:
         merge("imdb_id", ids.imdb)
     return result
@@ -544,7 +544,7 @@ class TestAnimeIdsParity:
         [
             ExternalIds(tvdb=200),
             ExternalIds(imdb="tt100"),
-            ExternalIds(tmdb=7000),
+            ExternalIds(tmdb_movie=7000),
             ExternalIds(tvdb=200, imdb="tt100"),
             ExternalIds(tvdb=424242),  # no match -> empty
         ],
@@ -561,7 +561,7 @@ class TestAnimeIdsParity:
             ),
         )
         try:
-            assert resolver.get_mappings_from_anime_mappings(ids) == _anime_oracle(AMAP, ids)
+            assert resolver.mappings_from_anime_ids(ids) == _anime_oracle(AMAP, ids)
         finally:
             resolver.close()
 
@@ -582,7 +582,7 @@ class TestAnimeIdsParity:
             ),
         )
         try:
-            entry = resolver.get_mappings_from_anime_mappings(ExternalIds(tvdb=5000))[500]
+            entry = resolver.mappings_from_anime_ids(ExternalIds(tvdb=5000))[500]
             assert entry.tvdb_season == -1
             assert entry.tvdb_epoffset == 0
         finally:
@@ -605,7 +605,7 @@ class TestAnimeIdsParity:
             assert resolver.anime_id_set("tvdb_id") == {200, 999}
             assert resolver.anime_id_set("imdb_id") == {"tt100"}
             assert resolver.anime_id_set("tmdb_movie_id") == {7000}
-            assert resolver.get_mappings_from_anime_mappings(ExternalIds(tvdb=999)) == {}  # E has no anilist
+            assert resolver.mappings_from_anime_ids(ExternalIds(tvdb=999)) == {}  # E has no anilist
         finally:
             resolver.close()
 
@@ -629,10 +629,10 @@ class TestGetAnilistIdsMerge:
             ),
         )
         try:
-            resolved = resolver.get_anilist_ids(ExternalIds(tvdb=74796))
+            resolved = resolver.resolve(ExternalIds(tvdb=74796))
             assert list(resolved.ignored) == [270]
             assert resolved.ignored[270].anilist_id == 270
-            mappings = resolved.mappings
+            mappings = resolved.kept
             assert list(mappings) == [269]  # 270 set aside, sorted
             # AniBridge won for 269 -> ANIBRIDGE mode (not the anime-ids season 7).
             assert mappings[269].mode is MappingKind.EPISODE_RANGES
@@ -670,7 +670,7 @@ class TestRunServicesIgnoredIds:
             ),
         )
         try:
-            yield make_services(_mappings=resolver, _reporter=log)
+            yield make_services(_resolver=resolver, _reporter=log)
         finally:
             resolver.close()
 
@@ -684,7 +684,7 @@ class TestRunServicesIgnoredIds:
         log = _IgnoredIdLog()
         with self._services(log) as services:
             resolved = services.mappings_with_ignored(ExternalIds(tvdb=74796))
-        assert (list(resolved.mappings), list(resolved.ignored)) == ([269], [270])
+        assert (list(resolved.kept), list(resolved.ignored)) == ([269], [270])
         assert log.ids == []
 
 
@@ -711,7 +711,7 @@ class TestVu1DegradedAniBridge:
             ),
         )
         try:
-            mappings = resolver.get_anilist_ids(ExternalIds(tvdb=555, imdb="tt400")).mappings
+            mappings = resolver.resolve(ExternalIds(tvdb=555, imdb="tt400")).kept
             entry = mappings[400]
             assert entry.source is MappingSource.ANIME_IDS  # Kometa won, not the degraded AniBridge entry
             assert entry.tvdb_season == 2  # the precise season is no longer shadowed
@@ -737,7 +737,7 @@ class TestVu1DegradedAniBridge:
             ),
         )
         try:
-            mappings = resolver.get_anilist_ids(ExternalIds(tvdb=555, imdb="tt600")).mappings
+            mappings = resolver.resolve(ExternalIds(tvdb=555, imdb="tt600")).kept
             entry = mappings[600]
             assert entry.source is MappingSource.ANIME_IDS  # Kometa restored, not the degraded -1
             assert entry.tvdb_season == 0  # season 0 preserved -> the special is still selectable
@@ -759,7 +759,7 @@ class TestVu1DegradedAniBridge:
             ),
         )
         try:
-            mappings = resolver.get_anilist_ids(ExternalIds(tmdb=888, imdb="tt401")).mappings
+            mappings = resolver.resolve(ExternalIds(tmdb_movie=888, imdb="tt401")).kept
             assert mappings[401].source is MappingSource.ANIBRIDGE  # AniBridge stays primary
         finally:
             resolver.close()
@@ -779,7 +779,7 @@ class TestVu1DegradedAniBridge:
             ),
         )
         try:
-            mappings = resolver.get_anilist_ids(ExternalIds(tvdb=777, imdb="tt500")).mappings
+            mappings = resolver.resolve(ExternalIds(tvdb=777, imdb="tt500")).kept
         finally:
             resolver.close()
         degraded = mappings[500]
@@ -796,7 +796,7 @@ class TestVu1DegradedAniBridge:
 
 
 # --------------------------------------------------------------------------- #
-# anidb: contract change (anidb_mapping_dict) edges
+# anidb: contract change (anidb_episode_by_tvdb) edges
 # --------------------------------------------------------------------------- #
 
 ANIDB_XML = """<anime-list>
@@ -838,23 +838,23 @@ class TestAnidbMappingDict:
         resolver = _anidb_resolver()
         try:
             assert resolver.has_anidb
-            assert resolver.anidb_mapping_dict(1, 1) == {1: {1: 1, 2: 2}}
-            assert resolver.anidb_mapping_dict(1, 2) == {2: {1: 3, 2: 4}}
+            assert resolver.anidb_episode_by_tvdb(1, 1) == {1: {1: 1, 2: 2}}
+            assert resolver.anidb_episode_by_tvdb(1, 2) == {2: {1: 3, 2: 4}}
         finally:
             resolver.close()
 
     def test_missing_season_or_id_is_empty(self) -> None:
         resolver = _anidb_resolver()
         try:
-            assert resolver.anidb_mapping_dict(1, 5) == {}  # id known, season absent
-            assert resolver.anidb_mapping_dict(404, 1) == {}  # id unknown
+            assert resolver.anidb_episode_by_tvdb(1, 5) == {}  # id known, season absent
+            assert resolver.anidb_episode_by_tvdb(404, 1) == {}  # id unknown
         finally:
             resolver.close()
 
     def test_repeated_season_is_last_wins(self) -> None:
         resolver = _anidb_resolver()
         try:
-            assert resolver.anidb_mapping_dict(3, 1) == {1: {5: 5, 6: 6}}
+            assert resolver.anidb_episode_by_tvdb(3, 1) == {1: {5: 5, 6: 6}}
         finally:
             resolver.close()
 
@@ -862,7 +862,7 @@ class TestAnidbMappingDict:
         resolver = _anidb_resolver()
         try:
             with pytest.raises(ValueError, match="appears in multiple anime-list entries"):
-                resolver.anidb_mapping_dict(2, 1)
+                resolver.anidb_episode_by_tvdb(2, 1)
         finally:
             resolver.close()
 
@@ -879,7 +879,7 @@ class TestAnidbMappingDict:
         )
         try:
             assert not resolver.has_anidb
-            assert resolver.anidb_mapping_dict(1, 1) == {}
+            assert resolver.anidb_episode_by_tvdb(1, 1) == {}
         finally:
             resolver.close()
 
@@ -1024,8 +1024,8 @@ class TestDigestGate:
         resolver = build()
         try:
             assert calls["n"] == 2
-            assert resolver.get_mappings_from_anime_mappings(ExternalIds(tvdb=20))[2].anilist_id == 2
-            assert resolver.get_mappings_from_anime_mappings(ExternalIds(tvdb=10)) == {}  # old content gone
+            assert resolver.mappings_from_anime_ids(ExternalIds(tvdb=20))[2].anilist_id == 2
+            assert resolver.mappings_from_anime_ids(ExternalIds(tvdb=10)) == {}  # old content gone
         finally:
             resolver.close()
 
@@ -1101,7 +1101,7 @@ class TestUnwritableDbFallback:
                     "in memory for this run (slower startup, no data lost)"
                 ),
             ]
-            assert resolver.get_mappings_from_anime_mappings(ExternalIds(tvdb=10))[1].anilist_id == 1
+            assert resolver.mappings_from_anime_ids(ExternalIds(tvdb=10))[1].anilist_id == 1
         finally:
             resolver.close()
 
@@ -1208,7 +1208,7 @@ class TestRealDataParity:
             for tvdb in graph_ab.all_tvdb_ids:
                 assert sql_ab.lookup_by_tvdb(tvdb) == graph_ab.lookup_by_tvdb(tvdb)
             for tmdb in graph_ab.all_tmdb_movie_ids:
-                assert sql_ab.lookup_by_tmdb(tmdb) == graph_ab.lookup_by_tmdb(tmdb)
+                assert sql_ab.lookup_by_tmdb_movie(tmdb) == graph_ab.lookup_by_tmdb_movie(tmdb)
             for imdb in graph_ab.all_imdb_ids:
                 assert sql_ab.lookup_by_imdb(imdb) == graph_ab.lookup_by_imdb(imdb)
         finally:
@@ -1231,14 +1231,14 @@ class TestRealDataParity:
                 r["tvdb_id"] for r in amap.values() if r.get("tvdb_id") is not None and r.get("anilist_id") is not None
             ][:200]
             for tvdb in tvdbs:
-                assert resolver.get_mappings_from_anime_mappings(ExternalIds(tvdb=tvdb)) == _anime_oracle(
+                assert resolver.mappings_from_anime_ids(ExternalIds(tvdb=tvdb)) == _anime_oracle(
                     amap, ExternalIds(tvdb=tvdb)
                 )
             imdbs = [
                 r["imdb_id"] for r in amap.values() if r.get("imdb_id") is not None and r.get("anilist_id") is not None
             ][:200]
             for imdb in imdbs:
-                assert resolver.get_mappings_from_anime_mappings(ExternalIds(imdb=imdb)) == _anime_oracle(
+                assert resolver.mappings_from_anime_ids(ExternalIds(imdb=imdb)) == _anime_oracle(
                     amap, ExternalIds(imdb=imdb)
                 )
         finally:
@@ -1270,9 +1270,9 @@ class TestRealDataParity:
                         expected = _anidb_oracle(root, anidb_id, season)
                     except ValueError:
                         with pytest.raises(ValueError, match="appears in multiple anime-list entries"):
-                            resolver.anidb_mapping_dict(anidb_id, season)
+                            resolver.anidb_episode_by_tvdb(anidb_id, season)
                         continue
-                    assert resolver.anidb_mapping_dict(anidb_id, season) == expected
+                    assert resolver.anidb_episode_by_tvdb(anidb_id, season) == expected
         finally:
             resolver.close()
 

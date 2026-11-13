@@ -119,8 +119,8 @@ def test_radarr_sync_init_builds_without_network_via_client_seam() -> None:
     strat = RadarrStrategy(deps, services, radarr_client=fake)
 
     assert strat.radarr is fake
-    assert strat._mappings is deps.mappings
-    assert strat.anibridge is deps.mappings.anibridge
+    assert strat._resolver is deps.resolver
+    assert strat.anibridge is deps.resolver.anibridge
 
 
 def _build_deps(app_config: AppConfig, tmp_path: Path) -> LegDeps:
@@ -144,13 +144,13 @@ def test_rundeps_build_pins_verify_ssl_to_the_arrs_knob(monkeypatch: pytest.Monk
     """
 
     seen: list[bool] = []
-    real_factory = run_services.make_httpx_client
+    real_factory = run_services.make_arr_client
 
     def _record(*, verify: bool = True) -> httpx.Client:
         seen.append(verify)
         return real_factory(verify=verify)
 
-    monkeypatch.setattr(run_services, "make_httpx_client", _record)
+    monkeypatch.setattr(run_services, "make_arr_client", _record)
     deps = _build_deps(make_config(verify_ssl=False), tmp_path)
     deps.close()
 

@@ -66,7 +66,7 @@ class _RecordingAniList:
         self.format_calls.append(al_id)
         return self._media_format
 
-    def n_eps(self, al_id: int) -> int | None:
+    def episode_count(self, al_id: int) -> int | None:
         self.n_eps_calls.append(al_id)
         return self._n_eps
 
@@ -90,7 +90,7 @@ class _FakeAniDbMappings:
         self._mapping = mapping
         self.calls: list[tuple[int, int]] = []
 
-    def anidb_mapping_dict(self, anidb_id: int, tvdb_season: int) -> dict[int, dict[int, int]]:
+    def anidb_episode_by_tvdb(self, anidb_id: int, tvdb_season: int) -> dict[int, dict[int, int]]:
         self.calls.append((anidb_id, tvdb_season))
         return self._mapping
 
@@ -105,7 +105,7 @@ def test_anime_ids_lookups_route_through_the_gateway() -> None:
 
     sonarr = _FakeSonarr([sonarr_ep(1, 1), sonarr_ep(1, 2)])
     anilist = _RecordingAniList(n_eps=1)
-    episodes = make_sonarr_episodes(sonarr=sonarr, _anilist=anilist, _mappings=_NoAniDbMappings())
+    episodes = make_sonarr_episodes(sonarr=sonarr, _anilist=anilist, _resolver=_NoAniDbMappings())
 
     mapping = TitleMapping(anilist_id=123, tvdb_season=1)
     result = episodes.mapping_episodes(sonarr_series_id=10, al_id=123, mapping=mapping)
@@ -131,8 +131,8 @@ def test_an_entry_the_gateway_left_unread_is_unread() -> None:
     # AniList goes down on entry 5. Entry 4 is looked up after that, from its record in the run cache.
     down = make_anilist_gateway(ScriptedAniListClient(failing=frozenset({5})))
     down.al_cache[4] = anilist_body(4)
-    down.n_eps(5)
-    down.n_eps(4)
+    down.episode_count(5)
+    down.episode_count(4)
     episodes = make_sonarr_episodes(_anilist=down)
 
     assert episodes.entries_unread([4, 5]) is True
@@ -174,7 +174,7 @@ def test_anidb_map_filters_episodes_and_bypasses_the_offset_slice() -> None:
     sonarr = _FakeSonarr([sonarr_ep(0, 1), sonarr_ep(0, 2), sonarr_ep(0, 3)])
     anilist = _RecordingAniList(media_format="MOVIE")
     mappings = _FakeAniDbMappings({0: {1: 100, 3: 300}})
-    episodes = make_sonarr_episodes(sonarr=sonarr, _anilist=anilist, _mappings=mappings)
+    episodes = make_sonarr_episodes(sonarr=sonarr, _anilist=anilist, _resolver=mappings)
 
     mapping = TitleMapping(anilist_id=123, tvdb_season=0, anidb_id=99)
     result = episodes.mapping_episodes(sonarr_series_id=10, al_id=123, mapping=mapping)
@@ -195,7 +195,7 @@ def test_tv_format_outside_season_zero_never_consults_anidb() -> None:
     sonarr = _FakeSonarr([sonarr_ep(1, 1), sonarr_ep(1, 2)])
     anilist = _RecordingAniList(media_format="TV", n_eps=2)
     mappings = _FakeAniDbMappings({1: {1: 1}})
-    episodes = make_sonarr_episodes(sonarr=sonarr, _anilist=anilist, _mappings=mappings)
+    episodes = make_sonarr_episodes(sonarr=sonarr, _anilist=anilist, _resolver=mappings)
 
     mapping = TitleMapping(anilist_id=123, tvdb_season=1, anidb_id=99)
     result = episodes.mapping_episodes(sonarr_series_id=10, al_id=123, mapping=mapping)
@@ -211,7 +211,7 @@ def test_missing_anidb_id_never_consults_anidb() -> None:
     sonarr = _FakeSonarr([sonarr_ep(0, 1), sonarr_ep(0, 2)])
     anilist = _RecordingAniList(media_format="MOVIE", n_eps=1)
     mappings = _FakeAniDbMappings({0: {1: 100}})
-    episodes = make_sonarr_episodes(sonarr=sonarr, _anilist=anilist, _mappings=mappings)
+    episodes = make_sonarr_episodes(sonarr=sonarr, _anilist=anilist, _resolver=mappings)
 
     mapping = TitleMapping(anilist_id=123, tvdb_season=0)
     result = episodes.mapping_episodes(sonarr_series_id=10, al_id=123, mapping=mapping)
@@ -231,7 +231,7 @@ def test_episodes_without_numbers_are_skipped_on_the_anidb_path() -> None:
     sonarr = _FakeSonarr([sonarr_ep(1, 1), SonarrEpisode(), SonarrEpisode(season_number=1)])
     anilist = _RecordingAniList(media_format="MOVIE")
     mappings = _FakeAniDbMappings({1: {1: 100}})
-    episodes = make_sonarr_episodes(sonarr=sonarr, _anilist=anilist, _mappings=mappings)
+    episodes = make_sonarr_episodes(sonarr=sonarr, _anilist=anilist, _resolver=mappings)
 
     mapping = TitleMapping(anilist_id=123, tvdb_season=-1, anidb_id=99)
     result = episodes.mapping_episodes(sonarr_series_id=10, al_id=123, mapping=mapping)
@@ -251,7 +251,7 @@ def test_empty_anidb_map_falls_through_to_the_offset_slice() -> None:
     sonarr = _FakeSonarr([sonarr_ep(0, 1), sonarr_ep(0, 2)])
     anilist = _RecordingAniList(media_format="MOVIE", n_eps=1)
     mappings = _FakeAniDbMappings({})
-    episodes = make_sonarr_episodes(sonarr=sonarr, _anilist=anilist, _mappings=mappings)
+    episodes = make_sonarr_episodes(sonarr=sonarr, _anilist=anilist, _resolver=mappings)
 
     mapping = TitleMapping(anilist_id=123, tvdb_season=0, anidb_id=99)
     result = episodes.mapping_episodes(sonarr_series_id=10, al_id=123, mapping=mapping)
@@ -284,7 +284,7 @@ _EARLIER_SPECIAL = sonarr_ep(0, 1, ep_id=1, air_date="2019-02-20", runtime=12)
 def _dated_specials(later: list[SonarrEpisode], airing: AniListAiring) -> SonarrEpisodes:
     series = [_EARLIER_SPECIAL, *later, sonarr_ep(1, 1, ep_id=9, air_date="2019-01-05", runtime=24)]
     anilist = _RecordingAniList(media_format="MOVIE", n_eps=airing.episodes, airing=airing)
-    return make_sonarr_episodes(sonarr=_FakeSonarr(series), _anilist=anilist, _mappings=_NoAniDbMappings())
+    return make_sonarr_episodes(sonarr=_FakeSonarr(series), _anilist=anilist, _resolver=_NoAniDbMappings())
 
 
 def _film() -> SonarrEpisodes:

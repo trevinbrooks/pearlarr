@@ -59,7 +59,7 @@ from pearlarr.radarr_client import AbstractRadarrClient
 from pearlarr.run_services import LegServices
 from pearlarr.skyhook_client import AbstractSkyHookClient, SkyHookMiss, SkyHookReply
 from pearlarr.sonarr_client import AbstractSonarrClient
-from pearlarr.tvdb_orders import NO_ORDERING, SeriesOrdering
+from pearlarr.tvdb_orders import NO_INDEX_ORDERS, IndexOrders
 from pearlarr.wait_types import AttemptKind, AttemptResult, ImportProgress
 
 _ANSI = re.compile(r"\x1b\[[0-9;?]*[a-zA-Z]")
@@ -198,7 +198,7 @@ class FakeClock(Clock):
         """The requested duration of each `sleep` call, in call order."""
 
     @override
-    def now(self) -> float:
+    def monotonic(self) -> float:
         return self.t
 
     @override
@@ -209,7 +209,7 @@ class FakeClock(Clock):
         self.t += self._step
 
     def __call__(self) -> float:
-        return self.now()
+        return self.monotonic()
 
     def tick(self, seconds: float) -> None:
         """Advance the fake time by `seconds`."""
@@ -435,7 +435,7 @@ class FakeSonarrClient(AbstractSonarrClient):
         return self.languages_return
 
     @override
-    def manual_import_candidates(
+    def manual_import_candidates_by_download_id(
         self,
         *,
         pending: PendingImport,
@@ -508,12 +508,12 @@ class HookedSonarrClient(FakeSonarrClient):
         return answer
 
     @override
-    def manual_import_candidates(
+    def manual_import_candidates_by_download_id(
         self,
         *,
         pending: PendingImport,
     ) -> list[ManualImportCandidate] | None:
-        answer = super().manual_import_candidates(pending=pending)
+        answer = super().manual_import_candidates_by_download_id(pending=pending)
         if self.on_scan is not None:
             self.on_scan()
         return answer
@@ -645,11 +645,11 @@ class ScriptedEpisodes:
         del ep_list
         return ArrFiles()
 
-    def orders_for(self, series_id: int) -> SeriesOrdering:
+    def orders_for(self, series_id: int) -> IndexOrders:
         """No series has another order."""
 
         del series_id
-        return NO_ORDERING
+        return NO_INDEX_ORDERS
 
     def aired_order(self, series_id: int) -> bool:
         """Sonarr numbers every series as aired."""

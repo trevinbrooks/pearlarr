@@ -36,7 +36,7 @@ from pearlarr.parse_records import parse_from_json, parse_to_json
 from pearlarr.pending_import import OwnedAtGrab, PendingImport, SizeMatchedEpisode, TitleNames
 from pearlarr.sqlite_util import is_corruption
 from pearlarr.stamps import parse_stamp_or_none
-from pearlarr.tvdb_orders import OrderRow, StoredOrders
+from pearlarr.tvdb_orders import CachedOrders, OrderRow
 
 from .builders import cached_as_done, claim_al_ids, entry_claim, make_entry_record, pending_import
 
@@ -701,7 +701,7 @@ class TestSchemaVersionGate:
         # The v6 -> v7 step: the table goes, and the entry its rows hung off stays.
         db = tmp_path / "cache.db"
         with _open(tmp_path) as store:
-            store.update_cache(Arr.SONARR, 2, {"name": "Frieren", "url": "u"})
+            store.update_cached_title(Arr.SONARR, 2, {"name": "Frieren", "url": "u"})
             store.save(preview=False)
         raw = sqlite3.connect(str(db))
         raw.executescript(_V6_TORRENT_HASHES_SCHEMA)
@@ -744,9 +744,9 @@ class TestEntries:
 
     def test_update_cache_is_a_partial_merge(self, tmp_path: Path) -> None:
         with _open(tmp_path) as store:
-            store.update_cache(Arr.SONARR, 7, {"name": "Title", "url": "u"})
+            store.update_cached_title(Arr.SONARR, 7, {"name": "Title", "url": "u"})
             # A later update with only one field must not wipe the others.
-            store.update_cache(Arr.SONARR, 7, {"coverage": "S01"})
+            store.update_cached_title(Arr.SONARR, 7, {"coverage": "S01"})
             entry = store.get_entry(Arr.SONARR, 7)
             assert entry is not None
             assert (entry.name, entry.url, entry.coverage) == ("Title", "u", "S01")
@@ -754,8 +754,8 @@ class TestEntries:
     def test_clear_entry_stamp_clears_the_timestamp_and_nothing_else(self, tmp_path: Path) -> None:
         stamped: CachedTitleUpdate = {"name": "Title", "url": "u", "updated_at": datetime(2021, 6, 5)}
         with _open(tmp_path) as store:
-            store.update_cache(Arr.SONARR, 7, stamped)
-            store.update_cache(Arr.RADARR, 7, stamped)
+            store.update_cached_title(Arr.SONARR, 7, stamped)
+            store.update_cached_title(Arr.RADARR, 7, stamped)
 
             store.uncache_title(Arr.SONARR, 7)
 
@@ -774,21 +774,21 @@ class TestEntries:
 
     def test_update_cache_formats_datetime_timestamp(self, tmp_path: Path) -> None:
         with _open(tmp_path) as store:
-            store.update_cache(Arr.SONARR, 7, {"updated_at": datetime(2021, 6, 5, 4, 3, 2)})
+            store.update_cached_title(Arr.SONARR, 7, {"updated_at": datetime(2021, 6, 5, 4, 3, 2)})
             entry = store.get_entry(Arr.SONARR, 7)
             assert entry is not None
             assert entry.updated_at == "2021-06-05 04:03:02"
 
     def test_arrs_are_isolated(self, tmp_path: Path) -> None:
         with _open(tmp_path) as store:
-            store.update_cache(Arr.SONARR, 7, {"name": "S"})
-            store.update_cache(Arr.RADARR, 7, {"name": "R"})
+            store.update_cached_title(Arr.SONARR, 7, {"name": "S"})
+            store.update_cached_title(Arr.RADARR, 7, {"name": "R"})
             assert _entry_name(store, 7, Arr.SONARR) == "S"
             assert _entry_name(store, 7, Arr.RADARR) == "R"
 
     def test_get_entry_reads_all_columns_at_once(self, tmp_path: Path) -> None:
         with _open(tmp_path) as store:
-            store.update_cache(
+            store.update_cached_title(
                 Arr.SONARR,
                 7,
                 {"name": "Title", "url": "u", "coverage": "S01", "updated_at": datetime(2021, 6, 5, 4, 3, 2)},
@@ -811,19 +811,19 @@ class TestFallbackSatisfied:
     def test_defaults_false_and_roundtrips_as_bool(self, tmp_path: Path) -> None:
         with _open(tmp_path) as store:
             # A row written without the key reads back False (NOT NULL DEFAULT 0)...
-            store.update_cache(Arr.SONARR, 7, {"name": "Title"})
+            store.update_cached_title(Arr.SONARR, 7, {"name": "Title"})
             entry = store.get_entry(Arr.SONARR, 7)
             assert entry is not None
             assert entry.fallback_satisfied is False
             # ...and a written True reads back as a real bool, not the stored int.
-            store.update_cache(Arr.SONARR, 7, {"fallback_satisfied": True})
+            store.update_cached_title(Arr.SONARR, 7, {"fallback_satisfied": True})
             entry = store.get_entry(Arr.SONARR, 7)
             assert entry is not None
             assert entry.fallback_satisfied is True
 
     def test_persists_across_save_and_reopen(self, tmp_path: Path) -> None:
         with _open(tmp_path) as store:
-            store.update_cache(Arr.SONARR, 7, {"fallback_satisfied": True})
+            store.update_cached_title(Arr.SONARR, 7, {"fallback_satisfied": True})
             store.save(preview=False)
 
         with _open(tmp_path) as reopened:
@@ -833,14 +833,14 @@ class TestFallbackSatisfied:
 
     def test_partial_update_preserves_until_rewritten(self, tmp_path: Path) -> None:
         with _open(tmp_path) as store:
-            store.update_cache(Arr.SONARR, 7, {"fallback_satisfied": True})
+            store.update_cached_title(Arr.SONARR, 7, {"fallback_satisfied": True})
             # A partial merge that omits the key must not clear the marker...
-            store.update_cache(Arr.SONARR, 7, {"coverage": "S01"})
+            store.update_cached_title(Arr.SONARR, 7, {"coverage": "S01"})
             entry = store.get_entry(Arr.SONARR, 7)
             assert entry is not None
             assert entry.fallback_satisfied is True
             # ...but a supplied False overwrites it.
-            store.update_cache(Arr.SONARR, 7, {"fallback_satisfied": False})
+            store.update_cached_title(Arr.SONARR, 7, {"fallback_satisfied": False})
             entry = store.get_entry(Arr.SONARR, 7)
             assert entry is not None
             assert entry.fallback_satisfied is False
@@ -851,13 +851,13 @@ class TestPreviewGate:
 
     def test_preview_save_on_missing_file_writes_nothing(self, tmp_path: Path) -> None:
         with _open(tmp_path) as store:
-            store.update_cache(Arr.SONARR, 7, {"name": "Title"})
+            store.update_cached_title(Arr.SONARR, 7, {"name": "Title"})
             store.save(preview=True)
         assert not (tmp_path / "cache.db").exists()
 
     def test_real_save_on_missing_file_creates_and_persists(self, tmp_path: Path) -> None:
         with _open(tmp_path) as store:
-            store.update_cache(Arr.SONARR, 7, {"name": "Title"})
+            store.update_cached_title(Arr.SONARR, 7, {"name": "Title"})
             store.save(preview=False)
 
         assert (tmp_path / "cache.db").exists()
@@ -867,13 +867,13 @@ class TestPreviewGate:
     def test_preview_on_existing_db_does_not_mutate_committed_state(self, tmp_path: Path) -> None:
         # Establish a real, committed db.
         with _open(tmp_path) as store:
-            store.update_cache(Arr.SONARR, 7, {"name": "Original"})
+            store.update_cached_title(Arr.SONARR, 7, {"name": "Original"})
             store.save(preview=False)
 
         # A preview run stages changes but must persist none of them.
         with _open(tmp_path) as preview:
-            preview.update_cache(Arr.SONARR, 7, {"name": "Changed"})
-            preview.update_cache(Arr.SONARR, 8, {"name": "New"})
+            preview.update_cached_title(Arr.SONARR, 7, {"name": "Changed"})
+            preview.update_cached_title(Arr.SONARR, 8, {"name": "New"})
             preview.save(preview=True)
 
         with _open(tmp_path) as reopened:
@@ -1164,7 +1164,7 @@ class TestGuardFacts:
             assert store.get_guards(Arr.SONARR) == {}
 
 
-_ORDERS = StoredOrders(
+_ORDERS = CachedOrders(
     fetched_at="2026-07-01 10:00:00",
     fresh_until="2026-07-08 10:00:00",
     orders={"official": (OrderRow(1, 1, 101, 1), OrderRow(1, 2, 102, 2)), "dvd": ()},
@@ -1179,7 +1179,7 @@ class TestTvdbOrders:
         with _open(tmp_path) as store:
             assert store.get_tvdb_orders(1) is None
 
-            store.put_tvdb_orders(1, StoredOrders(fetched_at="x", fresh_until="x", orders={}, sonarr_counts=None))
+            store.put_tvdb_orders(1, CachedOrders(fetched_at="x", fresh_until="x", orders={}, sonarr_counts=None))
             store.put_tvdb_orders(1, _ORDERS)
 
             assert store.get_tvdb_orders(1) == _ORDERS
@@ -1235,7 +1235,7 @@ class TestPromoteFailure:
         # partial cache.db - else the next run mistakes the torn file for a real
         # (empty) cache.
         with _open(tmp_path) as store:
-            store.update_cache(Arr.SONARR, 7, {"name": "T"})
+            store.update_cached_title(Arr.SONARR, 7, {"name": "T"})
             # Scope the patch to this save only: the later `again.save` must promote for real.
             with monkeypatch.context() as mp, contextlib.suppress(OSError):
                 mp.setattr("pearlarr.cache.os.replace", _raise_os_replace)
@@ -1246,7 +1246,7 @@ class TestPromoteFailure:
 
         # A fresh run promotes for real (the failed attempt left nothing torn behind).
         with _open(tmp_path) as again:
-            again.update_cache(Arr.SONARR, 7, {"name": "T"})
+            again.update_cached_title(Arr.SONARR, 7, {"name": "T"})
             again.save(preview=False)
         assert (tmp_path / "cache.db").exists()
 
@@ -1264,7 +1264,7 @@ class TestRunLifecycle:
     def test_run_call_order_persists_and_reloads(self, tmp_path: Path) -> None:
         # Run 1 (real): process one entry the way the loop does, then commit + close.
         with _open(tmp_path) as store:
-            store.update_cache(
+            store.update_cached_title(
                 Arr.SONARR,
                 7,
                 {
@@ -1327,7 +1327,7 @@ class TestMaintenance:
 
     def test_stats_and_integrity(self, tmp_path: Path) -> None:
         with _open(tmp_path) as store:
-            store.update_cache(Arr.SONARR, 7, {"name": "T"})
+            store.update_cached_title(Arr.SONARR, 7, {"name": "T"})
             store.put_anilist_meta(1, {"fetched_at": "2026-06-26 12:00:00", "data": {}})
             store.save(preview=False)  # promote to file so size_bytes > 0
 
@@ -1367,7 +1367,7 @@ class TestCorruptStore:
         # A healthy db whose load() hits a non-corruption DatabaseError must NOT be
         # quarantined: the error propagates (fail closed) and the file is untouched.
         with _open(tmp_path) as store:
-            store.update_cache(Arr.SONARR, 7, {"name": "Keep"})
+            store.update_cached_title(Arr.SONARR, 7, {"name": "Keep"})
             store.save(preview=False)
         db = tmp_path / "cache.db"
 
@@ -1393,7 +1393,7 @@ class TestCorruptStore:
         # Must NOT raise - fail open to a fresh store.
         with _open(tmp_path) as store:
             assert store.get_entry(Arr.SONARR, 7) is None
-            store.update_cache(Arr.SONARR, 7, {"name": "Recovered"})
+            store.update_cached_title(Arr.SONARR, 7, {"name": "Recovered"})
             store.save(preview=False)
 
         # The corrupt file was moved aside. A fresh, working db took its place.

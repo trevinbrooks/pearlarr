@@ -37,7 +37,7 @@ from pearlarr.anilist_client import (
     _parse_errors,
     extract_path,
     lacks_air_dates,
-    media_from,
+    media_from_body,
 )
 from pearlarr.log import LOG_NAME
 from pearlarr.output import Diagnostic, Severity, install_hub
@@ -160,7 +160,7 @@ def test_extract_null_intermediate_yields_empty() -> None:
     assert extract_path(None, "data", "Media") == {}
 
 
-# --- media_from ------------------------------------------------------------
+# --- media_from_body ------------------------------------------------------------
 
 
 def test_media_from_full_body() -> None:
@@ -177,7 +177,7 @@ def test_media_from_full_body() -> None:
             },
         },
     }
-    assert media_from(body) == AniListMediaNode(
+    assert media_from_body(body) == AniListMediaNode(
         id=5,
         title_english="English Title",
         title_romaji="Romaji Title",
@@ -191,13 +191,13 @@ def test_media_from_missing_fields_defaults() -> None:
     """Absent nested `title`/`coverImage` and scalar fields default to `None`."""
 
     body: dict[str, object] = {"data": {"Media": {"id": 7}}}
-    assert media_from(body) == AniListMediaNode(id=7)
+    assert media_from_body(body) == AniListMediaNode(id=7)
 
 
 def test_media_from_none_body_is_all_none() -> None:
     """A `None` body (a miss) parses to an all-`None` node, not a crash."""
 
-    assert media_from(None) == AniListMediaNode()
+    assert media_from_body(None) == AniListMediaNode()
 
 
 @pytest.mark.parametrize(
@@ -270,7 +270,7 @@ def test_query_returns_valid_200_body(monkeypatch: pytest.MonkeyPatch) -> None:
 
     assert route.call_count == 1
     assert body == expected
-    assert media_from(body).episodes == 12
+    assert media_from_body(body).episodes == 12
 
 
 @respx.mock

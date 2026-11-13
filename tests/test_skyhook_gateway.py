@@ -11,7 +11,7 @@ from pearlarr.cache import CacheStore
 from pearlarr.skyhook_client import SkyHookReply
 from pearlarr.skyhook_gateway import SkyHookGateway
 from pearlarr.stamps import parse_stamp
-from pearlarr.tvdb_orders import AIRED_ORDER, NO_ORDERS, OrderRow, SeriesOrderFacts
+from pearlarr.tvdb_orders import AIRED_ORDER, NO_ORDERS, OrderRow, SonarrSeriesOrders
 
 from .builders import FakeCacheStore, stored_orders
 from .fakes import FakeSkyHookClient
@@ -42,11 +42,11 @@ def _gateway(
 
 
 def _fetches(gateway: SkyHookGateway, counts: Mapping[str, int] | None = None) -> int:
-    return gateway.prefetch([SeriesOrderFacts(_SERIES, AIRED_ORDER, counts)], preview=True)
+    return gateway.prefetch([SonarrSeriesOrders(_SERIES, AIRED_ORDER, counts)], preview=True)
 
 
 def _fresh_days(gateway: SkyHookGateway) -> float:
-    stored = gateway.orders(_SERIES)
+    stored = gateway.cached_orders(_SERIES)
     assert stored is not None
     return (parse_stamp(stored.fresh_until) - parse_stamp(stored.fetched_at)) / timedelta(days=1)
 
@@ -56,7 +56,7 @@ def test_a_first_fill_stores_every_listed_order_official_with_its_absolutes() ->
 
     assert _fetches(gateway, {"official": 4, "dvd": 4}) == 1
 
-    stored = gateway.orders(_SERIES)
+    stored = gateway.cached_orders(_SERIES)
     assert stored is not None
     assert stored.orders == {
         "official": (
@@ -143,7 +143,7 @@ def test_an_order_only_sonarr_lists_is_kept_in_the_counts_and_refetches_nothing(
 
     assert [_fetches(gateway, counts) for _ in range(2)] == [1, 0]
 
-    stored = gateway.orders(_SERIES)
+    stored = gateway.cached_orders(_SERIES)
     assert stored is not None
     assert set(stored.orders) == {"official", "dvd"}
     assert stored.sonarr_counts == counts
@@ -154,7 +154,7 @@ def test_a_series_skyhook_does_not_have_is_stored_without_orders_for_a_week() ->
 
     assert [_fetches(gateway, {"official": 4}) for _ in range(2)] == [1, 0]
 
-    stored = gateway.orders(_SERIES)
+    stored = gateway.cached_orders(_SERIES)
     assert stored is not None
     assert stored.orders == {}
     assert gateway.has_record(_SERIES) is True
@@ -166,7 +166,7 @@ def test_a_listed_order_skyhook_does_not_have_is_stored_empty() -> None:
 
     _fetches(gateway)
 
-    stored = gateway.orders(_SERIES)
+    stored = gateway.cached_orders(_SERIES)
     assert stored is not None
     assert stored.orders["dvd"] == ()
     assert set(stored.orders) == {"official", "dvd"}
@@ -188,7 +188,7 @@ def test_an_outage_mid_series_keeps_the_stale_record_and_serves_it() -> None:
     assert _fetches(gateway) == 0
 
     assert gateway.unreachable is True
-    assert gateway.orders(_SERIES) == stale
+    assert gateway.cached_orders(_SERIES) == stale
 
 
 def test_other_orders_leave_out_official_and_empty_orders() -> None:
@@ -207,7 +207,7 @@ def test_each_record_is_saved_as_it_is_written_unless_previewing(tmp_path: Path,
     path = str(tmp_path / "cache.db")
     store = CacheStore.load(path, config_hash="x")
     SkyHookGateway(client=FakeSkyHookClient(_REPLIES), cache_store=store).prefetch(
-        [SeriesOrderFacts(_SERIES, AIRED_ORDER, None)], preview=preview
+        [SonarrSeriesOrders(_SERIES, AIRED_ORDER, None)], preview=preview
     )
     # Closing without the end-of-run save is how an interrupted run ends.
     store.close()

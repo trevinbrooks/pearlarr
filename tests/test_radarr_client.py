@@ -18,7 +18,7 @@ import respx
 from pearlarr.arr_http import ArrHttp
 from pearlarr.arr_models import HistoryRecord, MovieFile, RadarrItem, RadarrMovie
 from pearlarr.mapping_store import IdKind
-from pearlarr.mappings import AnimeIdSets
+from pearlarr.mappings import KnownExternalIds
 from pearlarr.output import Severity
 from pearlarr.radarr_client import RadarrClient, collect_anime_movies
 
@@ -240,7 +240,7 @@ def test_all_movies_skips_non_dict_elements() -> None:
     assert [m.id for m in movies] == [9]
 
 
-class _RecordingIdSets(AnimeIdSets):
+class _RecordingIdSets(KnownExternalIds):
     """Recording `AnimeIdSets`: preset per-column id sets, calls recorded."""
 
     def __init__(self, sets: dict[str, set[int | str]]) -> None:

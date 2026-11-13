@@ -58,8 +58,8 @@ class TestKometaPath:
             },
         )
 
-        resolved = resolver.get_anilist_ids(ExternalIds(tvdb=200))
-        mappings = resolved.mappings
+        resolved = resolver.resolve(ExternalIds(tvdb=200))
+        mappings = resolved.kept
 
         assert resolved.ignored == {}
         assert list(mappings) == [100]
@@ -76,7 +76,7 @@ class TestKometaPath:
             anime={"Minimal": {"anilist_id": 101, "tvdb_id": 201}},
         )
 
-        mappings = resolver.get_anilist_ids(ExternalIds(tvdb=201)).mappings
+        mappings = resolver.resolve(ExternalIds(tvdb=201)).kept
 
         entry = mappings[101]
         # Exactly the former mapping.get("tvdb_season", -1) / ("tvdb_epoffset", 0)
@@ -103,7 +103,7 @@ class TestAniBridgePath:
         }
         resolver = _resolver(anibridge=graph)
 
-        mappings = resolver.get_anilist_ids(ExternalIds(tvdb=74796)).mappings
+        mappings = resolver.resolve(ExternalIds(tvdb=74796)).kept
 
         entry = mappings[269]
         assert entry.mode is MappingKind.EPISODE_RANGES
@@ -137,7 +137,7 @@ class TestSpecialAliasing:
         }
         resolver = _resolver(anibridge=graph)
 
-        mappings = resolver.get_anilist_ids(ExternalIds(tvdb=500)).mappings
+        mappings = resolver.resolve(ExternalIds(tvdb=500)).kept
 
         assert mappings[1].special_aliasing == SpecialAliasing(900, {7: 7, 13: 12})
 

@@ -8,7 +8,7 @@ from .anime_filter import IdField, build_id_filters, collect_anime_items
 from .arr_http import ArrHttp
 from .arr_models import HistoryRecord, MovieFile, RadarrItem, RadarrMovie
 from .boundary import validate_each
-from .mappings import AnimeIdSets
+from .mappings import KnownExternalIds
 
 
 class AbstractRadarrClient(ABC):
@@ -103,7 +103,7 @@ class RadarrClient(AbstractRadarrClient):
 
 def collect_anime_movies(
     radarr_client: AbstractRadarrClient,
-    mappings: AnimeIdSets,
+    mappings: KnownExternalIds,
     anibridge: AniBridge | None,
 ) -> list[RadarrItem]:
     """Radarr movies that have an AniList mapping, sorted by title.

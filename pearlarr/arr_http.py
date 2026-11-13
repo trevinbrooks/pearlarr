@@ -20,7 +20,7 @@ import httpx
 
 from .arr_models import DownloadClientRecord, HistoryRecord
 from .boundary import Json, validate_each
-from .config import strip_userinfo
+from .config import redact_userinfo
 from .log import LOG_NAME
 from .output import hub_note, hub_warn
 from .output.console_text import compact_duration
@@ -81,7 +81,7 @@ class DeleteOutcome(Enum):
     """A transport error or any other non-2xx."""
 
 
-class ArrConnectionError(Exception):
+class ArrUnreachableError(Exception):
     """An arr's load-bearing library fetch could not produce a result.
 
     Raised (instead of failing open) by `ArrHttp.get_json_list_strict`:
@@ -100,7 +100,7 @@ class ArrAuthError(Exception):
     """
 
 
-def make_httpx_client(*, verify: bool = True) -> httpx.Client:
+def make_arr_client(*, verify: bool = True) -> httpx.Client:
     """The pinned httpx client the arr transports share (one per run).
 
     - `follow_redirects=False` (httpx's default, pinned here on purpose): the
@@ -174,7 +174,7 @@ class ArrHttp:
         under the redaction guarantee.
         """
 
-        return strip_userinfo(self.base_url)
+        return redact_userinfo(self.base_url)
 
     @classmethod
     def bind(
@@ -475,10 +475,10 @@ class ArrHttp:
             return None
         return validate_each(DownloadClientRecord, raw)
 
-    def _strict_error(self, detail: str) -> ArrConnectionError:
+    def _strict_error(self, detail: str) -> ArrUnreachableError:
         """The strict path's uniform could-not-reach error, naming url + cause."""
 
-        return ArrConnectionError(f"Could not reach {self.label} at {self.display_url} ({detail})")
+        return ArrUnreachableError(f"Could not reach {self.label} at {self.display_url} ({detail})")
 
     def _fail(self, warn: str | None, detail: str) -> None:
         """The single fail-open tail: warn (when wanted) and return None.

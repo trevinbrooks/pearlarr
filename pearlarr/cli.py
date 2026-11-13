@@ -26,7 +26,7 @@ from .config import (
     ArrTarget,
     ConfigRewriteError,
     LogFormat,
-    strip_userinfo,
+    redact_userinfo,
     upgrade_config_file,
     write_starter_config,
 )
@@ -269,8 +269,8 @@ def show_paths(json_output: Annotated[bool, typer.Option("--json", help=_JSON_HE
         emit_to_hub(
             PathsShown(
                 data_dir=paths.data_dir,
-                config=paths.config,
-                cache=paths.cache,
+                config=paths.config_file,
+                cache=paths.cache_db,
                 mappings_db=paths.mappings_db,
                 log_dir=paths.log_dir,
             ),
@@ -494,7 +494,7 @@ def run_scheduled(
     for cycle in itertools.count(1):
         # The config's console format is re-resolved each cycle (like the
         # cadence below), so a config edit takes effect without a restart.
-        console_format = _resolved_format(paths.config)
+        console_format = _resolved_format(paths.config_file)
         logger = setup_logger(log_level=log_level or "INFO", console_format=console_format)
         # The config level lands mid-cycle via apply_log_level -> hub.set_level.
         hub.begin_run(console_format=console_format, level=logger.level)
@@ -503,7 +503,7 @@ def run_scheduled(
 
         # Re-read the cadence each cycle so a config edit takes effect without a
         # restart.
-        schedule_time = _schedule_hours(paths.config)
+        schedule_time = _schedule_hours(paths.config_file)
 
         # Build the shared config + id-mapping resolver once and run every
         # configured arr (one config read + one download/parse per cycle, reused
@@ -603,7 +603,7 @@ def run_single(
     signal.signal(signal.SIGTERM, _handle_sigterm)
 
     # Install the hub before the logger - see _install_output_hub.
-    console_format = _resolved_format(paths.config)
+    console_format = _resolved_format(paths.config_file)
     hub, file_sink = _install_output_hub(paths)
     logger = setup_logger(log_level=log_level or "INFO", console_format=console_format)
     hub.begin_run(console_format=console_format, level=logger.level)
@@ -645,17 +645,17 @@ def config_init(
         paths = resolve_paths()
         _prepare_data_dir(paths)
 
-        if os.path.exists(paths.config) and not force:
-            hub_error(f"{paths.config} already exists - pass --force to overwrite it with the starter template")
+        if os.path.exists(paths.config_file) and not force:
+            hub_error(f"{paths.config_file} already exists - pass --force to overwrite it with the starter template")
             return False
 
         try:
-            write_starter_config(paths.config)
+            write_starter_config(paths.config_file)
         except OSError as e:
             # A pre-existing data dir gone read-only passes _prepare_data_dir
             # (makedirs is a no-op) and fails here instead.
             _data_dir_unwritable(paths.data_dir, e)
-        emit_to_hub(StarterConfigWritten(path=paths.config))
+        emit_to_hub(StarterConfigWritten(path=paths.config_file))
 
         return True
 
@@ -701,14 +701,14 @@ def config_validate(json_output: Annotated[bool, typer.Option("--json", help=_JS
 
     with cli_surface(json_output):
         paths = resolve_paths()
-        app_config = _run_config_action(paths.config, AppConfig.load)
+        app_config = _run_config_action(paths.config_file, AppConfig.load)
         if app_config is None:
             return False
 
         outcome = app_config.migration()
         emit_to_hub(
             ConfigValidated(
-                path=paths.config,
+                path=paths.config_file,
                 migration_notes=outcome.notes if outcome is not None else None,
                 sonarr_missing_keys=app_config.missing_arr_keys(Arr.SONARR),
                 radarr_missing_keys=app_config.missing_arr_keys(Arr.RADARR),
@@ -739,17 +739,17 @@ def config_migrate(json_output: Annotated[bool, typer.Option("--json", help=_JSO
             if _refused_by_active_run(acquired, paths.data_dir, what="the config"):
                 return False
 
-            upgrade = _run_config_action(paths.config, upgrade_config_file)
+            upgrade = _run_config_action(paths.config_file, upgrade_config_file)
             if upgrade is None:
                 return False
             if upgrade.migration is None:
-                emit_to_hub(ConfigUpToDate(path=paths.config))
+                emit_to_hub(ConfigUpToDate(path=paths.config_file))
                 return True
 
             # backup_path is set in lockstep with a non-None migration (ConfigUpgrade).
             assert upgrade.backup_path is not None
             emit_to_hub(
-                ConfigMigrated(path=paths.config, backup_path=upgrade.backup_path, notes=upgrade.migration.notes),
+                ConfigMigrated(path=paths.config_file, backup_path=upgrade.backup_path, notes=upgrade.migration.notes),
             )
             return True
 
@@ -783,7 +783,7 @@ def _redact_secrets(node: JsonValue, *, mask_values: bool = False) -> JsonValue:
             if value is not None and (mask_values or any(marker in lowered for marker in _SECRET_KEY_MARKERS)):
                 redacted[key] = "REDACTED"
             elif isinstance(value, str) and ("url" in lowered or "host" in lowered):
-                redacted[key] = strip_userinfo(value)
+                redacted[key] = redact_userinfo(value)
             else:
                 redacted[key] = _redact_secrets(value, mask_values=mask_values or lowered in _MASK_ALL_SUBTREES)
         return redacted
@@ -804,7 +804,7 @@ def config_show(json_output: Annotated[bool, typer.Option("--json", help=_JSON_H
 
     with cli_surface(json_output):
         paths = resolve_paths()
-        app_config = _run_config_action(paths.config, AppConfig.load)
+        app_config = _run_config_action(paths.config_file, AppConfig.load)
         if app_config is None:
             return False
 
@@ -812,7 +812,7 @@ def config_show(json_output: Annotated[bool, typer.Option("--json", help=_JSON_H
         # only narrows the recursive helper's return type.
         redacted = _redact_secrets(app_config.model_dump(mode="json"))
         assert isinstance(redacted, dict)
-        emit_to_hub(EffectiveConfigShown(path=paths.config, config=redacted))
+        emit_to_hub(EffectiveConfigShown(path=paths.config_file, config=redacted))
         return True
 
 
@@ -830,7 +830,7 @@ def cache_backup(json_output: Annotated[bool, typer.Option("--json", help=_JSON_
     with cli_surface(json_output):
         paths = resolve_paths()
 
-        if _echo_missing_cache(paths.cache):
+        if _echo_missing_cache(paths.cache_db):
             return False
 
         with single_instance_lock(paths.data_dir) as acquired:
@@ -840,7 +840,7 @@ def cache_backup(json_output: Annotated[bool, typer.Option("--json", help=_JSON_
             tmp_backup = paths.cache_backup + ".tmp"
             try:
                 with (
-                    contextlib.closing(sqlite3.connect(paths.cache)) as source,
+                    contextlib.closing(sqlite3.connect(paths.cache_db)) as source,
                     contextlib.closing(sqlite3.connect(tmp_backup)) as dest,
                 ):
                     source.backup(dest)
@@ -880,11 +880,11 @@ def cache_restore(json_output: Annotated[bool, typer.Option("--json", help=_JSON
             if _refused_by_active_run(acquired, paths.data_dir):
                 return False
 
-            tmp_restore = paths.cache + ".tmp"
+            tmp_restore = paths.cache_db + ".tmp"
             try:
                 shutil.copyfile(paths.cache_backup, tmp_restore)
-                _remove_db_sidecars(paths.cache)
-                os.replace(tmp_restore, paths.cache)
+                _remove_db_sidecars(paths.cache_db)
+                os.replace(tmp_restore, paths.cache_db)
             except OSError as e:
                 # A read-only data dir / vanished backup: one clean line, no traceback.
                 hub_error(f"Cache restore failed ({e}) - cache.db is left unchanged")
@@ -901,17 +901,17 @@ def cache_remove(json_output: Annotated[bool, typer.Option("--json", help=_JSON_
     with cli_surface(json_output):
         paths = resolve_paths()
 
-        if _echo_missing(paths.cache, what="cache database", hint="nothing to remove"):
+        if _echo_missing(paths.cache_db, what="cache database", hint="nothing to remove"):
             return False
 
         with single_instance_lock(paths.data_dir) as acquired:
             if _refused_by_active_run(acquired, paths.data_dir):
                 return False
 
-            os.remove(paths.cache)
-            _remove_db_sidecars(paths.cache)
+            os.remove(paths.cache_db)
+            _remove_db_sidecars(paths.cache_db)
 
-        emit_to_hub(CacheRemoved(path=paths.cache))
+        emit_to_hub(CacheRemoved(path=paths.cache_db))
         return True
 
 
@@ -921,10 +921,10 @@ def cache_stats(json_output: Annotated[bool, typer.Option("--json", help=_JSON_H
 
     with cli_surface(json_output):
         paths = resolve_paths()
-        if _echo_missing_cache(paths.cache):
+        if _echo_missing_cache(paths.cache_db):
             return False
 
-        with _open_cache_readonly(paths.cache) as store:
+        with _open_cache_readonly(paths.cache_db) as store:
             try:
                 s = store.stats()
             except sqlite3.DatabaseError as e:
@@ -951,10 +951,10 @@ def cache_check(json_output: Annotated[bool, typer.Option("--json", help=_JSON_H
 
     with cli_surface(json_output):
         paths = resolve_paths()
-        if _echo_missing_cache(paths.cache):
+        if _echo_missing_cache(paths.cache_db):
             return False
 
-        with _open_cache_readonly(paths.cache) as store:
+        with _open_cache_readonly(paths.cache_db) as store:
             try:
                 result = store.integrity_check()
             except sqlite3.DatabaseError as e:

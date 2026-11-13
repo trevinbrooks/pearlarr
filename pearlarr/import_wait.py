@@ -582,9 +582,9 @@ class ImportWaitManager:
         if progress_s <= 0 or progress_s >= poll_s:
             self.clock.sleep(poll_s)
             return
-        deadline = self.clock.now() + poll_s
+        deadline = self.clock.monotonic() + poll_s
         while mp.active_count:
-            remaining = deadline - self.clock.now()
+            remaining = deadline - self.clock.monotonic()
             if remaining <= 0:
                 return
             self.clock.sleep(min(progress_s, remaining))
@@ -834,7 +834,7 @@ class WaitPass:
         self._clock = manager.clock
         self._dl_timeout = manager.imports.wait_timeout
         self._import_timeout = manager.imports.ready_timeout
-        self._start = self._clock.now()
+        self._start = self._clock.monotonic()
         # Stamped at construction: an imported fresh grab leaves `pending_imports` mid-pass,
         # so a later membership check would misread it as carried-over.
         fresh = manager.fresh_grab_keys()
@@ -866,7 +866,7 @@ class WaitPass:
     def elapsed(self) -> float:
         """Seconds since the pass started (off the injected clock)."""
 
-        return self._clock.now() - self._start
+        return self._clock.monotonic() - self._start
 
     def snapshot(self) -> WaitSnapshot:
         """The current frame: every torrent's `TorrentView`, plus elapsed."""
@@ -879,7 +879,7 @@ class WaitPass:
         record = row.record
         # Store effects precede the frozen frame and the result row (resolve_terminal's contract).
         self._mgr.resolve_terminal(record, outcome, carried_over=row.carried_over)
-        row.view_terminal(outcome, self._clock.now(), detail)
+        row.view_terminal(outcome, self._clock.monotonic(), detail)
         # Read back from the frozen frame, so the frame stays the one source of the row's facts.
         self.results.append(
             WaitOutcomeRow(
@@ -915,15 +915,15 @@ class WaitPass:
         if poll.outcome is None:
             # Monitor-only: `dl_start` is this pass's construction, so a check-pass timeout would
             # mislabel a still-downloading record. `_finish_active_rows` words it truthfully there.
-            if self.kind is WaitKind.MONITOR and self._clock.now() - row.dl_start >= self._dl_timeout:
+            if self.kind is WaitKind.MONITOR and self._clock.monotonic() - row.dl_start >= self._dl_timeout:
                 self._terminal(Outcome.DOWNLOAD_TIMED_OUT, row)
                 return
             if not poll.observed:
                 # Transient qBittorrent error: the zeroed probe is a placeholder, not a reading. Keep the row's
                 # last real state (no 0% bar flash, no fake stall sample) and let its clock tick.
-                row.view_tick(self._clock.now())
+                row.view_tick(self._clock.monotonic())
                 return
-            row.view_downloading(poll.telemetry, self._clock.now())
+            row.view_downloading(poll.telemetry, self._clock.monotonic())
             return
         if poll.outcome is TorrentStatus.GONE:
             self._terminal(Outcome.MISSING, row)
@@ -938,7 +938,7 @@ class WaitPass:
             return
 
         # COMPLETE: drive and verify our import.
-        now_ts = self._clock.now()
+        now_ts = self._clock.monotonic()
         clock = row.clock
         if clock is None:
             clock = row.clock = _ImportClock(timeout=self._import_timeout, anchor=now_ts, started=now_ts)
@@ -992,12 +992,12 @@ class WaitPass:
             # finishes the row.
             if not progress.determinate or progress.total <= 0:
                 continue
-            clock.note_progress(progress.done, progress.total, self._clock.now())
+            clock.note_progress(progress.done, progress.total, self._clock.monotonic())
             if progress.all_done:
                 self._terminal(Outcome.IMPORTED, row, _TerminalDetail(files=progress.total))
                 changed = True
             elif (progress.done, progress.total) != (row.view.import_done, row.view.import_total):
-                row.view_import_progress(progress, self._clock.now())
+                row.view_import_progress(progress, self._clock.monotonic())
                 changed = True
         return changed
 
@@ -1014,6 +1014,6 @@ class WaitPass:
         changed = False
         for row in downloading:
             telemetry = by_hash.get(row.record.infohash)
-            if telemetry is not None and row.view_telemetry(telemetry, self._clock.now()):
+            if telemetry is not None and row.view_telemetry(telemetry, self._clock.monotonic()):
                 changed = True
         return changed

@@ -13,7 +13,7 @@ from typing import NamedTuple
 from .anibridge import AniBridge
 from .arr_models import ArrItem
 from .mapping_store import IdKind
-from .mappings import AnimeIdSets
+from .mappings import KnownExternalIds
 
 
 @dataclass(frozen=True)
@@ -86,7 +86,7 @@ def collect_anime_items[ItemT: ArrItem](
 
 def build_id_filters(
     fields: tuple[IdField, ...],
-    mappings: AnimeIdSets,
+    mappings: KnownExternalIds,
     anibridge: AniBridge | None,
 ) -> tuple[IdFilter, ...]:
     """Build one `IdFilter` per id space for `collect_anime_items`.
