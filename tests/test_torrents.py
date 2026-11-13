@@ -32,7 +32,7 @@ from pearlarr.config import Arr, ArrSettings
 from pearlarr.leg_state import RunContext
 from pearlarr.mappings import MappingResolver
 from pearlarr.output import Severity
-from pearlarr.releases import SeadexReleaseGroupItem, SeadexUrlItem
+from pearlarr.releases import GroupReleases, Release
 from pearlarr.run_services import QbitConnectionError, RunDeps, RunServices
 from pearlarr.torrent import TorrentParseError
 from pearlarr.torrents import (
@@ -204,7 +204,7 @@ def test_add_new_torrent_with_hash_prefers_qbit_name(monkeypatch: pytest.MonkeyP
     service = _service(qbit, category="anime", tags=["seadex"])
 
     outcome, name, _ = service.add(
-        item=SeadexUrlItem(url="https://nyaa.si/view/1", tracker=Tracker.NYAA, infohash=_HASH), preview=False
+        item=Release(url="https://nyaa.si/view/1", tracker=Tracker.NYAA, infohash=_HASH), preview=False
     )
 
     assert outcome is AddOutcome.ADDED
@@ -226,7 +226,7 @@ def test_add_already_present_dedups_by_hash(monkeypatch: pytest.MonkeyPatch) -> 
     service = _service(qbit)
 
     outcome, name, _ = service.add(
-        item=SeadexUrlItem(url="https://nyaa.si/view/1", tracker=Tracker.NYAA, infohash=_HASH), preview=False
+        item=Release(url="https://nyaa.si/view/1", tracker=Tracker.NYAA, infohash=_HASH), preview=False
     )
 
     assert outcome is AddOutcome.ALREADY_ADDED
@@ -242,7 +242,7 @@ def test_add_hashless_falls_back_to_source_title(monkeypatch: pytest.MonkeyPatch
     service = _service(qbit)
 
     outcome, name, _ = service.add(
-        item=SeadexUrlItem(url="https://nyaa.si/view/1", tracker=Tracker.NYAA, infohash=None), preview=False
+        item=Release(url="https://nyaa.si/view/1", tracker=Tracker.NYAA, infohash=None), preview=False
     )
 
     assert outcome is AddOutcome.ADDED
@@ -255,7 +255,7 @@ def test_add_hashless_falls_back_to_source_title(monkeypatch: pytest.MonkeyPatch
 def test_seadex_url_item_normalizes_infohash(raw: str, expected: str | None) -> None:
     """`SeadexUrlItem` strips its infohash and folds an empty/blank one to None (a real hash is never empty)."""
 
-    assert SeadexUrlItem(infohash=raw).infohash == expected
+    assert Release(infohash=raw).infohash == expected
 
 
 def test_add_empty_infohash_is_treated_as_hashless(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -272,7 +272,7 @@ def test_add_empty_infohash_is_treated_as_hashless(monkeypatch: pytest.MonkeyPat
     service = _service(qbit)
 
     outcome, name, _ = service.add(
-        item=SeadexUrlItem(url="https://nyaa.si/view/1", tracker=Tracker.NYAA, infohash=""), preview=False
+        item=Release(url="https://nyaa.si/view/1", tracker=Tracker.NYAA, infohash=""), preview=False
     )
 
     assert outcome is AddOutcome.ADDED
@@ -290,9 +290,7 @@ def test_add_qbit_rejects_add_raises(monkeypatch: pytest.MonkeyPatch) -> None:
     # The message names the release URL and qBittorrent's response (it surfaces
     # verbatim in the pipeline's containment warning).
     with pytest.raises(TorrentAddError, match=r"rejected the torrent from https://nyaa.si/view/1 .*'Fails\.'"):
-        service.add(
-            item=SeadexUrlItem(url="https://nyaa.si/view/1", tracker=Tracker.NYAA, infohash=None), preview=False
-        )
+        service.add(item=Release(url="https://nyaa.si/view/1", tracker=Tracker.NYAA, infohash=None), preview=False)
 
 
 def test_add_unparseable_url_raises(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -308,7 +306,7 @@ def test_add_unparseable_url_raises(monkeypatch: pytest.MonkeyPatch) -> None:
 
     with pytest.raises(TorrentParseError, match="Could not extract a torrent download link from"):
         service.add(
-            item=SeadexUrlItem(url="https://animetosho.org/view/1", tracker=Tracker.ANIMETOSHO, infohash=None),
+            item=Release(url="https://animetosho.org/view/1", tracker=Tracker.ANIMETOSHO, infohash=None),
             preview=False,
         )
 
@@ -347,13 +345,11 @@ def test_add_raises_iff_tracker_unparseable(tracker: Tracker, monkeypatch: pytes
     service = _service(_FakeQbit())
 
     if tracker in PARSEABLE_TRACKERS:
-        outcome, _, _ = service.add(
-            item=SeadexUrlItem(url="https://example/1", tracker=tracker, infohash=None), preview=True
-        )
+        outcome, _, _ = service.add(item=Release(url="https://example/1", tracker=tracker, infohash=None), preview=True)
         assert outcome is AddOutcome.ADDED
     else:
         with pytest.raises(ValueError, match="Unable to parse torrent links"):
-            service.add(item=SeadexUrlItem(url="https://example/1", tracker=tracker, infohash=None), preview=True)
+            service.add(item=Release(url="https://example/1", tracker=tracker, infohash=None), preview=True)
 
 
 def test_grab_failures_covers_every_expected_boundary_error() -> None:
@@ -425,7 +421,7 @@ def test_add_already_present_reads_the_add_time(
     service = _service(qbit)
 
     outcome, _, when = service.add(
-        item=SeadexUrlItem(url="https://nyaa.si/view/1", tracker=Tracker.NYAA, infohash=_HASH), preview=False
+        item=Release(url="https://nyaa.si/view/1", tracker=Tracker.NYAA, infohash=_HASH), preview=False
     )
 
     assert outcome is AddOutcome.ALREADY_ADDED
@@ -446,9 +442,7 @@ def test_add_preview_with_the_torrent_in_qbit_reports_it_without_fetching(monkey
     qbit = _FakeQbit(present={_HASH: "Existing Name"})
     service = _service(qbit)
 
-    result = service.add(
-        item=SeadexUrlItem(url="https://nyaa.si/view/1", tracker=Tracker.NYAA, infohash=_HASH), preview=True
-    )
+    result = service.add(item=Release(url="https://nyaa.si/view/1", tracker=Tracker.NYAA, infohash=_HASH), preview=True)
 
     assert (result.outcome, result.name) == (AddOutcome.ALREADY_ADDED, "Existing Name")
     assert fetched == []
@@ -468,7 +462,7 @@ def test_add_a_torrent_two_entries_list_is_fetched_once(monkeypatch: pytest.Monk
     monkeypatch.setattr(torrents, "get_nyaa_torrent", _recording_nyaa)
     qbit = _FakeQbit(register_on_add=(_HASH, "Qbit Reported Name"))
     service = _service(qbit)
-    item = SeadexUrlItem(url="https://nyaa.si/view/1", tracker=Tracker.NYAA, infohash=_HASH)
+    item = Release(url="https://nyaa.si/view/1", tracker=Tracker.NYAA, infohash=_HASH)
 
     first = service.add(item=item, preview=False)
     second = service.add(item=item, preview=False)
@@ -487,7 +481,7 @@ _EPISODES = [_TorrFile("Show/Show - 01.mkv", 100), _TorrFile("Show/Show - 02.mkv
 _HELD: Mapping[str, list[_TorrFile] | Exception] = {_CROSS: _EPISODES}
 
 
-def _url() -> SeadexUrlItem:
+def _url() -> Release:
     """SeaDex's public url for `_EPISODES`, under its own hash."""
 
     return url_item(files=["Show - 01.mkv", "Show - 02.mkv"], size=[100, 200], tracker=Tracker.NYAA, infohash=_SEADEX)
@@ -501,11 +495,11 @@ def _row(infohash: str, *, category: str = _GRAB, state: str = "downloading", pr
     )
 
 
-def _marked(service: TorrentService, item: SeadexUrlItem, *, pearlarr_imports: bool = True) -> str | None:
+def _marked(service: TorrentService, item: Release, *, pearlarr_imports: bool = True) -> str | None:
     """Mark one title's dict holding `item` on a run Pearlarr imports for, and return the hash it was marked with."""
 
     service.begin_run(pearlarr_imports=pearlarr_imports)
-    service.mark_cross_seeds({"Group": SeadexReleaseGroupItem(urls={item.url: item})})
+    service.mark_cross_seeds({"Group": GroupReleases(releases={item.url: item})})
     return item.cross_seed_hash
 
 
@@ -561,9 +555,7 @@ def test_mark_cross_seeds_leaves_a_url_no_counted_torrent_holds(
         pytest.param(replace(_url(), infohash=None), (_row(_CROSS),), id="no-hash"),
     ],
 )
-def test_mark_cross_seeds_skips_a_url_without_reading_a_file_list(
-    item: SeadexUrlItem, rows: tuple[_TorrInfo, ...]
-) -> None:
+def test_mark_cross_seeds_skips_a_url_without_reading_a_file_list(item: Release, rows: tuple[_TorrInfo, ...]) -> None:
     """A url SeaDex's own torrent holds, or one with no hash (every private url), is left before any file-list read."""
 
     qbit = _FakeQbit(rows=rows, files=_HELD)
@@ -667,7 +659,7 @@ def test_a_runs_seadex_dict_carries_a_finished_cross_seed_only_when_pearlarr_imp
 
     seadex_dict = services.get_seadex_dict(make_entry_record(torrents=(listed,)))
 
-    (item,) = seadex_dict["Group"].urls.values()
+    (item,) = seadex_dict["Group"].releases.values()
     assert item.cross_seed_hash == marked
 
 

@@ -32,7 +32,7 @@ from xml.etree import ElementTree
 
 import httpx
 
-from .anibridge import AniBridge, AniBridgeEntry, AniBridgeGraph, AniBridgeLookup, SpecialAliasing, TvdbMappings
+from .anibridge import AniBridge, AniBridgeGraph, AniBridgeLookup, AniBridgeRawMapping, SpecialAliasing, TvdbMappings
 from .arr_models import SonarrItem
 from .mapping_store import (
     INLINE_DIGEST,
@@ -92,7 +92,7 @@ class MappingSource(Enum):
 
 
 @dataclass(frozen=True, slots=True)
-class MappingEntry:
+class TitleMapping:
     """One resolved AniList mapping, as the sync strategies consume it.
 
     Built at the raw->typed boundary from the two producers: the AniBridge graph
@@ -150,7 +150,7 @@ def _coalesce_season_epoffset(raw: dict[str, Any]) -> tuple[int, int]:
     return (-1 if season is None else season, 0 if epoffset is None else epoffset)
 
 
-def _entry_from_raw(anilist_id: int, raw: AnimeIdsRecord | AniBridgeEntry) -> MappingEntry:
+def _entry_from_raw(anilist_id: int, raw: AnimeIdsRecord | AniBridgeRawMapping) -> TitleMapping:
     """Build a `MappingEntry` from a producer's raw dict.
 
     The one place a loosely-typed producer dict (an AniBridge `_consumer_entry`
@@ -163,7 +163,7 @@ def _entry_from_raw(anilist_id: int, raw: AnimeIdsRecord | AniBridgeEntry) -> Ma
     # Both AniBridge backings tag their entries source="anibridge". A Kometa-style
     # raw dict (no key) is ANIME_IDS, so this derives provenance for either producer.
     source = MappingSource.ANIBRIDGE if raw.get("source") == "anibridge" else MappingSource.ANIME_IDS
-    return MappingEntry(
+    return TitleMapping(
         anilist_id=anilist_id,
         tvdb_season=season,
         tvdb_epoffset=epoffset,
@@ -176,14 +176,14 @@ def _entry_from_raw(anilist_id: int, raw: AnimeIdsRecord | AniBridgeEntry) -> Ma
     )
 
 
-def _entry_from_anime_row(row: AnimeIdRow) -> MappingEntry:
+def _entry_from_anime_row(row: AnimeIdRow) -> TitleMapping:
     """Build a `MappingEntry` from a stored `AnimeIdRow`.
 
     The SQL twin of `_entry_from_raw` for Kometa records: a row never
     carries `tvdb_mappings` (only AniBridge does), so `mode` is ANIME_IDS.
     """
 
-    return MappingEntry(
+    return TitleMapping(
         anilist_id=row.anilist_id,
         tvdb_season=row.tvdb_season,
         tvdb_epoffset=row.tvdb_epoffset,
@@ -195,7 +195,7 @@ def _entry_from_anime_row(row: AnimeIdRow) -> MappingEntry:
     )
 
 
-def _is_degraded_anibridge(entry: MappingEntry) -> bool:
+def _is_degraded_anibridge(entry: TitleMapping) -> bool:
     """An AniBridge entry resolved via imdb/tmdb only - no usable tvdb mapping.
 
     Such an entry carries `source ANIBRIDGE` but `tvdb_mappings is None` (so
@@ -237,15 +237,15 @@ class ResolvedMappings:
     Built by keyword, so the two same-typed halves can't silently transpose.
     """
 
-    mappings: dict[int, MappingEntry]
+    mappings: dict[int, TitleMapping]
     """AniList id -> mapping, the ignore list removed, in AniList id order."""
-    ignored: dict[int, MappingEntry]
+    ignored: dict[int, TitleMapping]
     """The entries on the ignore list, AniList id -> mapping, in AniList id order. Never processed, but a series'
     listing read still builds their windows, flagged so `ordered_windows` runs each after the kept windows of its
     kind."""
 
     @property
-    def every_entry(self) -> dict[int, MappingEntry]:
+    def every_entry(self) -> dict[int, TitleMapping]:
         """The kept and the ignored entries together, in AniList id order, for the series' listing read."""
 
         return dict(sorted({**self.mappings, **self.ignored}.items()))
@@ -794,7 +794,7 @@ class MappingResolver(AnimeIdSets):
         if cached is not None:
             anilist_mappings, ignored = cached.mappings, cached.ignored
         else:
-            anilist_mappings: dict[int, MappingEntry] = {}
+            anilist_mappings: dict[int, TitleMapping] = {}
 
             # AniBridge is the primary source: its richer per-season episode
             # offsets win, so query it first and key results by AniList ID.
@@ -833,7 +833,7 @@ class MappingResolver(AnimeIdSets):
     def get_mappings_from_anime_mappings(
         self,
         ids: ExternalIds,
-    ) -> dict[int, MappingEntry]:
+    ) -> dict[int, TitleMapping]:
         """Get mappings from the Anime ID mappings (served from SQL).
 
         Returns a fresh {AniList id -> mapping} dict for this source alone.
@@ -843,7 +843,7 @@ class MappingResolver(AnimeIdSets):
             ids: The external Arr ids to resolve (at least one).
         """
 
-        anilist_mappings: dict[int, MappingEntry] = {}
+        anilist_mappings: dict[int, TitleMapping] = {}
 
         ids.require_any()
 
@@ -869,7 +869,7 @@ class MappingResolver(AnimeIdSets):
     def get_mappings_from_anibridge_mappings(
         self,
         ids: ExternalIds,
-    ) -> dict[int, MappingEntry]:
+    ) -> dict[int, TitleMapping]:
         """Get mappings from the AniBridge mappings (served from SQL).
 
         Returns a fresh {AniList id -> mapping} dict for this source alone.
@@ -879,7 +879,7 @@ class MappingResolver(AnimeIdSets):
             ids: The external Arr ids to resolve (at least one).
         """
 
-        anilist_mappings: dict[int, MappingEntry] = {}
+        anilist_mappings: dict[int, TitleMapping] = {}
 
         anibridge = self.anibridge
         if not anibridge:

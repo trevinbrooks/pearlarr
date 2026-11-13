@@ -99,7 +99,7 @@ class ArrTarget(NamedTuple):
     """
 
     arr: Arr
-    item_id: int | None = None
+    external_id: int | None = None
 
 
 class PrivateReleaseAction(StrEnum):

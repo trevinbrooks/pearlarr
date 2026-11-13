@@ -96,7 +96,7 @@ NO_ELSEWHERE = ElsewhereCounts(elsewhere=0, unplaced=0)
 
 
 @dataclass
-class SeadexUrlItem:
+class Release:
     """One SeaDex url record within a release group."""
 
     url: str = ""
@@ -154,16 +154,16 @@ class SeadexUrlItem:
 
 
 @dataclass
-class SeadexReleaseGroupItem:
+class GroupReleases:
     """One SeaDex release-group record, keyed by url under `urls`."""
 
-    urls: dict[str, SeadexUrlItem] = field(default_factory=dict[str, SeadexUrlItem])
+    releases: dict[str, Release] = field(default_factory=dict[str, Release])
     tags: frozenset[Tag] = field(default_factory=frozenset[Tag])
     all_episodes: list[EpisodeRecord] | None = None
     """`None` until the episode parser has run, distinct from an empty list (it ran and found nothing)."""
 
 
-SeadexDict = dict[str, SeadexReleaseGroupItem]
+SeadexDict = dict[str, GroupReleases]
 """SeaDex release groups keyed by group name."""
 
 
@@ -174,7 +174,7 @@ class FlaggedUrl(NamedTuple):
     """The release group's name, the key of `SeadexDict`."""
     url: str
     """The key under `SeadexReleaseGroupItem.urls`."""
-    item: SeadexUrlItem
+    item: Release
     """The url's item, the flag and file list the planner read."""
     qbit_hash: str
     """The hash its torrent goes by in qBittorrent (`SeadexUrlItem.qbit_hash`), lowercase."""
@@ -184,10 +184,10 @@ def flagged_urls(seadex_dict: SeadexDict) -> list[FlaggedUrl]:
     """The urls flagged to grab that carry an infohash. Narrow at the riders, never here."""
 
     return [
-        FlaggedUrl(srg, url, url_item, url_item.qbit_hash)
+        FlaggedUrl(srg, url, release, release.qbit_hash)
         for srg, srg_item in seadex_dict.items()
-        for url, url_item in srg_item.urls.items()
-        if url_item.download and url_item.qbit_hash
+        for url, release in srg_item.releases.items()
+        if release.download and release.qbit_hash
     ]
 
 

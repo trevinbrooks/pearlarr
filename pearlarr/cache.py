@@ -356,7 +356,7 @@ def stamp_is_fresh(record: dict[str, Any], cutoff: datetime) -> bool:
         return False
 
 
-class CacheRecord(TypedDict, total=False):
+class CachedTitleUpdate(TypedDict, total=False):
     """The fixed shape of a per-entry cache update / a `cache_details` payload."""
 
     name: str
@@ -370,7 +370,7 @@ class CacheRecord(TypedDict, total=False):
 
 
 @dataclass(frozen=True, slots=True)
-class CachedEntry:
+class CachedTitle:
     """One `entries` row, read in a single query."""
 
     updated_at: str | None
@@ -450,9 +450,9 @@ class AbstractCacheStore(ABC):
     @abstractmethod
     def vouch_selection(self, arr: Arr, digest: str) -> None: ...
     @abstractmethod
-    def get_entry(self, arr: Arr, al_id: int) -> CachedEntry | None: ...
+    def get_entry(self, arr: Arr, al_id: int) -> CachedTitle | None: ...
     @abstractmethod
-    def update_cache(self, arr: Arr, al_id: int, cache_details: CacheRecord) -> None: ...
+    def update_cache(self, arr: Arr, al_id: int, cache_details: CachedTitleUpdate) -> None: ...
     @abstractmethod
     def clear_entry_stamp(self, arr: Arr, al_id: int) -> None: ...
     @abstractmethod
@@ -626,7 +626,7 @@ class CacheStore(AbstractCacheStore):
     # -- per-entry records (entries) ------------------------------------------
 
     @override
-    def get_entry(self, arr: Arr, al_id: int) -> CachedEntry | None:
+    def get_entry(self, arr: Arr, al_id: int) -> CachedTitle | None:
         """An entry's row in one query, or None."""
 
         row = self._conn.execute(
@@ -634,14 +634,14 @@ class CacheStore(AbstractCacheStore):
             "WHERE arr = ? AND al_id = ?",
             (_arr_key(arr), al_id),
         ).fetchone()
-        return None if row is None else CachedEntry(row[0], row[1], row[2], row[3], bool(row[4]), row[5])
+        return None if row is None else CachedTitle(row[0], row[1], row[2], row[3], bool(row[4]), row[5])
 
     @override
     def update_cache(
         self,
         arr: Arr,
         al_id: int,
-        cache_details: CacheRecord,
+        cache_details: CachedTitleUpdate,
     ) -> None:
         """Merge fields into an entry's record: only supplied ones, staged until a save point.
 

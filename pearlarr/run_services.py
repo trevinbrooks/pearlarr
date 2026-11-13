@@ -20,18 +20,18 @@ from .anilist_client import AniListClient
 from .anilist_gateway import AniListGateway
 from .arr_categories import ArrCategoryResolver, CategorySources
 from .arr_http import ARR_REQUEST_TIMEOUT_S, ArrHttp, make_httpx_client
-from .arr_models import ArrReleases, SonarrEpisode
+from .arr_models import ArrFiles, SonarrEpisode
 from .boot_flow import BootFlow
-from .cache import AbstractCacheStore, CachedEntry, CacheRecord, CacheStore
+from .cache import AbstractCacheStore, CachedTitle, CachedTitleUpdate, CacheStore
 from .clock import Clock, SystemClock
 from .config import AppConfig, Arr, ArrSettings, PrivateReleaseAction, secret_value
 from .grab_pipeline import GrabPipeline, GrabRequest
-from .leg_state import EntryTitle, PerTitleState, RunContext, is_preview, resolve_entry_title
-from .mappings import ExternalIds, MappingEntry, MappingResolver, ResolvedMappings
+from .leg_state import PerTitleState, RunContext, Title, is_preview, resolve_entry_title
+from .mappings import ExternalIds, MappingResolver, ResolvedMappings, TitleMapping
 from .notify import Notifier
 from .output import emit_to_hub, hub_counts
 from .parse_records import ParseRecords
-from .pending_records import PendingRecords
+from .pending_records import PendingImportStore
 from .planner import DownloadPlanner, PlanResult
 from .releases import SeadexDict
 from .reporter import RunReporter
@@ -347,7 +347,7 @@ class RunServices:
         # placeholder ctx. begin_run rebinds their ctx at the top of each run.
         self._filter = SeadexReleaseFilter(deps=deps, ctx=self._ctx)
         # The one pending-record seam, shared by the grab pipeline, the strategies, and the wait manager.
-        self._records = PendingRecords(deps.cache_store)
+        self._records = PendingImportStore(deps.cache_store)
         self._records.begin_run(self._ctx)
         self._grab_pipeline = GrabPipeline(deps=deps, ctx=self._ctx, records=self._records)
 
@@ -392,7 +392,7 @@ class RunServices:
         )
 
     @property
-    def records(self) -> PendingRecords:
+    def records(self) -> PendingImportStore:
         """The one pending-record seam bound to the current run, shared by the strategies and the wait manager."""
 
         return self._records
@@ -412,7 +412,7 @@ class RunServices:
             return False
         return self._skippable_entry(al_id, sd_entry) is None
 
-    def _skippable_entry(self, al_id: int, sd_entry: EntryRecord) -> CachedEntry | None:
+    def _skippable_entry(self, al_id: int, sd_entry: EntryRecord) -> CachedTitle | None:
         """The cached row iff the per-id loop may skip this id. None re-processes.
 
         The single decision BOTH cache gates share: `al_id_needs_scan` picks
@@ -444,7 +444,7 @@ class RunServices:
 
         self._dirty_al_ids.update(al_ids)
 
-    def get_anilist_ids(self, ids: ExternalIds, log_ignored: bool = True) -> dict[int, MappingEntry]:
+    def get_anilist_ids(self, ids: ExternalIds, log_ignored: bool = True) -> dict[int, TitleMapping]:
         """Resolve external Arr ids to a {AniList id -> mapping} dict, logging the ignored ones.
 
         The resolver maps and sets aside the ignore list's entries, and the ledger rows stay here.
@@ -470,7 +470,7 @@ class RunServices:
 
         return self._mappings.get_anilist_ids(ids)
 
-    def resolve_title(self, al_id: int) -> EntryTitle:
+    def resolve_title(self, al_id: int) -> Title:
         """Resolve the entry's title through the ladder (resolves only: no logging, no attribution).
 
         The stored name is deliberately not read: the gateway serves its cached record, and
@@ -479,14 +479,14 @@ class RunServices:
 
         return resolve_entry_title(al_id, self._anilist.titles(al_id), self._ctx.arr_title)
 
-    def new_cache_details(self, title: EntryTitle, sd_entry: EntryRecord) -> CacheRecord:
+    def new_cache_details(self, title: Title, sd_entry: EntryRecord) -> CachedTitleUpdate:
         """The seed record a processed id accumulates into.
 
         `name` rides only when AniList resolved: `update_cache` merges partially, so an omitted
         name keeps what an earlier run stored instead of clobbering it with a fallback label.
         """
 
-        details: CacheRecord = {"updated_at": sd_entry.updated_at}
+        details: CachedTitleUpdate = {"updated_at": sd_entry.updated_at}
         if title.anilist is not None:
             details["name"] = title.anilist
         return details
@@ -510,7 +510,7 @@ class RunServices:
     def filter_seadex_downloads(
         self,
         seadex_dict: SeadexDict,
-        arr_releases: ArrReleases,
+        arr_releases: ArrFiles,
         ep_list: list[SonarrEpisode] | None = None,
     ) -> PlanResult:
         """Apply the download plan, stamping private-only skips onto ctx (delegates)."""
@@ -537,7 +537,7 @@ class RunServices:
     def _update_cache(
         self,
         al_id: int,
-        cache_details: CacheRecord,
+        cache_details: CachedTitleUpdate,
     ) -> None:
         """Merge `cache_details` into an entry's cache record (in-memory only).
 
@@ -549,7 +549,7 @@ class RunServices:
     def no_releases_skip(
         self,
         al_id: int,
-        cache_details: CacheRecord,
+        cache_details: CachedTitleUpdate,
         *,
         metadata_unread: bool = False,
     ) -> None:
@@ -637,7 +637,7 @@ class RunServices:
 
         # One-time backfills merged into a single write: the url + coverage an older record lacks,
         # and the name a record written while AniList was unreachable lacks.
-        backfill: CacheRecord = {}
+        backfill: CachedTitleUpdate = {}
         if not entry.url:
             backfill["url"] = sd_entry.url
             backfill["coverage"] = coverage()

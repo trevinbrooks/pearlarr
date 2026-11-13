@@ -25,7 +25,7 @@ import pytest
 from pearlarr.boundary import Json
 from pearlarr.config import Arr
 from pearlarr.json_narrow import is_json_list, is_json_obj
-from pearlarr.leg_state import GrabRecord, NeedsActionKind, NeedsActionRecord, RunStats
+from pearlarr.leg_state import GrabbedRow, NeedsActionKind, NeedsActionRow, RunStats
 from pearlarr.output import (
     BootReady,
     BootStepFinished,
@@ -411,7 +411,7 @@ def _summary_ready() -> RunSummaryReady:
     stats = RunStats(checked=182, up_to_date=161, cached=14)
     stats.queued = 1
     stats.added.append(
-        GrabRecord(
+        GrabbedRow(
             title="Frieren: Beyond Journey's End",
             coverage="S01 E01-E28",
             url="https://releases.moe/154587",
@@ -420,7 +420,7 @@ def _summary_ready() -> RunSummaryReady:
         ),
     )
     stats.needs_action.append(
-        NeedsActionRecord(
+        NeedsActionRow(
             title="Monogatari",
             coverage=None,
             group="Okay-Subs",

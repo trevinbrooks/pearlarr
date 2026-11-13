@@ -10,7 +10,7 @@ from pearlarr.planner import (
     get_same_files_groups,
     normalize_rg,
 )
-from pearlarr.releases import EpisodeKey, EpisodeRecord, SeadexReleaseGroupItem, SeadexUrlItem
+from pearlarr.releases import EpisodeKey, EpisodeRecord, GroupReleases, Release
 
 from .builders import sonarr_ep
 
@@ -64,27 +64,27 @@ class TestGetSameFilesGroups:
     """
 
     def test_no_episode_parsing_groups_together(self) -> None:
-        seadex = {"A": SeadexReleaseGroupItem(), "B": SeadexReleaseGroupItem()}
+        seadex = {"A": GroupReleases(), "B": GroupReleases()}
         assert get_same_files_groups(seadex) == [["A", "B"]]
 
     def test_unparsed_each_on_its_own(self) -> None:
         seadex = {
-            "A": SeadexReleaseGroupItem(all_episodes=[]),
-            "B": SeadexReleaseGroupItem(all_episodes=[]),
+            "A": GroupReleases(all_episodes=[]),
+            "B": GroupReleases(all_episodes=[]),
         }
         assert get_same_files_groups(seadex) == [["A"], ["B"]]
 
     def test_identical_coverage_grouped(self) -> None:
         seadex = {
-            "A": SeadexReleaseGroupItem(all_episodes=[EpisodeRecord(season=1, episode=1)]),
-            "B": SeadexReleaseGroupItem(all_episodes=[EpisodeRecord(season=1, episode=1)]),
+            "A": GroupReleases(all_episodes=[EpisodeRecord(season=1, episode=1)]),
+            "B": GroupReleases(all_episodes=[EpisodeRecord(season=1, episode=1)]),
         }
         assert get_same_files_groups(seadex) == [["A", "B"]]
 
     def test_different_coverage_separate(self) -> None:
         seadex = {
-            "A": SeadexReleaseGroupItem(all_episodes=[EpisodeRecord(season=1, episode=1)]),
-            "B": SeadexReleaseGroupItem(all_episodes=[EpisodeRecord(season=1, episode=2)]),
+            "A": GroupReleases(all_episodes=[EpisodeRecord(season=1, episode=1)]),
+            "B": GroupReleases(all_episodes=[EpisodeRecord(season=1, episode=2)]),
         }
         assert get_same_files_groups(seadex) == [["A"], ["B"]]
 
@@ -100,8 +100,8 @@ class TestEpisodeCoverage:
     def test_a_single_group_indexes_its_own_placed_episodes(self) -> None:
         # No sibling to excuse a mismatch, but a refused pack of the group reads its placed episodes here.
         seadex = {
-            "A": SeadexReleaseGroupItem(
-                urls={"u": SeadexUrlItem(episodes=[EpisodeRecord(season=1, episode=1)])},
+            "A": GroupReleases(
+                releases={"u": Release(episodes=[EpisodeRecord(season=1, episode=1)])},
             ),
         }
         result = episode_coverage(seadex, {EpisodeKey(1, 1): sonarr_ep(1, 1)})
@@ -110,10 +110,10 @@ class TestEpisodeCoverage:
 
     def test_records_episodes_sonarr_has(self) -> None:
         seadex = {
-            "Era-Raws": SeadexReleaseGroupItem(
-                urls={"u": SeadexUrlItem(episodes=[EpisodeRecord(season=1, episode=1)])},
+            "Era-Raws": GroupReleases(
+                releases={"u": Release(episodes=[EpisodeRecord(season=1, episode=1)])},
             ),
-            "Other": SeadexReleaseGroupItem(urls={"u2": SeadexUrlItem(episodes=[])}),
+            "Other": GroupReleases(releases={"u2": Release(episodes=[])}),
         }
         result = episode_coverage(seadex, {EpisodeKey(1, 1): sonarr_ep(1, 1)})
         assert result.by_key[EpisodeKey(1, 1)] == {"era-raws"}
@@ -125,11 +125,11 @@ class TestEpisodeCoverage:
         # arise. The index guard still keeps a foreign key out, and a url with records
         # never blankets: a record is proof of what the url covers.
         seadex = {
-            "A": SeadexReleaseGroupItem(
-                urls={"u": SeadexUrlItem(episodes=[EpisodeRecord(season=1, episode=99)])},
+            "A": GroupReleases(
+                releases={"u": Release(episodes=[EpisodeRecord(season=1, episode=99)])},
             ),
-            "B": SeadexReleaseGroupItem(
-                urls={"u2": SeadexUrlItem(episodes=[EpisodeRecord(season=1, episode=1)])},
+            "B": GroupReleases(
+                releases={"u2": Release(episodes=[EpisodeRecord(season=1, episode=1)])},
             ),
         }
         result = episode_coverage(seadex, {EpisodeKey(1, 1): sonarr_ep(1, 1)})
@@ -143,11 +143,11 @@ class TestEpisodeCoverage:
         # group also normalizes to None, so indexing it would read every
         # untagged file as covered and silently suppress its grabs.
         seadex = {
-            "": SeadexReleaseGroupItem(
-                urls={"u": SeadexUrlItem(episodes=[]), "u2": SeadexUrlItem(episodes=[EpisodeRecord(1, 1)])},
+            "": GroupReleases(
+                releases={"u": Release(episodes=[]), "u2": Release(episodes=[EpisodeRecord(1, 1)])},
             ),
-            "B": SeadexReleaseGroupItem(
-                urls={"u3": SeadexUrlItem(episodes=[EpisodeRecord(season=1, episode=1)])},
+            "B": GroupReleases(
+                releases={"u3": Release(episodes=[EpisodeRecord(season=1, episode=1)])},
             ),
         }
         result = episode_coverage(seadex, {EpisodeKey(1, 1): sonarr_ep(1, 1)})

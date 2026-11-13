@@ -15,7 +15,7 @@ from dataclasses import dataclass, field
 from itertools import compress
 from typing import NamedTuple
 
-from .arr_models import ArrReleases, SonarrEpisode, index_episodes_by_key
+from .arr_models import ArrFiles, SonarrEpisode, index_episodes_by_key
 from .config import Arr
 from .output import Severity
 from .pairs import unambiguous
@@ -23,9 +23,9 @@ from .pending_import import GuardFacts, OwnedEpisode
 from .releases import (
     EpisodeKey,
     EpisodeRecord,
+    GroupReleases,
+    Release,
     SeadexDict,
-    SeadexReleaseGroupItem,
-    SeadexUrlItem,
     normalize_rg,
     season_episode_key,
 )
@@ -152,8 +152,8 @@ def get_same_files_groups(seadex_dict: SeadexDict) -> list[list[str]]:
         str | tuple[str, str] | frozenset[tuple[int | None, int | None]],
         list[str],
     ] = {}
-    for rg, rg_item in seadex_dict.items():
-        all_episodes = rg_item.all_episodes
+    for rg, group_releases in seadex_dict.items():
+        all_episodes = group_releases.all_episodes
 
         key: str | tuple[str, str] | frozenset[tuple[int | None, int | None]]
         if all_episodes is None:
@@ -172,31 +172,31 @@ def get_same_files_groups(seadex_dict: SeadexDict) -> list[list[str]]:
     return list(grouped.values())
 
 
-def _is_flagged(rg_item: SeadexReleaseGroupItem) -> bool:
-    return any(u.download for u in rg_item.urls.values())
+def _is_flagged(group_releases: GroupReleases) -> bool:
+    return any(u.download for u in group_releases.releases.values())
 
 
-def _is_public_group(rg_item: SeadexReleaseGroupItem) -> bool:
-    return any(u.is_public for u in rg_item.urls.values())
+def _is_public_group(group_releases: GroupReleases) -> bool:
+    return any(u.is_public for u in group_releases.releases.values())
 
 
-def _is_fallback_group(rg_item: SeadexReleaseGroupItem) -> bool:
-    return any(u.is_fallback for u in rg_item.urls.values())
+def _is_fallback_group(group_releases: GroupReleases) -> bool:
+    return any(u.is_fallback for u in group_releases.releases.values())
 
 
-def _all_public(rg_item: SeadexReleaseGroupItem) -> bool:
-    return all(u.is_public for u in rg_item.urls.values())
+def _all_public(group_releases: GroupReleases) -> bool:
+    return all(u.is_public for u in group_releases.releases.values())
 
 
-def _flagged_all_addable(rg_item: SeadexReleaseGroupItem) -> bool:
+def _flagged_all_addable(group_releases: GroupReleases) -> bool:
     # No flagged private url (the add-time gate refuses those).
-    return all(u.is_public for u in rg_item.urls.values() if u.download)
+    return all(u.is_public for u in group_releases.releases.values() if u.download)
 
 
-def _unflag(rg_item: SeadexReleaseGroupItem, dropped: list[SeadexUrlItem]) -> None:
+def _unflag(group_releases: GroupReleases, dropped: list[Release]) -> None:
     """Unflag a whole group, recording the urls this pass actually dropped."""
 
-    for u in rg_item.urls.values():
+    for u in group_releases.releases.values():
         if u.download:
             dropped.append(u)
         u.unflag()
@@ -212,7 +212,7 @@ class _SameFilesSet:
     flagged: list[str]
     """The subset still flagged to grab when the reduction began."""
 
-    dropped: list[SeadexUrlItem] = field(default_factory=list[SeadexUrlItem])
+    dropped: list[Release] = field(default_factory=list[Release])
     """The urls the reduction unflagged, scoped to THIS set - the coverage rescue's input."""
 
 
@@ -271,8 +271,8 @@ def episode_coverage(
         if seadex_rg_normalized is None:
             continue
 
-        for url_item in seadex_rg_item.urls.values():
-            seadex_episodes = url_item.episodes
+        for release in seadex_rg_item.releases.values():
+            seadex_episodes = release.episodes
 
             # A url none of whose files placed on this entry proves nothing
             # about coverage, so its group covers everything rather than nothing.
@@ -354,18 +354,18 @@ def _episode_identities(
     if not untagged:
         return _EntryIdentities(identities, untagged)
 
-    for seadex_rg, rg_item in seadex_dict.items():
+    for seadex_rg, group_releases in seadex_dict.items():
         normalized = normalize_rg(seadex_rg)
         if normalized is None:
             continue
-        for url_item in rg_item.urls.values():
+        for release in group_releases.releases.values():
             # A refused pack placed nothing: an untagged file at one of its listed sizes is its, wherever it sits.
-            if url_item.hand_import:
+            if release.hand_import:
                 for key, size in untagged.items():
-                    if key not in identities and size > 0 and size in url_item.size:
+                    if key not in identities and size > 0 and size in release.size:
                         identities[key] = _EpisodeIdentity(normalized, by_size=True, size=size)
                 continue
-            for seadex_ep in url_item.episodes:
+            for seadex_ep in release.episodes:
                 if seadex_ep.season is None or seadex_ep.episode is None:
                     continue
                 key = season_episode_key(seadex_ep.season, seadex_ep.episode)
@@ -450,11 +450,11 @@ def _group_verdicts(seadex_dict: SeadexDict, ctx: _MatchContext) -> _GroupVerdic
     cover: dict[str | None, set[int]] = {}
     for rg, item in seadex_dict.items():
         listed = cover.setdefault(normalize_rg(rg), set())
-        for url_item in item.urls.values():
+        for release in item.releases.values():
             # Url-level and per-episode sizes both count (an episode parse can
             # carry sizes a bare listing record doesn't); zero proves nothing.
-            listed.update(s for s in url_item.size if s > 0)
-            listed.update(ep.size for ep in url_item.episodes if ep.size > 0)
+            listed.update(s for s in release.size if s > 0)
+            listed.update(ep.size for ep in release.episodes if ep.size > 0)
 
     # The on-disk files each group must answer for. With an episode list the
     # per-episode identities attribute them (size-identified files included);
@@ -509,7 +509,7 @@ class DownloadPlanner:
     def filter_by_release_group(
         self,
         seadex_dict: SeadexDict,
-        arr_releases: ArrReleases,
+        arr_releases: ArrFiles,
         ep_list: list[SonarrEpisode] | None = None,
     ) -> PlanResult:
         """Filter torrents by release group.
@@ -572,9 +572,9 @@ class DownloadPlanner:
         overlapping_results = overlapping_results or (
             untagged_counter is not None
             and any(
-                _owns_untagged_copy(untagged_counter, url_item.size)
-                for rg_item in seadex_dict.values()
-                for url_item in rg_item.urls.values()
+                _owns_untagged_copy(untagged_counter, release.size)
+                for group_releases in seadex_dict.values()
+                for release in group_releases.releases.values()
             )
         )
 
@@ -595,19 +595,19 @@ class DownloadPlanner:
         for seadex_rg, seadex_rg_item in seadex_dict.items():
             self.logger.debug(f"Filtering for release group {seadex_rg}")
 
-            for url_item in seadex_rg_item.urls.values():
+            for release in seadex_rg_item.releases.values():
                 # A pack the placement refused is judged by what its window holds, never by its numbers.
-                if url_item.hand_import:
-                    self._match_url_refused(ctx, seadex_rg, url_item)
+                if release.hand_import:
+                    self._match_url_refused(ctx, seadex_rg, release)
                     continue
 
                 # A url none of whose files placed on this entry (numberless names, a
                 # held run, another season's pack) is judged by release group and size.
-                if not url_item.episodes:
-                    self._match_url_no_episodes(ctx, seadex_rg, url_item)
+                if not release.episodes:
+                    self._match_url_no_episodes(ctx, seadex_rg, release)
                     continue
 
-                self._match_url_episodes(ctx, seadex_rg, url_item)
+                self._match_url_episodes(ctx, seadex_rg, release)
 
         # Where multiple preferred release groups cover the same files and the
         # Arr has none of them, only grab one (preferring a public group)
@@ -635,7 +635,7 @@ class DownloadPlanner:
         self,
         ctx: _MatchContext,
         seadex_rg: str,
-        url_item: SeadexUrlItem,
+        release: Release,
     ) -> None:
         """Decide a single url with no parsed episodes, by release group + size.
 
@@ -646,7 +646,7 @@ class DownloadPlanner:
         instead (`_owns_untagged_copy`).
         """
 
-        url = url_item.url
+        url = release.url
 
         # Match by the normalized name (like the per-episode path). The merged
         # size index was built once per entry (see _MatchContext). A blank pick
@@ -656,7 +656,7 @@ class DownloadPlanner:
             # The group matches: fall through to a size comparison. A listing
             # with no sizes carries no evidence either way, so the held copy
             # stands (a vacuous disjoint must not read as an upgrade).
-            seadex_file_sizes = url_item.size
+            seadex_file_sizes = release.size
             arr_file_sizes = ctx.arr_sizes_by_norm[seadex_norm]
 
             if seadex_file_sizes and set(seadex_file_sizes).isdisjoint(arr_file_sizes):
@@ -666,14 +666,14 @@ class DownloadPlanner:
                         f"{ctx.arr_groups_label}, but file sizes do not match - will download {url}",
                     )
 
-                url_item.flag(upgrade=True)
+                release.flag(upgrade=True)
 
             elif ctx.debug_on:
                 self.logger.debug(
                     f"SeaDex release group {seadex_rg} in {self.arr.capitalize()} releases: "
                     f"{ctx.arr_groups_label}, and no listed size contradicts the on-disk copy",
                 )
-        elif _owns_untagged_copy(ctx.untagged_counter, url_item.size):
+        elif _owns_untagged_copy(ctx.untagged_counter, release.size):
             # A rename stripped the group tag: the untagged files on disk
             # (Radarr's None key, or Sonarr's untagged episode files) all
             # belong to this listing by size, so the copy is ours.
@@ -690,7 +690,7 @@ class DownloadPlanner:
                     f"{ctx.arr_groups_label} - will download {url}",
                 )
 
-            url_item.flag()
+            release.flag()
         elif ctx.debug_on:
             # Group absent, but the Arr already holds another SeaDex-preferred
             # group's release covering these files - nothing to flag.
@@ -703,7 +703,7 @@ class DownloadPlanner:
         self,
         ctx: _MatchContext,
         seadex_rg: str,
-        url_item: SeadexUrlItem,
+        release: Release,
     ) -> None:
         """Decide a single url against its placed episodes, per episode.
 
@@ -730,8 +730,8 @@ class DownloadPlanner:
             )
             return
 
-        url = url_item.url
-        seadex_episodes = url_item.episodes
+        url = release.url
+        seadex_episodes = release.episodes
 
         # For each episode the placement put this url on, check whether the release group matches and
         # whether the file sizes match. A release-group mismatch with no alternative flips download to
@@ -801,7 +801,7 @@ class DownloadPlanner:
                             f"recommended release covers it - will download {url}",
                         )
 
-                    url_item.flag()
+                    release.flag()
 
             else:
                 if ctx.debug_on:
@@ -837,21 +837,21 @@ class DownloadPlanner:
         matched_sizes = list(compress(size_matches, rg_matches))
         if matched_sizes and not any(matched_sizes):
             self.logger.debug(f"File sizes all differ for release group {seadex_rg} - will download {url}")
-            url_item.flag(upgrade=True)
+            release.flag(upgrade=True)
 
         # An episode two listed files claim at different sizes is left out: the import cannot pick between them.
-        doubled = _doubled_sizes(unambiguous(listed_pairs), held_by_key, url_item.size)
+        doubled = _doubled_sizes(unambiguous(listed_pairs), held_by_key, release.size)
         if doubled:
             self.logger.debug(
                 f"{url} lists size(s) {doubled} on fewer episodes than {seadex_rg} holds them, will download"
             )
-            url_item.flag(upgrade=True)
+            release.flag(upgrade=True)
 
     def _match_url_refused(
         self,
         ctx: _MatchContext,
         seadex_rg: str,
-        url_item: SeadexUrlItem,
+        release: Release,
     ) -> None:
         """Decide a pack the placement refused (`GrabHold.hand_import`), by what its window holds.
 
@@ -864,16 +864,16 @@ class DownloadPlanner:
             self.logger.debug("Skipping the refused-pack check: no Sonarr episode list available")
             return
 
-        url = url_item.url
+        url = release.url
         seadex_norm = normalize_rg(seadex_rg)
-        if _window_in_place(ctx, seadex_norm, url_item.size):
+        if _window_in_place(ctx, seadex_norm, release.size):
             if ctx.debug_on:
                 self.logger.debug(
                     f"Every episode of the window holds {seadex_rg}'s file or a covering release's: not flagging {url}"
                 )
             return
         self.logger.debug(f"{seadex_rg} was refused by the placement and is not in place: will download {url}")
-        url_item.flag(upgrade=seadex_norm in ctx.arr_sizes_by_norm)
+        release.flag(upgrade=seadex_norm in ctx.arr_sizes_by_norm)
 
     def reduce_overlapping_downloads(
         self,
@@ -930,9 +930,9 @@ class DownloadPlanner:
         # listings can even name their episodes identically, but the bytes
         # differ. An unsized listing can't prove identity, so it's never
         # deduped. Cross-group overlap is the same-files logic above.
-        for rg_item in seadex_dict.values():
+        for group_releases in seadex_dict.values():
             seen: set[tuple[int, ...]] = set()
-            for u in rg_item.urls.values():
+            for u in group_releases.releases.values():
                 if not u.download or not u.size:
                     continue
                 identity = tuple(sorted(u.size))
@@ -961,7 +961,7 @@ class DownloadPlanner:
         # release wrong (a stale size, or a file on too many episodes), so an
         # unflagged public group in this set is NOT owned and may be promoted in
         # its place. Without it, promotion would re-download owned content.
-        upgrade_pending = any(u.upgrade for rg in flagged for u in seadex_dict[rg].urls.values())
+        upgrade_pending = any(u.upgrade for rg in flagged for u in seadex_dict[rg].releases.values())
 
         if len(public_flagged) == 0:
             # Only an unflagged preferred public group in THIS same-files set
@@ -1088,7 +1088,7 @@ class DownloadPlanner:
             return None
 
         promoted = next((rg for rg in candidates if _all_public(seadex_dict[rg])), candidates[0])
-        for u in seadex_dict[promoted].urls.values():
+        for u in seadex_dict[promoted].releases.values():
             if u.is_public:
                 u.flag()
         return promoted
@@ -1119,7 +1119,7 @@ class DownloadPlanner:
         survivor_keys = {
             key
             for rg in same_files.names
-            for u in seadex_dict[rg].urls.values()
+            for u in seadex_dict[rg].releases.values()
             if u.download and u.is_public
             for key in get_episode_keys(u.episodes)
         }
@@ -1135,4 +1135,6 @@ class DownloadPlanner:
     def get_any_to_download(seadex_dict: SeadexDict) -> bool:
         """Check if any torrents are marked as to download."""
 
-        return any(url_item.download for rg_item in seadex_dict.values() for url_item in rg_item.urls.values())
+        return any(
+            release.download for group_releases in seadex_dict.values() for release in group_releases.releases.values()
+        )

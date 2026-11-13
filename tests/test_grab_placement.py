@@ -804,7 +804,7 @@ class TestPlaceHeld:
 
         placed.attach_placements(seadex_dict)
 
-        holds = [seadex_dict["RG"].urls[u].hold for u in urls]
+        holds = [seadex_dict["RG"].releases[u].hold for u in urls]
         assert holds == [GrabHold.MISNUMBERED, GrabHold.INPUT_UNREAD, None]
         assert placed.input_missing_groups(seadex_dict) == ("RG",)
 
@@ -851,7 +851,7 @@ class TestPlaceBesideAnotherListedTitle:
 
         placed.attach_placements(seadex_dict)
 
-        item = seadex_dict["RG"].urls["u1"]
+        item = seadex_dict["RG"].releases["u1"]
         assert (item.hold, item.hold_counts) == (GrabHold.PLACED_ELSEWHERE, ElsewhereCounts(elsewhere=4, unplaced=0))
 
     def test_a_stored_file_on_an_episode_no_other_window_holds_is_nobodys(self) -> None:
@@ -1349,7 +1349,7 @@ class TestTorrentReads:
 
     def test_a_marked_url_reads_its_record_by_its_cross_seed_and_its_listing_by_seadexs_hash(self) -> None:
         seadex_dict = self._dict()
-        seadex_dict["RG"].urls["u1"].cross_seed_hash = "c1"
+        seadex_dict["RG"].releases["u1"].cross_seed_hash = "c1"
         record = _resident_record()
         listing = torrent_listing(entry_window(1, (101,)))
         reads = TorrentReads({"c1": record}, _INDEXES, ListingsRead({"h1": listing, "h3": None}, None))
@@ -1391,9 +1391,9 @@ class TestEntryPlacements:
         placed.attach_placements(seadex_dict)
 
         run_records = [EpisodeRecord(1, n, 10 * n) for n in range(1, 5)]
-        assert seadex_dict["RG"].urls["u1"].episodes == run_records
+        assert seadex_dict["RG"].releases["u1"].episodes == run_records
         assert seadex_dict["RG"].all_episodes == run_records
-        assert seadex_dict["Held"].urls["u2"].episodes == []
+        assert seadex_dict["Held"].releases["u2"].episodes == []
         assert seadex_dict["Held"].all_episodes == []
         assert seadex_dict["Subs"].all_episodes == []
 
@@ -1421,7 +1421,7 @@ class TestEntryPlacements:
 
     def test_a_marked_url_seeds_under_its_cross_seed(self) -> None:
         placed, seadex_dict = self._entry()
-        seadex_dict["RG"].urls["u1"].cross_seed_hash = "c1"
+        seadex_dict["RG"].releases["u1"].cross_seed_hash = "c1"
 
         seeds = build_pending_seeds(seadex_dict, placed, entry_facts())
 

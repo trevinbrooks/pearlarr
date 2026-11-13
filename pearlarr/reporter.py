@@ -8,7 +8,7 @@ from seadex import EntryRecord
 from .anilist_gateway import AniListGateway
 from .cache import AbstractCacheStore
 from .config import Arr
-from .leg_state import EntryTitle, RunContext, resolve_entry_title
+from .leg_state import RunContext, Title, resolve_entry_title
 from .output import (
     Accent,
     CapReached,
@@ -210,15 +210,15 @@ class RunReporter:
         # Scope-free (the titled row closed the entry): the reason rides col-0.
         self.detail("status", StyledValue("lookup skipped (SeaDex unreachable)", Accent.DIM))
 
-    def _display_title(self, ctx: RunContext, al_id: int, stored: str | None) -> EntryTitle:
+    def _display_title(self, ctx: RunContext, al_id: int, stored: str | None) -> Title:
         """The entry's label: the stored name, else AniList, else the arr's own title, else the id form."""
 
         return resolve_entry_title(al_id, (stored,) if stored else self.anilist.titles(al_id), ctx.arr_title)
 
-    def _titled_row(self, state: EntryState, title: EntryTitle) -> None:
+    def _titled_row(self, state: EntryState, title: Title) -> None:
         """A ledger row for an id with no entry block, the id repeated only when the row shows a title."""
 
-        self._ledger(state, title.display)
+        self._ledger(state, title.name)
         if title.resolved:
             self.detail("anilist", StyledValue(str(title.al_id)))
 
@@ -265,7 +265,7 @@ class RunReporter:
         self._block(
             EntryHeader(
                 EntryState.UNCHANGED,
-                title.display,
+                title.name,
                 al_id=al_id,
                 coverage=entry.coverage if entry is not None else None,
                 url=entry.url if entry is not None else None,
@@ -348,7 +348,7 @@ class RunReporter:
         groups = tuple(
             RecommendedGroup(name=srg, tags=tuple(sorted(map(str, srg_item.tags))))
             for srg, srg_item in seadex_dict.items()
-            if any(u.download for u in srg_item.urls.values())
+            if any(u.download for u in srg_item.releases.values())
         )
 
         self._post(

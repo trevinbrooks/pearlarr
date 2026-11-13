@@ -46,7 +46,7 @@ from .import_quality import (
 from .output import hub_note, hub_warn
 from .output.console_text import count_noun, pluralize
 from .pending_import import FileEpisodeMap, PendingImport, joined_map
-from .pending_records import PendingRecords
+from .pending_records import PendingImportStore
 from .placement_types import episode_index
 from .probe_verdicts import (
     CommandBlock,
@@ -483,7 +483,7 @@ class ImportExecutor:
             record for record in queue if record.download_id is not None and record.download_id.casefold() == target
         ]
 
-    def close_tracked(self, pending: PendingImport) -> EffectStatus:
+    def remove_from_queue(self, pending: PendingImport) -> EffectStatus:
         """Dismiss Sonarr's leftover queue entry, leaving an unknown-series one alone (dismissing it 500s)."""
 
         rows = self.queue_records(pending.infohash)
@@ -887,7 +887,7 @@ class _Poll:
 class ImportReconciler:
     """Decides a completed download's state and builds the grab-time seeds."""
 
-    def __init__(self, records: PendingRecords, episodes: SonarrEpisodes, executor: ImportExecutor) -> None:
+    def __init__(self, records: PendingImportStore, episodes: SonarrEpisodes, executor: ImportExecutor) -> None:
         """Bind the run's record seam and the composed collaborators (the logger is the executor's)."""
 
         self._records = records

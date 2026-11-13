@@ -27,7 +27,7 @@ from .discord import (
 from .output import hub_warn
 from .output.console_text import count_noun, format_elapsed, human_bytes
 from .output.wait_lines import held_back_names, held_back_sentences
-from .releases import SeadexDict, SeadexUrlItem
+from .releases import Release, SeadexDict
 from .torrents import AddOutcome, ReleaseOutcome
 from .wait_types import OutcomeCategory
 from .wait_view import WaitOutcomeRow, WaitResult
@@ -194,7 +194,7 @@ def _grab_notes(notice: GrabNotice) -> str:
     return "\n".join(parts)
 
 
-def _release_line(item: SeadexUrlItem) -> str:
+def _release_line(item: Release) -> str:
     """One release's line: the tracker link plus size/audio/provenance markers."""
 
     parts = [f"[{item.tracker.value}]({item.url})"]
@@ -232,7 +232,7 @@ def _group_blocks(notice: GrabNotice) -> list[_GroupBlock]:
     outcome_by_group = {r.group: r.outcome for r in notice.results}
     blocks: list[_GroupBlock] = []
     for srg, srg_item in notice.seadex_dict.items():
-        release_lines = [_release_line(u) for u in srg_item.urls.values() if u.download]
+        release_lines = [_release_line(u) for u in srg_item.releases.values() if u.download]
         if not release_lines:
             continue
         if srg_item.tags:

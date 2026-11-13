@@ -14,7 +14,7 @@ import qbittorrentapi
 
 from pearlarr.arr_http import ArrHttp, DeleteOutcome
 from pearlarr.arr_models import (
-    ArrReleases,
+    ArrFiles,
     CommandResource,
     DownloadClientConfig,
     HistoryPage,
@@ -32,7 +32,7 @@ from pearlarr.arr_models import (
     SonarrItem,
 )
 from pearlarr.clock import Clock
-from pearlarr.mappings import MappingEntry
+from pearlarr.mappings import TitleMapping
 from pearlarr.output import (
     CapReached,
     Diagnostic,
@@ -234,7 +234,7 @@ class FakeStrategy(ArrSync[FakeArrItem]):
         self,
         *,
         items: list[FakeArrItem],
-        anilist_ids: dict[int, MappingEntry],
+        anilist_ids: dict[int, TitleMapping],
         held_through: RunServices | None = None,
         process_raises_on: int | None = None,
         history: list[HistoryRecord] | None = None,
@@ -261,7 +261,7 @@ class FakeStrategy(ArrSync[FakeArrItem]):
         return [i for i in items if i.id == item_id]
 
     @override
-    def item_anilist_ids(self, item: FakeArrItem, log_ignored: bool = True) -> dict[int, MappingEntry]:
+    def item_anilist_ids(self, item: FakeArrItem, log_ignored: bool = True) -> dict[int, TitleMapping]:
         return self._anilist_ids
 
     @property
@@ -283,7 +283,7 @@ class FakeStrategy(ArrSync[FakeArrItem]):
         return self.history
 
     @override
-    def process_al_id(self, item: FakeArrItem, al_id: int, mapping: MappingEntry) -> None:
+    def process_al_id(self, item: FakeArrItem, al_id: int, mapping: TitleMapping) -> None:
         self.process_calls.append(al_id)
         if self._process_raises_on is not None and al_id == self._process_raises_on:
             raise ValueError(f"boom on al_id {al_id}")
@@ -630,7 +630,7 @@ class ScriptedEpisodes:
 
         return None if self._sonarr is None else self._sonarr.episodes(series_id)
 
-    def get_ep_list(self, sonarr_series_id: int, al_id: int, mapping: MappingEntry) -> list[SonarrEpisode] | None:
+    def get_ep_list(self, sonarr_series_id: int, al_id: int, mapping: TitleMapping) -> list[SonarrEpisode] | None:
         """The entry's window, recorded. Raises for an `ambiguous` id as the real resolver does."""
 
         del mapping
@@ -639,11 +639,11 @@ class ScriptedEpisodes:
             raise ValueError("ambiguous")
         return self.cached_episodes(sonarr_series_id) if self._windows is None else self._windows.get(al_id)
 
-    def get_sonarr_releases(self, ep_list: list[SonarrEpisode]) -> ArrReleases:
+    def get_sonarr_releases(self, ep_list: list[SonarrEpisode]) -> ArrFiles:
         """No release is on disk."""
 
         del ep_list
-        return ArrReleases()
+        return ArrFiles()
 
     def orders_for(self, series_id: int) -> SeriesOrdering:
         """No series has another order."""

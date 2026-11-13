@@ -21,7 +21,7 @@ from seadex import EntryRecord
 from pearlarr.arr_models import AlternateTitle, MatchedEpisode, ParsedFileInfo, SeasonTypeCount, SonarrEpisode
 from pearlarr.config import Arr
 from pearlarr.grab_placement import SeedFile
-from pearlarr.mappings import ExternalIds, MappingEntry
+from pearlarr.mappings import ExternalIds, TitleMapping
 from pearlarr.parse_records import (
     SONARR_PARSE_CACHE_TTL_DAYS,
     SONARR_PARSE_UNMATCHED_TTL_DAYS,
@@ -258,10 +258,10 @@ def _eps_for(series_id: int) -> list[SonarrEpisode]:
     return [sonarr_ep(1, series_id)]
 
 
-def _ids(*al_ids: int) -> dict[int, MappingEntry]:
+def _ids(*al_ids: int) -> dict[int, TitleMapping]:
     """A `{al_id -> mapping}` dict. Only the keys are read by the prefetch gate."""
 
-    return {aid: MappingEntry(anilist_id=aid) for aid in al_ids}
+    return {aid: TitleMapping(anilist_id=aid) for aid in al_ids}
 
 
 class _Recorder:
@@ -336,7 +336,7 @@ class _Services:
     def __init__(
         self,
         *,
-        mapping: dict[int, dict[int, MappingEntry]] | None = None,
+        mapping: dict[int, dict[int, TitleMapping]] | None = None,
         identity: bool = False,
         needs_scan: set[int] | None = None,
     ) -> None:
@@ -348,11 +348,11 @@ class _Services:
         self,
         ids: ExternalIds,
         log_ignored: bool = True,
-    ) -> dict[int, MappingEntry]:
+    ) -> dict[int, TitleMapping]:
         del log_ignored
         assert ids.tvdb is not None  # the prefetch always keys on the series' tvdb id
         if self._identity:
-            return {ids.tvdb: MappingEntry(anilist_id=ids.tvdb)}
+            return {ids.tvdb: TitleMapping(anilist_id=ids.tvdb)}
         return self._mapping.get(ids.tvdb, {})
 
     def al_id_needs_scan(self, al_id: int) -> bool:

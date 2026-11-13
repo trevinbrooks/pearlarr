@@ -14,7 +14,7 @@ from seadex import EntryRecord, Tag, TorrentRecord, Tracker
 
 from pearlarr import seadex_filter
 from pearlarr.config import Arr
-from pearlarr.mappings import MappingEntry
+from pearlarr.mappings import TitleMapping
 from pearlarr.output import Diagnostic, Severity, install_hub
 from pearlarr.output.recording import RecordingHub
 from pearlarr.run_services import RunServices
@@ -172,7 +172,7 @@ class TestGetSeadexDict:
             _torrent(release_group="A", url="u1", tracker=Tracker.NYAA),
         )
         result = filt.build(entry)
-        assert result["A"].urls["u1"].is_public is False
+        assert result["A"].releases["u1"].is_public is False
 
     def test_drops_private_url_when_public_exists(self) -> None:
         filt = make_release_filter(private_releases="warn", want_best=False, prefer_dual_audio=False)
@@ -181,7 +181,7 @@ class TestGetSeadexDict:
             _torrent(release_group="A", url="priv", tracker=Tracker.ANIMEBYTES),
         )
         result = filt.build(entry)
-        assert set(result["A"].urls) == {"pub"}
+        assert set(result["A"].releases) == {"pub"}
 
     def test_keeps_private_only_group(self) -> None:
         # A group with no public option is kept here. It's only dropped later in
@@ -191,7 +191,7 @@ class TestGetSeadexDict:
             _torrent(release_group="A", url="priv", tracker=Tracker.ANIMEBYTES),
         )
         result = filt.build(entry)
-        assert set(result["A"].urls) == {"priv"}
+        assert set(result["A"].releases) == {"priv"}
 
 
 class TestPrivateFallback:
@@ -207,8 +207,8 @@ class TestPrivateFallback:
         # The private preferred pick stays (for the already-have check). The best
         # public alternative rides along, marked as the fallback.
         assert set(result) == {"Best", "Alt"}
-        assert result["Best"].urls["priv"].is_fallback is False
-        assert result["Alt"].urls["pub"].is_fallback is True
+        assert result["Best"].releases["priv"].is_fallback is False
+        assert result["Alt"].releases["pub"].is_fallback is True
 
     def test_no_fallback_added_when_preferred_has_public(self) -> None:
         filt = make_release_filter(private_releases="fallback", want_best=True, prefer_dual_audio=False)
@@ -230,8 +230,8 @@ class TestPrivateFallback:
         )
         result = filt.build(entry)
         assert set(result) == {"PrivBest", "PubBest", "Alt"}
-        assert result["PubBest"].urls["pub"].is_fallback is False
-        assert result["Alt"].urls["pub2"].is_fallback is True
+        assert result["PubBest"].releases["pub"].is_fallback is False
+        assert result["Alt"].releases["pub2"].is_fallback is True
 
     def test_same_group_public_copy_survives_as_fallback(self) -> None:
         # One group with a private preferred url and a public non-best url: the
@@ -244,8 +244,8 @@ class TestPrivateFallback:
         )
         result = filt.build(entry)
         assert set(result) == {"A"}
-        assert set(result["A"].urls) == {"pub"}
-        assert result["A"].urls["pub"].is_fallback is True
+        assert set(result["A"].releases) == {"pub"}
+        assert result["A"].releases["pub"].is_fallback is True
 
     def test_no_fallback_added_when_nothing_public(self) -> None:
         filt = make_release_filter(private_releases="fallback", want_best=True, prefer_dual_audio=False)
@@ -254,7 +254,7 @@ class TestPrivateFallback:
         )
         result = filt.build(entry)
         assert set(result) == {"Best"}
-        assert result["Best"].urls["priv"].is_fallback is False
+        assert result["Best"].releases["priv"].is_fallback is False
 
     def test_warn_mode_does_not_add_fallback(self) -> None:
         # The default: a private-only preferred pick stays alone, so the planner
@@ -303,8 +303,8 @@ class TestPrivateFallback:
         )
         result = filt.build(entry)
         assert set(result) == {"A"}
-        assert set(result["A"].urls) == {"priv", "pub"}
-        assert result["A"].urls["pub"].is_fallback is True
+        assert set(result["A"].releases) == {"priv", "pub"}
+        assert result["A"].releases["pub"].is_fallback is True
 
     def test_same_group_cross_seeded_private_copy_still_dropped(self) -> None:
         # Identical filenames on both trackers (a cross-seed): the private copy is
@@ -330,7 +330,7 @@ class TestPrivateFallback:
             ),
         )
         result = filt.build(entry)
-        assert set(result["A"].urls) == {"pub"}
+        assert set(result["A"].releases) == {"pub"}
 
     def test_same_group_blind_public_copy_skips_the_search(self) -> None:
         # Group A: a private pick with KNOWN files + a public copy whose fileset
@@ -367,7 +367,7 @@ class TestPrivateFallback:
         result = filt.build(entry)
         assert set(result) == {"A"}
         # The coverage-aware per-group drop still keeps the uncovered private url.
-        assert set(result["A"].urls) == {"priv", "pub"}
+        assert set(result["A"].releases) == {"priv", "pub"}
 
     def test_exactly_covered_private_files_skip_the_search(self) -> None:
         # MUTATION PIN (needs_fallback): the coverage check `<= public_file_names`
@@ -482,8 +482,8 @@ class TestPrivateFallback:
         )
         result = filt.build(entry)
         assert set(result) == {"A", "B"}
-        assert set(result["A"].urls) == {"a_pub", "a_priv"}
-        assert result["B"].urls["b_pub"].is_fallback is True
+        assert set(result["A"].releases) == {"a_pub", "a_priv"}
+        assert result["B"].releases["b_pub"].is_fallback is True
 
 
 class TestInteractivePick:
@@ -598,7 +598,7 @@ class TestInteractivePick:
             return "42"  # out of range -> every token invalid -> empty pick
 
         monkeypatch.setattr("builtins.input", fake_input)
-        strat.process_al_id(_MovieItem(), al_id, MappingEntry(anilist_id=al_id))
+        strat.process_al_id(_MovieItem(), al_id, TitleMapping(anilist_id=al_id))
         capsys.readouterr()  # drain the picker's terminal rows
 
         # Nothing persisted: the title must resurface (and re-prompt) next run.

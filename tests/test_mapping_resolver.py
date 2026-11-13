@@ -46,11 +46,11 @@ from pearlarr.mappings import (
     AnimeIdsMap,
     AnimeIdsRecord,
     ExternalIds,
-    MappingEntry,
     MappingMode,
     MappingResolver,
     MappingSource,
     MappingSources,
+    TitleMapping,
     _entry_from_raw,
 )
 from pearlarr.output import Severity
@@ -500,7 +500,7 @@ AMAP: AnimeIdsMap = {
 }
 
 
-def _anime_oracle(amap: AnimeIdsMap, ids: ExternalIds) -> dict[int, MappingEntry]:
+def _anime_oracle(amap: AnimeIdsMap, ids: ExternalIds) -> dict[int, TitleMapping]:
     """Inline twin of the former reverse-index + no-clobber merge (the oracle)."""
 
     index: dict[str, dict[object, list[AnimeIdsRecord]]] = {
@@ -516,7 +516,7 @@ def _anime_oracle(amap: AnimeIdsMap, ids: ExternalIds) -> dict[int, MappingEntry
             if value is not None:
                 bucket.setdefault(value, []).append(rec)
 
-    result: dict[int, MappingEntry] = {}
+    result: dict[int, TitleMapping] = {}
 
     def merge(field: str, value: object) -> None:
         for rec in index[field].get(value, []):

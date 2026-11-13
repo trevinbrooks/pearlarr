@@ -29,7 +29,7 @@ from pearlarr.config import AppConfig, Arr
 from pearlarr.grab_pipeline import GrabRequest
 from pearlarr.import_wait import ImportWaitManager
 from pearlarr.leg_state import RunContext
-from pearlarr.mappings import MappingEntry
+from pearlarr.mappings import TitleMapping
 from pearlarr.output import BootStepFinished, CountsMark, Diagnostic, EntryHeader, Severity, SeverityCounts
 from pearlarr.output.events import EntryState
 from pearlarr.output.recording import RecordingHub
@@ -196,7 +196,7 @@ class TestHeldTitleKeepsScanning:
         # Every id is held by the cap, as the pipeline holds a grabbable release past it.
         strategy = FakeStrategy(
             items=[FakeArrItem(item_id=1, title="A"), FakeArrItem(item_id=2, title="B")],
-            anilist_ids={1: MappingEntry(anilist_id=1)},
+            anilist_ids={1: TitleMapping(anilist_id=1)},
             held_through=engine._services,
         )
 
@@ -215,7 +215,7 @@ class TestPerIdErrorContainment:
     def test_one_al_id_error_does_not_skip_siblings(self, logger: logging.Logger) -> None:
         strategy = FakeStrategy(
             items=[FakeArrItem(item_id=1, title="A")],
-            anilist_ids={1: MappingEntry(anilist_id=1), 2: MappingEntry(anilist_id=2)},
+            anilist_ids={1: TitleMapping(anilist_id=1), 2: TitleMapping(anilist_id=2)},
             process_raises_on=1,
         )
         finalize = _FinalizeRecorder()
@@ -249,14 +249,14 @@ class _ItemRaisingStrategy(FakeStrategy):
         self,
         *,
         items: list[FakeArrItem],
-        anilist_ids: dict[int, MappingEntry],
+        anilist_ids: dict[int, TitleMapping],
         raise_on_item: int,
     ) -> None:
         super().__init__(items=items, anilist_ids=anilist_ids)
         self._raise_on_item = raise_on_item
 
     @override
-    def item_anilist_ids(self, item: FakeArrItem, log_ignored: bool = True) -> dict[int, MappingEntry]:
+    def item_anilist_ids(self, item: FakeArrItem, log_ignored: bool = True) -> dict[int, TitleMapping]:
         # Only the per-item scan calls with the log_ignored default. The pre-loop
         # activity/prefetch passes pass False and must stay healthy.
         if log_ignored and item.id == self._raise_on_item:
@@ -270,7 +270,7 @@ class TestPerItemErrorContainment:
     def test_one_item_error_does_not_skip_siblings(self, logger: logging.Logger) -> None:
         strategy = _ItemRaisingStrategy(
             items=[FakeArrItem(item_id=1, title="A"), FakeArrItem(item_id=2, title="B")],
-            anilist_ids={5: MappingEntry(anilist_id=5)},
+            anilist_ids={5: TitleMapping(anilist_id=5)},
             raise_on_item=1,
         )
         finalize = _FinalizeRecorder()
@@ -301,12 +301,12 @@ class _StagingStrategy(FakeStrategy):
     """
 
     def __init__(self, *, items: list[FakeArrItem], services: RunServices, stop_at: tuple[int, int] | None) -> None:
-        super().__init__(items=items, anilist_ids={1: MappingEntry(anilist_id=1), 2: MappingEntry(anilist_id=2)})
+        super().__init__(items=items, anilist_ids={1: TitleMapping(anilist_id=1), 2: TitleMapping(anilist_id=2)})
         self._services = services
         self._stop_at = stop_at
 
     @override
-    def process_al_id(self, item: FakeArrItem, al_id: int, mapping: MappingEntry) -> None:
+    def process_al_id(self, item: FakeArrItem, al_id: int, mapping: TitleMapping) -> None:
         self._services.no_releases_skip(item.id * 10 + al_id, {"name": item.title})
         if (item.id, al_id) == self._stop_at:
             raise SystemExit(0)
@@ -525,7 +525,7 @@ class TestBootNotes:
     ) -> RecordingHub:
         strategy = FakeStrategy(
             items=[FakeArrItem(item_id=1, title="A")],
-            anilist_ids={1: MappingEntry(anilist_id=1)},
+            anilist_ids={1: TitleMapping(anilist_id=1)},
         )
         anilist = make_anilist_gateway(client) if client is not None else None
         recording = install_recording_hub()
@@ -575,7 +575,7 @@ class TestScanItemContext:
     def test_arr_title_follows_the_item(self, logger: logging.Logger) -> None:
         strategy = FakeStrategy(
             items=[FakeArrItem(item_id=1, title="A")],
-            anilist_ids={1: MappingEntry(anilist_id=1)},
+            anilist_ids={1: TitleMapping(anilist_id=1)},
         )
         engine = _engine(_FinalizeRecorder(), logger)
         install_recording_hub()
@@ -615,7 +615,7 @@ class TestSelectionRecheck:
         engine = _engine(_FinalizeRecorder(), logger, config=config, seadex=seadex, anilist=anilist)
         strategy = FakeStrategy(
             items=[FakeArrItem(item_id=3, title="A")],
-            anilist_ids={11: MappingEntry(anilist_id=11)},
+            anilist_ids={11: TitleMapping(anilist_id=11)},
             held_through=engine._services if held else None,
             history=[_IMPORT_EVENT],
         )
@@ -698,7 +698,7 @@ class _OrderFetchingStrategy(FakeStrategy):
     def __init__(self, skyhook: SkyHookGateway) -> None:
         super().__init__(
             items=[FakeArrItem(item_id=3, title="A")],
-            anilist_ids={11: MappingEntry(anilist_id=11)},
+            anilist_ids={11: TitleMapping(anilist_id=11)},
             history=[_IMPORT_EVENT],
         )
         self._skyhook = skyhook

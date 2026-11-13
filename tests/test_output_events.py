@@ -12,7 +12,7 @@ from typing import Final
 import pytest
 
 from pearlarr.config import Arr
-from pearlarr.leg_state import GrabRecord, NeedsActionKind, NeedsActionRecord, RunStats
+from pearlarr.leg_state import GrabbedRow, NeedsActionKind, NeedsActionRow, RunStats
 from pearlarr.output import (
     Accent,
     BootStepFinished,
@@ -173,8 +173,8 @@ def test_run_tally_freezes_run_stats_whole() -> None:
     stats.queued = 1
     stats.downloaded = 2
     stats.imported = 3
-    grab = GrabRecord(title="T", coverage="S01", url="u", name="n", group="G")
-    needs = NeedsActionRecord(
+    grab = GrabbedRow(title="T", coverage="S01", url="u", name="n", group="G")
+    needs = NeedsActionRow(
         title="T2",
         coverage=None,
         group="G2",

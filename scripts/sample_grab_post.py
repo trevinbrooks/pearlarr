@@ -39,7 +39,7 @@ from seadex import SeaDexEntry, Tracker
 from pearlarr.config import Arr
 from pearlarr.json_narrow import is_json_obj
 from pearlarr.notify import GrabNotice, Notifier
-from pearlarr.releases import SeadexReleaseGroupItem, SeadexUrlItem
+from pearlarr.releases import GroupReleases, Release
 from pearlarr.torrents import AddOutcome, ReleaseOutcome
 
 if TYPE_CHECKING:
@@ -64,9 +64,9 @@ def _notice(groups: Sequence[str]) -> GrabNotice:
     entry = SeaDexEntry().from_id(_ENTRY_ID)
     picks = [t for t in entry.torrents if t.tracker is Tracker.NYAA and t.release_group in groups]
     seadex_dict = {
-        t.release_group: SeadexReleaseGroupItem(
-            urls={
-                t.url: SeadexUrlItem(
+        t.release_group: GroupReleases(
+            releases={
+                t.url: Release(
                     url=t.url,
                     files=[f.name for f in t.files],
                     size=[f.size for f in t.files],

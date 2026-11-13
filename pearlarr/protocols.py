@@ -3,7 +3,7 @@
 from abc import ABC, abstractmethod
 
 from .arr_models import ArrItem, HistoryRecord
-from .mappings import MappingEntry
+from .mappings import TitleMapping
 from .pending_import import PendingImport
 from .progress import ProgressSink
 from .wait_types import AttemptKind, EffectStatus, ImportProbe, ImportProgress
@@ -32,7 +32,7 @@ class ImportCompleter(ABC):
         MUST NOT refresh downloads, read the queue, or issue commands.
         """
 
-    def close_tracked(self, pending: PendingImport) -> EffectStatus:
+    def remove_from_queue(self, pending: PendingImport) -> EffectStatus:
         """Dismiss the arr's leftover queue entry for a fully imported torrent.
 
         Sonarr auto-closes a tracked download only when ONE import covers the grab's full episode count.
@@ -64,7 +64,7 @@ class ArrSync[ItemT: ArrItem](ImportCompleter):
         self,
         item: ItemT,
         log_ignored: bool = True,
-    ) -> dict[int, MappingEntry]:
+    ) -> dict[int, TitleMapping]:
         """Resolve the AniList ids mapped to one Arr item."""
 
     @property
@@ -92,7 +92,7 @@ class ArrSync[ItemT: ArrItem](ImportCompleter):
         self,
         item: ItemT,
         al_id: int,
-        mapping: MappingEntry,
+        mapping: TitleMapping,
     ) -> None:
         """Process one AniList id for one Arr item: judge it, grab or hold, cache the outcome."""
 

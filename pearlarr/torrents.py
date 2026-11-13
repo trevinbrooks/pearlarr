@@ -16,7 +16,7 @@ from .arr_categories import ArrCategoryResolver
 from .boundary import coerce_int
 from .file_paths import normalized_leaf
 from .output import hub_warn
-from .releases import SeadexDict, SeadexUrlItem, normalized_infohash
+from .releases import Release, SeadexDict, normalized_infohash
 from .torrent import (
     ParsedTorrent,
     TorrentParseError,
@@ -156,7 +156,7 @@ class _CategoryLook:
             by_size.setdefault(total_size, []).append(_Candidate(infohash, str(getattr(row, "name", ""))))
         return cls(qbit, by_size)
 
-    def cross_seed_of(self, item: SeadexUrlItem) -> _Candidate | None:
+    def cross_seed_of(self, item: Release) -> _Candidate | None:
         """The oldest torrent that counts and holds exactly the url's files, by name and size, under another hash.
 
         The oldest, so every run picks the same one: the url's record is keyed by its hash. None when there's
@@ -243,8 +243,8 @@ class TorrentService:
                     # The arr's download clients can't be read: the next title asks again.
                     return
                 self._look = _CategoryLook.take(self.qbit, categories, pearlarr_imports=self._pearlarr_imports)
-            for rg_item in seadex_dict.values():
-                for item in rg_item.urls.values():
+            for group_releases in seadex_dict.values():
+                for item in group_releases.releases.values():
                     cross_seed = self._look.cross_seed_of(item)
                     if cross_seed is not None:
                         self.logger.debug(
@@ -262,7 +262,7 @@ class TorrentService:
     def add(
         self,
         *,
-        item: SeadexUrlItem,
+        item: Release,
         preview: bool,
     ) -> AddResult:
         """Add a release to qBittorrent, parsing its tracker page only when qBittorrent doesn't have it yet.
@@ -287,7 +287,7 @@ class TorrentService:
 
         return AddResult(AddOutcome.ADDED, name or source_name)
 
-    def _already_added(self, item: SeadexUrlItem) -> AddResult | None:
+    def _already_added(self, item: Release) -> AddResult | None:
         """The `ALREADY_ADDED` result when qBittorrent has the url's torrent (`SeadexUrlItem.qbit_hash`), else None."""
 
         qbit_hash = item.qbit_hash
@@ -303,7 +303,7 @@ class TorrentService:
     def _add_to_qbit(
         self,
         *,
-        item: SeadexUrlItem,
+        item: Release,
         torrent_url: str,
         preview: bool,
     ) -> str | None:

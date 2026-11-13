@@ -17,7 +17,7 @@ from contextlib import contextmanager
 
 from seadex import EntryRecord, TorrentRecord, Tracker
 
-from pearlarr.arr_models import ArrReleases
+from pearlarr.arr_models import ArrFiles
 from pearlarr.config import Arr
 from pearlarr.grab_pipeline import GrabRequest
 from pearlarr.leg_state import NeedsActionKind, RunContext
@@ -80,10 +80,10 @@ def _entry_private_pick_plus_public_alt() -> EntryRecord:
 def _fill_episodes(sd: SeadexDict, mapping: dict[str, list[EpisodeRecord]]) -> None:
     """Mirror `attach_placements`: per-url episodes + the group union."""
 
-    for rg_item in sd.values():
+    for group_releases in sd.values():
         all_eps: list[EpisodeRecord] = []
-        rg_item.all_episodes = all_eps
-        for url, item in rg_item.urls.items():
+        group_releases.all_episodes = all_eps
+        for url, item in group_releases.releases.items():
             eps = list(mapping.get(url, []))
             item.episodes = eps
             all_eps.extend(eps)
@@ -161,10 +161,10 @@ class TestUpgradePendingHoldsForOwnedStale:
         ep_list = [sonarr_ep(1, 1, size=100, release_group="Priv")]
 
         with _record() as recording:
-            plan = filt.filter_downloads(sd, ArrReleases(tagged={"Priv": (100,)}), ep_list)
+            plan = filt.filter_downloads(sd, ArrFiles(tagged={"Priv": (100,)}), ep_list)
 
-        assert plan.seadex_dict["Fall"].urls[PUB_URL].download is False
-        assert plan.seadex_dict["Priv"].urls[PRIV_URL].download is False
+        assert plan.seadex_dict["Fall"].releases[PUB_URL].download is False
+        assert plan.seadex_dict["Priv"].releases[PRIV_URL].download is False
         warnings = _warning_texts(recording)
         assert any(STALE_NOTICE in m for m in warnings), warnings
         assert ctx.per_title.private_only_skipped is True
@@ -192,10 +192,10 @@ class TestUpgradePendingHoldsForOwnedStale:
         sd = filt.build(_entry_private_pick_plus_public_alt())
 
         with _record() as recording:
-            plan = filt.filter_downloads(sd, ArrReleases(tagged={"Priv": (100,)}), None)
+            plan = filt.filter_downloads(sd, ArrFiles(tagged={"Priv": (100,)}), None)
 
-        assert plan.seadex_dict["Fall"].urls[PUB_URL].download is False
-        assert plan.seadex_dict["Priv"].urls[PRIV_URL].download is False
+        assert plan.seadex_dict["Fall"].releases[PUB_URL].download is False
+        assert plan.seadex_dict["Priv"].releases[PRIV_URL].download is False
         warnings = _warning_texts(recording)
         assert any(STALE_NOTICE in m for m in warnings), warnings
         assert ctx.per_title.private_only_skipped is True
@@ -234,10 +234,10 @@ class TestOwnedPreferredPrivateAtMatchingSize:
         ep_list = [sonarr_ep(1, 1, size=999, release_group="Priv")]
 
         with _record() as recording:
-            plan = filt.filter_downloads(sd, ArrReleases(tagged={"Priv": (999,)}), ep_list)
+            plan = filt.filter_downloads(sd, ArrFiles(tagged={"Priv": (999,)}), ep_list)
 
-        assert plan.seadex_dict["Priv"].urls[PRIV_URL].download is False
-        assert plan.seadex_dict["Fall"].urls[PUB_URL].download is False
+        assert plan.seadex_dict["Priv"].releases[PRIV_URL].download is False
+        assert plan.seadex_dict["Fall"].releases[PUB_URL].download is False
         assert recording.events == []
         assert ctx.per_title.private_only_skipped is False
         assert ctx.per_title.private_only_stale_held is False
@@ -268,10 +268,10 @@ class TestOwnedPreferredPrivateAtMatchingSize:
         sd = filt.build(entry)
 
         with _record() as recording:
-            plan = filt.filter_downloads(sd, ArrReleases(tagged={"Priv": (999,)}), None)
+            plan = filt.filter_downloads(sd, ArrFiles(tagged={"Priv": (999,)}), None)
 
-        assert plan.seadex_dict["Priv"].urls[PRIV_URL].download is False
-        assert plan.seadex_dict["Fall"].urls[PUB_URL].download is False
+        assert plan.seadex_dict["Priv"].releases[PRIV_URL].download is False
+        assert plan.seadex_dict["Fall"].releases[PUB_URL].download is False
         assert recording.events == []
         assert ctx.per_title.private_only_skipped is False
         assert ctx.per_title.private_only_stale_held is False
@@ -305,7 +305,7 @@ class TestOwnedPreferredPrivateAtMatchingSize:
         ep_list = [sonarr_ep(1, 1, size=100, release_group="Priv")]
 
         with _record() as recording:
-            plan = filt.filter_downloads(sd, ArrReleases(tagged={"Priv": (100,)}), ep_list)
+            plan = filt.filter_downloads(sd, ArrFiles(tagged={"Priv": (100,)}), ep_list)
 
         warnings = _warning_texts(recording)
         assert any("private-only (private releases not supported)" in m for m in warnings), warnings
@@ -380,11 +380,11 @@ class TestFilterDownloadsNoticeSeam:
         ep_list = [sonarr_ep(1, 1, size=100, release_group="PrivA"), sonarr_ep(2, 1)]
 
         with _record() as recording:
-            plan = filt.filter_downloads(sd, ArrReleases(tagged={"PrivA": (100,)}), ep_list)
+            plan = filt.filter_downloads(sd, ArrFiles(tagged={"PrivA": (100,)}), ep_list)
 
-        assert plan.seadex_dict["PubA"].urls[self.PUBA_URL].download is True
-        assert plan.seadex_dict["PrivA"].urls[self.PRIVA_URL].download is False
-        assert plan.seadex_dict["PrivB"].urls[self.PRIVB_URL].download is False
+        assert plan.seadex_dict["PubA"].releases[self.PUBA_URL].download is True
+        assert plan.seadex_dict["PrivA"].releases[self.PRIVA_URL].download is False
+        assert plan.seadex_dict["PrivB"].releases[self.PRIVB_URL].download is False
         # Each SkipNotice reaches the logger at ITS level: the promoted set at
         # INFO, the truly-blocked set at WARNING.
         info = _info_texts(recording)
@@ -458,7 +458,7 @@ class TestMixedGroupKeeperPreference:
         entry = make_entry_record(anilist_id=55, torrents=(g_pub, g_priv, h_pub))
         sd = filt.build(entry)
         # The coverage-aware drop keeps G's uncovered private batch.
-        assert set(sd["G"].urls) == {PUB_URL, PRIV_URL}
+        assert set(sd["G"].releases) == {PUB_URL, PRIV_URL}
         _fill_episodes(
             sd,
             {
@@ -476,11 +476,11 @@ class TestMixedGroupKeeperPreference:
 
         # Sonarr is missing both episodes: every url flags before the reducer.
         with _record() as recording:
-            plan = filt.filter_downloads(sd, ArrReleases(), [sonarr_ep(1, 1), sonarr_ep(2, 1)])
+            plan = filt.filter_downloads(sd, ArrFiles(), [sonarr_ep(1, 1), sonarr_ep(2, 1)])
 
-        assert plan.seadex_dict["H"].urls[self.H_URL].download is True
-        assert plan.seadex_dict["G"].urls[PUB_URL].download is False
-        assert plan.seadex_dict["G"].urls[PRIV_URL].download is False
+        assert plan.seadex_dict["H"].releases[self.H_URL].download is True
+        assert plan.seadex_dict["G"].releases[PUB_URL].download is False
+        assert plan.seadex_dict["G"].releases[PRIV_URL].download is False
         assert _warning_texts(recording) == []
         assert ctx.per_title.private_only_skipped is False
 
@@ -525,9 +525,9 @@ class TestMixedGroupKeeperPreference:
             },
         )
 
-        plan = filt.filter_downloads(sd, ArrReleases(), [sonarr_ep(1, 1), sonarr_ep(2, 1)])
-        assert plan.seadex_dict["G"].urls[PUB_URL].download is True
-        assert plan.seadex_dict["G"].urls[PRIV_URL].download is True
+        plan = filt.filter_downloads(sd, ArrFiles(), [sonarr_ep(1, 1), sonarr_ep(2, 1)])
+        assert plan.seadex_dict["G"].releases[PUB_URL].download is True
+        assert plan.seadex_dict["G"].releases[PRIV_URL].download is True
 
         torrents = FakeTorrents({PUB_HASH: (AddOutcome.ADDED, "G S01 web")})
         pipe = make_grab_pipeline(
@@ -586,7 +586,7 @@ class TestSurvivingPrivateCoverage:
         )
         entry = make_entry_record(anilist_id=33, torrents=(priv_batch, pub_s1))
         sd = filt.build(entry)
-        assert set(sd["A"].urls) == {PRIV_URL, PUB_URL}
+        assert set(sd["A"].releases) == {PRIV_URL, PUB_URL}
 
         _fill_episodes(
             sd,
@@ -600,9 +600,9 @@ class TestSurvivingPrivateCoverage:
         )
 
         # Sonarr is missing BOTH episodes: the batch and the fallback both flag.
-        plan = filt.filter_downloads(sd, ArrReleases(), [sonarr_ep(1, 1), sonarr_ep(2, 1)])
-        assert plan.seadex_dict["A"].urls[PRIV_URL].download is True
-        assert plan.seadex_dict["A"].urls[PUB_URL].download is True
+        plan = filt.filter_downloads(sd, ArrFiles(), [sonarr_ep(1, 1), sonarr_ep(2, 1)])
+        assert plan.seadex_dict["A"].releases[PRIV_URL].download is True
+        assert plan.seadex_dict["A"].releases[PUB_URL].download is True
 
         torrents = FakeTorrents({PUB_HASH: (AddOutcome.ADDED, "A S01 web")})
         pipe = make_grab_pipeline(
@@ -681,10 +681,10 @@ class TestPromotionGeneralization:
         ep_list = [sonarr_ep(1, 1, size=100, release_group="Priv")]
 
         with _record() as recording:
-            plan = filt.filter_downloads(sd, ArrReleases(tagged={"Priv": (100,)}), ep_list)
+            plan = filt.filter_downloads(sd, ArrFiles(tagged={"Priv": (100,)}), ep_list)
 
-        assert plan.seadex_dict["Pub"].urls[PUB_URL].download is True
-        assert plan.seadex_dict["Priv"].urls[PRIV_URL].download is False
+        assert plan.seadex_dict["Pub"].releases[PUB_URL].download is True
+        assert plan.seadex_dict["Priv"].releases[PRIV_URL].download is False
         info = _info_texts(recording)
         assert any("grabbing public alternative Pub" in m for m in info), info
         assert _warning_texts(recording) == []
@@ -723,10 +723,10 @@ class TestPromotionGeneralization:
         sd = filt.build(self._preferred_pair_entry(73))
 
         with _record() as recording:
-            plan = filt.filter_downloads(sd, ArrReleases(tagged={"Priv": (100,)}), None)
+            plan = filt.filter_downloads(sd, ArrFiles(tagged={"Priv": (100,)}), None)
 
-        assert plan.seadex_dict["Pub"].urls[PUB_URL].download is True
-        assert plan.seadex_dict["Priv"].urls[PRIV_URL].download is False
+        assert plan.seadex_dict["Pub"].releases[PUB_URL].download is True
+        assert plan.seadex_dict["Priv"].releases[PRIV_URL].download is False
         assert _warning_texts(recording) == []
         assert ctx.per_title.private_only_skipped is False
 
@@ -800,11 +800,11 @@ class TestPromotionGeneralization:
         ]
 
         with _record() as recording:
-            plan = filt.filter_downloads(sd, ArrReleases(tagged={"M": (555, 100)}), ep_list)
+            plan = filt.filter_downloads(sd, ArrFiles(tagged={"M": (555, 100)}), ep_list)
 
-        assert plan.seadex_dict["F"].urls[self.F_URL].download is False
-        assert plan.seadex_dict["M"].urls[self.M_PUB_URL].download is False
-        assert plan.seadex_dict["M"].urls[PRIV_URL].download is True
+        assert plan.seadex_dict["F"].releases[self.F_URL].download is False
+        assert plan.seadex_dict["M"].releases[self.M_PUB_URL].download is False
+        assert plan.seadex_dict["M"].releases[PRIV_URL].download is True
         assert recording.events == []
         assert ctx.per_title.private_only_skipped is False
         assert ctx.per_title.private_only_stale_held is True
@@ -893,9 +893,9 @@ class TestEqualUnionMixedGroups:
             )
 
             # Sonarr is missing both episodes: every url flags before the reducer.
-            plan = filt.filter_downloads(sd, ArrReleases(), [sonarr_ep(1, 1), sonarr_ep(2, 1)])
-            assert plan.seadex_dict["A"].urls[self.A_PUB_URL].download is True, f"order={al_id}"
-            assert plan.seadex_dict["B"].urls[self.B_PUB_URL].download is True, f"order={al_id}"
+            plan = filt.filter_downloads(sd, ArrFiles(), [sonarr_ep(1, 1), sonarr_ep(2, 1)])
+            assert plan.seadex_dict["A"].releases[self.A_PUB_URL].download is True, f"order={al_id}"
+            assert plan.seadex_dict["B"].releases[self.B_PUB_URL].download is True, f"order={al_id}"
 
             torrents = FakeTorrents(
                 {
@@ -958,8 +958,8 @@ class TestModeSwitchResurfacesFallbackSatisfied:
                 PUB_URL: [EpisodeRecord(season=1, episode=1, size=555)],
             },
         )
-        plan = filt.filter_downloads(sd, ArrReleases(), [sonarr_ep(1, 1)])
-        assert plan.seadex_dict["Fall"].urls[PUB_URL].download is True
+        plan = filt.filter_downloads(sd, ArrFiles(), [sonarr_ep(1, 1)])
+        assert plan.seadex_dict["Fall"].releases[PUB_URL].download is True
 
         torrents = FakeTorrents({PUB_HASH: (AddOutcome.ADDED, "Fall S01")})
         pipe = make_grab_pipeline(
@@ -1014,7 +1014,7 @@ class TestModeSwitchResurfacesFallbackSatisfied:
         _fill_episodes(sd_warn, {PRIV_URL: [EpisodeRecord(season=1, episode=1, size=999)]})
         ep_list = [sonarr_ep(1, 1, size=555, release_group="Fall")]
         with _record() as recording:
-            warn_plan = warn_filt.filter_downloads(sd_warn, ArrReleases(tagged={"Fall": (555,)}), ep_list)
+            warn_plan = warn_filt.filter_downloads(sd_warn, ArrFiles(tagged={"Fall": (555,)}), ep_list)
         warnings = _warning_texts(recording)
         assert any("private-only (private releases not supported)" in m for m in warnings), warnings
 
@@ -1095,7 +1095,7 @@ class TestFolderLayoutCoverage:
         )
 
         assert set(sd) == {"Pick"}
-        assert set(sd["Pick"].urls) == {PUB_URL}
+        assert set(sd["Pick"].releases) == {PUB_URL}
 
     def test_a_listing_carrying_fewer_copies_is_not_coverage(self) -> None:
         # Two files of one size are two files: a twin carrying only one does
@@ -1110,7 +1110,7 @@ class TestFolderLayoutCoverage:
         )
 
         assert "Alt" in sd
-        assert PRIV_URL in sd["Pick"].urls
+        assert PRIV_URL in sd["Pick"].releases
 
     def test_files_seadex_named_differently_still_cover(self) -> None:
         # Real data: a per-special AB torrent and the public pack it belongs to
@@ -1126,7 +1126,7 @@ class TestFolderLayoutCoverage:
             pub_sizes=(938809391, 1464436971),
         )
 
-        assert set(sd["Pick"].urls) == {PUB_URL}
+        assert set(sd["Pick"].releases) == {PUB_URL}
 
     def test_a_different_release_at_the_same_names_is_not_coverage(self) -> None:
         # Same names, different bytes: a re-encode is not the release the
@@ -1139,7 +1139,7 @@ class TestFolderLayoutCoverage:
             pub_sizes=(200,),
         )
 
-        assert PRIV_URL in sd["Pick"].urls
+        assert PRIV_URL in sd["Pick"].releases
 
     def test_coverage_split_across_two_public_listings_still_covers(self) -> None:
         # The public side genuinely carries both of the private pick's files,

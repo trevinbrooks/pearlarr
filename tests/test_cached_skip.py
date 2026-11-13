@@ -18,9 +18,9 @@ from typing import override
 import httpx
 import pytest
 
-from pearlarr.cache import CacheRecord
+from pearlarr.cache import CachedTitleUpdate
 from pearlarr.config import Arr
-from pearlarr.leg_state import EntryTitle, RunContext
+from pearlarr.leg_state import RunContext, Title
 from pearlarr.pending_import import EntryNames
 from pearlarr.run_services import RunServices
 
@@ -44,10 +44,10 @@ class _RecordingCacheStore(FakeCacheStore):
 
     def __init__(self) -> None:
         super().__init__()
-        self.updates: list[CacheRecord] = []
+        self.updates: list[CachedTitleUpdate] = []
 
     @override
-    def update_cache(self, arr: Arr, al_id: int, cache_details: CacheRecord) -> None:
+    def update_cache(self, arr: Arr, al_id: int, cache_details: CachedTitleUpdate) -> None:
         self.updates.append(cache_details)
         super().update_cache(arr, al_id, cache_details)
 
@@ -67,9 +67,9 @@ class _RecordingReporter:
 class _BackfillCase:
     """One cached-entry backfill: the stored row, what AniList resolves, the single write, the wire calls, the name after."""
 
-    stored: CacheRecord
+    stored: CachedTitleUpdate
     anilist: str | None
-    updates: list[CacheRecord]
+    updates: list[CachedTitleUpdate]
     queries: list[int]
     name: str | None
 
@@ -488,8 +488,8 @@ class TestResolveTitle:
     def test_climbs_the_ladder(self, anilist: str | None, arr_title: str, display: str) -> None:
         run = self._run(ScriptedAniListClient(anilist), arr_title=arr_title)
 
-        assert run.resolve_title(5) == EntryTitle(
-            al_id=5, display=display, names=EntryNames(arr_title, (anilist,) if anilist else ())
+        assert run.resolve_title(5) == Title(
+            al_id=5, name=display, names=EntryNames(arr_title, (anilist,) if anilist else ())
         )
 
 
@@ -503,13 +503,13 @@ class TestNewCacheDetails:
             pytest.param(None, {}, id="fallback title is never stored"),
         ],
     )
-    def test_carries_the_name_only_when_anilist_resolved_it(self, anilist: str | None, name: CacheRecord) -> None:
+    def test_carries_the_name_only_when_anilist_resolved_it(self, anilist: str | None, name: CachedTitleUpdate) -> None:
         # A fallback label must not clobber a name a prior run stored (the merge
         # keeps the omitted field), nor persist an id form a later run would have to undo.
         entry = make_entry_record(updated_at=_FRESH)
         run = make_services()
 
-        title = EntryTitle(al_id=5, display="Series", names=EntryNames("Series", (anilist,) if anilist else ()))
+        title = Title(al_id=5, name="Series", names=EntryNames("Series", (anilist,) if anilist else ()))
 
         details = run.new_cache_details(title, entry)
 

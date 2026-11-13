@@ -10,7 +10,7 @@ from .pending_import import EntryClaim, GuardFacts, PendingImport, hydrate_pendi
 from .wait_types import ImportProbe
 
 
-class PendingRecords:
+class PendingImportStore:
     """One seam for the pending-import store: raw and hydrated views, run-list-aware writes.
 
     Binds the cache store once. The run context (whose `arr` scopes every read and whose
@@ -31,7 +31,7 @@ class PendingRecords:
     def fresh_keys(self) -> set[str]:
         """Keys of the records written THIS run, tallied as `added` and never carried-over."""
 
-        return set(self._ctx.pending_imports)
+        return set(self._ctx.grabbed_this_run)
 
     def rows(self) -> dict[str, dict[str, Any]]:
         """Every stored row, raw."""
@@ -91,7 +91,7 @@ class PendingRecords:
 
         self._put(record)
         self._put_guards(claim)
-        self._ctx.pending_imports[record.infohash] = record
+        self._ctx.grabbed_this_run[record.infohash] = record
 
     def save_with_claim(self, record: PendingImport, claim: EntryClaim) -> None:
         """`save` plus `claim`'s guard row: the write of a grab whose claim joins or refreshes a stored record."""
@@ -107,8 +107,8 @@ class PendingRecords:
         """
 
         self._put(record)
-        if record.infohash in self._ctx.pending_imports:
-            self._ctx.pending_imports[record.infohash] = record
+        if record.infohash in self._ctx.grabbed_this_run:
+            self._ctx.grabbed_this_run[record.infohash] = record
 
     def _put(self, record: PendingImport) -> None:
         """The record's row write."""
@@ -141,7 +141,7 @@ class PendingRecords:
         """Remove one torrent's record from the store and the run list."""
 
         self._store.drop_pending(self._ctx.arr, infohash)
-        self._ctx.pending_imports.pop(infohash, None)
+        self._ctx.grabbed_this_run.pop(infohash, None)
 
     def drop_unimported(self, record: PendingImport) -> None:
         """Remove the record of a torrent that left qBittorrent unimported, and have the next run check its titles.
