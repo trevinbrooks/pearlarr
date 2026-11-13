@@ -27,7 +27,7 @@ from .pending_import import PendingImport
 from .placement_types import EpisodeIndex, GrabbingTitle, Placement, episode_index
 from .planner import get_episode_keys
 from .progress import ProgressCallback
-from .releases import PlacementSkip, SeadexDict, ignore_tag_set, releases_to_grab
+from .releases import SeadexDict, SkipReason, ignore_tag_set, releases_to_grab
 from .series_listings import SeriesListings
 from .sonarr_client import AbstractSonarrClient, SonarrClient
 from .sonarr_episodes import SonarrEpisodes
@@ -469,7 +469,7 @@ class SonarrStrategy(ArrStrategy[SonarrItem]):
             aside = ", ".join(_file_and_why(p) for p in assignment.excluded)
             by_hand = ", ".join(_file_and_why(p) for p in assignment.placements if p.verdict.left_for_hand_import)
             not_grabbed_note = "" if placement.skip_reason is None else f" (not grabbed: {placement.skip_reason})"
-            note_read_failed = not placement.inputs_read and placement.skip_reason is not PlacementSkip.INPUT_UNREAD
+            note_read_failed = not placement.inputs_read and placement.skip_reason is not SkipReason.INPUT_UNREAD
             self.logger.debug(
                 f"{url}: placed {_coverage.coverage_string(list(placement.episodes)) or 'nothing'}"
                 f"{' (a read failed)' if note_read_failed else ''}{not_grabbed_note}"

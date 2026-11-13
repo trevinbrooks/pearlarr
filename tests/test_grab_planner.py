@@ -36,7 +36,7 @@ from pearlarr.arr_models import ArrFiles, SonarrEpisode
 from pearlarr.config import Arr
 from pearlarr.output import Severity
 from pearlarr.planner import GrabPlan, GrabPlanner
-from pearlarr.releases import GroupReleases, PlacementSkip, PlannedGrab, Release, ReleaseEpisode, releases_to_grab
+from pearlarr.releases import GroupReleases, PlannedGrab, Release, ReleaseEpisode, SkipReason, releases_to_grab
 
 from .builders import arr_releases, make_planner, make_release, rg_group, sonarr_ep
 
@@ -1643,7 +1643,7 @@ class TestRefusedPack:
 
     @classmethod
     def _seadex(
-        cls, skip_reason: PlacementSkip = PlacementSkip.MISNUMBERED, **siblings: GroupReleases
+        cls, skip_reason: SkipReason = SkipReason.MISNUMBERED, **siblings: GroupReleases
     ) -> dict[str, GroupReleases]:
         """The pack left for a hand import for `hold`, three files at `_SIZES` placed nowhere, beside `siblings`."""
 
@@ -1663,16 +1663,16 @@ class TestRefusedPack:
 
         return sonarr_ep(0, episode, size=size, release_group="Pack", episode_file_id=file_id)
 
-    @pytest.mark.parametrize("skip_reason", [PlacementSkip.MISNUMBERED, PlacementSkip.TITLE_REFUTED])
-    def test_every_special_holding_a_pack_file_is_in_place(self, skip_reason: PlacementSkip) -> None:
+    @pytest.mark.parametrize("skip_reason", [SkipReason.MISNUMBERED, SkipReason.TITLE_REFUTED])
+    def test_every_special_holding_a_pack_file_is_in_place(self, skip_reason: SkipReason) -> None:
         arr_episodes = [self._ours(n, size, 10 + n) for n, size in enumerate(self._SIZES, 1)]
 
         item = self._decide(self._seadex(skip_reason), arr_episodes)
 
         assert item.to_grab is False
 
-    @pytest.mark.parametrize("skip_reason", [PlacementSkip.MISNUMBERED, PlacementSkip.TITLE_REFUTED])
-    def test_an_empty_special_flags_the_pack_as_an_upgrade(self, skip_reason: PlacementSkip) -> None:
+    @pytest.mark.parametrize("skip_reason", [SkipReason.MISNUMBERED, SkipReason.TITLE_REFUTED])
+    def test_an_empty_special_flags_the_pack_as_an_upgrade(self, skip_reason: SkipReason) -> None:
         arr_episodes = [self._ours(1, 100, 11), self._ours(2, 200, 12), sonarr_ep(0, 3, episode_file_id=0)]
 
         item = self._decide(self._seadex(skip_reason), arr_episodes)

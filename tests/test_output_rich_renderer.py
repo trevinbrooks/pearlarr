@@ -36,11 +36,11 @@ from pearlarr.output import (
     ScopeKind,
     ScopeOpened,
     Severity,
-    SkipReason,
     diagnostic_text,
     diagnostic_threshold,
 )
 from pearlarr.output.console_text import INDENT
+from pearlarr.releases import SkipReason
 
 from .fakes import AsciiStringIO, strip_ansi
 

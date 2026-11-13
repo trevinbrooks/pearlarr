@@ -73,7 +73,6 @@ from pearlarr.output import (
     ScopeKind,
     ScopeOpened,
     Severity,
-    SkipReason,
     StarterConfigWritten,
     StyledValue,
     TitleDetail,
@@ -90,7 +89,7 @@ from pearlarr.output import (
 from pearlarr.output.events import TitleState
 from pearlarr.output.line_renderers import _BACKUP_STAMP_FORMAT, _JSON_SKIP, _TEXT_SKIP
 from pearlarr.output.trace import CapturedTrace
-from pearlarr.releases import AnotherTitlesCounts
+from pearlarr.releases import AnotherTitlesCounts, SkipReason
 from pearlarr.wait_types import Outcome, OutcomeKind
 
 from .builders import files_left_for_hand_import, order_only_hand_import_files

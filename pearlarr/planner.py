@@ -853,7 +853,7 @@ class GrabPlanner:
         seadex_rg: str,
         release: Release,
     ) -> None:
-        """Decide a pack the placement refused (`GrabHold.hand_import`), by what its window holds.
+        """Decide a pack the placement refused (`SkipReason.left_for_hand_import`), by what its window holds.
 
         Flips `url_item.download` in place. The pack is in place once every window episode holds its file at a
         listed size or a covering release's (`_window_in_place`), the shape a hand import leaves. Otherwise it is

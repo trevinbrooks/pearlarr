@@ -48,7 +48,6 @@ from pearlarr.output import (
     ScopeOpened,
     Severity,
     SeverityCounter,
-    SkipReason,
     StyledValue,
     TitleDetail,
     TitleHeader,
@@ -57,7 +56,7 @@ from pearlarr.output import (
 from pearlarr.output.console_text import ConsoleRender, KeyValue, SeparatorRule, StyledLine, TitledRule, group_highlight
 from pearlarr.output.events import TitleState
 from pearlarr.output.scan_lines import _TIP_TEXTS, ScanEvent
-from pearlarr.releases import AnotherTitlesCounts, SeadexDict
+from pearlarr.releases import AnotherTitlesCounts, SeadexDict, SkipReason
 from pearlarr.reporter import _TIP_PRECEDENCE, RunReporter
 from pearlarr.torrent_service import AddStatus, GrabResult
 from pearlarr.wait_types import ImportWaitMode, PendingImportState
