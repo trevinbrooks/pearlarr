@@ -9,15 +9,16 @@ from .releases import ReleaseEpisode
 def format_episode_ranges(episode_numbers: Iterable[int]) -> str:
     """Condense one season's episode numbers into a readable range string.
 
-    Contiguous runs are collapsed (e.g. [1, 2, 3] -> "E01-E03"), lone episodes
-    are kept as-is (e.g. [5] -> "E05"), and gaps split into multiple comma-separated ranges (e.g. [1, 2, 3, 7, 8] -> "E01-E03, E07-E08").
+    Contiguous ranges are collapsed (e.g. [1, 2, 3] -> "E01-E03"), lone episodes
+    are kept as-is (e.g. [5] -> "E05"), and gaps split into multiple comma-separated ranges (e.g. [1, 2, 3, 7, 8] ->
+    "E01-E03, E07-E08").
     """
 
     episodes = sorted(set(episode_numbers))
     if not episodes:
         return ""
 
-    # Walk the sorted episodes, breaking into runs wherever they aren't
+    # Walk the sorted episodes, breaking into ranges wherever they aren't
     # consecutive
     runs: list[tuple[int, int]] = []
     run_start = run_end = episodes[0]
@@ -33,14 +34,14 @@ def format_episode_ranges(episode_numbers: Iterable[int]) -> str:
 
 
 def format_episode_coverage(episodes: list[ReleaseEpisode]) -> list[tuple[str, str]] | None:
-    """Summarize per-season Sonarr episode coverage over a list of EpisodeRecord, whatever the source.
+    """Summarize per-season Sonarr episode coverage over a list of `ReleaseEpisode`, whatever the source.
 
-    The records may come from a torrent's `url_item` episodes or be built from
+    The episodes may come from a release's `episodes` or be built from
     a Sonarr ep_list. The summary is the same either way.
 
     Returns a list of (season_label, episode_ranges) tuples, one per season
-    present in the records, ordered by season. The season label is e.g. "S01"
-    and the episode ranges condense contiguous runs, e.g. "E01-E12" or
+    present in the episodes, ordered by season. The season label is e.g. "S01"
+    and the episode ranges condense contiguous ranges, e.g. "E01-E12" or
     "E01-E03, E07-E12" for a season with a gap, or "E05" for a lone episode.
 
     Returns None when there is no parsed episode info (e.g., Radarr movies,
@@ -84,11 +85,11 @@ def episodes_from_ep_list(
     ep_list: list[SonarrEpisode] | None,
     missing_only: bool = False,
 ) -> list[ReleaseEpisode]:
-    """Convert a Sonarr ep_list into `ReleaseEpisode` coverage records.
+    """Convert a Sonarr ep_list into coverage `ReleaseEpisode`s.
 
     Sonarr episodes carry "seasonNumber"/"episodeNumber". The coverage helpers
     read `ReleaseEpisode.season`/`.episode`. `missing_only` keeps only missing
-    episodes (no file on disk), to summarize what is still needed.
+    episodes (with no file), to summarize what is still needed.
     """
 
     episodes: list[ReleaseEpisode] = []

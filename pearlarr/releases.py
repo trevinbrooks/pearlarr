@@ -1,4 +1,4 @@
-"""What SeaDex lists and what Pearlarr plans to grab: release groups, urls, skip reasons, and episode keys."""
+"""What SeaDex lists and what Pearlarr plans to grab: release groups, releases, skip reasons, and episode keys."""
 
 from collections.abc import Iterable
 from dataclasses import dataclass, field
@@ -12,7 +12,7 @@ from .tvdb_orders import order_display_name
 
 @dataclass
 class ReleaseEpisode:
-    """One parsed `{season, episode, size}` record for a SeaDex file."""
+    """One parsed `{season, episode, size}` triple for a SeaDex file."""
 
     season: int | None = None
     episode: int | None = None
@@ -22,8 +22,8 @@ class ReleaseEpisode:
 def normalized_infohash(raw: str | None) -> str | None:
     """The one spelling of an infohash: stripped and lowercase, a blank one None.
 
-    An empty `hashes` filter matches every torrent in the qBittorrent dedup, and the pending store keys on the hash
-    byte-exact.
+    An empty `hashes` filter matches every torrent in the qBittorrent dedup, and the pending import store keys on the
+    hash byte-exact.
     """
 
     if raw is None:
@@ -50,28 +50,29 @@ class SkipReason(StrEnum):
     UNSUPPORTED_TRACKER = auto()
     TRACKER_NOT_SELECTED = auto()
     MISNUMBERED = "misnumbered"
-    """A pack with a `PlacementVerdict.MISNUMBERED` file of the entry's own window: a file whose own numbers
-    disagree, or a specials pack numbered another way than its listing. Grabbed, it would import onto the wrong
-    episodes, so it's left for a hand import. Also a pack with a file another TVDB order reads outside the entry's
-    window, where no listed title placed it (`PlacementVerdict.OTHER_ORDER_OUTSIDE_WINDOW`), and nothing of it placed on
-    the entry."""
+    """A torrent with a `PlacementVerdict.MISNUMBERED` file of the title's window: a file whose numbers disagree,
+    or a specials torrent numbered another way than its listing. Grabbed, it would import onto the wrong episodes, so
+    it's left for a hand import. Also a torrent with a file another TVDB order reads outside the title's window, where
+    no listed title placed it (`PlacementVerdict.OTHER_ORDER_OUTSIDE_WINDOW`), and nothing of it placed on the
+    title."""
     TITLE_REFUTED = "titles refute its numbers"
-    """A pack whose file titles contradict its numbers, with nothing of it placed on the entry
+    """A torrent whose files' episode titles contradict their numbers, with nothing of it placed on the title
     (`PlacementVerdict.TITLE_REFUTED`): left for a hand import."""
     PLACED_ELSEWHERE = "files place under another title"
-    """A url none of whose files land on the entry, while some are another title's SeaDex lists the torrent with:
-    placed or left for a hand import by that title's window, or stored on an episode its window holds. That title's
+    """A release none of whose files land on the title, while some are another title's SeaDex lists the torrent
+    with: placed or left for a hand import by that title's window, or stored on an episode of its window. That title's
     grab imports the placed ones, unless the title is in `ignore_anilist_ids`, which is never grabbed for. Not a
-    hand-import hold: the url as a whole isn't the entry's, and only its files nothing placed are a hand import."""
+    hand-import skip: the release as a whole isn't the title's, and only its files nothing placed are a hand import."""
     INPUT_UNREAD = "a read failed"
-    """A SeaDex listing for the series, Sonarr's parse of any of the url's video files while one is left to place,
-    or the episode list of a series the record claims couldn't be read this run. Without the listing nothing is
-    placed, since another title it names may own some of the files. Grabbing now could seed a file onto the wrong
-    episode for good, or leave one unplaced that the import never places, so the url waits for the next run."""
+    """A SeaDex listing for the series, Sonarr's parse of any of the release's video files while one is left to
+    place, or the episode list of a series the pending import claims couldn't be read this run. Without the listing
+    nothing is placed, since another title it names may have some of the files. Grabbing now could place a file on the
+    wrong episode for good, or leave one unplaced that the import never places, so the release waits for the next
+    run."""
 
     @property
     def left_for_hand_import(self) -> bool:
-        """Whether the pack is left for a hand import."""
+        """Whether the torrent is left for a hand import."""
 
         return self in _HAND_IMPORT_SKIPS
 
@@ -81,26 +82,26 @@ _HAND_IMPORT_SKIPS = frozenset({SkipReason.MISNUMBERED, SkipReason.TITLE_REFUTED
 
 @dataclass(frozen=True, slots=True, kw_only=True)
 class AnotherTitlesCounts:
-    """How the files of a url held as another title's (`SkipReason.PLACED_ELSEWHERE`) split, for its skip line.
+    """How the files of a release skipped as another title's (`SkipReason.PLACED_ELSEWHERE`) split, for its skip line.
 
     Built by keyword, so the two counts can't silently transpose.
     """
 
     another_titles: int
-    """The files another title SeaDex lists the torrent with holds: placed or left for a hand import by its window,
-    or stored on its episodes."""
+    """The files that are another title's, one SeaDex lists the torrent with: placed or left for a hand import by
+    its window, or stored on its episodes."""
 
     unplaced: int
     """The other files, which nothing placed."""
 
 
 NO_ANOTHER_TITLES_COUNTS = AnotherTitlesCounts(another_titles=0, unplaced=0)
-"""The counts of a url not held as another title's."""
+"""The counts of a release not skipped as another title's."""
 
 
 @dataclass
 class Release:
-    """One SeaDex url record within a release group."""
+    """One SeaDex release within a release group."""
 
     url: str = ""
     files: list[str] = field(default_factory=list[str])
@@ -110,27 +111,27 @@ class Release:
     is_public: bool = True
     is_dual_audio: bool = False
     infohash: str | None = None
-    """SeaDex's hash for the url, the key of its listing."""
+    """SeaDex's hash for the release, the key of its listing."""
     cross_seed_hash: str | None = None
-    """The hash of a torrent already in qBittorrent that holds exactly this url's files under another hash.
-    `TorrentService.mark_cross_seeds` sets it before anything reads the item."""
+    """The hash of a torrent already in qBittorrent with exactly this release's files under another hash.
+    `TorrentService.mark_cross_seeds` sets it before anything reads the release."""
     to_grab: bool = False
     is_fallback: bool = False
-    """A public alternative added because the preferred release is private-only."""
+    """A fallback, grabbed because the preferred release is private-only."""
     is_upgrade: bool = False
-    """A grab over files the Arr holds at a stale size or on too many episodes. Never set without `download`."""
+    """A grab over files the Arr has at an outdated size or on too many episodes. Never set without `to_grab`."""
     episodes: list[ReleaseEpisode] = field(default_factory=list[ReleaseEpisode])
     skip_reason: SkipReason | None = None
-    """Why the placement refuses to grab the url this run (`attach_placements` sets it), None when it may be."""
+    """Why the placement skips the release this run (`attach_placements` sets it), None when it may be grabbed."""
     another_titles_counts: AnotherTitlesCounts = NO_ANOTHER_TITLES_COUNTS
-    """How the url's files split when it's held as another title's (`PlacedRelease.another_titles_counts`)."""
+    """How the release's files split when it's skipped as another title's (`PlacedRelease.another_titles_counts`)."""
 
     def __post_init__(self) -> None:
         self.infohash = normalized_infohash(self.infohash)
 
     @property
     def qbit_hash(self) -> str | None:
-        """The hash the url's torrent goes by in qBittorrent: the cross-seed's when one holds its files, else SeaDex's."""
+        """The hash the release's torrent goes by in qBittorrent: the cross-seed's when one has its files, else SeaDex's."""
 
         # Invariant: a url's record is keyed by the torrent that holds its files in qBittorrent, which is SeaDex's
         # torrent unless a cross-seed was already there. The wait and the import read the record by that key.
@@ -138,19 +139,19 @@ class Release:
 
     @property
     def left_for_hand_import(self) -> bool:
-        """Whether the placement left the url's pack for a hand import (`SkipReason.left_for_hand_import`)."""
+        """Whether the placement left the release's torrent for a hand import (`SkipReason.left_for_hand_import`)."""
 
         return self.skip_reason is not None and self.skip_reason.left_for_hand_import
 
     def plan_grab(self, *, upgrade: bool = False) -> None:
-        """Mark the url to grab, `upgrade` marking a replacement of held files. Never clears an upgrade already set."""
+        """Mark the release to grab, `upgrade` marking a replacement of the arr's files. Never unsets an upgrade."""
 
         self.to_grab = True
         if upgrade:
             self.is_upgrade = True
 
     def drop_grab(self) -> None:
-        """Clear the grab. `upgrade` clears with `download`: it describes the grab, so it must never outlive it."""
+        """Clear the grab. `is_upgrade` clears with `to_grab`: it describes the grab, so it must never outlive it."""
 
         self.to_grab = False
         self.is_upgrade = False
@@ -158,12 +159,12 @@ class Release:
 
 @dataclass
 class GroupReleases:
-    """One SeaDex release-group record, keyed by url under `urls`."""
+    """One SeaDex release group's releases, keyed by url under `releases`."""
 
     releases: dict[str, Release] = field(default_factory=dict[str, Release])
     tags: frozenset[Tag] = field(default_factory=frozenset[Tag])
     all_episodes: list[ReleaseEpisode] | None = None
-    """`None` until the episode parser has run, distinct from an empty list (it ran and found nothing)."""
+    """`None` until `attach_placements` has run, distinct from an empty list (it ran and found nothing)."""
 
 
 SeadexDict = dict[str, GroupReleases]
@@ -171,20 +172,20 @@ SeadexDict = dict[str, GroupReleases]
 
 
 class PlannedGrab(NamedTuple):
-    """One url flagged to grab that carries an infohash."""
+    """One release marked to grab that carries an infohash."""
 
     group: str
     """The release group's name, the key of `SeadexDict`."""
     url: str
     """The key under `GroupReleases.releases`."""
     item: Release
-    """The url's item, the flag and file list the planner read."""
+    """The release, the `to_grab` and file list the planner read."""
     qbit_hash: str
     """The hash its torrent goes by in qBittorrent (`Release.qbit_hash`), lowercase."""
 
 
 def releases_to_grab(seadex_dict: SeadexDict) -> list[PlannedGrab]:
-    """The urls flagged to grab that carry an infohash. Narrow at the riders, never here."""
+    """The releases marked to grab that carry an infohash. Narrow at the callers, never here."""
 
     return [
         PlannedGrab(srg, url, release, release.qbit_hash)
@@ -194,9 +195,9 @@ def releases_to_grab(seadex_dict: SeadexDict) -> list[PlannedGrab]:
     ]
 
 
-# Folded into the config's selection digest: bump when the release-selection
-# rules change in code, or a fix leaves earlier verdicts in doubt, so every
-# cached verdict re-checks once after an upgrade.
+# Included in the config's selection hash: bump when the release-selection
+# rules change in code, or a fix leaves earlier decisions in doubt, so every
+# cached title re-checks once after an upgrade.
 SELECTION_RULES_VERSION: int = 17
 
 SONARR_MISSING_KEY: int = 999
@@ -204,7 +205,7 @@ SONARR_MISSING_KEY: int = 999
 
 
 class EpisodeKey(NamedTuple):
-    """The folded `(season, episode)` index key, always concrete ints."""
+    """The converted `(season, episode)` index key, always concrete ints."""
 
     season: int
     episode: int
@@ -233,7 +234,7 @@ class OrderOnlyKey:
         return f"{order_display_name(self.order)} {self.key.label}"
 
     def to_json(self) -> dict[str, Any]:
-        """The plain dict persisted inside a pending record."""
+        """The plain dict persisted inside a pending import."""
 
         return {"order": self.order, "season": self.key.season, "episode": self.key.episode}
 

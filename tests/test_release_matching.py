@@ -44,7 +44,7 @@ class TestFormatEpisodeRanges:
 
 
 class TestGetEpisodeKeys:
-    """`get_episode_keys` builds a `(season, episode)` set from episode records, missing fields becoming `(None, None)`."""
+    """`get_episode_keys` builds a `(season, episode)` set from release episodes, absent fields becoming `(None, None)`."""
 
     def test_builds_season_episode_pairs(self) -> None:
         eps = [ReleaseEpisode(season=1, episode=1), ReleaseEpisode(season=1, episode=2)]
@@ -91,13 +91,13 @@ class TestGetSameFilesGroups:
 class TestEpisodeCoverage:
     """`episode_coverage` indexes each Sonarr-known episode's casefolded covering groups.
 
-    A dict of one group short-circuits to the empty index. A group with a url
-    the placement put on none of the entry's episodes lands in `blanket`
+    A dict of one group short-circuits to the empty index. A group with a release
+    the placement put on none of the title's episodes lands in `blanket`
     instead of a per-episode key.
     """
 
     def test_a_single_group_indexes_its_own_placed_episodes(self) -> None:
-        # No sibling to excuse a mismatch, but a refused pack of the group reads its placed episodes here.
+        # No sibling to excuse a mismatch, but a skipped torrent of the group reads its placed episodes here.
         seadex = {
             "A": GroupReleases(
                 releases={"u": Release(episodes=[ReleaseEpisode(season=1, episode=1)])},
@@ -116,13 +116,13 @@ class TestEpisodeCoverage:
         }
         result = episode_coverage(seadex, {EpisodeKey(1, 1): sonarr_ep(1, 1)})
         assert result.by_key[EpisodeKey(1, 1)] == {"era-raws"}
-        # No placed record -> the group blanket-covers every episode
+        # No placed episode -> the group blanket-covers every episode
         assert result.blanket == {"other"}
 
     def test_a_record_outside_the_index_never_blankets(self) -> None:
-        # The placement only ever records the entry's own episodes, so this input cannot
-        # arise. The index guard still keeps a foreign key out, and a url with records
-        # never blankets: a record is proof of what the url covers.
+        # The placement only ever records the title's own episodes, so this input cannot
+        # arise. The index guard still keeps a key outside the index out, and a release with placed
+        # episodes never blankets: a placed episode is proof of what the release covers.
         seadex = {
             "A": GroupReleases(
                 releases={"u": Release(episodes=[ReleaseEpisode(season=1, episode=99)])},
@@ -138,9 +138,9 @@ class TestEpisodeCoverage:
 
     def test_blank_group_name_is_indexed_nowhere(self) -> None:
         # PIN: a group whose name normalizes to None (a blank name) must not
-        # enter the blanket or any per-episode set. An untagged on-disk file's
-        # group also normalizes to None, so indexing it would read every
-        # untagged file as covered and silently suppress its grabs.
+        # enter the blanket or any per-episode set. A file the arr has with no
+        # group normalizes to None too, so indexing it would read every
+        # no-group file as covered and silently suppress its grabs.
         seadex = {
             "": GroupReleases(
                 releases={"u": Release(episodes=[]), "u2": Release(episodes=[ReleaseEpisode(1, 1)])},

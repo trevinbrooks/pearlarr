@@ -1,7 +1,7 @@
 # pyright: strict
-"""Direct tests for the tracker HTML/feed parsers in `torrent`.
+"""Direct tests for the tracker HTML/feed parsers in `tracker_links`.
 
-The three `get_*_torrent` helpers turn a release URL into `(download_url, title)`:
+The three `fetch_*_link` helpers turn a release URL into a `TrackerLink` (link, torrent name):
 Nyaa from one HEAD on its .torrent, AnimeTosho from its page and JSON feed,
 RuTracker from its page. Each takes an `httpx.Client`, so they are driven over a
 `respx`-mocked boundary, the pages with saved HTML fixtures. The documented error raises
@@ -30,7 +30,7 @@ from pearlarr.web_client import get_with_retries, head_with_retries
 
 _TORRENT_FIXTURES = Path(__file__).parent / "fixtures" / "torrent"
 
-# The titles the saved HTML fixtures carry (so a test asserts the exact scrape).
+# The torrent names the saved HTML fixtures carry (so a test asserts the exact scrape).
 _NYAA_TITLE = "[Group] Cool Anime - 01 [1080p]"
 _NYAA_LINK = "https://nyaa.si/download/1234567.torrent"
 _ANIMETOSHO_TITLE = "[Erai-raws] Cool Anime - 01 [1080p][Multiple Subtitle]"
@@ -57,7 +57,7 @@ def _stub_retry_sleep(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(torrent, "get_with_retries", _no_sleep_get)
 
 
-# --- Nyaa (build the .torrent link, read the title off its download header) ---
+# --- Nyaa (build the .torrent link, read the torrent name off its download header) ---
 
 
 def _nyaa_disposition(filename: str) -> dict[str, str]:
@@ -69,7 +69,7 @@ def _nyaa_disposition(filename: str) -> dict[str, str]:
 
 @respx.mock
 def test_get_nyaa_torrent_reads_the_title_off_one_head() -> None:
-    """The link is built from the release number and the title is its download filename, from one HEAD."""
+    """The link is built from the release number and the torrent name is its download filename, from one HEAD."""
 
     head = respx.head(_NYAA_LINK).respond(headers=_nyaa_disposition(f"{_NYAA_TITLE}.torrent"))
 
@@ -82,7 +82,7 @@ def test_get_nyaa_torrent_reads_the_title_off_one_head() -> None:
 
 @respx.mock
 def test_get_nyaa_torrent_decodes_a_non_ascii_title() -> None:
-    """The title comes from the header's UTF-8 `filename*` form, so a non-ASCII name survives."""
+    """The torrent name comes from the header's UTF-8 `filename*` form, so a non-ASCII name survives."""
 
     respx.head(_NYAA_LINK).respond(headers=_nyaa_disposition("[Group] クールアニメ - 01.torrent"))
 
@@ -181,12 +181,12 @@ def test_get_nyaa_torrent_deleted_release_raises_http_error() -> None:
         fetch_nyaa_link("https://nyaa.si/view/1234567", client=httpx.Client())
 
 
-# --- AnimeTosho (scrape the page title, then look it up in the JSON feed) ----
+# --- AnimeTosho (scrape the torrent name, then look it up in the JSON feed) ---
 
 
 @respx.mock
 def test_get_animetosho_torrent_success() -> None:
-    """The scraped page title plus the feed entry whose `link` matches the URL yield `(torrent_url, title)`."""
+    """The scraped torrent name plus the feed element whose `link` matches the URL yield `(torrent_url, title)`."""
 
     page_url = "https://animetosho.org/view/cool-anime-01.123456"
     feed_torrent = "https://animetosho.org/storage/torrent/abc/cool-anime-01.torrent"
@@ -205,7 +205,7 @@ def test_get_animetosho_torrent_success() -> None:
 
 @respx.mock
 def test_get_animetosho_torrent_no_feed_match_returns_none_url() -> None:
-    """When no feed entry's `link` matches the page URL, the download URL is `None` but the scraped title is still returned."""
+    """When no feed element's `link` matches the page URL, the .torrent link is `None` but the scraped torrent name is still returned."""
 
     page_url = "https://animetosho.org/view/cool-anime-01.123456"
 
@@ -221,7 +221,7 @@ def test_get_animetosho_torrent_no_feed_match_returns_none_url() -> None:
 
 @respx.mock
 def test_get_animetosho_torrent_non_str_url_folds_to_none() -> None:
-    """A matching feed entry with a junk (non-str) `torrent_url` yields `None` instead of leaking the junk value downstream as a fake download URL."""
+    """A matching feed element with a junk (non-str) `torrent_url` yields `None` instead of leaking the junk value downstream as a fake .torrent link."""
 
     page_url = "https://animetosho.org/view/cool-anime-01.123456"
 
@@ -296,7 +296,7 @@ def test_get_animetosho_torrent_non_list_json_is_a_parse_error() -> None:
 
 @respx.mock
 def test_get_rutracker_torrent_builds_magnet() -> None:
-    """The RuTracker parser scrapes the maintitle and builds the magnet from the hash, the fixed announce, and the title as `dn`."""
+    """The RuTracker parser scrapes the maintitle and builds the magnet from the hash, the fixed announce, and the torrent name as `dn`."""
 
     url = "https://rutracker.org/forum/viewtopic.php?t=1234567"
     infohash = "abcdef0123456789abcdef0123456789abcdef01"

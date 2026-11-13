@@ -19,8 +19,8 @@ def _rec(al_id: int) -> EntryRecord:
 class FakeSeaDex:
     """Stands in for `SeaDexEntry`: `from_filter` (batch) + `from_id` (single).
 
-    `filter_error` / `from_id_error` fail every call with that error (a full
-    outage). `filter_blips` / `from_id_blips` fail just the first N calls then
+    `filter_error` / `from_id_error` fail every call with that error (SeaDex
+    fully unreachable). `filter_blips` / `from_id_blips` fail just the first N calls then
     recover (a transient blip the retry absorbs).
     """
 
@@ -90,10 +90,10 @@ def _status_error(status: int, location: str | None = None) -> httpx.HTTPStatusE
 
 
 class TestSeaDexPrefetch:
-    """`prefetch` batches entries so `entry` serves cache hits and known-absent misses without a fallback.
+    """`prefetch` batches entries so `entry` serves cache hits and known-absent ids without a per-id call.
 
-    Only unprefetched ids fall back to `from_id`, and a single failed batch
-    chunk retries silently before an outage is declared.
+    Only unprefetched ids go to `from_id`, and a single failed batch
+    chunk retries silently before SeaDex is marked unreachable.
     """
 
     def test_prefetch_serves_from_cache_without_from_id(self) -> None:
@@ -103,7 +103,7 @@ class TestSeaDexPrefetch:
         assert len(fake.filter_calls) == 1  # one batch
         assert gateway.entry(1) is fake.entries[1]
         assert gateway.entry(2) is fake.entries[2]
-        assert fake.from_id_calls == []  # never fell back to per-id
+        assert fake.from_id_calls == []  # never called per-id
 
     def test_batch_emits_or_ed_alid_filter(self) -> None:
         # Drift guard: pins the exact OR-filter syntax prefetch emits - the format
@@ -120,7 +120,7 @@ class TestSeaDexPrefetch:
         gateway = _gateway(fake)
         gateway.prefetch([1, 2])  # 2 has no SeaDex entry
         assert gateway.entry(2) is SeaDexNoEntry.NOT_FOUND
-        assert fake.from_id_calls == []  # known-absent -> no fallback call
+        assert fake.from_id_calls == []  # known-absent -> no per-id call
 
     def test_second_prefetch_skips_known_absent_id(self) -> None:
         fake = FakeSeaDex({1: _rec(1)})  # id 2 has no SeaDex entry
@@ -130,7 +130,7 @@ class TestSeaDexPrefetch:
         gateway.prefetch([1, 2])  # both known: 1 cached, 2 prefetched-absent
         assert len(fake.filter_calls) == n  # no re-fetch of known ids
         assert gateway.entry(2) is SeaDexNoEntry.NOT_FOUND
-        assert fake.from_id_calls == []  # never fell back to per-id
+        assert fake.from_id_calls == []  # never called per-id
 
     def test_unprefetched_id_falls_back_to_from_id(self) -> None:
         fake = FakeSeaDex({9: _rec(9)})
@@ -146,7 +146,7 @@ class TestSeaDexPrefetch:
 
     def test_transient_batch_blip_recovers_on_retry(self) -> None:
         # A single failed batch (one 502 among many) is retried immediately and
-        # silently: the run keeps its SeaDex lookups, no outage, no warning.
+        # silently: the run keeps its SeaDex lookups, SeaDex stays reachable, no warning.
         ids = list(range(1, SEADEX_BATCH_SIZE + 6))  # two batches
         fake = FakeSeaDex({i: _rec(i) for i in ids}, filter_blips=1)
         gateway = _gateway(fake)
@@ -161,9 +161,9 @@ class TestSeaDexPrefetch:
         assert diagnostic_messages(recording, Severity.WARNING) == []
 
     def test_batch_outage_warns_once_and_short_circuits(self) -> None:
-        # A chunk failing TWICE (retry exhausted) declares the outage: it warns
+        # A chunk failing TWICE (retry exhausted) marks SeaDex unreachable: it warns
         # once, later batches never hit the network, and every entry() degrades
-        # straight to an UNREACHABLE miss with zero from_id calls.
+        # straight to an UNREACHABLE `SeaDexNoEntry` with zero from_id calls.
         ids = list(range(1, SEADEX_BATCH_SIZE * 2 + 6))  # three batches
         fake = FakeSeaDex({i: _rec(i) for i in ids}, filter_error=httpx.ConnectError("down"))
         gateway = _gateway(fake)
@@ -176,7 +176,7 @@ class TestSeaDexPrefetch:
         warnings = diagnostic_messages(recording, Severity.WARNING)
         assert len(warnings) == 1
         assert "SeaDex request failed (ConnectError)" in warnings[0]
-        # The per-id fallback is muted too: no fresh timeout per title.
+        # The per-id call is muted too: no fresh timeout per title.
         assert gateway.entry(ids[0]) is SeaDexNoEntry.UNREACHABLE
         assert fake.from_id_calls == []
         assert len(diagnostic_messages(recording, Severity.WARNING)) == 1  # still just the one
@@ -201,7 +201,7 @@ class TestSeaDexPrefetch:
         assert f"SeaDex request failed ({cause})" in warning
 
     def test_outage_prefetch_still_drives_progress_to_completion(self) -> None:
-        # The cockpit sink must not hang on a mid-prefetch outage: every chunk
+        # The boot step sink must not hang when SeaDex turns unreachable mid-prefetch: every chunk
         # still reports, ending at 1.0.
         ids = list(range(1, SEADEX_BATCH_SIZE + 6))  # two batches
         fake = FakeSeaDex({}, filter_error=httpx.ConnectError("down"))
@@ -212,8 +212,8 @@ class TestSeaDexPrefetch:
         assert rec.calls[-1] == (1.0, f"{len(ids)}/{len(ids)}")
 
     def test_failed_chunk_ids_are_not_marked_absent(self) -> None:
-        # An id in a failed chunk is a transient skip, never a remembered
-        # "no entry": a later prefetch still counts it as missing work (it
+        # An id in a failed chunk is transiently unread, never a remembered
+        # "no entry": a later prefetch still counts it as work to do (it
         # stays out of the prefetched set) rather than returning 0.
         fake = FakeSeaDex({1: _rec(1)}, filter_error=httpx.ConnectError("down"))
         gateway = _gateway(fake)
@@ -221,8 +221,8 @@ class TestSeaDexPrefetch:
         assert gateway.prefetch([1]) == 1
 
     def test_single_lookup_timeout_degrades_to_outage_and_warns_once(self) -> None:
-        # The module contract: a SeaDex outage degrades to an UNREACHABLE miss. A
-        # ReadTimeout on the per-id fallback (httpx.HTTPError, not just
+        # The module contract: an unreachable SeaDex degrades to an UNREACHABLE `SeaDexNoEntry`. A
+        # ReadTimeout on the per-id call (httpx.HTTPError, not just
         # ConnectError) must not unwind the run - and a SECOND lookup
         # short-circuits without another network attempt or warning.
         fake = FakeSeaDex({1: _rec(1), 2: _rec(2)}, from_id_error=httpx.ReadTimeout("slow"))
@@ -237,9 +237,9 @@ class TestSeaDexPrefetch:
         assert len(diagnostic_messages(recording, Severity.WARNING)) == 1
 
     def test_single_lookup_blip_recovers_on_retry(self) -> None:
-        # A lone transient blip on the per-id fallback is retried immediately
-        # and silently, mirroring the batch path: the entry is served, no
-        # outage, no warning.
+        # A lone transient blip on the per-id call is retried immediately
+        # and silently, mirroring the batch path: the entry is served, SeaDex
+        # stays reachable, no warning.
         fake = FakeSeaDex({1: _rec(1)}, from_id_blips=1)
         gateway = _gateway(fake)
         recording = install_recording_hub()
@@ -251,7 +251,7 @@ class TestSeaDexPrefetch:
 
     def test_single_lookup_double_blip_declares_outage(self) -> None:
         # The retry absorbs exactly one blip: a lookup failing twice flips the
-        # run-wide outage flag with the single batch-path-style warning.
+        # run-wide unreachable flag with the single batch-path-style warning.
         fake = FakeSeaDex({1: _rec(1)}, from_id_blips=2)
         gateway = _gateway(fake)
         recording = install_recording_hub()

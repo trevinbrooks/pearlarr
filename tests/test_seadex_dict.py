@@ -1,9 +1,9 @@
 # pyright: strict
 """Characterization tests for `SeadexReleaseFilter.build` (entry -> release dict).
 
-This is the SeaDexGateway logic (the engine reaches it via `get_seadex_dict`):
+This is the SeadexReleaseFilter logic (the arr run reaches it via `get_seadex_dict`):
 tracker filtering, the prefer_dual_audio / want_best narrowing, the is_public
-computation, and the per-group private-url drop.
+computation, and the per-group private-release drop.
 """
 
 from collections import Counter
@@ -77,7 +77,7 @@ def _entry(*torrents: TorrentRecord) -> EntryRecord:
 class TestGetSeadexDict:
     """`make_release_filter`'s `build` narrows candidates by tracker, tags, want_best, and dual-audio.
 
-    A private url is dropped only when a public copy of the same group survives.
+    A private release is dropped only when a public copy of the same group survives.
     """
 
     def test_filters_out_unselected_trackers(self) -> None:
@@ -184,7 +184,7 @@ class TestGetSeadexDict:
 
     def test_keeps_private_only_group(self) -> None:
         # A group with no public option is kept here. It's only dropped later in
-        # reduce_overlapping_grabs if the Arr already has a match.
+        # reduce_overlapping_grabs if the Arr already owns it.
         filt = make_release_filter(private_releases="warn", want_best=False, prefer_dual_audio=False)
         entry = _entry(
             _torrent(release_group="A", url="priv", tracker=Tracker.ANIMEBYTES),
@@ -194,7 +194,7 @@ class TestGetSeadexDict:
 
 
 class TestPrivateFallback:
-    """`private_releases: fallback` - the public-alternative pool added by `build`."""
+    """`private_releases: fallback` - the public fallback pool added by `build`."""
 
     def test_private_only_preferred_adds_public_fallback(self) -> None:
         filt = make_release_filter(private_releases="fallback", want_best=True, prefer_dual_audio=False)
@@ -203,8 +203,8 @@ class TestPrivateFallback:
             _torrent(release_group="Alt", url="pub", tracker=Tracker.NYAA),
         )
         result = filt.build(entry)
-        # The private preferred pick stays (for the already-have check). The best
-        # public alternative rides along, marked as the fallback.
+        # The private preferred release stays (for the already-have check). The best
+        # public release is added beside it, marked as the fallback.
         assert set(result) == {"Best", "Alt"}
         assert result["Best"].releases["priv"].is_fallback is False
         assert result["Alt"].releases["pub"].is_fallback is True
@@ -220,7 +220,7 @@ class TestPrivateFallback:
     def test_mixed_preferred_adds_fallback_for_private_only_group(self) -> None:
         # A private-only preferred group triggers the pool even when another
         # preferred group is public (the gate is per-group, not per-entry). The
-        # public preferred pick is NOT marked as a fallback.
+        # public preferred release is NOT marked as a fallback.
         filt = make_release_filter(private_releases="fallback", want_best=True, prefer_dual_audio=False)
         entry = _entry(
             _torrent(release_group="PrivBest", url="priv", tracker=Tracker.ANIMEBYTES, is_best=True),
@@ -233,9 +233,9 @@ class TestPrivateFallback:
         assert result["Alt"].releases["pub2"].is_fallback is True
 
     def test_same_group_public_copy_survives_as_fallback(self) -> None:
-        # One group with a private preferred url and a public non-best url: the
+        # One group with a private preferred release and a public non-best release: the
         # pool re-adds the group's public copy, then the per-group drop removes
-        # the private url, leaving a public group marked as the fallback.
+        # the private release, leaving a public group marked as the fallback.
         filt = make_release_filter(private_releases="fallback", want_best=True, prefer_dual_audio=False)
         entry = _entry(
             _torrent(release_group="A", url="priv", tracker=Tracker.ANIMEBYTES, is_best=True),
@@ -256,8 +256,8 @@ class TestPrivateFallback:
         assert result["Best"].releases["priv"].is_fallback is False
 
     def test_warn_mode_does_not_add_fallback(self) -> None:
-        # The default: a private-only preferred pick stays alone, so the planner
-        # warns and holds the title exactly as before.
+        # The default: a private-only preferred release stays alone, so the planner
+        # warns and skips it exactly as before.
         filt = make_release_filter(private_releases="warn", want_best=True, prefer_dual_audio=False)
         entry = _entry(
             _torrent(release_group="Best", url="priv", tracker=Tracker.ANIMEBYTES, is_best=True),
@@ -276,9 +276,9 @@ class TestPrivateFallback:
         assert set(filt.build(entry)) == {"Best", "AltDual"}
 
     def test_same_group_private_url_with_uncovered_files_survives_the_drop(self) -> None:
-        # Group A: a private dual S1+S2 batch (preferred) + a public S1-only copy
+        # Group A: a private dual S1+S2 torrent (preferred) + a public S1-only copy
         # re-added as the fallback. The coverage-aware drop must NOT delete the
-        # batch - its S2 file isn't covered by the group's public urls.
+        # torrent - its S2 file isn't covered by the group's public releases.
         filt = make_release_filter(private_releases="fallback", want_best=True, prefer_dual_audio=True)
         entry = make_entry_record(
             torrents=(
@@ -307,7 +307,7 @@ class TestPrivateFallback:
 
     def test_same_group_cross_seeded_private_copy_still_dropped(self) -> None:
         # Identical filenames on both trackers (a cross-seed): the private copy is
-        # fully covered by the group's public url, so it's dropped as before.
+        # fully covered by the group's public release, so it's dropped as before.
         filt = make_release_filter(private_releases="fallback", want_best=True, prefer_dual_audio=False)
         entry = make_entry_record(
             torrents=(
@@ -332,10 +332,10 @@ class TestPrivateFallback:
         assert set(result["A"].releases) == {"pub"}
 
     def test_same_group_blind_public_copy_skips_the_search(self) -> None:
-        # Group A: a private pick with KNOWN files + a public copy whose fileset
+        # Group A: a private release with KNOWN files + a public copy whose fileset
         # SeaDex doesn't know (empty). The blind public copy counts as covering
         # its group - mirroring the private side's per-group gate - so the search
-        # is skipped and group B's alternative stays out of the dict.
+        # is skipped and group B's fallback stays out of the dict.
         filt = make_release_filter(private_releases="fallback", want_best=True, prefer_dual_audio=False)
         entry = make_entry_record(
             torrents=(
@@ -365,13 +365,13 @@ class TestPrivateFallback:
         )
         result = filt.build(entry)
         assert set(result) == {"A"}
-        # The coverage-aware per-group drop still keeps the uncovered private url.
+        # The coverage-aware per-group drop still keeps the uncovered private release.
         assert set(result["A"].releases) == {"priv", "pub"}
 
     def test_exactly_covered_private_files_skip_the_search(self) -> None:
         # MUTATION PIN (needs_fallback): the coverage check `<= public_file_names`
         # flipped to `<` treats an EXACTLY-equal fileset as uncovered and runs the
-        # fallback search. Priv's files match Pub's file-for-file: no search, so
+        # fallback search. Priv's files equal Pub's file-for-file: no search, so
         # the non-best Alt never enters the dict.
         filt = make_release_filter(private_releases="fallback", want_best=True, prefer_dual_audio=False)
         entry = make_entry_record(
@@ -443,10 +443,10 @@ class TestPrivateFallback:
         assert set(result) == {"A"}
 
     def test_mixed_group_private_files_uncovered_triggers_the_search(self) -> None:
-        # Group A has a public S1 AND a private S2 among the preferred picks: the
+        # Group A has a public S1 AND a private S2 among the preferred releases: the
         # gate is per-candidate file coverage (not per-group), so the private S2
-        # still triggers the search and group B's public S2 alternative enters as
-        # the fallback - while the coverage-aware drop keeps A's private S2 url.
+        # still triggers the search and group B's public S2 release enters as
+        # the fallback - while the coverage-aware drop keeps A's private S2 release.
         filt = make_release_filter(private_releases="fallback", want_best=True, prefer_dual_audio=False)
         entry = make_entry_record(
             torrents=(
@@ -488,7 +488,7 @@ class TestPrivateFallback:
 class TestInteractivePick:
     """The interactive numbered-pick prompt supports comma-separated multi-select and tolerates bad input.
 
-    All-invalid input skips the title without caching a result.
+    All-invalid input grabs nothing for the title and caches no result.
     """
 
     def test_comma_separated_multi_pick_keeps_each_selection(
@@ -515,7 +515,7 @@ class TestInteractivePick:
     def test_tolerates_non_numeric_input(
         self, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
     ) -> None:
-        # A non-numeric pick (a typo) must not crash the entry with an uncaught
+        # A non-numeric pick (a typo) must not crash the title with an uncaught
         # ValueError. The bad token is skipped with a warning, so nothing is selected.
         filt = make_release_filter()
         seadex_dict = {"GroupA": rg_group({})}
@@ -565,7 +565,7 @@ class TestInteractivePick:
         self, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
     ) -> None:
         # An interactive pick where EVERY token is invalid returns {} - the
-        # strategy must then skip the title WITHOUT caching it. Caching would
+        # strategy must then move on WITHOUT caching the title. Caching would
         # stamp the entry's updated_at, so the fumbled title would be treated as
         # done and silently suppressed until SeaDex next updates the entry.
         class _MovieItem:
@@ -607,10 +607,10 @@ class TestInteractivePick:
 def test_file_size_cover_folds_listings_with_elementwise_max() -> None:
     """MUTATION PIN: `|` not `+`, and not a set union either.
 
-    Two listings carrying one copy of a size each cannot cover a listing that
-    genuinely carries two - only ONE listing holding both can. A `+` fold would
-    fake that coverage and prune a real pick; a set union would deflate a real
-    two-copy listing to one and offer a fallback nobody needs.
+    Two torrents carrying one copy of a size each cannot cover a torrent that
+    genuinely carries two - only ONE torrent with both can. A `+` merge would
+    fake that coverage and prune a real release; a set union would deflate a real
+    two-copy torrent to one and offer a fallback nobody needs.
     """
 
     cover = seadex_filter.file_size_cover
@@ -618,5 +618,5 @@ def test_file_size_cover_folds_listings_with_elementwise_max() -> None:
     assert cover(one_each)[100] == 1
     assert not Counter([100, 100]) <= cover(one_each)
     assert cover([[100, 100]])[100] == 2
-    # Coverage genuinely split across two listings still covers.
+    # Coverage genuinely split across two torrents still covers.
     assert Counter([100, 200]) <= cover([[100], [200]])

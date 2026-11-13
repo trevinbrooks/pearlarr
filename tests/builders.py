@@ -107,12 +107,12 @@ from pearlarr.window_placement import WindowedPlacements
 
 from .fakes import FakeClock, FakeRadarrClient, FakeSkyHookClient, FakeSonarrClient
 
-# The display separator the cockpit/ledger/report rows join parts with. Assertions build expected
+# The display separator the wait region, boot step lines and report rows join parts with. Assertions build expected
 # strings from this so a separator change is one edit.
 SEP = " · "
 
 # Flat (group-local) setting name -> config group, derived from AppConfig's own field tree so it can't
-# drift into a stale subset. AppConfig declares `sonarr` before `radarr`, so a name shared by both arr
+# drift into an outdated subset. AppConfig declares `sonarr` before `radarr`, so a name shared by both arr
 # groups (url/api_key/ignore_unmonitored/torrent_category) resolves to `sonarr`.
 _FIELD_GROUP: dict[str, str] = {}
 for _group, _group_field in AppConfig.model_fields.items():
@@ -182,13 +182,13 @@ def make_bare_instance[T](cls: type[T], **attrs: Any) -> T:
     return obj
 
 
-# The entry columns `update_cached_title` merges, aliased from the real store's tuple so the fake
+# The cached-title columns `update_cached_title` merges, aliased from the real store's tuple so the fake
 # can't drift from `CacheStore`.
 _FAKE_CACHED_TITLE_FIELDS: tuple[str, ...] = _CACHED_TITLE_COLUMNS
 
 
 def _evict_stale[K](store: dict[K, dict[str, Any]], cutoff: datetime) -> int:
-    """Drop records whose `fetched_at` is stamp-less or older than `cutoff`."""
+    """Drop rows whose `fetched_at` is stamp-less or older than `cutoff`."""
 
     cutoff_str = cutoff.strftime(STAMP_FORMAT)
     stale: list[K] = []
@@ -202,7 +202,7 @@ def _evict_stale[K](store: dict[K, dict[str, Any]], cutoff: datetime) -> int:
 
 
 def anilist_body(al_id: int, title: str = "Resolved") -> AniListBody:
-    """A populated single-id AniList body: the run-cache value, and a stored record's `data`."""
+    """A populated single-id AniList body: the run-cache value, and a stored answer's `data`."""
 
     return {
         "data": {
@@ -225,7 +225,7 @@ class ScriptedAniListClient(AniListClient):
     """Scripted AniList wire client: canned bodies, wire calls recorded, no HTTP.
 
     `title` names every known id (None: AniList knows none), an `absent` id answers the unknown-id
-    body, and a request touching a `failing` id trips the breaker, muting later calls like the real client.
+    body, and a request touching a `failing` id marks AniList unreachable, muting later calls like the real client.
     """
 
     def __init__(
@@ -281,7 +281,7 @@ class FakeCacheStore(AbstractCacheStore):
     ) -> None:
         self._sonarr_parse: dict[str, dict[str, Any]] = dict(sonarr_parse or {})
         self._pending: dict[str, dict[str, dict[str, Any]]] = {arr: dict(recs) for arr, recs in (pending or {}).items()}
-        # The entries, keyed by (arr, al_id). The existence checks key on membership, never the dict's truthiness.
+        # The cached titles, keyed by (arr, al_id). The existence checks key on membership, never the dict's truthiness.
         self._cached_titles: dict[tuple[str, int], dict[str, Any]] = {}
         self._anilist_meta: dict[int, dict[str, Any]] = {}
         self._guards: dict[str, dict[int, OwnedAtGrab]] = {}
@@ -298,7 +298,7 @@ class FakeCacheStore(AbstractCacheStore):
     def close(self) -> None:
         pass
 
-    # -- selection digest --
+    # -- selection hash --
     @override
     def selection_changed(self, arr: Arr, selection_hash: str) -> bool:
         stored = self._kv.get(selection_hash_key(arr))
@@ -308,7 +308,7 @@ class FakeCacheStore(AbstractCacheStore):
     def store_selection_hash(self, arr: Arr, selection_hash: str) -> None:
         self._kv[selection_hash_key(arr)] = selection_hash
 
-    # -- per-entry records (entries) --
+    # -- per-title rows (cached titles) --
     @override
     def update_cached_title(
         self,
@@ -316,7 +316,7 @@ class FakeCacheStore(AbstractCacheStore):
         al_id: int,
         update: CachedTitleUpdate,
     ) -> None:
-        """Partial-merge the supplied columns. An empty record adds no row."""
+        """Partial-merge the supplied columns. An empty update adds no row."""
 
         details: dict[str, Any] = dict(update)
         updated_at = details.get("updated_at")
@@ -329,7 +329,7 @@ class FakeCacheStore(AbstractCacheStore):
 
     @override
     def uncache_title(self, arr: Arr, al_id: int) -> None:
-        """Drop the entry's stored timestamp. No row, no effect."""
+        """Drop the title's stored timestamp. No row, no effect."""
 
         cached = self._cached_titles.get((str(arr), al_id))
         if cached is not None:
@@ -337,7 +337,7 @@ class FakeCacheStore(AbstractCacheStore):
 
     @override
     def get_cached_title(self, arr: Arr, al_id: int) -> CachedTitle | None:
-        """The entry as a `CachedTitle`, or None."""
+        """The title's row as a `CachedTitle`, or None."""
 
         cached = self._cached_titles.get((str(arr), al_id))
         if cached is None:
@@ -392,7 +392,7 @@ class FakeCacheStore(AbstractCacheStore):
 
     @override
     def get_pending_import_rows_for_series(self, arr: Arr, series_id: int) -> dict[str, dict[str, Any]]:
-        """Fresh deep-copied snapshot of the records with a claim on the series (mirrors the `json_each` read)."""
+        """Fresh deep copy of the pending imports with a claim on the series (mirrors the `json_each` read)."""
 
         return {
             key: deepcopy(rec)
@@ -411,7 +411,7 @@ class FakeCacheStore(AbstractCacheStore):
 
     @override
     def other_arr_holds(self, arr: Arr, infohash: str) -> bool:
-        """Whether the other arr holds a record on the torrent, by exact key (mirrors the SQL)."""
+        """Whether the other arr has a pending import on the torrent, by exact key (mirrors the SQL)."""
 
         return any(infohash in recs for arr_key, recs in self._pending.items() if arr_key != str(arr))
 
@@ -421,7 +421,7 @@ class FakeCacheStore(AbstractCacheStore):
 
     @override
     def get_guards(self, arr: Arr) -> dict[int, OwnedAtGrab]:
-        """Only entries with a live pending record (mirrors the real store's join)."""
+        """Only titles with a live pending import (mirrors the real store's join)."""
 
         live = {
             claim.get("al_id") for rec in self._pending.get(str(arr), {}).values() for claim in rec.get("claims", [])
@@ -536,7 +536,7 @@ def make_config(**overrides: Any) -> AppConfig:
 
 
 def cached_as_done(row: CachedTitle | None, sd_entry: EntryRecord) -> bool:
-    """Whether a cache row has its title cached as done under SeaDex's current update time."""
+    """Whether a cache row has its title cached under SeaDex's current update time."""
 
     return row is not None and row.cached_under(sd_entry.updated_at)
 
@@ -701,7 +701,7 @@ def sonarr_client_fields(grab: str = "tv-sonarr", post_import: str = "sonarr-don
 
 
 def _real_torrents(logger: logging.Logger, web: httpx.Client, categories: ArrCategoryResolver) -> TorrentService:
-    """A real, client-less `TorrentService` (`qbit=None` -> preview no-op add)."""
+    """A real, client-less `TorrentService` (`qbit=None` -> dry-run no-op add)."""
 
     return TorrentService(qbit=None, web=web, categories=categories, tags=[], logger=logger)
 
@@ -715,7 +715,7 @@ def make_services(**overrides: Any) -> ArrRunServices:
     defaults: dict[str, Any] = {
         "logger": logger,
         "_config": config,
-        # The real __init__ always sets the authoritative arr and an ArrRunState. Override _ctx=... for a run state.
+        # The real __init__ always sets the authoritative arr and an ArrRunState. Override _state=... for a run state.
         "arr": Arr.SONARR,
         "_state": ArrRunState(arr=Arr.SONARR),
         # The real __init__ mints these too. Without them the dirty-aware / selection-aware skip predicates fail.
@@ -739,7 +739,7 @@ def make_run_deps(
     skyhook_client: AbstractSkyHookClient | None = None,
     categories: ArrCategoryResolver | None = None,
 ) -> ArrRunDeps:
-    """A real `ArrRunDeps` over typed fakes, with a Sonarr url and api_key set and `qbit` None (preview).
+    """A real `ArrRunDeps` over typed fakes, with a Sonarr url and api_key set and `qbit` None (dry run).
 
     `categories` swaps in a resolver that reads Sonarr's clients, in place of the config passthrough.
     """
@@ -755,8 +755,8 @@ def make_run_deps(
     return ArrRunDeps(
         config=config,
         arr_config=config.for_arr(Arr.SONARR),
-        # None: the strategies' require_connection fallback binds lazily, so the keys-missing
-        # construction seams behave exactly as production's.
+        # None: the strategies' require_connection binds one lazily, so the keys-missing
+        # construction paths behave exactly as production's.
         arr_http=None,
         categories=categories,
         clock=clock or FakeClock(),
@@ -803,7 +803,7 @@ CLIENT_SENTINEL = object()
 
 
 def _lower_hash(infohash: str | None) -> str | None:
-    """A scripted hash as the url item carries it (lowercased)."""
+    """A scripted hash as the release carries it (lowercased)."""
 
     return None if infohash is None else infohash.lower()
 
@@ -828,7 +828,7 @@ class FakeTorrents:
         item: Release,
         dry_run: bool,
     ) -> AddResult:
-        """Return the scripted `AddResult` for the url item's infohash, or raise its scripted error."""
+        """Return the scripted `AddResult` for the release's infohash, or raise its scripted error."""
 
         del dry_run
         infohash = item.infohash
@@ -840,7 +840,7 @@ class FakeTorrents:
 
 
 def one_release_dict(*, srg: str, infohash: str, url: str = "https://nyaa.si/view/1") -> SeadexDict:
-    """A one-release `SeadexDict` flagged for download, its tracker pinned to `NYAA`."""
+    """A one-release `SeadexDict` marked to grab, its tracker pinned to `NYAA`."""
 
     item = make_release(url=url, infohash=infohash, download=True)
     item.tracker = Tracker.NYAA
@@ -877,7 +877,7 @@ def pending_import_update(
     order_only: Mapping[str, OrderOnlyKey] = NO_ORDER_ONLY,
     **claim: Any,
 ) -> PendingImportUpdate:
-    """A seed on `infohash` (group NAN0, no files) claimed by `title_claim(**claim)`, new unless `stored` is given."""
+    """A pending import update on `infohash` (group NAN0, no files) claimed by `title_claim(**claim)`, new unless `stored` is given."""
 
     return PendingImportUpdate(
         facts=torrent_facts(infohash=infohash, release_group="NAN0"),
@@ -891,7 +891,7 @@ def pending_import_update(
 
 
 def title_facts(**overrides: Any) -> TitleFacts:
-    """Entry 1 on series 7 titled Show, with no coverage, url, or guard facts unless given."""
+    """Title 1 on series 7 named Show, with no coverage, url, or guard facts unless given."""
 
     defaults: dict[str, Any] = {
         "al_id": 1,
@@ -906,7 +906,7 @@ def title_facts(**overrides: Any) -> TitleFacts:
 
 
 def grab_request(**overrides: Any) -> GrabRequest:
-    """A minimal `GrabRequest` for driving the add path directly (an empty `seadex_dict`, no seeds)."""
+    """A minimal `GrabRequest` for driving the add path directly (an empty `seadex_dict`, no pending import updates)."""
 
     defaults: dict[str, Any] = {
         "al_id": 1,
@@ -922,7 +922,7 @@ def grab_request(**overrides: Any) -> GrabRequest:
 
 
 def make_grab_pipeline(**overrides: Any) -> GrabPipeline:
-    """A bare `GrabPipeline` carrying only what its methods read, `_state` a non-preview blocking run."""
+    """A bare `GrabPipeline` carrying only what its methods read, `_state` a blocking run, not a dry run."""
 
     config = _split_config(overrides)
     logger = make_logger()
@@ -943,7 +943,7 @@ def make_grab_pipeline(**overrides: Any) -> GrabPipeline:
     }
     defaults.update(overrides)
     if "_pending_imports" not in defaults:
-        # The record seam binds the FINAL store + ctx, exactly as the real ctor + bind_arr_run do.
+        # The pending import store binds the FINAL store + state, exactly as the real ctor + bind_arr_run do.
         pending_imports = PendingImportStore(defaults["cache_store"])
         pending_imports.bind_arr_run(defaults["_state"])
         defaults["_pending_imports"] = pending_imports
@@ -964,8 +964,9 @@ def _categories_like_config(config: AppConfig, qbit: qbittorrentapi.Client | Non
 def make_import_wait_manager(**overrides: Any) -> ImportWaitManager:
     """A bare `ImportWaitManager` over real sub-objects, config keys routed through `AppConfig`.
 
-    Constructs the records/probes/cleanup seams on the SAME store, binds the record seam as
-    the hub would, and ends with `begin_run`, so every sub-object shares the one ctx (and strategy) a run would.
+    Constructs the pending import store, pollers and cleanup on the SAME store, binds the pending import store as
+    `ArrRunServices` would, and ends with `begin_run`, so every sub-object shares the one state (and strategy) a run
+    would.
     """
 
     config = overrides.pop("config", None) or _split_config(overrides)
@@ -973,7 +974,7 @@ def make_import_wait_manager(**overrides: Any) -> ImportWaitManager:
     cache_store = overrides.pop("cache_store", None) or FakeCacheStore()
     qbit = overrides.pop("qbit", None)
     clock = overrides.pop("clock", None) or FakeClock()
-    # `ArrRunDeps.categories` as a run would hold it. With no qBittorrent it is fetchless and the config
+    # `ArrRunDeps.categories` as a run would have it. With no qBittorrent it is fetchless and the config
     # category passes through. With one, it reads as if the arr's own client carried the config's categories.
     categories = overrides.pop("categories", None) or _categories_like_config(config, qbit)
     # The production placeholder before a run binds one. Tests driving the import hook pass their own.
@@ -1039,7 +1040,7 @@ def make_release(
     upgrade: bool = False,
     episodes: list[ReleaseEpisode] | None = None,
 ) -> Release:
-    """One SeaDex URL record, matching `get_seadex_dict`'s `url_item` shape."""
+    """One SeaDex release, as `get_seadex_dict`'s dict carries it."""
 
     return Release(
         url=url,
@@ -1091,7 +1092,7 @@ def sonarr_ep(
     air_date: str | None = None,
     runtime: int | None = None,
 ) -> SonarrEpisode:
-    """`episode_file_id=0` omits the `episodeFile` block, as in Sonarr's record for a missing episode.
+    """`episode_file_id=0` omits the `episodeFile` block, as Sonarr sends it for a missing episode.
 
     `air_date` is Sonarr's `YYYY-MM-DD` string and `runtime` its minutes.
     """
@@ -1113,7 +1114,7 @@ def sonarr_ep(
 
 
 def arr_files(ep_list: Iterable[SonarrEpisode]) -> ArrFiles:
-    """The episodes' files folded per tagged group, as `sonarr_files` reports them."""
+    """The episodes' files merged per group, files with no group left out, as `sonarr_files` reports them."""
 
     return ArrFiles.from_files(
         [f for ep in ep_list if ep.episode_file_id != 0 and (f := ep.episode_file) is not None], keep_no_group=False
@@ -1121,13 +1122,13 @@ def arr_files(ep_list: Iterable[SonarrEpisode]) -> ArrFiles:
 
 
 _NO_TORRENT_GROUP = TorrentGroup("", ())
-"""An own release listing no sizes: no file is judged misplaced against it."""
+"""A torrent group with no sizes: no file counts as misplaced against it."""
 
 
 def episode_statuses(
     by_id: Mapping[int, EpisodeFileStatus], holding_own_copy: frozenset[int] = frozenset()
 ) -> EpisodeStatuses:
-    """`EpisodeStatuses` over `by_id`, where `holding_own_copy` are the targets holding a copy of our own file."""
+    """`EpisodeStatuses` over `by_id`, where `holding_own_copy` are the file map episodes with a copy of this torrent's file."""
 
     return EpisodeStatuses(by_id, holding_own_copy)
 
@@ -1141,7 +1142,7 @@ def episode_snapshot(
 ) -> EpisodeSnapshot:
     """An empty series index trusting no group, with no owned sizes unless given.
 
-    The default own release lists no sizes, so no file is ever judged misplaced unless `own` is given.
+    The default torrent group has no sizes, so no file ever counts as misplaced unless `torrent_group` is given.
     """
 
     return EpisodeSnapshot(
@@ -1153,18 +1154,18 @@ def episode_snapshot(
 
 
 _NO_SIZES: EpisodeBySize = MappingProxyType({})
-"""No size identities, so nothing gets placed by size."""
+"""No episodes by size, so nothing gets placed by size."""
 
 UNLISTED = FetchedSeadex(EMPTY_LISTING, _NO_SIZES)
-"""A torrent no entry lists, with the listings read and no size identities."""
+"""A torrent no entry lists, with the listings read and no episodes by size."""
 
 
 UNREAD_EVIDENCE = FetchedSeadex(None, None)
-"""SeaDex couldn't be read: no listing and no size identities."""
+"""SeaDex couldn't be read: no listing and no episodes by size."""
 
 
 _NO_NAMES = TitleNames()
-"""An entry with no series or AniList titles."""
+"""A title with no series or AniList names."""
 
 
 def title_window(
@@ -1176,7 +1177,7 @@ def title_window(
     ignored: bool = False,
     episode_count: int | None = None,
 ) -> TitleWindow:
-    """Entry `al_id`'s window over `ids` on `series_id` (series 7, as `title_claim`'s), in the order given."""
+    """Title `al_id`'s window over `ids` on `series_id` (series 7, as `title_claim`'s), in the order given."""
 
     return TitleWindow(
         al_id=al_id,
@@ -1189,19 +1190,19 @@ def title_window(
 
 
 def torrent_listing(*windows: TitleWindow, aliases: SpecialAliases = NO_ALIASES) -> TorrentListing:
-    """The listing of a torrent the `windows`' entries list, with `aliases`."""
+    """The listing of a torrent SeaDex lists under the `windows`' titles, with `aliases`."""
 
     return TorrentListing(windows, aliases)
 
 
 ALIASED_SPECIALS_LISTING = torrent_listing(title_window(1, (502, 504, 506)), aliases={1: 2, 2: 4, 3: 6})
-"""A listing of specials 2, 4 and 6 whose aliases map a pack's 1, 2 and 3 onto them."""
+"""A listing of specials 2, 4 and 6 whose aliases map a torrent's 1, 2 and 3 onto them."""
 
 
 def torrent_evidence(
     *windows: TitleWindow, episode_by_size: EpisodeBySize = _NO_SIZES, aliases: SpecialAliases = NO_ALIASES
 ) -> FetchedSeadex:
-    """Evidence after a good read: the `windows`' listing with `aliases`, and size `identities` (both none by default)."""
+    """Evidence after a good read: the `windows`' listing with `aliases`, and `episode_by_size` (both none by default)."""
 
     return FetchedSeadex(torrent_listing(*windows, aliases=aliases), episode_by_size)
 
@@ -1228,7 +1229,7 @@ def make_grabbing_title(
     alternate_titles: tuple[str, ...] = (),
     aired_order: bool = True,
 ) -> GrabbingTitle:
-    """Entry `al_id`'s grab scope over `title_index`, within `series` on `series_id` (series 7, as `title_claim`'s).
+    """The grabbing title `al_id` over `title_index`, within `series` on `series_id` (series 7, as `title_claim`'s).
 
     Unless given, the series has no alternate titles and Sonarr numbers it as aired.
     """
@@ -1246,7 +1247,7 @@ def make_grabbing_title(
 
 
 def new_torrent(grabbing_title: GrabbingTitle) -> KnownTorrent:
-    """A new torrent that nothing lists, with only the scope's own series read."""
+    """A new torrent that nothing lists, with only the grabbing title's series read."""
 
     return known_torrent(indexes={grabbing_title.series_id: grabbing_title.series_index})
 
@@ -1259,7 +1260,7 @@ def series_index(
     aired: Mapping[int, str | None] | None = None,
     orders: OrdersByName = NO_ORDERS,
 ) -> EpisodeIndex:
-    """A whole-series index synthesized from a `(season, episode) -> id` map, with the absolutes and titles given by id.
+    """A whole-series index synthesized from a `(season, episode) -> id` dict, with absolutes and titles given by id.
 
     `aired` gives air dates by id, as `YYYY-MM-DD`, None for an episode without one. Each episode's TVDB id is its
     Sonarr id, so a row of `orders` names an episode by that id, and a row with any other TVDB id is an episode
@@ -1383,8 +1384,8 @@ def numbered_names(prefix: str, count: int, tails: Sequence[str] = ()) -> list[s
     ]
 
 
-# The `al_id` every `pending_import` record's claim carries unless overridden, exported so tests can
-# spell a builder record's guard-row key without magic ints.
+# The `al_id` every `pending_import` builder's claim carries unless overridden, exported so tests can
+# spell a built pending import's guard-row key without magic ints.
 PENDING_IMPORT_AL_ID = 1
 
 _CLAIM_KEYS = frozenset(TitleClaim.__dataclass_fields__)
@@ -1393,7 +1394,7 @@ PENDING_IMPORT_ADDED = parse_stamp(PENDING_IMPORT_STAMP).astimezone()
 
 
 def title_claim(**overrides: Any) -> TitleClaim:
-    """An `TitleClaim` on series 7 by entry `PENDING_IMPORT_AL_ID`, unscoped unless `ordered_episode_ids` is given."""
+    """A `TitleClaim` on series 7 by title `PENDING_IMPORT_AL_ID`, with no window unless `ordered_episode_ids` is given."""
 
     defaults: dict[str, Any] = {
         "al_id": PENDING_IMPORT_AL_ID,
@@ -1420,7 +1421,7 @@ def two_claim_pending_import(
     titles: tuple[str, str] = ("Show", "Show"),
     **overrides: Any,
 ) -> PendingImport:
-    """A `pending_import(**overrides)` claimed by two entries, each on its series over its window."""
+    """A `pending_import(**overrides)` claimed by two titles, each on its series over its window."""
 
     claims = tuple(
         title_claim(al_id=al_id, series_id=series_id, ordered_episode_ids=window, title=title)
@@ -1458,7 +1459,7 @@ def pending_import(**overrides: Any) -> PendingImport:
 def order_only_hand_import_files(
     *, missing: tuple[EpisodeKey, ...] = (EpisodeKey(4, 1),), untrusted: tuple[EpisodeKey, ...] = ()
 ) -> LeftForHandImport:
-    """A split opener's two halves held back under their DVD keys, the aired opener missing by default."""
+    """A split opener's two halves left for a hand import under their DVD keys, the aired opener missing by default."""
 
     halves = ("[grp] Show Ending S1 - 01 [ABCD1234].mkv", "[grp] Show Ending S1 - 02 [ABCD1234].mkv")
     keys = (OrderOnlyKey("dvd", EpisodeKey(7, 1)), OrderOnlyKey("dvd", EpisodeKey(7, 2)))
@@ -1467,7 +1468,7 @@ def order_only_hand_import_files(
 
 
 def files_left_for_hand_import(*names: str) -> LeftForHandImport:
-    """Files held back with no order-only key."""
+    """Files left for a hand import with no order-only key."""
 
     return LeftForHandImport(files=tuple(HandImportFile(name) for name in names))
 
@@ -1483,7 +1484,7 @@ def attempt_result(
     unmatched_files: tuple[str, ...] = (),
     left_for_hand_import: LeftForHandImport = NO_HAND_IMPORT_FILES,
 ) -> AttemptResult:
-    """An `AttemptResult` defaulting to the verified-import outcome (`all_done`)."""
+    """An `AttemptResult` defaulting to the all-done outcome (`all_done`)."""
 
     return AttemptResult(
         all_done=all_done,
@@ -1546,7 +1547,7 @@ def stored_orders(
     fresh_for: timedelta = timedelta(days=1),
     sonarr_counts: Mapping[str, int] | None = None,
 ) -> CachedOrders:
-    """A series' order record fetched a day ago, fresh for `fresh_for` from now (past it when negative)."""
+    """A series' cached order answer fetched a day ago, fresh for `fresh_for` from now (past it when negative)."""
 
     now = datetime.now()
     return CachedOrders(
@@ -1603,6 +1604,6 @@ def make_sonarr_parse(**attrs: Any) -> SonarrParseCache:
 
 
 def claim_al_ids(pending: PendingImport) -> tuple[int, ...]:
-    """The record's claiming entries, claim order."""
+    """The pending import's claiming titles, claim order."""
 
     return tuple(claim.al_id for claim in pending.claims)

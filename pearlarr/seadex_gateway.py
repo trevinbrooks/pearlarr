@@ -1,9 +1,9 @@
 """SeaDex API gateway: bulk-prefetch entries, then serve lookups by AniList id.
 
 `SeaDexGateway` wraps the SeaDex client with the connection-error handling the
-orchestrator relies on: a missing entry and a SeaDex outage both degrade to a
-typed `SeaDexNoEntry` rather than raising, and the two are distinguishable
-so an outage skip is never reported as "no entry".
+orchestrator relies on: an entry not found and an unreachable SeaDex both
+degrade to a typed `SeaDexNoEntry` rather than raising, and the two are
+distinguishable so an unreachable SeaDex is never reported as "no entry".
 
 `prefetch` batches ids into `ceil(N / SEADEX_BATCH_SIZE)` batched `from_filter`
 queries (OR-ed `alID` clauses), mirroring the AniList prefetch, to warm a
@@ -31,10 +31,10 @@ SEADEX_BATCH_SIZE = 50
 
 
 class SeaDexNoEntry(Enum):
-    """Why `SeaDexSource.entry` has no record for an id.
+    """Why `SeaDexSource.entry` has no entry for an id.
 
-    The caller must report the two members distinctly: an outage skip is not a
-    missing entry.
+    The caller must report the two members distinctly: an unreachable SeaDex is
+    not "no entry".
     """
 
     NOT_FOUND = auto()
@@ -44,13 +44,13 @@ class SeaDexNoEntry(Enum):
 
 
 class SeaDexSource(ABC):
-    """The SeaDex lookup surface the run engine consumes.
+    """The SeaDex lookup surface the arr run consumes.
 
-    A nominal seam over what the engine reads off `deps.seadex`
+    A nominal interface over what the arr run reads off `deps.seadex`
     (`prefetch` to warm the per-run cache, `entry` to serve a lookup,
-    `outage` for the run's SeaDex-unreachable state). The real
-    `SeaDexGateway` subclasses it, giving `ArrRunDeps.seadex` a checked seam
-    rather than a bare `object.__new__` instance.
+    `unreachable` for the run's SeaDex-unreachable state). The real
+    `SeaDexGateway` subclasses it, giving `ArrRunDeps.seadex` a checked
+    interface rather than a bare `object.__new__` instance.
     """
 
     @abstractmethod
@@ -72,7 +72,7 @@ class SeaDexEntryApi(Protocol):
 
     Sanctioned Protocol exception to the ABC house rule: the real satisfier is the
     third-party `seadex.SeaDexEntry` (plus test doubles), which can't be made to
-    subclass a local ABC without a wrapper, so structural typing is the seam here.
+    subclass a local ABC without a wrapper, so structural typing is the interface here.
     """
 
     def from_filter(self, filter_str: str, /) -> Iterable[EntryRecord]: ...
@@ -89,11 +89,11 @@ class SeaDexGateway(SeaDexSource):
         self._client = client
         # Per-run bulk-fetch cache: entries keyed by AniList id, plus the set of ids
         # we successfully prefetched - so an id that was requested but not returned
-        # is known-absent and `entry` can skip the per-id fallback call.
+        # is known-absent and `entry` can avoid the per-id call.
         self._entry_cache: dict[int, EntryRecord] = {}
         self._prefetched: set[int] = set()
         # Set once a request has failed twice (batch and single-id lookups both
-        # get one immediate retry): SeaDex is down for this run, so every later
+        # get one immediate retry): SeaDex is unreachable for this run, so every later
         # batch/lookup short-circuits instead of re-timing-out per id.
         self._unreachable = False
 
@@ -118,20 +118,21 @@ class SeaDexGateway(SeaDexSource):
         Populates the per-run entry cache so the per-item loop's `entry`
         calls are cache hits instead of one `from_id` round-trip each. Ids in a
         successfully-fetched batch that SeaDex didn't return are remembered as
-        absent (so `entry` reports them NO_ENTRY without a call). A failed
+        absent (so `entry` reports them NOT_FOUND without a call). A failed
         batch gets ONE immediate retry (a single transient 502 must not write off
-        the whole run). A batch that fails twice warns once and flips the outage
-        flag, so the remaining batches - and every later `entry` fallback -
-        short-circuit to an OUTAGE miss instead of re-timing-out per id.
+        the whole run). A batch that fails twice warns once and flips the
+        unreachable flag, so the remaining batches - and every later `entry`
+        single-id lookup - short-circuit to UNREACHABLE instead of re-timing-out
+        per id.
 
         Args:
             al_ids: Candidate AniList IDs for this run.
-            progress: Boot cockpit step fed per-batch
-                fraction + "done/total" detail. None outside the cockpit.
+            progress: Boot step fed per-batch
+                fraction + "done/total" detail. None outside a boot step.
 
         Returns:
             How many ids needed fetching (0 = nothing to do), for the
-            caller's ledger detail.
+            caller's boot step line.
         """
 
         missing = sorted({i for i in al_ids if i not in self._entry_cache and i not in self._prefetched})
@@ -142,7 +143,7 @@ class SeaDexGateway(SeaDexSource):
         done = 0
         for chunk in batched(missing, SEADEX_BATCH_SIZE, strict=False):
             # A failed chunk's ids are NOT marked prefetched (never "absent"), so a
-            # transient miss stays a skip, not a remembered no-entry.
+            # transient failure stays unread, not a remembered no-entry.
             if not self._unreachable:
                 fetched = self._fetch_chunk(chunk)
                 if fetched is not None:
@@ -158,7 +159,7 @@ class SeaDexGateway(SeaDexSource):
         """One prefetch batch with a single immediate retry.
 
         A lone transient blip (one 502 among many batches) is absorbed silently.
-        Only a chunk that fails twice declares the outage and returns None.
+        Only a chunk that fails twice declares SeaDex unreachable and returns None.
         """
 
         try:
@@ -179,12 +180,13 @@ class SeaDexGateway(SeaDexSource):
 
     @override
     def entry(self, al_id: int) -> EntryRecord | SeaDexNoEntry:
-        """Get the SeaDex entry for an AniList id, or a typed miss.
+        """Get the SeaDex entry for an AniList id, or a typed `SeaDexNoEntry`.
 
         Served from the bulk-prefetch cache when warm. A prefetched-but-absent id
-        is NO_ENTRY without a call. An id that wasn't prefetched (e.g. a single-id
-        run) falls back to a single `from_id` - unless the outage flag is set, in
-        which case it degrades straight to OUTAGE without another network attempt.
+        is NOT_FOUND without a call. An id that wasn't prefetched (e.g. a single-id
+        run) gets a single `from_id` - unless the unreachable flag is set, in
+        which case it degrades straight to UNREACHABLE without another network
+        attempt.
         """
 
         cached = self._entry_cache.get(al_id)
@@ -199,13 +201,13 @@ class SeaDexGateway(SeaDexSource):
     def _entry_single(self, al_id: int) -> EntryRecord | SeaDexNoEntry:
         """Single by-id lookup with the orchestrator's graceful degradation.
 
-        A missing entry (`EntryNotFoundError`) is NO_ENTRY, immediately - that's
+        An entry not found (`EntryNotFoundError`) is NOT_FOUND, immediately - that's
         SeaDex answering, not failing. A failed request (any `httpx.HTTPError` -
         connection failure, timeout, HTTP error status - the same breadth
         `prefetch` catches) gets ONE immediate silent retry, mirroring
         `_fetch_chunk` (a single transient 502 must not write off the whole
-        run). Only a lookup that fails twice is OUTAGE, so the caller can report
-        the skip truthfully - it warns once and mutes later lookups.
+        run). Only a lookup that fails twice is UNREACHABLE, so the caller can
+        report it truthfully - it warns once and mutes later lookups.
         """
 
         try:
