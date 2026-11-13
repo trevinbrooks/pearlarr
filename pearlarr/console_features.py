@@ -1,13 +1,13 @@
-"""Shared console-capability probing for the render seats (wait + boot).
+"""Shared console feature detection for the live regions (wait + boot).
 
 The output package's live regions (`boot_region`,
 `wait_region`) drive an optional sticky `rich.Live` region over
-the SAME `Console` the logger already owns, and both must degrade to a calm
-log digest on a non-TTY (Docker / a pipe / a dumb or too-narrow terminal). The
-wait narrator's `wants_download_progress` probe branches on the same signals. The probe
+the SAME `Console` the logger already owns, and both must degrade to calm
+log lines on a non-TTY (Docker / a pipe / a dumb or too-narrow terminal). The
+wait narrator's `wants_download_progress` check branches on the same signals. The detection
 lives here once: `console_of` finds the logger's console and `detect_features`
-folds rich's derived signals (plus `log.console_supports_unicode`) into the
-small `ConsoleFeatures` value the seats branch on.
+converts rich's derived signals (plus `log.console_supports_unicode`) into the
+small `ConsoleFeatures` value the regions branch on.
 """
 
 import logging
@@ -21,18 +21,18 @@ from rich.text import Text
 from .log import RichConsoleHandler, console_supports_unicode
 
 # Below this console width a sticky live region can't be drawn legibly, so the
-# views fall back to the log digest (the same path a non-TTY / dumb terminal
+# regions fall back to log lines (the same path a non-TTY / dumb terminal
 # takes).
 MIN_LIVE_WIDTH = 40
 
-# rich's own refresh cadence (frames/sec) for both live cockpits: the spinner
+# rich's own refresh cadence (frames/sec) for both live regions: the spinner
 # animates and any timers tick at this rate on rich's background thread.
 LIVE_REFRESH_PER_SECOND = 12.5
 
 
 @dataclass(frozen=True, slots=True)
 class ConsoleFeatures:
-    """What the output stream can do, probed once - drives mode + glyph choices."""
+    """What the output stream can do, detected once - drives the redraw + glyph choices."""
 
     can_redraw: bool
     """Whether we may drive a sticky live region (a real, non-dumb, wide-enough TTY)."""
@@ -56,12 +56,12 @@ def console_of(logger: logging.Logger) -> Console | None:
 
 
 def detect_features(console: Console | None) -> ConsoleFeatures:
-    """Fold rich's derived console signals into our render capabilities.
+    """Convert rich's derived console signals into `ConsoleFeatures`.
 
-    Reads rich's own folded flags (which already honor `NO_COLOR` / `TERM` /
+    Reads rich's own combined flags (which already honor `NO_COLOR` / `TERM` /
     isatty / legacy Windows) rather than re-parsing the environment. The only
     things added on top are the `MIN_LIVE_WIDTH` floor and a glyph-encodability
-    probe, which decide box-vs-lines and the glyph set.
+    check, which decide box-vs-lines and the glyph set.
     """
 
     if console is None:
@@ -81,11 +81,11 @@ def detect_features(console: Console | None) -> ConsoleFeatures:
 
 @final
 class DetectedFeatures:
-    """An identity-keyed `detect_features` cache for the render seats.
+    """An identity-keyed `detect_features` result for the live regions.
 
-    The console seat's regions (boot + wait) branch on the probe (the slow
+    The console renderer's regions (boot + wait) branch on the detected features (the slow
     heads-up policy). They must share ONE instance per hub, or a mid-boot resize
-    across `MIN_LIVE_WIDTH` could flip one surface's decision only.
+    across `MIN_LIVE_WIDTH` could flip one region's decision only.
     """
 
     __slots__ = ("_state",)
@@ -94,7 +94,7 @@ class DetectedFeatures:
         self._state: tuple[Console, ConsoleFeatures] | None = None
 
     def for_console(self, console: Console | None) -> ConsoleFeatures:
-        """The cached probe for `console`. A new identity re-probes and replaces."""
+        """The detected features for `console`. A new identity detects them again and replaces them."""
 
         if console is None:
             return detect_features(None)
@@ -105,7 +105,7 @@ class DetectedFeatures:
         return state[1]
 
     def reset(self) -> None:
-        """Drop the cached probe (cycle start, idempotent)."""
+        """Drop the detected features (run start, idempotent)."""
 
         self._state = None
 
@@ -126,7 +126,7 @@ def spinner_name(features: ConsoleFeatures) -> str:
 
 
 def make_live(console: Console) -> Live:
-    """The transient, auto-refreshing `rich.Live` both cockpits drive."""
+    """The transient, auto-refreshing `rich.Live` both live regions drive."""
 
     return Live(
         console=console,

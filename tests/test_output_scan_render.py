@@ -1,11 +1,11 @@
 # pyright: strict
-"""Tests for the scan-surface rendering layer.
+"""Tests for the scan rendering layer.
 
-Two halves over ONE golden spine (the data in `test_scan_parity`, captured
+Two halves over ONE set of goldens (the data in `test_scan_parity`, captured
 from the live reporter): the pure `scan_lines` builders reproduce the exact
-`(level, message, payload)` tuples per event, and the RichRenderer's scan arm
+`(level, message, payload)` tuples per event, and the RichRenderer's scan branch
 renders the same lines through the shared payload renderers on the shared
-Console at LOGGER-parity gating. Plus the generalized ENTRY-indent placement
+Console at LOGGER-parity gating. Plus the generalized ENTRY-indent position
 rule for diagnostics.
 """
 
@@ -128,7 +128,7 @@ def _as_lines(lines: tuple[ConsoleLine, ...]) -> tuple[Line, ...]:
 
 
 class TestBuilders:
-    """The pure line builders match their golden Line tuples for every scan, entry, action, and summary event."""
+    """The pure line builders match their golden Line tuples for every scan, title, action, and summary event."""
 
     def test_scan_started(self) -> None:
         assert _as_lines(scan_started_lines(SCAN_STARTED_SONARR)) == SCAN_STARTED_SONARR_LINES
@@ -253,7 +253,7 @@ class TestBuilders:
         }
 
 
-# --- the RichRenderer scan console arm ---------------------------------------------------
+# --- the RichRenderer scan console branch ------------------------------------------------
 
 _WIDTH = 100
 
@@ -292,7 +292,7 @@ def _expected_console(*line_groups: tuple[Line, ...], width: int = _WIDTH) -> li
 
 
 class TestRichRendererScanArm:
-    """The RichRenderer scan arm matches the golden lines, honors level gating, and no-ops without a console."""
+    """The RichRenderer scan branch matches the golden lines, honors level gating, and no-ops without a console."""
 
     def test_renders_a_scan_sequence_in_order(self) -> None:
         renderer, stream = _renderer()
@@ -311,7 +311,7 @@ class TestRichRendererScanArm:
         renderer.handle(SUMMARY_DRY_HAS_CLIENT, 0.0)
         lines = _plain_lines(stream)
         assert lines == _expected_console(SUMMARY_DRY_HAS_CLIENT_LINES)
-        # The DRY RUN note the file log drops rides the console title.
+        # The DRY RUN note the file log drops shows in the console title.
         assert "Pearlarr (Sonarr) run complete   (DRY RUN - nothing grabbed)" in lines
 
     def test_renders_the_rich_summary(self) -> None:
@@ -344,7 +344,7 @@ class TestRichRendererScanArm:
 
 
 class TestEntryIndentedDiagnostics:
-    """The generalized placement rule: a diagnostic indents while an ENTRY or ITEM scope is open (like boot/wait).
+    """The generalized position rule: a diagnostic indents while an ENTRY or ITEM scope is open (like boot/wait).
 
     Under RUN alone it stays column-0.
     """
@@ -363,7 +363,7 @@ class TestEntryIndentedDiagnostics:
         assert "  ⚠ tracker down" in _plain_lines(stream)
 
     def test_diagnostic_indents_under_an_open_item_between_entries(self) -> None:
-        # Import-flow lines fire between a series' entry blocks: they indent
+        # Import-flow lines fire between a series' title blocks: they indent
         # with the listing, not the run margin.
         renderer, stream = _renderer()
         self._open_item(renderer)
@@ -371,7 +371,7 @@ class TestEntryIndentedDiagnostics:
         assert "  ⚠ tracker down" in _plain_lines(stream)
 
     def test_scan_finished_returns_diagnostics_to_column_zero(self) -> None:
-        # ScanFinished evicts the item (and any entry under it): a diagnostic
+        # ScanFinished evicts the item (and any title under it): a diagnostic
         # after the listing sits back at the run margin.
         renderer, stream = _renderer()
         self._open_item(renderer)

@@ -1,15 +1,15 @@
 # pyright: strict
 # pyright: reportPrivateUsage=false
 # ^ the lifecycle tests read RichRenderer._wait._live and drive WaitRegion/_LiveFrame.
-"""Tests for the wait cockpit's renderer side (`output.wait_region`) + routing.
+"""Tests for the wait region's renderer side (`output.wait_region`) + routing.
 
 The RichRenderer's wait region opens its single `rich.Live` on the FIRST
-WaitProgress (never on WaitStarted), graduates finished torrents to durable
-scrollback while the cockpit is active, stops the Live before the closing tally
-prints, degrades to a start line + throttled pulses on a non-live console, and
-tears its slot down whenever the wait region leaves the fold's frontier
-(ScopeClosed, a RunFinished unwind). A raised level suppresses the durable lines
-but never the cockpit. A raising frame build degrades to an empty frame whose
+WaitProgress (never on WaitStarted), turns finished torrents into durable
+scrollback while the live region is active, stops the Live before the closing tally
+prints, degrades to a start line + throttled progress lines on a non-live console, and
+tears its slot down whenever the wait region leaves the open scopes
+(ScopeClosed, an ArrRunFinished unwind). A raised level suppresses the durable lines
+but never the live region. A raising frame build degrades to an empty frame whose
 failure LATCHES for a main-thread report (the refresh thread never logs).
 """
 
@@ -64,7 +64,7 @@ _WAIT_TWO = ScopeId(ScopeKind.WAIT_REGION, 701)
 def _live_renderer(width: int = 100) -> tuple[RichRenderer, io.StringIO]:
     stream = io.StringIO()
     console = Console(file=stream, force_terminal=True, legacy_windows=False, width=width)
-    # A frozen clock: the cockpit's between-poll ticking stays deterministic.
+    # A frozen clock: the wait region's between-poll ticking stays deterministic.
     return RichRenderer(lambda: console, time_source=lambda: 0.0), stream
 
 
@@ -86,13 +86,13 @@ def _progress(*torrents: TorrentView, elapsed: float) -> WaitProgress:
 
 
 class TestWaitCockpitLifecycle:
-    """The wait cockpit's Live opens on the first WaitProgress and stops before the closing tally prints."""
+    """The wait region's Live opens on the first WaitProgress and stops before the closing tally prints."""
 
     def test_live_starts_on_first_progress_not_on_started(self) -> None:
         renderer, _stream = _live_renderer()
 
         _feed(renderer, WaitStarted(total=1, progress_line_s=300.0, kind=WaitKind.MONITOR))
-        assert renderer._wait._live is None  # WaitStarted alone never opens the cockpit
+        assert renderer._wait._live is None  # WaitStarted alone never opens the live region
 
         _feed(renderer, _progress(_dl("Show"), elapsed=0))
         live = renderer._wait._live
@@ -111,11 +111,11 @@ class TestWaitCockpitLifecycle:
             RowFinished(label="Show A", outcome=Outcome.IMPORTED, files=8, waited_s=300),
         )
         live = renderer._wait._live
-        assert live is not None and live.is_started  # the cockpit is still active
+        assert live is not None and live.is_started  # the live region is still active
 
         _feed(renderer, WaitFinished(imported=1, left=0, failed=0, elapsed_s=300, in_progress=0, kind=WaitKind.MONITOR))
         out = _plain(stream)
-        assert "✔ imported    Show A  (8 files · 5m 00s)" in out  # graduated to durable scrollback
+        assert "✔ imported    Show A  (8 files · 5m 00s)" in out  # finished as durable scrollback
         assert "wait complete · 1 imported · 5m 00s" in out
 
     def test_wait_finished_stops_the_live_then_prints_the_tally(self) -> None:
@@ -165,7 +165,7 @@ class TestWaitCockpitLifecycle:
 
 
 class TestNonLiveDigest:
-    """On a non-live console the cockpit degrades to a start line plus throttled pulses, still honoring level gating."""
+    """On a non-live console it degrades to a start line plus throttled progress lines, still honoring level gating."""
 
     def test_prints_start_and_throttled_pulses_without_a_live(self) -> None:
         renderer, stream = _live_renderer(width=20)  # width < MIN_LIVE_WIDTH -> not live
@@ -173,8 +173,8 @@ class TestNonLiveDigest:
         _feed(
             renderer,
             WaitStarted(total=1, progress_line_s=300.0, kind=WaitKind.MONITOR),
-            _progress(_dl("Show"), elapsed=0),  # the start snapshot never pulses
-            _progress(_dl("Show"), elapsed=300),  # the first pulse
+            _progress(_dl("Show"), elapsed=0),  # the start snapshot never prints a progress line
+            _progress(_dl("Show"), elapsed=300),  # the first progress line
         )
         assert renderer._wait._live is None  # a non-live console never opens a Live
 
@@ -199,7 +199,7 @@ class TestNonLiveDigest:
         assert renderer._wait._live is None
 
     def test_failed_graduation_survives_a_raised_level(self) -> None:
-        # P6: the graduation line carries severity_of's category-based level,
+        # P6: the outcome line carries severity_of's category-based level,
         # so a FAILED outcome renders at ERROR through render_console_lines'
         # WARNING gate while the INFO wait lines around it vanish.
         renderer, stream = _live_renderer(width=40)
@@ -216,7 +216,7 @@ class TestNonLiveDigest:
 
 
 class TestFrontierTeardown:
-    """The wait Live slot tears down whenever the wait region leaves the fold's frontier, always starting fresh."""
+    """The wait Live slot tears down whenever the wait region leaves the open scopes, always starting fresh."""
 
     def test_scope_closed_tears_down_the_wait_live(self) -> None:
         renderer, _stream = _live_renderer()
@@ -249,7 +249,7 @@ class TestFrontierTeardown:
         assert renderer._wait._live is None and not live.is_started
 
     def test_a_second_pass_starts_a_fresh_live_slot(self) -> None:
-        # Negative control against stale reuse: the evicted slot is never repainted.
+        # Negative control against reusing a leftover slot: the evicted slot is never repainted.
         # A second pass mints a fresh Live (a leaked slot would be reused, nested).
         renderer, _stream = _live_renderer()
 
@@ -273,7 +273,7 @@ class TestFrontierTeardown:
         )
         second = renderer._wait._live
         assert second is not None and second.is_started
-        assert second is not first  # a fresh slot, never the stale one
+        assert second is not first  # a fresh slot, never the leftover one
 
         renderer.close()
         assert renderer._wait._live is None and not second.is_started
@@ -287,7 +287,7 @@ class TestFrontierTeardown:
             WaitStarted(total=1, progress_line_s=300.0, kind=WaitKind.MONITOR),
             _progress(_dl("Show"), elapsed=0),
         )
-        assert renderer._wait._live is not None  # the cockpit is NOT level-gated
+        assert renderer._wait._live is not None  # the live region is NOT level-gated
 
         _feed(
             renderer,
@@ -296,7 +296,7 @@ class TestFrontierTeardown:
         )
         assert renderer._wait._live is None
         out = _plain(stream)
-        assert "imported" not in out  # the durable graduation + tally were suppressed
+        assert "imported" not in out  # the durable outcome line + tally were suppressed
         assert "wait complete" not in out
 
     def test_without_a_rich_console_every_wait_event_no_ops(self) -> None:
@@ -313,7 +313,7 @@ class TestFrontierTeardown:
 
 
 class TestWaitRegionDirect:
-    """WaitRegion driven directly: section_left tears down idempotently, frames roll the clock, rows adapt to width."""
+    """WaitRegion driven directly: scope_closed tears down idempotently, frames roll the clock, rows adapt to width."""
 
     @staticmethod
     def _region() -> WaitRegion:
@@ -322,7 +322,7 @@ class TestWaitRegionDirect:
 
     def test_section_left_no_ops_when_no_live_ever_started(self) -> None:
         region = self._region()
-        region.scope_closed()  # the non-TTY digest path never started a Live
+        region.scope_closed()  # the non-TTY progress line path never started a Live
         assert region._live is None
         region.scope_closed()  # idempotent
         assert region._live is None
@@ -340,7 +340,7 @@ class TestWaitRegionDirect:
         assert region._live is None
 
     def test_check_kind_threads_from_the_start_event_into_the_frame(self) -> None:
-        # The frame must render the CHECK verb, never the reset seed's monitor wording.
+        # The frame must render the CHECK verb, never the reset default's MONITOR wording.
         region = self._region()
         region.handle(WaitStarted(total=1, progress_line_s=300.0, kind=WaitKind.CHECK))
         region.handle(_progress(_dl("Show"), elapsed=5.0))
@@ -351,8 +351,8 @@ class TestWaitRegionDirect:
 
     def test_frame_rolls_the_clocks_forward_between_polls(self) -> None:
         # The self-animating tick: a refresh AFTER the push rebuilds the frame
-        # with the clock's advance folded into the overall elapsed and every
-        # in-flight row's phase clock (TERMINAL rows would stay frozen).
+        # with the clock's advance added into the overall elapsed and every
+        # in-flight row's phase clock (FINISHED rows would stay frozen).
         clock = {"now": 100.0}
         console = Console(file=io.StringIO(), force_terminal=True, legacy_windows=False, width=100)
         region = WaitRegion(lambda: console, level_source=lambda: logging.INFO, time_source=lambda: clock["now"])
@@ -369,7 +369,7 @@ class TestWaitRegionDirect:
 
     def test_wide_frame_renders_the_bar_percent_and_importing_spinner(self) -> None:
         # The RowModel -> rich-widget mapping: a download shows its block bar +
-        # clamped percent. An importing row rides the shared Spinner marker with
+        # clamped percent. An importing row uses the shared Spinner marker with
         # its "copying" word in the bar column.
         region = self._region()
         download = TorrentView(key="d", label="Down", phase=Phase.DOWNLOADING, fraction=0.5)

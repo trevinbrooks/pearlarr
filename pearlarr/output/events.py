@@ -20,7 +20,7 @@ if TYPE_CHECKING:
 
 
 class TitleState(StrEnum):
-    """The outcome word in an entry-ledger row's state column. The widest value fixes STATE_WIDTH."""
+    """The outcome word in a title row's state column. The widest value fixes STATE_WIDTH."""
 
     UNCHANGED = "unchanged"
     CHECKING = "checking"
@@ -68,7 +68,7 @@ class StyledValue:
 
 
 class ScopeKind(Enum):
-    """The open-node kinds."""
+    """The open scope kinds."""
 
     BOOT_SECTION = auto()
     BOOT_STEP = auto()
@@ -89,11 +89,11 @@ class ScopeId:
 class PlacedBy(Enum):
     """How a diagnostic's rendered position was assigned."""
 
-    AMBIENT = auto()  # position-free. Any rendered position is the frontier's guess
+    AMBIENT = auto()  # position-free. Any rendered position is the open scopes' guess
     HANDLE = auto()  # demoted from a known (closed) scope. Attribution is exact
 
 
-# --- run / cycle lifecycle -------------------------------------------------------
+# --- run lifecycle ---------------------------------------------------------------
 
 
 @dataclass(frozen=True, slots=True)
@@ -107,14 +107,14 @@ class PearlarrStarted:
 
 @dataclass(frozen=True, slots=True)
 class ScheduledRunStarted:
-    """One scheduled-mode cycle begins (1-based)."""
+    """One scheduled run begins (1-based)."""
 
     number: int
 
 
 @dataclass(frozen=True, slots=True)
 class NextRunScheduled:
-    """When the next scheduled cycle fires."""
+    """When the next scheduled run fires."""
 
     at: datetime
 
@@ -137,7 +137,7 @@ class ScopeClosed:
     scope: ScopeId
 
 
-# --- boot cockpit -----------------------------------------------------------------
+# --- boot -------------------------------------------------------------------------
 
 
 @dataclass(frozen=True, slots=True)
@@ -178,7 +178,7 @@ class BootStepFinished:
 
 @dataclass(frozen=True, slots=True)
 class BootReady:
-    """The boot capstone."""
+    """The boot ready line."""
 
     elapsed_s: float
 
@@ -188,7 +188,7 @@ class BootReady:
 
 @dataclass(frozen=True, slots=True)
 class ScanStarted:
-    """Opens the per-arr run node."""
+    """Opens the arr run scope."""
 
     arr: Arr
     total: int
@@ -196,7 +196,7 @@ class ScanStarted:
 
 @dataclass(frozen=True, slots=True)
 class ItemStarted:
-    """Opens an item node."""
+    """Opens an item scope."""
 
     arr: Arr
     index: int
@@ -206,7 +206,7 @@ class ItemStarted:
 
 @dataclass(frozen=True, slots=True)
 class TitleHeader:
-    """One entry block's head."""
+    """One title block's head."""
 
     state: TitleState
     title: str
@@ -219,7 +219,7 @@ class TitleHeader:
 
 @dataclass(frozen=True, slots=True)
 class TitleDetail:
-    """A labeled line inside an entry block."""
+    """A labeled line inside a title block."""
 
     label: str
     value: StyledValue
@@ -230,7 +230,7 @@ class TitleDetail:
 
 @dataclass(frozen=True, slots=True)
 class TitleRow:
-    """A one-line ledger row with no block body."""
+    """A one-line title row with no block body."""
 
     state: TitleState
     label: str
@@ -274,12 +274,12 @@ class GrabStatus(Enum):
     ADDING = auto()
     WOULD_ADD = auto()
     ALREADY_DOWNLOADING = auto()
-    """SeaDex's pick is already in qBittorrent."""
+    """The release is already in qBittorrent."""
 
 
 @dataclass(frozen=True, slots=True)
 class GroupLabel:
-    """A recommended release group with its SeaDex tags."""
+    """A release group with its SeaDex tags."""
 
     name: str
     tags: tuple[str, ...] = ()
@@ -319,7 +319,7 @@ class GrabAction:
 
 @dataclass(frozen=True, slots=True)
 class CapReached:
-    """The `max_torrents` cap was reached."""
+    """The `max_torrents_to_add` cap was reached."""
 
     cap: int
 
@@ -336,7 +336,7 @@ class ScanFinished:
 
 @dataclass(frozen=True, slots=True)
 class GrabbedRow:
-    """One grab, recorded for the end-of-run summary's "added" detail block."""
+    """One grab, recorded for the arr run summary's "added" detail block."""
 
     title: str | None
     coverage: str | None
@@ -349,25 +349,24 @@ class NeedsActionCause(Enum):
     """Why a title landed in "needs action". The summary's tips key off this, never the display reason text."""
 
     PRIVATE_ONLY = auto()
-    """The warn-mode skip: a private-only recommended release with no fallback attempted."""
+    """The `private_releases: warn` skip: a private-only release with no fallback attempted."""
     PRIVATE_ONLY_NO_FALLBACK = auto()
-    """Fallback mode that couldn't or wouldn't fall back."""
+    """`private_releases: fallback` that couldn't or wouldn't fall back."""
     PRIVATE_ONLY_STALE = auto()
-    """Fallback mode refusing to replace an owned stale copy of the preferred private release."""
+    """`private_releases: fallback` refusing to replace the library's outdated copy of the preferred private release."""
     UNSUPPORTED_TRACKER = auto()
-    """A recommended release is on a tracker we have no parser for."""
+    """A release is on a tracker we have no parser for."""
     GRAB_FAILED = auto()
-    """A contained transient failure (tracker/qBittorrent down)."""
+    """A contained transient failure (tracker/qBittorrent unreachable)."""
     PLACEMENT_INPUT_MISSING = auto()
-    """A read the grab-time placement needs failed: the grab was judged without it, or held until it answers."""
+    """A read the grab-time placement needs failed: the grab was decided without it, or skipped until it answers."""
     MISNUMBERED = auto()
-    """A recommended release's file numbers disagree, or it's a specials pack numbered another way than its
-    listing: a hand import."""
+    """A release's file numbers disagree, or it's a specials torrent numbered another way than its listing: a hand
+    import."""
     TITLE_REFUTED = auto()
-    """A recommended release's file titles contradict its numbering and none of it places on the entry."""
+    """A release's episode titles contradict its numbering and none of it places on the title."""
     PLACED_ELSEWHERE = auto()
-    """None of a recommended release's files place on the entry, and some place under another title SeaDex lists
-    it with."""
+    """None of a release's files place on the title, and some place under another title SeaDex lists it with."""
 
 
 @dataclass(frozen=True, slots=True)
@@ -425,7 +424,7 @@ class ArrRunTally:
 
 @dataclass(frozen=True, slots=True)
 class ArrRunSummary:
-    """The whole end-of-run scoreboard as one value."""
+    """The whole arr run summary as one value."""
 
     arr: Arr
     dry_run_note: str | None
@@ -445,7 +444,7 @@ class ArrRunSummary:
 
 @dataclass(frozen=True, slots=True)
 class ArrRunSummaryReady:
-    """The end-of-run summary is ready."""
+    """The arr run summary is ready."""
 
     summary: ArrRunSummary
 
@@ -465,14 +464,14 @@ class Phase(Enum):
     AWAITING_FIRST_POLL = auto()
     """Still downloading (or not yet polled)."""
     DOWNLOADING = auto()
-    """Downloading with live telemetry."""
+    """Downloading with live download progress."""
     IMPORTING = auto()
     """The download finished and an import is in flight."""
     FINISHED = auto()
-    """A terminal `Outcome` was reached. These GRADUATE to scrollback and leave the live region."""
+    """An `Outcome` was reached. These rows FINISH: they go to scrollback and leave the live region."""
 
 
-# Speed samples a downloading row keeps for its sparkline, one per heavy poll
+# Speed samples a downloading row keeps for its sparkline, one per poll
 # (~4 minutes at the default 30s cadence). The producer bounds TorrentView.speed_history to this window.
 SPARK_SAMPLES = 8
 
@@ -492,11 +491,12 @@ class TorrentView:
     phase_elapsed_s: float = 0.0
     command_issued: bool = False
     import_done: int | None = None
-    """"Files inserted" bar: both set = determinate, both None = indeterminate."""
+    """"Files imported" bar: both set = determinate, both None = indeterminate."""
     import_total: int | None = None
-    """On a TERMINAL imported row, the ledger's final files count (`phase_elapsed_s` freezes as its wait clock)."""
+    """On a FINISHED imported row, the outcome line's final files count (`phase_elapsed_s` freezes as its wait
+    clock)."""
     left_for_hand_import: LeftForHandImport = NO_HAND_IMPORT_FILES
-    """On a TERMINAL unmatched or partial row, the on-disk files left for a hand import."""
+    """On a FINISHED unmatched or partial row, the on-disk files left for a hand import."""
     speed_history: tuple[int, ...] = ()
     """Speed samples (bytes/s, stalled = 0), newest last, bounded to `SPARK_SAMPLES`."""
     outcome: Outcome | None = None
@@ -504,7 +504,7 @@ class TorrentView:
 
 @dataclass(frozen=True, slots=True)
 class WaitSnapshot:
-    """An immutable description of the whole wait pass, one value per poll cycle."""
+    """An immutable description of the whole wait pass, one value per poll."""
 
     torrents: tuple[TorrentView, ...]
     elapsed_s: float = 0.0
@@ -518,7 +518,7 @@ class WaitSnapshot:
         return tally
 
     def done(self) -> int:
-        """How many torrents have reached a terminal outcome."""
+        """How many torrents have finished with an outcome."""
 
         return sum(1 for t in self.torrents if t.phase is Phase.FINISHED)
 
@@ -528,7 +528,7 @@ class WaitSnapshot:
         return len(self.torrents)
 
     def overall_fraction(self) -> float:
-        """An aggregate 0-1 progress for the header bar. A terminal or importing row counts as complete."""
+        """An aggregate 0-1 progress for the header bar. A finished or importing row counts as complete."""
 
         if not self.torrents:
             return 0.0
@@ -542,22 +542,22 @@ class WaitSnapshot:
 
 
 class WaitKind(Enum):
-    """Which end-of-run pass a wait region narrates, with its rendering vocab."""
+    """Which wait pass a wait region narrates, with its rendering vocab."""
 
     MONITOR = ("Waiting on {n} download{s} to complete and import...", "wait complete", "waiting", "Wait")
-    """The blocking/hybrid monitor: waits for downloads to finish, then imports."""
+    """The blocking/hybrid wait pass: waits for downloads to finish, then imports."""
 
     CHECK = ("Checking {n} carried-over download{s}...", "check complete", "checking", "Check")
-    """The one-cycle check: polls once, imports the finished ones, never waits."""
+    """The deferred wait pass: polls once, imports the finished ones, never waits."""
 
     start_template: str
-    """The digest's opening sentence, with `{n}` count and `{s}` plural-suffix slots."""
+    """The progress lines' opening sentence, with `{n}` count and `{s}` plural-suffix slots."""
 
     tally_head: str
     """The closing summary's lead phrase."""
 
     live_verb: str
-    """The cockpit header's progress verb, also the structured log's start word."""
+    """The wait region header's progress verb, also the structured log's start word."""
 
     interrupt_noun: str
     """The Ctrl-C notice's pass name."""
@@ -575,14 +575,14 @@ class WaitStarted:
 
     total: int
     progress_line_s: float
-    """The renderer's pulse throttle interval (`max(poll_s, digest_interval)`)."""
+    """The renderer's progress line throttle interval (`max(poll_s, digest_interval)`)."""
     kind: WaitKind
     scope: ScopeId | None = None
 
 
 @dataclass(frozen=True, slots=True)
 class WaitProgress:
-    """The engine's per-poll snapshot."""
+    """The wait pass's per-poll snapshot."""
 
     snapshot: WaitSnapshot
     scope: ScopeId | None = None
@@ -590,7 +590,7 @@ class WaitProgress:
 
 @dataclass(frozen=True, slots=True)
 class RowFinished:
-    """One torrent reached a terminal outcome."""
+    """One torrent's row finished with its outcome."""
 
     label: str
     outcome: Outcome
@@ -610,14 +610,14 @@ class WaitFinished:
     failed: int
     elapsed_s: float
     in_progress: int
-    """Rows the one-cycle check left for the next run on purpose."""
+    """Rows the deferred wait pass left for the next run on purpose."""
     kind: WaitKind
     scope: ScopeId | None = None
 
 
 @dataclass(frozen=True, slots=True)
 class ArrRunFinished:
-    """The run-close boundary."""
+    """The arr run close boundary."""
 
     arr: Arr
 
@@ -636,7 +636,7 @@ class Diagnostic:
     trace: CapturedTrace | None = None
     placed_by: PlacedBy = PlacedBy.AMBIENT
     file_only: bool = False
-    """Routes hub-containment notes past the console surfaces to the file sink alone."""
+    """Routes hub-containment notes past the console renderers to the file log renderer alone."""
 
 
 # --- json value model -------------------------------------------------------------
@@ -741,7 +741,7 @@ class CacheStatsReported:
 
 @dataclass(frozen=True, slots=True)
 class CacheIntegrityReported:
-    """`cache check`'s success arm: SQLite's integrity-check result."""
+    """`cache check`'s success case: SQLite's integrity-check result."""
 
     result: str
 
@@ -799,7 +799,7 @@ def _kind_severity(kind: OutcomeKind) -> Severity:
 
 
 def severity_of(event: Event) -> Severity:
-    """The severity an event tallies as (drives SeverityCounts + sink level floors)."""
+    """The severity an event tallies as (drives SeverityCounter + renderer level floors)."""
 
     match event:
         case Diagnostic(severity=severity):

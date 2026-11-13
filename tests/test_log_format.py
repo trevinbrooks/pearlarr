@@ -5,19 +5,19 @@ Pins the contract:
 
 * "rich" (and "auto" on a TTY) attaches exactly ONE `RichConsoleHandler`.
   It is the only non-bridge handler - no FileHandler anywhere (the hub's
-  FileLogSink owns the file), no logger filters (severity tallies live on the
+  FileLogRenderer owns the file), no logger filters (severity tallies live on the
   hub's `SeverityCounter`).
 * "plain"/"json" (and "auto" off a TTY) attach NO console handler at all:
   level-only configuration. The bridge is the only handler, so records still
   reach the hub and `logging.lastResort` can never fire.
-* `console_of` -> None under plain/json, so the live cockpits never build -
-  designed, not a bug (the hub seats LineRenderer/JsonRenderer instead).
+* `console_of` -> None under plain/json, so the live regions never build -
+  designed, not a bug (the hub subscribes PlainRenderer/JsonRenderer instead).
 * `apply_log_level` re-points the rich console handler's threshold
   (`console_level` semantics) and forwards the raw level to the hub.
-* The stand-down seam: the rich handler renders raw records (badges for
+* The stand-down check: the rich handler renders raw records (badges for
   WARNING+, plain text below) UNLESS the registered console owner answers True
   (the bridge adopts every record. The hub's renderer places it) - no owner
-  keeps the legacy arms, so records can never vanish.
+  keeps the legacy branches, so records can never vanish.
 * The invalid-level complaint fires AFTER handler attach: on a rich console
   with no owner the legacy badge renders it. Under plain/json it arrives as a
   hub Diagnostic through the bridge (advisor #17's early-record path).
@@ -57,7 +57,7 @@ class _Builder:
     """Build a `setup_logger` logger over a swapped-in stdout stream.
 
     Swapping `sys.stdout` (rather than relying on pytest capture) makes the
-    TTY probe deterministic: `StringIO.isatty()` is False even under `-s`.
+    TTY detection deterministic: `StringIO.isatty()` is False even under `-s`.
     """
 
     def __init__(self, monkeypatch: pytest.MonkeyPatch) -> None:
@@ -138,7 +138,7 @@ class TestApplyLogLevel:
         logger = build("rich")
         console = next(h for h in logger.handlers if isinstance(h, RichConsoleHandler))
 
-        # Raising the level quiets the sinks but the console keeps INFO+
+        # Raising the level quiets the renderers but the console keeps INFO+
         # (routine progress stays visible)...
         apply_log_level(logger, "ERROR")
         assert logger.level == logging.ERROR
@@ -170,18 +170,18 @@ def _rich_setup(name: str, stream: io.StringIO | None = None) -> tuple[logging.L
 
 
 class TestRichHandlerSeam:
-    """The stand-down seam: while a bridge is installed, the hub owns the raw-record stream outright.
+    """The stand-down check: while a bridge is installed, the hub owns the raw-record stream outright.
 
-    WARNING+ render in-context on an armed seat (stderr fallback otherwise), DEBUG chatter at the renderer's
-    frontier indent - either way the handler stands down. With no bridge installed the legacy arms render
-    instead (the standalone fallback).
+    WARNING+ render in-context on an active console renderer (stderr fallback otherwise), DEBUG chatter at the
+    indent of the renderer's open scopes - either way the handler stands down. With no bridge installed the legacy
+    branches render instead (the standalone fallback).
     """
 
     def test_plain_warning_and_error_records_skip_the_handler_when_the_hub_owns_the_console(self) -> None:
         """Plain WARNING+ (incl. exc_info) never render here while a bridge is installed.
 
         The hub places the badge instead - rendering here too would double it.
-        Ownership is registration, not seat state: pre-`begin_run` or after a
+        Ownership is registration, not renderer state: pre-`begin_run` or after a
         strike-out, the hub's STDERR fallback is the single net.
         """
 
@@ -206,7 +206,7 @@ class TestRichHandlerSeam:
         assert "⚠ watch out" in strip_ansi(stream.getvalue())
 
     def test_an_ascii_console_badges_with_the_word(self) -> None:
-        """The handler probes its console once: no unicode -> the legacy padded word."""
+        """The handler checks its console once: no unicode -> the legacy padded word."""
 
         logger, stream = _rich_setup("pearlarr-test-rich-seam-ascii", AsciiStringIO())
 
@@ -225,7 +225,7 @@ class TestRichHandlerSeam:
         """DEBUG chatter stands down too: the bridge-adopted Diagnostic is its only console route.
 
         Rendering here as well would double the line - and at a producer-baked
-        indent instead of the renderer's frontier placement.
+        indent instead of the position the renderer's open scopes give it.
         """
 
         logger, stream = _rich_setup("pearlarr-test-rich-seam-chatter")

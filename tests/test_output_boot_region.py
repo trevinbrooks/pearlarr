@@ -1,14 +1,14 @@
 # pyright: strict
 # pyright: reportPrivateUsage=false
 # ^ the frame-text tests exercise BootRegion._frame_text (a pure render helper).
-"""Tests for the boot cockpit's renderer side (`output.boot_region`).
+"""Tests for the boot region's renderer side (`output.boot_region`).
 
-The RichRenderer's boot region draws the banner, graduates finished steps to
-durable scrollback lines, prints the capstone, degrades to the heads-up digest
+The RichRenderer's boot region draws the banner, turns finished steps into
+durable scrollback lines, prints the ready line, degrades to the heads-up lines
 on a non-live rich console, and tears its single Live slot down whenever the
-boot section leaves the fold's frontier (ScopeClosed, ScanStarted, run/cycle
-boundaries). The pure ledger-line builders are pinned directly. The file/plain
-surfaces render the same events through the `output.line_renderers` grammar.
+boot scope leaves the open scopes (ScopeClosed, ScanStarted, process/run
+boundaries). The pure boot step line builders are pinned directly. The file/plain
+renderers render the same events through the `output.line_renderers` grammar.
 """
 
 import io
@@ -57,7 +57,7 @@ _BOOT_SCOPE_TWO = ScopeId(ScopeKind.BOOT_SECTION, 901)
 
 
 def _opened(scope: ScopeId = _BOOT_SCOPE) -> ScopeOpened:
-    """Production shape: the section opens via ScopeOpened before any step."""
+    """Production shape: the boot scope opens via ScopeOpened before any step."""
 
     return ScopeOpened(scope=scope, label="boot")
 
@@ -104,7 +104,7 @@ def _plain(stream: io.StringIO) -> str:
     return strip_ansi(stream.getvalue()).replace("\r", "")
 
 
-# --- the shared ledger-line grammar -------------------------------------------------
+# --- the shared boot step line grammar ----------------------------------------------
 
 
 def test_graduation_line_unicode_and_ascii_glyphs() -> None:
@@ -137,7 +137,7 @@ def test_format_step_secs_bands() -> None:
 
 
 class TestBootRegion:
-    """Boot region: steps graduate to durable lines. The Live slot tears down at every scope/run/cycle boundary."""
+    """Boot region: steps finish as durable lines. The Live slot tears down at every scope/process/run boundary."""
 
     def test_banner_renders_title_blank_and_data_dir(self) -> None:
         renderer, stream = _renderer()
@@ -223,7 +223,7 @@ class TestBootRegion:
         assert live is not None and live.is_started
         _feed(renderer, ScopeClosed(scope=_BOOT_SCOPE))
         assert renderer._boot._live is None and not live.is_started
-        # A second section must start a FRESH Live: rich refuses two concurrent
+        # A second boot scope must start a FRESH Live: rich refuses two concurrent
         # Lives on one console, so a leaked slot would raise LiveError here.
         _feed(
             renderer,
@@ -238,7 +238,7 @@ class TestBootRegion:
         assert f"  ✔ Two{SEP}0.61s" in out
 
     def test_scan_started_tears_down_the_live_slot(self) -> None:
-        # The trap: ScanStarted evicts the boot section in the fold WITHOUT
+        # The trap: ScanStarted evicts the boot scope from the open scopes WITHOUT
         # any ScopeClosed. The spinner must not survive over the scan output.
         renderer, _stream = _renderer()
 
@@ -250,7 +250,7 @@ class TestBootRegion:
         assert renderer._boot._live is None and not live.is_started
 
     def test_run_and_cycle_boundaries_tear_down_the_live_slot(self) -> None:
-        # Teardown keys on the frontier departure, not on WHICH event caused it.
+        # Teardown keys on the boot scope leaving the open scopes, not on WHICH event caused it.
         for boundary in (PearlarrStarted(version="v9.9.9", data_dir="/data"), ScheduledRunStarted(number=2)):
             renderer, _stream = _renderer()
             _feed(renderer, _opened(), _started("Fetching library"))
@@ -260,9 +260,9 @@ class TestBootRegion:
             assert renderer._boot._live is None and not live.is_started
 
     def test_run_finished_arr_run_boundary_evicts_the_live_and_the_next_arr_run_starts_fresh(self) -> None:
-        # G4: within one scheduled cycle each arr leg ends with ArrRunFinished (never a
-        # begin_run). The leg close must evict the boot Live so the next leg's boot
-        # section starts a FRESH slot - a leaked Live would be reused (stale region,
+        # G4: within one scheduled run each arr run ends with ArrRunFinished (never a
+        # begin_run). The arr run's close must evict the boot Live so the next arr run's boot
+        # scope starts a FRESH slot - a leaked Live would be reused (leftover region,
         # nested on rich's live stack), so the load-bearing pin is object identity.
         renderer, stream = _renderer()
 
@@ -276,13 +276,13 @@ class TestBootRegion:
         _feed(renderer, _opened(_BOOT_SCOPE_TWO), _started("Two", serial=2), _finished("Two", serial=2))
         second_arr_run_live = renderer._boot._live
         assert second_arr_run_live is not None and second_arr_run_live.is_started
-        assert second_arr_run_live is not first_arr_run_live  # a fresh slot, never the stale one
+        assert second_arr_run_live is not first_arr_run_live  # a fresh slot, never the leftover one
 
         renderer.close()
         assert renderer._boot._live is None and not second_arr_run_live.is_started
 
         out = _plain(stream)
-        assert f"  ✔ Two{SEP}0.61s" in out  # leg two's ledger rendered under the fresh Live
+        assert f"  ✔ Two{SEP}0.61s" in out  # arr run two's boot step lines rendered under the fresh Live
 
     def test_begin_cycle_and_close_stop_a_live_slot(self) -> None:
         renderer, _stream = _renderer()
@@ -294,7 +294,7 @@ class TestBootRegion:
         _feed(renderer, _opened(), _started("Three", serial=3), ScopeClosed(scope=_BOOT_SCOPE))
 
     def test_a_raising_live_stop_still_prints_the_capstone(self, monkeypatch: pytest.MonkeyPatch) -> None:
-        # The shared spine (LiveRegion._stop_live) contains a stop() raise so a
+        # The shared base class (LiveRegion._stop_live) contains a stop() raise so a
         # failed teardown can't eat the durable print that follows it.
         real_stop = Live.stop
 
@@ -326,7 +326,7 @@ class TestBootRegion:
         assert f"  ✔ Refreshing mappings{SEP}1/2 MB{SEP}0.61s" in _plain(stream)
 
     def test_raised_level_silences_the_durable_boot_lines(self) -> None:
-        # Parity with the logger-driven ledger: at level WARNING the INFO boot
+        # Parity with the logger-driven boot step lines: at level WARNING the INFO boot
         # lines never rendered under the old logger gate, so the region mirrors it.
         renderer, stream = _renderer()
         renderer.set_level(logging.WARNING)
@@ -343,12 +343,12 @@ class TestBootRegion:
 
         out = _plain(stream)
         assert "Pearlarr" not in out
-        assert "✔" not in out  # no graduated ledger line (spinner frames may remain)
+        assert "✔" not in out  # no finished boot step line (spinner frames may remain)
         assert "ready in" not in out
 
     def test_warning_level_keeps_first_party_info_diagnostics(self) -> None:
-        # The two gates stay distinct at configured WARNING: the boot ledger
-        # vanishes (logger parity, above) while a first-party INFO diagnostic
+        # The two gates stay distinct at configured WARNING: the boot step lines
+        # vanish (logger parity, above) while a first-party INFO diagnostic
         # keeps rendering (diagnostic_threshold's console INFO floor).
         renderer, stream = _renderer()
         renderer.set_level(logging.WARNING)

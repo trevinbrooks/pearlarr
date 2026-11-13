@@ -1,13 +1,13 @@
 # pyright: strict
 # pyright: reportPrivateUsage=false
 # ^ the drift pin reads _PHASE_RANK and the ETA tests drive _rough_eta directly.
-"""Tests for the wait surface's pure line builders + throttle + reducers.
+"""Tests for the wait pass's pure line builders + throttle + reducers.
 
-The byte guarantees on the wait ledger live in the builders (consumed by the
+The byte guarantees on the outcome lines live in the builders (consumed by the
 WaitRegion's durable prints) and the `output.line_renderers`
 grammar. The region-side rendering is pinned in test_output_wait_region. Here:
 the `ProgressLineThrottle` unit contract, the builder edge cases (including the
-category-based graduation level), and the pure cockpit reducers
+category-based outcome line level), and the pure live region reducers
 (`live_model` / `sparkline` / `row_finished_note`).
 """
 
@@ -65,7 +65,7 @@ def _grad(
 
 
 class TestPulseThrottle:
-    """PulseThrottle's contract: skip-first firing, elapsed-anchored cadence, and re-arm restarts skip-first."""
+    """ProgressLineThrottle's contract: skip-first firing, elapsed-anchored cadence, and start() restarts skip-first."""
 
     def test_disarmed_never_fires(self) -> None:
         throttle = ProgressLineThrottle()
@@ -83,9 +83,9 @@ class TestPulseThrottle:
         throttle.start(300.0)
         assert throttle.fire(0.0) is False  # skip-first
         assert throttle.fire(299.0) is False  # within the interval
-        assert throttle.fire(300.0) is True  # due, re-arms at 600
+        assert throttle.fire(300.0) is True  # due, next at 600
         assert throttle.fire(599.0) is False
-        assert throttle.fire(650.0) is True  # elapsed-anchored: re-arms at 950, not a 900 grid mark
+        assert throttle.fire(650.0) is True  # elapsed-anchored: next at 950, not a 900 grid mark
         assert throttle.fire(940.0) is False  # 940 < 950
         assert throttle.fire(1310.0) is True
 
@@ -114,7 +114,7 @@ class TestPulseThrottle:
 
     def test_first_fire_is_skipped_even_past_the_interval(self) -> None:
         # skip-first as DISTINCT behavior: a late first snapshot (already past the
-        # mark) still never pulses - the old view's first render printed the start
+        # mark) still never prints a progress line - the old view's first render printed the start
         # line and returned no matter when it ran.
         throttle = ProgressLineThrottle()
         throttle.start(5.0)
@@ -126,7 +126,7 @@ class TestPulseThrottle:
 
 
 class TestWaitBuilders:
-    """Builder edge cases the goldens miss: zero tallies, per-kind wording, graduation style/level by outcome."""
+    """Builder edge cases the goldens miss: zero tallies, per-kind wording, outcome line style/level by outcome."""
 
     def test_zero_graduation_tally_is_empty(self) -> None:
         finished = WaitFinished(imported=0, left=0, failed=0, elapsed_s=42.0, in_progress=0, kind=WaitKind.MONITOR)
@@ -168,7 +168,7 @@ class TestWaitBuilders:
         assert line.message == "  ok imported    Show A  (1 file · 1m 00s)"
 
     def test_graduation_line_level_follows_the_outcome_category(self) -> None:
-        # P6: the rendered line and severity_of/the sink admission agree -
+        # P6: the rendered line and severity_of/the renderer admission agree -
         # FAILED carries ERROR, DEFERRED WARNING, success INFO.
         features = detect_features(None)
         assert row_finished_lines(_grad("A", Outcome.IMPORTED), features)[0].level == logging.INFO
@@ -176,7 +176,7 @@ class TestWaitBuilders:
         assert row_finished_lines(_grad("C", Outcome.DOWNLOAD_ERRORED), features)[0].level == logging.ERROR
 
 
-# --- the pure cockpit reducers ----------------------------------------------------------
+# --- the pure live region reducers ------------------------------------------------------
 
 _WIDE = ConsoleFeatures(can_redraw=True, can_color=True, can_unicode=True, width=100, height=40)
 
@@ -241,7 +241,7 @@ def test_live_model_header_reports_aggregate_under_the_kinds_verb(kind: WaitKind
 
 
 def test_live_model_importing_determinate_bar() -> None:
-    # A known files-inserted count -> a determinate bar with a "done/total" count
+    # A known files-imported count -> a determinate bar with a "done/total" count
     # and the elapsed clock in the shared time column.
     snap = WaitSnapshot((_importing_row("h", "Show", done=8, total=12, elapsed=64),), elapsed_s=64)
 
@@ -254,7 +254,7 @@ def test_live_model_importing_determinate_bar() -> None:
 
 
 def test_live_model_importing_is_indeterminate_without_a_total() -> None:
-    # No seed-complete count -> no bar. The status word carries the phase
+    # No file map count -> no bar. The status word carries the phase
     # ("copying" once the import command's async copy is in flight), and the
     # elapsed clock sits in the same time column as every other row.
     snap = WaitSnapshot(
@@ -341,12 +341,12 @@ def test_compact_eta_covers_every_magnitude() -> None:
 
 
 def test_phase_rank_covers_every_non_terminal_phase() -> None:
-    # Drift pin: a new Phase member must be placed in the cockpit ordering - and
-    # in the overflow/pulse tallies that hand-list the same non-terminal trio.
+    # Drift pin: a new Phase member must be added to the live region ordering - and
+    # in the overflow/progress line tallies that hand-list the same unfinished trio.
     assert set(_PHASE_RANK) | {Phase.FINISHED} == set(Phase)
 
 
-# --- graduation ledger coda ------------------------------------------------------
+# --- outcome line note -----------------------------------------------------------
 
 
 def test_graduation_tail_states_files_and_elapsed_for_an_import() -> None:
@@ -354,12 +354,12 @@ def test_graduation_tail_states_files_and_elapsed_for_an_import() -> None:
 
 
 def test_graduation_tail_is_empty_when_an_import_has_no_detail() -> None:
-    # No files count (incomplete seed) and a sub-second wait -> nothing to say.
+    # No files count (incomplete file map) and a sub-second wait -> nothing to say.
     assert row_finished_note(_grad("A", Outcome.IMPORTED)) == ""
 
 
 def test_graduation_tail_elapsed_alone_when_files_unknown() -> None:
-    # An incomplete seed map hides the files count but the wait clock still shows.
+    # An incomplete file map hides the files count but the wait clock still shows.
     assert row_finished_note(_grad("A", Outcome.IMPORTED, waited=192)) == "3m 12s"
 
 

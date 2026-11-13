@@ -13,7 +13,7 @@ from rich.traceback import Traceback
 from .config import LogFormat
 
 # True while the output bridge is installed: the rich handler must stand down or every record renders twice.
-# With no bridge (standalone `setup_logger`) the legacy arms still render, so a record can never vanish.
+# With no bridge (standalone `setup_logger`) the legacy branches still render, so a record can never vanish.
 _hub_owns_console = False
 
 
@@ -59,7 +59,7 @@ LEVEL_BADGES = {
 
 
 def console_supports_unicode(console: Console) -> bool:
-    """Whether the console can encode the glyphs/blocks the styled surfaces draw."""
+    """Whether the console can encode the glyphs/blocks the styled renderers draw."""
 
     if getattr(console, "legacy_windows", False):
         return False
@@ -72,7 +72,7 @@ def console_supports_unicode(console: Console) -> bool:
 
 
 class RichConsoleHandler(logging.Handler):
-    """The rich-TTY fallback surface for raw first-party records, and the shared Console's home."""
+    """The rich-TTY fallback handler for raw first-party records, and the shared Console's home."""
 
     # rich keeps the outermost and innermost frames and elides the middle beyond this.
     MAX_TRACEBACK_FRAMES = 10
@@ -80,7 +80,7 @@ class RichConsoleHandler(logging.Handler):
     def __init__(self, console: Console, level: int = logging.NOTSET) -> None:
         super().__init__(level=level)
         self.console = console
-        # Probed once. The console identity is fixed for this handler's lifetime.
+        # Checked once. The console identity is fixed for this handler's lifetime.
         self._use_unicode = console_supports_unicode(console)
 
     def _print_line(self, record: logging.LogRecord, message: str) -> None:
@@ -152,7 +152,7 @@ class LogLevel(StrEnum):
 
 
 def resolve_console_format(console_format: LogFormat) -> LogFormat:
-    """Fold "auto" to the tty-detected concrete format."""
+    """Convert "auto" to the tty-detected concrete format."""
 
     if console_format == "auto":
         return "rich" if sys.stdout.isatty() else "plain"
@@ -160,7 +160,7 @@ def resolve_console_format(console_format: LogFormat) -> LogFormat:
 
 
 def console_level(level: int) -> int:
-    """The rich-console threshold for a logger level. The text surfaces use the raw level."""
+    """The rich-console threshold for a logger level. The text renderers use the raw level."""
 
     if level in (logging.DEBUG, logging.CRITICAL):
         return level
@@ -172,7 +172,7 @@ def apply_log_level(logger: logging.Logger, log_level: str) -> None:
 
     level = _LOG_LEVELS.get(log_level.upper(), logging.INFO)
     logger.setLevel(level)
-    # Keep root in step: the config level lands here mid-cycle, and the root-seated bridge must see
+    # Keep root in step: the config level lands here mid-run, and the bridge on the root logger must see
     # sub-WARNING third-party records.
     logging.getLogger().setLevel(level)
     for handler in logger.handlers:
@@ -198,7 +198,7 @@ def setup_logger(
     logger = logging.getLogger(LOG_NAME)
     logger.propagate = False
 
-    # Close and detach handlers from a previous call first (scheduled mode re-runs this each cycle): an
+    # Close and detach handlers from a previous call first (scheduled mode re-runs this each run): an
     # unclosed handler leaks its descriptor. The output bridge is installed once per process and must survive.
     for old_handler in list(logger.handlers):
         if isinstance(old_handler, HubBridgeBase):
@@ -215,7 +215,7 @@ def setup_logger(
     # WARNING default) decides third-party records.
     logging.getLogger().setLevel(level)
 
-    # Defensive fold for programmatic callers. cli resolves before calling.
+    # Defensive conversion for programmatic callers. cli resolves before calling.
     console_format = resolve_console_format(console_format)
 
     if console_format == "rich":

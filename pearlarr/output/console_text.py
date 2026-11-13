@@ -13,7 +13,7 @@ from ..log import print_literal
 
 @dataclass(frozen=True, slots=True)
 class TitledRule:
-    """The payload for a titled section header."""
+    """The payload for a titled block header."""
 
     title: str
     style: str = "bold cyan"
@@ -55,7 +55,7 @@ type ConsoleRender = TitledRule | SeparatorRule | KeyValue | StyledLine
 
 
 def print_titled_rule(console: Console, title: str, style: str, *, heavy: bool) -> None:
-    """A titled section header: a full-width rule, then the bold title line."""
+    """A titled block header: a full-width rule, then the bold title line."""
 
     console.print(Rule(style=style, characters="━" if heavy else "─"))
     print_literal(console, Text(title, style=f"{style} bold"))
@@ -82,7 +82,7 @@ def kv_text(kv: KeyValue) -> Text:
 
 
 def rule_text(char: str) -> Rule:
-    """A full-width separator: heavy ("━") for section ("=") breaks, light ("─") for sub ("-") breaks."""
+    """A full-width separator: heavy ("━") for top-level ("=") breaks, light ("─") for sub ("-") breaks."""
 
     if char == "=":
         return Rule(style="cyan", characters="━")
@@ -91,10 +91,10 @@ def rule_text(char: str) -> Rule:
 
 INDENT = "  "
 
-# The entry-ledger state column, padded so labels align. Widest state word is "unmonitored" (11).
+# The title row state column, padded so labels align. Widest state word is "unmonitored" (11).
 STATE_WIDTH = 11
 
-# Column the entry title starts at, measured from the end of its indent prefix.
+# Column the title starts at, measured from the end of its indent prefix.
 TITLE_LABEL_OFFSET = STATE_WIDTH + 1
 
 # Detail-line keys sit in the indent gutter so the value lands at the title column, less the space kv adds.
@@ -103,7 +103,7 @@ DETAIL_KEY_WIDTH = (len(INDENT) + TITLE_LABEL_OFFSET) - (DETAIL_INDENT * len(IND
 
 
 def title_row_string(state: TitleState, label: str) -> str:
-    """Format an entry-ledger body: "<state> <label>", state padded to STATE_WIDTH."""
+    """Format a title row body: "<state> <label>", state padded to STATE_WIDTH."""
 
     return f"{state.ljust(STATE_WIDTH)} {label}"
 

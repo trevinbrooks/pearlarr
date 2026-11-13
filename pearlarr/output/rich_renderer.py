@@ -1,22 +1,22 @@
-"""The rich console surface: diagnostics + the boot, scan, and wait cockpit arms.
+"""The live console's renderer: diagnostics + the boot, scan, and wait branches.
 
-Diagnostics are position-free. This renderer is the single ambient placement
+Diagnostics are position-free. This renderer is the single ambient position
 authority: its `scope_path.OpenScopes` instance decides where a
-diagnostic lands: indented while a boot section, item, wait region, or entry
+diagnostic lands: indented while the boot scope, an item, a wait region, or a title
 block is open, column 0 under RUN alone (before the first item and after the
-scan closes. Mid-scan an item stays on the frontier until the next boundary,
+scan closes. Mid-scan an item stays open until the next boundary,
 so import-flow notes indent with the listing they land in). The boot
-events (banner / steps / capstone) drive the `boot_region.BootRegion`
-(the live spinner and the durable ledger lines).
+events (banner / steps / ready line) drive the `boot_region.BootRegion`
+(the live spinner and the durable boot step lines).
 The scan events render through the shared `scan_lines` builders at
 LOGGER-parity gating, so the console shows exactly what the file logs.
 
 The renderer resolves the CURRENT shared Console at render time from the live
 `log.RichConsoleHandler` (`setup_logger` rebuilds handlers per
-cycle. The logger identity is stable). Printing through that shared Console
-keeps Live reflow safe - the same mechanism as the cockpits' graduation lines.
-Under plain/json (no rich handler) it no-ops. This seat is never built there
-(cli seats LineRenderer/JsonRenderer instead), and the FileLogSink always
+run. The logger identity is stable). Printing through that shared Console
+keeps Live reflow safe - the same mechanism as the live regions' durable lines.
+Under plain/json (no rich handler) it no-ops. This renderer is never built there
+(cli installs PlainRenderer/JsonRenderer instead), and the FileLogRenderer always
 carries the record.
 """
 
@@ -90,7 +90,7 @@ from ..log import LEVEL_BADGES, LOG_NAME, badge_line, console_level, print_liter
 
 
 def live_console() -> Console | None:
-    """The current cycle's shared rich Console, or None under plain/json."""
+    """The current run's shared rich Console, or None under plain/json."""
 
     return console_of(logging.getLogger(LOG_NAME))
 
@@ -100,7 +100,7 @@ def diagnostic_threshold(level: int, *, first_party: bool) -> int:
 
     First-party keeps the `console_level` semantics (INFO floor except
     DEBUG/CRITICAL). Third-party floors at WARNING unless the configured level
-    is DEBUG, so a chatty library can't flood the ledger.
+    is DEBUG, so a chatty library can't flood the console.
     """
 
     base = console_level(level)
@@ -126,7 +126,7 @@ def diagnostic_text(event: Diagnostic, *, indented: bool, use_unicode: bool) -> 
 
 @final
 class RichRenderer(Renderer):
-    """The hub's console seat (diagnostics + the boot/scan/wait cockpit arms)."""
+    """The hub's console renderer (diagnostics + the boot/scan/wait branches)."""
 
     def __init__(
         self,
@@ -135,8 +135,8 @@ class RichRenderer(Renderer):
         time_source: Callable[[], float] = time.monotonic,
     ) -> None:
         # `detected_features` is the process-shared instance in production (cli
-        # wiring, stable across seat swaps). None builds one private cache
-        # shared by this seat's surfaces (diagnostics + both regions).
+        # wiring, stable across console renderer swaps). None builds one private instance
+        # shared by this renderer's parts (diagnostics + both regions).
         self._console_source = console_source
         self._detected_features = detected_features if detected_features is not None else DetectedFeatures()
         self._open_scopes = OpenScopes()
@@ -148,8 +148,8 @@ class RichRenderer(Renderer):
             level_source=self._current_level,
             time_source=time_source,
         )
-        # Each region owns one Live slot. A frontier departure tears its slot down
-        # no matter which event evicted the node (ScopeClosed, an ArrRunFinished unwind).
+        # Each region owns one Live slot. A scope close tears its slot down
+        # no matter which event closed the scope (ScopeClosed, an ArrRunFinished unwind).
         self._regions: tuple[tuple[ScopeKind, LiveRegion], ...] = (
             (ScopeKind.BOOT_SECTION, self._boot),
             (ScopeKind.WAIT_REGION, self._wait),
@@ -158,9 +158,9 @@ class RichRenderer(Renderer):
     @override
     def handle(self, event: Event, when: float) -> None:
         del when
-        # Placement must be settled BEFORE rendering (fold-first also keeps the
-        # fold advancing when rendering raises). A region departure tears its live
-        # slot down no matter which event evicted the node (ScopeClosed, a
+        # Position must be settled BEFORE rendering (applying `OpenScopes` first also keeps
+        # it advancing when rendering raises). A region's scope close tears its live
+        # slot down no matter which event closed the scope (ScopeClosed, a
         # ArrRunFinished unwind, anything).
         open_before = tuple(self._has_open_scope(kind) for kind, _ in self._regions)
         self._open_scopes.apply(event)
@@ -180,7 +180,7 @@ class RichRenderer(Renderer):
             ):
                 self._boot.handle(event)
             case ScopeOpened() | ScopeClosed():
-                # Scope boundaries feed the fold (and the departure check) only.
+                # Scope boundaries feed `OpenScopes` (and the scope-close check) only.
                 pass
             case (
                 ScanStarted()
@@ -200,8 +200,8 @@ class RichRenderer(Renderer):
             case NextRunScheduled(at=at):
                 self._next_run(at)
             case ScheduledRunStarted() | ScanFinished() | ArrRunFinished():
-                # Pure boundaries: the banner leads each cycle and the summary
-                # closes each run, so none draws a console line of its own.
+                # Pure boundaries: the banner leads each run and the summary
+                # closes each arr run, so none draws a console line of its own.
                 pass
             case (
                 PathsShown()
@@ -261,7 +261,7 @@ class RichRenderer(Renderer):
             )
 
     def _render_console_lines(self, lines: Iterable[ConsoleLine]) -> None:
-        """Shared legacy lines over the live Console at LOGGER-parity gating."""
+        """Shared console lines over the live Console at LOGGER-parity gating."""
 
         console = self._console_source()
         if console is None:
@@ -279,32 +279,32 @@ class RichRenderer(Renderer):
         self._render_console_lines((line,))
 
     def _scan(self, event: ScanEvent) -> None:
-        """The scan console arm: the shared legacy lines over the shared Console.
+        """The scan console branch: the shared console lines over the shared Console.
 
         Gating is LOGGER parity (`render_console_lines`): at a configured
         WARNING the INFO scan lines vanish from the console exactly as they
         vanish from the file - deliberately NOT the diagnostics' console floor.
         """
 
-        # Skip building the (sometimes hefty, e.g. the run summary) scan lines
+        # Skip building the (sometimes hefty, e.g. the arr run summary) scan lines
         # when there's no console to render them. `_render_console_lines` discards them.
         if self._console_source() is None:
             return
         self._render_console_lines(scan_event_lines(event))
 
     def _has_open_scope(self, *kinds: ScopeKind) -> bool:
-        """True when any open node (the whole stack, not just the top) is one of `kinds`."""
+        """True when any open scope (the whole stack, not just the top) is one of `kinds`."""
 
         wanted = frozenset(kinds)
         return any(open_scope.kind in wanted for open_scope in self._open_scopes.scopes())
 
     def _indented_scope_open(self) -> bool:
-        """True while a boot section, item, wait region, or entry block is open.
+        """True while the boot scope, an item, a wait region, or a title block is open.
 
-        These are the indented contexts a diagnostic folds into (RUN alone
+        These are the indented contexts a diagnostic goes into (RUN alone
         stays column-0). ITEM is included so an import-flow warning fired
-        between a series' entry blocks indents with the listing instead of
-        breaking it at the run margin.
+        between a series' title blocks indents with the listing instead of
+        breaking it at the arr run margin.
         """
 
         return self._has_open_scope(ScopeKind.BOOT_SECTION, ScopeKind.ITEM, ScopeKind.WAIT_REGION, ScopeKind.ENTRY)

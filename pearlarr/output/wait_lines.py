@@ -1,4 +1,4 @@
-"""Pure builders and reducers for the wait pass: the rich-free live-frame model and the ledger lines."""
+"""Pure builders and reducers for the wait pass: the rich-free live-frame model and the wait lines."""
 
 from __future__ import annotations
 
@@ -46,7 +46,7 @@ if TYPE_CHECKING:
 
 type WaitEvent = WaitStarted | WaitProgress | RowFinished | WaitFinished
 
-# The live cockpit never grows past this many in-flight rows, the rest collapse into a one-line
+# The wait region never grows past this many in-flight rows, the rest collapse into a one-line
 # "+ N more ..." overflow so a large carried-over backlog can't blow the region past the screen.
 MAX_LIVE_ROWS = 12
 MIN_LIVE_ROWS = 4
@@ -54,11 +54,11 @@ MIN_LIVE_ROWS = 4
 _RESERVED_ROWS = 8
 # The sparkline needs unicode blocks and enough width not to crowd the label.
 MIN_SPARK_WIDTH = 80
-# The console names this many of a download's held-back files. The log and the notification name them all.
+# The console names this many of a download's files left for hand import. The log and the notification name them all.
 _MAX_FILE_ROWS = 5
-# The console wraps an order-only record's reason at this many columns, so its rows fit a 100-column terminal.
+# The console wraps an order-only pending import's reason at this many columns, so its rows fit a 100-column terminal.
 _REASON_WIDTH = 78
-# A ledger row's label starts two columns past an entry row's, behind the glyph and its space.
+# An outcome line's label starts two columns past a title row's, behind the glyph and its space.
 _ROW_KEY_WIDTH = DETAIL_KEY_WIDTH + 2
 
 
@@ -69,7 +69,7 @@ def _episodes(keys: tuple[EpisodeKey, ...]) -> str:
 
 
 def _order_only_reason(left: LeftForHandImport) -> str:
-    """Why the order-only files are held, as a sentence with no capital and no closing mark."""
+    """Why the order-only files are left for hand import, as a sentence with no capital and no closing mark."""
 
     keys = [file.order_only for file in left.files if file.order_only is not None]
     names = list(dict.fromkeys(order_display_name(key.order) for key in keys))
@@ -87,7 +87,7 @@ def _order_only_reason(left: LeftForHandImport) -> str:
 
 
 def hand_import_names(left: LeftForHandImport, *, sep: str = ": ", quote: str = "") -> list[str]:
-    """Each held-back file's name, an order-only one behind its order's number, as "DVD S07E01: NAME"."""
+    """Each hand import file's name, an order-only one behind its order's number, as "DVD S07E01: NAME"."""
 
     names: list[str] = []
     for file in left.files:
@@ -97,7 +97,9 @@ def hand_import_names(left: LeftForHandImport, *, sep: str = ": ", quote: str = 
 
 
 def hand_import_sentences(left: LeftForHandImport) -> tuple[str, str]:
-    """A record explained by its order, in words: a sentence per kind of unfilled episode, then why its files are held.
+    """A pending import explained by its order, in words.
+
+    A sentence per kind of episode still needed, then why its files are left for hand import.
 
     The reason has no closing mark.
     """
@@ -115,7 +117,7 @@ def hand_import_sentences(left: LeftForHandImport) -> tuple[str, str]:
 
 
 def _still_needed_note(left: LeftForHandImport) -> str:
-    """The unfilled episodes of a record explained by its order, as its ledger row's coda."""
+    """The episodes a pending import still needs, explained by its order, as its outcome line's note."""
 
     parts: list[str] = []
     if left.missing:
@@ -128,7 +130,7 @@ def _still_needed_note(left: LeftForHandImport) -> str:
 
 
 def row_finished_note(event: RowFinished) -> str:
-    """The ledger line's parenthesized coda. "" when there is nothing to say."""
+    """The outcome line's parenthesized note. "" when there is nothing to say."""
 
     outcome = event.outcome
     left = event.left_for_hand_import
@@ -153,18 +155,18 @@ def row_finished_note(event: RowFinished) -> str:
     return "no longer tracked · title checked again next run"
 
 
-# --- the durable ledger-line builders (the rich console's scrollback) ----------------
+# --- the durable wait line builders (the rich console's scrollback) ------------------
 
 
 def wait_start_line(event: WaitStarted) -> ConsoleLine:
-    """The non-TTY digest's opening line, worded by the pass kind."""
+    """The non-TTY progress lines' opening line, worded by the wait mode."""
 
     plural = "" if event.total == 1 else "s"
     return ConsoleLine(logging.INFO, event.kind.start_template.format(n=event.total, s=plural))
 
 
 def wait_progress_line(snapshot: WaitSnapshot) -> ConsoleLine:
-    """One throttled "still waiting" aggregate pulse."""
+    """One throttled "still waiting" aggregate progress line."""
 
     counts = snapshot.counts()
     message = indent_string(
@@ -176,13 +178,13 @@ def wait_progress_line(snapshot: WaitSnapshot) -> ConsoleLine:
 
 
 def _detail(key: str, value: str, style: str | None = None) -> KeyValue:
-    """A labeled row under a ledger row: the key in the gutter, the value under the row's label."""
+    """A labeled row under an outcome line: the key in the gutter, the value under the line's label."""
 
     return KeyValue(key=key, value=value, key_width=_ROW_KEY_WIDTH, value_style=style, indent=DETAIL_INDENT, sep="")
 
 
 def _hand_import_details(left: LeftForHandImport, features: ConsoleFeatures, style: str) -> list[KeyValue]:
-    """The rows under a held-back ledger row: the reason, when the order explains it, then `_MAX_FILE_ROWS` files."""
+    """Rows under a hand import outcome line: the reason, when the order explains it, then `_MAX_FILE_ROWS` files."""
 
     rows: list[KeyValue] = []
     if left.explained_by_order:
@@ -196,7 +198,7 @@ def _hand_import_details(left: LeftForHandImport, features: ConsoleFeatures, sty
 
 
 def row_finished_lines(event: RowFinished, features: ConsoleFeatures) -> list[ConsoleLine]:
-    """A finished torrent's durable ledger line (glyph + word + label + coda), then its held-back files' rows.
+    """A finished torrent's durable outcome line (glyph + word + label + note), then its hand import files' rows.
 
     Every line is at `severity_of`'s level.
     """
@@ -215,7 +217,7 @@ def row_finished_lines(event: RowFinished, features: ConsoleFeatures) -> list[Co
 
 
 def wait_tally_lines(event: WaitFinished) -> list[ConsoleLine]:
-    """The closing wait summary. `[]` when nothing graduated."""
+    """The closing wait summary. `[]` when no row finished."""
 
     if event.imported == 0 and event.in_progress == 0 and event.left == 0 and event.failed == 0:
         return []
@@ -236,7 +238,7 @@ def wait_tally_lines(event: WaitFinished) -> list[ConsoleLine]:
 
 @final
 class ProgressLineThrottle:
-    """The "still waiting" pulse cadence."""
+    """The "still waiting" progress line cadence."""
 
     __slots__ = ("_interval", "_next", "_skip_first")
 
@@ -251,7 +253,7 @@ class ProgressLineThrottle:
         self._skip_first = True
 
     def fire(self, elapsed_s: float) -> bool:
-        """Advance the cadence. True when a pulse is due at `elapsed_s`."""
+        """Advance the cadence. True when a progress line is due at `elapsed_s`."""
 
         if self._interval is None:
             return False
@@ -292,7 +294,7 @@ class RowModel:
 
 @dataclass(frozen=True, slots=True)
 class LiveModel:
-    """A bounded, ordered, rich-free description of the live cockpit frame."""
+    """A bounded, ordered, rich-free description of the wait region frame."""
 
     left_text: str
     right_text: str
@@ -302,7 +304,7 @@ class LiveModel:
 
 
 def live_model(snapshot: WaitSnapshot, features: ConsoleFeatures, kind: WaitKind) -> LiveModel:
-    """Reduce a snapshot to a bounded, ordered cockpit frame."""
+    """Reduce a snapshot to a bounded, ordered wait region frame."""
 
     in_flight = [t for t in snapshot.torrents if t.phase is not Phase.FINISHED]
     in_flight.sort(key=_row_sort_key)
@@ -337,13 +339,13 @@ def live_model(snapshot: WaitSnapshot, features: ConsoleFeatures, kind: WaitKind
     )
 
 
-# Every non-terminal Phase, drift-pinned (test_output_wait_render ties it to set(Phase)).
+# Every Phase but FINISHED, drift-pinned (test_output_wait_render ties it to set(Phase)).
 # _overflow_text and wait_progress_line hand-list the same trio.
 _PHASE_RANK = {Phase.IMPORTING: 0, Phase.DOWNLOADING: 1, Phase.AWAITING_FIRST_POLL: 2}
 
 
 def _row_sort_key(torrent: TorrentView) -> tuple[int, float]:
-    """Order key: importing first, downloads by soonest ETA, queued last."""
+    """Order key: importing first, downloads by soonest ETA, not yet polled last."""
 
     rank = _PHASE_RANK.get(torrent.phase, 3)
     eta = float(torrent.eta_s) if torrent.eta_s is not None else float("inf")
@@ -351,7 +353,7 @@ def _row_sort_key(torrent: TorrentView) -> tuple[int, float]:
 
 
 def _row_model(torrent: TorrentView, *, spark: bool) -> RowModel:
-    """Format one in-flight torrent's cells for the cockpit."""
+    """Format one in-flight torrent's cells for the wait region."""
 
     if torrent.phase is Phase.DOWNLOADING:
         rate = "stalled" if torrent.speed_bps is None else f"{human_bytes(torrent.speed_bps)}/s"

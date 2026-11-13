@@ -1,7 +1,7 @@
 """The process-global hub registry.
 
 Mirrors stdlib logging's process-global registry: cli installs the real hub once
-pre-loop. Scope producers (the boot flow's mark, the wait narrator's factory) and
+pre-loop. Scope producers (the boot flow's boot scope, the wait narrator's factory) and
 `apply_log_level` reach it via `current_hub`. The default is a
 renderer-less hub, so emissions before install (tests, library use) drop silently
 instead of raising.
@@ -25,9 +25,9 @@ def emit_to_hub(event: Event) -> None:
     """Emit through the process hub, resolved at call time.
 
     THE late-resolver emit for every producer without a bound handle - the
-    reporter's `emit` seam, boot_flow's ledger/mark, the wait narrator's
-    ScopeFactory - so the per-cycle hub swap is never captured at build time,
-    and the seam has one home.
+    reporter's `emit`, boot_flow's boot step lines/boot scope, the wait narrator's
+    ScopeFactory - so the per-run hub swap is never captured at build time,
+    and the late resolve has one home.
     """
 
     current_hub().emit(event)
@@ -56,13 +56,16 @@ def hub_error(message: str, *, exc: BaseException | None = None) -> None:
 
 
 def note_to_file_log(message: str, *, severity: Severity = Severity.INFO) -> None:
-    """A first-party diagnostic routed past the console surfaces to the file log alone."""
+    """A first-party diagnostic routed past the console renderers to the file log alone."""
 
     emit_to_hub(Diagnostic(severity=severity, message=message, origin=LOG_NAME, file_only=True))
 
 
 def file_log_admits(severity: Severity) -> bool:
-    """Whether the file log admits `severity` - the text surfaces take the raw configured level; the rich console has its own floor."""
+    """Whether the file log admits `severity`.
+
+    The text renderers take the raw configured level. The live console has its own floor.
+    """
 
     return current_hub().level <= int(severity)
 
@@ -77,7 +80,7 @@ def install_hub(hub: OutputHub) -> None:
     """Make `hub` the process hub, closing any previously installed one.
 
     A repeat `run single` in one process must not leak the prior hub's open
-    FileLogSink (or double-rotate its cascade). The DEFAULT hub is never closed.
+    FileLogRenderer (or double-rotate its cascade). The DEFAULT hub is never closed.
     """
 
     global _hub
@@ -89,7 +92,7 @@ def install_hub(hub: OutputHub) -> None:
 def uninstall_hub() -> None:
     """Close the installed hub and restore the renderer-less default (tests).
 
-    Closing releases the outgoing hub's sink resources (an open FileLogSink
+    Closing releases the outgoing hub's renderer resources (an open FileLogRenderer
     handle). Emits on a closed hub drop silently. NEVER closes the default.
     """
 

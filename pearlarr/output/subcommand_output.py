@@ -1,10 +1,10 @@
-"""The subcommand output surface: a hub seat + install shim for the typer commands.
+"""The subcommand output: a hub renderer + install shim for the typer commands.
 
 The `config`/`cache`/`paths` subcommands emit the same typed events run commands
-do, through a minimal hub carrying ONE console seat and no file sink (subcommands
-must work with an unwritable log dir). `cli_surface` installs that hub for a
-command body. `--json` picks the JSON seat, otherwise `CliTextRenderer` renders
-the `typer.echo` output the docs and pinned tests expect. The seat is built
+do, through a minimal hub carrying ONE console renderer and no file log renderer (subcommands
+must work with an unwritable log dir). `subcommand_hub` installs that hub for a
+command body. `--json` picks the JSON renderer, otherwise `CliTextRenderer` renders
+the `typer.echo` output the docs and pinned tests expect. The renderer is built
 INSIDE the contextmanager so `sys.stdout` resolves after any pytest/CliRunner
 stream swap.
 """
@@ -72,12 +72,12 @@ if TYPE_CHECKING:
 
 @final
 class CliTextRenderer(Renderer):
-    """The subcommands' human seat: reproduces the `typer.echo` output verbatim.
+    """The subcommands' human renderer: reproduces the `typer.echo` output verbatim.
 
     A WARNING+ diagnostic goes to stderr (so `config show > cfg.yml` stays
     clean). Everything else prints to stdout via `typer.echo` (keeping click's
     Windows-console encoding behavior identical). Run-lifecycle events can never
-    reach this seat, so they render nothing.
+    reach this renderer, so they render nothing.
     """
 
     @override
@@ -137,7 +137,7 @@ class CliTextRenderer(Renderer):
                 | WaitFinished()
                 | ArrRunFinished()
             ):
-                # Run-lifecycle events never reach the cli seat.
+                # Run-lifecycle events never reach the cli renderer.
                 pass
             case _:
                 assert_never(event)
@@ -203,10 +203,10 @@ class CliTextRenderer(Renderer):
 
 @contextlib.contextmanager
 def subcommand_hub(json_output: bool) -> Generator[None]:
-    """Install a minimal one-seat hub for a subcommand body, closing it on exit.
+    """Install a minimal one-renderer hub for a subcommand body, closing it on exit.
 
-    No file sink, no bridge, no begin_cycle: INFO renders straight through the
-    seat with the hub's synchronous same-thread drain. Closing the hub on exit is
+    No file log renderer, no bridge, no begin_run: INFO renders straight through the
+    renderer with the hub's synchronous same-thread drain. Closing the hub on exit is
     the output barrier before the command's exit code fires.
     """
 

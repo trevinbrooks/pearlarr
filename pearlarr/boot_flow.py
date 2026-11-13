@@ -1,20 +1,20 @@
 """The boot flow's producer facade: mint scopes, emit events, never render.
 
-Startup does real work before any series is scanned - read+validate config,
+The boot does real work before any series is scanned - read+validate config,
 download/parse the id-mapping sources, open the cache, log into qBittorrent,
 fetch the library, prefetch AniList + SeaDex metadata. The composition root
 (`bootstrap.py`) drives that work through `BootFlow`: the banner facts
-ride a `PearlarrStarted` event, each IO step runs inside a
-`StepScope` (timed + graduated by the renderers), and the
-section mark keeps diagnostics fired BETWEEN steps placed at the boot-ledger
-indent. Rendering lives entirely on the hub's surfaces (the RichRenderer's boot
-region, the file/plain/json text sinks) - this module emits facts only.
+go out in a `PearlarrStarted` event, each IO step runs inside a
+`StepScope` (timed + finished by the renderers), and the
+boot scope keeps diagnostics fired BETWEEN steps at the boot step
+indent. Rendering lives entirely in the hub's renderers (the RichRenderer's boot
+region, the file/plain/json text renderers) - this module emits facts only.
 
 A run scans each configured arr in turn. Each scan's per-item logging must start
-with no live region above it, so `end_boot` caps a section (emitting
-the `ready in Xs` capstone when it earned one) and the next `step`
-reopens a fresh one. Every method is total: emission rides the hub (which contains
-renderer bugs), so presentation can never abort the startup work it wraps.
+with no live region above it, so `end_boot` closes the boot scope (emitting
+the `ready in Xs` ready line when it earned one) and the next `step`
+reopens a fresh one. Every method is total: emission goes through the hub (which contains
+renderer bugs), so presentation can never abort the boot work it wraps.
 """
 
 from __future__ import annotations
@@ -41,10 +41,10 @@ from .output import (
 
 @dataclass(frozen=True, slots=True)
 class _BootStart:
-    """The capstone gate's window: opened at a section's first step, closed by `end_boot`.
+    """The ready line gate's window: opened at a boot scope's first step, closed by `end_boot`.
 
     Opening at the first step keeps the banner→step gap - which holds only
-    import work - out of the capstone's timing.
+    import work - out of the ready line's timing.
     """
 
     started_at: float
@@ -58,7 +58,7 @@ class BootFlow:
     The root emits the `banner`, runs each IO step inside `step`,
     calls `end_boot` right before a per-arr scan starts logging (so the
     renderers tear their live region down first), and `close` once at the
-    end - the safety net when a section was left open.
+    end - the safety net when the boot scope was left open.
     """
 
     def __init__(self, data_dir: str = "", *, clock: Callable[[], float] = time.monotonic) -> None:
@@ -70,10 +70,10 @@ class BootFlow:
         self._step_failed = False
 
     def banner(self) -> None:
-        """State the banner facts (version, data dir), then open the boot section.
+        """State the banner facts (version, data dir), then open the boot scope.
 
-        Order matters: `PearlarrStarted` is the run boundary (the fold closes any
-        stale nodes on it), so the section mark opens after it.
+        Order matters: `PearlarrStarted` is the run boundary (`OpenScopes` closes any
+        scopes still open on it), so the boot scope opens after it.
         """
 
         emit_to_hub(PearlarrStarted(version=_app_version(), data_dir=self._data_dir))
@@ -83,8 +83,8 @@ class BootFlow:
     def step(self, label: str) -> Generator[StepScope]:
         """Run one IO step as a StepScope: started/progress/slow/finished events out.
 
-        The caller's exception still propagates (the step just graduates FAILED
-        first). A failed step suppresses the section's capstone.
+        The caller's exception still propagates (the step just finishes FAILED
+        first). A failed step suppresses the boot's ready line.
         """
 
         self._boot_scope.open()
@@ -94,13 +94,13 @@ class BootFlow:
             with self._steps.step(label) as scope:
                 yield scope
         except BaseException:
-            # StepScope's __exit__ graduated the step FAILED. The section-level
-            # verdict is ours (the scope knows nothing of the section).
+            # StepScope's __exit__ finished the step FAILED. The boot-level
+            # result is BootFlow's (the step scope knows nothing of the boot scope).
             self._step_failed = True
             raise
 
     def end_boot(self) -> None:
-        """Cap the section: emit the capstone (when earned), close the scope mark.
+        """End the boot: emit the ready line (when earned), close the boot scope.
 
         Calling this inside an open `step` body is unsupported.
         """
@@ -111,20 +111,20 @@ class BootFlow:
         self._step_failed = False
 
     def close(self) -> None:
-        """Final teardown (idempotent) - safety net if a section was left open."""
+        """Final teardown (idempotent) - safety net if the boot scope was left open."""
 
         self.end_boot()
 
     def _emit_boot_ready(self) -> None:
-        # No "ready" line on an empty or failed section, or one that recorded an
-        # ERROR+ without raising (a refused arm mid-section): the error already
+        # No "ready" line on an empty or failed boot, or one that recorded an
+        # ERROR+ without raising (a refused branch mid-boot): the error already
         # carries the meaning, and claiming "ready" after it would lie.
         start = self._boot_start
         if start is None or self._step_failed:
             return
-        # The mark carries the counter it was stamped on (a hub swap can't skew the
+        # The mark carries the counter it was taken from (a hub swap can't skew the
         # diff). Counts exclude file_only forensics, so only an ERROR+ a visible
-        # surface could show suppresses the ready line.
+        # renderer could show suppresses the ready line.
         if start.counts_mark.since().errors > 0:
             return
         emit_to_hub(BootReady(elapsed_s=self._clock() - start.started_at))

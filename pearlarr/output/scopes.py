@@ -1,4 +1,4 @@
-"""Typed capability scope handles: position rides the handle, never the call site.
+"""Typed capability scope handles: position travels with the handle, never the call site.
 
 Emitting on a closed handle demotes to a `Diagnostic` instead of raising.
 """
@@ -71,7 +71,7 @@ PROCESS_SCOPE_IDS: Final = ScopeIdCounter()
 
 @final
 class BootScope:
-    """The boot flow's ambient-scope mark ceremony: idempotent open/close."""
+    """The boot flow's ambient-scope mark: idempotent open and close calls."""
 
     def __init__(self, kind: ScopeKind, label: str) -> None:
         self._kind = kind
@@ -109,7 +109,7 @@ def _describe_fact(fact: TitleEvent) -> str:
 
 
 class _ScopeBase:
-    """Shared handle spine, including the closed-handle demotion."""
+    """Shared handle base class, including the closed-handle demotion."""
 
     _KIND_WORD: ClassVar[str] = "scope"
 
@@ -164,7 +164,7 @@ class StepScope(_ScopeBase):
         self._emit(BootStepProgressed(scope=self._scope, fraction=clamp01(fraction), detail=self._detail))
 
     def note(self, text: str) -> None:
-        """Set the detail the finished ledger line carries (e.g. "42 series")."""
+        """Set the detail the finished boot step line carries (e.g. "42 series")."""
 
         if not self._open:
             self._late(f"note: {text}", Severity.INFO)
@@ -212,7 +212,7 @@ class StepScope(_ScopeBase):
 
 @final
 class TitleScope(_ScopeBase):
-    """One entry block, opened with its header."""
+    """One title block, opened with its header."""
 
     _KIND_WORD: ClassVar[str] = "entry"
 
@@ -222,7 +222,7 @@ class TitleScope(_ScopeBase):
         emit(replace(header, scope=scope))
 
     def post(self, fact: TitleEvent) -> None:
-        """Emit an entry-block fact stamped with this scope's id (demotes when stale)."""
+        """Emit a title block fact tagged with this scope's id (demotes when closed)."""
 
         if not self._open:
             self._late(_describe_fact(fact), severity_of(fact))
@@ -240,7 +240,7 @@ class TitleScope(_ScopeBase):
 
 @final
 class WaitScope(_ScopeBase):
-    """The wait region: snapshot progress and graduations."""
+    """The wait region: snapshot progress and finished rows."""
 
     _KIND_WORD: ClassVar[str] = "wait"
 
@@ -262,7 +262,7 @@ class WaitScope(_ScopeBase):
         self._emit(replace(event, scope=self._scope))
 
     def finish(self, finished: WaitFinished) -> None:
-        """Emit the wait tally stamped whole, then close (demotes when already closed)."""
+        """Emit the whole wait tally tagged with this scope's id, then close (demotes when already closed)."""
 
         if not self._open:
             self._late("wait finished", Severity.INFO)

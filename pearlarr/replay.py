@@ -2,7 +2,7 @@
 
 `pearlarr replay` reads a capture of the JSON envelope stream - what a run with
 `advanced.log_format: json` or a subcommand's `--json` wrote to stdout - and
-prints each envelope back as one `ts LEVEL [bracket] message k=v` line, for
+prints each envelope back as one `ts LEVEL [where] message k=v` line, for
 reading a docker-captured or archived log after the fact. `-` reads stdin.
 
 The grammar lives once, in `output.line_renderers.render_envelope_line`. This module
@@ -16,8 +16,8 @@ aborting the read.
 
 The rendered lines are the command's PRODUCT, not events: they go straight to
 stdout with `typer.echo` (the same class as `CliTextRenderer`'s echoes), while
-the skip count and the schema-mismatch heads-up ride the hub as warnings and
-the read-failure / no-events arms as errors.
+the skip count and the schema-mismatch heads-up go through the hub as warnings and
+the read-failure / no-events cases as errors.
 """
 
 from __future__ import annotations
@@ -49,7 +49,7 @@ def replay(source: str) -> bool:
     """Render the JSON envelope capture at `source` (`-` = stdin) as text lines.
 
     Returns True when at least one event rendered. False (with the reason already
-    reported through the hub) when the capture can't be read or held no events.
+    reported through the hub) when the capture can't be read or had no events.
     """
 
     try:

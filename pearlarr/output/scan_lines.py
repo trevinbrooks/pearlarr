@@ -1,4 +1,4 @@
-"""The scan surface's rich-console line grammar: one pure builder per scan event."""
+"""The scan's rich-console line grammar: one pure builder per scan event."""
 
 from __future__ import annotations
 
@@ -90,7 +90,7 @@ _TIP_TEXTS: Final[dict[NeedsActionCause, str]] = {
 
 
 def accent_style(accent: Accent) -> str:
-    """The rich style an `Accent` renders as on the scan surface."""
+    """The rich style an `Accent` renders as in the scan lines."""
 
     match accent:
         case Accent.PLAIN:
@@ -117,7 +117,7 @@ def _info(message: str, payload: ConsoleRender) -> ConsoleLine:
 
 
 def kv_line(payload: KeyValue, *, level: int = logging.INFO) -> ConsoleLine:
-    """One kv line: the KvLine payload plus the exact `kv_string` message it renders."""
+    """One kv line: the KeyValue payload plus the exact `kv_string` message it renders."""
 
     message = kv_string(payload.key, payload.value, key_width=payload.key_width, indent=payload.indent, sep=payload.sep)
     return ConsoleLine(level, message, payload)
@@ -131,7 +131,7 @@ def _detail_kv(
     level: int = logging.INFO,
     tail: str | None = None,
 ) -> ConsoleLine:
-    """An entry-detail line (the colon-less gutter kv indented under an entry block)."""
+    """A title detail line (the colon-less gutter kv indented under a title block)."""
 
     payload = KeyValue(
         key=key,
@@ -146,7 +146,7 @@ def _detail_kv(
 
 
 def _title_row_line(state: TitleState, label: str, style: str) -> ConsoleLine:
-    """A fixed-column ledger row, indent baked into the message."""
+    """A fixed-column title row, indent baked into the message."""
 
     return _info(indent_string(title_row_string(state, label), level=1), StyledLine(style=style))
 
@@ -169,7 +169,7 @@ def item_started_lines(event: ItemStarted) -> tuple[ConsoleLine, ...]:
 
 
 def title_header_lines(event: TitleHeader) -> tuple[ConsoleLine, ...]:
-    """An entry block's head (ledger row plus files/link rows), the incomplete note riding the last row."""
+    """A title block's head (title row plus files/link rows), the incomplete note on the last row."""
 
     if event.state is TitleState.CHECKING:
         style = ""
@@ -186,13 +186,13 @@ def title_header_lines(event: TitleHeader) -> tuple[ConsoleLine, ...]:
 
 
 def title_row_lines(event: TitleRow) -> tuple[ConsoleLine, ...]:
-    """A self-contained ledger row (unmonitored / no mapping / ignored / ...)."""
+    """A self-contained title row (unmonitored / no mapping / ignored / ...)."""
 
     return _BLANK, _title_row_line(event.state, event.label, accent_style(event.accent))
 
 
 def title_detail_lines(event: TitleDetail) -> tuple[ConsoleLine, ...]:
-    """One labeled detail line under an entry. PLAIN renders a style-less kv."""
+    """One labeled detail line under a title. PLAIN renders a style-less kv."""
 
     return (
         _detail_kv(
@@ -257,7 +257,7 @@ def grab_failed_lines(event: GrabFailed) -> tuple[ConsoleLine, ...]:
 
 
 def grab_action_lines(event: GrabAction) -> tuple[ConsoleLine, ...]:
-    """The per-title action block: status, recommended groups, per-release rows."""
+    """The per-title action block: status, release groups, per-release rows."""
 
     lines: list[ConsoleLine] = []
     match event.status:
@@ -304,7 +304,7 @@ def _summary_block(
     title_style: str | None,
     rows: Iterable[SummaryRow],
 ) -> Iterator[ConsoleLine]:
-    """A summary per-entry block: title at indent 2, labeled rows at indent 3."""
+    """A summary per-title block: title at indent 2, labeled rows at indent 3."""
 
     yield _info(indent_string(title, level=2), StyledLine(style=title_style or ""))
     for row in rows:
@@ -344,7 +344,7 @@ def _added_block(item: GrabbedRow, *, dry_run: bool) -> Iterator[ConsoleLine]:
 
 
 def arr_run_summary_lines(event: ArrRunSummaryReady) -> tuple[ConsoleLine, ...]:
-    """The end-of-run scoreboard: checked / needs-action / added tallies plus the closing section rule."""
+    """The arr run summary: checked / needs-action / added tallies plus the closing rule."""
 
     summary = event.summary
     tally = summary.tally
@@ -356,7 +356,7 @@ def arr_run_summary_lines(event: ArrRunSummaryReady) -> tuple[ConsoleLine, ...]:
 
     lines: list[ConsoleLine] = [
         _BLANK,
-        # The DRY RUN note rides the rule title only. The message stays plain (the text surfaces carry
+        # The DRY RUN note goes on the rule title only. The message stays plain (the text renderers carry
         # dry_run/note as structured fields via _fact_of).
         _info(title, TitledRule(title=rule_title, heavy=True)),
         _BLANK,
@@ -419,7 +419,7 @@ def arr_run_summary_lines(event: ArrRunSummaryReady) -> tuple[ConsoleLine, ...]:
 
 
 def scan_event_lines(event: ScanEvent) -> tuple[ConsoleLine, ...]:
-    """Dispatch one scan event to its builder (the seats' single entry point)."""
+    """Dispatch one scan event to its builder (the renderers' single entry point)."""
 
     match event:
         case ScanStarted():

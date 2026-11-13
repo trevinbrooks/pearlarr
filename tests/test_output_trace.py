@@ -3,7 +3,7 @@
 
 Pin the secrets contract (frame locals are NEVER captured: an api_key local must
 not appear anywhere in the value), the bounded rich frame count, and the full
-plain-text rendering the file sink stores.
+plain-text rendering the file log renderer stores.
 """
 
 from pearlarr.output import CapturedTrace
@@ -12,7 +12,7 @@ _SECRET = "hunter2-super-secret-key"
 
 
 def _leak() -> None:
-    # The secret must live in the raising frame's locals without riding the message.
+    # The secret must live in the raising frame's locals without being in the message.
     api_key = _SECRET
     raise ValueError(f"request failed ({len(api_key)} chars)")
 

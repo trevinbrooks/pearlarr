@@ -1,19 +1,19 @@
 """The logging bridge: stdlib LogRecords adopted into Diagnostic events.
 
 One `HubBridgeHandler` per process, attached to the root logger AND to the
-app logger (its `propagate` stays False, so the app path needs its own seat).
+app logger (its `propagate` stays False, so the app path needs its own attachment).
 Adoption rules:
 
 * Sub-WARNING records below the hub's level are never constructed, either
-  party: no surface would keep them - the file sink thresholds at the same
+  party: no renderer would keep them - the file log renderer thresholds at the same
   configured level.
 * App-logger records: WARNING+ adopt visible (the badge class) - a defensive
-  arm, since first-party WARNING+ emits hub Diagnostics directly
+  branch, since first-party WARNING+ emits hub Diagnostics directly
   (tests/test_logging_ban.py enforces it. log.py's invalid-level critical is
   the one sanctioned raw site). At-level sub-WARNING (DEBUG chatter, which
   stays raw forever) adopts visible - the bridge is a raw record's ONLY
-  console route on every seat (RichConsoleHandler stands down whenever a
-  bridge is installed), so the renderer's frontier owns the line's placement
+  console route under every console renderer (RichConsoleHandler stands down whenever a
+  bridge is installed), so the renderer's open scopes own the line's position
   instead of a producer-baked indent.
 * Root records (third-party: httpx, urllib3, pydantic, py.warnings, ...):
   WARNING+ adopt visible with `origin = record.name`. At-level sub-WARNING
@@ -26,7 +26,7 @@ The bridge CONSTRUCTS new events and never mutates the LogRecord (caplog
 safety). A record fired from inside hub dispatch on the same thread (a renderer
 or signal handler logging mid-dispatch, whichever producer entered the drain)
 downgrades to file-only adoption - the hub's own
-`dispatch_active` baton read decides, so the rule holds for every drain, not
+`dispatch_active` drain lock read decides, so the rule holds for every drain, not
 just bridge-entered ones. The hub is resolved through the process registry at
 every record (like every other producer), so an `install_hub` swap can never
 orphan the bridge onto a closed hub. `logging.captureWarnings` is flipped on
@@ -133,7 +133,7 @@ def install_bridge() -> HubBridgeHandler:
     swap re-points it automatically - but install a real hub before (or with)
     the bridge: under the renderer-less default hub, adopted records drop while
     the rich handler stands down. Idempotent by replacement: any prior bridge is removed first, so a
-    repeat install never doubles up - and `setup_logger`'s per-cycle handler
+    repeat install never doubles up - and `setup_logger`'s per-run handler
     rebuilds preserve the installed one (`HubBridgeBase`).
     """
 
@@ -143,7 +143,7 @@ def install_bridge() -> HubBridgeHandler:
     app_logger = logging.getLogger(LOG_NAME)
     app_logger.addHandler(bridge)
     # setup_logger does this too, but doing it here kills the install-window in
-    # which an app record would be adopted twice (app seat + root propagation).
+    # which an app record would be adopted twice (app logger attachment + root propagation).
     app_logger.propagate = False
     mark_hub_console_owner()
     logging.captureWarnings(True)

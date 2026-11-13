@@ -1,4 +1,4 @@
-"""The shared traditional text grammar `ts LEVEL [path] message k=v` and its sinks."""
+"""The shared traditional text grammar `ts LEVEL [path] message k=v` and its renderers."""
 
 from __future__ import annotations
 
@@ -128,7 +128,7 @@ def _field_text(value: FieldValue) -> str:
         return str(value)
     if isinstance(value, float):
         return f"{value:.2f}"
-    # Containers and None ride only the json-only cli facts. Compact-encode them so the formatter stays total.
+    # Containers and None appear only in the json-only cli facts. Compact-encode them so the formatter stays total.
     text = value if isinstance(value, str) else json.dumps(value, ensure_ascii=False)
     if _needs_quote(text):
         escaped = text.replace("\\", "\\\\").replace('"', '\\"').translate(_CTRL_TABLE)
@@ -143,7 +143,7 @@ def _logfmt(fields: tuple[Field, ...]) -> str:
 def _render_line(line: _Line, ts: str) -> str:
     parts = [ts, line.severity.name]
     if line.where:
-        # Escaped like the message: breadcrumb labels carry external titles (Arr/AniList).
+        # Escaped like the message: scope labels carry external titles (Arr/AniList).
         parts.append(f"[{_flat(line.where)}]")
     parts.append(_flat(line.message))
     if line.fields:
@@ -160,7 +160,7 @@ def _render_line(line: _Line, ts: str) -> str:
 
 @dataclass(frozen=True, slots=True)
 class _Fact:
-    """One event's shared surface facts."""
+    """One event's facts, shared by the renderers."""
 
     name: str
     severity: Severity
@@ -284,7 +284,7 @@ def _fields_wait_finished(event: WaitFinished) -> tuple[Field, ...]:
 
 
 def _wait_progress_fact(event: WaitProgress) -> _Fact:
-    """The "still waiting" heartbeat's pure facts. The grammar sinks decide WHEN."""
+    """The "still waiting" progress line's pure facts. The grammar renderers decide WHEN."""
 
     counts = event.snapshot.counts()
     fields = (
@@ -360,7 +360,7 @@ def _fields_added(row: GrabbedRow) -> tuple[Field, ...]:
 
 
 def _placement_fields(event: Diagnostic, open_scopes: OpenScopes) -> tuple[Field, ...]:
-    # Ambient placement is a guess. The record admits it (during=/placed=frontier).
+    # Ambient position is a guess. The line admits it (during=/placed=frontier).
     during = open_scopes.during()
     if event.placed_by is PlacedBy.AMBIENT and during is not None:
         return (Field("during", during), Field("placed", "frontier"))
@@ -382,7 +382,7 @@ def _fields_paths_shown(event: PathsShown) -> tuple[Field, ...]:
 
 
 def _fields_config_validated(event: ConfigValidated) -> tuple[Field, ...]:
-    # "config_path" not "path": the json envelope reserves "path" for the breadcrumb.
+    # "config_path" not "path": the json envelope reserves "path" for the scope path.
     migrated = event.migration_notes is not None
     fields: list[Field] = [Field("config_path", event.path), Field("migrated", migrated)]
     if event.migration_notes is not None:
@@ -431,7 +431,7 @@ def _fact_of(event: Event, open_scopes: OpenScopes, severity: Severity) -> _Fact
         case ScopeClosed(scope=scope):
             return _Fact("scope_closed", severity, "scope closed", _scope_fields(scope), None, "scope")
         case BootStepStarted() | BootStepProgressed() | WaitProgress():
-            # WaitProgress has no per-event fact. The grammar sinks pulse it (throttled).
+            # WaitProgress has no per-event fact. The grammar renderers turn it into progress lines (throttled).
             return None
         case BootStepSlow(scope=scope):
             return _Fact("boot_step_slow", severity, "in progress", (), scope, "boot")
@@ -511,12 +511,12 @@ def _fact_of(event: Event, open_scopes: OpenScopes, severity: Severity) -> _Fact
 # Facts with no TEXT-line form: pure boundaries (the summary is the run-end marker), plus the effective-config
 # document (its config object has no logfmt line).
 _TEXT_SKIP: Final = frozenset({ScopeOpened, ScopeClosed, ScanFinished, ArrRunFinished, EffectiveConfigShown})
-# Facts the JSON stream drops: the slow heads-up is a text-sink affordance only.
+# Facts the JSON stream drops: the slow heads-up is for the text renderers only.
 _JSON_SKIP: Final = frozenset({BootStepSlow})
 
 
 def _scope_path_or(scope: ScopeId | None, open_scopes: OpenScopes, fallback: str) -> str:
-    """The breadcrumb for a handle-carried ScopeId, or the fixed component word."""
+    """The scope path for a handle-carried ScopeId, or the fixed component word."""
 
     if scope is not None:
         path = open_scopes.path_for(scope)
@@ -537,7 +537,7 @@ def _summary_row_lines(summary: ArrRunSummary) -> tuple[_Line, ...]:
 def _lines_of(event: Event, open_scopes: OpenScopes, severity: Severity) -> tuple[_Line, ...]:
     """The text grammar: the shared fact plus text-only decoration."""
 
-    # Skip first: scope boundaries fire per entry on both grammar sinks, so building their facts just to drop
+    # Skip first: scope boundaries fire per title on both grammar renderers, so building their facts just to drop
     # them is pure hot-path waste.
     if type(event) in _TEXT_SKIP:
         return ()
@@ -565,7 +565,7 @@ def _json_of(event: Event, open_scopes: OpenScopes, iso: str, severity: Severity
         "level": fact.severity.name,
         "message": fact.message,
     }
-    # The bracket seed: always present, so `replay` can reconstruct the [bracket] without per-event knowledge.
+    # What [where] is built from: always present, so `replay` can reconstruct the [where] without per-event knowledge.
     payload["component"] = fact.component
     if isinstance(event, Diagnostic):
         payload["origin"] = event.origin
@@ -603,7 +603,7 @@ def _reformat_iso(iso: str) -> str | None:
 
 
 def _envelope_where(payload: dict[str, JsonValue], event: str) -> str:
-    """The bracket seed: `path`, else `component`, else `origin`, else the event name."""
+    """The [where] text: `path`, else `component`, else `origin`, else the event name."""
 
     for key in ("path", "component", "origin"):
         value = payload.get(key)
@@ -613,7 +613,7 @@ def _envelope_where(payload: dict[str, JsonValue], event: str) -> str:
 
 
 def render_envelope_line(payload: dict[str, JsonValue]) -> str | None:
-    """Render one JSON envelope back to a `ts LEVEL [bracket] message k=v` text line.
+    """Render one JSON envelope back to a `ts LEVEL [where] message k=v` text line.
 
     None when `time`, `level`, `message`, or `event` is missing, non-string, or unparseable.
     """
@@ -646,7 +646,7 @@ def render_envelope_line(payload: dict[str, JsonValue]) -> str | None:
     return text
 
 
-# --- the sinks ------------------------------------------------------------------------
+# --- the renderers --------------------------------------------------------------------
 
 
 @final
@@ -667,7 +667,7 @@ class _PerSecondMemo:
 
 
 class _LineRenderer(Renderer):
-    """The shared sink chassis: admission, breadcrumb folding, per-second timestamps."""
+    """The shared renderer base class: admission, scope path tracking, per-second timestamps."""
 
     def __init__(self) -> None:
         self._open_scopes = OpenScopes()
@@ -707,7 +707,7 @@ class _LineRenderer(Renderer):
 
 
 class _GrammarRenderer(_LineRenderer):
-    """Chassis plus the text grammar, with line-granular admission."""
+    """The base class plus the text grammar, with line-granular admission."""
 
     def __init__(self) -> None:
         super().__init__()

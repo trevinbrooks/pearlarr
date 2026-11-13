@@ -1,11 +1,11 @@
 # pyright: strict
-"""The subcommands' `--json` seat: envelope shape, stream separation, no hub leak.
+"""The subcommands' `--json` renderer: envelope shape, stream separation, no hub leak.
 
-Every subcommand wraps its body in `cli_surface`, emitting the same typed events
-run commands do. With `--json` the JSON seat writes one envelope line per event
+Every subcommand wraps its body in `subcommand_hub`, emitting the same typed events
+run commands do. With `--json` the JSON renderer writes one envelope line per event
 to stdout (errors included, at level ERROR), stderr stays empty, and the exit
 semantics (the returned bool) are unchanged. The human-output byte-parity is
-pinned in test_cli.py. Here we pin the machine surface and that the surface is
+pinned in test_cli.py. Here we pin the JSON renderer and that it is
 torn down cleanly after each command (`current_hub()` back to the default).
 """
 
@@ -39,7 +39,7 @@ _ENVELOPE = ["schema_version", "time", "event", "level", "message"]
 
 
 def _build_cache(tmp_path: Path) -> None:
-    """Write a real on-disk cache.db under tmp_path holding one entry."""
+    """Write a real on-disk cache.db under tmp_path holding one cached title."""
 
     store = CacheStore.load(str(tmp_path / "cache.db"), config_hash="x")
     store.update_cached_title(Arr.SONARR, 7, {"name": "X"})
@@ -75,7 +75,7 @@ def data_dir(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
 
 
 class TestJsonSuccessArms:
-    """Each command's success arm emits its event as one envelope line, stderr empty."""
+    """Each command's success branch emits its event as one envelope line, stderr empty."""
 
     def test_paths(self, tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
         assert show_paths(json_output=True) is True
@@ -176,7 +176,7 @@ class TestJsonSuccessArms:
 
 
 class TestJsonErrorArms:
-    """One error arm per command family: the failure is an ERROR envelope on stdout, stderr empty."""
+    """One error branch per command family: the failure is an ERROR envelope on stdout, stderr empty."""
 
     def test_missing_cache_file(self, capsys: pytest.CaptureFixture[str]) -> None:
         # No cache.db: the missing-file report is a diagnostic on the json stream.
@@ -233,14 +233,14 @@ class TestRedactionCanary:
 
 
 class TestHumanModeLeavesNoHub:
-    """A command restores the process default hub on exit. A later emit can't leak into its seat."""
+    """A command restores the process default hub on exit. A later emit can't leak into its renderer."""
 
     def test_command_uninstalls_its_hub(self, capsys: pytest.CaptureFixture[str]) -> None:
         before = current_hub()
         assert show_paths() is True  # human mode
         capsys.readouterr()  # drain the paths block
 
-        # The default (renderer-less) hub is back, so a later emit reaches no seat.
+        # The default (renderer-less) hub is back, so a later emit reaches no renderer.
         assert current_hub() is before
         emit_to_hub(Diagnostic(severity=Severity.ERROR, message="leak check", origin="test"))
         leaked = capsys.readouterr()

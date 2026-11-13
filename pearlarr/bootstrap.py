@@ -2,12 +2,12 @@
 
 `run_arrs` reads + validates the config once, builds the id-mapping resolver
 once (both arrs share them), then wires each requested arr its own
-RunDeps -> RunServices -> RunLoop stack and drives it inside an independent
+ArrRunDeps -> ArrRunServices -> ArrRunLoop stack and drives it inside an independent
 try block, so one arr crashing doesn't ruin the other. `cli.py` (the
 presentation layer) calls in. This module never imports it back.
 
 Boot weight: the heavy run machinery stays lazily imported inside the
-functions that use it (the boot-cockpit invariant: instant title first).
+functions that use it (the boot region invariant: instant title first).
 """
 
 from __future__ import annotations
@@ -146,7 +146,7 @@ def _rewrite_old_config(config: str, loaded: AppConfig, *, dry_run: bool) -> Non
     # backup_path is None only when the file turned current between the load and
     # this rewrite (nothing was written) - then there is nothing to announce.
     if migrated.backup_path is not None:
-        # The detail line above rides at INFO: only promise it when the file log admits it.
+        # The detail line above goes out at INFO: only promise it when the file log admits it.
         hint = " (details in the log)" if notes and file_log_admits(Severity.INFO) else ""
         hub_note(f"Config migrated to the current schema - previous file saved as {migrated.backup_path}{hint}")
 
@@ -160,7 +160,7 @@ def load_shared_config(
 
     Returns None - after logging the specific cause - when the file is invalid
     (the bad keys are listed without a traceback) or unreadable, so the caller
-    skips this run and retries next cycle instead of crashing (an edit may be
+    skips this run and retries next run instead of crashing (an edit may be
     in progress). A MISSING file instead writes the starter template (inside
     `AppConfig.load`) and exits 1: no retry can succeed until it is filled
     in, so a scheduled/container run must stop and say so rather than sleep
@@ -191,13 +191,13 @@ def load_shared_config(
     except FileNotFoundError:
         hub_error(f"No config file at {config} - a starter template was written - fill it in and re-run")
         # typer.Exit is an Exception subclass, but it escapes cleanly: sibling
-        # arms can't catch a raise from THIS arm, and run_arrs wraps this call
-        # in try/FINALLY only - so the boot view, web client and run lock all
+        # handlers can't catch a raise from THIS handler, and run_arrs wraps this call
+        # in try/FINALLY only - so the boot region, web client and run lock all
         # release on the way out to typer (exit code 1).
         raise typer.Exit(1) from None
     except OSError as e:
         # A permissions/FS problem (unreadable file, read-only data dir failing
-        # the template copy): report + skip like the invalid-config arms below -
+        # the template copy): report + skip like the invalid-config handlers below -
         # exiting would kill a scheduled daemon over a possibly transient error.
         # Must sit after FileNotFoundError (its subclass) and before Exception.
         hub_error(
@@ -206,14 +206,14 @@ def load_shared_config(
         )
     except ValidationError as e:
         # Surface the specific bad keys (nested path -> message) without a traceback,
-        # then skip + retry next cycle - same contract as the missing-file branch.
+        # then skip + retry next run - same contract as the missing-file branch.
         hub_error(
             f"Invalid configuration in {config}:\n{format_validation_errors(e)}\n"
             f"Fix the listed keys and re-run - skipping this run{retry_note}"
         )
     except yaml.YAMLError as e:
         # Malformed YAML is a user-facing config problem like a failed validation:
-        # a clean report + retry, not the unexpected-error traceback arm below.
+        # a clean report + retry, not the unexpected-error traceback handler below.
         hub_error(
             f"Unreadable YAML in {config} ({format_yaml_error(e)}) - fix the file and re-run - skipping this run{retry_note}"
         )
@@ -237,7 +237,7 @@ def build_resolver(
     serves both arrs from SQL. It is injected (by `run_arrs`) into both, so
     that work happens a single time per run and is skipped entirely when the
     sources are unchanged. Returns None - after logging - when a source can't be
-    fetched, so the caller skips this run and retries next cycle.
+    fetched, so the caller skips this run and retries next run.
     """
 
     from .mappings import MappingResolver, MappingSources
@@ -258,7 +258,7 @@ def build_resolver(
                 progress=mapping_step,
             )
             # Overwrite the per-MB download detail with the final "which sources"
-            # note, so the graduated line reads e.g. "anime-ids · anidb · anibridge".
+            # note, so the finished line reads e.g. "anime-ids · anidb · anibridge".
             mapping_step.note(resolver.sources_summary())
     except OSError as e:
         # A first-ever source download with no network lands here (a failed
@@ -287,7 +287,7 @@ def configured_arrs(
 
     A Sonarr-only (or Radarr-only) config is a normal setup: an implicit
     selection (scheduled mode, a flagless `run single`) skips the unconfigured
-    arr with a dim note placed in the boot ledger it lands in, instead
+    arr with a dim note among the boot step lines it lands in, instead
     of tripping `require_connection` into an "unexpected error" traceback.
     A half-configured arr (url without api_key, or vice versa) is almost
     certainly a mistake, so its skip is a WARNING naming the missing key. An
@@ -309,8 +309,8 @@ def configured_arrs(
             other = f"{arr}.api_key" if keys[0] == f"{arr}.url" else f"{arr}.url"
             hub_warn(f"{other} is set but {keys[0]} is not - skipping {arr.capitalize()}")
         else:
-            # Flat message: the rich console indents it via placement (the open
-            # boot section). The file/plain surfaces take a structured line.
+            # Flat message: the live console indents it by its position (the open
+            # boot scope). The file/plain renderers take a structured line.
             hub_note(f"{arr.capitalize()} not configured - skipped")
 
     kept = [target for target in arrs if target.arr not in missing]
@@ -325,10 +325,10 @@ def configured_arrs(
 
 @dataclass(frozen=True)
 class RunContext:
-    """The run-invariant collaborators every arr leg shares (built once per run).
+    """The run-invariant collaborators every arr run shares (built once per run).
 
-    Bundles the cross-leg scaffolding so `_run_arr` takes one context plus the
-    per-leg `ArrTarget`, instead of a wide positional signature.
+    Bundles the scaffolding shared across arr runs so `_run_arr` takes one context plus the
+    arr run's `ArrTarget`, instead of a wide positional signature.
     """
 
     cache: str
@@ -342,11 +342,11 @@ class RunContext:
 
 
 def _run_arr(target: ArrTarget, ctx: RunContext) -> bool:
-    """Run one arr leg end to end: True on a clean completion, False for each caught arm.
+    """Do one arr run end to end: True on a clean completion, False from each except handler.
 
-    Re-does its own lazy imports of the heavy run machinery (the boot-cockpit
+    Re-does its own lazy imports of the heavy run machinery (the boot region
     invariant: nothing heavy at module load). A `BaseException` that matches no
-    arm still propagates - the `finally` runs first - so `run_arrs`'s outer
+    handler still propagates - the `finally` runs first - so `run_arrs`'s outer
     try/finally chain unwinds exactly as before.
     """
 
@@ -366,10 +366,10 @@ def _run_arr(target: ArrTarget, ctx: RunContext) -> bool:
     # UnboundLocalError in the finally's close.
     deps: ArrRunDeps | None = None
     try:
-        # An inner handler so a dying leg's open output frames close
-        # BEFORE the except arms below log: a leg-fatal error is a
-        # cycle-level fact, not a detail of the entry / item / boot step
-        # it died in. A completed leg's single close comes from the run tail.
+        # An inner handler so a dying arr run's open scopes close
+        # BEFORE the except handlers below log: an error that ends the arr run is a
+        # run-level fact, not a detail of the title / item / boot step
+        # it died in. A completed arr run's single close comes from the run tail.
         try:
             deps = ArrRunDeps.build(
                 arr_name,
@@ -400,16 +400,16 @@ def _run_arr(target: ArrTarget, ctx: RunContext) -> bool:
                 case Arr.RADARR:
                     drive(RadarrStrategy(deps, services))
         except BaseException:
-            # Through the hub seam, not the reporter (deps is None when
+            # Through the hub, not the reporter (deps is None when
             # ArrRunDeps.build itself failed). hub.emit contains renderer errors,
-            # so the emit cannot mask the in-flight leg-fatal Exception.
+            # so the emit cannot mask the in-flight Exception that ended the arr run.
             emit_to_hub(ArrRunFinished(arr=arr_name))
             raise
     except (QbitConnectionError, CacheSchemaError) as e:
         # A user-facing environment problem (wrong host/credentials, a
         # cache.db from a newer release): a clean one-line message, not
         # a stack trace under "unexpected error". The two arr-client
-        # arms below get the same treatment.
+        # handlers below get the same treatment.
         hub_error(str(e))
         return False
     except ArrUnreachableError as e:
@@ -430,7 +430,7 @@ def _run_arr(target: ArrTarget, ctx: RunContext) -> bool:
         )
         return False
     finally:
-        # Cap this arr's boot section so the next arr opens a fresh
+        # Close this arr's boot scope so the next arr opens a fresh
         # one. A no-op on the happy path (run_arr already ended it
         # before scanning), the safety net when a step failed.
         ctx.boot.end_boot()
@@ -464,13 +464,13 @@ def run_arrs(
     the cause is logged - when the shared deps couldn't be built, nothing
     runnable was selected, or an arr run failed (unreachable/unauthorized arr,
     qBittorrent connection failure, or an unexpected error), so a scripted
-    `run single` exits non-zero on any failed leg. A MISSING config doesn't
+    `run single` exits non-zero on any failed arr run. A MISSING config doesn't
     return at all: `load_shared_config` writes the starter template and
     raises `typer.Exit(1)` (see its docstring). An empty `arrs` is a
     defensive no-op returning True (both callers guard against it).
-    `file_sink` is the installed hub's FileLogSink (`cli._install_output_hub`
+    `file_log_renderer` is the installed hub's FileLogRenderer (`cli._install_output_hub`
     returns it alongside the hub) - its retention window is only knowable once
-    `app_config` is read, so it rides in as its own dep rather than through the
+    `app_config` is read, so it comes in as its own dep rather than through the
     hub's global registry. `import_wait_mode` is the resolved CLI override
     threaded into each arr (None in scheduled mode). `log_level` is the CLI
     log-level override, applied as soon as the config is readable
@@ -490,17 +490,17 @@ def run_arrs(
             hub_warn(f"Another Pearlarr run is active in {paths.data_dir} - skipping this run")
             return False
 
-        # The banner names the data dir every cycle: scheduled mode rotates the
-        # log per cycle, and "which data dir is this?" is the first support question.
+        # The banner names the data dir every run: scheduled mode rotates the
+        # log per run, and "which data dir is this?" is the first support question.
         boot = BootFlow(paths.data_dir)
         boot.banner()
-        # The heavy run machinery is imported inside `_run_arr` (the boot-cockpit
+        # The heavy run machinery is imported inside `_run_arr` (the boot region
         # invariant: nothing heavy at module load). Only the shared web client is
         # needed out here.
         from .web_client import make_web_client
 
-        # One shared client for all non-arr web traffic this cycle (tracker
-        # scrapes, AniList, webhooks). Both arr legs reuse its pool.
+        # One shared client for all non-arr web traffic this run (tracker
+        # scrapes, AniList, webhooks). Both arr runs reuse its pool.
         web = make_web_client()
         try:
             # In scheduled mode retry_note states the loop's next move on every
@@ -527,7 +527,7 @@ def run_arrs(
             if runnable is None:
                 return False
 
-            # The parsed/indexed mapping cache lives beside cache.db in the data dir.
+            # The parsed/indexed mappings database lives beside cache.db in the data dir.
             resolver = build_resolver(app_config, paths.mappings_db, logger, boot, retry, web)
             if resolver is None:
                 return False
@@ -544,13 +544,13 @@ def run_arrs(
             )
             try:
                 for target in runnable:
-                    # Each leg logs + closes independently (a False return = a caught
-                    # arm), so one crashing doesn't drop the other.
+                    # Each arr run logs + closes independently (a False return = a caught
+                    # exception), so one crashing doesn't drop the other.
                     if not _run_arr(target, ctx):
                         all_arrs_completed = False
             finally:
                 # The resolver owns mappings.db (shared across both arrs). Close it once
-                # the cycle is done so the connection / WAL handles are released.
+                # the run is done so the connection / WAL handles are released.
                 resolver.close()
         finally:
             boot.close()
