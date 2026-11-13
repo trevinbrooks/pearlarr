@@ -8,7 +8,7 @@ from collections.abc import Set as AbstractSet
 from dataclasses import dataclass
 from typing import NamedTuple, final, override
 
-from .console_caps import console_of, detect_capabilities
+from .console_caps import console_of, detect_features
 from .output import (
     Phase,
     RowFinished,
@@ -116,12 +116,12 @@ class HubWaitView(WaitView):
         self,
         logger: logging.Logger,
         *,
-        pulse_s: float,
+        progress_line_s: float,
         wants_download_progress: bool,
         kind: WaitKind,
     ) -> None:
         self._logger = logger
-        self._pulse_s = pulse_s
+        self._progress_line_s = progress_line_s
         self._kind = kind
         self.wants_download_progress = wants_download_progress
         # Process-global ids through the late-resolving hub seam.
@@ -141,7 +141,9 @@ class HubWaitView(WaitView):
             self._last_elapsed = snapshot.elapsed_s
             if self._scope is None:
                 # WaitStarted precedes any first-snapshot graduations.
-                self._scope = self._factory.wait(total=snapshot.total(), pulse_s=self._pulse_s, kind=self._kind)
+                self._scope = self._factory.wait(
+                    total=snapshot.total(), progress_line_s=self._progress_line_s, kind=self._kind
+                )
             scope = self._scope
             for view, outcome in newly_finished(self._seen, snapshot):
                 self._seen.add(view.key)
@@ -195,16 +197,16 @@ def make_wait_view(
     logger: logging.Logger,
     *,
     poll_s: int,
-    digest_interval: int = 300,
+    progress_line_interval: int = 300,
     kind: WaitKind,
 ) -> WaitView:
     """The production narrator, probed off the logger's console."""
 
     console = console_of(logger)
-    features = detect_capabilities(console)
+    features = detect_features(console)
     return HubWaitView(
         logger,
-        pulse_s=float(max(poll_s, digest_interval)),
+        progress_line_s=float(max(poll_s, progress_line_interval)),
         wants_download_progress=console is not None and features.can_redraw,
         kind=kind,
     )

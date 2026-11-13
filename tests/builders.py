@@ -79,7 +79,7 @@ from pearlarr.placement_types import (
 )
 from pearlarr.placer import place_batch
 from pearlarr.planner import GrabPlan, GrabPlanner, PrivateOnlyNotices
-from pearlarr.progress import ProgressSink
+from pearlarr.progress import ProgressCallback
 from pearlarr.radarr_client import AbstractRadarrClient
 from pearlarr.radarr_strategy import RadarrStrategy
 from pearlarr.releases import EpisodeKey, GroupReleases, OrderOnlyKey, Release, ReleaseEpisode, SeadexDict
@@ -477,7 +477,7 @@ class FakeSeaDexSource(SeaDexSource):
         self.entry_calls: list[int] = []
 
     @override
-    def prefetch(self, al_ids: Iterable[int], *, progress: ProgressSink | None = None) -> int:
+    def prefetch(self, al_ids: Iterable[int], *, progress: ProgressCallback | None = None) -> int:
         del progress
         ids = list(al_ids)
         self.prefetch_calls.append(ids)

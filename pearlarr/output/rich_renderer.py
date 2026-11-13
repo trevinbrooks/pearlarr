@@ -131,20 +131,20 @@ class RichRenderer(Renderer):
     def __init__(
         self,
         console_source: Callable[[], Console | None] = live_console,
-        caps_cache: DetectedFeatures | None = None,
+        detected_features: DetectedFeatures | None = None,
         time_source: Callable[[], float] = time.monotonic,
     ) -> None:
-        # `caps_cache` is the process-shared instance in production (cli
+        # `detected_features` is the process-shared instance in production (cli
         # wiring, stable across seat swaps). None builds one private cache
         # shared by this seat's surfaces (diagnostics + both regions).
         self._console_source = console_source
-        self._caps = caps_cache if caps_cache is not None else DetectedFeatures()
-        self._crumbs = OpenScopes()
+        self._detected_features = detected_features if detected_features is not None else DetectedFeatures()
+        self._open_scopes = OpenScopes()
         self._level = int(Severity.INFO)
-        self._boot = BootRegion(console_source, self._caps, level_source=self._current_level)
+        self._boot = BootRegion(console_source, self._detected_features, level_source=self._current_level)
         self._wait = WaitRegion(
             console_source,
-            self._caps,
+            self._detected_features,
             level_source=self._current_level,
             time_source=time_source,
         )
@@ -162,11 +162,11 @@ class RichRenderer(Renderer):
         # fold advancing when rendering raises). A region departure tears its live
         # slot down no matter which event evicted the node (ScopeClosed, a
         # ArrRunFinished unwind, anything).
-        open_before = tuple(self._frontier_has(kind) for kind, _ in self._regions)
-        self._crumbs.apply(event)
+        open_before = tuple(self._has_open_scope(kind) for kind, _ in self._regions)
+        self._open_scopes.apply(event)
         for was_open, (kind, region) in zip(open_before, self._regions, strict=True):
-            if was_open and not self._frontier_has(kind):
-                region.section_left()
+            if was_open and not self._has_open_scope(kind):
+                region.scope_closed()
         match event:
             case Diagnostic():
                 self._diagnostic(event)
@@ -223,7 +223,7 @@ class RichRenderer(Renderer):
 
     @override
     def begin_run(self) -> None:
-        self._crumbs.reset()
+        self._open_scopes.reset()
         self._boot.begin_run()
         self._wait.begin_run()
 
@@ -249,7 +249,7 @@ class RichRenderer(Renderer):
         console = self._console_source()
         if console is None:
             return
-        use_unicode = self._caps.for_console(console).can_unicode
+        use_unicode = self._detected_features.for_console(console).can_unicode
         print_literal(console, diagnostic_text(event, indented=self._indented_scope_open(), use_unicode=use_unicode))
         if event.trace is not None:
             console.print(
@@ -260,7 +260,7 @@ class RichRenderer(Renderer):
                 ),
             )
 
-    def _render_legacy(self, lines: Iterable[ConsoleLine]) -> None:
+    def _render_console_lines(self, lines: Iterable[ConsoleLine]) -> None:
         """Shared legacy lines over the live Console at LOGGER-parity gating."""
 
         console = self._console_source()
@@ -276,7 +276,7 @@ class RichRenderer(Renderer):
         """
 
         line = ConsoleLine(logging.INFO, f"Next scheduled run at {at:%a %H:%M}", None)
-        self._render_legacy((line,))
+        self._render_console_lines((line,))
 
     def _scan(self, event: ScanEvent) -> None:
         """The scan console arm: the shared legacy lines over the shared Console.
@@ -287,16 +287,16 @@ class RichRenderer(Renderer):
         """
 
         # Skip building the (sometimes hefty, e.g. the run summary) scan lines
-        # when there's no console to render them. `_render_legacy` discards them.
+        # when there's no console to render them. `_render_console_lines` discards them.
         if self._console_source() is None:
             return
-        self._render_legacy(scan_event_lines(event))
+        self._render_console_lines(scan_event_lines(event))
 
-    def _frontier_has(self, *kinds: ScopeKind) -> bool:
+    def _has_open_scope(self, *kinds: ScopeKind) -> bool:
         """True when any open node (the whole stack, not just the top) is one of `kinds`."""
 
         wanted = frozenset(kinds)
-        return any(node.kind in wanted for node in self._crumbs.nodes())
+        return any(open_scope.kind in wanted for open_scope in self._open_scopes.scopes())
 
     def _indented_scope_open(self) -> bool:
         """True while a boot section, item, wait region, or entry block is open.
@@ -307,4 +307,4 @@ class RichRenderer(Renderer):
         breaking it at the run margin.
         """
 
-        return self._frontier_has(ScopeKind.BOOT_SECTION, ScopeKind.ITEM, ScopeKind.WAIT_REGION, ScopeKind.ENTRY)
+        return self._has_open_scope(ScopeKind.BOOT_SECTION, ScopeKind.ITEM, ScopeKind.WAIT_REGION, ScopeKind.ENTRY)

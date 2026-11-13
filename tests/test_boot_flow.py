@@ -77,10 +77,10 @@ def test_a_step_after_end_section_opens_a_fresh_scope() -> None:
     flow, recording, _ = _flow()
 
     flow.banner()
-    flow.end_section()
+    flow.end_boot()
     with flow.step("Fetching library"):
         pass
-    flow.end_section()
+    flow.end_boot()
 
     first, second = recording.of_type(ScopeOpened)
     assert first.scope != second.scope
@@ -157,7 +157,7 @@ def test_capstone_measures_from_the_first_step() -> None:
         clock.tick(0.61)
     with flow.step("Opening cache"):
         clock.tick(0.61)
-    flow.end_section()
+    flow.end_boot()
 
     (ready,) = recording.of_type(BootReady)
     assert ready.elapsed_s == pytest.approx(1.22)
@@ -172,7 +172,7 @@ def test_error_recorded_mid_section_suppresses_the_capstone() -> None:
     with flow.step("Reading config"):
         clock.tick(0.02)
     recording.emit(_error("no runnable arr selected"))
-    flow.end_section()
+    flow.end_boot()
 
     assert recording.of_type(BootReady) == []
 
@@ -183,7 +183,7 @@ def test_a_warning_does_not_gate_the_capstone() -> None:
     with flow.step("Reading config"):
         clock.tick(0.02)
     recording.emit(Diagnostic(severity=Severity.WARNING, message="config perms loose"))
-    flow.end_section()
+    flow.end_boot()
 
     assert len(recording.of_type(BootReady)) == 1
 
@@ -196,7 +196,7 @@ def test_deferred_warn_still_allows_the_capstone() -> None:
     with flow.step("Connecting to qBittorrent") as step:
         clock.tick(0.05)
         step.warn("not configured")
-    flow.end_section()
+    flow.end_boot()
 
     (finished,) = recording.of_type(BootStepFinished)
     assert finished.outcome is OutcomeKind.LEFT
@@ -212,23 +212,23 @@ def test_error_before_the_first_step_does_not_gate() -> None:
     recording.emit(_error("pre-step noise"))
     with flow.step("Reading config"):
         clock.tick(0.02)
-    flow.end_section()
+    flow.end_boot()
 
     assert len(recording.of_type(BootReady)) == 1
 
 
 def test_error_gate_resets_with_the_section() -> None:
-    # end_section resets the mark: an error during one arr's section must not
+    # end_boot resets the mark: an error during one arr's section must not
     # suppress the NEXT arr's capstone (multi-arr runs share the flow).
     flow, recording, clock = _flow()
 
     with flow.step("First step"):
         pass
     recording.emit(_error("first section error"))
-    flow.end_section()
+    flow.end_boot()
     with flow.step("Second step"):
         clock.tick(0.1)
-    flow.end_section()
+    flow.end_boot()
 
     assert len(recording.of_type(BootReady)) == 1  # second section only
 
@@ -244,7 +244,7 @@ def test_capstone_gate_survives_a_hub_swap_mid_section() -> None:
     swapped = RecordingHub()
     install_hub(swapped.hub)  # conftest teardown uninstalls
     swapped.emit(_error("unrelated error on the new hub"))
-    flow.end_section()
+    flow.end_boot()
 
     assert len(swapped.of_type(BootReady)) == 1  # gated on the ORIGINAL counter
 
@@ -253,7 +253,7 @@ def test_empty_section_emits_no_capstone() -> None:
     flow, recording, _ = _flow()
 
     flow.banner()
-    flow.end_section()
+    flow.end_boot()
 
     assert recording.of_type(BootReady) == []
     assert len(recording.of_type(ScopeClosed)) == 1  # the mark still closes
@@ -272,14 +272,14 @@ def test_logger_error_via_the_bridge_suppresses_the_capstone() -> None:
         with flow.step("Reading config"):
             clock.tick(0.02)
             app_logger.error("half-configured arr refused")
-        flow.end_section()
+        flow.end_boot()
 
         assert recording.of_type(BootReady) == []
 
         # Positive control: the same wiring without the error still graduates.
         with flow.step("Opening cache"):
             clock.tick(0.02)
-        flow.end_section()
+        flow.end_boot()
 
         assert len(recording.of_type(BootReady)) == 1
     finally:
@@ -298,7 +298,7 @@ def test_without_an_installed_hub_the_flow_is_a_silent_no_op() -> None:
         step.progress(0.5, "x")
         step.note("y")
         step.warn()
-    flow.end_section()
+    flow.end_boot()
     flow.close()
 
 

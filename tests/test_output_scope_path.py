@@ -50,7 +50,7 @@ def _fold(*events: Event) -> OpenScopes:
 
 
 def _kinds(fold: OpenScopes) -> list[ScopeKind]:
-    return [node.kind for node in fold.nodes()]
+    return [open_scope.kind for open_scope in fold.scopes()]
 
 
 def _summary_ready() -> ArrRunSummaryReady:
@@ -170,7 +170,7 @@ def test_wait_started_closes_only_entry_depth() -> None:
     fold = _fold(
         ScanStarted(arr=Arr.SONARR, total=1),
         ScopeOpened(scope=_WAIT, label="wait"),
-        WaitStarted(total=4, pulse_s=300.0, kind=WaitKind.MONITOR, scope=_WAIT),
+        WaitStarted(total=4, progress_line_s=300.0, kind=WaitKind.MONITOR, scope=_WAIT),
     )
     assert _kinds(fold) == [ScopeKind.RUN, ScopeKind.WAIT_REGION]
     assert fold.path_text() == "sonarr › wait"
@@ -183,19 +183,19 @@ def test_run_finished_closes_everything_and_is_idempotent() -> None:
         ScopeOpened(scope=_ENTRY, label="A"),
         ArrRunFinished(arr=Arr.SONARR),
     )
-    assert fold.nodes() == ()
+    assert fold.scopes() == ()
 
     # The defensive teardown close re-emits it, a no-op on an empty stack.
     fold.apply(ArrRunFinished(arr=Arr.SONARR))
-    assert fold.nodes() == ()
+    assert fold.scopes() == ()
 
 
 def test_run_and_cycle_starts_close_everything() -> None:
     fold = _fold(ScopeOpened(scope=_BOOT, label="boot"), PearlarrStarted(version="", data_dir="/d"))
-    assert fold.nodes() == ()
+    assert fold.scopes() == ()
 
     fold = _fold(ScanStarted(arr=Arr.SONARR, total=1), ScheduledRunStarted(number=2))
-    assert fold.nodes() == ()
+    assert fold.scopes() == ()
 
 
 # --- unwind + defensive closes ---------------------------------------------------------
@@ -207,7 +207,7 @@ def test_closing_a_mid_stack_scope_closes_everything_deeper() -> None:
         BootStepStarted(scope=_STEP, label="Fetching library"),
         ScopeClosed(scope=_BOOT),
     )
-    assert fold.nodes() == ()
+    assert fold.scopes() == ()
 
 
 def test_closing_an_unknown_scope_is_a_no_op() -> None:
@@ -224,11 +224,11 @@ def test_content_events_never_move_the_fold() -> None:
         ItemStarted(arr=Arr.SONARR, index=1, total=1, title="A"),
         ScopeOpened(scope=_ENTRY, label="A"),
     )
-    entry_nodes = fold.nodes()
+    entry_nodes = fold.scopes()
 
     fold.apply(Diagnostic(severity=Severity.WARNING, message="w"))
     fold.apply(TitleHeader(state=TitleState.CHECKING, title="A", scope=_ENTRY))
-    assert fold.nodes() == entry_nodes
+    assert fold.scopes() == entry_nodes
 
 
 # --- read APIs ---------------------------------------------------------------------------
@@ -247,7 +247,7 @@ def test_path_for_returns_the_breadcrumb_down_to_that_scope() -> None:
 def test_reset_clears_all_open_nodes() -> None:
     fold = _fold(ScanStarted(arr=Arr.SONARR, total=1))
     fold.reset()
-    assert fold.nodes() == ()
+    assert fold.scopes() == ()
     assert fold.path_text() == ""
 
 

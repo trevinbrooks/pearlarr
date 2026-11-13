@@ -26,7 +26,7 @@ from .output.console_text import count_noun, pluralize
 from .pending_import import PendingImport
 from .placement_types import EpisodeIndex, GrabbingTitle, Placement, episode_index
 from .planner import get_episode_keys
-from .progress import ProgressSink
+from .progress import ProgressCallback
 from .releases import PlacementSkip, SeadexDict, ignore_tag_set, releases_to_grab
 from .series_listings import SeriesListings
 from .sonarr_client import AbstractSonarrClient, SonarrClient
@@ -203,7 +203,7 @@ class SonarrStrategy(ArrStrategy[SonarrItem]):
         return True
 
     @override
-    def prefetch_episodes(self, items: list[SonarrItem], *, progress: ProgressSink | None = None) -> int:
+    def prefetch_episodes(self, items: list[SonarrItem], *, progress: ProgressCallback | None = None) -> int:
         """Warm the per-series episode lists before the scan loop.
 
         Delegates to the episode collaborator's concurrent prefetch. Returns how
@@ -213,7 +213,7 @@ class SonarrStrategy(ArrStrategy[SonarrItem]):
         return self._episodes.prefetch(items, progress=progress)
 
     @override
-    def prefetch_orders(self, items: list[SonarrItem], *, progress: ProgressSink | None = None) -> int:
+    def prefetch_orders(self, items: list[SonarrItem], *, progress: ProgressCallback | None = None) -> int:
         """Refetch the due TVDB orders of the series the scan reads and of every stored record's series.
 
         A record's series is read at grab and import whether or not its own item needs a scan.

@@ -23,7 +23,7 @@ class TitledRule:
 
 
 @dataclass(frozen=True, slots=True)
-class SectionRule:
+class SeparatorRule:
     """The payload for a full-width separator rule."""
 
     char: str = "-"
@@ -51,7 +51,7 @@ class StyledLine:
     style: str = ""
 
 
-type ConsoleRender = TitledRule | SectionRule | KeyValue | StyledLine
+type ConsoleRender = TitledRule | SeparatorRule | KeyValue | StyledLine
 
 
 def print_titled_rule(console: Console, title: str, style: str, *, heavy: bool) -> None:

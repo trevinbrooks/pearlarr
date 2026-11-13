@@ -5,7 +5,7 @@ from datetime import UTC, datetime, timedelta
 from types import MappingProxyType
 
 from .cache import AbstractCacheStore
-from .progress import ProgressSink
+from .progress import ProgressCallback
 from .skyhook_client import AbstractSkyHookClient, SkyHookNoReply, SkyHookReply
 from .stamps import parse_stamp_or_none, stamp_of
 from .tvdb_orders import AIRED_ORDER, NO_ORDERS, CachedOrders, OrderRow, OrdersByName, SonarrSeriesOrders
@@ -41,7 +41,7 @@ class SkyHookGateway:
         series: Sequence[SonarrSeriesOrders],
         *,
         dry_run: bool,
-        progress: ProgressSink | None = None,
+        progress: ProgressCallback | None = None,
     ) -> int:
         """Refetch every due series, one at a time, writing each one's record whole. Returns how many were written.
 

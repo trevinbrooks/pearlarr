@@ -36,7 +36,7 @@ from pearlarr.mappings import TitleMapping
 from pearlarr.output import BootStepFinished, CountsMark, Diagnostic, Severity, SeverityCounter, TitleHeader
 from pearlarr.output.events import TitleState
 from pearlarr.output.recording import RecordingHub
-from pearlarr.progress import ProgressSink
+from pearlarr.progress import ProgressCallback
 from pearlarr.skyhook_gateway import SkyHookGateway
 from pearlarr.tvdb_orders import AIRED_ORDER, SonarrSeriesOrders
 from pearlarr.wait_types import ImportWaitMode, Outcome, OutcomeKind
@@ -71,7 +71,7 @@ class _FakeGateway:
         ids: object,
         *,
         dry_run: bool = False,
-        progress: ProgressSink | None = None,
+        progress: ProgressCallback | None = None,
     ) -> int:
         del ids, dry_run, progress
         return 0
@@ -709,7 +709,7 @@ class _OrderFetchingStrategy(FakeStrategy):
         return True
 
     @override
-    def prefetch_orders(self, items: list[FakeArrItem], *, progress: ProgressSink | None = None) -> int:
+    def prefetch_orders(self, items: list[FakeArrItem], *, progress: ProgressCallback | None = None) -> int:
         series = [SonarrSeriesOrders(item.id, AIRED_ORDER, None) for item in items]
         return self._skyhook.prefetch(series, dry_run=True, progress=progress)
 

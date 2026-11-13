@@ -63,7 +63,7 @@ from pearlarr.bootstrap import _rewrite_old_config, configured_arrs, load_shared
 from pearlarr.cache import CacheStore
 from pearlarr.cli import (
     _configured_format,
-    _console_seat,
+    _console_renderer,
     _handle_sigterm,
     _run_format,
     _schedule_hours,
@@ -433,7 +433,7 @@ class _RunArrsRecorder:
         *,
         paths: AppPaths,
         logger: logging.Logger,
-        file_sink: FileLogRenderer,
+        file_log_renderer: FileLogRenderer,
         explicit_selection: bool = False,
         dry_run: bool = False,
         import_wait_mode: ImportWaitMode | None = None,
@@ -1231,7 +1231,7 @@ class TestHubSeats:
         monkeypatch.setattr(sys, "stdout", stream)
         hub = OutputHub(
             [FileLogRenderer(str(log_dir))],
-            console_factory=partial(_console_seat, caps_cache=DetectedFeatures()),
+            console_factory=partial(_console_renderer, detected_features=DetectedFeatures()),
         )
         hub.begin_run(console_format=console_format, level=level)
         return hub, stream
@@ -1665,7 +1665,7 @@ class TestScheduledLifecycle:
             [ArrTarget(Arr.SONARR)],
             paths=paths,
             logger=logger,
-            file_sink=FileLogRenderer(paths.log_dir),
+            file_log_renderer=FileLogRenderer(paths.log_dir),
             retry_note="will retry in 6h (Ctrl-C to stop)",
         )
 
@@ -1687,7 +1687,9 @@ class TestScheduledLifecycle:
         self._stub_resolver(monkeypatch)
 
         assert (
-            run_arrs([ArrTarget(Arr.SONARR)], paths=paths, logger=logger, file_sink=FileLogRenderer(paths.log_dir))
+            run_arrs(
+                [ArrTarget(Arr.SONARR)], paths=paths, logger=logger, file_log_renderer=FileLogRenderer(paths.log_dir)
+            )
             is False
         )
 
@@ -1715,7 +1717,7 @@ class TestScheduledLifecycle:
             [ArrTarget(Arr.SONARR)],
             paths=paths,
             logger=logger,
-            file_sink=FileLogRenderer(paths.log_dir),
+            file_log_renderer=FileLogRenderer(paths.log_dir),
             dry_run=True,
         )
 
@@ -1746,7 +1748,7 @@ class TestScheduledLifecycle:
         monkeypatch.setattr(FileLogRenderer, "apply_retention_days", record)
         self._stub_resolver(monkeypatch)
 
-        run_arrs([ArrTarget(Arr.SONARR)], paths=paths, logger=logger, file_sink=FileLogRenderer(paths.log_dir))
+        run_arrs([ArrTarget(Arr.SONARR)], paths=paths, logger=logger, file_log_renderer=FileLogRenderer(paths.log_dir))
 
         assert applied == [3]
 
@@ -1848,7 +1850,7 @@ class TestRunLockContention:
         with single_instance_lock(paths.data_dir) as held:
             assert held
             result = run_arrs(
-                [ArrTarget(Arr.SONARR)], paths=paths, logger=logger, file_sink=FileLogRenderer(paths.log_dir)
+                [ArrTarget(Arr.SONARR)], paths=paths, logger=logger, file_log_renderer=FileLogRenderer(paths.log_dir)
             )
 
         assert result is False

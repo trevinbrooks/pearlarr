@@ -433,7 +433,7 @@ def _run_arr(target: ArrTarget, ctx: RunContext) -> bool:
         # Cap this arr's boot section so the next arr opens a fresh
         # one. A no-op on the happy path (run_arr already ended it
         # before scanning), the safety net when a step failed.
-        ctx.boot.end_section()
+        ctx.boot.end_boot()
         if deps is not None:
             deps.close()
     return True
@@ -444,7 +444,7 @@ def run_arrs(
     *,
     paths: AppPaths,
     logger: logging.Logger,
-    file_sink: FileLogRenderer,
+    file_log_renderer: FileLogRenderer,
     explicit_selection: bool = False,
     dry_run: bool = False,
     import_wait_mode: ImportWaitMode | None = None,
@@ -510,7 +510,7 @@ def run_arrs(
             if app_config is None:
                 return False
             apply_log_level(logger, log_level or app_config.advanced.log_level)
-            file_sink.apply_retention_days(app_config.advanced.log_retention_days)
+            file_log_renderer.apply_retention_days(app_config.advanced.log_retention_days)
 
             # An old-schema file loads via the in-memory migration; the file on
             # disk catches up here - never on a dry run.

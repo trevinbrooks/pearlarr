@@ -276,7 +276,7 @@ def test_multi_line_messages_and_field_values_stay_one_line() -> None:
 )
 def test_wait_start_lines_word_and_stamp_the_pass_kind(kind: WaitKind, words: str) -> None:
     context = (ScanStarted(arr=Arr.SONARR, total=182), ScopeOpened(scope=_WAIT, label="wait"))
-    assert _format(WaitStarted(total=4, pulse_s=300.0, kind=kind, scope=_WAIT), *context) == (
+    assert _format(WaitStarted(total=4, progress_line_s=300.0, kind=kind, scope=_WAIT), *context) == (
         f"{_TS} INFO [sonarr › wait] {words} total=4"
     )
 
@@ -541,11 +541,11 @@ def test_a_warning_file_level_admits_per_line_within_the_summary(tmp_path: Path)
 def test_file_only_diagnostics_reach_the_file_but_not_stdout(tmp_path: Path) -> None:
     note = Diagnostic(severity=Severity.WARNING, message="renderer failed", origin="output.hub", file_only=True)
     line_sink, stream = _line_sink()
-    file_sink = FileLogRenderer(str(tmp_path))
+    file_log_renderer = FileLogRenderer(str(tmp_path))
 
     line_sink.handle(note, _EPOCH)
-    file_sink.handle(note, _EPOCH)
-    file_sink.close()
+    file_log_renderer.handle(note, _EPOCH)
+    file_log_renderer.close()
 
     assert stream.getvalue() == ""
     assert "renderer failed" in (tmp_path / "Pearlarr.log").read_text(encoding="utf-8")
@@ -562,12 +562,12 @@ def test_line_and_file_output_are_byte_identical(tmp_path: Path) -> None:
         ArrRunFinished(arr=Arr.SONARR),
     ]
     line_sink, stream = _line_sink()
-    file_sink = FileLogRenderer(str(tmp_path))
+    file_log_renderer = FileLogRenderer(str(tmp_path))
 
     for event in events:
         line_sink.handle(event, _EPOCH)
-        file_sink.handle(event, _EPOCH)
-    file_sink.close()
+        file_log_renderer.handle(event, _EPOCH)
+    file_log_renderer.close()
 
     assert stream.getvalue() == (tmp_path / "Pearlarr.log").read_text(encoding="utf-8")
     assert stream.getvalue() != ""
@@ -582,14 +582,14 @@ def test_line_and_file_parity_holds_at_a_warning_level(tmp_path: Path) -> None:
         Diagnostic(severity=Severity.WARNING, message="renderer failed", origin="output.hub", file_only=True),
     ]
     line_sink, stream = _line_sink()
-    file_sink = FileLogRenderer(str(tmp_path))
+    file_log_renderer = FileLogRenderer(str(tmp_path))
     line_sink.set_level(logging.WARNING)
-    file_sink.set_level(logging.WARNING)
+    file_log_renderer.set_level(logging.WARNING)
 
     for event in events:
         line_sink.handle(event, _EPOCH)
-        file_sink.handle(event, _EPOCH)
-    file_sink.close()
+        file_log_renderer.handle(event, _EPOCH)
+    file_log_renderer.close()
 
     file_lines = (tmp_path / "Pearlarr.log").read_text(encoding="utf-8").splitlines(keepends=True)
     assert sum("renderer failed" in line for line in file_lines) == 1
@@ -866,7 +866,7 @@ def test_file_sink_writes_utf8(tmp_path: Path) -> None:
 
 def test_wait_progress_stays_silent_below_the_pulse_cadence() -> None:
     line_sink, stream = _line_sink()
-    line_sink.handle(WaitStarted(total=1, pulse_s=300.0, kind=WaitKind.MONITOR, scope=None), _EPOCH)
+    line_sink.handle(WaitStarted(total=1, progress_line_s=300.0, kind=WaitKind.MONITOR, scope=None), _EPOCH)
     line_sink.handle(Diagnostic(severity=Severity.DEBUG, message="hidden", origin="app"), _EPOCH)
     before = stream.getvalue()
 
@@ -888,17 +888,17 @@ def _wait_progress(elapsed: float) -> WaitProgress:
 
 
 def test_grammar_sinks_pulse_still_waiting_on_the_event_cadence() -> None:
-    # The anti-hang heartbeat: cadence is pure event content (pulse_s/elapsed_s,
+    # The anti-hang heartbeat: cadence is pure event content (progress_line_s/elapsed_s,
     # never wall clock), and the start snapshot never pulses.
     line_sink, stream = _line_sink()
     context = (ScanStarted(arr=Arr.SONARR, total=182), ScopeOpened(scope=_WAIT, label="wait"))
-    for event in (*context, WaitStarted(total=3, pulse_s=300.0, kind=WaitKind.MONITOR, scope=_WAIT)):
+    for event in (*context, WaitStarted(total=3, progress_line_s=300.0, kind=WaitKind.MONITOR, scope=_WAIT)):
         line_sink.handle(event, _EPOCH)
     line_sink.handle(_wait_progress(0.0), _EPOCH)  # the start snapshot never pulses
     line_sink.handle(_wait_progress(299.0), _EPOCH)  # within the interval
     before = stream.getvalue()
 
-    line_sink.handle(_wait_progress(300.0), _EPOCH)  # due at pulse_s
+    line_sink.handle(_wait_progress(300.0), _EPOCH)  # due at progress_line_s
     assert stream.getvalue() == before + (
         f"{_TS} INFO [sonarr › wait] still waiting downloading=1 importing=1 queued=1 elapsed_s=300.00\n"
     )
@@ -908,18 +908,18 @@ def test_pulse_lines_keep_line_and_file_byte_parity(tmp_path: Path) -> None:
     events: list[Event] = [
         ScanStarted(arr=Arr.SONARR, total=182),
         ScopeOpened(scope=_WAIT, label="wait"),
-        WaitStarted(total=3, pulse_s=300.0, kind=WaitKind.MONITOR, scope=_WAIT),
+        WaitStarted(total=3, progress_line_s=300.0, kind=WaitKind.MONITOR, scope=_WAIT),
         _wait_progress(0.0),
         _wait_progress(300.0),
         _wait_progress(650.0),
         WaitFinished(imported=1, left=0, failed=0, elapsed_s=700.0, in_progress=0, kind=WaitKind.MONITOR, scope=_WAIT),
     ]
     line_sink, stream = _line_sink()
-    file_sink = FileLogRenderer(str(tmp_path))
+    file_log_renderer = FileLogRenderer(str(tmp_path))
     for event in events:
         line_sink.handle(event, _EPOCH)
-        file_sink.handle(event, _EPOCH)
-    file_sink.close()
+        file_log_renderer.handle(event, _EPOCH)
+    file_log_renderer.close()
 
     content = (tmp_path / "Pearlarr.log").read_text(encoding="utf-8")
     assert stream.getvalue() == content
@@ -928,11 +928,13 @@ def test_pulse_lines_keep_line_and_file_byte_parity(tmp_path: Path) -> None:
 
 def test_a_new_wait_pass_rearms_the_pulse_skip_first() -> None:
     line_sink, stream = _line_sink()
-    line_sink.handle(WaitStarted(total=1, pulse_s=300.0, kind=WaitKind.MONITOR), _EPOCH)
+    line_sink.handle(WaitStarted(total=1, progress_line_s=300.0, kind=WaitKind.MONITOR), _EPOCH)
     line_sink.handle(_wait_progress(300.0), _EPOCH)  # skip-first: even a late start snapshot never pulses
     line_sink.handle(_wait_progress(300.0), _EPOCH)  # due
 
-    line_sink.handle(WaitStarted(total=1, pulse_s=300.0, kind=WaitKind.MONITOR), _EPOCH)  # a second pass this run
+    line_sink.handle(
+        WaitStarted(total=1, progress_line_s=300.0, kind=WaitKind.MONITOR), _EPOCH
+    )  # a second pass this run
     line_sink.handle(_wait_progress(900.0), _EPOCH)  # skip-first again
     line_sink.handle(_wait_progress(900.0), _EPOCH)  # due again
 
@@ -941,7 +943,7 @@ def test_a_new_wait_pass_rearms_the_pulse_skip_first() -> None:
 
 def test_begin_cycle_disarms_the_pulse_until_the_next_wait_pass() -> None:
     line_sink, stream = _line_sink()
-    line_sink.handle(WaitStarted(total=1, pulse_s=300.0, kind=WaitKind.MONITOR), _EPOCH)
+    line_sink.handle(WaitStarted(total=1, progress_line_s=300.0, kind=WaitKind.MONITOR), _EPOCH)
     line_sink.begin_run()
 
     line_sink.handle(_wait_progress(10_000.0), _EPOCH)
@@ -951,10 +953,10 @@ def test_begin_cycle_disarms_the_pulse_until_the_next_wait_pass() -> None:
 
 def test_pulse_lines_drop_below_a_raised_threshold_but_the_cadence_advances() -> None:
     # Line-granular admission applies to the pulse like any INFO line. The
-    # throttle state advances regardless of level (the PulseThrottle contract).
+    # throttle state advances regardless of level (the ProgressLineThrottle contract).
     line_sink, stream = _line_sink()
     line_sink.set_level(logging.WARNING)
-    line_sink.handle(WaitStarted(total=1, pulse_s=300.0, kind=WaitKind.MONITOR), _EPOCH)
+    line_sink.handle(WaitStarted(total=1, progress_line_s=300.0, kind=WaitKind.MONITOR), _EPOCH)
     line_sink.handle(_wait_progress(0.0), _EPOCH)
     line_sink.handle(_wait_progress(300.0), _EPOCH)  # due, but INFO drops at WARNING
     assert stream.getvalue() == ""
@@ -1163,7 +1165,7 @@ def _exemplars() -> list[Event]:
         CapReached(cap=25),
         ScanFinished(arr=Arr.SONARR),
         _summary_ready(),
-        WaitStarted(total=1, pulse_s=300.0, kind=WaitKind.MONITOR),
+        WaitStarted(total=1, progress_line_s=300.0, kind=WaitKind.MONITOR),
         WaitProgress(snapshot=WaitSnapshot(torrents=(), elapsed_s=1.0)),
         RowFinished(label="T", outcome=Outcome.IMPORTED, files=1, waited_s=1.0),
         WaitFinished(imported=1, left=0, failed=0, elapsed_s=1.0, in_progress=0, kind=WaitKind.MONITOR),

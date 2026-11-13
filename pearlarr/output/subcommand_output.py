@@ -202,7 +202,7 @@ class CliTextRenderer(Renderer):
 
 
 @contextlib.contextmanager
-def cli_surface(json_output: bool) -> Generator[None]:
+def subcommand_hub(json_output: bool) -> Generator[None]:
     """Install a minimal one-seat hub for a subcommand body, closing it on exit.
 
     No file sink, no bridge, no begin_cycle: INFO renders straight through the
@@ -210,8 +210,8 @@ def cli_surface(json_output: bool) -> Generator[None]:
     the output barrier before the command's exit code fires.
     """
 
-    seat = JsonRenderer(sys.stdout) if json_output else CliTextRenderer()
-    hub = OutputHub([], console=seat)
+    renderer = JsonRenderer(sys.stdout) if json_output else CliTextRenderer()
+    hub = OutputHub([], console=renderer)
     install_hub(hub)
     try:
         yield

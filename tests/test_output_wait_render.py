@@ -15,7 +15,7 @@ import logging
 
 import pytest
 
-from pearlarr.console_caps import ConsoleFeatures, detect_capabilities
+from pearlarr.console_caps import ConsoleFeatures, detect_features
 from pearlarr.output import (
     Phase,
     RowFinished,
@@ -28,7 +28,7 @@ from pearlarr.output import (
 from pearlarr.output.console_text import StyledLine
 from pearlarr.output.wait_lines import (
     _PHASE_RANK,
-    PulseThrottle,
+    ProgressLineThrottle,
     _rough_eta,
     hand_import_sentences,
     live_model,
@@ -61,26 +61,26 @@ def _grad(
     )
 
 
-# --- the shared PulseThrottle -----------------------------------------------------------
+# --- the shared ProgressLineThrottle -----------------------------------------------------------
 
 
 class TestPulseThrottle:
     """PulseThrottle's contract: skip-first firing, elapsed-anchored cadence, and re-arm restarts skip-first."""
 
     def test_disarmed_never_fires(self) -> None:
-        throttle = PulseThrottle()
+        throttle = ProgressLineThrottle()
         assert throttle.fire(0.0) is False
         assert throttle.fire(10_000.0) is False
 
     def test_first_fire_after_arm_is_skipped(self) -> None:
         # The old view's first render printed the start line and returned.
-        throttle = PulseThrottle()
-        throttle.arm(300.0)
+        throttle = ProgressLineThrottle()
+        throttle.start(300.0)
         assert throttle.fire(0.0) is False
 
     def test_elapsed_anchored_cadence(self) -> None:
-        throttle = PulseThrottle()
-        throttle.arm(300.0)
+        throttle = ProgressLineThrottle()
+        throttle.start(300.0)
         assert throttle.fire(0.0) is False  # skip-first
         assert throttle.fire(299.0) is False  # within the interval
         assert throttle.fire(300.0) is True  # due, re-arms at 600
@@ -90,25 +90,25 @@ class TestPulseThrottle:
         assert throttle.fire(1310.0) is True
 
     def test_poll_floor_interval(self) -> None:
-        throttle = PulseThrottle()
-        throttle.arm(600.0)
+        throttle = ProgressLineThrottle()
+        throttle.start(600.0)
         assert throttle.fire(0.0) is False  # skip-first
         assert throttle.fire(300.0) is False  # a shorter interval would fire, 600 rules
         assert throttle.fire(600.0) is True
 
     def test_reset_disarms(self) -> None:
-        throttle = PulseThrottle()
-        throttle.arm(300.0)
+        throttle = ProgressLineThrottle()
+        throttle.start(300.0)
         assert throttle.fire(0.0) is False
         throttle.reset()
         assert throttle.fire(10_000.0) is False
 
     def test_re_arm_restarts_the_skip_first(self) -> None:
-        throttle = PulseThrottle()
-        throttle.arm(300.0)
+        throttle = ProgressLineThrottle()
+        throttle.start(300.0)
         assert throttle.fire(0.0) is False
         assert throttle.fire(300.0) is True
-        throttle.arm(600.0)  # a fresh pass
+        throttle.start(600.0)  # a fresh pass
         assert throttle.fire(0.0) is False  # skip-first again
         assert throttle.fire(600.0) is True
 
@@ -116,8 +116,8 @@ class TestPulseThrottle:
         # skip-first as DISTINCT behavior: a late first snapshot (already past the
         # mark) still never pulses - the old view's first render printed the start
         # line and returned no matter when it ran.
-        throttle = PulseThrottle()
-        throttle.arm(5.0)
+        throttle = ProgressLineThrottle()
+        throttle.start(5.0)
         assert throttle.fire(7.0) is False  # skipped unconditionally
         assert throttle.fire(7.0) is True  # the next one is already due
 
@@ -144,10 +144,10 @@ class TestWaitBuilders:
         ],
     )
     def test_start_line_words_and_pluralizes_by_kind(self, kind: WaitKind, one: str, two: str) -> None:
-        line = wait_start_line(WaitStarted(total=1, pulse_s=300.0, kind=kind))
+        line = wait_start_line(WaitStarted(total=1, progress_line_s=300.0, kind=kind))
         assert line.message == one
         assert line.payload is None
-        assert wait_start_line(WaitStarted(total=2, pulse_s=300.0, kind=kind)).message == two
+        assert wait_start_line(WaitStarted(total=2, progress_line_s=300.0, kind=kind)).message == two
 
     @pytest.mark.parametrize(
         ("kind", "expected"),
@@ -163,14 +163,14 @@ class TestWaitBuilders:
 
     def test_graduation_style_is_dropped_without_color(self) -> None:
         # The colorless case is style="", not None (an unstyled console line).
-        [line] = row_finished_lines(_grad("Show A", Outcome.IMPORTED, files=1, waited=60), detect_capabilities(None))
+        [line] = row_finished_lines(_grad("Show A", Outcome.IMPORTED, files=1, waited=60), detect_features(None))
         assert line.payload == StyledLine(style="")
         assert line.message == "  ok imported    Show A  (1 file · 1m 00s)"
 
     def test_graduation_line_level_follows_the_outcome_category(self) -> None:
         # P6: the rendered line and severity_of/the sink admission agree -
         # FAILED carries ERROR, DEFERRED WARNING, success INFO.
-        features = detect_capabilities(None)
+        features = detect_features(None)
         assert row_finished_lines(_grad("A", Outcome.IMPORTED), features)[0].level == logging.INFO
         assert row_finished_lines(_grad("B", Outcome.DOWNLOAD_TIMED_OUT), features)[0].level == logging.WARNING
         assert row_finished_lines(_grad("C", Outcome.DOWNLOAD_ERRORED), features)[0].level == logging.ERROR
@@ -436,7 +436,7 @@ def test_a_lone_order_only_file_reads_in_the_singular() -> None:
 
 def test_a_long_reason_wraps_onto_rows_that_fit_a_100_column_console() -> None:
     left = LeftForHandImport(files=order_only_held_back().files[:1], missing=(EpisodeKey(4, 1),))
-    lines = row_finished_lines(_grad("A", Outcome.PARTIAL, left_for_hand_import=left), detect_capabilities(None))
+    lines = row_finished_lines(_grad("A", Outcome.PARTIAL, left_for_hand_import=left), detect_features(None))
     assert [line.message for line in lines[1:3]] == [
         "    reason      this pack is numbered by the DVD order, and 1 of its files is one of the DVD",
         "                episodes that aren't in Sonarr's list, so Pearlarr can't tell where it belongs",
@@ -454,7 +454,7 @@ def test_files_keyed_by_two_orders_name_both_orders() -> None:
 
 def test_an_order_only_row_says_why_then_lists_each_file_behind_its_key() -> None:
     event = _grad("Show Ending · grp · S04 E01-E12", Outcome.PARTIAL, left_for_hand_import=order_only_held_back())
-    lines = row_finished_lines(event, detect_capabilities(None))
+    lines = row_finished_lines(event, detect_features(None))
     assert [line.message for line in lines] == [
         "  ~ partial     Show Ending · grp · S04 E01-E12  (S04 E01 still missing in Sonarr)",
         "    reason      this pack is numbered by the DVD order, and 2 of its files are DVD episodes",
@@ -468,7 +468,7 @@ def test_an_order_only_row_says_why_then_lists_each_file_behind_its_key() -> Non
 def test_a_held_back_row_names_five_files_and_counts_the_rest() -> None:
     names = tuple(f"[grp] Show - Part {n:02d}.mkv" for n in range(1, 8))
     lines = row_finished_lines(
-        _grad("A", Outcome.UNMATCHED, left_for_hand_import=held_files(*names)), detect_capabilities(None)
+        _grad("A", Outcome.UNMATCHED, left_for_hand_import=held_files(*names)), detect_features(None)
     )
     assert [line.message for line in lines[1:]] == [
         "    files       [grp] Show - Part 01.mkv",
@@ -481,7 +481,7 @@ def test_a_mixed_record_keeps_its_count_and_keys_the_order_only_file() -> None:
     left = LeftForHandImport(
         files=(order_only_held_back().files[0], HandImportFile("[grp] Show Ending S1 - 05 [ABCD1234].mkv"))
     )
-    lines = row_finished_lines(_grad("A", Outcome.PARTIAL, left_for_hand_import=left), detect_capabilities(None))
+    lines = row_finished_lines(_grad("A", Outcome.PARTIAL, left_for_hand_import=left), detect_features(None))
     assert [line.message for line in lines] == [
         f"  ~ partial     A  (2 files held back{SEP}import by hand in Sonarr)",
         "    files       DVD S07E01  [grp] Show Ending S1 - 01 [ABCD1234].mkv",

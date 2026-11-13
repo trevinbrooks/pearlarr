@@ -22,7 +22,7 @@ import httpx
 from seadex import EntryNotFoundError, EntryRecord
 
 from .output import hub_warn
-from .progress import ProgressSink
+from .progress import ProgressCallback
 from .web_client import failure_detail
 
 # Ids per batched `from_filter` query. Mirrors ANILIST_BATCH_SIZE. ~50
@@ -54,7 +54,7 @@ class SeaDexSource(ABC):
     """
 
     @abstractmethod
-    def prefetch(self, al_ids: Iterable[int], *, progress: ProgressSink | None = None) -> int: ...
+    def prefetch(self, al_ids: Iterable[int], *, progress: ProgressCallback | None = None) -> int: ...
 
     @abstractmethod
     def entry(self, al_id: int) -> EntryRecord | SeaDexNoEntry: ...
@@ -112,7 +112,7 @@ class SeaDexGateway(SeaDexSource):
         self._unreachable = True
 
     @override
-    def prefetch(self, al_ids: Iterable[int], *, progress: ProgressSink | None = None) -> int:
+    def prefetch(self, al_ids: Iterable[int], *, progress: ProgressCallback | None = None) -> int:
         """Bulk-fetch SeaDex entries for many ids in batched OR-filter queries.
 
         Populates the per-run entry cache so the per-item loop's `entry`

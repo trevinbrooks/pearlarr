@@ -366,8 +366,8 @@ class OutputHub:
                     return
                 event, when = self._event_queue.popleft()
                 self._in_flight = (event, when)
-                armed = [sub for sub in self._subs if sub.strikes < self._strike_limit]
-            self._dispatch(event, when, armed)
+                active = [sub for sub in self._subs if sub.strikes < self._strike_limit]
+            self._dispatch(event, when, active)
 
     def _flush_on_unwind(self) -> None:
         """Re-dispatch the in-flight event, then flush the queued tail, while an exception unwinds `_drain`.
@@ -384,10 +384,10 @@ class OutputHub:
         try:
             with self._lock:
                 in_flight, self._in_flight = self._in_flight, None
-                armed = [sub for sub in self._subs if sub.strikes < self._strike_limit]
+                active = [sub for sub in self._subs if sub.strikes < self._strike_limit]
             if in_flight is not None:
                 event, when = in_flight
-                for sub in armed:
+                for sub in active:
                     try:
                         sub.renderer.handle(event, when)
                     except Exception:
@@ -420,7 +420,7 @@ class OutputHub:
         )
 
     @contextlib.contextmanager
-    def _baton_held(self) -> Generator[None]:
+    def _with_drain_lock(self) -> Generator[None]:
         """Hold the drain baton for a lifecycle body (lock held, no other drainer).
 
         A renderer's lifecycle call can log. The bridge adopts that into a
@@ -448,7 +448,7 @@ class OutputHub:
             self._await_no_drainer()
             if self._closed:
                 return
-            with self._baton_held():
+            with self._with_drain_lock():
                 self._once_keys.clear()
                 for sub in self._subs:
                     sub.strikes = 0
@@ -469,7 +469,7 @@ class OutputHub:
             self._await_no_drainer()
             if self._closed:
                 return
-            with self._baton_held():
+            with self._with_drain_lock():
                 self._set_level_locked(level)
         self._drain()
 
@@ -495,7 +495,7 @@ class OutputHub:
             self._await_no_drainer()
             if self._closed:
                 return
-            with self._baton_held():
+            with self._with_drain_lock():
                 file_subs = [sub for sub in self._subs if sub.renderer.writes_file_only]
                 for sub in self._subs:
                     if sub in file_subs:
@@ -581,8 +581,8 @@ class OutputHub:
         """
 
         with self._lock:
-            armed = [sub for sub in self._subs if sub is not skip and sub.strikes < self._strike_limit]
-        file_only = any(sub.renderer.writes_file_only for sub in armed)
+            active = [sub for sub in self._subs if sub is not skip and sub.strikes < self._strike_limit]
+        file_only = any(sub.renderer.writes_file_only for sub in active)
         note = Diagnostic(
             severity=Severity.WARNING if file_only else Severity.ERROR,
             message=message,
@@ -593,7 +593,7 @@ class OutputHub:
         if not file_only:
             # Counts = what a visible surface could show. This one is visible.
             self._counts.record(note.severity)
-        for sub in armed:
+        for sub in active:
             try:
                 sub.renderer.handle(note, when)
             except Exception:

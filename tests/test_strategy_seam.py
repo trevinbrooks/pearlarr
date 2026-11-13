@@ -65,7 +65,7 @@ from pearlarr.pending_import import (
 from pearlarr.pending_import_store import PendingImportStore
 from pearlarr.placement_types import FetchedListings, TorrentListing, episode_index
 from pearlarr.planner import GrabPlan
-from pearlarr.progress import ProgressSink
+from pearlarr.progress import ProgressCallback
 from pearlarr.radarr_strategy import _HISTORY_SKEW_HOURS, RadarrStrategy
 from pearlarr.releases import EpisodeKey, OrderOnlyKey, PlacementSkip, ReleaseEpisode, SeadexDict
 from pearlarr.sonarr_episodes import sonarr_series_hash
@@ -452,9 +452,9 @@ class TestSonarrPrefetchDelegates:
 
     def test_sonarr_prefetch_routes_to_episodes(self, monkeypatch: pytest.MonkeyPatch) -> None:
         strat = make_sonarr_sync()
-        prefetch_calls: list[tuple[list[SonarrItem], ProgressSink | None]] = []
+        prefetch_calls: list[tuple[list[SonarrItem], ProgressCallback | None]] = []
 
-        def _prefetch(items: list[SonarrItem], *, progress: ProgressSink | None = None) -> int:
+        def _prefetch(items: list[SonarrItem], *, progress: ProgressCallback | None = None) -> int:
             prefetch_calls.append((items, progress))
             return 3
 

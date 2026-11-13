@@ -110,11 +110,11 @@ class BootRegion(LiveRegion):
     def __init__(
         self,
         console_source: Callable[[], Console | None],
-        caps_cache: DetectedFeatures | None = None,
+        detected_features: DetectedFeatures | None = None,
         *,
         level_source: Callable[[], int],
     ) -> None:
-        super().__init__(console_source, caps_cache, level_source=level_source)
+        super().__init__(console_source, detected_features, level_source=level_source)
         # The only cross-event frame state: Progressed events carry no label.
         self._label = ""
 
@@ -122,7 +122,7 @@ class BootRegion(LiveRegion):
         console = self._console_source()
         if console is None:
             return
-        features = self._caps_cache.for_console(console)
+        features = self._detected_features.for_console(console)
         match event:
             case PearlarrStarted():
                 self._banner(console, event)
@@ -142,7 +142,7 @@ class BootRegion(LiveRegion):
                     self._print(console, Text(step_finished_line(event, features), style=style))
             case BootReady(elapsed_s=elapsed_s):
                 # Teardown order: the spinner is torn down before the capstone
-                # prints (section_left stays the teardown for capstone-less ends).
+                # prints (scope_closed stays the teardown for capstone-less ends).
                 self._stop_live()
                 if self._admits_durable():
                     self._print(console, Text(ready_line(elapsed_s), style="grey50" if features.can_color else ""))

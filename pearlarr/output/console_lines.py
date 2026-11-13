@@ -11,7 +11,7 @@ from rich.text import Text
 from .console_text import (
     ConsoleRender,
     KeyValue,
-    SectionRule,
+    SeparatorRule,
     StyledLine,
     TitledRule,
     kv_text,
@@ -39,7 +39,7 @@ def render_console_lines(console: Console, lines: Iterable[ConsoleLine], level: 
         match line.payload:
             case TitledRule(title=title, style=style, heavy=heavy):
                 print_titled_rule(console, title, style, heavy=heavy)
-            case SectionRule(char=char):
+            case SeparatorRule(char=char):
                 console.print(rule_text(char))
             case KeyValue() as kv:
                 print_literal(console, kv_text(kv))

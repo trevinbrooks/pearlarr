@@ -46,7 +46,7 @@ from .mapping_store import (
 )
 from .output import hub_warn
 from .paths import resolve_paths
-from .progress import ProgressSink
+from .progress import ProgressCallback
 from .web_client import failure_detail
 
 type AnimeIdsRawMapping = dict[str, Any]
@@ -450,7 +450,7 @@ class MappingResolver(KnownExternalIds):
         web: httpx.Client,
         mappings_db: str = ":memory:",
         logger: logging.Logger | None = None,
-        progress: ProgressSink | None = None,
+        progress: ProgressCallback | None = None,
     ) -> None:
         """Open the store and load (parse-if-changed) the mapping sources.
 

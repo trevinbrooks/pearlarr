@@ -94,10 +94,10 @@ class OpenScope:
     """`None` for boundary-opened RUN/ITEM nodes."""
 
 
-def _segment(node: OpenScope) -> str:
+def _segment(open_scope: OpenScope) -> str:
     """A node's path segment: fixed words for section kinds, the label otherwise."""
 
-    return SEGMENT_WORD.get(node.kind, node.label)
+    return SEGMENT_WORD.get(open_scope.kind, open_scope.label)
 
 
 @final
@@ -167,7 +167,7 @@ class OpenScopes:
 
     # -- read APIs (the only surface: labels/during only, never placement) ---------
 
-    def nodes(self) -> tuple[OpenScope, ...]:
+    def scopes(self) -> tuple[OpenScope, ...]:
         """The open nodes, root to top."""
 
         return tuple(self._stack)
@@ -175,13 +175,13 @@ class OpenScopes:
     def path_text(self) -> str:
         """The full PATH_SEP-joined breadcrumb, e.g. "sonarr" then "[3/182] Frieren" then "entry"."""
 
-        return PATH_SEP.join(_segment(node) for node in self._stack)
+        return PATH_SEP.join(_segment(open_scope) for open_scope in self._stack)
 
     def path_for(self, scope: ScopeId) -> str | None:
         """The breadcrumb down to the named open scope, or None when it isn't open."""
 
-        for i, node in enumerate(self._stack):
-            if node.scope == scope:
+        for i, open_scope in enumerate(self._stack):
+            if open_scope.scope == scope:
                 return PATH_SEP.join(_segment(n) for n in self._stack[: i + 1])
         return None
 
@@ -207,7 +207,7 @@ class OpenScopes:
             self._stack.pop()
 
     def _pop_through(self, scope: ScopeId) -> None:
-        for i, node in enumerate(self._stack):
-            if node.scope == scope:
+        for i, open_scope in enumerate(self._stack):
+            if open_scope.scope == scope:
                 del self._stack[i:]
                 return

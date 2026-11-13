@@ -127,7 +127,7 @@ def _run_failing_arr(
 
     paths = resolve_paths()
     completed = run_arrs(
-        [ArrTarget(Arr.SONARR)], paths=paths, logger=app_logger, file_sink=FileLogRenderer(paths.log_dir)
+        [ArrTarget(Arr.SONARR)], paths=paths, logger=app_logger, file_log_renderer=FileLogRenderer(paths.log_dir)
     )
     return completed, recording
 
@@ -263,7 +263,7 @@ def _run_completing_arr(
 
     paths = resolve_paths()
     completed = run_arrs(
-        [ArrTarget(Arr.SONARR)], paths=paths, logger=app_logger, file_sink=FileLogRenderer(paths.log_dir)
+        [ArrTarget(Arr.SONARR)], paths=paths, logger=app_logger, file_log_renderer=FileLogRenderer(paths.log_dir)
     )
     return completed, recording
 
