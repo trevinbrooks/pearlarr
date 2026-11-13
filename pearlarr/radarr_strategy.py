@@ -7,6 +7,7 @@ from typing import override
 
 from .arr_activity import HISTORY_MAX_LOOKBACK_DAYS, IMPORT_EVENTS, format_history_date
 from .arr_models import ArrFiles, HistoryRecord, RadarrItem
+from .arr_strategy import ArrStrategy
 from .config import Arr
 from .grab_pipeline import NO_SEEDS, GrabRequest
 from .grab_placement import PendingImportUpdate, TitleFacts, build_unscoped_seed
@@ -15,7 +16,6 @@ from .output import hub_warn
 from .output.console_text import pluralize
 from .pending_import import OwnedAtGrab, PendingImport, added_at_of
 from .progress import ProgressSink
-from .protocols import ArrStrategy
 from .radarr_client import AbstractRadarrClient, RadarrClient, collect_anime_movies
 from .releases import releases_to_grab
 from .run_services import LegDeps, LegServices, bind_arr_http

@@ -9,9 +9,9 @@ from enum import IntEnum
 from typing import Self
 
 from ._state import ConsecutiveEpisodes, NumberedSequence, PlacerState, TorrentFile
-from ..parse_reading import ParsedEpisodes, claims_several_episodes
+from ..file_names import Naming
+from ..parsed_episodes import ParsedEpisodes, claims_several_episodes
 from ..placement_types import PlacementVerdict
-from ..release_names import Naming
 from ..releases import EpisodeKey
 
 # Episode titles pick a run, or refuse one, only when at least this many members carry them.

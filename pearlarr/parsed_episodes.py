@@ -4,8 +4,8 @@ from collections.abc import Iterable, Mapping, Sequence
 from dataclasses import dataclass
 
 from .arr_models import MatchedEpisode, ParsedFileInfo
+from .file_names import range_key
 from .placement_types import EpisodeIndex, PlacementTarget
-from .release_names import range_key
 from .releases import EpisodeKey, season_episode_key
 
 # Sonarr's matched pairs plausibly cover a double or triple episode, never more, and a range key Sonarr read short

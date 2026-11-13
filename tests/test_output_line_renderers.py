@@ -85,10 +85,10 @@ from pearlarr.output import (
     WaitProgress,
     WaitSnapshot,
     WaitStarted,
-    textline,
+    line_renderers,
 )
 from pearlarr.output.events import TitleState
-from pearlarr.output.textline import _BACKUP_STAMP_FORMAT, _JSON_SKIP, _TEXT_SKIP
+from pearlarr.output.line_renderers import _BACKUP_STAMP_FORMAT, _JSON_SKIP, _TEXT_SKIP
 from pearlarr.output.trace import CapturedTrace
 from pearlarr.releases import ElsewhereCounts
 from pearlarr.wait_types import Outcome, OutcomeKind
@@ -708,7 +708,7 @@ def test_a_reopened_file_sink_appends_after_close(tmp_path: Path) -> None:
 
 
 def test_backstop_deletes_oldest_backups_beyond_the_cap(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setattr(textline, "_BACKSTOP_MAX_BACKUPS", 2)
+    monkeypatch.setattr(line_renderers, "_BACKSTOP_MAX_BACKUPS", 2)
     sink = FileLogRenderer(str(tmp_path))
     log = tmp_path / "Pearlarr.log"
     stamps = [datetime(2026, 1, day, 0, 0, 0) for day in (1, 2, 3, 4)]
@@ -783,7 +783,7 @@ def test_apply_retention_days_survives_an_undeletable_backup_and_prunes_the_rest
 
 
 def test_backstop_survives_an_undeletable_oldest_backup(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setattr(textline, "_BACKSTOP_MAX_BACKUPS", 1)
+    monkeypatch.setattr(line_renderers, "_BACKSTOP_MAX_BACKUPS", 1)
     sink = FileLogRenderer(str(tmp_path))
     log = tmp_path / "Pearlarr.log"
     stuck = _make_backup(tmp_path, "Pearlarr.log.2025-01-01_000000", age_days=30)
@@ -1246,7 +1246,7 @@ def test_no_fact_field_key_can_collide_with_the_json_envelope() -> None:
     import ast
     import inspect
 
-    from pearlarr.output import textline as _textline
+    from pearlarr.output import line_renderers as _textline
 
     tree = ast.parse(inspect.getsource(_textline))
     offenders: list[str] = []

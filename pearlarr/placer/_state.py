@@ -14,9 +14,9 @@ from typing import Self
 from ._names import TorrentNames
 from ..arr_models import ParsedFileInfo
 from ..episode_titles import EpisodeTitles, spells_title
-from ..parse_reading import ParsedEpisodes, glued_counts, read_parse, spans_multiple, widen_range_key
+from ..file_names import FileIdentity, NameParts, is_consecutive
+from ..parsed_episodes import ParsedEpisodes, glued_counts, read_parse, spans_multiple, widen_range_key
 from ..placement_types import EpisodeIndex, Placement, PlacementBatch, PlacementTarget, PlacementVerdict
-from ..release_names import FileIdentity, NameParts, is_consecutive
 from ..releases import OrderOnlyKey
 
 

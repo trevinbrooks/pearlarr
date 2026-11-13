@@ -14,9 +14,9 @@ from collections.abc import Iterable
 
 from . import coverage as _coverage
 from .anibridge import TvdbMappings, season_holds
-from .anime_filter import IdField, build_id_filters, collect_anime_items
 from .arr_models import ArrFiles, SonarrEpisode, SonarrItem
 from .config import AppConfig
+from .library_filter import IdField, build_id_filters, collect_anime_items
 from .mappings import ExternalIds, MappingKind, MappingSource, TitleMapping
 from .output import Accent, Severity, StyledValue, hub_note
 from .progress import ProgressSink

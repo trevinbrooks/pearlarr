@@ -32,7 +32,7 @@ from pearlarr.config import Arr
 from pearlarr.log import LOG_NAME
 from pearlarr.output import Diagnostic, Severity, install_hub
 from pearlarr.output.recording import RecordingHub
-from pearlarr.parse_records import parse_from_json, parse_to_json
+from pearlarr.parse_cache import parse_from_json, parse_to_json
 from pearlarr.pending_import import OwnedAtGrab, PendingImport, SizeMatchedEpisode, TitleNames
 from pearlarr.sqlite_util import is_corruption
 from pearlarr.stamps import parse_stamp_or_none

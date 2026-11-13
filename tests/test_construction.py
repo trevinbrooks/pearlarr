@@ -24,10 +24,10 @@ from pearlarr.arr_http import HEARTBEAT_INTERVAL_S
 from pearlarr.boot_flow import BootFlow
 from pearlarr.config import AppConfig, Arr
 from pearlarr.mappings import MappingResolver
+from pearlarr.radarr_strategy import RadarrStrategy
 from pearlarr.run_loop import LegLoop
 from pearlarr.run_services import LegDeps, LegServices
-from pearlarr.seadex_radarr import RadarrStrategy
-from pearlarr.seadex_sonarr import SonarrStrategy
+from pearlarr.sonarr_strategy import SonarrStrategy
 
 from .builders import FakeCacheStore, make_bare_instance, make_config, make_run_deps
 from .fakes import FakeRadarrClient, FakeSonarrClient

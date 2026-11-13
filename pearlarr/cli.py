@@ -59,8 +59,8 @@ from .output import (
     install_hub,
 )
 from .output.bridge import install_bridge
-from .output.cli_surface import cli_surface
 from .output.rich_renderer import RichRenderer
+from .output.subcommand_output import cli_surface
 from .paths import PROJECT_URL, AppPaths, ensure_data_dir, resolve_paths
 from .runlock import single_instance_lock
 from .wait_types import ImportWaitMode

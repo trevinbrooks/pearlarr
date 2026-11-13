@@ -16,7 +16,7 @@ from rich.live import Live
 from rich.spinner import Spinner
 
 from .events import Diagnostic, Severity
-from .runtime import emit_to_hub
+from .process_hub import emit_to_hub
 from .trace import CapturedTrace
 from ..console_caps import DetectedFeatures
 

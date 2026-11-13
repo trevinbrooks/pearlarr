@@ -12,7 +12,7 @@ import pytest
 from pearlarr.arr_models import SonarrItem, SonarrSeries
 from pearlarr.config import Arr
 from pearlarr.leg_state import ArrRunState
-from pearlarr.seadex_sonarr import SonarrStrategy
+from pearlarr.sonarr_strategy import SonarrStrategy
 from pearlarr.tvdb_orders import NO_INDEX_ORDERS, IndexOrders, OrderRow
 from pearlarr.wait_types import ImportWaitMode
 

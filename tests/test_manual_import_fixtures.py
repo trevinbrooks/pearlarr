@@ -24,7 +24,7 @@ from pearlarr.config import AppConfig
 from pearlarr.file_paths import normalize_name
 from pearlarr.import_quality import QualityParts, quality_parts_from_model, resolve_quality
 from pearlarr.pending_import import PendingImport
-from pearlarr.probe_verdicts import (
+from pearlarr.sonarr_state import (
     ContentPaths,
     DownloadMatch,
     QueueState,
@@ -32,7 +32,7 @@ from pearlarr.probe_verdicts import (
     in_flight_disk_commands,
     manual_import_in_flight,
 )
-from pearlarr.seadex_sonarr import SonarrStrategy
+from pearlarr.sonarr_strategy import SonarrStrategy
 from pearlarr.wait_types import AttemptKind, ImportProgress
 
 from .builders import FakeCacheStore, make_config, make_sonarr_sync, pending_import

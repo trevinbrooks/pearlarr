@@ -11,7 +11,7 @@ from pearlarr.arr_models import SonarrEpisode
 from pearlarr.mappings import ResolvedMappings, TitleMapping
 from pearlarr.pending_import import TitleNames, TitleWindow
 from pearlarr.placement_types import EMPTY_LISTING
-from pearlarr.torrent_listings import SeriesListings
+from pearlarr.series_listings import SeriesListings
 
 from .builders import (
     FakeSeaDexSource,

@@ -38,7 +38,7 @@ from pearlarr.output import (
     SeverityCounter,
 )
 from pearlarr.reporter import RunReporter
-from pearlarr.torrents import AddStatus, GrabResult
+from pearlarr.torrent_service import AddStatus, GrabResult
 from pearlarr.wait_types import ImportWaitMode, PendingImportState
 
 from .builders import (

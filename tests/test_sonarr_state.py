@@ -7,7 +7,7 @@ import pytest
 
 from pearlarr.arr_models import CommandResource, HistoryPage
 from pearlarr.pending_import import PendingImport
-from pearlarr.probe_verdicts import (
+from pearlarr.sonarr_state import (
     CommandBlock,
     ContentPaths,
     DownloadMatch,

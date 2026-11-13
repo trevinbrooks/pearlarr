@@ -17,8 +17,8 @@ from pearlarr.config import Arr
 from pearlarr.mappings import TitleMapping
 from pearlarr.output import Diagnostic, Severity, install_hub
 from pearlarr.output.recording import RecordingHub
+from pearlarr.radarr_strategy import RadarrStrategy
 from pearlarr.run_services import LegServices
-from pearlarr.seadex_radarr import RadarrStrategy
 
 from .builders import (
     FakeCacheStore,

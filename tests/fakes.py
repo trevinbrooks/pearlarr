@@ -31,6 +31,7 @@ from pearlarr.arr_models import (
     SonarrEpisode,
     SonarrItem,
 )
+from pearlarr.arr_strategy import ArrStrategy
 from pearlarr.clock import Clock
 from pearlarr.mappings import TitleMapping
 from pearlarr.output import (
@@ -54,7 +55,6 @@ from pearlarr.output.recording import RecordingHub
 from pearlarr.output.scan_lines import scan_event_lines
 from pearlarr.pending_import import PendingImport
 from pearlarr.progress import ProgressSink
-from pearlarr.protocols import ArrStrategy
 from pearlarr.radarr_client import AbstractRadarrClient
 from pearlarr.run_services import LegServices
 from pearlarr.skyhook_client import AbstractSkyHookClient, SkyHookMiss, SkyHookReply

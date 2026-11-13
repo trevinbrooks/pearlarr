@@ -11,7 +11,7 @@ from types import MappingProxyType
 from typing import Self
 
 from .arr_models import SonarrEpisode
-from .release_names import NameParts, folded_words, is_quality_word, written_keys
+from .file_names import NameParts, folded_words, is_quality_word, written_keys
 from .releases import EpisodeKey
 
 # An episode title names a file from this many words past the series title and the labels below.

@@ -59,7 +59,7 @@ from pearlarr.output.events import TitleState
 from pearlarr.output.scan_lines import _TIP_TEXTS, ScanEvent
 from pearlarr.releases import ElsewhereCounts, SeadexDict
 from pearlarr.reporter import _TIP_PRECEDENCE, RunReporter
-from pearlarr.torrents import AddStatus, GrabResult
+from pearlarr.torrent_service import AddStatus, GrabResult
 from pearlarr.wait_types import ImportWaitMode, PendingImportState
 
 from .builders import (

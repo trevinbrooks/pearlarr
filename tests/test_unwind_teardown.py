@@ -255,7 +255,7 @@ def _run_completing_leg(
     monkeypatch.setattr(LegDeps, "build", _completing_build())
     monkeypatch.setattr("pearlarr.run_services.LegServices", _FakeRunServices)
     monkeypatch.setattr("pearlarr.run_loop.LegLoop", _FakeRunLoop)
-    monkeypatch.setattr("pearlarr.seadex_sonarr.SonarrStrategy", _FakeSonarrSync)
+    monkeypatch.setattr("pearlarr.sonarr_strategy.SonarrStrategy", _FakeSonarrSync)
 
     recording = RecordingHub()
     install_hub(recording.hub)

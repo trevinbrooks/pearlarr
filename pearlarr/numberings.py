@@ -118,7 +118,7 @@ def _marked_title(title: str) -> str:
     return f"{_norm_title(core)}|{marks}"
 
 
-# `release_names.folded_words` isn't reused for these keys: it folds roman numerals, ordinals and accents and drops
+# `file_names.folded_words` isn't reused for these keys: it folds roman numerals, ordinals and accents and drops
 # bracketed text, which would merge titles the partition and the known-title gate keep apart.
 
 

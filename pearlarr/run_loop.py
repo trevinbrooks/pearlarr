@@ -5,12 +5,12 @@ from typing import final
 
 from .arr_activity import ArrActivityMonitor
 from .arr_models import ArrItem
+from .arr_strategy import ArrStrategy, ImportCompleter
 from .boot_flow import BootFlow
 from .import_wait import ImportWaitManager
 from .leg_state import ArrRunState, unresolved_label
 from .output import hub_error, hub_note, hub_warn
 from .output.console_text import arr_item_noun, count_noun
-from .protocols import ArrStrategy, ImportCompleter
 from .run_services import LegDeps, LegServices
 from .wait_types import ImportWaitMode, PendingImportState
 from .wait_view import (

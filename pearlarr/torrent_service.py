@@ -17,7 +17,7 @@ from .boundary import coerce_int
 from .file_paths import normalized_leaf
 from .output import hub_warn
 from .releases import Release, SeadexDict, normalized_infohash
-from .torrent import (
+from .tracker_links import (
     TrackerLink,
     TrackerPageError,
     fetch_animetosho_link,

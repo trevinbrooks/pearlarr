@@ -32,7 +32,7 @@ from typing import TYPE_CHECKING, NamedTuple
 import typer
 
 from .output import JsonValue, hub_error, hub_warn
-from .output.textline import JSON_SCHEMA_VERSION, render_envelope_line
+from .output.line_renderers import JSON_SCHEMA_VERSION, render_envelope_line
 
 if TYPE_CHECKING:
     from collections.abc import Iterable

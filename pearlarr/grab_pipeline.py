@@ -15,10 +15,10 @@ from .grab_placement import PendingImportUpdate
 from .leg_state import ArrRunState, GrabbedRow, NeedsActionKind, NeedsActionRow, is_dry_run
 from .notify import GrabNotice
 from .output import Accent, GrabFailed, ReleaseSkipped, SkipReason, StyledValue
-from .pending_records import PendingImportStore
+from .pending_import_store import PendingImportStore
 from .releases import GrabHold, Release, SeadexDict
 from .stamps import now_stamp, stamp_of
-from .torrents import GRAB_FAILURES, PARSEABLE_TRACKERS, AddResult, AddStatus, GrabResult
+from .torrent_service import GRAB_FAILURES, PARSEABLE_TRACKERS, AddResult, AddStatus, GrabResult
 from .wait_types import ImportWaitMode
 
 if TYPE_CHECKING:

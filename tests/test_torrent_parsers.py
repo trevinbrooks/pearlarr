@@ -17,8 +17,8 @@ import httpx
 import pytest
 import respx
 
-import pearlarr.torrent as torrent
-from pearlarr.torrent import (
+import pearlarr.tracker_links as torrent
+from pearlarr.tracker_links import (
     ANIMETOSHO_FEED_URL,
     TrackerLink,
     TrackerPageError,

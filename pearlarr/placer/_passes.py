@@ -114,9 +114,9 @@ from ._run_passes import (
     pass_reread_season_runs,
 )
 from ._state import NameFacts, NumberedSequence, PlacerState, TorrentFile
-from ..parse_reading import glued_counts, numbers_miss_the_series, parse_has_no_number
+from ..file_names import FileIdentity, natural_key, sole_title_match
+from ..parsed_episodes import glued_counts, numbers_miss_the_series, parse_has_no_number
 from ..placement_types import BatchPlacements, PlacementBatch, PlacementTarget, PlacementVerdict
-from ..release_names import FileIdentity, natural_key, sole_title_match
 from ..releases import EpisodeKey
 
 

@@ -31,7 +31,7 @@ from respx.models import Call
 from seadex import EntryRecord
 
 import pearlarr.run_services as run_services
-import pearlarr.torrents as torrents
+import pearlarr.torrent_service as torrents
 from pearlarr.cli import run_single
 from pearlarr.output import current_hub
 from pearlarr.skyhook_client import SKYHOOK_URL
