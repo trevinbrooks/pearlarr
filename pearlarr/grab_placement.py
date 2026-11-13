@@ -50,7 +50,7 @@ from .seadex_types import (
     season_episode_key,
     unambiguous,
 )
-from .window_placement import NOTHING_PLACED, WindowOrder, ordered_windows, place_across_windows, windows_of
+from .window_placement import NOTHING_PLACED, WindowOrder, ordered_windows, place_across_windows, scopes_of
 
 
 @dataclass(frozen=True, slots=True)
@@ -266,7 +266,7 @@ def place_release(files: Sequence[SeedFile], scope: SeedScope, torrent: KnownTor
     view = NOTHING_PLACED
     # With no file left to place, the windows have nothing to judge.
     if batch.names and scope.can_place and order is not None:
-        scopes = windows_of(order.windows, torrent.indexes, torrent.listing_evidence(sizes))
+        scopes = scopes_of(order.windows, torrent.indexes, torrent.listing_evidence(sizes))
         windowed = place_across_windows(batch, scopes)
         reading = NumberingReader.of(scope, order.windows).read(batch, windowed.facts[order.own_at].names)
         view = windowed.filled(batch, reading).seen_by(order.own_at, order.imports)

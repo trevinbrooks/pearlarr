@@ -365,7 +365,7 @@ def _disputed(judged: Collection[Placement]) -> bool:
     return bool(unaliased - by_alias)
 
 
-def windows_of(
+def scopes_of(
     windows: Iterable[EntryWindow], indexes: Mapping[int, EpisodeIndex], listing: ListingEvidence
 ) -> tuple[TargetScope, ...]:
     """One placement scope per window, in order. `indexes` must hold every window's series.
