@@ -8,7 +8,7 @@ from typing import Self
 from .arr_models import ParsedFileInfo
 from .coverage import coverage_string, episodes_from_ep_list
 from .episode_state import EpisodeFileStatus, EpisodeSnapshot, GrabbedGroups
-from .file_paths import normalized_leaf
+from .file_paths import file_name, normalize_name
 from .numberings import NumberingStep
 from .pairs import unambiguous
 from .pending_import import (
@@ -68,10 +68,11 @@ class ListedFile:
     passes from placing, and holds the url while it has a file left to place (`SkipReason.INPUT_UNREAD`)."""
 
     name: str = field(init=False, repr=False, compare=False)
-    """The normalized basename (`normalized_leaf`): what the batch, the sizes and the stored map key a file by."""
+    """The normalized basename (`normalize_name` of its `file_name`): what the batch, the sizes and the stored map
+    key a file by."""
 
     def __post_init__(self) -> None:
-        object.__setattr__(self, "name", normalized_leaf(self.file_name))
+        object.__setattr__(self, "name", normalize_name(file_name(self.file_name)))
 
 
 @dataclass(frozen=True, slots=True)

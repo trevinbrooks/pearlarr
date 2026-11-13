@@ -2,7 +2,7 @@
 """Direct tests for the path and name helpers: the basename and group normalizers, path leaves, and download path mapping."""
 
 from pearlarr.arr_models import RemotePathMapping
-from pearlarr.file_paths import file_name, normalize_name, normalized_leaf, translate_download_path
+from pearlarr.file_paths import file_name, normalize_name, translate_download_path
 from pearlarr.releases import normalize_group
 
 
@@ -38,13 +38,13 @@ class TestNormalize:
     def test_windows_paths_and_trailing_separators_still_fold_to_a_leaf(self) -> None:
         # MUTATION PIN: a Windows arr's paths reach pearlarr verbatim, where posixpath.basename
         # sees no separator at all and would key the whole path.
-        assert normalized_leaf("C:\\downloads\\Show\\Show - 01.mkv") == "show - 01.mkv"
+        assert normalize_name(file_name("C:\\downloads\\Show\\Show - 01.mkv")) == "show - 01.mkv"
         # And a directory entry never folds to the empty leaf, which every other
         # unnamed thing would then collide with.
-        assert normalized_leaf("Show/NC/") == "nc"
+        assert normalize_name(file_name("Show/NC/")) == "nc"
 
     def test_path_leaf_folds_separators_but_preserves_the_name(self) -> None:
-        # The parser-input twin of normalized_leaf: same separator folding, but
+        # The parser input, before normalize_name: same separator folding, but
         # case/unicode intact - Sonarr's /parse and the video gate must see the
         # real filename, never a whole Windows path or a folded one.
         assert file_name("C:\\downloads\\Show\\Show - 01 [1080p].MKV") == "Show - 01 [1080p].MKV"

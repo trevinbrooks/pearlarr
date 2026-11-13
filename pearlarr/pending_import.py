@@ -6,7 +6,7 @@ from types import MappingProxyType
 from typing import Any, NamedTuple
 
 from .arr_models import SonarrEpisode
-from .file_paths import normalized_leaf
+from .file_paths import file_name, normalize_name
 from .pairs import unambiguous
 from .releases import OrderOnlyKey
 
@@ -21,13 +21,13 @@ NO_ORDER_ONLY: Mapping[str, OrderOnlyKey] = MappingProxyType({})
 def _normalized_names(names: Iterable[str]) -> set[str]:
     """Normalized-leaf SET, deliberately not a multiset."""
 
-    return {normalized_leaf(name) for name in names}
+    return {normalize_name(file_name(name)) for name in names}
 
 
 def _normalized_names_in_order(names: Iterable[str]) -> tuple[str, ...]:
     """Each name's normalized leaf, once, in first-seen order."""
 
-    return tuple(dict.fromkeys(normalized_leaf(name) for name in names))
+    return tuple(dict.fromkeys(normalize_name(file_name(name)) for name in names))
 
 
 NO_SIZES_BY_NAME: Mapping[str, int] = MappingProxyType({})
@@ -53,7 +53,7 @@ def _normalized_file_map(entries: FileEpisodeMap) -> dict[str, tuple[int, ...]]:
     for name, ids in entries.items():
         clean = tuple(i for i in ids if i)
         if clean:
-            normalized.setdefault(normalized_leaf(name), clean)
+            normalized.setdefault(normalize_name(file_name(name)), clean)
     return normalized
 
 
@@ -64,7 +64,7 @@ def _normalized_keys[V](by_name: Mapping[str, V]) -> dict[str, V]:
     is never read as misplaced and one with no key prints its bare name, where a guessed value could misjudge it.
     """
 
-    return unambiguous((normalized_leaf(name), value) for name, value in by_name.items())
+    return unambiguous((normalize_name(file_name(name)), value) for name, value in by_name.items())
 
 
 def joined_file_map(base: FileEpisodeMap, added: FileEpisodeMap) -> dict[str, tuple[int, ...]]:
