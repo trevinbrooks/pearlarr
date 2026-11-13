@@ -9,12 +9,12 @@ from typing import TYPE_CHECKING
 from seadex import EntryRecord
 
 from . import coverage as _coverage
-from .arr_run_state import ArrRunState, GrabbedRow, NeedsActionKind, NeedsActionRow, is_dry_run
+from .arr_run_state import ArrRunState, GrabbedRow, NeedsActionRow, is_dry_run
 from .cache import CachedTitleUpdate
 from .config import PrivateReleaseAction
 from .grab_placement import PendingImportUpdate
 from .notify import GrabNotice
-from .output import Accent, GrabFailed, ReleaseSkipped, StyledValue
+from .output import Accent, GrabFailed, NeedsActionCause, ReleaseSkipped, StyledValue
 from .pending_import_store import PendingImportStore
 from .releases import Release, SeadexDict, SkipReason
 from .stamps import now_stamp, stamp_of
@@ -34,7 +34,7 @@ NO_PENDING_IMPORT_UPDATES: Mapping[str, PendingImportUpdate] = MappingProxyType(
 class SkipReport:
     """What the run reports for a url the placement held: its title's needs-action row."""
 
-    kind: NeedsActionKind
+    cause: NeedsActionCause
     reason: str
     """The needs-action row's reason text."""
 
@@ -44,21 +44,21 @@ class SkipReport:
 _SKIP_REPORTS: Mapping[SkipReason, SkipReport] = MappingProxyType(
     {
         SkipReason.MISNUMBERED: SkipReport(
-            NeedsActionKind.MISNUMBERED,
+            NeedsActionCause.MISNUMBERED,
             "numbering does not match its SeaDex listing; import it by hand",
         ),
         SkipReason.TITLE_REFUTED: SkipReport(
-            NeedsActionKind.TITLE_REFUTED,
+            NeedsActionCause.TITLE_REFUTED,
             "file titles contradict its numbering; import it by hand",
         ),
         # No retry clears it: the row stays until the entry holds the group's files, so it outranks a failed read.
         SkipReason.PLACED_ELSEWHERE: SkipReport(
-            NeedsActionKind.PLACED_ELSEWHERE,
+            NeedsActionCause.PLACED_ELSEWHERE,
             "its files place under another title SeaDex lists it with; any it could not place need a hand import",
         ),
         # The placement may have held a run on the missing read, so the grab was judged coarsely: re-check.
         SkipReason.INPUT_UNREAD: SkipReport(
-            NeedsActionKind.PLACEMENT_INPUT_MISSING,
+            NeedsActionCause.PLACEMENT_INPUT_MISSING,
             "a read the placement needs failed; will retry next run",
         ),
     },
@@ -304,7 +304,7 @@ class GrabPipeline:
         if pending.infohash not in self._state.grabbed_this_run:
             self._state.reacquired_keys.add(pending.infohash)
 
-    def _needs_action(self, groups: list[str], reason: str, kind: NeedsActionKind) -> NeedsActionRow:
+    def _needs_action(self, groups: list[str], reason: str, cause: NeedsActionCause) -> NeedsActionRow:
         """A needs-action record for the current title."""
 
         return NeedsActionRow(
@@ -313,7 +313,7 @@ class GrabPipeline:
             group=", ".join(dict.fromkeys(groups)),
             url=self._state.per_title.entry_url,
             reason=reason,
-            kind=kind,
+            cause=cause,
         )
 
     def _should_cache_as_done(self, *, added_this_title: int) -> bool:
@@ -353,14 +353,14 @@ class GrabPipeline:
         """
 
         if self._state.per_title.private_only_skipped:
-            reason, kind = self._private_only_reason()
-            return self._needs_action(self._state.per_title.private_only_groups, reason, kind)
+            reason, cause = self._private_only_reason()
+            return self._needs_action(self._state.per_title.private_only_groups, reason, cause)
 
         if self._state.per_title.unsupported_tracker_skipped:
             return self._needs_action(
                 self._state.per_title.unsupported_tracker_groups,
                 "tracker not yet supported; grab manually",
-                NeedsActionKind.UNSUPPORTED_TRACKER,
+                NeedsActionCause.UNSUPPORTED_TRACKER,
             )
 
         hand_import_row = self._needs_action_row_for(
@@ -375,7 +375,7 @@ class GrabPipeline:
             return self._needs_action(
                 self._state.per_title.grab_failed_groups,
                 "grab failed; will retry next run",
-                NeedsActionKind.GRAB_FAILED,
+                NeedsActionCause.GRAB_FAILED,
             )
 
         return self._needs_action_row_for(
@@ -390,21 +390,21 @@ class GrabPipeline:
             groups = skipped_groups.get(skip_reason)
             if groups:
                 hold_row = _SKIP_REPORTS[skip_reason]
-                return self._needs_action(groups, hold_row.reason, hold_row.kind)
+                return self._needs_action(groups, hold_row.reason, hold_row.cause)
         return None
 
-    def _private_only_reason(self) -> tuple[str, NeedsActionKind]:
-        """The (reason, kind) for a private-only hold, resolving the fallback-mode arms.
+    def _private_only_reason(self) -> tuple[str, NeedsActionCause]:
+        """The (reason, cause) for a private-only hold, resolving the fallback-mode arms.
 
         The stale bit wins over a coexisting plain hold, keeping one row per title.
         """
 
         if self._config.seadex.private_releases is not PrivateReleaseAction.FALLBACK:
-            return "private-only release; private releases not supported", NeedsActionKind.PRIVATE_ONLY
+            return "private-only release; private releases not supported", NeedsActionCause.PRIVATE_ONLY
         if self._config.advanced.interactive:
             return (
                 "hand-picked private release; private releases not supported",
-                NeedsActionKind.PRIVATE_ONLY_NO_FALLBACK,
+                NeedsActionCause.PRIVATE_ONLY_NO_FALLBACK,
             )
         if self._state.per_title.private_only_outdated:
             return (
@@ -412,11 +412,11 @@ class GrabPipeline:
                     "private-only release; your copy is outdated (its file size no longer matches) "
                     "and only a fallback covers it"
                 ),
-                NeedsActionKind.PRIVATE_ONLY_STALE,
+                NeedsActionCause.PRIVATE_ONLY_STALE,
             )
         return (
             "private-only release; no public alternative covers these files",
-            NeedsActionKind.PRIVATE_ONLY_NO_FALLBACK,
+            NeedsActionCause.PRIVATE_ONLY_NO_FALLBACK,
         )
 
     def grab_and_cache(self, req: GrabRequest) -> None:

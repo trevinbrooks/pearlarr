@@ -25,7 +25,7 @@ import pytest
 from rich.text import Span, Text
 from seadex import Tag
 
-from pearlarr.arr_run_state import ArrRunState, ArrRunStats, GrabbedRow, NeedsActionKind, NeedsActionRow
+from pearlarr.arr_run_state import ArrRunState, ArrRunStats, GrabbedRow, NeedsActionRow
 from pearlarr.cache import AbstractCacheStore, CachedTitleUpdate
 from pearlarr.config import Arr
 from pearlarr.output import (
@@ -478,7 +478,7 @@ def _rich_stats() -> ArrRunStats:
                 group="PrivGrp",
                 url="https://releases.moe/222",
                 reason="private-only release; private releases not supported",
-                kind=NeedsActionKind.PRIVATE_ONLY,
+                cause=NeedsActionCause.PRIVATE_ONLY,
             ),
             NeedsActionRow(
                 title=None,
@@ -486,7 +486,7 @@ def _rich_stats() -> ArrRunStats:
                 group="OddTracker",
                 url=None,
                 reason="tracker not supported",
-                kind=NeedsActionKind.UNSUPPORTED_TRACKER,
+                cause=NeedsActionCause.UNSUPPORTED_TRACKER,
             ),
         ],
         unmonitored=1,
@@ -580,7 +580,7 @@ def _dry_stats() -> ArrRunStats:
                 group="PrivGrp",
                 url="https://releases.moe/7",
                 reason="no public alternative covers these files",
-                kind=NeedsActionKind.PRIVATE_ONLY_NO_FALLBACK,
+                cause=NeedsActionCause.PRIVATE_ONLY_NO_FALLBACK,
             ),
         ],
     )
@@ -730,7 +730,7 @@ def _wait_off_stats() -> ArrRunStats:
                 group="PrivGrp",
                 url="https://releases.moe/33",
                 reason="your copy of the private release is outdated",
-                kind=NeedsActionKind.PRIVATE_ONLY_STALE,
+                cause=NeedsActionCause.PRIVATE_ONLY_STALE,
             ),
         ],
         # Non-zero pending counters that must stay hidden with the wait mode off.

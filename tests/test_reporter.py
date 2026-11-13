@@ -21,7 +21,7 @@ import pytest
 from seadex import Tag
 
 from pearlarr.anilist_client import AniListClient
-from pearlarr.arr_run_state import ArrRunState, GrabbedRow, NeedsActionKind, NeedsActionRow
+from pearlarr.arr_run_state import ArrRunState, GrabbedRow, NeedsActionRow
 from pearlarr.cache import AbstractCacheStore, CachedTitleUpdate
 from pearlarr.config import Arr
 from pearlarr.output import (
@@ -308,7 +308,7 @@ class TestRunSummary:
                 group="Priv",
                 url="u2",
                 reason="private-only release; private releases not supported",
-                kind=NeedsActionKind.PRIVATE_ONLY,
+                cause=NeedsActionCause.PRIVATE_ONLY,
             ),
         ]
         return state
@@ -541,7 +541,7 @@ class TestPrivateOnlyTip:
     Rewording the string must not kill the tip.
     """
 
-    def _needs_ctx(self, kind: NeedsActionKind) -> ArrRunState:
+    def _needs_ctx(self, cause: NeedsActionCause) -> ArrRunState:
         state = ArrRunState(arr=Arr.SONARR)
         state.stats.needs_action = [
             NeedsActionRow(
@@ -550,27 +550,27 @@ class TestPrivateOnlyTip:
                 group="Priv",
                 url="u2",
                 reason="a reworded reason with no magic words",
-                kind=kind,
+                cause=cause,
             ),
         ]
         return state
 
     def test_private_only_kind_renders_tip_despite_reworded_reason(self) -> None:
-        messages = _summary_messages(self._needs_ctx(NeedsActionKind.PRIVATE_ONLY))
+        messages = _summary_messages(self._needs_ctx(NeedsActionCause.PRIVATE_ONLY))
         assert any("private_releases: fallback" in m for m in messages)
         assert not any("private_releases: allow" in m for m in messages)
 
     def test_no_fallback_kind_tip_omits_the_fallback_suggestion(self) -> None:
         # Fallback mode found nothing public: suggesting private_releases: fallback
         # (already on) would be nonsense, so that kind's tip names no setting at all.
-        messages = _summary_messages(self._needs_ctx(NeedsActionKind.PRIVATE_ONLY_NO_FALLBACK))
+        messages = _summary_messages(self._needs_ctx(NeedsActionCause.PRIVATE_ONLY_NO_FALLBACK))
         assert not any("private_releases" in m for m in messages)
         assert any("re-checked every run" in m for m in messages)
 
     def test_stale_kind_renders_the_owned_stale_tip(self) -> None:
         # The fallback-never-replaces-an-owned-copy hold: the tip names the two
         # ways out (update or delete) and, with fallback already on, no setting.
-        messages = _summary_messages(self._needs_ctx(NeedsActionKind.PRIVATE_ONLY_STALE))
+        messages = _summary_messages(self._needs_ctx(NeedsActionCause.PRIVATE_ONLY_STALE))
         assert not any("private_releases" in m for m in messages)
         assert any(
             "your copies of these releases are outdated (their file sizes no longer match); "
@@ -580,11 +580,11 @@ class TestPrivateOnlyTip:
         )
 
     def test_unsupported_tracker_kind_renders_no_tip(self) -> None:
-        messages = _summary_messages(self._needs_ctx(NeedsActionKind.UNSUPPORTED_TRACKER))
+        messages = _summary_messages(self._needs_ctx(NeedsActionCause.UNSUPPORTED_TRACKER))
         assert not any("private_releases" in m for m in messages)
 
     def test_misnumbered_kind_renders_no_tip(self) -> None:
-        messages = _summary_messages(self._needs_ctx(NeedsActionKind.MISNUMBERED))
+        messages = _summary_messages(self._needs_ctx(NeedsActionCause.MISNUMBERED))
         assert not any("private_releases" in m for m in messages)
 
 
