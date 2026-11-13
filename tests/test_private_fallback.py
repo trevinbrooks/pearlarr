@@ -147,7 +147,7 @@ class TestUpgradePendingHoldsForOwnedStale:
             want_best=True,
             prefer_dual_audio=False,
             planner=make_planner(),
-            ctx=state,
+            state=state,
         )
         entry = _entry_private_preferred_plus_public_alt()
         sd = filt.build(entry)
@@ -187,7 +187,7 @@ class TestUpgradePendingHoldsForOwnedStale:
             want_best=True,
             prefer_dual_audio=False,
             planner=make_planner(),
-            ctx=state,
+            state=state,
         )
         sd = filt.build(_entry_private_preferred_plus_public_alt())
 
@@ -219,7 +219,7 @@ class TestOwnedPreferredPrivateAtMatchingSize:
             want_best=True,
             prefer_dual_audio=False,
             planner=make_planner(),
-            ctx=state,
+            state=state,
         )
         entry = _entry_private_preferred_plus_public_alt()
         sd = filt.build(entry)
@@ -262,7 +262,7 @@ class TestOwnedPreferredPrivateAtMatchingSize:
             want_best=True,
             prefer_dual_audio=False,
             planner=make_planner(),
-            ctx=state,
+            state=state,
         )
         entry = _entry_private_preferred_plus_public_alt()
         sd = filt.build(entry)
@@ -295,7 +295,7 @@ class TestOwnedPreferredPrivateAtMatchingSize:
             want_best=True,
             prefer_dual_audio=False,
             planner=make_planner(),
-            ctx=state,
+            state=state,
         )
         entry = _entry_private_preferred_plus_public_alt()
         sd = filt.build(entry)
@@ -337,7 +337,7 @@ class TestFilterDownloadsNoticeSeam:
             want_best=True,
             prefer_dual_audio=False,
             planner=make_planner(),
-            ctx=state,
+            state=state,
         )
         priv_a = make_torrent_record(
             release_group="PrivA",
@@ -443,7 +443,7 @@ class TestMixedGroupKeeperPreference:
             want_best=True,
             prefer_dual_audio=False,
             planner=make_planner(),
-            ctx=state,
+            state=state,
         )
         g_pub, g_priv = self._mixed_group_torrents()
         h_pub = make_torrent_record(
@@ -509,7 +509,7 @@ class TestMixedGroupKeeperPreference:
             want_best=True,
             prefer_dual_audio=False,
             planner=make_planner(),
-            ctx=state,
+            state=state,
         )
         g_pub, g_priv = self._mixed_group_torrents()
         entry = make_entry_record(anilist_id=56, torrents=(g_pub, g_priv))
@@ -563,7 +563,7 @@ class TestSurvivingPrivateCoverage:
             want_best=True,
             prefer_dual_audio=True,
             planner=make_planner(),
-            ctx=state,
+            state=state,
         )
         priv_batch = make_torrent_record(
             release_group="A",
@@ -667,7 +667,7 @@ class TestPromotionGeneralization:
             want_best=True,
             prefer_dual_audio=False,
             planner=make_planner(),
-            ctx=state,
+            state=state,
         )
         entry = self._preferred_pair_entry(66)
         sd = filt.build(entry)
@@ -718,7 +718,7 @@ class TestPromotionGeneralization:
             want_best=True,
             prefer_dual_audio=False,
             planner=make_planner(),
-            ctx=state,
+            state=state,
         )
         sd = filt.build(self._preferred_pair_entry(73))
 
@@ -747,7 +747,7 @@ class TestPromotionGeneralization:
             want_best=True,
             prefer_dual_audio=False,
             planner=make_planner(),
-            ctx=state,
+            state=state,
         )
         m_pub = make_torrent_record(
             release_group="M",
@@ -872,7 +872,7 @@ class TestEqualUnionMixedGroups:
                 want_best=True,
                 prefer_dual_audio=False,
                 planner=make_planner(),
-                ctx=state,
+                state=state,
             )
             entry = make_entry_record(anilist_id=al_id, torrents=order)
             sd = filt.build(entry)
@@ -947,7 +947,7 @@ class TestModeSwitchResurfacesFallbackSatisfied:
             want_best=True,
             prefer_dual_audio=False,
             planner=make_planner(),
-            ctx=state,
+            state=state,
         )
         entry = _entry_private_preferred_plus_public_alt()
         sd = filt.build(entry)
@@ -1007,7 +1007,7 @@ class TestModeSwitchResurfacesFallbackSatisfied:
             want_best=True,
             prefer_dual_audio=False,
             planner=make_planner(),
-            ctx=warn_state,
+            state=warn_state,
         )
         sd_warn = warn_filt.build(entry)
         assert set(sd_warn) == {"Priv"}  # warn mode adds no fallback

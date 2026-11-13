@@ -189,14 +189,14 @@ class RadarrStrategy(ArrStrategy[RadarrItem]):
         # Seed a pending record per grabbed torrent so the engine's gate persists it: the category move then
         # defers until Radarr imports the movie, and for a torrent shared with a Sonarr grab until both arrs clear.
         # A torrent already downloading under a stored record takes this entry's claim (a re-flag replaces it).
-        pending_seeds: Mapping[str, PendingImportUpdate] = NO_PENDING_IMPORT_UPDATES
+        pending_import_updates: Mapping[str, PendingImportUpdate] = NO_PENDING_IMPORT_UPDATES
         if services.import_wait_mode is not ImportWaitMode.OFF:
             planned = releases_to_grab(seadex_dict)
             stored = services.pending_imports.stored_pending_imports(f.qbit_hash for f in planned)
             facts = TitleFacts(
                 al_id=al_id, series_id=0, title=title.name, coverage=None, url=sd_url, guards=OwnedAtGrab()
             )
-            pending_seeds = {
+            pending_import_updates = {
                 f.qbit_hash: build_update_without_window(f, facts, stored.get(f.qbit_hash)) for f in planned
             }
 
@@ -210,7 +210,7 @@ class RadarrStrategy(ArrStrategy[RadarrItem]):
                 update=update,
                 # Every edition's tagged group, not just the first file's.
                 replaced_groups=radarr_releases.groups(),
-                pending_import_updates=pending_seeds,
+                pending_import_updates=pending_import_updates,
             ),
         )
 

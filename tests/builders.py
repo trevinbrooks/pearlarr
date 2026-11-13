@@ -785,10 +785,10 @@ def make_run_deps(
 
 
 def make_release_filter(**overrides: Any) -> SeadexReleaseFilter:
-    """A `SeadexReleaseFilter` over an assembled `RunDeps`, with `ctx` and `planner` overridable."""
+    """A `SeadexReleaseFilter` over an assembled `RunDeps`, with `state` and `planner` overridable."""
 
     config = _split_config(overrides)
-    state = overrides.pop("ctx", None) or ArrRunState(arr=Arr.SONARR)
+    state = overrides.pop("state", None) or ArrRunState(arr=Arr.SONARR)
     deps = make_run_deps(config=config)
     if "planner" in overrides:
         deps = dataclasses.replace(deps, planner=overrides.pop("planner"))
@@ -978,7 +978,7 @@ def make_import_wait_manager(**overrides: Any) -> ImportWaitManager:
     categories = overrides.pop("categories", None) or _categories_like_config(config, qbit)
     # The production placeholder before a run binds one. Tests driving the import hook pass their own.
     strategy = overrides.pop("strategy", None)
-    state = overrides.pop("ctx", None) or ArrRunState(arr=Arr.SONARR)
+    state = overrides.pop("state", None) or ArrRunState(arr=Arr.SONARR)
     reporter = overrides.pop("reporter", None) or _real_reporter(logger, cache_store, httpx.Client())
     if overrides:
         msg = f"unknown make_import_wait_manager overrides: {sorted(overrides)}"
