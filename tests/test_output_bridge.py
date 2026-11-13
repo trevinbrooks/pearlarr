@@ -120,7 +120,7 @@ class TestAdoption:
 
         recorder = RecordingRenderer()
         hub = OutputHub([recorder], console_factory=lambda console_format: NullRenderer())
-        hub.begin_cycle(console_format="plain", level=logging.DEBUG)
+        hub.begin_run(console_format="plain", level=logging.DEBUG)
         install_hub(hub)
         install_bridge()
 
@@ -144,7 +144,7 @@ class TestAdoption:
 
         recorder = RecordingRenderer()
         hub = OutputHub([recorder], console_factory=lambda console_format: NullRenderer())
-        hub.begin_cycle(console_format="rich", level=logging.DEBUG)
+        hub.begin_run(console_format="rich", level=logging.DEBUG)
         install_hub(hub)
         install_bridge()
 
@@ -348,7 +348,7 @@ class _MidDispatchLogger(Renderer):
             logging.getLogger(self._name).warning("from inside dispatch")
 
     @override
-    def begin_cycle(self) -> None:
+    def begin_run(self) -> None:
         pass
 
     @override
@@ -650,12 +650,12 @@ class TestFullStackSeams:
         bridge = install_bridge()
         try:
             logger = setup_logger(log_level="INFO", console_format="rich")
-            hub.begin_cycle(console_format="rich", level=logging.INFO)
+            hub.begin_run(console_format="rich", level=logging.INFO)
 
             stream_two = TtyStringIO()
             monkeypatch.setattr(sys, "stdout", stream_two)
             logger = setup_logger(log_level="INFO", console_format="rich")
-            hub.begin_cycle(console_format="rich", level=logging.INFO)
+            hub.begin_run(console_format="rich", level=logging.INFO)
 
             logger.warning("second cycle")
 

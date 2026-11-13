@@ -381,7 +381,7 @@ def _console_seat(console_format: LogFormat, caps_cache: CapsCache) -> Renderer:
     Console). Plain and json get the matching stdout text seat.
     """
 
-    # "auto" is unreachable from production (cli resolves pre-begin_cycle).
+    # "auto" is unreachable from production (cli resolves pre-begin_run).
     # folded defensively for programmatic callers.
     console_format = resolve_console_format(console_format)
     if console_format == "rich":
@@ -497,8 +497,8 @@ def run_scheduled(
         console_format = _resolved_format(paths.config)
         logger = setup_logger(log_level=log_level or "INFO", console_format=console_format)
         # The config level lands mid-cycle via apply_log_level -> hub.set_level.
-        hub.begin_cycle(console_format=console_format, level=logger.level)
-        # Post-begin_cycle, so the boundary lands in the fresh cycle's file.
+        hub.begin_run(console_format=console_format, level=logger.level)
+        # Post-begin_run, so the boundary lands in the fresh cycle's file.
         emit_to_hub(CycleStarted(number=cycle))
 
         # Re-read the cadence each cycle so a config edit takes effect without a
@@ -606,7 +606,7 @@ def run_single(
     console_format = _resolved_format(paths.config)
     hub, file_sink = _install_output_hub(paths)
     logger = setup_logger(log_level=log_level or "INFO", console_format=console_format)
-    hub.begin_cycle(console_format=console_format, level=logger.level)
+    hub.begin_run(console_format=console_format, level=logger.level)
 
     # Build the shared config + mappings once and run each requested arr. True
     # when the run proceeded and every arr completed. False (exit 1) when the

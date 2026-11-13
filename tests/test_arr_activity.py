@@ -30,7 +30,7 @@ from pearlarr.boot_flow import BootFlow
 from pearlarr.cache import HistoryCheckpoint
 from pearlarr.config import AppConfig, Arr
 from pearlarr.mappings import TitleMapping
-from pearlarr.run_loop import RunLoop
+from pearlarr.run_loop import LegLoop
 
 from .builders import FakeCacheStore, make_config, make_logger
 from .fakes import CaptureHandler, FakeArrItem, FakeStrategy
@@ -330,9 +330,9 @@ class TestRunLoopActivityWiring:
         *,
         item_id: int | None = None,
         config: AppConfig | None = None,
-    ) -> RunLoop:
+    ) -> LegLoop:
         engine = _engine(_FinalizeRecorder(), logger, config=config)
-        engine.run_sync(strategy, item_id=item_id, dry_run=True, boot=BootFlow())
+        engine.run_leg(strategy, item_id=item_id, dry_run=True, boot=BootFlow())
         return engine
 
     def test_touched_item_marks_its_anilist_ids_dirty(self, logger: logging.Logger) -> None:
@@ -347,7 +347,7 @@ class TestRunLoopActivityWiring:
         cache.put_pending(Arr.SONARR, "beef01", {"infohash": "beef01"})
         engine = _engine(_FinalizeRecorder(), logger, cache_store=cache)
         strategy = self._strategy(history=[_rec(1, item_id=3, download_id="BEEF01")])
-        engine.run_sync(strategy, item_id=None, dry_run=True, boot=BootFlow())
+        engine.run_leg(strategy, item_id=None, dry_run=True, boot=BootFlow())
 
         assert engine._services._dirty_al_ids == {11}
 
@@ -364,7 +364,7 @@ class TestRunLoopActivityWiring:
         engine = _engine(_FinalizeRecorder(), logger)
         stale = datetime.now(UTC) - timedelta(days=HISTORY_MAX_LOOKBACK_DAYS + 10)
         engine.cache_store.put_history_checkpoint(Arr.SONARR, HistoryCheckpoint(format_history_date(stale), 1))
-        engine.run_sync(strategy, item_id=None, dry_run=True, boot=BootFlow())
+        engine.run_leg(strategy, item_id=None, dry_run=True, boot=BootFlow())
 
         assert engine._services._dirty_al_ids == {11}
 
@@ -381,7 +381,7 @@ class TestRunLoopActivityWiring:
         assert engine.cache_store.get_history_checkpoint(Arr.SONARR) is None
 
     @staticmethod
-    def _outage_engine(logger: logging.Logger, cache: FakeCacheStore) -> RunLoop:
+    def _outage_engine(logger: logging.Logger, cache: FakeCacheStore) -> LegLoop:
         gateway = _FakeGateway()
         gateway.outage = True
         return _engine(_FinalizeRecorder(), logger, seadex=gateway, cache_store=cache)
@@ -391,7 +391,7 @@ class TestRunLoopActivityWiring:
         # drift events the run never acted on.
         cache = FakeCacheStore()
         engine = self._outage_engine(logger, cache)
-        engine.run_sync(self._strategy(history=[_rec(1, item_id=3)]), item_id=None, dry_run=True, boot=BootFlow())
+        engine.run_leg(self._strategy(history=[_rec(1, item_id=3)]), item_id=None, dry_run=True, boot=BootFlow())
 
         assert engine._services._dirty_al_ids == {11}  # detection itself still ran
         assert cache.get_history_checkpoint(Arr.SONARR) is None
@@ -400,7 +400,7 @@ class TestRunLoopActivityWiring:
         cache = FakeCacheStore()
         for _ in range(2):
             engine = self._outage_engine(logger, cache)
-            engine.run_sync(self._strategy(history=[_rec(1, item_id=3)]), item_id=None, dry_run=True, boot=BootFlow())
+            engine.run_leg(self._strategy(history=[_rec(1, item_id=3)]), item_id=None, dry_run=True, boot=BootFlow())
 
         assert cache.get_history_checkpoint(Arr.SONARR) is None
 
@@ -408,12 +408,12 @@ class TestRunLoopActivityWiring:
         # Outage run first: dirty derived but unactionable, checkpoint held.
         cache = FakeCacheStore()
         outage = self._outage_engine(logger, cache)
-        outage.run_sync(self._strategy(history=[_rec(1, item_id=3)]), item_id=None, dry_run=True, boot=BootFlow())
+        outage.run_leg(self._strategy(history=[_rec(1, item_id=3)]), item_id=None, dry_run=True, boot=BootFlow())
 
         # Healthy run over the SAME store: the held cursor replays the same
         # records through the id dedup, re-derives the dirty mark, and commits.
         healthy = _engine(_FinalizeRecorder(), logger, cache_store=cache)
-        healthy.run_sync(
+        healthy.run_leg(
             self._strategy(history=[_rec(1, item_id=3, date="2026-07-06T10:00:00Z")]),
             item_id=None,
             dry_run=True,

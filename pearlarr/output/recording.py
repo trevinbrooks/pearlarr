@@ -25,7 +25,7 @@ class RecordingRenderer(Renderer):
         self.whens.append(when)
 
     @override
-    def begin_cycle(self) -> None:
+    def begin_run(self) -> None:
         self.cycles += 1
 
     @override

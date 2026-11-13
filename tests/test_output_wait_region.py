@@ -23,9 +23,9 @@ from pearlarr.config import Arr
 from pearlarr.output import (
     Diagnostic,
     Event,
+    LegFinished,
     Phase,
     RichRenderer,
-    RunFinished,
     ScopeClosed,
     ScopeId,
     ScopeKind,
@@ -151,7 +151,7 @@ class TestWaitCockpitLifecycle:
         assert renderer._wait._live is not None
         assert renderer._wait._live_frame is not None
 
-        renderer.begin_cycle()
+        renderer.begin_run()
         assert renderer._wait._live is None
         # The frame dies with its Live slot: no dangling dead frame to keep polling.
         assert renderer._wait._live_frame is None
@@ -238,7 +238,7 @@ class TestFrontierTeardown:
         live = renderer._wait._live
         assert live is not None and live.is_started
 
-        _feed(renderer, RunFinished(arr=Arr.SONARR))
+        _feed(renderer, LegFinished(arr=Arr.SONARR))
         assert renderer._wait._live is None and not live.is_started
 
     def test_a_second_pass_starts_a_fresh_live_slot(self) -> None:

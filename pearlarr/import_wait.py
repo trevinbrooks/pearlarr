@@ -14,7 +14,7 @@ from .output import SPARK_SAMPLES, Phase, TorrentView, WaitKind, WaitSnapshot, h
 from .pending_import import PendingImport, is_awaiting_cleanup
 from .pending_records import PendingImportStore
 from .protocols import ImportCompleter
-from .run_services import RunDeps
+from .run_services import LegDeps
 from .wait_types import (
     LEAVE_PROBE,
     NO_HELD_BACK,
@@ -55,7 +55,7 @@ class ImportProbes:
         self._logger = logger
         self.strategy = None
 
-    def begin_run(self, strategy: ImportCompleter | None) -> None:
+    def bind_leg(self, strategy: ImportCompleter | None) -> None:
         """Bind the active strategy whose import hooks the probes drive."""
 
         self.strategy = strategy
@@ -143,7 +143,7 @@ class PostImportCleanup:
     _ctx: RunContext
     """The current run's context. Never bound at construction: `begin_run` rebinds it every run."""
 
-    def __init__(self, deps: RunDeps, records: PendingImportStore, probes: ImportProbes) -> None:
+    def __init__(self, deps: LegDeps, records: PendingImportStore, probes: ImportProbes) -> None:
         self._imports = deps.config.imports
         self._categories = deps.categories
         self._qbit = deps.qbit
@@ -154,10 +154,10 @@ class PostImportCleanup:
         self._probes = probes
         self._kept_keys: set[str] = set()
 
-    def begin_run(self, ctx: RunContext) -> None:
+    def bind_leg(self, state: RunContext) -> None:
         """Bind the fresh run context, forgetting the prior run's keeps."""
 
-        self._ctx = ctx
+        self._ctx = state
         self._kept_keys = set()
 
     def retire(self, pending: PendingImport) -> bool:
@@ -331,7 +331,7 @@ class PostImportCleanup:
             return
         # DEADLINE, not POLL: the heal is one attempt per run with no clock to escalate it,
         # and a partial seed map only verifies past a clean importPending by stepping in.
-        probe = self._probes.try_import_completed(record, path, AttemptKind.DEADLINE)
+        probe = self._probes.try_import_completed(record, path, AttemptKind.FINAL)
         record = self._records.absorb_probe(record, probe)
         if probe.files_present:
             self._finish_cleanup(record)
@@ -364,7 +364,7 @@ class ImportWaitManager:
     _ctx: RunContext
     """The current run's context. `__init__` seeds it through the first `begin_run`, which rebinds every run."""
 
-    def __init__(self, *, deps: RunDeps, ctx: RunContext, records: PendingImportStore) -> None:
+    def __init__(self, *, deps: LegDeps, ctx: RunContext, records: PendingImportStore) -> None:
         self.imports = deps.config.imports
         self.clock = deps.clock
         self.logger = deps.logger
@@ -373,18 +373,18 @@ class ImportWaitManager:
         self._records = records
         self.probes = ImportProbes(qbit=deps.qbit, logger=deps.logger)
         self._cleanup = PostImportCleanup(deps, self._records, self.probes)
-        self.begin_run(ctx, None)
+        self.bind_leg(ctx, None)
 
-    def begin_run(self, ctx: RunContext, strategy: ImportCompleter | None) -> None:
+    def bind_leg(self, state: RunContext, strategy: ImportCompleter | None) -> None:
         """Bind the fresh run context to the manager and its sub-objects, the strategy to the probes alone.
 
         Rebound EVERY run (`reset_run_stats` mints a fresh ctx), so none of them can
         operate on a dead context after the first run. The record seam is the hub's to bind.
         """
 
-        self._ctx = ctx
-        self.probes.begin_run(strategy)
-        self._cleanup.begin_run(ctx)
+        self._ctx = state
+        self.probes.bind_leg(strategy)
+        self._cleanup.bind_leg(state)
 
     def fresh_grab_keys(self) -> set[str]:
         """Keys of the records written THIS run, tallied as `added` and never carried-over."""
@@ -500,7 +500,7 @@ class ImportWaitManager:
         if not records:
             return None
 
-        mp = MonitorPass(self, records, kind=WaitKind.MONITOR)
+        mp = WaitPass(self, records, kind=WaitKind.MONITOR)
 
         def body(view: WaitView) -> None:
             while mp.active_count:
@@ -521,7 +521,7 @@ class ImportWaitManager:
         if not records:
             return None
 
-        mp = MonitorPass(self, records, kind=WaitKind.CHECK)
+        mp = WaitPass(self, records, kind=WaitKind.CHECK)
 
         def body(view: WaitView) -> None:
             mp.run_check()
@@ -531,7 +531,7 @@ class ImportWaitManager:
 
     def _run_pass(
         self,
-        mp: "MonitorPass",
+        mp: "WaitPass",
         *,
         view: WaitView | None,
         body: Callable[[WaitView], None],
@@ -564,13 +564,13 @@ class ImportWaitManager:
         return WaitResult(tuple(mp.results), elapsed_s=mp.elapsed())
 
     @staticmethod
-    def _note_interrupted(mp: "MonitorPass", view: WaitView) -> None:
+    def _note_interrupted(mp: "WaitPass", view: WaitView) -> None:
         """Push the rows as they stand and note how many records the interrupted pass left pending."""
 
         view.update(mp.snapshot())
         hub_note(f"{mp.kind.interrupt_noun} interrupted - {mp.active_count} left pending")
 
-    def _progress_wait(self, mp: "MonitorPass", view: WaitView) -> None:
+    def _progress_wait(self, mp: "WaitPass", view: WaitView) -> None:
         """Sleep one heavy-poll interval, refreshing the live rows between slices.
 
         The slices run only the cheap fast-lane reads (progress and telemetry). A ready
@@ -816,7 +816,7 @@ class _MonitorRow:
         return True
 
 
-class MonitorPass:
+class WaitPass:
     """One end-of-run pass's mutable state and per-cycle advance logic."""
 
     kind: WaitKind
@@ -946,7 +946,7 @@ class MonitorPass:
         probe = self._mgr.probes.try_import_completed(
             record,
             path,
-            AttemptKind.DEADLINE if at_deadline else AttemptKind.POLL,
+            AttemptKind.FINAL if at_deadline else AttemptKind.ORDINARY,
         )
         # The placements land before any outcome: the retire, the keep, the next poll, and the Tier-2 bar read them.
         record = row.record = self._mgr.absorb_probe(record, probe)

@@ -23,7 +23,7 @@ from .wait_types import ImportWaitMode
 
 if TYPE_CHECKING:
     # Annotation-only: run_services imports this module at runtime (cycle).
-    from .run_services import RunDeps
+    from .run_services import LegDeps
 
 
 NO_SEEDS: Mapping[str, PendingSeed] = MappingProxyType({})
@@ -115,7 +115,7 @@ class GrabPipeline:
     def __init__(
         self,
         *,
-        deps: "RunDeps",
+        deps: "LegDeps",
         ctx: RunContext,
         records: PendingImportStore,
     ) -> None:
@@ -130,13 +130,13 @@ class GrabPipeline:
         self.qbit = deps.qbit
         # The hub's record seam, which the hub binds each run.
         self._records = records
-        # Rebound each run by begin_run to the same ctx the engine holds, so the grab bookkeeping stays in sync.
+        # Rebound each run by bind_leg to the same ctx the engine holds, so the grab bookkeeping stays in sync.
         self._ctx = ctx
 
-    def begin_run(self, ctx: RunContext) -> None:
+    def bind_leg(self, state: RunContext) -> None:
         """Bind the run context the grab bookkeeping reads/writes."""
 
-        self._ctx = ctx
+        self._ctx = state
 
     def _is_preview(self) -> bool:
         """A run is a no-op preview (nothing can be grabbed): explicit dry run, or qBittorrent not configured."""

@@ -15,10 +15,10 @@ from .output import hub_warn
 from .output.console_text import pluralize
 from .pending_import import GuardFacts, PendingImport, added_at_of
 from .progress import ProgressSink
-from .protocols import ArrSync
+from .protocols import ArrStrategy
 from .radarr_client import AbstractRadarrClient, RadarrClient, collect_anime_movies
 from .releases import releases_to_grab
-from .run_services import RunDeps, RunServices, bind_arr_http
+from .run_services import LegDeps, LegServices, bind_arr_http
 from .stamps import parse_stamp_aware
 from .wait_types import NO_PROGRESS, AttemptKind, ImportProbe, ImportProgress, ImportWaitMode
 
@@ -38,13 +38,13 @@ class _ImportEvidence:
     """False when the history read failed: the check then never moves a torrent."""
 
 
-class RadarrSync(ArrSync[RadarrItem]):
+class RadarrStrategy(ArrStrategy[RadarrItem]):
     """Radarr sync strategy: owns the Radarr REST client and the movie domain logic."""
 
     def __init__(
         self,
-        deps: RunDeps,
-        services: RunServices,
+        deps: LegDeps,
+        services: LegServices,
         radarr_client: AbstractRadarrClient | None = None,
     ) -> None:
         """Stand up the Radarr client from the injected shared collaborators."""
@@ -67,7 +67,7 @@ class RadarrSync(ArrSync[RadarrItem]):
             # A None deps.arr_http means the keys are missing, so the fallback bind raises here.
             self.radarr = RadarrClient(http=deps.arr_http or bind_arr_http(Arr.RADARR, self._config, deps.http))
 
-    # --- ArrSync hooks ------------------------------------------------------
+    # --- ArrStrategy hooks ------------------------------------------------------
 
     @override
     def get_items(self) -> list[RadarrItem]:
@@ -128,7 +128,7 @@ class RadarrSync(ArrSync[RadarrItem]):
         return self.radarr.history_since(date)
 
     @override
-    def process_al_id(
+    def check_title(
         self,
         item: RadarrItem,
         al_id: int,
@@ -138,7 +138,7 @@ class RadarrSync(ArrSync[RadarrItem]):
 
         run = self._services
 
-        sd_entry = run.al_id_prologue(al_id)
+        sd_entry = run.begin_check(al_id)
         if sd_entry is None:
             return
         sd_url = sd_entry.url

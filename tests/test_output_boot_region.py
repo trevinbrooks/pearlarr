@@ -30,8 +30,8 @@ from pearlarr.output import (
     CycleStarted,
     Diagnostic,
     Event,
+    LegFinished,
     RichRenderer,
-    RunFinished,
     RunStarted,
     ScanStarted,
     ScopeClosed,
@@ -260,8 +260,8 @@ class TestBootRegion:
             assert renderer._boot._live is None and not live.is_started
 
     def test_run_finished_leg_boundary_evicts_the_live_and_the_next_leg_starts_fresh(self) -> None:
-        # G4: within one scheduled cycle each arr leg ends with RunFinished (never a
-        # begin_cycle). The leg close must evict the boot Live so the next leg's boot
+        # G4: within one scheduled cycle each arr leg ends with LegFinished (never a
+        # begin_run). The leg close must evict the boot Live so the next leg's boot
         # section starts a FRESH slot - a leaked Live would be reused (stale region,
         # nested on rich's live stack), so the load-bearing pin is object identity.
         renderer, stream = _renderer()
@@ -270,7 +270,7 @@ class TestBootRegion:
         leg_one_live = renderer._boot._live
         assert leg_one_live is not None and leg_one_live.is_started
 
-        _feed(renderer, RunFinished(arr=Arr.SONARR))
+        _feed(renderer, LegFinished(arr=Arr.SONARR))
         assert renderer._boot._live is None and not leg_one_live.is_started
 
         _feed(renderer, _opened(_SECTION_TWO), _started("Two", serial=2), _finished("Two", serial=2))
@@ -288,7 +288,7 @@ class TestBootRegion:
         renderer, _stream = _renderer()
 
         _feed(renderer, _opened(), _started("One"))
-        renderer.begin_cycle()
+        renderer.begin_run()
         _feed(renderer, _opened(), _started("Two", serial=2))
         renderer.close()
         _feed(renderer, _opened(), _started("Three", serial=3), ScopeClosed(scope=_SECTION))

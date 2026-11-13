@@ -25,9 +25,9 @@ from .pending_import import PendingImport
 from .placement_types import EpisodeIndex, Placement, SeedScope, episode_index
 from .planner import get_episode_keys
 from .progress import ProgressSink
-from .protocols import ArrSync
+from .protocols import ArrStrategy
 from .releases import GrabHold, SeadexDict, ignore_tag_set, releases_to_grab
-from .run_services import RunDeps, RunServices, bind_arr_http
+from .run_services import LegDeps, LegServices, bind_arr_http
 from .sonarr_client import AbstractSonarrClient, SonarrClient
 from .sonarr_episodes import SonarrEpisodes
 from .sonarr_import import ImportExecutor, ImportReconciler
@@ -81,7 +81,7 @@ def _override_line(url: str, override: IdentityOverride) -> str:
     )
 
 
-class SonarrSync(ArrSync[SonarrItem]):
+class SonarrStrategy(ArrStrategy[SonarrItem]):
     """Sonarr sync strategy: owns the Sonarr REST client + episode domain logic.
 
     See `ArrSync` for the shared DI/hook-wiring regime.
@@ -89,8 +89,8 @@ class SonarrSync(ArrSync[SonarrItem]):
 
     def __init__(
         self,
-        deps: RunDeps,
-        services: RunServices,
+        deps: LegDeps,
+        services: LegServices,
         *,
         sonarr_client: AbstractSonarrClient | None = None,
     ) -> None:
@@ -157,10 +157,10 @@ class SonarrSync(ArrSync[SonarrItem]):
 
         # Import-reconcile collaborator: the import_completed decision + the
         # grab-time pending-seed build. Composes the episode collaborator + the
-        # executor. The import_completed / process_al_id hooks delegate to it.
+        # executor. The import_completed / check_title hooks delegate to it.
         self._reconciler = ImportReconciler(self._services.records, self._episodes, self._executor)
 
-    # --- ArrSync hooks ------------------------------------------------------
+    # --- ArrStrategy hooks ------------------------------------------------------
 
     @override
     def get_items(self) -> list[SonarrItem]:
@@ -232,7 +232,7 @@ class SonarrSync(ArrSync[SonarrItem]):
         return self.sonarr.history_since(date)
 
     @override
-    def process_al_id(
+    def check_title(
         self,
         item: SonarrItem,
         al_id: int,
@@ -247,7 +247,7 @@ class SonarrSync(ArrSync[SonarrItem]):
 
         run = self._services
 
-        sd_entry = run.al_id_prologue(al_id)
+        sd_entry = run.begin_check(al_id)
         if sd_entry is None:
             return
         sd_url = sd_entry.url

@@ -984,7 +984,7 @@ class TestModeSwitchResurfacesFallbackSatisfied:
             _reporter=_CachedEntryReporter(),
             private_releases="fallback",
         )
-        assert fallback_run.al_id_needs_scan(11) is False
+        assert fallback_run.title_needs_check(11) is False
         assert fallback_run.is_unchanged(11, entry, lambda: "") is True
 
         # 3) warn services over the same cache: BOTH gates re-process the id
@@ -995,7 +995,7 @@ class TestModeSwitchResurfacesFallbackSatisfied:
             _reporter=_CachedEntryReporter(),
             private_releases="warn",
         )
-        assert warn_run.al_id_needs_scan(11) is True
+        assert warn_run.title_needs_check(11) is True
         assert warn_run.is_unchanged(11, entry, lambda: "") is False
 
         # 4) the warn-mode reprocess warns and holds: the private pick is all

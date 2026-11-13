@@ -24,10 +24,10 @@ from pearlarr.output import (
     Diagnostic,
     Event,
     FileLogSink,
+    LegFinished,
     NullRenderer,
     OutputHub,
     Renderer,
-    RunFinished,
     RunStarted,
     Severity,
     SeverityCounts,
@@ -60,7 +60,7 @@ class _FailingRenderer(Renderer):
         raise RuntimeError("render bug")
 
     @override
-    def begin_cycle(self) -> None:
+    def begin_run(self) -> None:
         pass
 
     @override
@@ -115,7 +115,7 @@ class _EmittingRenderer(Renderer):
             self.hub.emit(Diagnostic(severity=Severity.INFO, message="re-entrant"))
 
     @override
-    def begin_cycle(self) -> None:
+    def begin_run(self) -> None:
         pass
 
     @override
@@ -166,7 +166,7 @@ class _LockProbeRenderer(Renderer):
         self.lock_was_free.extend(acquired)
 
     @override
-    def begin_cycle(self) -> None:
+    def begin_run(self) -> None:
         pass
 
     @override
@@ -207,7 +207,7 @@ class _GatedRenderer(Renderer):
         self.log.append(f"handled:{name}")
 
     @override
-    def begin_cycle(self) -> None:
+    def begin_run(self) -> None:
         self.log.append("cycle")
 
     @override
@@ -234,7 +234,7 @@ class _InterruptOnceRenderer(Renderer):
             raise KeyboardInterrupt
 
     @override
-    def begin_cycle(self) -> None:
+    def begin_run(self) -> None:
         pass
 
     @override
@@ -273,7 +273,7 @@ class _ReArmableGate(Renderer):
             assert self.release.wait(timeout=30.0), "gate never released"
 
     @override
-    def begin_cycle(self) -> None:
+    def begin_run(self) -> None:
         pass
 
     @override
@@ -320,7 +320,7 @@ class _FileishRecorder(Renderer):
         self.events.append(event)
 
     @override
-    def begin_cycle(self) -> None:
+    def begin_run(self) -> None:
         pass
 
     @override
@@ -353,7 +353,7 @@ class _LifecycleEmitter(Renderer):
         self.events.append(event)
 
     @override
-    def begin_cycle(self) -> None:
+    def begin_run(self) -> None:
         if self.hub is not None:
             self.hub.emit(Diagnostic(severity=Severity.INFO, message="mid-lifecycle"))
             self.seen_during_cycle = len(self.events)
@@ -390,7 +390,7 @@ class _EmitThenInterrupt(Renderer):
             raise KeyboardInterrupt
 
     @override
-    def begin_cycle(self) -> None:
+    def begin_run(self) -> None:
         pass
 
     @override
@@ -450,7 +450,7 @@ def test_three_strikes_quarantine_until_begin_cycle_rearms() -> None:
         hub.emit(_EVENT)
     assert flaky.calls == STRIKE_LIMIT  # skipped after the third strike
 
-    hub.begin_cycle(console_format="plain", level=logging.INFO)
+    hub.begin_run(console_format="plain", level=logging.INFO)
     hub.emit(_EVENT)
     assert flaky.calls == STRIKE_LIMIT + 1  # re-armed, not process-latched
 
@@ -473,7 +473,7 @@ def test_strikes_carry_across_a_run_leg_boundary_and_only_begin_cycle_rearms() -
     assert sub.strikes == STRIKE_LIMIT - 1
 
     # The leg boundary renders cleanly: it neither strikes nor resets the count.
-    hub.emit(RunFinished(arr=Arr.SONARR))
+    hub.emit(LegFinished(arr=Arr.SONARR))
     assert sub.strikes == STRIKE_LIMIT - 1
     assert flaky.closes == 0
 
@@ -489,7 +489,7 @@ def test_strikes_carry_across_a_run_leg_boundary_and_only_begin_cycle_rearms() -
     assert flaky.closes == 1
 
     # Only a cycle turnover re-arms the seat - the leg boundary never did.
-    hub.begin_cycle(console_format="plain", level=logging.INFO)
+    hub.begin_run(console_format="plain", level=logging.INFO)
     assert sub.strikes == 0
     hub.emit(_EVENT)
     assert sub.strikes == 1
@@ -511,7 +511,7 @@ def test_quarantine_closes_the_seat_exactly_once_at_the_crossing() -> None:
     hub.emit(_EVENT)  # skipped while quarantined: close is not re-fired
     assert flaky.closes == 1
 
-    hub.begin_cycle(console_format="plain", level=logging.INFO)
+    hub.begin_run(console_format="plain", level=logging.INFO)
     for _ in range(STRIKE_LIMIT):
         hub.emit(_EVENT)
     assert flaky.closes == 2  # re-armed, then a fresh strike-out closes again
@@ -599,7 +599,7 @@ def test_a_lifecycle_reentrant_emit_enqueues_and_drains_after_the_turnover() -> 
     hub = OutputHub([emitter])
     emitter.hub = hub
 
-    hub.begin_cycle(console_format="plain", level=logging.INFO)
+    hub.begin_run(console_format="plain", level=logging.INFO)
 
     assert emitter.seen_during_cycle == 0  # enqueued, not dispatched mid-lifecycle
     assert [d.message for d in emitter.events if isinstance(d, Diagnostic)] == ["mid-lifecycle"]
@@ -721,9 +721,9 @@ def test_lifecycle_waits_for_the_active_drain_to_finish() -> None:
     drainer.start()
     assert gated.entered.wait(timeout=30.0)
 
-    lifecycle = threading.Thread(target=lambda: hub.begin_cycle(console_format="plain", level=logging.INFO))
+    lifecycle = threading.Thread(target=lambda: hub.begin_run(console_format="plain", level=logging.INFO))
     lifecycle.start()
-    # A bounded chance for a broken (non-waiting) begin_cycle to interleave.
+    # A bounded chance for a broken (non-waiting) begin_run to interleave.
     lifecycle.join(timeout=0.2)
     assert lifecycle.is_alive()  # parked until the drain finishes
     assert "cycle" not in gated.log
@@ -781,7 +781,7 @@ def test_overflow_never_sheds_a_structural_event(monkeypatch: pytest.MonkeyPatch
     # _EVENT is blocked mid-handle (already popped). Fill the pending queue to the cap.
     for i in range(cap):
         hub.emit(Diagnostic(severity=Severity.INFO, message=f"q{i}"))
-    structural = RunFinished(arr=Arr.SONARR)
+    structural = LegFinished(arr=Arr.SONARR)
     hub.emit(structural)  # non-diagnostic at the cap: appended, never shed
 
     gated.release.set()
@@ -849,7 +849,7 @@ def test_once_keys_dedup_and_clear_per_cycle() -> None:
     assert len(recording.of_type(Diagnostic)) == 1
     assert recording.hub.counts.mark().warning == 1  # the dropped copy is not counted
 
-    recording.hub.begin_cycle(console_format="plain", level=logging.INFO)
+    recording.hub.begin_run(console_format="plain", level=logging.INFO)
     recording.emit(outage)
     assert len(recording.of_type(Diagnostic)) == 2
 
@@ -946,7 +946,7 @@ def test_begin_cycle_turns_over_renderers_and_applies_the_level() -> None:
     renderer = RecordingRenderer()
     hub = OutputHub([renderer])
 
-    hub.begin_cycle(console_format="plain", level=logging.WARNING)
+    hub.begin_run(console_format="plain", level=logging.WARNING)
 
     assert renderer.cycles == 1
     assert renderer.levels == [logging.WARNING]
@@ -968,7 +968,7 @@ def test_a_closed_hub_drops_emits_and_cycle_turnovers() -> None:
     hub.close()
 
     hub.emit(_EVENT)
-    hub.begin_cycle(console_format="plain", level=logging.INFO)
+    hub.begin_run(console_format="plain", level=logging.INFO)
 
     assert renderer.events == []
     assert renderer.cycles == 0
@@ -1011,7 +1011,7 @@ def test_the_stderr_fallback_skips_info_file_only_and_seated_consoles(capsys: py
 
     hub.emit(Diagnostic(severity=Severity.INFO, message="quiet"))
     hub.emit(Diagnostic(severity=Severity.WARNING, message="forensic", file_only=True))
-    hub.begin_cycle(console_format="plain", level=logging.INFO)
+    hub.begin_run(console_format="plain", level=logging.INFO)
     hub.emit(Diagnostic(severity=Severity.WARNING, message="seated"))
 
     assert capsys.readouterr().err == ""
@@ -1062,10 +1062,10 @@ def test_begin_cycle_swaps_the_console_renderer_only_on_format_change() -> None:
     sink = RecordingRenderer()
     hub = OutputHub([sink], console_factory=factory)
 
-    hub.begin_cycle(console_format="rich", level=logging.INFO)
+    hub.begin_run(console_format="rich", level=logging.INFO)
     hub.emit(_EVENT)
-    hub.begin_cycle(console_format="rich", level=logging.INFO)  # unchanged: no rebuild
-    hub.begin_cycle(console_format="plain", level=logging.INFO)  # changed: swap
+    hub.begin_run(console_format="rich", level=logging.INFO)  # unchanged: no rebuild
+    hub.begin_run(console_format="plain", level=logging.INFO)  # changed: swap
     hub.emit(_EVENT)
 
     assert [fmt for fmt, _ in built] == ["rich", "plain"]
@@ -1083,7 +1083,7 @@ def test_a_failing_console_factory_keeps_the_old_seat_and_notes_file_only() -> N
         raise RuntimeError("no tty")
 
     hub = OutputHub([sink], console=console, console_factory=factory)
-    hub.begin_cycle(console_format="plain", level=logging.INFO)
+    hub.begin_run(console_format="plain", level=logging.INFO)
     hub.emit(_EVENT)
 
     assert not console.closed
@@ -1219,7 +1219,7 @@ def test_a_mid_dispatch_lifecycle_call_keeps_the_baton_and_the_emit_order() -> N
                 self.hub.set_level(logging.WARNING)
 
         @override
-        def begin_cycle(self) -> None:
+        def begin_run(self) -> None:
             pass
 
         @override
@@ -1257,7 +1257,7 @@ def test_a_broken_stderr_never_raises_through_emit() -> None:
             raise BrokenPipeError
 
     hub = OutputHub([], console_factory=lambda console_format: NullRenderer())
-    # No begin_cycle: the console seat is unarmed, so the fallback path fires.
+    # No begin_run: the console seat is unarmed, so the fallback path fires.
     import sys
 
     original = sys.stderr
@@ -1290,7 +1290,7 @@ def test_close_hands_teardown_chatter_to_the_file_sink_before_closing_it() -> No
             self.handled.append(event)
 
         @override
-        def begin_cycle(self) -> None:
+        def begin_run(self) -> None:
             pass
 
         @override
@@ -1312,7 +1312,7 @@ def test_close_hands_teardown_chatter_to_the_file_sink_before_closing_it() -> No
             pass
 
         @override
-        def begin_cycle(self) -> None:
+        def begin_run(self) -> None:
             pass
 
         @override
@@ -1355,7 +1355,7 @@ def test_begin_cycle_applies_the_level_to_a_fresh_console_exactly_once() -> None
             pass
 
         @override
-        def begin_cycle(self) -> None:
+        def begin_run(self) -> None:
             pass
 
         @override
@@ -1369,7 +1369,7 @@ def test_begin_cycle_applies_the_level_to_a_fresh_console_exactly_once() -> None
     fresh = _LevelRecorder()
     hub = OutputHub([], console_factory=lambda console_format: fresh)
 
-    hub.begin_cycle(console_format="rich", level=logging.DEBUG)
+    hub.begin_run(console_format="rich", level=logging.DEBUG)
 
     assert fresh.levels == [logging.DEBUG]
 

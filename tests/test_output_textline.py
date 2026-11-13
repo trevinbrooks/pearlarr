@@ -54,6 +54,9 @@ from pearlarr.output import (
     ItemStarted,
     JsonRenderer,
     LedgerRow,
+    LegFinished,
+    LegSummary,
+    LegTally,
     LineRenderer,
     NeedsActionCause,
     NextRunScheduled,
@@ -63,11 +66,8 @@ from pearlarr.output import (
     RecommendedGroup,
     ReleaseName,
     ReleaseSkipped,
-    RunFinished,
     RunStarted,
-    RunSummary,
     RunSummaryReady,
-    RunTally,
     ScanFinished,
     ScanStarted,
     ScopeClosed,
@@ -398,7 +398,7 @@ def test_pure_boundaries_and_ephemerals_have_no_text_form() -> None:
         ScopeClosed(scope=_ENTRY),
         BootStepStarted(scope=_STEP, label="x"),
         ScanFinished(arr=Arr.SONARR),
-        RunFinished(arr=Arr.SONARR),
+        LegFinished(arr=Arr.SONARR),
     ]
     for event in silent:
         assert _format(event) is None
@@ -430,11 +430,11 @@ def _summary_ready() -> RunSummaryReady:
         ),
     )
     return RunSummaryReady(
-        RunSummary(
+        LegSummary(
             arr=Arr.SONARR,
             dry_run_note=None,
             added_count=1,
-            tally=RunTally.from_stats(stats),
+            tally=LegTally.from_stats(stats),
             wait_mode_on=True,
             warnings=2,
             errors=0,
@@ -448,11 +448,11 @@ def _quiet_summary_ready() -> RunSummaryReady:
     """A summary with nothing actionable and no errors (stays plain INFO)."""
 
     return RunSummaryReady(
-        RunSummary(
+        LegSummary(
             arr=Arr.SONARR,
             dry_run_note=None,
             added_count=0,
-            tally=RunTally.from_stats(RunStats()),
+            tally=LegTally.from_stats(RunStats()),
             wait_mode_on=False,
             warnings=0,
             errors=0,
@@ -559,7 +559,7 @@ def test_line_and_file_output_are_byte_identical(tmp_path: Path) -> None:
         Diagnostic(severity=Severity.WARNING, message="rate limited", origin="anilist"),
         ScanFinished(arr=Arr.SONARR),
         _summary_ready(),
-        RunFinished(arr=Arr.SONARR),
+        LegFinished(arr=Arr.SONARR),
     ]
     line_sink, stream = _line_sink()
     file_sink = FileLogSink(str(tmp_path))
@@ -621,11 +621,11 @@ def test_file_rotation_names_the_backup_after_the_run_s_mtime(tmp_path: Path) ->
     sink.handle(RunStarted(version="one", data_dir="/d"), _EPOCH)
     first_run = datetime(2026, 1, 1, 10, 0, 0)
     _pin_mtime(log, first_run)
-    sink.begin_cycle()
+    sink.begin_run()
     sink.handle(RunStarted(version="two", data_dir="/d"), _EPOCH)  # rotates "one"
     second_run = datetime(2026, 1, 2, 11, 30, 15)
     _pin_mtime(log, second_run)
-    sink.begin_cycle()
+    sink.begin_run()
     sink.handle(RunStarted(version="three", data_dir="/d"), _EPOCH)  # rotates "two"
     sink.close()
 
@@ -643,10 +643,10 @@ def test_rotate_same_second_collision_gets_a_numeric_suffix(tmp_path: Path) -> N
 
     sink.handle(RunStarted(version="one", data_dir="/d"), _EPOCH)
     _pin_mtime(log, when)
-    sink.begin_cycle()
+    sink.begin_run()
     sink.handle(RunStarted(version="two", data_dir="/d"), _EPOCH)  # rotates "one" to the bare stamp
     _pin_mtime(log, when)  # same second as "one"
-    sink.begin_cycle()
+    sink.begin_run()
     sink.handle(RunStarted(version="three", data_dir="/d"), _EPOCH)  # collides, falls to ".1"
     sink.close()
 
@@ -658,8 +658,8 @@ def test_rotate_same_second_collision_gets_a_numeric_suffix(tmp_path: Path) -> N
 
 def test_an_idle_cycle_never_churns_a_backup(tmp_path: Path) -> None:
     sink = FileLogSink(str(tmp_path))
-    sink.begin_cycle()
-    sink.begin_cycle()  # no writes in between: nothing to rotate
+    sink.begin_run()
+    sink.begin_run()  # no writes in between: nothing to rotate
     sink.handle(RunStarted(version="only", data_dir="/d"), _EPOCH)
     sink.close()
 
@@ -668,8 +668,8 @@ def test_an_idle_cycle_never_churns_a_backup(tmp_path: Path) -> None:
 
 
 def test_pre_cycle_writes_append_and_rotation_fires_once_per_begin_cycle(tmp_path: Path) -> None:
-    # Only begin_cycle arms rotation - construction must not, or a record in the
-    # install→begin_cycle window would rotate twice and strand a one-line backup.
+    # Only begin_run arms rotation - construction must not, or a record in the
+    # install→begin_run window would rotate twice and strand a one-line backup.
     log = tmp_path / "Pearlarr.log"
     log.write_text("previous run\n", encoding="utf-8")
     when = datetime(2026, 1, 1, 10, 0, 0)
@@ -682,7 +682,7 @@ def test_pre_cycle_writes_append_and_rotation_fires_once_per_begin_cycle(tmp_pat
     assert log_text.startswith("previous run\n") and "pre-cycle" in log_text
     _pin_mtime(log, when)  # the append above bumped mtime, re-pin for a deterministic stamp
 
-    sink.begin_cycle()
+    sink.begin_run()
     sink.handle(RunStarted(version="cycle-one", data_dir="/d"), _EPOCH)
     sink.close()
 
@@ -716,7 +716,7 @@ def test_backstop_deletes_oldest_backups_beyond_the_cap(tmp_path: Path, monkeypa
     sink.handle(RunStarted(version="seed", data_dir="/d"), _EPOCH)
     for i, when in enumerate(stamps):
         _pin_mtime(log, when)
-        sink.begin_cycle()
+        sink.begin_run()
         sink.handle(RunStarted(version=f"run-{i}", data_dir="/d"), _EPOCH)
     sink.close()
 
@@ -797,7 +797,7 @@ def test_backstop_survives_an_undeletable_oldest_backup(tmp_path: Path, monkeypa
     monkeypatch.setattr(os, "remove", remove_unless_stuck)
     sink.handle(RunStarted(version="one", data_dir="/d"), _EPOCH)
     _pin_mtime(log, datetime(2026, 1, 1, 10, 0, 0))
-    sink.begin_cycle()
+    sink.begin_run()
     sink.handle(RunStarted(version="two", data_dir="/d"), _EPOCH)  # rotates past the cap
     sink.close()
 
@@ -942,7 +942,7 @@ def test_a_new_wait_pass_rearms_the_pulse_skip_first() -> None:
 def test_begin_cycle_disarms_the_pulse_until_the_next_wait_pass() -> None:
     line_sink, stream = _line_sink()
     line_sink.handle(WaitStarted(total=1, pulse_s=300.0, kind=WaitKind.MONITOR), _EPOCH)
-    line_sink.begin_cycle()
+    line_sink.begin_run()
 
     line_sink.handle(_wait_progress(10_000.0), _EPOCH)
     line_sink.handle(_wait_progress(10_000.0), _EPOCH)  # disarmed: not even a late fire
@@ -1068,7 +1068,7 @@ def test_json_includes_scope_boundaries_but_not_ephemerals() -> None:
         BootStepStarted(scope=_STEP, label="x"),
         WaitProgress(snapshot=WaitSnapshot(torrents=(), elapsed_s=1.0)),
         ScopeClosed(scope=_ENTRY),
-        RunFinished(arr=Arr.SONARR),
+        LegFinished(arr=Arr.SONARR),
     ]
     payloads = _json_lines(events)
     assert [p["event"] for p in payloads] == ["scope_opened", "scope_closed", "run_finished"]
@@ -1101,11 +1101,11 @@ def test_json_summary_carries_held_by_cap_only_when_the_run_held_titles() -> Non
     stats = RunStats(checked=3)
     stats.held_by_cap = 2
     held = RunSummaryReady(
-        RunSummary(
+        LegSummary(
             arr=Arr.SONARR,
             dry_run_note=None,
             added_count=1,
-            tally=RunTally.from_stats(stats),
+            tally=LegTally.from_stats(stats),
             wait_mode_on=False,
             warnings=0,
             errors=0,
@@ -1167,7 +1167,7 @@ def _exemplars() -> list[Event]:
         WaitProgress(snapshot=WaitSnapshot(torrents=(), elapsed_s=1.0)),
         TorrentGraduated(label="T", outcome=Outcome.IMPORTED, files=1, waited_s=1.0),
         WaitFinished(imported=1, deferred=0, failed=0, elapsed_s=1.0, pending=0, kind=WaitKind.MONITOR),
-        RunFinished(arr=Arr.SONARR),
+        LegFinished(arr=Arr.SONARR),
         Diagnostic(severity=Severity.INFO, message="m", origin="app", trace=trace),
         PathsShown(
             data_dir="/d", config="/d/config.yml", cache="/d/cache.db", mappings_db="/d/mappings.db", log_dir="/d/logs"
@@ -1285,7 +1285,7 @@ _TEXT_SILENT = {
     BootStepProgressed,
     WaitProgress,
     ScanFinished,
-    RunFinished,
+    LegFinished,
     EffectiveConfigShown,
 }
 # Events the json stream drops: ephemera (json keeps the boundaries).
@@ -1318,7 +1318,7 @@ def test_skip_sets_are_event_members_pinned_to_their_current_membership() -> Non
     union_members: set[object] = set(get_args(Event.__value__))
     assert union_members >= _TEXT_SKIP
     assert union_members >= _JSON_SKIP
-    assert {ScopeOpened, ScopeClosed, ScanFinished, RunFinished, EffectiveConfigShown} == _TEXT_SKIP
+    assert {ScopeOpened, ScopeClosed, ScanFinished, LegFinished, EffectiveConfigShown} == _TEXT_SKIP
     assert {BootStepSlow} == _JSON_SKIP
 
 

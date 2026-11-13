@@ -24,16 +24,16 @@ from pearlarr.arr_http import HEARTBEAT_INTERVAL_S
 from pearlarr.boot_flow import BootFlow
 from pearlarr.config import AppConfig, Arr
 from pearlarr.mappings import MappingResolver
-from pearlarr.run_loop import RunLoop
-from pearlarr.run_services import RunDeps, RunServices
-from pearlarr.seadex_radarr import RadarrSync
-from pearlarr.seadex_sonarr import SonarrSync
+from pearlarr.run_loop import LegLoop
+from pearlarr.run_services import LegDeps, LegServices
+from pearlarr.seadex_radarr import RadarrStrategy
+from pearlarr.seadex_sonarr import SonarrStrategy
 
 from .builders import FakeCacheStore, make_bare_instance, make_config, make_run_deps
 from .fakes import FakeRadarrClient, FakeSonarrClient
 
 
-def _ctx_holders(runner: RunLoop, services: RunServices) -> list[object]:
+def _ctx_holders(runner: LegLoop, services: LegServices) -> list[object]:
     """Structurally discover every rebindable ctx-holder hanging off the pair.
 
     Introspective on purpose: a hand-enumerated holder list silently passes when
@@ -45,14 +45,14 @@ def _ctx_holders(runner: RunLoop, services: RunServices) -> list[object]:
         attr
         for owner in (runner, services)
         for attr in vars(owner).values()
-        if hasattr(attr, "begin_run") and hasattr(attr, "_ctx")
+        if hasattr(attr, "bind_leg") and hasattr(attr, "_ctx")
     ]
 
 
 def test_runner_adopts_placeholder_then_rebinds_fresh_ctx() -> None:
     deps = make_run_deps()
-    services = RunServices(deps, Arr.SONARR)
-    runner = RunLoop(deps, services)
+    services = LegServices(deps, Arr.SONARR)
+    runner = LegLoop(deps, services)
 
     # Phase 1 (adoption): the runner adopts the hub's single placeholder - no
     # second mint - and every ctx-holding collaborator is bound to that object.
@@ -65,7 +65,7 @@ def test_runner_adopts_placeholder_then_rebinds_fresh_ctx() -> None:
     # Phase 2 (fresh mint): reset_run_stats swaps a fresh RunContext AND rebinds
     # every ctx-holding collaborator to it. A missed rebind would route a
     # collaborator's writes into the orphaned prior context (the drift the
-    # begin_run fold guards against).
+    # bind_leg fold guards against).
     first_ctx = runner._ctx
     runner.reset_run_stats(dry_run=False)
 
@@ -82,13 +82,13 @@ def test_services_read_selection_staleness_from_the_store_at_construction() -> N
 
     vouched_old = FakeCacheStore()
     vouched_old.vouch_selection(Arr.SONARR, "a-previous-digest")
-    assert RunServices(make_run_deps(config=config, cache_store=vouched_old), Arr.SONARR).selection_changed is True
+    assert LegServices(make_run_deps(config=config, cache_store=vouched_old), Arr.SONARR).selection_changed is True
 
     vouched_current = FakeCacheStore()
     vouched_current.vouch_selection(Arr.SONARR, config.selection_hash())
-    assert RunServices(make_run_deps(config=config, cache_store=vouched_current), Arr.SONARR).selection_changed is False
+    assert LegServices(make_run_deps(config=config, cache_store=vouched_current), Arr.SONARR).selection_changed is False
 
-    assert RunServices(make_run_deps(config=config), Arr.SONARR).selection_changed is False
+    assert LegServices(make_run_deps(config=config), Arr.SONARR).selection_changed is False
 
 
 def test_sonarr_sync_init_shares_cache_store_for_staged_writes() -> None:
@@ -96,12 +96,12 @@ def test_sonarr_sync_init_shares_cache_store_for_staged_writes() -> None:
     # through the hub's record seam) must share the strat's cache_store by identity, or
     # a staged parse write would not be visible to build_pending_seeds.
     deps = make_run_deps()
-    services = RunServices(deps, Arr.SONARR)
+    services = LegServices(deps, Arr.SONARR)
     # Inject a typed fake through the sonarr_client seam so the collaborator wiring
     # runs off the REAL __init__ without connection keys - an incomplete fake here
     # is a pyright error and un-instantiable, unlike the old stringly-typed
     # monkeypatch.
-    strat = SonarrSync(deps, services, sonarr_client=FakeSonarrClient())
+    strat = SonarrStrategy(deps, services, sonarr_client=FakeSonarrClient())
 
     assert strat._parse.cache_store is deps.cache_store
     assert strat._reconciler._records is services.records
@@ -110,23 +110,23 @@ def test_sonarr_sync_init_shares_cache_store_for_staged_writes() -> None:
 
 
 def test_radarr_sync_init_builds_without_network_via_client_seam() -> None:
-    # The radarr_client seam lets RadarrSync's REAL __init__ run under test: the
+    # The radarr_client seam lets RadarrStrategy's REAL __init__ run under test: the
     # injected fake skips require_connection, so no config keys are needed.
     deps = make_run_deps()
-    services = RunServices(deps, Arr.RADARR)
+    services = LegServices(deps, Arr.RADARR)
     fake = FakeRadarrClient()
 
-    strat = RadarrSync(deps, services, radarr_client=fake)
+    strat = RadarrStrategy(deps, services, radarr_client=fake)
 
     assert strat.radarr is fake
     assert strat._mappings is deps.mappings
     assert strat.anibridge is deps.mappings.anibridge
 
 
-def _build_deps(app_config: AppConfig, tmp_path: Path) -> RunDeps:
+def _build_deps(app_config: AppConfig, tmp_path: Path) -> LegDeps:
     """`RunDeps.build` over the throwaway wiring every construction test shares."""
 
-    return RunDeps.build(
+    return LegDeps.build(
         Arr.SONARR,
         cache=str(tmp_path / "cache.db"),
         logger=logging.getLogger("pearlarr.test"),

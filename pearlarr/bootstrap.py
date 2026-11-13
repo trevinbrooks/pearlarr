@@ -33,7 +33,7 @@ from .config_migrations import CONFIG_VERSION, MIGRATE_HINT
 from .log import apply_log_level
 from .output import (
     FileLogSink,
-    RunFinished,
+    LegFinished,
     Severity,
     emit_to_hub,
     hub_error,
@@ -354,24 +354,24 @@ def _run_leg(target: ArrTarget, ctx: LegContext) -> bool:
     from .arr_models import ArrItem
     from .boundary import BoundaryContractError
     from .cache import CacheSchemaError
-    from .protocols import ArrSync
-    from .run_loop import RunLoop
-    from .run_services import QbitConnectionError, RunDeps, RunServices
-    from .seadex_radarr import RadarrSync
-    from .seadex_sonarr import SonarrSync
+    from .protocols import ArrStrategy
+    from .run_loop import LegLoop
+    from .run_services import LegDeps, LegServices, QbitConnectionError
+    from .seadex_radarr import RadarrStrategy
+    from .seadex_sonarr import SonarrStrategy
 
     arr_name = target.arr
     item_id = target.external_id
-    # Bound before the try so a RunDeps.build failure can't hit an
+    # Bound before the try so a LegDeps.build failure can't hit an
     # UnboundLocalError in the finally's close.
-    deps: RunDeps | None = None
+    deps: LegDeps | None = None
     try:
         # An inner handler so a dying leg's open output frames close
         # BEFORE the except arms below log: a leg-fatal error is a
         # cycle-level fact, not a detail of the entry / item / boot step
         # it died in. A completed leg's single close comes from the run tail.
         try:
-            deps = RunDeps.build(
+            deps = LegDeps.build(
                 arr_name,
                 ctx.cache,
                 logger=ctx.logger,
@@ -380,13 +380,13 @@ def _run_leg(target: ArrTarget, ctx: LegContext) -> bool:
                 web=ctx.web,
                 boot=ctx.boot,
             )
-            services = RunServices(deps, arr_name)
-            runner = RunLoop(deps, services)
+            services = LegServices(deps, arr_name)
+            runner = LegLoop(deps, services)
 
-            # The concrete strategy differs per arr, but the run_sync kwargs don't -
+            # The concrete strategy differs per arr, but the run_leg kwargs don't -
             # capture them once so a signature change edits a single place.
-            def drive[ItemT: ArrItem](strategy: ArrSync[ItemT]) -> None:
-                runner.run_sync(
+            def drive[ItemT: ArrItem](strategy: ArrStrategy[ItemT]) -> None:
+                runner.run_leg(
                     strategy,
                     item_id=item_id,
                     dry_run=ctx.dry_run,
@@ -396,14 +396,14 @@ def _run_leg(target: ArrTarget, ctx: LegContext) -> bool:
 
             match arr_name:
                 case Arr.SONARR:
-                    drive(SonarrSync(deps, services))
+                    drive(SonarrStrategy(deps, services))
                 case Arr.RADARR:
-                    drive(RadarrSync(deps, services))
+                    drive(RadarrStrategy(deps, services))
         except BaseException:
             # Through the hub seam, not the reporter (deps is None when
-            # RunDeps.build itself failed). hub.emit contains renderer errors,
+            # LegDeps.build itself failed). hub.emit contains renderer errors,
             # so the emit cannot mask the in-flight leg-fatal Exception.
-            emit_to_hub(RunFinished(arr=arr_name))
+            emit_to_hub(LegFinished(arr=arr_name))
             raise
     except (QbitConnectionError, CacheSchemaError) as e:
         # A user-facing environment problem (wrong host/credentials, a
@@ -431,7 +431,7 @@ def _run_leg(target: ArrTarget, ctx: LegContext) -> bool:
         return False
     finally:
         # Cap this arr's boot section so the next arr opens a fresh
-        # one. A no-op on the happy path (run_sync already ended it
+        # one. A no-op on the happy path (run_leg already ended it
         # before scanning), the safety net when a step failed.
         ctx.boot.end_section()
         if deps is not None:

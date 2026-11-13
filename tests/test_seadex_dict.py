@@ -17,8 +17,8 @@ from pearlarr.config import Arr
 from pearlarr.mappings import TitleMapping
 from pearlarr.output import Diagnostic, Severity, install_hub
 from pearlarr.output.recording import RecordingHub
-from pearlarr.run_services import RunServices
-from pearlarr.seadex_radarr import RadarrSync
+from pearlarr.run_services import LegServices
+from pearlarr.seadex_radarr import RadarrStrategy
 
 from .builders import (
     FakeCacheStore,
@@ -588,8 +588,8 @@ class TestInteractivePick:
         cache = FakeCacheStore()
         config = make_config(url="http://sonarr", api_key="key", interactive=True, sleep_time=0)
         deps = make_run_deps(config=config, cache_store=cache, seadex=FakeSeaDexSource({al_id: entry}))
-        services = RunServices(deps, Arr.RADARR)
-        strat = RadarrSync(deps, services, radarr_client=FakeRadarrClient())
+        services = LegServices(deps, Arr.RADARR)
+        strat = RadarrStrategy(deps, services, radarr_client=FakeRadarrClient())
         # Serve the title from the gateway's in-memory cache so no AniList query runs.
         deps.anilist.al_cache[al_id] = {"data": {"Media": {"title": {"english": "Movie", "romaji": None}}}}
 
@@ -598,7 +598,7 @@ class TestInteractivePick:
             return "42"  # out of range -> every token invalid -> empty pick
 
         monkeypatch.setattr("builtins.input", fake_input)
-        strat.process_al_id(_MovieItem(), al_id, TitleMapping(anilist_id=al_id))
+        strat.check_title(_MovieItem(), al_id, TitleMapping(anilist_id=al_id))
         capsys.readouterr()  # drain the picker's terminal rows
 
         # Nothing persisted: the title must resurface (and re-prompt) next run.

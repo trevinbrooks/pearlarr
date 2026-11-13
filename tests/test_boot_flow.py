@@ -35,7 +35,7 @@ from pearlarr.output import (
     install_hub,
 )
 from pearlarr.output.recording import RecordingHub
-from pearlarr.run_services import RunDeps
+from pearlarr.run_services import LegDeps
 from pearlarr.wait_types import OutcomeCategory
 
 from .builders import make_bare_instance, make_config
@@ -291,7 +291,7 @@ def test_logger_error_via_the_bridge_suppresses_the_capstone() -> None:
 
 def test_without_an_installed_hub_the_flow_is_a_silent_no_op() -> None:
     # The renderer-less default hub drops emissions: library/standalone use of
-    # RunDeps.build / run_sync needs no cockpit and no ceremony.
+    # LegDeps.build / run_leg needs no cockpit and no ceremony.
     flow = BootFlow()
     flow.banner()
     with flow.step("anything") as step:
@@ -317,7 +317,7 @@ def test_rundeps_build_warns_deferred_when_qbit_unconfigured(tmp_path: Path) -> 
     # the qBittorrent step.
     flow, recording, _ = _flow()
 
-    deps = RunDeps.build(
+    deps = LegDeps.build(
         Arr.SONARR,
         cache=str(tmp_path / "cache.db"),
         logger=logging.getLogger("boot-flow-qbit"),

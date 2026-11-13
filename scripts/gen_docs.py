@@ -742,7 +742,7 @@ JSON_SILENT: dict[str, str] = {
 def _specimen_stream() -> tuple[ev.Event, ...]:
     """A realistic single-run event sequence containing every union member once."""
 
-    tally = ev.RunTally(
+    tally = ev.LegTally(
         checked=42,
         added=(
             ev.GrabFact(
@@ -775,7 +775,7 @@ def _specimen_stream() -> tuple[ev.Event, ...]:
         imported=1,
         held_by_cap=0,
     )
-    summary = ev.RunSummary(
+    summary = ev.LegSummary(
         arr=Arr.SONARR,
         dry_run_note=None,
         added_count=1,
@@ -866,7 +866,7 @@ def _specimen_stream() -> tuple[ev.Event, ...]:
             imported=1, deferred=0, failed=0, elapsed_s=430.0, pending=0, kind=ev.WaitKind.MONITOR, scope=_WAIT_SCOPE
         ),
         ev.ScopeClosed(scope=_WAIT_SCOPE),
-        ev.RunFinished(arr=Arr.SONARR),
+        ev.LegFinished(arr=Arr.SONARR),
         ev.NextRunScheduled(at=datetime(2026, 1, 2, 0, 0, tzinfo=UTC)),
         ev.PathsShown(
             data_dir=data_dir,

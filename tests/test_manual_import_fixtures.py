@@ -32,7 +32,7 @@ from pearlarr.probe_verdicts import (
     in_flight_disk_commands,
     manual_import_in_flight,
 )
-from pearlarr.seadex_sonarr import SonarrSync
+from pearlarr.seadex_sonarr import SonarrStrategy
 from pearlarr.wait_types import AttemptKind, ImportProgress
 
 from .builders import FakeCacheStore, make_config, make_sonarr_sync, pending_import
@@ -292,7 +292,7 @@ class TestManualImportInFlightFixture:
 class _Specials(NamedTuple):
     """The captured specials download wired into a bare `SonarrSync` and its scripted fake."""
 
-    strat: SonarrSync
+    strat: SonarrStrategy
     sonarr: FakeSonarrClient
     files: list[str]
     """The on-disk basenames of the captured candidates."""
@@ -339,7 +339,7 @@ class TestCapturedSpecialsEndToEnd:
             ordered_episode_ids=[8030, 8031, 8032],
         )
 
-        probe = specials.strat.import_completed(pending, "/downloads/yamada", AttemptKind.POLL)
+        probe = specials.strat.import_completed(pending, "/downloads/yamada", AttemptKind.ORDINARY)
 
         # The copy is async, so nothing is present yet.
         assert probe.files_present is False
@@ -369,7 +369,7 @@ class TestCapturedSpecialsEndToEnd:
             cross_seed=cross_seed,
         )
 
-        specials.strat.import_completed(pending, "/downloads/yamada", AttemptKind.POLL)
+        specials.strat.import_completed(pending, "/downloads/yamada", AttemptKind.ORDINARY)
 
         assert len(specials.sonarr.execute_calls) == 1
         assert specials.sonarr.execute_calls[0][1] == mode
@@ -384,7 +384,7 @@ class TestCapturedSpecialsEndToEnd:
             ordered_episode_ids=[v[0] for v in ep_map.values()],
         )
 
-        probe = specials.strat.import_completed(pending, "/downloads/yamada", AttemptKind.POLL)
+        probe = specials.strat.import_completed(pending, "/downloads/yamada", AttemptKind.ORDINARY)
 
         assert probe.target_count == len(specials.files)
         assert probe.imported_count == 0
@@ -453,7 +453,7 @@ class TestCapturedSpecialsEndToEnd:
         )
 
         progress = specials.strat.import_progress(pending)
-        probe = specials.strat.import_completed(pending, "/downloads/yamada", AttemptKind.POLL)
+        probe = specials.strat.import_completed(pending, "/downloads/yamada", AttemptKind.ORDINARY)
 
         assert progress == ImportProgress(0, 0, determinate=False)
         assert (probe.imported_count, probe.target_count) == (0, 1)

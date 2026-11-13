@@ -17,7 +17,7 @@ from .grab_placement import SeedFile
 from .output.console_text import count_noun
 from .parse_records import ParseWindow
 from .releases import SeadexDict
-from .run_services import RunDeps
+from .run_services import LegDeps
 from .sonarr_client import AbstractSonarrClient
 from .sonarr_episodes import fetch_workers
 from .video_files import video_file_entries
@@ -29,7 +29,7 @@ class SonarrParseCache:
     Reads go through `records`, so a write staged by `parsed_files` is visible to a later same-run read.
     """
 
-    def __init__(self, deps: RunDeps, sonarr: AbstractSonarrClient) -> None:
+    def __init__(self, deps: LegDeps, sonarr: AbstractSonarrClient) -> None:
         """Bind the shared collaborators and the strategy's Sonarr client, whose `/parse` the cache fills from."""
 
         self.sonarr = sonarr

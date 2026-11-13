@@ -6,7 +6,7 @@
 import pytest
 
 from pearlarr.arr_models import CommandResource, QueueRecord, SonarrEpisode
-from pearlarr.seadex_sonarr import SonarrSync
+from pearlarr.seadex_sonarr import SonarrStrategy
 from pearlarr.wait_types import NO_PROGRESS, AttemptKind, Deferral
 
 from .builders import manual_candidate, pending_import, queue_record, sonarr_ep
@@ -22,7 +22,7 @@ from .test_strategy_seam import (
 )
 
 
-def _strategy(queue: list[QueueRecord], clock: FakeClock | None = None) -> tuple[SonarrSync, HookedSonarrClient]:
+def _strategy(queue: list[QueueRecord], clock: FakeClock | None = None) -> tuple[SonarrStrategy, HookedSonarrClient]:
     """A strategy and its hooked fake under `queue`, the by-id scan serving the record's one file."""
 
     return _make_sonarr_for_import(candidates=[manual_candidate("/d/Show - 01 [1080p].mkv")], queue=queue, clock=clock)
@@ -46,7 +46,7 @@ def _our_file_placed() -> list[SonarrEpisode]:
     return [sonarr_ep(1, 1, ep_id=101, release_group="SubGroup")]
 
 
-def _strategy_whose_scan_meets_a_pass(clock: FakeClock) -> tuple[SonarrSync, HookedSonarrClient]:
+def _strategy_whose_scan_meets_a_pass(clock: FakeClock) -> tuple[SonarrStrategy, HookedSonarrClient]:
     """A tracked record's strategy whose by-id scan starts a pass and leaves every later by-id scan failing."""
 
     strat, sonarr = _strategy([_blocked_row()], clock)
@@ -72,9 +72,9 @@ class TestRescanOnce:
         sonarr.on_rescan = start_a_pass
         pending = pending_import()
 
-        first = strat.import_completed(pending, "/d", AttemptKind.POLL)
+        first = strat.import_completed(pending, "/d", AttemptKind.ORDINARY)
         clock.tick(30)
-        second = strat.import_completed(pending, "/d", AttemptKind.POLL)
+        second = strat.import_completed(pending, "/d", AttemptKind.ORDINARY)
 
         assert (first.deferral, second.deferral) == (Deferral.BUSY, Deferral.BUSY)
         assert sonarr.execute_calls == []
@@ -89,7 +89,7 @@ class TestRescanOnce:
 
         sonarr.on_queue = rescan_meanwhile
 
-        strat.import_completed(pending_import(), "/d", AttemptKind.POLL)
+        strat.import_completed(pending_import(), "/d", AttemptKind.ORDINARY)
 
         assert sonarr.refresh_calls == 1
 
@@ -106,7 +106,7 @@ class TestRescanOnce:
         strat, sonarr = _strategy([])
         sonarr.commands_return = list(commands)
 
-        strat.import_completed(pending_import(), "/d", AttemptKind.POLL)
+        strat.import_completed(pending_import(), "/d", AttemptKind.ORDINARY)
 
         assert sonarr.refresh_calls == refresh_calls
 
@@ -115,15 +115,15 @@ class TestRescanOnce:
         strat, sonarr = _strategy([], clock)
         pending = pending_import()
 
-        strat.import_completed(pending, "/d", AttemptKind.POLL)
+        strat.import_completed(pending, "/d", AttemptKind.ORDINARY)
         first = sonarr.refresh_calls
         sonarr.commands_return = []
         clock.tick(30)
-        strat.import_completed(pending, "/d", AttemptKind.POLL)
+        strat.import_completed(pending, "/d", AttemptKind.ORDINARY)
         restarted = sonarr.refresh_calls
         sonarr.commands_return = [_RESCAN_BEFORE_ADD]
         clock.tick(30)
-        strat.import_completed(pending, "/d", AttemptKind.POLL)
+        strat.import_completed(pending, "/d", AttemptKind.ORDINARY)
 
         assert (first, restarted, sonarr.refresh_calls) == (1, 2, 2)
 
@@ -135,7 +135,7 @@ class TestRescanOnce:
     def test_tracked_row_gets_no_rescan(self, state: str, status: str) -> None:
         strat, sonarr = _strategy([queue_record("ABC123", state, status=status)])
 
-        strat.import_completed(pending_import(), "/d", AttemptKind.POLL)
+        strat.import_completed(pending_import(), "/d", AttemptKind.ORDINARY)
 
         assert sonarr.refresh_calls == 0
 
@@ -147,7 +147,7 @@ class TestRescanOnce:
 
         sonarr.on_rescan = block_the_import
 
-        strat.import_completed(pending_import(), "/d", AttemptKind.POLL)
+        strat.import_completed(pending_import(), "/d", AttemptKind.ORDINARY)
 
         assert sonarr.refresh_calls == 1
         assert len(sonarr.execute_calls) == 1
@@ -157,11 +157,11 @@ class TestRescanOnce:
         strat, sonarr = _strategy([], clock)
         throttled = pending_import(infohash="def456")
 
-        strat.import_completed(pending_import(infohash="abc123"), "/d", AttemptKind.POLL)
-        strat.import_completed(throttled, "/e", AttemptKind.POLL)
+        strat.import_completed(pending_import(infohash="abc123"), "/d", AttemptKind.ORDINARY)
+        strat.import_completed(throttled, "/e", AttemptKind.ORDINARY)
         inside_the_interval = sonarr.refresh_calls
         clock.tick(30)
-        strat.import_completed(throttled, "/e", AttemptKind.POLL)
+        strat.import_completed(throttled, "/e", AttemptKind.ORDINARY)
 
         assert (inside_the_interval, sonarr.refresh_calls) == (1, 2)
 
@@ -177,7 +177,7 @@ class TestStepInGuard:
 
         sonarr.on_scan = start_a_pass
 
-        probe = strat.import_completed(pending_import(), "/d", AttemptKind.POLL)
+        probe = strat.import_completed(pending_import(), "/d", AttemptKind.ORDINARY)
 
         assert probe.deferral is Deferral.BUSY
         assert sonarr.execute_calls == []
@@ -190,7 +190,7 @@ class TestStepInGuard:
 
         sonarr.on_scan = start_a_pass
 
-        probe = strat.import_completed(pending_import(), "/d", AttemptKind.POLL)
+        probe = strat.import_completed(pending_import(), "/d", AttemptKind.ORDINARY)
 
         assert probe.deferral is Deferral.BUSY
 
@@ -202,7 +202,7 @@ class TestStepInGuard:
 
         sonarr.on_scan = run_a_pass
 
-        strat.import_completed(pending_import(), "/d", AttemptKind.POLL)
+        strat.import_completed(pending_import(), "/d", AttemptKind.ORDINARY)
 
         assert len(sonarr.execute_calls) == 1
 
@@ -218,7 +218,7 @@ class TestStepInGuard:
 
         sonarr.on_episodes = run_a_pass_on_the_re_read
 
-        probe = strat.import_completed(pending_import(), "/d", AttemptKind.POLL)
+        probe = strat.import_completed(pending_import(), "/d", AttemptKind.ORDINARY)
 
         assert probe.deferral is Deferral.BUSY
         assert sonarr.execute_calls == []
@@ -231,7 +231,7 @@ class TestStepInGuard:
 
         sonarr.on_languages = start_a_pass
 
-        probe = strat.import_completed(pending_import(), "/d", AttemptKind.POLL)
+        probe = strat.import_completed(pending_import(), "/d", AttemptKind.ORDINARY)
 
         assert probe.deferral is Deferral.BUSY
         assert sonarr.execute_calls == []
@@ -246,10 +246,10 @@ class TestStepInGuard:
         sonarr.on_languages = run_a_pass
         pending = pending_import()
 
-        blocked = strat.import_completed(pending, "/d", AttemptKind.POLL)
+        blocked = strat.import_completed(pending, "/d", AttemptKind.ORDINARY)
         posted_while_blocked = len(sonarr.execute_calls)
         clock.tick(30)
-        strat.import_completed(pending, "/d", AttemptKind.POLL)
+        strat.import_completed(pending, "/d", AttemptKind.ORDINARY)
 
         assert blocked.deferral is Deferral.BUSY
         assert (posted_while_blocked, len(sonarr.execute_calls)) == (0, 1)
@@ -262,7 +262,7 @@ class TestStepInGuard:
 
         sonarr.on_languages = start_an_import
 
-        probe = strat.import_completed(pending_import(), "/d", AttemptKind.POLL)
+        probe = strat.import_completed(pending_import(), "/d", AttemptKind.ORDINARY)
 
         assert probe.deferral is Deferral.IMPORT
         assert probe.command_issued is True
@@ -276,7 +276,7 @@ class TestStepInGuard:
 
         sonarr.on_languages = restart
 
-        probe = strat.import_completed(pending_import(), "/d", AttemptKind.POLL)
+        probe = strat.import_completed(pending_import(), "/d", AttemptKind.ORDINARY)
 
         assert probe.deferral is Deferral.NONE
         assert sonarr.execute_calls == []
@@ -300,7 +300,7 @@ class TestStepInGuard:
 
         sonarr.on_scan = start_a_folder_import
 
-        probe = strat.import_completed(pending_import(), "/d/Show", AttemptKind.POLL)
+        probe = strat.import_completed(pending_import(), "/d/Show", AttemptKind.ORDINARY)
 
         assert probe.deferral is Deferral.IMPORT
         assert probe.command_issued is False
@@ -310,7 +310,7 @@ class TestStepInGuard:
         strat, sonarr = _strategy([])
         sonarr.commands_return = None
 
-        probe = strat.import_completed(pending_import(), "/d", AttemptKind.POLL)
+        probe = strat.import_completed(pending_import(), "/d", AttemptKind.ORDINARY)
 
         assert probe.deferral is Deferral.NONE
         assert sonarr.execute_calls == []
@@ -328,7 +328,7 @@ class TestStepInGuard:
         sonarr.on_scan = fail_the_next_read
         sonarr.on_languages = recover
 
-        probe = strat.import_completed(pending_import(), "/d", AttemptKind.POLL)
+        probe = strat.import_completed(pending_import(), "/d", AttemptKind.ORDINARY)
 
         assert probe.deferral is Deferral.NONE
         assert sonarr.execute_calls == []
@@ -341,7 +341,7 @@ class TestStepInGuard:
 
         sonarr.on_languages = fail_the_next_read
 
-        probe = strat.import_completed(pending_import(), "/d", AttemptKind.POLL)
+        probe = strat.import_completed(pending_import(), "/d", AttemptKind.ORDINARY)
 
         assert probe.deferral is Deferral.NONE
         assert sonarr.execute_calls == []
@@ -359,7 +359,7 @@ class TestEpisodeReads:
 
         sonarr.on_scan = import_our_file
 
-        probe = strat.import_completed(pending_import(), "/d", AttemptKind.POLL)
+        probe = strat.import_completed(pending_import(), "/d", AttemptKind.ORDINARY)
 
         assert probe.files_present is True
         assert probe.imported_count == 1
@@ -373,7 +373,7 @@ class TestEpisodeReads:
 
         sonarr.on_episodes = fail_the_next_read
 
-        probe = strat.import_completed(pending_import(), "/d", AttemptKind.POLL)
+        probe = strat.import_completed(pending_import(), "/d", AttemptKind.ORDINARY)
 
         assert probe.files_present is False
         assert probe.deferral is Deferral.NONE
@@ -384,9 +384,9 @@ class TestEpisodeReads:
         sonarr.episodes_return = _our_file_placed()
         pending = pending_import()
 
-        imported = strat.import_completed(pending, "/d", AttemptKind.POLL)
+        imported = strat.import_completed(pending, "/d", AttemptKind.ORDINARY)
         sonarr.episodes_return = None
-        probe = strat.import_completed(pending, "/d", AttemptKind.POLL)
+        probe = strat.import_completed(pending, "/d", AttemptKind.ORDINARY)
 
         assert imported.files_present is True
         assert probe.files_present is False
@@ -397,9 +397,9 @@ class TestEpisodeReads:
         sonarr.episodes_return = [*_our_file_placed(), sonarr_ep(1, 2, ep_id=102, episode_file_id=0)]
         pending = pending_import(file_episode_map={"Show - 01 [1080p].mkv": [101], "Show - 02 [1080p].mkv": [102]})
 
-        strat.import_completed(pending, "/d", AttemptKind.POLL)
+        strat.import_completed(pending, "/d", AttemptKind.ORDINARY)
         sonarr.episodes_return = None
-        probe = strat.import_completed(pending, "/d", AttemptKind.POLL)
+        probe = strat.import_completed(pending, "/d", AttemptKind.ORDINARY)
 
         assert (probe.imported_count, probe.target_count) == (1, 2)
 
@@ -418,10 +418,10 @@ class TestKeptScan:
         strat, sonarr = _strategy_whose_scan_meets_a_pass(clock)
         pending = pending_import()
 
-        blocked = strat.import_completed(pending, "/d", AttemptKind.POLL)
+        blocked = strat.import_completed(pending, "/d", AttemptKind.ORDINARY)
         sonarr.commands_return = [_RESCAN_BEFORE_ADD]
         clock.tick(30)
-        strat.import_completed(pending, "/d", AttemptKind.POLL)
+        strat.import_completed(pending, "/d", AttemptKind.ORDINARY)
 
         assert blocked.deferral is Deferral.BUSY
         assert len(sonarr.execute_calls) == 1
@@ -436,12 +436,12 @@ class TestKeptScan:
         sonarr.on_scan = start_a_pass
         pending = pending_import()
 
-        strat.import_completed(pending, "/d", AttemptKind.POLL)
+        strat.import_completed(pending, "/d", AttemptKind.ORDINARY)
         sonarr.on_scan = None
         sonarr.commands_return = [_RESCAN_BEFORE_ADD]
         sonarr.candidates_return = [manual_candidate("/d/Show - 01 [1080p].mkv")]
         clock.tick(30)
-        strat.import_completed(pending, "/d", AttemptKind.POLL)
+        strat.import_completed(pending, "/d", AttemptKind.ORDINARY)
 
         assert len(sonarr.execute_calls) == 1
 
@@ -455,15 +455,15 @@ class TestKeptScan:
         sonarr.on_scan = start_a_pass
         pending = pending_import()
 
-        strat.import_completed(pending, "/d", AttemptKind.POLL)
+        strat.import_completed(pending, "/d", AttemptKind.ORDINARY)
         sonarr.on_scan = None
         sonarr.commands_return = [_RESCAN_BEFORE_ADD]
         sonarr.queue_return = []
         clock.tick(30)
-        strat.import_completed(pending, "/d", AttemptKind.POLL)
+        strat.import_completed(pending, "/d", AttemptKind.ORDINARY)
         sonarr.queue_return = [_blocked_row()]
         clock.tick(25)
-        strat.import_completed(pending, "/d", AttemptKind.POLL)
+        strat.import_completed(pending, "/d", AttemptKind.ORDINARY)
 
         assert len(sonarr.candidate_calls) == 3
 
@@ -472,11 +472,11 @@ class TestKeptScan:
         strat, sonarr = _strategy_whose_scan_meets_a_pass(clock)
         pending = pending_import()
 
-        strat.import_completed(pending, "/d", AttemptKind.POLL)
+        strat.import_completed(pending, "/d", AttemptKind.ORDINARY)
         sonarr.queue_return = []
         sonarr.commands_return = [_RESCAN_AFTER_ADD]
         clock.tick(30)
-        strat.import_completed(pending, "/d", AttemptKind.POLL)
+        strat.import_completed(pending, "/d", AttemptKind.ORDINARY)
 
         assert sonarr.execute_calls == []
 
@@ -485,10 +485,10 @@ class TestKeptScan:
         strat, sonarr = _strategy_whose_scan_meets_a_pass(clock)
         pending = pending_import()
 
-        strat.import_completed(pending, "/d", AttemptKind.POLL)
+        strat.import_completed(pending, "/d", AttemptKind.ORDINARY)
         sonarr.commands_return = [_RESCAN_BEFORE_ADD]
         clock.tick(90)
-        strat.import_completed(pending, "/d", AttemptKind.POLL)
+        strat.import_completed(pending, "/d", AttemptKind.ORDINARY)
 
         assert sonarr.execute_calls == []
 
@@ -497,10 +497,10 @@ class TestKeptScan:
         strat, sonarr = _strategy_whose_scan_meets_a_pass(clock)
         pending = pending_import()
 
-        strat.import_completed(pending, "/d", AttemptKind.POLL)
+        strat.import_completed(pending, "/d", AttemptKind.ORDINARY)
         sonarr.commands_return = [_RESCAN_BEFORE_ADD]
         clock.tick(30)
-        strat.import_completed(pending, "/elsewhere", AttemptKind.POLL)
+        strat.import_completed(pending, "/elsewhere", AttemptKind.ORDINARY)
 
         assert sonarr.execute_calls == []
 
@@ -512,15 +512,15 @@ class TestKeptScan:
         def start_a_pass() -> None:
             sonarr.commands_return = [_RESCAN_BEFORE_ADD, _started_process_pass()]
 
-        strat.import_completed(pending, "/d", AttemptKind.POLL)
+        strat.import_completed(pending, "/d", AttemptKind.ORDINARY)
         sonarr.commands_return = [_RESCAN_BEFORE_ADD]
         sonarr.on_queue = start_a_pass
         clock.tick(30)
-        taken = strat.import_completed(pending, "/d", AttemptKind.POLL)
+        taken = strat.import_completed(pending, "/d", AttemptKind.ORDINARY)
         sonarr.on_queue = None
         sonarr.commands_return = [_RESCAN_BEFORE_ADD]
         clock.tick(30)
-        strat.import_completed(pending, "/d", AttemptKind.POLL)
+        strat.import_completed(pending, "/d", AttemptKind.ORDINARY)
 
         assert taken.deferral is Deferral.BUSY
         assert sonarr.execute_calls == []
