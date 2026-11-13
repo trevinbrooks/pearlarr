@@ -32,7 +32,7 @@ from pearlarr.grab_pipeline import (
     GrabRequest,
     HoldRow,
 )
-from pearlarr.grab_placement import PendingSeed
+from pearlarr.grab_placement import PendingImportUpdate
 from pearlarr.leg_state import NeedsActionKind, PerTitleState, RunContext
 from pearlarr.notify import Notifier
 from pearlarr.output import (
@@ -449,7 +449,7 @@ class TestReacquireRegistration:
         pipeline.cache_store.put_pending(Arr.SONARR, resident.infohash, resident.to_json())
         return resident
 
-    def _add(self, pipeline: GrabPipeline, seed: PendingSeed) -> list[ReleaseOutcome]:
+    def _add(self, pipeline: GrabPipeline, seed: PendingImportUpdate) -> list[ReleaseOutcome]:
         _, results = pipeline.add_torrent(
             grab_request(seadex_dict=one_release_dict(srg="NAN0", infohash="h1"), pending_seeds={"h1": seed}),
         )

@@ -25,8 +25,8 @@ from types import MappingProxyType
 from typing import Self
 
 from .arr_models import ParsedFileInfo, SonarrEpisode
-from .pending_import import EntryWindow
-from .placement_types import EpisodeIndex, PlacementBatch, SeedScope
+from .pending_import import TitleWindow
+from .placement_types import EpisodeIndex, GrabbingTitle, PlacementBatch
 from .placer import NameFacts
 from .releases import season_episode_key
 
@@ -178,7 +178,7 @@ class _Window:
     """`_marked_title` of each AniList title of the entry whose `_norm_title` isn't blank."""
 
     @classmethod
-    def of(cls, window: EntryWindow, index: EpisodeIndex) -> Self:
+    def of(cls, window: TitleWindow, index: EpisodeIndex) -> Self:
         """The window's ids as `index` knows them, in season and episode order, and the facts read off them."""
 
         by_id = index.by_id
@@ -318,7 +318,7 @@ def _rows(ids: Iterable[int | None]) -> tuple[int, ...] | None:
 
 
 @dataclass(frozen=True, slots=True, kw_only=True)
-class NumberingReader:
+class NumberingStep:
     """Reads a torrent's lone-number files against its windows on the grabbing entry's series.
 
     Built by `of` from the grab's scope and the torrent's window order; `read` proposes ids for one batch.
@@ -336,12 +336,12 @@ class NumberingReader:
     """Whether the union's regular rows all carry absolutes that strictly increase."""
     known_titles: frozenset[str]
     """`_norm_title` of the series title, of each alternate title, and of each window's AniList titles."""
-    aired_numbering: bool
+    aired_order: bool
     """Whether Sonarr numbers the series as aired. Off it the reader proposes nothing: the regular rows are then
     not the rows a group counts."""
 
     @classmethod
-    def of(cls, scope: SeedScope, windows: Iterable[EntryWindow]) -> Self:
+    def of(cls, scope: GrabbingTitle, windows: Iterable[TitleWindow]) -> Self:
         """The reader for one torrent: `windows` are the torrent's (`WindowOrder.windows`), any series."""
 
         index = scope.series
@@ -358,7 +358,7 @@ class NumberingReader:
             union_regs=tuple(ep.id for ep in union_regs),
             union_monotone=_absolutes_increase(union_regs),
             known_titles=frozenset(known - {""}),
-            aired_numbering=scope.aired_numbering,
+            aired_order=scope.aired_order,
         )
 
     def read(self, batch: PlacementBatch, facts: Mapping[str, NameFacts]) -> NumberingReading:
@@ -370,7 +370,7 @@ class NumberingReader:
         AniList's count. Two files proposed overlapping ids are both dropped: one id, one file.
         """
 
-        if not self.aired_numbering or not self.windows or not batch.all_parses_known:
+        if not self.aired_order or not self.windows or not batch.all_parses_known:
             return NO_PROPOSALS
         # A window whose rows aren't what AniList counts for the entry (Panty & Stocking: 13 double episodes on
         # AniList, 26 rows in Sonarr) isn't the thing the group counted, so no position in it means what it seems.

@@ -17,9 +17,9 @@ from pydantic import BaseModel, RootModel
 from pearlarr.arr_models import ParsedFileInfo, SonarrEpisode
 from pearlarr.boundary import Json
 from pearlarr.file_paths import normalize_basename
-from pearlarr.grab_placement import SeedFile, place_release
-from pearlarr.pending_import import EntryNames
-from pearlarr.placement_types import SeedScope, episode_index
+from pearlarr.grab_placement import ListedFile, place_release
+from pearlarr.pending_import import TitleNames
+from pearlarr.placement_types import GrabbingTitle, episode_index
 from pearlarr.releases import EpisodeRecord
 
 from .builders import new_torrent, seed_scope
@@ -117,11 +117,11 @@ CASES = ShapeCatalog.model_validate(json.loads(_CATALOG.read_text(encoding="utf-
 _PARAMS = [pytest.param(case, id=case.name) for case in CASES]
 
 
-def _names(case: ShapeCase) -> EntryNames:
-    return EntryNames(case.series_title, case.titles)
+def _names(case: ShapeCase) -> TitleNames:
+    return TitleNames(case.series_title, case.titles)
 
 
-def _scope(case: ShapeCase) -> SeedScope:
+def _scope(case: ShapeCase) -> GrabbingTitle:
     """The grab-time scope: the entry's slice of the whole-series index, and the names."""
 
     index = episode_index(case.episodes)
@@ -145,7 +145,7 @@ def test_the_grab_places_the_captured_shape(case: ShapeCase) -> None:
 
     scope = _scope(case)
     parsed = _parsed(case)
-    files = [SeedFile(name, size, parsed[name]) for size, name in enumerate(case.parses, start=1)]
+    files = [ListedFile(name, size, parsed[name]) for size, name in enumerate(case.parses, start=1)]
 
     placement = place_release(files, scope, new_torrent(scope))
 

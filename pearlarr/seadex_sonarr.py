@@ -12,7 +12,7 @@ from .grab_placement import (
     EntryFacts,
     EntryPlacements,
     IdentityOverride,
-    PendingSeed,
+    PendingImportUpdate,
     TorrentReads,
     build_pending_seeds,
     entry_hashes,
@@ -22,7 +22,7 @@ from .mappings import ExternalIds, MappingSource, TitleMapping
 from .output import hub_warn
 from .output.console_text import count_noun, pluralize
 from .pending_import import PendingImport
-from .placement_types import EpisodeIndex, Placement, SeedScope, episode_index
+from .placement_types import EpisodeIndex, GrabbingTitle, Placement, episode_index
 from .planner import get_episode_keys
 from .progress import ProgressSink
 from .protocols import ArrStrategy
@@ -130,7 +130,7 @@ class SonarrStrategy(ArrStrategy[SonarrItem]):
         # Episode-domain collaborator: owns the per-run episode cache + series-id
         # fingerprint and the (series, al_id, mapping) -> episodes resolution. Built
         # from the shared deps + this client. The strategy delegates get_items /
-        # prefetch_episodes / prefetch_orders to it, reads its series_fp for the parse
+        # prefetch_episodes / prefetch_orders to it, reads its series_hash for the parse
         # cache, and builds every episode index with its orders_for.
         self._episodes = SonarrEpisodes(deps, self.sonarr, self._services)
 
@@ -349,7 +349,7 @@ class SonarrStrategy(ArrStrategy[SonarrItem]):
         indexes = self._series_indexes(series_ids)
         resolved = self._services.listing_mappings(ExternalIds.of_series(item))
         listings = self._listings.read(sonarr_series_id, resolved)
-        scope = SeedScope(
+        scope = GrabbingTitle(
             al_id=al_id,
             series_id=sonarr_series_id,
             entry=episode_index(ep_list, self._episodes.orders_for(sonarr_series_id)),
@@ -357,11 +357,11 @@ class SonarrStrategy(ArrStrategy[SonarrItem]):
             names=title.names,
             episode_count=self._episodes.episode_count(al_id),
             alternate_titles=tuple(alt.title for alt in item.alternateTitles),
-            aired_numbering=self._episodes.numbers_aired(sonarr_series_id),
+            aired_order=self._episodes.aired_order(sonarr_series_id),
         )
         placed = EntryPlacements.place(
             scope,
-            self._parse.parsed_files(seadex_dict, series_fp=self._episodes.series_fp),
+            self._parse.parsed_files(seadex_dict, series_hash=self._episodes.series_hash),
             TorrentReads(stored, indexes, listings).known(seadex_dict),
         )
         placed.attach_placements(seadex_dict)
@@ -398,7 +398,7 @@ class SonarrStrategy(ArrStrategy[SonarrItem]):
         # (download + hash), carrying our own (basename -> Sonarr episode ids) map so the later manual import never
         # trusts Sonarr's blind parse. Gated on the engine's RESOLVED mode (cli > config), not the raw config, so
         # a CLI override agrees with the engine's persist/reconcile/blocking gates.
-        pending_seeds: Mapping[str, PendingSeed] = NO_SEEDS
+        pending_seeds: Mapping[str, PendingImportUpdate] = NO_SEEDS
         if waits_on_imports:
             pending_seeds = build_pending_seeds(
                 seadex_dict,
@@ -466,7 +466,7 @@ class SonarrStrategy(ArrStrategy[SonarrItem]):
             # names it once, in its hold.
             assignment = placement.assignment
             aside = ", ".join(_file_and_why(p) for p in assignment.excluded)
-            by_hand = ", ".join(_file_and_why(p) for p in assignment.placements if p.verdict.hand_import)
+            by_hand = ", ".join(_file_and_why(p) for p in assignment.placements if p.verdict.left_for_hand_import)
             hold = "" if placement.hold is None else f" (not grabbed: {placement.hold})"
             note_read_failed = not placement.inputs_read and placement.hold is not GrabHold.INPUT_UNREAD
             self.logger.debug(

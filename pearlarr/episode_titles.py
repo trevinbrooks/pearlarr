@@ -11,7 +11,7 @@ from types import MappingProxyType
 from typing import Self
 
 from .arr_models import SonarrEpisode
-from .release_names import NameRead, folded_words, is_quality_word, written_keys
+from .release_names import NameParts, folded_words, is_quality_word, written_keys
 from .releases import EpisodeKey
 
 # An episode title names a file from this many words past the series title and the labels below.
@@ -20,7 +20,7 @@ _MIN_TITLE_WORDS = 2
 _TITLE_LABELS = frozenset({"part", "episode", "ep", "special", "sp", "ova", "oad", "movie", "recap", "vol", "chapter"})
 
 
-def is_distinct_title(words: Iterable[str]) -> bool:
+def is_distinctive_title(words: Iterable[str]) -> bool:
     """Whether the words say enough to name an episode: `_MIN_TITLE_WORDS` that are neither a number nor a label."""
 
     return sum(not word.isdigit() and word not in _TITLE_LABELS for word in words) >= _MIN_TITLE_WORDS
@@ -29,7 +29,7 @@ def is_distinct_title(words: Iterable[str]) -> bool:
 def spells_title(words: Iterable[str]) -> bool:
     """Whether a name's words spell an episode title: `is_distinct_title` with the quality junk left out."""
 
-    return is_distinct_title(word for word in words if not is_quality_word(word))
+    return is_distinctive_title(word for word in words if not is_quality_word(word))
 
 
 def names_alone(words: Iterable[str]) -> bool:
@@ -173,7 +173,7 @@ class EpisodeTitles:
             for form in _title_forms(ep.title):
                 words = folded_words(form.text)
                 beyond = tuple(word for word in words if word not in series_words)
-                distinct = is_distinct_title(beyond)
+                distinct = is_distinctive_title(beyond)
                 # A title part too short to place a file ("Chapter 4: Home") is not run evidence either.
                 if words and (distinct or not form.part):
                     titled.append(
@@ -218,7 +218,7 @@ class EpisodeTitles:
             return None
         return equal
 
-    def keyed_by(self, read: NameRead, resolved: Collection[int]) -> frozenset[int]:
+    def keyed_by(self, read: NameParts, resolved: Collection[int]) -> frozenset[int]:
         """The episodes a name's numbers are a key for: Sonarr's read of it (`resolved`), and the keys it writes.
 
         "Show 2 - 05" and "Show.2.05" are keys for S02E05 (`written_keys`). "Show No. 8 - 05" counts as a key for

@@ -13,9 +13,9 @@ import concurrent.futures
 from collections.abc import Sequence
 
 from .arr_models import ParsedFileInfo
-from .grab_placement import SeedFile
+from .grab_placement import ListedFile
 from .output.console_text import count_noun
-from .parse_records import ParseWindow
+from .parse_records import ParseFreshness
 from .releases import SeadexDict
 from .run_services import LegDeps
 from .sonarr_client import AbstractSonarrClient
@@ -35,10 +35,10 @@ class SonarrParseCache:
         self.sonarr = sonarr
         self._config = deps.config
         self.cache_store = deps.cache_store
-        self.records = deps.parse_records
+        self.records = deps.parse_cache_rows
         self.logger = deps.logger
 
-    def _parse_for(self, f: str, *, window: ParseWindow) -> ParsedFileInfo | None:
+    def _parse_for(self, f: str, *, window: ParseFreshness) -> ParsedFileInfo | None:
         """One file's parse, read-through the cache: a fresh hit, else Sonarr's answer (cached), else None.
 
         None is a transport miss (not cached, re-queried on demand).
@@ -57,7 +57,7 @@ class SonarrParseCache:
             self.logger.debug(f"Sonarr could not parse episode for {f}")
         return info
 
-    def _warm_parse_cache(self, names: Sequence[str], *, window: ParseWindow) -> None:
+    def _warm_parse_cache(self, names: Sequence[str], *, window: ParseFreshness) -> None:
         """Concurrently parse the distinct `names` not yet cached, so the gather reads them as hits.
 
         Only `sonarr.parse` runs in the pool (cache reads and writes stay on this thread). No-op when sequential.
@@ -92,8 +92,8 @@ class SonarrParseCache:
         self,
         seadex_dict: SeadexDict,
         *,
-        series_fp: str,
-    ) -> dict[str, tuple[SeedFile, ...]]:
+        series_hash: str,
+    ) -> dict[str, tuple[ListedFile, ...]]:
         """Each url's video files with their sizes and Sonarr parses, keyed as the groups key their urls.
 
         A name goes to Sonarr once, within a run (the same file across overlapping groups) and across
@@ -102,7 +102,7 @@ class SonarrParseCache:
         """
 
         # Cutoffs computed once per call (not per file), all anchored to one instant.
-        window = ParseWindow.open(series_fp)
+        window = ParseFreshness.open(series_hash)
 
         # Evict parse records aged past that same cutoff so the block stops growing
         # without bound. Staged like the writes below (committed at the run's save
@@ -120,6 +120,6 @@ class SonarrParseCache:
         }
         self._warm_parse_cache(list(dict.fromkeys(f for files in listed.values() for f, _ in files)), window=window)
         return {
-            url: tuple(SeedFile(f, size, self._parse_for(f, window=window)) for f, size in files)
+            url: tuple(ListedFile(f, size, self._parse_for(f, window=window)) for f, size in files)
             for url, files in listed.items()
         }

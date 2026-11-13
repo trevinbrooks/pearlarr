@@ -9,7 +9,7 @@ import qbittorrentapi
 
 from .config import Arr
 from .output import CountsMark, SeverityCounts
-from .pending_import import EntryNames, PendingImport
+from .pending_import import PendingImport, TitleNames
 from .releases import GrabHold
 from .wait_types import ImportWaitMode, PendingState
 
@@ -31,7 +31,7 @@ class Title:
     al_id: int
     name: str
     """The AniList title, else the arr item's own title, else the id form."""
-    names: EntryNames = field(default_factory=EntryNames)
+    names: TitleNames = field(default_factory=TitleNames)
     """The arr title and every AniList title, the placement's tie-break between look-alike files."""
 
     @property
@@ -50,7 +50,7 @@ class Title:
 def resolve_entry_title(al_id: int, anilist_titles: tuple[str, ...], arr_title: str) -> Title:
     """The title ladder: the first AniList title, else the arr item's own title, else the id form."""
 
-    names = EntryNames(arr_title, tuple(title for title in anilist_titles if title))
+    names = TitleNames(arr_title, tuple(title for title in anilist_titles if title))
     named = names.anilist[0] if names.anilist else arr_title
     return Title(al_id=al_id, name=named or unresolved_label(al_id), names=names)
 

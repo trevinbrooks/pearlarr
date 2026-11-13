@@ -103,7 +103,7 @@ class OwnGroup:
 
 
 @dataclass(frozen=True, slots=True)
-class EntryNames:
+class TitleNames:
     """What names an entry: the arr series title and the AniList titles (English first, then romaji).
 
     The placement's tie-break between look-alike files scores on the words
@@ -119,14 +119,14 @@ class EntryNames:
         return {"series": self.series, "anilist": list(self.anilist)}
 
     @classmethod
-    def from_json(cls, raw: dict[str, Any]) -> "EntryNames":
+    def from_json(cls, raw: dict[str, Any]) -> "TitleNames":
         """Rebuild from the persisted dict (a record written before the names were kept reads empty)."""
 
         return cls(series=raw.get("series", ""), anilist=tuple(raw.get("anilist", [])))
 
 
 @dataclass(frozen=True, slots=True, kw_only=True)
-class EntryWindow:
+class TitleWindow:
     """One entry's episode window on a series: its episode ids and the names it goes by."""
 
     al_id: int
@@ -138,7 +138,7 @@ class EntryWindow:
     ordered_episode_ids: tuple[int, ...]
     """The window's episode ids in season order, each once. Empty when the entry's episode list came back empty."""
 
-    names: EntryNames
+    names: TitleNames
     """The entry's series and AniList titles (see `EntryNames`)."""
 
     ignored: bool = False
@@ -157,10 +157,10 @@ class EntryWindow:
         al_id: int,
         series_id: int,
         ep_list: Iterable[SonarrEpisode],
-        names: EntryNames,
+        names: TitleNames,
         ignored: bool = False,
         episode_count: int | None = None,
-    ) -> "EntryWindow":
+    ) -> "TitleWindow":
         """The window over `ep_list`: each episode with an id, once, in the list's order."""
 
         ids = tuple(dict.fromkeys(ep.id for ep in ep_list if ep.id))
@@ -205,7 +205,7 @@ class GuardFacts:
 
 
 @dataclass(frozen=True, slots=True, kw_only=True)
-class EntryClaim:
+class TitleClaim:
     """One AniList entry's claim on a torrent: the window its files are judged under and the slice it intends."""
 
     al_id: int
@@ -226,7 +226,7 @@ class EntryClaim:
     ordered_episode_ids: tuple[int, ...]
     """The entry's resolved episode ids in season order. Empty means unscoped: any id the series map holds."""
 
-    names: EntryNames
+    names: TitleNames
     """The series and AniList titles the placement breaks ties by (see `EntryNames`)."""
 
     preowned_episode_ids: tuple[int, ...]
@@ -248,7 +248,7 @@ class EntryClaim:
         return not self.ordered_episode_ids or ep_id in self.ordered_episode_ids
 
     @property
-    def window(self) -> EntryWindow:
+    def window(self) -> TitleWindow:
         """The claim as a window, the shape a listing holds.
 
         A claim with no ids gives a window with no ids, and `admits` still reads that claim as covering any id. The
@@ -256,7 +256,7 @@ class EntryClaim:
         count, so `ordered_windows` takes both from the listing.
         """
 
-        return EntryWindow(
+        return TitleWindow(
             al_id=self.al_id, series_id=self.series_id, ordered_episode_ids=self.ordered_episode_ids, names=self.names
         )
 
@@ -276,7 +276,7 @@ class EntryClaim:
         }
 
     @classmethod
-    def from_json(cls, raw: dict[str, Any], *, guards: Mapping[int, GuardFacts]) -> "EntryClaim":
+    def from_json(cls, raw: dict[str, Any], *, guards: Mapping[int, GuardFacts]) -> "TitleClaim":
         """Rebuild a claim from its persisted dict, fed the arr's guard rows by entry."""
 
         al_id = raw.get("al_id", 0)
@@ -287,7 +287,7 @@ class EntryClaim:
             coverage=raw.get("coverage"),
             url=raw.get("url"),
             ordered_episode_ids=tuple(raw.get("ordered_episode_ids", [])),
-            names=EntryNames.from_json(raw.get("names", {})),
+            names=TitleNames.from_json(raw.get("names", {})),
             preowned_episode_ids=tuple(raw.get("preowned_episode_ids", [])),
             slice_coverage=raw.get("slice_coverage"),
             guards=guards.get(al_id, GuardFacts()),
@@ -324,7 +324,7 @@ class PendingImport:
     history placed for a download no scan saw. Folded as the record is built (`_normalized_map`) and wrapped
     read-only."""
 
-    claims: tuple[EntryClaim, ...]
+    claims: tuple[TitleClaim, ...]
     """Every entry's claim on the torrent, in accretion order."""
 
     excluded_files: tuple[str, ...] = ()
@@ -393,7 +393,7 @@ class PendingImport:
 
         return tuple(dict.fromkeys(claim.series_id for claim in self.claims))
 
-    def claim_for(self, series_id: int) -> EntryClaim:
+    def claim_for(self, series_id: int) -> TitleClaim:
         """The first claim on `series_id` (the caller reads a record stored under that series)."""
 
         claim = next((claim for claim in self.claims if claim.series_id == series_id), None)
@@ -497,7 +497,7 @@ class PendingImport:
         )
         return self._or_self(joined)
 
-    def with_claim(self, claim: EntryClaim) -> "PendingImport":
+    def with_claim(self, claim: TitleClaim) -> "PendingImport":
         """The record with `claim` joined and its cleanup flag cleared (new files to import make it active again).
 
         A re-flag by an entry already claiming replaces its claim, keeping the stored claim's preowned ids: the
@@ -546,7 +546,7 @@ class PendingImport:
             seadex_files=seadex_files,
             added_at=added_at_of(raw),
             file_episode_map=mapped,
-            claims=tuple(EntryClaim.from_json(claim, guards=guards) for claim in raw.get("claims", [])),
+            claims=tuple(TitleClaim.from_json(claim, guards=guards) for claim in raw.get("claims", [])),
             excluded_files=excluded,
             release_sizes=tuple(raw.get("release_sizes", [])),
             awaiting_cleanup=is_awaiting_cleanup(raw),

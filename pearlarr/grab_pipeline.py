@@ -11,7 +11,7 @@ from seadex import EntryRecord
 from . import coverage as _coverage
 from .cache import CachedTitleUpdate
 from .config import PrivateReleaseAction
-from .grab_placement import PendingSeed
+from .grab_placement import PendingImportUpdate
 from .leg_state import GrabbedRow, NeedsActionKind, NeedsActionRow, RunContext, is_dry_run
 from .notify import GrabNotice
 from .output import Accent, GrabFailed, ReleaseSkipped, SkipReason, StyledValue
@@ -26,7 +26,7 @@ if TYPE_CHECKING:
     from .run_services import LegDeps
 
 
-NO_SEEDS: Mapping[str, PendingSeed] = MappingProxyType({})
+NO_SEEDS: Mapping[str, PendingImportUpdate] = MappingProxyType({})
 """No seeds: the strategies build them only when a record can be persisted (the wait mode is on)."""
 
 
@@ -88,7 +88,7 @@ class GrabRequest:
     """The existing arr release groups this grab is replacing (the notifier's "Replacing" field)."""
     coverage: str = ""
     """Sonarr's episode coverage string ("" for Radarr)."""
-    pending_seeds: Mapping[str, PendingSeed] = NO_SEEDS
+    pending_seeds: Mapping[str, PendingImportUpdate] = NO_SEEDS
     """One seed per flagged torrent with a video file, keyed by its hash in qBittorrent (`NO_SEEDS` when the wait
     mode is off)."""
     input_missing_groups: tuple[str, ...] = ()
@@ -278,7 +278,7 @@ class GrabPipeline:
         self._register_pending_import(release, req, result)
         return ReleaseOutcome(outcome=result.outcome, name=result.name, group=srg)
 
-    def _seed_for(self, release: Release, req: GrabRequest) -> PendingSeed | None:
+    def _seed_for(self, release: Release, req: GrabRequest) -> PendingImportUpdate | None:
         """The url's seed (the strategy seeds nothing when the wait mode is off), or None on a preview or no hash."""
 
         qbit_hash = release.qbit_hash

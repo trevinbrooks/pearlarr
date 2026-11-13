@@ -5,7 +5,7 @@ from seadex import EntryRecord, Tag, TorrentRecord, Tracker
 
 from pearlarr.anibridge import SpecialAliasing
 from pearlarr.listing_fold import EntryListing, fold_listings, size_identities
-from pearlarr.pending_import import EntryWindow
+from pearlarr.pending_import import TitleWindow
 from pearlarr.placement_types import EMPTY_LISTING
 
 from .builders import entry_window, make_entry_record, make_torrent_record, torrent_listing
@@ -27,7 +27,7 @@ def _entry(al_id: int, *torrents: TorrentRecord) -> EntryRecord:
     return make_entry_record(anilist_id=al_id, torrents=torrents)
 
 
-def _window(record: EntryRecord, *ids: int) -> EntryWindow:
+def _window(record: EntryRecord, *ids: int) -> TitleWindow:
     """The entry's window over `ids`."""
 
     return entry_window(record.anilist_id, ids)
@@ -67,7 +67,7 @@ class TestFoldListings:
 
         listing = read.listing(_H1)
         assert listing is not None
-        assert listing.entries == (_window(twice, 501), _window(later, 504))
+        assert listing.windows == (_window(twice, 501), _window(later, 504))
 
     def test_an_unread_window_marks_its_hashes_unread(self) -> None:
         both = _entry(2, _torrent(_H1), _torrent(_H2))

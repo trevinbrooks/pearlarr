@@ -9,16 +9,16 @@ from dataclasses import dataclass, replace
 from typing import Self
 
 from ..episode_titles import EpisodeTitles, TitleLead
-from ..parse_reading import Reading
-from ..placement_types import PlacementBatch, TargetScope
-from ..release_names import NameRead, TitleGround, is_extras_name, read_names, whole_words
+from ..parse_reading import ParsedEpisodes
+from ..placement_types import PlacementBatch, PlacementTarget
+from ..release_names import NameParts, TitleGround, is_extras_name, split_names, whole_words
 
 
 @dataclass(frozen=True, slots=True)
 class NameTitle:
     """One name read on its own and against the episode titles."""
 
-    read: NameRead
+    read: NameParts
     """The name read on its own: stem, run membership, title words, numbers."""
     titled_as: int | None
     """The episode the name is titled as: its specific title, carried by no other file of the torrent, else None."""
@@ -28,7 +28,7 @@ class NameTitle:
     """Whether the name is an extra: set aside, and left out of every count."""
 
 
-def _title_lead(episodes: EpisodeTitles, read: NameRead, resolved: Collection[int]) -> TitleLead:
+def _title_lead(episodes: EpisodeTitles, read: NameParts, resolved: Collection[int]) -> TitleLead:
     """Read one name against the episode titles: the tail behind its count, else the whole name.
 
     A counted name is read whole too, its season tag left out: "Show - 17 Steps 2" is titled "17 Steps 2". A name
@@ -61,7 +61,7 @@ class TorrentNames:
     """The episode titles the names were read against."""
 
     @classmethod
-    def of(cls, batch: PlacementBatch, scope: TargetScope, readings: Mapping[str, Reading]) -> Self:
+    def of(cls, batch: PlacementBatch, scope: PlacementTarget, readings: Mapping[str, ParsedEpisodes]) -> Self:
         """Read every name, seeded and gone ones included.
 
         Two versions of one file carrying the same title still count as titled as it. A file whose own key Sonarr
@@ -70,7 +70,7 @@ class TorrentNames:
 
         ground = TitleGround.of(scope.names)
         episode_titles = scope.series.titles(ground.series_words)
-        reads = read_names(batch.torrent_names, ground)
+        reads = split_names(batch.torrent_names, ground)
         leads = {name: _title_lead(episode_titles, read, readings[name].resolved) for name, read in reads.items()}
         carriers = Counter(words for _file, words in {(reads[name].file, lead.words) for name, lead in leads.items()})
         by_name: dict[str, NameTitle] = {}

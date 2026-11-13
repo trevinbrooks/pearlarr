@@ -160,7 +160,7 @@ class SonarrEpisodes:
         self._picks_logged: set[int] = set()
 
     @property
-    def series_fp(self) -> str:
+    def series_hash(self) -> str:
         """The current run's series-id fingerprint (read by the parse cache)."""
 
         return self._series_fp
@@ -315,14 +315,14 @@ class SonarrEpisodes:
         if ordering is None:
             # Every index reads Sonarr's rows as aired, so another order can't be read onto a series numbered by
             # one of them yet.
-            if self.numbers_aired(series_id):
+            if self.aired_order(series_id):
                 ordering = SeriesOrdering(self._skyhook.other_orders(self._order_facts[series_id].tvdb_id), None)
             else:
                 ordering = NO_ORDERING
             self._orderings[series_id] = ordering
         return ordering
 
-    def numbers_aired(self, series_id: int) -> bool:
+    def aired_order(self, series_id: int) -> bool:
         """Whether Sonarr numbers the series by TVDB's aired order. False for a series this run didn't read."""
 
         facts = self._order_facts.get(series_id)

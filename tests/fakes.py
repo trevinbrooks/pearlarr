@@ -604,7 +604,7 @@ class ScriptedEpisodes:
     AniList id, None for an id left out.
     """
 
-    series_fp = "fp"
+    series_hash = "fp"
 
     def __init__(
         self,
@@ -651,7 +651,7 @@ class ScriptedEpisodes:
         del series_id
         return NO_ORDERING
 
-    def numbers_aired(self, series_id: int) -> bool:
+    def aired_order(self, series_id: int) -> bool:
         """Sonarr numbers every series as aired."""
 
         del series_id

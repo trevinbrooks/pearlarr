@@ -8,7 +8,7 @@ from types import MappingProxyType
 from typing import NamedTuple, Self
 
 from .arr_models import SonarrEpisodeFile
-from .pending_import import EntryClaim, FileEpisodeMap, GuardFacts, OwnGroup, PendingImport, sizes_by_episode
+from .pending_import import FileEpisodeMap, GuardFacts, OwnGroup, PendingImport, TitleClaim, sizes_by_episode
 from .placement_types import EpisodeIndex
 from .releases import normalize_group, normalize_rg
 
@@ -244,11 +244,11 @@ class EpisodeSnapshot(NamedTuple):
 class Route(NamedTuple):
     """Where an episode id is judged: the claim whose guards apply, if one, and the series whose index holds it."""
 
-    claim: EntryClaim | None
+    claim: TitleClaim | None
     series_id: int | None
 
 
-def lone_unscoped_claims(claims: Sequence[EntryClaim]) -> dict[int, EntryClaim]:
+def lone_unscoped_claims(claims: Sequence[TitleClaim]) -> dict[int, TitleClaim]:
     """The one unscoped claim of each series that has exactly one: it judges the series' ids outside every window."""
 
     unscoped_on = Counter(claim.series_id for claim in claims if not claim.ordered_episode_ids)
@@ -272,7 +272,7 @@ class RecordSnapshot:
     by_claim: Mapping[int, EpisodeSnapshot]
     """Each claim's snapshot by AniList id: its series' same index under the claim's OWN guard evidence."""
 
-    lone_unscoped: Mapping[int, EntryClaim] = field(init=False)
+    lone_unscoped: Mapping[int, TitleClaim] = field(init=False)
     """Each series' one unscoped claim where it has exactly one (see `lone_unscoped_claims`)."""
 
     def __post_init__(self) -> None:

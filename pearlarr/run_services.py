@@ -103,7 +103,7 @@ class LegDeps:
     logger: logging.Logger
     seadex: SeaDexSource
     cache_store: AbstractCacheStore
-    parse_records: ParseRecords
+    parse_cache_rows: ParseRecords
     """The Sonarr parse-cache leaf over `cache_store`, read by the sweep's parse step."""
     anilist: AniListGateway
     skyhook: SkyHookGateway
@@ -239,7 +239,7 @@ class LegDeps:
             categories=categories,
             clock=SystemClock(),
             web=web,
-            parse_records=ParseRecords(cache_store),
+            parse_cache_rows=ParseRecords(cache_store),
             http=http,
             qbit=qbit,
             mappings=mappings,

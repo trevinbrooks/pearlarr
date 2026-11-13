@@ -5,7 +5,7 @@ off each name of the torrent before the first pass (its title, whether its parse
 is an extra, whether its number is its own title's).
 """
 
-from ._passes import PlacerResult, assign_episode_ids
+from ._passes import PlacerResult, place_batch
 from ._state import NameFacts
 
-__all__ = ["NameFacts", "PlacerResult", "assign_episode_ids"]
+__all__ = ["NameFacts", "PlacerResult", "place_batch"]
