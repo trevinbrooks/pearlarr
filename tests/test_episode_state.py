@@ -17,7 +17,7 @@ from pearlarr.pending_import import OwnedAtGrab, TorrentGroup
 from pearlarr.placement_types import episode_index
 from pearlarr.releases import normalize_group
 
-from .builders import entry_claim, episode_snapshot, pending_import, sonarr_ep, target_statuses
+from .builders import episode_snapshot, episode_statuses, pending_import, sonarr_ep, title_claim
 
 
 class TestEpisodeFileStatuses:
@@ -190,18 +190,18 @@ class TestEpisodeFileStatuses:
         assert self._guarded().torrent_group == TorrentGroup("-SubGroup-", (1000,))
 
     def test_a_misplaced_file_is_not_done(self) -> None:
-        assert target_statuses({1: EpisodeFileStatus.MISPLACED}).all_trusted() is False
+        assert episode_statuses({1: EpisodeFileStatus.MISPLACED}).all_trusted() is False
 
     def test_all_done_only_when_all_recommended(self) -> None:
-        rec = target_statuses({1: EpisodeFileStatus.TRUSTED, 2: EpisodeFileStatus.TRUSTED})
-        mixed = target_statuses({1: EpisodeFileStatus.TRUSTED, 2: EpisodeFileStatus.OTHER_GROUP})
+        rec = episode_statuses({1: EpisodeFileStatus.TRUSTED, 2: EpisodeFileStatus.TRUSTED})
+        mixed = episode_statuses({1: EpisodeFileStatus.TRUSTED, 2: EpisodeFileStatus.OTHER_GROUP})
         assert rec.all_trusted() is True
         assert mixed.all_trusted() is False
-        assert target_statuses({}).all_trusted() is False
+        assert episode_statuses({}).all_trusted() is False
 
     def test_filled_by_hand_needs_a_target(self) -> None:
-        assert target_statuses({1: EpisodeFileStatus.TRUSTED}).all_done() is True
-        assert target_statuses({}).all_done() is False
+        assert episode_statuses({1: EpisodeFileStatus.TRUSTED}).all_done() is True
+        assert episode_statuses({}).all_done() is False
 
     def test_unfilled_splits_the_targets_left_by_whether_they_hold_a_file(self) -> None:
         statuses = EpisodeStatuses(
@@ -219,7 +219,7 @@ class TestEpisodeFileStatuses:
         assert statuses.still_needed() == StillNeeded(missing=(401,), untrusted=(403, 404))
 
     def test_needing_import_excludes_only_recommended(self) -> None:
-        statuses = target_statuses(
+        statuses = episode_statuses(
             {
                 1: EpisodeFileStatus.ABSENT,
                 2: EpisodeFileStatus.TRUSTED,
@@ -231,14 +231,14 @@ class TestEpisodeFileStatuses:
         assert statuses.needing_import() == {1, 3, 4, 5}
 
     def test_import_ids_takes_our_copy_along_with_a_needing_id_in_order(self) -> None:
-        statuses = target_statuses(
+        statuses = episode_statuses(
             {1: EpisodeFileStatus.ABSENT, 2: EpisodeFileStatus.TRUSTED, 3: EpisodeFileStatus.TRUSTED},
             frozenset({2}),
         )
         assert statuses.import_ids([2, 1, 3]) == (2, 1)
 
     def test_import_ids_is_empty_when_no_id_needs_the_file(self) -> None:
-        statuses = target_statuses({1: EpisodeFileStatus.TRUSTED, 2: EpisodeFileStatus.TRUSTED}, frozenset({1, 2}))
+        statuses = episode_statuses({1: EpisodeFileStatus.TRUSTED, 2: EpisodeFileStatus.TRUSTED}, frozenset({1, 2}))
         assert statuses.import_ids([1, 2]) == ()
 
     def test_holding_own_copy_is_the_targets_with_a_file_at_one_of_our_sizes(self) -> None:
@@ -282,7 +282,7 @@ class TestRecordSnapshot:
     @staticmethod
     def _snapshot(by_claim: dict[int, EpisodeSnapshot] | None = None) -> ImportSnapshot:
         pending = pending_import(
-            claims=(entry_claim(al_id=1, series_id=7, ordered_episode_ids=[1]), entry_claim(al_id=2, series_id=8)),
+            claims=(title_claim(al_id=1, series_id=7, ordered_episode_ids=[1]), title_claim(al_id=2, series_id=8)),
         )
         first = episode_snapshot(
             episodes=episode_index([sonarr_ep(1, 1, ep_id=1, episode_file_id=10, release_group="SubGroup")]),
@@ -358,8 +358,8 @@ class TestRecordSnapshot:
     def test_route_names_the_first_scoped_claim_holding_the_id(self) -> None:
         # Two windows hold id 2: the earlier claim judges it, as the placer's first window decides, so the
         # later claim's preowned 2 does not read as preowned. Id 3 holds one claim, and 9 holds none.
-        first = entry_claim(al_id=1, ordered_episode_ids=[1, 2])
-        second = entry_claim(al_id=2, ordered_episode_ids=[2, 3], preowned_episode_ids=[2, 3])
+        first = title_claim(al_id=1, ordered_episode_ids=[1, 2])
+        second = title_claim(al_id=2, ordered_episode_ids=[2, 3], preowned_episode_ids=[2, 3])
         snapshot = ImportSnapshot(pending_import(claims=(first, second)), {7: _series(1, 2, 3)}, {})
 
         assert snapshot.route(2) == Route(first, 7)
@@ -370,19 +370,19 @@ class TestRecordSnapshot:
     def test_route_judges_a_series_under_its_lone_unscoped_claim(self) -> None:
         # One unscoped claim on series 7 judges every id its index holds. Two unscoped claims on series 8
         # merge: their ids route to the series alone, and preowned reads off either of them.
-        lone = entry_claim(al_id=1)
-        pair = (entry_claim(al_id=2, series_id=8), entry_claim(al_id=3, series_id=8, preowned_episode_ids=[5]))
-        snapshot = ImportSnapshot(pending_import(claims=(lone, *pair)), {7: _series(1), 8: _series(5)}, {})
+        only_claim = title_claim(al_id=1)
+        pair = (title_claim(al_id=2, series_id=8), title_claim(al_id=3, series_id=8, preowned_episode_ids=[5]))
+        snapshot = ImportSnapshot(pending_import(claims=(only_claim, *pair)), {7: _series(1), 8: _series(5)}, {})
 
-        assert snapshot.route(1) == Route(lone, 7)
+        assert snapshot.route(1) == Route(only_claim, 7)
         assert snapshot.route(5) == Route(None, 8)
         assert snapshot.preowned(5) is True
 
     def test_an_overlapped_id_is_classified_under_the_first_claims_evidence(self) -> None:
         # A's plan judged group G stale and B's picks carry it. Both windows hold id 2: judged under A, the
         # G file on it still needs importing, where B's own snapshot calls its id 3 done.
-        first = entry_claim(al_id=1, ordered_episode_ids=[1, 2])
-        second = entry_claim(al_id=2, ordered_episode_ids=[2, 3])
+        first = title_claim(al_id=1, ordered_episode_ids=[1, 2])
+        second = title_claim(al_id=2, ordered_episode_ids=[2, 3])
         by_claim = {1: _series(1, 2, 3, group="G"), 2: _series(1, 2, 3, group="G", trusted={"g": None})}
         snapshot = ImportSnapshot(pending_import(claims=(first, second)), {7: _series(1, 2, 3, group="G")}, by_claim)
 

@@ -67,9 +67,9 @@ from .builders import (
     ScriptedAniListClient,
     make_anilist_gateway,
     make_entry_record,
+    make_release,
     pending_import,
     rg_group,
-    url_item,
 )
 from .fakes import SCAN_EVENT_TYPES, scan_lines_from_events
 
@@ -237,10 +237,12 @@ CACHED_BARE_LINES: tuple[Line, ...] = (
 
 # --- titled entries with detail continuations (outage skip / no entry) ----------------
 
-OUTAGE_ROW = TitleRow(state=TitleState.SKIPPED, label="Cached Show")
-OUTAGE_ANILIST_DETAIL = TitleDetail(label="anilist", value=StyledValue("1"))
-OUTAGE_STATUS_DETAIL = TitleDetail(label="status", value=StyledValue("lookup skipped (SeaDex unreachable)", Accent.DIM))
-OUTAGE_LINES: tuple[Line, ...] = (
+UNREACHABLE_ROW = TitleRow(state=TitleState.SKIPPED, label="Cached Show")
+UNREACHABLE_ANILIST_DETAIL = TitleDetail(label="anilist", value=StyledValue("1"))
+UNREACHABLE_STATUS_DETAIL = TitleDetail(
+    label="status", value=StyledValue("lookup skipped (SeaDex unreachable)", Accent.DIM)
+)
+UNREACHABLE_LINES: tuple[Line, ...] = (
     _blank(),
     _styled("  skipped     Cached Show", "grey50"),
     # The anilist id repeats on its own detail row under any real title, the
@@ -271,14 +273,14 @@ NO_ENTRY_UNRESOLVED_LINES: tuple[Line, ...] = (
 
 # --- carried-over pending snapshots ----------------------------------------------------
 
-_PENDING_KWARGS = {"title": "My Show", "window_coverage": "S01 E01-E13", "url": "https://releases.moe/1"}
+_PENDING_IMPORT_KWARGS = {"title": "My Show", "window_coverage": "S01 E01-E13", "url": "https://releases.moe/1"}
 
 
-def _pending_header(state: TitleState) -> TitleHeader:
+def _pending_import_header(state: TitleState) -> TitleHeader:
     return TitleHeader(state=state, title="My Show · SubGroup", coverage="S01 E01-E13", url="https://releases.moe/1")
 
 
-def _pending_lines(row: Line) -> tuple[Line, ...]:
+def _pending_import_lines(row: Line) -> tuple[Line, ...]:
     return (
         _blank(),
         row,
@@ -287,14 +289,14 @@ def _pending_lines(row: Line) -> tuple[Line, ...]:
     )
 
 
-PENDING_QUEUED = _pending_header(TitleState.QUEUED)
-PENDING_QUEUED_LINES = _pending_lines(_styled("  queued      My Show · SubGroup", "grey50"))
+PENDING_IMPORT_QUEUED = _pending_import_header(TitleState.QUEUED)
+PENDING_QUEUED_LINES = _pending_import_lines(_styled("  queued      My Show · SubGroup", "grey50"))
 
-PENDING_DOWNLOADED = _pending_header(TitleState.DOWNLOADED)
-PENDING_DOWNLOADED_LINES = _pending_lines(_styled("  downloaded  My Show · SubGroup", "grey50"))
+PENDING_IMPORT_DOWNLOADED = _pending_import_header(TitleState.DOWNLOADED)
+PENDING_DOWNLOADED_LINES = _pending_import_lines(_styled("  downloaded  My Show · SubGroup", "grey50"))
 
-PENDING_IMPORTED = _pending_header(TitleState.IMPORTED)
-PENDING_IMPORTED_LINES = _pending_lines(_styled("  imported    My Show · SubGroup", "green"))
+PENDING_IMPORT_IMPORTED = _pending_import_header(TitleState.IMPORTED)
+PENDING_IMPORTED_LINES = _pending_import_lines(_styled("  imported    My Show · SubGroup", "green"))
 
 # --- entry details -----------------------------------------------------------------------
 
@@ -438,7 +440,7 @@ PRIVATE_ONLY_TIP = (
     "  Tip: manually grab private releases or set private_releases: fallback to automatically grab public alternatives."
 )
 NO_FALLBACK_TIP = "  Tip: no public alternative exists yet; the title is re-checked every run until one appears."
-STALE_TIP = (
+OUTDATED_TIP = (
     "  Tip: your copies of these releases are outdated (their file sizes no longer match); "
     "update them from their private tracker, or delete the outdated files to let the "
     "public fallback stand in."
@@ -637,7 +639,7 @@ SUMMARY_DRY_HAS_CLIENT_LINES: tuple[Line, ...] = (
 )
 
 
-def _preview_stats() -> ArrRunStats:
+def _dry_run_stats() -> ArrRunStats:
     return ArrRunStats(
         checked=1,
         added=[
@@ -657,7 +659,7 @@ SUMMARY_DRY_NO_CLIENT = ArrRunSummaryReady(
         arr=Arr.RADARR,
         dry_run_note="qBittorrent not configured; nothing grabbed",
         added_count=1,
-        tally=ArrRunTally.from_stats(_preview_stats()),
+        tally=ArrRunTally.from_stats(_dry_run_stats()),
         wait_mode_on=False,
         warnings=0,
         errors=0,
@@ -772,7 +774,7 @@ SUMMARY_WAIT_OFF_LINES: tuple[Line, ...] = (
     _srow("  up to date   : 5", "up to date", "5"),
     _srow("  unchanged    : 0", "unchanged", "0", style="grey50"),
     _srow("  issues       : 0 warnings, 0 errors", "issues", "0 warnings, 0 errors"),
-    _styled(STALE_TIP, "grey50"),
+    _styled(OUTDATED_TIP, "grey50"),
     _RULE_LINE,
 )
 
@@ -893,7 +895,7 @@ class TestEntryHeaderParity:
 
     def test_pending_snapshots(self) -> None:
         harness = _Harness()
-        pending = pending_import(**_PENDING_KWARGS)
+        pending = pending_import(**_PENDING_IMPORT_KWARGS)
         for state, expected in (
             (PendingImportState.DOWNLOADING, PENDING_QUEUED_LINES),
             (PendingImportState.DOWNLOADED, PENDING_DOWNLOADED_LINES),
@@ -930,7 +932,7 @@ class TestTitledEntryParity:
     def test_outage_skip_with_cached_name(self) -> None:
         harness = _Harness(store=_seeded_store())
         harness.reporter.log_seadex_unreachable(ArrRunState(arr=Arr.SONARR), 1)
-        assert harness.lines() == OUTAGE_LINES
+        assert harness.lines() == UNREACHABLE_LINES
 
 
 class TestDetailParity:
@@ -1175,8 +1177,8 @@ class TestActionBlockParity:
     """
 
     _SEADEX_DICT: ClassVar[SeadexDict] = {
-        "GroupA": rg_group({"https://nyaa.si/view/1": url_item(download=True)}, tags=frozenset({_HDR_TAG})),
-        "GroupB": rg_group({"https://nyaa.si/view/2": url_item(download=True)}),
+        "GroupA": rg_group({"https://nyaa.si/view/1": make_release(download=True)}, tags=frozenset({_HDR_TAG})),
+        "GroupB": rg_group({"https://nyaa.si/view/2": make_release(download=True)}),
     }
     _FRESH_RESULTS: ClassVar[list[GrabResult]] = [
         GrabResult(outcome=AddStatus.ADDED, name="[GroupA] Frieren S01 1080p.mkv", group="GroupA"),
@@ -1200,7 +1202,7 @@ class TestActionBlockParity:
     def test_already_downloading_with_monitor(self) -> None:
         harness = _Harness()
         seadex_dict = {
-            "GroupA": rg_group({"https://nyaa.si/view/1": url_item(download=True)}, tags=frozenset({_HDR_TAG})),
+            "GroupA": rg_group({"https://nyaa.si/view/1": make_release(download=True)}, tags=frozenset({_HDR_TAG})),
         }
         results = [
             GrabResult(outcome=AddStatus.ALREADY_IN_QBIT, name="[GroupA] Frieren S01 1080p.mkv", group="GroupA"),
@@ -1273,7 +1275,7 @@ class TestRunSummaryParity:
         assert _summary_lines(state, dry_run=True, has_client=True) == SUMMARY_DRY_HAS_CLIENT_LINES
 
     def test_dry_run_without_client(self) -> None:
-        state = ArrRunState(arr=Arr.RADARR, stats=_preview_stats())
+        state = ArrRunState(arr=Arr.RADARR, stats=_dry_run_stats())
         state.torrents_added = 1
         assert _summary_lines(state, dry_run=True, has_client=False) == SUMMARY_DRY_NO_CLIENT_LINES
 

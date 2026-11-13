@@ -22,7 +22,7 @@ from pearlarr.placement_types import (
 from pearlarr.releases import SONARR_MISSING_KEY, EpisodeKey
 from pearlarr.tvdb_orders import IndexOrders, OrderRow
 
-from .builders import entry_window, parsed_info, series_index, sonarr_ep, torrent_listing
+from .builders import parsed_info, series_index, sonarr_ep, title_window, torrent_listing
 
 
 class TestEpisodeIndex:
@@ -213,7 +213,7 @@ class TestTargetScope:
         assert PlacementTarget([], self._SERIES).using([12, 21]).used == {12, 21}
 
     def test_using_keeps_the_listing(self) -> None:
-        listing = SeadexEvidence(torrent_listing(entry_window(1, (11, 12))), {"a.mkv": 11})
+        listing = SeadexEvidence(torrent_listing(title_window(1, (11, 12))), {"a.mkv": 11})
         target = PlacementTarget([11], self._SERIES, seadex=listing)
 
         assert target.using([12]).seadex == listing
@@ -234,13 +234,13 @@ class TestTorrentListing:
     """The listing's windows, one per AniList id in id order, and its aliases copied from the caller."""
 
     def test_two_windows_under_one_anilist_id_keep_the_first(self) -> None:
-        first, second, other = entry_window(1, (501,)), entry_window(1, (502,)), entry_window(2, (503,))
+        first, second, other = title_window(1, (501,)), title_window(1, (502,)), title_window(2, (503,))
 
         assert torrent_listing(other, first, second).windows == (first, other)
 
     def test_a_change_to_the_callers_dict_leaves_the_listing_as_it_was(self) -> None:
         aliases = {13: 12}
-        listing = torrent_listing(entry_window(1, (501,)), aliases=aliases)
+        listing = torrent_listing(title_window(1, (501,)), aliases=aliases)
 
         aliases[14] = 13
 
@@ -251,16 +251,16 @@ class TestListingEvidence:
     """The identified names are copied from the caller's map and wrapped read-only."""
 
     def test_the_identified_names_are_copied_and_read_only(self) -> None:
-        identified = {"a.mkv": 11}
-        evidence = SeadexEvidence(EMPTY_LISTING, identified)
-        identified["b.mkv"] = 12
+        size_matches = {"a.mkv": 11}
+        evidence = SeadexEvidence(EMPTY_LISTING, size_matches)
+        size_matches["b.mkv"] = 12
 
         assert evidence.size_matches == {"a.mkv": 11}
         with pytest.raises(TypeError):
             cast("dict[str, int]", evidence.size_matches)["c.mkv"] = 13
 
     def test_the_ids_and_aliases_come_from_the_listing(self) -> None:
-        listing = torrent_listing(entry_window(1, (501,)), aliases={13: 12})
+        listing = torrent_listing(title_window(1, (501,)), aliases={13: 12})
 
         evidence = SeadexEvidence(listing)
 
@@ -385,25 +385,25 @@ class TestSpecialsListing:
 
     _SERIES = series_index({EpisodeKey(0, n): 500 + n for n in range(1, 5)} | {EpisodeKey(1, 1): 11})
 
-    def _scope(self, resolved: list[int], listed: tuple[int, ...] = ()) -> PlacementTarget:
-        return PlacementTarget(resolved, self._SERIES, seadex=SeadexEvidence(torrent_listing(entry_window(1, listed))))
+    def _target(self, resolved: list[int], listed: tuple[int, ...] = ()) -> PlacementTarget:
+        return PlacementTarget(resolved, self._SERIES, seadex=SeadexEvidence(torrent_listing(title_window(1, listed))))
 
     def test_a_listing_covering_a_window_of_specials_judges(self) -> None:
-        assert self._scope([502, 504], (502, 503, 504)).specials_listing() == {502, 503, 504}
+        assert self._target([502, 504], (502, 503, 504)).specials_listing() == {502, 503, 504}
 
     def test_a_listing_leaving_a_window_special_out_stands_down(self) -> None:
-        assert self._scope([501, 502], (502, 504)).specials_listing() is None
+        assert self._target([501, 502], (502, 504)).specials_listing() is None
 
     def test_a_listing_with_a_seasoned_id_stands_down(self) -> None:
-        assert self._scope([501], (501, 11)).specials_listing() is None
+        assert self._target([501], (501, 11)).specials_listing() is None
 
     def test_no_listing_stands_down(self) -> None:
-        assert self._scope([501]).specials_listing() is None
+        assert self._target([501]).specials_listing() is None
 
     def test_an_unscoped_window_stands_down(self) -> None:
-        assert self._scope([], (501,)).specials_listing() is None
+        assert self._target([], (501,)).specials_listing() is None
 
     def test_a_specials_window_is_scoped_and_specials_only(self) -> None:
-        assert self._scope([501, 502]).specials_window
-        assert not self._scope([501, 11]).specials_window
-        assert not self._scope([]).specials_window
+        assert self._target([501, 502]).specials_window
+        assert not self._target([501, 11]).specials_window
+        assert not self._target([]).specials_window

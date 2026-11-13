@@ -177,49 +177,49 @@ def test_late_step_calls_demote_to_attributed_diagnostics() -> None:
 def test_entry_opens_with_its_header_stamped() -> None:
     factory, recorder, _ = _factory()
 
-    entry = factory.title(TitleHeader(state=TitleState.CHECKING, title="Frieren", al_id=154587))
+    title_scope = factory.title(TitleHeader(state=TitleState.CHECKING, title="Frieren", al_id=154587))
 
     opened = recorder.of_type(ScopeOpened)
     headers = recorder.of_type(TitleHeader)
     assert [o.label for o in opened] == ["Frieren"]
-    assert headers[0].scope == entry.scope_id
+    assert headers[0].scope == title_scope.scope_id
     assert headers[0].al_id == 154587
     assert recorder.events[0] == opened[0]  # header-at-open: ScopeOpened first
 
 
 def test_entry_post_stamps_the_scope_id() -> None:
     factory, recorder, _ = _factory()
-    entry = factory.title(TitleHeader(state=TitleState.CHECKING, title="T"))
+    title_scope = factory.title(TitleHeader(state=TitleState.CHECKING, title="T"))
 
-    entry.post(ReleaseSkipped(group="Okay-Subs", tracker="AB", reason=SkipReason.PRIVATE_ONLY))
+    title_scope.post(ReleaseSkipped(group="Okay-Subs", tracker="AB", reason=SkipReason.PRIVATE_ONLY))
 
     (skipped,) = recorder.of_type(ReleaseSkipped)
-    assert skipped.scope == entry.scope_id
+    assert skipped.scope == title_scope.scope_id
 
 
 def test_entry_close_emits_scope_closed_once() -> None:
     factory, recorder, _ = _factory()
-    entry = factory.title(TitleHeader(state=TitleState.CHECKING, title="T"))
+    title_scope = factory.title(TitleHeader(state=TitleState.CHECKING, title="T"))
 
-    entry.close()
-    entry.close()
+    title_scope.close()
+    title_scope.close()
 
-    assert [c.scope for c in recorder.of_type(ScopeClosed)] == [entry.scope_id]
+    assert [c.scope for c in recorder.of_type(ScopeClosed)] == [title_scope.scope_id]
 
 
 def test_late_entry_post_demotes_and_keeps_the_severity() -> None:
     factory, recorder, _ = _factory()
-    entry = factory.title(TitleHeader(state=TitleState.CHECKING, title="Frieren"))
-    entry.close()
+    title_scope = factory.title(TitleHeader(state=TitleState.CHECKING, title="Frieren"))
+    title_scope.close()
 
-    entry.post(
+    title_scope.post(
         TitleDetail(
             label="skipped",
             value=StyledValue("Okay-Subs on AB (private-only)", accent=Accent.CAUTION),
             severity=Severity.WARNING,
         ),
     )
-    entry.post(
+    title_scope.post(
         GrabAction(status=GrabStatus.ADDING, groups=(), added=(), in_qbit=()),
     )
 
@@ -234,12 +234,12 @@ def test_late_entry_post_demotes_and_keeps_the_severity() -> None:
 
 def test_every_late_fact_kind_describes_itself() -> None:
     factory, recorder, _ = _factory()
-    entry = factory.title(TitleHeader(state=TitleState.CHECKING, title="T"))
-    entry.close()
+    title_scope = factory.title(TitleHeader(state=TitleState.CHECKING, title="T"))
+    title_scope.close()
 
-    entry.post(TitleRow(state=TitleState.IGNORED, label="AniList #1"))
-    entry.post(ReleaseSkipped(group="G", tracker="AB", reason=SkipReason.PRIVATE_ONLY))
-    entry.post(GrabFailed(group="G", url="u", error="tracker down"))
+    title_scope.post(TitleRow(state=TitleState.IGNORED, label="AniList #1"))
+    title_scope.post(ReleaseSkipped(group="G", tracker="AB", reason=SkipReason.PRIVATE_ONLY))
+    title_scope.post(GrabFailed(group="G", url="u", error="tracker down"))
 
     messages = [d.message for d in recorder.of_type(Diagnostic)]
     assert "ignored AniList #1" in messages[0]

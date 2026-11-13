@@ -18,7 +18,7 @@ from pearlarr.placement_types import EpisodeIndex, GrabbingTitle, PlacementTarge
 from pearlarr.placer import place_batch
 from pearlarr.releases import EpisodeKey
 
-from .builders import batch, entry_window, parsed_info, seed_scope, series_index
+from .builders import batch, make_grabbing_title, parsed_info, series_index, title_window
 
 type Row = tuple[int, int, int, int | None]
 """A Sonarr row: season, episode, id, absolute number."""
@@ -45,15 +45,15 @@ def _ids(index: EpisodeIndex, season: int) -> tuple[int, ...]:
 
 
 def _window(al_id: int, ids: Iterable[int], count: int | None, series: str, *anilist: str) -> TitleWindow:
-    return entry_window(al_id, ids, names=TitleNames(series, anilist), episode_count=count)
+    return title_window(al_id, ids, names=TitleNames(series, anilist), episode_count=count)
 
 
-def _scope(
+def _grabbing_title(
     index: EpisodeIndex, own: TitleWindow, *, alternate_titles: tuple[str, ...] = (), aired_order: bool = True
 ) -> GrabbingTitle:
     """The grab scope of `own`'s entry over `index`."""
 
-    return seed_scope(
+    return make_grabbing_title(
         episode_index([index.by_id[ep_id] for ep_id in own.ordered_episode_ids]),
         index,
         al_id=own.al_id,
@@ -64,7 +64,7 @@ def _scope(
     )
 
 
-def _lone(number: int, title: str, *numbers: int, matched: tuple[tuple[int, int], ...] = ()) -> ParsedFileInfo:
+def _absolute_only(number: int, title: str, *numbers: int, matched: tuple[tuple[int, int], ...] = ()) -> ParsedFileInfo:
     """Sonarr's parse of a name carrying `number` (and `numbers`) alone: season 0, the absolutes, the lifted title."""
 
     return parsed_info(season=0, absolutes=(number, *numbers), matched=matched, series_title=title)
@@ -94,7 +94,7 @@ def _stray_cat(number: int) -> str:
     return f"[Tsundere] Mayoi Neko Overrun! - {number:02d} [BDRip h264 1920x1080 FLAC][746CE979].mkv"
 
 
-_STRAY_CATS_FILES = {_stray_cat(n): _lone(n, "Mayoi Neko Overrun!") for n in range(1, 13)}
+_STRAY_CATS_FILES = {_stray_cat(n): _absolute_only(n, "Mayoi Neko Overrun!") for n in range(1, 13)}
 
 
 class TestEveryNumberingAgrees:
@@ -102,7 +102,7 @@ class TestEveryNumberingAgrees:
 
     def test_a_season_window_counted_from_one_places_its_files(self) -> None:
         # The series row, the absolute, the window row and the window season all read 07 as S01E07.
-        proposed = _read(_scope(_STRAY_CATS, _STRAY_CATS_SEASON), (_STRAY_CATS_SEASON,), _STRAY_CATS_FILES)
+        proposed = _read(_grabbing_title(_STRAY_CATS, _STRAY_CATS_SEASON), (_STRAY_CATS_SEASON,), _STRAY_CATS_FILES)
 
         assert proposed == {_stray_cat(n): (32768 + n,) for n in range(1, 13)}
 
@@ -120,9 +120,11 @@ class TestEveryNumberingAgrees:
             "Boku no Hero Academia: Ikinokore! Kesshi no Survival Kunren",
         )
         name = "[HorribleSubs] Boku no Hero Academia - Ikinokore! Kesshi no Survival Kunren - 01 [1080p].mkv"
-        parsed = {name: _lone(1, "Boku no Hero Academia - Ikinokore! Kesshi no Survival Kunren")}
+        parsed = {name: _absolute_only(1, "Boku no Hero Academia - Ikinokore! Kesshi no Survival Kunren")}
 
-        proposed = _read(_scope(series, window, alternate_titles=("Boku no Hero Academia",)), (window,), parsed)
+        proposed = _read(
+            _grabbing_title(series, window, alternate_titles=("Boku no Hero Academia",)), (window,), parsed
+        )
 
         assert proposed == {name: (9254,)}
 
@@ -139,9 +141,9 @@ class TestEveryNumberingAgrees:
         series = _series(_run(1, range(21672, 21696), absolute=1), season_four)
         window = _window(20906, _ids(series, 4), 24, "Lupin III", "Lupin the 3rd Part IV", "Lupin III: PART IV")
         names = {n: f"[scoot] Lupin the Third - {n:02d} [7AA4746D].mkv" for n in (1, 6, 24)}
-        parsed = {names[n]: _lone(n, "Lupin the Third", matched=((1, n),)) for n in names}
+        parsed = {names[n]: _absolute_only(n, "Lupin the Third", matched=((1, n),)) for n in names}
 
-        proposed = _read(_scope(series, window, alternate_titles=("Lupin the Third",)), (window,), parsed)
+        proposed = _read(_grabbing_title(series, window, alternate_titles=("Lupin the Third",)), (window,), parsed)
 
         assert proposed == {names[1]: (21900,), names[6]: (21906,), names[24]: (21925,)}
 
@@ -153,7 +155,9 @@ class TestEveryNumberingAgrees:
         window = _sengoku_youko_window(series)
         name = "[Erai-raws] Sengoku Youko - Senma Konton-hen - 13 [1080p][Multiple Subtitle][8DA9E2B9].mkv"
 
-        proposed = _read(_scope(series, window), (window,), {name: _lone(13, "Sengoku Youko - Senma Konton-hen")})
+        proposed = _read(
+            _grabbing_title(series, window), (window,), {name: _absolute_only(13, "Sengoku Youko - Senma Konton-hen")}
+        )
 
         assert proposed == {name: (51765,)}
 
@@ -174,10 +178,12 @@ class TestEveryNumberingAgrees:
         )
         names = {n: f"Shinkon Gattai Godannar!! - {n:02d}.mkv" for n in range(1, 26)}
         names[26] = "Shinkon Gattai Godannar!! - 26 END.mkv"
-        parsed: dict[str, ParsedFileInfo | None] = {names[n]: _lone(n, "Shinkon Gattai Godannar!!") for n in names}
+        parsed: dict[str, ParsedFileInfo | None] = {
+            names[n]: _absolute_only(n, "Shinkon Gattai Godannar!!") for n in names
+        }
         parsed["Shinkon Gattai Godannar!! - OP 1.mkv"] = parsed_info()
 
-        proposed = _read(_scope(series, first), (first, second), parsed)
+        proposed = _read(_grabbing_title(series, first), (first, second), parsed)
 
         assert proposed == {names[n]: (28078 + n,) for n in range(1, 27)}
 
@@ -193,10 +199,10 @@ class TestEveryNumberingAgrees:
         )
         window = _window(171642, _ids(series, 2), 12, "MF GHOST", "MF GHOST Season 2", "MF Ghost 2nd Season")
         names = {n: f"[sam] MF Ghost - {n} [BD 1080p FLAC] [68FDDB91].mkv" for n in range(13, 25)}
-        parsed = {names[13]: _lone(13, "MF Ghost", matched=((3, 13),))}
-        parsed.update({names[n]: _lone(n, "MF Ghost", matched=((2, n - 12),)) for n in range(14, 25)})
+        parsed = {names[13]: _absolute_only(13, "MF Ghost", matched=((3, 13),))}
+        parsed.update({names[n]: _absolute_only(n, "MF Ghost", matched=((2, n - 12),)) for n in range(14, 25)})
 
-        proposed = _read(_scope(series, window), (window,), parsed)
+        proposed = _read(_grabbing_title(series, window), (window,), parsed)
 
         assert proposed == {names[n]: (49356 + n,) for n in range(13, 25)}
 
@@ -215,9 +221,9 @@ class TestEveryNumberingAgrees:
         name = "Ao no Exorcist - 01 [1080p - AVC - [PCM, ja][FLAC, en]].mkv"
 
         proposed = _read(
-            _scope(series, window, alternate_titles=("Ao no Exorcist",)),
+            _grabbing_title(series, window, alternate_titles=("Ao no Exorcist",)),
             (window,),
-            {name: _lone(1, "Ao no Exorcist", matched=((1, 1),))},
+            {name: _absolute_only(1, "Ao no Exorcist", matched=((1, 1),))},
         )
 
         assert proposed == {name: (8830,)}
@@ -226,7 +232,7 @@ class TestEveryNumberingAgrees:
         # Gintama (Sonarr 39): CBT's DVD batch opens with 001-002 in one file, then 003 on.
         series, window, parsed = _gintama()
 
-        proposed = _read(_scope(series, window), (window,), parsed)
+        proposed = _read(_grabbing_title(series, window), (window,), parsed)
 
         assert proposed[_gintama_name("001-002")] == (4604, 4605)
         assert proposed[_gintama_name("201")] == (4804,)
@@ -242,14 +248,19 @@ class TestEveryNumberingAgrees:
         )
         first = _window(21455, _ids(series, 1), 12, "New Game!", "NEW GAME!")
         second = _window(98292, _ids(series, 2), 12, "New Game!", "NEW GAME!!")
-        parsed = {f"[ToshY] New Game! - {n:02d}.mkv": _lone(n, "New Game!", matched=((1, n),)) for n in range(1, 13)}
+        parsed = {
+            f"[ToshY] New Game! - {n:02d}.mkv": _absolute_only(n, "New Game!", matched=((1, n),)) for n in range(1, 13)
+        }
         parsed.update(
-            {f"[ToshY] New Game!! - {n:02d}.mkv": _lone(n, "New Game!!", matched=((2, n),)) for n in range(1, 13)}
+            {
+                f"[ToshY] New Game!! - {n:02d}.mkv": _absolute_only(n, "New Game!!", matched=((2, n),))
+                for n in range(1, 13)
+            }
         )
-        parsed["[ToshY] New Game! OVA - 01.mkv"] = _lone(1, "New Game! OVA")
+        parsed["[ToshY] New Game! OVA - 01.mkv"] = _absolute_only(1, "New Game! OVA")
         alternates = ("New Game!!", "New Game! S2", "New Game!! S2", "New Game!")
 
-        proposed = _read(_scope(series, first, alternate_titles=alternates), (first, second), parsed)
+        proposed = _read(_grabbing_title(series, first, alternate_titles=alternates), (first, second), parsed)
 
         assert proposed == {
             **{f"[ToshY] New Game! - {n:02d}.mkv": (13960 + n,) for n in range(1, 13)},
@@ -266,13 +277,13 @@ class TestTheGatesRefuse:
         series = _sengoku_youko()
         window = _sengoku_youko_window(series)
         parsed = {
-            f"[Erai-raws] Sengoku Youko - Senma Konton-hen - {n} [1080p][Multiple Subtitle][35EB3627].mkv": _lone(
+            f"[Erai-raws] Sengoku Youko - Senma Konton-hen - {n} [1080p][Multiple Subtitle][35EB3627].mkv": _absolute_only(
                 n, "Sengoku Youko - Senma Konton-hen"
             )
             for n in (14, 22)
         }
 
-        assert _read(_scope(series, window), (window,), parsed) == {}
+        assert _read(_grabbing_title(series, window), (window,), parsed) == {}
 
     def test_a_window_off_anilists_count_refuses_the_torrent(self) -> None:
         # Panty & Stocking (Sonarr 74): AniList counts the season as 13 double-episodes, Sonarr as 26 rows.
@@ -284,9 +295,9 @@ class TestTheGatesRefuse:
             8795, _ids(series, 1), 13, "Panty & Stocking with Garterbelt", "Panty & Stocking with Garterbelt"
         )
         name = "[Underwater] Panty and Stocking with Garterbelt 01v2 - Excretion Without Honor and Humanity - Death Race 2010 (BD 720p) [32949214].mkv"
-        parsed = {name: _lone(1, "Panty and Stocking with Garterbelt", matched=((1, 1),))}
+        parsed = {name: _absolute_only(1, "Panty and Stocking with Garterbelt", matched=((1, 1),))}
 
-        assert _read(_scope(series, window), (window,), parsed) == {}
+        assert _read(_grabbing_title(series, window), (window,), parsed) == {}
 
     def test_a_repeated_number_under_one_title_refuses_the_files_carrying_it(self) -> None:
         # K Project (Sonarr 101): Beatrice-kBaraka's Return of Kings carries 13 twice (a Director's Cut and a v2),
@@ -304,13 +315,13 @@ class TestTheGatesRefuse:
         cut = "[Beatrice-kBaraka] K Return of Kings 13 Director's Cut [BDRip 1920x1080 x264 FLAC] [4E3BA8EB].mkv"
         v2 = "[Beatrice-kBaraka] K Return of Kings 13v2 [BDRip 1920x1080 x264 FLAC] [93026D00].mkv"
         parsed: dict[str, ParsedFileInfo | None] = {
-            names[n]: _lone(n, "K Return of Kings", matched=((2, n),)) for n in range(1, 13)
+            names[n]: _absolute_only(n, "K Return of Kings", matched=((2, n),)) for n in range(1, 13)
         }
-        parsed[cut] = _lone(13, "K Return of Kings", matched=((2, 13),))
-        parsed[v2] = _lone(13, "K Return of Kings", matched=((2, 13),))
+        parsed[cut] = _absolute_only(13, "K Return of Kings", matched=((2, 13),))
+        parsed[v2] = _absolute_only(13, "K Return of Kings", matched=((2, 13),))
         parsed["[Beatrice-Raws] K Return of Kings (CM) [BDRip 1920x1080 x264 FLAC].mkv"] = parsed_info()
 
-        proposed = _read(_scope(series, window, alternate_titles=("K - Return of Kings",)), (window,), parsed)
+        proposed = _read(_grabbing_title(series, window, alternate_titles=("K - Return of Kings",)), (window,), parsed)
 
         assert proposed == {names[n]: (9668 + n,) for n in range(1, 13)}
 
@@ -318,9 +329,9 @@ class TestTheGatesRefuse:
         # Constructed: Gintama's batch with a 002 single added beside the 001-002 file. 2 repeats, and both files
         # are refused.
         series, window, parsed = _gintama()
-        parsed[_gintama_name("002")] = _lone(2, "Gintama", matched=((1, 2),))
+        parsed[_gintama_name("002")] = _absolute_only(2, "Gintama", matched=((1, 2),))
 
-        proposed = _read(_scope(series, window), (window,), parsed)
+        proposed = _read(_grabbing_title(series, window), (window,), parsed)
 
         assert _gintama_name("001-002") not in proposed
         assert _gintama_name("002") not in proposed
@@ -333,7 +344,7 @@ class TestTheGatesRefuse:
         # carrying 13; 12 has no twelfth regular row.
         series, windows, parsed = _wandering_son()
 
-        proposed = _read(_scope(series, windows[0]), windows, parsed)
+        proposed = _read(_grabbing_title(series, windows[0]), windows, parsed)
 
         assert proposed == {_hourou_musuko(f"{n:02d}"): (33585 + n,) for n in range(1, 10)}
 
@@ -344,7 +355,7 @@ class TestTheGatesRefuse:
         series, windows, parsed = _wandering_son()
         del parsed[_hourou_musuko("10+11")]
 
-        proposed = _read(_scope(series, windows[0]), windows, parsed)
+        proposed = _read(_grabbing_title(series, windows[0]), windows, parsed)
 
         assert proposed[_hourou_musuko("10")] == (33595,)
 
@@ -357,11 +368,11 @@ class TestTheGatesRefuse:
         series = _series(_run(0, range(2730, 2734)), rows)
         window = _window(1, _ids(series, 1), 26, "Cowboy Bebop", "Cowboy Bebop")
         parsed = {
-            "[JySzE] Cowboy Bebop - 01 [v3].mkv": _lone(1, "Cowboy Bebop", matched=((1, 13),)),
-            "[JySzE] Cowboy Bebop - 19 [v3].mkv": _lone(19, "Cowboy Bebop", matched=((1, 19),)),
+            "[JySzE] Cowboy Bebop - 01 [v3].mkv": _absolute_only(1, "Cowboy Bebop", matched=((1, 13),)),
+            "[JySzE] Cowboy Bebop - 19 [v3].mkv": _absolute_only(19, "Cowboy Bebop", matched=((1, 19),)),
         }
 
-        proposed = _read(_scope(series, window), (window,), parsed)
+        proposed = _read(_grabbing_title(series, window), (window,), parsed)
 
         assert proposed == {"[JySzE] Cowboy Bebop - 19 [v3].mkv": (2752,)}
 
@@ -385,9 +396,9 @@ class TestTheGatesRefuse:
             "Re:Zero kara Hajimeru Isekai Seikatsu",
         )
         name = "[OZR] ReZero kara Hajimeru Isekai Seikatsu - Shin Henshuu-ban 01 [BDRip 1920x1080 HEVC FLAC].mkv"
-        grabbing_title = _scope(series, window, alternate_titles=("ReZero kara Hajimeru Isekai Seikatsu",))
+        grabbing_title = _grabbing_title(series, window, alternate_titles=("ReZero kara Hajimeru Isekai Seikatsu",))
 
-        assert _read(grabbing_title, (window,), {name: _lone(1, title)}) == {}
+        assert _read(grabbing_title, (window,), {name: _absolute_only(1, title)}) == {}
 
     def test_two_files_proposed_one_id_are_both_dropped(self) -> None:
         # Constructed: two titles of one torrent read under two windows that share their first regular season's
@@ -395,9 +406,9 @@ class TestTheGatesRefuse:
         series = _series(_run(1, range(601, 604), absolute=1), _run(2, range(701, 704), absolute=4))
         first = _window(1, _ids(series, 1), 3, "Show", "Show!")
         second = _window(2, _ids(series, 1)[:1], 1, "Show", "Show!!")
-        parsed = {"show! - 01.mkv": _lone(1, "Show!"), "show!! - 01.mkv": _lone(1, "Show!!")}
+        parsed = {"show! - 01.mkv": _absolute_only(1, "Show!"), "show!! - 01.mkv": _absolute_only(1, "Show!!")}
 
-        assert _read(_scope(series, first), (first, second), parsed) == {}
+        assert _read(_grabbing_title(series, first), (first, second), parsed) == {}
 
 
 class TestTheReaderStandsDown:
@@ -410,21 +421,21 @@ class TestTheReaderStandsDown:
         parsed["[Tsundere] Mayoi Neko Overrun! - SP1 [BDRip h264 1920x1080 FLAC][B66672E2].mkv"] = None
         windows = (_STRAY_CATS_SEASON, _STRAY_CATS_SPECIALS)
 
-        assert _read(_scope(_STRAY_CATS, _STRAY_CATS_SEASON), windows, parsed) == {}
+        assert _read(_grabbing_title(_STRAY_CATS, _STRAY_CATS_SEASON), windows, parsed) == {}
 
     def test_off_the_aired_numbering_the_reader_proposes_nothing(self) -> None:
         # Constructed: Stray Cats' real batch under a numbering its series doesn't have (Sonarr numbers it as aired).
-        grabbing_title = _scope(_STRAY_CATS, _STRAY_CATS_SEASON, aired_order=False)
+        grabbing_title = _grabbing_title(_STRAY_CATS, _STRAY_CATS_SEASON, aired_order=False)
 
         assert _read(grabbing_title, (_STRAY_CATS_SEASON,), _STRAY_CATS_FILES) == {}
 
     def test_a_window_on_another_series_is_left_out(self) -> None:
         # Constructed: a claim's window on Sonarr series 8 lists ids the grabbing series lacks and a count no window
         # of it matches. Left out, it gates nothing.
-        elsewhere = entry_window(9, (81, 82, 83), series_id=8, episode_count=1)
+        elsewhere = title_window(9, (81, 82, 83), series_id=8, episode_count=1)
         windows = (_STRAY_CATS_SEASON, elsewhere)
 
-        proposed = _read(_scope(_STRAY_CATS, _STRAY_CATS_SEASON), windows, _STRAY_CATS_FILES)
+        proposed = _read(_grabbing_title(_STRAY_CATS, _STRAY_CATS_SEASON), windows, _STRAY_CATS_FILES)
 
         assert proposed == {_stray_cat(n): (32768 + n,) for n in range(1, 13)}
 
@@ -435,12 +446,12 @@ class TestTheReaderStandsDown:
         series = _series(_run(1, range(601, 604), absolute=1))
         window = _window(1, _ids(series, 1), 3, "Show")
         parsed = {
-            "show - 01 [grp].mkv": _lone(1, "Show"),
-            "[grp] show - NCOP1 [bd].mkv": _lone(1, "Show"),
-            "show - 03 Days of Summer [grp].mkv": _lone(3, "Show", matched=((1, 3),)),
+            "show - 01 [grp].mkv": _absolute_only(1, "Show"),
+            "[grp] show - NCOP1 [bd].mkv": _absolute_only(1, "Show"),
+            "show - 03 Days of Summer [grp].mkv": _absolute_only(3, "Show", matched=((1, 3),)),
         }
 
-        proposed = _read(_scope(series, window), (window,), parsed)
+        proposed = _read(_grabbing_title(series, window), (window,), parsed)
 
         assert proposed == {"show - 01 [grp].mkv": (601,)}
 
@@ -526,11 +537,11 @@ def _gintama() -> tuple[EpisodeIndex, TitleWindow, dict[str, ParsedFileInfo | No
         918, tuple(ep_id for season in (1, 2, 3, 4) for ep_id in _ids(series, season)), 201, "Gintama", "Gintama"
     )
     parsed: dict[str, ParsedFileInfo | None] = {
-        _gintama_name("001-002"): _lone(1, "Gintama", 2, matched=((1, 1), (1, 2)))
+        _gintama_name("001-002"): _absolute_only(1, "Gintama", 2, matched=((1, 1), (1, 2)))
     }
     for n in range(3, 202):
         key = series.key_by_id[window.ordered_episode_ids[n - 1]]
-        parsed[_gintama_name(f"{n:03d}")] = _lone(n, "Gintama", matched=((key.season, key.episode),))
+        parsed[_gintama_name(f"{n:03d}")] = _absolute_only(n, "Gintama", matched=((key.season, key.episode),))
     return series, window, parsed
 
 
@@ -549,6 +560,6 @@ def _wandering_son() -> tuple[EpisodeIndex, tuple[TitleWindow, TitleWindow], dic
     numbers = [f"{n:02d}" for n in range(1, 13)]
     numbers.insert(10, "10+11")
     parsed: dict[str, ParsedFileInfo | None] = {
-        _hourou_musuko(number): _lone(int(number[:2]), "Hourou Musuko") for number in numbers
+        _hourou_musuko(number): _absolute_only(int(number[:2]), "Hourou Musuko") for number in numbers
     }
     return series, (season, specials), parsed

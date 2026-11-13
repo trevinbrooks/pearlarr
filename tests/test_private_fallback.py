@@ -45,15 +45,15 @@ PUB_URL = "https://nyaa.si/view/1"
 PUB_HASH = "f" * 40
 
 # The stale-owned hold's planner notice and needs-action row wording, pinned.
-STALE_NOTICE = (
+OUTDATED_NOTICE = (
     "private-only; your copy is outdated (its file size no longer matches the release) and only a fallback covers it"
 )
-STALE_ROW_REASON = (
+OUTDATED_ROW_REASON = (
     "private-only release; your copy is outdated (its file size no longer matches) and only a fallback covers it"
 )
 
 
-def _entry_private_pick_plus_public_alt() -> EntryRecord:
+def _entry_private_preferred_plus_public_alt() -> EntryRecord:
     """A SeaDex entry preferring a private-only release, with a public alternative."""
 
     priv = make_torrent_record(
@@ -77,7 +77,7 @@ def _entry_private_pick_plus_public_alt() -> EntryRecord:
     return make_entry_record(anilist_id=11, torrents=(priv, fall))
 
 
-def _fill_episodes(sd: SeadexDict, mapping: dict[str, list[ReleaseEpisode]]) -> None:
+def _attach_episodes(sd: SeadexDict, mapping: dict[str, list[ReleaseEpisode]]) -> None:
     """Mirror `attach_placements`: per-url episodes + the group union."""
 
     for group_releases in sd.values():
@@ -149,9 +149,9 @@ class TestUpgradePendingHoldsForOwnedStale:
             planner=make_planner(),
             ctx=state,
         )
-        entry = _entry_private_pick_plus_public_alt()
+        entry = _entry_private_preferred_plus_public_alt()
         sd = filt.build(entry)
-        _fill_episodes(
+        _attach_episodes(
             sd,
             {
                 PRIV_URL: [ReleaseEpisode(season=1, episode=1, size=999)],
@@ -166,7 +166,7 @@ class TestUpgradePendingHoldsForOwnedStale:
         assert plan.seadex_dict["Fall"].releases[PUB_URL].to_grab is False
         assert plan.seadex_dict["Priv"].releases[PRIV_URL].to_grab is False
         warnings = _warning_texts(recording)
-        assert any(STALE_NOTICE in m for m in warnings), warnings
+        assert any(OUTDATED_NOTICE in m for m in warnings), warnings
         assert state.per_title.private_only_skipped is True
         assert state.per_title.private_only_outdated is True
 
@@ -176,7 +176,7 @@ class TestUpgradePendingHoldsForOwnedStale:
         pipe.grab_and_cache(_grab_request(11, plan.seadex_dict, entry))
         assert cache.get_cached_title(Arr.SONARR, 11) is None
         assert [n.kind for n in state.stats.needs_action] == [NeedsActionKind.PRIVATE_ONLY_STALE]
-        assert [n.reason for n in state.stats.needs_action] == [STALE_ROW_REASON]
+        assert [n.reason for n in state.stats.needs_action] == [OUTDATED_ROW_REASON]
 
     def test_radarr_size_disjoint_warns_and_holds(self) -> None:
         # The no-episode (Radarr) twin: the size-disjoint branch re-flags the
@@ -189,7 +189,7 @@ class TestUpgradePendingHoldsForOwnedStale:
             planner=make_planner(),
             ctx=state,
         )
-        sd = filt.build(_entry_private_pick_plus_public_alt())
+        sd = filt.build(_entry_private_preferred_plus_public_alt())
 
         with _record() as recording:
             plan = filt.filter_downloads(sd, ArrFiles(by_group={"Priv": (100,)}), None)
@@ -197,7 +197,7 @@ class TestUpgradePendingHoldsForOwnedStale:
         assert plan.seadex_dict["Fall"].releases[PUB_URL].to_grab is False
         assert plan.seadex_dict["Priv"].releases[PRIV_URL].to_grab is False
         warnings = _warning_texts(recording)
-        assert any(STALE_NOTICE in m for m in warnings), warnings
+        assert any(OUTDATED_NOTICE in m for m in warnings), warnings
         assert state.per_title.private_only_skipped is True
         assert state.per_title.private_only_outdated is True
 
@@ -221,9 +221,9 @@ class TestOwnedPreferredPrivateAtMatchingSize:
             planner=make_planner(),
             ctx=state,
         )
-        entry = _entry_private_pick_plus_public_alt()
+        entry = _entry_private_preferred_plus_public_alt()
         sd = filt.build(entry)
-        _fill_episodes(
+        _attach_episodes(
             sd,
             {
                 PRIV_URL: [ReleaseEpisode(season=1, episode=1, size=999)],
@@ -264,7 +264,7 @@ class TestOwnedPreferredPrivateAtMatchingSize:
             planner=make_planner(),
             ctx=state,
         )
-        entry = _entry_private_pick_plus_public_alt()
+        entry = _entry_private_preferred_plus_public_alt()
         sd = filt.build(entry)
 
         with _record() as recording:
@@ -297,11 +297,11 @@ class TestOwnedPreferredPrivateAtMatchingSize:
             planner=make_planner(),
             ctx=state,
         )
-        entry = _entry_private_pick_plus_public_alt()
+        entry = _entry_private_preferred_plus_public_alt()
         sd = filt.build(entry)
         assert set(sd) == {"Priv"}  # warn mode adds no fallback
 
-        _fill_episodes(sd, {PRIV_URL: [ReleaseEpisode(season=1, episode=1, size=999)]})
+        _attach_episodes(sd, {PRIV_URL: [ReleaseEpisode(season=1, episode=1, size=999)]})
         ep_list = [sonarr_ep(1, 1, size=100, release_group="Priv")]
 
         with _record() as recording:
@@ -368,7 +368,7 @@ class TestFilterDownloadsNoticeSeam:
         )
         sd = filt.build(make_entry_record(anilist_id=44, torrents=(priv_a, priv_b, pub_a)))
         assert set(sd) == {"PrivA", "PrivB", "PubA"}
-        _fill_episodes(
+        _attach_episodes(
             sd,
             {
                 self.PRIVA_URL: [ReleaseEpisode(season=1, episode=1, size=999)],
@@ -459,7 +459,7 @@ class TestMixedGroupKeeperPreference:
         sd = filt.build(entry)
         # The coverage-aware drop keeps G's uncovered private batch.
         assert set(sd["G"].releases) == {PUB_URL, PRIV_URL}
-        _fill_episodes(
+        _attach_episodes(
             sd,
             {
                 PUB_URL: [ReleaseEpisode(season=1, episode=1, size=555)],
@@ -514,7 +514,7 @@ class TestMixedGroupKeeperPreference:
         g_pub, g_priv = self._mixed_group_torrents()
         entry = make_entry_record(anilist_id=56, torrents=(g_pub, g_priv))
         sd = filt.build(entry)
-        _fill_episodes(
+        _attach_episodes(
             sd,
             {
                 PUB_URL: [ReleaseEpisode(season=1, episode=1, size=555)],
@@ -588,7 +588,7 @@ class TestSurvivingPrivateCoverage:
         sd = filt.build(entry)
         assert set(sd["A"].releases) == {PRIV_URL, PUB_URL}
 
-        _fill_episodes(
+        _attach_episodes(
             sd,
             {
                 PRIV_URL: [
@@ -671,7 +671,7 @@ class TestPromotionGeneralization:
         )
         entry = self._preferred_pair_entry(66)
         sd = filt.build(entry)
-        _fill_episodes(
+        _attach_episodes(
             sd,
             {
                 PRIV_URL: [ReleaseEpisode(season=1, episode=1, size=999)],
@@ -779,7 +779,7 @@ class TestPromotionGeneralization:
         entry = make_entry_record(anilist_id=77, torrents=(m_pub, m_priv, fall))
         sd = filt.build(entry)
         assert set(sd) == {"M", "F"}
-        _fill_episodes(
+        _attach_episodes(
             sd,
             {
                 self.M_PUB_URL: [ReleaseEpisode(season=1, episode=1, size=555)],
@@ -876,7 +876,7 @@ class TestEqualUnionMixedGroups:
             )
             entry = make_entry_record(anilist_id=al_id, torrents=order)
             sd = filt.build(entry)
-            _fill_episodes(
+            _attach_episodes(
                 sd,
                 {
                     self.A_PUB_URL: [ReleaseEpisode(season=1, episode=1, size=555)],
@@ -922,7 +922,7 @@ class TestEqualUnionMixedGroups:
             assert cached_as_done(cache.get_cached_title(Arr.SONARR, al_id), entry) is True
 
 
-class _CachedEntryReporter:
+class _CachedTitleReporter:
     """Just enough reporter surface for `cached_entry_skip`'s logging tail."""
 
     def log_cached_title(self, state: ArrRunState, al_id: int) -> None:
@@ -949,9 +949,9 @@ class TestModeSwitchResurfacesFallbackSatisfied:
             planner=make_planner(),
             ctx=state,
         )
-        entry = _entry_private_pick_plus_public_alt()
+        entry = _entry_private_preferred_plus_public_alt()
         sd = filt.build(entry)
-        _fill_episodes(
+        _attach_episodes(
             sd,
             {
                 PRIV_URL: [ReleaseEpisode(season=1, episode=1, size=999)],
@@ -981,7 +981,7 @@ class TestModeSwitchResurfacesFallbackSatisfied:
         fallback_run = make_services(
             cache_store=cache,
             _seadex=seadex,
-            _reporter=_CachedEntryReporter(),
+            _reporter=_CachedTitleReporter(),
             private_releases="fallback",
         )
         assert fallback_run.title_needs_check(11) is False
@@ -992,7 +992,7 @@ class TestModeSwitchResurfacesFallbackSatisfied:
         warn_run = make_services(
             cache_store=cache,
             _seadex=seadex,
-            _reporter=_CachedEntryReporter(),
+            _reporter=_CachedTitleReporter(),
             private_releases="warn",
         )
         assert warn_run.title_needs_check(11) is True
@@ -1001,26 +1001,26 @@ class TestModeSwitchResurfacesFallbackSatisfied:
         # 4) the warn-mode reprocess warns and holds: the private pick is all
         # that's offered (the Arr owns the grabbed fallback's file), nothing is
         # cached, and the marker persists for the next run.
-        warn_ctx = ArrRunState(arr=Arr.SONARR)
+        warn_state = ArrRunState(arr=Arr.SONARR)
         warn_filt = make_release_filter(
             private_releases="warn",
             want_best=True,
             prefer_dual_audio=False,
             planner=make_planner(),
-            ctx=warn_ctx,
+            ctx=warn_state,
         )
         sd_warn = warn_filt.build(entry)
         assert set(sd_warn) == {"Priv"}  # warn mode adds no fallback
-        _fill_episodes(sd_warn, {PRIV_URL: [ReleaseEpisode(season=1, episode=1, size=999)]})
+        _attach_episodes(sd_warn, {PRIV_URL: [ReleaseEpisode(season=1, episode=1, size=999)]})
         ep_list = [sonarr_ep(1, 1, size=555, release_group="Fall")]
         with _record() as recording:
             warn_plan = warn_filt.filter_downloads(sd_warn, ArrFiles(by_group={"Fall": (555,)}), ep_list)
         warnings = _warning_texts(recording)
         assert any("private-only (private releases not supported)" in m for m in warnings), warnings
 
-        warn_pipe = make_grab_pipeline(cache_store=cache, _state=warn_ctx, private_releases="warn", sleep_time=0)
+        warn_pipe = make_grab_pipeline(cache_store=cache, _state=warn_state, private_releases="warn", sleep_time=0)
         warn_pipe.grab_and_cache(_grab_request(11, warn_plan.seadex_dict, entry))
-        assert [n.kind for n in warn_ctx.stats.needs_action] == [NeedsActionKind.PRIVATE_ONLY]
+        assert [n.kind for n in warn_state.stats.needs_action] == [NeedsActionKind.PRIVATE_ONLY]
         persisted = cache.get_cached_title(Arr.SONARR, 11)
         assert persisted is not None
         assert persisted.fallback_satisfied is True  # the hold left the marker alone

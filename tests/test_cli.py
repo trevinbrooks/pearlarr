@@ -1064,7 +1064,7 @@ class _SignalRecorder:
         self.registered.append((signum, handler))
 
 
-class _CycleStampingRenderer(Renderer):
+class _RunStampingRenderer(Renderer):
     """Records each hub event alongside how many `begin_cycle` calls preceded it.
 
     Makes post-begin ordering assertable (CycleStarted lands in the fresh cycle).
@@ -1093,10 +1093,10 @@ class _CycleStampingRenderer(Renderer):
         pass
 
 
-def _install_cycle_recorder(monkeypatch: pytest.MonkeyPatch) -> _CycleStampingRenderer:
+def _install_run_recorder(monkeypatch: pytest.MonkeyPatch) -> _RunStampingRenderer:
     """Swap `cli._install_output_hub` for a hub over one recording renderer."""
 
-    renderer = _CycleStampingRenderer()
+    renderer = _RunStampingRenderer()
 
     def install(paths: AppPaths) -> tuple[OutputHub, FileLogRenderer]:
         hub = OutputHub([renderer])
@@ -1221,7 +1221,7 @@ class TestHubSeats:
     """
 
     @staticmethod
-    def _seated(
+    def _with_console_renderer(
         log_dir: Path,
         console_format: LogFormat,
         level: int,
@@ -1243,7 +1243,7 @@ class TestHubSeats:
         monkeypatch: pytest.MonkeyPatch,
         level: int,
     ) -> None:
-        hub, stream = self._seated(tmp_path / "logs", "plain", level, monkeypatch)
+        hub, stream = self._with_console_renderer(tmp_path / "logs", "plain", level, monkeypatch)
         _drive_representative(hub)
         hub.close()
 
@@ -1258,7 +1258,7 @@ class TestHubSeats:
         tmp_path: Path,
         monkeypatch: pytest.MonkeyPatch,
     ) -> None:
-        hub, stream = self._seated(tmp_path / "logs", "json", logging.INFO, monkeypatch)
+        hub, stream = self._with_console_renderer(tmp_path / "logs", "json", logging.INFO, monkeypatch)
         _drive_representative(hub)
         hub.close()
 
@@ -1778,7 +1778,7 @@ class TestScheduledLifecycle:
         monkeypatch.setattr("pearlarr.cli.setup_logger", _SetupLoggerRecorder())
         monkeypatch.setattr("pearlarr.bootstrap.run_arrs", _stop_loop)
         monkeypatch.delenv("SCHEDULE_TIME", raising=False)
-        renderer = _install_cycle_recorder(monkeypatch)
+        renderer = _install_run_recorder(monkeypatch)
 
         with pytest.raises(_StopScheduledLoop):
             run_scheduled()
@@ -1793,7 +1793,7 @@ class TestScheduledLifecycle:
         monkeypatch.setattr("pearlarr.bootstrap.run_arrs", _RunArrsRecorder())
         monkeypatch.setattr("pearlarr.cli.time.sleep", _stop_loop)
         monkeypatch.delenv("SCHEDULE_TIME", raising=False)
-        renderer = _install_cycle_recorder(monkeypatch)
+        renderer = _install_run_recorder(monkeypatch)
 
         before = datetime.now().astimezone()
         with pytest.raises(_StopScheduledLoop):
@@ -1847,8 +1847,8 @@ class TestRunLockContention:
         # Hold the run lock ourselves. run_arrs must find it taken and bail
         # before ever reading the config (none exists here - a regression past
         # the guard would raise the missing-config typer.Exit).
-        with single_instance_lock(paths.data_dir) as held:
-            assert held
+        with single_instance_lock(paths.data_dir) as lock:
+            assert lock
             result = run_arrs(
                 [ArrTarget(Arr.SONARR)], paths=paths, logger=logger, file_log_renderer=FileLogRenderer(paths.log_dir)
             )

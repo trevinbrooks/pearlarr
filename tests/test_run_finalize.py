@@ -197,7 +197,7 @@ class TestHeldTitleKeepsScanning:
         strategy = FakeStrategy(
             items=[FakeArrItem(item_id=1, title="A"), FakeArrItem(item_id=2, title="B")],
             anilist_ids={1: TitleMapping(anilist_id=1)},
-            held_through=engine._services,
+            services=engine._services,
         )
 
         engine.run_arr(strategy, item_id=None, dry_run=True, boot=BootFlow())
@@ -340,7 +340,7 @@ class _StopOnSleepClock(FakeClock):
 _TITLES = [FakeArrItem(item_id=1, title="A"), FakeArrItem(item_id=2, title="B")]
 
 
-def _kept(path: Path, keys: list[int]) -> list[int]:
+def _still_cached(path: Path, keys: list[int]) -> list[int]:
     """The `keys` whose entry rows the cache at `path` holds once reopened."""
 
     reopened = CacheStore.load(str(path), config_hash="")
@@ -372,7 +372,7 @@ class TestPerTitleCommit:
             _run(engine, _StagingStrategy(items=_TITLES, services=services, stop_at=(2, 2)))
         store.close()
 
-        assert _kept(tmp_path / "cache.db", [11, 12, 21, 22]) == [11, 12]
+        assert _still_cached(tmp_path / "cache.db", [11, 12, 21, 22]) == [11, 12]
 
     def test_a_title_that_raised_still_commits_what_it_staged(self, logger: logging.Logger, tmp_path: Path) -> None:
         store = CacheStore.load(str(tmp_path / "cache.db"), config_hash="")
@@ -386,7 +386,7 @@ class TestPerTitleCommit:
             _run(engine, _StagingStrategy(items=_TITLES, services=services, stop_at=(2, 1)), ImportWaitMode.BLOCKING)
         store.close()
 
-        assert _kept(tmp_path / "cache.db", [11, 12, 21]) == [11, 12]
+        assert _still_cached(tmp_path / "cache.db", [11, 12, 21]) == [11, 12]
 
     def test_a_stop_in_the_pacing_pause_keeps_the_title_before_it(self, logger: logging.Logger, tmp_path: Path) -> None:
         store = CacheStore.load(str(tmp_path / "cache.db"), config_hash="")
@@ -400,7 +400,7 @@ class TestPerTitleCommit:
         store.close()
 
         assert clock.sleeps == [1, 1]
-        assert _kept(tmp_path / "cache.db", [11, 12, 21]) == [11, 12]
+        assert _still_cached(tmp_path / "cache.db", [11, 12, 21]) == [11, 12]
 
     def test_a_preview_run_keeps_nothing(self, logger: logging.Logger, tmp_path: Path) -> None:
         store = CacheStore.load(str(tmp_path / "cache.db"), config_hash="")
@@ -410,7 +410,7 @@ class TestPerTitleCommit:
         _run(engine, _StagingStrategy(items=_TITLES[:1], services=services, stop_at=None))
         store.close()
 
-        assert _kept(tmp_path / "cache.db", [11, 12]) == []
+        assert _still_cached(tmp_path / "cache.db", [11, 12]) == []
 
     @pytest.mark.parametrize(("qbit", "kept"), [(CLIENT_SENTINEL, [1]), (None, [])], ids=["real", "preview"])
     def test_the_finalize_save_commits_only_a_real_run(
@@ -425,7 +425,7 @@ class TestPerTitleCommit:
         _run(engine, _StagingStrategy(items=[], services=services, stop_at=None))
         store.close()
 
-        assert _kept(tmp_path / "cache.db", [1]) == kept
+        assert _still_cached(tmp_path / "cache.db", [1]) == kept
 
 
 class TestRunStartKeepsPendingRecords:
@@ -609,14 +609,14 @@ class TestSelectionRecheck:
         config: AppConfig | None = None,
         seadex: _FakeGateway | None = None,
         anilist: _FakeGateway | None = None,
-        held: bool = False,
+        cap_reached: bool = False,
     ) -> tuple[ArrRunLoop, RecordingHub]:
         recording = install_recording_hub()
         engine = _engine(_FinalizeRecorder(), logger, config=config, seadex=seadex, anilist=anilist)
         strategy = FakeStrategy(
             items=[FakeArrItem(item_id=3, title="A")],
             anilist_ids={11: TitleMapping(anilist_id=11)},
-            held_through=engine._services if held else None,
+            services=engine._services if cap_reached else None,
             history=[_IMPORT_EVENT],
         )
         engine._services._selection_changed = stale
@@ -670,23 +670,23 @@ class TestSelectionRecheck:
         self, logger: logging.Logger
     ) -> None:
         # A hold keeps neither the vouch nor the checkpoint back.
-        engine, _ = self._run(logger, held=True)
+        engine, _ = self._run(logger, cap_reached=True)
 
         assert self._vouched_any(engine) is True
         assert engine.cache_store.get_history_checkpoint(Arr.SONARR) is not None
 
     def test_outage_run_does_not_vouch(self, logger: logging.Logger) -> None:
-        outage = _FakeGateway()
-        outage.unreachable = True
-        engine, _ = self._run(logger, seadex=outage)
+        unreachable_gateway = _FakeGateway()
+        unreachable_gateway.unreachable = True
+        engine, _ = self._run(logger, seadex=unreachable_gateway)
 
         assert self._vouched_any(engine) is False
 
     def test_an_anilist_outage_run_vouches_and_commits_the_checkpoint(self, logger: logging.Logger) -> None:
         # A title AniList left unread isn't cached as done, so the outage keeps neither back.
-        outage = _FakeGateway()
-        outage.unreachable = True
-        engine, _ = self._run(logger, anilist=outage)
+        unreachable_gateway = _FakeGateway()
+        unreachable_gateway.unreachable = True
+        engine, _ = self._run(logger, anilist=unreachable_gateway)
 
         assert self._vouched_any(engine) is True
         assert engine.cache_store.get_history_checkpoint(Arr.SONARR) is not None

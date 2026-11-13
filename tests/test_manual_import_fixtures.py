@@ -300,7 +300,7 @@ class _Specials(NamedTuple):
     """The on-disk basenames of the captured candidates."""
 
     @property
-    def grab_map(self) -> dict[str, list[int]]:
+    def grab_file_map(self) -> dict[str, list[int]]:
         """The map the grab writes for the download: S00E01 and S00E02, the first two of the entry's three specials."""
 
         return {name: [8030 + i] for i, name in enumerate(self.files)}
@@ -337,7 +337,7 @@ class TestCapturedSpecialsEndToEnd:
         specials = _specials()
         pending = specials.pending(
             infohash="1111111111111111111111111111111111111111",
-            file_episode_map=specials.grab_map,
+            file_episode_map=specials.grab_file_map,
             ordered_episode_ids=[8030, 8031, 8032],
         )
 
@@ -366,7 +366,7 @@ class TestCapturedSpecialsEndToEnd:
         specials = _specials(config)
         pending = specials.pending(
             infohash="1111111111111111111111111111111111111111",
-            file_episode_map=specials.grab_map,
+            file_episode_map=specials.grab_file_map,
             ordered_episode_ids=[8030, 8031, 8032],
             is_cross_seed=cross_seed,
         )
@@ -379,7 +379,7 @@ class TestCapturedSpecialsEndToEnd:
     def test_import_completed_probe_carries_seed_complete_counts(self) -> None:
         # A complete seed map gives the probe determinate counts over the seed set, none landed yet.
         specials = _specials()
-        ep_map = specials.grab_map
+        ep_map = specials.grab_file_map
         pending = specials.pending(
             infohash="2222222222222222222222222222222222222222",
             file_episode_map=ep_map,
@@ -395,7 +395,7 @@ class TestCapturedSpecialsEndToEnd:
         # The fast poll: a determinate count over the seed targets, reading ONLY the episode files,
         # never the refresh, queue, or execute pipeline.
         specials = _specials()
-        ep_map = specials.grab_map
+        ep_map = specials.grab_file_map
         pending = specials.pending(
             infohash="4444444444444444444444444444444444444444",
             file_episode_map=ep_map,

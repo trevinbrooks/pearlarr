@@ -38,7 +38,7 @@ from pearlarr.output.recording import RecordingHub
 from pearlarr.wait_types import NO_HAND_IMPORT_FILES, LeftForHandImport, Outcome, OutcomeKind
 from pearlarr.wait_view import HubWaitView, WaitOutcomeRow, WaitResult, make_wait_view, newly_finished
 
-from .builders import held_files
+from .builders import files_left_for_hand_import
 from .fakes import CaptureHandler
 
 
@@ -210,7 +210,11 @@ class TestHubWaitViewNarration:
         recording = RecordingHub()
         install_hub(recording.hub)
         row = _finished_view(
-            "h1", "A", Outcome.UNMATCHED, elapsed=15.0, left_for_hand_import=held_files("a.mkv", "b.mkv")
+            "h1",
+            "A",
+            Outcome.UNMATCHED,
+            elapsed=15.0,
+            left_for_hand_import=files_left_for_hand_import("a.mkv", "b.mkv"),
         )
 
         self._view().update(WaitSnapshot((row,), elapsed_s=15))

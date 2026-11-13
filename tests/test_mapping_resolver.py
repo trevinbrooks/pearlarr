@@ -205,7 +205,7 @@ def _specials_target(draw: DrawFn, width: int) -> str:
 
 
 @st.composite
-def _specials_map_pair(draw: DrawFn) -> tuple[dict[str, str], dict[str, str]]:
+def _specials_ranges_pair(draw: DrawFn) -> tuple[dict[str, str], dict[str, str]]:
     """A (TVDB, TMDB) pair of specials maps that share some source ranges and not others.
 
     Each target is drawn as wide as its source or one wider, so some ranges fail the length check.
@@ -246,7 +246,7 @@ def _anibridge_graph(draw: DrawFn) -> AniBridgeGraph:
             targets[f"tmdb_show:{draw(_SMALL_ID)}:s1"] = {}
         if draw(st.booleans()):
             # A TVDB and a TMDB specials map, which pair into aliases unless the loop above also drew a TVDB season 0.
-            tvdb_specials, tmdb_specials = draw(_specials_map_pair())
+            tvdb_specials, tmdb_specials = draw(_specials_ranges_pair())
             targets[f"tvdb_show:{draw(_SMALL_ID)}:s0"] = tvdb_specials
             targets[f"tmdb_show:{draw(_SMALL_ID)}:s0"] = tmdb_specials
         if draw(st.booleans()):
@@ -782,17 +782,17 @@ class TestVu1DegradedAniBridge:
             mappings = resolver.resolve(ExternalIds(tvdb=777, imdb="tt500")).kept
         finally:
             resolver.close()
-        degraded = mappings[500]
-        assert degraded.source is MappingSource.ANIBRIDGE
-        assert degraded.kind is MappingKind.SEASON_OFFSET  # no tvdb ranges -> would have grabbed wrong eps
-        assert degraded.tvdb_mappings is None
+        without_tvdb_mappings = mappings[500]
+        assert without_tvdb_mappings.source is MappingSource.ANIBRIDGE
+        assert without_tvdb_mappings.kind is MappingKind.SEASON_OFFSET  # no tvdb ranges -> would have grabbed wrong eps
+        assert without_tvdb_mappings.tvdb_mappings is None
 
         episodes = make_bare_instance(
             SonarrEpisodes,
             _ep_list_cache={777: [SimpleNamespace(season_number=s, episode_number=1) for s in (1, 2, 3)]},
         )
         # A non-empty series, yet the degraded entry resolves to NO episodes (skip).
-        assert episodes.mapping_episodes(sonarr_series_id=777, al_id=500, mapping=degraded) == []
+        assert episodes.mapping_episodes(sonarr_series_id=777, al_id=500, mapping=without_tvdb_mappings) == []
 
 
 # --------------------------------------------------------------------------- #

@@ -46,7 +46,7 @@ from .fakes import AsciiStringIO, strip_ansi
 
 _BOOT = ScopeId(ScopeKind.BOOT_SECTION, 1)
 _WAIT = ScopeId(ScopeKind.WAIT_REGION, 2)
-_ENTRY = ScopeId(ScopeKind.ENTRY, 3)
+_TITLE_SCOPE = ScopeId(ScopeKind.ENTRY, 3)
 
 
 def _renderer(width: int = 120) -> tuple[RichRenderer, io.StringIO]:
@@ -149,7 +149,7 @@ class TestUnwindPlacement:
             renderer,
             ScanStarted(arr=Arr.SONARR, total=182),
             ItemStarted(arr=Arr.SONARR, index=12, total=182, title="Frieren"),
-            ScopeOpened(scope=_ENTRY, label="Frieren"),
+            ScopeOpened(scope=_TITLE_SCOPE, label="Frieren"),
             ArrRunFinished(arr=Arr.SONARR),
             _warning("Sonarr run failed"),
         )
@@ -165,7 +165,7 @@ class TestUnwindPlacement:
             renderer,
             ScanStarted(arr=Arr.SONARR, total=182),
             ItemStarted(arr=Arr.SONARR, index=12, total=182, title="Frieren"),
-            ScopeOpened(scope=_ENTRY, label="Frieren"),
+            ScopeOpened(scope=_TITLE_SCOPE, label="Frieren"),
             _warning("Sonarr run failed"),
         )
 

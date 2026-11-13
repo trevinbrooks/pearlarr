@@ -44,12 +44,12 @@ from pearlarr.wait_types import ImportWaitMode, PendingImportState
 from .builders import (
     FakeCacheStore,
     ScriptedAniListClient,
-    entry_claim,
     make_anilist_gateway,
     make_entry_record,
+    make_release,
     pending_import,
     rg_group,
-    url_item,
+    title_claim,
 )
 from .fakes import scan_lines_from_events
 
@@ -293,7 +293,7 @@ class TestRunSummary:
     The dry-run note wording tracks whether a qBittorrent client is configured.
     """
 
-    def _ctx_with_data(self) -> ArrRunState:
+    def _state_with_data(self) -> ArrRunState:
         state = ArrRunState(arr=Arr.SONARR)
         state.stats.checked = 3
         state.torrents_added = 1
@@ -318,7 +318,7 @@ class TestRunSummary:
 
     def test_real_run_emits_the_scoreboard(self) -> None:
         reporter, events = _record()
-        reporter.log_arr_run_summary(self._ctx_with_data(), dry_run=False, has_client=True)
+        reporter.log_arr_run_summary(self._state_with_data(), dry_run=False, has_client=True)
 
         summary = self._summary_of(events).summary
         assert summary.dry_run is False and summary.dry_run_note is None
@@ -332,13 +332,13 @@ class TestRunSummary:
 
     def test_dry_run_note_wording_tracks_the_client(self) -> None:
         reporter, events = _record()
-        reporter.log_arr_run_summary(self._ctx_with_data(), dry_run=True, has_client=False)
+        reporter.log_arr_run_summary(self._state_with_data(), dry_run=True, has_client=False)
         summary = self._summary_of(events).summary
         assert summary.dry_run is True
         assert summary.dry_run_note == "qBittorrent not configured; nothing grabbed"
 
         reporter, events = _record()
-        reporter.log_arr_run_summary(self._ctx_with_data(), dry_run=True, has_client=True)
+        reporter.log_arr_run_summary(self._state_with_data(), dry_run=True, has_client=True)
         assert self._summary_of(events).summary.dry_run_note == "nothing grabbed"
 
     def test_counts_mark_stays_bound_to_the_counter_it_was_stamped_on(self) -> None:
@@ -357,7 +357,7 @@ class TestRunSummary:
             anilist=anilist,
         )
 
-        state = self._ctx_with_data()
+        state = self._state_with_data()
         state.counts_mark = reporter.counts_mark()
         counters[-1].record(Severity.WARNING)  # the run's own post-mark warning
 
@@ -416,10 +416,10 @@ class TestPendingSnapshot:
         reporter, events = _record()
         pending = pending_import(
             claims=(
-                entry_claim(
+                title_claim(
                     al_id=1, series_id=7, title="Show", window_coverage="S01 E01-E13", url="https://releases.moe/1"
                 ),
-                entry_claim(
+                title_claim(
                     al_id=2, series_id=8, title="Other", window_coverage="S02 E01", url="https://releases.moe/2"
                 ),
             ),
@@ -697,7 +697,7 @@ class TestLogSeadexAction:
         reporter, events = _record()
         seadex_dict = {
             "NAN0": rg_group(
-                {"u": url_item(download=True)},
+                {"u": make_release(download=True)},
                 tags=frozenset({Tag.HDR, Tag.DOLBY_VISION, Tag.BROKEN}),
             ),
         }

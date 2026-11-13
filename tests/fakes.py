@@ -235,7 +235,7 @@ class FakeStrategy(ArrStrategy[FakeArrItem]):
         *,
         items: list[FakeArrItem],
         anilist_ids: dict[int, TitleMapping],
-        held_through: ArrRunServices | None = None,
+        services: ArrRunServices | None = None,
         process_raises_on: int | None = None,
         history: list[HistoryRecord] | None = None,
         supports_blocking_wait: bool = True,
@@ -244,9 +244,9 @@ class FakeStrategy(ArrStrategy[FakeArrItem]):
         self._anilist_ids = anilist_ids
         # Every processed id is held past the cap on this hub's run context, as the grab pipeline holds one: the
         # title's hold and the run tally.
-        self._held_through = held_through
+        self._cap_services = services
         self._process_raises_on = process_raises_on
-        self._supports_blocking_monitor = supports_blocking_wait
+        self._supports_blocking_wait = supports_blocking_wait
         self.process_calls: list[int] = []
         # Reassign to None mid-test to script the failure path.
         self.history: list[HistoryRecord] | None = [] if history is None else history
@@ -287,9 +287,9 @@ class FakeStrategy(ArrStrategy[FakeArrItem]):
         self.process_calls.append(al_id)
         if self._process_raises_on is not None and al_id == self._process_raises_on:
             raise ValueError(f"boom on al_id {al_id}")
-        if self._held_through is not None:
-            self._held_through.state.per_title.held_by_cap = True
-            self._held_through.state.stats.held_by_cap += 1
+        if self._cap_services is not None:
+            self._cap_services.state.per_title.held_by_cap = True
+            self._cap_services.state.stats.held_by_cap += 1
 
     @override
     def pending_import_series_id(self, item: FakeArrItem) -> int | None:
@@ -311,7 +311,7 @@ class FakeStrategy(ArrStrategy[FakeArrItem]):
     @property
     @override
     def supports_blocking_wait(self) -> bool:
-        return self._supports_blocking_monitor
+        return self._supports_blocking_wait
 
 
 NEUTRAL_RESCAN = CommandResource(
@@ -380,7 +380,7 @@ class FakeSonarrClient(AbstractSonarrClient):
         self.refresh_calls: int = 0
         self.history_calls: list[str] = []
         self.folder_candidate_calls: list[tuple[str, str]] = []
-        self.history_probe_calls: list[str] = []
+        self.download_history_calls: list[str] = []
         self.path_mapping_calls: int = 0
         self.download_client_config_calls: int = 0
 
@@ -455,7 +455,7 @@ class FakeSonarrClient(AbstractSonarrClient):
 
     @override
     def history_for_download(self, *, download_id: str) -> HistoryPage | None:
-        self.history_probe_calls.append(download_id)
+        self.download_history_calls.append(download_id)
         return self.history_page_return
 
     @override
@@ -489,7 +489,7 @@ class HookedSonarrClient(FakeSonarrClient):
 
     on_queue: Callable[[], None] | None = None
     on_rescan: Callable[[], None] | None = None
-    on_scan: Callable[[], None] | None = None
+    on_fetch: Callable[[], None] | None = None
     on_episodes: Callable[[], None] | None = None
     on_languages: Callable[[], None] | None = None
 
@@ -514,8 +514,8 @@ class HookedSonarrClient(FakeSonarrClient):
         pending: PendingImport,
     ) -> list[ManualImportCandidate] | None:
         answer = super().manual_import_candidates_by_download_id(pending=pending)
-        if self.on_scan is not None:
-            self.on_scan()
+        if self.on_fetch is not None:
+            self.on_fetch()
         return answer
 
     @override
@@ -613,14 +613,14 @@ class ScriptedEpisodes:
         windows: Mapping[int, list[SonarrEpisode] | None] | None = None,
         ambiguous: frozenset[int] = frozenset(),
         unread_series: frozenset[int] = frozenset(),
-        unread_entries: frozenset[int] = frozenset(),
+        unread_al_ids: frozenset[int] = frozenset(),
         counts: Mapping[int, int] | None = None,
     ) -> None:
         self._sonarr = sonarr
         self._windows = windows
         self._ambiguous = ambiguous
         self._unread_series = unread_series
-        self._unread_entries = unread_entries
+        self._unread_al_ids = unread_al_ids
         self._counts: Mapping[int, int] = counts or {}
         self.calls: list[tuple[int, int]] = []
         """Each `get_ep_list` call's (series id, AniList id), in call order."""
@@ -665,7 +665,7 @@ class ScriptedEpisodes:
     def any_air_dates_unread(self, al_ids: Iterable[int]) -> bool:
         """Whether any of the entries is one of the `unread_entries`."""
 
-        return not self._unread_entries.isdisjoint(al_ids)
+        return not self._unread_al_ids.isdisjoint(al_ids)
 
     def orders_unread(self, series_ids: Iterable[int]) -> bool:
         """Whether any of the series is one of the `unread_series`."""
