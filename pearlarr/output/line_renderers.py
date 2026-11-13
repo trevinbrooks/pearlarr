@@ -15,6 +15,7 @@ from typing import ClassVar, Final, NamedTuple, TextIO, assert_never, final, ove
 from .events import (
     ArrRunFinished,
     ArrRunSummary,
+    ArrRunSummaryReady,
     BootReady,
     BootStepFinished,
     BootStepProgressed,
@@ -29,7 +30,6 @@ from .events import (
     ConfigMigrated,
     ConfigUpToDate,
     ConfigValidated,
-    CycleStarted,
     Diagnostic,
     EffectiveConfigShown,
     Event,
@@ -42,15 +42,15 @@ from .events import (
     NeedsActionFact,
     NextRunScheduled,
     PathsShown,
+    PearlarrStarted,
     Phase,
     PlacedBy,
     ReleaseLabel,
     ReleaseSkipped,
     RowFinished,
-    RunStarted,
-    RunSummaryReady,
     ScanFinished,
     ScanStarted,
+    ScheduledRunStarted,
     ScopeClosed,
     ScopeId,
     ScopeOpened,
@@ -190,7 +190,7 @@ def _names_text(releases: tuple[ReleaseLabel, ...]) -> str:
     return "; ".join(release.display for release in releases)
 
 
-def _fields_run_started(event: RunStarted) -> tuple[Field, ...]:
+def _fields_run_started(event: PearlarrStarted) -> tuple[Field, ...]:
     fields: list[Field] = []
     if event.version:
         fields.append(Field("version", event.version))
@@ -417,9 +417,9 @@ def _fact_of(event: Event, crumbs: OpenScopes, severity: Severity) -> _Fact | No
     """The exhaustive per-event table. None means the event has no rendered form."""
 
     match event:
-        case RunStarted():
+        case PearlarrStarted():
             return _Fact("run_started", severity, "Pearlarr started", _fields_run_started(event), None, "run")
-        case CycleStarted(number=number):
+        case ScheduledRunStarted(number=number):
             return _Fact("cycle_started", severity, "cycle started", (Field("number", number),), None, "run")
         case NextRunScheduled(at=at):
             # Seconds precision drops microseconds and keeps the offset, matching the json "time" key's shape.
@@ -462,7 +462,7 @@ def _fact_of(event: Event, crumbs: OpenScopes, severity: Severity) -> _Fact | No
             return _Fact("cap_reached", severity, "torrent cap reached", (Field("cap", cap),), None, "run")
         case ScanFinished(arr=arr):
             return _Fact("scan_finished", severity, "scan finished", (Field("arr", str(arr)),), None, "scan")
-        case RunSummaryReady(summary=summary):
+        case ArrRunSummaryReady(summary=summary):
             return _Fact("run_summary", severity, "run complete", _fields_summary_head(summary), None, "summary")
         case WaitStarted(scope=scope, kind=kind):
             return _Fact("wait_started", severity, kind.live_verb, _fields_wait_started(event), scope, "wait")
@@ -547,7 +547,7 @@ def _lines_of(event: Event, crumbs: OpenScopes, severity: Severity) -> tuple[_Li
     bracket = _scope_bracket(fact.scope, crumbs, fact.component)
     trace = event.trace.plain if isinstance(event, Diagnostic) and event.trace is not None else None
     head = _Line(fact.severity, bracket, fact.message, fact.fields, trace)
-    if isinstance(event, RunSummaryReady):
+    if isinstance(event, ArrRunSummaryReady):
         return (head, *_summary_row_lines(event.summary))
     return (head,)
 
@@ -575,7 +575,7 @@ def _json_of(event: Event, crumbs: OpenScopes, iso: str, severity: Severity) -> 
             payload["path"] = path
     for field in fact.fields:
         payload[field.key] = field.value
-    if isinstance(event, RunSummaryReady):
+    if isinstance(event, ArrRunSummaryReady):
         tally = event.summary.tally
         payload["needs_action_records"] = [
             dict[str, JsonValue](_fields_needs_action(row)) for row in tally.needs_action
@@ -887,7 +887,7 @@ class JsonRenderer(_LineRenderer):
 
     @staticmethod
     def _effective(event: Event, severity: Severity) -> Severity:
-        if isinstance(event, RunSummaryReady):
+        if isinstance(event, ArrRunSummaryReady):
             summary = event.summary
             if summary.tally.needs_action or summary.errors:
                 return max(severity, Severity.WARNING)

@@ -27,7 +27,7 @@ from .events import (
     BootStepProgressed,
     BootStepSlow,
     BootStepStarted,
-    RunStarted,
+    PearlarrStarted,
 )
 from .live_region import LiveRegion
 from ..console_caps import ConsoleFeatures, DetectedFeatures, block_bar, make_live, spinner_name
@@ -37,7 +37,7 @@ from ..log import print_literal
 # it, so it doesn't need to scale with the terminal like the wait cockpit's does.
 _BAR_WIDTH = 16
 
-type BootEvent = RunStarted | BootStepStarted | BootStepProgressed | BootStepSlow | BootStepFinished | BootReady
+type BootEvent = PearlarrStarted | BootStepStarted | BootStepProgressed | BootStepSlow | BootStepFinished | BootReady
 """The event subset the RichRenderer delegates to the boot region."""
 
 
@@ -124,7 +124,7 @@ class BootRegion(LiveRegion):
             return
         features = self._caps_cache.for_console(console)
         match event:
-            case RunStarted():
+            case PearlarrStarted():
                 self._banner(console, event)
             case BootStepStarted(label=label):
                 self._step_started(console, features, label)
@@ -163,7 +163,7 @@ class BootRegion(LiveRegion):
 
         return self._level_source() <= logging.INFO
 
-    def _banner(self, console: Console, event: RunStarted) -> None:
+    def _banner(self, console: Console, event: PearlarrStarted) -> None:
         # Parity: the same look the TitledRule/StyledLine payload route renders.
         if not self._admits_durable():
             return

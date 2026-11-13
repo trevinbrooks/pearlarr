@@ -17,7 +17,7 @@ class PendingImportStore:
     `pending_imports` is the run list) arrives via `begin_run` each run. Every key is a torrent's infohash.
     """
 
-    _ctx: ArrRunState
+    _state: ArrRunState
     """The current run's context. Never bound at construction: `begin_run` rebinds it every run."""
 
     def __init__(self, cache_store: AbstractCacheStore) -> None:
@@ -26,22 +26,22 @@ class PendingImportStore:
     def bind_arr_run(self, state: ArrRunState) -> None:
         """Bind the fresh run context the views and writes read."""
 
-        self._ctx = state
+        self._state = state
 
     def fresh_keys(self) -> set[str]:
         """Keys of the records written THIS run, tallied as `added` and never carried-over."""
 
-        return set(self._ctx.grabbed_this_run)
+        return set(self._state.grabbed_this_run)
 
     def rows(self) -> dict[str, dict[str, Any]]:
         """Every stored row, raw."""
 
-        return self._store.get_pending_import_rows(self._ctx.arr)
+        return self._store.get_pending_import_rows(self._state.arr)
 
     def rows_for_series(self, series_id: int) -> dict[str, dict[str, Any]]:
         """The raw rows with a claim on `series_id` (the store's own filter, not a full-table read)."""
 
-        return self._store.get_pending_import_rows_for_series(self._ctx.arr, series_id)
+        return self._store.get_pending_import_rows_for_series(self._state.arr, series_id)
 
     def imports_for_series(self, series_id: int, guards: Mapping[int, OwnedAtGrab]) -> dict[str, PendingImport]:
         """The records claiming `series_id`, keyed by infohash, rehydrated under the guards the caller already read."""
@@ -69,7 +69,7 @@ class PendingImportStore:
     def guards(self) -> dict[int, OwnedAtGrab]:
         """The arr's guard rows for the entries with live records (one read, shared by a poll's hydrations)."""
 
-        return self._store.get_guards(self._ctx.arr)
+        return self._store.get_guards(self._state.arr)
 
     def active_imports(self) -> dict[str, PendingImport]:
         """The `active` rows rehydrated: the carried-over working set of the end-of-run passes."""
@@ -82,7 +82,7 @@ class PendingImportStore:
         rows = {
             infohash: raw
             for infohash in dict.fromkeys(hashes)
-            if (raw := self._store.get_pending_import_row(self._ctx.arr, infohash)) is not None
+            if (raw := self._store.get_pending_import_row(self._state.arr, infohash)) is not None
         }
         return self.load(rows)
 
@@ -91,7 +91,7 @@ class PendingImportStore:
 
         self._put(pending)
         self._put_guards(claim)
-        self._ctx.grabbed_this_run[pending.infohash] = pending
+        self._state.grabbed_this_run[pending.infohash] = pending
 
     def save_with_claim(self, pending: PendingImport, claim: TitleClaim) -> None:
         """`save` plus `claim`'s guard row: the write of a grab whose claim joins or refreshes a stored record."""
@@ -107,13 +107,13 @@ class PendingImportStore:
         """
 
         self._put(pending)
-        if pending.infohash in self._ctx.grabbed_this_run:
-            self._ctx.grabbed_this_run[pending.infohash] = pending
+        if pending.infohash in self._state.grabbed_this_run:
+            self._state.grabbed_this_run[pending.infohash] = pending
 
     def _put(self, pending: PendingImport) -> None:
         """The record's row write."""
 
-        self._store.put_pending_import_row(self._ctx.arr, pending.infohash, pending.to_json())
+        self._store.put_pending_import_row(self._state.arr, pending.infohash, pending.to_json())
 
     def _put_guards(self, claim: TitleClaim) -> None:
         """The claim's guard row (Sonarr only: Radarr's import reads no guards).
@@ -122,16 +122,16 @@ class PendingImportStore:
         may trail a newer write.
         """
 
-        if self._ctx.arr is Arr.SONARR:
-            self._store.put_guards(self._ctx.arr, claim.al_id, claim.guards)
+        if self._state.arr is Arr.SONARR:
+            self._store.put_guards(self._state.arr, claim.al_id, claim.guards)
 
-    def save_history_placements(self, pending: PendingImport, probe: AttemptResult) -> PendingImport:
+    def save_history_placements(self, pending: PendingImport, result: AttemptResult) -> PendingImport:
         """Persist the files a poll's Sonarr history placed onto the record and return the healed copy.
 
         Writes only when the poll added something: the record hands itself back on a no-op.
         """
 
-        healed = pending.with_placements(probe.placements)
+        healed = pending.with_placements(result.placements)
         if healed is pending:
             return pending
         self.save(healed)
@@ -140,8 +140,8 @@ class PendingImportStore:
     def drop(self, infohash: str) -> None:
         """Remove one torrent's record from the store and the run list."""
 
-        self._store.drop_pending_import_row(self._ctx.arr, infohash)
-        self._ctx.grabbed_this_run.pop(infohash, None)
+        self._store.drop_pending_import_row(self._state.arr, infohash)
+        self._state.grabbed_this_run.pop(infohash, None)
 
     def drop_unimported(self, pending: PendingImport) -> None:
         """Remove the record of a torrent that left qBittorrent unimported, and have the next run check its titles.
@@ -152,9 +152,9 @@ class PendingImportStore:
 
         self.drop(pending.infohash)
         for claim in pending.claims:
-            self._store.uncache_title(self._ctx.arr, claim.al_id)
+            self._store.uncache_title(self._state.arr, claim.al_id)
 
     def other_arr_holds(self, infohash: str) -> bool:
         """Whether the other arr still holds a record on the torrent (the category move defers on it)."""
 
-        return self._store.other_arr_holds(self._ctx.arr, infohash)
+        return self._store.other_arr_holds(self._state.arr, infohash)

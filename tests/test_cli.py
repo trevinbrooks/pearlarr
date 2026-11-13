@@ -86,17 +86,17 @@ from pearlarr.config_migrations import CONFIG_VERSION
 from pearlarr.console_caps import DetectedFeatures
 from pearlarr.log import LOG_NAME, HubBridgeBase, LogLevel, RichConsoleHandler, apply_log_level, setup_logger
 from pearlarr.output import (
-    CycleStarted,
     Diagnostic,
     Event,
     FileLogRenderer,
     ItemStarted,
     NextRunScheduled,
     OutputHub,
+    PearlarrStarted,
     Renderer,
     RowFinished,
-    RunStarted,
     ScanStarted,
+    ScheduledRunStarted,
     Severity,
     current_hub,
     install_hub,
@@ -1073,16 +1073,16 @@ class _CycleStampingRenderer(Renderer):
     writes_file_only: ClassVar[bool] = False
 
     def __init__(self) -> None:
-        self.cycles = 0
+        self.runs_begun = 0
         self.events: list[tuple[Event, int]] = []
 
     @override
     def handle(self, event: Event, when: float) -> None:
-        self.events.append((event, self.cycles))
+        self.events.append((event, self.runs_begun))
 
     @override
     def begin_run(self) -> None:
-        self.cycles += 1
+        self.runs_begun += 1
 
     @override
     def set_level(self, level: int) -> None:
@@ -1204,7 +1204,7 @@ class TestResolvedFormat:
 def _drive_representative(hub: OutputHub) -> None:
     """Boot facts, scan lines, both diagnostic classes, a graduation, a summary."""
 
-    hub.emit(RunStarted(version="v9.9.9", data_dir="/data"))
+    hub.emit(PearlarrStarted(version="v9.9.9", data_dir="/data"))
     hub.emit(ScanStarted(arr=Arr.SONARR, total=1))
     hub.emit(ItemStarted(arr=Arr.SONARR, index=1, total=1, title="Frieren"))
     hub.emit(Diagnostic(severity=Severity.WARNING, message="tracker down", origin=LOG_NAME))
@@ -1781,8 +1781,8 @@ class TestScheduledLifecycle:
         with pytest.raises(_StopScheduledLoop):
             run_scheduled()
 
-        started = [(e, cycles) for e, cycles in renderer.events if isinstance(e, CycleStarted)]
-        assert [(e.number, cycles) for e, cycles in started] == [(1, 1)]
+        started = [(e, runs_begun) for e, runs_begun in renderer.events if isinstance(e, ScheduledRunStarted)]
+        assert [(e.number, runs_begun) for e, runs_begun in started] == [(1, 1)]
 
     def test_next_run_scheduled_is_emitted_with_the_cadence_ahead(self, monkeypatch: pytest.MonkeyPatch) -> None:
         # After a completed cycle the loop states the next run as a typed event

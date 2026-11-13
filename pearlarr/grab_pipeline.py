@@ -116,7 +116,7 @@ class GrabPipeline:
         self,
         *,
         deps: "ArrRunDeps",
-        ctx: ArrRunState,
+        state: ArrRunState,
         pending_imports: PendingImportStore,
     ) -> None:
         self._config = deps.config
@@ -131,17 +131,17 @@ class GrabPipeline:
         # The hub's record seam, which the hub binds each run.
         self._pending_imports = pending_imports
         # Rebound each run by bind_arr_run to the same ctx the engine holds, so the grab bookkeeping stays in sync.
-        self._ctx = ctx
+        self._state = state
 
     def bind_arr_run(self, state: ArrRunState) -> None:
         """Bind the run context the grab bookkeeping reads/writes."""
 
-        self._ctx = state
+        self._state = state
 
     def _is_dry_run(self) -> bool:
         """A run is a no-op preview (nothing can be grabbed): explicit dry run, or qBittorrent not configured."""
 
-        return is_dry_run(self._ctx, self.qbit)
+        return is_dry_run(self._state, self.qbit)
 
     @property
     def _effective_cap(self) -> int | None:
@@ -153,7 +153,7 @@ class GrabPipeline:
         """Whether this run's adds have reached the cap (never under a preview or an uncapped run)."""
 
         cap = self._effective_cap
-        return cap is not None and self._ctx.torrents_added >= cap
+        return cap is not None and self._state.torrents_added >= cap
 
     def grab_releases(self, req: GrabRequest) -> tuple[int, list[GrabResult]]:
         """Add the request's torrent(s) to qBittorrent, holding the grabbable ones past the run's cap.
@@ -178,7 +178,7 @@ class GrabPipeline:
 
                 results.append(add_result)
                 if add_result.outcome is AddStatus.ADDED:
-                    self._ctx.torrents_added += 1
+                    self._state.torrents_added += 1
                     n_torrents_added += 1
 
         return n_torrents_added, results
@@ -197,8 +197,8 @@ class GrabPipeline:
 
         if not release.is_public:
             self._reporter.post(ReleaseSkipped(group=srg, tracker=tracker, reason=SkipReason.PRIVATE_ONLY, url=url))
-            self._ctx.per_title.private_only_skipped = True
-            self._ctx.per_title.private_only_groups.append(srg)
+            self._state.per_title.private_only_skipped = True
+            self._state.per_title.private_only_groups.append(srg)
             return False
 
         if tracker.casefold() not in self._config.seadex.trackers:
@@ -213,15 +213,15 @@ class GrabPipeline:
             self._reporter.post(
                 ReleaseSkipped(group=srg, tracker=tracker, reason=SkipReason.UNSUPPORTED_TRACKER, url=url),
             )
-            self._ctx.per_title.unsupported_tracker_skipped = True
-            self._ctx.per_title.unsupported_tracker_groups.append(srg)
+            self._state.per_title.unsupported_tracker_skipped = True
+            self._state.per_title.unsupported_tracker_groups.append(srg)
             return False
 
         skip_reason = release.skip_reason
         if skip_reason is None:
             return True
         # Never added, and the title stays uncached for the next run.
-        self._ctx.per_title.add_skipped(skip_reason, (srg,))
+        self._state.per_title.add_skipped(skip_reason, (srg,))
         self._reporter.post(
             ReleaseSkipped(
                 group=srg,
@@ -236,9 +236,9 @@ class GrabPipeline:
     def _hold_capped(self, release: Release, req: GrabRequest) -> None:
         """Hold a grabbable url past the cap: the title stays uncached, and a resident torrent keeps its claim."""
 
-        if not self._ctx.per_title.held_by_cap:
-            self._ctx.per_title.held_by_cap = True
-            self._ctx.stats.held_by_cap += 1
+        if not self._state.per_title.held_by_cap:
+            self._state.per_title.held_by_cap = True
+            self._state.stats.held_by_cap += 1
         seed = self._seed_for(release, req)
         if seed is not None and (joined := seed.joined()) is not None:
             self._pending_imports.save_with_claim(joined, seed.claim)
@@ -259,18 +259,18 @@ class GrabPipeline:
             result = self._torrents.add(item=release, dry_run=self._is_dry_run())
         except GRAB_FAILURES as e:
             self._reporter.post(GrabFailed(group=srg, url=url, error=str(e)))
-            self._ctx.per_title.grab_failed_groups.append(srg)
+            self._state.per_title.grab_failed_groups.append(srg)
             return None
 
         if result.outcome is AddStatus.ADDED:
             # Prefer the release's own parsed file list, falling back to the entry-level coverage so the summary's
             # files are never blank when a release's filenames couldn't be parsed.
-            coverage_str = _coverage.coverage_string(release.episodes) or self._ctx.per_title.entry_coverage
-            self._ctx.stats.added.append(
+            coverage_str = _coverage.coverage_string(release.episodes) or self._state.per_title.entry_coverage
+            self._state.stats.added.append(
                 GrabbedRow(
-                    title=self._ctx.per_title.title_name,
+                    title=self._state.per_title.title_name,
                     coverage=coverage_str,
-                    url=self._ctx.per_title.entry_url,
+                    url=self._state.per_title.entry_url,
                     name=result.name,
                     group=srg,
                 ),
@@ -306,17 +306,17 @@ class GrabPipeline:
             return
         pending = seed.pending_import_at(_reacquire_stamp(result.added_on), fresh=False)
         self._pending_imports.save_with_claim(pending, seed.claim)
-        if pending.infohash not in self._ctx.grabbed_this_run:
-            self._ctx.reacquired_keys.add(pending.infohash)
+        if pending.infohash not in self._state.grabbed_this_run:
+            self._state.reacquired_keys.add(pending.infohash)
 
     def _needs_action(self, groups: list[str], reason: str, kind: NeedsActionKind) -> NeedsActionRow:
         """A needs-action record for the current title."""
 
         return NeedsActionRow(
-            title=self._ctx.per_title.title_name,
-            coverage=self._ctx.per_title.entry_coverage,
+            title=self._state.per_title.title_name,
+            coverage=self._state.per_title.entry_coverage,
             group=", ".join(dict.fromkeys(groups)),
-            url=self._ctx.per_title.entry_url,
+            url=self._state.per_title.entry_url,
             reason=reason,
             kind=kind,
         )
@@ -329,7 +329,7 @@ class GrabPipeline:
         AniList record or a series without its TVDB orders vetoes it.
         """
 
-        per_title = self._ctx.per_title
+        per_title = self._state.per_title
         # A non-interactive fallback-mode private hold means nothing public was grabbed for these files: never cache,
         # so every run re-checks and resurfaces it. Warn mode and interactive picks keep the plain gate.
         private_only_no_fallback = (
@@ -357,13 +357,13 @@ class GrabPipeline:
         title's or on a failed read.
         """
 
-        if self._ctx.per_title.private_only_skipped:
+        if self._state.per_title.private_only_skipped:
             reason, kind = self._private_only_reason()
-            return self._needs_action(self._ctx.per_title.private_only_groups, reason, kind)
+            return self._needs_action(self._state.per_title.private_only_groups, reason, kind)
 
-        if self._ctx.per_title.unsupported_tracker_skipped:
+        if self._state.per_title.unsupported_tracker_skipped:
             return self._needs_action(
-                self._ctx.per_title.unsupported_tracker_groups,
+                self._state.per_title.unsupported_tracker_groups,
                 "tracker not yet supported; grab manually",
                 NeedsActionKind.UNSUPPORTED_TRACKER,
             )
@@ -374,11 +374,11 @@ class GrabPipeline:
         if hand_import_row is not None:
             return hand_import_row
 
-        if self._ctx.per_title.grab_failed_groups:
+        if self._state.per_title.grab_failed_groups:
             # No user action needed (the warning named it, the uncached title retries), but the summary must say why
             # the title is neither added nor up to date.
             return self._needs_action(
-                self._ctx.per_title.grab_failed_groups,
+                self._state.per_title.grab_failed_groups,
                 "grab failed; will retry next run",
                 NeedsActionKind.GRAB_FAILED,
             )
@@ -390,7 +390,7 @@ class GrabPipeline:
     def _needs_action_row_for(self, holds: Iterable[PlacementSkip]) -> NeedsActionRow | None:
         """The row of the first of `holds` that held a group of this title, or None."""
 
-        skipped_groups = self._ctx.per_title.skipped_groups
+        skipped_groups = self._state.per_title.skipped_groups
         for skip_reason in holds:
             groups = skipped_groups.get(skip_reason)
             if groups:
@@ -411,7 +411,7 @@ class GrabPipeline:
                 "hand-picked private release; private releases not supported",
                 NeedsActionKind.PRIVATE_ONLY_NO_FALLBACK,
             )
-        if self._ctx.per_title.private_only_outdated:
+        if self._state.per_title.private_only_outdated:
             return (
                 (
                     "private-only release; your copy is outdated (its file size no longer matches) "
@@ -429,15 +429,15 @@ class GrabPipeline:
 
         any_to_grab = self._planner.any_to_grab(req.seadex_dict)
         # The strategy's placement facts land on the title's flags beside the add loop's own.
-        self._ctx.per_title.add_skipped(PlacementSkip.INPUT_UNREAD, req.input_unread_groups)
-        self._ctx.per_title.metadata_unread |= req.metadata_unread
+        self._state.per_title.add_skipped(PlacementSkip.INPUT_UNREAD, req.input_unread_groups)
+        self._state.per_title.metadata_unread |= req.metadata_unread
 
         added_this_title = 0
 
         if not any_to_grab:
             # A failed Sonarr read may have held a placement, so "already have it" is not claimed either.
-            if not (self._ctx.per_title.private_only_skipped or req.input_unread_groups):
-                self._ctx.stats.up_to_date += 1
+            if not (self._state.per_title.private_only_skipped or req.input_unread_groups):
+                self._state.stats.up_to_date += 1
                 self._reporter.detail(
                     "status",
                     StyledValue("already have the recommended release", Accent.NOTE),
@@ -453,14 +453,14 @@ class GrabPipeline:
                 for u in group_releases.releases.values()
             )
             self.cache_store.update_cached_title(
-                self._ctx.arr,
+                self._state.arr,
                 req.al_id,
                 req.update,
             )
         else:
             rec = self._classify_needs_action()
             if rec is not None:
-                self._ctx.stats.needs_action.append(rec)
+                self._state.stats.needs_action.append(rec)
 
     def _grab(self, req: GrabRequest) -> int:
         """Add this title's torrents and notify, returning the added count.
@@ -475,7 +475,7 @@ class GrabPipeline:
 
         # grab_releases runs even in a preview: the service simulates the add, while the download-flag, private-release
         # and tracker filters still apply, so only releases that would really be grabbed are counted.
-        before = self._ctx.torrents_added
+        before = self._state.torrents_added
         n_torrents_added, results = self.grab_releases(req)
 
         # Logged only now the outcome is known, so the status reads "adding" only when something was actually grabbed.
@@ -484,7 +484,7 @@ class GrabPipeline:
             req.seadex_dict,
             results,
             dry_run=dry_run,
-            waiting_to_import=self._ctx.import_wait_mode is not ImportWaitMode.OFF and not dry_run,
+            waiting_to_import=self._state.import_wait_mode is not ImportWaitMode.OFF and not dry_run,
         )
 
         # Never on a preview: this is an outward notification. Built after the add so each group is labeled with what
@@ -492,7 +492,7 @@ class GrabPipeline:
         if self._notifier.enabled and n_torrents_added > 0 and not dry_run:
             self._notifier.push_grab(
                 GrabNotice(
-                    arr=self._ctx.arr,
+                    arr=self._state.arr,
                     arr_title=req.arr_title,
                     title_name=req.title_name,
                     entry=req.entry,
@@ -501,16 +501,16 @@ class GrabPipeline:
                     replaced_groups=req.replaced_groups,
                     seadex_dict=req.seadex_dict,
                     results=results,
-                    failed_groups=frozenset(self._ctx.per_title.grab_failed_groups),
+                    failed_groups=frozenset(self._state.per_title.grab_failed_groups),
                     coverage=req.coverage,
                 ),
             )
 
-        if self._ctx.per_title.held_by_cap:
+        if self._state.per_title.held_by_cap:
             self._reporter.detail("status", StyledValue("held by the run cap; grabbed next run", Accent.NOTE))
 
         cap = self._effective_cap
-        if cap is not None and before < cap <= self._ctx.torrents_added:
+        if cap is not None and before < cap <= self._state.torrents_added:
             self._reporter.log_max_torrents_added(cap)
 
         return n_torrents_added

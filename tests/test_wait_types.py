@@ -8,7 +8,7 @@ import pytest
 
 from pearlarr.releases import EpisodeKey
 from pearlarr.wait_types import (
-    LEAVE_PROBE,
+    NO_ATTEMPT,
     AttemptResult,
     HeldFile,
     LeftForHandImport,
@@ -41,37 +41,37 @@ class TestPendingStateAndProbe:
         assert PendingImportState.DOWNLOADING == "queued"
 
     def test_imported_probe_claims_the_files_without_a_command(self) -> None:
-        probe = AttemptResult.imported()
-        assert probe.all_done is True
-        assert probe.command_issued is False
+        result = AttemptResult.imported()
+        assert result.all_done is True
+        assert result.command_issued is False
 
     def test_waiting_probe_carries_the_attempt_flags(self) -> None:
-        probe = AttemptResult.waiting(command_issued=True, deferral=PauseReason.IMPORT)
-        assert probe.all_done is False
-        assert probe.command_issued is True
-        assert probe.deferral is PauseReason.IMPORT
-        assert probe.deferred is True
-        assert probe.attempted is True
+        result = AttemptResult.waiting(command_issued=True, deferral=PauseReason.IMPORT)
+        assert result.all_done is False
+        assert result.command_issued is True
+        assert result.deferral is PauseReason.IMPORT
+        assert result.deferred is True
+        assert result.attempted is True
 
     def test_waiting_probe_defaults_to_no_deferral(self) -> None:
-        probe = AttemptResult.waiting()
-        assert probe.deferral is PauseReason.NONE
-        assert probe.deferred is False
+        result = AttemptResult.waiting()
+        assert result.deferral is PauseReason.NONE
+        assert result.deferred is False
 
     def test_leave_probe_records_no_attempt(self) -> None:
-        assert LEAVE_PROBE.attempted is False
-        assert LEAVE_PROBE.all_done is False
-        assert LEAVE_PROBE.command_issued is False
+        assert NO_ATTEMPT.attempted is False
+        assert NO_ATTEMPT.all_done is False
+        assert NO_ATTEMPT.command_issued is False
 
     def test_a_probes_placements_are_detached_and_read_only(self) -> None:
         placed: dict[str, tuple[int, ...]] = {"show - 01.mkv": (101,)}
-        probe = AttemptResult(all_done=False, command_issued=True, placements=placed)
+        result = AttemptResult(all_done=False, command_issued=True, placements=placed)
         placed["show - 02.mkv"] = (102,)
-        mutable = cast("dict[str, tuple[int, ...]]", probe.placements)
+        mutable = cast("dict[str, tuple[int, ...]]", result.placements)
 
         with pytest.raises(TypeError):
             mutable["show - 02.mkv"] = (102,)
-        assert dict(probe.placements) == {"show - 01.mkv": (101,)}
+        assert dict(result.placements) == {"show - 01.mkv": (101,)}
 
     @pytest.mark.parametrize(
         ("held", "explained"),

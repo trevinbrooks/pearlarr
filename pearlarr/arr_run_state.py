@@ -213,7 +213,7 @@ class ArrRunState:
     """An id's queries owe the `advanced.sleep_time` pause. The run loop sleeps it before the next id."""
 
 
-def is_dry_run(ctx: ArrRunState, qbit: qbittorrentapi.Client | None) -> bool:
+def is_dry_run(state: ArrRunState, qbit: qbittorrentapi.Client | None) -> bool:
     """A run is a no-op preview when a dry run was requested OR qBittorrent is not configured."""
 
-    return ctx.dry_run or qbit is None
+    return state.dry_run or qbit is None

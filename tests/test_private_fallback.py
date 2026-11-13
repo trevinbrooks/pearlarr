@@ -140,14 +140,14 @@ class TestUpgradePendingHoldsForOwnedStale:
         # The Arr holds Priv's release at a STALE size (the SeaDex entry updated):
         # a fallback (a cascade loser) must not supersede the owned preferred
         # copy, so nothing is promoted and the set warns with the stale reason.
-        ctx = ArrRunState(arr=Arr.SONARR)
+        state = ArrRunState(arr=Arr.SONARR)
         cache = FakeCacheStore()
         filt = make_release_filter(
             private_releases="fallback",
             want_best=True,
             prefer_dual_audio=False,
             planner=make_planner(),
-            ctx=ctx,
+            ctx=state,
         )
         entry = _entry_private_pick_plus_public_alt()
         sd = filt.build(entry)
@@ -167,27 +167,27 @@ class TestUpgradePendingHoldsForOwnedStale:
         assert plan.seadex_dict["Priv"].releases[PRIV_URL].to_grab is False
         warnings = _warning_texts(recording)
         assert any(STALE_NOTICE in m for m in warnings), warnings
-        assert ctx.per_title.private_only_skipped is True
-        assert ctx.per_title.private_only_outdated is True
+        assert state.per_title.private_only_skipped is True
+        assert state.per_title.private_only_outdated is True
 
         # The fallback hold keeps the title uncached and surfaces the STALE row,
         # so it resurfaces every run until the copy is updated or deleted.
-        pipe = make_grab_pipeline(cache_store=cache, _ctx=ctx, private_releases="fallback", sleep_time=0)
+        pipe = make_grab_pipeline(cache_store=cache, _state=state, private_releases="fallback", sleep_time=0)
         pipe.grab_and_cache(_grab_request(11, plan.seadex_dict, entry))
         assert cache.get_cached_title(Arr.SONARR, 11) is None
-        assert [n.kind for n in ctx.stats.needs_action] == [NeedsActionKind.PRIVATE_ONLY_STALE]
-        assert [n.reason for n in ctx.stats.needs_action] == [STALE_ROW_REASON]
+        assert [n.kind for n in state.stats.needs_action] == [NeedsActionKind.PRIVATE_ONLY_STALE]
+        assert [n.reason for n in state.stats.needs_action] == [STALE_ROW_REASON]
 
     def test_radarr_size_disjoint_warns_and_holds(self) -> None:
         # The no-episode (Radarr) twin: the size-disjoint branch re-flags the
         # private pick, and the same-set fallback stays un-promoted - hold.
-        ctx = ArrRunState(arr=Arr.RADARR)
+        state = ArrRunState(arr=Arr.RADARR)
         filt = make_release_filter(
             private_releases="fallback",
             want_best=True,
             prefer_dual_audio=False,
             planner=make_planner(),
-            ctx=ctx,
+            ctx=state,
         )
         sd = filt.build(_entry_private_pick_plus_public_alt())
 
@@ -198,8 +198,8 @@ class TestUpgradePendingHoldsForOwnedStale:
         assert plan.seadex_dict["Priv"].releases[PRIV_URL].to_grab is False
         warnings = _warning_texts(recording)
         assert any(STALE_NOTICE in m for m in warnings), warnings
-        assert ctx.per_title.private_only_skipped is True
-        assert ctx.per_title.private_only_outdated is True
+        assert state.per_title.private_only_skipped is True
+        assert state.per_title.private_only_outdated is True
 
 
 class TestOwnedPreferredPrivateAtMatchingSize:
@@ -212,14 +212,14 @@ class TestOwnedPreferredPrivateAtMatchingSize:
     """
 
     def test_sonarr_owned_private_at_matching_size_stays_untouched(self) -> None:
-        ctx = ArrRunState(arr=Arr.SONARR)
+        state = ArrRunState(arr=Arr.SONARR)
         cache = FakeCacheStore()
         filt = make_release_filter(
             private_releases="fallback",
             want_best=True,
             prefer_dual_audio=False,
             planner=make_planner(),
-            ctx=ctx,
+            ctx=state,
         )
         entry = _entry_private_pick_plus_public_alt()
         sd = filt.build(entry)
@@ -239,13 +239,13 @@ class TestOwnedPreferredPrivateAtMatchingSize:
         assert plan.seadex_dict["Priv"].releases[PRIV_URL].to_grab is False
         assert plan.seadex_dict["Fall"].releases[PUB_URL].to_grab is False
         assert recording.events == []
-        assert ctx.per_title.private_only_skipped is False
-        assert ctx.per_title.private_only_outdated is False
+        assert state.per_title.private_only_skipped is False
+        assert state.per_title.private_only_outdated is False
 
-        pipe = make_grab_pipeline(cache_store=cache, _ctx=ctx, private_releases="fallback", sleep_time=0)
+        pipe = make_grab_pipeline(cache_store=cache, _state=state, private_releases="fallback", sleep_time=0)
         pipe.grab_and_cache(_grab_request(11, plan.seadex_dict, entry))
-        assert ctx.stats.up_to_date == 1
-        assert ctx.stats.needs_action == []
+        assert state.stats.up_to_date == 1
+        assert state.stats.needs_action == []
         cached = cache.get_cached_title(Arr.SONARR, 11)
         assert cached_as_done(cached, entry) is True
         assert cached is not None
@@ -255,14 +255,14 @@ class TestOwnedPreferredPrivateAtMatchingSize:
 
     def test_radarr_owned_private_at_matching_size_stays_untouched(self) -> None:
         # The no-episode (Radarr) twin, via the arr size overlap.
-        ctx = ArrRunState(arr=Arr.RADARR)
+        state = ArrRunState(arr=Arr.RADARR)
         cache = FakeCacheStore()
         filt = make_release_filter(
             private_releases="fallback",
             want_best=True,
             prefer_dual_audio=False,
             planner=make_planner(),
-            ctx=ctx,
+            ctx=state,
         )
         entry = _entry_private_pick_plus_public_alt()
         sd = filt.build(entry)
@@ -273,13 +273,13 @@ class TestOwnedPreferredPrivateAtMatchingSize:
         assert plan.seadex_dict["Priv"].releases[PRIV_URL].to_grab is False
         assert plan.seadex_dict["Fall"].releases[PUB_URL].to_grab is False
         assert recording.events == []
-        assert ctx.per_title.private_only_skipped is False
-        assert ctx.per_title.private_only_outdated is False
+        assert state.per_title.private_only_skipped is False
+        assert state.per_title.private_only_outdated is False
 
-        pipe = make_grab_pipeline(cache_store=cache, _ctx=ctx, private_releases="fallback", sleep_time=0)
+        pipe = make_grab_pipeline(cache_store=cache, _state=state, private_releases="fallback", sleep_time=0)
         pipe.grab_and_cache(_grab_request(22, plan.seadex_dict, entry))
-        assert ctx.stats.up_to_date == 1
-        assert ctx.stats.needs_action == []
+        assert state.stats.up_to_date == 1
+        assert state.stats.needs_action == []
         cached = cache.get_cached_title(Arr.RADARR, 22)
         assert cached_as_done(cached, entry) is True
         assert cached is not None
@@ -288,14 +288,14 @@ class TestOwnedPreferredPrivateAtMatchingSize:
     def test_warn_mode_upgrade_pending_warns_and_holds(self) -> None:
         # Parity: warn mode on the same upgrade-pending state warns and leaves
         # the title uncached, surfacing the plain PRIVATE_ONLY needs-action row.
-        ctx = ArrRunState(arr=Arr.SONARR)
+        state = ArrRunState(arr=Arr.SONARR)
         cache = FakeCacheStore()
         filt = make_release_filter(
             private_releases="warn",
             want_best=True,
             prefer_dual_audio=False,
             planner=make_planner(),
-            ctx=ctx,
+            ctx=state,
         )
         entry = _entry_private_pick_plus_public_alt()
         sd = filt.build(entry)
@@ -309,13 +309,13 @@ class TestOwnedPreferredPrivateAtMatchingSize:
 
         warnings = _warning_texts(recording)
         assert any("private-only (private releases not supported)" in m for m in warnings), warnings
-        assert ctx.per_title.private_only_skipped is True
+        assert state.per_title.private_only_skipped is True
 
-        pipe = make_grab_pipeline(cache_store=cache, _ctx=ctx, private_releases="warn", sleep_time=0)
+        pipe = make_grab_pipeline(cache_store=cache, _state=state, private_releases="warn", sleep_time=0)
         pipe.grab_and_cache(_grab_request(11, plan.seadex_dict, entry))
 
         assert cache.get_cached_title(Arr.SONARR, 11) is None
-        assert [n.kind for n in ctx.stats.needs_action] == [NeedsActionKind.PRIVATE_ONLY]
+        assert [n.kind for n in state.stats.needs_action] == [NeedsActionKind.PRIVATE_ONLY]
 
 
 class TestFilterDownloadsNoticeSeam:
@@ -331,13 +331,13 @@ class TestFilterDownloadsNoticeSeam:
         # public group (an INFO notice). {PrivB} is private-only with no cover
         # (a WARNING notice, plus the skip flag + group carried onto the
         # ArrRunState).
-        ctx = ArrRunState(arr=Arr.SONARR)
+        state = ArrRunState(arr=Arr.SONARR)
         filt = make_release_filter(
             private_releases="fallback",
             want_best=True,
             prefer_dual_audio=False,
             planner=make_planner(),
-            ctx=ctx,
+            ctx=state,
         )
         priv_a = make_torrent_record(
             release_group="PrivA",
@@ -393,9 +393,9 @@ class TestFilterDownloadsNoticeSeam:
         assert any("PrivB private-only (private releases not supported)" in m for m in warnings), warnings
         # The skip flag + group names land on the run context for the grab tail
         # (a promotion succeeded, so no stale hold rides along).
-        assert ctx.per_title.private_only_skipped is True
-        assert ctx.per_title.private_only_groups == ["PrivB"]
-        assert ctx.per_title.private_only_outdated is False
+        assert state.per_title.private_only_skipped is True
+        assert state.per_title.private_only_groups == ["PrivB"]
+        assert state.per_title.private_only_outdated is False
 
 
 class TestMixedGroupKeeperPreference:
@@ -436,14 +436,14 @@ class TestMixedGroupKeeperPreference:
         # G is first in dict order, but its flagged private url would be refused
         # at add time, so H wins keeper and S2 is actually obtained - pre-fix the
         # keeper was order-dependent and a G win silently lost S2.
-        ctx = ArrRunState(arr=Arr.SONARR)
+        state = ArrRunState(arr=Arr.SONARR)
         cache = FakeCacheStore()
         filt = make_release_filter(
             private_releases="warn",
             want_best=True,
             prefer_dual_audio=False,
             planner=make_planner(),
-            ctx=ctx,
+            ctx=state,
         )
         g_pub, g_priv = self._mixed_group_torrents()
         h_pub = make_torrent_record(
@@ -482,12 +482,12 @@ class TestMixedGroupKeeperPreference:
         assert plan.seadex_dict["G"].releases[PUB_URL].to_grab is False
         assert plan.seadex_dict["G"].releases[PRIV_URL].to_grab is False
         assert _warning_texts(recording) == []
-        assert ctx.per_title.private_only_skipped is False
+        assert state.per_title.private_only_skipped is False
 
         torrents = FakeTorrents({self.H_HASH: (AddStatus.ADDED, "H S01+S02")})
         pipe = make_grab_pipeline(
             cache_store=cache,
-            _ctx=ctx,
+            _state=state,
             _torrents=torrents,
             private_releases="warn",
             sleep_time=0,
@@ -495,21 +495,21 @@ class TestMixedGroupKeeperPreference:
         pipe._anilist.al_cache.update({55: {}})
         pipe.grab_and_cache(_grab_request(55, plan.seadex_dict, entry))
         assert torrents.calls == [self.H_HASH]
-        assert ctx.stats.needs_action == []
+        assert state.stats.needs_action == []
         assert cached_as_done(cache.get_cached_title(Arr.SONARR, 55), entry) is True
 
     def test_no_public_batch_boundary_warns_at_add_time(self) -> None:
         # No fully-addable group exists: the keeper degrades to the mixed group,
         # its public S1 url is grabbed, and the surviving private batch is
         # refused at add time with a WARNING + the hold flag - never silently.
-        ctx = ArrRunState(arr=Arr.SONARR)
+        state = ArrRunState(arr=Arr.SONARR)
         cache = FakeCacheStore()
         filt = make_release_filter(
             private_releases="warn",
             want_best=True,
             prefer_dual_audio=False,
             planner=make_planner(),
-            ctx=ctx,
+            ctx=state,
         )
         g_pub, g_priv = self._mixed_group_torrents()
         entry = make_entry_record(anilist_id=56, torrents=(g_pub, g_priv))
@@ -532,7 +532,7 @@ class TestMixedGroupKeeperPreference:
         torrents = FakeTorrents({PUB_HASH: (AddStatus.ADDED, "G S01 web")})
         pipe = make_grab_pipeline(
             cache_store=cache,
-            _ctx=ctx,
+            _state=state,
             _torrents=torrents,
             private_releases="warn",
             sleep_time=0,
@@ -542,8 +542,8 @@ class TestMixedGroupKeeperPreference:
             pipe.grab_and_cache(_grab_request(56, plan.seadex_dict, entry))
 
         assert [s.group for s in _private_skips(recording)] == ["G"]
-        assert ctx.per_title.private_only_skipped is True
-        assert ctx.per_title.private_only_groups == ["G"]
+        assert state.per_title.private_only_skipped is True
+        assert state.per_title.private_only_groups == ["G"]
         assert torrents.calls == [PUB_HASH]
         assert cached_as_done(cache.get_cached_title(Arr.SONARR, 56), entry) is True
 
@@ -556,14 +556,14 @@ class TestSurvivingPrivateCoverage:
         # to its public S1-only fallback. With both episodes missing, the batch
         # stays flagged and the add-time gate warns + sets the hold flag - the
         # old drop lost the S2 coverage without a trace.
-        ctx = ArrRunState(arr=Arr.SONARR)
+        state = ArrRunState(arr=Arr.SONARR)
         cache = FakeCacheStore()
         filt = make_release_filter(
             private_releases="fallback",
             want_best=True,
             prefer_dual_audio=True,
             planner=make_planner(),
-            ctx=ctx,
+            ctx=state,
         )
         priv_batch = make_torrent_record(
             release_group="A",
@@ -607,7 +607,7 @@ class TestSurvivingPrivateCoverage:
         torrents = FakeTorrents({PUB_HASH: (AddStatus.ADDED, "A S01 web")})
         pipe = make_grab_pipeline(
             cache_store=cache,
-            _ctx=ctx,
+            _state=state,
             _torrents=torrents,
             private_releases="fallback",
             sleep_time=0,
@@ -617,17 +617,17 @@ class TestSurvivingPrivateCoverage:
             pipe.grab_and_cache(_grab_request(33, plan.seadex_dict, entry))
 
         assert [s.group for s in _private_skips(recording)] == ["A"]
-        assert ctx.per_title.private_only_skipped is True
-        assert ctx.per_title.private_only_groups == ["A"]
+        assert state.per_title.private_only_skipped is True
+        assert state.per_title.private_only_groups == ["A"]
         assert torrents.calls == [PUB_HASH]
         # A non-interactive fallback hold blocks the cache even on a partial grab
         # (the S2 files stay missing), and the no-fallback row resurfaces the title
         # in every run's summary until a covering public release lands.
         assert cached_as_done(cache.get_cached_title(Arr.SONARR, 33), entry) is False
-        assert [n.kind for n in ctx.stats.needs_action] == [NeedsActionKind.PRIVATE_ONLY_NO_FALLBACK]
+        assert [n.kind for n in state.stats.needs_action] == [NeedsActionKind.PRIVATE_ONLY_NO_FALLBACK]
         # Exact wording pinned once, in test_grab_pipeline's
         # test_private_only_in_fallback_mode_surfaces_no_alternative.
-        assert "no public alternative" in ctx.stats.needs_action[0].reason
+        assert "no public alternative" in state.stats.needs_action[0].reason
 
 
 class TestPromotionGeneralization:
@@ -660,14 +660,14 @@ class TestPromotionGeneralization:
         # Upgrade-pending private pick + preferred public twin: pre-graft this
         # warned "no public alternative" and held the title forever. Now the
         # public group is promoted, grabbed, and the title caches normally.
-        ctx = ArrRunState(arr=Arr.SONARR)
+        state = ArrRunState(arr=Arr.SONARR)
         cache = FakeCacheStore()
         filt = make_release_filter(
             private_releases="fallback",
             want_best=True,
             prefer_dual_audio=False,
             planner=make_planner(),
-            ctx=ctx,
+            ctx=state,
         )
         entry = self._preferred_pair_entry(66)
         sd = filt.build(entry)
@@ -688,12 +688,12 @@ class TestPromotionGeneralization:
         info = _info_texts(recording)
         assert any("grabbing public alternative Pub" in m for m in info), info
         assert _warning_texts(recording) == []
-        assert ctx.per_title.private_only_skipped is False
+        assert state.per_title.private_only_skipped is False
 
         torrents = FakeTorrents({PUB_HASH: (AddStatus.ADDED, "Show S01 web")})
         pipe = make_grab_pipeline(
             cache_store=cache,
-            _ctx=ctx,
+            _state=state,
             _torrents=torrents,
             private_releases="fallback",
             sleep_time=0,
@@ -701,7 +701,7 @@ class TestPromotionGeneralization:
         pipe._anilist.al_cache.update({66: {}})
         pipe.grab_and_cache(_grab_request(66, plan.seadex_dict, entry))
         assert torrents.calls == [PUB_HASH]
-        assert ctx.stats.needs_action == []
+        assert state.stats.needs_action == []
         # Nothing is held, so the fallback-hold uncache must not fire.
         cached = cache.get_cached_title(Arr.SONARR, 66)
         assert cached_as_done(cached, entry) is True
@@ -712,13 +712,13 @@ class TestPromotionGeneralization:
     def test_radarr_preferred_public_alternative_is_promoted(self) -> None:
         # The no-parse (Radarr) twin of the preferred-pair upgrade: the public
         # movie is grabbed instead of the old warn-and-hold.
-        ctx = ArrRunState(arr=Arr.RADARR)
+        state = ArrRunState(arr=Arr.RADARR)
         filt = make_release_filter(
             private_releases="fallback",
             want_best=True,
             prefer_dual_audio=False,
             planner=make_planner(),
-            ctx=ctx,
+            ctx=state,
         )
         sd = filt.build(self._preferred_pair_entry(73))
 
@@ -728,7 +728,7 @@ class TestPromotionGeneralization:
         assert plan.seadex_dict["Pub"].releases[PUB_URL].to_grab is True
         assert plan.seadex_dict["Priv"].releases[PRIV_URL].to_grab is False
         assert _warning_texts(recording) == []
-        assert ctx.per_title.private_only_skipped is False
+        assert state.per_title.private_only_skipped is False
 
     M_PUB_URL = "https://nyaa.si/view/3"
     M_PUB_HASH = "c" * 40
@@ -741,13 +741,13 @@ class TestPromotionGeneralization:
         # which never replaces the owned stale copy: nothing is promoted, the
         # stale bit is set (no planner notice - the add-time gate warns), and
         # the batch stays flagged for that gate to refuse.
-        ctx = ArrRunState(arr=Arr.SONARR)
+        state = ArrRunState(arr=Arr.SONARR)
         filt = make_release_filter(
             private_releases="fallback",
             want_best=True,
             prefer_dual_audio=False,
             planner=make_planner(),
-            ctx=ctx,
+            ctx=state,
         )
         m_pub = make_torrent_record(
             release_group="M",
@@ -806,8 +806,8 @@ class TestPromotionGeneralization:
         assert plan.seadex_dict["M"].releases[self.M_PUB_URL].to_grab is False
         assert plan.seadex_dict["M"].releases[PRIV_URL].to_grab is True
         assert recording.events == []
-        assert ctx.per_title.private_only_skipped is False
-        assert ctx.per_title.private_only_outdated is True
+        assert state.per_title.private_only_skipped is False
+        assert state.per_title.private_only_outdated is True
 
 
 class TestEqualUnionMixedGroups:
@@ -865,14 +865,14 @@ class TestEqualUnionMixedGroups:
         # loss as done). Both public urls must now grab in either order.
         a_pub, a_priv, b_pub, b_priv = self._torrents()
         for al_id, order in ((91, (a_pub, a_priv, b_pub, b_priv)), (92, (b_pub, b_priv, a_pub, a_priv))):
-            ctx = ArrRunState(arr=Arr.SONARR)
+            state = ArrRunState(arr=Arr.SONARR)
             cache = FakeCacheStore()
             filt = make_release_filter(
                 private_releases="warn",
                 want_best=True,
                 prefer_dual_audio=False,
                 planner=make_planner(),
-                ctx=ctx,
+                ctx=state,
             )
             entry = make_entry_record(anilist_id=al_id, torrents=order)
             sd = filt.build(entry)
@@ -905,7 +905,7 @@ class TestEqualUnionMixedGroups:
             )
             pipe = make_grab_pipeline(
                 cache_store=cache,
-                _ctx=ctx,
+                _state=state,
                 _torrents=torrents,
                 private_releases="warn",
                 sleep_time=0,
@@ -918,15 +918,15 @@ class TestEqualUnionMixedGroups:
             # refused with a WARNING, and warn mode still caches the title.
             assert set(torrents.calls) == {self.A_PUB_HASH, self.B_PUB_HASH}, f"order={al_id}"
             assert _private_skips(recording), recording.events
-            assert ctx.per_title.private_only_skipped is True
+            assert state.per_title.private_only_skipped is True
             assert cached_as_done(cache.get_cached_title(Arr.SONARR, al_id), entry) is True
 
 
 class _CachedEntryReporter:
     """Just enough reporter surface for `cached_entry_skip`'s logging tail."""
 
-    def log_cached_title(self, ctx: ArrRunState, al_id: int) -> None:
-        del ctx, al_id
+    def log_cached_title(self, state: ArrRunState, al_id: int) -> None:
+        del state, al_id
 
 
 class TestModeSwitchResurfacesFallbackSatisfied:
@@ -940,14 +940,14 @@ class TestModeSwitchResurfacesFallbackSatisfied:
     def test_fallback_marker_resurfaces_under_warn_and_persists(self) -> None:
         # 1) fallback run: Sonarr misses the episode, the keeper flow grabs the
         # public fallback, and the title caches with the marker set.
-        ctx = ArrRunState(arr=Arr.SONARR)
+        state = ArrRunState(arr=Arr.SONARR)
         cache = FakeCacheStore()
         filt = make_release_filter(
             private_releases="fallback",
             want_best=True,
             prefer_dual_audio=False,
             planner=make_planner(),
-            ctx=ctx,
+            ctx=state,
         )
         entry = _entry_private_pick_plus_public_alt()
         sd = filt.build(entry)
@@ -964,7 +964,7 @@ class TestModeSwitchResurfacesFallbackSatisfied:
         torrents = FakeTorrents({PUB_HASH: (AddStatus.ADDED, "Fall S01")})
         pipe = make_grab_pipeline(
             cache_store=cache,
-            _ctx=ctx,
+            _state=state,
             _torrents=torrents,
             private_releases="fallback",
             sleep_time=0,
@@ -1018,7 +1018,7 @@ class TestModeSwitchResurfacesFallbackSatisfied:
         warnings = _warning_texts(recording)
         assert any("private-only (private releases not supported)" in m for m in warnings), warnings
 
-        warn_pipe = make_grab_pipeline(cache_store=cache, _ctx=warn_ctx, private_releases="warn", sleep_time=0)
+        warn_pipe = make_grab_pipeline(cache_store=cache, _state=warn_ctx, private_releases="warn", sleep_time=0)
         warn_pipe.grab_and_cache(_grab_request(11, warn_plan.seadex_dict, entry))
         assert [n.kind for n in warn_ctx.stats.needs_action] == [NeedsActionKind.PRIVATE_ONLY]
         persisted = cache.get_cached_title(Arr.SONARR, 11)

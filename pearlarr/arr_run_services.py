@@ -336,8 +336,8 @@ class ArrRunServices:
         # fresh at the start of each run by the loop's start_arr_run. The single
         # placeholder is minted here - its dry_run=False + OFF wait mode keep every
         # preview / pending-import path a safe no-op - so the object is usable
-        # before run_arr. The run loop ADOPTS it (via `ctx`) at construction.
-        self._ctx = ArrRunState(arr=arr)
+        # before run_arr. The run loop ADOPTS it (via `state`) at construction.
+        self._state = ArrRunState(arr=arr)
 
         # AniList ids whose arr-side files changed since the last pass (fed by the
         # run loop's activity scan). They bypass the cached-entry skip once.
@@ -345,21 +345,21 @@ class ArrRunServices:
 
         # The shared per-id collaborators, built from the deps hub + the
         # placeholder ctx. bind_arr_run rebinds their ctx at the top of each run.
-        self._filter = SeadexReleaseFilter(deps=deps, ctx=self._ctx)
+        self._filter = SeadexReleaseFilter(deps=deps, state=self._state)
         # The one pending-record seam, shared by the grab pipeline, the strategies, and the wait manager.
         self._pending_imports = PendingImportStore(deps.cache_store)
-        self._pending_imports.bind_arr_run(self._ctx)
-        self._grab_pipeline = GrabPipeline(deps=deps, ctx=self._ctx, pending_imports=self._pending_imports)
+        self._pending_imports.bind_arr_run(self._state)
+        self._grab_pipeline = GrabPipeline(deps=deps, state=self._state, pending_imports=self._pending_imports)
 
     @property
-    def ctx(self) -> ArrRunState:
+    def state(self) -> ArrRunState:
         """The current run context (the placeholder until a run begins).
 
         Read by the `RunLoop` run loop at construction so
         it adopts the same placeholder instead of minting a second one.
         """
 
-        return self._ctx
+        return self._state
 
     @property
     def selection_changed(self) -> bool:
@@ -380,7 +380,7 @@ class ArrRunServices:
         stays on the loop side (the loop owns the manager).
         """
 
-        self._ctx = state
+        self._state = state
         # Per-run state: the loop's activity scan re-marks dirty ids after this.
         self._dirty_al_ids.clear()
         self._filter.bind_arr_run(state)
@@ -427,7 +427,7 @@ class ArrRunServices:
 
         if self._config.seadex.ignore_seadex_update_times or self._selection_changed or al_id in self._dirty_al_ids:
             return None
-        cached = self.cache_store.get_cached_title(self._ctx.arr, al_id)
+        cached = self.cache_store.get_cached_title(self._state.arr, al_id)
         if cached is None or not cached.cached_under(sd_entry.updated_at):
             return None
         if cached.fallback_satisfied and self._config.seadex.private_releases is PrivateReleaseAction.WARN:
@@ -456,7 +456,7 @@ class ArrRunServices:
         # Logged per call, not only on the cache-filling one, so the main loop still logs every ignored id.
         if log_ignored:
             for al_id in resolved.ignored:
-                self._reporter.log_ignored_anilist_id(self._ctx, al_id)
+                self._reporter.log_ignored_anilist_id(self._state, al_id)
 
         return resolved.kept
 
@@ -477,7 +477,7 @@ class ArrRunServices:
         `new_cache_details` writes the result back. `log_al_title` opens the block with it.
         """
 
-        return title_from_names(al_id, self._anilist.titles(al_id), self._ctx.arr_title)
+        return title_from_names(al_id, self._anilist.titles(al_id), self._state.arr_title)
 
     def new_cache_details(self, title: Title, sd_entry: EntryRecord) -> CachedTitleUpdate:
         """The seed record a processed id accumulates into.
@@ -519,7 +519,7 @@ class ArrRunServices:
 
     def is_dry_run(self) -> bool:
         """A run is a no-op preview (nothing can be grabbed): explicit dry run, or qBittorrent not configured."""
-        return is_dry_run(self._ctx, self.qbit)
+        return is_dry_run(self._state, self.qbit)
 
     @property
     def import_wait_mode(self) -> ImportWaitMode:
@@ -532,7 +532,7 @@ class ArrRunServices:
         whole pass would silently no-op.
         """
 
-        return self._ctx.import_wait_mode
+        return self._state.import_wait_mode
 
     def _update_cache(
         self,
@@ -544,7 +544,7 @@ class ArrRunServices:
         The run's save points flush it. See `CacheStore.update_cache`.
         """
 
-        self.cache_store.update_cached_title(self._ctx.arr, al_id, update)
+        self.cache_store.update_cached_title(self._state.arr, al_id, update)
 
     def report_no_releases(
         self,
@@ -581,13 +581,13 @@ class ArrRunServices:
     def owe_pause(self) -> None:
         """Owe the `advanced.sleep_time` pause for this id's queries. `pay_pause` sleeps it before the next id."""
 
-        self._ctx.pause_owed = True
+        self._state.pause_owed = True
 
     def pay_pause(self) -> None:
         """Sleep the owed pacing pause, if any, and clear it."""
 
-        if self._ctx.pause_owed:
-            self._ctx.pause_owed = False
+        if self._state.pause_owed:
+            self._state.pause_owed = False
             self._clock.sleep(self._config.advanced.sleep_time)
 
     def begin_check(self, al_id: int) -> EntryRecord | None:
@@ -598,16 +598,16 @@ class ArrRunServices:
         """
 
         # A fresh PerTitleState clears every flag at once, so none leaks from the prior title.
-        self._ctx.per_title = PerTitleState()
-        self._ctx.stats.checked += 1
+        self._state.per_title = PerTitleState()
+        self._state.stats.checked += 1
 
         # Get the SeaDex entry if it exists
         sd_entry = self._seadex.entry(al_id)
         if isinstance(sd_entry, SeaDexMiss):
             if sd_entry is SeaDexMiss.UNREACHABLE:
-                self._reporter.log_seadex_unreachable(self._ctx, al_id)
+                self._reporter.log_seadex_unreachable(self._state, al_id)
             else:
-                self._reporter.log_no_sd_entry(self._ctx, al_id)
+                self._reporter.log_no_sd_entry(self._state, al_id)
             return None
 
         return sd_entry
@@ -632,7 +632,7 @@ class ArrRunServices:
         if cached is None:
             # A forced re-check finds the row already stamped with SeaDex's current update time. Left so, a check
             # that ends in a failed grab, a hold or an error would leave the title skipped as cached from then on.
-            self.cache_store.uncache_title(self._ctx.arr, al_id)
+            self.cache_store.uncache_title(self._state.arr, al_id)
             return False
 
         # One-time backfills merged into a single write: the url + coverage an older record lacks,
@@ -645,7 +645,7 @@ class ArrRunServices:
             backfill["name"] = name
         if backfill:
             self._update_cache(al_id=al_id, update=backfill)
-        self._reporter.log_cached_title(self._ctx, al_id)
+        self._reporter.log_cached_title(self._state, al_id)
         return True
 
     def grab_and_cache(self, req: GrabRequest) -> None:
@@ -671,7 +671,7 @@ class ArrRunServices:
 
     def log_anilist_item_unmonitored(self, item_title: str) -> None:
         """Log an unmonitored-item skip (delegates to RunReporter)."""
-        self._reporter.log_arr_item_unmonitored(self._ctx, item_title)
+        self._reporter.log_arr_item_unmonitored(self._state, item_title)
 
     def open_title_block(
         self,
@@ -681,7 +681,7 @@ class ArrRunServices:
     ) -> None:
         """Log the active-entry header (delegates to RunReporter)."""
         self._reporter.open_title_block(
-            self._ctx,
+            self._state,
             title,
             sd_entry,
             coverage=coverage,
@@ -689,4 +689,4 @@ class ArrRunServices:
 
     def _log_no_seadex_releases(self) -> None:
         """Log a no-suitable-releases outcome (delegates to RunReporter)."""
-        self._reporter.log_no_seadex_releases(self._ctx)
+        self._reporter.log_no_seadex_releases(self._state)

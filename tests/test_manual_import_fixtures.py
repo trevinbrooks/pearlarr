@@ -339,11 +339,11 @@ class TestCapturedSpecialsEndToEnd:
             ordered_episode_ids=[8030, 8031, 8032],
         )
 
-        probe = specials.strat.import_completed(pending, "/downloads/yamada", AttemptKind.ORDINARY)
+        result = specials.strat.import_completed(pending, "/downloads/yamada", AttemptKind.ORDINARY)
 
         # The copy is async, so nothing is present yet.
-        assert probe.all_done is False
-        assert probe.command_issued is True
+        assert result.all_done is False
+        assert result.command_issued is True
         assert len(specials.sonarr.execute_calls) == 1
         files = specials.sonarr.execute_calls[0][0]
         assert {f.episodeIds[0] for f in files} == {8030, 8031}
@@ -384,10 +384,10 @@ class TestCapturedSpecialsEndToEnd:
             ordered_episode_ids=[v[0] for v in ep_map.values()],
         )
 
-        probe = specials.strat.import_completed(pending, "/downloads/yamada", AttemptKind.ORDINARY)
+        result = specials.strat.import_completed(pending, "/downloads/yamada", AttemptKind.ORDINARY)
 
-        assert probe.target_count == len(specials.files)
-        assert probe.imported_count == 0
+        assert result.target_count == len(specials.files)
+        assert result.imported_count == 0
 
     def test_import_progress_is_read_only_and_counts_seed_targets(self) -> None:
         # The fast poll: a determinate count over the seed targets, reading ONLY the episode files,
@@ -453,7 +453,7 @@ class TestCapturedSpecialsEndToEnd:
         )
 
         progress = specials.strat.import_progress(pending)
-        probe = specials.strat.import_completed(pending, "/downloads/yamada", AttemptKind.ORDINARY)
+        result = specials.strat.import_completed(pending, "/downloads/yamada", AttemptKind.ORDINARY)
 
         assert progress == ImportProgress(0, 0, determinate=False)
-        assert (probe.imported_count, probe.target_count) == (0, 1)
+        assert (result.imported_count, result.target_count) == (0, 1)

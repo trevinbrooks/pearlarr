@@ -12,18 +12,18 @@ from pearlarr.output import (
     KIND_DEPTH,
     ArrRunFinished,
     ArrRunSummary,
+    ArrRunSummaryReady,
     ArrRunTally,
     BootStepFinished,
     BootStepStarted,
-    CycleStarted,
     Diagnostic,
     Event,
     ItemStarted,
     OpenScopes,
-    RunStarted,
-    RunSummaryReady,
+    PearlarrStarted,
     ScanFinished,
     ScanStarted,
+    ScheduledRunStarted,
     ScopeClosed,
     ScopeId,
     ScopeKind,
@@ -53,8 +53,8 @@ def _kinds(fold: OpenScopes) -> list[ScopeKind]:
     return [node.kind for node in fold.nodes()]
 
 
-def _summary_ready() -> RunSummaryReady:
-    return RunSummaryReady(
+def _summary_ready() -> ArrRunSummaryReady:
+    return ArrRunSummaryReady(
         ArrRunSummary(
             arr=Arr.SONARR,
             dry_run_note=None,
@@ -191,10 +191,10 @@ def test_run_finished_closes_everything_and_is_idempotent() -> None:
 
 
 def test_run_and_cycle_starts_close_everything() -> None:
-    fold = _fold(ScopeOpened(scope=_BOOT, label="boot"), RunStarted(version="", data_dir="/d"))
+    fold = _fold(ScopeOpened(scope=_BOOT, label="boot"), PearlarrStarted(version="", data_dir="/d"))
     assert fold.nodes() == ()
 
-    fold = _fold(ScanStarted(arr=Arr.SONARR, total=1), CycleStarted(number=2))
+    fold = _fold(ScanStarted(arr=Arr.SONARR, total=1), ScheduledRunStarted(number=2))
     assert fold.nodes() == ()
 
 

@@ -28,6 +28,7 @@ from .console_text import (
 )
 from .events import (
     Accent,
+    ArrRunSummaryReady,
     CapReached,
     GrabAction,
     GrabFact,
@@ -37,7 +38,6 @@ from .events import (
     NeedsActionCause,
     NeedsActionFact,
     ReleaseSkipped,
-    RunSummaryReady,
     ScanStarted,
     SkipReason,
     TitleDetail,
@@ -57,7 +57,7 @@ type ScanEvent = (
     | GrabFailed
     | GrabAction
     | CapReached
-    | RunSummaryReady
+    | ArrRunSummaryReady
 )
 
 
@@ -343,7 +343,7 @@ def _added_block(item: GrabFact, *, dry_run: bool) -> Iterator[ConsoleLine]:
     yield from _summary_block(item.title or "(unknown title)", "grey50" if dry_run else None, rows)
 
 
-def run_summary_lines(event: RunSummaryReady) -> tuple[ConsoleLine, ...]:
+def arr_run_summary_lines(event: ArrRunSummaryReady) -> tuple[ConsoleLine, ...]:
     """The end-of-run scoreboard: checked / needs-action / added tallies plus the closing section rule."""
 
     summary = event.summary
@@ -440,6 +440,6 @@ def scan_event_lines(event: ScanEvent) -> tuple[ConsoleLine, ...]:
             return grab_action_lines(event)
         case CapReached():
             return cap_reached_lines(event)
-        case RunSummaryReady():
-            return run_summary_lines(event)
+        case ArrRunSummaryReady():
+            return arr_run_summary_lines(event)
     assert_never(event)

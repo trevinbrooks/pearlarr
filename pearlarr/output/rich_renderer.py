@@ -38,6 +38,7 @@ from .console_lines import ConsoleLine, render_console_lines
 from .console_text import INDENT
 from .events import (
     ArrRunFinished,
+    ArrRunSummaryReady,
     BootReady,
     BootStepFinished,
     BootStepProgressed,
@@ -52,7 +53,6 @@ from .events import (
     ConfigMigrated,
     ConfigUpToDate,
     ConfigValidated,
-    CycleStarted,
     Diagnostic,
     EffectiveConfigShown,
     Event,
@@ -61,12 +61,12 @@ from .events import (
     ItemStarted,
     NextRunScheduled,
     PathsShown,
+    PearlarrStarted,
     ReleaseSkipped,
     RowFinished,
-    RunStarted,
-    RunSummaryReady,
     ScanFinished,
     ScanStarted,
+    ScheduledRunStarted,
     ScopeClosed,
     ScopeKind,
     ScopeOpened,
@@ -171,7 +171,7 @@ class RichRenderer(Renderer):
             case Diagnostic():
                 self._diagnostic(event)
             case (
-                RunStarted()
+                PearlarrStarted()
                 | BootStepStarted()
                 | BootStepProgressed()
                 | BootStepSlow()
@@ -192,14 +192,14 @@ class RichRenderer(Renderer):
                 | GrabFailed()
                 | GrabAction()
                 | CapReached()
-                | RunSummaryReady()
+                | ArrRunSummaryReady()
             ):
                 self._scan(event)
             case WaitStarted() | WaitProgress() | RowFinished() | WaitFinished():
                 self._wait.handle(event)
             case NextRunScheduled(at=at):
                 self._next_run(at)
-            case CycleStarted() | ScanFinished() | ArrRunFinished():
+            case ScheduledRunStarted() | ScanFinished() | ArrRunFinished():
                 # Pure boundaries: the banner leads each cycle and the summary
                 # closes each run, so none draws a console line of its own.
                 pass
@@ -250,7 +250,7 @@ class RichRenderer(Renderer):
         if console is None:
             return
         use_unicode = self._caps.for_console(console).can_unicode
-        print_literal(console, diagnostic_text(event, indented=self._cockpit_open(), use_unicode=use_unicode))
+        print_literal(console, diagnostic_text(event, indented=self._indented_scope_open(), use_unicode=use_unicode))
         if event.trace is not None:
             console.print(
                 Traceback(
@@ -298,7 +298,7 @@ class RichRenderer(Renderer):
         wanted = frozenset(kinds)
         return any(node.kind in wanted for node in self._crumbs.nodes())
 
-    def _cockpit_open(self) -> bool:
+    def _indented_scope_open(self) -> bool:
         """True while a boot section, item, wait region, or entry block is open.
 
         These are the indented contexts a diagnostic folds into (RUN alone

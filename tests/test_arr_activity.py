@@ -21,7 +21,7 @@ import pytest
 from pearlarr.arr_activity import (
     HISTORY_MAX_LOOKBACK_DAYS,
     HISTORY_QUERY_OVERLAP_HOURS,
-    ArrActivityMonitor,
+    ArrActivityReader,
     format_history_date,
     parse_history_date,
 )
@@ -70,9 +70,9 @@ class _Fetch:
         return self.records
 
 
-def _monitor(cache: FakeCacheStore | None = None) -> tuple[ArrActivityMonitor, FakeCacheStore]:
+def _monitor(cache: FakeCacheStore | None = None) -> tuple[ArrActivityReader, FakeCacheStore]:
     cache = cache if cache is not None else FakeCacheStore()
-    return ArrActivityMonitor(Arr.SONARR, cache, make_logger()), cache
+    return ArrActivityReader(Arr.SONARR, cache, make_logger()), cache
 
 
 class TestDateHelpers:
@@ -98,86 +98,86 @@ class TestScan:
     """`ArrActivityMonitor.scan` windows/dedups history queries off the stored checkpoint, clamping bad or future dates to a full rescan, and filters touched ids by event type."""
 
     def test_bootstrap_queries_lookback_window_and_stores_max_id_checkpoint(self) -> None:
-        monitor, cache = _monitor()
+        activity, cache = _monitor()
         fetch = _Fetch([_rec(5, item_id=3), _rec(7, item_id=4, date="2026-07-06T11:00:00Z")])
 
-        scan = monitor.scan(fetch, now=_NOW)
+        scan = activity.read(fetch, now=_NOW)
 
         assert scan.touched == frozenset({3, 4})
         assert scan.rescan_all is False
         assert fetch.calls == [format_history_date(_NOW - timedelta(days=HISTORY_MAX_LOOKBACK_DAYS))]
-        monitor.stage_checkpoint()
+        activity.stage_checkpoint()
         assert cache.get_history_checkpoint(Arr.SONARR) == HistoryCheckpoint("2026-07-06T11:00:00Z", 7)
 
     def test_id_cursor_dedup_skips_already_seen_records(self) -> None:
-        monitor, cache = _monitor()
+        activity, cache = _monitor()
         cache.put_history_checkpoint(Arr.SONARR, HistoryCheckpoint(format_history_date(_NOW), 10))
         fetch = _Fetch([_rec(9, item_id=1), _rec(10, item_id=1), _rec(11, item_id=2)])
 
-        assert monitor.scan(fetch, now=_NOW).touched == frozenset({2})
+        assert activity.read(fetch, now=_NOW).touched == frozenset({2})
 
     def test_query_date_overlaps_behind_the_checkpoint(self) -> None:
-        monitor, cache = _monitor()
+        activity, cache = _monitor()
         since = _NOW - timedelta(hours=2)
         cache.put_history_checkpoint(Arr.SONARR, HistoryCheckpoint(format_history_date(since), 1))
         fetch = _Fetch([])
 
-        assert monitor.scan(fetch, now=_NOW).rescan_all is False
+        assert activity.read(fetch, now=_NOW).rescan_all is False
         assert fetch.calls == [format_history_date(since - timedelta(hours=HISTORY_QUERY_OVERLAP_HOURS))]
 
     def test_checkpoint_beyond_lookback_clamps_and_signals_rescan(self) -> None:
         # A gap the clamp truncates: the un-queried stretch may hide changes,
         # so the scan demands a full re-check while the cursor still advances.
-        monitor, cache = _monitor()
+        activity, cache = _monitor()
         since = _NOW - timedelta(days=40)
         cache.put_history_checkpoint(Arr.SONARR, HistoryCheckpoint(format_history_date(since), 1))
         fetch = _Fetch([_rec(50, item_id=3, date="2026-07-06T09:00:00Z")])
 
-        scan = monitor.scan(fetch, now=_NOW)
+        scan = activity.read(fetch, now=_NOW)
 
         assert scan.rescan_all is True
         assert scan.touched == frozenset()
         assert fetch.calls == [format_history_date(_NOW - timedelta(days=HISTORY_MAX_LOOKBACK_DAYS))]
-        monitor.stage_checkpoint()
+        activity.stage_checkpoint()
         assert cache.get_history_checkpoint(Arr.SONARR) == HistoryCheckpoint("2026-07-06T09:00:00Z", 50)
 
     def test_gap_with_empty_window_still_signals_rescan(self) -> None:
         # No fresh records to advance the cursor: coverage stays broken, so the
         # rescan repeats next pass until history produces a new stamp.
-        monitor, cache = _monitor()
+        activity, cache = _monitor()
         since = _NOW - timedelta(days=40)
         stored = HistoryCheckpoint(format_history_date(since), 1)
         cache.put_history_checkpoint(Arr.SONARR, stored)
 
-        scan = monitor.scan(_Fetch([]), now=_NOW)
+        scan = activity.read(_Fetch([]), now=_NOW)
 
         assert scan.rescan_all is True
-        monitor.stage_checkpoint()
+        activity.stage_checkpoint()
         assert cache.get_history_checkpoint(Arr.SONARR) == stored
 
     def test_future_checkpoint_date_clamped_to_now(self) -> None:
-        monitor, cache = _monitor()
+        activity, cache = _monitor()
         cache.put_history_checkpoint(
             Arr.SONARR,
             HistoryCheckpoint(format_history_date(_NOW + timedelta(hours=1)), 1),
         )
         fetch = _Fetch([])
 
-        assert monitor.scan(fetch, now=_NOW).rescan_all is False
+        assert activity.read(fetch, now=_NOW).rescan_all is False
         assert fetch.calls == [format_history_date(_NOW - timedelta(hours=HISTORY_QUERY_OVERLAP_HOURS))]
 
     def test_unparseable_checkpoint_date_replays_lookback_and_rescans(self) -> None:
-        monitor, cache = _monitor()
+        activity, cache = _monitor()
         cache.put_history_checkpoint(Arr.SONARR, HistoryCheckpoint("garbage", 1))
         fetch = _Fetch([])
 
-        scan = monitor.scan(fetch, now=_NOW)
+        scan = activity.read(fetch, now=_NOW)
 
         assert scan.rescan_all is True
         assert fetch.calls == [format_history_date(_NOW - timedelta(days=HISTORY_MAX_LOOKBACK_DAYS))]
 
     def test_event_type_filtering(self) -> None:
-        monitor, _ = _monitor()
+        activity, _ = _monitor()
         fetch = _Fetch(
             [
                 _rec(1, item_id=1, event="grabbed"),
@@ -192,10 +192,10 @@ class TestScan:
             ],
         )
 
-        assert monitor.scan(fetch, now=_NOW).touched == frozenset({5, 6, 7, 8, 9})
+        assert activity.read(fetch, now=_NOW).touched == frozenset({5, 6, 7, 8, 9})
 
     def test_upgrade_reason_delete_suppressed_both_casings(self) -> None:
-        monitor, cache = _monitor()
+        activity, cache = _monitor()
         fetch = _Fetch(
             [
                 _rec(1, item_id=1, event="episodeFileDeleted", reason="upgrade"),
@@ -203,9 +203,9 @@ class TestScan:
             ],
         )
 
-        assert monitor.scan(fetch, now=_NOW).touched == frozenset()
+        assert activity.read(fetch, now=_NOW).touched == frozenset()
         # The window was non-empty, so the cursor still advances on commit.
-        monitor.stage_checkpoint()
+        activity.stage_checkpoint()
         checkpoint = cache.get_history_checkpoint(Arr.SONARR)
         assert checkpoint is not None
         assert checkpoint.last_id == 2
@@ -218,7 +218,7 @@ class TestScan:
         # An own pending grab is seeded so a re-added own-grab filter fails here: the arr may import only part of a grab.
         cache = FakeCacheStore()
         cache.put_pending_import_row(arr, "beef01", {"infohash": "beef01"})
-        monitor = ArrActivityMonitor(arr, cache, make_logger())
+        activity = ArrActivityReader(arr, cache, make_logger())
         fetch = _Fetch(
             [
                 _rec(1, item_id=1, event=event, download_id="BEEF01"),  # pending grab
@@ -226,24 +226,24 @@ class TestScan:
             ],
         )
 
-        assert monitor.scan(fetch, now=_NOW).touched == frozenset({1, 2})
+        assert activity.read(fetch, now=_NOW).touched == frozenset({1, 2})
 
     def test_committed_own_grab_import_is_not_touched_again(self) -> None:
         # The committed cursor dedups the overlap's replay, so the next run re-checks nothing.
-        monitor, cache = _monitor()
+        activity, cache = _monitor()
         cache.put_pending_import_row(Arr.SONARR, "beef01", {"infohash": "beef01"})
         records = [_rec(1, item_id=2, download_id="BEEF01")]
 
-        assert monitor.scan(_Fetch(records), now=_NOW).touched == frozenset({2})
-        monitor.stage_checkpoint()
+        assert activity.read(_Fetch(records), now=_NOW).touched == frozenset({2})
+        activity.stage_checkpoint()
         next_run, _ = _monitor(cache)
-        assert next_run.scan(_Fetch(records), now=_NOW).touched == frozenset()
+        assert next_run.read(_Fetch(records), now=_NOW).touched == frozenset()
 
     def test_item_id_zero_dropped(self) -> None:
-        monitor, _ = _monitor()
+        activity, _ = _monitor()
         fetch = _Fetch([_rec(1, item_id=0), _rec(2, item_id=6)])
 
-        assert monitor.scan(fetch, now=_NOW).touched == frozenset({6})
+        assert activity.read(fetch, now=_NOW).touched == frozenset({6})
 
     def test_fetch_failure_fails_open(self) -> None:
         logger = make_logger()
@@ -251,9 +251,9 @@ class TestScan:
         capture = CaptureHandler()
         logger.addHandler(capture)
         cache = FakeCacheStore()
-        monitor = ArrActivityMonitor(Arr.SONARR, cache, logger)
+        activity = ArrActivityReader(Arr.SONARR, cache, logger)
         try:
-            scan = monitor.scan(_Fetch(None), now=_NOW)
+            scan = activity.read(_Fetch(None), now=_NOW)
         finally:
             logger.removeHandler(capture)
 
@@ -264,51 +264,51 @@ class TestScan:
         assert not any(r.levelno == logging.WARNING for r in capture.records)
         assert any(r.levelno == logging.DEBUG for r in capture.records)
         # No pending checkpoint either: commit is a no-op.
-        monitor.stage_checkpoint()
+        activity.stage_checkpoint()
         assert cache.get_history_checkpoint(Arr.SONARR) is None
 
     def test_fetch_failure_on_a_gap_keeps_the_gap_detectable(self) -> None:
         # Fail-open beats rescan: nothing this run, but the untouched checkpoint
         # re-detects the gap next pass.
-        monitor, cache = _monitor()
+        activity, cache = _monitor()
         stored = HistoryCheckpoint(format_history_date(_NOW - timedelta(days=40)), 1)
         cache.put_history_checkpoint(Arr.SONARR, stored)
 
-        scan = monitor.scan(_Fetch(None), now=_NOW)
+        scan = activity.read(_Fetch(None), now=_NOW)
 
         assert scan.rescan_all is False
-        monitor.stage_checkpoint()
+        activity.stage_checkpoint()
         assert cache.get_history_checkpoint(Arr.SONARR) == stored
 
     def test_empty_response_leaves_checkpoint_unchanged(self) -> None:
-        monitor, cache = _monitor()
+        activity, cache = _monitor()
         stored = HistoryCheckpoint(format_history_date(_NOW - timedelta(hours=3)), 12)
         cache.put_history_checkpoint(Arr.SONARR, stored)
 
-        assert monitor.scan(_Fetch([]), now=_NOW).touched == frozenset()
-        monitor.stage_checkpoint()
+        assert activity.read(_Fetch([]), now=_NOW).touched == frozenset()
+        activity.stage_checkpoint()
         assert cache.get_history_checkpoint(Arr.SONARR) == stored
 
     def test_stale_only_window_leaves_checkpoint_unchanged(self) -> None:
-        monitor, cache = _monitor()
+        activity, cache = _monitor()
         stored = HistoryCheckpoint(format_history_date(_NOW - timedelta(hours=3)), 12)
         cache.put_history_checkpoint(Arr.SONARR, stored)
 
-        assert monitor.scan(_Fetch([_rec(11), _rec(12)]), now=_NOW).touched == frozenset()
-        monitor.stage_checkpoint()
+        assert activity.read(_Fetch([_rec(11), _rec(12)]), now=_NOW).touched == frozenset()
+        activity.stage_checkpoint()
         assert cache.get_history_checkpoint(Arr.SONARR) == stored
 
     def test_empty_date_record_does_not_stash_a_checkpoint(self) -> None:
         # An empty stored date would collapse the next window to the overlap.
         # keep the old cursor and let the id dedup absorb the re-delivery.
-        monitor, cache = _monitor()
+        activity, cache = _monitor()
         stored = HistoryCheckpoint(format_history_date(_NOW - timedelta(hours=3)), 12)
         cache.put_history_checkpoint(Arr.SONARR, stored)
 
-        scan = monitor.scan(_Fetch([_rec(20, item_id=5, date="")]), now=_NOW)
+        scan = activity.read(_Fetch([_rec(20, item_id=5, date="")]), now=_NOW)
 
         assert scan.touched == frozenset({5})
-        monitor.stage_checkpoint()
+        activity.stage_checkpoint()
         assert cache.get_history_checkpoint(Arr.SONARR) == stored
 
 

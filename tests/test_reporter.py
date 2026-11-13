@@ -26,10 +26,10 @@ from pearlarr.cache import AbstractCacheStore, CachedTitleUpdate
 from pearlarr.config import Arr
 from pearlarr.output import (
     ArrRunFinished,
+    ArrRunSummaryReady,
     Event,
     GrabAction,
     NeedsActionCause,
-    RunSummaryReady,
     ScanFinished,
     ScopeClosed,
     ScopeOpened,
@@ -106,33 +106,33 @@ class TestStatsCounters:
     """
 
     def test_unmonitored(self) -> None:
-        ctx = ArrRunState(arr=Arr.SONARR)
-        _make_reporter().log_arr_item_unmonitored(ctx, "Title")
-        assert ctx.stats.unmonitored == 1
+        state = ArrRunState(arr=Arr.SONARR)
+        _make_reporter().log_arr_item_unmonitored(state, "Title")
+        assert state.stats.unmonitored == 1
 
     def test_no_mappings(self) -> None:
-        ctx = ArrRunState(arr=Arr.SONARR)
-        _make_reporter().log_no_anilist_mappings(ctx, "Title")
-        assert ctx.stats.no_mappings == 1
+        state = ArrRunState(arr=Arr.SONARR)
+        _make_reporter().log_no_anilist_mappings(state, "Title")
+        assert state.stats.no_mappings == 1
 
     def test_no_releases(self) -> None:
-        ctx = ArrRunState(arr=Arr.RADARR)
-        _make_reporter().log_no_seadex_releases(ctx)
-        assert ctx.stats.no_releases == 1
+        state = ArrRunState(arr=Arr.RADARR)
+        _make_reporter().log_no_seadex_releases(state)
+        assert state.stats.no_releases == 1
 
     def test_cached_uses_stored_name(self) -> None:
         # A stored name short-circuits the AniList lookup (no network)
         reporter = _make_reporter(_seeded_store(name="Cached", coverage="S01", url="u"))
-        ctx = ArrRunState(arr=Arr.SONARR)
-        reporter.log_cached_title(ctx, 1)
-        assert ctx.stats.unchanged == 1
+        state = ArrRunState(arr=Arr.SONARR)
+        reporter.log_cached_title(state, 1)
+        assert state.stats.unchanged == 1
 
     def test_no_sd_entry_increments_and_caches_title(self) -> None:
         client = ScriptedAniListClient()
         reporter = _make_reporter(client=client)
-        ctx = ArrRunState(arr=Arr.SONARR)
-        reporter.log_no_sd_entry(ctx, 42)
-        assert ctx.stats.no_seadex_entry == 1
+        state = ArrRunState(arr=Arr.SONARR)
+        reporter.log_no_sd_entry(state, 42)
+        assert state.stats.no_seadex_entry == 1
         # Routed through the gateway: its al_cache is warmed in place and the
         # lookup rode its bound wire client (which carries the transport and the
         # per-run retry narration by construction).
@@ -146,9 +146,9 @@ class TestStatsCounters:
         store.update_cached_title(Arr.SONARR, 1, CachedTitleUpdate(coverage="S01", url="u"))
         client = ScriptedAniListClient()
         reporter = _make_reporter(store, client=client)
-        ctx = ArrRunState(arr=Arr.SONARR)
-        reporter.log_cached_title(ctx, 1)
-        assert ctx.stats.unchanged == 1
+        state = ArrRunState(arr=Arr.SONARR)
+        reporter.log_cached_title(state, 1)
+        assert state.stats.unchanged == 1
         assert client.query_calls == [1]
 
     def test_outage_skip_tallies_and_renders_distinctly(self) -> None:
@@ -157,11 +157,11 @@ class TestStatsCounters:
         # no stored name, so the title still comes from the gateway lookup.
         client = ScriptedAniListClient()
         reporter, events = _record(client=client)
-        ctx = ArrRunState(arr=Arr.SONARR)
-        reporter.log_seadex_unreachable(ctx, 42)
+        state = ArrRunState(arr=Arr.SONARR)
+        reporter.log_seadex_unreachable(state, 42)
 
-        assert ctx.stats.seadex_unreachable == 1
-        assert ctx.stats.no_seadex_entry == 0
+        assert state.stats.seadex_unreachable == 1
+        assert state.stats.no_seadex_entry == 0
         joined = "\n".join(_event_messages(events))
         assert "skipped" in joined and "Resolved" in joined
         assert "lookup skipped (SeaDex unreachable)" in joined
@@ -173,10 +173,10 @@ class TestStatsCounters:
         # outage skip renders the stored name with no AniList lookup at all.
         client = ScriptedAniListClient()
         reporter, events = _record(_seeded_store(name="Stored Title", coverage="S01", url="u"), client=client)
-        ctx = ArrRunState(arr=Arr.SONARR)
-        reporter.log_seadex_unreachable(ctx, 1)
+        state = ArrRunState(arr=Arr.SONARR)
+        reporter.log_seadex_unreachable(state, 1)
 
-        assert ctx.stats.seadex_unreachable == 1
+        assert state.stats.seadex_unreachable == 1
         joined = "\n".join(_event_messages(events))
         assert "Stored Title" in joined
         assert "lookup skipped (SeaDex unreachable)" in joined
@@ -188,9 +188,9 @@ class TestStatsCounters:
         store.update_cached_title(Arr.SONARR, 1, CachedTitleUpdate(coverage="S01", url="u"))
         client = ScriptedAniListClient(None)
         reporter, events = _record(store, client=client)
-        ctx = ArrRunState(arr=Arr.SONARR)
-        ctx.arr_title = "Series"
-        reporter.log_cached_title(ctx, 1)
+        state = ArrRunState(arr=Arr.SONARR)
+        state.arr_title = "Series"
+        reporter.log_cached_title(state, 1)
 
         assert client.query_calls == [1]
         assert any("Series" in m for m in _event_messages(events))
@@ -200,12 +200,12 @@ class TestActiveTitle:
     """`log_al_title` sets the context's current title, url, and coverage for the open entry."""
 
     def test_log_al_title_sets_current(self) -> None:
-        ctx = ArrRunState(arr=Arr.SONARR)
+        state = ArrRunState(arr=Arr.SONARR)
         entry = make_entry_record(url="https://releases.moe/9")
-        _make_reporter().open_title_block(ctx, "Steins;Gate", entry, coverage="S01 E01-E24")
-        assert ctx.per_title.title_name == "Steins;Gate"
-        assert ctx.per_title.entry_url == "https://releases.moe/9"
-        assert ctx.per_title.entry_coverage == "S01 E01-E24"
+        _make_reporter().open_title_block(state, "Steins;Gate", entry, coverage="S01 E01-E24")
+        assert state.per_title.title_name == "Steins;Gate"
+        assert state.per_title.entry_url == "https://releases.moe/9"
+        assert state.per_title.entry_coverage == "S01 E01-E24"
 
 
 class TestEntryHeaderAlId:
@@ -249,18 +249,18 @@ class TestCloseBoundaries:
     def test_run_finished_without_an_open_entry_emits_only_the_boundary(self) -> None:
         reporter, events = _record()
 
-        reporter.run_finished(Arr.SONARR)
+        reporter.arr_run_finished(Arr.SONARR)
 
         assert events == [ArrRunFinished(arr=Arr.SONARR)]
 
     def test_the_boundaries_are_idempotent_about_the_entry(self) -> None:
-        # scan_finished already closed it, so run_finished's defensive close is a no-op:
+        # scan_finished already closed it, so arr_run_finished's defensive close is a no-op:
         # a second ScopeClosed would demote every later fact on that stale scope.
         reporter, events = _record()
         reporter.open_title_block(ArrRunState(arr=Arr.SONARR), "Steins;Gate", make_entry_record())
 
         reporter.scan_finished(Arr.SONARR)
-        reporter.run_finished(Arr.SONARR)
+        reporter.arr_run_finished(Arr.SONARR)
 
         assert [type(e) for e in events].count(ScopeClosed) == 1
 
@@ -294,14 +294,14 @@ class TestRunSummary:
     """
 
     def _ctx_with_data(self) -> ArrRunState:
-        ctx = ArrRunState(arr=Arr.SONARR)
-        ctx.stats.checked = 3
-        ctx.torrents_added = 1
-        ctx.started_monotonic = time.monotonic() - 1.0  # exercise the elapsed line
-        ctx.stats.added = [
+        state = ArrRunState(arr=Arr.SONARR)
+        state.stats.checked = 3
+        state.torrents_added = 1
+        state.started_monotonic = time.monotonic() - 1.0  # exercise the elapsed line
+        state.stats.added = [
             GrabbedRow(title="A", coverage="S01", url="u", name="A.mkv", group="G"),
         ]
-        ctx.stats.needs_action = [
+        state.stats.needs_action = [
             NeedsActionRow(
                 title="B",
                 coverage="S02",
@@ -311,14 +311,14 @@ class TestRunSummary:
                 kind=NeedsActionKind.PRIVATE_ONLY,
             ),
         ]
-        return ctx
+        return state
 
-    def _summary_of(self, events: list[Event]) -> RunSummaryReady:
-        return next(e for e in events if isinstance(e, RunSummaryReady))
+    def _summary_of(self, events: list[Event]) -> ArrRunSummaryReady:
+        return next(e for e in events if isinstance(e, ArrRunSummaryReady))
 
     def test_real_run_emits_the_scoreboard(self) -> None:
         reporter, events = _record()
-        reporter.log_run_summary(self._ctx_with_data(), dry_run=False, has_client=True)
+        reporter.log_arr_run_summary(self._ctx_with_data(), dry_run=False, has_client=True)
 
         summary = self._summary_of(events).summary
         assert summary.dry_run is False and summary.dry_run_note is None
@@ -332,13 +332,13 @@ class TestRunSummary:
 
     def test_dry_run_note_wording_tracks_the_client(self) -> None:
         reporter, events = _record()
-        reporter.log_run_summary(self._ctx_with_data(), dry_run=True, has_client=False)
+        reporter.log_arr_run_summary(self._ctx_with_data(), dry_run=True, has_client=False)
         summary = self._summary_of(events).summary
         assert summary.dry_run is True
         assert summary.dry_run_note == "qBittorrent not configured; nothing grabbed"
 
         reporter, events = _record()
-        reporter.log_run_summary(self._ctx_with_data(), dry_run=True, has_client=True)
+        reporter.log_arr_run_summary(self._ctx_with_data(), dry_run=True, has_client=True)
         assert self._summary_of(events).summary.dry_run_note == "nothing grabbed"
 
     def test_counts_mark_stays_bound_to_the_counter_it_was_stamped_on(self) -> None:
@@ -357,8 +357,8 @@ class TestRunSummary:
             anilist=anilist,
         )
 
-        ctx = self._ctx_with_data()
-        ctx.counts_mark = reporter.counts_mark()
+        state = self._ctx_with_data()
+        state.counts_mark = reporter.counts_mark()
         counters[-1].record(Severity.WARNING)  # the run's own post-mark warning
 
         # The "hub swap": the source now resolves to a fresh counter soaking up
@@ -367,22 +367,22 @@ class TestRunSummary:
         counters[-1].record(Severity.ERROR)
         counters[-1].record(Severity.ERROR)
 
-        reporter.log_run_summary(ctx, dry_run=False, has_client=True)
+        reporter.log_arr_run_summary(state, dry_run=False, has_client=True)
         summary = self._summary_of(events).summary
         assert summary.warnings == 1  # the original counter's record, not garbage
         assert summary.errors == 0  # the swapped-in counter's errors never leak
 
 
 def _summary_messages(
-    ctx: ArrRunState,
+    state: ArrRunState,
     *,
     import_wait_mode: ImportWaitMode = ImportWaitMode.OFF,
 ) -> list[str]:
     """The messages log_run_summary re-derives to, for row-presence assertions."""
 
-    ctx.import_wait_mode = import_wait_mode
+    state.import_wait_mode = import_wait_mode
     reporter, events = _record()
-    reporter.log_run_summary(ctx, dry_run=False, has_client=True)
+    reporter.log_arr_run_summary(state, dry_run=False, has_client=True)
     return _event_messages(events)
 
 
@@ -391,16 +391,16 @@ class TestPendingSnapshot:
 
     def test_renders_and_bumps_no_counter(self) -> None:
         reporter, events = _record()
-        ctx = ArrRunState(arr=Arr.SONARR)
+        state = ArrRunState(arr=Arr.SONARR)
         pending = pending_import(title="My Show", window_coverage="S01 E01-E13", url="https://releases.moe/1")
 
         reporter.log_pending_import(PendingImportState.IMPORTED, pending, pending.claims[0].series_id)
 
         assert any(isinstance(e, TitleHeader) for e in events)
         # The reporter never touches the counters - the engine owns drop/count.
-        assert ctx.stats.imported == 0
-        assert ctx.stats.queued == 0
-        assert ctx.stats.downloaded == 0
+        assert state.stats.imported == 0
+        assert state.stats.queued == 0
+        assert state.stats.downloaded == 0
 
     def test_missing_state_renders_nothing(self) -> None:
         reporter, events = _record()
@@ -437,13 +437,13 @@ class TestSummaryPendingCounters:
     """The carried-over counters render only when feature-on and non-zero."""
 
     def test_counters_render_when_feature_on_and_non_zero(self) -> None:
-        ctx = ArrRunState(arr=Arr.SONARR)
-        ctx.stats.queued = 2
-        ctx.stats.downloaded = 1
-        ctx.stats.imported = 3
+        state = ArrRunState(arr=Arr.SONARR)
+        state.stats.queued = 2
+        state.stats.downloaded = 1
+        state.stats.imported = 3
 
         messages = _summary_messages(
-            ctx,
+            state,
             import_wait_mode=ImportWaitMode.BLOCKING,
         )
         joined = "\n".join(messages)
@@ -453,13 +453,13 @@ class TestSummaryPendingCounters:
         assert "imported" in joined
 
     def test_counters_hidden_when_feature_off(self) -> None:
-        ctx = ArrRunState(arr=Arr.SONARR)
-        ctx.stats.queued = 2
-        ctx.stats.downloaded = 1
-        ctx.stats.imported = 3
+        state = ArrRunState(arr=Arr.SONARR)
+        state.stats.queued = 2
+        state.stats.downloaded = 1
+        state.stats.imported = 3
 
         messages = _summary_messages(
-            ctx,
+            state,
             import_wait_mode=ImportWaitMode.OFF,
         )
 
@@ -467,10 +467,10 @@ class TestSummaryPendingCounters:
         assert not any("downloaded" in m for m in messages)
 
     def test_zero_counters_not_rendered_even_when_on(self) -> None:
-        ctx = ArrRunState(arr=Arr.SONARR)  # all counters zero
+        state = ArrRunState(arr=Arr.SONARR)  # all counters zero
 
         messages = _summary_messages(
-            ctx,
+            state,
             import_wait_mode=ImportWaitMode.BLOCKING,
         )
 
@@ -481,15 +481,15 @@ class TestSummaryPendingCounters:
         # REGRESSION (double-report): a this-run grab is `added`. With the counters
         # left at 0 (the engine never bumps them for this-run grabs), the summary
         # shows `added` but no `queued` row for the same torrent.
-        ctx = ArrRunState(arr=Arr.SONARR)
-        ctx.torrents_added = 1
-        ctx.stats.added = [
+        state = ArrRunState(arr=Arr.SONARR)
+        state.torrents_added = 1
+        state.stats.added = [
             GrabbedRow(title="A", coverage="S01", url="u", name="A.mkv", group="G"),
         ]
         # counters stay 0 -> no queued/importing rows
 
         messages = _summary_messages(
-            ctx,
+            state,
             import_wait_mode=ImportWaitMode.BLOCKING,
         )
 
@@ -506,10 +506,10 @@ class TestSummaryNoReleaseRow:
         assert not any("no release" in m for m in messages)
 
     def test_non_zero_count_renders_the_row(self) -> None:
-        ctx = ArrRunState(arr=Arr.SONARR)
-        ctx.stats.no_releases = 2
+        state = ArrRunState(arr=Arr.SONARR)
+        state.stats.no_releases = 2
 
-        messages = _summary_messages(ctx)
+        messages = _summary_messages(state)
 
         assert any("no release" in m and "2" in m for m in messages)
 
@@ -526,10 +526,10 @@ class TestSummarySeadexDownRow:
         assert not any("seadex down" in m for m in messages)
 
     def test_non_zero_count_renders_the_row_not_no_entry(self) -> None:
-        ctx = ArrRunState(arr=Arr.SONARR)
-        ctx.stats.seadex_unreachable = 3
+        state = ArrRunState(arr=Arr.SONARR)
+        state.stats.seadex_unreachable = 3
 
-        messages = _summary_messages(ctx)
+        messages = _summary_messages(state)
 
         assert any("seadex down" in m and "3" in m for m in messages)
         assert not any("no entry" in m for m in messages)
@@ -542,8 +542,8 @@ class TestPrivateOnlyTip:
     """
 
     def _needs_ctx(self, kind: NeedsActionKind) -> ArrRunState:
-        ctx = ArrRunState(arr=Arr.SONARR)
-        ctx.stats.needs_action = [
+        state = ArrRunState(arr=Arr.SONARR)
+        state.stats.needs_action = [
             NeedsActionRow(
                 title="B",
                 coverage="S02",
@@ -553,7 +553,7 @@ class TestPrivateOnlyTip:
                 kind=kind,
             ),
         ]
-        return ctx
+        return state
 
     def test_private_only_kind_renders_tip_despite_reworded_reason(self) -> None:
         messages = _summary_messages(self._needs_ctx(NeedsActionKind.PRIVATE_ONLY))

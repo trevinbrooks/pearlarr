@@ -338,7 +338,7 @@ def test_fake_overrides_the_full_public_surface() -> None:
 
     # Loop-driven members (the runner calls these, strategies never do), so the
     # fake doesn't script them.
-    lifecycle = {"bind_arr_run", "ctx", "is_dry_run", "mark_dirty", "pay_pause", "selection_changed"}
+    lifecycle = {"bind_arr_run", "state", "is_dry_run", "mark_dirty", "pay_pause", "selection_changed"}
     surface = {
         name
         for name, member in vars(ArrRunServices).items()
@@ -693,12 +693,12 @@ class TestImportCompletedQueueState:
             queue=[queue_record("ABC123", "importing")],
         )
 
-        probe = strat.import_completed(pending, "/d", attempt)
+        result = strat.import_completed(pending, "/d", attempt)
 
-        assert probe.all_done is False
-        assert probe.deferral is PauseReason.IMPORT
-        assert probe.command_issued is False
-        assert (probe.imported_count, probe.target_count) == (0, 1)
+        assert result.all_done is False
+        assert result.deferral is PauseReason.IMPORT
+        assert result.command_issued is False
+        assert (result.imported_count, result.target_count) == (0, 1)
         assert sonarr.candidate_calls == []
         assert sonarr.execute_calls == []
 
@@ -711,10 +711,10 @@ class TestImportCompletedQueueState:
             queue=[queue_record("ABC123", "downloading")],
         )
 
-        probe = strat.import_completed(pending, "/d", AttemptKind.ORDINARY)
+        result = strat.import_completed(pending, "/d", AttemptKind.ORDINARY)
 
-        assert probe.all_done is False
-        assert probe.deferred is False
+        assert result.all_done is False
+        assert result.deferred is False
         assert sonarr.candidate_calls == []
         assert sonarr.execute_calls == []
 
@@ -726,8 +726,8 @@ class TestImportCompletedQueueState:
             queue=[queue_record("ABC123", "importPending", status="ok")],
         )
 
-        probe = strat.import_completed(pending, "/d", AttemptKind.ORDINARY)
-        assert probe.all_done is False
+        result = strat.import_completed(pending, "/d", AttemptKind.ORDINARY)
+        assert result.all_done is False
         assert sonarr.candidate_calls == []
 
     def test_clean_pending_at_deadline_defers_while_a_pass_runs(self) -> None:
@@ -741,11 +741,11 @@ class TestImportCompletedQueueState:
             commands=[_started_process_pass()],
         )
 
-        probe = strat.import_completed(pending, "/d", AttemptKind.FINAL)
+        result = strat.import_completed(pending, "/d", AttemptKind.FINAL)
 
-        assert probe.all_done is False
-        assert probe.deferral is PauseReason.BUSY
-        assert probe.command_issued is False
+        assert result.all_done is False
+        assert result.deferral is PauseReason.BUSY
+        assert result.command_issued is False
         assert sonarr.candidate_calls == []
         assert sonarr.execute_calls == []
 
@@ -780,10 +780,10 @@ class TestImportCompletedQueueState:
         )
         sonarr.queue_return = None
 
-        probe = strat.import_completed(pending, "/d", attempt)
+        result = strat.import_completed(pending, "/d", attempt)
 
-        assert probe.all_done is False
-        assert probe.deferred is False
+        assert result.all_done is False
+        assert result.deferred is False
         assert sonarr.candidate_calls == []
         assert sonarr.execute_calls == []
 
@@ -815,14 +815,14 @@ class TestImportCompletedQueueState:
             commands=[_started_process_pass()],
         )
 
-        probe = strat.import_completed(pending, "/d", AttemptKind.FINAL)
+        result = strat.import_completed(pending, "/d", AttemptKind.FINAL)
 
-        assert probe.all_done is False
+        assert result.all_done is False
         # A foreign command pauses the ready clock (BUSY, never a "still
         # importing" claim); the monitor's credit cap bounds the walk-away.
-        assert probe.deferral is PauseReason.BUSY
-        assert probe.command_issued is False
-        assert (probe.imported_count, probe.target_count) == (0, 1)
+        assert result.deferral is PauseReason.BUSY
+        assert result.command_issued is False
+        assert (result.imported_count, result.target_count) == (0, 1)
         assert sonarr.candidate_calls == []
         assert sonarr.execute_calls == []
 
@@ -840,12 +840,12 @@ class TestImportCompletedQueueState:
 
         first = strat.import_completed(pending_a, "/d", AttemptKind.ORDINARY)
         sonarr.commands_return = [_inflight_manual_import("ABC123", command_id=42)]
-        probe = strat.import_completed(pending_b, "/e", AttemptKind.ORDINARY)
+        result = strat.import_completed(pending_b, "/e", AttemptKind.ORDINARY)
 
         assert first.command_issued is True
-        assert probe.all_done is False
-        assert probe.deferred is True
-        assert probe.command_issued is False  # not B's command
+        assert result.all_done is False
+        assert result.deferred is True
+        assert result.command_issued is False  # not B's command
         assert len(sonarr.execute_calls) == 1  # only A's import was POSTed
 
     def test_in_flight_import_for_this_record_reads_honest_flags(self) -> None:
@@ -860,11 +860,11 @@ class TestImportCompletedQueueState:
             commands=[_inflight_manual_import("ABC123")],
         )
 
-        probe = strat.import_completed(pending, "/d", AttemptKind.FINAL)
+        result = strat.import_completed(pending, "/d", AttemptKind.FINAL)
 
-        assert probe.all_done is False
-        assert probe.command_issued is True
-        assert probe.deferred is True
+        assert result.all_done is False
+        assert result.command_issued is True
+        assert result.deferred is True
         assert sonarr.execute_calls == []
 
     def test_two_claim_record_defers_on_the_torrents_running_import(self) -> None:
@@ -881,10 +881,10 @@ class TestImportCompletedQueueState:
             commands=[_inflight_manual_import("ABC123")],
         )
 
-        probe = strat.import_completed(pending, "/d", AttemptKind.ORDINARY)
+        result = strat.import_completed(pending, "/d", AttemptKind.ORDINARY)
 
-        assert probe.deferred is True
-        assert probe.command_issued is True
+        assert result.deferred is True
+        assert result.command_issued is True
         assert sonarr.execute_calls == []
 
     def test_unproven_folder_import_waits_with_credit_but_no_claim(self) -> None:
@@ -907,11 +907,11 @@ class TestImportCompletedQueueState:
             ],
         )
 
-        probe = strat.import_completed(pending, "/d", AttemptKind.ORDINARY)
+        result = strat.import_completed(pending, "/d", AttemptKind.ORDINARY)
 
-        assert probe.all_done is False
-        assert probe.deferral is PauseReason.IMPORT
-        assert probe.command_issued is False
+        assert result.all_done is False
+        assert result.deferral is PauseReason.IMPORT
+        assert result.command_issued is False
         assert sonarr.execute_calls == []
 
     def test_step_in_post_is_a_credited_wait(self) -> None:
@@ -979,9 +979,9 @@ class TestImportCompletedQueueState:
         )
         strat = make_sonarr_sync(sonarr=sonarr, config=make_config(), cache_store=FakeCacheStore())
 
-        probe = strat.import_completed(pending, "/d", AttemptKind.ORDINARY)
+        result = strat.import_completed(pending, "/d", AttemptKind.ORDINARY)
 
-        assert probe.all_done is True
+        assert result.all_done is True
         assert sonarr.execute_calls == []
 
     @pytest.mark.parametrize(
@@ -1083,10 +1083,10 @@ class TestImportCompletedQueueState:
             queue=[queue_record("ABC123", "importPending", status="ok")],
         )
 
-        probe = strat.import_completed(pending, "/d", AttemptKind.FINAL)
+        result = strat.import_completed(pending, "/d", AttemptKind.FINAL)
 
-        assert probe.command_issued is True
-        assert probe.all_done is False
+        assert result.command_issued is True
+        assert result.all_done is False
         assert len(sonarr.execute_calls) == 1
 
     def test_pending_with_warning_steps_in(self) -> None:
@@ -1103,9 +1103,9 @@ class TestImportCompletedQueueState:
             queue=[queue_record("ABC123", "importPending", status="warning")],
         )
 
-        probe = strat.import_completed(pending, "/d", AttemptKind.ORDINARY)
-        assert probe.all_done is False
-        assert probe.command_issued is True
+        result = strat.import_completed(pending, "/d", AttemptKind.ORDINARY)
+        assert result.all_done is False
+        assert result.command_issued is True
         assert len(sonarr.execute_calls) == 1
 
     def test_target_already_recommended_drops_record(self) -> None:
@@ -1121,9 +1121,9 @@ class TestImportCompletedQueueState:
             episodes=[sonarr_ep(1, 1, ep_id=101, release_group="SubGroup")],
         )
 
-        probe = strat.import_completed(pending, "/d", AttemptKind.ORDINARY)
+        result = strat.import_completed(pending, "/d", AttemptKind.ORDINARY)
 
-        assert probe.all_done is True
+        assert result.all_done is True
         assert sonarr.candidate_calls == []
 
     def test_target_holding_another_entry_group_is_protected(self) -> None:
@@ -1141,9 +1141,9 @@ class TestImportCompletedQueueState:
             episodes=[sonarr_ep(1, 1, ep_id=101, release_group="OtherPick")],
         )
 
-        probe = strat.import_completed(pending, "/d", AttemptKind.ORDINARY)
+        result = strat.import_completed(pending, "/d", AttemptKind.ORDINARY)
 
-        assert probe.all_done is True
+        assert result.all_done is True
         assert sonarr.candidate_calls == []
 
     @staticmethod
@@ -1243,9 +1243,9 @@ class TestImportCompletedQueueState:
             episodes=[sonarr_ep(1, 1, ep_id=101, release_group=None, size=700)],
         )
 
-        probe = strat.import_completed(pending, "/d", AttemptKind.ORDINARY)
+        result = strat.import_completed(pending, "/d", AttemptKind.ORDINARY)
 
-        assert probe.all_done is True
+        assert result.all_done is True
         assert sonarr.candidate_calls == []
 
     def test_flagged_record_with_files_gone_demotes_through_the_reconciler(self) -> None:
@@ -1266,7 +1266,7 @@ class TestImportCompletedQueueState:
 
         assert len(sonarr.execute_calls) == 1
         assert mgr._pending_imports.rows()[pending.infohash].get("awaiting_cleanup") is False
-        assert mgr._ctx.pending_import_states[pending.infohash] is PendingImportState.DOWNLOADED
+        assert mgr._state.pending_import_states[pending.infohash] is PendingImportState.DOWNLOADED
         assert any("no longer present" in w for w in diagnostic_messages(recording, Severity.WARNING))
 
     def test_store_persisted_guard_row_protects_through_the_snapshot_seam(self) -> None:
@@ -1302,7 +1302,7 @@ class TestImportCompletedQueueState:
         # arm (a MISSING drop would also empty the store).
         assert sonarr.candidate_calls == []
         assert store.get_pending_import_rows(Arr.SONARR) == {}
-        assert mgr._ctx.pending_import_states[pending.infohash] is PendingImportState.IMPORTED
+        assert mgr._state.pending_import_states[pending.infohash] is PendingImportState.IMPORTED
 
     def test_import_blocked_steps_in_with_our_mapping(self) -> None:
         # Sonarr can't auto-import (importBlocked) -> our authoritative manual
@@ -1318,10 +1318,10 @@ class TestImportCompletedQueueState:
             queue=[queue_record("ABC123", "importBlocked", status="warning")],
         )
 
-        probe = strat.import_completed(pending, "/d", AttemptKind.ORDINARY)
+        result = strat.import_completed(pending, "/d", AttemptKind.ORDINARY)
 
-        assert probe.command_issued is True
-        assert probe.all_done is False
+        assert result.command_issued is True
+        assert result.all_done is False
         assert len(sonarr.candidate_calls) == 1
         assert len(sonarr.execute_calls) == 1
 
@@ -1364,10 +1364,10 @@ class TestImportCompletedQueueState:
             queue=[],
         )
 
-        probe = strat.import_completed(pending, "/d", AttemptKind.ORDINARY)
+        result = strat.import_completed(pending, "/d", AttemptKind.ORDINARY)
 
-        assert probe.all_done is False
-        assert probe.command_issued is True
+        assert result.all_done is False
+        assert result.command_issued is True
         assert len(sonarr.candidate_calls) == 1
         assert len(sonarr.execute_calls) == 1
 
@@ -1544,14 +1544,14 @@ class TestInFlightManualImportGuard:
             commands=[_inflight_manual_import("abc123")],
         )
 
-        probe = strat.import_completed(pending, "/d", AttemptKind.ORDINARY)
+        result = strat.import_completed(pending, "/d", AttemptKind.ORDINARY)
 
-        assert probe.all_done is False
+        assert result.all_done is False
         # Honest flags: a command for this record IS running (so an at-deadline
         # outcome reads "still importing", never "not ready") and its runtime is
         # credited back to the ready deadline.
-        assert probe.command_issued is True
-        assert probe.deferred is True
+        assert result.command_issued is True
+        assert result.deferred is True
         assert sonarr.execute_calls == []
         assert sonarr.candidate_calls == []
 
@@ -1569,11 +1569,11 @@ class TestInFlightManualImportGuard:
             commands=[_inflight_manual_import("abc123")],
         )
 
-        probe = strat.import_completed(pending, "/d", AttemptKind.FINAL)
+        result = strat.import_completed(pending, "/d", AttemptKind.FINAL)
 
-        assert probe.all_done is False
-        assert probe.command_issued is True
-        assert probe.deferred is True
+        assert result.all_done is False
+        assert result.command_issued is True
+        assert result.deferred is True
         assert sonarr.execute_calls == []
 
     def test_completed_command_does_not_suppress(self) -> None:
@@ -1589,10 +1589,10 @@ class TestInFlightManualImportGuard:
             commands=[_inflight_manual_import("abc123", status="completed")],
         )
 
-        probe = strat.import_completed(pending, "/d", AttemptKind.ORDINARY)
+        result = strat.import_completed(pending, "/d", AttemptKind.ORDINARY)
 
-        assert probe.all_done is False
-        assert probe.command_issued is True
+        assert result.all_done is False
+        assert result.command_issued is True
         assert len(sonarr.execute_calls) == 1
 
     def test_queued_import_for_other_download_defers(self) -> None:
@@ -1606,10 +1606,10 @@ class TestInFlightManualImportGuard:
             commands=[_inflight_manual_import("OTHERHASH", status="queued")],
         )
 
-        probe = strat.import_completed(pending, "/d", AttemptKind.ORDINARY)
+        result = strat.import_completed(pending, "/d", AttemptKind.ORDINARY)
 
-        assert probe.deferral is PauseReason.BUSY
-        assert probe.command_issued is False
+        assert result.deferral is PauseReason.BUSY
+        assert result.command_issued is False
         assert sonarr.execute_calls == []
 
 
@@ -1631,12 +1631,12 @@ class TestImportCompletedPayload:
         )
         strat, sonarr = _make_sonarr_for_import(candidates=[candidate])
 
-        probe = strat.import_completed(pending, "/downloads/Show", AttemptKind.ORDINARY)
+        result = strat.import_completed(pending, "/downloads/Show", AttemptKind.ORDINARY)
 
         # The command was issued. The copy is async, so the probe carries
         # command_issued without all_done right after issuing.
-        assert probe.all_done is False
-        assert probe.command_issued is True
+        assert result.all_done is False
+        assert result.command_issued is True
         assert sonarr.candidate_calls == [pending]
         files = sonarr.execute_calls[0][0]
         assert len(files) == 1
@@ -1671,10 +1671,10 @@ class TestImportCompletedPayload:
             quality_defs=quality_defs,
         )
 
-        probe = strat.import_completed(pending, "/d", AttemptKind.ORDINARY)
+        result = strat.import_completed(pending, "/d", AttemptKind.ORDINARY)
 
-        assert probe.all_done is False
-        assert probe.command_issued is True
+        assert result.all_done is False
+        assert result.command_issued is True
         entry = sonarr.execute_calls[0][0][0]
         quality = entry.quality
         assert quality is not None
@@ -1709,10 +1709,10 @@ class TestImportCompletedPayload:
             quality_defs=quality_defs,
         )
 
-        probe = strat.import_completed(pending, "/d", AttemptKind.ORDINARY)
+        result = strat.import_completed(pending, "/d", AttemptKind.ORDINARY)
 
-        assert probe.all_done is False
-        assert probe.command_issued is True
+        assert result.all_done is False
+        assert result.command_issued is True
         entry = sonarr.execute_calls[0][0][0]
         quality = entry.quality
         assert quality is not None
@@ -1732,9 +1732,9 @@ class TestImportCompletedPayload:
         )
         strat, sonarr = _make_sonarr_for_import(candidates=[manual_candidate(f"/d/{nfd}")])
 
-        probe = strat.import_completed(pending, "/d", AttemptKind.ORDINARY)
-        assert probe.all_done is False
-        assert probe.command_issued is True
+        result = strat.import_completed(pending, "/d", AttemptKind.ORDINARY)
+        assert result.all_done is False
+        assert result.command_issued is True
         assert sonarr.execute_calls[0][0][0].episodeIds == [101]
 
     def test_candidate_not_in_our_map_is_never_imported(self) -> None:
@@ -1750,10 +1750,10 @@ class TestImportCompletedPayload:
         ]
         strat, sonarr = _make_sonarr_for_import(candidates=candidates)
 
-        probe = strat.import_completed(pending, "/d", AttemptKind.ORDINARY)
+        result = strat.import_completed(pending, "/d", AttemptKind.ORDINARY)
 
-        assert probe.all_done is False
-        assert probe.command_issued is True
+        assert result.all_done is False
+        assert result.command_issued is True
         paths = [f.path for f in sonarr.execute_calls[0][0]]
         assert paths == ["/d/Show - 01 [1080p].mkv"]
 
@@ -1772,12 +1772,12 @@ class TestImportCompletedPayload:
         )
         strat, sonarr = _make_sonarr_for_import(candidates=[good, sample])
 
-        probe = strat.import_completed(pending, "/d", AttemptKind.ORDINARY)
+        result = strat.import_completed(pending, "/d", AttemptKind.ORDINARY)
 
         # The good file's import command was issued.
         # The sample is never queued.
-        assert probe.all_done is False
-        assert probe.command_issued is True
+        assert result.all_done is False
+        assert result.command_issued is True
         paths = [f.path for f in sonarr.execute_calls[0][0]]
         assert paths == ["/d/Show - 01 [1080p].mkv"]
 
@@ -1801,10 +1801,10 @@ class TestImportCompletedPayload:
             episodes=[sonarr_ep(1, 1, ep_id=101, release_group=None)],
         )
 
-        probe = strat.import_completed(pending, "/d", AttemptKind.ORDINARY)
+        result = strat.import_completed(pending, "/d", AttemptKind.ORDINARY)
 
-        assert probe.command_issued is True
-        assert probe.all_done is False
+        assert result.command_issued is True
+        assert result.all_done is False
         assert len(sonarr.execute_calls) == 1
 
     def test_missing_group_import_then_recognized_terminates(self) -> None:
@@ -1847,17 +1847,17 @@ class TestImportCompletedPayload:
             candidates=[manual_candidate("/d/Unrelated.mkv")],
         )
 
-        probe = strat.import_completed(pending, "/d", AttemptKind.ORDINARY)
-        assert probe.command_issued is False
-        assert probe.all_done is False
+        result = strat.import_completed(pending, "/d", AttemptKind.ORDINARY)
+        assert result.command_issued is False
+        assert result.all_done is False
         assert sonarr.execute_calls == []
 
     def test_transient_candidate_scan_retries(self) -> None:
         # A None candidates result (timeout / non-200) is transient -> retry.
         strat, sonarr = _make_sonarr_for_import(candidates=None)
 
-        probe = strat.import_completed(pending_import(), "/d", AttemptKind.ORDINARY)
-        assert probe.all_done is False
+        result = strat.import_completed(pending_import(), "/d", AttemptKind.ORDINARY)
+        assert result.all_done is False
         assert sonarr.execute_calls == []
 
     def test_languages_follow_dual_audio_flag(self) -> None:
@@ -1873,10 +1873,10 @@ class TestImportCompletedPayload:
             config_overrides={"import_languages_dual": ["Japanese", "English"]},
         )
 
-        probe = strat.import_completed(pending, "/d", AttemptKind.ORDINARY)
+        result = strat.import_completed(pending, "/d", AttemptKind.ORDINARY)
 
-        assert probe.all_done is False
-        assert probe.command_issued is True
+        assert result.all_done is False
+        assert result.command_issued is True
         names = [lang.name for lang in sonarr.execute_calls[0][0][0].languages]
         assert names == ["Japanese", "English"]
 
@@ -1888,9 +1888,9 @@ class TestImportCompletedPayload:
         candidate = manual_candidate("/d/Show - 01 [1080p].mkv")
         strat, sonarr = _make_sonarr_for_import(candidates=[candidate], cmd_id=None)
 
-        probe = strat.import_completed(pending, "/d", AttemptKind.ORDINARY)
-        assert probe.all_done is False
-        assert probe.command_issued is False
+        result = strat.import_completed(pending, "/d", AttemptKind.ORDINARY)
+        assert result.all_done is False
+        assert result.command_issued is False
         # The execute WAS attempted (Sonarr rejected it -> command_issued False).
         # A regression returning early without even trying would still set False here.
         assert len(sonarr.execute_calls) == 1
@@ -2051,9 +2051,9 @@ class TestMultiSeriesImport:
         pending = _two_series_record()
         strat, sonarr = _make_sonarr_for_import(candidates=self._candidates(_SHOW_FILE, _OTHER_FILE))
 
-        probe = strat.import_completed(pending, "/d", AttemptKind.ORDINARY)
+        result = strat.import_completed(pending, "/d", AttemptKind.ORDINARY)
 
-        assert probe.command_issued is True
+        assert result.command_issued is True
         assert _posted_series(sonarr) == {f"/d/{_SHOW_FILE}": 7, f"/d/{_OTHER_FILE}": 8}
 
     def test_an_unscoped_claims_file_posts_under_the_index_holding_its_id(self) -> None:
@@ -2064,9 +2064,9 @@ class TestMultiSeriesImport:
             candidates=self._candidates(_SHOW_FILE, _OTHER_FILE),
         )
 
-        probe = self._strat(sonarr).import_completed(pending, "/d", AttemptKind.ORDINARY)
+        result = self._strat(sonarr).import_completed(pending, "/d", AttemptKind.ORDINARY)
 
-        assert probe.command_issued is True
+        assert result.command_issued is True
         assert _posted_series(sonarr) == {f"/d/{_SHOW_FILE}": 7, f"/d/{_OTHER_FILE}": 8}
 
     def test_a_file_no_claim_or_index_routes_waits_and_warns_at_the_deadline(self) -> None:
@@ -2097,9 +2097,9 @@ class TestMultiSeriesImport:
             candidates=self._candidates(_SHOW_FILE, _OTHER_FILE),
         )
 
-        probe = self._strat(sonarr).import_completed(pending, "/d", AttemptKind.ORDINARY)
+        result = self._strat(sonarr).import_completed(pending, "/d", AttemptKind.ORDINARY)
 
-        assert probe.command_issued is True
+        assert result.command_issued is True
         assert _posted_series(sonarr) == {f"/d/{_SHOW_FILE}": 7, f"/d/{_OTHER_FILE}": 8}
 
     def test_a_one_series_record_posts_under_its_only_series_without_an_index(self) -> None:
@@ -2109,9 +2109,9 @@ class TestMultiSeriesImport:
         strat, sonarr = _make_sonarr_for_import(candidates=self._candidates(_SHOW_FILE))
         sonarr.episodes_return = []
 
-        probe = strat.import_completed(pending, "/d", AttemptKind.ORDINARY)
+        result = strat.import_completed(pending, "/d", AttemptKind.ORDINARY)
 
-        assert probe.command_issued is True
+        assert result.command_issued is True
         assert _posted_series(sonarr) == {f"/d/{_SHOW_FILE}": pending.claims[0].series_id}
 
     def test_imported_only_when_every_series_targets_are_done(self) -> None:
@@ -2284,9 +2284,9 @@ class TestRadarrImportCompletedHistory:
     def test_matching_import_event_verifies_files(self) -> None:
         strat = make_radarr_sync(radarr=FakeRadarrClient(history_since=[_import_history("h")]))
 
-        probe = strat.import_completed(pending_import(infohash="h"), "/d", AttemptKind.ORDINARY)
+        result = strat.import_completed(pending_import(infohash="h"), "/d", AttemptKind.ORDINARY)
 
-        assert probe.all_done is True
+        assert result.all_done is True
 
     @pytest.mark.parametrize(
         "history",
@@ -2303,17 +2303,17 @@ class TestRadarrImportCompletedHistory:
         radarr.history_since_return = history
         strat = make_radarr_sync(radarr=radarr)
 
-        probe = strat.import_completed(pending_import(infohash="h"), "/d", AttemptKind.ORDINARY)
+        result = strat.import_completed(pending_import(infohash="h"), "/d", AttemptKind.ORDINARY)
 
-        assert probe.all_done is False
+        assert result.all_done is False
 
     def test_matches_download_id_case_insensitively(self) -> None:
         # Radarr uppercases the stored downloadId; our infohash is lowercase.
         strat = make_radarr_sync(radarr=FakeRadarrClient(history_since=[_import_history("ABCDEF")]))
 
-        probe = strat.import_completed(pending_import(infohash="abcdef"), "/d", AttemptKind.ORDINARY)
+        result = strat.import_completed(pending_import(infohash="abcdef"), "/d", AttemptKind.ORDINARY)
 
-        assert probe.all_done is True
+        assert result.all_done is True
 
     def test_history_fetched_once_per_pass(self) -> None:
         # Two records in one reconcile pass share ONE history fetch (memoized).
@@ -2381,7 +2381,7 @@ class TestRadarrImportCompletedHistory:
     def test_does_not_support_the_blocking_monitor(self) -> None:
         strat = make_bare_instance(RadarrStrategy, logger=make_logger())
 
-        assert strat.supports_blocking_monitor is False
+        assert strat.supports_blocking_wait is False
 
 
 _SEED_URL = "https://nyaa.si/1"
@@ -2928,9 +2928,9 @@ class TestManualImportWarningGating:
         recording = install_recording_hub()
 
         with caplog.at_level("DEBUG"):
-            probe = strat.import_completed(pending, "/d", AttemptKind.ORDINARY)
+            result = strat.import_completed(pending, "/d", AttemptKind.ORDINARY)
 
-        assert probe.all_done is False
+        assert result.all_done is False
         assert not any(
             "not visible to Sonarr" in message for message in diagnostic_messages(recording, Severity.WARNING)
         )
@@ -2940,9 +2940,9 @@ class TestManualImportWarningGating:
         strat, pending = self._strat_with_missing_file()
         recording = install_recording_hub()
 
-        probe = strat.import_completed(pending, "/d", AttemptKind.FINAL)
+        result = strat.import_completed(pending, "/d", AttemptKind.FINAL)
 
-        assert probe.all_done is False
+        assert result.all_done is False
         assert any("not visible to Sonarr" in message for message in diagnostic_messages(recording, Severity.WARNING))
 
     @staticmethod
@@ -2968,9 +2968,9 @@ class TestManualImportWarningGating:
         recording = install_recording_hub()
 
         with caplog.at_level("DEBUG"):
-            probe = strat.import_completed(pending, "/d", AttemptKind.ORDINARY)
+            result = strat.import_completed(pending, "/d", AttemptKind.ORDINARY)
 
-        assert probe.command_issued is True
+        assert result.command_issued is True
         assert len(sonarr.execute_calls) == 1
         assert not any("could not be matched" in m for m in diagnostic_messages(recording, Severity.WARNING))
         assert any("1 file excluded on record" in r.message and r.levelname == "DEBUG" for r in caplog.records)
@@ -3065,9 +3065,9 @@ class TestUnmatchedProbe:
         pending = self._unplaced_pair()
         strat, _ = self._strat(served=False)
 
-        probe = strat.import_completed(pending, "/d", AttemptKind.ORDINARY)
+        result = strat.import_completed(pending, "/d", AttemptKind.ORDINARY)
 
-        assert probe.unmatched_files == self._NAMES
+        assert result.unmatched_files == self._NAMES
 
     def test_every_file_excluded_at_grab_time_still_reads_unmatched(self) -> None:
         # Nothing of the record's own is on disk and nothing is authoritative: a recorded exclusion
@@ -3075,17 +3075,17 @@ class TestUnmatchedProbe:
         pending = self._unplaced_pair(excluded=self._NAMES)
         strat, _ = self._strat()
 
-        probe = strat.import_completed(pending, "/d", AttemptKind.ORDINARY)
+        result = strat.import_completed(pending, "/d", AttemptKind.ORDINARY)
 
-        assert probe.unmatched_files == self._NAMES
+        assert result.unmatched_files == self._NAMES
 
     def test_the_unmatched_names_leave_out_the_excluded_files(self) -> None:
         pending = self._unplaced_pair(excluded=self._NAMES[1:])
         strat, sonarr = self._strat()
 
-        probe = strat.import_completed(pending, "/d", AttemptKind.ORDINARY)
+        result = strat.import_completed(pending, "/d", AttemptKind.ORDINARY)
 
-        assert probe.unmatched_files == self._NAMES[:1]
+        assert result.unmatched_files == self._NAMES[:1]
         assert sonarr.execute_calls == []
 
     def test_a_hand_import_that_filled_every_intended_episode_reads_imported(self) -> None:
@@ -3095,9 +3095,9 @@ class TestUnmatchedProbe:
         strat, sonarr = self._strat(held_by="SubGroup")
         recording = install_recording_hub()
 
-        probe = strat.import_completed(pending, "/d", AttemptKind.ORDINARY)
+        result = strat.import_completed(pending, "/d", AttemptKind.ORDINARY)
 
-        assert probe == AttemptResult.imported()
+        assert result == AttemptResult.imported()
         assert sonarr.execute_calls == []
         assert diagnostic_messages(recording, Severity.WARNING) == []
 
@@ -3109,9 +3109,9 @@ class TestUnmatchedProbe:
         strat, sonarr = self._strat()
         sonarr.episodes_return = [sonarr_ep(1, 1, ep_id=101, size=1000)]
 
-        probe = strat.import_completed(pending, "/d", AttemptKind.ORDINARY)
+        result = strat.import_completed(pending, "/d", AttemptKind.ORDINARY)
 
-        assert probe == AttemptResult.imported()
+        assert result == AttemptResult.imported()
         assert sonarr.execute_calls == []
 
     def test_another_groups_copy_on_the_target_keeps_the_verdict_unmatched(self) -> None:
@@ -3119,9 +3119,9 @@ class TestUnmatchedProbe:
         pending = self._unplaced_pair()
         strat, _ = self._strat(held_by="OtherPick")
 
-        probe = strat.import_completed(pending, "/d", AttemptKind.ORDINARY)
+        result = strat.import_completed(pending, "/d", AttemptKind.ORDINARY)
 
-        assert probe.unmatched_files == self._NAMES
+        assert result.unmatched_files == self._NAMES
 
     def test_a_seeded_file_beside_an_unmatched_one_imports_and_warns_once(self) -> None:
         # Something to import means the partial arm: today's once-a-run warning, no unmatched outcome.
@@ -3200,10 +3200,10 @@ class TestHeldBackFiles:
         del raw["hand_import_files"]
         stored = PendingImport.from_json(raw, guards={claim.al_id: claim.guards for claim in pending.claims})
 
-        probe = strat.import_completed(stored, "/d", AttemptKind.ORDINARY)
+        result = strat.import_completed(stored, "/d", AttemptKind.ORDINARY)
 
-        assert probe.left_for_hand_import.names == (self._NAMES[2],)
-        assert probe.all_done is False
+        assert result.left_for_hand_import.names == (self._NAMES[2],)
+        assert result.all_done is False
         assert sonarr.execute_calls == []
 
     def test_the_record_retires_once_a_hand_import_fills_its_window(self) -> None:
@@ -3231,10 +3231,10 @@ class TestHeldBackFiles:
         strat, _ = self._strat("Extras.mkv")
         recording = install_recording_hub()
 
-        probe = strat.import_completed(self._record(), "/d", AttemptKind.ORDINARY)
+        result = strat.import_completed(self._record(), "/d", AttemptKind.ORDINARY)
         strat.import_completed(self._record(), "/d", AttemptKind.ORDINARY)
 
-        assert probe.left_for_hand_import.names == (self._NAMES[2],)
+        assert result.left_for_hand_import.names == (self._NAMES[2],)
         warnings = [m for m in diagnostic_messages(recording, Severity.WARNING) if "could not be matched" in m]
         assert len(warnings) == 1
         assert ": 1 file could not be matched" in warnings[0]
@@ -3246,10 +3246,10 @@ class TestHeldBackFiles:
         )
         pending = pending_import(seadex_files=["Show - 01 [1080p].mkv", "Extras.mkv"])
 
-        probe = strat.import_completed(pending, "/d", AttemptKind.ORDINARY)
+        result = strat.import_completed(pending, "/d", AttemptKind.ORDINARY)
 
-        assert probe.all_done is True
-        assert probe.left_for_hand_import.names == ()
+        assert result.all_done is True
+        assert result.left_for_hand_import.names == ()
 
 
 class TestOrderOnlyHalves:
@@ -3279,9 +3279,9 @@ class TestOrderOnlyHalves:
             ],
         )
 
-        probe = strat.import_completed(pending, "/d", AttemptKind.ORDINARY)
+        result = strat.import_completed(pending, "/d", AttemptKind.ORDINARY)
 
-        assert probe.left_for_hand_import == LeftForHandImport(
+        assert result.left_for_hand_import == LeftForHandImport(
             files=tuple(HeldFile(name, key) for name, key in zip(self._RUN[:2], self._KEYS, strict=True)),
             missing=(EpisodeKey(4, 1),),
         )
@@ -3450,10 +3450,10 @@ class TestFolderScanFallback:
             mappings=[_tv_mapping()],
         )
 
-        probe = strat.import_completed(pending_import(), "/d/Show", AttemptKind.ORDINARY)
+        result = strat.import_completed(pending_import(), "/d/Show", AttemptKind.ORDINARY)
 
-        assert probe.all_done is False
-        assert probe.command_issued is True
+        assert result.all_done is False
+        assert result.command_issued is True
         # The folder scan received the TRANSLATED (Sonarr-visible) path.
         assert [folder for folder, _ in sonarr.folder_candidate_calls] == ["/remote/tv/Show"]
         [(files, mode)] = sonarr.execute_calls
@@ -3489,9 +3489,9 @@ class TestFolderScanFallback:
             folder_candidates=[manual_candidate("/d/Show/Show - 01 [1080p].mkv")],
         )
 
-        probe = strat.import_completed(pending_import(), "/d/Show", AttemptKind.ORDINARY)
+        result = strat.import_completed(pending_import(), "/d/Show", AttemptKind.ORDINARY)
 
-        assert probe.command_issued is True
+        assert result.command_issued is True
         [(files, mode)] = sonarr.execute_calls
         assert mode == "copy"
         assert files[0].downloadId == "ABC123"
@@ -3553,16 +3553,16 @@ class TestFolderScanFallback:
         strat, sonarr = self._strat(history=_dead_history(), folder_candidates=[])
         pending = pending_import()
 
-        probe = strat.import_completed(pending, "/d/Show", AttemptKind.ORDINARY)
-        assert probe.all_done is False
-        assert probe.command_issued is False
+        result = strat.import_completed(pending, "/d/Show", AttemptKind.ORDINARY)
+        assert result.all_done is False
+        assert result.command_issued is False
         assert sonarr.execute_calls == []
 
         # The transient heals: the downloadId scan answers again and wins.
         sonarr.candidates_return = [manual_candidate("/d/Show/Show - 01 [1080p].mkv")]
-        probe = strat.import_completed(pending, "/d/Show", AttemptKind.ORDINARY)
+        result = strat.import_completed(pending, "/d/Show", AttemptKind.ORDINARY)
 
-        assert probe.command_issued is True
+        assert result.command_issued is True
         assert len(sonarr.candidate_calls) == 2
         assert len(sonarr.folder_candidate_calls) == 1
         assert sonarr.execute_calls[0][0][0].downloadId == "ABC123"
@@ -3611,9 +3611,9 @@ class TestFolderScanFallback:
             excluded_files=["show - 02 [1080p].mkv"],
         )
 
-        probe = strat.import_completed(pending, "/d/Show", AttemptKind.FINAL)
+        result = strat.import_completed(pending, "/d/Show", AttemptKind.FINAL)
 
-        assert probe.all_done is True
+        assert result.all_done is True
         assert diagnostic_messages(recording, Severity.WARNING) == []
 
     def test_seeded_unverified_record_warns_once_with_the_folder_reason(self) -> None:
@@ -3623,9 +3623,9 @@ class TestFolderScanFallback:
         recording = install_recording_hub()
         strat, _ = self._strat(history=_dead_history(), folder_candidates=[])
 
-        probe = strat.import_completed(pending_import(), "/d/Show", AttemptKind.FINAL)
+        result = strat.import_completed(pending_import(), "/d/Show", AttemptKind.FINAL)
 
-        assert probe.all_done is False
+        assert result.all_done is False
         [warning] = diagnostic_messages(recording, Severity.WARNING)
         assert "1 intended file not visible to Sonarr" in warning
         assert "a scan of /d/Show found no files" in warning
@@ -3658,10 +3658,10 @@ class TestFolderScanFallback:
         sonarr.episodes_return = [sonarr_ep(1, 1, ep_id=101, release_group="SubGroup")]
         pending = pending_import(file_episode_map={}, ordered_episode_ids=[101], seadex_files=[name])
 
-        probe = strat.import_completed(pending, "/d/Show", AttemptKind.ORDINARY)
+        result = strat.import_completed(pending, "/d/Show", AttemptKind.ORDINARY)
 
-        assert probe.all_done is True
-        assert probe.placements == {normalize_name(name): (101,)}
+        assert result.all_done is True
+        assert result.placements == {normalize_name(name): (101,)}
         assert pending.file_episode_map == {}
         assert sonarr.execute_calls == []
         assert diagnostic_messages(recording, Severity.WARNING) == []
@@ -3684,10 +3684,10 @@ class TestFolderScanFallback:
             excluded_files=[normalize_name(excluded)],
         )
 
-        probe = strat.import_completed(pending, "/d/Show", AttemptKind.ORDINARY)
+        result = strat.import_completed(pending, "/d/Show", AttemptKind.ORDINARY)
 
-        assert probe.all_done is False
-        assert probe.placements == {}
+        assert result.all_done is False
+        assert result.placements == {}
 
     def test_rebuilt_map_that_does_not_verify_waits_without_pinning_it(self) -> None:
         # The history row names an episode holding no recommended file (the
@@ -3699,10 +3699,10 @@ class TestFolderScanFallback:
         strat, _ = self._strat(history=_imported_history((101, f"/d/Show/{name}")), folder_candidates=[])
         pending = pending_import(file_episode_map={}, ordered_episode_ids=[101], seadex_files=[name])
 
-        probe = strat.import_completed(pending, "/d/Show", AttemptKind.FINAL)
+        result = strat.import_completed(pending, "/d/Show", AttemptKind.FINAL)
 
-        assert probe.all_done is False
-        assert probe.placements == {}
+        assert result.all_done is False
+        assert result.placements == {}
         [warning] = diagnostic_messages(recording, Severity.WARNING)
         assert "1 intended file not visible to Sonarr" in warning
         assert "a scan of /d/Show found no files" in warning
@@ -3714,10 +3714,10 @@ class TestFolderScanFallback:
         strat, _ = self._strat(history=_imported_history((102, f"/d/Show/{name}")), folder_candidates=[])
         pending = pending_import()
 
-        probe = strat.import_completed(pending, "/d/Show", AttemptKind.ORDINARY)
+        result = strat.import_completed(pending, "/d/Show", AttemptKind.ORDINARY)
 
-        assert probe.all_done is False
-        assert probe.placements == {}
+        assert result.all_done is False
+        assert result.placements == {}
 
     def test_empty_poll_then_files_never_warns(self) -> None:
         # The common shape: the first scan lands before the folder is visible,
@@ -3728,9 +3728,9 @@ class TestFolderScanFallback:
 
         strat.import_completed(pending, "/d/Show", AttemptKind.ORDINARY)
         sonarr.folder_candidates_return = [manual_candidate("/d/Show/Show - 01 [1080p].mkv")]
-        probe = strat.import_completed(pending, "/d/Show", AttemptKind.ORDINARY)
+        result = strat.import_completed(pending, "/d/Show", AttemptKind.ORDINARY)
 
-        assert probe.command_issued is True
+        assert result.command_issued is True
         assert not any("found no files" in w for w in diagnostic_messages(recording, Severity.WARNING))
 
     def test_clean_verdict_empty_folder_stays_quiet(self) -> None:
@@ -3863,9 +3863,9 @@ class TestFolderScanFallback:
         sonarr.episodes_return = [sonarr_ep(1, 1, ep_id=101, release_group="SubGroup")]
         pending = pending_import(file_episode_map={}, ordered_episode_ids=[101, 102], seadex_files=[first, second])
 
-        probe = strat.import_completed(pending, "/d/Show", AttemptKind.FINAL)
+        result = strat.import_completed(pending, "/d/Show", AttemptKind.FINAL)
 
-        assert probe.all_done is False
+        assert result.all_done is False
         [warning] = diagnostic_messages(recording, Severity.WARNING)
         assert "found no files" in warning
 
@@ -3888,9 +3888,9 @@ class TestFolderScanFallback:
         sonarr.candidates_return = by_id
         pending = pending_import(file_episode_map={}, ordered_episode_ids=[101, 102], seadex_files=[first, second])
 
-        probe = self._poll_then_empty_the_folder(strat, sonarr, pending)
+        result = self._poll_then_empty_the_folder(strat, sonarr, pending)
 
-        assert probe.placements == rebuilt
+        assert result.placements == rebuilt
 
     def test_failed_download_id_scan_then_an_empty_answer_never_rebuilds_from_history(self) -> None:
         first, second = "Show - 01 [1080p].mkv", "Show - 02 [1080p].mkv"
@@ -3906,9 +3906,9 @@ class TestFolderScanFallback:
         sonarr.candidates_return = []
         sonarr.folder_candidates_return = []
 
-        probe = strat.import_completed(pending, "/d/Show", AttemptKind.ORDINARY)
+        result = strat.import_completed(pending, "/d/Show", AttemptKind.ORDINARY)
 
-        assert probe.all_done is False
+        assert result.all_done is False
 
     def test_translated_in_flight_command_suppresses_reissue(self) -> None:
         # A dead-tracked import POSTs translated paths and no downloadId.
@@ -3933,9 +3933,9 @@ class TestFolderScanFallback:
                 },
             ),
         ]
-        probe = strat.import_completed(pending, "/d/Show", AttemptKind.ORDINARY)
+        result = strat.import_completed(pending, "/d/Show", AttemptKind.ORDINARY)
 
-        assert probe.all_done is False
+        assert result.all_done is False
         assert len(sonarr.execute_calls) == 1
 
     def test_single_file_content_path_scans_the_file(self) -> None:
@@ -3947,9 +3947,9 @@ class TestFolderScanFallback:
             mappings=[_tv_mapping()],
         )
 
-        probe = strat.import_completed(pending_import(), "/d/Show - 01 [1080p].mkv", AttemptKind.ORDINARY)
+        result = strat.import_completed(pending_import(), "/d/Show - 01 [1080p].mkv", AttemptKind.ORDINARY)
 
-        assert probe.command_issued is True
+        assert result.command_issued is True
         assert [folder for folder, _ in sonarr.folder_candidate_calls] == ["/remote/tv/Show - 01 [1080p].mkv"]
 
 
@@ -3987,9 +3987,9 @@ class TestUnwatchedTorrentImport:
     def test_imports_from_the_folder_by_the_records_map_without_a_download_id(self) -> None:
         strat, sonarr, _ = self._strat()
 
-        probe = strat.import_completed(pending_import(), "/d/Show", AttemptKind.ORDINARY)
+        result = strat.import_completed(pending_import(), "/d/Show", AttemptKind.ORDINARY)
 
-        assert probe.command_issued is True
+        assert result.command_issued is True
         [(files, mode)] = sonarr.execute_calls
         assert mode == "copy"
         [entry] = files
@@ -4038,9 +4038,9 @@ class TestUnwatchedTorrentImport:
         recording = install_recording_hub()
         strat, sonarr, _ = self._strat(folder_candidates=[])
 
-        probe = strat.import_completed(pending_import(), "/d/Show", AttemptKind.FINAL)
+        result = strat.import_completed(pending_import(), "/d/Show", AttemptKind.FINAL)
 
-        assert probe.all_done is False
+        assert result.all_done is False
         assert sonarr.execute_calls == []
         [warning] = diagnostic_messages(recording, Severity.WARNING)
         assert "1 intended file not visible to Sonarr" in warning

@@ -791,8 +791,8 @@ def _specimen_stream() -> tuple[ev.Event, ...]:
     data_dir = "/home/user/.local/share/pearlarr"
     redacted_config: ev.JsonObj = {"sonarr": {"url": "http://sonarr:8989", "api_key": "REDACTED"}}
     return (
-        ev.RunStarted(version="v1.0.0", data_dir="/home/user/.local/share/pearlarr"),
-        ev.CycleStarted(number=1),
+        ev.PearlarrStarted(version="v1.0.0", data_dir="/home/user/.local/share/pearlarr"),
+        ev.ScheduledRunStarted(number=1),
         ev.BootStepStarted(scope=_BOOT_SCOPE, label="Connecting to Sonarr"),
         ev.BootStepProgressed(scope=_BOOT_SCOPE, fraction=0.5),
         ev.BootStepSlow(scope=_BOOT_SCOPE, label="Connecting to Sonarr"),
@@ -851,7 +851,7 @@ def _specimen_stream() -> tuple[ev.Event, ...]:
         ev.ScopeClosed(scope=_TITLE_SCOPE),
         ev.CapReached(cap=25),
         ev.ScanFinished(arr=Arr.SONARR),
-        ev.RunSummaryReady(summary=summary),
+        ev.ArrRunSummaryReady(summary=summary),
         ev.ScopeOpened(scope=_WAIT_SCOPE, label="wait"),
         ev.WaitStarted(total=1, pulse_s=300.0, kind=ev.WaitKind.MONITOR, scope=_WAIT_SCOPE),
         ev.WaitProgress(snapshot=ev.WaitSnapshot(torrents=(), elapsed_s=30.0), scope=_WAIT_SCOPE),

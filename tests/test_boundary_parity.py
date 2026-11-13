@@ -98,10 +98,10 @@ def _drive_manual_import(
     pending = pending_import()
     scan = executor.scanner.scan(pending, "/d", untracked=False)
     assert scan is not None
-    probe = executor.run_auto_import(pending, "/d", PollReading(scan, _bare_snapshot(pending), [], at_deadline=False))
+    result = executor.run_auto_import(pending, "/d", PollReading(scan, _bare_snapshot(pending), [], at_deadline=False))
 
-    assert probe.all_done is False
-    assert probe.command_issued is True
+    assert result.all_done is False
+    assert result.command_issued is True
     body: object = json.loads(post_route.calls.last.request.content)
     return body
 
@@ -170,10 +170,10 @@ def test_golden_body_dead_tracked_folder_import_omits_download_id() -> None:
     pending = pending_import()
     scan = executor.scanner.scan(pending, "/d", untracked=True)
     assert scan is not None
-    probe = executor.run_auto_import(pending, "/d", PollReading(scan, _bare_snapshot(pending), [], at_deadline=False))
+    result = executor.run_auto_import(pending, "/d", PollReading(scan, _bare_snapshot(pending), [], at_deadline=False))
 
-    assert probe.all_done is False
-    assert probe.command_issued is True
+    assert result.all_done is False
+    assert result.command_issued is True
     body: object = json.loads(post_route.calls.last.request.content)
     assert body == {
         "name": "ManualImport",

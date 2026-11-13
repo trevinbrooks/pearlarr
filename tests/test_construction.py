@@ -45,7 +45,7 @@ def _ctx_holders(runner: ArrRunLoop, services: ArrRunServices) -> list[object]:
         attr
         for owner in (runner, services)
         for attr in vars(owner).values()
-        if hasattr(attr, "bind_arr_run") and hasattr(attr, "_ctx")
+        if hasattr(attr, "bind_arr_run") and hasattr(attr, "_state")
     ]
 
 
@@ -59,19 +59,19 @@ def test_runner_adopts_placeholder_then_rebinds_fresh_ctx() -> None:
     holders = _ctx_holders(runner, services)
     # The discovery itself is load-bearing: wait manager + hub + filter + pipeline.
     assert len(holders) >= 4
-    assert runner._ctx is services.ctx
-    assert all(vars(c)["_ctx"] is runner._ctx for c in holders)
+    assert runner._state is services.state
+    assert all(vars(c)["_state"] is runner._state for c in holders)
 
     # Phase 2 (fresh mint): start_arr_run swaps a fresh ArrRunState AND rebinds
     # every ctx-holding collaborator to it. A missed rebind would route a
     # collaborator's writes into the orphaned prior context (the drift the
     # bind_arr_run fold guards against).
-    first_ctx = runner._ctx
+    first_ctx = runner._state
     runner.start_arr_run(dry_run=False)
 
-    assert runner._ctx is not first_ctx  # a fresh ctx was swapped in
-    assert services.ctx is runner._ctx  # the hub rebound to it
-    assert all(vars(c)["_ctx"] is runner._ctx for c in holders)
+    assert runner._state is not first_ctx  # a fresh ctx was swapped in
+    assert services.state is runner._state  # the hub rebound to it
+    assert all(vars(c)["_state"] is runner._state for c in holders)
 
 
 def test_services_read_selection_staleness_from_the_store_at_construction() -> None:

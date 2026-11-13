@@ -261,7 +261,7 @@ class AttemptResult:
         return cls(all_done=False, command_issued=False, left_for_hand_import=held)
 
 
-LEAVE_PROBE = AttemptResult(attempted=False, all_done=False, command_issued=False)
+NO_ATTEMPT = AttemptResult(attempted=False, all_done=False, command_issued=False)
 """The fail-open probe: no attempt ran, so leave the record pending for a later run."""
 
 

@@ -27,7 +27,7 @@ from pearlarr.output import (
     BootStepSlow,
     BootStepStarted,
     Diagnostic,
-    RunStarted,
+    PearlarrStarted,
     ScopeClosed,
     ScopeKind,
     ScopeOpened,
@@ -64,10 +64,10 @@ def test_banner_opens_the_section_and_states_the_run_facts() -> None:
 
     (opened,) = recording.of_type(ScopeOpened)
     assert opened.scope.kind is ScopeKind.BOOT_SECTION
-    (started,) = recording.of_type(RunStarted)
+    (started,) = recording.of_type(PearlarrStarted)
     assert started.data_dir == "/data/dir"
     assert started.version.startswith("v")  # the installed package version
-    # RunStarted is the run boundary (the fold closes stale nodes on it), so it
+    # PearlarrStarted is the run boundary (the fold closes stale nodes on it), so it
     # precedes the section open.
     assert recording.events == [started, opened]
 

@@ -16,7 +16,7 @@ from .output import SPARK_SAMPLES, Phase, TorrentView, WaitKind, WaitSnapshot, h
 from .pending_import import PendingImport, is_awaiting_cleanup
 from .pending_import_store import PendingImportStore
 from .wait_types import (
-    LEAVE_PROBE,
+    NO_ATTEMPT,
     NO_HELD_BACK,
     NO_PROGRESS,
     PENDING_IMPORT_STATE_FOR_OUTCOME,
@@ -118,12 +118,12 @@ class WaitPollers:
         """
 
         if self.strategy is None:
-            return LEAVE_PROBE
+            return NO_ATTEMPT
         try:
             return self.strategy.import_completed(pending, path, attempt)
         except Exception as e:
             hub_error(f"Manual import failed for {pending.display_label} - leaving it for a later run", exc=e)
-            return LEAVE_PROBE
+            return NO_ATTEMPT
 
     def import_progress(self, pending: PendingImport) -> ImportProgress:
         """Cheap, read-only files-landed count (the Tier-2 poll), never raising."""
@@ -140,10 +140,10 @@ class WaitPollers:
 class PostImportCleanup:
     """Owns the post-import effects (category move, queue close) and the flagged-record heal."""
 
-    _ctx: ArrRunState
+    _state: ArrRunState
     """The current run's context. Never bound at construction: `begin_run` rebinds it every run."""
 
-    def __init__(self, deps: ArrRunDeps, pending_imports: PendingImportStore, probes: WaitPollers) -> None:
+    def __init__(self, deps: ArrRunDeps, pending_imports: PendingImportStore, pollers: WaitPollers) -> None:
         self._imports = deps.config.imports
         self._categories = deps.categories
         self._qbit = deps.qbit
@@ -151,13 +151,13 @@ class PostImportCleanup:
         self._logger = deps.logger
         self._pending_imports = pending_imports
         # Also the strategy source: the queue close drives the hook bound on the probes.
-        self._probes = probes
+        self._pollers = pollers
         self._kept_keys: set[str] = set()
 
     def bind_arr_run(self, state: ArrRunState) -> None:
         """Bind the fresh run context, forgetting the prior run's keeps."""
 
-        self._ctx = state
+        self._state = state
         self._kept_keys = set()
 
     def retire(self, pending: PendingImport) -> bool:
@@ -228,7 +228,7 @@ class PostImportCleanup:
         own, without the permanent "download ignored" history marker an explicit delete writes.
         """
 
-        strategy = self._probes.strategy
+        strategy = self._pollers.strategy
         if not self._imports.remove_from_queue or strategy is None:
             return EffectStatus.SKIPPED
         if moved_to and self._categories.move_untracks(moved_to):
@@ -295,7 +295,7 @@ class PostImportCleanup:
         seen = self._categories.category_watch(current)
         if seen is Watch.WATCHED:
             return None
-        arr = self._ctx.arr.capitalize()
+        arr = self._state.arr.capitalize()
         if target is Watch.WATCHED and seen is Watch.UNWATCHED:
             self._logger.debug(
                 f"{pending.display_label}: its torrent is in {current!r}, a category {arr} doesn't watch, "
@@ -316,7 +316,7 @@ class PostImportCleanup:
         `_advance`: a fourth branch means extracting a shared fold helper first.
         """
 
-        poll = self._probes.poll_torrent(pending.infohash)
+        poll = self._pollers.poll_torrent(pending.infohash)
         if poll.outcome is TorrentStatus.GONE:
             # A gone torrent leaves no content path to verify with, the import verified once,
             # and holding the flag would wedge the record for good while the stale queue
@@ -331,18 +331,18 @@ class PostImportCleanup:
             return
         # DEADLINE, not POLL: the heal is one attempt per run with no clock to escalate it,
         # and a partial seed map only verifies past a clean importPending by stepping in.
-        probe = self._probes.try_import_completed(pending, path, AttemptKind.FINAL)
-        pending = self._pending_imports.save_history_placements(pending, probe)
-        if probe.all_done:
+        result = self._pollers.try_import_completed(pending, path, AttemptKind.FINAL)
+        pending = self._pending_imports.save_history_placements(pending, result)
+        if result.all_done:
             self._finish_cleanup(pending)
-        elif probe.deferral is PauseReason.ISSUED:
+        elif result.deferral is PauseReason.ISSUED:
             # A fresh re-import just started, so the "import done" premise is dead: demote to
             # an ordinary carryover and let this run's end pass track and recount it. Only a
             # fresh issue demotes. A blip or an own command still in flight holds the flag.
             self._pending_imports.save(replace(pending, awaiting_cleanup=False))
             # Blocking mode tallies before the monitor: fold DOWNLOADED so the summary does
             # not default the never-snapshotted key to queued.
-            self._ctx.pending_import_states[pending.infohash] = PendingImportState.DOWNLOADED
+            self._state.pending_import_states[pending.infohash] = PendingImportState.DOWNLOADED
             hub_warn(f"Imported files for {pending.display_label} are no longer present - re-importing")
 
     def _finish_cleanup(self, pending: PendingImport) -> None:
@@ -359,21 +359,21 @@ class ImportWaitManager:
     """The imports config submodel: the pass timeouts and poll intervals."""
     clock: Clock
     """The wait passes' time seam."""
-    probes: WaitPollers
+    pollers: WaitPollers
     """The run's fail-open pollers and the one strategy binding, shared with the cleanup (for the heal)."""
-    _ctx: ArrRunState
+    _state: ArrRunState
     """The current run's context. `__init__` seeds it through the first `begin_run`, which rebinds every run."""
 
-    def __init__(self, *, deps: ArrRunDeps, ctx: ArrRunState, pending_imports: PendingImportStore) -> None:
+    def __init__(self, *, deps: ArrRunDeps, state: ArrRunState, pending_imports: PendingImportStore) -> None:
         self.imports = deps.config.imports
         self.clock = deps.clock
         self.logger = deps.logger
         self._reporter = deps.reporter
         # The hub's seam, shared with the grab pipeline and bound by the hub each run: one run list, one binding.
         self._pending_imports = pending_imports
-        self.probes = WaitPollers(qbit=deps.qbit, logger=deps.logger)
-        self._cleanup = PostImportCleanup(deps, self._pending_imports, self.probes)
-        self.bind_arr_run(ctx, None)
+        self.pollers = WaitPollers(qbit=deps.qbit, logger=deps.logger)
+        self._cleanup = PostImportCleanup(deps, self._pending_imports, self.pollers)
+        self.bind_arr_run(state, None)
 
     def bind_arr_run(self, state: ArrRunState, strategy: ImportCompleter | None) -> None:
         """Bind the fresh run context to the manager and its sub-objects, the strategy to the probes alone.
@@ -382,8 +382,8 @@ class ImportWaitManager:
         operate on a dead context after the first run. The record seam is the hub's to bind.
         """
 
-        self._ctx = state
-        self.probes.bind_arr_run(strategy)
+        self._state = state
+        self.pollers.bind_arr_run(strategy)
         self._cleanup.bind_arr_run(state)
 
     def fresh_grab_keys(self) -> set[str]:
@@ -397,17 +397,17 @@ class ImportWaitManager:
         A record spanning several series is observed once, under whichever of its series scans first.
         """
 
-        return self.fresh_grab_keys() | self._ctx.reacquired_keys | set(self._ctx.pending_import_states)
+        return self.fresh_grab_keys() | self._state.reacquired_keys | set(self._state.pending_import_states)
 
     def note_pending_import_state(self, key: str, outcome: Outcome) -> None:
         """Fold a pass's non-dropped outcome for a carried-over record into `pending_states`."""
 
-        self._ctx.pending_import_states[key] = PENDING_IMPORT_STATE_FOR_OUTCOME[outcome]
+        self._state.pending_import_states[key] = PENDING_IMPORT_STATE_FOR_OUTCOME[outcome]
 
-    def save_history_placements(self, pending: PendingImport, probe: AttemptResult) -> PendingImport:
+    def save_history_placements(self, pending: PendingImport, result: AttemptResult) -> PendingImport:
         """Persist the files a poll's Sonarr history placed onto the record and return the healed copy."""
 
-        return self._pending_imports.save_history_placements(pending, probe)
+        return self._pending_imports.save_history_placements(pending, result)
 
     def resolve_terminal(self, pending: PendingImport, outcome: Outcome, *, carried_over: bool) -> None:
         """One terminal outcome's store effects: retire on IMPORTED, drop on MISSING, else fold the state.
@@ -432,13 +432,13 @@ class ImportWaitManager:
     def _observe_one(self, pending: PendingImport) -> PendingImportState:
         """Observe one carried-over record (never an import) and fold it to a `PendingState`."""
 
-        poll = self.probes.poll_torrent(pending.infohash)
-        all_done = poll.outcome is TorrentStatus.COMPLETE and self.probes.import_progress(pending).all_done
+        poll = self.pollers.poll_torrent(pending.infohash)
+        all_done = poll.outcome is TorrentStatus.COMPLETE and self.pollers.import_progress(pending).all_done
         state = classify_pending_import(poll.outcome, all_done)
         # Store effects precede the state write: a raising retire/drop must not
-        # leave a state for _finalize_run to count off an unwritten store.
+        # leave a state for _finish_arr_run to count off an unwritten store.
         if state is PendingImportState.IMPORTED:
-            # _finalize_run counts the IMPORTED entry into stats. No local bump.
+            # _finish_arr_run counts the IMPORTED entry into stats. No local bump.
             # A kept-for-cleanup record still counts here: the import happened this run.
             self._cleanup.retire(pending)
         elif state is PendingImportState.GONE:
@@ -449,13 +449,13 @@ class ImportWaitManager:
             )
         elif state is PendingImportState.ERRORED:
             self.logger.debug(f"Pending import {pending.display_label} errored in qBittorrent - left for a later run")
-        self._ctx.pending_import_states[pending.infohash] = state
+        self._state.pending_import_states[pending.infohash] = state
         return state
 
     def report_imports_for_series(self, series_id: int) -> None:
         """Report this series' carried-over pending records inline, retiring any newly imported one."""
 
-        if self.probes.strategy is None:
+        if self.pollers.strategy is None:
             return
 
         reported = self._reported_in_title_blocks()
@@ -479,59 +479,59 @@ class ImportWaitManager:
         # A raw read on purpose: this loop needs only the keys and `pending_import_states`,
         # so rehydrating every record would build a full map only to discard it.
         for key in self._pending_imports.active_rows():
-            state = self._ctx.pending_import_states.get(key, PendingImportState.DOWNLOADING)
+            state = self._state.pending_import_states.get(key, PendingImportState.DOWNLOADING)
             if state is PendingImportState.DOWNLOADED:
-                self._ctx.stats.downloaded += 1
+                self._state.stats.downloaded += 1
             elif state is PendingImportState.DOWNLOADING:
-                self._ctx.stats.queued += 1
+                self._state.stats.queued += 1
 
     def heal_flagged(self) -> None:
         """The finalize tail's heal pass over earlier runs' kept-for-cleanup records."""
 
         self._cleanup.heal_flagged()
 
-    def run_monitor(self, *, view: WaitView | None = None) -> WaitResult | None:
+    def run_blocking(self, *, view: WaitView | None = None) -> WaitResult | None:
         """The blocking/hybrid end-of-run pass: interleaved wait+import over every pending record."""
 
-        if self.probes.strategy is None:
+        if self.pollers.strategy is None:
             return None
 
-        pending_imports = self._monitor_working_set()
+        pending_imports = self._imports_to_wait_on()
         if not pending_imports:
             return None
 
-        mp = WaitPass(self, pending_imports, kind=WaitKind.MONITOR)
+        wait_pass = WaitPass(self, pending_imports, kind=WaitKind.MONITOR)
 
         def body(view: WaitView) -> None:
-            while mp.active_count:
-                mp.run_cycle()
-                view.update(mp.snapshot())
-                if mp.active_count:
-                    self._progress_wait(mp, view)
+            while wait_pass.active_count:
+                wait_pass.run_poll()
+                view.update(wait_pass.snapshot())
+                if wait_pass.active_count:
+                    self._sleep_between_polls(wait_pass, view)
 
-        return self._run_pass(mp, view=view, body=body)
+        return self._run_wait_pass(wait_pass, view=view, body=body)
 
-    def check_once(self, *, view: WaitView | None = None) -> WaitResult | None:
+    def run_deferred(self, *, view: WaitView | None = None) -> WaitResult | None:
         """The deferred end-of-run pass: one non-blocking check cycle over the carried-over records."""
 
-        if self.probes.strategy is None:
+        if self.pollers.strategy is None:
             return None
 
         pending_imports = list(self._pending_imports.active_imports().values())
         if not pending_imports:
             return None
 
-        mp = WaitPass(self, pending_imports, kind=WaitKind.CHECK)
+        wait_pass = WaitPass(self, pending_imports, kind=WaitKind.CHECK)
 
         def body(view: WaitView) -> None:
-            mp.run_check()
-            view.update(mp.snapshot())
+            wait_pass.run_single_poll()
+            view.update(wait_pass.snapshot())
 
-        return self._run_pass(mp, view=view, body=body)
+        return self._run_wait_pass(wait_pass, view=view, body=body)
 
-    def _run_pass(
+    def _run_wait_pass(
         self,
-        mp: "WaitPass",
+        wait_pass: "WaitPass",
         *,
         view: WaitView | None,
         body: Callable[[WaitView], None],
@@ -547,30 +547,30 @@ class ImportWaitManager:
                 self.logger,
                 poll_s=self.imports.poll_interval,
                 digest_interval=self.imports.digest_interval,
-                kind=mp.kind,
+                kind=wait_pass.kind,
             )
         try:
-            view.update(mp.snapshot())
+            view.update(wait_pass.snapshot())
             try:
                 body(view)
             except KeyboardInterrupt:
-                self._note_interrupted(mp, view)
+                self._note_interrupted(wait_pass, view)
             except SystemExit:
-                self._note_interrupted(mp, view)
+                self._note_interrupted(wait_pass, view)
                 raise
         finally:
             if own_view:
                 view.close()
-        return WaitResult(tuple(mp.results), elapsed_s=mp.elapsed())
+        return WaitResult(tuple(wait_pass.results), elapsed_s=wait_pass.elapsed())
 
     @staticmethod
-    def _note_interrupted(mp: "WaitPass", view: WaitView) -> None:
+    def _note_interrupted(wait_pass: "WaitPass", view: WaitView) -> None:
         """Push the rows as they stand and note how many records the interrupted pass left pending."""
 
-        view.update(mp.snapshot())
-        hub_note(f"{mp.kind.interrupt_noun} interrupted - {mp.active_count} left pending")
+        view.update(wait_pass.snapshot())
+        hub_note(f"{wait_pass.kind.interrupt_noun} interrupted - {wait_pass.active_count} left pending")
 
-    def _progress_wait(self, mp: "WaitPass", view: WaitView) -> None:
+    def _sleep_between_polls(self, wait_pass: "WaitPass", view: WaitView) -> None:
         """Sleep one heavy-poll interval, refreshing the live rows between slices.
 
         The slices run only the cheap fast-lane reads (progress and telemetry). A ready
@@ -583,26 +583,26 @@ class ImportWaitManager:
             self.clock.sleep(poll_s)
             return
         deadline = self.clock.monotonic() + poll_s
-        while mp.active_count:
+        while wait_pass.active_count:
             remaining = deadline - self.clock.monotonic()
             if remaining <= 0:
                 return
             self.clock.sleep(min(progress_s, remaining))
-            if not mp.active_count:
+            if not wait_pass.active_count:
                 return
             # The import bar first: it can promote or retire rows.
-            progressed = mp.refresh_progress()
-            telemetry_moved = view.wants_telemetry and mp.refresh_telemetry()
+            progressed = wait_pass.refresh_progress()
+            telemetry_moved = view.wants_telemetry and wait_pass.refresh_telemetry()
             if progressed or telemetry_moved:
-                view.update(mp.snapshot())
+                view.update(wait_pass.snapshot())
 
-    def _monitor_working_set(self) -> list[PendingImport]:
+    def _imports_to_wait_on(self) -> list[PendingImport]:
         """This run's fresh grabs (run-list order, first) plus the hydrated carried-over records.
 
         No dedup needed: `records` excludes the fresh keys, so the in-memory copy always wins.
         """
 
-        pending_imports = [pending for pending in self._ctx.grabbed_this_run.values() if pending.infohash]
+        pending_imports = [pending for pending in self._state.grabbed_this_run.values() if pending.infohash]
         pending_imports.extend(self._pending_imports.active_imports().values())
         return pending_imports
 
@@ -673,19 +673,19 @@ class _ImportClock:
         return True
 
 
-def _unmatched(probe: AttemptResult) -> LeftForHandImport:
+def _unmatched(result: AttemptResult) -> LeftForHandImport:
     """The files the probe matched to no episode, as the download's held-back files."""
 
-    return LeftForHandImport(files=tuple(HeldFile(name) for name in probe.unmatched_files))
+    return LeftForHandImport(files=tuple(HeldFile(name) for name in result.unmatched_files))
 
 
-def _exhausted_outcome(probe: AttemptResult) -> Outcome:
+def _exhausted_outcome(result: AttemptResult) -> Outcome:
     """The truthful label for a row graduating with its wait uncredited (the deadline, or the credit cap)."""
 
     # `command_issued` alone covers scripted probes: the reconciler pairs it with a deferral.
-    if probe.command_issued or probe.deferral in (PauseReason.ISSUED, PauseReason.IMPORT):
+    if result.command_issued or result.deferral in (PauseReason.ISSUED, PauseReason.IMPORT):
         return Outcome.STILL_IMPORTING
-    if probe.deferral is PauseReason.BUSY:
+    if result.deferral is PauseReason.BUSY:
         return Outcome.SONARR_BUSY
     return Outcome.NOT_READY
 
@@ -772,11 +772,11 @@ class _WaitRow:
         if self.view.phase is Phase.DOWNLOADING:
             self.view = replace(self.view, phase_elapsed_s=now - self.dl_start)
 
-    def view_importing(self, probe: AttemptResult, now: float) -> None:
+    def view_importing(self, result: AttemptResult, now: float) -> None:
         """The heavy poll's importing frame. The bar is determinate only when the seed map is whole."""
 
-        total = probe.target_count
-        done = probe.imported_count
+        total = result.target_count
+        done = result.imported_count
         self.view = TorrentView(
             key=self.pending.infohash,
             label=self.pending.display_label,
@@ -785,7 +785,7 @@ class _WaitRow:
             import_done=(done if total else None),
             import_total=(total if total else None),
             phase_elapsed_s=now - self._import_started(),
-            command_issued=probe.command_issued,
+            command_issued=result.command_issued,
         )
 
     def view_import_progress(self, progress: ImportProgress, now: float) -> None:
@@ -850,17 +850,17 @@ class WaitPass:
 
         return sum(1 for row in self.rows.values() if row.active)
 
-    def run_cycle(self) -> None:
+    def run_poll(self) -> None:
         """Run one heavy-poll cycle: advance every active row."""
 
         for row in self.rows.values():
             if row.active:
                 self._advance(row)
 
-    def run_check(self) -> None:
+    def run_single_poll(self) -> None:
         """The check pass's whole cycle: one heavy poll, the cheap bar refresh, then graduate the rest."""
 
-        self.run_cycle()
+        self.run_poll()
         self.refresh_progress()
         self._finish_active_rows()
 
@@ -911,7 +911,7 @@ class WaitPass:
 
         pending = row.pending
 
-        poll = self._mgr.probes.poll_torrent(pending.infohash)
+        poll = self._mgr.pollers.poll_torrent(pending.infohash)
 
         if poll.outcome is None:
             # Monitor-only: `dl_start` is this pass's construction, so a check-pass timeout would
@@ -945,34 +945,34 @@ class WaitPass:
             clock = row.clock = _ImportClock(timeout=self._import_timeout, anchor=now_ts, started=now_ts)
         clock.mark_poll(now_ts)
         at_deadline = clock.at_deadline(now_ts)
-        probe = self._mgr.probes.try_import_completed(
+        result = self._mgr.pollers.try_import_completed(
             pending,
             path,
             AttemptKind.FINAL if at_deadline else AttemptKind.ORDINARY,
         )
         # The placements land before any outcome: the retire, the keep, the next poll, and the Tier-2 bar read them.
-        pending = row.pending = self._mgr.save_history_placements(pending, probe)
-        landed = clock.note_progress(probe.imported_count, probe.target_count, now_ts)
+        pending = row.pending = self._mgr.save_history_placements(pending, result)
+        landed = clock.note_progress(result.imported_count, result.target_count, now_ts)
         # Waiting on Sonarr's import work is not this record stalling (a landed poll already re-anchored
         # harder than a pause would).
-        deferred = probe.deferred and clock.can_defer(probe.deferral)
+        deferred = result.deferred and clock.can_defer(result.deferral)
         if deferred and not landed:
-            clock.credit_deferral(now_ts, probe.deferral)
-        if probe.all_done:
-            self._terminal(Outcome.IMPORTED, row, _TerminalDetail(files=probe.target_count or None))
-        elif probe.unmatched_files:
+            clock.credit_deferral(now_ts, result.deferral)
+        if result.all_done:
+            self._terminal(Outcome.IMPORTED, row, _TerminalDetail(files=result.target_count or None))
+        elif result.unmatched_files:
             # Nothing to wait for: the deadline would only repeat the answer. Kept for a human, re-reported next run.
-            self._terminal(Outcome.UNMATCHED, row, _TerminalDetail(left_for_hand_import=_unmatched(probe)))
-        elif probe.left_for_hand_import.files:
+            self._terminal(Outcome.UNMATCHED, row, _TerminalDetail(left_for_hand_import=_unmatched(result)))
+        elif result.left_for_hand_import.files:
             # The placed files are in and the rest wait on a hand import: kept, re-reported next run.
-            self._terminal(Outcome.PARTIAL, row, _TerminalDetail(left_for_hand_import=probe.left_for_hand_import))
+            self._terminal(Outcome.PARTIAL, row, _TerminalDetail(left_for_hand_import=result.left_for_hand_import))
         elif at_deadline and not landed and not deferred:
-            self._terminal(_exhausted_outcome(probe), row)
-        elif not probe.attempted:
+            self._terminal(_exhausted_outcome(result), row)
+        elif not result.attempted:
             self._terminal(Outcome.ATTEMPT_FAILED, row)
         else:
             # Still waiting, or our copy is in flight.
-            row.view_importing(probe, now_ts)
+            row.view_importing(result, now_ts)
 
     def refresh_progress(self) -> bool:
         """Cheap Tier-2 pass over the IMPORTING rows: refresh the "files inserted" bar, promote on verified files.
@@ -988,7 +988,7 @@ class WaitPass:
             clock = row.clock
             if clock is None:
                 continue
-            progress = self._mgr.probes.import_progress(row.pending)
+            progress = self._mgr.pollers.import_progress(row.pending)
             # Indeterminate (a partial seed map) means no bar and no promotion. The heavy poll's done-check
             # finishes the row.
             if not progress.determinate or progress.total <= 0:
@@ -1011,7 +1011,7 @@ class WaitPass:
         downloading = [row for row in self.rows.values() if row.active and row.view.phase is Phase.DOWNLOADING]
         # One batch read for every downloading row (one row per torrent).
         hashes = [row.pending.infohash for row in downloading]
-        by_hash = self._mgr.probes.poll_telemetry(hashes)
+        by_hash = self._mgr.pollers.poll_telemetry(hashes)
         changed = False
         for row in downloading:
             telemetry = by_hash.get(row.pending.infohash)

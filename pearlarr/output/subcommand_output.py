@@ -20,6 +20,7 @@ import yaml
 
 from .events import (
     ArrRunFinished,
+    ArrRunSummaryReady,
     BootReady,
     BootStepFinished,
     BootStepProgressed,
@@ -34,7 +35,6 @@ from .events import (
     ConfigMigrated,
     ConfigUpToDate,
     ConfigValidated,
-    CycleStarted,
     Diagnostic,
     EffectiveConfigShown,
     Event,
@@ -43,12 +43,12 @@ from .events import (
     ItemStarted,
     NextRunScheduled,
     PathsShown,
+    PearlarrStarted,
     ReleaseSkipped,
     RowFinished,
-    RunStarted,
-    RunSummaryReady,
     ScanFinished,
     ScanStarted,
+    ScheduledRunStarted,
     ScopeClosed,
     ScopeOpened,
     Severity,
@@ -110,8 +110,8 @@ class CliTextRenderer(Renderer):
             case Diagnostic(severity=severity, message=message):
                 typer.echo(message, err=severity >= Severity.WARNING)
             case (
-                RunStarted()
-                | CycleStarted()
+                PearlarrStarted()
+                | ScheduledRunStarted()
                 | NextRunScheduled()
                 | ScopeOpened()
                 | ScopeClosed()
@@ -130,7 +130,7 @@ class CliTextRenderer(Renderer):
                 | GrabAction()
                 | CapReached()
                 | ScanFinished()
-                | RunSummaryReady()
+                | ArrRunSummaryReady()
                 | WaitStarted()
                 | WaitProgress()
                 | RowFinished()

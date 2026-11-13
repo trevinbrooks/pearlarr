@@ -136,21 +136,21 @@ class RadarrStrategy(ArrStrategy[RadarrItem]):
     ) -> None:
         """Process one AniList id for a Radarr movie."""
 
-        run = self._services
+        services = self._services
 
-        sd_entry = run.begin_check(al_id)
+        sd_entry = services.begin_check(al_id)
         if sd_entry is None:
             return
         sd_url = sd_entry.url
 
         # Movies have no episode coverage, so the backfill is just the URL.
-        if run.is_unchanged(al_id, sd_entry, lambda: ""):
+        if services.is_unchanged(al_id, sd_entry, lambda: ""):
             return
 
-        title = run.resolve_title(al_id)
-        run.open_title_block(title=title.name, sd_entry=sd_entry)
+        title = services.resolve_title(al_id)
+        services.open_title_block(title=title.name, sd_entry=sd_entry)
 
-        update = run.new_cache_details(title, sd_entry)
+        update = services.new_cache_details(title, sd_entry)
         update["url"] = sd_url
         update["coverage"] = ""
 
@@ -162,26 +162,26 @@ class RadarrStrategy(ArrStrategy[RadarrItem]):
             f"Radarr release {pluralize(radarr_releases.group_count(), 'group')}: {radarr_releases.groups_label()}"
         )
 
-        seadex_dict = run.get_seadex_dict(sd_entry=sd_entry)
+        seadex_dict = services.get_seadex_dict(sd_entry=sd_entry)
 
         if len(seadex_dict) == 0:
-            run.report_no_releases(al_id, update)
+            services.report_no_releases(al_id, update)
             return
 
         self.logger.debug(f"SeaDex: {', '.join(seadex_dict)}")
 
         if self._config.advanced.interactive and len(seadex_dict) > 1:
-            seadex_dict = run.filter_seadex_interactive(
+            seadex_dict = services.filter_seadex_interactive(
                 seadex_dict=seadex_dict,
                 sd_entry=sd_entry,
             )
             # Every token was invalid: skip WITHOUT caching, since grab_and_cache would cache the
             # title as done and suppress it forever. It re-prompts next run.
             if len(seadex_dict) == 0:
-                run.report_invalid_selection()
+                services.report_invalid_selection()
                 return
 
-        seadex_dict = run.filter_seadex_downloads(
+        seadex_dict = services.filter_seadex_downloads(
             seadex_dict=seadex_dict,
             arr_releases=radarr_releases,
         ).seadex_dict
@@ -190,15 +190,15 @@ class RadarrStrategy(ArrStrategy[RadarrItem]):
         # defers until Radarr imports the movie, and for a torrent shared with a Sonarr grab until both arrs clear.
         # A torrent already downloading under a stored record takes this entry's claim (a re-flag replaces it).
         pending_seeds: Mapping[str, PendingImportUpdate] = NO_SEEDS
-        if run.import_wait_mode is not ImportWaitMode.OFF:
+        if services.import_wait_mode is not ImportWaitMode.OFF:
             planned = releases_to_grab(seadex_dict)
-            stored = run.pending_imports.stored_pending_imports(f.qbit_hash for f in planned)
+            stored = services.pending_imports.stored_pending_imports(f.qbit_hash for f in planned)
             facts = TitleFacts(
                 al_id=al_id, series_id=0, title=title.name, coverage=None, url=sd_url, guards=OwnedAtGrab()
             )
             pending_seeds = {f.qbit_hash: build_unscoped_seed(f, facts, stored.get(f.qbit_hash)) for f in planned}
 
-        run.grab_and_cache(
+        services.grab_and_cache(
             GrabRequest(
                 al_id=al_id,
                 arr_title=item.title,
@@ -246,7 +246,7 @@ class RadarrStrategy(ArrStrategy[RadarrItem]):
 
     @property
     @override
-    def supports_blocking_monitor(self) -> bool:
+    def supports_blocking_wait(self) -> bool:
         """No waiting monitor: Radarr records run the one-cycle check off import history."""
 
         return False

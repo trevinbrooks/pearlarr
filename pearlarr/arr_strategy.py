@@ -44,7 +44,7 @@ class ImportCompleter(ABC):
 
     @property
     @abstractmethod
-    def supports_blocking_monitor(self) -> bool:
+    def supports_blocking_wait(self) -> bool:
         """Whether the engine may run the end-of-run waiting monitor."""
 
 

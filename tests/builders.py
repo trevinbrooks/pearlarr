@@ -710,7 +710,7 @@ def make_services(**overrides: Any) -> ArrRunServices:
         "_config": config,
         # The real __init__ always sets the authoritative arr and an ArrRunState. Override _ctx=... for a run state.
         "arr": Arr.SONARR,
-        "_ctx": ArrRunState(arr=Arr.SONARR),
+        "_state": ArrRunState(arr=Arr.SONARR),
         # The real __init__ mints these too. Without them the dirty-aware / selection-aware skip predicates fail.
         "_dirty_al_ids": set[int](),
         "_selection_changed": False,
@@ -781,14 +781,14 @@ def make_release_filter(**overrides: Any) -> SeadexReleaseFilter:
     """A `SeadexReleaseFilter` over an assembled `RunDeps`, with `ctx` and `planner` overridable."""
 
     config = _split_config(overrides)
-    ctx = overrides.pop("ctx", None) or ArrRunState(arr=Arr.SONARR)
+    state = overrides.pop("ctx", None) or ArrRunState(arr=Arr.SONARR)
     deps = make_run_deps(config=config)
     if "planner" in overrides:
         deps = dataclasses.replace(deps, planner=overrides.pop("planner"))
     if overrides:
         msg = f"unknown make_release_filter overrides: {sorted(overrides)}"
         raise TypeError(msg)
-    return SeadexReleaseFilter(deps=deps, ctx=ctx)
+    return SeadexReleaseFilter(deps=deps, state=state)
 
 
 # A truthy stand-in for a logged-in qBittorrent client, so is_dry_run() is False.
@@ -932,13 +932,13 @@ def make_grab_pipeline(**overrides: Any) -> GrabPipeline:
         "_reporter": _real_reporter(logger, cache_store, web),
         "logger": logger,
         "qbit": CLIENT_SENTINEL,
-        "_ctx": ArrRunState(arr=Arr.SONARR, import_wait_mode=ImportWaitMode.BLOCKING),
+        "_state": ArrRunState(arr=Arr.SONARR, import_wait_mode=ImportWaitMode.BLOCKING),
     }
     defaults.update(overrides)
     if "_pending_imports" not in defaults:
         # The record seam binds the FINAL store + ctx, exactly as the real ctor + bind_arr_run do.
         pending_imports = PendingImportStore(defaults["cache_store"])
-        pending_imports.bind_arr_run(defaults["_ctx"])
+        pending_imports.bind_arr_run(defaults["_state"])
         defaults["_pending_imports"] = pending_imports
     return make_bare_instance(GrabPipeline, **defaults)
 
@@ -971,15 +971,15 @@ def make_import_wait_manager(**overrides: Any) -> ImportWaitManager:
     categories = overrides.pop("categories", None) or _categories_like_config(config, qbit)
     # The production placeholder before a run binds one. Tests driving the import hook pass their own.
     strategy = overrides.pop("strategy", None)
-    ctx = overrides.pop("ctx", None) or ArrRunState(arr=Arr.SONARR)
+    state = overrides.pop("ctx", None) or ArrRunState(arr=Arr.SONARR)
     reporter = overrides.pop("reporter", None) or _real_reporter(logger, cache_store, httpx.Client())
     if overrides:
         msg = f"unknown make_import_wait_manager overrides: {sorted(overrides)}"
         raise TypeError(msg)
 
     pending_imports = PendingImportStore(cache_store)
-    pending_imports.bind_arr_run(ctx)
-    probes = make_bare_instance(WaitPollers, _qbit=qbit, _logger=logger, strategy=None)
+    pending_imports.bind_arr_run(state)
+    pollers = make_bare_instance(WaitPollers, _qbit=qbit, _logger=logger, strategy=None)
     cleanup = make_bare_instance(
         PostImportCleanup,
         _imports=config.imports,
@@ -988,7 +988,7 @@ def make_import_wait_manager(**overrides: Any) -> ImportWaitManager:
         _clock=clock,
         _logger=logger,
         _pending_imports=pending_imports,
-        _probes=probes,
+        _pollers=pollers,
     )
     mgr = make_bare_instance(
         ImportWaitManager,
@@ -997,10 +997,10 @@ def make_import_wait_manager(**overrides: Any) -> ImportWaitManager:
         logger=logger,
         _reporter=reporter,
         _pending_imports=pending_imports,
-        probes=probes,
+        pollers=pollers,
         _cleanup=cleanup,
     )
-    mgr.bind_arr_run(ctx, strategy)
+    mgr.bind_arr_run(state, strategy)
     return mgr
 
 

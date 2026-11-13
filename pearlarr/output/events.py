@@ -97,7 +97,7 @@ class PlacedBy(Enum):
 
 
 @dataclass(frozen=True, slots=True)
-class RunStarted:
+class PearlarrStarted:
     """The process banner facts."""
 
     version: str
@@ -106,7 +106,7 @@ class RunStarted:
 
 
 @dataclass(frozen=True, slots=True)
-class CycleStarted:
+class ScheduledRunStarted:
     """One scheduled-mode cycle begins (1-based)."""
 
     number: int
@@ -455,7 +455,7 @@ class ArrRunSummary:
 
 
 @dataclass(frozen=True, slots=True)
-class RunSummaryReady:
+class ArrRunSummaryReady:
     """The end-of-run summary is ready."""
 
     summary: ArrRunSummary
@@ -760,8 +760,8 @@ class CacheIntegrityReported:
 # --- the closed union --------------------------------------------------------------
 
 type Event = (
-    RunStarted
-    | CycleStarted
+    PearlarrStarted
+    | ScheduledRunStarted
     | NextRunScheduled
     | ScopeOpened
     | ScopeClosed
@@ -780,7 +780,7 @@ type Event = (
     | GrabAction
     | CapReached
     | ScanFinished
-    | RunSummaryReady
+    | ArrRunSummaryReady
     | WaitStarted
     | WaitProgress
     | RowFinished
@@ -829,8 +829,8 @@ def severity_of(event: Event) -> Severity:
             # Category-based. wait_graduation_lines carries the same level.
             return _category_severity(outcome.category)
         case (
-            RunStarted()
-            | CycleStarted()
+            PearlarrStarted()
+            | ScheduledRunStarted()
             | NextRunScheduled()
             | ScopeOpened()
             | ScopeClosed()
@@ -845,7 +845,7 @@ def severity_of(event: Event) -> Severity:
             | GrabAction()
             | CapReached()
             | ScanFinished()
-            | RunSummaryReady()
+            | ArrRunSummaryReady()
             | WaitStarted()
             | WaitProgress()
             | WaitFinished()

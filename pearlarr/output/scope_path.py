@@ -20,6 +20,7 @@ from typing import Final, assert_never, final
 
 from .events import (
     ArrRunFinished,
+    ArrRunSummaryReady,
     BootReady,
     BootStepFinished,
     BootStepProgressed,
@@ -34,7 +35,6 @@ from .events import (
     ConfigMigrated,
     ConfigUpToDate,
     ConfigValidated,
-    CycleStarted,
     Diagnostic,
     EffectiveConfigShown,
     Event,
@@ -43,12 +43,12 @@ from .events import (
     ItemStarted,
     NextRunScheduled,
     PathsShown,
+    PearlarrStarted,
     ReleaseSkipped,
     RowFinished,
-    RunStarted,
-    RunSummaryReady,
     ScanFinished,
     ScanStarted,
+    ScheduledRunStarted,
     ScopeClosed,
     ScopeId,
     ScopeKind,
@@ -119,13 +119,13 @@ class OpenScopes:
                 self._push(ScopeKind.BOOT_STEP, label, scope)
             case BootStepFinished(scope=scope):
                 self._pop_through(scope)
-            case RunStarted() | CycleStarted() | ArrRunFinished():
+            case PearlarrStarted() | ScheduledRunStarted() | ArrRunFinished():
                 self._close_at(1)  # unwind to root (all levels)
             case ScanStarted(arr=arr):
                 self._push(ScopeKind.RUN, str(arr))
             case ItemStarted(index=index, total=total, title=title):
                 self._push(ScopeKind.ITEM, f"[{index}/{total}] {title}")
-            case ScanFinished() | RunSummaryReady():
+            case ScanFinished() | ArrRunSummaryReady():
                 self._close_at(2)  # close item/wait/entry, keep the run
             case WaitStarted():
                 self._close_at(3)  # close the entry before the wait pass

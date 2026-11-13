@@ -58,8 +58,8 @@ class _RecordingReporter:
     def __init__(self) -> None:
         self.cached: list[int] = []
 
-    def log_cached_title(self, ctx: ArrRunState, al_id: int) -> None:
-        del ctx
+    def log_cached_title(self, state: ArrRunState, al_id: int) -> None:
+        del state
         self.cached.append(al_id)
 
 
@@ -236,7 +236,7 @@ class TestCachedEntrySkip:
             _pending_imports=_CtxBind(),
         )
         run.mark_dirty([7])
-        run.bind_arr_run(run.ctx)
+        run.bind_arr_run(run.state)
         assert run.is_unchanged(7, make_entry_record(updated_at=datetime(2021, 1, 1)), lambda: "") is True
 
 
@@ -264,8 +264,8 @@ class TestACheckedTitleLosesItsStamp:
         cache.update_cached_title(Arr.SONARR, 7, {"updated_at": _CACHED_ON})
         pipeline = make_grab_pipeline(_torrents=torrents, cache_store=cache, sleep_time=0, max_torrents_to_add=add_cap)
         pipeline._anilist.al_cache.update({7: {}})
-        pipeline._ctx.per_title.title_name = "Show"
-        run = self._run(cache, _grab_pipeline=pipeline, _ctx=pipeline._ctx)
+        pipeline._state.per_title.title_name = "Show"
+        run = self._run(cache, _grab_pipeline=pipeline, _state=pipeline._state)
         run.mark_dirty([7])
         return run
 
@@ -313,12 +313,12 @@ class TestACheckedTitleLosesItsStamp:
     def test_a_recheck_held_past_the_add_cap_is_checked_again_next_run(self) -> None:
         cache = FakeCacheStore()
         run = self._rechecking(cache, FakeTorrents({"h1": (AddStatus.ADDED, "Show-RG")}), add_cap=1)
-        run.ctx.torrents_added = 1
+        run.state.torrents_added = 1
 
         assert run.is_unchanged(7, self._ENTRY, lambda: "") is False
         self._grab(run)
 
-        assert run.ctx.stats.held_by_cap == 1
+        assert run.state.stats.held_by_cap == 1
         assert self._run(cache).is_unchanged(7, self._ENTRY, lambda: "") is False
 
     def test_a_recheck_that_caches_the_title_as_done_is_skipped_next_run(self) -> None:
@@ -391,17 +391,17 @@ class _TailReporter:
         self.no_sd_entry_ids: list[int] = []
         self.outage_skip_ids: list[int] = []
 
-    def log_no_seadex_releases(self, ctx: ArrRunState) -> bool:
-        self.no_releases_ctxs.append(ctx)
+    def log_no_seadex_releases(self, state: ArrRunState) -> bool:
+        self.no_releases_ctxs.append(state)
         return True
 
-    def log_no_sd_entry(self, ctx: ArrRunState, al_id: int) -> bool:
-        del ctx
+    def log_no_sd_entry(self, state: ArrRunState, al_id: int) -> bool:
+        del state
         self.no_sd_entry_ids.append(al_id)
         return True
 
-    def log_seadex_unreachable(self, ctx: ArrRunState, al_id: int) -> bool:
-        del ctx
+    def log_seadex_unreachable(self, state: ArrRunState, al_id: int) -> bool:
+        del state
         self.outage_skip_ids.append(al_id)
         return True
 
@@ -445,7 +445,7 @@ class TestAlIdPrologue:
         assert run.begin_check(5) is None
         assert reporter.no_sd_entry_ids == [5]
         assert reporter.outage_skip_ids == []
-        assert run._ctx.stats.checked == 1
+        assert run._state.stats.checked == 1
 
     def test_outage_skip_reports_distinctly_and_returns_none(self) -> None:
         # A SeaDex-unreachable skip must never be reported as "no entry" - it
@@ -456,16 +456,16 @@ class TestAlIdPrologue:
         assert run.begin_check(5) is None
         assert reporter.outage_skip_ids == [5]
         assert reporter.no_sd_entry_ids == []
-        assert run._ctx.stats.checked == 1
+        assert run._state.stats.checked == 1
 
     def test_entry_found_resets_skip_flags_and_tallies(self) -> None:
         entry = make_entry_record()
         run = make_services(_seadex=FakeSeaDexSource({5: entry}), _reporter=_TailReporter())
-        run._ctx.per_title.private_only_skipped = True  # stale flag from a previous title
+        run._state.per_title.private_only_skipped = True  # stale flag from a previous title
 
         assert run.begin_check(5) is entry
-        assert run._ctx.per_title.private_only_skipped is False
-        assert run._ctx.stats.checked == 1
+        assert run._state.per_title.private_only_skipped is False
+        assert run._state.stats.checked == 1
 
 
 class TestResolveTitle:
@@ -474,7 +474,7 @@ class TestResolveTitle:
     @staticmethod
     def _run(client: ScriptedAniListClient, arr_title: str = "") -> ArrRunServices:
         run = make_services(_anilist=make_anilist_gateway(client))
-        run._ctx.arr_title = arr_title
+        run._state.arr_title = arr_title
         return run
 
     @pytest.mark.parametrize(

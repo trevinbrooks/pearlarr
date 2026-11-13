@@ -27,8 +27,8 @@ from pearlarr.output import (
     FileLogRenderer,
     NullRenderer,
     OutputHub,
+    PearlarrStarted,
     Renderer,
-    RunStarted,
     Severity,
     SeverityCounter,
     SeverityTally,
@@ -42,7 +42,7 @@ from pearlarr.output.hub import QUEUE_CAP
 from pearlarr.output.recording import RecordingHub, RecordingRenderer
 from pearlarr.paths import resolve_paths
 
-_EVENT = RunStarted(version="v1.0.0", data_dir="/data")
+_EVENT = PearlarrStarted(version="v1.0.0", data_dir="/data")
 
 
 class _FailingRenderer(Renderer):
@@ -88,7 +88,7 @@ class _FailOnMarkerRenderer(_FailingRenderer):
     @override
     def handle(self, event: Event, when: float) -> None:
         self.calls += 1
-        if isinstance(event, RunStarted):
+        if isinstance(event, PearlarrStarted):
             raise RuntimeError("render bug")
 
 
@@ -383,7 +383,7 @@ class _EmitThenInterrupt(Renderer):
 
     @override
     def handle(self, event: Event, when: float) -> None:
-        if isinstance(event, RunStarted) and self.hub is not None:
+        if isinstance(event, PearlarrStarted) and self.hub is not None:
             if not self._marked:
                 self._marked = True
                 self.hub.emit(Diagnostic(severity=Severity.INFO, message="exit marker"))
@@ -417,7 +417,7 @@ def test_a_raising_renderer_never_breaks_the_survivors() -> None:
     assert note.file_only  # a file surface survives: forensic, not console spam
     assert note.severity is Severity.WARNING
     assert note.origin == "output.hub"
-    assert "_FailingRenderer failed on RunStarted" in note.message
+    assert "_FailingRenderer failed on PearlarrStarted" in note.message
     assert note.trace is not None and "RuntimeError" in note.trace.plain
 
 
@@ -438,7 +438,7 @@ def test_losing_the_file_sink_escalates_the_note_to_a_counted_visible_error() ->
     assert isinstance(note, Diagnostic)
     assert not note.file_only
     assert note.severity is Severity.ERROR
-    assert "_FailingFileish failed on RunStarted" in note.message
+    assert "_FailingFileish failed on PearlarrStarted" in note.message
     assert hub.counts.counts_since(mark).errors == 1
 
 
@@ -573,7 +573,7 @@ def test_a_reentrant_emit_is_queued_and_drained_after_the_outer_event() -> None:
     hub.emit(_EVENT)
 
     # Queued, not dispatched inline: the observer finishes the outer event first.
-    assert [type(event).__name__ for event in observer.events] == ["RunStarted", "Diagnostic"]
+    assert [type(event).__name__ for event in observer.events] == ["PearlarrStarted", "Diagnostic"]
 
 
 def test_reentrant_emits_drain_fifo_before_the_outer_emit_returns() -> None:
@@ -584,7 +584,7 @@ def test_reentrant_emits_drain_fifo_before_the_outer_emit_returns() -> None:
     hub.emit(_EVENT)
 
     # Both follow-ups drained inside the same emit call, in enqueue order.
-    assert isinstance(observer.events[0], RunStarted)
+    assert isinstance(observer.events[0], PearlarrStarted)
     assert [d.message for d in observer.of_type(Diagnostic)] == ["first", "second"]
 
 
@@ -628,12 +628,12 @@ def test_a_concurrent_emit_hands_off_to_the_active_drainer() -> None:
 
     # B's emit returns immediately without dispatching: A still owns the baton.
     hub.emit(Diagnostic(severity=Severity.INFO, message="from B"))
-    assert [name for name, _ in gated.handled] == ["RunStarted"]
+    assert [name for name, _ in gated.handled] == ["PearlarrStarted"]
 
     gated.release.set()
     drainer.join(timeout=30.0)
     assert not drainer.is_alive()
-    assert [name for name, _ in gated.handled] == ["RunStarted", "Diagnostic"]
+    assert [name for name, _ in gated.handled] == ["PearlarrStarted", "Diagnostic"]
     assert gated.handled[1][1] is drainer  # A's drain loop delivered B's event
 
 
@@ -646,11 +646,11 @@ def test_an_unwinding_interrupt_still_flushes_the_queued_tail() -> None:
         hub.emit(_EVENT)
 
     # Crash fidelity, both halves: the IN-FLIGHT event's fan-out completes on the
-    # unwind path (the survivor gets the RunStarted the interrupt cut short -
+    # unwind path (the survivor gets the PearlarrStarted the interrupt cut short -
     # even though the hostile arm re-raises on the best-effort re-dispatch), and
     # the QUEUED marker (a SIGTERM handler's exit line) flushes before the baton
     # is released.
-    assert len(survivor.of_type(RunStarted)) == 1
+    assert len(survivor.of_type(PearlarrStarted)) == 1
     assert [d.message for d in survivor.of_type(Diagnostic)] == ["exit marker"]
     assert hub._drainer is None
 
@@ -690,7 +690,7 @@ def test_an_interrupt_before_the_drain_loop_cannot_wedge_the_baton(monkeypatch: 
     assert hub._drainer is None  # nothing to strand: the baton was never taken
     follow = Diagnostic(severity=Severity.INFO, message="after")
     hub.emit(follow)  # drains the stranded event AND the new one, in order
-    assert [type(event).__name__ for event in survivor.events] == ["RunStarted", "Diagnostic"]
+    assert [type(event).__name__ for event in survivor.events] == ["PearlarrStarted", "Diagnostic"]
 
 
 def test_drain_is_a_no_op_loser_when_another_thread_holds_the_baton() -> None:
@@ -710,7 +710,7 @@ def test_drain_is_a_no_op_loser_when_another_thread_holds_the_baton() -> None:
     with hub._lock:  # hand the baton back so the follow-up emit can drain
         hub._drainer = None
     hub.emit(Diagnostic(severity=Severity.INFO, message="after"))
-    assert [type(event).__name__ for event in survivor.events] == ["RunStarted", "Diagnostic"]
+    assert [type(event).__name__ for event in survivor.events] == ["PearlarrStarted", "Diagnostic"]
 
 
 def test_lifecycle_waits_for_the_active_drain_to_finish() -> None:
@@ -731,7 +731,7 @@ def test_lifecycle_waits_for_the_active_drain_to_finish() -> None:
     gated.release.set()
     drainer.join(timeout=30.0)
     lifecycle.join(timeout=30.0)
-    assert gated.log == ["handled:RunStarted", "cycle"]
+    assert gated.log == ["handled:PearlarrStarted", "cycle"]
 
 
 def test_overflow_sheds_newest_with_one_note_per_episode() -> None:
@@ -948,7 +948,7 @@ def test_begin_cycle_turns_over_renderers_and_applies_the_level() -> None:
 
     hub.begin_run(console_format="plain", level=logging.WARNING)
 
-    assert renderer.cycles == 1
+    assert renderer.runs_begun == 1
     assert renderer.levels == [logging.WARNING]
 
 
@@ -971,7 +971,7 @@ def test_a_closed_hub_drops_emits_and_cycle_turnovers() -> None:
     hub.begin_run(console_format="plain", level=logging.INFO)
 
     assert renderer.events == []
-    assert renderer.cycles == 0
+    assert renderer.runs_begun == 0
 
 
 # --- timestamps ------------------------------------------------------------------------
@@ -1213,7 +1213,7 @@ def test_a_mid_dispatch_lifecycle_call_keeps_the_baton_and_the_emit_order() -> N
         @override
         def handle(self, event: Event, when: float) -> None:
             del when
-            if isinstance(event, RunStarted) and self.hub is not None and not self._fired:
+            if isinstance(event, PearlarrStarted) and self.hub is not None and not self._fired:
                 self._fired = True
                 self.hub.emit(Diagnostic(severity=Severity.INFO, message="queued behind"))
                 self.hub.set_level(logging.WARNING)
@@ -1236,9 +1236,9 @@ def test_a_mid_dispatch_lifecycle_call_keeps_the_baton_and_the_emit_order() -> N
 
     hub.emit(_EVENT)
 
-    # Order preserved: the in-flight RunStarted completes its fan-out before the
+    # Order preserved: the in-flight PearlarrStarted completes its fan-out before the
     # re-entrant diagnostic dispatches. Nothing double-dispatches. Baton released.
-    assert [type(e).__name__ for e in recorder.events] == ["RunStarted", "Diagnostic"]
+    assert [type(e).__name__ for e in recorder.events] == ["PearlarrStarted", "Diagnostic"]
     assert hub._drainer is None
 
 
@@ -1335,7 +1335,7 @@ def test_close_hands_teardown_chatter_to_the_file_sink_before_closing_it() -> No
     assert [d.message for d in file_sink.handled if isinstance(d, Diagnostic)] == ["teardown failed"]
     assert file_sink.closed
     hub.emit(_EVENT)  # fully closed: drops silently
-    assert not any(isinstance(e, RunStarted) for e in file_sink.handled)
+    assert not any(isinstance(e, PearlarrStarted) for e in file_sink.handled)
 
 
 def test_begin_cycle_applies_the_level_to_a_fresh_console_exactly_once() -> None:

@@ -3,7 +3,7 @@
 import time
 from typing import final
 
-from .arr_activity import ArrActivityMonitor
+from .arr_activity import ArrActivityReader
 from .arr_models import ArrItem
 from .arr_run_services import ArrRunDeps, ArrRunServices
 from .arr_run_state import ArrRunState, unresolved_label
@@ -44,10 +44,10 @@ class ArrRunLoop:
 
         # Adopt the hub's placeholder ctx, never mint a second one.
         # Its dry_run=False and OFF wait mode keep every preview and pending-import path a safe no-op before run_arr.
-        self._ctx = services.ctx
+        self._state = services.state
 
-        self._wait_manager = ImportWaitManager(deps=deps, ctx=self._ctx, pending_imports=services.pending_imports)
-        self.bind_arr_run(self._ctx)
+        self._wait_manager = ImportWaitManager(deps=deps, state=self._state, pending_imports=services.pending_imports)
+        self.bind_arr_run(self._state)
 
     def bind_arr_run(self, state: ArrRunState) -> None:
         """Bind the fresh run context to every per-run collaborator."""
@@ -62,7 +62,7 @@ class ArrRunLoop:
     ) -> None:
         """Start a fresh run context and the run clock, and rebind collaborators."""
 
-        self._ctx = ArrRunState(
+        self._state = ArrRunState(
             arr=self._services.arr,
             dry_run=dry_run,
             import_wait_mode=import_wait_mode,
@@ -70,13 +70,13 @@ class ArrRunLoop:
             started_monotonic=time.monotonic(),
             counts_mark=self._reporter.counts_mark(),
         )
-        self.bind_arr_run(self._ctx)
+        self.bind_arr_run(self._state)
 
     @property
     def _wait_active(self) -> bool:
         """Whether the wait machinery runs this pass (an active mode, not preview)."""
 
-        return self._ctx.import_wait_mode is not ImportWaitMode.OFF and not self._services.is_dry_run()
+        return self._state.import_wait_mode is not ImportWaitMode.OFF and not self._services.is_dry_run()
 
     # --- Run orchestration --------------------------------------------------
 
@@ -116,11 +116,11 @@ class ArrRunLoop:
             fetching.note(arr_item_noun(arr, n_items))
 
         # The activity scan must run before the prefetches, which warm exactly the dirty subset it marks.
-        monitor: ArrActivityMonitor | None = None
+        activity: ArrActivityReader | None = None
         if self._config.advanced.detect_arr_activity and not self._config.seadex.ignore_seadex_update_times:
             with boot.step(f"Checking {arr.capitalize()} activity") as step:
-                monitor = ArrActivityMonitor(arr, self.cache_store, self.logger)
-                scan = monitor.scan(strategy.history_since)
+                activity = ArrActivityReader(arr, self.cache_store, self.logger)
+                scan = activity.read(strategy.history_since)
                 dirty: set[int] = set()
                 for item in all_items:
                     if scan.rescan_all or item.id in scan.touched:
@@ -207,9 +207,9 @@ class ArrRunLoop:
         full_scan = item_id is None and not self._seadex.unreachable and not self._skyhook.unreachable
 
         # Held on outage so the next healthy run re-derives the same dirty ids (the query overlap and id
-        # dedup absorb the replay). The staged write persists only at _finalize_run's non-preview save.
-        if monitor is not None and full_scan:
-            monitor.stage_checkpoint()
+        # dedup absorb the replay). The staged write persists only at _finish_arr_run's non-preview save.
+        if activity is not None and full_scan:
+            activity.stage_checkpoint()
 
         # A contained per-id error still vouches: otherwise one flaky title re-scans the library every run. A title
         # whose check raised past the cached-entry gate is checked again next run all the same.
@@ -217,7 +217,7 @@ class ArrRunLoop:
             self.cache_store.store_selection_hash(arr, self._config.selection_hash())
 
         # The finalize save persists the checkpoint and vouch with the tail's own writes.
-        self._finalize_run()
+        self._finish_arr_run()
 
     def _scan_item[ItemT: ArrItem](
         self,
@@ -231,7 +231,7 @@ class ArrRunLoop:
         arr = self._services.arr
         item_title = item.title
         # The display fallback for every id under this item.
-        self._ctx.arr_title = item_title
+        self._state.arr_title = item_title
 
         self._reporter.log_arr_item_start(
             arr,
@@ -241,13 +241,13 @@ class ArrRunLoop:
         )
 
         if not item.monitored and self._arr_config.ignore_unmonitored:
-            self._reporter.log_arr_item_unmonitored(self._ctx, item_title)
+            self._reporter.log_arr_item_unmonitored(self._state, item_title)
             return
 
         al_mappings = strategy.item_mappings(item)
 
         if len(al_mappings) == 0:
-            self._reporter.log_no_anilist_mappings(self._ctx, item_title)
+            self._reporter.log_no_anilist_mappings(self._state, item_title)
             return
 
         for al_id, mapping in al_mappings.items():
@@ -273,17 +273,17 @@ class ArrRunLoop:
 
     # --- Wait-for-completion orchestration ----------------------------------
 
-    def _finalize_run(self) -> None:
+    def _finish_arr_run(self) -> None:
         """Shared run tail: the one-cycle check + tally, print the summary, THEN the waiting monitor."""
 
         # Close the scan before anything below logs: these diagnostics are run-level facts.
         # Always ScanStarted-paired: run_arr, the only caller, has no early return between log_arr_start and here.
-        self._reporter.scan_finished(self._ctx.arr)
+        self._reporter.scan_finished(self._state.arr)
 
         dry_run = self._services.is_dry_run()
 
-        supports_monitor = self._active_strategy is not None and self._active_strategy.supports_blocking_monitor
-        end_pass_waits = supports_monitor and self._ctx.import_wait_mode in (
+        supports_blocking_wait = self._active_strategy is not None and self._active_strategy.supports_blocking_wait
+        end_pass_waits = supports_blocking_wait and self._state.import_wait_mode in (
             ImportWaitMode.BLOCKING,
             ImportWaitMode.HYBRID,
         )
@@ -295,26 +295,26 @@ class ArrRunLoop:
                 # Heal earlier runs' kept-for-cleanup records before this run's passes read the store.
                 self._wait_manager.heal_flagged()
                 if not end_pass_waits:
-                    check = self._wait_manager.check_once()
+                    check = self._wait_manager.run_deferred()
                     if check is not None:
-                        self._ctx.stats.imported += check.carried_over_imported
+                        self._state.stats.imported += check.carried_over_imported
                 # This owns the tally's `imported` bump: the snapshot's verified imports land in
                 # `pending_import_states`, the passes report theirs on their carried-over result rows.
-                self._ctx.stats.imported += sum(
-                    1 for state in self._ctx.pending_import_states.values() if state is PendingImportState.IMPORTED
+                self._state.stats.imported += sum(
+                    1 for state in self._state.pending_import_states.values() if state is PendingImportState.IMPORTED
                 )
                 self._wait_manager.tally_carried_over_into_stats()
 
-            self._reporter.log_run_summary(
-                self._ctx,
+            self._reporter.log_arr_run_summary(
+                self._state,
                 dry_run=dry_run,
                 has_client=self.qbit is not None,
             )
 
             if self._wait_active and end_pass_waits:
-                result = self._wait_manager.run_monitor()
+                result = self._wait_manager.run_blocking()
                 if result is not None:
-                    self._ctx.stats.imported += result.carried_over_imported
+                    self._state.stats.imported += result.carried_over_imported
                     # _notify_wait_complete swallows its own errors, so a bad webhook can never skip the save below.
                     if result.waited:
                         self._notify_wait_complete(result)
@@ -322,7 +322,7 @@ class ArrRunLoop:
             self.cache_store.save(dry_run=dry_run)
 
         # Deliberately outside the finally: on a raise, bootstrap's unwind emits it, so it lands once.
-        self._reporter.run_finished(self._ctx.arr)
+        self._reporter.arr_run_finished(self._state.arr)
 
     def _notify_wait_complete(self, result: WaitResult) -> None:
         """Push the completion notification, gated on `wait_notify`, swallowing errors."""
@@ -330,6 +330,6 @@ class ArrRunLoop:
         if not self._config.notifications.wait_notify:
             return
         try:
-            _ = self._notifier.push_wait_summary(arr=self._ctx.arr, result=result)
+            _ = self._notifier.push_wait_summary(arr=self._state.arr, result=result)
         except Exception as e:
             hub_warn("Wait completion notification failed unexpectedly - the notification was dropped", exc=e)
