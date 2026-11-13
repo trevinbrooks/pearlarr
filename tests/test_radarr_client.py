@@ -2,10 +2,10 @@
 """Direct tests for the `radarr_client` module's contracts.
 
 Mirrors `test_sonarr_client`: a REAL `RadarrClient` (construction is
-network-free) with every endpoint riding the httpx-based `ArrHttp`, mocked
+network-free) with every endpoint going through the httpx-based `ArrHttp`, mocked
 via `respx`. Pins the decode into the typed `MovieFile` /
 `RadarrMovie` views and the degrade-to-empty guard (non-200 / transient
-request error -> `[]` + a warning), so a Radarr outage never unwinds the
+request error -> `[]` + a warning), so an unreachable Radarr never unwinds the
 run, plus the `collect_anime_movies` wiring.
 """
 
@@ -58,7 +58,7 @@ def test_movie_files_decodes_records_and_builds_request() -> None:
     request = route.calls.last.request
     url = str(request.url)
     assert "movieId=7" in url
-    # The key rides the X-Api-Key header, never the URL (it would leak via logs).
+    # The key goes in the X-Api-Key header, never the URL (it would leak via logs).
     assert "apikey" not in url
     assert request.headers["X-Api-Key"] == "testkey"
 
@@ -101,7 +101,7 @@ def test_movie_files_non_json_body_returns_empty_and_warns() -> None:
 def test_history_since_decodes_records_and_builds_request() -> None:
     """`history_since()` keys the item id on `movieId` and the request pins `includeMovie=false`.
 
-    A record with no `data` map parses to a `None` reason.
+    A record with no `data` object parses to a `None` reason.
     """
 
     body: list[object] = [
@@ -192,7 +192,7 @@ def test_trailing_slash_url_is_normalized() -> None:
     assert client.history_since("2026-06-30T08:00:00Z") == []
 
 
-# A minimal `/api/v3/movie` record: the consumed item fields plus a couple of
+# A minimal `/api/v3/movie` resource: the consumed item fields plus a couple of
 # extras proving unknown keys are ignored by `RadarrMovie`.
 _MOVIE_BODY: dict[str, object] = {
     "id": 9,
@@ -207,7 +207,7 @@ _MOVIE_BODY: dict[str, object] = {
 
 @respx.mock
 def test_all_movies_parses_into_radarr_item_shape() -> None:
-    """`all_movies` parses each raw record into a `RadarrMovie` satisfying the `RadarrItem` protocol.
+    """`all_movies` parses each raw resource into a `RadarrMovie` satisfying the `RadarrItem` protocol.
 
     This is checked from `object` (the runtime counterpart of the client's
     typed claim), with correctly-typed id fields.
@@ -225,7 +225,7 @@ def test_all_movies_parses_into_radarr_item_shape() -> None:
     assert movie.imdbId == "tt5311514"
     assert movie.monitored is True
     request = route.calls.last.request
-    # The key rides the X-Api-Key header, never the URL (it would leak via logs).
+    # The key goes in the X-Api-Key header, never the URL (it would leak via logs).
     assert "apikey" not in str(request.url)
     assert request.headers["X-Api-Key"] == _KEY
 
@@ -241,7 +241,7 @@ def test_all_movies_skips_non_dict_elements() -> None:
 
 
 class _RecordingIdSets(KnownExternalIds):
-    """Recording `KnownExternalIds`: preset per-kind id sets, calls recorded."""
+    """Recording `KnownExternalIds`: preset per-id-kind sets, calls recorded."""
 
     def __init__(self, sets: dict[str, set[int | str]]) -> None:
         self._sets = sets

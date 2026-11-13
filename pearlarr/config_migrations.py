@@ -35,7 +35,7 @@ class MigrationOutcome:
     """The schema version the mapping declared before this pass ran."""
 
     notes: tuple[str, ...]
-    """Human-readable functional changes. Empty when the pass only stamped config_version."""
+    """Human-readable functional changes. Empty when the pass only bumped config_version."""
 
 
 def declared_version(config: Mapping[str, Json]) -> int | None:
@@ -63,9 +63,9 @@ def _group(config: dict[str, Json], key: str) -> dict[str, Json] | None:
 
 
 def _to_v1(config: dict[str, Json]) -> list[str]:
-    """v0 -> v1: fold the pre-versioning schema that 1.0.0 removed.
+    """v0 -> v1: convert the pre-versioning schema that 1.0.0 removed.
 
-    Only removed KEYS and removed ENUM VALUES fold - spellings that were once
+    Only removed KEYS and removed ENUM VALUES convert - spellings that were once
     part of the schema and cannot be a typo against the current one. A value
     that was never valid (a misspelled log level, an unknown import mode) is
     left for validation to reject by name: a version-less file may just as
@@ -127,8 +127,8 @@ def _to_v3(config: dict[str, Json]) -> list[str]:
 
     Note-only, like the v2 `wait_mode` notice: nothing is rewritten. The note
     fires unconditionally - whether the flip bites depends on connection
-    state a file mapping cannot see (env overlays, qBittorrent credentials
-    added after the stamp).
+    state a file mapping cannot see (env overrides, qBittorrent credentials
+    added after the version was written).
     """
 
     return [

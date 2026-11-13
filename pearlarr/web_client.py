@@ -4,7 +4,7 @@
 `arr_http.make_arr_client`: the arr client stays pinned to
 no-redirects and the per-arr `verify_ssl` knob (the `X-Api-Key`
 invariants), while external hosts - tracker pages, AniList, webhooks, the
-mapping-source downloads - ride this one. `get_with_retries` and
+mapping-source downloads - use this one. `get_with_retries` and
 `head_with_retries` carry the transient-retry policy (retry count, jittered
 backoff, retryable-status set) for those reads.
 """
@@ -48,7 +48,7 @@ def make_web_client() -> httpx.Client:
     """The pinned httpx client all non-arr web traffic shares (one per run).
 
     - `follow_redirects=True`: tracker pages and GitHub release downloads
-      redirect routinely, and no credential header rides this client, so
+      redirect routinely, and no credential header is sent on this client, so
       following is safe (unlike the arr client, which must never replay its
       key at a new location).
     - `verify=True` always: external hosts never inherit an arr's
@@ -102,7 +102,7 @@ def head_with_retries(
 def _send_with_retries(client: httpx.Client, method: str, url: str, sleep: Callable[[float], None]) -> httpx.Response:
     """Send a bodiless idempotent request, retrying transient failures (`get_with_retries` has the policy).
 
-    Each attempt builds its own request, so a cookie a retryable response set rides the next one.
+    Each attempt builds its own request, so a cookie a retryable response set goes with the next one.
     """
 
     for attempt in range(GET_RETRIES):

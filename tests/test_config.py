@@ -1,13 +1,13 @@
 # pyright: strict
 # pyright: reportPrivateUsage=false
 # TestSelectionDigest reaches the private `_canonical_for_hash` (its set-order
-# guarantee is unobservable through the opaque hex digest). Strict re-flags that
+# guarantee is unobservable through the opaque hex hash). Strict re-flags that
 # and the repo disables reportPrivateUsage for tests.
 """Characterization tests for the Pydantic `AppConfig` model tree.
 
 Pins the validated-settings behavior: per-group defaults, blank-YAML coalescing,
 strict validation (extra-forbid + strict enum), the lazy point-of-use connection
-requirement, and the file lifecycle (template copy + checksum).
+requirement, and the file lifecycle (template copy + config hash).
 """
 
 import hashlib
@@ -45,7 +45,7 @@ from .builders import make_config
 class TestFileLifecycle:
     """A missing config copies the starter template (0600, banner-stripped) and raises.
 
-    An existing one loads normally, preserving user values, with a byte-exact checksum.
+    An existing one loads normally, preserving user values, with a byte-exact config hash.
     """
 
     def test_missing_config_copies_template_and_raises(self, tmp_path: Path) -> None:
@@ -130,7 +130,7 @@ class TestSchemaMigration:
     """`load` brings an older file's mapping to the current schema, in memory only.
 
     A file without `config_version` is pre-versioning (v0): its removed keys and
-    values are folded forward, the outcome is reported via `migration()`, and
+    values are migrated forward, the outcome is reported via `migration()`, and
     the file on disk stays byte-identical. A current file migrates nothing. A
     newer one is refused by name.
     """
@@ -145,13 +145,13 @@ class TestSchemaMigration:
             tmp_path,
             "seadex:\n  public_only: true\n  private_releases: allow\n",
         )
-        # Each fold lands on the removed schema's old runtime behavior.
+        # Each conversion lands on the removed schema's old runtime behavior.
         assert cfg.seadex.private_releases is PrivateReleaseAction.WARN
         assert cfg.config_version == CONFIG_VERSION
         outcome = cfg.migration()
         assert outcome is not None
         assert outcome.from_version == 0
-        # The two v0 folds, the v2 wait_mode default-flip notice, and the
+        # The two v0 conversions, the v2 wait_mode default-flip notice, and the
         # unconditional v3 category notice.
         assert len(outcome.notes) == 4
         assert any("public_only" in note for note in outcome.notes)
@@ -159,7 +159,7 @@ class TestSchemaMigration:
         assert any("torrent_category" in note for note in outcome.notes)
 
     def test_typos_stay_loud_in_a_version_less_file(self, tmp_path: Path) -> None:
-        # Only removed schema folds. A never-valid value is a typo and must
+        # Only removed schema values convert. A never-valid value is a typo and must
         # reject by name even without a config_version key - a version-less
         # file may just as well be a new hand-written config.
         with pytest.raises(ValidationError, match="log_level"):
@@ -175,8 +175,8 @@ class TestSchemaMigration:
         assert any("'allow'" in note for note in outcome.notes)
 
     def test_v0_file_without_deltas_gets_only_the_standing_v3_notice(self, tmp_path: Path) -> None:
-        # Nothing to fold and wait_mode pinned: only the unconditional v3
-        # category notice rides (it fires for every pre-v3 file - whether the
+        # Nothing to convert and wait_mode pinned: only the unconditional v3
+        # category notice comes (it fires for every pre-v3 file - whether the
         # flip bites depends on state the mapping cannot see).
         cfg = self._load(
             tmp_path,
@@ -197,7 +197,7 @@ class TestSchemaMigration:
     def test_blank_version_takes_the_default_like_any_blank_key(self, tmp_path: Path) -> None:
         # `config_version:` parses to None and the blank-drop applies the field
         # default (the current version) - blank means default everywhere, so a
-        # blank version must NOT count as pre-versioning and re-open the folds.
+        # blank version must NOT count as pre-versioning and re-open the conversions.
         cfg = self._load(tmp_path, "config_version:\n")
         assert cfg.migration() is None
         assert cfg.config_version == CONFIG_VERSION
@@ -208,7 +208,7 @@ class TestSchemaMigration:
 
     def test_garbage_versions_are_validation_errors_not_migrations(self, tmp_path: Path) -> None:
         # Unparseable or nonsense (negative) versions must surface under their
-        # key, not be silently re-stamped to current.
+        # key, not be silently re-set to current.
         for bad in ("banana", "-3"):
             with pytest.raises(ValidationError, match="config_version"):
                 self._load(tmp_path, f"config_version: {bad}\n")
@@ -216,10 +216,10 @@ class TestSchemaMigration:
     def test_migration_never_touches_the_file(self, tmp_path: Path) -> None:
         cfg_path = tmp_path / "config.yml"
         text = "seadex:\n  private_releases: allow\n"
-        cfg_path.write_bytes(text.encode())  # LF bytes exactly, the checksum assert hashes them
+        cfg_path.write_bytes(text.encode())  # LF bytes exactly, the config hash assert hashes them
         cfg = AppConfig.load(str(cfg_path))
         assert cfg_path.read_text(encoding="utf-8") == text
-        # The checksum (the cache descriptor) hashes the on-disk bytes, so an
+        # The config hash (what the cache stores) hashes the on-disk bytes, so an
         # in-memory migration cannot shift it between runs.
         assert cfg.config_hash() == hashlib.md5(text.encode()).hexdigest()
 
@@ -419,7 +419,7 @@ class TestStrictValidation:
             SeadexSettings.model_validate({"private_releases": "maybe"})
 
     def test_removed_public_only_key_is_rejected(self) -> None:
-        # public_only was folded into private_releases (warn/fallback). An
+        # public_only was merged into private_releases (warn/fallback). An
         # old config still setting it must fail loudly, not be silently ignored.
         with pytest.raises(ValidationError):
             SeadexSettings.model_validate({"public_only": True})
@@ -651,7 +651,7 @@ class TestSecrets:
 
 
 class TestSelectionDigest:
-    """The selection digest moves with matching preferences only, and stably."""
+    """The selection hash moves with matching preferences only, and stably."""
 
     def test_stable_across_builds(self) -> None:
         assert make_config().selection_hash() == make_config().selection_hash()
@@ -669,10 +669,10 @@ class TestSelectionDigest:
         ]
         digests = [config.selection_hash() for config in changed]
         assert base not in digests
-        assert len(set(digests)) == len(digests)  # each change lands a distinct digest
+        assert len(set(digests)) == len(digests)  # each change lands a distinct hash
 
     def test_moves_with_the_selection_rules_version(self, monkeypatch: pytest.MonkeyPatch) -> None:
-        # A rule change in code re-checks cached verdicts like a config change.
+        # A rule change in code re-checks cached titles like a config change.
         base = make_config().selection_hash()
         monkeypatch.setattr("pearlarr.config.SELECTION_RULES_VERSION", 999)
         assert make_config().selection_hash() != base
@@ -685,7 +685,7 @@ class TestSelectionDigest:
 
     def test_sets_canonicalize_sorted_not_iteration_ordered(self) -> None:
         # Set iteration order is hash-seed dependent (it differs across processes).
-        # without sorting, the digest would move between container restarts and
+        # without sorting, the hash would move between container restarts and
         # trigger phantom re-checks.
         assert _canonical_for_hash({"b", "c", "a"}) == ["a", "b", "c"]
         assert _canonical_for_hash({"ids": {3, 1, 2}}) == {"ids": ["1", "2", "3"]}

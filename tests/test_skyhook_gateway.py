@@ -29,7 +29,7 @@ _DVD = _fixture("tvdb_112961_dvd.json")
 _REPLIES = {(_SERIES, "official"): _OFFICIAL, (_SERIES, "dvd"): _DVD}
 _ROW = (OrderRow(1, 1, 2273831, None),)
 _STORED = {"official": _ROW, "dvd": _ROW}
-"""A stored record's orders, one row each."""
+"""A cached answer's orders, one row each."""
 
 
 def _gateway(
@@ -117,7 +117,7 @@ def test_a_record_refetches_once_its_fresh_until_passes(fresh_for: timedelta, fe
         pytest.param({"official": 4, "dvd": 5}, 1, id="count-moved"),
         pytest.param({"official": 4}, 1, id="order-dropped"),
         pytest.param({"official": 4, "dvd": 4, "alternate": 4}, 1, id="order-appeared"),
-        # The stored record has one row per order: what Sonarr counted at fetch time is the bar, not our rows.
+        # The cached answer has one row per order: what Sonarr counted at fetch time is the bar, not pearlarr's rows.
         pytest.param({"official": 4, "dvd": 4}, 0, id="count-as-stored"),
     ],
 )

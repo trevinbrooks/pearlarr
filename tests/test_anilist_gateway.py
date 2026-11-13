@@ -33,19 +33,19 @@ def _now_str() -> str:
 
 
 def _fresh_answer(al_id: int) -> dict[str, Any]:
-    """A populated store record stamped inside the refresh age."""
+    """A populated cached answer stamped inside the refresh age."""
 
     return {"fetched_at": _stamp(days_ago=1), "data": anilist_body(al_id)}
 
 
 def _stale_answer(al_id: int) -> dict[str, Any]:
-    """A populated store record stamped past the refresh age."""
+    """A populated cached answer stamped past the refresh age."""
 
     return {"fetched_at": _stamp(days_ago=ANILIST_REFRESH_AGE_DAYS + 1), "data": anilist_body(al_id)}
 
 
 def _dateless_answer(al_id: int) -> dict[str, Any]:
-    """A store record stamped inside the refresh age, with a Media that has no `startDate` key."""
+    """A cached answer stamped inside the refresh age, with a Media that has no `startDate` key."""
 
     body = anilist_body(al_id)
     del body["data"]["Media"]["startDate"]
@@ -63,7 +63,7 @@ class _RecordingProgress:
 
 
 class TestLoadCache:
-    """load_cache seeds every stored record, including the ones past the refresh age."""
+    """load_cache loads every cached answer, including the ones past the refresh age."""
 
     def test_every_payload_loads_whatever_its_stamp(self) -> None:
         client = ScriptedAniListClient()
@@ -83,7 +83,10 @@ class TestLoadCache:
 
 
 class TestPrefetch:
-    """prefetch batches the missing and stale ids, persists exactly what it fetched, and stops on an outage."""
+    """prefetch batches the missing and stale ids and persists exactly what it fetched.
+
+    It stops when AniList is unreachable.
+    """
 
     def test_all_fresh_fetches_nothing(self) -> None:
         client = ScriptedAniListClient()
@@ -98,7 +101,7 @@ class TestPrefetch:
 
     def test_51_missing_chunks_merges_persists_and_reports(self) -> None:
         # 51 missing ids -> two id_in pages ([50, 1]). id 7 is unknown to AniList
-        # (absent from the batch result), which is just a miss, never a raise.
+        # (absent from the batch result), which is just not found, never a raise.
         client = ScriptedAniListClient(absent=frozenset({7}))
         store = FakeCacheStore()
         gateway = make_anilist_gateway(client, store)
@@ -117,7 +120,7 @@ class TestPrefetch:
         assert store.get_anilist_meta(1) is not None
         assert store.get_anilist_meta(ids[-1]) is not None
         assert store.get_anilist_meta(7) is None
-        # The cockpit sink saw one (fraction, "done/total") update per batch.
+        # The progress handle saw one (fraction, "done/total") update per batch.
         assert progress.updates == [(50 / 51, "50/51"), (1.0, "51/51")]
 
     def test_writes_exactly_the_fetched_ids(self) -> None:
@@ -127,7 +130,7 @@ class TestPrefetch:
         original = _stamp(days_ago=1)
         store.put_anilist_meta(1, {"fetched_at": original, "data": anilist_body(1)})
         gateway.load_cache()
-        # A confirmed miss is remembered for the run, so the prefetch has nothing to ask about it.
+        # A confirmed not-found answer is kept for the run, so the prefetch has nothing to ask about it.
         assert gateway.titles(2) == ()
 
         before = _now_str()
@@ -138,7 +141,7 @@ class TestPrefetch:
         fresh = store.get_anilist_meta(1)
         assert fresh is not None
         assert fresh["fetched_at"] == original
-        # The remembered miss never reaches disk.
+        # The not-found answer kept for the run never reaches disk.
         assert store.get_anilist_meta(2) is None
         written = store.get_anilist_meta(3)
         assert written is not None
@@ -146,7 +149,7 @@ class TestPrefetch:
         assert written["data"] == anilist_body(3)
 
     def test_a_preview_save_writes_nothing(self) -> None:
-        # A preview never commits, so the fetch stays in memory and no aged row is evicted.
+        # A dry run never commits, so the fetch stays in memory and no aged row is evicted.
         client = ScriptedAniListClient()
         store = FakeCacheStore()
         gateway = make_anilist_gateway(client, store)
@@ -170,9 +173,9 @@ class TestPrefetch:
 
         assert fetched == len(ids)
         assert gateway.unreachable is True
-        # The first chunk tripped the breaker, so the second was never requested.
+        # The first chunk marked AniList unreachable, so the second was never requested.
         assert client.batch_calls == [ids[:ANILIST_BATCH_SIZE]]
-        # The tripped chunk fetched nothing, so the cockpit never claimed it as progress.
+        # The tripped chunk fetched nothing, so the boot step's bar never claimed it as progress.
         assert progress.updates == []
         assert gateway.al_cache == {}
         assert store.get_anilist_meta(1) is None
@@ -237,7 +240,7 @@ class TestPrefetch:
 
 
 class TestMediaResolution:
-    """The per-id resolvers: get-or-fetch against the run cache, typed reads, misses remembered."""
+    """The per-id resolvers: get-or-fetch against the run cache, typed reads, not-found answers kept for the run."""
 
     def test_resolvers_read_typed_fields_and_cache_the_fetch(self) -> None:
         client = ScriptedAniListClient()
@@ -296,12 +299,12 @@ class TestMediaResolution:
 
         assert gateway.titles(7) == ()
         assert gateway.unreachable is True
-        # No answer is not a miss: the id stays unknown instead of remembered as absent.
+        # No answer is not a not-found answer: the id stays unknown instead of kept as absent.
         assert gateway.al_cache == {}
 
 
 class TestUnread:
-    """An id is unread only when an outage left a lookup of it without a record that holds its air dates."""
+    """An id is unread only when an unreachable AniList left its lookup without a cached answer with its air dates."""
 
     @pytest.mark.parametrize(
         ("al_id", "unread"),
@@ -334,7 +337,7 @@ class TestUnread:
         assert gateway.air_dates_unread(2) is False
 
     def test_a_record_stored_without_dates_is_not_unread_while_anilist_answers(self) -> None:
-        # The stored record without dates serves the lookup, and AniList was never down.
+        # The cached answer without dates serves the lookup, and AniList was never unreachable.
         store = FakeCacheStore()
         store.put_anilist_meta(3, _dateless_answer(3))
         gateway = make_anilist_gateway(ScriptedAniListClient(), store)
@@ -345,7 +348,7 @@ class TestUnread:
 
 
 class TestLogPluralization:
-    """The debug ledger lines pluralize by count (no "1 entries" / manual "(s)")."""
+    """The debug lines pluralize by count (no "1 entries" / manual "(s)")."""
 
     def _captured(self, gateway: AniListGateway) -> CaptureHandler:
         handler = CaptureHandler()

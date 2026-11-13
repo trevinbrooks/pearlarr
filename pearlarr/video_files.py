@@ -1,4 +1,4 @@
-"""Decides which listed or on-disk files could be an episode. The seed, the import, and the parse share these rules."""
+"""Decides which listed or folder files could be an episode. The file map, import, and parse share these rules."""
 
 import os
 from collections.abc import Iterator, Sequence
@@ -77,8 +77,8 @@ NON_VIDEO_EXTENSIONS = {
     ".cue",
     ".log",
     ".m3u8",
-    # Checksum sidecars: Sonarr's manual-import scan never offers them, so a
-    # seeded one sticks a record on "intended file missing" until the deadline.
+    # Checksum sidecars: Sonarr's ManualImport folder fetch never offers them, so
+    # one in the file map sticks a pending import on "intended file missing" until the deadline.
     ".blake3",
     ".md5",
     ".sha2",
@@ -89,7 +89,7 @@ NON_VIDEO_EXTENSIONS = {
 def is_video_candidate(file_name: str) -> bool:
     """Whether a filename is an importable video (not a sub, font, or creditless OP/ED).
 
-    The skip rules live only here, so the seed, the import, and the parse agree on what could be an episode.
+    The skip rules live only here, so the file map, the import, and the parse agree on what could be an episode.
     """
 
     if any(skip in file_name for skip in CREDITLESS_MARKERS):
@@ -98,7 +98,7 @@ def is_video_candidate(file_name: str) -> bool:
 
 
 def indexed_video_files(files: Sequence[str]) -> Iterator[tuple[int, str]]:
-    """Yield `(index, basename)` for each importable video file in `files`, the index keying a size list."""
+    """Yield `(index, file name)` for each importable video file in `files`, the index keying a size list."""
 
     for idx, name in enumerate(files):
         base = file_name(name)

@@ -6,7 +6,7 @@
 
 `make_web_client` is the second process-wide client (tracker pages, AniList,
 webhooks, mapping downloads): these pin its transport policy - redirects
-followed (no credential header rides it), verification always on, the
+followed (no credential header is sent on it), verification always on, the
 `pearlarr/<version>` User-Agent default, and the (5, 30) timeout split -
 mirroring `test_make_httpx_client_pins_the_transport_policy` for the arr
 client. `get_with_retries` replaces the urllib3 `Retry` adapter the old
@@ -48,7 +48,7 @@ def _pool_ssl_context(client: httpx.Client) -> ssl.SSLContext:
 def test_make_web_client_pins_the_transport_policy() -> None:
     """The factory pins the web client's transport policy: redirects, verification, UA, and timeouts.
 
-    It follows redirects (no credential rides this client), always verifies, defaults
+    It follows redirects (no credential is sent on this client), always verifies, defaults
     to an identifiable UA, and fixes the (5, 30) (connect, read) timeout split every
     external call used to pass per-request.
     """

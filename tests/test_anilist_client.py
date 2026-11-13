@@ -11,7 +11,7 @@ at all. `AniListClient`'s retry loop is exercised through its public queries,
 faked at the `httpx` boundary with the `respx` library (no `unittest.mock`).
 
 The `AniListMediaNode` tests pin its all-None empty-dict validation, the
-miss-node contract the AniList gateway depends on.
+not-found node contract the AniList gateway depends on.
 """
 
 import re
@@ -66,7 +66,7 @@ def test_errors_are_retryable_none_body() -> None:
 
 
 def test_errors_are_retryable_no_errors() -> None:
-    """An empty body, a missing `errors` key, and an empty list are all misses, never a throttle."""
+    """An empty body, a missing `errors` key, and an empty list are all read as not found, never a throttle."""
 
     assert _errors_are_retryable({}) is False
     assert _errors_are_retryable({"data": {"Media": None}}) is False
@@ -81,7 +81,7 @@ def test_errors_are_retryable_throttle_substring_is_case_insensitive() -> None:
 
 
 def test_errors_are_retryable_status_path() -> None:
-    """A 5xx-style status in the error entry is retryable even with a benign message."""
+    """A 5xx-style status in the error object is retryable even with a benign message."""
 
     body: dict[str, object] = {"errors": [{"message": "internal", "status": 503}]}
     assert _errors_are_retryable(body) is True
@@ -112,7 +112,7 @@ def test_parse_errors_non_list_errors() -> None:
 
 
 def test_parse_errors_wellformed() -> None:
-    """A well-formed entry maps to a typed `AniListError` with its status and message."""
+    """A well-formed error object maps to a typed `AniListError` with its status and message."""
 
     body: dict[str, object] = {"errors": [{"message": "Too Many Requests", "status": 429}]}
     parsed = _parse_errors(body)
@@ -120,7 +120,7 @@ def test_parse_errors_wellformed() -> None:
 
 
 def test_parse_errors_skips_malformed_entries() -> None:
-    """Non-object junk in the array is skipped. Only the dict entries are parsed.
+    """Non-object junk in the array is skipped. Only the dict elements are parsed.
 
     A dict without a `message` defaults to `""`. A non-int `status` becomes
     `None` (here the second dict carries only a status).
@@ -196,7 +196,7 @@ def test_media_from_missing_fields_defaults() -> None:
 
 
 def test_media_from_none_body_is_all_none() -> None:
-    """A `None` body (a miss) parses to an all-`None` node, not a crash."""
+    """A `None` body (not found) parses to an all-`None` node, not a crash."""
 
     assert media_from_body(None) == AniListMediaNode()
 
@@ -331,9 +331,9 @@ def test_query_retries_on_throttle_error_body(monkeypatch: pytest.MonkeyPatch) -
 
 @respx.mock
 def test_query_batch_reshapes_page_media_by_id(monkeypatch: pytest.MonkeyPatch) -> None:
-    """A Page body is re-keyed to {id: single-id-shaped body}, so the results can seed the run cache directly.
+    """A Page body is re-keyed to {id: single-id-shaped body}, so the results can populate the run cache directly.
 
-    Junk, id-less and non-int-id entries in the media array are skipped (an id
+    Junk, id-less and non-int-id elements in the media array are skipped (an id
     unknown to AniList is simply absent, never an error).
     """
 
@@ -351,7 +351,7 @@ def test_query_batch_reshapes_page_media_by_id(monkeypatch: pytest.MonkeyPatch) 
 
 @respx.mock
 def test_query_json_array_body_is_no_data(monkeypatch: pytest.MonkeyPatch) -> None:
-    """A 200 whose body is a JSON *array* falls to the {} no-data arm instead of being laundered as a dict (which used to crash the callers' .get walks)."""
+    """A 200 whose body is a JSON *array* falls to the {} no-data branch instead of being laundered as a dict (which used to crash the callers' .get walks)."""
 
     monkeypatch.setattr(time, "sleep", _no_sleep)
     route = respx.post(API_URL).respond(json=[1, 2, 3])
@@ -362,11 +362,11 @@ def test_query_json_array_body_is_no_data(monkeypatch: pytest.MonkeyPatch) -> No
     assert body == {}
 
 
-# --- retry narration and the per-run breaker ---------------------------------
+# --- retry narration and marking AniList unreachable --------------------------
 
 
 def _warnings(recording: RecordingHub) -> list[Diagnostic]:
-    """The WARNING Diagnostics only (the waiting notes ride at INFO/DEBUG)."""
+    """The WARNING Diagnostics only (the waiting notes log at INFO/DEBUG)."""
 
     return [d for d in recording.of_type(Diagnostic) if d.severity is Severity.WARNING]
 
@@ -386,7 +386,7 @@ _SKIPPING = "skipping further lookups this run"
 
 @respx.mock
 def test_rate_limit_wait_is_narrated(monkeypatch: pytest.MonkeyPatch) -> None:
-    """A 429 backoff emits the (Retry-After) wait as an INFO hub Diagnostic - the run no longer looks hung - and a successful retry never trips the breaker."""
+    """A 429 backoff emits the (Retry-After) wait as an INFO hub Diagnostic - the run no longer looks hung - and a successful retry never marks AniList unreachable."""
 
     monkeypatch.setattr(time, "sleep", _no_sleep)
     recording = _recording()
@@ -419,7 +419,7 @@ def test_rate_limit_wait_is_narrated(monkeypatch: pytest.MonkeyPatch) -> None:
 def test_give_up_trips_the_breaker(
     monkeypatch: pytest.MonkeyPatch, effect: httpx.Response | Exception, returned: dict[str, object]
 ) -> None:
-    """Exhausting the retries warns ONCE and trips the breaker: later calls never touch the wire."""
+    """Exhausting the retries warns ONCE and marks AniList unreachable: later calls never touch the wire."""
 
     monkeypatch.setattr(time, "sleep", _no_sleep)
     recording = _recording()
@@ -466,7 +466,7 @@ def test_give_up_trips_the_breaker(
 def test_dataless_answer_trips_the_breaker_once(
     response: httpx.Response, returned: dict[str, object], detail: str
 ) -> None:
-    """Any dataless answer trips the breaker on the first request: one warning, the body still returned, then no traffic."""
+    """Any dataless answer marks AniList unreachable on the first request: one warning, the body still returned, then no traffic."""
 
     recording = _recording()
     client = _client()
@@ -502,7 +502,7 @@ def test_refusal_message_is_collapsed_and_clamped() -> None:
 
 @respx.mock
 def test_unknown_id_404_is_an_ordinary_miss() -> None:
-    """AniList's unknown-id answer (HTTP 404, `data.Media` null plus a not-found error) never trips the breaker."""
+    """AniList's unknown-id answer (HTTP 404, `data.Media` null plus a not-found error) never marks it unreachable."""
 
     recording = _recording()
     client = _client()
@@ -521,7 +521,7 @@ def test_unknown_id_404_is_an_ordinary_miss() -> None:
 
 
 def test_anilist_media_node_empty_dict_is_the_all_none_miss_node() -> None:
-    """`{}` (the reduced `Media: null` miss) validates to the all-None node."""
+    """`{}` (the reduced `Media: null` not-found answer) validates to the all-None node."""
 
     assert AniListMediaNode.model_validate({}) == AniListMediaNode()
 

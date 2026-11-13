@@ -1,4 +1,4 @@
-"""The injectable time seam: monotonic readings plus sleep behind one handle."""
+"""The injectable time interface: monotonic readings plus sleep behind one handle."""
 
 import time
 from abc import ABC, abstractmethod

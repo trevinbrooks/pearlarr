@@ -4,9 +4,9 @@
 Pins today's read -> resolve -> re-emit behavior AT THE WIRE so the pydantic
 port cannot change it: golden ManualImport POST bodies across
 `resolve_quality`'s branches (verbatim unknown-key passthrough, the
-dict-falsy empty-quality fallbacks), per-field fail-open folding on
-queue/history records, and the candidate rejections folding. Every test drives
-a REAL client over `respx` (no network) - the seams that survive the port
+dict-falsy empty-quality fallbacks), per-field fail-open conversion on
+queue/history records, and the candidate rejections conversion. Every test drives
+a REAL client over `respx` (no network) - the interfaces that survive the port
 unchanged.
 """
 
@@ -74,7 +74,7 @@ _NEUTRAL_RESCAN: dict[str, object] = {"id": 1, "name": "RefreshMonitoredDownload
 
 
 def _bare_snapshot(pending: PendingImport) -> ImportSnapshot:
-    """An empty same-poll index for every series the record claims (nothing on disk yet)."""
+    """An empty same-poll index for every series the pending import claims (no episode files yet)."""
 
     return ImportSnapshot(pending, {sid: episode_snapshot() for sid in pending.series_ids}, {})
 
@@ -141,11 +141,11 @@ _UNKNOWN_QUALITY: dict[str, object] = {
 
 @respx.mock
 def test_golden_body_dead_tracked_folder_import_omits_download_id() -> None:
-    """The dead-tracked wire shape: NO `downloadId` key at all, `importMode` forced to copy.
+    """The wire shape when the download's history is closed: NO `downloadId` key at all, `importMode` forced to copy.
 
-    Drives the REAL client end-to-end through the fallback: the downloadId scan
-    500s (the poisoned tracked download), the history probe reports a prior
-    import, the folder scan serves the candidate. The POSTed body must OMIT
+    Drives the REAL client end-to-end through the fallback: the downloadId fetch
+    500s (the poisoned tracked download), the history read reports a prior
+    import, the folder fetch serves the candidate. The POSTed body must OMIT
     `downloadId` on every file (a downloadId there re-enters Sonarr's poisoned
     tracked branch, a null is not the same as absent) and force copy under the
     configured auto (the untracked Execute branch resolves Auto to MOVE).
@@ -314,7 +314,7 @@ def test_golden_body_empty_inner_quality_synthesizes_unknown() -> None:
 
 @respx.mock
 def test_queue_record_folds_junk_per_field_without_dropping_the_record() -> None:
-    """Junk in individual queue-record fields folds that FIELD to None.
+    """Junk in individual queue-record fields reduces that FIELD to None.
 
     The record itself (and its healthy siblings) always survives.
     """
@@ -348,7 +348,7 @@ def test_queue_record_folds_junk_per_field_without_dropping_the_record() -> None
 
 @respx.mock
 def test_import_pending_classifies_by_tracked_status() -> None:
-    """Live invariant: a CLEAN `importPending` record waits; a warning-flagged one steps in.
+    """Live invariant: a CLEAN `importPending` record waits. A warning-flagged one gets an auto import.
 
     The flag means Sonarr's own import attempt failed (e.g. the file was not
     visible on its mount yet) and it does not reliably retry - so only the clean
@@ -380,12 +380,12 @@ def test_import_pending_classifies_by_tracked_status() -> None:
     assert classify_queue([records["DEF456"]]) is QueueState.STUCK
 
 
-# --- HistoryRecord: per-field folds, record never drops ----------------------
+# --- HistoryRecord: per-field conversion, record never drops -----------------
 
 
 @respx.mock
 def test_history_junk_item_id_folds_to_zero_and_the_record_is_kept() -> None:
-    """A junk `seriesId` folds to 0 without dropping the record.
+    """A junk `seriesId` reduces to 0 without dropping the record.
 
     A dropped record would be a missed dirty-mark and a lagging checkpoint.
     """
@@ -452,7 +452,7 @@ def test_history_missing_item_id_defaults_to_zero() -> None:
 def test_radarr_history_item_id_reads_movie_id_and_junk_folds() -> None:
     """Radarr's item id comes from `movieId`.
 
-    A null one folds to 0 with the record kept (same per-field posture as
+    A null one reduces to 0 with the record kept (same per-field posture as
     Sonarr's).
     """
 
@@ -474,11 +474,11 @@ def test_radarr_history_item_id_reads_movie_id_and_junk_folds() -> None:
 
 @respx.mock
 def test_rejections_fold_strings_and_dicts_and_skip_other_shapes() -> None:
-    """One rejections list mixes several item shapes. The well-formed ones fold, the rest are skipped.
+    """One rejections list mixes several element shapes. The well-formed ones convert, the rest are skipped.
 
     The shapes are a bare string (older Sonarr), a proper `{reason}` object,
-    a reason-less object, and non-str/non-dict junk. The first three fold to
-    `ImportRejection`s. The junk entries are skipped.
+    a reason-less object, and non-str/non-dict junk. The first three convert to
+    `ImportRejection`s. The junk elements are skipped.
     """
 
     respx.get(f"{_BASE}/manualimport").respond(

@@ -36,7 +36,7 @@ def single_instance_lock(
 
     Yields `True` if this process acquired the lock (no other run is active in
     that directory), or `False` if another run already holds it - the caller
-    should skip and retry next cycle. Degrades to a best-effort `True` (no real
+    should skip and retry next run. Degrades to a best-effort `True` (no real
     lock) when the lock file can't be created (missing/unwritable `data_dir`)
     or the filesystem can't honor the lock (e.g. ENOLCK on some NFS/FUSE mounts) -
     so a guard failure never crashes or silently skips the run.

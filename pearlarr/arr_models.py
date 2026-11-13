@@ -1,4 +1,4 @@
-"""The Sonarr and Radarr API models: the records their JSON validates into, the bodies sent, and the item protocols."""
+"""The Sonarr and Radarr API models: what their JSON validates into, the bodies sent, and the item protocols."""
 
 from collections.abc import Iterable, Mapping
 from dataclasses import dataclass, field
@@ -53,7 +53,7 @@ class ArrItem(Protocol):
 class SeasonTypeCount(ApiModel):
     """One `seasonTypes[]` element: a TVDB order a series lists and its episode count.
 
-    Sonarr v5's series record and SkyHook's reply send the same shape.
+    Sonarr v5's series resource and SkyHook's reply send the same shape.
     """
 
     type: str
@@ -62,14 +62,14 @@ class SeasonTypeCount(ApiModel):
 
 
 class AlternateTitle(ApiModel):
-    """One `alternateTitles[]` element: another title Sonarr knows the series by."""
+    """One `alternateTitles[]` element: another name Sonarr knows the series by."""
 
     title: str
 
 
 @runtime_checkable
 class SonarrItem(ArrItem, Protocol):
-    """An `ArrItem` keyed on `tvdbId`, with the TVDB orders Sonarr lists for it and its alternate titles."""
+    """An `ArrItem` keyed on `tvdbId`, with the TVDB orders Sonarr lists for it and its alternate names."""
 
     @property
     def tvdbId(self) -> int: ...
@@ -93,7 +93,7 @@ class RadarrItem(ArrItem, Protocol):
 
 
 class SonarrSeries(ApiModel):
-    """One Sonarr `/api/v3/series` record, narrowed to the `SonarrItem` surface.
+    """One Sonarr `/api/v3/series` resource, narrowed to the `SonarrItem` surface.
 
     camelCase on purpose: the fields satisfy the protocol directly and `IdField.item_attr` reads them by name.
     """
@@ -104,30 +104,30 @@ class SonarrSeries(ApiModel):
     tvdbId: int = 0
     imdbId: str | None = None
     seasonType: BlankStr = AIRED_ORDER
-    """The TVDB order Sonarr numbers the series by. Sonarr v4 sends no field and numbers by the official order. A
-    null or junk value folds to "", which names no order, so the series is read without its other orders."""
+    """The TVDB order Sonarr numbers the series by. Sonarr v4 sends no field and numbers by the aired order. A
+    null or junk value reduces to "", which names no order, so the series is read without its other orders."""
     seasonTypes: tuple[SeasonTypeCount, ...] = ()
     """The orders TVDB lists for the series, with counts. Sonarr v5 only."""
     alternateTitles: tuple[AlternateTitle, ...] = ()
-    """The series' other titles, in Sonarr's order. Some name one season, which this model doesn't keep."""
+    """The series' other names, in Sonarr's order. Some name one season, which this model doesn't keep."""
 
     @field_validator("seasonTypes", mode="before")
     @classmethod
     def _lenient_season_types(cls, value: object) -> object:
-        """Skip junk `seasonTypes[]` entries, never failing the series over one."""
+        """Skip junk `seasonTypes[]` elements, never failing the series over one."""
 
         return validate_skipping_junk(SeasonTypeCount, value)
 
     @field_validator("alternateTitles", mode="before")
     @classmethod
     def _lenient_alternate_titles(cls, value: object) -> object:
-        """Skip junk `alternateTitles[]` entries (a null title among them), never failing the series over one."""
+        """Skip junk `alternateTitles[]` elements (a null title among them), never failing the series over one."""
 
         return validate_skipping_junk(AlternateTitle, value)
 
 
 class RadarrMovie(ApiModel):
-    """One Radarr `/api/v3/movie` record, narrowed to the `RadarrItem` surface (camelCase as in `SonarrSeries`)."""
+    """One Radarr `/api/v3/movie` resource, narrowed to the `RadarrItem` surface (camelCase as in `SonarrSeries`)."""
 
     id: int = 0
     title: str = ""
@@ -140,14 +140,14 @@ class RadarrMovie(ApiModel):
 
 
 class SonarrEpisodeFile(ApiModel):
-    """The `episodeFile` sub-record of a Sonarr episode."""
+    """The `episodeFile` sub-object of a Sonarr episode."""
 
     release_group: str | None = Field(default=None, validation_alias="releaseGroup")
     size: int | None = None
 
 
 class SonarrEpisode(ApiModel):
-    """One Sonarr `/api/v3/episode` record."""
+    """One Sonarr `/api/v3/episode` resource."""
 
     id: int = 0
     season_number: int | None = Field(default=None, validation_alias="seasonNumber")
@@ -167,11 +167,11 @@ class SonarrEpisode(ApiModel):
         default=None,
         validation_alias="episodeFile",
     )
-    """An empty/null `episodeFile` folds to `None`."""
+    """An empty/null `episodeFile` reduces to `None`."""
 
 
 def index_episodes_by_key(ep_list: Iterable[SonarrEpisode]) -> dict[EpisodeKey, SonarrEpisode]:
-    """Index Sonarr episodes by `season_episode_key`, the first record winning."""
+    """Index Sonarr episodes by `season_episode_key`, the first one winning."""
 
     index: dict[EpisodeKey, SonarrEpisode] = {}
     for ep in ep_list:
@@ -181,13 +181,13 @@ def index_episodes_by_key(ep_list: Iterable[SonarrEpisode]) -> dict[EpisodeKey, 
 
 @dataclass(frozen=True, slots=True)
 class ArrFiles:
-    """The Arr's existing files for one entry, folded by release group.
+    """The Arr's existing files for one title, grouped by release group.
 
-    Keys hold the tag as the arr wrote it, and only an EMPTY tag makes a file untagged.
+    Keys hold the group as the arr wrote it, and only an EMPTY one leaves a file with no group.
     """
 
     by_group: Mapping[str, tuple[int, ...]] = field(default_factory=dict[str, tuple[int, ...]])
-    """Each tagged release group's existing-file sizes, insertion-ordered."""
+    """Each named release group's existing-file sizes, insertion-ordered."""
 
     no_group: tuple[int, ...] = ()
     """Sizes of files with no release group (Radarr only)."""
@@ -207,9 +207,9 @@ class ArrFiles:
         *,
         keep_no_group: bool,
     ) -> Self:
-        """Fold arr file records into one per-entry record.
+        """Merge the arr's files into one per-title `ArrFiles`.
 
-        Sonarr passes `keep_no_group=False`: its untagged files ride the episode list and would double-count.
+        Sonarr passes `keep_no_group=False`: its files with no group go with the episode list and would double-count.
         """
 
         tagged: dict[str, list[int]] = {}
@@ -227,22 +227,22 @@ class ArrFiles:
         )
 
     def group_count(self) -> int:
-        """How many entries `groups_label` renders: tagged names, plus one for untagged files."""
+        """How many names `groups_label` renders: group names, plus one for files with no group."""
 
         return len(self.by_group) + (1 if self.no_group else 0)
 
     def groups_label(self) -> str:
-        """The group names comma-joined for a log line: `(none)` marks untagged files, `(no files)` an empty record."""
+        """The group names comma-joined for a log line: `(none)` for files with no group, `(no files)` when empty."""
 
         return ", ".join([*self.by_group, *(["(none)"] if self.no_group else [])]) or "(no files)"
 
     def groups(self) -> tuple[str, ...]:
-        """Every tagged name a grab would replace (the notify `Replacing` field)."""
+        """Every group name a grab would replace (the notify `Replacing` field)."""
 
         return tuple(self.by_group)
 
 
-# --- Sonarr manual-import (candidate read views + outgoing file payload) -----
+# --- Sonarr ManualImport (candidate read views + outgoing file payload) ------
 #
 # Derived from the Sonarr v3 OpenAPI `ManualImportResource` (`schemas/sonarr.schema`), nullability mirroring
 # the schema exactly. `Quality`, `Revision` and `QualityModel` are `WireModel`s: a candidate's in-context
@@ -273,7 +273,7 @@ class QualitySource(StrEnum):
         return _SOURCE_BY_FOLDED.get(value.casefold()) if value else None
 
 
-# Case-folded value to member. UNKNOWN is excluded so it folds to None.
+# Case-folded value to member. UNKNOWN is excluded so it reduces to None.
 _SOURCE_BY_FOLDED: dict[str, QualitySource] = {
     m.value.casefold(): m for m in QualitySource if m is not QualitySource.UNKNOWN
 }
@@ -314,7 +314,7 @@ class Language(ApiModel):
 
 
 class ImportRejection(ApiModel):
-    """One entry of a candidate's `rejections` array (schema `ImportRejectionResource`)."""
+    """One element of a candidate's `rejections` array (schema `ImportRejectionResource`)."""
 
     reason: str | None = None
     """The human text the sample / already-imported classifier matches against (`string | null` in the schema)."""
@@ -324,16 +324,16 @@ class ManualImportCandidate(ApiModel):
     """A Sonarr `ManualImportResource`, reduced to the fields planning reads."""
 
     path: str | None = None
-    """The on-disk file to import (`string | null` in the schema)."""
+    """The file to import (`string | null` in the schema)."""
     quality: Annotated[QualityModel | None, BeforeValidator(none_if_falsy)] = None
-    """The in-context `QualityModel`, re-emitted verbatim (unknown keys included). An empty/null one folds to None."""
+    """The in-context `QualityModel`, re-emitted verbatim (unknown keys included). An empty/null one reduces to None."""
     rejections: tuple[ImportRejection, ...] = ()
-    """May be null and, on older Sonarr versions, a bare string per entry rather than an object."""
+    """May be null and, on older Sonarr versions, a bare string per element rather than an object."""
 
     @field_validator("rejections", mode="before")
     @classmethod
     def _convert_rejections(cls, value: object) -> object:
-        """Fold str/dict rejection entries to `ImportRejection`, skipping junk."""
+        """Convert str/dict rejection elements to `ImportRejection`, skipping junk."""
 
         if not isinstance(value, list):
             return ()
@@ -345,21 +345,22 @@ class ManualImportCandidate(ApiModel):
                 try:
                     converted.append(ImportRejection.model_validate(rejection))
                 except ValidationError:
-                    continue  # junk reason: skip the entry, keep the candidate
+                    continue  # junk reason: skip the element, keep the candidate
             elif isinstance(rejection, ImportRejection):
                 converted.append(rejection)  # field-name construction passes models
         return converted
 
 
 class ManualImportFile(WireModel):
-    """One outgoing `ManualImport` command file entry, POSTed via `model_dump(exclude_unset=True)`."""
+    """One outgoing `ManualImport` command file, POSTed via `model_dump(exclude_unset=True)`."""
 
     path: str
     seriesId: int
     episodeIds: list[int]
     releaseGroup: str
     downloadId: str | None = None
-    """UNSET for a dead-tracked folder-mode entry: a downloadId re-enters Sonarr's poisoned tracked branch."""
+    """UNSET for a folder-mode file whose download's history is closed: a downloadId re-enters Sonarr's poisoned
+    tracked branch."""
     languages: list[Language]
     quality: QualityModel | None = None
     """Unset stays off the wire, never sent as `None`, and Sonarr falls back to Unknown."""
@@ -372,12 +373,12 @@ class ManualImportFile(WireModel):
 
 
 class QueueRecord(ApiModel):
-    """One Sonarr `QueueResource` record, reduced to the fields the wait reads."""
+    """One Sonarr `QueueResource` record, reduced to the fields the wait pass reads."""
 
     id: ZeroInt = 0
     """`queue_delete`'s handle: any one of a download's rows dismisses the whole download. 0 means unusable."""
     series_id: ZeroInt = Field(default=0, validation_alias="seriesId")
-    """0 when Sonarr never matched a series. The queue close skips those rows: Sonarr's dismissal 500s on them."""
+    """0 when Sonarr never matched a series. The queue removal skips those rows: Sonarr's dismissal 500s on them."""
     download_id: LenientStr = Field(default=None, validation_alias="downloadId")
     """The infohash. Sonarr stores it uppercased, so match case-insensitively."""
     state: LenientStr = Field(default=None, validation_alias="trackedDownloadState")
@@ -393,7 +394,7 @@ class QueueRecord(ApiModel):
 
 
 class HistoryRecord(ApiModel):
-    """One arr `HistoryResource` record, reduced to what the activity scan reads."""
+    """One arr `HistoryResource` record, reduced to what the activity read uses."""
 
     id: ZeroInt = 0
     """The per-arr autoincrement, doubling as the monotone cursor."""
@@ -406,18 +407,18 @@ class HistoryRecord(ApiModel):
     download_id: LenientStr = Field(default=None, validation_alias="downloadId")
     """The infohash, uppercased by Sonarr, so compare casefolded."""
     reason: LenientStr = None
-    """The `data` map's reason value, its key read case-insensitively (an alias cannot)."""
+    """The `data` object's reason value, its key read case-insensitively (an alias cannot)."""
 
     @model_validator(mode="before")
     @classmethod
     def _lift_reason(cls, data: object) -> object:
-        """Lift the `data` map's reason value, matching its key case-insensitively."""
+        """Lift the `data` object's reason value, matching its key case-insensitively."""
 
         return _lift_from_data(data, "reason", "reason")
 
 
 def _lift_from_data(data: object, key: str, field: str) -> object:
-    """Copy one `data` map value onto a top-level field, its key matched casefolded.
+    """Copy one `data` object value onto a top-level field, its key matched casefolded.
 
     A field already present is left alone.
     """
@@ -436,33 +437,33 @@ def _lift_from_data(data: object, key: str, field: str) -> object:
 
 
 class SonarrHistoryRecord(HistoryRecord):
-    """A Sonarr `HistoryResource` row with the import fields the download probe reads."""
+    """A Sonarr `HistoryResource` row with the import fields a download's history read uses."""
 
     episode_id: ZeroInt = Field(default=0, validation_alias="episodeId")
-    """The episode an import row landed on; 0 on rows that carry none."""
+    """The episode an import row imported to, or 0 on rows that carry none."""
     dropped_path: LenientStr = None
-    """The `data` map's `droppedPath`: the file's path in the download folder as Sonarr saw it,
+    """The `data` object's `droppedPath`: the file's path in the download folder as Sonarr saw it,
     its key read case-insensitively."""
 
     @model_validator(mode="before")
     @classmethod
     def _lift_dropped_path(cls, data: object) -> object:
-        """Lift the `data` map's `droppedPath` onto `dropped_path`."""
+        """Lift the `data` object's `droppedPath` onto `dropped_path`."""
 
         return _lift_from_data(data, "droppedPath", "dropped_path")
 
 
 class HistoryPage(ApiModel):
-    """One `/api/v3/history` page envelope, reduced to its `records` array and row count."""
+    """One `/api/v3/history` page envelope, reduced to its `records` array and record count."""
 
     records: tuple[SonarrHistoryRecord, ...] = ()
     total_records: ZeroInt = Field(default=0, validation_alias="totalRecords")
-    """The envelope's row count; page 1 alone is fetched, so more than `len(records)` means the page is cut."""
+    """The envelope's record count. Page 1 alone is fetched, so more than `len(records)` means the page is cut."""
 
     @field_validator("records", mode="before")
     @classmethod
     def _lenient_records(cls, value: object) -> object:
-        """Skip junk `records[]` entries, never failing the whole page over one."""
+        """Skip junk `records[]` elements, never failing the whole page over one."""
 
         return validate_skipping_junk(SonarrHistoryRecord, value)
 
@@ -471,7 +472,7 @@ class HistoryPage(ApiModel):
 
 
 def _priority_or_lowest(value: object) -> int:
-    """Keep an int priority, folding junk to 50 (the arrs' lowest)."""
+    """Keep an int priority, reducing junk to 50 (the arrs' lowest)."""
 
     return value if isinstance(value, int) and not isinstance(value, bool) else 50
 
@@ -497,7 +498,7 @@ class DownloadClientRecord(ApiModel):
     @field_validator("fields", mode="before")
     @classmethod
     def _lenient_fields(cls, value: object) -> object:
-        """Skip junk `fields[]` entries, never failing the definition over one."""
+        """Skip junk `fields[]` elements, never failing the definition over one."""
 
         return validate_skipping_junk(DownloadClientField, value)
 
@@ -529,7 +530,7 @@ class DownloadClientConfig(ApiModel):
     """Sonarr's `DownloadClientConfigResource`, reduced to the completed-download-handling switch.
 
     Off, Sonarr parks a clean `importPending` download forever and Pearlarr imports it. Defaults to on, so a
-    fail-open read defers rather than racing Sonarr.
+    fail-open read leaves it to Sonarr rather than racing it.
     """
 
     enable_completed_download_handling: bool = Field(default=True, validation_alias="enableCompletedDownloadHandling")
@@ -559,7 +560,7 @@ class CommandBody(WireModel):
 
 
 def _ints_only(value: object) -> object:
-    """Fold an episode-id array: keep the int entries, fold junk/None to ()."""
+    """Convert an episode-id array: keep the int elements, reduce junk/None to ()."""
 
     if isinstance(value, list):
         return [i for i in cast("list[object]", value) if isinstance(i, int)]
@@ -602,7 +603,7 @@ class CommandResource(ApiModel):
     @field_validator("files", mode="before")
     @classmethod
     def _lenient_files(cls, value: object) -> object:
-        """Skip junk `files[]` entries, never failing the whole command over one."""
+        """Skip junk `files[]` elements, never failing the whole command over one."""
 
         return validate_skipping_junk(CommandFile, value)
 
@@ -611,7 +612,7 @@ class CommandResource(ApiModel):
 
 
 class MovieFile(ApiModel):
-    """A Radarr `MovieFileResource`, reduced to the fields the syncer reads."""
+    """A Radarr `MovieFileResource`, reduced to the fields the Radarr strategy reads."""
 
     release_group: str | None = Field(default=None, validation_alias="releaseGroup")
     size: int | None = None
@@ -621,7 +622,7 @@ class MovieFile(ApiModel):
 
 
 def _tuple_or_empty(value: object) -> object:
-    """Fold a null/absent number array to () (Sonarr nulls empty arrays)."""
+    """Reduce a null/absent number array to () (Sonarr nulls empty arrays)."""
 
     return value or ()
 
@@ -632,15 +633,15 @@ class MatchedEpisode(ApiModel):
     season_number: int = Field(validation_alias="seasonNumber")
     episode_number: int = Field(validation_alias="episodeNumber")
     id: int | None = None
-    """Sonarr's episode id, checked against OUR map so a wrong-series title match is refused. None for a pair
-    `widen_range_key` added."""
+    """Sonarr's episode id, checked against the episode index so a match to the wrong series is rejected. None for
+    an episode `widen_range_key` added."""
 
 
 class ParsedFileInfo(ApiModel):
-    """Sonarr's parse of one filename, narrowed to what assignment reads.
+    """Sonarr's parse of one filename, narrowed to what placement reads.
 
     The `parsedEpisodeInfo` numbers are series-AGNOSTIC (present even with no series match), `matched_episodes`
-    is Sonarr's MATCHED resolution. Assignment prefers the agnostic numbers, matched pairs only inside OUR set.
+    is Sonarr's MATCHED resolution. Placement prefers the agnostic numbers, matched episodes only inside the window.
     """
 
     season_number: int | None = Field(
@@ -652,7 +653,7 @@ class ParsedFileInfo(ApiModel):
         default=(),
         validation_alias=AliasPath("parsedEpisodeInfo", "episodeNumbers"),
     )
-    """Drives the exact `(season, episode)` assignment, paired with `season_number`."""
+    """Drives the exact season and episode placement, paired with `season_number`."""
     absolute_episode_numbers: Annotated[tuple[int, ...], BeforeValidator(_tuple_or_empty)] = Field(
         default=(),
         validation_alias=AliasPath("parsedEpisodeInfo", "absoluteEpisodeNumbers"),
@@ -666,22 +667,22 @@ class ParsedFileInfo(ApiModel):
         default=False,
         validation_alias=AliasPath("parsedEpisodeInfo", "fullSeason"),
     )
-    """A season-pack-shaped name (bare "S01"). Its matched pairs span the season, never one file's claims."""
+    """A season-pack-shaped name (bare "S01"). Its matched episodes span the season, never one file's."""
     series_title: BlankStr = Field(
         default="",
         validation_alias=AliasPath("parsedEpisodeInfo", "seriesTitle"),
     )
-    """The series title Sonarr's parser lifted from the name, whether or not it matched a series. "" when it lifted
-    none."""
+    """The series name Sonarr's parser took from the file name, whether or not it matched a series. "" when it
+    took none."""
     matched_episodes: tuple[MatchedEpisode, ...] = Field(default=(), validation_alias="episodes")
-    """Sonarr's series-matched pairs. The exact leg's fallback when the name carries no `(season, episode)`."""
+    """Sonarr's series-matched episodes. The exact pass's fallback when the name carries no season and episode."""
 
     @field_validator("matched_episodes", mode="before")
     @classmethod
     def _lenient_matched(cls, value: object) -> object:
-        """Fold a junk `episodes[]`, or ANY junk entry in it, to ().
+        """Reduce a junk `episodes[]`, or ANY junk element in it, to ().
 
-        All-or-nothing on purpose: dropping one entry would shorten a span and slip the every-pair check.
+        All-or-nothing on purpose: dropping one element would shorten a span and slip the every-pair check.
         """
 
         return validate_all_or_none(MatchedEpisode, value) or ()
@@ -689,7 +690,7 @@ class ParsedFileInfo(ApiModel):
     def with_numbers(
         self, *, episodes: tuple[int, ...], absolutes: tuple[int, ...], matched: tuple[MatchedEpisode, ...]
     ) -> Self:
-        """A copy of this parse with new episode numbers, absolute numbers, and matched pairs."""
+        """A copy of this parse with new episode numbers, absolute numbers, and matched episodes."""
 
         return self.model_copy(
             update={"episode_numbers": episodes, "absolute_episode_numbers": absolutes, "matched_episodes": matched}

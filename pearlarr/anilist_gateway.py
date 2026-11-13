@@ -1,10 +1,10 @@
 """AniList client gateway: the in-memory meta cache, its refresh age, and prefetch.
 
 `AniListGateway` owns the per-run `al_cache` (AniList responses keyed by id)
-and the persisted `anilist_meta` block in the cache file: it seeds the cache
+and the persisted `anilist_meta` block in the cache file: it loads the cache
 from disk, batch-fetches whatever is missing, past the refresh age, or stored
 without air dates, persists what it fetched, and resolves
-titles / thumbnails. A record due a refetch still serves, so an AniList outage
+titles / thumbnails. A cached answer due a refetch still serves, so an unreachable AniList
 never drains the cache.
 
 The gateway is deliberately side-effect-free with respect to run state - the
@@ -35,7 +35,7 @@ from .stamps import stamp_of
 
 # How old a persisted AniList response gets before a run refetches it.
 # title/format/coverImage are effectively static. Episodes for a currently airing
-# show drift, so this caps how stale that count can get (~one episode/week).
+# title drift, so this caps how stale that count can get (~one episode/week).
 ANILIST_REFRESH_AGE_DAYS = 7
 
 
@@ -65,16 +65,16 @@ class AniListGateway:
 
     @property
     def unreachable(self) -> bool:
-        """True once AniList has been declared unavailable for this run."""
+        """True once AniList has been marked unreachable for this run."""
 
         return self._client.unreachable
 
     def air_dates_unread(self, al_id: int) -> bool:
         """Whether a lookup of an id this run went without its air dates because AniList couldn't be asked.
 
-        The id was looked up, AniList is down, and no stored record with its air dates answers. A record stored by
+        The id was looked up, AniList is unreachable, and no cached answer with its air dates answers. One stored by
         a query that didn't ask for them counts as none (`lacks_air_dates`). An id nothing looked up isn't unread,
-        and neither is one whose lookup AniList answered, with a record or with no such id.
+        and neither is one whose lookup AniList answered, with its Media or with no such id.
         """
 
         if not self.unreachable or al_id not in self._looked_up:
@@ -90,7 +90,7 @@ class AniListGateway:
         self._fetched.add(al_id)
 
     def load_cache(self) -> None:
-        """Seed the run cache from every stored record.
+        """Load the run cache from every cached answer.
 
         One past the refresh age, or stored by a query that didn't ask for air dates (`lacks_air_dates`), is marked
         stale.
@@ -103,7 +103,7 @@ class AniListGateway:
             if payload is None:
                 continue
             self.al_cache[al_id] = payload
-            # A stale record still serves: refetch, never drop. An unreadable stamp counts as aged.
+            # A stale answer still serves: refetch, never drop. An unreadable stamp counts as aged.
             if not stamp_is_fresh(answer, cutoff) or lacks_air_dates(payload):
                 self._stale.add(al_id)
             loaded += 1
@@ -114,11 +114,11 @@ class AniListGateway:
     def save_cache(self, *, dry_run: bool) -> None:
         """Persist this run's fetches stamped now. The prefetch-time save is the only save.
 
-        Rows past the refresh age are evicted only on a healthy, non-preview run:
+        Rows past the refresh age are evicted only on a healthy run that isn't a dry run:
         a stale id the batch did not return is gone, and absent next run.
         """
 
-        # A preview persists nothing, so its fetches stay in memory only.
+        # A dry run persists nothing, so its fetches stay in memory only.
         if dry_run:
             return
 
@@ -129,7 +129,7 @@ class AniListGateway:
             self._cache.put_anilist_meta(al_id, {"fetched_at": now_str, "data": self.al_cache[al_id]})
         self._fetched.clear()
 
-        # Evicting during an outage would drain the very records serving the run.
+        # Evicting while AniList is unreachable would drain the very answers serving the run.
         cutoff = now - timedelta(days=ANILIST_REFRESH_AGE_DAYS)
         evicted = 0 if self.unreachable else self._cache.evict_anilist_meta(cutoff)
 
@@ -147,8 +147,8 @@ class AniListGateway:
     ) -> int:
         """Batch-fetch the missing and stale ids, then persist. Returns how many needed fetching.
 
-        A stored record that lacks air dates is fetched whether or not `al_ids` names it. `progress` is the boot
-        cockpit step fed per-batch fraction + "done/total".
+        A cached answer that lacks air dates is fetched whether or not `al_ids` names it. `progress` is the boot
+        step fed per-batch fraction + "done/total".
         """
 
         # A title the run doesn't check is still read when one it checks shares its series.
@@ -161,7 +161,7 @@ class AniListGateway:
         done = 0
         for chunk in batched(wanted, ANILIST_BATCH_SIZE, strict=False):
             fetched = self._client.query_batch(list(chunk))
-            # A tripped breaker answered this batch empty and answers every later one the same.
+            # Once AniList is unreachable, the client answered this batch empty and answers every later one the same.
             if self.unreachable:
                 break
             for al_id, body in fetched.items():
@@ -175,14 +175,14 @@ class AniListGateway:
         return total
 
     def _media(self, al_id: int) -> AniListMediaNode:
-        """Resolve the typed Media node for an id: the run cache, then one wire query. All-None on a miss."""
+        """Resolve the typed Media node for an id: the run cache, then one wire query. All-None with no Media."""
 
         self._looked_up.add(al_id)
         body = self.al_cache.get(al_id)
         if body is not None:
             return media_from_body(body)
 
-        # A tripped breaker answers {} without a request.
+        # Once AniList is unreachable, the client answers {} without a request.
         fetched = self._client.query(al_id)
         raw_media = extract_path(fetched, "data", "Media")
         if raw_media:
@@ -193,7 +193,7 @@ class AniListGateway:
         return media_from_node(raw_media)
 
     def titles(self, al_id: int) -> tuple[str, ...]:
-        """Every distinct AniList title for an id (English first, then romaji, cached or queried live), empty on a miss.
+        """Every distinct AniList name for an id (English first, then romaji, cached or queried live), empty when none.
 
         Side-effect-free: the caller owns any fallback and the `title_name` attribution.
         """

@@ -1,4 +1,4 @@
-"""SkyHook order gateway: which series' TVDB orders to refetch, and the stored record per series."""
+"""SkyHook order gateway: which series' TVDB orders to refetch, and the cached answer per series."""
 
 from collections.abc import Sequence
 from datetime import UTC, datetime, timedelta
@@ -14,17 +14,17 @@ QUIET_AFTER_DAYS = 30
 """An ended series whose newest episode aired longer ago than this is quiet."""
 
 QUIET_FRESH_DAYS = 30
-"""How long a quiet series' record stays fresh."""
+"""How long a quiet series' cached answer stays fresh."""
 
 ACTIVE_FRESH_DAYS = 7
-"""How long any other series' record stays fresh, a series SkyHook doesn't have included."""
+"""How long any other series' cached answer stays fresh, a series SkyHook doesn't have included."""
 
 
 class SkyHookGateway:
-    """The TVDB order cache over the SkyHook client: refetches due series, serves stored records at any age."""
+    """The TVDB order cache over the SkyHook client: refetches due series, serves cached answers at any age."""
 
     def __init__(self, *, client: AbstractSkyHookClient, cache_store: AbstractCacheStore) -> None:
-        """Bind the client and the cache (network-free). Records read are kept for the run."""
+        """Bind the client and the cache (network-free). Cached answers read are kept for the run."""
 
         self._client = client
         self._cache = cache_store
@@ -32,7 +32,7 @@ class SkyHookGateway:
 
     @property
     def unreachable(self) -> bool:
-        """True once SkyHook has been declared unreachable for this run."""
+        """True once SkyHook has been marked unreachable for this run."""
 
         return self._client.unreachable
 
@@ -43,10 +43,11 @@ class SkyHookGateway:
         dry_run: bool,
         progress: ProgressCallback | None = None,
     ) -> int:
-        """Refetch every due series, one at a time, writing each one's record whole. Returns how many were written.
+        """Refetch every due series, one at a time, writing each one's answer whole. Returns how many were written.
 
-        Each record is saved as it is written, unless `preview`, so an interrupted first fill keeps what it fetched.
-        On an outage the series being fetched keeps its old record, and the rest are left for the next run.
+        Each answer is saved as it is written, unless `dry_run`, so an interrupted first fetch keeps what it fetched.
+        When SkyHook is unreachable the series being fetched keeps its old answer, and the rest are left for the next
+        run.
         """
 
         now = datetime.now()
@@ -65,14 +66,14 @@ class SkyHookGateway:
         return written
 
     def cached_orders(self, tvdb_id: int) -> CachedOrders | None:
-        """The series' stored record at any age, or None when it has never been fetched."""
+        """The series' cached answer at any age, or None when it has never been fetched."""
 
         if tvdb_id not in self._answers:
             self._answers[tvdb_id] = self._cache.get_tvdb_orders(tvdb_id)
         return self._answers[tvdb_id]
 
     def other_orders(self, tvdb_id: int) -> OrdersByName:
-        """Every stored order of the series except official, empty orders left out."""
+        """Every stored order of the series except the aired order, empty orders left out."""
 
         stored = self.cached_orders(tvdb_id)
         if stored is None:
@@ -80,12 +81,12 @@ class SkyHookGateway:
         return MappingProxyType({name: rows for name, rows in stored.orders.items() if name != AIRED_ORDER and rows})
 
     def has_cached_answer(self, tvdb_id: int) -> bool:
-        """Whether the series has a stored record, even one with no orders."""
+        """Whether the series has a cached answer, even one with no orders."""
 
         return self.cached_orders(tvdb_id) is not None
 
     def _due(self, facts: SonarrSeriesOrders, now: datetime) -> bool:
-        """Whether the series needs a fetch: no record, a record past its `fresh_until`, or Sonarr's counts moved."""
+        """Whether the series needs a fetch: no cached answer, one past its `fresh_until`, or Sonarr's counts moved."""
 
         stored = self.cached_orders(facts.tvdb_id)
         if stored is None:
@@ -98,7 +99,7 @@ class SkyHookGateway:
         return facts.counts is not None and dict(facts.counts) != stored.sonarr_counts
 
     def _fetch_series(self, facts: SonarrSeriesOrders, now: datetime) -> CachedOrders | None:
-        """The series' new record: official first, then each other order it lists. None on an outage."""
+        """The series' new answer: the aired order first, then each other order it lists. None when unreachable."""
 
         aired_reply = self._client.fetch(facts.tvdb_id, AIRED_ORDER)
         if aired_reply is SkyHookNoReply.UNREACHABLE:

@@ -1,15 +1,15 @@
 # pyright: strict
 # pyright: reportPrivateUsage=false
-# The overlay unit tests read the private `_env_overrides`/`_hash_config_bytes` to pin
-# the nested-mapping shape and the digest formula directly (both unobservable
+# The override unit tests read the private `_env_overrides`/`_hash_config_bytes` to pin
+# the nested-mapping shape and the hash formula directly (both unobservable
 # through a validated AppConfig). Strict re-flags that and the repo disables
 # reportPrivateUsage for tests.
-"""Environment-variable config overrides: the `PEARLARR_<GROUP>__<KEY>` overlay.
+"""Environment-variable config overrides: the `PEARLARR_<GROUP>__<KEY>` overrides.
 
-Pins the overlay's path mapping and YAML value parsing, the leaf-wins/
+Pins the overrides' path mapping and YAML value parsing, the leaf-wins/
 dicts-merge semantics against a real file, the reserved delimiter-less names,
-the error line naming the variable that set a bad key, and the checksum folding
-a qualifying env change in.
+the error line naming the variable that set a bad key, and the config hash including
+a qualifying env change.
 """
 
 import hashlib
@@ -89,12 +89,12 @@ class TestOverlayValueParsing:
         with pytest.raises(ValidationError, match=r"PEARLARR_SONARR__API_KEY") as excinfo:
             _env_overrides({"PEARLARR_SONARR__API_KEY": "'unterminated"})
         assert "unterminated" not in str(excinfo.value)
-        # The invalid-configuration arms render this like a bad file key.
+        # The invalid-configuration handlers render this like a bad file key.
         assert "PEARLARR_SONARR__API_KEY" in format_validation_errors(excinfo.value)
 
 
 class TestOverlayThroughLoad:
-    """`AppConfig.load` overlays the environment onto the migrated file, env winning per leaf."""
+    """`AppConfig.load` applies the environment onto the migrated file, env winning per leaf."""
 
     def _write(self, tmp_path: Path, text: str) -> str:
         cfg = tmp_path / "config.yml"
@@ -191,7 +191,7 @@ class TestErrorLinesNameTheVariable:
 
 
 class TestChecksumFoldsEnv:
-    """The cache descriptor folds the qualifying env pairs in, so an env change re-checks."""
+    """The config hash includes the qualifying env pairs, so an env change re-checks."""
 
     def test_digest_folds_only_qualifying_pairs(self) -> None:
         raw = b"sonarr:\n  url: http://x\n"
@@ -202,7 +202,7 @@ class TestChecksumFoldsEnv:
                 raw + b"PEARLARR_SEADEX__WANT_BEST=false\n",
             ).hexdigest()
         )
-        # Unrelated (delimiter-less / non-prefixed) vars leave it at the no-env digest.
+        # Unrelated (delimiter-less / non-prefixed) vars leave it at the no-env hash.
         assert _hash_config_bytes(raw, {"PEARLARR_DATA_DIR": "/d", "OTHER": "y"}) == hashlib.md5(raw).hexdigest()
 
     def test_checksum_moves_when_an_override_changes(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:

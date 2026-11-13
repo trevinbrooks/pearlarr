@@ -36,7 +36,7 @@ class SkyHookEpisode(ApiModel):
     episode_number: int = Field(validation_alias="episodeNumber")
     air_date_utc: LenientTime = Field(default=None, validation_alias="airDateUtc")
     absolute_episode_number: int | None = Field(default=None, validation_alias="absoluteEpisodeNumber")
-    """Sent on official rows only."""
+    """Sent on aired-order rows only."""
 
 
 class SkyHookReply(ApiModel):
@@ -67,7 +67,7 @@ class SkyHookReply(ApiModel):
     @field_validator("season_types", mode="before")
     @classmethod
     def _lenient_season_types(cls, value: object) -> object:
-        """Skip junk `seasonTypes[]` entries, never failing the reply over one."""
+        """Skip junk `seasonTypes[]` elements, never failing the reply over one."""
 
         return validate_skipping_junk(SeasonTypeCount, value)
 
@@ -109,24 +109,24 @@ class SkyHookNoReply(Enum):
 
 
 class AbstractSkyHookClient(ABC):
-    """The SkyHook seam the gateway depends on."""
+    """The SkyHook interface the gateway depends on."""
 
     @property
     @abstractmethod
     def unreachable(self) -> bool:
-        """True once SkyHook has been declared unreachable for this run."""
+        """True once SkyHook has been marked unreachable for this run."""
 
     @abstractmethod
     def fetch(self, tvdb_id: int, order_type: str) -> SkyHookReply | SkyHookNoReply:
         """One series' reply for one order.
 
-        A reply that fails validation or doesn't match the request comes back with no episodes. After an outage
-        every call returns `SkyHookNoReply.UNREACHABLE` without a request.
+        A reply that fails validation or doesn't match the request comes back with no episodes. Once SkyHook is
+        unreachable every call returns `SkyHookNoReply.UNREACHABLE` without a request.
         """
 
 
 class SkyHookClient(AbstractSkyHookClient):
-    """SkyHook over the shared web client: GETs with the web retry policy and a per-run outage latch."""
+    """SkyHook over the shared web client: GETs with the web retry policy and a per-run unreachable flag."""
 
     def __init__(self, *, client: httpx.Client, sleep: Callable[[float], None] = time.sleep) -> None:
         """Bind the shared web client (network-free). `sleep` is the retry backoff's."""
@@ -141,9 +141,9 @@ class SkyHookClient(AbstractSkyHookClient):
         return self._unreachable
 
     def _note_unreachable(self, detail: str) -> SkyHookNoReply:
-        """Warn that SkyHook failed and latch the outage, muting every later call this run."""
+        """Warn that SkyHook failed and mark it unreachable, muting every later call this run."""
 
-        # The latch also trips on one series SkyHook keeps failing, so `detail` names the request.
+        # It is also marked unreachable on one series SkyHook keeps failing, so `detail` names the request.
         hub_warn(f"SkyHook failed ({detail}) - re-checking cached titles until it answers")
         self._unreachable = True
         return SkyHookNoReply.UNREACHABLE
@@ -163,7 +163,7 @@ class SkyHookClient(AbstractSkyHookClient):
             hub_note(f"SkyHook has no TVDB series {tvdb_id} ({order_type} order)", severity=Severity.DEBUG)
             return SkyHookNoReply.NOT_FOUND
         # Any other status is about the host, not the series: an edge block (403), a moved route (a bare 404), a
-        # rate limit. Read as a miss, it would store every series empty for a week.
+        # rate limit. Read as not found, it would store every series empty for a week.
         return self._note_unreachable(f"HTTP {response.status_code} {asked}")
 
 

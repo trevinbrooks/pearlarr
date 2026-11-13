@@ -1,24 +1,24 @@
-"""SQLite cache of the parsed + indexed id-mapping sources (`mappings.db`).
+"""SQLite store of the parsed + indexed mapping sources (`mappings.db`).
 
 The three immutable mapping sources - the Kometa Anime-IDs JSON, the AniDB
 anime-list XML and the anibridge graph - are large, read-only files whose
 parsed+indexed forms never change until the file is re-downloaded *with new
 content*. Re-parsing and re-indexing them on every fresh process start is wasted
-CPU (~1.2s) and resident memory (~51MB held for the process lifetime). This store
+CPU (~1.2s) and resident memory (~51MB kept for the process lifetime). This store
 persists the indexed forms in a dedicated `mappings.db` (next to `cache.db`),
-keyed by each source's content digest, so a process whose source files are
+keyed by each source's content hash, so a process whose source files are
 unchanged answers lookups straight from SQL without re-parsing - and never has to
-hold the full parsed structures in memory.
+keep the full parsed structures in memory.
 
 How this differs from `CacheStore` (deliberately a separate file and a separate db):
 
-* **Never preview-gated.** `cache.db` stages writes and only commits on a
-  non-preview save. This store is a pure derived cache of an *immutable download*,
+* **Never dry-run-gated.** `cache.db` stages writes and only commits on a
+  save outside a dry run. This store is a pure derived copy of an *immutable download*,
   so a freshly parsed index is always committed, even on `--dry-run`. Each
   `replace_*` is its own atomic transaction.
-* **Atomic populate.** A source's rows and its `meta` digest stamp are written
-  and committed in *one* transaction. Stamping the digest separately would risk a
-  kill leaving *digest-fresh + tables-empty*, which `is_fresh` would then
+* **Atomic populate.** A source's rows and its `meta` source hash are written
+  and committed in *one* transaction. Storing the hash separately would risk a
+  kill leaving *hash-fresh + tables-empty*, which `is_fresh` would then
   trust and silently serve as empty mappings. The single transaction makes that
   state unreachable.
 * **No migration, rebuild on format change.** There is no `ALTER` path. The
@@ -29,7 +29,7 @@ How this differs from `CacheStore` (deliberately a separate file and a separate 
   `:memory:` store started (one re-parse, the safe direction), mirroring
   `CacheStore`.
 
-`MappingResolver` builds this once per cycle inside `single_instance_lock`, so
+`MappingResolver` builds this once per run inside `single_instance_lock`, so
 concurrent repopulation across processes is already prevented. The connection is
 not shared across threads.
 """
@@ -41,7 +41,7 @@ from typing import Literal, NamedTuple, overload
 from .sqlite_util import open_or_quarantine, rollback_and_close
 
 # Bump when the table layout below changes. A stored `user_version` that differs
-# triggers a DROP+rebuild (the data is a pure cache, re-derived from the sources).
+# triggers a DROP+rebuild (the data is purely derived, re-derived from the sources).
 SCHEMA_VERSION = 3
 
 # Source names used as `meta` keys and to select which tables a `replace_*`
@@ -50,9 +50,9 @@ SOURCE_ANIME_IDS = "anime_ids"
 SOURCE_ANIBRIDGE = "anibridge"
 SOURCE_ANIDB = "anidb"
 
-# Digest stamped for a source populated from a pre-parsed config object rather than
+# Source hash stored for a source populated from a pre-parsed config object rather than
 # a downloaded file: it has no file to hash, and must never be considered fresh
-# against a real file digest, so it is always repopulated.
+# against a real file hash, so it is always repopulated.
 INLINE_HASH = "<inline>"
 
 # anime_ids query columns the resolver may filter / DISTINCT on. The Literal is
@@ -61,7 +61,7 @@ INLINE_HASH = "<inline>"
 type IdKind = Literal["tvdb_id", "tmdb_movie_id", "imdb_id"]
 _ANIME_ID_COLUMNS = ("tvdb_id", "tmdb_movie_id", "imdb_id")
 
-# anibridge xref axes - a DIFFERENT vocabulary from the anime_ids columns above
+# anibridge xref id kinds - a DIFFERENT vocabulary from the anime_ids columns above
 # ("tvdb", not "tvdb_id"). tvdb/tmdb ext ids are ints, imdb ids are strs.
 type AniBridgeIdKind = Literal["tvdb", "tmdb_movie", "imdb"]
 
@@ -153,14 +153,14 @@ _SOURCE_TABLES: dict[str, tuple[str, ...]] = {
 # Drop in FK-free order. All tables are independent so any order works. Derived
 # from _SOURCE_TABLES (plus the shared `meta` table) so a new source's tables are
 # dropped on a SCHEMA_VERSION rebuild automatically - no parallel hand-maintained
-# list to forget (which would leave a stale table that CREATE IF NOT EXISTS skips).
+# list to forget (which would leave an old table that CREATE IF NOT EXISTS skips).
 _DROP_ALL = "".join(
     f"DROP TABLE IF EXISTS {t};\n" for t in ("meta", *(t for tables in _SOURCE_TABLES.values() for t in tables))
 )
 
 
 def _ensure_schema(conn: sqlite3.Connection) -> None:
-    """Create the tables, rebuilding from scratch if the stored format is stale.
+    """Create the tables, rebuilding from scratch if the stored format is out of date.
 
     A fresh db has `user_version` 0, which never equals `SCHEMA_VERSION`, so
     the rebuild branch creates everything. An existing db at the current version
@@ -181,7 +181,7 @@ def _ensure_schema(conn: sqlite3.Connection) -> None:
 class AnimeIdRow(NamedTuple):
     """One stored `anime_ids` row, in column order.
 
-    A typed record (not a positional `tuple[object, ...]`) shared by the whole
+    A typed row (not a positional `tuple[object, ...]`) shared by the whole
     pipeline - `_anime_ids_rows` builds it, `replace_anime_ids` inserts it,
     `anime_ids_lookup` returns it, `_mapping_from_anime_id_row` reads named fields -
     so the four column lists can't silently transpose. `anilist_id` is typed
@@ -199,10 +199,10 @@ class AnimeIdRow(NamedTuple):
 
 
 class AniBridgeMappingRow(NamedTuple):
-    """One `anibridge_entry` row: the computed `_raw_mapping_for` picks.
+    """One `anibridge_entry` row: the computed `_raw_mapping_for` choices.
 
-    A typed record (not a positional `tuple[object, ...]`) shared by the producer
-    (`AniBridge.to_rows`) and the consumer (`anibridge_mappings_for`), so the two
+    A typed row (not a positional `tuple[object, ...]`) shared by the code that writes
+    it (`AniBridge.to_rows`) and the code that reads it (`anibridge_mappings_for`), so the two
     column lists agree by construction. Tuple-compatible, so it's built straight
     from a fetched row with `AniBridgeMappingRow(*row)`.
     """
@@ -280,10 +280,10 @@ class AnidbMappingRow(NamedTuple):
 
 
 def _external_id_as[T: (int, str)](value: object, kind: type[T], id_kind: str) -> T:
-    """Pin a stored anibridge ext id to the type its axis owns.
+    """Pin a stored anibridge external id to the type its id kind owns.
 
     The write path coerced these, so a mismatch means the db is corrupt - raise
-    (with the type names only, never the value) instead of folding.
+    (with the type names only, never the value) instead of converting.
     """
 
     if not isinstance(value, kind):
@@ -304,8 +304,8 @@ class MappingStore:
     def open(cls, path: str) -> "MappingStore":
         """Open (or create) the mappings db, quarantining a corrupt file.
 
-        A missing file is created in place (this is a derived cache we *want* on
-        disk, so there is no preview/in-memory staging like `CacheStore`). A
+        A missing file is created in place (this is derived data we *want* on
+        disk, so there is no dry-run/in-memory staging like `CacheStore`). A
         not-a-database/torn file is moved aside and a fresh `:memory:` store is
         returned so the run fails open (re-parsing into memory) instead of
         crash-looping.
@@ -330,7 +330,7 @@ class MappingStore:
     # -- freshness -----------------------------------------------------------
 
     def is_fresh(self, name: str, source_hash: str) -> bool:
-        """True iff `name`'s stored digest equals `digest` (so no re-parse)."""
+        """True iff `name`'s stored source hash equals `source_hash` (so no re-parse)."""
 
         row = self._conn.execute("SELECT digest FROM meta WHERE name = ?", (name,)).fetchone()
         return row is not None and row[0] == source_hash
@@ -338,11 +338,11 @@ class MappingStore:
     # -- atomic populate -----------------------------------------------------
 
     def _replace(self, name: str, source_hash: str, write: Callable[[sqlite3.Connection], None]) -> None:
-        """Clear `name`'s tables, run `write` to repopulate, stamp the digest.
+        """Clear `name`'s tables, run `write` to repopulate, store the source hash.
 
         All in ONE transaction (legacy/deferred control means the first DELETE opens
         it and `commit` closes it), so a kill mid-populate rolls back to the prior
-        state - never digest-fresh + empty. `write` is a callback given the live
+        state - never hash-fresh + empty. `write` is a callback given the live
         connection. It only inserts rows.
         """
 
@@ -365,7 +365,7 @@ class MappingStore:
 
         Args:
             source_hash: sha256 of the source file (or `INLINE_HASH`).
-            rows: `AnimeIdRow` tuples (column order), one per Kometa record.
+            rows: `AnimeIdRow` tuples (column order), one per Kometa anime.
         """
 
         def write(conn: sqlite3.Connection) -> None:
@@ -467,7 +467,7 @@ class MappingStore:
     def anime_ids_distinct(self, column: IdKind) -> set[int] | set[str]:
         """The set of DISTINCT non-null `column` values in anime_ids.
 
-        Used to build the library-filter candidate sets without scanning the map.
+        Used to build the library-filter candidate sets without scanning the table.
         Third-party Kometa JSON reaches these columns un-coerced, so a junk-typed
         value is possible: it is SKIPPED (junk in a candidate set never matched an
         arr id anyway).
@@ -489,8 +489,8 @@ class MappingStore:
 
         One xref->entry JOIN so a lookup that resolves k AniList ids costs a single
         query instead of k per-id point lookups. The INNER JOIN drops any xref row
-        lacking an entry, but `to_rows` writes both from the same `by_anilist`
-        map, so that pairing is structurally guaranteed.
+        lacking an entry row, but `to_rows` writes both from the same `by_anilist`
+        dict, so that pairing is structurally guaranteed.
         """
 
         rows = self._conn.execute(
@@ -507,7 +507,7 @@ class MappingStore:
         external_id: int | str,
         tvdb_id: int,
     ) -> list[AniBridgeRangeHit]:
-        """The `tvdb_id`-scoped `AniBridgeRangeHit` rows for an (axis, ext_id) lookup.
+        """The `tvdb_id`-scoped `AniBridgeRangeHit` rows for an `(id_kind, external_id)` lookup.
 
         Ordered by `(anilist_id, rowid)`. Batched: one xref->range JOIN
         fetches the ranges for every AniList id a tvdb lookup resolves, so the
@@ -527,7 +527,7 @@ class MappingStore:
         return [AniBridgeRangeHit(*row) for row in rows]
 
     def anibridge_aliases_for(self, id_kind: str, external_id: int | str, tvdb_id: int) -> list[AniBridgeAliasHit]:
-        """The special aliases onto TVDB show `tvdb_id` of every AniList id the xref maps (axis, ext_id) to.
+        """The special aliases onto TVDB show `tvdb_id` of every AniList id the xref maps `(id_kind, external_id)` to.
 
         One batched xref->alias JOIN like `anibridge_ranges_for`, ordered by `anilist_id` then write order.
         """
@@ -546,10 +546,10 @@ class MappingStore:
     @overload
     def anibridge_distinct(self, id_kind: Literal["imdb"]) -> set[str]: ...
     def anibridge_distinct(self, id_kind: AniBridgeIdKind) -> set[int] | set[str]:
-        """The set of all ext ids on `id_kind` (for the library-filter id sets).
+        """The set of all external ids on `id_kind` (for the library-filter id sets).
 
-        Unlike the anime_ids columns, the AniBridge write path coerces every ext
-        id per axis before it reaches the store, so a mismatched stored type is
+        Unlike the anime_ids columns, the AniBridge write path coerces every external
+        id per id kind before it reaches the store, so a mismatched stored type is
         corruption: it RAISES rather than being skipped.
         """
 
@@ -562,7 +562,7 @@ class MappingStore:
         return {_external_id_as(r[0], int, id_kind) for r in rows}
 
     def anibridge_len(self) -> int:
-        """Number of AniList entries (backs `AniBridge.__len__` / `__bool__`)."""
+        """Number of titles (backs `AniBridge.__len__` / `__bool__`)."""
 
         return self._conn.execute("SELECT COUNT(*) FROM anibridge_entry").fetchone()[0]
 
