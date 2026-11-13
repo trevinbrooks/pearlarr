@@ -8,7 +8,7 @@ is retried at the next use), the priority pick among several enabled clients,
 the per-arr field names (`tvCategory`/`tvImportedCategory` vs
 `movieCategory`/`movieImportedCategory`), and the fail-open matrix: a fetch
 failure, a missing/disabled qBittorrent client, and blank/junk fields all
-leave omitted categories blank. `move_untracks` answers off the fetched
+leave omitted categories blank. `is_unwatched` answers off the fetched
 clients first (a fetched blank is authoritative False), the
 configured grab on a failed fetch, and False when both are unknown.
 `watch` answers off the fetched clients only: every enabled qBittorrent
@@ -291,20 +291,20 @@ def test_blank_and_junk_category_fields_fail_open() -> None:
     assert resolver.post_import_category() is None
 
 
-# --- move_untracks() ---------------------------------------------------------
+# --- is_unwatched() ---------------------------------------------------------
 
 
 @respx.mock
-def test_move_untracks_when_the_fetched_grab_category_differs() -> None:
+def test_is_unwatched_when_the_fetched_grab_category_differs() -> None:
     respx.get(f"{_URL}/api/v3/downloadclient").respond(json=[download_client_json(sonarr_client_fields())])
     resolver, _ = _resolver()
 
-    assert resolver.move_untracks("sonarr-done") is True
-    assert resolver.move_untracks("tv-sonarr") is False  # post == watched: the entry stays
+    assert resolver.is_unwatched("sonarr-done") is True
+    assert resolver.is_unwatched("tv-sonarr") is False  # post == watched: the entry stays
 
 
 @respx.mock
-def test_move_untracks_fetched_blank_is_authoritative_false() -> None:
+def test_is_unwatched_fetched_blank_is_authoritative_false() -> None:
     # A blank TvCategory means Sonarr sees every torrent, so no move ever clears
     # the entry - even when pearlarr's own grab category is configured.
     respx.get(f"{_URL}/api/v3/downloadclient").respond(
@@ -312,51 +312,51 @@ def test_move_untracks_fetched_blank_is_authoritative_false() -> None:
     )
     resolver, _ = _resolver(ArrSettings(torrent_category="anime"))
 
-    assert resolver.move_untracks("sonarr-done") is False
+    assert resolver.is_unwatched("sonarr-done") is False
 
 
 @respx.mock
-def test_move_untracks_fetch_failure_falls_back_to_the_configured_grab() -> None:
+def test_is_unwatched_fetch_failure_falls_back_to_the_configured_grab() -> None:
     # The single-attempt fetch handle can blip. The configured grab approximates
     # the watched category so one dropped connection can't force the explicit
     # delete (and its permanent Ignored marker) on a category-preferring setup.
     respx.get(f"{_URL}/api/v3/downloadclient").respond(status_code=500)
     resolver, _ = _resolver(ArrSettings(torrent_category="anime"))
 
-    assert resolver.move_untracks("sonarr-done") is True
-    assert resolver.move_untracks("anime") is False
+    assert resolver.is_unwatched("sonarr-done") is True
+    assert resolver.is_unwatched("anime") is False
 
 
 @respx.mock
-def test_move_untracks_fetch_failure_without_config_stays_false() -> None:
+def test_is_unwatched_fetch_failure_without_config_stays_false() -> None:
     # Both sources unknown: conservative False keeps the explicit close.
     respx.get(f"{_URL}/api/v3/downloadclient").respond(status_code=500)
     resolver, _ = _resolver()
 
-    assert resolver.move_untracks("sonarr-done") is False
+    assert resolver.is_unwatched("sonarr-done") is False
 
 
-def test_move_untracks_without_transport_reads_the_configured_grab() -> None:
+def test_is_unwatched_without_transport_reads_the_configured_grab() -> None:
     resolver = ArrCategoryResolver(Arr.SONARR, ArrSettings(torrent_category="anime"), None)
 
-    assert resolver.move_untracks("sonarr-done") is True
-    assert resolver.move_untracks("anime") is False
+    assert resolver.is_unwatched("sonarr-done") is True
+    assert resolver.is_unwatched("anime") is False
 
 
-def test_move_untracks_explicit_blank_opt_out_is_false() -> None:
+def test_is_unwatched_explicit_blank_opt_out_is_false() -> None:
     # `""` opts out of categories entirely: nothing is watched by our reckoning.
     resolver = ArrCategoryResolver(Arr.SONARR, ArrSettings(torrent_category=""), None)
 
-    assert resolver.move_untracks("sonarr-done") is False
+    assert resolver.is_unwatched("sonarr-done") is False
 
 
 @respx.mock
-def test_move_untracks_compares_exactly() -> None:
+def test_is_unwatched_compares_exactly() -> None:
     # qBittorrent categories are case-sensitive, so the compare must be too.
     respx.get(f"{_URL}/api/v3/downloadclient").respond(json=[download_client_json(sonarr_client_fields())])
     resolver, _ = _resolver()
 
-    assert resolver.move_untracks("TV-Sonarr") is True
+    assert resolver.is_unwatched("TV-Sonarr") is True
 
 
 # --- watch() -----------------------------------------------------------------
@@ -388,7 +388,7 @@ def test_every_enabled_client_counts_as_watching() -> None:
     resolver, _ = _resolver()
 
     assert resolver.category_watch("anime") is Watch.WATCHED
-    assert resolver.move_untracks("anime") is False
+    assert resolver.is_unwatched("anime") is False
     assert resolver.category_watch("old") is Watch.UNWATCHED
 
 
@@ -399,7 +399,7 @@ def test_a_subcategory_is_watched_under_the_category_a_client_names(preferences:
     resolver, _ = _resolver(qbit=QbitCategoryReads(None, preferences))
 
     assert resolver.category_watch("tv-sonarr/done") is Watch.WATCHED
-    assert resolver.move_untracks("tv-sonarr/done") is False
+    assert resolver.is_unwatched("tv-sonarr/done") is False
 
 
 @respx.mock
@@ -408,7 +408,7 @@ def test_with_subcategories_off_a_name_under_a_watched_one_is_its_own_category()
     resolver, _ = _resolver(qbit=QbitCategoryReads(None, {"use_subcategories": False}))
 
     assert resolver.category_watch("tv-sonarr/done") is Watch.UNWATCHED
-    assert resolver.move_untracks("tv-sonarr/done") is True
+    assert resolver.is_unwatched("tv-sonarr/done") is True
     assert resolver.category_watch("tv-sonarr") is Watch.WATCHED
 
 
@@ -419,7 +419,7 @@ def test_an_unreadable_subcategory_setting_leaves_a_subcategory_unread_until_it_
     resolver, _ = _resolver(qbit=QbitCategoryReads(None, down, down, {"use_subcategories": False}))
 
     assert resolver.category_watch("tv-sonarr/done") is Watch.UNREAD
-    assert resolver.move_untracks("tv-sonarr/done") is False
+    assert resolver.is_unwatched("tv-sonarr/done") is False
     assert resolver.category_watch("tv-sonarr/done") is Watch.UNWATCHED
 
 
@@ -435,7 +435,7 @@ def test_a_client_with_a_blank_category_watches_every_category(blank: str) -> No
     resolver, _ = _resolver()
 
     assert resolver.category_watch("sonarr-done") is Watch.WATCHED
-    assert resolver.move_untracks("sonarr-done") is False
+    assert resolver.is_unwatched("sonarr-done") is False
 
 
 @respx.mock
@@ -450,7 +450,7 @@ def test_with_no_qbittorrent_client_nothing_is_called_unwatched() -> None:
 
 @respx.mock
 def test_a_failed_fetch_is_unread_and_asked_again() -> None:
-    # No configured approximation here, unlike `move_untracks`: a wrong answer imports a download twice.
+    # No configured approximation here, unlike `is_unwatched`: a wrong answer imports a download twice.
     respx.get(f"{_URL}/api/v3/downloadclient").mock(
         side_effect=[httpx.Response(500), httpx.Response(200, json=[download_client_json(sonarr_client_fields())])],
     )

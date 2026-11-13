@@ -235,7 +235,7 @@ class PostImportCleanup:
         strategy = self._pollers.strategy
         if not self._imports.remove_from_queue or strategy is None:
             return EffectStatus.SKIPPED
-        if moved_to and self._categories.move_untracks(moved_to):
+        if moved_to and self._categories.is_unwatched(moved_to):
             self._logger.debug(
                 f"{pending.display_label}: the category move clears the queue entry on its own - "
                 "skipping the explicit removal",

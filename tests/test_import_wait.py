@@ -3317,7 +3317,7 @@ class TestRetireCategoryResolve:
 
     def test_no_client_with_a_configured_category_still_runs_the_explicit_close(self) -> None:
         # qbit None resolves NO category at all: a configured untracking category
-        # must not make the close skip on move_untracks when no move can run.
+        # must not make the close skip on is_unwatched when no move can run.
         strategy = _RecordingStrategy()
         pending = pending_import(infohash="h")
         mgr = make_orchestration_manager(

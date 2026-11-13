@@ -132,7 +132,7 @@ class ArrCategoryResolver:
         names = (self.grab_category(), self.post_import_category() if with_post_import else None)
         return tuple(dict.fromkeys(name for name in names if name))
 
-    def move_untracks(self, category: str) -> bool:
+    def is_unwatched(self, category: str) -> bool:
         """Whether moving a torrent to `category` takes it out of the categories the arr watches.
 
         The fetched clients are authoritative (a blank category means the arr watches everything).
