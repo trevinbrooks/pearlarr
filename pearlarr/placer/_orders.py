@@ -1,4 +1,4 @@
-"""Pass 16 of the list in `_passes`: place the files the other passes left open by another TVDB order."""
+"""Pass 16 of the list in `_passes`: place by another TVDB order the files the other passes left for one."""
 
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
@@ -19,7 +19,8 @@ class _OrderFit:
     order_only: Mapping[TorrentFile, OrderOnlyKey]
     """File -> the order and the key of its number, which the order gives to an episode Sonarr doesn't list."""
     places_nothing: bool = False
-    """Whether a keyed fit places nothing, though it still counts among the explaining orders (`_place_season_episode_files`)."""
+    """Whether a fit for the season-episode files places nothing, though it still counts among the explaining orders
+    (`_place_season_episode_files`)."""
 
     def judges(self, file: TorrentFile) -> bool:
         """Whether the fit reads the file, onto episodes or onto a key Sonarr doesn't list."""
@@ -29,7 +30,7 @@ class _OrderFit:
 
 @dataclass(frozen=True, slots=True)
 class _SeasonEpisodeFile:
-    """One file that spells its own key, as the keyed half judges every order against it."""
+    """One season-episode file, as `_place_season_episode_files` judges every order against it."""
 
     file: TorrentFile
     keys: tuple[EpisodeKey, ...]
@@ -42,20 +43,20 @@ class _SeasonEpisodeFile:
 
 @dataclass(frozen=True, slots=True)
 class _SeasonEpisodeFiles:
-    """The torrent's keyed files, as the keyed half judges every order against them."""
+    """The torrent's season-episode files, as `_place_season_episode_files` judges every order against them."""
 
     files: tuple[_SeasonEpisodeFile, ...]
-    """Every file that spells its own key. Extras are left out, and so is a lower version of a number, which stays
-    as the passes left it."""
+    """Every file that spells out its season and episode. Extras are left out, and so is a lower version of a number,
+    which stays as the passes left it."""
     still_to_place: tuple[TorrentFile, ...]
-    """The keyed files to place that aren't settled and the passes left open, batch order."""
+    """The season-episode files to place that aren't yet placed and the passes left for another order, batch order."""
     outside_files: tuple[TorrentFile, ...]
-    """The keyed files not settled whose keys the aired order reads, any of them onto an episode away from home:
-    one the window doesn't hold and SeaDex doesn't list for the torrent (`_in_window_or_listing`)."""
+    """The season-episode files not yet placed whose keys the aired order reads, any of them onto an episode the
+    window doesn't hold and SeaDex doesn't list for the torrent (`_in_window_or_listing`)."""
 
     @classmethod
     def of(cls, state: PlacerState) -> Self:
-        """Read the keyed files off the state."""
+        """Read the season-episode files off the state."""
 
         keys: dict[TorrentFile, tuple[EpisodeKey, ...]] = {}
         for file in state.non_extras:
@@ -82,32 +83,33 @@ class _SeasonEpisodeFiles:
 
 
 def pass_other_orders(state: PlacerState) -> None:
-    """Place left-open keyed files where their own keys land in another TVDB order that explains the torrent.
+    """Place the files left for another order where their keys land in another TVDB order that explains the torrent.
 
-    It is the only pass that gives a judged file a new verdict, and it moves no file an earlier pass, a seed or an
-    earlier window placed.
+    It is the only pass that gives a judged file a new verdict, and it moves no file an earlier pass, the file map or
+    an earlier window placed.
 
-    The keyed files are the names that spell their own `SxxEyy`. Home is an episode the window holds or SeaDex
-    lists for the torrent. A stray is a keyed file not settled whose keys the aired order reads, any of them onto
-    an episode away from home. An order explains the torrent when:
+    The season-episode files are the names that spell out their `SxxEyy`. An outside file is a season-episode file
+    not yet placed whose keys the aired order reads, any of them onto an episode outside both the window and the
+    listing. An order explains the torrent when:
 
-    - it does one thing the aired order can't. Either it reads another way a keyed file the aired order can't read
-      (`_answers`): one a count or a title refused, one whose own title names another episode than its key, or one
-      whose key Sonarr's list lacks. Or it reads every stray onto episodes at home (`_brings_outside_files_in`),
-    - it reads the keyed files onto distinct episodes,
-    - no bracketed count or title in a keyed name contradicts it,
-    - it reads every refused special onto an episode SeaDex lists for the torrent (`_final_unplaced_special`),
-    - it numbers every keyed file already settled (placed by an earlier pass, seeded, or placed by an earlier
-      window),
-    - and it numbers every keyed file (the pack follows it whole), or a count or title confirms its reading of a
-      file this window's own passes left skipped, misnumbered, refuted or foreign, whether or not an earlier
-      window placed it ("S10E01 (0337)" where the order's S10E01 is episode 337).
+    - it does one thing the aired order can't. Either it reads another way a season-episode file the aired order
+      can't read (`_answers`): one a number or a title left for a hand import, one whose own title names another
+      episode than its key, or one whose key Sonarr's list lacks. Or it reads every outside file into the window or
+      the listing (`_brings_outside_files_in`),
+    - it reads the season-episode files onto distinct episodes,
+    - no bracketed number or title in a season-episode name contradicts it,
+    - it reads every special left for a hand import onto an episode SeaDex lists for the torrent
+      (`_final_unplaced_special`),
+    - it numbers every season-episode file already placed (by an earlier pass, the file map, or an earlier window),
+    - and it numbers every season-episode file (the torrent follows it whole), or a number or title confirms how it
+      reads a file this window's own passes left with no episode found, misnumbered, contradicted or outside the
+      window, whether or not an earlier window placed it ("S10E01 (0337)" where the order's S10E01 is episode 337).
 
-    So a pack the aired order reads whole onto episodes at home is never read another way, and an order that reads
-    the files as the aired order does explains nothing. `_place_season_episode_files` places the left-open files by the explaining
-    orders.
+    So a torrent the aired order reads whole into the window or the listing is never read another way, and an order
+    that reads the files as the aired order does explains nothing. `_place_season_episode_files` places the files
+    left for another order by the explaining orders.
 
-    Then the skipped bare-numbered runs: `_place_name_number_sequences`.
+    Then the name-number sequences with no episode found: `_place_name_number_sequences`.
     """
 
     if not state.index.orders:
@@ -117,31 +119,31 @@ def pass_other_orders(state: PlacerState) -> None:
 
 
 def _place_season_episode_files(state: PlacerState) -> None:
-    """Place the left-open keyed files by the orders that explain the torrent (`pass_other_orders`).
+    """Place season-episode files left for another order by the orders that explain the torrent (`pass_other_orders`).
 
-    A left-open file is placed where its keys land in the explaining orders (`OTHER_ORDER`), when the window holds
-    those episodes and no file has them yet. When two explaining orders read a left-open file onto different
-    episodes, only the orders whose readings of the left-open files SeaDex lists for the torrent are kept. A file
-    the kept orders don't judge alike stays as it was: they read it onto different episodes, or one reads it onto
-    an episode and another gives its key to an episode Sonarr doesn't list.
+    Such a file is placed where its keys land in the explaining orders (`OTHER_ORDER`), when the window holds those
+    episodes and no file has them yet. When two explaining orders read one of these files onto different episodes,
+    only the orders that read them onto episodes SeaDex lists for the torrent are kept. A file the kept orders don't
+    judge alike stays as it was: they read it onto different episodes, or one reads it onto an episode and another
+    gives its key to an episode Sonarr doesn't list.
 
-    Two kinds of explaining order are silent. One reads a settled file off the episodes it sits on, and no settled
-    file moves. The other reads a misnumbered file onto the episodes the earlier passes read it as, which doesn't
-    explain why its numbers were refused. A silent order places nothing and gives no file a new verdict, but it
-    still counts as an explaining order: a file it judges unlike another order stays as it was, and while it is
-    kept there is no one explaining order to name a key Sonarr doesn't list.
+    Two kinds of explaining order place nothing. One reads an already placed file off the episodes it sits on, and no
+    placed file moves. The other reads a misnumbered file onto the episodes the earlier passes read it as, which
+    doesn't explain why they left it misnumbered. Such an order gives no file a new verdict, but it still counts as
+    an explaining order: a file it judges unlike another order stays as it was, and while it is kept there is no one
+    explaining order to name a key Sonarr doesn't list.
 
     A file the order reads onto the episodes the earlier passes read it as (`ParsedEpisodes.ids`) is placed only
-    when a title refuted it. A title refutes its run's numbers, not the file's own, and an order that explains the
-    torrent accounts for the run, whichever file it explains the torrent by. Any other such file stays as the
-    passes left it: the order adds nothing to what kept them from placing it there, such as a size that names
-    another episode.
+    when a title contradicted it. A title contradicts its sequence's numbers, not the file's own, and an order that
+    explains the torrent accounts for the sequence, whichever file it explains the torrent by. Any other such file
+    stays as the passes left it: the order adds nothing to what kept them from placing it there, such as a size that
+    names another episode.
 
-    A misnumbered or refuted file read outside the window is claimed for the window that holds the episode
-    (`OTHER_ORDER_OUTSIDE_WINDOW`). A skipped or foreign one keeps its verdict, which already lets that window place it.
-    A skipped or foreign file whose key the one explaining order gives to an episode Sonarr doesn't list (a split
-    half, a merged pair) is `ORDER_ONLY`: left for a hand import, unless another window places it or proves it a
-    duplicate.
+    A misnumbered or contradicted file read outside the window gets `OTHER_ORDER_OUTSIDE_WINDOW`, a provisional
+    verdict for the window that holds the episode. A `NO_EPISODE_FOUND` or `OUTSIDE_WINDOW` one keeps its verdict,
+    which already lets that window place it. A `NO_EPISODE_FOUND` or `OUTSIDE_WINDOW` file whose key the one
+    explaining order gives to an episode Sonarr doesn't list (a split half, a merged pair) is `ORDER_ONLY`: left for
+    a hand import, unless another window places it or proves it a duplicate.
     """
 
     files = _SeasonEpisodeFiles.of(state)
@@ -158,7 +160,7 @@ def _place_season_episode_files(state: PlacerState) -> None:
     # Only the one explaining order names a key Sonarr doesn't list, and only when it reads a file onto an episode.
     sole = fits[0] if len(fits) == 1 and placing_fits and fits[0].episodes_by_file else None
     for file in files.still_to_place:
-        # Only a file a count or a title refused is claimed for another window.
+        # Only a file a number or a title left for a hand import gets a provisional verdict for another window.
         final_unplaced_by_name = _final_unplaced_by_name(file)
         judged = {fit.episodes_by_file.get(file) for fit in fits if fit.judges(file)}
         if len(judged) != 1:
@@ -181,7 +183,7 @@ def _place_season_episode_files(state: PlacerState) -> None:
 def _repeats_misnumbered(
     episodes_by_file: Mapping[TorrentFile, tuple[int, ...]], still_to_place: Sequence[TorrentFile]
 ) -> bool:
-    """Whether an order's readings put a misnumbered file on the episodes the earlier passes read it as."""
+    """Whether an order puts a misnumbered file on the episodes the earlier passes read it as."""
 
     return any(
         file.verdict is PlacementVerdict.MISNUMBERED and episodes_by_file.get(file) == file.parsed_episodes.ids
@@ -190,7 +192,7 @@ def _repeats_misnumbered(
 
 
 def _fits_disagree(fits: Sequence[_OrderFit], still_to_place: Sequence[TorrentFile]) -> bool:
-    """Whether two fits read some left-open file onto different episodes."""
+    """Whether two fits read some file left for another order onto different episodes."""
 
     return any(
         len({fit.episodes_by_file[file] for fit in fits if file in fit.episodes_by_file}) > 1 for file in still_to_place
@@ -198,19 +200,19 @@ def _fits_disagree(fits: Sequence[_OrderFit], still_to_place: Sequence[TorrentFi
 
 
 def _other_order_may_place(file: TorrentFile) -> bool:
-    """Whether the passes left the file open for another order (`PlacementVerdict.left_open`)."""
+    """Whether the passes left the file for another order (`PlacementVerdict.other_order_may_place`)."""
 
     return (verdict := file.verdict) is not None and verdict.other_order_may_place
 
 
 def _final_unplaced_by_name(file: TorrentFile) -> bool:
-    """Whether a count or a title in the names refused the file: left open, and for a hand import."""
+    """Whether a number or a title in the names left the file for another order, and for a hand import."""
 
     return (verdict := file.verdict) is not None and verdict.other_order_may_place and verdict.left_for_hand_import
 
 
 def _final_ids(state: PlacerState, file: TorrentFile) -> tuple[int, ...] | None:
-    """The episodes the file sits on, else None: an earlier window's, else this call's, else the stored map's."""
+    """The episodes the file sits on, else None: an earlier window's, else this call's, else the file map's."""
 
     if (earlier := state.target.earlier.get(file.name)) is not None:
         return earlier
@@ -221,7 +223,10 @@ def _final_ids(state: PlacerState, file: TorrentFile) -> tuple[int, ...] | None:
 
 
 def _season_episode_fit(state: PlacerState, files: _SeasonEpisodeFiles, name: str) -> _OrderFit | None:
-    """How the order `name` reads the keyed files when it explains the torrent (see `pass_other_orders`), else None."""
+    """How the order `name` reads the season-episode files when it explains the torrent, else None.
+
+    See `pass_other_orders`.
+    """
 
     order = state.index.orders[name]
     listed = state.target.seadex.ids
@@ -267,10 +272,10 @@ def _season_episode_fit(state: PlacerState, files: _SeasonEpisodeFiles, name: st
 
 
 def _final_unplaced_special(keyed: _SeasonEpisodeFile) -> bool:
-    """Whether a count or a title refused the file and its keys are specials'.
+    """Whether a number or a title left the file for a hand import and its keys are specials'.
 
-    A special's number is refused for missing the listing, so an order has to put it on the listing to explain
-    it. A season's number is refused for running past the season's end, which an order explains by counting a
+    A special's number is rejected for missing the listing, so an order has to put it on the listing to explain
+    it. A season's number is rejected for running past the season's end, which an order explains by counting a
     special in, whether or not SeaDex lists that special.
     """
 
@@ -278,12 +283,12 @@ def _final_unplaced_special(keyed: _SeasonEpisodeFile) -> bool:
 
 
 def _answers(keyed: _SeasonEpisodeFile, ids: tuple[int, ...] | None) -> bool:
-    """Whether an order's reading answers a keyed file the aired order can't read.
+    """Whether an order answers a season-episode file the aired order can't read.
 
-    `ids` is the order's reading, None when the order gives the file's key to an episode Sonarr doesn't list. The
-    aired order can't read the file when Sonarr's list lacks a key of it, its name refused it, or its title names an
-    episode its key doesn't. A reading onto the aired order's own episodes answers nothing, and an episode Sonarr
-    doesn't list answers only a file whose key the aired list lacks.
+    `ids` is how the order reads it, None when the order gives the file's key to an episode Sonarr doesn't list. The
+    aired order can't read the file when Sonarr's list lacks a key of it, its name left it for a hand import, or its
+    title names an episode its key doesn't. Reading it onto the aired order's own episodes answers nothing, and an
+    episode Sonarr doesn't list answers only a file whose key the aired list lacks.
     """
 
     aired = keyed.aired_ids
@@ -297,12 +302,12 @@ def _answers(keyed: _SeasonEpisodeFile, ids: tuple[int, ...] | None) -> bool:
 def _brings_outside_files_in(
     state: PlacerState, files: _SeasonEpisodeFiles, episodes_by_file: Mapping[TorrentFile, tuple[int, ...]]
 ) -> bool:
-    """Whether the torrent has stray keyed files and the order reads every one onto episodes at home (`_in_window_or_listing`).
+    """Whether the torrent has outside files and the order reads every one into the window or the listing.
 
-    A stray (`_SeasonEpisodeFiles.outside_files`) is a file nothing placed, whose key the aired order reads onto an episode that
-    the window doesn't hold and SeaDex doesn't list for the torrent. An order explains none of them when it reads
-    one onto another such episode, gives its key to an episode Sonarr doesn't list, or has no key for it: the
-    torrent still holds a file its listing doesn't account for.
+    An outside file (`_SeasonEpisodeFiles.outside_files`) is a file nothing placed, whose key the aired order reads
+    onto an episode that the window doesn't hold and SeaDex doesn't list for the torrent (`_in_window_or_listing`).
+    An order explains none of them when it reads one onto another such episode, gives its key to an episode Sonarr
+    doesn't list, or has no key for it: the torrent still holds a file its listing doesn't account for.
     """
 
     outside_files = files.outside_files
@@ -327,28 +332,28 @@ def _in_window_or_listing(state: PlacerState, ids: Sequence[int]) -> bool:
 
 
 def _bracketed_number_episodes(state: PlacerState, file: TorrentFile) -> list[int]:
-    """The episodes the name's bracketed counts name as absolute numbers ("(0337)": episode 337)."""
+    """The episodes the name's bracketed numbers name as absolute numbers ("(0337)": episode 337)."""
 
     by_absolute = state.index.id_by_absolute
     return [ep_id for count in file.name_parts.bracketed_numbers if (ep_id := by_absolute.get(count))]
 
 
 def _place_name_number_sequences(state: PlacerState) -> None:
-    """Place the one skipped bare-numbered run an AniList title names, by an order season that holds the window.
+    """Place the one name-number sequence with no episode found that an AniList name of the title points at.
 
-    A bare run is the files sharing a prefix before a release number, none spelling a key ("Show S1 - 03"). Only a
-    run with more members than the window has episodes is read, since no aired count explains one. The one season
-    of an order that holds every window episode reads member n as its nth episode. The order explains the run
-    when:
+    A name-number sequence is the files sharing a prefix before a name number, none spelling out a season and episode
+    ("Show S1 - 03"). Only a sequence with more members than the window has episodes is read, since no aired count
+    explains one. The one season of an order that holds every window episode reads member n as its nth episode. The
+    order explains the sequence when:
 
-    - it reads every member, none outside the window or past the season's end: a settled one onto the episodes it
-      holds, and each one still to place, which must be skipped, onto a distinct unused window episode or a key
-      Sonarr doesn't list,
+    - it reads every member, none outside the window or past the season's end: an already placed one onto the
+      episodes it is on, and each one still to place, which must have no episode found, onto a distinct unused
+      window episode or a key Sonarr doesn't list,
     - its numbering of the window differs from the aired one,
     - and no member's title contradicts it.
 
     A member every explaining order reads alike is placed `OTHER_ORDER`, or is `ORDER_ONLY` when they all read it
-    as a key Sonarr doesn't list. Read apart, it stays skipped, and so does one an earlier window placed.
+    as a key Sonarr doesn't list. Read apart, it stays `NO_EPISODE_FOUND`, and so does one an earlier window placed.
     """
 
     sequences = state.sequences_among(file for file in state.non_extras if not file.name_parts.spells_season_episode)
@@ -377,13 +382,16 @@ def _place_name_number_sequences(state: PlacerState) -> None:
 
 
 def _no_episode_found(file: TorrentFile) -> bool:
-    """Whether the passes left the file skipped."""
+    """Whether the passes left the file `NO_EPISODE_FOUND`."""
 
     return file.verdict is PlacementVerdict.NO_EPISODE_FOUND
 
 
 def _name_number_fit(state: PlacerState, name: str, sequence: NumberedSequence) -> _OrderFit | None:
-    """How the order `name` reads the run's skipped members when it explains the run (`_place_name_number_sequences`), else None."""
+    """How the order `name` reads the sequence's unplaced members when it explains the sequence, else None.
+
+    See `_place_name_number_sequences`.
+    """
 
     order = state.index.orders[name]
     window = state.target.real_ids

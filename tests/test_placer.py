@@ -1,5 +1,5 @@
 # pyright: strict
-"""The placer's passes through `place_batch`, over synthetic parses and series maps.
+"""The placer's passes through `place_batch`, over synthetic parses and episode indexes.
 
 The grab-time path through `place_release` is pinned by `test_grab_placement` and `test_pending_import_updates`.
 """
@@ -42,20 +42,20 @@ from .builders import (
 )
 
 _GONE = "gone.mkv"
-"""A name outside the batch: parsed blind it keeps the numberless zip out, unparsed (None) it holds the batch."""
+"""A name outside the batch: parsed blind it keeps pairing in name order out, unread (None) it makes the batch wait."""
 
 
 def _pair_in_order_blocked(parsed: Mapping[str, ParsedFileInfo | None]) -> dict[str, ParsedFileInfo | None]:
-    """The parses plus a blind name outside the batch, so the numberless zip never places what a pass refused."""
+    """The parses plus a blind name outside the batch, so pairing in name order never places what a pass would not."""
 
     return {**parsed, _GONE: parsed_info()}
 
 
 class TestBorrowedPairPlacement:
-    """The reading limits every pass shares: borrow cap, all-or-nothing resolution, duplicate collapse.
+    """The parsed-episode limits every pass shares: the matched span cap, all-or-nothing resolution, duplicate collapse.
 
-    Sonarr's series-matched pairs are borrowed only by a name carrying no
-    numbers of its own, and only inside the record's set.
+    Sonarr's matched episodes are taken only by a name carrying no
+    numbers of its own, and only inside the window.
     """
 
     _TARGET: ClassVar[PlacementTarget] = PlacementTarget(
@@ -68,19 +68,21 @@ class TestBorrowedPairPlacement:
         assert by_name(place(parsed, self._TARGET)) == {"span.mkv": ((11, 12), PlacementVerdict.EXACT)}
 
     def test_a_pair_resolving_nowhere_in_the_series_is_skipped(self) -> None:
-        # The series map knows nothing of it, so it is possibly ours, never proved another slice's.
+        # The episode index knows nothing of it, so it is possibly the window's, never proved outside it.
         parsed = {"span.mkv": parsed_info(matched=((9, 9),))}
 
         assert by_name(place(parsed, self._TARGET)) == {"span.mkv": ((), PlacementVerdict.NO_EPISODE_FOUND)}
 
     def test_a_partially_resolving_span_refuses_the_whole_file(self) -> None:
-        # One pair in the map, one out: placing the resolved half would half-import a multi-episode file.
+        # One season and episode in the index, one not: placing the resolved half would half-import a multi-episode
+        # file.
         parsed = {"span.mkv": parsed_info(matched=((1, 1), (9, 9)))}
 
         assert by_name(place(parsed, self._TARGET)) == {"span.mkv": ((), PlacementVerdict.NO_EPISODE_FOUND)}
 
     def test_a_full_season_match_never_borrows(self) -> None:
-        # A bare "S01" extra matches the WHOLE season: none of its pairs place, alone or beside the episodes.
+        # A "S01" extra with no episode matches the WHOLE season: none of its matched episodes place, alone or beside
+        # the episodes.
         full_season = parsed_info(matched=((1, 1), (1, 2)), full_season=True)
         beside = {
             "extras.mkv": full_season,
@@ -99,34 +101,35 @@ class TestBorrowedPairPlacement:
         }
 
     def test_a_full_season_name_key_is_refused_too(self) -> None:
-        # The flag vetoes the name's own key too, not just the borrow.
+        # The flag rejects the name's season and episode too, not just the matched episodes.
         parsed = {"pack.mkv": parsed_info(season=1, episodes=(1,), full_season=True)}
 
         assert by_name(place(parsed, self._TARGET)) == {"pack.mkv": ((), PlacementVerdict.NO_EPISODE_FOUND)}
 
     def test_a_wide_span_the_name_claims_itself_places_whole(self) -> None:
-        # The cap is a BORROW limit. An explicit "E01-E04" range resolving every key inside the
-        # set is a complete reading of the name's own claim, so width never refuses it.
+        # The cap is a FROM-MATCHED limit. A spelled-out "E01-E04" range resolving every season and episode inside the
+        # window is a complete parse of what the name spells out, so width never rejects it.
         target = PlacementTarget([11, 12, 13, 14], series_index({EpisodeKey(1, e): 10 + e for e in range(1, 5)}))
         parsed = {"span.mkv": parsed_info(season=1, episodes=(1, 2, 3, 4))}
 
         assert by_name(place(parsed, target)) == {"span.mkv": ((11, 12, 13, 14), PlacementVerdict.EXACT)}
 
     def test_a_borrowed_span_just_over_the_cap_is_refused(self) -> None:
-        # Four distinct pairs a NO_NUMBERS name only borrowed is the season-pack shape sans flag.
+        # Four distinct matched episodes a name with no numbers only took from the match is the season-pack shape sans
+        # flag.
         target = PlacementTarget([11, 12, 13, 14], series_index({EpisodeKey(1, e): 10 + e for e in range(1, 5)}))
         parsed = {"pack.mkv": parsed_info(matched=tuple((1, e) for e in range(1, 5)))}
 
         assert by_name(place(parsed, target)) == {"pack.mkv": ((), PlacementVerdict.NO_EPISODE_FOUND)}
 
     def test_a_triple_span_still_places(self) -> None:
-        # The cap boundary: three episodes is still one file's claim.
+        # The cap boundary: three episodes is still one file's span.
         parsed = {"triple.mkv": parsed_info(matched=((1, 1), (1, 2), (1, 3)))}
 
         assert by_name(place(parsed, self._TARGET)) == {"triple.mkv": ((11, 12, 13), PlacementVerdict.EXACT)}
 
     def test_duplicate_pairs_collapse_to_one_claim(self) -> None:
-        # Junk wire repeats are one claim, so the file places rather than reading as a wide span.
+        # Junk wire repeats are one season and episode, so the file places rather than reading as a wide span.
         parsed = {"one.mkv": parsed_info(matched=((1, 1), (1, 1)))}
         one_key = PlacementTarget([11, 12], series_index({EpisodeKey(1, 1): 11}))
 
@@ -135,10 +138,10 @@ class TestBorrowedPairPlacement:
 
 
 class TestForeignClassification:
-    """`FOREIGN` needs a COMPLETE reading landing entirely outside the record's set.
+    """`OUTSIDE_WINDOW` needs COMPLETE parsed episodes landing entirely outside the window.
 
-    Anything less (a partial span, a veto, no reading at all) is possibly ours
-    and stays `SKIPPED`, so the count legs may still place it.
+    Anything less (a partial span, a rejection, no parsed episodes at all) is possibly the window's
+    and stays `NO_EPISODE_FOUND`, so the pairing passes may still place it.
     """
 
     _ID_BY_KEY: ClassVar[dict[EpisodeKey, int]] = {
@@ -148,7 +151,7 @@ class TestForeignClassification:
     }
 
     def test_a_clean_reading_fully_outside_is_another_slice(self) -> None:
-        # In the window's season or another: the over-grab guard, identity must land INSIDE the set.
+        # In the window's season or another: the over-grab guard, identity must land INSIDE the window.
         same_season = {"other.mkv": parsed_info(season=3, episodes=(13,))}
         other_season = {"x.mkv": parsed_info(season=1, episodes=(1,))}
         specials = PlacementTarget([8030], series_index({EpisodeKey(0, 1): 8030, EpisodeKey(1, 1): 8033}))
@@ -166,8 +169,8 @@ class TestForeignClassification:
         }
 
     def test_a_partially_resolving_span_stays_possibly_ours(self) -> None:
-        # A double-episode with one key off the map may be partly ours, and is not provably bogus either:
-        # the single-file arm refuses it whether or not the window's one id is on the map.
+        # A double-episode with one season and episode off the index may be partly the window's, and is not provably
+        # bogus either: the single-file pass doesn't place it whether or not the window's one id is in the index.
         parsed = {"d.mkv": parsed_info(season=3, episodes=(12, 99))}
         off_map = {"d.mkv": parsed_info(season=1, episodes=(5, 99))}
 
@@ -179,8 +182,8 @@ class TestForeignClassification:
         }
 
     def test_a_vetoed_full_season_reading_is_still_ours(self) -> None:
-        # Sonarr reads a bare "S0X" as the whole season: a missing episode token, not several episodes,
-        # so the one leftover id takes the file, whether or not the season is on the map.
+        # Sonarr reads "S0X" alone as the whole season: no episode token, not several episodes,
+        # so the one unused id takes the file, whether or not the season is in the index.
         unmapped = {"pack.mkv": parsed_info(season=2, episodes=(1,), full_season=True)}
         mapped = {"show S2 - OVA.mkv": parsed_info(season=2, full_season=True)}
 
@@ -199,7 +202,7 @@ class TestForeignClassification:
         }
 
     def test_no_reading_at_all_stays_possibly_ours(self) -> None:
-        # Two leftover ids keep the degenerate single-file arm out, so the classification is what is pinned.
+        # Two unused ids keep the degenerate single-file pass out, so the classification is what is pinned.
         parsed = {"blank.mkv": parsed_info()}
 
         assert by_name(place(parsed, PlacementTarget([101, 112], series_index(self._ID_BY_KEY)))) == {
@@ -207,7 +210,7 @@ class TestForeignClassification:
         }
 
     def test_an_empty_series_map_refuses_the_verdict(self) -> None:
-        # Every key misses an unserved map, so nothing may be called another slice's.
+        # No season and episode resolves in an unserved index, so nothing may be called outside the window.
         parsed = {"other.mkv": parsed_info(season=3, episodes=(13,))}
 
         assert by_name(place(parsed, PlacementTarget([101, 112], series_index({})))) == {
@@ -244,14 +247,14 @@ def _target(
     series: str = "Show",
     titles: Mapping[int, str] | None = None,
 ) -> PlacementTarget:
-    """A scope over the shared series map, retitled wholesale when `titles` is given."""
+    """A target over the shared episode index, retitled wholesale when `titles` is given."""
 
     index = _SERIES if titles is None else series_index(_ID_BY_KEY, titles=titles)
     return PlacementTarget(list(resolved), index, used=frozenset(used), title_names=TitleNames(series))
 
 
 class TestAssignEpisodeTitle:
-    """The titled pass: a name whose title is one episode of the scope goes there, whatever its number said."""
+    """The episode-title pass: a name whose title is one episode of the window goes there, whatever its number said."""
 
     def test_a_shifted_match_yields_to_the_title(self) -> None:
         # Sonarr's absolute match landed one episode early. The title is the third episode's.
@@ -272,7 +275,7 @@ class TestAssignEpisodeTitle:
         assert placed == {name: ((603,), PlacementVerdict.EPISODE_TITLE)}
 
     def test_a_key_the_series_never_had_yields_to_the_title(self) -> None:
-        # A CRC tag read as an episode key resolves nowhere. The title still names the episode.
+        # A CRC tag read as a season and episode resolves nowhere. The title still names the episode.
         name = "show - the return [E8F03223].mkv"
 
         placed = by_name(place({name: parsed_info(episodes=(8,))}, _target(_FIRST_THREE)))
@@ -383,7 +386,7 @@ class TestAssignEpisodeTitle:
     def test_a_file_titled_as_another_slices_episode_is_foreign_only_once_nothing_is_left_for_it(
         self, used: Sequence[int], verdict: PlacementVerdict
     ) -> None:
-        # The title alone never excludes a file the entry may still need.
+        # The episode title alone never excludes a file the title may still need.
         name = "show - pilot flight [grp].mkv"
 
         placed = by_name(place({name: parsed_info()}, _target([501], used=used)))
@@ -391,7 +394,8 @@ class TestAssignEpisodeTitle:
         assert placed == {name: ((), verdict)}
 
     def test_a_title_and_a_reading_both_outside_agree_the_file_is_another_slices(self) -> None:
-        # Sonarr read it outside the scope too, onto a different episode than the title: neither says it is ours.
+        # Sonarr read it outside the window too, onto a different episode than the title: neither says it is the
+        # window's.
         name = "show - pilot flight [grp].mkv"
 
         placed = by_name(place({name: parsed_info(matched=((2, 1),))}, _target([501])))
@@ -399,7 +403,7 @@ class TestAssignEpisodeTitle:
         assert placed == {name: ((), PlacementVerdict.OUTSIDE_WINDOW)}
 
     def test_a_file_titled_outside_stays_skipped_while_its_episode_is_open(self) -> None:
-        # Sonarr read it onto the open special, and its title is another slice's episode.
+        # Sonarr read it onto the unused special, and its title is that of an episode outside the window.
         name = "show - pilot flight [grp].mkv"
 
         placed = by_name(place({name: parsed_info(matched=((0, 1),))}, _target([501])))
@@ -419,9 +423,9 @@ class TestAssignEpisodeTitle:
         assert placed == {plain: ((501,), PlacementVerdict.EXACT), titled: ((), PlacementVerdict.OUTSIDE_WINDOW)}
 
     def test_a_lone_title_whose_episode_a_keyed_neighbour_reads_is_held(self) -> None:
-        # The file's title is the next episode's, which its neighbour holds by key: the group numbered the run
-        # one off, or the title is wrong, and one title cannot say which. Both stay loud, the neighbour as a
-        # member of the run its title refuted.
+        # The file's title is the next episode's, which its neighbour reads by season and episode: the group numbered
+        # the sequence one off, or the title is wrong, and one title cannot say which. Both stay loud, the neighbour
+        # as a member of the sequence its title contradicted.
         titled, neighbour = "show - 02 - Festival Night [grp].mkv", "show - 03 [grp].mkv"
         parsed: dict[str, ParsedFileInfo | None] = {
             titled: parsed_info(season=1, episodes=(2,)),
@@ -447,7 +451,7 @@ class TestAssignEpisodeTitle:
         assert placed == {v1: ((), PlacementVerdict.DUPLICATE), v2: ((602,), PlacementVerdict.EPISODE_TITLE)}
 
     def test_a_seeded_versions_title_proves_the_leftover_its_duplicate(self) -> None:
-        # The v2 was seeded on the title's episode. The v1 left over is titled as the same episode.
+        # The v2 is in the file map on the title's episode. The v1 left unplaced carries the same episode's title.
         v1, v2 = "show - 02 - The Return [grp].mkv", "show - 02v2 - The Return [grp].mkv"
         parsed: dict[str, ParsedFileInfo | None] = dict.fromkeys(
             (v1, v2), parsed_info(absolutes=(2,), matched=((1, 3),))
@@ -458,7 +462,7 @@ class TestAssignEpisodeTitle:
         assert placed == {v1: ((), PlacementVerdict.DUPLICATE)}
 
     def test_a_count_a_title_word_follows_yields_to_the_title(self) -> None:
-        # No dash between the count and the title, and Sonarr's absolute match landed one early.
+        # No dash between the name number and the title, and Sonarr's absolute match landed one early.
         name = "show - 03 Festival Night [grp].mkv"
 
         placed = by_name(place({name: parsed_info(absolutes=(3,), matched=((1, 2),))}, _target(_FIRST_THREE)))
@@ -466,7 +470,7 @@ class TestAssignEpisodeTitle:
         assert placed == {name: ((603,), PlacementVerdict.EPISODE_TITLE)}
 
     def test_a_whole_name_that_is_a_title_with_a_number_names_the_episode(self) -> None:
-        # "17 Times 2" counts 2 by its shape; whole, it is the third episode's title.
+        # "17 Times 2" has the name number 2 by its shape. Whole, it is the third episode's title.
         name = "show - 17 Times 2 [grp].mkv"
 
         placed = by_name(place({name: parsed_info()}, _target(_FIRST_THREE, titles={603: "17 Times 2"})))
@@ -485,15 +489,16 @@ class TestAssignEpisodeTitle:
         ],
     )
     def test_a_title_of_numbers_read_whole_names_the_episode(self, series: str, name: str, title: str) -> None:
-        # The count is one of the title's numbers. A season tag, or the series title's own number, is no part of it.
-        # "2 - 1 =" spells S02E01, a key the name doesn't carry: its count isn't zero-padded.
+        # The name number is one of the title's numbers. A season tag, or the series name's own number, is no part
+        # of it. "2 - 1 =" spells S02E01, a season and episode the name doesn't carry: its name number isn't
+        # zero-padded.
         placed = by_name(place({name: parsed_info()}, _target(_FIRST_THREE, series=series, titles={603: title})))
 
         assert placed == {name: ((603,), PlacementVerdict.EPISODE_TITLE)}
 
     @pytest.mark.parametrize("tag", ["S1", "Season 1", "1st Season", "1", "I"])
     def test_a_names_season_tag_and_count_spell_no_title(self, tag: str) -> None:
-        # The third episode is titled "1.2", which the season and the count spell.
+        # The third episode is titled "1.2", which the season and the name number spell.
         name = f"show {tag} - 02 [grp].mkv"
         parsed = {name: parsed_info(absolutes=(2,), matched=((1, 2),))}
 
@@ -517,7 +522,7 @@ class TestAssignEpisodeTitle:
     )
     def test_a_season_and_padded_count_spell_no_title_without_sonarrs_key(self, name: str) -> None:
         # The third episode is titled "1.2". Sonarr reads absolute 2 but matches no episode, and the season and the
-        # zero-padded count still spell no title, however the name sets them apart.
+        # zero-padded name number still spell no title, however the name sets them apart.
         placed = by_name(
             place({name: parsed_info(absolutes=(2,))}, _target(_FIRST_THREE, titles={**_TITLES, 603: "1.2"}))
         )
@@ -536,7 +541,7 @@ class TestAssignEpisodeTitle:
         }
 
     def test_a_bare_season_and_unpadded_count_spell_no_title(self) -> None:
-        # Sonarr reads nothing here, but a number right behind a word and just before the count is the season.
+        # Sonarr reads nothing here, but a number right behind a word and just before the name number is the season.
         name = "show 1 - 2 [grp].mkv"
 
         placed = by_name(place({name: parsed_info()}, _target(_FIRST_THREE, titles={**_TITLES, 603: "1.2"})))
@@ -552,15 +557,15 @@ class TestAssignEpisodeTitle:
         ],
     )
     def test_a_title_of_numbers_spelling_sonarrs_key_is_no_title(self, name: str, parsed: ParsedFileInfo) -> None:
-        # Sonarr reads S01E02, the key the third episode's title "1.2" spells, from absolute 2 or from the name's
-        # unpadded pair, which by itself writes no key.
+        # Sonarr reads S01E02, the season and episode the third episode's title "1.2" spells, from absolute 2 or from
+        # the name's unpadded pair, which by itself spells out no season and episode.
         placed = by_name(place({name: parsed}, _target(_FIRST_THREE, titles={**_TITLES, 603: "1.2"})))
 
         assert placed == {name: ((602,), PlacementVerdict.EXACT)}
 
     @pytest.mark.parametrize("window", [[*_FIRST_THREE, 604, 701, 702, 703], [701, 702, 703]])
     def test_a_title_spelling_its_own_episodes_key_names_it(self, window: list[int]) -> None:
-        # S02E03 is titled "2.3", the name's bare season and count. Sonarr reads absolute 3, S01E03.
+        # S02E03 is titled "2.3", the name's plain season and name number. Sonarr reads absolute 3, S01E03.
         name = "show 2 - 03 [grp].mkv"
         parsed = {name: parsed_info(absolutes=(3,), matched=((1, 3),))}
 
@@ -569,7 +574,7 @@ class TestAssignEpisodeTitle:
         assert placed == {name: ((703,), PlacementVerdict.EPISODE_TITLE)}
 
     def test_a_name_titled_both_ways_as_different_episodes_names_neither(self) -> None:
-        # Count then title, or a title opening with a number.
+        # Name number then title, or a title opening with a number.
         name = "show - 02 Lost Girls [grp].mkv"
         titles = {602: "Lost Girls", 603: "02 Lost Girls"}
 
@@ -579,7 +584,7 @@ class TestAssignEpisodeTitle:
 
 
 class TestRefuseCountedByTitle:
-    """A count a title word follows is the title's number unless a title confirms it or an episode carries it."""
+    """A name number a title word follows is the title's number unless a title confirms it or an episode carries it."""
 
     @pytest.mark.parametrize(
         "name",
@@ -621,7 +626,7 @@ class TestRefuseCountedByTitle:
         assert placed == {name: ((), PlacementVerdict.MISNUMBERED)}
 
     def test_a_leftover_counted_by_its_title_is_not_zipped_onto_the_last_episode(self) -> None:
-        # Two files are matched; the third's 100 counts nothing of the series, and its words name no episode.
+        # Two files are matched. The third's 100 numbers nothing in the series, and its words name no episode.
         parsed = {
             "show - 01 [grp].mkv": parsed_info(absolutes=(1,), matched=((1, 1),)),
             "show - 02 [grp].mkv": parsed_info(absolutes=(2,), matched=((1, 2),)),
@@ -637,7 +642,7 @@ class TestRefuseCountedByTitle:
         }
 
     def test_an_unmatched_pack_titled_its_own_way_still_zips(self) -> None:
-        # Sonarr matched nothing, and every count is an episode of the series.
+        # Sonarr matched nothing, and every name number is an episode of the series.
         names = [
             "show - 01 First Flight [grp].mkv",
             "show - 02 Coming Back [grp].mkv",
@@ -651,7 +656,7 @@ class TestRefuseCountedByTitle:
 
 
 class TestAssignRefutedRun:
-    """A run a member's title refutes: its count was wrong about every member's reading in the scope."""
+    """A sequence a member's title contradicts: its numbering was wrong about every member's parse in the window."""
 
     _RUN: ClassVar[list[str]] = numbered_names("show", 4, ("The Return", "Festival Night", "", ""))
     _PARSED: ClassVar[dict[str, ParsedFileInfo | None]] = {
@@ -660,7 +665,7 @@ class TestAssignRefutedRun:
 
     def test_the_titled_members_place_and_the_rest_stay_loud(self) -> None:
         # Sonarr matched each file one episode early. The two titled files place by title, the untitled one
-        # inside the scope is refuted (its match is as wrong), and the one read past the scope is the other slice's.
+        # inside the window is contradicted (its match is as wrong), and the one read past the window is outside it.
         placed = by_name(place(self._PARSED, _target(_FIRST_THREE)))
 
         assert placed == {
@@ -671,7 +676,7 @@ class TestAssignRefutedRun:
         }
 
     def test_a_run_keyed_by_the_group_is_refuted_like_a_matched_one(self) -> None:
-        # The group's own keys are one off, as its titles show: the untitled member's key is as wrong.
+        # The group's seasons and episodes are one off, as its titles show: the untitled member's is as wrong.
         run = numbered_names("show", 3, ("The Return", "Festival Night", ""))
         parsed: dict[str, ParsedFileInfo | None] = {
             name: parsed_info(season=1, episodes=(n,), matched=((1, n),)) for n, name in enumerate(run, start=1)
@@ -686,7 +691,7 @@ class TestAssignRefutedRun:
         }
 
     def test_a_member_its_own_title_confirms_keeps_its_key(self) -> None:
-        # The numbering strays from the second file on: the first, titled as its own episode, stays placed.
+        # The numbering strays from the second file on: the first, carrying its own episode's title, stays placed.
         run = numbered_names("show", 3, ("Pilot Flight", "Festival Night", "Final Bell"))
         parsed: dict[str, ParsedFileInfo | None] = {
             name: parsed_info(season=1, episodes=(n,), matched=((1, n),)) for n, name in enumerate(run, start=1)
@@ -701,8 +706,8 @@ class TestAssignRefutedRun:
         }
 
     def test_an_import_poll_judges_the_leftover_as_the_grab_did(self) -> None:
-        # The titled files were seeded. The poll places only the leftover, over the whole torrent's evidence,
-        # so the untitled file's shifted match still never lands on the seed's empty episode.
+        # The titled files are in the file map. The poll places only the unplaced files, over the whole torrent's
+        # evidence, so the untitled file's shifted match still never lands on the file map's empty episode.
         file_map = {self._RUN[0]: (602,), self._RUN[1]: (603,)}
 
         placed = by_name(place(self._PARSED, _target(_FIRST_THREE), file_map=file_map))
@@ -714,7 +719,7 @@ class TestAssignRefutedRun:
 
 
 class TestAssignRefutedZips:
-    """A zip a title contradicts places nothing by count: the pair it refutes says the count is off."""
+    """A pairing in order a title contradicts places nothing: the pair it contradicts says the numbering is off."""
 
     def test_a_release_run_a_title_contradicts_places_only_the_titled_file(self) -> None:
         run = numbered_names("show", 3, ("The Return", "", ""))
@@ -729,7 +734,7 @@ class TestAssignRefutedZips:
 
     @pytest.mark.parametrize("absolutes", [True, False], ids=["absolute zip", "ordered zip"])
     def test_a_zip_a_title_contradicts_places_nothing(self, absolutes: bool) -> None:
-        # The files zip 1:1 by count, but the first is titled as the next season's episode.
+        # The files pair 1:1 in order, but the first carries the title of the next season's episode.
         names = ("show new dawn.mkv", "show b.mkv", "show c.mkv")
         parsed: dict[str, ParsedFileInfo | None] = {
             name: parsed_info(absolutes=(n,)) if absolutes else parsed_info() for n, name in enumerate(names, 1)
@@ -741,7 +746,7 @@ class TestAssignRefutedZips:
 
 
 class TestAssignOverlappingClaims:
-    """Two open files reading one episode differently: a span among them is refused, a same-span pair is not."""
+    """Two unplaced files reading one episode differently: a span among them is rejected, a same-span pair is not."""
 
     def test_a_span_holding_an_episode_another_file_reads_alone_is_refused(self) -> None:
         span, single = "show S01E01-E02 [grp].mkv", "show S01E02 [grp].mkv"
@@ -755,7 +760,7 @@ class TestAssignOverlappingClaims:
         assert placed == {span: ((), PlacementVerdict.NO_EPISODE_FOUND), single: ((602,), PlacementVerdict.EXACT)}
 
     def test_an_import_poll_refuses_the_span_the_grab_did(self) -> None:
-        # The single was seeded. The span still holds an episode it read differently, and one nothing has.
+        # The single is in the file map. The span still holds an episode it read differently, and one nothing has.
         span, single = "show S01E01-E02 [grp].mkv", "show S01E02 [grp].mkv"
         parsed: dict[str, ParsedFileInfo | None] = {
             span: parsed_info(season=1, episodes=(1, 2)),
@@ -767,7 +772,7 @@ class TestAssignOverlappingClaims:
         assert placed == {span: ((), PlacementVerdict.NO_EPISODE_FOUND)}
 
     def test_a_vetoed_wide_match_holds_no_episode(self) -> None:
-        # A recap Sonarr matched to four episodes is past the borrow cap: its claims dispute nothing.
+        # A recap Sonarr matched to four episodes is past the matched span cap: its parsed episodes contest nothing.
         span, recap = "show S01E01-E02 [grp].mkv", "show recap [grp].mkv"
         parsed: dict[str, ParsedFileInfo | None] = {
             span: parsed_info(season=1, episodes=(1, 2)),
@@ -779,7 +784,8 @@ class TestAssignOverlappingClaims:
         assert placed == {span: ((601, 602), PlacementVerdict.EXACT), recap: ((), PlacementVerdict.NO_EPISODE_FOUND)}
 
     def test_a_span_only_partly_taken_is_no_duplicate(self) -> None:
-        # A seed titled as the span's first episode holds it. The span's second episode has nothing else.
+        # A file in the file map carries the title of the span's first episode and is on it. The span's second
+        # episode has nothing else.
         span, seed = "show S01E02-E03 [grp].mkv", "show - the return [grp].mkv"
         parsed: dict[str, ParsedFileInfo | None] = {span: parsed_info(season=1, episodes=(2, 3)), seed: parsed_info()}
 
@@ -816,7 +822,7 @@ class TestAssignExtras:
         ],
     )
     def test_an_extras_word_sets_the_file_aside(self, name: str) -> None:
-        # Alone with one open episode, the file would otherwise be the single-file placement.
+        # Alone with one unused episode, the file would otherwise be the single-file placement.
         assert by_name(place({name: parsed_info()}, _target([601]))) == {name: ((), PlacementVerdict.EXTRA)}
 
     @pytest.mark.parametrize(
@@ -889,12 +895,12 @@ class TestAssignExtras:
 
 
 class TestAssignAliasReading:
-    """A name Sonarr read under a series alias: its key yields to the match moving it, numbers intact, into a season."""
+    """A name Sonarr read under a series alias: its season and episode yield to the season shift into a season."""
 
     _SEQUEL: ClassVar[list[int]] = [701, 702, 703]
 
     def test_a_match_moving_the_key_into_the_scopes_season_places_it(self) -> None:
-        # The sequel numbers itself season one. Sonarr matched the name into the season our map holds it under.
+        # The sequel numbers itself season one. Sonarr matched the name into the season the mapping holds it under.
         name = "show flat S01E02 [grp].mkv"
 
         placed = by_name(place({name: parsed_info(season=1, episodes=(2,), matched=((2, 2),))}, _target(self._SEQUEL)))
@@ -909,7 +915,8 @@ class TestAssignAliasReading:
         assert placed == {name: ((), PlacementVerdict.OUTSIDE_WINDOW)}
 
     def test_a_match_onto_the_specials_is_no_alias(self) -> None:
-        # A first-season key matched to a special keeps naming the season's episode: another slice's.
+        # A spelled-out first-season episode matched to a special keeps naming the season's episode: outside the
+        # window.
         name = "show S01E01 [grp].mkv"
 
         placed = by_name(place({name: parsed_info(season=1, episodes=(1,), matched=((0, 1),))}, _target([501, 502])))
@@ -933,7 +940,7 @@ class TestAssignExactSeason:
         assert (result.unplaced, result.excluded) == ((), ())
 
     def test_empty_resolved_set_places_correctly_named_specials(self) -> None:
-        # With no resolved set the exact pass falls back to the live series map,
+        # With no window the exact pass falls back to the live episode index,
         # so a correctly named file lands on its real episode instead of sticking forever.
         parsed = {
             "s00e01.mkv": parsed_info(season=0, episodes=(1,)),
@@ -948,10 +955,10 @@ class TestAssignExactSeason:
 
 
 class TestAssignAbsolute:
-    """The absolute zip: absolute numbers only ORDER the files onto the resolved set, never decide identity."""
+    """Pairing in absolute order: absolute numbers only ORDER the files onto the window, never decide identity."""
 
     def test_mis_numbered_specials_map_positionally(self) -> None:
-        # Files named "01".."05" that are really S00E05..E09: "01" takes the first resolved episode.
+        # Files named "01".."05" that are really S00E05..E09: "01" takes the first window episode.
         files = [f"{n:02d}.mkv" for n in range(1, 6)]
         parsed = {name: parsed_info(absolutes=(i + 1,)) for i, name in enumerate(files)}
 
@@ -967,7 +974,7 @@ class TestAssignAbsolute:
         }
 
     def test_continuous_absolute_batch_spans_seasons(self) -> None:
-        # The only multi-season pack trusted: a continuous 1..4 onto a season-sorted set.
+        # The only multi-season torrent trusted: a continuous 1..4 onto a season-sorted window.
         parsed = {f"e{i}.mkv": parsed_info(absolutes=(i,)) for i in range(1, 5)}
 
         result = place(parsed, PlacementTarget([501, 502, 601, 602], series_index({})))
@@ -980,7 +987,7 @@ class TestAssignAbsolute:
         }
 
     def test_no_signal_file_refuses_the_positional_leg(self) -> None:
-        # A file whose parse yields nothing could be a hiccuped real episode, so the whole zip is refused.
+        # A file whose parse yields nothing could be a hiccuped real episode, so the whole pairing is blocked.
         parsed: dict[str, ParsedFileInfo | None] = {
             "a.mkv": parsed_info(absolutes=(1,)),
             "b.mkv": parsed_info(absolutes=(2,)),
@@ -993,7 +1000,7 @@ class TestAssignAbsolute:
         assert sorted(result.unplaced) == ["a.mkv", "b.mkv", "c.mkv"]
 
     def test_a_menu_file_neither_takes_a_slot_nor_refuses_the_zip(self) -> None:
-        # A menu is never an episode: set aside by name before the count passes run.
+        # A menu is never an episode: set aside by name before the pairing passes run.
         parsed: dict[str, ParsedFileInfo | None] = {
             "a.mkv": parsed_info(absolutes=(1,)),
             "b.mkv": parsed_info(absolutes=(2,)),
@@ -1005,7 +1012,7 @@ class TestAssignAbsolute:
         assert result.placed == {"a.mkv": (501,), "b.mkv": (502,)}
 
     def test_absolute_ova_pack_maps_onto_resolved_set(self) -> None:
-        # Thirteen season-0 absolute-only OVA files onto the entry's S00E16..E28, count-matched 13:13.
+        # Thirteen season-0 absolute-only OVA files onto the title's S00E16..E28, count-matched 13:13.
         files = [f"{n:02d}.mkv" for n in range(1, 14)]
         parsed = {name: parsed_info(season=0, absolutes=(i + 1,)) for i, name in enumerate(files)}
 
@@ -1015,7 +1022,7 @@ class TestAssignAbsolute:
         assert result.placed == {f"{n:02d}.mkv": (2089 + n,) for n in range(1, 14)}
 
     def test_mixed_exact_then_leftover_absolute(self) -> None:
-        # The exact pass places the named file. The absolute file maps onto the one leftover id.
+        # The exact pass places the named file. The absolute file goes onto the one unused id.
         parsed = {
             "s01e01.mkv": parsed_info(season=1, episodes=(1,)),
             "extra.mkv": parsed_info(absolutes=(2,)),
@@ -1028,11 +1035,11 @@ class TestAssignAbsolute:
 
 
 class TestAssignMatchedPairs:
-    """The exact pass's matched-pairs fallback: Sonarr's series-matched `(season, episode)` for absolute-only names."""
+    """The exact pass's fallback to matched episodes: Sonarr's `(season, episode)` for absolute-only names."""
 
     def test_multi_entry_batch_places_exactly_inside_the_set(self) -> None:
-        # A batch spanning two entries plus a special, the record covering the second only:
-        # in-set files place exactly and the two the map resolves OUTSIDE are another slice's.
+        # A batch spanning two titles plus a special, the window covering the second only:
+        # in-window files place exactly and the two the index resolves OUTSIDE are outside the window.
         parsed: dict[str, ParsedFileInfo | None] = {
             "ep-11.mkv": parsed_info(season=0, absolutes=(11,), matched=((1, 11),)),
             "ep-12.mkv": parsed_info(season=0, absolutes=(12,), matched=((1, 12),)),
@@ -1060,7 +1067,7 @@ class TestAssignMatchedPairs:
         assert result.placed == {"x.mkv": (400,)}
 
     def test_matched_pairs_never_apply_unscoped(self) -> None:
-        # With NO resolved set the live-map fallback trusts only a name-parsed pair.
+        # With NO window the live-index fallback trusts only a season and episode parsed from the name.
         # Sonarr's series match must not decide identity on its own.
         parsed = {"x.mkv": parsed_info(season=0, absolutes=(3,), matched=((1, 3),))}
 
@@ -1070,7 +1077,7 @@ class TestAssignMatchedPairs:
         assert result.unplaced == ("x.mkv",)
 
     def test_partially_in_set_matched_span_is_skipped(self) -> None:
-        # A matched span reaching outside the resolved set is refused whole, as a name-parsed one is.
+        # A matched span reaching outside the window is rejected whole, as a name-parsed one is.
         parsed = {"span.mkv": parsed_info(season=0, matched=((1, 1), (1, 3)))}
         ep_id_map = {EpisodeKey(1, 1): 501, EpisodeKey(1, 3): 503}
 
@@ -1080,8 +1087,8 @@ class TestAssignMatchedPairs:
         assert result.unplaced == ("span.mkv",)
 
     def test_an_out_of_set_match_on_the_sole_file_is_foreign(self) -> None:
-        # One numberless file, one leftover id, and Sonarr's title match claims an out-of-set
-        # episode: a complete reading outside the entry is another slice's, never the leftover's.
+        # One file with no parsed number, one unused id, and Sonarr's title match names an out-of-window
+        # episode: a complete parse outside the window is outside it, never the unused id's.
         parsed = {"only.mkv": parsed_info(matched=((1, 5),))}
 
         result = place(parsed, PlacementTarget([900], series_index({EpisodeKey(1, 5): 555})))
@@ -1092,7 +1099,7 @@ class TestAssignMatchedPairs:
     @pytest.mark.parametrize(
         ("matched_id", "expected"),
         [
-            # A disagreeing id is refused as possibly ours, never proven another slice's.
+            # A disagreeing id is rejected as possibly the window's, never proven outside it.
             pytest.param(999, ((), PlacementVerdict.NO_EPISODE_FOUND), id="another series' id is refused"),
             pytest.param(501, ((501,), PlacementVerdict.EXACT), id="an agreeing id places"),
         ],
@@ -1100,7 +1107,7 @@ class TestAssignMatchedPairs:
     def test_sonarr_s_matched_id_must_agree_with_the_map(
         self, matched_id: int, expected: tuple[tuple[int, ...], PlacementVerdict]
     ) -> None:
-        # Sonarr may match another series whose numbers coincide with ours: its episode id then disagrees.
+        # Sonarr may match another series whose numbers coincide with this one's: its episode id then disagrees.
         info = ParsedFileInfo(matched_episodes=(MatchedEpisode(season_number=1, episode_number=1, id=matched_id),))
 
         result = place({"x.mkv": info}, PlacementTarget([501, 502], series_index({EpisodeKey(1, 1): 501})))
@@ -1108,8 +1115,8 @@ class TestAssignMatchedPairs:
         assert by_name(result) == {"x.mkv": expected}
 
     def test_mixed_id_duplicate_claims_place_once(self) -> None:
-        # (s,e,None) and (s,e,id) survive the triple dedup as two claims, yet name the episode once.
-        # Two resolved ids keep the single-file arm out, so this pins the exact pass itself.
+        # (s,e,None) and (s,e,id) survive the triple dedup as two, yet name the episode once.
+        # Two window ids keep the single-file pass out, so this pins the exact pass itself.
         info = ParsedFileInfo(
             matched_episodes=(
                 MatchedEpisode(season_number=1, episode_number=1),
@@ -1122,7 +1129,7 @@ class TestAssignMatchedPairs:
         assert result.placed == {"x.mkv": (501,)}
 
     def test_wrong_id_match_cannot_veto_the_single_file_fallback(self) -> None:
-        # A disagreeing id refuses the CLAIM, but one numberless file and one leftover id still place.
+        # A disagreeing id rejects the MATCH, but one file with no parsed number and one unused id still place.
         info = ParsedFileInfo(matched_episodes=(MatchedEpisode(season_number=1, episode_number=1, id=999),))
 
         result = place({"only.mkv": info}, PlacementTarget([501], series_index({EpisodeKey(1, 1): 501})))
@@ -1130,7 +1137,7 @@ class TestAssignMatchedPairs:
         assert result.placed == {"only.mkv": (501,)}
 
     def test_junk_duplicates_beyond_the_cap_still_collapse_and_place(self) -> None:
-        # The cap counts DISTINCT claims: four wire duplicates of one pair are one claim, not a season pack.
+        # The cap counts DISTINCT matched episodes: four wire duplicates of one are one, not a season pack.
         parsed = {"x.mkv": parsed_info(matched=((1, 1), (1, 1), (1, 1), (1, 1)))}
 
         result = place(parsed, PlacementTarget([501], series_index({EpisodeKey(1, 1): 501})))
@@ -1138,7 +1145,7 @@ class TestAssignMatchedPairs:
         assert result.placed == {"x.mkv": (501,)}
 
     def test_mixed_id_duplicate_of_a_triple_span_still_places(self) -> None:
-        # An id-bearing junk duplicate of one pair can't inflate a triple past the cap.
+        # An id-bearing junk duplicate of one matched episode can't inflate a triple past the cap.
         info = ParsedFileInfo(
             matched_episodes=(
                 MatchedEpisode(season_number=1, episode_number=1),
@@ -1154,7 +1161,7 @@ class TestAssignMatchedPairs:
         assert result.placed == {"x.mkv": (501, 502, 503)}
 
     def test_partially_resolved_double_absolute_never_half_imports(self) -> None:
-        # A "12-13" file whose match resolved only E12: the borrowed span doesn't cover the absolutes.
+        # A "12-13" file whose match resolved only E12: the span from the match doesn't cover the absolutes.
         parsed = {"d.mkv": parsed_info(season=0, absolutes=(12, 13), matched=((1, 12),))}
 
         result = place(parsed, PlacementTarget([2586, 2587], series_index({EpisodeKey(1, 12): 2586})))
@@ -1172,7 +1179,7 @@ class TestAssignMatchedPairs:
         assert result.unplaced == ()
 
     def test_matched_span_never_half_imports_via_the_single_file_fallback(self) -> None:
-        # Sonarr says the file spans E01+E02: the single-file arm honors that count even where it ignores identity.
+        # Sonarr says the file spans E01+E02: the single-file pass honors that count even where it ignores identity.
         parsed = {"span.mkv": parsed_info(matched=((1, 1), (1, 2)))}
 
         result = place(parsed, PlacementTarget([501], series_index({EpisodeKey(1, 1): 501, EpisodeKey(1, 2): 502})))
@@ -1181,7 +1188,7 @@ class TestAssignMatchedPairs:
         assert result.unplaced == ("span.mkv",)
 
     def test_full_season_file_never_takes_the_spare_id(self) -> None:
-        # The exact pass quarantines the season-pack shape. The single-file arm must not hand it the spare id.
+        # The exact pass quarantines the season-pack shape. The single-file pass must not hand it the spare id.
         parsed: dict[str, ParsedFileInfo | None] = {
             "extras-s01.mkv": parsed_info(matched=((1, 1), (1, 2), (1, 3), (1, 4)), full_season=True),
             "e01.mkv": parsed_info(season=1, episodes=(1,)),
@@ -1197,11 +1204,11 @@ class TestAssignMatchedPairs:
 
 
 class TestAssignExactPrecedence:
-    """Two open files resolving to one episode: `_Reading.rank` decides, and batch order only breaks a tie."""
+    """Two unplaced files resolving to one episode: `ParsedEpisodes.rank` picks, and batch order only breaks a tie."""
 
     def test_a_corroborated_own_key_beats_a_borrowed_pair(self) -> None:
         # The "17.5 (S00E01)" special names itself. The "- 17" beside it only
-        # borrowed the same pair from a match TVDB's interleaving shifted.
+        # took the same season and episode from a match TVDB's interleaving shifted.
         parsed: dict[str, ParsedFileInfo | None] = {
             "ep - 17.mkv": parsed_info(season=0, absolutes=(17,), matched=((0, 1),)),
             "ep - 17.5 (S00E01).mkv": parsed_info(season=0, episodes=(1,), matched=((0, 1),)),
@@ -1214,7 +1221,7 @@ class TestAssignExactPrecedence:
         assert by_name(result)["ep - 17.mkv"] == ((), PlacementVerdict.DUPLICATE)
 
     def test_a_borrowed_pair_beats_an_own_key_sonarr_never_matched(self) -> None:
-        # A "- Bonus" whose CRC tag parsed as E8 carries a key Sonarr could not
+        # A "- Bonus" whose CRC tag parsed as E8 carries a season and episode Sonarr could not
         # match to the series. The "- 08" it collides with is the episode.
         parsed: dict[str, ParsedFileInfo | None] = {
             "ep - Bonus [E8F03223].mkv": parsed_info(season=1, episodes=(8,)),
@@ -1227,7 +1234,8 @@ class TestAssignExactPrecedence:
         assert by_name(result)["ep - Bonus [E8F03223].mkv"] == ((), PlacementVerdict.DUPLICATE)
 
     def test_batch_order_breaks_a_tie_within_a_rank(self) -> None:
-        # Two own keys of one rank for one episode, corroborated or not: the first stays, the second is a duplicate.
+        # Two names spelling out one episode at one rank, Sonarr agreeing or not: the first stays, the second is a
+        # duplicate.
         corroborated: dict[str, ParsedFileInfo | None] = dict.fromkeys(
             ("a - S01E08.mkv", "b - S01E08.mkv"), parsed_info(season=1, episodes=(8,), matched=((1, 8),))
         )
@@ -1247,7 +1255,7 @@ class TestAssignExactPrecedence:
 
 
 class TestAssignBesideForeignFiles:
-    """A file whose own key reads outside the entry is another slice's: it never blocks a count pass."""
+    """A file whose season and episode read outside the window is outside it: it never blocks a pairing pass."""
 
     _ID_BY_KEY: ClassVar[dict[EpisodeKey, int]] = {
         EpisodeKey(1, 1): 501,
@@ -1258,7 +1266,7 @@ class TestAssignBesideForeignFiles:
     }
 
     def test_one_numberless_leftover_beside_foreign_files_places_single(self) -> None:
-        # The OVA's entry resolves one id. The season files around it name
+        # The OVA's title resolves one id. The season files around it name
         # another season, so the OVA is the only contender.
         parsed: dict[str, ParsedFileInfo | None] = {
             "show - S01E01.mkv": parsed_info(season=1, episodes=(1,)),
@@ -1275,8 +1283,8 @@ class TestAssignBesideForeignFiles:
         ]
 
     def test_a_borrowed_pair_outside_yields_to_an_open_file(self) -> None:
-        # Sonarr matched the special elsewhere: its opinion steps aside for the
-        # one file the listing leaves open, which takes the one id.
+        # Sonarr matched the special outside the window: its opinion steps aside for the
+        # one file the listing leaves unplaced, which takes the one id.
         parsed: dict[str, ParsedFileInfo | None] = {
             "show - special.mkv": parsed_info(matched=((1, 5),)),
             "show - OVA.mkv": parsed_info(),
@@ -1289,8 +1297,8 @@ class TestAssignBesideForeignFiles:
         assert [p.verdict for p in result.excluded] == [PlacementVerdict.OUTSIDE_WINDOW]
 
     def test_the_absolute_zip_counts_only_the_contenders(self) -> None:
-        # Two absolute-only leftovers zip onto the two-id window although a
-        # first-season file rides in the same batch.
+        # Two absolute-only unplaced files pair in order onto the two-id window although a
+        # first-season file is in the same batch.
         parsed: dict[str, ParsedFileInfo | None] = {
             "show - S01E01.mkv": parsed_info(season=1, episodes=(1,)),
             "show - 14.mkv": parsed_info(season=0, absolutes=(14,)),
@@ -1304,14 +1312,14 @@ class TestAssignBesideForeignFiles:
 
 
 class TestDuplicateEvidence:
-    """A collision is a duplicate only when the id's holder reads there too. Otherwise it is a skip to report."""
+    """A collision is a duplicate only when the file on the id reads there too. Otherwise it is unplaced, to report."""
 
     _ID_BY_KEY: ClassVar[dict[EpisodeKey, int]] = {EpisodeKey(1, 12): 2586, EpisodeKey(1, 13): 2587}
     _SPELLED_NAME = "show - S01E12 [1080p].mkv"
 
     @classmethod
     def _place(cls, file_map_parse: ParsedFileInfo | None) -> BatchPlacements:
-        # The seed holds 2586 through "seeded.mkv". The keyed on-disk file resolves there by name.
+        # The file map puts "seeded.mkv" on 2586. The file spelling out its season and episode resolves there by name.
         parsed = {"seeded.mkv": file_map_parse, cls._SPELLED_NAME: parsed_info(season=1, episodes=(12,))}
         return place(
             parsed, PlacementTarget([2586, 2587], series_index(cls._ID_BY_KEY)), file_map={"seeded.mkv": (2586,)}
@@ -1323,8 +1331,8 @@ class TestDuplicateEvidence:
         assert by_name(result) == {self._SPELLED_NAME: ((), PlacementVerdict.DUPLICATE)}
 
     def test_a_positionally_seeded_holder_leaves_a_skip_the_caller_reports(self) -> None:
-        # The seed zipped a numberless file onto 2586. A file naming that episode outright disagrees
-        # with it, and a disagreement is reported, never persisted as an exclusion.
+        # The file map has a file with no parsed number on 2586, paired in order. A file naming that episode outright
+        # disagrees with it, and a disagreement is reported, never persisted as an exclusion.
         result = self._place(parsed_info())
 
         assert by_name(result) == {self._SPELLED_NAME: ((), PlacementVerdict.NO_EPISODE_FOUND)}
@@ -1332,11 +1340,11 @@ class TestDuplicateEvidence:
 
 
 class TestAssignScopeGate:
-    """The scope is the whole resolved set: a fully held one stays enforced, and only an empty one is unscoped."""
+    """The window is all its episode ids: a fully used one stays enforced, and only an empty one is no window."""
 
     def test_a_scope_an_earlier_window_fully_holds_never_unlocks_the_live_map(self) -> None:
-        # An earlier window holds every resolved id, yet a correctly named out-of-scope file is refused, not placed on
-        # the live map.
+        # An earlier window used every window id, yet a correctly named file outside the window is outside it, not
+        # placed on the live index.
         parsed = {"x.mkv": parsed_info(season=1, episodes=(1,))}
 
         result = place(parsed, PlacementTarget([8044], series_index({EpisodeKey(1, 1): 8033}), used=frozenset({8044})))
@@ -1345,7 +1353,7 @@ class TestAssignScopeGate:
         assert by_name(result) == {"x.mkv": ((), PlacementVerdict.OUTSIDE_WINDOW)}
 
     def test_empty_resolved_set_skips_absolute_only_files(self) -> None:
-        # With no resolved set the absolute zip has nothing to index into. Absolutes never decide identity alone.
+        # With no window, pairing in absolute order has nothing to index into. Absolutes never decide identity alone.
         files = [f"{n:02d}.mkv" for n in range(1, 4)]
         parsed = {name: parsed_info(season=0, absolutes=(i + 1,)) for i, name in enumerate(files)}
 
@@ -1356,7 +1364,7 @@ class TestAssignScopeGate:
 
 
 class TestAbsoluteDuplicateTell:
-    """The absolute zip needs a clean 1:1 count and no absolute shared across the batch's parses, seeded or not."""
+    """Pairing in absolute order needs a clean 1:1 count and no absolute two parses share, the file map's too."""
 
     def test_count_mismatch_skips(self) -> None:
         parsed = {"a.mkv": parsed_info(absolutes=(1,)), "b.mkv": parsed_info(absolutes=(2,))}
@@ -1392,7 +1400,7 @@ class TestAbsoluteDuplicateTell:
         assert sorted(result.unplaced) == ["c.mkv", "span.mkv"]
 
     def test_out_of_set_absolute_cannot_fill_in_for_a_hiccuped_episode(self) -> None:
-        # An out-of-entry sibling (absolute 11, matched out of set) must not fill the count for a hiccuped E12.
+        # A sibling outside the window (absolute 11, matched outside it) must not make up the count for a hiccuped E12.
         parsed: dict[str, ParsedFileInfo | None] = {
             "s-11.mkv": parsed_info(season=0, absolutes=(11,), matched=((1, 11),)),
             "e-12.mkv": None,
@@ -1409,7 +1417,7 @@ class TestAbsoluteDuplicateTell:
 
     def test_the_earlier_version_of_a_placed_file_is_the_duplicate(self) -> None:
         # The exact pass places the "- 12v2" (a later version outranks its earlier one). The "- 12"
-        # shares absolute 12, so the batch-wide duplicate tell refuses the absolute zip for it.
+        # shares absolute 12, so the batch-wide duplicate tell blocks pairing in absolute order for it.
         parsed: dict[str, ParsedFileInfo | None] = {
             "e-12.mkv": parsed_info(season=0, absolutes=(12,), matched=((1, 12),)),
             "e-12v2.mkv": parsed_info(season=0, absolutes=(12,), matched=((1, 12),)),
@@ -1422,8 +1430,9 @@ class TestAbsoluteDuplicateTell:
         assert by_name(result)["e-12.mkv"] == ((), PlacementVerdict.DUPLICATE)
 
     def test_seeded_sharer_still_vetoes_the_positional_leg(self) -> None:
-        # The v1 was placed on an earlier poll, and its parse still reaches the duplicate tell. The map is
-        # unserved for the pair, so nothing resolves and the count is the only thing that can decide.
+        # The v1 was placed on an earlier poll, and its parse still reaches the duplicate tell. The index is
+        # unserved for the matched episode, so nothing resolves and pairing in order is the only thing that can
+        # place it.
         parsed: dict[str, ParsedFileInfo | None] = {
             "e-12.mkv": parsed_info(season=0, absolutes=(12,), matched=((1, 12),)),
             "e-12v2.mkv": parsed_info(season=0, absolutes=(12,), matched=((1, 12),)),
@@ -1446,7 +1455,7 @@ class TestAbsoluteDuplicateTell:
         assert by_name(result) == {"e-12v2.mkv": ((), PlacementVerdict.NO_EPISODE_FOUND)}
 
     def test_junk_duplicate_absolute_within_one_parse_does_not_veto(self) -> None:
-        # One parse repeating its own absolute is wire junk, not a restart tell: the leftover still places.
+        # One parse repeating its own absolute is wire junk, not a restart tell: the other file still places.
         parsed: dict[str, ParsedFileInfo | None] = {
             "seeded-12.mkv": parsed_info(season=0, absolutes=(12, 12)),
             "left-13.mkv": parsed_info(season=0, absolutes=(13,)),
@@ -1458,7 +1467,7 @@ class TestAbsoluteDuplicateTell:
         assert result.unplaced == ()
 
     def test_multi_absolute_seeded_sharer_still_vetoes(self) -> None:
-        # Every absolute of every parse is counted, so a seeded "12-13" span shows the leftover v2's duplicate.
+        # Every absolute of every parse is counted, so a "12-13" span in the file map shows the unplaced v2's duplicate.
         parsed: dict[str, ParsedFileInfo | None] = {
             "e-12-13.mkv": parsed_info(season=0, absolutes=(12, 13)),
             "e-12v2.mkv": parsed_info(season=0, absolutes=(12,), matched=((1, 12),)),
@@ -1471,7 +1480,7 @@ class TestAbsoluteDuplicateTell:
 
     def test_a_two_sub_series_restart_is_refused(self) -> None:
         # Two sub-series whose numbering both restart at 1 share absolutes: the tell of a season-boundary
-        # scramble, so the whole absolute zip is refused rather than mis-assigned.
+        # scramble, so pairing in absolute order is blocked whole rather than misplacing files.
         main = {f"main-{i:02d}.mkv": parsed_info(absolutes=(i,)) for i in range(1, 4)}
         spinoff = {f"spinoff-{i:02d}.mkv": parsed_info(absolutes=(i,)) for i in range(1, 4)}
         parsed = {**main, **spinoff}
@@ -1483,14 +1492,15 @@ class TestAbsoluteDuplicateTell:
 
 
 class TestAssignBogusKeyDowngrade:
-    """A name key that exists nowhere in the series is noise, not identity.
+    """A season and episode in the name that exist nowhere in the series are noise, not identity.
 
-    The downgrade only ever feeds the 1:1 single-file fallback. A key that
-    resolves ANYWHERE in the series map stays real evidence.
+    The downgrade only ever feeds the 1:1 single-file fallback. A season and episode that
+    resolve ANYWHERE in the episode index stay real evidence.
     """
 
     def test_movie_year_bogus_key_places_the_sole_resolved_episode(self) -> None:
-        # "Title.2020" parses S20E20, a key the series doesn't have: one file and one id make it numberless.
+        # "Title.2020" parses S20E20, which the series doesn't have: one file and one id count it as no parsed
+        # number.
         parsed = {"movie.mkv": parsed_info(season=20, episodes=(20,))}
 
         result = place(parsed, PlacementTarget([900], series_index({EpisodeKey(1, 1): 501})))
@@ -1499,7 +1509,8 @@ class TestAssignBogusKeyDowngrade:
         assert result.unplaced == ()
 
     def test_resolving_key_is_never_downgraded(self) -> None:
-        # The same key EXISTS in the series, outside our set: real evidence that names the file another slice's.
+        # The same season and episode EXISTS in the series, outside the window: real evidence that puts the file
+        # outside it.
         parsed = {"movie.mkv": parsed_info(season=20, episodes=(20,))}
 
         result = place(parsed, PlacementTarget([900], series_index({EpisodeKey(20, 20): 555})))
@@ -1508,7 +1519,8 @@ class TestAssignBogusKeyDowngrade:
         assert by_name(result) == {"movie.mkv": ((), PlacementVerdict.OUTSIDE_WINDOW)}
 
     def test_bogus_key_with_absolutes_is_not_downgraded(self) -> None:
-        # Absolutes are real signal beside a bogus key, and the multi-absolute span keeps the zip refused too.
+        # Absolutes are real signal beside a bogus season and episode, and the multi-absolute span keeps pairing in
+        # order blocked too.
         parsed = {"movie.mkv": parsed_info(season=20, episodes=(20,), absolutes=(20, 21))}
 
         result = place(parsed, PlacementTarget([900], series_index({EpisodeKey(1, 1): 501})))
@@ -1517,7 +1529,8 @@ class TestAssignBogusKeyDowngrade:
         assert result.unplaced == ("movie.mkv",)
 
     def test_bogus_key_with_single_matched_pair_still_places(self) -> None:
-        # The name parses a nonexistent S02E00 and Sonarr matched one pair: one pair never vetoes the fallback.
+        # The name parses a nonexistent S02E00 and Sonarr matched one episode: one matched episode never blocks the
+        # fallback.
         parsed = {"sp.mkv": parsed_info(season=2, episodes=(0,), matched=((1, 5),))}
 
         result = place(parsed, PlacementTarget([900], series_index({EpisodeKey(1, 5): 555})))
@@ -1527,10 +1540,10 @@ class TestAssignBogusKeyDowngrade:
 
 
 class TestAssignNumberlessZip:
-    """The numberless zip and its single-file arm: with no number left, name order is the only signal."""
+    """Pairing in name order and the single-file pass: with no number left, name order is the only signal."""
 
     def test_single_numberless_file_single_target_is_placed(self) -> None:
-        # One leftover file, one leftover id, and Sonarr saw the name and found no number: it's that one.
+        # One unplaced file, one unused id, and Sonarr saw the name and found no number: it's that one.
         result = place({"only.mkv": ParsedFileInfo()}, PlacementTarget([900], series_index({})))
 
         assert result.placed == {"only.mkv": (900,)}
@@ -1545,7 +1558,7 @@ class TestAssignNumberlessZip:
         assert result.unplaced == ("only.mkv",)
 
     def test_numberless_batch_zips_in_name_order(self) -> None:
-        # Name order maps onto airing order regardless of the on-disk listing order.
+        # Name order pairs with airing order regardless of the order the folder lists the files in.
         result = place(blind(["sp2.mkv", "sp1.mkv", "sp3.mkv"]), PlacementTarget([901, 902, 903], series_index({})))
 
         assert result.placed == {"sp1.mkv": (901,), "sp2.mkv": (902,), "sp3.mkv": (903,)}
@@ -1558,7 +1571,8 @@ class TestAssignNumberlessZip:
         assert result.placed == {"sp1.mkv": (901,), "sp2.mkv": (902,), "sp10.mkv": (903,)}
 
     def test_mixed_batch_never_zips(self) -> None:
-        # The exact pass placing one file leaves more parses than leftovers: numberless extras never fill episodes.
+        # The exact pass placing one file leaves more parses than unplaced files: extras with no parsed number never
+        # take episodes.
         parsed = {
             "e01.mkv": parsed_info(season=1, episodes=(1,)),
             "interview.mkv": parsed_info(),
@@ -1571,7 +1585,7 @@ class TestAssignNumberlessZip:
         assert sorted(result.unplaced) == ["interview.mkv", "making of.mkv"]
 
     def test_seeded_sibling_parse_kills_the_zip(self) -> None:
-        # A seeded file's parse proves a prior placement, so the whole zip is refused.
+        # The parse of a file in the file map proves a prior placement, so pairing in order is blocked.
         parsed = blind(["seeded.mkv", "sp1.mkv", "sp2.mkv"])
 
         result = place(parsed, PlacementTarget([901, 902], series_index({})), file_map={"seeded.mkv": (900,)})
@@ -1598,7 +1612,7 @@ class TestAssignNumberlessZip:
         assert sorted(result.unplaced) == ["sp1.mkv", "sp2.mkv", "sp3.mkv"]
 
     def test_bogus_key_member_refuses_the_zip(self) -> None:
-        # The bogus-key downgrade is 1:1 only: two movies can share one bogus key.
+        # The downgrade of a bogus season and episode is 1:1 only: two movies can share one.
         parsed = {**blind(["sp1.mkv", "sp2.mkv"]), "movie.mkv": parsed_info(season=20, episodes=(20,))}
 
         result = place(parsed, PlacementTarget([901, 902, 903], series_index({})))
@@ -1608,7 +1622,7 @@ class TestAssignNumberlessZip:
 
 
 class TestAssignTitledSingle:
-    """The titled single-file arm: a one-episode window, several numberless leftovers, and the one a title names."""
+    """The titled single-file pass: a one-episode window, several files with no parsed number, the one a title names."""
 
     _ID_BY_KEY: ClassVar[dict[EpisodeKey, int]] = {
         EpisodeKey(0, 1): 901,
@@ -1647,7 +1661,7 @@ class TestAssignTitledSingle:
         assert result.placed == {deja: (901,)}
 
     def test_a_title_that_is_the_series_names_nothing(self) -> None:
-        # The entry is the series itself: no word of its title tells one file from another.
+        # The title is the series itself: no word of its name tells one file from another.
         parsed: dict[str, ParsedFileInfo | None] = {
             "long show name - sunny day [grp].mkv": parsed_info(),
             "long show name - prologue [grp].mkv": parsed_info(),
@@ -1658,7 +1672,7 @@ class TestAssignTitledSingle:
         assert result.placed == {}
 
     def test_a_descriptor_in_a_tag_never_names_the_series_title(self) -> None:
-        # Tags drop away, leaving the bare series name, which the title's own leftover words never match.
+        # Tags drop away, leaving only the series name, which the title's own leftover words never match.
         parsed: dict[str, ParsedFileInfo | None] = {
             "[grp] show (director's cut) (show II date to date) [bd].mkv": parsed_info(),
             "[grp] show - live [bd].mkv": parsed_info(),
@@ -1669,7 +1683,7 @@ class TestAssignTitledSingle:
         assert result.placed == {}
 
     def test_half_the_leftover_words_name_the_file(self) -> None:
-        # The season words drop with the series title. "sunny day" is half the combined leftover.
+        # The season words drop with the series name. "sunny day" is half the combined leftover.
         sunny, prologue = "show - sunny day [grp].mkv", "show - prologue [grp].mkv"
 
         result = self._place({sunny: parsed_info(), prologue: parsed_info()}, "Show 2nd Season: Sunny Day")
@@ -1691,7 +1705,7 @@ class TestAssignTitledSingle:
         assert by_name(result)[opening] == ((), PlacementVerdict.EXTRA)
 
     def test_a_file_sharing_only_a_title_s_opening_words_is_not_named(self) -> None:
-        # The romaji title opens with the franchise name, which the English series title never sheds.
+        # The romaji title opens with the franchise name, which the English series name never sheds.
         # A file carrying those words and none after them scores half the leftover yet names the franchise.
         parsed: dict[str, ParsedFileInfo | None] = {
             "[grp] nagai show ni [bd].mkv": parsed_info(),
@@ -1706,7 +1720,7 @@ class TestAssignTitledSingle:
 
     def test_refusing_the_best_never_promotes_the_runner_up(self) -> None:
         # The best match shares only the title's opening words. The file carrying the title's last word
-        # scores less and must not become the pick by the refusal.
+        # scores less and must not become the pick by the rejection.
         parsed: dict[str, ParsedFileInfo | None] = {
             "show - alpha beta gamma [grp].mkv": parsed_info(),
             "show - alpha ova [grp].mkv": parsed_info(),
@@ -1754,7 +1768,7 @@ class TestAssignTitledSingle:
 
     def test_a_full_season_match_of_another_season_is_no_span(self) -> None:
         # "show S2 - OVA": a season token and no episode, matched to every S2 episode. S2 is
-        # not the entry's, so the file is one numberless leftover, and the sole one takes the window.
+        # not the title's, so the file is one unplaced file with no parsed number, and the sole one takes the window.
         name = "show S2 - OVA [grp].mkv"
 
         result = self._place({name: parsed_info(season=2, matched=((2, 1), (2, 2)), full_season=True)})
@@ -1762,7 +1776,7 @@ class TestAssignTitledSingle:
         assert by_name(result) == {name: ((901,), PlacementVerdict.SINGLE)}
 
     def test_a_full_season_match_reaching_into_the_entry_spans(self) -> None:
-        # The same read over the entry's own season is the extras-of-this-season shape: several episodes.
+        # The same read over the title's own season is the extras-of-this-season shape: several episodes.
         name = "show S2 [grp].mkv"
         parsed: dict[str, ParsedFileInfo | None] = {
             name: parsed_info(season=2, matched=((2, 1), (2, 2)), full_season=True)
@@ -1779,10 +1793,10 @@ def _numbered(template: str) -> list[str]:
 
 
 class TestReleaseNumberForms:
-    """Which name shapes carry a release number, read through the run pass that consumes them.
+    """Which name shapes carry a name number, read through the sequence pass that consumes them.
 
-    A `1..N` run over a 3-wide window places. A shape carrying no number forms
-    no run at all, so nothing indexes the window.
+    A `1..N` sequence over a 3-wide window places. A shape carrying no number forms
+    no sequence at all, so nothing indexes the window.
     """
 
     _ID_BY_KEY: ClassVar[dict[EpisodeKey, int]] = {
@@ -1795,8 +1809,8 @@ class TestReleaseNumberForms:
     def _place(cls, names: Sequence[str], *, blocked: bool = False) -> BatchPlacements:
         """Run three blind names against a 3-wide specials window.
 
-        `blocked` adds a fourth parse so the numberless zip can never place a
-        refused run instead, leaving the run pass the only thing under test.
+        `blocked` adds a fourth parse so pairing in name order can never place a
+        blocked sequence instead, leaving the sequence pass the only thing under test.
         """
 
         parsed = blind(names)
@@ -1818,19 +1832,21 @@ class TestReleaseNumberForms:
             pytest.param(_numbered("show_-_0{n}_[bd].mkv"), id="underscores as spaces"),
             # One strip would leave "[a] (b)" behind and the trailing form would miss the number.
             pytest.param(_numbered("show - 0{n} [a] (b) [c].mkv"), id="nested trailing tags to a fixpoint"),
-            # A titled keyed name carries no middle or trailing number, so its key is the count.
+            # A titled name spelling out season and episode carries no middle or trailing number, so its episode is the
+            # name number.
             pytest.param(_numbered("[grp] show - S07E0{n} - a titled episode.mkv"), id="the keyed form"),
-            # The middle form would split "S01E01 - 01" into three prefixes. The key keeps them one run.
+            # The middle form would split "S01E01 - 01" into three prefixes. The season and episode keep them one
+            # sequence.
             pytest.param(_numbered("show S01E0{n} - 0{n} - title.mkv"), id="the key outranks a middle number"),
             # "S0101" parses as a whole season 101 though the release meant episode 01 of season 1.
-            # The group's own digits ride behind, so the packed form is read before the trailing one.
+            # The group's own digits come after it, so the packed form is read before the trailing one.
             pytest.param(_numbered("show.S010{n}.1080p.Blu-ray.x265-grp067.mkv"), id="the packed form"),
             pytest.param(_numbered("show - S2 - 0{n} [1{n}] - title [tag].mkv"), id="past an absolute bracket"),
             pytest.param(_numbered("show - Episode 0{n} - title [tag].mkv"), id="past an episode word"),
             pytest.param(_numbered("show - Ep. 0{n} - title [tag].mkv"), id="past an abbreviated episode word"),
-            # A scene-dotted count, its "vN" behind a dot of its own, between the title and the quality words.
+            # A scene-dotted name number, its "vN" behind a dot of its own, between the title and the quality words.
             pytest.param(_numbered("show.00{n}.v4.480p.DVD.FLAC2.0.x264-grp.mkv"), id="the dotted form"),
-            # A show past its thousandth episode pads its count to four digits behind a zero.
+            # A series past its thousandth episode pads its name number to four digits behind a zero.
             pytest.param(
                 _numbered("show - 000{n} (BD 1080p) [grp][ABCD123{n}].mkv"), id="a zero-padded trailing count"
             ),
@@ -1846,7 +1862,7 @@ class TestReleaseNumberForms:
         [
             pytest.param(["show 2019.mkv", "show 2020.mkv", "show 2021.mkv"], id="a four-digit year"),
             pytest.param(["show.2019.1080p.mkv", "show.2020.1080p.mkv", "show.2021.1080p.mkv"], id="a dotted year"),
-            # The tag strip takes the whole bracket off, so a CRC's digits never become a count.
+            # The tag strip takes the whole bracket off, so a CRC's digits never become a name number.
             pytest.param(
                 [f"show part {word} [ABCD123{n}].mkv" for n, word in enumerate(("one", "two", "three"), 1)],
                 id="digits only inside a tail tag",
@@ -1858,7 +1874,7 @@ class TestReleaseNumberForms:
         assert sorted(self._place(names, blocked=True).unplaced) == sorted(names)
 
     def test_a_numbered_extras_run_is_set_aside(self) -> None:
-        # Previews count previews: a "PV 01..03" beside three unreadable specials never takes their window.
+        # Previews number previews: a "PV 01..03" beside three unreadable specials never takes their window.
         names = _numbered("show - PV 0{n} [tag].mkv")
 
         result = self._place(names, blocked=True)
@@ -1871,7 +1887,8 @@ class TestReleaseNumberForms:
         ids=["trailing", "before the title"],
     )
     def test_a_later_version_displaces_the_earlier_one_in_the_run(self, template: str) -> None:
-        # Two names share a number: the higher `vN` is the member and the other its duplicate once the run places.
+        # Two names share a number: the higher `vN` is the member and the other its duplicate once the sequence
+        # places.
         names = [template.format(n=n, v=v) for n, v in ((1, ""), (2, ""), (2, "v2"), (3, ""))]
 
         result = self._place(names)
@@ -1886,7 +1903,7 @@ class TestReleaseNumberForms:
 
 
 class TestAssignReleaseRun:
-    """The release-run pass: the batch's one `1..N` run indexes a one-season window Sonarr read incoherently."""
+    """Sequence over parse: the batch's one `1..N` sequence indexes a one-season window Sonarr read incoherently."""
 
     _WINDOW: ClassVar[list[int]] = [501, 502, 503]
     _ID_BY_KEY: ClassVar[dict[EpisodeKey, int]] = {
@@ -1896,7 +1913,7 @@ class TestAssignReleaseRun:
         EpisodeKey(1, 1): 601,
         EpisodeKey(1, 2): 602,
     }
-    # A whole first season beside the specials, for the franchise-pack shapes.
+    # A whole first season beside the specials, for the franchise torrent shapes.
     _SEASONED: ClassVar[dict[EpisodeKey, int]] = {**_ID_BY_KEY, **{EpisodeKey(1, n): 600 + n for n in (3, 4, 5, 6)}}
     # Six specials beside the six-episode season, for the specials-window shapes.
     _WIDE_SPECIALS: ClassVar[dict[EpisodeKey, int]] = {**_SEASONED, **{EpisodeKey(0, n): 500 + n for n in (4, 5, 6)}}
@@ -1915,20 +1932,20 @@ class TestAssignReleaseRun:
         assert by_name(place(blind(self._RUN), self._target())) == self._ran()
 
     def test_matched_pairs_outside_the_window_do_not_stand(self) -> None:
-        # Every member matched the same out-of-window episode: incoherent, so the run wins.
+        # Every member matched the same out-of-window episode: incoherent, so the sequence wins.
         parsed: dict[str, ParsedFileInfo | None] = {name: parsed_info(matched=((1, 1),)) for name in self._RUN}
 
         assert by_name(place(parsed, self._target())) == self._ran()
 
     def test_a_members_own_key_outside_a_specials_window_is_overridden(self) -> None:
-        # A TVDB-shifted special names another season. Over a season-0 window the run stands.
+        # A TVDB-shifted special names another season. Over a season-0 window the sequence stands.
         parsed = blind(self._RUN)
         parsed[self._RUN[0]] = parsed_info(season=1, episodes=(1,))
 
         assert by_name(place(parsed, self._target())) == self._ran()
 
     def test_bogus_keys_do_not_stand(self) -> None:
-        # Keys that exist nowhere in the series are parse artifacts, never a reading.
+        # Seasons and episodes that exist nowhere in the series are parse artifacts, never parsed episodes.
         parsed: dict[str, ParsedFileInfo | None] = {name: parsed_info(season=20, episodes=(20,)) for name in self._RUN}
 
         assert by_name(place(parsed, self._target())) == self._ran()
@@ -1937,7 +1954,7 @@ class TestAssignReleaseRun:
 
     @classmethod
     def _beside_the_season(cls, specials: Sequence[str]) -> dict[str, ParsedFileInfo | None]:
-        """Sonarr reads a lone "S1" as a whole first season; the "- 01".."- 06" beside it as that season's episodes."""
+        """Sonarr reads a lone "S1" as a whole first season, and the "- 01".."- 06" beside it as its episodes."""
 
         parsed: dict[str, ParsedFileInfo | None] = {name: parsed_info(season=1, full_season=True) for name in specials}
         for n, name in enumerate(numbered_names("[grp] Show", 6), 1):
@@ -1982,7 +1999,7 @@ class TestAssignReleaseRun:
 
     @pytest.mark.parametrize("names", [TitleNames("Show 2"), TitleNames("Show", ("Show Season 2", "Show 2"))])
     def test_a_count_equal_to_the_titles_season_digit_keeps_the_run(self, names: TitleNames) -> None:
-        # A second season's pack counts "- 1".."- 3" unpadded.
+        # A second season's torrent numbers "- 1".."- 3" unpadded.
         run = [f"[grp] Show - {n} (1080p).mkv" for n in (1, 2, 3)]
         target = PlacementTarget(self._WINDOW, series_index(self._ID_BY_KEY), title_names=names)
 
@@ -2010,7 +2027,7 @@ class TestAssignReleaseRun:
 
     def test_a_coherent_permuted_reading_stands(self) -> None:
         # Every member reads one distinct id inside the window, so Sonarr's
-        # reading decides placement even though it permutes the run's order.
+        # parse decides placement even though it permutes the sequence's order.
         parsed: dict[str, ParsedFileInfo | None] = {
             self._RUN[0]: parsed_info(season=0, episodes=(3,)),
             self._RUN[1]: parsed_info(season=0, episodes=(1,)),
@@ -2024,7 +2041,7 @@ class TestAssignReleaseRun:
         }
 
     def test_two_runs_of_one_width_refuse_and_suppress_the_numbered_run(self) -> None:
-        # Which run owns the window is unknowable, and the later blind pass must not guess either.
+        # Which sequence owns the window is unknowable, and the later blind pass must not guess either.
         names = [*numbered_names("a", 3), *numbered_names("b", 3)]
         result = place(blind(names), self._target())
 
@@ -2032,7 +2049,7 @@ class TestAssignReleaseRun:
         assert sorted(result.unplaced) == sorted(names)
 
     def test_a_width_one_window_refuses(self) -> None:
-        # A one-id window is no run: the single-file arm is what places it.
+        # A one-id window is no sequence: the single-file pass is what places it.
         result = place({self._RUN[0]: parsed_info()}, PlacementTarget([501], series_index(self._ID_BY_KEY)))
 
         assert by_name(result) == {self._RUN[0]: ((501,), PlacementVerdict.SINGLE)}
@@ -2050,7 +2067,7 @@ class TestAssignReleaseRun:
         assert sorted(result.unplaced) == sorted(self._RUN)
 
     # A title's three files beside two shorts of another title: more files than the title has episodes, so only
-    # the title's own run can place them.
+    # the title's own sequence can place them.
     _TRIO: ClassVar[list[str]] = numbered_names("sp", 3)
     _BESIDE_SHORTS: ClassVar[list[str]] = [*_TRIO, *numbered_names("short", 2)]
 
@@ -2106,7 +2123,8 @@ class TestAssignReleaseRun:
         assert place(blind(self._BESIDE_SHORTS), target).placed == {}
 
     def test_specials_numbered_apart_take_a_run_keyed_as_its_own_season(self) -> None:
-        # The release numbers the title as a first season of its own. Over specials that key doesn't refuse the run.
+        # The release numbers the title as a first season of its own. Over specials that season and episode doesn't
+        # block the sequence.
         ids = {EpisodeKey(0, n): 500 + n for n in range(1, 7)} | {EpisodeKey(1, n): 600 + n for n in range(1, 4)}
         index = series_index(ids, aired={501: "2016-03-01", 503: "2016-06-01", 506: "2016-09-01"})
         spelled_names = [f"Spin.S01E{n:02d}.mkv" for n in range(1, 4)]
@@ -2118,13 +2136,14 @@ class TestAssignReleaseRun:
         assert result.placed == {spelled_names[0]: (501,), spelled_names[1]: (503,), spelled_names[2]: (506,)}
 
     def test_a_seasons_episodes_numbered_apart_refuse(self) -> None:
-        # Episodes 1, 3 and 6 of a season: the run would have to count the episodes between them.
+        # Episodes 1, 3 and 6 of a season: the sequence would have to count the episodes between them.
         result = place(blind(self._BESIDE_SHORTS), PlacementTarget([501, 503, 506], self._apart(1)))
 
         assert result.placed == {}
 
     def test_specials_numbered_apart_with_consecutive_absolutes_follow_the_absolutes(self) -> None:
-        # Special 1 is absolute 14 and special 3 is absolute 13, so the pack's 13 and 14 go where the absolutes say.
+        # Special 1 is absolute 14 and special 3 is absolute 13, so the torrent's 13 and 14 go where the absolutes
+        # say.
         ids = {EpisodeKey(0, n): 500 + n for n in (1, 2, 3)}
         index = series_index(ids, absolutes={501: 14, 503: 13}, aired={501: "2016-03-01", 503: "2016-06-01"})
         names = ["show - 13 [grp].mkv", "show - 14 [grp].mkv"]
@@ -2135,7 +2154,7 @@ class TestAssignReleaseRun:
         assert result.placed == {names[0]: (503,), names[1]: (501,)}
 
     def test_a_two_season_window_refuses(self) -> None:
-        # The extra parse keeps the numberless zip out, so the refusal is what is pinned.
+        # The extra parse keeps pairing in name order out, so the block is what is pinned.
         parsed = _pair_in_order_blocked(blind(self._RUN))
 
         result = place(parsed, PlacementTarget([501, 502, 601], series_index(self._ID_BY_KEY)), self._RUN)
@@ -2144,7 +2163,7 @@ class TestAssignReleaseRun:
         assert sorted(result.unplaced) == sorted(self._RUN)
 
     def test_a_member_whose_lone_absolute_disagrees_leaves_the_run(self) -> None:
-        # Its "02" was not the release's count, so no full-width run is left to fit.
+        # Its "02" was not the release's name number, so no full-width sequence is left to fit.
         parsed = blind(self._RUN)
         parsed[self._RUN[1]] = parsed_info(absolutes=(9,))
 
@@ -2154,7 +2173,7 @@ class TestAssignReleaseRun:
         assert sorted(result.unplaced) == sorted(self._RUN)
 
     def test_a_member_whose_own_numbers_claim_several_episodes_refuses_the_run(self) -> None:
-        # Its name parsed as absolutes 1 and 2, two episodes where the run needs one.
+        # Its name parsed as absolutes 1 and 2, two episodes where the sequence needs one.
         parsed = blind(self._RUN)
         parsed[self._RUN[0]] = parsed_info(absolutes=(1, 2))
 
@@ -2164,7 +2183,7 @@ class TestAssignReleaseRun:
 
     def test_a_full_season_read_never_refuses(self) -> None:
         # A member read as a whole season ("S0101" is season 101, "S1 - 02" is
-        # season 1) has no episode token, so the run still indexes the window.
+        # season 1) has no episode token, so the sequence still indexes the window.
         parsed: dict[str, ParsedFileInfo | None] = {
             name: parsed_info(season=101, full_season=True) for name in self._RUN
         }
@@ -2173,7 +2192,7 @@ class TestAssignReleaseRun:
         assert by_name(place(parsed, self._target())) == self._ran()
 
     def test_a_run_numbered_as_the_windows_episodes_indexes_it(self) -> None:
-        # A split cour's second half counts on from the first: 12..14 over S01E12..E14.
+        # A split cour's second half numbers on from the first: 12..14 over S01E12..E14.
         target = PlacementTarget([612, 613, 614], series_index({EpisodeKey(1, n): 600 + n for n in (12, 13, 14)}))
         run = [f"sp - {n} [grp].mkv" for n in (12, 13, 14)]
         parsed = blind(run)
@@ -2198,7 +2217,8 @@ class TestAssignReleaseRun:
         }
 
     def test_a_run_from_anywhere_needs_every_member_unread(self) -> None:
-        # One member Sonarr did read says the numbering is not the series' own: the tier stands down.
+        # One member Sonarr did read says the numbering is not the series' own: the sequence from anywhere stands
+        # down.
         run = [f"sp - {n} [grp].mkv" for n in (14, 15, 16)]
         parsed = blind(run)
         parsed[run[0]] = parsed_info(matched=((1, 1),))
@@ -2212,9 +2232,9 @@ class TestAssignReleaseRun:
         }
 
     def test_a_covering_run_read_across_two_seasons_still_blocks_a_run_from_anywhere(self) -> None:
-        # Sonarr matched the 1..4 run onto two other seasons, so it settles nowhere: refused, it still outranks the
-        # run from anywhere, and nothing places. Read whole into one other season, it would be FOREIGN and the run
-        # from anywhere would place.
+        # Sonarr matched the 1..4 sequence onto two other seasons, so it lands nowhere: rejected, it still outranks the
+        # sequence from anywhere, and nothing places. Read whole into one other season, it would be OUTSIDE_WINDOW and
+        # the sequence from anywhere would place.
         index = series_index({EpisodeKey(s, e): s * 100 + e for s in (1, 2, 3) for e in range(1, 5)})
         covering = numbered_names("A", 4)
         anywhere = [f"B - {n:02d} [grp].mkv" for n in (5, 6)]
@@ -2229,7 +2249,7 @@ class TestAssignReleaseRun:
         assert by_name(result) == dict.fromkeys((*covering, *anywhere), ((), PlacementVerdict.NO_EPISODE_FOUND))
 
     def test_a_one_to_n_run_outranks_a_run_from_anywhere(self) -> None:
-        # Both fit the width. The release's own 1..N is the count, the other run is extras.
+        # Both fit the width. The release's own 1..N is the numbering, the other sequence is extras.
         offset = [f"extra - {n} [grp].mkv" for n in (14, 15, 16)]
         parsed = blind((*self._RUN, *offset))
 
@@ -2247,7 +2267,7 @@ class TestAssignReleaseRun:
         assert result.placed == {}
 
     def test_several_fitting_runs_leave_the_one_a_title_names(self) -> None:
-        # A franchise pack: two 1..3 runs fit the window, and the entry's own title picks one.
+        # A franchise torrent: two 1..3 sequences fit the window, and the title's own names pick one.
         alpha = numbered_names("show alpha", 3)
         beta = numbered_names("show beta", 3)
         parsed = blind((*alpha, *beta))
@@ -2265,7 +2285,7 @@ class TestAssignReleaseRun:
         }
 
     def test_a_title_that_is_the_series_names_no_run(self) -> None:
-        # The entry is the series itself, so its title decides nothing and the pack stays ambiguous.
+        # The title is the series itself, so its name decides nothing and the torrent stays ambiguous.
         alpha = numbered_names("show alpha", 3)
         beta = numbered_names("show beta", 3)
         parsed = blind((*alpha, *beta))
@@ -2278,8 +2298,8 @@ class TestAssignReleaseRun:
         assert result.placed == {}
 
     def test_a_run_sonarr_read_whole_elsewhere_stands_aside(self) -> None:
-        # A franchise pack: the AniList title names the base run, but Sonarr read that run whole into
-        # season 1, so the unread sequel run takes the window instead.
+        # A franchise torrent: the AniList name names the base sequence, but Sonarr read that sequence whole into
+        # season 1, so the blind sequel sequence takes the window instead.
         base = numbered_names("show name", 3)
         sequel = numbered_names("show name season two", 3)
         parsed: dict[str, ParsedFileInfo | None] = {
@@ -2298,7 +2318,7 @@ class TestAssignReleaseRun:
         }
 
     def test_a_run_numbered_as_the_window_outranks_a_run_from_one(self) -> None:
-        # A two-cour pack for the second cour: Sonarr read the first cour whole into the first half.
+        # A two-cour torrent for the second cour: Sonarr read the first cour whole into the first half.
         first = numbered_names("show part 1", 3)
         second = [f"show part 2 - 0{i} [grp].mkv" for i in (4, 5, 6)]
         parsed: dict[str, ParsedFileInfo | None] = {
@@ -2315,8 +2335,8 @@ class TestAssignReleaseRun:
         }
 
     def test_a_refused_title_pick_keeps_the_numbered_run_down(self) -> None:
-        # Several runs fit, the title picks one, and a member's own key refuses it: the losing blind run
-        # must not index the window through the numbered-run pass.
+        # Several sequences fit, the title picks one, and a member's season and episode block it: the losing blind
+        # sequence must not index the window through the numbered sequence pass.
         picked = numbered_names("show wrath", 3)
         other = numbered_names("show revival", 3)
         parsed = blind((*picked, *other))
@@ -2330,7 +2350,7 @@ class TestAssignReleaseRun:
         assert result.placed == {}
 
     def test_an_empty_series_map_refuses(self) -> None:
-        # With no map there is no window to index, and the extra parse keeps the zip out.
+        # With no index there is no window to index, and the extra parse keeps pairing in name order out.
         parsed = _pair_in_order_blocked(blind(self._RUN))
 
         result = place(parsed, PlacementTarget(self._WINDOW, series_index({})), self._RUN)
@@ -2339,7 +2359,7 @@ class TestAssignReleaseRun:
         assert sorted(result.unplaced) == sorted(self._RUN)
 
     def test_an_unknown_parse_holds_the_members(self) -> None:
-        # One unreadable name anywhere in the batch, and no pass may place the run.
+        # One unreadable name anywhere in the batch, and no pass may place the sequence.
         parsed = blind(self._RUN)
         parsed[_GONE] = None
 
@@ -2349,8 +2369,8 @@ class TestAssignReleaseRun:
         assert {p.verdict for p in result.placements} == {PlacementVerdict.WAITING_ON_PARSE}
 
     def test_a_held_run_holds_its_superseded_versions_too(self) -> None:
-        # The earlier version is the run's duplicate once it places, so it waits with the members
-        # rather than taking the episode by its own exact key.
+        # The earlier version is the sequence's duplicate once it places, so it waits with the members
+        # rather than taking the episode by its own exact season and episode.
         names = [*self._RUN, "sp - 02v2 [grp].mkv"]
         parsed: dict[str, ParsedFileInfo | None] = {
             name: parsed_info(matched=((0, i),)) for i, name in enumerate(self._RUN, 1)
@@ -2377,7 +2397,7 @@ class TestAssignReleaseRun:
         assert sorted(result.unplaced) == sorted(self._RUN[1:])
 
     def test_a_non_member_reading_inside_the_window_refuses_the_run(self) -> None:
-        # Another file owns one of the slots, so the run does not own the window whole.
+        # Another file owns one of the slots, so the sequence does not own the window whole.
         parsed = blind(self._RUN)
         parsed["extra.mkv"] = parsed_info(season=0, episodes=(2,))
 
@@ -2387,8 +2407,8 @@ class TestAssignReleaseRun:
         assert sorted(result.unplaced) == sorted(self._RUN)
 
     def test_a_member_sonarr_matched_to_two_episodes_stays_in_the_run(self) -> None:
-        # Sonarr's scene map reading one member as a double episode is the incoherence
-        # the run overrides (measured: every such pack was N files for N episodes).
+        # Sonarr's scene mapping reading one member as a double episode is the incoherence
+        # the sequence overrides (measured: every such torrent was N files for N episodes).
         parsed = blind(self._RUN)
         parsed[self._RUN[1]] = parsed_info(matched=((0, 2), (0, 3)))
 
@@ -2415,9 +2435,9 @@ class TestAssignReleaseRun:
         ],
     )
     def test_a_title_keeps_the_fit_it_names_and_refuses_one_it_does_not(self, title: str, placed: bool) -> None:
-        # One run fits the window and a wider one does not. The title naming the fit keeps it. Naming the
-        # other refuses the fit (the named run is never promoted onto a window it does not fit) and the
-        # numbered run stands down with it.
+        # One sequence fits the window and a wider one does not. The title naming the fit keeps it. Naming the
+        # other blocks the fit (the named sequence is never promoted onto a window it does not fit) and the
+        # numbered sequence pass stands down with it.
         fit = numbered_names("show wrath", 3)
         other = numbered_names("show revival", 4)
         parsed = blind((*fit, *other))
@@ -2429,7 +2449,7 @@ class TestAssignReleaseRun:
 
     @pytest.mark.parametrize("title", ["Show 3rd Season", "Show Third Season", "Show Season 3", "Show III", "Show 3"])
     def test_a_season_counted_any_way_names_the_run_counted_that_way(self, title: str) -> None:
-        # AniList counts a season as it likes and a release as it likes: both fold to the plain number.
+        # AniList numbers a season as it likes and a release as it likes: both reduce to the plain number.
         second = numbered_names("show s2", 3)
         third = numbered_names("show s3", 3)
         parsed = blind((*second, *third))
@@ -2440,8 +2460,8 @@ class TestAssignReleaseRun:
         assert result.placed == {name: (501 + i,) for i, name in enumerate(third)}
 
     def test_a_whole_season_run_over_a_slice_window_places_the_slice(self) -> None:
-        # A season pack listed on a cour's entry: the run counts the whole season, the window is two of
-        # its episodes, and the members past the slice are the other cour's.
+        # A season pack listed on a cour's entry: the sequence numbers the whole season, the window is two of
+        # its episodes, and the members past the window are the other cour's.
         run = numbered_names("show", 6)
         parsed = blind(run)
 
@@ -2467,8 +2487,8 @@ class TestAssignReleaseRun:
         }
 
     def test_a_specials_window_takes_no_covering_run(self) -> None:
-        # A `1..6` run Sonarr read nothing from, on an entry of two of the six specials: neither its count
-        # nor a slice indexes the specials.
+        # A `1..6` sequence Sonarr read nothing from, on a title of two of the six specials: neither its numbering
+        # nor a part of it indexes the specials.
         run = numbered_names("show", 6)
         parsed = blind(run)
 
@@ -2484,7 +2504,7 @@ class TestAssignReleaseRun:
         ],
     )
     def test_a_run_sonarr_read_into_another_season_never_covers(self, read: int, verdict: PlacementVerdict) -> None:
-        # A shorts run as wide as the season, which Sonarr read into the specials: read whole, it is
+        # A shorts sequence as wide as the season, which Sonarr read into the specials: read whole, it is
         # theirs, and read only in part, it is nowhere.
         run = numbered_names("show mini", 6)
         parsed: dict[str, ParsedFileInfo | None] = {
@@ -2497,7 +2517,7 @@ class TestAssignReleaseRun:
 
     def test_a_run_read_across_the_season_and_the_specials_is_nowhere(self) -> None:
         # Sonarr read the first file into the season and the rest onto the specials: no one season
-        # claims the run, so its files are neither the entry's nor foreign.
+        # takes the sequence, so its files are neither the title's nor outside the window.
         run = numbered_names("show", 6)
         reads = ((1, 1), (0, 1), (0, 2), (0, 3), (0, 4), (0, 5))
         parsed: dict[str, ParsedFileInfo | None] = {
@@ -2510,7 +2530,7 @@ class TestAssignReleaseRun:
 
     def test_a_runs_own_lower_version_inside_the_window_does_not_refuse_it(self) -> None:
         # The displaced `- 02` reads as the second episode, as its `- 02v2` does: a member's own version
-        # is no rival file, so the run still indexes the third episode Sonarr read nothing for.
+        # is no rival file, so the sequence still indexes the third episode Sonarr read nothing for.
         run = numbered_names("show", 6)
         later = "show - 02v2 [grp].mkv"
         parsed: dict[str, ParsedFileInfo | None] = {
@@ -2532,8 +2552,8 @@ class TestAssignReleaseRun:
 
     @pytest.mark.parametrize("beside", [False, True], ids=["alone", "beside another run"])
     def test_a_run_read_partly_into_another_season_places_nothing_by_its_reads(self, beside: bool) -> None:
-        # A bare sequel pack Sonarr read by absolute number, two files into the first season and the rest
-        # from the sequel's start: the read that lands in the entry is as disputed as the rest.
+        # A plain sequel torrent Sonarr read by absolute number, two files into the first season and the rest
+        # from the sequel's start: the read that lands in the window is as doubtful as the rest.
         two_seasons = {
             **{EpisodeKey(1, n): 600 + n for n in (1, 2)},
             **{EpisodeKey(2, n): 700 + n for n in range(1, 7)},
@@ -2551,8 +2571,8 @@ class TestAssignReleaseRun:
         assert by_name(result) == dict.fromkeys((*run, *other), ((), PlacementVerdict.NO_EPISODE_FOUND))
 
     def test_a_refused_pick_stands_the_numbered_run_down(self) -> None:
-        # A keyed file inside the window refuses the season's run and takes its episode: the two blind
-        # extras that now fit what is left do not fill it.
+        # A file spelling out its season and episode inside the window blocks the season's sequence and takes its
+        # episode: the two blind extras that now fit what is left do not take it.
         run = numbered_names("show", 6)
         spelled_name = "show S01E04 [grp].mkv"
         extras = numbered_names("show extra", 2)
@@ -2567,8 +2587,8 @@ class TestAssignReleaseRun:
         }
 
     def test_a_season_with_a_numbering_gap_takes_no_covering_run(self) -> None:
-        # TVDB skips the third episode, so the season counts five and a 1..5 run fits its count while its
-        # numbers count on past the gap: the slice is not the run's fourth and fifth.
+        # TVDB skips the third episode, so the season counts five and a 1..5 sequence fits its count while its
+        # numbers go on past the gap: the window is not the sequence's fourth and fifth.
         gapped = {key: ep_id for key, ep_id in self._SEASONED.items() if key != EpisodeKey(1, 3)}
         run = numbered_names("show", 5)
         parsed = blind(run)
@@ -2578,8 +2598,8 @@ class TestAssignReleaseRun:
         assert by_name(result) == dict.fromkeys(run, ((), PlacementVerdict.NO_EPISODE_FOUND))
 
     def test_an_earlier_window_owning_part_of_the_scope_keeps_a_run_from_anywhere_out(self) -> None:
-        # Three files fit a three-wide leftover by chance once an earlier window holds the rest of the scope:
-        # the count only speaks for the whole scope.
+        # Three files fit three unused ids by chance once an earlier window used the rest of the target:
+        # the numbering only speaks for the whole target.
         run = [f"sp - {n} [grp].mkv" for n in (14, 15, 16)]
         parsed = _pair_in_order_blocked(blind(run))
         target = PlacementTarget(
@@ -2591,8 +2611,8 @@ class TestAssignReleaseRun:
         assert result.placed == {}
 
     def test_a_stored_map_owning_part_of_the_scope_keeps_a_run_from_anywhere_out(self) -> None:
-        # The same three slots left over, held by the stored map instead of an earlier window: without the guard
-        # the specials would take 604-606 as a release run.
+        # The same three slots left over, used by the file map instead of an earlier window: without the guard
+        # the specials would take 604-606 as a sequence.
         run = [f"sp - {n} [grp].mkv" for n in (14, 15, 16)]
         mapped = {
             f"show - {n:02d} [grp].mkv": parsed_info(season=1, episodes=(n,), matched=((1, n),)) for n in (1, 2, 3)
@@ -2606,7 +2626,7 @@ class TestAssignReleaseRun:
 
 
 class TestAssignAbsoluteWindow:
-    """The release-run pass over a window spanning seasons: the absolute numbering orders it when every slot has one."""
+    """Sequence over parse on a window spanning seasons: the absolute numbering orders it when every slot has one."""
 
     _RUN: ClassVar[list[str]] = numbered_names("show", 3)
     _WINDOW: ClassVar[list[int]] = [501, 601, 602]
@@ -2615,7 +2635,7 @@ class TestAssignAbsoluteWindow:
 
     @classmethod
     def _place(cls, *absolutes: int | None, blocked: bool = False) -> BatchPlacements:
-        """Sonarr's shifted reading over the slots carrying `absolutes`: the third file collides with the second."""
+        """Sonarr's shifted parse over the slots carrying `absolutes`: the third file collides with the second."""
 
         carried = {ep_id: n for ep_id, n in zip(cls._ID_BY_KEY.values(), absolutes, strict=True) if n is not None}
         parsed: dict[str, ParsedFileInfo | None] = {
@@ -2627,7 +2647,7 @@ class TestAssignAbsoluteWindow:
         return place(_pair_in_order_blocked(parsed) if blocked else parsed, target, cls._RUN)
 
     def test_the_run_follows_the_absolute_order_across_seasons(self) -> None:
-        # An entry holding a special TVDB interleaved: "02" is absolute 2, the special, whatever season it sits in.
+        # A title holding a special TVDB interleaved: "02" is absolute 2, the special, whatever season it sits in.
         result = self._place(1, 2, 3)
 
         assert result.placed == {self._RUN[0]: (601,), self._RUN[1]: (501,), self._RUN[2]: (602,)}
@@ -2635,8 +2655,8 @@ class TestAssignAbsoluteWindow:
 
     @pytest.mark.parametrize("absolutes", [(1, None, 3), (1, 2, 4)])
     def test_without_an_absolute_order_the_reading_stands(self, absolutes: tuple[int | None, ...]) -> None:
-        # A slot with no absolute, or a gap between them, leaves the run nothing to index by: the reading
-        # stands, and the collided third file is the one leftover onto the one leftover slot.
+        # A slot with no absolute, or a gap between them, leaves the sequence nothing to index by: the parse
+        # stands, and the collided third file is the one unplaced file onto the one unused slot.
         result = self._place(*absolutes, blocked=True)
 
         assert by_name(result) == {
@@ -2647,7 +2667,7 @@ class TestAssignAbsoluteWindow:
 
 
 class TestAssignRunTitleEvidence:
-    """The release-run pass among several fitting runs: the members' episode titles pick one, or refuse the pick."""
+    """Sequence over parse among several fitting sequences: the members' episode titles pick one, or block the pick."""
 
     _WINDOW: ClassVar[list[int]] = [501, 502, 503]
     _TITLES: ClassVar[dict[int, str]] = {
@@ -2665,7 +2685,7 @@ class TestAssignRunTitleEvidence:
         EpisodeKey(1, 1): 601,
         EpisodeKey(1, 2): 602,
     }
-    # Two 1..3 runs fitting a franchise pack's specials window: one titled as the window's episodes, one as
+    # Two 1..3 sequences fitting a franchise torrent's specials window: one titled as the window's episodes, one as
     # another season's.
     _INSIDE: ClassVar[list[str]] = numbered_names(
         "show a", 3, ("Beach Day 1080p", "Hot Springs 1080p", "Festival Night 1080p")
@@ -2696,7 +2716,7 @@ class TestAssignRunTitleEvidence:
         ]
 
     def test_one_titled_member_places_only_itself(self) -> None:
-        # One title is too little to pick a run among two, and enough to place its own file.
+        # One title is too little to pick a sequence among two, and enough to place its own file.
         inside = numbered_names("show a", 3, ("Beach Day", "", ""))
 
         result = self._place(inside, numbered_names("show b", 3))
@@ -2706,14 +2726,15 @@ class TestAssignRunTitleEvidence:
 
     @pytest.mark.parametrize("blocked", [True, False], ids=["mixed batch", "pristine batch"])
     def test_members_naming_only_other_episodes_refuse_the_run(self, blocked: bool) -> None:
-        # The one fitting run is titled as another season's episodes: nothing places, and neither the
-        # numbered run nor the ordered zip of a pristine batch fills the window behind the refusal.
+        # The one fitting sequence is titled as another season's episodes: nothing places, and neither the numbered
+        # sequence pass nor pairing in name order on a batch with nothing judged takes the window behind the block.
         result = self._place(numbered_names("show", 3, ("Pilot Flight", "The Return", "Bonus")), blocked=blocked)
 
         assert result.placed == {}
 
     def test_a_short_subtitle_is_no_run_evidence(self) -> None:
-        # The word past the colon leads two members' tails, and says too little to count against the run.
+        # The word past the colon leads two members' words after the number, and says too little to count against
+        # the sequence.
         run = numbered_names("show", 3, ("Home Alone", "Home Again", ""))
 
         result = self._place(run, retitled={601: "Chapter 4: Home"})
@@ -2721,7 +2742,7 @@ class TestAssignRunTitleEvidence:
         assert result.placed == {name: (501 + i,) for i, name in enumerate(run)}
 
     def test_one_word_titles_still_refuse_the_run(self) -> None:
-        # A title too short to place a file is still evidence against a run titled as another season's.
+        # A title too short to place a file is still evidence against a sequence titled as another season's.
         run = numbered_names("show", 3, ("Pilot", "Return", "Bonus"))
 
         result = self._place(run, retitled={601: "Pilot", 602: "Return"}, blocked=True)
@@ -2738,21 +2759,21 @@ class TestAssignRunTitleEvidence:
 
 
 class TestRereadSeasonRun:
-    """A `1..N` run Sonarr matched into the one N-episode season and its specials is that season's own numbering."""
+    """A `1..N` sequence Sonarr matched into the one N-episode season and its specials is the season's own numbering."""
 
     _ID_BY_KEY: ClassVar[dict[EpisodeKey, int]] = {
         EpisodeKey(0, 1): 501,
         **{EpisodeKey(1, n): 600 + n for n in (1, 2, 3, 4)},
     }
     _SHIFTED: ClassVar[tuple[tuple[int, int], ...]] = ((1, 1), (1, 2), (0, 1), (1, 3), (1, 4))
-    """Sonarr's reading after the special TVDB interleaved after the second episode shifted it."""
+    """Sonarr's parse after the special TVDB interleaved after the second episode shifted it."""
     _TWO_OF_FOUR: ClassVar[dict[EpisodeKey, int]] = {
         **{EpisodeKey(0, n): 500 + n for n in (1, 2, 3, 4)},
         **{EpisodeKey(1, n): 600 + n for n in (1, 2, 3, 4)},
     }
-    """Four specials beside a four-episode season, the tie's shape."""
+    """Four specials beside a four-episode season, where a sequence can fit a season and the specials equally."""
     _TIED: ClassVar[tuple[tuple[int, int], ...]] = ((1, 1), (0, 1), (1, 2), (0, 2))
-    """Sonarr's reading of a four-file run, as many onto the specials as into the season."""
+    """Sonarr's parse of a four-file sequence, as many onto the specials as into the season."""
 
     @staticmethod
     def _reads(run: list[str], pairs: tuple[tuple[int, int], ...]) -> dict[str, ParsedFileInfo | None]:
@@ -2780,7 +2801,7 @@ class TestRereadSeasonRun:
 
     def test_a_lower_version_of_a_member_is_re_read_with_it(self) -> None:
         # Sonarr shifted the `- 03` and its `- 03v2` onto the special alike: the lower version is re-read
-        # as the third episode with its member, so the specials entry places neither.
+        # as the third episode with its member, so the specials window places neither.
         run = numbered_names("show", 4)
         later = "show - 03v2 [grp].mkv"
         parsed = self._reads(run, self._SHIFTED)
@@ -2792,8 +2813,8 @@ class TestRereadSeasonRun:
         assert {p.verdict for p in result.placements} == {PlacementVerdict.OUTSIDE_WINDOW}
 
     def test_a_ties_possible_episode_keeps_another_run_out_of_the_window(self) -> None:
-        # Under the tie the first file may be the season's first episode, so two blind extras that fit
-        # the entry's first two episodes do not take them.
+        # The sequence fits the season and the specials equally, so the first file may be the season's first episode,
+        # and two blind extras that fit the window's first two episodes do not take them.
         run = numbered_names("show", 4)
         extras = numbered_names("show extra", 2)
         parsed = self._reads(run, self._TIED)
@@ -2804,7 +2825,7 @@ class TestRereadSeasonRun:
         assert by_name(result) == dict.fromkeys((*run, *extras), ((), PlacementVerdict.NO_EPISODE_FOUND))
 
     def test_a_title_never_places_a_ties_file_alone(self) -> None:
-        # Over the one special's entry the AniList title names the run's second file: under the tie it
+        # Over the one special's window the AniList name names the sequence's second file: fitting both equally, it
         # is the second episode or the second special, never the first special.
         series = {key: ep_id for key, ep_id in self._TWO_OF_FOUR.items() if key.episode <= 2}
         run = numbered_names("show", 2)
@@ -2816,8 +2837,8 @@ class TestRereadSeasonRun:
         assert by_name(result) == dict.fromkeys(run, ((), PlacementVerdict.NO_EPISODE_FOUND))
 
     def test_a_title_naming_files_that_form_no_run_refuses_the_tied_pick(self) -> None:
-        # The sequel's entry lists its title, which names three loose sequel files and not the tied run:
-        # the run is refused there rather than indexed by count.
+        # The sequel's window carries its AniList name, which names three loose sequel files and not the sequence
+        # fitting both: the sequence is blocked there rather than indexed by its name numbers.
         run = numbered_names("show", 4)
         loose = [f"show two - {n} [grp].mkv" for n in ("05", "06", "08")]
         parsed = self._reads(run, self._TIED)
@@ -2832,8 +2853,8 @@ class TestRereadSeasonRun:
         assert by_name(result) == dict.fromkeys((*run, *loose), ((), PlacementVerdict.NO_EPISODE_FOUND))
 
     def test_a_ties_run_stands_aside_from_an_entry_neither_numbering_reaches(self) -> None:
-        # The tie is between the first season and the specials, so over the second season's entry the
-        # tied run is elsewhere and the blind sequel run indexes it.
+        # The sequence fits the first season and the specials equally, so over the second season's window it is
+        # outside the window and the blind sequel sequence indexes it.
         run = numbered_names("show", 4)
         sequel = numbered_names("show 2", 4)
         parsed = self._reads(run, self._TIED)
@@ -2848,7 +2869,7 @@ class TestRereadSeasonRun:
         }
 
     def test_a_run_one_wider_than_the_season_carried_the_special(self) -> None:
-        # Five files for four episodes and one special: Sonarr's reading stands.
+        # Five files for four episodes and one special: Sonarr's parse stands.
         run = numbered_names("show", 5)
 
         result = self._place(run, [501])
@@ -2856,7 +2877,7 @@ class TestRereadSeasonRun:
         assert result.placed == {run[2]: (501,)}
 
     def test_another_season_of_the_same_width_does_not_block_the_reread(self) -> None:
-        # Sonarr's reads name the season the run belongs to, so a second four-episode season is no rival.
+        # Sonarr's reads name the season the sequence belongs to, so a second four-episode season is no rival.
         two_seasons = {**self._ID_BY_KEY, **{EpisodeKey(2, n): 700 + n for n in (1, 2, 3, 4)}}
 
         result = self._place(numbered_names("show", 4), [501], series=two_seasons)
@@ -2875,7 +2896,7 @@ class TestRereadSeasonRun:
         self, specials: int, verdict: PlacementVerdict
     ) -> None:
         # Two of four members onto two specials: the season's, unless a specials release could be as
-        # wide as the run, which is a tie nothing places over the specials entry.
+        # wide as the sequence, which then fits both equally and nothing places over the specials window.
         series = {key: ep_id for key, ep_id in self._TWO_OF_FOUR.items() if key.season or key.episode <= specials}
         run = numbered_names("show", 4)
         parsed = self._reads(run, self._TIED)
@@ -2886,7 +2907,7 @@ class TestRereadSeasonRun:
         assert {p.verdict for p in result.placements} == {verdict}
 
 
-# Twenty-five specials and one seasoned episode, the series the specials pack tests place into.
+# Twenty-five specials and one seasoned episode, the series the specials torrent tests place into.
 _SPECIALS_ID_BY_KEY: dict[EpisodeKey, int] = {
     **{EpisodeKey(0, n): 500 + n for n in range(1, 26)},
     EpisodeKey(1, 1): 601,
@@ -2900,27 +2921,27 @@ def _listing(*ids: int) -> TorrentListing:
     return torrent_listing(title_window(1, ids))
 
 
-# The eight specials the entries list (7, 12, 13, 15, 17, 20, 22 and 23), and a pack as wide numbered another way.
+# The eight specials the entries list (7, 12, 13, 15, 17, 20, 22 and 23), and a torrent as wide numbered another way.
 _EIGHT_WINDOW = title_window(1, (507, 512, 513, 515, 517, 520, 522, 523))
 _EIGHT_LISTING = torrent_listing(_EIGHT_WINDOW)
 _TORRENT_NUMBERS = (7, 13, 14, 15, 16, 17, 18, 19)
-# A listing of three specials, room for a three-wide pack numbered 1, 2 and 3 to miss it.
+# A listing of three specials, room for a three-wide torrent numbered 1, 2 and 3 to miss it.
 _THREE_LISTING = _listing(502, 504, 506)
 
 
 def _specials_placement_target(
     resolved: Sequence[int], listing: TorrentListing, size_matches: SizeMatches = NO_SIZE_MATCHES
 ) -> PlacementTarget:
-    """A window of `resolved` over the specials series, carrying `listing` and the size-matched `identified`."""
+    """A window of `resolved` over the specials series, carrying `listing` and the `size_matches`."""
 
     evidence = SeadexEvidence(listing, size_matches)
     return PlacementTarget(list(resolved), _SPECIALS_INDEX, title_names=TitleNames("Show"), seadex=evidence)
 
 
 class TestRefuseMisnumbered:
-    """A specials pack numbered by another TVDB state than the windows listing it is set aside whole, never reordered.
+    """A specials torrent numbered by another TVDB state than the windows listing it is set aside whole, not reordered.
 
-    The pack is one `S00Exx` run, each file read as its own number's special, as wide as the listing, and some
+    The torrent is one `S00Exx` sequence, each file read as its own number's special, as wide as the listing, and some
     number is no listed special's. The listing has no special aliases here. Every shape the pass cannot judge
     places by number as before.
     """
@@ -2930,7 +2951,7 @@ class TestRefuseMisnumbered:
     )
 
     def test_a_pack_the_listing_contradicts_is_set_aside_whole(self) -> None:
-        # The pack's 14, 16, 18 and 19 are no listed special, so its count is another TVDB state's. Its 7, 13 and
+        # The torrent's 14, 16, 18 and 19 are no listed special, so its numbering is another TVDB state's. Its 7, 13 and
         # 15 are not placed either.
         parsed = parsed_specials(*_TORRENT_NUMBERS)
 
@@ -2942,7 +2963,7 @@ class TestRefuseMisnumbered:
 
     def test_one_stray_number_refuses_the_pack_and_never_reorders_it(self) -> None:
         # Seven of eight numbers are listed: placing them and the eighth by its position would be a guess that the
-        # listing's order is the pack's. The whole pack is a human's.
+        # listing's order is the torrent's. The whole torrent is a human's.
         result = place(
             parsed_specials(*range(1, 9)),
             _specials_placement_target([501, 502, 503], _listing(*range(501, 508), 520)),
@@ -2970,7 +2991,7 @@ class TestRefuseMisnumbered:
         }
 
     def test_a_listing_with_a_seasoned_episode_is_no_specials_listing(self) -> None:
-        # A season's numbering is stable: a number outside it is a mislisting, never a shifted count.
+        # A season's numbering is stable: a number outside it is a mislisting, never a shifted numbering.
         placed = by_name(
             place(parsed_specials(1, 2, 3), _specials_placement_target([501, 502], _listing(501, 502, 601)))
         )
@@ -3000,7 +3021,7 @@ class TestRefuseMisnumbered:
         assert result.placed == {"Show.S00E01.mkv": (501,), "Show.S00E02.mkv": (502,), "Show.S00E03.mkv": (503,)}
 
     def test_a_seeded_window_stands_down(self) -> None:
-        # A stored record already mapped a file, so the window has a used id and the pack isn't refused.
+        # The file map already places a file, so the window has a used id and the torrent isn't set aside.
         result = place(
             parsed_specials(1, 2, 3),
             _specials_placement_target([504], _THREE_LISTING),
@@ -3010,8 +3031,8 @@ class TestRefuseMisnumbered:
         assert PlacementVerdict.MISNUMBERED not in verdicts_of(result)
 
     def test_a_seed_on_another_windows_special_leaves_the_pack_refused(self) -> None:
-        # The stored record mapped a file onto a special outside this window, so this window holds nothing yet and
-        # the pack is still refused.
+        # The file map puts a file on a special outside this window, so nothing in this window is used yet and
+        # the torrent is still set aside.
         result = place(
             parsed_specials(1, 2, 3),
             _specials_placement_target([504], _THREE_LISTING),
@@ -3070,7 +3091,8 @@ class TestRefuseMisnumbered:
         assert PlacementVerdict.MISNUMBERED not in verdicts_of(result)
 
     def test_a_numberless_file_beside_the_pack_stands_down(self) -> None:
-        # The torrent is not one pack: a file no count reads is beside it, and the listing judges packs alone.
+        # The torrent is not one sequence: a file with no name number is beside it, and the listing judges a torrent
+        # only when it is one sequence.
         parsed = {**parsed_specials(1, 2, 3), "Show - Bonus.mkv": parsed_info()}
 
         result = place(parsed, _specials_placement_target([502, 504], _THREE_LISTING))
@@ -3078,8 +3100,8 @@ class TestRefuseMisnumbered:
         assert PlacementVerdict.MISNUMBERED not in verdicts_of(result)
 
     def test_one_title_confirming_its_number_keeps_the_pack_refused(self) -> None:
-        # The first file is titled as special 1, the number it carries. That vouches for one file: a special
-        # inserted after it would still shift the rest, so the listing keeps judging the pack.
+        # The first file is titled as special 1, the number it carries. That confirms one file: a special
+        # inserted after it would still shift the rest, so the listing keeps judging the torrent.
         parsed = {
             **parsed_specials(2, 3),
             "Show.S00E01 - Pilot Flight.mkv": parsed_info(season=0, episodes=(1,), matched=((0, 1),)),
@@ -3090,7 +3112,7 @@ class TestRefuseMisnumbered:
         assert verdicts_of(result) == {PlacementVerdict.MISNUMBERED}
 
     def test_a_title_on_every_member_confirming_its_number_stands_down(self) -> None:
-        # Every file is titled as the special it is numbered: the pack is numbered by this TVDB state.
+        # Every file is titled as the special it is numbered: the torrent is numbered by this TVDB state.
         titles = {1: "Pilot Flight", 2: "Distress Call", 3: "Final Bell"}
         parsed = {
             f"Show.S00E{n:02d} - {title}.mkv": parsed_info(season=0, episodes=(n,), matched=((0, n),))
@@ -3130,7 +3152,8 @@ class TestRefuseMisnumbered:
         }
 
     def test_a_member_its_size_identifies_stays_in_the_refused_pack(self) -> None:
-        # The refusal runs first, so a size match never pulls one special out of a pack that was refused whole.
+        # The misnumbered specials pass runs first, so a size match never pulls one special out of a torrent set
+        # aside whole.
         parsed = parsed_specials(*_TORRENT_NUMBERS)
         target = _specials_placement_target([507, 512, 513], _EIGHT_LISTING, {"Show.S00E14.mkv": 512})
 
@@ -3138,14 +3161,15 @@ class TestRefuseMisnumbered:
 
 
 class TestAlternateNumbering:
-    """A misnumbered specials pack is placed through the listing's special aliases when they map it one to one.
+    """A misnumbered specials torrent is placed through the listing's special aliases when they cover it one to one.
 
     Each member goes on the special its alias points at, or is `ALIAS_OUTSIDE_WINDOW` when that special is outside the
-    window. Anything short of a one-to-one map onto the listing, or a title or size match against an alias, refuses
-    the pack whole as it would without aliases. A seed off its alias keeps the aliases out of a seeded window.
+    window. Anything short of one to one onto the listing, or a title or size match against an alias, sets
+    the torrent aside whole as it would without aliases. A file in the file map off its alias keeps the aliases out of
+    a window the file map uses.
     """
 
-    # Maps the pack's numbers onto the eight listed specials.
+    # Points the torrent's numbers at the eight listed specials.
     _ALIASES: ClassVar[dict[int, int]] = {7: 7, 13: 12, 14: 13, 15: 15, 16: 17, 17: 20, 18: 22, 19: 23}
     _LISTING: ClassVar[TorrentListing] = torrent_listing(_EIGHT_WINDOW, aliases=_ALIASES)
 
@@ -3193,7 +3217,7 @@ class TestAlternateNumbering:
         assert verdicts_of(result) == {PlacementVerdict.MISNUMBERED}
 
     def test_a_title_naming_another_special_than_its_alias_refuses_the_pack(self) -> None:
-        # File 13 is titled as special 13 but its alias says special 12, so the pack is left for a hand import.
+        # File 13 is titled as special 13 but its alias says special 12, so the torrent is left for a hand import.
         parsed = {
             **parsed_specials(*(n for n in _TORRENT_NUMBERS if n != 13)),
             "Show.S00E13 - Final Bell.mkv": parsed_info(season=0, episodes=(13,), matched=((0, 13),)),
@@ -3219,7 +3243,8 @@ class TestAlternateNumbering:
         assert placed["Show.S00E07.mkv"] == ((), PlacementVerdict.DUPLICATE)
 
     def test_a_member_whose_special_is_already_held_is_skipped(self) -> None:
-        # An earlier window already holds special 7. The pack still maps whole, and only that member is skipped.
+        # An earlier window already used special 7. The aliases still cover the whole torrent, and only that member
+        # is unplaced.
         target = replace(_specials_placement_target([507, 512, 513], self._LISTING), used=frozenset({507}))
 
         placed = by_name(place(parsed_specials(*_TORRENT_NUMBERS), target))
@@ -3230,7 +3255,7 @@ class TestAlternateNumbering:
         assert {placed[f"Show.S00E{n}.mkv"][1] for n in (15, 16, 17, 18, 19)} == {PlacementVerdict.ALIAS_OUTSIDE_WINDOW}
 
     def test_a_size_match_on_another_special_than_its_alias_refuses_the_pack(self) -> None:
-        # File 13's size matches special 13 but its alias says special 12, so the pack is left for a hand import.
+        # File 13's size matches special 13 but its alias says special 12, so the torrent is left for a hand import.
         target = _specials_placement_target([507, 512, 513], self._LISTING, {"Show.S00E13.mkv": 513})
 
         result = place(parsed_specials(*_TORRENT_NUMBERS), target)
@@ -3239,7 +3264,7 @@ class TestAlternateNumbering:
 
     def test_a_superseded_versions_size_match_against_its_alias_refuses_the_pack(self) -> None:
         # The v1 of file 13 is the size of special 13, where its alias says special 12. The v2 supersedes it in
-        # the pack, but the v1's size still speaks for the number, so the pack is left for a hand import.
+        # the torrent, but the v1's size still speaks for the number, so the torrent is left for a hand import.
         parsed = {
             **parsed_specials(*_TORRENT_NUMBERS),
             "Show.S00E13v2.mkv": parsed_info(season=0, episodes=(13,), matched=((0, 13),)),
@@ -3251,8 +3276,8 @@ class TestAlternateNumbering:
         assert verdicts_of(result) == {PlacementVerdict.MISNUMBERED}
 
     def test_a_superseded_version_seeded_on_its_own_number_keeps_the_aliases_out(self) -> None:
-        # The stored record holds the v1 of file 13 on special 13, its own number. The v2 is left to place, and
-        # the seed's disagreement with the aliases keeps the rest of the pack off them too.
+        # The file map puts the v1 of file 13 on special 13, its own number. The v2 is left to place, and
+        # the file map's disagreement with the aliases keeps the rest of the torrent off them too.
         parsed = {
             **parsed_specials(*_TORRENT_NUMBERS),
             "Show.S00E13v2.mkv": parsed_info(season=0, episodes=(13,), matched=((0, 13),)),
@@ -3264,8 +3289,9 @@ class TestAlternateNumbering:
         assert not verdicts_of(result) & {PlacementVerdict.SPECIAL_ALIAS, PlacementVerdict.MISNUMBERED}
 
     def test_a_seed_on_its_own_number_contradicts_the_aliases_and_the_pack_keeps_its_numbers(self) -> None:
-        # The stored record holds file 13 on special 13, its own number, where its alias says special 12. The
-        # aliases are wrong for this pack, so nothing is placed by them, and the seeded window isn't refused either.
+        # The file map puts file 13 on special 13, its own number, where its alias says special 12. The aliases
+        # are wrong for this torrent, so nothing is placed by them, and the window the file map uses isn't set aside
+        # either.
         parsed = parsed_specials(*_TORRENT_NUMBERS)
         file_map = {"Show.S00E13.mkv": (513,)}
 
@@ -3274,8 +3300,8 @@ class TestAlternateNumbering:
         assert not verdicts_of(result) & {PlacementVerdict.SPECIAL_ALIAS, PlacementVerdict.MISNUMBERED}
 
     def test_a_seed_spanning_its_alias_and_another_special_keeps_the_aliases_out(self) -> None:
-        # The stored record holds file 13 on two specials, its alias among them. A member on more than its one
-        # aliased special is off it, so the pack keeps its numbers.
+        # The file map puts file 13 on two specials, its alias among them. A member on more than its one
+        # aliased special is off it, so the torrent keeps its numbers.
         parsed = parsed_specials(*_TORRENT_NUMBERS)
         file_map = {"Show.S00E13.mkv": (512, 513)}
 
@@ -3284,7 +3310,7 @@ class TestAlternateNumbering:
         assert not verdicts_of(result) & {PlacementVerdict.SPECIAL_ALIAS, PlacementVerdict.MISNUMBERED}
 
     def test_a_seed_on_its_aliased_special_agrees_and_the_rest_places_by_the_aliases(self) -> None:
-        # The stored record holds file 13 on special 12, its alias: the rest of the pack follows the aliases.
+        # The file map puts file 13 on special 12, its alias: the rest of the torrent follows the aliases.
         parsed = parsed_specials(*_TORRENT_NUMBERS)
         file_map = {"Show.S00E13.mkv": (512,)}
 
@@ -3334,7 +3360,7 @@ class TestSizeIdentity:
         }
 
     def test_a_keyed_name_is_overridden_though_its_release_number_matches_the_special(self) -> None:
-        # Its size says S00E02 and its key says S01E02. The release number 2 is just the key's episode again, so
+        # Its size says S00E02 and its season and episode say S01E02. The name number 2 is just its episode again, so
         # it doesn't count as agreeing.
         name = "Show.S01E02.mkv"
 
@@ -3366,7 +3392,7 @@ class TestSizeIdentity:
 
     def test_a_size_one_pack_member_disagrees_with_moves_that_member_alone(self) -> None:
         # The second file's size puts it on episode 3, which the third file also reads as. Being placed by size
-        # doesn't make the third file a duplicate, so it's skipped and reported, and episode 2 stays open.
+        # doesn't make the third file a duplicate, so it's unplaced and reported, and episode 2 stays unused.
         placed = by_name(place(self._PARSED, self._target(self._SEASON, {"Show.S01E02.mkv": 603})))
 
         assert placed == {
@@ -3377,8 +3403,8 @@ class TestSizeIdentity:
         }
 
     def test_a_size_disagreeing_with_a_runs_number_bars_the_run(self) -> None:
-        # The last member's size puts it on episode 1, so the run's numbering is off. Nothing places the rest by
-        # count or by run, so each one is skipped for a hand check.
+        # The last member's size puts it on episode 1, so the sequence's numbering is off. Nothing places the rest by
+        # pairing or by sequence, so each one is left unplaced for a hand check.
         run = numbered_names("show", 4)
         parsed: dict[str, ParsedFileInfo | None] = {name: parsed_info(absolutes=(n,)) for n, name in enumerate(run, 1)}
 
@@ -3392,8 +3418,8 @@ class TestSizeIdentity:
         }
 
     def test_a_size_disagreeing_with_a_matched_number_bars_the_count_only(self) -> None:
-        # Sonarr matched each member, so the others keep their matches. The first member is skipped, since the
-        # last one took its episode by size.
+        # Sonarr matched each member, so the others keep their matches. The first member is unplaced, since the
+        # last one used its episode by size.
         run = numbered_names("show", 4)
         parsed: dict[str, ParsedFileInfo | None] = {
             name: parsed_info(absolutes=(n,), matched=((1, n),)) for n, name in enumerate(run, 1)
@@ -3409,8 +3435,8 @@ class TestSizeIdentity:
         }
 
     def test_a_size_agreeing_with_an_unresolved_number_leaves_the_run_to_place(self) -> None:
-        # Sonarr resolved nothing, and the last member's size matches the episode its number counts to. Nothing
-        # disagrees, so the run places by its numbers and the last member by size.
+        # Sonarr resolved nothing, and the last member's size matches the episode its number points at. Nothing
+        # disagrees, so the sequence places by its numbers and the last member by size.
         run = numbered_names("show", 4)
         parsed: dict[str, ParsedFileInfo | None] = {name: parsed_info(absolutes=(n,)) for n, name in enumerate(run, 1)}
 
@@ -3424,7 +3450,7 @@ class TestSizeIdentity:
         }
 
     def test_unscoped_a_size_matching_another_series_leaves_the_file_to_its_name(self) -> None:
-        # An unscoped window admits any id: only the series check keeps the file off another series' episode.
+        # A target with no window admits any id: only the series check keeps the file off another series' episode.
         name = "Show.S01E01.mkv"
         target = PlacementTarget(
             [], _SERIES, title_names=TitleNames("Show"), seadex=SeadexEvidence(EMPTY_LISTING, {name: 999})
@@ -3433,8 +3459,8 @@ class TestSizeIdentity:
         assert by_name(place({name: self._PARSED[name]}, target)) == {name: ((601,), PlacementVerdict.EXACT)}
 
     def test_a_size_agreeing_with_a_rejected_reading_places_it(self) -> None:
-        # The titles reject the run's numbering, so the last member's reading is rejected. Its size points at the
-        # same episode, though, and the veto was only against the numbers, so it's placed.
+        # The titles contradict the sequence's numbering, so the last member's parse is rejected. Its size points at
+        # the same episode, though, and the rejection was only against the numbers, so it's placed.
         run = numbered_names("show", 4, ("The Return", "Festival Night", "", ""))
         parsed: dict[str, ParsedFileInfo | None] = {
             name: parsed_info(absolutes=(n,), matched=((1, n),)) for n, name in enumerate(run, start=1)
@@ -3454,7 +3480,8 @@ class TestSizeIdentity:
         assert placed == {name: ((603,), PlacementVerdict.EPISODE_TITLE)}
 
     def test_a_size_matching_a_taken_episode_sets_the_file_aside(self) -> None:
-        # The numberless file would otherwise take the one open id, but its size says it's the taken episode.
+        # The file with no parsed number would otherwise take the one unused id, but its size says it's the used
+        # episode.
         name = "Show - Special [grp].mkv"
 
         placed = by_name(place({name: parsed_info()}, self._target([501, 502], {name: 502}, used=[502])))
@@ -3477,7 +3504,7 @@ class TestRangeKey:
         assert placed == {self._NAME: ((602, 603), PlacementVerdict.EXACT)}
 
     def test_a_range_partly_held_never_zips_onto_its_open_episode(self) -> None:
-        # The absolute zip sees the widened parse, which no longer reads the range's end as an absolute.
+        # Pairing in absolute order sees the widened parse, which no longer reads the range's end as an absolute.
         placed = by_name(place(self._SHORT, _target([602, 603], used=[603])))
 
         assert placed == {self._NAME: ((), PlacementVerdict.NO_EPISODE_FOUND)}
@@ -3507,7 +3534,7 @@ class TestRangeKey:
 
 
 class TestAssignNumberedRun:
-    """The numbered-run pass: one `1..N` run indexes the run window among files Sonarr read blind."""
+    """The numbered sequence pass: one `1..N` sequence indexes the sequence's window among files Sonarr read blind."""
 
     _WINDOW: ClassVar[list[int]] = [10370, 10371, 10372]
     _ID_BY_KEY: ClassVar[dict[EpisodeKey, int]] = {
@@ -3525,7 +3552,7 @@ class TestAssignNumberedRun:
 
     @classmethod
     def _batch(cls, run: list[str]) -> dict[str, ParsedFileInfo | None]:
-        """The season-pack file plus a blind run, in file order."""
+        """The season-pack file plus a blind sequence, in file order."""
 
         parsed: dict[str, ParsedFileInfo | None] = {cls._MAIN: parsed_info(season=1, episodes=(1,))}
         parsed.update(blind(run))
@@ -3536,8 +3563,8 @@ class TestAssignNumberedRun:
         return PlacementTarget([10384, *cls._WINDOW], series_index(cls._ID_BY_KEY))
 
     def test_a_run_beside_a_season_pack_places(self) -> None:
-        # The mixed batch the ordered zip refuses: the pack takes its own key and the
-        # run indexes what is left, which the two-season window keeps the release-run pass out of.
+        # The mixed batch that blocks pairing in name order: the season-pack file takes the season and episode in its
+        # name and the sequence indexes what is left, which the two-season window keeps sequence over parse out of.
         run = self._run("extra ", range(1, 4))
         result = place(self._batch(run), self._target())
 
@@ -3546,7 +3573,7 @@ class TestAssignNumberedRun:
         assert {p.verdict for p in result.placements if p.name in run} == {PlacementVerdict.SEQUENCE}
 
     def test_a_later_version_displaces_the_earlier_one_in_a_blind_run(self) -> None:
-        # The blind run keeps the higher `vN` and leaves the lower as its duplicate, as the release run does.
+        # The blind sequence keeps the higher `vN` and leaves the lower as its duplicate, as sequence over parse does.
         run = self._run("extra ", range(1, 4))
         later = "[grp] show extra 2v2 [bd 1080p x264 10bit flac].mkv"
         parsed = self._batch([*run, later])
@@ -3557,7 +3584,7 @@ class TestAssignNumberedRun:
         assert by_name(result)[run[1]] == ((), PlacementVerdict.DUPLICATE)
 
     def test_a_season_zero_absolute_run_still_counts_as_blind(self) -> None:
-        # Absolutes alone resolve nothing, so a season-0 run reads as blind and indexes the window.
+        # Absolutes alone resolve nothing, so a season-0 sequence reads as blind and indexes the window.
         main = "[grp] show s2 - 01 [bd].mkv"
         run = [f"[grp] ova - 0{i} [bd].mkv" for i in (1, 2, 3)]
         parsed: dict[str, ParsedFileInfo | None] = {main: parsed_info(season=1, episodes=(1,), absolutes=(1,))}
@@ -3571,7 +3598,7 @@ class TestAssignNumberedRun:
         ("run", "window"),
         [
             pytest.param(_run("a ", range(1, 4)) + _run("b ", range(1, 4)), _WINDOW, id="two runs of one width"),
-            # Only a 1..N run indexes a window: a 2..4 run says nothing about where it starts.
+            # Only a 1..N sequence indexes a window: a 2..4 sequence says nothing about where it starts.
             pytest.param(_run("extra ", range(2, 5)), _WINDOW, id="a run not starting at one"),
             pytest.param(_run("extra ", range(1, 6)), _WINDOW, id="a run wider than the window"),
         ],
@@ -3583,7 +3610,7 @@ class TestAssignNumberedRun:
         assert sorted(result.unplaced) == sorted(run)
 
     def test_an_unknown_parse_refuses(self) -> None:
-        # An unreadable name anywhere holds every count pass closed, the blind one too.
+        # An unreadable name anywhere blocks every name number pass, the blind one too.
         run = self._run("extra ", range(1, 4))
         parsed = self._batch(run)
         parsed[_GONE] = None
@@ -3595,7 +3622,7 @@ class TestAssignNumberedRun:
 
 
 class TestPlacementClassification:
-    """What `finish()` calls the leftovers, and what a leftover's classification does NOT buy it earlier."""
+    """What `_pass_classify` calls each unplaced file, and what its classification does NOT buy it earlier."""
 
     _ID_BY_KEY: ClassVar[dict[EpisodeKey, int]] = {
         EpisodeKey(0, 1): 501,
@@ -3604,8 +3631,8 @@ class TestPlacementClassification:
     }
 
     def test_a_file_bound_for_foreign_still_counts_against_the_ordered_zip(self) -> None:
-        # Exclusion is decided LAST, so a foreign leaf is an open leftover while the
-        # count passes run: the numberless pair beside it never zips.
+        # Exclusion is decided LAST, so a file outside the window is still unplaced while the
+        # pairing passes run: the pair with no parsed numbers beside it is never paired in order.
         parsed: dict[str, ParsedFileInfo | None] = {
             "one.mkv": parsed_info(),
             "two.mkv": parsed_info(),
@@ -3619,7 +3646,7 @@ class TestPlacementClassification:
         assert by_name(result)["far.mkv"] == ((), PlacementVerdict.OUTSIDE_WINDOW)
 
     def test_a_reading_that_resolves_nowhere_stays_countable(self) -> None:
-        # Nothing proved it another slice's, so the absolute zip may still place it.
+        # Nothing proved it outside the window, so pairing in absolute order may still place it.
         parsed: dict[str, ParsedFileInfo | None] = {"x.mkv": parsed_info(season=9, episodes=(9,), absolutes=(9,))}
 
         result = place(parsed, PlacementTarget([501], series_index(self._ID_BY_KEY)))
@@ -3627,7 +3654,7 @@ class TestPlacementClassification:
         assert by_name(result) == {"x.mkv": ((501,), PlacementVerdict.ABSOLUTE)}
 
     def test_the_bogus_key_single_arm_refuses_on_an_empty_map(self) -> None:
-        # Over an unserved map every key "misses", so no key may be called bogus.
+        # Over an unserved episode index every season and episode "misses", so none may be called bogus.
         parsed: dict[str, ParsedFileInfo | None] = {"movie.mkv": parsed_info(season=20, episodes=(20,))}
 
         result = place(parsed, PlacementTarget([501], series_index({})))
@@ -3636,7 +3663,7 @@ class TestPlacementClassification:
 
 
 class TestRefuseDisputed:
-    """A name that counts two ways is right about at most one of them: the file is never placed by either count."""
+    """A name with two numberings is right about at most one of them: the file is never placed by either numbering."""
 
     _ID_BY_KEY: ClassVar[dict[EpisodeKey, int]] = {
         EpisodeKey(1, 1): 601,
@@ -3646,7 +3673,7 @@ class TestRefuseDisputed:
         EpisodeKey(5, 2): 702,
     }
     _ABSOLUTES: ClassVar[dict[int, int]] = {601: 1, 602: 2, 603: 3, 702: 102}
-    """The season counts 1 to 3; one far episode carries absolute 102."""
+    """The season's absolutes are 1 to 3, and one far episode carries absolute 102."""
 
     @classmethod
     def _target(cls, *resolved: int, absolutes: Mapping[int, int] | None = None) -> PlacementTarget:
@@ -3654,7 +3681,7 @@ class TestRefuseDisputed:
         return PlacementTarget(list(resolved), index, title_names=TitleNames("Show"))
 
     def test_a_bracketed_count_naming_another_episode_refuses_the_key(self) -> None:
-        # "(0003)" is episode 3's absolute number, and the key says episode 2.
+        # "(0003)" is episode 3's absolute number, and the season and episode say episode 2.
         name = "[grp] Show S01E02 (0003) (WEB 1080p) [ABCD1234].mkv"
 
         result = place({name: parsed_info(season=1, episodes=(2,), matched=((1, 2),))}, self._target(601, 602, 603))
@@ -3677,7 +3704,8 @@ class TestRefuseDisputed:
         assert by_name(result) == {name: ((602,), PlacementVerdict.EXACT)}
 
     def test_a_bracketed_count_naming_another_episode_disputes_a_borrowed_reading(self) -> None:
-        # Sonarr matched the "02" as episode 2 and lent the file that key; "[0102]" counts it as episode 102.
+        # Sonarr matched the "02" as episode 2 and gave the file that season and episode. "[0102]" numbers it as
+        # episode 102.
         name = "[0102] Show - 02 (WEB 1080p) [ABCD1234].mkv"
 
         result = place({name: parsed_info(absolutes=(2,), matched=((1, 2),))}, self._target(601, 602, 603))
@@ -3779,7 +3807,7 @@ class TestRefuseDisputed:
         assert by_name(result) == {name: ((), PlacementVerdict.OUTSIDE_WINDOW)}
 
     def test_a_dispute_over_an_episode_the_window_holds_by_the_other_count_is_refused(self) -> None:
-        # The key says S01E02, outside the window; the count says episode 102, inside it.
+        # The season and episode say S01E02, outside the window, and the name number says episode 102, inside it.
         name = "Show.102.v4.480p.DVD.FLAC2.0.x264-grp.mkv"
 
         result = place({name: parsed_info(season=1, episodes=(2,), matched=((1, 2),))}, self._target(702))
@@ -3787,7 +3815,8 @@ class TestRefuseDisputed:
         assert by_name(result) == {name: ((), PlacementVerdict.MISNUMBERED)}
 
     def test_a_lower_version_of_a_disputed_number_is_a_copy(self) -> None:
-        # The top version at 102 is disputed (S01E02 or episode 102), and the other cut of 102 is a copy of it.
+        # The top version at 102 has numbers that disagree (S01E02 or episode 102), and the other cut of 102 is a
+        # copy of it.
         top = "Show.102.v4.480p.DVD.FLAC2.0.x264-grp.mkv"
         copy = "Show.102.Canon.Cut.v2.480p.DVD.FLAC2.0.x264-grp.mkv"
         parsed = {name: parsed_info(season=1, episodes=(2,), matched=((1, 2),)) for name in (top, copy)}
@@ -3797,7 +3826,7 @@ class TestRefuseDisputed:
         assert by_name(result) == {top: ((), PlacementVerdict.MISNUMBERED), copy: ((), PlacementVerdict.DUPLICATE)}
 
     def test_a_disputed_member_is_still_placed_by_its_run(self) -> None:
-        # Sonarr read "0003" as S00E03 (a key the series lacks) and the first two as absolutes.
+        # Sonarr read "0003" as S00E03 (a season and episode the series lacks) and the first two as absolutes.
         names = [f"Show - 000{n} (BD 1080p) [grp][ABCD123{n}].mkv" for n in (1, 2, 3)]
         parsed = {
             names[0]: parsed_info(absolutes=(1,), matched=((1, 1),)),
@@ -3813,7 +3842,7 @@ class TestRefuseDisputed:
 
 
 class TestRunnerUps:
-    """A refusal opens no episode to the file that would have lost it to the refused reading."""
+    """A rejection gives no episode to the file that would have lost it to the rejected parse."""
 
     _ID_BY_KEY: ClassVar[dict[EpisodeKey, int]] = {
         EpisodeKey(1, 1): 601,
@@ -3823,7 +3852,7 @@ class TestRunnerUps:
     }
     _ABSOLUTES: ClassVar[dict[int, int]] = {601: 1, 602: 2, 603: 3, 702: 102}
     _NUMBERS_DISAGREE: ClassVar[str] = "Show.102.v4.480p.DVD.FLAC2.0.x264-grp.mkv"
-    """Read as S01E02 from its glued count, which is also episode 102's absolute number: refused."""
+    """Read as S01E02 from its glued number, which is also episode 102's absolute number: rejected."""
 
     @classmethod
     def _target(cls, titles: Mapping[int, str] | None = None) -> PlacementTarget:
@@ -3831,7 +3860,8 @@ class TestRunnerUps:
         return PlacementTarget([601, 602, 603], index, title_names=TitleNames("Show"))
 
     def test_a_runner_up_never_takes_the_episode_the_refused_file_would_have_won(self) -> None:
-        # Sonarr matched the OVA to S01E02 by its absolute number, the episode the key names.
+        # Sonarr matched the OVA to S01E02 by its absolute number, the episode the other file's season and episode
+        # point at.
         ova = "Show - 02 (OVA) [grp].mkv"
         parsed = {
             self._NUMBERS_DISAGREE: parsed_info(season=1, episodes=(2,), matched=((1, 2),)),
@@ -3860,7 +3890,7 @@ class TestRunnerUps:
         }
 
     def test_a_runner_up_is_not_placed_on_its_lost_episode_by_an_anilist_title(self) -> None:
-        # One id open, and the numberless runner-up is the file an AniList title names.
+        # One id unused, and the next in line, with no parsed number, is the file an AniList name matches.
         titled = "Show - The Special Title [grp].mkv"
         parsed = {
             self._NUMBERS_DISAGREE: parsed_info(season=1, episodes=(2,), matched=((1, 2),)),
@@ -3878,7 +3908,7 @@ class TestRunnerUps:
         }
 
     def test_a_file_ranked_ahead_of_the_refused_one_keeps_its_episode(self) -> None:
-        # Equal rank and version, and the spelled-out key comes first in the batch.
+        # Equal rank and version, and the spelled-out season and episode comes first in the batch.
         spelled_name = "[grp] Show S01E02.mkv"
         disagreeing_name = "Show.102.480p.DVD.FLAC2.0.x264-grp.mkv"
         parsed = {
@@ -3894,8 +3924,8 @@ class TestRunnerUps:
         }
 
     def test_a_runner_up_neither_refuses_the_refused_files_run_nor_outlives_it(self) -> None:
-        # The first key's bracketed count names episode 102, the keyed run of three fits the window, and the OVA
-        # is matched to S01E01.
+        # The first name's bracketed number names episode 102, the season and episode sequence of three fits the
+        # window, and the OVA is matched to S01E01.
         names = ["[grp] Show S01E01 (0102).mkv", "[grp] Show S01E02 (0002).mkv", "[grp] Show S01E03 (0003).mkv"]
         ova = "Show - 01 (OVA) [grp].mkv"
         parsed = {
@@ -3911,7 +3941,8 @@ class TestRunnerUps:
         }
 
     def test_a_runner_up_inside_the_refused_files_run_is_still_placed_by_its_count(self) -> None:
-        # A pack numbered 001 to 103: Sonarr read the first hundred as absolutes and the rest as glued keys.
+        # A torrent numbered 001 to 103: Sonarr read the first hundred as absolutes and the rest as glued seasons
+        # and episodes.
         names = {n: f"Show.{n:03d}.v4.480p.DVD.FLAC2.0.x264-grp.mkv" for n in range(1, 104)}
         parsed = {
             name: parsed_info(absolutes=(n,), matched=((1, n),))
@@ -3928,9 +3959,9 @@ class TestRunnerUps:
         }
 
     def test_a_refused_lower_copy_still_keeps_the_top_version_off_its_episode(self) -> None:
-        # Only the lower copy carries the disputed key, and its own key outranks the top version's borrowed pair.
-        # It is still in the running when the runner-ups are read, so the top version loses the episode to it
-        # before the copy is set aside.
+        # Only the lower copy carries the disagreeing season and episode, and a season and episode in the name
+        # outranks the top version's matched episode. It is still in the running when the next in line are read, so
+        # the top version loses the episode to it before the copy is set aside.
         top = "Show.102.v4.480p.DVD.FLAC2.0.x264-grp.mkv"
         copy = "Show.102.Canon.Cut.v2.480p.DVD.FLAC2.0.x264-grp.mkv"
         parsed = {
@@ -3947,10 +3978,11 @@ class TestRunnerUps:
 
 
 class TestRefuseInterleavedSpecial:
-    """A keyed run numbered past its season's end, where TVDB counts a special inside the season's absolute numbering.
+    """A season and episode sequence past its season's end, where TVDB numbers a special inside the season's absolutes.
 
-    The release counted the special as an episode, or appended an extra: the keys run past the end the same. The
-    members before the special agree either way; from the special on, the two counts name different episodes.
+    The release numbered the special as an episode, or appended an extra: the seasons and episodes go past the end
+    the same. The members before the special agree either way. From the special on, the two numberings name
+    different episodes.
     """
 
     _ID_BY_KEY: ClassVar[dict[EpisodeKey, int]] = {
@@ -3987,7 +4019,7 @@ class TestRefuseInterleavedSpecial:
         }
 
     def test_a_window_holding_the_special_places_no_member_from_the_special_on_by_position(self) -> None:
-        # The run fits the window in absolute order, its third member on the special.
+        # The sequence fits the window in absolute order, its third member on the special.
         result = self._place({601: 1, 602: 2, 501: 3, 603: 4}, (601, 602, 501, 603))
 
         assert by_name(result) == {
@@ -4009,7 +4041,7 @@ class TestRefuseInterleavedSpecial:
         }
 
     def test_a_run_keyed_on_past_a_double_length_special_is_refused_from_the_special_on(self) -> None:
-        # The release keys the special between S01E02 and S01E03 as "S01E03-E04" and the aired third episode as
+        # The release numbers the special between S01E02 and S01E03 as "S01E03-E04" and the aired third episode as
         # "S01E05".
         names = [f"[grp] Show - S01E{key}.mkv" for key in ("01", "02", "03-E04", "05")]
         parsed = {
@@ -4030,7 +4062,7 @@ class TestRefuseInterleavedSpecial:
         }
 
     def test_a_run_keyed_within_its_season_is_placed_as_read(self) -> None:
-        # Two of three episodes, keyed past the special's position but not past the season's end.
+        # Two of three episodes, numbered past the special's position but not past the season's end.
         names = [f"[grp] Show - S01E0{n}.mkv" for n in (2, 3)]
         parsed = {
             names[0]: parsed_info(season=1, episodes=(2,), matched=((1, 2),)),
@@ -4070,11 +4102,12 @@ class TestRefuseInterleavedSpecial:
 
 
 class TestPlacerFacts:
-    """`PlacerResult.facts`: every name as the passes read it before the first pass, seeded and gone names included."""
+    """`PlacerResult.facts`: every name as the passes read it before the first pass, file map and gone names too."""
 
     def test_every_torrent_name_gets_the_facts_the_passes_judge_by(self) -> None:
-        # The titled file carries episode 2's title; the extra is an NCOP; the seeded file is counted by its own
-        # title's number, which no title confirms; the gone name reads inside the scope on its matched pair.
+        # The titled file carries episode 2's title, and the extra is an NCOP. The file in the file map is numbered by
+        # its own title's number, which no title confirms. The gone name reads inside the window on its matched
+        # episode.
         titled, extra, counted = (
             "show - 02 The Return [grp].mkv",
             "[grp] show - NCOP1 [bd].mkv",
@@ -4112,8 +4145,8 @@ class TestPlacerFacts:
         assert facts["show - 05 [grp].mkv"].parses_inside_window is False
 
     def test_a_reading_a_pass_rejects_still_reads_inside(self) -> None:
-        # Sonarr matched the name to episode 2, inside the scope, but it carries episode 3's title: the contradiction
-        # rejects the reading, and the episode-title pass places the file.
+        # Sonarr matched the name to episode 2, inside the window, but it carries episode 3's title: the contradiction
+        # rejects the parse, and the episode-title pass places the file.
         name = "show - 03 - Festival Night [grp].mkv"
         parsed = {name: parsed_info(absolutes=(3,), matched=((1, 2),))}
 
@@ -4124,7 +4157,8 @@ class TestPlacerFacts:
 
     def test_a_reading_the_season_re_read_replaces_keeps_its_first_read(self) -> None:
         # A special TVDB interleaved after the second episode shifted Sonarr's match: the third file onto the special,
-        # outside the scope. The season re-read reads it as the season's third episode, where the exact pass places it.
+        # outside the window. The season re-read reads it as the season's third episode, where the exact pass places
+        # it.
         run = numbered_names("show", 4)
         matched = ((1, 1), (1, 2), (0, 1), (1, 3))
         parsed = {name: parsed_info(matched=(pair,)) for name, pair in zip(run, matched, strict=True)}
