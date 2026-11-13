@@ -71,7 +71,7 @@ def _row(record: PendingImport) -> dict[str, Any]:
 
 
 def _open(tmp_path: Path) -> contextlib.closing[CacheStore]:
-    return contextlib.closing(CacheStore.load(str(tmp_path / "cache.db"), config_checksum=CHECKSUM))
+    return contextlib.closing(CacheStore.load(str(tmp_path / "cache.db"), config_hash=CHECKSUM))
 
 
 class TestSchemaAndDescriptor:
@@ -672,7 +672,7 @@ class TestSchemaVersionGate:
         raw.execute("PRAGMA user_version=4")
         raw.commit()
         raw.close()
-        with contextlib.closing(CacheStore.load(str(folded), config_checksum=CHECKSUM)) as store:
+        with contextlib.closing(CacheStore.load(str(folded), config_hash=CHECKSUM)) as store:
             assert store.get_pending(Arr.SONARR) == records
         assert _user_version(folded) == SCHEMA_VERSION
 
@@ -731,7 +731,7 @@ class TestSchemaVersionGate:
         raw.close()
 
         with pytest.raises(CacheSchemaError):
-            CacheStore.load(str(db), config_checksum=CHECKSUM)
+            CacheStore.load(str(db), config_hash=CHECKSUM)
         # Fail closed: the healthy newer db is left exactly where it was.
         assert db.exists()
         assert not list(tmp_path.glob("cache.db.corrupt-*"))
@@ -755,7 +755,7 @@ class TestEntries:
             store.update_cache(Arr.SONARR, 7, stamped)
             store.update_cache(Arr.RADARR, 7, stamped)
 
-            store.clear_entry_stamp(Arr.SONARR, 7)
+            store.uncache_title(Arr.SONARR, 7)
 
             entry = store.get_entry(Arr.SONARR, 7)
             assert entry is not None
@@ -767,7 +767,7 @@ class TestEntries:
 
     def test_clear_entry_stamp_adds_no_row(self, tmp_path: Path) -> None:
         with _open(tmp_path) as store:
-            store.clear_entry_stamp(Arr.SONARR, 7)
+            store.uncache_title(Arr.SONARR, 7)
             assert store.get_entry(Arr.SONARR, 7) is None
 
     def test_update_cache_formats_datetime_timestamp(self, tmp_path: Path) -> None:
@@ -884,7 +884,7 @@ class TestSelectionDigest:
 
     def test_no_digest_on_record_reads_fresh(self, tmp_path: Path) -> None:
         with _open(tmp_path) as store:
-            assert store.selection_stale(Arr.SONARR, "d1") is False
+            assert store.selection_changed(Arr.SONARR, "d1") is False
 
     def test_vouch_round_trips_through_a_real_save(self, tmp_path: Path) -> None:
         with _open(tmp_path) as store:
@@ -892,8 +892,8 @@ class TestSelectionDigest:
             store.save(preview=False)
 
         with _open(tmp_path) as reopened:
-            assert reopened.selection_stale(Arr.SONARR, "d1") is False
-            assert reopened.selection_stale(Arr.SONARR, "d2") is True
+            assert reopened.selection_changed(Arr.SONARR, "d1") is False
+            assert reopened.selection_changed(Arr.SONARR, "d2") is True
 
     def test_preview_save_does_not_consume_a_pending_recheck(self, tmp_path: Path) -> None:
         # Matching prefs changed (the committed digest is old). A preview run
@@ -904,18 +904,18 @@ class TestSelectionDigest:
             store.save(preview=False)
 
         with _open(tmp_path) as previewing:
-            assert previewing.selection_stale(Arr.SONARR, "new") is True
+            assert previewing.selection_changed(Arr.SONARR, "new") is True
             previewing.vouch_selection(Arr.SONARR, "new")
             previewing.save(preview=True)
 
         with _open(tmp_path) as real:
-            assert real.selection_stale(Arr.SONARR, "new") is True
+            assert real.selection_changed(Arr.SONARR, "new") is True
 
     def test_arrs_vouch_independently(self, tmp_path: Path) -> None:
         with _open(tmp_path) as store:
             store.vouch_selection(Arr.SONARR, "d1")
-            assert store.selection_stale(Arr.SONARR, "d2") is True
-            assert store.selection_stale(Arr.RADARR, "d2") is False
+            assert store.selection_changed(Arr.SONARR, "d2") is True
+            assert store.selection_changed(Arr.RADARR, "d2") is False
 
 
 class TestAnilistMeta:
@@ -1374,7 +1374,7 @@ class TestCorruptStore:
             mp.setattr("pearlarr.sqlite_util.connect", _raise_locked)
             raised = False
             try:
-                CacheStore.load(str(db), config_checksum=CHECKSUM)
+                CacheStore.load(str(db), config_hash=CHECKSUM)
             except sqlite3.OperationalError:
                 raised = True
 

@@ -41,7 +41,7 @@ _ENVELOPE = ["schema_version", "time", "event", "level", "message"]
 def _build_cache(tmp_path: Path) -> None:
     """Write a real on-disk cache.db under tmp_path holding one entry."""
 
-    store = CacheStore.load(str(tmp_path / "cache.db"), config_checksum="x")
+    store = CacheStore.load(str(tmp_path / "cache.db"), config_hash="x")
     store.update_cache(Arr.SONARR, 7, {"name": "X"})
     store.save(preview=False)
     store.close()

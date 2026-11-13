@@ -70,7 +70,7 @@ class AddOutcome(Enum):
     """The result of handing a release to the torrent client."""
 
     ADDED = auto()
-    ALREADY_ADDED = auto()
+    ALREADY_IN_QBIT = auto()
 
 
 class AddResult(NamedTuple):
@@ -298,7 +298,7 @@ class TorrentService:
         if not torr_info:
             return None
         self.logger.debug(f"Torrent {item.url} already in qBittorrent")
-        return AddResult(AddOutcome.ALREADY_ADDED, torr_info[0].name, _row_added_on(torr_info[0]))
+        return AddResult(AddOutcome.ALREADY_IN_QBIT, torr_info[0].name, _row_added_on(torr_info[0]))
 
     def _add_to_qbit(
         self,

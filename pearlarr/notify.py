@@ -86,7 +86,7 @@ def _wait_row_text(row: WaitOutcomeRow) -> str:
 
     if row.outcome.category is OutcomeCategory.SUCCESS:
         return row.label
-    held = row.held_back
+    held = row.left_for_hand_import
     # Discord strips leading whitespace and reads `_`, `*`, `[` as markdown, so each name rides in backticks.
     names = held_back_names(held, quote="`")
     if held.explained_by_order:
@@ -232,7 +232,7 @@ def _group_blocks(notice: GrabNotice) -> list[_GroupBlock]:
     outcome_by_group = {r.group: r.outcome for r in notice.results}
     blocks: list[_GroupBlock] = []
     for srg, srg_item in notice.seadex_dict.items():
-        release_lines = [_release_line(u) for u in srg_item.releases.values() if u.download]
+        release_lines = [_release_line(u) for u in srg_item.releases.values() if u.to_grab]
         if not release_lines:
             continue
         if srg_item.tags:
@@ -241,7 +241,7 @@ def _group_blocks(notice: GrabNotice) -> list[_GroupBlock]:
         add_outcome = outcome_by_group.get(srg)
         if add_outcome is AddOutcome.ADDED:
             label = "Grabbed"
-        elif add_outcome is AddOutcome.ALREADY_ADDED:
+        elif add_outcome is AddOutcome.ALREADY_IN_QBIT:
             label = "Already downloading"
         elif srg in notice.failed_groups:
             label = "Failed"

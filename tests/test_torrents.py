@@ -229,7 +229,7 @@ def test_add_already_present_dedups_by_hash(monkeypatch: pytest.MonkeyPatch) -> 
         item=Release(url="https://nyaa.si/view/1", tracker=Tracker.NYAA, infohash=_HASH), preview=False
     )
 
-    assert outcome is AddOutcome.ALREADY_ADDED
+    assert outcome is AddOutcome.ALREADY_IN_QBIT
     assert name == "Existing Name"
     assert qbit.add_calls == []
 
@@ -424,7 +424,7 @@ def test_add_already_present_reads_the_add_time(
         item=Release(url="https://nyaa.si/view/1", tracker=Tracker.NYAA, infohash=_HASH), preview=False
     )
 
-    assert outcome is AddOutcome.ALREADY_ADDED
+    assert outcome is AddOutcome.ALREADY_IN_QBIT
     assert when == expected
 
 
@@ -444,7 +444,7 @@ def test_add_preview_with_the_torrent_in_qbit_reports_it_without_fetching(monkey
 
     result = service.add(item=Release(url="https://nyaa.si/view/1", tracker=Tracker.NYAA, infohash=_HASH), preview=True)
 
-    assert (result.outcome, result.name) == (AddOutcome.ALREADY_ADDED, "Existing Name")
+    assert (result.outcome, result.name) == (AddOutcome.ALREADY_IN_QBIT, "Existing Name")
     assert fetched == []
     assert qbit.add_calls == []
 
@@ -467,7 +467,7 @@ def test_add_a_torrent_two_entries_list_is_fetched_once(monkeypatch: pytest.Monk
     first = service.add(item=item, preview=False)
     second = service.add(item=item, preview=False)
 
-    assert (first.outcome, second.outcome) == (AddOutcome.ADDED, AddOutcome.ALREADY_ADDED)
+    assert (first.outcome, second.outcome) == (AddOutcome.ADDED, AddOutcome.ALREADY_IN_QBIT)
     assert fetched == ["https://nyaa.si/view/1"]
 
 
@@ -671,7 +671,7 @@ def test_add_a_marked_url_is_its_cross_seed() -> None:
 
     result = _service(qbit).add(item=item, preview=False)
 
-    assert (result.outcome, result.name) == (AddOutcome.ALREADY_ADDED, "Cross")
+    assert (result.outcome, result.name) == (AddOutcome.ALREADY_IN_QBIT, "Cross")
     assert qbit.add_calls == []
 
 

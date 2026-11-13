@@ -237,7 +237,7 @@ class _FakeRunServices(RunServices):
         return self._prologue_entry
 
     @override
-    def cached_entry_skip(
+    def is_unchanged(
         self,
         al_id: int,
         sd_entry: EntryRecord,
@@ -331,7 +331,7 @@ def test_fake_overrides_the_full_public_surface() -> None:
 
     # Loop-driven members (the runner calls these, strategies never do), so the
     # fake doesn't script them.
-    lifecycle = {"begin_run", "ctx", "is_preview", "mark_dirty", "pay_pause", "selection_stale"}
+    lifecycle = {"begin_run", "ctx", "is_dry_run", "mark_dirty", "pay_pause", "selection_changed"}
     surface = {
         name
         for name, member in vars(RunServices).items()
@@ -2539,7 +2539,7 @@ class TestSonarrProcessAlIdSeeds:
         strat.process_al_id(_Item(id=7, title="Show", tvdbId=70, imdbId=None), 5, TitleMapping(anilist_id=5))
 
         (req,) = run.grab_requests
-        assert req.seadex_dict["NAN0"].releases[_SEED_URL].hold is GrabHold.MISNUMBERED
+        assert req.seadex_dict["NAN0"].releases[_SEED_URL].skip_reason is GrabHold.MISNUMBERED
         assert req.seadex_dict["NAN0"].releases[_SEED_URL].episodes == []
         assert req.pending_seeds["h1"].placements == {}
         assert req.input_missing_groups == ()
@@ -2599,7 +2599,7 @@ class TestSonarrProcessAlIdSeeds:
         run = _entry_run(files, [_EP1, _EP2], _ScriptedListings(outage=True))
 
         (req,) = run.grab_requests
-        assert req.seadex_dict["NAN0"].releases[_SEED_URL].hold is GrabHold.INPUT_UNREAD
+        assert req.seadex_dict["NAN0"].releases[_SEED_URL].skip_reason is GrabHold.INPUT_UNREAD
         assert req.pending_seeds["h1"].placements == {}
         assert req.input_missing_groups == ("NAN0",)
 
@@ -2674,7 +2674,7 @@ class TestSonarrProcessAlIdSeeds:
         seed = req.pending_seeds["h1"]
         assert seed.placements == {}
         assert seed.excluded == tuple(normalize_basename(name) for name in _SEED_FILES)
-        assert req.seadex_dict["NAN0"].releases[_SEED_URL].hold is GrabHold.PLACED_ELSEWHERE
+        assert req.seadex_dict["NAN0"].releases[_SEED_URL].skip_reason is GrabHold.PLACED_ELSEWHERE
 
     def test_wait_mode_off_reads_no_record_and_seeds_nothing(self) -> None:
         store = _CountingStore()
@@ -3179,7 +3179,7 @@ class TestHeldBackFiles:
         first = strat.import_completed(self._record(), "/d", AttemptKind.POLL)
         second = strat.import_completed(self._record(), "/d", AttemptKind.POLL)
 
-        assert first.held_back.names == (self._NAMES[2],)
+        assert first.left_for_hand_import.names == (self._NAMES[2],)
         assert first.files_present is False
         assert second == first
         assert sonarr.execute_calls == []
@@ -3194,7 +3194,7 @@ class TestHeldBackFiles:
 
         probe = strat.import_completed(stored, "/d", AttemptKind.POLL)
 
-        assert probe.held_back.names == (self._NAMES[2],)
+        assert probe.left_for_hand_import.names == (self._NAMES[2],)
         assert probe.files_present is False
         assert sonarr.execute_calls == []
 
@@ -3205,9 +3205,9 @@ class TestHeldBackFiles:
 
         done = strat.import_completed(self._record(), "/d", AttemptKind.POLL)
 
-        assert held.held_back.names == (self._NAMES[2],)
+        assert held.left_for_hand_import.names == (self._NAMES[2],)
         assert done.files_present is True
-        assert done.held_back.names == ()
+        assert done.left_for_hand_import.names == ()
 
     def test_an_untagged_hand_import_at_a_listed_size_retires_the_record(self) -> None:
         strat, sonarr = self._strat()
@@ -3217,7 +3217,7 @@ class TestHeldBackFiles:
         done = strat.import_completed(self._record(), "/d", AttemptKind.POLL)
 
         assert done.files_present is True
-        assert done.held_back.names == ()
+        assert done.left_for_hand_import.names == ()
 
     def test_a_plain_skip_beside_the_held_back_file_warns_once_for_itself_alone(self) -> None:
         strat, _ = self._strat("Extras.mkv")
@@ -3226,7 +3226,7 @@ class TestHeldBackFiles:
         probe = strat.import_completed(self._record(), "/d", AttemptKind.POLL)
         strat.import_completed(self._record(), "/d", AttemptKind.POLL)
 
-        assert probe.held_back.names == (self._NAMES[2],)
+        assert probe.left_for_hand_import.names == (self._NAMES[2],)
         warnings = [m for m in diagnostic_messages(recording, Severity.WARNING) if "could not be matched" in m]
         assert len(warnings) == 1
         assert ": 1 file could not be matched" in warnings[0]
@@ -3241,7 +3241,7 @@ class TestHeldBackFiles:
         probe = strat.import_completed(pending, "/d", AttemptKind.POLL)
 
         assert probe.files_present is True
-        assert probe.held_back.names == ()
+        assert probe.left_for_hand_import.names == ()
 
 
 class TestOrderOnlyHalves:
@@ -3273,7 +3273,7 @@ class TestOrderOnlyHalves:
 
         probe = strat.import_completed(pending, "/d", AttemptKind.POLL)
 
-        assert probe.held_back == HeldBack(
+        assert probe.left_for_hand_import == HeldBack(
             files=tuple(HeldFile(name, key) for name, key in zip(self._RUN[:2], self._KEYS, strict=True)),
             missing=(EpisodeKey(4, 1),),
         )

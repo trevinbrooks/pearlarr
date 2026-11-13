@@ -275,7 +275,7 @@ def grab_action_lines(event: GrabAction) -> tuple[LegacyLine, ...]:
     added_label = "would add" if event.status is GrabStatus.WOULD_ADD else "added"
     for release in event.added:
         lines.append(_detail_kv(added_label, release.display, value_style="green"))
-    for release in event.downloading:
+    for release in event.in_qbit:
         lines.append(_detail_kv("downloading", release.display, value_style="yellow"))
     return tuple(lines)
 
@@ -385,7 +385,9 @@ def run_summary_lines(event: RunSummaryReady) -> tuple[LegacyLine, ...]:
 
     lines.append(_summary_kv("up to date", str(tally.up_to_date)))
     lines.append(
-        _summary_kv("unchanged", f"{tally.cached}  (since last run)" if tally.cached else "0", value_style="grey50"),
+        _summary_kv(
+            "unchanged", f"{tally.unchanged}  (since last run)" if tally.unchanged else "0", value_style="grey50"
+        ),
     )
     if tally.no_mappings:
         lines.append(_summary_kv("no mapping", str(tally.no_mappings)))

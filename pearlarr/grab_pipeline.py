@@ -12,7 +12,7 @@ from . import coverage as _coverage
 from .cache import CachedTitleUpdate
 from .config import PrivateReleaseAction
 from .grab_placement import PendingSeed
-from .leg_state import GrabbedRow, NeedsActionKind, NeedsActionRow, RunContext, is_preview
+from .leg_state import GrabbedRow, NeedsActionKind, NeedsActionRow, RunContext, is_dry_run
 from .notify import GrabNotice
 from .output import Accent, GrabFailed, ReleaseSkipped, SkipReason, StyledValue
 from .pending_records import PendingImportStore
@@ -141,7 +141,7 @@ class GrabPipeline:
     def _is_preview(self) -> bool:
         """A run is a no-op preview (nothing can be grabbed): explicit dry run, or qBittorrent not configured."""
 
-        return is_preview(self._ctx, self.qbit)
+        return is_dry_run(self._ctx, self.qbit)
 
     @property
     def _effective_cap(self) -> int | None:
@@ -189,7 +189,7 @@ class GrabPipeline:
         A refused url posts its skip line and flags the title.
         """
 
-        if not release.download:
+        if not release.to_grab:
             return False
 
         url = release.url
@@ -217,7 +217,7 @@ class GrabPipeline:
             self._ctx.per_title.unsupported_tracker_groups.append(srg)
             return False
 
-        hold = release.hold
+        hold = release.skip_reason
         if hold is None:
             return True
         # Never added, and the title stays uncached for the next run.
@@ -274,7 +274,7 @@ class GrabPipeline:
 
         # ALREADY_ADDED is the url's torrent already in qBittorrent, SeaDex's or a cross-seed holding its files,
         # whoever added it, and it's tracked like a grab. The genuine "already own it" case is the
-        # any_to_download=False branch, which never reaches add_torrent.
+        # any_to_grab=False branch, which never reaches add_torrent.
         self._register_pending_import(release, req, result)
         return ReleaseOutcome(outcome=result.outcome, name=result.name, group=srg)
 
@@ -339,7 +339,7 @@ class GrabPipeline:
             not per_title.held_by_cap
             and not fallback_hold
             and not per_title.grab_failed_groups
-            and not per_title.held_groups
+            and not per_title.skipped_groups
             and not per_title.metadata_unread
             and (added_this_title > 0 or not (per_title.private_only_skipped or per_title.unsupported_tracker_skipped))
         )
@@ -382,7 +382,7 @@ class GrabPipeline:
     def _held_row(self, holds: Iterable[GrabHold]) -> NeedsActionRow | None:
         """The row of the first of `holds` that held a group of this title, or None."""
 
-        held_groups = self._ctx.per_title.held_groups
+        held_groups = self._ctx.per_title.skipped_groups
         for hold in holds:
             groups = held_groups.get(hold)
             if groups:
@@ -419,14 +419,14 @@ class GrabPipeline:
     def grab_and_cache(self, req: GrabRequest) -> None:
         """Shared per-id tail: add torrents, notify, cache the outcome."""
 
-        any_to_download = self._planner.get_any_to_download(req.seadex_dict)
+        any_to_grab = self._planner.get_any_to_download(req.seadex_dict)
         # The strategy's placement facts land on the title's flags beside the add loop's own.
         self._ctx.per_title.add_held(GrabHold.INPUT_UNREAD, req.input_missing_groups)
         self._ctx.per_title.metadata_unread |= req.metadata_unread
 
         added_this_title = 0
 
-        if not any_to_download:
+        if not any_to_grab:
             # A failed Sonarr read may have held a placement, so "already have it" is not claimed either.
             if not (self._ctx.per_title.private_only_skipped or req.input_missing_groups):
                 self._ctx.stats.up_to_date += 1
@@ -440,7 +440,7 @@ class GrabPipeline:
         if self._should_cache_as_done(added_this_title=added_this_title):
             # Always written: the partial-merge upsert would otherwise preserve a stale True.
             req.cache_details["fallback_satisfied"] = any(
-                u.is_fallback and u.download
+                u.is_fallback and u.to_grab
                 for group_releases in req.seadex_dict.values()
                 for u in group_releases.releases.values()
             )

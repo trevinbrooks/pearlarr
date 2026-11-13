@@ -205,13 +205,13 @@ def test_other_orders_leave_out_official_and_empty_orders() -> None:
 )
 def test_each_record_is_saved_as_it_is_written_unless_previewing(tmp_path: Path, preview: bool, kept: bool) -> None:
     path = str(tmp_path / "cache.db")
-    store = CacheStore.load(path, config_checksum="x")
+    store = CacheStore.load(path, config_hash="x")
     SkyHookGateway(client=FakeSkyHookClient(_REPLIES), cache_store=store).prefetch(
         [SeriesOrderFacts(_SERIES, OFFICIAL_ORDER, None)], preview=preview
     )
     # Closing without the end-of-run save is how an interrupted run ends.
     store.close()
 
-    reopened = CacheStore.load(path, config_checksum="x")
+    reopened = CacheStore.load(path, config_hash="x")
     assert (reopened.get_tvdb_orders(_SERIES) is not None) is kept
     reopened.close()

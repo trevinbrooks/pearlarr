@@ -324,7 +324,7 @@ class GrabAction:
     status: GrabStatus
     groups: tuple[RecommendedGroup, ...]
     added: tuple[ReleaseName, ...]
-    downloading: tuple[ReleaseName, ...]
+    in_qbit: tuple[ReleaseName, ...]
     waiting_to_import: bool = False
     scope: ScopeId | None = None
 
@@ -390,7 +390,7 @@ class RunTally:
     checked: int
     added: tuple[GrabFact, ...]
     up_to_date: int
-    cached: int
+    unchanged: int
     no_seadex_entry: int
     seadex_unreachable: int
     no_releases: int
@@ -410,7 +410,7 @@ class RunTally:
                 GrabFact(title=g.title, coverage=g.coverage, url=g.url, name=g.name, group=g.group) for g in stats.added
             ),
             up_to_date=stats.up_to_date,
-            cached=stats.cached,
+            unchanged=stats.unchanged,
             no_seadex_entry=stats.no_seadex_entry,
             seadex_unreachable=stats.seadex_unreachable,
             no_releases=stats.no_releases,
@@ -506,7 +506,7 @@ class TorrentView:
     """"Files inserted" bar: both set = determinate, both None = indeterminate."""
     import_total: int | None = None
     """On a TERMINAL imported row, the ledger's final files count (`phase_elapsed_s` freezes as its wait clock)."""
-    held_back: HeldBack = NO_HELD_BACK
+    left_for_hand_import: HeldBack = NO_HELD_BACK
     """On a TERMINAL unmatched or partial row, the on-disk files left for a hand import."""
     speed_history: tuple[int, ...] = ()
     """Speed samples (bytes/s, stalled = 0), newest last, bounded to `SPARK_SAMPLES`."""
@@ -607,7 +607,7 @@ class TorrentGraduated:
     outcome: Outcome
     files: int | None
     waited_s: float
-    held_back: HeldBack = NO_HELD_BACK
+    left_for_hand_import: HeldBack = NO_HELD_BACK
     """On the `UNMATCHED` and `PARTIAL` outcomes, the on-disk files left for a hand import."""
     scope: ScopeId | None = None
 

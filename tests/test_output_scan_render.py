@@ -223,7 +223,7 @@ class TestBuilders:
             status=GrabStatus.ADDING,
             groups=(RecommendedGroup(name="GroupA", tags=("HDR", "Dual Audio")),),
             added=(),
-            downloading=(),
+            in_qbit=(),
         )
         assert grab_action_lines(event)[1].message == "    group     GroupA [HDR, Dual Audio]"
 

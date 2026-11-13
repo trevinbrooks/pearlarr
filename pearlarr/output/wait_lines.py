@@ -133,7 +133,7 @@ def graduation_tail(event: TorrentGraduated) -> str:
     """The ledger line's parenthesized coda. "" when there is nothing to say."""
 
     outcome = event.outcome
-    held = event.held_back
+    held = event.left_for_hand_import
     if outcome is Outcome.UNMATCHED:
         return f"{count_noun(len(held.files), 'file')} matched no episode · import by hand in Sonarr"
     if outcome is Outcome.PARTIAL:
@@ -212,7 +212,7 @@ def wait_graduation_lines(event: TorrentGraduated, caps: Capabilities) -> list[L
         line += f"  ({tail})"
     return [
         LegacyLine(level, indent_string(line), StyledLine(style=style)),
-        *(kv_line(detail, level=level) for detail in _held_back_details(event.held_back, caps, style)),
+        *(kv_line(detail, level=level) for detail in _held_back_details(event.left_for_hand_import, caps, style)),
     ]
 
 

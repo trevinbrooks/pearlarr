@@ -225,7 +225,7 @@ def test_grab_action_line_joins_groups_and_names_sink_side() -> None:
         status=GrabStatus.ADDING,
         groups=(RecommendedGroup("SubsPlease", ("dual audio",)), RecommendedGroup("Kowo")),
         added=(ReleaseName("[SubsPlease] Sousou no Frieren", "SubsPlease"),),
-        downloading=(ReleaseName("", "Kowo"),),
+        in_qbit=(ReleaseName("", "Kowo"),),
         scope=_ENTRY,
     )
     line = _format(action, *_entry_context())
@@ -303,7 +303,7 @@ def test_unmatched_graduation_line_names_the_files() -> None:
         outcome=Outcome.UNMATCHED,
         files=None,
         waited_s=15.0,
-        held_back=held_files("a.mkv", "b.mkv"),
+        left_for_hand_import=held_files("a.mkv", "b.mkv"),
         scope=_WAIT,
     )
     assert _format(graduated, *context) == (
@@ -318,7 +318,7 @@ def test_partial_graduation_line_names_the_files_left_for_a_hand_import() -> Non
         outcome=Outcome.PARTIAL,
         files=None,
         waited_s=15.0,
-        held_back=held_files("a.mkv", "b.mkv"),
+        left_for_hand_import=held_files("a.mkv", "b.mkv"),
         scope=_WAIT,
     )
     assert _format(graduated, *context) == (
@@ -333,7 +333,7 @@ def test_order_only_graduation_line_says_why_and_keys_each_file() -> None:
         outcome=Outcome.PARTIAL,
         files=None,
         waited_s=15.0,
-        held_back=order_only_held_back(),
+        left_for_hand_import=order_only_held_back(),
         scope=_WAIT,
     )
     assert _format(graduated, *context) == (
@@ -408,7 +408,7 @@ def test_pure_boundaries_and_ephemerals_have_no_text_form() -> None:
 
 
 def _summary_ready() -> RunSummaryReady:
-    stats = RunStats(checked=182, up_to_date=161, cached=14)
+    stats = RunStats(checked=182, up_to_date=161, unchanged=14)
     stats.queued = 1
     stats.added.append(
         GrabbedRow(
@@ -1159,7 +1159,7 @@ def _exemplars() -> list[Event]:
         LedgerRow(state=EntryState.IGNORED, label="AniList #1"),
         ReleaseSkipped(group="G", tracker="AB", reason=SkipReason.PRIVATE_ONLY),
         GrabFailed(group="G", url="u", error="e"),
-        GrabAction(status=GrabStatus.ADDING, groups=(), added=(), downloading=()),
+        GrabAction(status=GrabStatus.ADDING, groups=(), added=(), in_qbit=()),
         CapReached(cap=25),
         ScanFinished(arr=Arr.SONARR),
         _summary_ready(),

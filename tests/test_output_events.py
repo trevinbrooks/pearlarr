@@ -164,7 +164,7 @@ def test_diagnostic_defaults_are_ambient_and_shared() -> None:
 
 
 def test_run_tally_freezes_run_stats_whole() -> None:
-    stats = RunStats(checked=182, up_to_date=161, cached=14)
+    stats = RunStats(checked=182, up_to_date=161, unchanged=14)
     stats.no_mappings = 2
     stats.no_seadex_entry = 3
     stats.seadex_unreachable = 4
@@ -200,7 +200,7 @@ def test_run_tally_freezes_run_stats_whole() -> None:
         checked=182,
         added=(grab_fact,),
         up_to_date=161,
-        cached=14,
+        unchanged=14,
         no_seadex_entry=3,
         seadex_unreachable=4,
         no_releases=5,

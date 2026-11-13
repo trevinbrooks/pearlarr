@@ -343,7 +343,7 @@ _TITLES = [FakeArrItem(item_id=1, title="A"), FakeArrItem(item_id=2, title="B")]
 def _kept(path: Path, keys: list[int]) -> list[int]:
     """The `keys` whose entry rows the cache at `path` holds once reopened."""
 
-    reopened = CacheStore.load(str(path), config_checksum="")
+    reopened = CacheStore.load(str(path), config_hash="")
     try:
         return [key for key in keys if reopened.get_entry(Arr.SONARR, key) is not None]
     finally:
@@ -363,7 +363,7 @@ class TestPerTitleCommit:
     """
 
     def test_a_stop_mid_title_keeps_the_finished_titles(self, logger: logging.Logger, tmp_path: Path) -> None:
-        store = CacheStore.load(str(tmp_path / "cache.db"), config_checksum="")
+        store = CacheStore.load(str(tmp_path / "cache.db"), config_hash="")
         services = _services(qbit=CLIENT_SENTINEL, cache_store=store)
         engine = _engine(_FinalizeRecorder(), logger, cache_store=store, services=services)
 
@@ -375,7 +375,7 @@ class TestPerTitleCommit:
         assert _kept(tmp_path / "cache.db", [11, 12, 21, 22]) == [11, 12]
 
     def test_a_title_that_raised_still_commits_what_it_staged(self, logger: logging.Logger, tmp_path: Path) -> None:
-        store = CacheStore.load(str(tmp_path / "cache.db"), config_checksum="")
+        store = CacheStore.load(str(tmp_path / "cache.db"), config_hash="")
         services = _services(qbit=CLIENT_SENTINEL, cache_store=store)
         engine = _engine(
             _FinalizeRecorder(), logger, cache_store=store, services=services, wait_manager=_RaisingSnapshots()
@@ -389,7 +389,7 @@ class TestPerTitleCommit:
         assert _kept(tmp_path / "cache.db", [11, 12, 21]) == [11, 12]
 
     def test_a_stop_in_the_pacing_pause_keeps_the_title_before_it(self, logger: logging.Logger, tmp_path: Path) -> None:
-        store = CacheStore.load(str(tmp_path / "cache.db"), config_checksum="")
+        store = CacheStore.load(str(tmp_path / "cache.db"), config_hash="")
         # Every id owes a pause. The second one slept is the one after title A's last id.
         clock = _StopOnSleepClock(stop_on=2)
         services = _services(qbit=CLIENT_SENTINEL, cache_store=store, _clock=clock, sleep_time=1)
@@ -403,7 +403,7 @@ class TestPerTitleCommit:
         assert _kept(tmp_path / "cache.db", [11, 12, 21]) == [11, 12]
 
     def test_a_preview_run_keeps_nothing(self, logger: logging.Logger, tmp_path: Path) -> None:
-        store = CacheStore.load(str(tmp_path / "cache.db"), config_checksum="")
+        store = CacheStore.load(str(tmp_path / "cache.db"), config_hash="")
         services = _services(cache_store=store)
         engine = _engine(_FinalizeRecorder(), logger, cache_store=store, services=services)
 
@@ -416,7 +416,7 @@ class TestPerTitleCommit:
     def test_the_finalize_save_commits_only_a_real_run(
         self, logger: logging.Logger, tmp_path: Path, qbit: object, kept: list[int]
     ) -> None:
-        store = CacheStore.load(str(tmp_path / "cache.db"), config_checksum="")
+        store = CacheStore.load(str(tmp_path / "cache.db"), config_hash="")
         services = _services(qbit=qbit, cache_store=store)
         engine = _engine(None, logger, cache_store=store, services=services)
         # With no titles, the run tail's save is the run's only commit.
@@ -629,7 +629,7 @@ class TestSelectionRecheck:
     def _vouched_any(self, engine: RunLoop) -> bool:
         """Whether the run recorded a digest at all (an alien digest then reads stale)."""
 
-        return engine.cache_store.selection_stale(Arr.SONARR, "some-other-digest")
+        return engine.cache_store.selection_changed(Arr.SONARR, "some-other-digest")
 
     def test_stale_selection_is_announced(self, logger: logging.Logger) -> None:
         _, recording = self._run(logger, stale=True)
@@ -658,7 +658,7 @@ class TestSelectionRecheck:
     def test_full_run_vouches_the_current_digest(self, logger: logging.Logger) -> None:
         engine, _ = self._run(logger)
 
-        assert engine.cache_store.selection_stale(Arr.SONARR, engine._config.selection_digest()) is False
+        assert engine.cache_store.selection_changed(Arr.SONARR, engine._config.selection_hash()) is False
         assert self._vouched_any(engine) is True
 
     def test_single_item_run_does_not_vouch(self, logger: logging.Logger) -> None:
@@ -735,5 +735,5 @@ def test_a_skyhook_outage_notes_unreachable_and_the_run_neither_vouches_nor_comm
 
     [step] = [e for e in recording.of_type(BootStepFinished) if e.label == "Fetching TVDB orders"]
     assert step.detail == note
-    assert store.selection_stale(Arr.SONARR, "some-other-digest") is full_pass
+    assert store.selection_changed(Arr.SONARR, "some-other-digest") is full_pass
     assert (store.get_history_checkpoint(Arr.SONARR) is not None) is full_pass

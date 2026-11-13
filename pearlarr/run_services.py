@@ -26,7 +26,7 @@ from .cache import AbstractCacheStore, CachedTitle, CachedTitleUpdate, CacheStor
 from .clock import Clock, SystemClock
 from .config import AppConfig, Arr, ArrSettings, PrivateReleaseAction, secret_value
 from .grab_pipeline import GrabPipeline, GrabRequest
-from .leg_state import PerTitleState, RunContext, Title, is_preview, resolve_entry_title
+from .leg_state import PerTitleState, RunContext, Title, is_dry_run, resolve_entry_title
 from .mappings import ExternalIds, MappingResolver, ResolvedMappings, TitleMapping
 from .notify import Notifier
 from .output import emit_to_hub, hub_counts
@@ -197,7 +197,7 @@ class RunDeps:
         with boot.step("Opening cache"):
             cache_store = CacheStore.load(
                 cache,
-                config_checksum=app_config.checksum(),
+                config_hash=app_config.checksum(),
             )
 
         # AniList client gateway: owns the in-memory meta cache (al_cache) and the
@@ -328,7 +328,7 @@ class RunServices:
         # Whether matching preferences moved since a prior full pass vouched for
         # this arr's cached verdicts. `_skippable_entry` then re-checks every
         # cached entry, and the run loop re-vouches once a full sweep finishes.
-        self._selection_stale = deps.cache_store.selection_stale(arr, deps.config.selection_digest())
+        self._selection_stale = deps.cache_store.selection_changed(arr, deps.config.selection_hash())
 
         # All per-run state (stats tally, running torrent count, the active
         # title/url/coverage, the run clock, the private-only skip flags, plus the
@@ -362,7 +362,7 @@ class RunServices:
         return self._ctx
 
     @property
-    def selection_stale(self) -> bool:
+    def selection_changed(self) -> bool:
         """Whether matching settings changed since this arr's verdicts were vouched.
 
         Read by the run loop to announce the run-wide re-check
@@ -517,9 +517,9 @@ class RunServices:
 
         return self._filter.filter_downloads(seadex_dict, arr_releases, ep_list)
 
-    def is_preview(self) -> bool:
+    def is_dry_run(self) -> bool:
         """A run is a no-op preview (nothing can be grabbed): explicit dry run, or qBittorrent not configured."""
-        return is_preview(self._ctx, self.qbit)
+        return is_dry_run(self._ctx, self.qbit)
 
     @property
     def import_wait_mode(self) -> ImportWaitMode:
@@ -612,7 +612,7 @@ class RunServices:
 
         return sd_entry
 
-    def cached_entry_skip(
+    def is_unchanged(
         self,
         al_id: int,
         sd_entry: EntryRecord,
@@ -632,7 +632,7 @@ class RunServices:
         if entry is None:
             # A forced re-check finds the row already stamped with SeaDex's current update time. Left so, a check
             # that ends in a failed grab, a hold or an error would leave the title skipped as cached from then on.
-            self.cache_store.clear_entry_stamp(self._ctx.arr, al_id)
+            self.cache_store.uncache_title(self._ctx.arr, al_id)
             return False
 
         # One-time backfills merged into a single write: the url + coverage an older record lacks,

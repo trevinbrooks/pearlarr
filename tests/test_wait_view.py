@@ -74,7 +74,7 @@ def _terminal(
     *,
     files: int | None = None,
     elapsed: float = 0.0,
-    held_back: HeldBack = NO_HELD_BACK,
+    left_for_hand_import: HeldBack = NO_HELD_BACK,
 ) -> TorrentView:
     return TorrentView(
         key=key,
@@ -84,7 +84,7 @@ def _terminal(
         import_done=files,
         import_total=files,
         phase_elapsed_s=elapsed,
-        held_back=held_back,
+        left_for_hand_import=left_for_hand_import,
     )
 
 
@@ -209,12 +209,12 @@ class TestHubWaitViewNarration:
     def test_graduation_carries_the_unmatched_files(self) -> None:
         recording = RecordingHub()
         install_hub(recording.hub)
-        row = _terminal("h1", "A", Outcome.UNMATCHED, elapsed=15.0, held_back=held_files("a.mkv", "b.mkv"))
+        row = _terminal("h1", "A", Outcome.UNMATCHED, elapsed=15.0, left_for_hand_import=held_files("a.mkv", "b.mkv"))
 
         self._view().update(WaitSnapshot((row,), elapsed_s=15))
 
         (graduated,) = recording.of_type(TorrentGraduated)
-        assert graduated.held_back.names == ("a.mkv", "b.mkv")
+        assert graduated.left_for_hand_import.names == ("a.mkv", "b.mkv")
         assert graduated.outcome is Outcome.UNMATCHED
 
     def test_first_snapshot_terminals_graduate_after_the_start(self) -> None:

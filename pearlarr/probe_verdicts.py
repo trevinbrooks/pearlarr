@@ -246,7 +246,7 @@ def _with_status(
 class CommandBlock(Enum):
     """Why the command list blocks a step-in this poll (values are the log phrases)."""
 
-    OWN_IMPORT = "our ManualImport is in flight"
+    AUTO_IMPORT = "our ManualImport is in flight"
     IN_FLIGHT_IMPORT = "a ManualImport is already in flight"
     DISK_COMMAND = "Sonarr has a disk command queued or running"
     DISK_COMMAND_CHANGED = "a Sonarr disk command ran during the step-in"
@@ -256,7 +256,7 @@ class CommandBlock(Enum):
     def claims_import(self) -> bool:
         """Whether the in-flight import is provably ours (the probe reads `command_issued`)."""
 
-        return self is CommandBlock.OWN_IMPORT
+        return self is CommandBlock.AUTO_IMPORT
 
     @property
     def deferral(self) -> Deferral:
@@ -272,7 +272,7 @@ class CommandBlock(Enum):
         return ImportProbe.waiting(command_issued=self.claims_import, deferral=self.deferral)
 
 
-_IMPORT_BLOCKS = frozenset({CommandBlock.OWN_IMPORT, CommandBlock.IN_FLIGHT_IMPORT})
+_IMPORT_BLOCKS = frozenset({CommandBlock.AUTO_IMPORT, CommandBlock.IN_FLIGHT_IMPORT})
 
 
 def classify_commands(
@@ -288,7 +288,7 @@ def classify_commands(
     in_flight = manual_import_in_flight(commands, match)
     if in_flight:
         owned = in_flight.by_download_id or is_own(in_flight.command.id)
-        return CommandBlock.OWN_IMPORT if owned else CommandBlock.IN_FLIGHT_IMPORT
+        return CommandBlock.AUTO_IMPORT if owned else CommandBlock.IN_FLIGHT_IMPORT
     if in_flight_disk_commands(commands):
         return CommandBlock.DISK_COMMAND
     return None

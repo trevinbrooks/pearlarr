@@ -82,13 +82,13 @@ def test_services_read_selection_staleness_from_the_store_at_construction() -> N
 
     vouched_old = FakeCacheStore()
     vouched_old.vouch_selection(Arr.SONARR, "a-previous-digest")
-    assert RunServices(make_run_deps(config=config, cache_store=vouched_old), Arr.SONARR).selection_stale is True
+    assert RunServices(make_run_deps(config=config, cache_store=vouched_old), Arr.SONARR).selection_changed is True
 
     vouched_current = FakeCacheStore()
-    vouched_current.vouch_selection(Arr.SONARR, config.selection_digest())
-    assert RunServices(make_run_deps(config=config, cache_store=vouched_current), Arr.SONARR).selection_stale is False
+    vouched_current.vouch_selection(Arr.SONARR, config.selection_hash())
+    assert RunServices(make_run_deps(config=config, cache_store=vouched_current), Arr.SONARR).selection_changed is False
 
-    assert RunServices(make_run_deps(config=config), Arr.SONARR).selection_stale is False
+    assert RunServices(make_run_deps(config=config), Arr.SONARR).selection_changed is False
 
 
 def test_sonarr_sync_init_shares_cache_store_for_staged_writes() -> None:

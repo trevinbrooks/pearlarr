@@ -654,10 +654,10 @@ class TestSelectionDigest:
     """The selection digest moves with matching preferences only, and stably."""
 
     def test_stable_across_builds(self) -> None:
-        assert make_config().selection_digest() == make_config().selection_digest()
+        assert make_config().selection_hash() == make_config().selection_hash()
 
     def test_moves_with_each_selection_setting_kind(self) -> None:
-        base = make_config().selection_digest()
+        base = make_config().selection_hash()
         changed = [
             make_config(want_best=False),  # bool
             make_config(private_releases="fallback"),  # enum
@@ -667,21 +667,21 @@ class TestSelectionDigest:
             make_config(import_languages_dual=["English"]),  # the covered imports fields
             make_config(import_languages_single=["English"]),  # (both, independently)
         ]
-        digests = [config.selection_digest() for config in changed]
+        digests = [config.selection_hash() for config in changed]
         assert base not in digests
         assert len(set(digests)) == len(digests)  # each change lands a distinct digest
 
     def test_moves_with_the_selection_rules_version(self, monkeypatch: pytest.MonkeyPatch) -> None:
         # A rule change in code re-checks cached verdicts like a config change.
-        base = make_config().selection_digest()
+        base = make_config().selection_hash()
         monkeypatch.setattr("pearlarr.config.SELECTION_RULES_VERSION", 999)
-        assert make_config().selection_digest() != base
+        assert make_config().selection_hash() != base
 
     def test_ignores_non_selection_settings(self) -> None:
-        base = make_config().selection_digest()
-        assert make_config(discord_url="https://discord.example/hook").selection_digest() == base
-        assert make_config(import_wait_timeout=99).selection_digest() == base
-        assert make_config(max_torrents_to_add=1).selection_digest() == base
+        base = make_config().selection_hash()
+        assert make_config(discord_url="https://discord.example/hook").selection_hash() == base
+        assert make_config(import_wait_timeout=99).selection_hash() == base
+        assert make_config(max_torrents_to_add=1).selection_hash() == base
 
     def test_sets_canonicalize_sorted_not_iteration_ordered(self) -> None:
         # Set iteration order is hash-seed dependent (it differs across processes).

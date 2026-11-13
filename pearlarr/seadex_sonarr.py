@@ -26,7 +26,7 @@ from .placement_types import EpisodeIndex, Placement, SeedScope, episode_index
 from .planner import get_episode_keys
 from .progress import ProgressSink
 from .protocols import ArrSync
-from .releases import GrabHold, SeadexDict, flagged_urls, ignore_tag_set
+from .releases import GrabHold, SeadexDict, ignore_tag_set, releases_to_grab
 from .run_services import RunDeps, RunServices, bind_arr_http
 from .sonarr_client import AbstractSonarrClient, SonarrClient
 from .sonarr_episodes import SonarrEpisodes
@@ -256,7 +256,7 @@ class SonarrSync(ArrSync[SonarrItem]):
         # Skip if already cached. The one-time backfill on a legacy record adds
         # the URL and the season/episode coverage. The coverage needs the episode
         # list, so it's resolved lazily, only when the backfill actually runs.
-        if run.cached_entry_skip(
+        if run.is_unchanged(
             al_id,
             sd_entry,
             lambda: _coverage.coverage_string(
@@ -448,7 +448,7 @@ class SonarrSync(ArrSync[SonarrItem]):
         download plan's, so urls the run doesn't grab never warn.
         """
 
-        for flagged in flagged_urls(seadex_dict):
+        for flagged in releases_to_grab(seadex_dict):
             if overrides := identity_overrides(placed.by_url[flagged.url], placed.scope.series):
                 first, *rest = overrides
                 more = f" ({count_noun(len(rest), 'more file')} in the debug log)" if rest else ""
@@ -468,7 +468,7 @@ class SonarrSync(ArrSync[SonarrItem]):
             aside = ", ".join(_file_and_why(p) for p in assignment.excluded)
             by_hand = ", ".join(_file_and_why(p) for p in assignment.placements if p.verdict.hand_import)
             hold = "" if placement.hold is None else f" (not grabbed: {placement.hold})"
-            note_read_failed = not placement.inputs_known and placement.hold is not GrabHold.INPUT_UNREAD
+            note_read_failed = not placement.inputs_read and placement.hold is not GrabHold.INPUT_UNREAD
             self.logger.debug(
                 f"{url}: placed {_coverage.coverage_string(list(placement.records)) or 'nothing'}"
                 f"{' (a read failed)' if note_read_failed else ''}{hold}"

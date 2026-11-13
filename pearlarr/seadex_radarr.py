@@ -17,7 +17,7 @@ from .pending_import import GuardFacts, PendingImport, added_at_of
 from .progress import ProgressSink
 from .protocols import ArrSync
 from .radarr_client import AbstractRadarrClient, RadarrClient, collect_anime_movies
-from .releases import flagged_urls
+from .releases import releases_to_grab
 from .run_services import RunDeps, RunServices, bind_arr_http
 from .stamps import parse_stamp_aware
 from .wait_types import NO_PROGRESS, AttemptKind, ImportProbe, ImportProgress, ImportWaitMode
@@ -144,7 +144,7 @@ class RadarrSync(ArrSync[RadarrItem]):
         sd_url = sd_entry.url
 
         # Movies have no episode coverage, so the backfill is just the URL.
-        if run.cached_entry_skip(al_id, sd_entry, lambda: ""):
+        if run.is_unchanged(al_id, sd_entry, lambda: ""):
             return
 
         title = run.resolve_title(al_id)
@@ -191,7 +191,7 @@ class RadarrSync(ArrSync[RadarrItem]):
         # A torrent already downloading under a stored record takes this entry's claim (a re-flag replaces it).
         pending_seeds: Mapping[str, PendingSeed] = NO_SEEDS
         if run.import_wait_mode is not ImportWaitMode.OFF:
-            flagged = flagged_urls(seadex_dict)
+            flagged = releases_to_grab(seadex_dict)
             stored = run.records.stored_records(f.qbit_hash for f in flagged)
             facts = EntryFacts(
                 al_id=al_id, series_id=0, title=title.name, coverage=None, url=sd_url, guards=GuardFacts()

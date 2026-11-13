@@ -182,7 +182,7 @@ def test_push_wait_summary_says_a_gone_download_has_its_title_checked_again(push
 def test_push_wait_summary_lists_the_unmatched_files_under_their_row(pushes: list[DiscordEmbed]) -> None:
     # One backticked line per name: Discord strips leading whitespace and reads `_` as markdown.
     notifier = Notifier(discord_url="https://discord.example", web=httpx.Client())
-    row = WaitOutcomeRow("Demo Batch", Outcome.UNMATCHED, held_back=held_files("Part_1.mkv", "Part 2.mkv"))
+    row = WaitOutcomeRow("Demo Batch", Outcome.UNMATCHED, left_for_hand_import=held_files("Part_1.mkv", "Part 2.mkv"))
 
     assert notifier.push_wait_summary(arr=Arr.SONARR, result=WaitResult((row,), elapsed_s=15)) is True
     [field] = pushes[0].fields
@@ -195,7 +195,7 @@ def test_push_wait_summary_lists_the_unmatched_files_under_their_row(pushes: lis
 
 def test_push_wait_summary_lists_the_held_back_files_under_their_row(pushes: list[DiscordEmbed]) -> None:
     notifier = Notifier(discord_url="https://discord.example", web=httpx.Client())
-    row = WaitOutcomeRow("Demo Batch", Outcome.PARTIAL, held_back=held_files("show - 03 [grp].mkv"))
+    row = WaitOutcomeRow("Demo Batch", Outcome.PARTIAL, left_for_hand_import=held_files("show - 03 [grp].mkv"))
 
     assert notifier.push_wait_summary(arr=Arr.SONARR, result=WaitResult((row,), elapsed_s=15)) is True
     [field] = pushes[0].fields
@@ -207,7 +207,9 @@ def test_push_wait_summary_lists_the_held_back_files_under_their_row(pushes: lis
 
 def test_push_wait_summary_says_why_order_only_files_are_held(pushes: list[DiscordEmbed]) -> None:
     notifier = Notifier(discord_url="https://discord.example", web=httpx.Client())
-    row = WaitOutcomeRow("Show Ending · grp · S04 E01-E12", Outcome.PARTIAL, held_back=order_only_held_back())
+    row = WaitOutcomeRow(
+        "Show Ending · grp · S04 E01-E12", Outcome.PARTIAL, left_for_hand_import=order_only_held_back()
+    )
 
     assert notifier.push_wait_summary(arr=Arr.SONARR, result=WaitResult((row,), elapsed_s=15)) is True
     [field] = pushes[0].fields
@@ -224,7 +226,9 @@ def test_push_wait_summary_unmatched_names_stay_inside_the_value_clamp(pushes: l
     # A full section of three-name rows overflows a field value. The payload clamp is the backstop.
     notifier = Notifier(discord_url="https://discord.example", web=httpx.Client())
     names = tuple(f"Demo Batch Part {n} (BD 1080p) [Group].mkv" for n in range(3))
-    rows = tuple(WaitOutcomeRow(f"Title {i}", Outcome.UNMATCHED, held_back=held_files(*names)) for i in range(25))
+    rows = tuple(
+        WaitOutcomeRow(f"Title {i}", Outcome.UNMATCHED, left_for_hand_import=held_files(*names)) for i in range(25)
+    )
 
     assert notifier.push_wait_summary(arr=Arr.SONARR, result=WaitResult(rows, elapsed_s=15)) is True
     [field] = cast("list[dict[str, str]]", pushes[0].to_payload()["fields"])
@@ -523,7 +527,7 @@ class TestGrabLayout:
                 seadex_dict=seadex_dict,
                 results=[
                     ReleaseOutcome(AddOutcome.ADDED, None, "Fresh"),
-                    ReleaseOutcome(AddOutcome.ALREADY_ADDED, None, "InFlight"),
+                    ReleaseOutcome(AddOutcome.ALREADY_IN_QBIT, None, "InFlight"),
                 ],
                 failed_groups=frozenset({"Errored"}),
                 replaced_groups=("Erai_raws",),

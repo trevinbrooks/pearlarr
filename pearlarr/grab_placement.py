@@ -42,12 +42,12 @@ from .releases import (
     ElsewhereCounts,
     EpisodeKey,
     EpisodeRecord,
-    FlaggedUrl,
     GrabHold,
     OrderOnlyKey,
+    PlannedGrab,
     Release,
     SeadexDict,
-    flagged_urls,
+    releases_to_grab,
     season_episode_key,
 )
 from .window_placement import NOTHING_PLACED, WindowOrder, ordered_windows, place_across_windows, scopes_of
@@ -199,7 +199,7 @@ class UrlPlacement:
     claimed_ids: frozenset[int]
     """The entry's episode ids the whole map covers (a stored placement on another series adds none)."""
 
-    inputs_known: bool
+    inputs_read: bool
     """True when the placement had everything it needed this run: every window was built, the size identities were
     read, and, while a file is left to place, every parse came from Sonarr (`PlacementBatch.all_parses_known`). When
     False, a file may have been held or placed without its size, so the title gets re-checked next run."""
@@ -308,7 +308,7 @@ def place_release(files: Sequence[SeedFile], scope: SeedScope, torrent: KnownTor
         # A pack left for a hand import adds no records: the planner judges it by what its window holds.
         records=() if hold is not None and hold.hand_import else on_entry.records,
         claimed_ids=on_entry.claimed_ids,
-        inputs_known=not files or (known and not unread),
+        inputs_read=not files or (known and not unread),
         hold=hold,
         hold_counts=(
             _elsewhere_counts(elsewhere, view.assignment) if hold is GrabHold.PLACED_ELSEWHERE else NO_ELSEWHERE
@@ -466,7 +466,7 @@ class EntryPlacements:
             for url, release in group_releases.releases.items():
                 placement = self.by_url[url]
                 release.episodes = list(placement.records)
-                release.hold = placement.hold
+                release.skip_reason = placement.hold
                 release.hold_counts = placement.hold_counts
                 all_episodes.extend(release.episodes)
             group_releases.all_episodes = all_episodes
@@ -477,7 +477,7 @@ class EntryPlacements:
         return tuple(
             group
             for group, item in seadex_dict.items()
-            if not all(self.by_url[url].inputs_known for url in item.releases)
+            if not all(self.by_url[url].inputs_read for url in item.releases)
         )
 
 
@@ -706,7 +706,7 @@ def build_pending_seed(release: SeedRelease, scope: SeedScope, entry: EntryFacts
     )
 
 
-def build_unscoped_seed(flagged: FlaggedUrl, entry: EntryFacts, stored: PendingImport | None) -> PendingSeed:
+def build_unscoped_seed(flagged: PlannedGrab, entry: EntryFacts, stored: PendingImport | None) -> PendingSeed:
     """The seed of a torrent whose import reads nothing but its hash in qBittorrent (a Radarr grab): an id-less claim."""
 
     return PendingSeed(
@@ -739,7 +739,7 @@ def build_pending_seeds(
     """
 
     seeds: dict[str, PendingSeed] = {}
-    for flagged in flagged_urls(seadex_dict):
+    for flagged in releases_to_grab(seadex_dict):
         placement = placed.by_url[flagged.url]
         if not placement.files:
             continue

@@ -173,7 +173,7 @@ def get_same_files_groups(seadex_dict: SeadexDict) -> list[list[str]]:
 
 
 def _is_flagged(group_releases: GroupReleases) -> bool:
-    return any(u.download for u in group_releases.releases.values())
+    return any(u.to_grab for u in group_releases.releases.values())
 
 
 def _is_public_group(group_releases: GroupReleases) -> bool:
@@ -190,16 +190,16 @@ def _all_public(group_releases: GroupReleases) -> bool:
 
 def _flagged_all_addable(group_releases: GroupReleases) -> bool:
     # No flagged private url (the add-time gate refuses those).
-    return all(u.is_public for u in group_releases.releases.values() if u.download)
+    return all(u.is_public for u in group_releases.releases.values() if u.to_grab)
 
 
 def _unflag(group_releases: GroupReleases, dropped: list[Release]) -> None:
     """Unflag a whole group, recording the urls this pass actually dropped."""
 
     for u in group_releases.releases.values():
-        if u.download:
+        if u.to_grab:
             dropped.append(u)
-        u.unflag()
+        u.drop_grab()
 
 
 @dataclass(slots=True)
@@ -427,10 +427,10 @@ def _window_in_place(ctx: _MatchContext, seadex_norm: str | None, listed_sizes: 
 class _GroupVerdicts(NamedTuple):
     """The plan's size-evidence verdicts per pick group, feeding `GuardFacts` by name."""
 
-    current: tuple[str, ...]
+    owned: tuple[str, ...]
     """Groups whose every attributed on-disk file sits at a listed size (vacuously, none on disk)."""
 
-    stale: tuple[str, ...]
+    outdated: tuple[str, ...]
     """Groups with an attributed file at a size no sized listing carries."""
 
 
@@ -618,8 +618,8 @@ class DownloadPlanner:
             seadex_dict=seadex_dict,
             skips=skips,
             guards=GuardFacts(
-                entry_groups=verdicts.current,
-                stale_groups=verdicts.stale,
+                entry_groups=verdicts.owned,
+                stale_groups=verdicts.outdated,
                 # Resolved to (episode id, size) pairs here so the import seeds
                 # inherit the exact files the grab decision just called ours -
                 # and can re-verify them by size before honoring the claim.
@@ -666,7 +666,7 @@ class DownloadPlanner:
                         f"{ctx.arr_groups_label}, but file sizes do not match - will download {url}",
                     )
 
-                release.flag(upgrade=True)
+                release.plan_grab(upgrade=True)
 
             elif ctx.debug_on:
                 self.logger.debug(
@@ -690,7 +690,7 @@ class DownloadPlanner:
                     f"{ctx.arr_groups_label} - will download {url}",
                 )
 
-            release.flag()
+            release.plan_grab()
         elif ctx.debug_on:
             # Group absent, but the Arr already holds another SeaDex-preferred
             # group's release covering these files - nothing to flag.
@@ -801,7 +801,7 @@ class DownloadPlanner:
                             f"recommended release covers it - will download {url}",
                         )
 
-                    release.flag()
+                    release.plan_grab()
 
             else:
                 if ctx.debug_on:
@@ -837,7 +837,7 @@ class DownloadPlanner:
         matched_sizes = list(compress(size_matches, rg_matches))
         if matched_sizes and not any(matched_sizes):
             self.logger.debug(f"File sizes all differ for release group {seadex_rg} - will download {url}")
-            release.flag(upgrade=True)
+            release.plan_grab(upgrade=True)
 
         # An episode two listed files claim at different sizes is left out: the import cannot pick between them.
         doubled = _doubled_sizes(unambiguous(listed_pairs), held_by_key, release.size)
@@ -845,7 +845,7 @@ class DownloadPlanner:
             self.logger.debug(
                 f"{url} lists size(s) {doubled} on fewer episodes than {seadex_rg} holds them, will download"
             )
-            release.flag(upgrade=True)
+            release.plan_grab(upgrade=True)
 
     def _match_url_refused(
         self,
@@ -873,7 +873,7 @@ class DownloadPlanner:
                 )
             return
         self.logger.debug(f"{seadex_rg} was refused by the placement and is not in place: will download {url}")
-        release.flag(upgrade=seadex_norm in ctx.arr_sizes_by_norm)
+        release.plan_grab(upgrade=seadex_norm in ctx.arr_sizes_by_norm)
 
     def reduce_overlapping_downloads(
         self,
@@ -933,11 +933,11 @@ class DownloadPlanner:
         for group_releases in seadex_dict.values():
             seen: set[tuple[int, ...]] = set()
             for u in group_releases.releases.values():
-                if not u.download or not u.size:
+                if not u.to_grab or not u.size:
                     continue
                 identity = tuple(sorted(u.size))
                 if identity in seen:
-                    u.unflag()
+                    u.drop_grab()
                 else:
                     seen.add(identity)
 
@@ -1090,7 +1090,7 @@ class DownloadPlanner:
         promoted = next((rg for rg in candidates if _all_public(seadex_dict[rg])), candidates[0])
         for u in seadex_dict[promoted].releases.values():
             if u.is_public:
-                u.flag()
+                u.plan_grab()
         return promoted
 
     def _rescue_dropped_coverage(
@@ -1120,7 +1120,7 @@ class DownloadPlanner:
             key
             for rg in same_files.names
             for u in seadex_dict[rg].releases.values()
-            if u.download and u.is_public
+            if u.to_grab and u.is_public
             for key in get_episode_keys(u.episodes)
         }
         for u in rescuable:
@@ -1128,7 +1128,7 @@ class DownloadPlanner:
             if url_keys <= survivor_keys:
                 continue
             self.logger.debug(f"Re-flagging {u.url}: no surviving release covers its episodes")
-            u.flag()
+            u.plan_grab()
             survivor_keys |= url_keys
 
     @staticmethod
@@ -1136,5 +1136,5 @@ class DownloadPlanner:
         """Check if any torrents are marked as to download."""
 
         return any(
-            release.download for group_releases in seadex_dict.values() for release in group_releases.releases.values()
+            release.to_grab for group_releases in seadex_dict.values() for release in group_releases.releases.values()
         )

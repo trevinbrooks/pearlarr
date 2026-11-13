@@ -250,7 +250,7 @@ class TestGrabPushesNotice:
         assert embed.fields[-1].value == "-# The Show\n> the why"
 
     def test_nothing_added_pushes_nothing(self, monkeypatch: pytest.MonkeyPatch) -> None:
-        assert self._grab(monkeypatch, outcome=AddOutcome.ALREADY_ADDED) == []
+        assert self._grab(monkeypatch, outcome=AddOutcome.ALREADY_IN_QBIT) == []
 
     def test_preview_never_pushes(self, monkeypatch: pytest.MonkeyPatch) -> None:
         # A preview simulates the add (so the count is non-zero) but the push is
@@ -268,7 +268,7 @@ class TestAddOneUrlRegistersPending:
         # The recommended release is already in qBittorrent with no record (grabbed
         # before the store held it, or its row dropped): track it for the monitor,
         # but never count it as a this-run grab.
-        torrents = FakeTorrents({"h1": (AddOutcome.ALREADY_ADDED, "Show-NAN0")})
+        torrents = FakeTorrents({"h1": (AddOutcome.ALREADY_IN_QBIT, "Show-NAN0")})
         pipeline = _pipeline(torrents=torrents)
         facts = GuardFacts(entry_groups=("NAN0",))
         seeds = {"h1": pending_seed("h1", guards=facts)}
@@ -286,7 +286,7 @@ class TestAddOneUrlRegistersPending:
         assert n_added == 0
         assert pipeline._ctx.torrents_added == 0
         assert pipeline._ctx.stats.added == []
-        assert [r.outcome for r in results] == [AddOutcome.ALREADY_ADDED]
+        assert [r.outcome for r in results] == [AddOutcome.ALREADY_IN_QBIT]
 
     def test_added_registers_and_counts(self) -> None:
         torrents = FakeTorrents({"h1": (AddOutcome.ADDED, "Show-NAN0")})
@@ -309,7 +309,7 @@ class TestAddOneUrlRegistersPending:
         # One already-present + one fresh, cap 1: only the fresh add counts.
         torrents = FakeTorrents(
             {
-                "already": (AddOutcome.ALREADY_ADDED, "old"),
+                "already": (AddOutcome.ALREADY_IN_QBIT, "old"),
                 "fresh": (AddOutcome.ADDED, "new"),
             }
         )
@@ -328,7 +328,7 @@ class TestAddOneUrlRegistersPending:
     def test_a_seed_built_without_the_stored_record_replaces_it(self) -> None:
         # The seed's own `stored` decides the arm, never the store: a second entry's seed built
         # without the record reacquires and overwrites it (one record per torrent, the last writer's).
-        torrents = FakeTorrents({"h1": (AddOutcome.ALREADY_ADDED, "Show")})
+        torrents = FakeTorrents({"h1": (AddOutcome.ALREADY_IN_QBIT, "Show")})
         pipeline = _pipeline(torrents=torrents)
         first = pending_seed("h1", al_id=11, title="Cour 1")
         second = pending_seed("h1", al_id=22, title="Cour 2")
@@ -360,7 +360,7 @@ class TestAddOneUrlRegistersPending:
             )
         )
         second = make_grab_pipeline(
-            _torrents=FakeTorrents({"h1": (AddOutcome.ALREADY_ADDED, "Show")}), cache_store=store, _ctx=ctx
+            _torrents=FakeTorrents({"h1": (AddOutcome.ALREADY_IN_QBIT, "Show")}), cache_store=store, _ctx=ctx
         )
         seed = pending_seed("h1", al_id=22, title="Cour 2", stored=_stored(first, "h1"))
 
@@ -374,7 +374,7 @@ class TestAddOneUrlRegistersPending:
         assert _guards(second).keys() == {11, 22}
 
     def test_no_seed_does_not_register(self) -> None:
-        torrents = FakeTorrents({"h1": (AddOutcome.ALREADY_ADDED, "x")})
+        torrents = FakeTorrents({"h1": (AddOutcome.ALREADY_IN_QBIT, "x")})
         pipeline = _pipeline(torrents=torrents)
 
         pipeline.add_torrent(
@@ -387,7 +387,7 @@ class TestAddOneUrlRegistersPending:
     def test_off_mode_registers_nothing_off_the_strategys_empty_seeds(self) -> None:
         # The wait-mode gate is the strategy's: it seeds nothing when the mode is off, and the
         # pipeline persists only what it is fed.
-        torrents = FakeTorrents({"h1": (AddOutcome.ALREADY_ADDED, "x")})
+        torrents = FakeTorrents({"h1": (AddOutcome.ALREADY_IN_QBIT, "x")})
         pipeline = _pipeline(torrents=torrents, mode=ImportWaitMode.OFF)
 
         pipeline.add_torrent(
@@ -400,7 +400,7 @@ class TestAddOneUrlRegistersPending:
 
     def test_preview_does_not_register_but_returns_outcome(self) -> None:
         # No client -> preview: nothing persisted, but the outcome still surfaces.
-        torrents = FakeTorrents({"h1": (AddOutcome.ALREADY_ADDED, "x")})
+        torrents = FakeTorrents({"h1": (AddOutcome.ALREADY_IN_QBIT, "x")})
         pipeline = _pipeline(torrents=torrents, qbit=None)
         seeds = {"h1": pending_seed("h1")}
 
@@ -411,7 +411,7 @@ class TestAddOneUrlRegistersPending:
         assert _pending(pipeline) == {}
         assert _guards(pipeline) == {}
         assert pipeline._ctx.grabbed_this_run == {}
-        assert [r.outcome for r in results] == [AddOutcome.ALREADY_ADDED]
+        assert [r.outcome for r in results] == [AddOutcome.ALREADY_IN_QBIT]
 
     def test_radarr_registration_writes_no_guard_row(self) -> None:
         # Guard evidence is Sonarr-only enforcement: a Radarr ctx driven through
@@ -440,7 +440,7 @@ class TestReacquireRegistration:
     _STORED_AT = "2026-01-01 00:00:00"
 
     def _reacquire(self, added_on: datetime | None) -> FakeTorrents:
-        return FakeTorrents({"h1": AddResult(AddOutcome.ALREADY_ADDED, "Show", added_on)})
+        return FakeTorrents({"h1": AddResult(AddOutcome.ALREADY_IN_QBIT, "Show", added_on)})
 
     def _resident(self, pipeline: GrabPipeline) -> PendingImport:
         """A carried-over record put in the store, stamped well before this run."""
@@ -551,7 +551,7 @@ class TestReacquireRegistration:
         assert pipeline._ctx.reacquired_keys == {"h1"}
         assert pipeline._ctx.grabbed_this_run == {}
         assert _guards(pipeline).keys() == {PENDING_AL_ID}
-        assert [r.outcome for r in results] == [AddOutcome.ALREADY_ADDED]
+        assert [r.outcome for r in results] == [AddOutcome.ALREADY_IN_QBIT]
 
     def test_a_marked_url_is_tracked_under_its_cross_seed(self) -> None:
         # The torrent already holding the url's files is tracked like one under SeaDex's hash.
@@ -748,7 +748,7 @@ class TestAddTorrentCap:
         seadex_dict: SeadexDict = {"RG": rg_group({u1.url: u1, u2.url: u2})}
         torrents = FakeTorrents(
             {
-                "already": (AddOutcome.ALREADY_ADDED, "old"),
+                "already": (AddOutcome.ALREADY_IN_QBIT, "old"),
                 "fresh": (AddOutcome.ADDED, "new"),
             }
         )
@@ -758,7 +758,7 @@ class TestAddTorrentCap:
 
         assert torrents.calls == ["already", "fresh"]
         assert n_added == 1
-        assert [r.outcome for r in results] == [AddOutcome.ALREADY_ADDED, AddOutcome.ADDED]
+        assert [r.outcome for r in results] == [AddOutcome.ALREADY_IN_QBIT, AddOutcome.ADDED]
 
 
 class TestGrabAndCacheAtTheCap:
@@ -1182,7 +1182,7 @@ class TestPlacementHolds:
         """A flagged Nyaa release the placement refused to grab for `hold`."""
 
         item = _nyaa_release(url=url, infohash=infohash)
-        item.hold = hold
+        item.skip_reason = hold
         return item
 
     @pytest.mark.parametrize(
@@ -1221,7 +1221,7 @@ class TestPlacementHolds:
         assert torrents.calls == []
         assert pipeline._ctx.torrents_added == 0
         assert pipeline.cache_store.get_entry(Arr.SONARR, 42) is None
-        assert pipeline._ctx.per_title.held_groups == {hold: ["RG"]}
+        assert pipeline._ctx.per_title.skipped_groups == {hold: ["RG"]}
         assert [e.reason for e in recording.of_type(ReleaseSkipped)] == [expected.skip]
         (row,) = pipeline._ctx.stats.needs_action
         assert (row.kind, row.group, row.reason) == (expected.kind, "RG", expected.reason)
@@ -1230,8 +1230,8 @@ class TestPlacementHolds:
         # Another entry's record holds the torrent.
         resident = pending_import(infohash="h1")
         seadex_dict = one_release_dict(srg="RG", infohash="h1")
-        seadex_dict["RG"].releases["https://nyaa.si/view/1"].hold = GrabHold.TITLE_REFUTED
-        torrents = FakeTorrents({"h1": AddResult(AddOutcome.ALREADY_ADDED, "Show", None)})
+        seadex_dict["RG"].releases["https://nyaa.si/view/1"].skip_reason = GrabHold.TITLE_REFUTED
+        torrents = FakeTorrents({"h1": AddResult(AddOutcome.ALREADY_IN_QBIT, "Show", None)})
         pipeline = _pipeline(torrents=torrents, sleep_time=0)
         pipeline.cache_store.put_pending(Arr.SONARR, resident.infohash, resident.to_json())
 
@@ -1254,7 +1254,7 @@ class TestPlacementHolds:
 
         assert torrents.calls == []
         assert pipeline.cache_store.get_entry(Arr.SONARR, 42) is None
-        assert pipeline._ctx.per_title.held_groups == {GrabHold.INPUT_UNREAD: ["RG"]}
+        assert pipeline._ctx.per_title.skipped_groups == {GrabHold.INPUT_UNREAD: ["RG"]}
         assert [e.reason for e in recording.of_type(ReleaseSkipped)] == [SkipReason.INPUT_UNREAD]
         assert [r.kind for r in pipeline._ctx.stats.needs_action] == [NeedsActionKind.PLACEMENT_INPUT_MISSING]
 
@@ -1270,7 +1270,7 @@ class TestPlacementHolds:
 
         assert torrents.calls == []
         assert pipeline.cache_store.get_entry(Arr.SONARR, 42) is None
-        assert pipeline._ctx.per_title.held_groups == {GrabHold.PLACED_ELSEWHERE: ["RG"]}
+        assert pipeline._ctx.per_title.skipped_groups == {GrabHold.PLACED_ELSEWHERE: ["RG"]}
         assert [(e.reason, e.counts) for e in recording.of_type(ReleaseSkipped)] == [
             (SkipReason.PLACED_ELSEWHERE, ElsewhereCounts(elsewhere=12, unplaced=6))
         ]
@@ -1339,14 +1339,14 @@ class TestPlacementHolds:
         # The planner found the pack in place (a hand import done): the refusal is moot, the title is up to date.
         recording = install_recording_hub()
         held = self._held(url="https://nyaa.si/view/1", infohash="h1", hold=GrabHold.MISNUMBERED)
-        held.download = False
+        held.to_grab = False
         seadex_dict: SeadexDict = {"RG": rg_group({held.url: held})}
         pipeline = _on_entry(_pipeline(torrents=FakeTorrents({}), sleep_time=0))
 
         pipeline.grab_and_cache(_entry_request(seadex_dict))
 
         assert recording.of_type(ReleaseSkipped) == []
-        assert pipeline._ctx.per_title.held_groups == {}
+        assert pipeline._ctx.per_title.skipped_groups == {}
         assert pipeline._ctx.stats.up_to_date == 1
         assert pipeline.cache_store.get_entry(Arr.SONARR, 42) is not None
 

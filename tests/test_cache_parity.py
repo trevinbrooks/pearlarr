@@ -35,7 +35,7 @@ def _both_stores(tmp_path: Path) -> Generator[tuple[FakeCacheStore, CacheStore]]
     """The fake and a real SQLite store side by side, both closed on exit."""
 
     fake = FakeCacheStore()
-    real = CacheStore.load(str(tmp_path / "cache.db"), config_checksum="x")
+    real = CacheStore.load(str(tmp_path / "cache.db"), config_hash="x")
     try:
         yield fake, real
     finally:
@@ -66,8 +66,8 @@ def _apply_ops(store: AbstractCacheStore) -> None:
     # A row whose stamp is cleared loses its timestamp and nothing else. Clearing an id with no row adds none, and
     # neither does an empty record.
     store.update_cache(Arr.SONARR, 8, CachedTitleUpdate(name="Cleared", updated_at=_ENTRY_STAMP))
-    store.clear_entry_stamp(Arr.SONARR, 8)
-    store.clear_entry_stamp(Arr.SONARR, 4242)
+    store.uncache_title(Arr.SONARR, 8)
+    store.uncache_title(Arr.SONARR, 4242)
     store.update_cache(Arr.SONARR, 4242, CachedTitleUpdate())
 
     store.put_anilist_meta(7, {"fetched_at": _NEW, "data": {"title": "Show"}})
@@ -147,9 +147,9 @@ def _observe(store: AbstractCacheStore) -> dict[str, object]:
         "guards_radarr": store.get_guards(Arr.RADARR),
         "checkpoint_sonarr": store.get_history_checkpoint(Arr.SONARR),
         "checkpoint_radarr": store.get_history_checkpoint(Arr.RADARR),
-        "selection_current": store.selection_stale(Arr.SONARR, "digest-new"),
-        "selection_moved": store.selection_stale(Arr.SONARR, "digest-old"),
-        "selection_unvouched": store.selection_stale(Arr.RADARR, "digest-new"),
+        "selection_current": store.selection_changed(Arr.SONARR, "digest-new"),
+        "selection_moved": store.selection_changed(Arr.SONARR, "digest-old"),
+        "selection_unvouched": store.selection_changed(Arr.RADARR, "digest-new"),
         "tvdb_orders_5": store.get_tvdb_orders(5),
         "tvdb_orders_6": store.get_tvdb_orders(6),
         "tvdb_orders_missing": store.get_tvdb_orders(4242),

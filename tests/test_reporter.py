@@ -125,7 +125,7 @@ class TestStatsCounters:
         reporter = _make_reporter(_seeded_store(name="Cached", coverage="S01", url="u"))
         ctx = RunContext(arr=Arr.SONARR)
         reporter.log_cached_entry(ctx, 1)
-        assert ctx.stats.cached == 1
+        assert ctx.stats.unchanged == 1
 
     def test_no_sd_entry_increments_and_caches_title(self) -> None:
         client = ScriptedAniListClient()
@@ -148,7 +148,7 @@ class TestStatsCounters:
         reporter = _make_reporter(store, client=client)
         ctx = RunContext(arr=Arr.SONARR)
         reporter.log_cached_entry(ctx, 1)
-        assert ctx.stats.cached == 1
+        assert ctx.stats.unchanged == 1
         assert client.query_calls == [1]
 
     def test_outage_skip_tallies_and_renders_distinctly(self) -> None:
@@ -626,7 +626,7 @@ class TestLogSeadexAction:
 
     def test_already_downloading_waiting_to_import(self) -> None:
         messages = _action_messages(
-            [ReleaseOutcome(outcome=AddOutcome.ALREADY_ADDED, name="Show-NAN0", group="NAN0")],
+            [ReleaseOutcome(outcome=AddOutcome.ALREADY_IN_QBIT, name="Show-NAN0", group="NAN0")],
             waiting_to_import=True,
         )
         joined = "\n".join(messages)
@@ -642,7 +642,7 @@ class TestLogSeadexAction:
     def test_already_downloading_not_waiting(self, preview: bool) -> None:
         # State the fact, but don't promise an import, and in a preview don't say "would add".
         messages = _action_messages(
-            [ReleaseOutcome(outcome=AddOutcome.ALREADY_ADDED, name="X", group="G")],
+            [ReleaseOutcome(outcome=AddOutcome.ALREADY_IN_QBIT, name="X", group="G")],
             preview=preview,
             waiting_to_import=False,
         )
@@ -658,7 +658,7 @@ class TestLogSeadexAction:
         messages = _action_messages(
             [
                 ReleaseOutcome(outcome=AddOutcome.ADDED, name="new", group="G"),
-                ReleaseOutcome(outcome=AddOutcome.ALREADY_ADDED, name="old", group="G"),
+                ReleaseOutcome(outcome=AddOutcome.ALREADY_IN_QBIT, name="old", group="G"),
             ],
             waiting_to_import=True,
         )

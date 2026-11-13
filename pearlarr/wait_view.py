@@ -31,7 +31,7 @@ class WaitOutcomeRow:
     outcome: Outcome
     carried_over: bool = False
     """Whether the record predates this run. A fresh grab tallies as `added`, never `imported`."""
-    held_back: HeldBack = NO_HELD_BACK
+    left_for_hand_import: HeldBack = NO_HELD_BACK
     """On the `UNMATCHED` and `PARTIAL` outcomes, the on-disk files left for a hand import."""
 
 
@@ -152,7 +152,7 @@ class HubWaitView(WaitView):
                         outcome=outcome,
                         files=view.import_total,
                         waited_s=view.phase_elapsed_s,
-                        held_back=view.held_back,
+                        left_for_hand_import=view.left_for_hand_import,
                     ),
                 )
             scope.progress(snapshot)

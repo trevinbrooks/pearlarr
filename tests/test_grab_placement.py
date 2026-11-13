@@ -44,9 +44,9 @@ from pearlarr.releases import (
     ElsewhereCounts,
     EpisodeKey,
     EpisodeRecord,
-    FlaggedUrl,
     GrabHold,
     OrderOnlyKey,
+    PlannedGrab,
     SeadexDict,
 )
 from pearlarr.tvdb_orders import OrderRow, SeriesOrdering
@@ -158,7 +158,7 @@ class TestPlaceRelease:
         assert placement.records == tuple(EpisodeRecord(1, n, 10 * n) for n in range(1, 5))
         assert placement.assignment.assigned == {normalized_leaf(name): (100 + n,) for n, name in enumerate(_RUN, 1)}
         assert placement.claimed_ids == {101, 102, 103, 104}
-        assert placement.inputs_known
+        assert placement.inputs_read
         assert placement.stored is None
 
     def test_each_placed_episode_intends_its_files_listed_size(self) -> None:
@@ -193,7 +193,7 @@ class TestPlaceRelease:
 
         assert placement.records == ()
         assert placement.hold is GrabHold.INPUT_UNREAD
-        assert not placement.inputs_known
+        assert not placement.inputs_read
         assert verdicts_of(placement.assignment) == {PlacementVerdict.HELD}
 
     def test_a_file_beside_a_held_run_still_places(self) -> None:
@@ -205,7 +205,7 @@ class TestPlaceRelease:
 
         assert placement.records == (EpisodeRecord(0, 1, 5),)
         assert placement.hold is GrabHold.INPUT_UNREAD
-        assert not placement.inputs_known
+        assert not placement.inputs_read
 
     def test_two_files_sharing_a_leaf_keep_their_own_sizes(self) -> None:
         # The gather already stripped the folders: one leaf, placed once, two listed sizes.
@@ -235,7 +235,7 @@ class TestPlaceRelease:
         assert placement.assignment.placements == ()
         assert placement.records == ()
         assert placement.hold is GrabHold.INPUT_UNREAD
-        assert not placement.inputs_known
+        assert not placement.inputs_read
 
     def test_no_files_is_an_empty_placement_with_its_inputs_known(self) -> None:
         placement = place_release([], _scope(_SEASON), _NEW)
@@ -245,7 +245,7 @@ class TestPlaceRelease:
             assignment=EpisodeAssignment(()),
             records=(),
             claimed_ids=frozenset(),
-            inputs_known=True,
+            inputs_read=True,
             hold=None,
             hold_counts=NO_ELSEWHERE,
             stored=None,
@@ -265,7 +265,7 @@ class TestPlaceIdentified:
 
         assert placement.assignment.assigned["show - lost tape.mkv"] == (103,)
         assert PlacementVerdict.IDENTIFIED in verdicts_of(placement.assignment)
-        assert placement.inputs_known
+        assert placement.inputs_read
 
     def test_a_hash_less_url_is_placed_by_the_series_identities(self) -> None:
         # No listing matches a torrent without a hash, but the series' size identities still apply to it.
@@ -276,7 +276,7 @@ class TestPlaceIdentified:
 
         assert placement.assignment.assigned["show - lost tape.mkv"] == (103,)
         assert placement.hold is None
-        assert placement.inputs_known
+        assert placement.inputs_read
 
     def test_unread_identities_hold_the_url(self) -> None:
         # SeaDex is down, so there are no size identities. The pack is still placed by its numbers for coverage,
@@ -287,7 +287,7 @@ class TestPlaceIdentified:
 
         assert placement.assignment.assigned == {"show - s01e01.mkv": (101,), "show - s01e02.mkv": (102,)}
         assert placement.hold is GrabHold.INPUT_UNREAD
-        assert not placement.inputs_known
+        assert not placement.inputs_read
 
     def test_the_overrides_are_the_files_placed_over_their_names(self) -> None:
         # The numberless file isn't an override since it has no number. For the file Sonarr matched, the warning
@@ -318,7 +318,7 @@ class TestPlaceOntoResident:
         assert placement.assignment.assigned == {"show - s01e03.mkv": (103,), "show - s01e04.mkv": (104,)}
         assert placement.records == tuple(EpisodeRecord(1, n, 10 * n) for n in range(1, 5))
         assert placement.claimed_ids == {101, 102, 103, 104}
-        assert placement.inputs_known
+        assert placement.inputs_read
         assert placement.stored is record
 
     def test_a_seeded_parse_miss_on_a_wholly_mapped_torrent_holds_nothing(self) -> None:
@@ -333,7 +333,7 @@ class TestPlaceOntoResident:
         placement = place_release(files, _scope(_SEASON), _torrent(record))
 
         assert placement.hold is None
-        assert placement.inputs_known
+        assert placement.inputs_read
         assert placement.claimed_ids == {101, 102, 103, 104}
 
     def test_a_seeded_parse_miss_holds_the_url_while_a_file_is_left_to_place(self) -> None:
@@ -342,7 +342,7 @@ class TestPlaceOntoResident:
         placement = place_release(files, _scope(_SEASON), _torrent(_resident_record()))
 
         assert placement.hold is GrabHold.INPUT_UNREAD
-        assert not placement.inputs_known
+        assert not placement.inputs_read
 
     def test_a_seeded_id_outside_the_entry_records_nothing(self) -> None:
         # A sibling entry's episode (201) and an id no index holds (999): neither is this entry's.
@@ -359,7 +359,7 @@ class TestPlaceOntoResident:
         assert placement.assignment.placements == ()
         assert placement.records == ()
         assert placement.claimed_ids == frozenset()
-        assert placement.inputs_known
+        assert placement.inputs_read
 
     def test_a_re_flag_places_the_leftover_under_its_fresh_window(self) -> None:
         # The entry's stored claim covers two episodes. Re-listed over the whole season, its fresh window
@@ -411,7 +411,7 @@ class TestPlaceOntoResident:
         assert torrent.order(_scope(_SEASON).window) is None
         assert placement.assignment.placements == ()
         assert placement.hold is GrabHold.INPUT_UNREAD
-        assert not placement.inputs_known
+        assert not placement.inputs_read
         assert placement.claimed_ids == frozenset()
         assert placement.stored is record
 
@@ -424,7 +424,7 @@ class TestPlaceOntoResident:
         placement = place_release(_pack(), unread, torrent)
 
         assert placement.assignment.placements == ()
-        assert not placement.inputs_known
+        assert not placement.inputs_read
         assert placement.hold is GrabHold.INPUT_UNREAD
         assert placement.records == (EpisodeRecord(1, 1, 10), EpisodeRecord(1, 2, 20))
         assert placement.claimed_ids == {101, 102}
@@ -526,7 +526,7 @@ class TestPlaceHeld:
         assert placement.hold is GrabHold.MISNUMBERED
         assert placement.records == ()
         assert placement.claimed_ids == frozenset()
-        assert placement.inputs_known
+        assert placement.inputs_read
 
     def test_a_pack_held_for_a_disputed_run_records_none_of_its_placed_files(self) -> None:
         # The season's absolutes count the special between E02 and E03, and the pack is keyed on past the end.
@@ -761,7 +761,7 @@ class TestPlaceHeld:
         assert placement.hold is GrabHold.INPUT_UNREAD
         assert placement.assignment.placements == ()
         assert placement.records == ()
-        assert not placement.inputs_known
+        assert not placement.inputs_read
 
     def test_a_parse_miss_under_a_specials_listing_holds_the_url(self) -> None:
         files = [SeedFile(f"Show.S00E{n:02d}.mkv", 10 * n, None if n == 2 else _matched(0, n)) for n in (1, 2, 3)]
@@ -769,7 +769,7 @@ class TestPlaceHeld:
         placement = place_release(files, self._specials_scope(1, 2), self._listing((501, 502, 503)))
 
         assert placement.hold is GrabHold.INPUT_UNREAD
-        assert not placement.inputs_known
+        assert not placement.inputs_read
 
     def test_an_unread_listing_over_a_seasoned_window_places_nothing_and_holds(self) -> None:
         # Another title the listing names could own some of the pack, so nothing is placed until it's read. The
@@ -777,13 +777,13 @@ class TestPlaceHeld:
         placement = place_release(_pack(), _scope(_SEASON), _torrent(listed=None))
 
         assert placement.hold is GrabHold.INPUT_UNREAD
-        assert not placement.inputs_known
+        assert not placement.inputs_read
         assert placement.assignment.placements == ()
 
     def test_a_file_less_url_under_an_unread_listing_waits_on_nothing(self) -> None:
         placement = place_release([], self._specials_scope(1, 2), self._listing(None))
 
-        assert placement.inputs_known
+        assert placement.inputs_read
         assert placement.hold is None
 
     def test_attach_writes_each_urls_hold(self) -> None:
@@ -804,7 +804,7 @@ class TestPlaceHeld:
 
         placed.attach_placements(seadex_dict)
 
-        holds = [seadex_dict["RG"].releases[u].hold for u in urls]
+        holds = [seadex_dict["RG"].releases[u].skip_reason for u in urls]
         assert holds == [GrabHold.MISNUMBERED, GrabHold.INPUT_UNREAD, None]
         assert placed.input_missing_groups(seadex_dict) == ("RG",)
 
@@ -852,7 +852,10 @@ class TestPlaceBesideAnotherListedTitle:
         placed.attach_placements(seadex_dict)
 
         item = seadex_dict["RG"].releases["u1"]
-        assert (item.hold, item.hold_counts) == (GrabHold.PLACED_ELSEWHERE, ElsewhereCounts(elsewhere=4, unplaced=0))
+        assert (item.skip_reason, item.hold_counts) == (
+            GrabHold.PLACED_ELSEWHERE,
+            ElsewhereCounts(elsewhere=4, unplaced=0),
+        )
 
     def test_a_stored_file_on_an_episode_no_other_window_holds_is_nobodys(self) -> None:
         # The record maps the pack's last two files past this entry's window, and no other listed title holds
@@ -934,7 +937,7 @@ class TestPlaceBesideAnotherListedTitle:
             "show - ncop.mkv": ((), PlacementVerdict.EXTRA),
         }
         assert placement.hold is GrabHold.INPUT_UNREAD
-        assert not placement.inputs_known
+        assert not placement.inputs_read
 
 
 # neko-raws' The Rolling Girls BD batch (nyaa 743477) and its Sonarr series. SeaDex lists the batch under the
@@ -1199,7 +1202,7 @@ class TestPlaceWhereEveryNumberingAgrees:
             assignment=EpisodeAssignment(()),
             records=(EpisodeRecord(0, 8, 1_400_000_000),),
             claimed_ids=frozenset({9254}),
-            inputs_known=True,
+            inputs_read=True,
             hold=None,
             hold_counts=NO_ELSEWHERE,
             stored=record,
@@ -1615,8 +1618,8 @@ class TestBuildUnscopedSeed:
     """A Radarr grab's seed: the listing's facts, no files or window, an id-less claim on the entry."""
 
     @staticmethod
-    def _flagged() -> FlaggedUrl:
-        return FlaggedUrl("RG", "https://nyaa.si/view/1", url_item(infohash="h1", is_dual_audio=True), "h1")
+    def _flagged() -> PlannedGrab:
+        return PlannedGrab("RG", "https://nyaa.si/view/1", url_item(infohash="h1", is_dual_audio=True), "h1")
 
     def test_a_new_torrent_seeds_an_id_less_claim(self) -> None:
         facts = entry_facts(al_id=9, series_id=0, title="Movie", url="https://releases.moe/9")

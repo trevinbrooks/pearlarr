@@ -111,13 +111,13 @@ class Release:
     cross_seed_hash: str | None = None
     """The hash of a torrent already in qBittorrent that holds exactly this url's files under another hash.
     `TorrentService.mark_cross_seeds` sets it before anything reads the item."""
-    download: bool = False
+    to_grab: bool = False
     is_fallback: bool = False
     """A public alternative added because the preferred release is private-only."""
     upgrade: bool = False
     """A grab over files the Arr holds at a stale size or on too many episodes. Never set without `download`."""
     episodes: list[EpisodeRecord] = field(default_factory=list[EpisodeRecord])
-    hold: GrabHold | None = None
+    skip_reason: GrabHold | None = None
     """Why the placement refuses to grab the url this run (`attach_placements` sets it), None when it may be."""
     hold_counts: ElsewhereCounts = NO_ELSEWHERE
     """How the url's files split when it's held as another title's (`UrlPlacement.hold_counts`)."""
@@ -137,19 +137,19 @@ class Release:
     def hand_import(self) -> bool:
         """Whether the placement left the url's pack for a hand import (`GrabHold.hand_import`)."""
 
-        return self.hold is not None and self.hold.hand_import
+        return self.skip_reason is not None and self.skip_reason.hand_import
 
-    def flag(self, *, upgrade: bool = False) -> None:
+    def plan_grab(self, *, upgrade: bool = False) -> None:
         """Mark the url to grab, `upgrade` marking a replacement of held files. Never clears an upgrade already set."""
 
-        self.download = True
+        self.to_grab = True
         if upgrade:
             self.upgrade = True
 
-    def unflag(self) -> None:
+    def drop_grab(self) -> None:
         """Clear the grab. `upgrade` clears with `download`: it describes the grab, so it must never outlive it."""
 
-        self.download = False
+        self.to_grab = False
         self.upgrade = False
 
 
@@ -167,7 +167,7 @@ SeadexDict = dict[str, GroupReleases]
 """SeaDex release groups keyed by group name."""
 
 
-class FlaggedUrl(NamedTuple):
+class PlannedGrab(NamedTuple):
     """One url flagged to grab that carries an infohash."""
 
     group: str
@@ -180,14 +180,14 @@ class FlaggedUrl(NamedTuple):
     """The hash its torrent goes by in qBittorrent (`SeadexUrlItem.qbit_hash`), lowercase."""
 
 
-def flagged_urls(seadex_dict: SeadexDict) -> list[FlaggedUrl]:
+def releases_to_grab(seadex_dict: SeadexDict) -> list[PlannedGrab]:
     """The urls flagged to grab that carry an infohash. Narrow at the riders, never here."""
 
     return [
-        FlaggedUrl(srg, url, release, release.qbit_hash)
+        PlannedGrab(srg, url, release, release.qbit_hash)
         for srg, srg_item in seadex_dict.items()
         for url, release in srg_item.releases.items()
-        if release.download and release.qbit_hash
+        if release.to_grab and release.qbit_hash
     ]
 
 

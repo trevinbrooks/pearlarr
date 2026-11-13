@@ -76,7 +76,7 @@ class RunLoop:
     def _wait_active(self) -> bool:
         """Whether the wait machinery runs this pass (an active mode, not preview)."""
 
-        return self._ctx.import_wait_mode is not ImportWaitMode.OFF and not self._services.is_preview()
+        return self._ctx.import_wait_mode is not ImportWaitMode.OFF and not self._services.is_dry_run()
 
     # --- Run orchestration --------------------------------------------------
 
@@ -142,7 +142,7 @@ class RunLoop:
             )
 
         with boot.step("Fetching AniList metadata") as step:
-            fetched = self._anilist.prefetch(prefetch_ids, preview=self._services.is_preview(), progress=step)
+            fetched = self._anilist.prefetch(prefetch_ids, preview=self._services.is_dry_run(), progress=step)
             if self._anilist.outage:
                 # Terse: the client already warned once with the failure detail.
                 step.warn("unavailable")
@@ -183,10 +183,10 @@ class RunLoop:
 
         # Only on a full run, mirroring the vouch: a single-item run re-checks just its id, so the
         # whole-library note would overstate it and recur every time.
-        if item_id is None and self._services.selection_stale and not self._config.seadex.ignore_seadex_update_times:
+        if item_id is None and self._services.selection_changed and not self._config.seadex.ignore_seadex_update_times:
             hub_note("Matching settings changed - rechecking cached entries")
 
-        preview = self._services.is_preview()
+        preview = self._services.is_dry_run()
         for item_idx, item in enumerate(all_items):
             try:
                 self._scan_item(strategy, item, item_idx, n_items)
@@ -202,7 +202,7 @@ class RunLoop:
         # drift events the run never acted on. A SkyHook outage counts too: a series it left unrefreshed was read by
         # its old order record, and with neither committed the next pass repeats the re-checks they drive (a settings
         # change, a file change in the arr) against the refreshed one. A title held past the cap, or one whose check
-        # didn't cache it as done, holds back neither: `cached_entry_skip` cleared its stamp, so the next run checks
+        # didn't cache it as done, holds back neither: `is_unchanged` cleared its stamp, so the next run checks
         # it whatever is committed here. An AniList outage is left out: a Sonarr title whose check read an entry
         # with no stored record of its air dates isn't cached as done, and Radarr reads AniList only for display.
         full_pass = item_id is None and not self._seadex.outage and not self._skyhook.outage
@@ -215,7 +215,7 @@ class RunLoop:
         # A contained per-id error still vouches: otherwise one flaky title re-scans the library every run. A title
         # whose check raised past the cached-entry gate is checked again next run all the same.
         if full_pass:
-            self.cache_store.vouch_selection(arr, self._config.selection_digest())
+            self.cache_store.vouch_selection(arr, self._config.selection_hash())
 
         # The finalize save persists the checkpoint and vouch with the tail's own writes.
         self._finalize_run()
@@ -281,7 +281,7 @@ class RunLoop:
         # Always ScanStarted-paired: run_sync, the only caller, has no early return between log_arr_start and here.
         self._reporter.scan_finished(self._ctx.arr)
 
-        preview = self._services.is_preview()
+        preview = self._services.is_dry_run()
 
         supports_monitor = self._active_strategy is not None and self._active_strategy.supports_blocking_monitor
         end_pass_waits = supports_monitor and self._ctx.import_wait_mode in (

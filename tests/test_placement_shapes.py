@@ -157,7 +157,7 @@ def test_the_grab_places_the_captured_shape(case: ShapeCase) -> None:
         for size, name in enumerate(case.parses, start=1)
         for ep_id in case.expected.get(name, ())
     ]
-    assert placement.inputs_known
+    assert placement.inputs_read
 
 
 def test_every_shape_tag_carries_a_case() -> None:
