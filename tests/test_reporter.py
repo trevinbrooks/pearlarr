@@ -35,7 +35,7 @@ from pearlarr.output import (
     ScopeClosed,
     ScopeOpened,
     Severity,
-    SeverityCounts,
+    SeverityCounter,
 )
 from pearlarr.reporter import RunReporter
 from pearlarr.torrents import AddStatus, GrabResult
@@ -69,7 +69,7 @@ def _record(
     store: AbstractCacheStore = cache_store if cache_store is not None else FakeCacheStore()
     anilist = make_anilist_gateway(client)
     events: list[Event] = []
-    counts = SeverityCounts()
+    counts = SeverityCounter()
     reporter = RunReporter(emit=events.append, counts=lambda: counts, cache_store=store, anilist=anilist)
     return reporter, events
 
@@ -348,7 +348,7 @@ class TestRunSummary:
         """
 
         anilist = make_anilist_gateway()
-        counters = [SeverityCounts()]
+        counters = [SeverityCounter()]
         events: list[Event] = []
         reporter = RunReporter(
             emit=events.append,
@@ -363,7 +363,7 @@ class TestRunSummary:
 
         # The "hub swap": the source now resolves to a fresh counter soaking up
         # unrelated errors.
-        counters.append(SeverityCounts())
+        counters.append(SeverityCounter())
         counters[-1].record(Severity.ERROR)
         counters[-1].record(Severity.ERROR)
 

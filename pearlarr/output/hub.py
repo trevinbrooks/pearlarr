@@ -131,7 +131,7 @@ class SeverityTally:
 class CountsMark:
     """A baseline stamped on ONE counter. since() can never diff across hubs."""
 
-    counts: SeverityCounts
+    counts: SeverityCounter
     baseline: SeverityTally
 
     def since(self) -> SeverityTally:
@@ -139,7 +139,7 @@ class CountsMark:
 
 
 @final
-class SeverityCounts:
+class SeverityCounter:
     """Monotonic per-process tallies. Runs take a mark() and read counts_since().
 
     Never "reset per cycle", always deltas via marks.
@@ -176,7 +176,7 @@ class SeverityCounts:
         return CountsMark(self, self.mark())
 
 
-class _Sub:
+class _Subscription:
     """One subscription: a renderer plus its per-cycle strike count."""
 
     __slots__ = ("renderer", "strikes")
@@ -205,17 +205,17 @@ class OutputHub:
         strike_limit: int = STRIKE_LIMIT,
     ) -> None:
         self._lock = threading.RLock()
-        self._subs = [_Sub(renderer) for renderer in renderers]
-        self._console_sub: _Sub | None = None
+        self._subs = [_Subscription(renderer) for renderer in renderers]
+        self._console_sub: _Subscription | None = None
         if console is not None:
-            self._console_sub = _Sub(console)
+            self._console_sub = _Subscription(console)
             self._subs.append(self._console_sub)
         self._console_factory = console_factory
         self._console_format: LogFormat | None = None
         self._clock = clock
         self._strike_limit = strike_limit
         self._once_keys: set[tuple[str, str]] = set()
-        self._counts = SeverityCounts()
+        self._counts = SeverityCounter()
         self._level = int(Severity.INFO)
         self._closed = False
         self._pending: deque[tuple[Event, float]] = deque()
@@ -227,7 +227,7 @@ class OutputHub:
         self._overflowing = False
 
     @property
-    def counts(self) -> SeverityCounts:
+    def counts(self) -> SeverityCounter:
         return self._counts
 
     @property
@@ -515,7 +515,7 @@ class OutputHub:
                     with contextlib.suppress(Exception):
                         sub.renderer.close()
 
-    def _strike(self, sub: _Sub) -> None:
+    def _strike(self, sub: _Subscription) -> None:
         """One strike (under a brief lock re-acquire). Crossing the limit also closes the renderer.
 
         A quarantined seat must release its resources (a struck boot Live keeps
@@ -529,10 +529,10 @@ class OutputHub:
             with contextlib.suppress(Exception):
                 sub.renderer.close()
 
-    def _dispatch(self, event: Event, when: float, subs: Sequence[_Sub]) -> None:
+    def _dispatch(self, event: Event, when: float, subs: Sequence[_Subscription]) -> None:
         """Fan one event out to the snapshotted subs - no hub lock held here."""
 
-        failures: list[tuple[_Sub, Exception]] = []
+        failures: list[tuple[_Subscription, Exception]] = []
         for sub in subs:
             try:
                 sub.renderer.handle(event, when)
@@ -562,7 +562,7 @@ class OutputHub:
             with contextlib.suppress(Exception):
                 self._console_sub.renderer.close()
             self._subs.remove(self._console_sub)
-        sub = _Sub(fresh)
+        sub = _Subscription(fresh)
         self._subs.append(sub)
         self._console_sub = sub
         self._console_format = console_format
@@ -571,7 +571,7 @@ class OutputHub:
         # and nothing dispatches in between (re-entrant emits enqueue under the
         # baton). A second call would just burn a strike twice on one bug.
 
-    def _note(self, message: str, exc: Exception, when: float, *, skip: _Sub | None) -> None:
+    def _note(self, message: str, exc: Exception, when: float, *, skip: _Subscription | None) -> None:
         """A containment note to the armed survivors.
 
         Forensic (file_only, uncounted - a presentation bug must not inflate the

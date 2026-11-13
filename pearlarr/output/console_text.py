@@ -30,7 +30,7 @@ class SectionRule:
 
 
 @dataclass(frozen=True, slots=True)
-class KvLine:
+class KeyValue:
     """An aligned "key : value" (or gutter "key value") detail line."""
 
     key: str
@@ -51,7 +51,7 @@ class StyledLine:
     style: str = ""
 
 
-type ConsoleRender = TitledRule | SectionRule | KvLine | StyledLine
+type ConsoleRender = TitledRule | SectionRule | KeyValue | StyledLine
 
 
 def print_titled_rule(console: Console, title: str, style: str, *, heavy: bool) -> None:
@@ -61,7 +61,7 @@ def print_titled_rule(console: Console, title: str, style: str, *, heavy: bool) 
     print_literal(console, Text(title, style=f"{style} bold"))
 
 
-def render_kv(kv: KvLine) -> Text:
+def kv_text(kv: KeyValue) -> Text:
     """Build a styled "key : value" (or gutter "key value") line from a kv payload."""
 
     prefix = _kv_prefix(kv.indent, kv.key, kv.key_width, kv.sep)
@@ -81,7 +81,7 @@ def render_kv(kv: KvLine) -> Text:
     return line
 
 
-def render_rule(char: str) -> Rule:
+def rule_text(char: str) -> Rule:
     """A full-width separator: heavy ("━") for section ("=") breaks, light ("─") for sub ("-") breaks."""
 
     if char == "=":
@@ -141,7 +141,7 @@ def kv_string(
 ) -> str:
     """Format an aligned "key : value" line. Pass `sep=""` for the colon-less gutter "label value" format."""
 
-    # Shared `_kv_prefix`, so the plain message matches the console render (render_kv) exactly.
+    # Shared `_kv_prefix`, so the plain message matches the console render (kv_text) exactly.
     line = _kv_prefix(indent, key, key_width, sep)
 
     # An empty value acts as a header for the indented block below it.
@@ -223,7 +223,7 @@ def arr_item_noun(arr: Arr, n: int) -> str:
     return count_noun(n, "series", "series")
 
 
-def format_elapsed(seconds: float) -> str:
+def long_duration(seconds: float) -> str:
     """Format elapsed seconds as e.g. "8s", "14m 03s", or "1h 02m 03s"."""
 
     total = int(seconds)

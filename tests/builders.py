@@ -49,7 +49,7 @@ from pearlarr.import_wait import ImportWaitManager, PostImportCleanup, WaitPolle
 from pearlarr.leg_state import ArrRunState
 from pearlarr.mappings import MappingResolver, MappingSources
 from pearlarr.notify import Notifier
-from pearlarr.output import SeverityCounts, emit_to_hub
+from pearlarr.output import SeverityCounter, emit_to_hub
 from pearlarr.parse_records import ParseCacheRows
 from pearlarr.pending_import import (
     NO_ORDER_ONLY,
@@ -609,7 +609,7 @@ def _real_reporter(
 ) -> RunReporter:
     """A real `RunReporter` over the given cache store (composite-with-faked-leaf)."""
 
-    counts = SeverityCounts()
+    counts = SeverityCounter()
     return RunReporter(
         emit=emit_to_hub,
         counts=lambda: counts,

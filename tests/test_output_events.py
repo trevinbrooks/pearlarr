@@ -17,7 +17,6 @@ from pearlarr.output import (
     Accent,
     BootStepFinished,
     Diagnostic,
-    EntryDetail,
     EntryHeader,
     GrabFact,
     GrabFailed,
@@ -37,6 +36,7 @@ from pearlarr.output import (
     Severity,
     SkipReason,
     StyledValue,
+    TitleDetail,
     TitleRow,
     severity_of,
 )
@@ -95,7 +95,7 @@ def test_scope_id_is_a_value() -> None:
 
 def test_diagnostic_and_entry_detail_carry_their_own_severity() -> None:
     diag = Diagnostic(severity=Severity.ERROR, message="boom")
-    detail = EntryDetail(label="skipped", value=StyledValue("x"), severity=Severity.WARNING)
+    detail = TitleDetail(label="skipped", value=StyledValue("x"), severity=Severity.WARNING)
     assert severity_of(diag) is Severity.ERROR
     assert severity_of(detail) is Severity.WARNING
 

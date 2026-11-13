@@ -1,6 +1,6 @@
 # pyright: strict
 # pyright: reportPrivateUsage=false
-# ^ the drift pin reads _PHASE_RANK and the ETA tests drive _compact_eta directly.
+# ^ the drift pin reads _PHASE_RANK and the ETA tests drive _rough_eta directly.
 """Tests for the wait surface's pure line builders + throttle + reducers.
 
 The byte guarantees on the wait ledger live in the builders (consumed by the
@@ -15,7 +15,7 @@ import logging
 
 import pytest
 
-from pearlarr.console_caps import Capabilities, detect_capabilities
+from pearlarr.console_caps import ConsoleFeatures, detect_capabilities
 from pearlarr.output import (
     Phase,
     RowFinished,
@@ -29,7 +29,7 @@ from pearlarr.output.console_text import StyledLine
 from pearlarr.output.wait_lines import (
     _PHASE_RANK,
     PulseThrottle,
-    _compact_eta,
+    _rough_eta,
     graduation_tail,
     held_back_sentences,
     live_model,
@@ -170,15 +170,15 @@ class TestWaitBuilders:
     def test_graduation_line_level_follows_the_outcome_category(self) -> None:
         # P6: the rendered line and severity_of/the sink admission agree -
         # FAILED carries ERROR, DEFERRED WARNING, success INFO.
-        caps = detect_capabilities(None)
-        assert wait_graduation_lines(_grad("A", Outcome.IMPORTED), caps)[0].level == logging.INFO
-        assert wait_graduation_lines(_grad("B", Outcome.DOWNLOAD_TIMED_OUT), caps)[0].level == logging.WARNING
-        assert wait_graduation_lines(_grad("C", Outcome.DOWNLOAD_ERRORED), caps)[0].level == logging.ERROR
+        features = detect_capabilities(None)
+        assert wait_graduation_lines(_grad("A", Outcome.IMPORTED), features)[0].level == logging.INFO
+        assert wait_graduation_lines(_grad("B", Outcome.DOWNLOAD_TIMED_OUT), features)[0].level == logging.WARNING
+        assert wait_graduation_lines(_grad("C", Outcome.DOWNLOAD_ERRORED), features)[0].level == logging.ERROR
 
 
 # --- the pure cockpit reducers ----------------------------------------------------------
 
-_WIDE = Capabilities(live=True, color=True, unicode=True, width=100, height=40)
+_WIDE = ConsoleFeatures(can_redraw=True, can_color=True, can_unicode=True, width=100, height=40)
 
 
 def _downloading_row(key: str, label: str, frac: float, history: tuple[int, ...] = ()) -> TorrentView:
@@ -209,12 +209,12 @@ def _importing_row(key: str, label: str, *, done: int, total: int, elapsed: floa
 
 
 def test_live_model_orders_and_bounds_the_box() -> None:
-    caps = Capabilities(live=True, color=True, unicode=True, width=100, height=12)
+    features = ConsoleFeatures(can_redraw=True, can_color=True, can_unicode=True, width=100, height=12)
     torrents = [_downloading_row(f"d{i}", f"D{i}", 0.1 * i) for i in range(20)]
     torrents.append(TorrentView("imp", "Importer", Phase.IMPORTING))
     snap = WaitSnapshot(tuple(torrents), elapsed_s=120)
 
-    model = live_model(snap, caps, WaitKind.MONITOR)
+    model = live_model(snap, features, WaitKind.MONITOR)
 
     # height budget caps visible rows. The rest collapse to an overflow tally.
     assert len(model.rows) == 4
@@ -316,8 +316,8 @@ def test_download_row_speed_carries_the_sparkline() -> None:
 def test_sparkline_is_dropped_when_narrow_or_ascii() -> None:
     snap = WaitSnapshot((_downloading_row("h", "Show", 0.5, history=(0, 3_200_000)),))
 
-    narrow = Capabilities(live=True, color=True, unicode=True, width=72, height=40)
-    ascii_caps = Capabilities(live=True, color=True, unicode=False, width=100, height=40)
+    narrow = ConsoleFeatures(can_redraw=True, can_color=True, can_unicode=True, width=72, height=40)
+    ascii_caps = ConsoleFeatures(can_redraw=True, can_color=True, can_unicode=False, width=100, height=40)
 
     assert live_model(snap, narrow, WaitKind.MONITOR).rows[0].speed == "3.1 MB/s"
     assert live_model(snap, ascii_caps, WaitKind.MONITOR).rows[0].speed == "3.1 MB/s"
@@ -333,11 +333,11 @@ def test_sparkline_needs_two_samples() -> None:
 def test_compact_eta_covers_every_magnitude() -> None:
     # The docstring's own examples, pinned: zero-padded minutes past an hour, a
     # bare-seconds tail, and negatives floored to ~0s (never "~-5s").
-    assert _compact_eta(4000) == "~1h06m"
-    assert _compact_eta(3900) == "~1h05m"
-    assert _compact_eta(130) == "~2m"
-    assert _compact_eta(40) == "~40s"
-    assert _compact_eta(-5) == "~0s"
+    assert _rough_eta(4000) == "~1h06m"
+    assert _rough_eta(3900) == "~1h05m"
+    assert _rough_eta(130) == "~2m"
+    assert _rough_eta(40) == "~40s"
+    assert _rough_eta(-5) == "~0s"
 
 
 def test_phase_rank_covers_every_non_terminal_phase() -> None:

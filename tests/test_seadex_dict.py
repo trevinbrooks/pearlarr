@@ -534,7 +534,7 @@ class TestInteractivePick:
         # The prompt rows are printed, not logged, so they stay visible even at
         # log_level WARNING (a demoted INFO row would vanish and leave input() blind).
         assert "[0]: GroupA" in capsys.readouterr().out
-        # Only genuine problems warn (the hub's SeverityCounts tallies WARNINGs
+        # Only genuine problems warn (the hub's SeverityCounter tallies WARNINGs
         # into the run's issues summary): the invalid token, then the empty pick.
         warnings = [d.message for d in recording.of_type(Diagnostic) if d.severity is Severity.WARNING]
         assert len(warnings) == 2

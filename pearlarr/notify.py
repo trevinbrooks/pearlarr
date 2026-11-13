@@ -25,7 +25,7 @@ from .discord import (
     discord_push,
 )
 from .output import hub_warn
-from .output.console_text import count_noun, format_elapsed, human_bytes
+from .output.console_text import count_noun, human_bytes, long_duration
 from .output.wait_lines import held_back_names, held_back_sentences
 from .releases import Release, SeadexDict
 from .torrents import AddStatus, GrabResult
@@ -351,7 +351,7 @@ class Notifier:
 
         if result.waited == 0:
             return False
-        elapsed = format_elapsed(result.elapsed_s)
+        elapsed = long_duration(result.elapsed_s)
         posted = self._push(
             DiscordEmbed(
                 author_name="Pearlarr",

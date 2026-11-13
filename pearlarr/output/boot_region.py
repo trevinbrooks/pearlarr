@@ -20,7 +20,7 @@ from rich.padding import Padding
 from rich.spinner import Spinner
 from rich.text import Text
 
-from .console_text import INDENT, format_elapsed, indent_string, print_titled_rule
+from .console_text import INDENT, indent_string, long_duration, print_titled_rule
 from .events import (
     BootReady,
     BootStepFinished,
@@ -30,7 +30,7 @@ from .events import (
     RunStarted,
 )
 from .live_region import LiveRegion
-from ..console_caps import Capabilities, CapsCache, block_bar, make_live, spinner_name
+from ..console_caps import ConsoleFeatures, DetectedFeatures, block_bar, make_live, spinner_name
 from ..log import print_literal
 
 # Width of the live download bar (mapping refresh). Only the live cockpit draws
@@ -41,14 +41,14 @@ type BootEvent = RunStarted | BootStepStarted | BootStepProgressed | BootStepSlo
 """The event subset the RichRenderer delegates to the boot region."""
 
 
-def format_step_secs(seconds: float) -> str:
+def step_seconds(seconds: float) -> str:
     """A compact step duration: `"0.02s"` / `"1.3s"` / `"1m 04s"`."""
 
     if seconds < 10:
         return f"{seconds:.2f}s"
     if seconds < 60:
         return f"{seconds:.1f}s"
-    return format_elapsed(seconds)
+    return long_duration(seconds)
 
 
 # --- the shared ledger-line grammar (console scrollback == file/plain echo) --------
@@ -66,33 +66,33 @@ def data_dir_line(data_dir: str) -> str:
     return indent_string(f"Data directory: {data_dir}")
 
 
-def _ellipsis(caps: Capabilities) -> str:
+def _ellipsis(features: ConsoleFeatures) -> str:
     """The working-dots suffix, degraded per console caps."""
 
-    return "…" if caps.unicode else "..."
+    return "…" if features.can_unicode else "..."
 
 
-def slow_line(label: str, caps: Capabilities) -> str:
+def slow_line(label: str, features: ConsoleFeatures) -> str:
     """The one-time slow-step heads-up, ellipsis degraded per console caps."""
 
-    return indent_string(f"{label}{_ellipsis(caps)}")
+    return indent_string(f"{label}{_ellipsis(features)}")
 
 
-def graduation_line(event: BootStepFinished, caps: Capabilities) -> str:
+def graduation_line(event: BootStepFinished, features: ConsoleFeatures) -> str:
     """A finished step's durable ledger line: glyph + label · detail · elapsed."""
 
-    glyph = event.outcome.glyph_for(use_unicode=caps.unicode)
+    glyph = event.outcome.glyph_for(use_unicode=features.can_unicode)
     text = event.label
     if event.detail:
         text += f" · {event.detail}"
-    text += f" · {format_step_secs(event.elapsed_s)}"
+    text += f" · {step_seconds(event.elapsed_s)}"
     return indent_string(f"{glyph} {text}")
 
 
 def ready_line(elapsed_s: float) -> str:
     """The boot capstone line."""
 
-    return indent_string(f"ready in {format_step_secs(elapsed_s)}")
+    return indent_string(f"ready in {step_seconds(elapsed_s)}")
 
 
 @final
@@ -110,7 +110,7 @@ class BootRegion(LiveRegion):
     def __init__(
         self,
         console_source: Callable[[], Console | None],
-        caps_cache: CapsCache | None = None,
+        caps_cache: DetectedFeatures | None = None,
         *,
         level_source: Callable[[], int],
     ) -> None:
@@ -122,30 +122,30 @@ class BootRegion(LiveRegion):
         console = self._console_source()
         if console is None:
             return
-        caps = self._caps_cache.for_console(console)
+        features = self._caps_cache.for_console(console)
         match event:
             case RunStarted():
                 self._banner(console, event)
             case BootStepStarted(label=label):
-                self._step_started(console, caps, label)
+                self._step_started(console, features, label)
             case BootStepProgressed(fraction=fraction, detail=detail):
                 if self._spinner is not None:
-                    self._spinner.update(text=self._frame_text(caps, fraction, detail))
+                    self._spinner.update(text=self._frame_text(features, fraction, detail))
             case BootStepSlow(label=label):
                 # Live consoles show liveness via the spinner. The heads-up is
                 # the non-live rich console's degraded liveness signal.
-                if not caps.live and self._admits_durable():
-                    self._print(console, Text(slow_line(label, caps)))
+                if not features.can_redraw and self._admits_durable():
+                    self._print(console, Text(slow_line(label, features)))
             case BootStepFinished():
                 if self._admits_durable():
-                    style = event.outcome.style if caps.color else ""
-                    self._print(console, Text(graduation_line(event, caps), style=style))
+                    style = event.outcome.style if features.can_color else ""
+                    self._print(console, Text(graduation_line(event, features), style=style))
             case BootReady(elapsed_s=elapsed_s):
                 # Teardown order: the spinner is torn down before the capstone
                 # prints (section_left stays the teardown for capstone-less ends).
                 self._stop_live()
                 if self._admits_durable():
-                    self._print(console, Text(ready_line(elapsed_s), style="grey50" if caps.color else ""))
+                    self._print(console, Text(ready_line(elapsed_s), style="grey50" if features.can_color else ""))
             case _:
                 assert_never(event)
 
@@ -171,9 +171,9 @@ class BootRegion(LiveRegion):
         console.print(Text(""))
         self._print(console, Text(data_dir_line(event.data_dir), style="grey50"))
 
-    def _step_started(self, console: Console, caps: Capabilities, label: str) -> None:
+    def _step_started(self, console: Console, features: ConsoleFeatures, label: str) -> None:
         self._label = label
-        if not caps.live:
+        if not features.can_redraw:
             return
         if self._live is None:
             self._live = make_live(console)
@@ -181,20 +181,20 @@ class BootRegion(LiveRegion):
         # A fresh Spinner per step restarts the animation at frame 0 (intended).
         # Within a step only .text mutates so the dots keep their phase. Padding
         # holds the spinner by reference, so progress updates re-render live.
-        self._spinner = Spinner(spinner_name(caps), text=self._frame_text(caps, None, None), style="cyan")
+        self._spinner = Spinner(spinner_name(features), text=self._frame_text(features, None, None), style="cyan")
         self._live.update(Padding(self._spinner, (0, 0, 0, len(INDENT))))
 
-    def _frame_text(self, caps: Capabilities, fraction: float | None, detail: str | None) -> Text:
+    def _frame_text(self, features: ConsoleFeatures, fraction: float | None, detail: str | None) -> Text:
         line = Text(self._label, style="bold")
         if fraction is not None:
             line.append("  ")
-            line.append(block_bar(fraction, _BAR_WIDTH, caps))
+            line.append(block_bar(fraction, _BAR_WIDTH, features))
             line.append(f" {round(fraction * 100)}%", style="cyan")
         if detail:
             line.append("  ")
             line.append(detail, style="grey50")
         elif fraction is None:
-            line.append(_ellipsis(caps), style="bold")
+            line.append(_ellipsis(features), style="bold")
         return line
 
     @staticmethod

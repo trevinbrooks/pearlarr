@@ -44,7 +44,6 @@ from pearlarr.output import (
     CycleStarted,
     Diagnostic,
     EffectiveConfigShown,
-    EntryDetail,
     EntryHeader,
     Event,
     FileLogRenderer,
@@ -56,14 +55,14 @@ from pearlarr.output import (
     LegFinished,
     LegSummary,
     LegTally,
-    LineRenderer,
     NeedsActionCause,
     NextRunScheduled,
     PathsShown,
     Phase,
     PlacedBy,
+    PlainRenderer,
     RecommendedGroup,
-    ReleaseName,
+    ReleaseLabel,
     ReleaseSkipped,
     RowFinished,
     RunStarted,
@@ -78,6 +77,7 @@ from pearlarr.output import (
     SkipReason,
     StarterConfigWritten,
     StyledValue,
+    TitleDetail,
     TitleRow,
     TorrentView,
     WaitFinished,
@@ -116,7 +116,7 @@ def _format(event: Event, *events_before: Event) -> str | None:
     """
 
     stream = io.StringIO()
-    sink = LineRenderer(stream)
+    sink = PlainRenderer(stream)
     sink.set_level(logging.DEBUG)
     for before in events_before:
         sink.handle(before, _EPOCH)
@@ -224,8 +224,8 @@ def test_grab_action_line_joins_groups_and_names_sink_side() -> None:
     action = GrabAction(
         status=GrabStatus.ADDING,
         groups=(RecommendedGroup("SubsPlease", ("dual audio",)), RecommendedGroup("Kowo")),
-        added=(ReleaseName("[SubsPlease] Sousou no Frieren", "SubsPlease"),),
-        in_qbit=(ReleaseName("", "Kowo"),),
+        added=(ReleaseLabel("[SubsPlease] Sousou no Frieren", "SubsPlease"),),
+        in_qbit=(ReleaseLabel("", "Kowo"),),
         scope=_ENTRY,
     )
     line = _format(action, *_entry_context())
@@ -485,9 +485,9 @@ def test_summary_renders_one_head_line_plus_one_line_per_record() -> None:
 # --- sinks: thresholds, routing, parity, rotation --------------------------------------
 
 
-def _line_sink() -> tuple[LineRenderer, io.StringIO]:
+def _line_sink() -> tuple[PlainRenderer, io.StringIO]:
     stream = io.StringIO()
-    return LineRenderer(stream), stream
+    return PlainRenderer(stream), stream
 
 
 def test_file_sink_honors_the_configured_level_but_still_folds(tmp_path: Path) -> None:
@@ -982,7 +982,7 @@ class _ExplodingStream(io.StringIO):
 
 def test_the_fold_advances_even_when_the_write_blows_up() -> None:
     stream = _ExplodingStream()
-    sink = LineRenderer(stream)
+    sink = PlainRenderer(stream)
     scan, item, opened = _entry_context()
     with pytest.raises(RuntimeError):
         sink.handle(scan, _EPOCH)
@@ -1155,7 +1155,7 @@ def _exemplars() -> list[Event]:
         ScanStarted(arr=Arr.SONARR, total=1),
         ItemStarted(arr=Arr.SONARR, index=1, total=1, title="T"),
         EntryHeader(state=TitleState.CHECKING, title="T"),
-        EntryDetail(label="status", value=StyledValue("no suitable releases")),
+        TitleDetail(label="status", value=StyledValue("no suitable releases")),
         TitleRow(state=TitleState.IGNORED, label="AniList #1"),
         ReleaseSkipped(group="G", tracker="AB", reason=SkipReason.PRIVATE_ONLY),
         GrabFailed(group="G", url="u", error="e"),
@@ -1211,7 +1211,7 @@ def test_a_newline_in_a_breadcrumb_label_cannot_break_the_line_grammar() -> None
         ItemStarted(arr=Arr.SONARR, index=1, total=1, title="evil\ntitle"),
         ScopeOpened(scope=_ENTRY, label="entry"),
     )
-    detail = EntryDetail(label="files", value=StyledValue("S01"), scope=_ENTRY)
+    detail = TitleDetail(label="files", value=StyledValue("S01"), scope=_ENTRY)
     line = _format(detail, *context)
     assert line is not None
     assert "\n" not in line  # ONE physical line, the escape in place

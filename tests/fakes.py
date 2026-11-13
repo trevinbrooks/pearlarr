@@ -36,7 +36,6 @@ from pearlarr.mappings import TitleMapping
 from pearlarr.output import (
     CapReached,
     Diagnostic,
-    EntryDetail,
     EntryHeader,
     Event,
     GrabAction,
@@ -46,10 +45,11 @@ from pearlarr.output import (
     RunSummaryReady,
     ScanStarted,
     Severity,
+    TitleDetail,
     TitleRow,
     install_hub,
 )
-from pearlarr.output.console_lines import LegacyLine
+from pearlarr.output.console_lines import ConsoleLine
 from pearlarr.output.recording import RecordingHub
 from pearlarr.output.scan_lines import scan_event_lines
 from pearlarr.pending_import import PendingImport
@@ -76,7 +76,7 @@ SCAN_EVENT_TYPES = (
     ScanStarted,
     ItemStarted,
     EntryHeader,
-    EntryDetail,
+    TitleDetail,
     TitleRow,
     ReleaseSkipped,
     GrabFailed,
@@ -86,10 +86,10 @@ SCAN_EVENT_TYPES = (
 )
 
 
-def scan_lines_from_events(events: Iterable[Event]) -> list[LegacyLine]:
+def scan_lines_from_events(events: Iterable[Event]) -> list[ConsoleLine]:
     """Re-derive the legacy scan lines a recorded event stream produces."""
 
-    lines: list[LegacyLine] = []
+    lines: list[ConsoleLine] = []
     for event in events:
         if isinstance(event, SCAN_EVENT_TYPES):
             lines.extend(scan_event_lines(event))

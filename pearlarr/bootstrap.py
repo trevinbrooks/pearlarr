@@ -36,11 +36,11 @@ from .output import (
     LegFinished,
     Severity,
     emit_to_hub,
+    file_log_admits,
     hub_error,
-    hub_file_only,
-    hub_file_records,
     hub_note,
     hub_warn,
+    note_to_file_log,
 )
 from .runlock import single_instance_lock
 
@@ -133,11 +133,11 @@ def _rewrite_old_config(config: str, loaded: AppConfig, *, dry_run: bool) -> Non
         hub_note("Config uses an older schema - left unchanged on a dry run")
         return
     notes = "; ".join(outcome.notes)
-    hub_file_only(f"Config schema v{outcome.from_version} -> v{CONFIG_VERSION}: {notes or 'no functional changes'}")
+    note_to_file_log(f"Config schema v{outcome.from_version} -> v{CONFIG_VERSION}: {notes or 'no functional changes'}")
     try:
         upgraded = upgrade_config_file(config, expected_checksum=loaded.checksum())
     except Exception as e:
-        hub_file_only(
+        note_to_file_log(
             f"Could not rewrite {config} in place ({_one_line_reason(e)}) - continuing on the in-memory migration",
             severity=Severity.WARNING,
         )
@@ -147,7 +147,7 @@ def _rewrite_old_config(config: str, loaded: AppConfig, *, dry_run: bool) -> Non
     # this rewrite (nothing was written) - then there is nothing to announce.
     if upgraded.backup_path is not None:
         # The detail line above rides at INFO: only promise it when the file log admits it.
-        hint = " (details in the log)" if notes and hub_file_records(Severity.INFO) else ""
+        hint = " (details in the log)" if notes and file_log_admits(Severity.INFO) else ""
         hub_note(f"Config migrated to the current schema - previous file saved as {upgraded.backup_path}{hint}")
 
 

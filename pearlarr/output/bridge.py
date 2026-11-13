@@ -60,7 +60,7 @@ def attributed_message(event: Diagnostic) -> str:
     return f"{event.origin}: {event.message}"
 
 
-def _severity_of(levelno: int) -> Severity:
+def _severity_for_level(levelno: int) -> Severity:
     """Map a stdlib levelno onto the Severity ladder (custom levels floor down)."""
 
     for severity in (Severity.CRITICAL, Severity.ERROR, Severity.WARNING, Severity.INFO):
@@ -118,7 +118,7 @@ class HubBridgeHandler(HubBridgeBase):
             file_only = hub.level > logging.DEBUG
         exc = record.exc_info[1] if record.exc_info is not None else None
         return Diagnostic(
-            severity=_severity_of(record.levelno),
+            severity=_severity_for_level(record.levelno),
             message=record.getMessage(),
             origin=record.name,
             trace=CapturedTrace.from_exception(exc) if exc is not None else None,

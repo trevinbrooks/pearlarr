@@ -30,7 +30,7 @@ from pearlarr.grab_pipeline import GrabRequest
 from pearlarr.import_wait import ImportWaitManager
 from pearlarr.leg_state import ArrRunState
 from pearlarr.mappings import TitleMapping
-from pearlarr.output import BootStepFinished, CountsMark, Diagnostic, EntryHeader, Severity, SeverityCounts
+from pearlarr.output import BootStepFinished, CountsMark, Diagnostic, EntryHeader, Severity, SeverityCounter
 from pearlarr.output.events import TitleState
 from pearlarr.output.recording import RecordingHub
 from pearlarr.progress import ProgressSink
@@ -81,7 +81,7 @@ class _FakeReporter:
     """The run-loop log hooks the scan and the run tail drive (each just acknowledges)."""
 
     def counts_mark(self) -> CountsMark:
-        return SeverityCounts().bound_mark()
+        return SeverityCounter().bound_mark()
 
     def log_arr_start(self, arr: Arr, n_items: int) -> bool:
         return True

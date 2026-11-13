@@ -11,7 +11,7 @@ import io
 
 from rich.console import Console
 
-from pearlarr.console_caps import CapsCache, detect_capabilities
+from pearlarr.console_caps import DetectedFeatures, detect_capabilities
 
 
 def _console(width: int = 100) -> Console:
@@ -19,7 +19,7 @@ def _console(width: int = 100) -> Console:
 
 
 def test_same_console_identity_returns_the_cached_probe() -> None:
-    cache = CapsCache()
+    cache = DetectedFeatures()
     console = _console()
 
     first = cache.for_console(console)
@@ -30,17 +30,17 @@ def test_same_console_identity_returns_the_cached_probe() -> None:
 
 
 def test_a_new_console_identity_reprobes_and_replaces() -> None:
-    cache = CapsCache()
+    cache = DetectedFeatures()
     cache.for_console(_console(width=100))
 
     narrow = cache.for_console(_console(width=20))
 
     assert narrow.width == 20
-    assert not narrow.live  # below MIN_LIVE_WIDTH: the fresh probe was used
+    assert not narrow.can_redraw  # below MIN_LIVE_WIDTH: the fresh probe was used
 
 
 def test_reset_drops_the_cached_probe() -> None:
-    cache = CapsCache()
+    cache = DetectedFeatures()
     console = _console()
     first = cache.for_console(console)
 
@@ -51,7 +51,7 @@ def test_reset_drops_the_cached_probe() -> None:
 
 
 def test_no_console_takes_the_constant_path_without_touching_the_cache() -> None:
-    cache = CapsCache()
+    cache = DetectedFeatures()
     console = _console()
     cached = cache.for_console(console)
 

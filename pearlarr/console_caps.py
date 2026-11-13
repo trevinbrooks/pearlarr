@@ -31,14 +31,14 @@ LIVE_REFRESH_PER_SECOND = 12.5
 
 
 @dataclass(frozen=True, slots=True)
-class Capabilities:
+class ConsoleFeatures:
     """What the output stream can do, probed once - drives mode + glyph choices."""
 
-    live: bool
+    can_redraw: bool
     """Whether we may drive a sticky live region (a real, non-dumb, wide-enough TTY)."""
-    color: bool
+    can_color: bool
     """Whether we may emit ANSI color."""
-    unicode: bool
+    can_unicode: bool
     """Whether we may use `✔`/box glyphs, or must fall back to ASCII."""
     width: int
     """The console width (80 when rich reports 0)."""
@@ -55,7 +55,7 @@ def console_of(logger: logging.Logger) -> Console | None:
     return None
 
 
-def detect_capabilities(console: Console | None) -> Capabilities:
+def detect_capabilities(console: Console | None) -> ConsoleFeatures:
     """Fold rich's derived console signals into our render capabilities.
 
     Reads rich's own folded flags (which already honor `NO_COLOR` / `TERM` /
@@ -65,22 +65,22 @@ def detect_capabilities(console: Console | None) -> Capabilities:
     """
 
     if console is None:
-        return Capabilities(live=False, color=False, unicode=False, width=80, height=24)
+        return ConsoleFeatures(can_redraw=False, can_color=False, can_unicode=False, width=80, height=24)
     size = console.size
     width = size.width or 80
     height = size.height or 24
     live = console.is_terminal and not console.is_dumb_terminal and width >= MIN_LIVE_WIDTH
-    return Capabilities(
-        live=live,
-        color=console.color_system is not None,
-        unicode=console_supports_unicode(console),
+    return ConsoleFeatures(
+        can_redraw=live,
+        can_color=console.color_system is not None,
+        can_unicode=console_supports_unicode(console),
         width=width,
         height=height,
     )
 
 
 @final
-class CapsCache:
+class DetectedFeatures:
     """An identity-keyed `detect_capabilities` cache for the render seats.
 
     The console seat's regions (boot + wait) branch on the probe (the slow
@@ -91,9 +91,9 @@ class CapsCache:
     __slots__ = ("_state",)
 
     def __init__(self) -> None:
-        self._state: tuple[Console, Capabilities] | None = None
+        self._state: tuple[Console, ConsoleFeatures] | None = None
 
-    def for_console(self, console: Console | None) -> Capabilities:
+    def for_console(self, console: Console | None) -> ConsoleFeatures:
         """The cached probe for `console`. A new identity re-probes and replaces."""
 
         if console is None:
@@ -110,19 +110,19 @@ class CapsCache:
         self._state = None
 
 
-def block_bar(fraction: float, width: int, caps: Capabilities) -> Text:
+def block_bar(fraction: float, width: int, features: ConsoleFeatures) -> Text:
     """A fixed-width cyan progress bar (unicode blocks, or ASCII fallback)."""
 
     filled = round(max(0.0, min(1.0, fraction)) * width)
-    if caps.unicode:
+    if features.can_unicode:
         return Text("█" * filled + "░" * (width - filled), style="cyan")
     return Text("#" * filled + "-" * (width - filled), style="cyan")
 
 
-def spinner_name(caps: Capabilities) -> str:
+def spinner_name(features: ConsoleFeatures) -> str:
     """The spinner glyph set the console can draw."""
 
-    return "dots" if caps.unicode else "line"
+    return "dots" if features.can_unicode else "line"
 
 
 def make_live(console: Console) -> Live:

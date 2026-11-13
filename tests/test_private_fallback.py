@@ -21,7 +21,7 @@ from pearlarr.arr_models import ArrFiles
 from pearlarr.config import Arr
 from pearlarr.grab_pipeline import GrabRequest
 from pearlarr.leg_state import ArrRunState, NeedsActionKind
-from pearlarr.output import EntryDetail, ReleaseSkipped, Severity, SkipReason, install_hub, uninstall_hub
+from pearlarr.output import ReleaseSkipped, Severity, SkipReason, TitleDetail, install_hub, uninstall_hub
 from pearlarr.output.recording import RecordingHub
 from pearlarr.releases import EpisodeRecord, SeadexDict
 
@@ -104,13 +104,13 @@ def _record() -> Generator[RecordingHub]:
 def _warning_texts(recording: RecordingHub) -> list[str]:
     """The recorded detail texts at WARNING+ (the old `levelno >= WARNING` filter)."""
 
-    return [d.value.text for d in recording.of_type(EntryDetail) if d.severity >= Severity.WARNING]
+    return [d.value.text for d in recording.of_type(TitleDetail) if d.severity >= Severity.WARNING]
 
 
 def _info_texts(recording: RecordingHub) -> list[str]:
     """The recorded detail texts at exactly INFO."""
 
-    return [d.value.text for d in recording.of_type(EntryDetail) if d.severity is Severity.INFO]
+    return [d.value.text for d in recording.of_type(TitleDetail) if d.severity is Severity.INFO]
 
 
 def _private_skips(recording: RecordingHub) -> list[ReleaseSkipped]:

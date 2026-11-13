@@ -35,7 +35,7 @@ from rich.traceback import Traceback
 from .boot_region import BootRegion
 from .breadcrumbs import OpenScopes
 from .bridge import attributed_message, is_first_party
-from .console_lines import LegacyLine, render_legacy_lines
+from .console_lines import ConsoleLine, render_console_lines
 from .console_text import INDENT
 from .events import (
     BootReady,
@@ -55,7 +55,6 @@ from .events import (
     CycleStarted,
     Diagnostic,
     EffectiveConfigShown,
-    EntryDetail,
     EntryHeader,
     Event,
     GrabAction,
@@ -75,6 +74,7 @@ from .events import (
     ScopeOpened,
     Severity,
     StarterConfigWritten,
+    TitleDetail,
     TitleRow,
     WaitFinished,
     WaitProgress,
@@ -85,7 +85,7 @@ from .live_region import LiveRegion
 from .scan_lines import ScanEvent, scan_event_lines
 from .trace import CapturedTrace
 from .wait_region import WaitRegion
-from ..console_caps import CapsCache, console_of
+from ..console_caps import DetectedFeatures, console_of
 from ..log import LEVEL_BADGES, LOG_NAME, badge_line, console_level, print_literal
 
 
@@ -131,14 +131,14 @@ class RichRenderer(Renderer):
     def __init__(
         self,
         console_source: Callable[[], Console | None] = live_console,
-        caps_cache: CapsCache | None = None,
+        caps_cache: DetectedFeatures | None = None,
         time_source: Callable[[], float] = time.monotonic,
     ) -> None:
         # `caps_cache` is the process-shared instance in production (cli
         # wiring, stable across seat swaps). None builds one private cache
         # shared by this seat's surfaces (diagnostics + both regions).
         self._console_source = console_source
-        self._caps = caps_cache if caps_cache is not None else CapsCache()
+        self._caps = caps_cache if caps_cache is not None else DetectedFeatures()
         self._crumbs = OpenScopes()
         self._level = int(Severity.INFO)
         self._boot = BootRegion(console_source, self._caps, level_source=self._current_level)
@@ -186,7 +186,7 @@ class RichRenderer(Renderer):
                 ScanStarted()
                 | ItemStarted()
                 | EntryHeader()
-                | EntryDetail()
+                | TitleDetail()
                 | TitleRow()
                 | ReleaseSkipped()
                 | GrabFailed()
@@ -249,7 +249,7 @@ class RichRenderer(Renderer):
         console = self._console_source()
         if console is None:
             return
-        use_unicode = self._caps.for_console(console).unicode
+        use_unicode = self._caps.for_console(console).can_unicode
         print_literal(console, diagnostic_text(event, indented=self._cockpit_open(), use_unicode=use_unicode))
         if event.trace is not None:
             console.print(
@@ -260,13 +260,13 @@ class RichRenderer(Renderer):
                 ),
             )
 
-    def _render_legacy(self, lines: Iterable[LegacyLine]) -> None:
+    def _render_legacy(self, lines: Iterable[ConsoleLine]) -> None:
         """Shared legacy lines over the live Console at LOGGER-parity gating."""
 
         console = self._console_source()
         if console is None:
             return
-        render_legacy_lines(console, lines, self._level)
+        render_console_lines(console, lines, self._level)
 
     def _next_run(self, at: datetime) -> None:
         """The scheduled-mode footer, through the shared durable-line route.
@@ -275,7 +275,7 @@ class RichRenderer(Renderer):
         ambiguous about which day it means.
         """
 
-        line = LegacyLine(logging.INFO, f"Next scheduled run at {at:%a %H:%M}", None)
+        line = ConsoleLine(logging.INFO, f"Next scheduled run at {at:%a %H:%M}", None)
         self._render_legacy((line,))
 
     def _scan(self, event: ScanEvent) -> None:

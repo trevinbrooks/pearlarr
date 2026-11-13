@@ -31,7 +31,6 @@ from .events import (
     CycleStarted,
     Diagnostic,
     EffectiveConfigShown,
-    EntryDetail,
     EntryHeader,
     Event,
     GrabAction,
@@ -47,7 +46,7 @@ from .events import (
     PathsShown,
     Phase,
     PlacedBy,
-    ReleaseName,
+    ReleaseLabel,
     ReleaseSkipped,
     RowFinished,
     RunStarted,
@@ -60,6 +59,7 @@ from .events import (
     Severity,
     SkipReason,
     StarterConfigWritten,
+    TitleDetail,
     TitleRow,
     WaitFinished,
     WaitProgress,
@@ -186,7 +186,7 @@ def _grab_message(status: GrabStatus) -> str:
     return "recommended release already in qBittorrent"
 
 
-def _names_text(releases: tuple[ReleaseName, ...]) -> str:
+def _names_text(releases: tuple[ReleaseLabel, ...]) -> str:
     return "; ".join(release.display for release in releases)
 
 
@@ -446,7 +446,7 @@ def _fact_of(event: Event, crumbs: OpenScopes, severity: Severity) -> _Fact | No
             return _Fact("item_started", severity, "item", _fields_item_started(event), None, "scan")
         case EntryHeader(scope=scope, state=state):
             return _Fact("entry_header", severity, str(state), _fields_entry_header(event), scope, "entry")
-        case EntryDetail(scope=scope, label=label, value=value, tail=tail):
+        case TitleDetail(scope=scope, label=label, value=value, tail=tail):
             fields = (Field("note", tail),) if tail is not None else ()
             return _Fact("entry_detail", severity, f"{label}: {value.text}", fields, scope, "entry")
         case TitleRow(scope=scope, state=state, label=label):
@@ -666,7 +666,7 @@ class _PerSecondMemo:
         return self._memo[1]
 
 
-class _TextLineSink(Renderer):
+class _LineRenderer(Renderer):
     """The shared sink chassis: admission, breadcrumb folding, per-second timestamps."""
 
     def __init__(self) -> None:
@@ -706,7 +706,7 @@ class _TextLineSink(Renderer):
         pass
 
 
-class _GrammarRenderer(_TextLineSink):
+class _GrammarRenderer(_LineRenderer):
     """Chassis plus the text grammar, with line-granular admission."""
 
     def __init__(self) -> None:
@@ -748,7 +748,7 @@ class _GrammarRenderer(_TextLineSink):
 
 
 @final
-class LineRenderer(_GrammarRenderer):
+class PlainRenderer(_GrammarRenderer):
     """Plain stdout: the file grammar on the console."""
 
     def __init__(self, stream: TextIO) -> None:
@@ -868,7 +868,7 @@ class FileLogRenderer(_GrammarRenderer):
 
 
 @final
-class JsonRenderer(_TextLineSink):
+class JsonRenderer(_LineRenderer):
     """One JSON object per event: stable key order, local time with its UTC offset."""
 
     def __init__(self, stream: TextIO) -> None:

@@ -19,7 +19,6 @@ from .events import (
     BootStepSlow,
     BootStepStarted,
     Diagnostic,
-    EntryDetail,
     EntryHeader,
     Event,
     GrabAction,
@@ -32,6 +31,7 @@ from .events import (
     ScopeKind,
     ScopeOpened,
     Severity,
+    TitleDetail,
     TitleRow,
     WaitFinished,
     WaitKind,
@@ -41,19 +41,19 @@ from .events import (
     clamp01,
     severity_of,
 )
-from .hub import SeverityCounts
+from .hub import SeverityCounter
 from .runtime import emit_to_hub
 from ..wait_types import OutcomeKind
 
 type Emit = Callable[[Event], None]
 
-type CountsSource = Callable[[], SeverityCounts]
+type CountsSource = Callable[[], SeverityCounter]
 
-type EntryFact = EntryDetail | TitleRow | ReleaseSkipped | GrabFailed | GrabAction
+type EntryFact = TitleDetail | TitleRow | ReleaseSkipped | GrabFailed | GrabAction
 
 
 @final
-class ScopeIds:
+class ScopeIdCounter:
     """Thread-safe ScopeId minter."""
 
     def __init__(self) -> None:
@@ -66,11 +66,11 @@ class ScopeIds:
 
 
 # The process-wide default minter: factories share it so serials never collide across factories.
-PROCESS_SCOPE_IDS: Final = ScopeIds()
+PROCESS_SCOPE_IDS: Final = ScopeIdCounter()
 
 
 @final
-class ScopeMark:
+class BootScope:
     """The boot flow's ambient-scope mark ceremony: idempotent open/close."""
 
     def __init__(self, kind: ScopeKind, label: str) -> None:
@@ -95,7 +95,7 @@ def _describe_fact(fact: EntryFact) -> str:
     """A compact one-line description of a demoted fact (for the late diagnostic)."""
 
     match fact:
-        case EntryDetail(label=label, value=value):
+        case TitleDetail(label=label, value=value):
             return f"{label}: {value.text}"
         case TitleRow(state=state, label=label):
             return f"{state} {label}"
@@ -288,7 +288,7 @@ class ScopeFactory:
         emit: Emit,
         *,
         clock: Callable[[], float] = time.monotonic,
-        ids: ScopeIds | None = None,
+        ids: ScopeIdCounter | None = None,
     ) -> None:
         self._emit = emit
         self._clock = clock

@@ -30,7 +30,7 @@ from .config import (
     upgrade_config_file,
     write_starter_config,
 )
-from .console_caps import CapsCache
+from .console_caps import DetectedFeatures
 from .log import LogLevel, resolve_console_format, setup_logger
 from .output import (
     CacheBackedUp,
@@ -46,10 +46,10 @@ from .output import (
     FileLogRenderer,
     JsonRenderer,
     JsonValue,
-    LineRenderer,
     NextRunScheduled,
     OutputHub,
     PathsShown,
+    PlainRenderer,
     Renderer,
     StarterConfigWritten,
     emit_to_hub,
@@ -326,7 +326,7 @@ def _peek_config(config_path: str) -> AppConfig | None:
     return None
 
 
-def _console_format(config_path: str) -> LogFormat:
+def _configured_format(config_path: str) -> LogFormat:
     """The configured `advanced.log_format` peek, still possibly "auto".
 
     Folds to "auto" when the config is missing or unreadable - the real load
@@ -338,7 +338,7 @@ def _console_format(config_path: str) -> LogFormat:
     return peeked.advanced.log_format if peeked is not None else "auto"
 
 
-def _resolved_format(config_path: str) -> LogFormat:
+def _run_format(config_path: str) -> LogFormat:
     """The cycle's console format, "auto" folded once (`resolve_console_format`).
 
     Both run commands call this once per cycle and feed the SAME resolved value
@@ -346,10 +346,10 @@ def _resolved_format(config_path: str) -> LogFormat:
     hub's console seat can never disagree within a cycle.
     """
 
-    return resolve_console_format(_console_format(config_path))
+    return resolve_console_format(_configured_format(config_path))
 
 
-def _data_dir_unwritable(data_dir: str, e: OSError) -> NoReturn:
+def _exit_data_dir_unwritable(data_dir: str, e: OSError) -> NoReturn:
     """Report an unwritable data directory as one actionable stderr line, exit 1.
 
     These failures strike before any output surface exists (`ensure_data_dir`
@@ -371,10 +371,10 @@ def _prepare_data_dir(paths: AppPaths) -> None:
     try:
         ensure_data_dir(paths)
     except OSError as e:
-        _data_dir_unwritable(paths.data_dir, e)
+        _exit_data_dir_unwritable(paths.data_dir, e)
 
 
-def _console_seat(console_format: LogFormat, caps_cache: CapsCache) -> Renderer:
+def _console_seat(console_format: LogFormat, caps_cache: DetectedFeatures) -> Renderer:
     """The hub's console seat for a cycle's RESOLVED format.
 
     rich gets the cockpit renderer (boot/scan/wait regions over the shared
@@ -388,7 +388,7 @@ def _console_seat(console_format: LogFormat, caps_cache: CapsCache) -> Renderer:
         return RichRenderer(caps_cache=caps_cache)
     if console_format == "json":
         return JsonRenderer(sys.stdout)
-    return LineRenderer(sys.stdout)
+    return PlainRenderer(sys.stdout)
 
 
 def _install_output_hub(paths: AppPaths) -> tuple[OutputHub, FileLogRenderer]:
@@ -414,10 +414,10 @@ def _install_output_hub(paths: AppPaths) -> tuple[OutputHub, FileLogRenderer]:
     try:
         file_sink.probe()
     except OSError as e:
-        _data_dir_unwritable(paths.data_dir, e)
+        _exit_data_dir_unwritable(paths.data_dir, e)
     # ONE caps cache shared across console-seat swaps: the seat and its
     # boot/wait regions must branch on the same probe.
-    caps_cache = CapsCache()
+    caps_cache = DetectedFeatures()
     hub = OutputHub(
         [file_sink],
         console_factory=partial(_console_seat, caps_cache=caps_cache),
@@ -494,7 +494,7 @@ def run_scheduled(
     for cycle in itertools.count(1):
         # The config's console format is re-resolved each cycle (like the
         # cadence below), so a config edit takes effect without a restart.
-        console_format = _resolved_format(paths.config_file)
+        console_format = _run_format(paths.config_file)
         logger = setup_logger(log_level=log_level or "INFO", console_format=console_format)
         # The config level lands mid-cycle via apply_log_level -> hub.set_level.
         hub.begin_run(console_format=console_format, level=logger.level)
@@ -603,7 +603,7 @@ def run_single(
     signal.signal(signal.SIGTERM, _handle_sigterm)
 
     # Install the hub before the logger - see _install_output_hub.
-    console_format = _resolved_format(paths.config_file)
+    console_format = _run_format(paths.config_file)
     hub, file_sink = _install_output_hub(paths)
     logger = setup_logger(log_level=log_level or "INFO", console_format=console_format)
     hub.begin_run(console_format=console_format, level=logger.level)
@@ -654,7 +654,7 @@ def config_init(
         except OSError as e:
             # A pre-existing data dir gone read-only passes _prepare_data_dir
             # (makedirs is a no-op) and fails here instead.
-            _data_dir_unwritable(paths.data_dir, e)
+            _exit_data_dir_unwritable(paths.data_dir, e)
         emit_to_hub(StarterConfigWritten(path=paths.config_file))
 
         return True

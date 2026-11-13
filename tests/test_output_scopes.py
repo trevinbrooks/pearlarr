@@ -16,7 +16,6 @@ from pearlarr.output import (
     BootStepSlow,
     BootStepStarted,
     Diagnostic,
-    EntryDetail,
     EntryHeader,
     Event,
     GrabAction,
@@ -27,12 +26,13 @@ from pearlarr.output import (
     RowFinished,
     ScopeClosed,
     ScopeFactory,
-    ScopeIds,
+    ScopeIdCounter,
     ScopeKind,
     ScopeOpened,
     Severity,
     SkipReason,
     StyledValue,
+    TitleDetail,
     TitleRow,
     WaitFinished,
     WaitKind,
@@ -63,14 +63,14 @@ def _factory() -> tuple[ScopeFactory, _Recorder, FakeClock]:
     recorder = _Recorder()
     clock = FakeClock()
     # A fresh minter per test keeps serials deterministic (production shares one).
-    return ScopeFactory(recorder, clock=clock, ids=ScopeIds()), recorder, clock
+    return ScopeFactory(recorder, clock=clock, ids=ScopeIdCounter()), recorder, clock
 
 
-# --- ScopeIds ---------------------------------------------------------------------
+# --- ScopeIdCounter ---------------------------------------------------------------------
 
 
 def test_scope_ids_mint_unique_increasing_serials() -> None:
-    ids = ScopeIds()
+    ids = ScopeIdCounter()
     a = ids.mint(ScopeKind.BOOT_STEP)
     b = ids.mint(ScopeKind.ENTRY)
     assert (a.kind, a.serial) == (ScopeKind.BOOT_STEP, 1)
@@ -213,7 +213,7 @@ def test_late_entry_post_demotes_and_keeps_the_severity() -> None:
     entry.close()
 
     entry.post(
-        EntryDetail(
+        TitleDetail(
             label="skipped",
             value=StyledValue("Okay-Subs on AB (private-only)", accent=Accent.CAUTION),
             severity=Severity.WARNING,
@@ -223,7 +223,7 @@ def test_late_entry_post_demotes_and_keeps_the_severity() -> None:
         GrabAction(status=GrabStatus.ADDING, groups=(), added=(), in_qbit=()),
     )
 
-    assert len(recorder.of_type(EntryDetail)) == 0
+    assert len(recorder.of_type(TitleDetail)) == 0
     assert len(recorder.of_type(GrabAction)) == 0
     late = recorder.of_type(Diagnostic)
     assert [d.origin for d in late] == ["output.late.entry"] * 2

@@ -820,7 +820,7 @@ def _specimen_stream() -> tuple[ev.Event, ...]:
             url="https://seadex.moe/154587/",
             scope=_ENTRY_SCOPE,
         ),
-        ev.EntryDetail(
+        ev.TitleDetail(
             label="status",
             value=ev.StyledValue("missing episodes"),
             tail="S01E27-E28",
@@ -843,7 +843,7 @@ def _specimen_stream() -> tuple[ev.Event, ...]:
         ev.GrabAction(
             status=ev.GrabStatus.ADDING,
             groups=(ev.RecommendedGroup(name="SubsPlease", tags=("best",)),),
-            added=(ev.ReleaseName(name="[SubsPlease] Sousou no Frieren", group="SubsPlease"),),
+            added=(ev.ReleaseLabel(name="[SubsPlease] Sousou no Frieren", group="SubsPlease"),),
             in_qbit=(),
             waiting_to_import=True,
             scope=_ENTRY_SCOPE,
