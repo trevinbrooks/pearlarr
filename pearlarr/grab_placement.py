@@ -3,7 +3,7 @@
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, field, replace
 from types import MappingProxyType
-from typing import NamedTuple, Self
+from typing import Self
 
 from .coverage import coverage_string, episodes_from_ep_list
 from .episode_state import EpisodeFileStatus, EpisodeSnapshot, GroupVotes
@@ -74,7 +74,8 @@ class SeedFile:
         object.__setattr__(self, "name", normalized_leaf(self.basename))
 
 
-class TorrentEvidence(NamedTuple):
+@dataclass(frozen=True, slots=True)
+class TorrentEvidence:
     """What this run read from SeaDex about one torrent: its listing and the series' size identities."""
 
     listing: TorrentListing | None
@@ -104,7 +105,7 @@ class KnownTorrent:
         `sizes` is each file's listed size by normalized name. No size matches when the identities weren't read.
         """
 
-        listing, identities = self.evidence
+        listing, identities = self.evidence.listing, self.evidence.identities
         identified = {} if identities is None else {n: identities[s] for n, s in sizes.items() if s in identities}
         return ListingEvidence(EMPTY_LISTING if listing is None else listing, identified)
 
@@ -394,7 +395,8 @@ def _elsewhere_counts(elsewhere: frozenset[str], assignment: EpisodeAssignment) 
     return ElsewhereCounts(elsewhere=len(elsewhere), unplaced=unplaced)
 
 
-class IdentityOverride(NamedTuple):
+@dataclass(frozen=True, slots=True)
+class IdentityOverride:
     """A file placed by size on an episode its name doesn't point at."""
 
     name: str
@@ -435,7 +437,8 @@ def _read_as(info: ParsedFileInfo | None) -> str:
     return ", ".join(labels) or "nothing"
 
 
-class EntryPlacements(NamedTuple):
+@dataclass(frozen=True, slots=True)
+class EntryPlacements:
     """Every url of one entry placed, keyed as `SeadexReleaseGroupItem.urls` keys them."""
 
     scope: SeedScope
@@ -450,7 +453,7 @@ class EntryPlacements(NamedTuple):
         scope: SeedScope,
         files_by_url: Mapping[str, Sequence[SeedFile]],
         torrents: KnownTorrents,
-    ) -> "EntryPlacements":
+    ) -> Self:
         """Place each url's files under the entry's scope, against what the run knows of its torrent."""
 
         return cls(scope, {url: place_release(files, scope, torrents[url]) for url, files in files_by_url.items()})
@@ -527,7 +530,8 @@ class EntryFacts:
         )
 
 
-class TorrentFacts(NamedTuple):
+@dataclass(frozen=True, slots=True, kw_only=True)
+class TorrentFacts:
     """What a url's torrent is, independent of any entry: the record's identity fields."""
 
     infohash: str
@@ -547,7 +551,8 @@ class TorrentFacts(NamedTuple):
     """Whether the torrent is a cross-seed of the listing's (`PendingImport.cross_seed`)."""
 
 
-class SeedRelease(NamedTuple):
+@dataclass(frozen=True, slots=True)
+class SeedRelease:
     """One flagged release's seed inputs: the url record and its placement (I/O done)."""
 
     release_group: str
@@ -573,12 +578,12 @@ class SeedRelease(NamedTuple):
         """The torrent's identity fields as the record persists them."""
 
         return TorrentFacts(
-            self.qbit_hash,
-            self.release_group,
-            self.url_item.is_dual_audio,
-            tuple(f.basename for f in self.placed.files),
-            self.own_group.sizes,
-            self.placed.sizes_by_name,
+            infohash=self.qbit_hash,
+            release_group=self.release_group,
+            is_dual_audio=self.url_item.is_dual_audio,
+            seadex_files=tuple(f.basename for f in self.placed.files),
+            release_sizes=self.own_group.sizes,
+            sizes_by_name=self.placed.sizes_by_name,
             cross_seed=self.url_item.cross_seed_hash is not None,
         )
 
