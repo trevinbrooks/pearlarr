@@ -199,7 +199,7 @@ class TestNonLiveDigest:
         assert renderer._wait._live is None
 
     def test_failed_graduation_survives_a_raised_level(self) -> None:
-        # P6: the outcome line carries severity_of's category-based level,
+        # The outcome line carries severity_of's category-based level,
         # so a FAILED outcome renders at ERROR through render_console_lines'
         # WARNING gate while the INFO wait lines around it vanish.
         renderer, stream = _live_renderer(width=40)

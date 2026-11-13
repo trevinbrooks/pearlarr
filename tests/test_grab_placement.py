@@ -381,8 +381,8 @@ class TestPlaceOntoResident:
         assert placement.inputs_read
 
     def test_a_re_flag_places_the_leftover_under_its_fresh_window(self) -> None:
-        # The title's stored claim covers two episodes. Re-listed over the whole season, its fresh window
-        # replaces the stale one, so the third file lands where the stale window could not put it.
+        # The title's stored claim covers two episodes. Re-listed over the whole season, its new window
+        # replaces the stored one, so the third file lands where the stored window could not put it.
         pending = pending_import(
             infohash="h1",
             file_episode_map={"show - s01e01.mkv": [101]},
@@ -399,9 +399,9 @@ class TestPlaceOntoResident:
         assert fresh.covered_ids == {101, 102, 103}
 
     def test_a_re_flag_runs_the_fresh_window_in_the_stale_ones_place(self) -> None:
-        # The title's stored claim is a stale two-episode window, and the pair Sonarr read nothing of indexes
-        # whichever two-episode window runs. Re-listed over the two episodes before it, the fresh window runs
-        # in the stale one's place, never after it, so the pair lands on the fresh episodes.
+        # The title's stored claim is a two-episode window, and the pair Sonarr read nothing of indexes
+        # whichever two-episode window runs. Re-listed over the two episodes before it, the new window runs
+        # in the stored one's place, never after it, so the pair lands on the new episodes.
         pending = pending_import(
             infohash="h1", file_episode_map={}, seadex_files=_RUN[:2], ordered_episode_ids=(103, 104)
         )

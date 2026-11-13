@@ -102,7 +102,7 @@ class TestAdoption:
     def test_first_party_sub_threshold_records_are_never_constructed(
         self, bridged: tuple[RecordingRenderer, logging.Logger]
     ) -> None:
-        """P3: at INFO config, DEBUG chatter is dropped whole - like the third-party branch.
+        """At INFO config, DEBUG chatter is dropped whole - like the third-party branch.
 
         No renderer would keep a below-level record (the file log renderer thresholds
         at the same configured level), so a file_only Diagnostic is not built.

@@ -168,7 +168,7 @@ class TestWaitBuilders:
         assert line.message == "  ok imported    Show A  (1 file · 1m 00s)"
 
     def test_graduation_line_level_follows_the_outcome_category(self) -> None:
-        # P6: the rendered line and severity_of/the renderer admission agree -
+        # The rendered line and severity_of/the renderer admission agree -
         # FAILED carries ERROR, DEFERRED WARNING, success INFO.
         features = detect_features(None)
         assert row_finished_lines(_grad("A", Outcome.IMPORTED), features)[0].level == logging.INFO

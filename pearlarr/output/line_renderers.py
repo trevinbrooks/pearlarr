@@ -1,4 +1,4 @@
-"""The shared traditional text grammar `ts LEVEL [path] message k=v` and its renderers."""
+"""The shared traditional text grammar `ts LEVEL [where] message k=v` and its renderers."""
 
 from __future__ import annotations
 

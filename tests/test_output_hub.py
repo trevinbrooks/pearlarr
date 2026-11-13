@@ -764,7 +764,7 @@ def test_overflow_sheds_newest_with_one_note_per_episode() -> None:
 
 
 def test_overflow_never_sheds_a_structural_event(monkeypatch: pytest.MonkeyPatch) -> None:
-    """D1: at the cap, only diagnostics shed.
+    """At the cap, only diagnostics shed.
 
     An open-scopes input (ArrRunFinished) is appended even past the cap, so the
     open scopes can never be corrupted.

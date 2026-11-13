@@ -9,11 +9,11 @@ Pins the behaviors the commands must guarantee:
 
 * A corrupt / not-a-database `cache.db` is *reported*, never crashed on - the
   `stats` and `check` diagnostics (and `backup`) return a clean False instead
-  of letting a `sqlite3` traceback escape (finding #4). `check` exists to report
+  of letting a `sqlite3` traceback escape. `check` exists to report
   bad integrity, so it must survive the very corruption it diagnoses.
 * The destructive commands (`restore` / `remove`) take the single-instance run
   lock first and refuse while a run is active, so they never unlink or replace the
-  live db out from under it (finding #5).
+  live db out from under it.
 * Failure paths report cleanly (missing files echo one hint line, not a traceback),
   failure text goes to stderr (so `pearlarr config show > cfg.yml` stays clean)
   while success output stays on stdout, and a False return maps to exit code 1
@@ -212,7 +212,7 @@ class TestHealthyDiagnostics:
 
 
 class TestCorruptDatabaseIsReportedNotCrashed:
-    """Finding #4: a corrupt cache.db is reported cleanly, never tracebacks."""
+    """A corrupt cache.db is reported cleanly, never tracebacks."""
 
     def test_check_on_corrupt_db_returns_false_without_raising(
         self,
@@ -256,7 +256,7 @@ class TestCorruptDatabaseIsReportedNotCrashed:
 
 
 class TestActiveRunGuard:
-    """Finding #5: cache commands refuse while a run holds the lock."""
+    """Cache commands refuse while a run holds the lock."""
 
     def test_remove_refuses_while_a_run_holds_the_lock(
         self,
@@ -1113,7 +1113,7 @@ class TestLogFormatWiring:
     the run commands resolve the config format and thread `console_format`
     through (scheduled mode re-resolves each run, before the logger is
     rebuilt), AND that the hub + bridge are installed BEFORE setup_logger runs
-    (advisor #17: an invalid-level complaint fired inside it must reach the
+    (an invalid-level complaint fired inside it must reach the
     hub, never logging.lastResort).
     """
 

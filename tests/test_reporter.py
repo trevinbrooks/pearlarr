@@ -211,7 +211,7 @@ class TestActiveTitle:
 
 
 class TestEntryHeaderAlId:
-    """G1: `al_id` on the emitted `TitleHeader` is reporter-unverified.
+    """`al_id` on the emitted `TitleHeader` is reporter-unverified.
 
     Garbage in either header-opening path passed the whole suite, so pin it on both.
     """
@@ -268,7 +268,7 @@ class TestCloseBoundaries:
 
 
 class TestCompleteBlocksSelfClose:
-    """D6: a cached title's / carried-over pending import's block is COMPLETE on return, so it self-closes.
+    """A cached title's / carried-over pending import's block is COMPLETE on return, so it self-closes.
 
     Nothing follows it - the header carries the whole row. Self-closing keeps
     the open scopes honest: a gap diagnostic (e.g. a retry WARNING while resolving
@@ -694,7 +694,7 @@ class TestLogSeadexAction:
         assert messages == []
 
     def test_recommended_group_tags_are_sorted(self) -> None:
-        # G2: the tags are carried in a frozenset (StrEnum hash is per-process random), so
+        # The tags are carried in a frozenset (StrEnum hash is per-process random), so
         # the reporter sorts them. Feed several unordered and pin the emitted order.
         reporter, events = _record()
         seadex_dict = {

@@ -69,9 +69,9 @@ def classify_queue(records: Sequence[QueueRecord]) -> QueueState:
         elif state in _QUEUE_STUCK_STATES:
             troubled = True
         elif state == "importpending":
-            # Invariant: only a CLEAN importPending defers to Sonarr. A
-            # warning/error-flagged one is a failed Sonarr import attempt it
-            # won't reliably retry, so waiting would burn the readiness deadline.
+            # Invariant: only a CLEAN importPending is left to Sonarr. One Sonarr
+            # marked with a warning or error is a failed import attempt it won't
+            # reliably retry, so waiting would only burn the import clock.
             if (record.status or "").casefold() in _QUEUE_PROBLEM_STATUSES:
                 troubled = True
             else:

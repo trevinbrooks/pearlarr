@@ -345,7 +345,7 @@ class TestBuildPendingSeeds:
         assert updates["h1"].excluded == ()
 
     def test_unread_series_map_seeds_nothing(self) -> None:
-        # D12: the count steps need no index, but an update is final where an import poll is retried,
+        # The count steps need no index, but an update is final where an import poll is retried,
         # so the whole placement waits for a served list. Two files with no name number over two episodes
         # would otherwise zip in name order.
         ep_list = [sonarr_ep(1, 1, ep_id=101, episode_file_id=0), sonarr_ep(1, 2, ep_id=102, episode_file_id=0)]
