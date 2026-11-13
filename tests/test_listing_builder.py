@@ -1,5 +1,5 @@
 # pyright: strict
-"""Folding a series' SeaDex entries into each torrent's listing and the series' size identities."""
+"""Turning a series' SeaDex entries into each torrent's listing and the series' episodes by size."""
 
 from seadex import EntryRecord, Tag, TorrentRecord, Tracker
 
@@ -28,7 +28,7 @@ def _entry(al_id: int, *torrents: TorrentRecord) -> EntryRecord:
 
 
 def _window(entry: EntryRecord, *ids: int) -> TitleWindow:
-    """The entry's window over `ids`."""
+    """The window of the entry's title over `ids`."""
 
     return title_window(entry.anilist_id, ids)
 
@@ -38,13 +38,13 @@ def _listed(entry: EntryRecord, *ids: int) -> ListedTitle:
 
 
 def _aliased(entry: EntryRecord, ids: tuple[int, ...], aliases: dict[int, int], tmdb_id: int = 900) -> ListedTitle:
-    """An entry over `ids` whose `aliases` count in TMDB show `tmdb_id`."""
+    """A title over `ids` whose `aliases` are numbered in TMDB show `tmdb_id`."""
 
     return ListedTitle(entry, _window(entry, *ids), SpecialAliasing(tmdb_id, aliases))
 
 
 class TestFoldListings:
-    """Each hash gets its entries' windows and the union of their special aliases, or None if any window is unread."""
+    """Each hash gets its titles' windows and the union of their special aliases, or None if any window is unread."""
 
     def test_each_hash_keeps_the_window_of_every_entry_listing_it(self) -> None:
         one, both, two = _entry(1, _torrent(_H1)), _entry(2, _torrent(_H1), _torrent(_H2)), _entry(3, _torrent(_H2))
@@ -60,7 +60,7 @@ class TestFoldListings:
         assert listing.ids == {501, 502, 503}
 
     def test_the_windows_run_in_anilist_id_order_one_per_entry(self) -> None:
-        # SeaDex can list one hash twice under an entry: that entry still holds one window on it.
+        # SeaDex can list one hash twice under an entry: its title still holds one window on it.
         later, twice = _entry(3, _torrent(_H1)), _entry(1, _torrent(_H1), _torrent(_H1))
 
         read = build_listings([_listed(later, 504), _listed(twice, 501)], _NO_TAGS)
@@ -109,7 +109,7 @@ class TestFoldListings:
         assert read.listing(_H1) == torrent_listing(_window(one, 501), _window(two, 502), aliases={7: 7})
 
     def test_entries_whose_aliases_count_in_different_tmdb_shows_leave_the_hash_without_aliases(self) -> None:
-        # Each entry's TMDB numbers count in its own show, so the two alias maps aren't one numbering.
+        # Each title's TMDB numbers are its TMDB show's, so the two titles' special aliases aren't one numbering.
         one, two = _entry(1, _torrent(_H1)), _entry(2, _torrent(_H1))
         titles = [_aliased(one, (501,), {7: 7}, tmdb_id=900), _aliased(two, (502,), {8: 8}, tmdb_id=901)]
 
@@ -125,8 +125,8 @@ class TestFoldListings:
         assert read.listing(_H1) == torrent_listing(_window(one, 501), _window(two, 502), aliases={7: 7})
 
     def test_single_file_copies_identify_a_packs_specials(self) -> None:
-        # One pack listed under three entries, and a hash-less single-file copy of each special under its own.
-        # The sizes identify the specials, whatever the pack's names say.
+        # One torrent listed under three entries, and a hash-less single-file release of each special under its entry.
+        # The sizes identify the specials, whatever the torrent's names say.
         torrent = _torrent(_H1, ("Show - S00E02.mkv", 700), ("Show - S00E03.mkv", 800))
         season = _entry(1, torrent)
         special_b = _entry(2, torrent, _torrent(None, ("Show - Special B.mkv", 800)))
@@ -148,7 +148,7 @@ class TestFoldListings:
         assert read.episode_by_size == {}
 
     def test_an_unread_window_leaves_the_identities_unread(self) -> None:
-        # The unread entry's sizes are unknown, and one of them might clash with another entry's size.
+        # The unread window's sizes are unknown, and one of them might clash with another entry's size.
         titles = [
             _listed(_entry(1, _torrent(None, ("Show - Special.mkv", 700))), 7897),
             ListedTitle(_entry(2, _torrent(None, ("Show - Special.mkv", 700))), None, None),

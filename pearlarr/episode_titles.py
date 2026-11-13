@@ -1,6 +1,6 @@
 """The series' episode titles as words, which episode a name's words are titled as, and the placer's queries on them.
 
-Reading a torrent's names against them belongs in `placer._names`, and reading a name's own numbers in
+Reading a torrent's names against them belongs in `placer._names`, and reading a name's numbers in
 `file_names`. No I/O.
 """
 
@@ -14,9 +14,9 @@ from .arr_models import SonarrEpisode
 from .file_names import NameParts, folded_words, is_quality_word, written_keys
 from .releases import EpisodeKey
 
-# An episode title names a file from this many words past the series title and the labels below.
+# An episode title names a file from this many words past the series' name and the labels below.
 _MIN_TITLE_WORDS = 2
-# The words that label a title without being one: "Part 2" and "OVA 1" name nothing.
+# The words that label an episode title without being one: "Part 2" and "OVA 1" name nothing.
 _TITLE_LABELS = frozenset({"part", "episode", "ep", "special", "sp", "ova", "oad", "movie", "recap", "vol", "chapter"})
 
 
@@ -42,7 +42,7 @@ def names_alone(words: Iterable[str]) -> bool:
 
 
 def opens_title(words: tuple[str, ...], title: tuple[str, ...]) -> bool:
-    """Whether the title's words open the words, and the words end there or go on with quality junk."""
+    """Whether the episode title's words open the words, and the words end there or go on with quality junk."""
 
     return words[: len(title)] == title and _ends_title(words, len(title))
 
@@ -55,26 +55,26 @@ def _ends_title(words: tuple[str, ...], count: int) -> bool:
 
 @dataclass(frozen=True, slots=True, kw_only=True)
 class TitledEpisode:
-    """One series episode's title, in one of its forms."""
+    """An episode title of the series, in one of its forms."""
 
     ep_id: int
     words: tuple[str, ...]
-    """The title's folded words."""
+    """The episode title's folded words."""
     beyond: tuple[str, ...]
-    """The title's words that are not words of the series title."""
+    """The episode title's words that are not words of the series' name."""
     distinct: bool
     """Whether `beyond` is specific enough to place a file by."""
     alone: bool
     """Whether `beyond` names the episode when a name carries nothing else ("Room 12"): a number counts then."""
     part: bool
-    """Whether this form is only a part a colon or a dash sets off, not the whole title."""
+    """Whether this form is only a part a colon or a dash sets off, not the whole episode title."""
     spelled_id: int | None
     """The episode whose season and number `beyond` is, when it is those two numbers alone ("1.2" is S01E02)."""
 
 
 @dataclass(frozen=True, slots=True)
 class _TitleForm:
-    """One form of an episode title: the whole title, or a part a colon or a dash sets off."""
+    """One form of an episode title: the whole episode title, or a part a colon or a dash sets off."""
 
     text: str
     part: bool
@@ -87,14 +87,14 @@ _WRAPPED = re.compile(r"(?:^|(?<=\s))-([^\s-](?:[^-]*[^\s-])?)-(?=\s|$)")
 
 
 def _parts(*texts: str) -> tuple[_TitleForm, ...]:
-    """The texts with words, as title parts; none when fewer than two have words."""
+    """The texts with words, as episode title parts. None when fewer than two have words."""
 
     parts = tuple(_TitleForm(text, part=True) for text in texts if text.strip())
     return parts if len(parts) > 1 else ()
 
 
 def _title_forms(title: str) -> tuple[_TitleForm, ...]:
-    """The whole title and its parts: around its last colon, its last spaced dash, and a dash-wrapped segment.
+    """The whole episode title and its parts: around its last colon, its last spaced dash, and a dash-wrapped segment.
 
     A name often carries only one part. A form with "&" comes again with it spelled "and".
     """
@@ -110,10 +110,10 @@ def _title_forms(title: str) -> tuple[_TitleForm, ...]:
 
 
 def _sole(hits: Iterable[TitledEpisode]) -> TitledEpisode | None:
-    """The one episode a whole title matches. When no whole title matches, the one a title part matches. Else None.
+    """The one episode a whole episode title matches, else the one an episode title part matches, else None.
 
-    Two matches count as none: a recap repeating a title, a two-part title, or a title's text before the colon
-    that is another episode's subtitle.
+    Two matches count as none: a recap repeating an episode title, a two-part episode title, or an episode title's
+    text before the colon that is another episode's subtitle.
     """
 
     whole: dict[int, TitledEpisode] = {}
@@ -125,7 +125,7 @@ def _sole(hits: Iterable[TitledEpisode]) -> TitledEpisode | None:
 
 
 def _grouped[K](pairs: Iterable[tuple[K, TitledEpisode]]) -> Mapping[K, tuple[TitledEpisode, ...]]:
-    """The title forms grouped by key, each group in the order given, read-only."""
+    """The episode title forms grouped by key, each group in the order given, read-only."""
 
     groups: dict[K, list[TitledEpisode]] = {}
     for key, ep in pairs:
@@ -135,29 +135,29 @@ def _grouped[K](pairs: Iterable[tuple[K, TitledEpisode]]) -> Mapping[K, tuple[Ti
 
 @dataclass(frozen=True, slots=True)
 class TitleLead:
-    """What the episode titles say about a name's words: a run member's tail, else the whole name."""
+    """What the episode titles say about a name's words: the words after its name number, else the whole name."""
 
     title: TitledEpisode | None
-    """The one episode the words are titled as (`EpisodeTitles.leading_title` or `exact_match`), whether or not other files
-    carry it."""
+    """The one episode the words are titled as (`EpisodeTitles.leading_title` or `exact_match`), whether or not other
+    files carry it."""
     leading_title_ids: frozenset[int]
-    """Every episode whose title, specific or not, starts the words: the evidence a run is judged by."""
+    """Every episode whose episode title, specific or not, starts the words: what a numbered sequence is judged by."""
     words: tuple[str, ...]
     """The words read. Two files carrying the same words are titled as nothing."""
 
 
 @dataclass(frozen=True, slots=True)
 class EpisodeTitles:
-    """The series' episode titles as words: specific titles can place a file, and every title is run evidence."""
+    """The series' episode titles as words: specific ones can place a file, and a numbered sequence is judged by all."""
 
     series_words: frozenset[str]
-    """The series title's words."""
+    """The words of the series' name."""
     by_first: Mapping[tuple[str, ...], tuple[TitledEpisode, ...]]
-    """Every title form by its first word (a one-word tuple, so an empty name finds none), in series order."""
+    """Every episode title form by its first word (a one-word tuple, so an empty name finds none), in series order."""
     alone_by_beyond: Mapping[tuple[str, ...], tuple[TitledEpisode, ...]]
-    """The forms that name their episode alone, by their words beyond the series title, in series order."""
+    """The forms that name their episode alone, by their words beyond the series' name, in series order."""
     forms: tuple[TitledEpisode, ...]
-    """Every title form, in series order."""
+    """Every episode title form, in series order."""
     id_by_key: Mapping[EpisodeKey, int]
     """Each series episode by its season and number."""
 
@@ -166,7 +166,7 @@ class EpisodeTitles:
     def of(
         cls, by_id: Mapping[int, SonarrEpisode], id_by_key: Mapping[EpisodeKey, int], series_words: frozenset[str]
     ) -> Self:
-        """Fold every form of every episode title into words, noting the words beyond the series title."""
+        """Convert every form of every episode title to words, noting the words beyond the series' name."""
 
         titled: list[TitledEpisode] = []
         for ep_id, ep in by_id.items():
@@ -174,7 +174,8 @@ class EpisodeTitles:
                 words = folded_words(form.text)
                 beyond = tuple(word for word in words if word not in series_words)
                 distinct = is_distinctive_title(beyond)
-                # A title part too short to place a file ("Chapter 4: Home") is not run evidence either.
+                # An episode title part too short to place a file ("Chapter 4: Home") does not judge a numbered
+                # sequence either.
                 if words and (distinct or not form.part):
                     titled.append(
                         TitledEpisode(
@@ -196,9 +197,9 @@ class EpisodeTitles:
         )
 
     def leading_title(self, words: tuple[str, ...]) -> TitleLead:
-        """Match a run member's tail: the one specific title that starts it, and every title that starts it.
+        """Match the words after a name number: the one specific episode title starting them, and every one that does.
 
-        Quality tags may follow the specific title.
+        Quality tags may follow the specific episode title.
         """
 
         led = [ep for ep in self.by_first.get(words[:1], ()) if words[: len(ep.words)] == ep.words]
@@ -206,10 +207,11 @@ class EpisodeTitles:
         return TitleLead(titled, frozenset(ep.ep_id for ep in led), words)
 
     def exact_match(self, words: tuple[str, ...], keyed: Collection[int]) -> TitledEpisode | None:
-        """The one episode whose title names it alone and equals a name's words, the series words dropped from both.
+        """The one episode whose episode title names it alone and equals a name's words, series words dropped from both.
 
-        `keyed` are the episodes the name's numbers are a key for (`episodes_numbered_by`). A title that is just the season and
-        number of another of them ("1.2" against S01E02) is that key over again, not a title: it names nothing.
+        `keyed` are the episodes the name's numbers point at (`episodes_numbered_by`). An episode title that is just the
+        season and number of another of them ("1.2" against S01E02) is that season and episode over again, not an
+        episode title: it names nothing.
         """
 
         beyond = tuple(word for word in words if word not in self.series_words)
@@ -219,21 +221,21 @@ class EpisodeTitles:
         return equal
 
     def episodes_numbered_by(self, parts: NameParts, resolved: Collection[int]) -> frozenset[int]:
-        """The episodes a name's numbers are a key for: Sonarr's read of it (`resolved`), and the keys it writes.
+        """The episodes a name's numbers point at: Sonarr's parse of it (`resolved`), and the ones it writes.
 
-        "Show 2 - 05" and "Show.2.05" are keys for S02E05 (`written_keys`). "Show No. 8 - 05" counts as a key for
-        S08E05 too, which is harmless: no title can spell it, since a title's series words are dropped before it
-        spells a key.
+        "Show 2 - 05" and "Show.2.05" point at S02E05 (`written_keys`). "Show No. 8 - 05" points at S08E05 too, which
+        is harmless: no episode title can spell it, since an episode title's series words are dropped before it spells
+        a season and episode.
         """
 
         written = (self.id_by_key.get(key) for key in written_keys(parts))
         return frozenset((*resolved, *(ep_id for ep_id in written if ep_id is not None)))
 
     def near_matches(self, ep_id: int, words: tuple[str, ...]) -> bool:
-        """Whether the words open with the episode's title a word off at most: one swapped, added or dropped.
+        """Whether the words open with the episode title of `ep_id` a word off at most: one swapped, added or dropped.
 
-        The words the two share must still spell a title (`spells_title`): a short title confirms no near miss.
-        Quality junk may follow the title, as under `leading_title`.
+        The words the two share must still spell an episode title (`spells_title`): a short episode title confirms no
+        near miss. Quality junk may follow the episode title, as under `leading_title`.
         """
 
         for ep in self.forms:
@@ -256,7 +258,7 @@ def _spelled(id_by_key: Mapping[EpisodeKey, int], beyond: tuple[str, ...]) -> in
 
 
 def _one_word_apart(words: tuple[str, ...], title: tuple[str, ...]) -> tuple[str, ...] | None:
-    """The words the two share, in order, when the words are the title a word off at most, else None.
+    """The words the two share, in order, when the words are the episode title a word off at most, else None.
 
     A word off: one swapped for another, one added, or one dropped.
     """

@@ -1,9 +1,9 @@
 # pyright: strict
 # pyright: reportPrivateUsage=false
-# The title keys are the module's own; the pins on them read the private functions.
-"""The numberings reader over real torrents: their names, Sonarr's parses, and the series rows as Sonarr holds them.
+# The name keys are the module's, and the pins on them read the private functions.
+"""The numbering step over real torrents: their names, Sonarr's parses, and the series rows as Sonarr holds them.
 
-Each series is cut to the rows the read touches, with its real ids and absolute numbers. A case no real torrent
+Each series is cut to the rows the step touches, with its real ids and absolute numbers. A case no real torrent
 has is marked "Constructed".
 """
 
@@ -51,7 +51,7 @@ def _window(al_id: int, ids: Iterable[int], count: int | None, series: str, *ani
 def _grabbing_title(
     index: EpisodeIndex, own: TitleWindow, *, alternate_titles: tuple[str, ...] = (), aired_order: bool = True
 ) -> GrabbingTitle:
-    """The grab scope of `own`'s entry over `index`."""
+    """The grabbing title for the window `own`, over `index`."""
 
     return make_grabbing_title(
         episode_index([index.by_id[ep_id] for ep_id in own.ordered_episode_ids]),
@@ -65,7 +65,7 @@ def _grabbing_title(
 
 
 def _absolute_only(number: int, title: str, *numbers: int, matched: tuple[tuple[int, int], ...] = ()) -> ParsedFileInfo:
-    """Sonarr's parse of a name carrying `number` (and `numbers`) alone: season 0, the absolutes, the lifted title."""
+    """Sonarr's parse of a name carrying `number` (and `numbers`) alone: season 0, absolutes, the parsed series name."""
 
     return parsed_info(season=0, absolutes=(number, *numbers), matched=matched, series_title=title)
 
@@ -73,7 +73,10 @@ def _absolute_only(number: int, title: str, *numbers: int, matched: tuple[tuple[
 def _read(
     grabbing_title: GrabbingTitle, windows: Sequence[TitleWindow], parsed: Mapping[str, ParsedFileInfo | None]
 ) -> dict[str, tuple[int, ...]]:
-    """What the reader proposes for `parsed` under `windows`, the facts read under the own window as `place_release` does."""
+    """What the numbering step proposes for `parsed` under `windows`.
+
+    The facts are read under the grabbing title's window, as `place_release` does.
+    """
 
     torrent = batch(parsed)
     own = next(window for window in windows if window.al_id == grabbing_title.al_id)
@@ -84,7 +87,7 @@ def _read(
 
 
 # Stray Cats Overrun! (Sonarr 664): seven specials without absolutes, a season of 13. Tsundere's BD batch (AnimeBytes
-# 124088) is listed under the season's entry alone; its names carry a bare number Sonarr matched to nothing.
+# 124088) is listed under the season's entry alone, and its names carry only a number, which Sonarr matched to nothing.
 _STRAY_CATS = _series(_run(0, range(32762, 32769)), _run(1, range(32769, 32782), absolute=1))
 _STRAY_CATS_SEASON = _window(7590, _ids(_STRAY_CATS, 1), 13, "Stray Cats Overrun!", "Mayoi Neko Overrun!")
 _STRAY_CATS_SPECIALS = _window(8599, _ids(_STRAY_CATS, 0)[:6], 6, "Stray Cats Overrun!", "Mayoi Neko Overrun! Specials")
@@ -98,7 +101,7 @@ _STRAY_CATS_FILES = {_stray_cat(n): _absolute_only(n, "Mayoi Neko Overrun!") for
 
 
 class TestEveryNumberingAgrees:
-    """A lone-number file is proposed where every numbering that fits the torrent reads it."""
+    """An absolute-only file is proposed where every numbering that fits the torrent reads it."""
 
     def test_a_season_window_counted_from_one_places_its_files(self) -> None:
         # The series row, the absolute, the window row and the window season all read 07 as S01E07.
@@ -107,7 +110,7 @@ class TestEveryNumberingAgrees:
         assert proposed == {_stray_cat(n): (32768 + n,) for n in range(1, 13)}
 
     def test_a_window_of_specials_alone_counts_its_specials(self) -> None:
-        # My Hero Academia (Sonarr 254): the Ikinokore OVA entry (AniList 122349) is specials 8 and 9, count 2.
+        # My Hero Academia (Sonarr 254): the Ikinokore OVA title (AniList 122349) is specials 8 and 9, count 2.
         # HorribleSubs' single reads 01; the series row and the absolute read it as S01E01, outside the window, so
         # they're dropped, and the window row alone places it.
         series = _series(_run(0, range(9253, 9257), episode=7), _run(1, range(9271, 9274), absolute=1))
@@ -129,8 +132,8 @@ class TestEveryNumberingAgrees:
         assert proposed == {name: (9254,)}
 
     def test_a_window_row_counts_the_rows_the_window_holds(self) -> None:
-        # Lupin III (Sonarr 437): the Part IV entry (AniList 20906) is 24 rows of season 4, which Sonarr numbers
-        # 1-5, 7-22 and 24-26. scoot's 24 files count from one, so 06 is the window's sixth row, S04E07. Sonarr
+        # Lupin III (Sonarr 437): the Part IV title (AniList 20906) is 24 rows of season 4, which Sonarr numbers
+        # 1-5, 7-22 and 24-26. scoot's 24 files are numbered from one, so 06 is the window's sixth row, S04E07. Sonarr
         # matched them into season 1, whose rows carry the absolutes, so the series row and the absolute fall
         # outside the window and are dropped.
         season_four = [
@@ -148,7 +151,7 @@ class TestEveryNumberingAgrees:
         assert proposed == {names[1]: (21900,), names[6]: (21906,), names[24]: (21925,)}
 
     def test_a_single_of_a_second_season_counted_from_one(self) -> None:
-        # Sengoku Youko (Sonarr 1496): the second season's entry (AniList 176660) is 22 rows, absolutes 14-35.
+        # Sengoku Youko (Sonarr 1496): the second season's title (AniList 176660) is 22 rows, absolutes 14-35.
         # Erai-raws' single 13 reads S02E13 under the window row and the window season; the absolute for 13 lies
         # in season 1, outside the window, so the series-wide numberings don't fit.
         series = _sengoku_youko()
@@ -162,8 +165,8 @@ class TestEveryNumberingAgrees:
         assert proposed == {name: (51765,)}
 
     def test_two_windows_counted_straight_through_agree_with_the_series_row(self) -> None:
-        # Godannar (Sonarr 529): two seasons of 13, listed under both entries. The files count 01-26, so each
-        # window's own numberings count past it; the union row and the series row read 14 as S02E01.
+        # Godannar (Sonarr 529): two seasons of 13, listed under both entries. The files are numbered 01-26, so
+        # each window's numberings go past it. The union row and the series row read 14 as S02E01.
         series = _series(_run(1, range(28079, 28092), absolute=1), _run(2, range(28092, 28105), absolute=14))
         first = _window(
             1103, _ids(series, 1), 13, "Godannar", "Marriage of God & Soul Godannar!!", "Shinkon Gattai Godannar"
@@ -188,8 +191,8 @@ class TestEveryNumberingAgrees:
         assert proposed == {names[n]: (28078 + n,) for n in range(1, 27)}
 
     def test_a_number_past_the_window_is_read_by_the_series_row_and_the_absolute(self) -> None:
-        # MF GHOST (Sonarr 1352): sam's BD batch of the second season counts 13-24, the series' numbers. Sonarr
-        # matched 13 to S03E13 (another slice's). The 13th regular row carries absolute 13: S02E01.
+        # MF GHOST (Sonarr 1352): sam's BD batch of the second season is numbered 13-24, the series'
+        # numbers. Sonarr matched 13 to S03E13 (another window's). The 13th regular row carries absolute 13: S02E01.
         series = _series(
             _run(0, [49356]),
             _run(1, range(49357, 49369), absolute=1),
@@ -208,7 +211,7 @@ class TestEveryNumberingAgrees:
 
     def test_an_alternate_title_of_the_series_is_a_known_title(self) -> None:
         # Blue Exorcist (Sonarr 86): UltraRemux's Kyoto Saga names its files "Ao no Exorcist", Sonarr's alternate
-        # title for the series, and counts the season from one.
+        # title for the series, and numbers the season from one.
         series = _series(_run(1, range(8805, 8830), absolute=1), _run(2, range(8830, 8842), absolute=26))
         window = _window(
             21861,
@@ -239,8 +242,8 @@ class TestEveryNumberingAgrees:
 
     def test_each_title_of_a_two_title_torrent_is_read_under_the_window_it_names(self) -> None:
         # New Game! (Sonarr 207): ToshY's batch (nyaa 1705729) holds New Game! 01-12, New Game!! 01-12 and an
-        # OVA, listed under both seasons' entries. Every number repeats, so the files are read by title: the
-        # trailing marks tell the two titles and the two windows apart. The OVA's title names no window.
+        # OVA, listed under both seasons' entries. Every number repeats, so the files are read by parsed series name:
+        # the trailing marks tell the two names and the two windows apart. The OVA's parsed series name names no window.
         series = _series(
             _run(0, [13960], absolute=13),
             _run(1, range(13961, 13973), absolute=1),
@@ -269,7 +272,7 @@ class TestEveryNumberingAgrees:
 
 
 class TestTheGatesRefuse:
-    """Each gate leaves the file to its verdict, and refuses nothing a passing file would have."""
+    """Each gate leaves the file to its verdict, and blocks nothing a passing file would have."""
 
     def test_two_numberings_that_disagree_refuse_the_file(self) -> None:
         # Sengoku Youko's 14 and 22: the absolute for 14 is S02E01, inside the window, so the series row reads 14
@@ -287,7 +290,8 @@ class TestTheGatesRefuse:
 
     def test_a_window_off_anilists_count_refuses_the_torrent(self) -> None:
         # Panty & Stocking (Sonarr 74): AniList counts the season as 13 double-episodes, Sonarr as 26 rows.
-        # Underwater's 01v2 reads S01E01 every way, and is still refused: the window isn't the entry AniList counts.
+        # Underwater's 01v2 reads S01E01 every way, and still gets no proposal: the window isn't the title AniList
+        # counts.
         series = _series(
             _run(0, [8353]), _run(1, range(8354, 8380), absolute=1), _run(2, range(8380, 8410), absolute=27)
         )
@@ -301,7 +305,7 @@ class TestTheGatesRefuse:
 
     def test_a_repeated_number_under_one_title_refuses_the_files_carrying_it(self) -> None:
         # K Project (Sonarr 101): Beatrice-kBaraka's Return of Kings carries 13 twice (a Director's Cut and a v2),
-        # and a CM extra without a number. The two 13s are refused; 01-12 place.
+        # and a CM extra without a number. The two 13s get no proposal, and 01-12 place.
         series = _series(
             _run(0, [9645], absolute=14),
             _run(1, range(9656, 9669), absolute=1),
@@ -327,7 +331,7 @@ class TestTheGatesRefuse:
 
     def test_a_two_number_names_numbers_count_toward_repeats(self) -> None:
         # Constructed: Gintama's batch with a 002 single added beside the 001-002 file. 2 repeats, and both files
-        # are refused.
+        # get no proposal.
         series, window, parsed = _gintama()
         parsed[_gintama_name("002")] = _absolute_only(2, "Gintama", matched=((1, 2),))
 
@@ -339,9 +343,9 @@ class TestTheGatesRefuse:
 
     def test_a_row_numbered_otherwise_than_its_position_refuses_the_series_row(self) -> None:
         # Wandering Son (Sonarr 700): the two specials carry absolutes 11 and 12, so S01E11 carries 13. aro's BD
-        # batch counts 01-12 and holds 10 twice (a 10+11 cut and a 10). The series row and the absolute fit the
-        # torrent (every absolute lies in the two windows). 01-09 place; the 10s are a repeat; 11 reads to a row
-        # carrying 13; 12 has no twelfth regular row.
+        # batch is numbered 01-12 and holds 10 twice (a 10+11 cut and a 10). The series row and the absolute fit the
+        # torrent (every absolute lies in the two windows). 01-09 place, the 10s are a repeat, 11 reads to a row
+        # carrying 13, and 12 has no twelfth regular row.
         series, windows, parsed = _wandering_son()
 
         proposed = _read(_grabbing_title(series, windows[0]), windows, parsed)
@@ -361,8 +365,8 @@ class TestTheGatesRefuse:
 
     def test_a_shuffled_season_refuses_the_files_whose_rows_carry_another_absolute(self) -> None:
         # Cowboy Bebop (Sonarr 15): TVDB's absolutes follow the Japanese broadcast order, so S01E01 carries 2 and
-        # S01E13 carries 1; 19-26 carry their own numbers. The window isn't monotone, so the window numberings
-        # are dropped; the series row refuses 01 and reads 19 as S01E19, where the absolute agrees.
+        # S01E13 carries 1, and 19-26 carry their episode numbers. The window isn't monotone, so the window numberings
+        # are dropped. The series row leaves out 01 and reads 19 as S01E19, where the absolute agrees.
         absolutes = (2, 3, 7, 8, 9, 10, 11, 12, 13, 14, 15, 18, 1, 4, 5, 6, 16, 17, 19, 20, 21, 22, 23, 24, 25, 26)
         rows = [(1, n, 2733 + n, absolute) for n, absolute in enumerate(absolutes, 1)]
         series = _series(_run(0, range(2730, 2734)), rows)
@@ -384,8 +388,9 @@ class TestTheGatesRefuse:
         ],
     )
     def test_a_lifted_title_the_run_does_not_know_refuses_the_file(self, title: str) -> None:
-        # Re:ZERO (Sonarr 197): OZR's Shin Henshuu-ban recut counts from one under the first season's entry. Every
-        # numbering agrees on S01E01, but the lifted title is neither the series', an alternate's, nor AniList's.
+        # Re:ZERO (Sonarr 197): OZR's Shin Henshuu-ban recut is numbered from one under the first season's entry.
+        # Every numbering agrees on S01E01, but the parsed series name is neither the series', an alternate's, nor
+        # AniList's.
         series = _series(_run(1, range(13590, 13615), absolute=1))
         window = _window(
             21355,
@@ -412,11 +417,11 @@ class TestTheGatesRefuse:
 
 
 class TestTheReaderStandsDown:
-    """When the reader proposes nothing at all, and which names it never reads."""
+    """When the numbering step proposes nothing at all, and which names it never reads."""
 
     def test_an_unknown_parse_stands_the_reader_down(self) -> None:
-        # Tsundere's nyaa batch (1050453) carries six SP files too; one not yet parsed holds the url, and the
-        # reader proposes nothing until it is.
+        # Tsundere's nyaa batch (1050453) carries six SP files too; one not yet parsed leaves the release unread, and
+        # the numbering step proposes nothing until it is.
         parsed: dict[str, ParsedFileInfo | None] = {**_STRAY_CATS_FILES}
         parsed["[Tsundere] Mayoi Neko Overrun! - SP1 [BDRip h264 1920x1080 FLAC][B66672E2].mkv"] = None
         windows = (_STRAY_CATS_SEASON, _STRAY_CATS_SPECIALS)
@@ -440,8 +445,8 @@ class TestTheReaderStandsDown:
         assert proposed == {_stray_cat(n): (32768 + n,) for n in range(1, 13)}
 
     def test_an_extra_and_a_title_counted_name_are_not_in_the_pool(self) -> None:
-        # Constructed: an NCOP Sonarr read a number off, and a name whose number is its own title's (no title
-        # confirms "03 Days of Summer" and the series has no absolute 3 among the window's rows), beside the
+        # Constructed: an NCOP Sonarr read a number off, and a name whose number is its episode title's (no episode
+        # title confirms "03 Days of Summer" and the series has no absolute 3 among the window's rows), beside the
         # batch's 01. Neither repeats 01's number nor is proposed; 01 places.
         series = _series(_run(1, range(601, 604), absolute=1))
         window = _window(1, _ids(series, 1), 3, "Show")
@@ -457,7 +462,7 @@ class TestTheReaderStandsDown:
 
 
 class TestTitleKeys:
-    """The three title keys, on the titles they were measured against."""
+    """The three name keys, on the names they were measured against."""
 
     @pytest.mark.parametrize(
         ("title", "key"),

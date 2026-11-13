@@ -1,4 +1,4 @@
-"""Picks a title's specials by AniList's air dates and episode length when the mapped ones aired on other days."""
+"""Chooses a title's specials by AniList's air dates and episode length when the mapped ones aired on other days."""
 
 from collections.abc import Iterable, Sequence
 from datetime import date, timedelta
@@ -7,10 +7,10 @@ from .anilist_client import AniListAiring
 from .arr_models import SonarrEpisode
 
 # How far the mapped specials may air from AniList's dates and still agree with them. The two sources often date one
-# special days apart, and a weekly run one airing apart.
+# special days apart, and a weekly broadcast one airing apart.
 _AGREES_WITHIN = timedelta(days=14)
 
-# How far outside AniList's dates a special may air and still be picked. The sources date one airing a day apart
+# How far outside AniList's dates a special may air and still be chosen. The sources date one airing a day apart
 # when it ran late at night.
 _PICKED_WITHIN = timedelta(days=1)
 
@@ -23,7 +23,7 @@ _CLOSE_SHARE = 0.2
 def specials_by_date(
     mapping_episodes: Sequence[SonarrEpisode], series_episodes: Iterable[SonarrEpisode], airing: AniListAiring
 ) -> list[SonarrEpisode] | None:
-    """The specials that replace `mapped`, a title's mapped episodes, or None when the mapping stands.
+    """The specials that replace `mapping_episodes`, a title's mapped episodes, or None when the mapping stands.
 
     It stands unless every mapped episode is a special with an air date, `airing` has a start date, an episode
     count and an episode length, and the mapped specials miss its dates: the earliest aired more than two weeks

@@ -1,4 +1,4 @@
-"""Resolve one Sonarr parse against the scope: the episodes a file name claims, and how far to trust them."""
+"""Resolve one Sonarr parse against the window: the episodes a file name points at, and how far to trust them."""
 
 from collections.abc import Iterable, Mapping, Sequence
 from dataclasses import dataclass
@@ -8,83 +8,84 @@ from .file_names import range_key
 from .placement_types import EpisodeIndex, PlacementTarget
 from .releases import EpisodeKey, season_episode_key
 
-# Sonarr's matched pairs plausibly cover a double or triple episode, never more, and a range key Sonarr read short
-# is widened only that far. A range Sonarr read whole from the name is trusted at any width.
+# Sonarr's matched episodes plausibly cover a double or triple episode, never more, and an `SxxEyy-zz` range Sonarr
+# read short is widened only that far. A range Sonarr read whole from the name is trusted at any width.
 _MATCHED_SPAN_CAP = 3
 
 
 @dataclass(frozen=True, slots=True)
 class _ParsedKey:
-    """One identity claim a file's parse makes: a `(season, episode)` pair, plus Sonarr's id when borrowed."""
+    """One season and episode a file's parse names, plus Sonarr's id when it is a matched episode's."""
 
     season: int | None
     episode: int
     matched_id: int | None
-    """Sonarr's own episode id from a borrowed matched pair. It must agree
-    with our map's id. None for a name-parsed claim (no id to cross-check)."""
+    """Sonarr's episode id from a matched episode. It must agree with the episode index's id. None for a
+    season and episode parsed from the name (no id to cross-check)."""
 
 
 @dataclass(frozen=True, slots=True, kw_only=True)
 class ParsedEpisodes:
-    """What one file's parse resolves to in our series map, and how far to trust it."""
+    """What one file's parse resolves to in the episode index, and how far to trust it."""
 
     ids: tuple[int, ...]
-    """Every id a claim resolved to (inside the scope or not), claim order, deduped."""
+    """Every id a parsed season and episode resolved to (inside the window or not), in parse order, deduped."""
 
     in_window: tuple[int, ...]
-    """The subset inside the scope (all of `resolved` when the scope is `unscoped`)."""
+    """The subset inside the window (all of `ids` when there is no window)."""
 
     complete: bool
-    """At least one claim, and every claim resolved (a partial span is never half-placed)."""
+    """At least one parsed season and episode, and every one resolved (a partial span is never half-placed)."""
 
     from_matched: bool
-    """The claims are Sonarr's matched pairs: the name carried no `(season, episode)` of its own, or its keys
-    gave way to Sonarr's alias match (`_parsed_keys_of`)."""
+    """The parsed seasons and episodes are Sonarr's matched episodes: the name carried no `(season, episode)`, or its
+    season and episode gave way to Sonarr's season shift (`_parsed_keys_of`)."""
 
     rejected: bool
-    """Rejected: the ids stay as evidence, but no pass places the file by them, and they never prove it foreign.
+    """Rejected: the ids stay as evidence, but no pass places the file by them, and none proves it outside the window.
 
-    Set for a full-season parse, and for a borrowed span wider than `_MATCHED_SPAN_CAP` or not matching the count
-    of the name's own absolutes. The placer's passes reject the rest: a reading a title contradicts or no title
-    confirms, a number dispute, a span another file reads differently, a tie, and a covering run read into another
-    season."""
+    Set for a full-season parse, and for a span from matched episodes wider than `_MATCHED_SPAN_CAP` or not matching
+    the count of the name's absolutes. The placer's passes reject the rest: a parse an episode title contradicts or no
+    episode title confirms, numbers that disagree, a span another file reads differently, a file that fits a season
+    and the specials equally, and a numbered sequence read into another season."""
 
     sonarr_agrees: bool
-    """Sonarr's series match includes every claimed pair (a borrowed reading always does). An own key Sonarr
-    could not match to the series is a parse it did not believe either (a CRC tag read as "E8")."""
+    """Sonarr's series match includes every parsed season and episode (a parse from matched episodes always does). A
+    season and episode Sonarr parsed but could not match to the series is a parse it did not believe either (a CRC
+    tag read as "E8")."""
 
     either_ids: tuple[int, ...] | None = None
-    """For a tied file (see the placer's season re-read), its episode under the season's and the specials'
-    numbering. No other run may take a window holding either, and a tied run counts as matched elsewhere
-    only for a scope holding none of them."""
+    """For a file that fits a season and the specials equally (see the placer's season re-read), its episode under the
+    season's and the specials' numbering. No other numbered sequence may take a window holding either, and such a
+    sequence counts as outside the window only for a window holding none of them."""
 
     @property
     def key_confirmed(self) -> bool:
-        """The name's own key resolved in the series and Sonarr's match agrees: an episode, whatever else it says."""
+        """The name's season and episode resolved in the series and Sonarr agrees: an episode, whatever else it says."""
 
         return bool(self.ids) and not self.from_matched and self.sonarr_agrees
 
     @property
     def usable(self) -> bool:
-        """A complete reading that was not rejected."""
+        """A complete parse that was not rejected."""
 
         return self.complete and not self.rejected
 
     @property
     def wholly_outside(self) -> bool:
-        """A trusted reading wholly outside the scope: the file belongs to another slice."""
+        """A usable parse wholly outside the window: the file belongs to another window."""
 
         return self.usable and not self.in_window
 
     @property
     def exact_ids(self) -> tuple[int, ...]:
-        """The ids the exact pass places the file on: a trusted reading wholly inside the scope. Else ()."""
+        """The ids the exact pass places the file on: a usable parse wholly inside the window. Else ()."""
 
         return self.in_window if self.usable and self.in_window == self.ids else ()
 
     @property
     def rank(self) -> tuple[bool, bool]:
-        """Exact-pass priority, best first: an own key Sonarr matched, a borrowed pair, an own key it did not match."""
+        """Exact-pass priority, best first: a parse Sonarr matched, a matched episode, a parse it did not match."""
 
         return (not self.sonarr_agrees, self.from_matched)
 
@@ -96,14 +97,14 @@ _NO_PARSED_EPISODES = ParsedEpisodes(
 
 @dataclass(frozen=True, slots=True)
 class _ParsedKeys:
-    """The claims a parse makes, and whether they are Sonarr's matched pairs rather than the name's own keys."""
+    """The seasons and episodes a parse names, and whether they are Sonarr's matched episodes rather than the name's."""
 
     keys: tuple[_ParsedKey, ...]
     from_matched: bool
 
 
 def _matched_keys(info: ParsedFileInfo) -> tuple[_ParsedKey, ...]:
-    """Sonarr's series-matched pairs as claims, junk repeats collapsed."""
+    """Sonarr's matched episodes as `_ParsedKey`s, junk repeats collapsed."""
 
     return tuple(
         dict.fromkeys(
@@ -113,20 +114,20 @@ def _matched_keys(info: ParsedFileInfo) -> tuple[_ParsedKey, ...]:
 
 
 def _resolve(key: _ParsedKey, target: PlacementTarget) -> int | None:
-    """Our map's id for the claim's numbers, when Sonarr's own id (if any) agrees."""
+    """The episode index's id for the season and episode, when Sonarr's id (if any) agrees."""
 
     ep_id = target.id_by_key.get(season_episode_key(key.season, key.episode))
     return ep_id if ep_id and key.matched_id in (None, ep_id) else None
 
 
 def _all_inside(keys: Iterable[_ParsedKey], target: PlacementTarget) -> bool:
-    """Whether every claim resolves to an episode of the scope."""
+    """Whether every season and episode resolves to an episode of the window."""
 
     return all(_resolve(key, target) in target.real_ids for key in keys)
 
 
 def _is_season_shift(own: Sequence[_ParsedKey], matched: Sequence[_ParsedKey]) -> bool:
-    """Whether Sonarr moved the name's episode numbers, unchanged, into one regular season (an alias match)."""
+    """Whether Sonarr moved the name's episode numbers, unchanged, into one regular season (a season shift)."""
 
     seasons = {key.season for key in matched}
     return (
@@ -137,10 +138,10 @@ def _is_season_shift(own: Sequence[_ParsedKey], matched: Sequence[_ParsedKey]) -
 
 
 def _parsed_keys_of(info: ParsedFileInfo, target: PlacementTarget) -> _ParsedKeys:
-    """The name's own keys, else Sonarr's matched pairs when there is a scope and the parse is not a full season.
+    """The name's seasons and episodes, else matched episodes when there is a window and the parse isn't a full season.
 
-    Own keys give way to Sonarr's alias match (the same numbers moved into one regular season) when not every
-    key resolves inside the scope and every matched pair does: a sequel numbered as its own season 1.
+    The name's give way to Sonarr's season shift (the same numbers moved into one regular season) when not every one
+    resolves inside the window and every matched episode does: a sequel numbered as its own season 1.
     """
 
     own = tuple(dict.fromkeys(_ParsedKey(info.season_number, episode, None) for episode in info.episode_numbers))
@@ -154,11 +155,11 @@ def _parsed_keys_of(info: ParsedFileInfo, target: PlacementTarget) -> _ParsedKey
 
 
 def resolve_parse(info: ParsedFileInfo | None, target: PlacementTarget) -> ParsedEpisodes:
-    """Read one parse against the scope: the name's own keys are the claims (`_parsed_keys_of` has the alias shift).
+    """Read one parse against the window, by the name's seasons and episodes (`_parsed_keys_of` has the season shift).
 
-    A name with none borrows Sonarr's matched pairs when there is a scope and the parse is not a full season. A pair
-    may resolve anywhere in the series, but only when its own episode id agrees with our map's, so a wrong-series
-    match never resolves. `inside` keeps the ids the scope admits.
+    A name with none takes Sonarr's matched episodes when there is a window and the parse is not a full season. A
+    matched episode may resolve anywhere in the series, but only when its episode id agrees with the episode index's,
+    so a wrong-series match never resolves. `inside` keeps the ids the window admits.
     """
 
     if info is None:
@@ -166,11 +167,11 @@ def resolve_parse(info: ParsedFileInfo | None, target: PlacementTarget) -> Parse
     basis = _parsed_keys_of(info, target)
     if not basis.keys:
         return _NO_PARSED_EPISODES
-    # Only a borrowed span is capped (DISTINCT pairs): Sonarr matches a bare
-    # "S01" name to the WHOLE season, so a wide match is a season pack without
-    # the flag, while the name's own "E11-E16" is an explicit claim. A borrowed
-    # span must also COVER the name's own absolutes, or a "12-13" file whose
-    # match resolved only E12 would import half.
+    # Only a span from matched episodes is capped (DISTINCT pairs): Sonarr
+    # matches a name with only "S01" to the WHOLE season, so a wide match is a
+    # season pack without the flag, while the name's "E11-E16" is spelled out.
+    # A span from matched episodes must also COVER the name's absolutes, or a
+    # "12-13" file whose match resolved only E12 would import half.
     pairs = {(key.season, key.episode) for key in basis.keys}
     absolutes = set(info.absolute_episode_numbers)
     rejected = info.full_season or (
@@ -185,7 +186,7 @@ def resolve_parse(info: ParsedFileInfo | None, target: PlacementTarget) -> Parse
             resolved.append(ep_id)
         else:
             complete = False
-    # The claim dedup keeps (s,e,None) and (s,e,id) apart. Dedupe the resolved
+    # The `_ParsedKey` dedup keeps (s,e,None) and (s,e,id) apart. Dedupe the resolved
     # ids too, so Sonarr never receives one episode twice.
     ids = tuple(dict.fromkeys(resolved))
     inside = tuple(i for i in ids if target.admits(i))
@@ -244,10 +245,10 @@ def _range_fits(episodes: Sequence[int], season: int, series: EpisodeIndex) -> b
 
 
 def _widened_matches(matched: Iterable[MatchedEpisode], episodes: Sequence[int]) -> tuple[MatchedEpisode, ...]:
-    """Sonarr's matched pairs, each pair on the range's first episode followed by the rest of the range.
+    """Sonarr's matched episodes, each one on the range's first episode followed by the rest of the range.
 
-    The added pairs keep that pair's season and have no Sonarr id, since Sonarr never matched them. Our map
-    resolves them like a name's own key. A pair Sonarr already matched isn't added a second time.
+    The added ones keep that one's season and have no Sonarr id, since Sonarr never matched them. The episode index
+    resolves them like a name's season and episode. One Sonarr already matched isn't added a second time.
     """
 
     present = {(pair.season_number, pair.episode_number) for pair in matched}
@@ -273,7 +274,7 @@ def parse_has_no_number(info: ParsedFileInfo | None) -> bool:
 
 
 def glued_numbers(info: ParsedFileInfo) -> frozenset[int]:
-    """The counts Sonarr glues the parse's key from: season, then two-digit episode ("Show.101": S01E01).
+    """The glued numbers behind the parse's season and episode: season, then two-digit episode ("Show.101": S01E01).
 
     Season 0 glues too ("Show.0013": S00E13). Empty without a season.
     """
@@ -285,9 +286,9 @@ def glued_numbers(info: ParsedFileInfo) -> frozenset[int]:
 
 
 def numbers_miss_the_series(info: ParsedFileInfo, id_by_key: Mapping[EpisodeKey, int]) -> bool:
-    """Whether every key the name parsed misses the series map and the name has no absolutes: a year read as SxxEyy.
+    """Whether every season and episode the name parsed misses the episode index, with no absolutes: a year as SxxEyy.
 
-    False with an empty map.
+    False with an empty `id_by_key`.
     """
 
     if not id_by_key or not info.episode_numbers or info.absolute_episode_numbers:
@@ -296,19 +297,19 @@ def numbers_miss_the_series(info: ParsedFileInfo, id_by_key: Mapping[EpisodeKey,
 
 
 def names_several_episodes(info: ParsedFileInfo) -> bool:
-    """Whether the name's own numbers claim more than one episode.
+    """Whether the name's numbers point at more than one episode.
 
-    A multi-pair series match doesn't count (`spans_multiple` weighs it), nor does a full-season read.
+    A multi-episode series match doesn't count (`spans_multiple` weighs it), nor does a full-season parse.
     """
 
     return len(set(info.episode_numbers)) > 1 or len(set(info.absolute_episode_numbers)) > 1
 
 
 def spans_multiple(info: ParsedFileInfo, target: PlacementTarget) -> bool:
-    """Whether the file likely holds more than one episode: its name claims several, or Sonarr matched several.
+    """Whether the file likely holds more than one episode: its name points at several, or Sonarr matched several.
 
     It asks how many episodes, not which. A full-season match (a name with no episode number) counts only when one
-    of its episodes is in the scope.
+    of its episodes is in the window.
     """
 
     if names_several_episodes(info):

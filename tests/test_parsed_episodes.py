@@ -1,5 +1,5 @@
 # pyright: strict
-"""Parse reading: a range key Sonarr read as one episode is widened to the whole range, or left as read."""
+"""Parsed episodes: a range key Sonarr read as one episode is widened to the whole range, or left as read."""
 
 from typing import ClassVar
 
@@ -14,7 +14,7 @@ from .builders import parsed_info, series_index
 
 
 def _matched(info: ParsedFileInfo) -> list[tuple[int, int, int | None]]:
-    """The matched pairs as `(season, episode, id)` triples."""
+    """The matched episodes as `(season, episode, id)` triples."""
 
     return [(pair.season_number, pair.episode_number, pair.id) for pair in info.matched_episodes]
 
@@ -22,7 +22,7 @@ def _matched(info: ParsedFileInfo) -> list[tuple[int, int, int | None]]:
 class TestWidenRangeKey:
     """`widen_range_key` turns a tight `SxxEyy-zz` range Sonarr read as its first episode into the whole range.
 
-    When it refuses, it hands back the very same parse object.
+    When it doesn't widen, it hands back the very same parse object.
     """
 
     # Season 1 has episodes 1-12 (absolutes 1-12), season 2 has 1-14 but no 6 (absolutes 13-26), season 3 has
@@ -77,7 +77,8 @@ class TestWidenRangeKey:
         assert widen_range_key("show s01e11-13.mkv", info, self._SERIES) is info
 
     def test_a_range_over_an_episode_the_series_lacks_is_untouched(self) -> None:
-        # Season 2 has no episode 6. Rather than a range our map could only half place, the file keeps Sonarr's read.
+        # Season 2 has no episode 6. Rather than a range the episode index could only half place, the file keeps
+        # Sonarr's parse.
         info = parsed_info(season=2, episodes=(5,))
 
         assert widen_range_key("show s02e05-07.mkv", info, self._SERIES) is info
@@ -125,7 +126,7 @@ class TestWidenRangeKey:
         assert (widened.episode_numbers, widened.absolute_episode_numbers) == ((5, 6), (30,))
 
     def test_a_matched_pair_on_the_first_episode_widens_with_the_range(self) -> None:
-        # Sonarr matched the first episode, so the rest of the range gets matched pairs too, with no Sonarr id.
+        # Sonarr matched the first episode, so the rest of the range gets matched episodes too, with no Sonarr id.
         info = parsed_info(season=1, episodes=(5,), matched=((1, 5),))
 
         widened = widen_range_key("show s01e05-07.mkv", info, self._SERIES)
@@ -133,7 +134,8 @@ class TestWidenRangeKey:
         assert _matched(widened) == [(1, 5, None), (1, 6, None), (1, 7, None)]
 
     def test_an_alias_shifted_match_is_widened_in_its_own_season(self) -> None:
-        # A sequel numbered as its own season 1 that Sonarr matched into season 2, so the added pairs are in season 2.
+        # A sequel numbered as season 1 that Sonarr matched into season 2, so the added matched episodes are in
+        # season 2.
         info = parsed_info(season=1, episodes=(7,), matched=((2, 7),))
 
         widened = widen_range_key("show s01e07-08.mkv", info, self._SERIES)
@@ -149,7 +151,7 @@ class TestWidenRangeKey:
         assert (widened.episode_numbers, _matched(widened)) == ((12, 13), [(2, 12, None), (2, 13, None)])
 
     def test_a_matched_season_missing_an_episode_does_not_block_the_range(self) -> None:
-        # Season 2 has no episode 6, but the name's own season 1 holds the whole range.
+        # Season 2 has no episode 6, but the name's season 1 holds the whole range.
         info = parsed_info(season=1, episodes=(5,), matched=((2, 5),))
 
         widened = widen_range_key("show s01e05-07.mkv", info, self._SERIES)
@@ -163,7 +165,7 @@ class TestWidenRangeKey:
         assert widen_range_key("show s02e05-07.mkv", info, self._SERIES) is info
 
     def test_a_specials_match_on_the_first_episode_does_not_block_the_range(self) -> None:
-        # A specials match is never an alias shift, so only the name's own season has to hold the range.
+        # A specials match is never a season shift, so only the name's season has to hold the range.
         info = parsed_info(season=1, episodes=(5,), matched=((0, 5),))
 
         widened = widen_range_key("show s01e05-06.mkv", info, self._SERIES)

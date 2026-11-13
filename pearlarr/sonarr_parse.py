@@ -2,10 +2,10 @@
 
 `SonarrParseCache` owns the grab-time `/parse` of a release's filenames plus
 the durable parse cache: cold-cache warm, TTL eviction, and the gather that
-pairs each video file with its parse for `place_release`. The cache leaf
-itself (`ParseCacheRows`, in `parse_records`) is bound once on `ArrRunDeps`. The
-series-id fingerprint that pins unmatched records is threaded in per call
-(`series_fp`) so this stays decoupled from the episode collaborator that
+pairs each video file with its parse for `place_release`. The cache rows
+themselves (`ParseCacheRows`, in `parse_cache`) are bound once on `ArrRunDeps`. The
+series hash that pins unmatched rows is threaded in per call
+(`series_hash`) so this stays decoupled from the episode collaborator that
 computes it.
 """
 
@@ -26,7 +26,7 @@ from .video_files import indexed_video_files
 class SonarrParseCache:
     """Owns the grab-time `/parse` and the durable, freshness-checked parse cache, built once per run.
 
-    Reads go through `records`, so a write staged by `parsed_files` is visible to a later same-run read.
+    Reads go through `rows`, so a write staged by `parsed_files` is visible to a later same-run read.
     """
 
     def __init__(self, deps: ArrRunDeps, sonarr: AbstractSonarrClient) -> None:
@@ -41,7 +41,7 @@ class SonarrParseCache:
     def _parse_for(self, f: str, *, window: ParseFreshness) -> ParsedFileInfo | None:
         """One file's parse, read-through the cache: a fresh hit, else Sonarr's answer (cached), else None.
 
-        None is a transport miss (not cached, re-queried on demand).
+        None is a parse left unread (not cached, re-queried on demand).
         """
 
         info = self.rows.read(f, window=window)
@@ -50,8 +50,8 @@ class SonarrParseCache:
         info = self.sonarr.parse(f)
         if info is None:
             return None
-        # Cache the result (unmatched parses are series-fp pinned so they
-        # aren't re-parsed every run) before acting on it.
+        # Cache the result (unmatched parses are pinned to the series hash so
+        # they aren't re-parsed every run) before acting on it.
         self.rows.write(f, info, window=window)
         if not info.matched_episodes:
             self.logger.debug(f"Sonarr could not parse episode for {f}")
@@ -73,7 +73,7 @@ class SonarrParseCache:
             return
 
         def fetch(name: str) -> tuple[str, ParsedFileInfo | None]:
-            # A RAISE degrades to a transient miss (None: not cached, re-parsed on
+            # A RAISE leaves the parse unread (None: not cached, re-parsed on
             # demand) so one bad file can't abort the concurrent warm sweep.
             try:
                 return name, self.sonarr.parse(name)
@@ -84,7 +84,7 @@ class SonarrParseCache:
             results = list(pool.map(fetch, pending))
 
         for name, result in results:
-            if result is None:  # request failed: don't cache a transient miss
+            if result is None:  # request failed: don't cache an unread parse
                 continue
             self.rows.write(name, result, window=window)
 
@@ -94,25 +94,25 @@ class SonarrParseCache:
         *,
         series_hash: str,
     ) -> dict[str, tuple[ListedFile, ...]]:
-        """Each url's video files with their sizes and Sonarr parses, keyed as the groups key their urls.
+        """Each release's video files with their sizes and Sonarr parses, keyed by url as the groups key their releases.
 
         A name goes to Sonarr once, within a run (the same file across overlapping groups) and across
-        runs through the durable parse cache, its unmatched rows pinned by `series_fp`. Every url gets
-        an entry, empty when it lists no video file. Never mutates `seadex_dict`.
+        runs through the durable parse cache, its unmatched rows pinned by `series_hash`. Every release gets
+        a value, empty when it lists no video file. Never mutates `seadex_dict`.
         """
 
         # Cutoffs computed once per call (not per file), all anchored to one instant.
         window = ParseFreshness.open(series_hash)
 
-        # Evict parse records aged past that same cutoff so the block stops growing
-        # without bound. Staged like the writes below (committed at the run's save
-        # point, discarded in a preview). Only the first call per run finds stale
+        # Evict parse rows aged past that same cutoff so the stored parses stop
+        # growing without bound. Staged like the writes below (committed at the
+        # run's save point, discarded in a dry run). Only the first call per run finds stale
         # rows, later calls evict nothing.
         evicted = self.cache_store.evict_sonarr_parse(window.matched_cutoff)
         if evicted:
             self.logger.debug(f"Evicted {count_noun(evicted, 'stale Sonarr parse record')}")
 
-        # Each url's video files (creditless OP/ED, subs, fonts, audio dropped) with their listed sizes.
+        # Each release's video files (creditless OP/ED, subs, fonts, audio dropped) with their listed sizes.
         listed = {
             url: [(f, release.file_sizes[idx]) for idx, f in indexed_video_files(release.files)]
             for group_releases in seadex_dict.values()

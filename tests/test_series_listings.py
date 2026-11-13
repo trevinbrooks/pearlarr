@@ -1,5 +1,5 @@
 # pyright: strict
-"""SeriesListings: reads every entry's record and window, and folds them once per series per run."""
+"""SeriesListings: reads every title's entry and window, and turns them into listings once per series per run."""
 
 from collections.abc import Iterable, Mapping
 from dataclasses import replace
@@ -63,19 +63,19 @@ def _windows(
 
 
 def _names(al_id: int) -> TitleNames:
-    """The titles the reader's resolver gives entry `al_id`."""
+    """The title's names the resolver of `SeriesListings` gives title `al_id`."""
 
     return TitleNames("Show", (f"Title {al_id}",))
 
 
 def _window(al_id: int, *ids: int) -> TitleWindow:
-    """Entry `al_id`'s window over `ids` on series 7, named by the resolver."""
+    """Title `al_id`'s window over `ids` on series 7, named by the resolver."""
 
     return title_window(al_id, ids, series_id=7, names=_names(al_id))
 
 
 def _reader(seadex: FakeSeaDexSource, episodes: ScriptedEpisodes) -> SeriesListings:
-    """A reader over the given entries and scripted windows, with no ignored tags."""
+    """A `SeriesListings` over the given entries and scripted windows, with no ignored tags."""
 
     return make_bare_instance(
         SeriesListings, _seadex=seadex, _episodes=episodes, _ignore_tags=frozenset(), _names=_names, _reads={}
@@ -83,10 +83,10 @@ def _reader(seadex: FakeSeaDexSource, episodes: ScriptedEpisodes) -> SeriesListi
 
 
 class TestRead:
-    """Reads every entry's record and window and folds them into per-hash listings and size identities."""
+    """Reads every title's entry and window and turns them into per-hash listings and episodes by size."""
 
     def test_every_entry_is_read_into_a_window_and_folded(self) -> None:
-        # Each window carries its entry's ids on the series and the resolver's names for it.
+        # Each window carries its title's ids on the series and the resolver's names for it.
         episodes = _windows({1: _episodes(1, 2), 2: _episodes(3), 3: _episodes(4)})
         seadex = FakeSeaDexSource({1: _entry(1, _H1), 2: _entry(2, _H1, _H2), 3: _entry(3, _H2)})
 
@@ -95,12 +95,12 @@ class TestRead:
         assert read is not None
         assert read.listing(_H1) == torrent_listing(_window(1, 501, 502), _window(2, 503))
         assert read.listing(_H2) == torrent_listing(_window(2, 503), _window(3, 504))
-        # Entries 2 and 3 list lone files (sized 2 and 3) under one-episode windows. Entry 1's window holds two.
+        # Entries 2 and 3 list lone files (sized 2 and 3) under one-episode windows. Title 1's window holds two.
         assert read.episode_by_size == {2: 503, 3: 504}
         assert episodes.calls == [(7, 1), (7, 2), (7, 3)]
 
     def test_each_window_carries_its_entrys_anilist_episode_count(self) -> None:
-        # Entry 2 has no count on AniList.
+        # Title 2 has no count on AniList.
         episodes = ScriptedEpisodes(windows={1: _episodes(1, 2), 2: _episodes(3)}, counts={1: 2})
         seadex = FakeSeaDexSource({1: _entry(1, _H1), 2: _entry(2, _H1)})
 
@@ -136,8 +136,8 @@ class TestRead:
         assert read.listing(_H1) == torrent_listing(_window(1), _window(2, 503), aliases={2: 1})
 
     def test_an_ignored_entrys_window_is_read_like_a_siblings_and_carries_the_flag(self) -> None:
-        # Entry 2 is on the ignore list: its record and window are read like entry 1's, in id order, and only its
-        # window is flagged, so the placement runs it after the kept windows.
+        # Title 2 is on the ignore list: its entry and window are read like title 1's, in id order, and only its
+        # window is flagged, so the placement takes it after the kept windows.
         episodes = _windows({1: _episodes(1), 2: _episodes(3)})
         seadex = FakeSeaDexSource({1: _entry(1, _H1), 2: _entry(2, _H1)})
 
@@ -185,7 +185,7 @@ class TestRead:
         assert read.episode_by_size is None
 
     def test_an_ambiguous_mapping_lists_nothing(self) -> None:
-        # The entry's own run already errors on it: its window is no part of the listing, which stays read.
+        # The title's check already errors on it: its window is no part of the listing, which stays read.
         episodes = _windows({1: _episodes(1), 2: _episodes(3)}, ambiguous=frozenset({1}))
         seadex = FakeSeaDexSource({1: _entry(1, _H1), 2: _entry(2, _H1, _H2)})
 
@@ -208,7 +208,7 @@ class TestRead:
 
 
 def test_no_entry_asks_nothing_of_the_real_resolver() -> None:
-    # Built over the real collaborator types: with no entry resolved, every hash is listed nowhere and the
+    # Built over the real collaborator types: with no resolved mapping, every hash is listed nowhere and the
     # resolver (bare, no Sonarr behind it) is never asked.
     read = SeriesListings(FakeSeaDexSource(), make_sonarr_episodes(), frozenset(), _names).read(7, _mappings())
 
