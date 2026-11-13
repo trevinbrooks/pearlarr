@@ -35,6 +35,8 @@ from rich.traceback import Traceback
 from .boot_region import BootRegion
 from .breadcrumbs import BreadcrumbFold
 from .bridge import attributed_message, is_first_party
+from .console_lines import LegacyLine, render_legacy_lines
+from .console_text import INDENT
 from .events import (
     BootReady,
     BootStepFinished,
@@ -80,11 +82,11 @@ from .events import (
 )
 from .hub import Renderer
 from .live_region import LiveRegion
-from .scan_lines import LegacyLine, ScanEvent, render_legacy_lines, scan_event_lines
+from .scan_lines import ScanEvent, scan_event_lines
 from .trace import CapturedTrace
 from .wait_region import WaitRegion
 from ..console_caps import CapsCache, console_of
-from ..log import INDENT, LEVEL_BADGES, LOG_NAME, badge_line, console_level, print_literal
+from ..log import LEVEL_BADGES, LOG_NAME, badge_line, console_level, print_literal
 
 
 def live_console() -> Console | None:

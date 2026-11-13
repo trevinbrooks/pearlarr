@@ -9,7 +9,6 @@ never a raise and never a mispositioned structured event.
 
 import pytest
 
-from pearlarr.log import EntryState
 from pearlarr.output import (
     Accent,
     BootStepFinished,
@@ -41,6 +40,7 @@ from pearlarr.output import (
     WaitSnapshot,
     WaitStarted,
 )
+from pearlarr.output.events import EntryState
 from pearlarr.wait_types import Outcome, OutcomeCategory
 
 from .fakes import FakeClock

@@ -10,9 +10,9 @@ from .arr_models import ArrReleases, HistoryRecord, RadarrItem
 from .config import Arr
 from .grab_pipeline import NO_SEEDS, GrabRequest
 from .grab_placement import EntryFacts, PendingSeed, build_unscoped_seed
-from .log import pluralize
 from .mappings import ExternalIds, MappingEntry
 from .output import hub_warn
+from .output.console_text import pluralize
 from .pending_import import GuardFacts, PendingImport, added_at_of
 from .progress import ProgressSink
 from .protocols import ArrSync

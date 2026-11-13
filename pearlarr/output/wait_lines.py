@@ -8,21 +8,8 @@ from collections import Counter
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, final
 
-from .events import (
-    Phase,
-    TorrentGraduated,
-    TorrentView,
-    WaitFinished,
-    WaitKind,
-    WaitProgress,
-    WaitSnapshot,
-    WaitStarted,
-    clamp01,
-    severity_of,
-)
-from .scan_lines import LegacyLine, kv_line
-from ..coverage import coverage_string
-from ..log import (
+from .console_lines import LegacyLine
+from .console_text import (
     DETAIL_INDENT,
     DETAIL_KEY_WIDTH,
     STATE_WIDTH,
@@ -36,6 +23,20 @@ from ..log import (
     indent_string,
     rule_string,
 )
+from .events import (
+    Phase,
+    TorrentGraduated,
+    TorrentView,
+    WaitFinished,
+    WaitKind,
+    WaitProgress,
+    WaitSnapshot,
+    WaitStarted,
+    clamp01,
+    severity_of,
+)
+from .scan_lines import kv_line
+from ..coverage import coverage_string
 from ..releases import EpisodeKey, EpisodeRecord
 from ..tvdb_orders import order_display_name
 from ..wait_types import HeldBack, Outcome, OutcomeCategory

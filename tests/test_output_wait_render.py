@@ -16,7 +16,6 @@ import logging
 import pytest
 
 from pearlarr.console_caps import Capabilities, detect_capabilities
-from pearlarr.log import StyledLine
 from pearlarr.output import (
     Phase,
     TorrentGraduated,
@@ -26,6 +25,7 @@ from pearlarr.output import (
     WaitSnapshot,
     WaitStarted,
 )
+from pearlarr.output.console_text import StyledLine
 from pearlarr.output.wait_lines import (
     _PHASE_RANK,
     PulseThrottle,

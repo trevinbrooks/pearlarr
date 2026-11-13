@@ -29,7 +29,7 @@ from .anilist_client import (
     media_node_from,
 )
 from .cache import AbstractCacheStore, record_payload, stamp_is_fresh
-from .log import count_noun
+from .output.console_text import count_noun
 from .progress import ProgressSink
 from .stamps import stamp_of
 

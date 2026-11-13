@@ -43,12 +43,7 @@ from .events import Diagnostic, Severity
 from .hub import OutputHub
 from .runtime import current_hub
 from .trace import CapturedTrace
-from ..log import (
-    LOG_NAME,
-    HubBridgeBase,
-    clear_console_owner,
-    mark_hub_console_owner,
-)
+from ..log import LOG_NAME, HubBridgeBase, clear_console_owner, mark_hub_console_owner
 
 
 def is_first_party(origin: str) -> bool:

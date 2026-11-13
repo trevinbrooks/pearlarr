@@ -48,9 +48,9 @@ from pearlarr.config import (
 )
 from pearlarr.env_registry import ENV_VARS
 from pearlarr.json_narrow import is_json_obj
-from pearlarr.log import EntryState
 from pearlarr.output import JsonRenderer
 from pearlarr.output import events as ev
+from pearlarr.output.events import EntryState
 from pearlarr.paths import PROJECT_URL
 from pearlarr.wait_types import Outcome, OutcomeCategory
 

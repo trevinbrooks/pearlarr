@@ -9,7 +9,6 @@ from .anilist_gateway import AniListGateway
 from .cache import AbstractCacheStore
 from .config import Arr
 from .leg_state import EntryTitle, RunContext, resolve_entry_title
-from .log import EntryState
 from .output import (
     Accent,
     CapReached,
@@ -40,6 +39,7 @@ from .output import (
     Severity,
     StyledValue,
 )
+from .output.events import EntryState
 from .pending_import import PendingImport
 from .releases import SeadexDict
 from .torrents import AddOutcome, ReleaseOutcome

@@ -4,17 +4,34 @@ from __future__ import annotations
 
 import logging
 from collections.abc import Iterable, Iterator
-from dataclasses import dataclass
 from typing import Final, NamedTuple, assert_never
 
-from rich.console import Console
 from rich.text import Text
 
+from .console_lines import LegacyLine
+from .console_text import (
+    DETAIL_INDENT,
+    DETAIL_KEY_WIDTH,
+    ConsoleRender,
+    KvLine,
+    SectionRule,
+    StyledLine,
+    TitledRule,
+    arr_item_noun,
+    count_noun,
+    entry_string,
+    format_elapsed,
+    group_highlight,
+    indent_string,
+    kv_string,
+    rule_string,
+)
 from .events import (
     Accent,
     CapReached,
     EntryDetail,
     EntryHeader,
+    EntryState,
     GrabAction,
     GrabFact,
     GrabFailed,
@@ -29,28 +46,6 @@ from .events import (
     SkipReason,
     severity_of,
 )
-from ..log import (
-    DETAIL_INDENT,
-    DETAIL_KEY_WIDTH,
-    ConsoleRender,
-    EntryState,
-    KvLine,
-    SectionRule,
-    StyledLine,
-    TitledRule,
-    arr_item_noun,
-    count_noun,
-    entry_string,
-    format_elapsed,
-    group_highlight,
-    indent_string,
-    kv_string,
-    print_literal,
-    print_titled_rule,
-    render_kv,
-    render_rule,
-    rule_string,
-)
 
 type ScanEvent = (
     ScanStarted
@@ -64,15 +59,6 @@ type ScanEvent = (
     | CapReached
     | RunSummaryReady
 )
-
-
-@dataclass(frozen=True, slots=True)
-class LegacyLine:
-    """One rich-console line: level, plain message, console payload."""
-
-    level: int
-    message: str
-    payload: ConsoleRender | None = None
 
 
 _BLANK = LegacyLine(logging.INFO, "")
@@ -455,21 +441,3 @@ def scan_event_lines(event: ScanEvent) -> tuple[LegacyLine, ...]:
         case RunSummaryReady():
             return run_summary_lines(event)
     assert_never(event)
-
-
-def render_legacy_lines(console: Console, lines: Iterable[LegacyLine], level: int) -> None:
-    """Render legacy lines on the shared console: a line prints iff its level clears `level`."""
-
-    for line in lines:
-        if line.level < level:
-            continue
-        match line.payload:
-            case TitledRule(title=title, style=style, heavy=heavy):
-                print_titled_rule(console, title, style, heavy=heavy)
-            case SectionRule(char=char):
-                console.print(render_rule(char))
-            case KvLine() as kv:
-                print_literal(console, render_kv(kv))
-            case (StyledLine() | None) as payload:
-                style = payload.style if payload is not None else ""
-                print_literal(console, Text(line.message, style=style))

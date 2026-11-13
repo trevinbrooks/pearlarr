@@ -28,15 +28,6 @@ from seadex import Tag
 from pearlarr.cache import AbstractCacheStore, CacheRecord
 from pearlarr.config import Arr
 from pearlarr.leg_state import GrabRecord, NeedsActionKind, NeedsActionRecord, RunContext, RunStats
-from pearlarr.log import (
-    ConsoleRender,
-    EntryState,
-    KvLine,
-    SectionRule,
-    StyledLine,
-    TitledRule,
-    group_highlight,
-)
 from pearlarr.output import (
     Accent,
     CapReached,
@@ -63,6 +54,8 @@ from pearlarr.output import (
     SkipReason,
     StyledValue,
 )
+from pearlarr.output.console_text import ConsoleRender, KvLine, SectionRule, StyledLine, TitledRule, group_highlight
+from pearlarr.output.events import EntryState
 from pearlarr.output.scan_lines import _TIP_TEXTS, ScanEvent
 from pearlarr.releases import ElsewhereCounts, SeadexDict
 from pearlarr.reporter import _TIP_PRECEDENCE, RunReporter

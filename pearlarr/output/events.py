@@ -7,17 +7,32 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from datetime import datetime
-from enum import Enum, IntEnum, auto
+from enum import Enum, IntEnum, StrEnum, auto
 from typing import TYPE_CHECKING, assert_never
 
 from .trace import CapturedTrace
 from ..config import Arr
-from ..log import EntryState
 from ..releases import NO_ELSEWHERE, ElsewhereCounts
 from ..wait_types import NO_HELD_BACK, HeldBack, Outcome, OutcomeCategory
 
 if TYPE_CHECKING:
     from ..leg_state import RunStats
+
+
+class EntryState(StrEnum):
+    """The outcome word in an entry-ledger row's state column. The widest value fixes STATE_WIDTH."""
+
+    UNCHANGED = "unchanged"
+    CHECKING = "checking"
+    UNMONITORED = "unmonitored"
+    NO_MAPPING = "no mapping"
+    NO_EPISODES = "no episodes"
+    IGNORED = "ignored"
+    NO_ENTRY = "no entry"
+    SKIPPED = "skipped"
+    QUEUED = "queued"
+    DOWNLOADED = "downloaded"
+    IMPORTED = "imported"
 
 
 class Severity(IntEnum):
