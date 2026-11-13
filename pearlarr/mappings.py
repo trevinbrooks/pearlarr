@@ -130,8 +130,8 @@ class TitleMapping:
         still EPISODE_RANGES.
         """
 
-        # Invariant: an empty tvdb_mappings dict is still ANIBRIDGE - a truthiness
-        # check would fall back to Anime-IDs season heuristics and over-grab.
+        # Invariant: an empty tvdb_mappings dict is still EPISODE_RANGES. A truthiness check would fall back to the
+        # Anime-IDs season offset and over-grab.
         return MappingKind.EPISODE_RANGES if self.tvdb_mappings is not None else MappingKind.SEASON_OFFSET
 
 

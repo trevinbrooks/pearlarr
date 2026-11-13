@@ -208,7 +208,8 @@ class GrabPipeline:
             return False
 
         # Invariant: an unparseable tracker never reaches TorrentService.add, whose raise is a defensive contract. This
-        # skip and warn enforces it: handing one through unwinds the id's url loop, dropping later grabbable releases.
+        # skip and warn enforces it: handing one through unwinds the title's loop over its releases and drops the
+        # later ones it could grab.
         if tracker not in PARSEABLE_TRACKERS:
             self._reporter.post(
                 ReleaseSkipped(group=srg, tracker=tracker, reason=SkipReason.UNSUPPORTED_TRACKER, url=url),

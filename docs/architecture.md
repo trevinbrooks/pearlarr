@@ -12,7 +12,7 @@ For one arr:
 
 1. builds the runtime dependencies (`ArrRunDeps`): the arr client, the shared HTTP clients, qBittorrent (or preview mode when credentials are absent), the SQLite cache.
 2. scans the arr's library and resolves each series/movie to an AniList ID through the mapping graph.
-3. for each ID with a SeaDex entry that changed since it was last handled: selects the releases to grab (the planner), skips what the arr already owns, and adds the survivors to qBittorrent (the grab pipeline).
+3. checks each title whose SeaDex entry changed since it was cached: plans which releases to grab (the planner), leaves out what the arr already owns, and grabs the rest (the grab pipeline).
 4. notifies (Discord embed per grab), records the decisions in the cache, and prints the run summary.
 5. optionally waits on downloads (`imports.wait_mode`): a blocking wait on Sonarr that lets Sonarr import first and steps in with a manual import where it cannot, or a single end-of-run check that imports whatever already finished and classifies the rest for the summary.
 
@@ -42,42 +42,42 @@ flowchart LR
 
 | Subsystem | Modules | Role |
 | --- | --- | --- |
-| Composition | `cli`, `bootstrap`, `arr_run_loop`, `arr_run_services`, `sonarr_strategy`, `radarr_strategy` | CLI commands, dependency wiring, the per-arr run loop and its Sonarr/Radarr strategies, the per-ID service hub |
+| Composition | `cli`, `bootstrap`, `arr_run_loop`, `arr_run_services`, `sonarr_strategy`, `radarr_strategy` | CLI commands, dependency wiring, the arr run loop and its Sonarr/Radarr strategies, the services each title's check uses |
 | Configuration | `config`, `paths`, `env_registry` | validated settings, the data directory, env inventory |
 | Mapping graph | `mappings`, `mapping_store`, `anibridge`, `anilist_client`, `anilist_gateway` | AniList/TVDB/TMDB/IMDb ID resolution and per-season episode maps, parsed once into `mappings.db` |
 | Selection | `seadex_gateway`, `seadex_filter`, `planner`, `coverage` | fetch SeaDex entries, filter releases, decide what to grab |
 | Grabbing | `grab_pipeline`, `torrent_service` | tracker page parsing, qBittorrent adds, per-release outcomes |
 | Import wait | `pending_import`, `wait_types`, `file_paths`, `sonarr_import`, `sonarr_state`, `episode_state`, `import_files`, `import_quality`, `import_wait`, `wait_view` | waiting on downloads, Sonarr queue classification, the never-overwrite check, the series-pinned manual import, the per-file plan and its quality key |
 | TVDB orders | `tvdb_orders`, `skyhook_client`, `skyhook_gateway` | the TVDB episode orders (aired, DVD, and the others TVDB lists) of the Sonarr series a run reads, fetched from Sonarr's metadata service and kept per series in `cache.db` |
-| Placement | `placement_types`, `parsed_episodes`, `file_names`, `episode_titles`, `placer/*`, `numberings`, `window_placement`, `grab_placement`, `series_listings`, `listing_builder`, `video_files`, `sonarr_parse` | mapping a release's files onto episodes at grab time, the series' SeaDex listings and size identities it uses, and the Sonarr `/parse` cache the placement reads |
-| State | `cache`, `stamps`, `pending_import_store` | the SQLite decision cache, staged writes, backup/restore, the shared timestamp format, the pending-record seam over the store |
+| Placement | `placement_types`, `parsed_episodes`, `file_names`, `episode_titles`, `placer/*`, `numberings`, `window_placement`, `grab_placement`, `series_listings`, `listing_builder`, `video_files`, `sonarr_parse` | placing a release's files on episodes at grab time, the series' SeaDex listings and size matches it uses, and the Sonarr `/parse` cache the placement reads |
+| State | `cache`, `stamps`, `pending_import_store` | the SQLite decision cache, staged writes, backup/restore, the shared timestamp format, the pending import store |
 | Output | `output/*`, `log`, `console_features`, `boot_flow` | the event hub, renderers, the always-on file log |
 | Notifications | `notify`, `discord` | Discord embeds, the generic wait webhook |
-| Reporting | `reporter`, `arr_run_state` | each leg's state and tally, the run summary and needs-action rows |
+| Reporting | `reporter`, `arr_run_state` | each arr run's state and tally, its summary and needs-action rows |
 
 ## Design notes
 
 Compact records of the load-bearing decisions: what was decided, why, and what was rejected.
 Notes are appended, not rewritten, so the reasoning trail survives.
 
-### Planner: flag mutation over same-files groups
+### Planner: to-grab marks over same-files groups
 
-The planner mutates download flags on the SeaDex release dictionary in place, resolving conflicts per *same-files group* (release groups covering identical files).
-Private-only sets are resolved by promotion: when the arr's copy is stale (a size mismatch, or one file held on too many episodes, shows an upgrade is pending), the best public alternative covering the same files is promoted. With no upgrade pending nothing is promoted, since an unflagged public group may be one the arr owns, and the set warns as private-only. When only a fallback could replace an *owned* copy of the preferred private release, the title holds and warns instead: re-downloading owned content is never correct.
-Dropped groups re-flag any public URL whose episode coverage no survivor carries (group-atomic drops must not lose episodes).
-A full per-URL planner redesign was prototyped and rejected: it re-derives the same same-files groups with more state and no behavioral win.
+The planner marks each of an entry's releases to grab or not, in place, resolving conflicts per *same-files group* (release groups covering identical files).
+Private-only sets are resolved by promotion: when the arr's copy is outdated (a size mismatch, or one file on too many episodes, shows an upgrade is pending), the best public release covering the same files is promoted. With no upgrade pending nothing is promoted, since a public group not marked to grab may be one the arr owns, and the set warns as private-only. When only a fallback could replace an *owned* copy of the preferred private release, the title grabs nothing and warns instead: grabbing owned content again is never correct.
+Dropped groups mark to grab again any public release whose episodes no remaining group covers (group-atomic drops must not lose episodes).
+A full per-release planner redesign was prototyped and rejected: it re-derives the same same-files groups with more state and no behavioral win.
 
 ### Output: an event hub, not a logger
 
-All run output flows as typed events through a process-global hub with per-scope handles. Renderers (rich cockpit, plain console, JSON) subscribe, and a structured file log is always on.
+All run output flows as typed events through a process-global hub with per-scope handles. Renderers (rich live console, plain console, JSON) subscribe, and a structured file log is always on.
 Raw `logging.*` calls are banned (lint + an AST canary test). The one sanctioned raw site is the crash handler in `log.py`.
 Why: renderer failures are contained (a broken progress view cannot kill a run), the file grammar stays byte-stable, and tests assert on recorded events instead of scraping strings.
 Rejected alternatives, after a five-proposal design debate: pure logging with formatters (loses lifecycle/reflow control), a document model (over-general), scoped emitters without a hub (no single containment point).
 
 ### Cache: SQLite with staged writes and a preview gate
 
-Decisions persist in `cache.db` behind a `CacheStore` with one commit chokepoint: writes stage in a transaction and `save(preview=...)` commits only for real runs. Preview mode discards everything.
-A run saves after the AniList prefetch, after each title, and once more at the end. It never saves mid-title, where paired writes (a pending record and its guard row) may be half done.
+Decisions persist in `cache.db` behind a `CacheStore` with one commit chokepoint: writes stage in a transaction and `save(dry_run=...)` commits only for real runs. Preview mode discards everything.
+A run saves after the AniList prefetch, after each title, and once more at the end. It never saves mid-title, where paired writes (a pending import and its guard row) may be half done.
 A fresh store starts in memory and is promoted to disk via the SQLite backup API plus an atomic rename, so a half-written `cache.db` cannot exist.
 Reads fail open (a corrupt cache re-evaluates titles instead of aborting), and a file lock keeps concurrent runs from interleaving.
 The predecessor `cache.json` was rejected for having no atomicity, no partial-failure story, and no queryable schema.
@@ -106,6 +106,7 @@ Rejected: reusing Sonarr's manual-import candidates as the mapping source, the e
 | numbered sequence | A torrent's files whose names are the same up to their number, in number order (`Show - 01`, `Show - 02`). Where two versions share a number, the higher version is in the sequence. |
 | verdict | What the placer decided for one file under one window: the episodes it goes on and how they were found, or why it goes on none. A verdict is final when no other window can change it, and provisional otherwise. |
 | run | One sweep over every configured arr: a single `pearlarr run single`, or one scheduled cycle. |
+| arr run | One arr's share of a run: its scan, its grabs, then its wait pass. |
 | cycle | One scheduled-loop iteration (every configured arr, once). |
 | wait pass | The post-grab phase that waits for downloads and drives imports. |
 | preview mode | qBittorrent credentials absent: everything is evaluated and reported, nothing is grabbed or cached. |
@@ -138,11 +139,11 @@ No telemetry: Pearlarr is outbound-only, listens on no ports, and sends nothing 
 Load-bearing invariants, indexed from their `# Invariant:` enforcement-site comments in the source. Each entry names the module that enforces it.
 
 <!-- gen:invariants - GENERATED by scripts/gen_docs.py from the # Invariant: comments in pearlarr/. Do not edit between the markers. Regenerate: uv run python scripts/gen_docs.py -->
-- `pearlarr/cache.py` - a preview run never commits, so every staged write is discarded on close and preview mode can never mark a title as handled.
-- `pearlarr/grab_pipeline.py` - an unparseable tracker never reaches TorrentService.add, whose raise is a defensive contract. This skip and warn enforces it: handing one through unwinds the id's url loop, dropping later grabbable releases.
+- `pearlarr/cache.py` - a dry run never commits, so every staged write is discarded on close and a dry run can never cache a title.
+- `pearlarr/grab_pipeline.py` - an unparseable tracker never reaches TorrentService.add, whose raise is a defensive contract. This skip and warn enforces it: handing one through unwinds the title's loop over its releases and drops the later ones it could grab.
 - `pearlarr/import_quality.py` - the import payload always carries a quality key. Omitting it crashes Sonarr in FileNameBuilder.AddQualityTokens (observed on Sonarr 4.x).
-- `pearlarr/mappings.py` - an empty tvdb_mappings dict is still ANIBRIDGE - a truthiness check would fall back to Anime-IDs season heuristics and over-grab.
-- `pearlarr/planner.py` - a fallback substitute never replaces an owned copy of the preferred private release - those sets hold and warn every run.
-- `pearlarr/releases.py` - a url's record is keyed by the torrent that holds its files in qBittorrent, which is SeaDex's torrent unless a cross-seed was already there. The wait and the import read the record by that key.
+- `pearlarr/mappings.py` - an empty tvdb_mappings dict is still EPISODE_RANGES. A truthiness check would fall back to the Anime-IDs season offset and over-grab.
+- `pearlarr/planner.py` - a fallback never replaces an owned copy of the preferred private release. Those same-files groups grab nothing and warn every run.
+- `pearlarr/releases.py` - a release's pending import is keyed by the torrent that has its files in qBittorrent, which is SeaDex's torrent unless a cross-seed was already there. The wait and the import read it by that key.
 - `pearlarr/sonarr_state.py` - only a CLEAN importPending defers to Sonarr. A warning/error-flagged one is a failed Sonarr import attempt it won't reliably retry, so waiting would burn the readiness deadline.
 <!-- /gen:invariants -->
