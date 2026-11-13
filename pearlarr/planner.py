@@ -562,7 +562,7 @@ class GrabPlanner:
 
         # Every untagged file on disk, folded to its ownership multiset once
         # per entry. Exactly one source per arr - Radarr's untagged fold, or the
-        # Sonarr identity pass (`get_sonarr_releases` keeps `untagged` empty,
+        # Sonarr identity pass (`sonarr_files` keeps `untagged` empty,
         # pinned) - a file fed through both would count twice and could then
         # never be owned. A pick whose listed sizes contain the whole
         # multiset owns the copy, which counts as an on-disk overlap - a

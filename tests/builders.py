@@ -1113,7 +1113,7 @@ def sonarr_ep(
 
 
 def arr_releases(ep_list: Iterable[SonarrEpisode]) -> ArrFiles:
-    """The episodes' files folded per tagged group, as `get_sonarr_releases` reports them."""
+    """The episodes' files folded per tagged group, as `sonarr_files` reports them."""
 
     return ArrFiles.from_files(
         [f for ep in ep_list if ep.episode_file_id != 0 and (f := ep.episode_file) is not None], keep_no_group=False
