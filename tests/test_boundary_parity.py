@@ -96,7 +96,7 @@ def _drive_manual_import(
     client = _make_sonarr_client()
     executor = ImportExecutor(make_run_deps(), client)
     pending = pending_import()
-    scan = executor.scanner.scan(pending, "/d", untracked=False)
+    scan = executor.candidate_fetcher.fetch(pending, "/d", untracked=False)
     assert scan is not None
     result = executor.run_auto_import(
         pending, "/d", AttemptInputs(scan, _bare_snapshot(pending), [], at_deadline=False)
@@ -170,7 +170,7 @@ def test_golden_body_dead_tracked_folder_import_omits_download_id() -> None:
     client = _make_sonarr_client()
     executor = ImportExecutor(make_run_deps(), client)
     pending = pending_import()
-    scan = executor.scanner.scan(pending, "/d", untracked=True)
+    scan = executor.candidate_fetcher.fetch(pending, "/d", untracked=True)
     assert scan is not None
     result = executor.run_auto_import(
         pending, "/d", AttemptInputs(scan, _bare_snapshot(pending), [], at_deadline=False)
@@ -376,8 +376,8 @@ def test_import_pending_classifies_by_tracked_status() -> None:
     queue = _make_sonarr_client().queue()
     assert queue is not None
     records = {record.download_id: record for record in queue}
-    assert classify_queue([records["ABC123"]]) is QueueState.PENDING_CLEAN
-    assert classify_queue([records["DEF456"]]) is QueueState.STEP_IN
+    assert classify_queue([records["ABC123"]]) is QueueState.IMPORT_PENDING_OK
+    assert classify_queue([records["DEF456"]]) is QueueState.STUCK
 
 
 # --- HistoryRecord: per-field folds, record never drops ----------------------

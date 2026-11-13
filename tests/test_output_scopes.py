@@ -267,12 +267,12 @@ def test_wait_progress_and_graduations_are_stamped() -> None:
     wait = factory.wait(total=1, pulse_s=300.0, kind=WaitKind.MONITOR)
 
     wait.progress(WaitSnapshot(torrents=(), elapsed_s=30.0))
-    wait.graduated(RowFinished(label="T", outcome=Outcome.IMPORTED, files=12, waited_s=243.0))
+    wait.row_finished(RowFinished(label="T", outcome=Outcome.IMPORTED, files=12, waited_s=243.0))
 
     (progress,) = recorder.of_type(WaitProgress)
-    (graduated,) = recorder.of_type(RowFinished)
+    (row_finished,) = recorder.of_type(RowFinished)
     assert progress.scope == wait.scope_id
-    assert graduated.scope == wait.scope_id
+    assert row_finished.scope == wait.scope_id
 
 
 def test_wait_finish_emits_tally_then_closes() -> None:
@@ -294,7 +294,7 @@ def test_late_wait_emissions_demote() -> None:
     wait.close()
 
     wait.progress(WaitSnapshot(torrents=(), elapsed_s=1.0))
-    wait.graduated(RowFinished(label="T", outcome=Outcome.IMPORTED, files=None, waited_s=1.0))
+    wait.row_finished(RowFinished(label="T", outcome=Outcome.IMPORTED, files=None, waited_s=1.0))
     wait.finish(WaitFinished(imported=0, left=0, failed=0, elapsed_s=1.0, in_progress=0, kind=WaitKind.MONITOR))
 
     assert len(recorder.of_type(WaitProgress)) == 0

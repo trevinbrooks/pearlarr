@@ -26,7 +26,7 @@ from .discord import (
 )
 from .output import hub_warn
 from .output.console_text import count_noun, human_bytes, long_duration
-from .output.wait_lines import held_back_names, held_back_sentences
+from .output.wait_lines import hand_import_names, hand_import_sentences
 from .releases import Release, SeadexDict
 from .torrent_service import AddStatus, GrabResult
 from .wait_types import OutcomeKind
@@ -84,13 +84,13 @@ def _wait_color(result: WaitResult) -> int:
 def _wait_row_text(row: WaitOutcomeRow) -> str:
     """One summary row: the title alone for an import, else with its detail and any file left for a hand import."""
 
-    if row.outcome.category is OutcomeKind.IMPORTED:
+    if row.outcome.kind is OutcomeKind.IMPORTED:
         return row.label
-    held = row.left_for_hand_import
+    left = row.left_for_hand_import
     # Discord strips leading whitespace and reads `_`, `*`, `[` as markdown, so each name rides in backticks.
-    names = held_back_names(held, quote="`")
-    if held.explained_by_order:
-        lead, reason = held_back_sentences(held)
+    names = hand_import_names(left, quote="`")
+    if left.explained_by_order:
+        lead, reason = hand_import_sentences(left)
         return "\n".join((f"{row.label} - {lead}", f"{reason}:", *names))
     return "\n".join((f"{row.label} - {row.outcome.detail}", *names))
 
@@ -379,8 +379,8 @@ class Notifier:
             (OutcomeKind.FAILED, "Failed"),
         )
         fields: list[EmbedField] = []
-        for category, name in sections:
-            rows = [r for r in result.rows if r.outcome.category is category]
+        for kind, name in sections:
+            rows = [r for r in result.rows if r.outcome.kind is kind]
             if not rows:
                 continue
             value = "\n".join(_wait_row_text(r) for r in rows[:_MAX_FIELD_TITLES])

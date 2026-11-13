@@ -30,16 +30,16 @@ from pearlarr.output.wait_lines import (
     _PHASE_RANK,
     PulseThrottle,
     _rough_eta,
-    graduation_tail,
-    held_back_sentences,
+    hand_import_sentences,
     live_model,
+    row_finished_lines,
+    row_finished_note,
     sparkline,
-    wait_graduation_lines,
     wait_start_line,
     wait_tally_lines,
 )
 from pearlarr.releases import EpisodeKey, OrderOnlyKey
-from pearlarr.wait_types import NO_HELD_BACK, HeldFile, LeftForHandImport, Outcome
+from pearlarr.wait_types import NO_HAND_IMPORT_FILES, HandImportFile, LeftForHandImport, Outcome
 
 from .builders import SEP, held_files, order_only_held_back
 
@@ -54,7 +54,7 @@ def _grad(
     *,
     files: int | None = None,
     waited: float = 0.0,
-    left_for_hand_import: LeftForHandImport = NO_HELD_BACK,
+    left_for_hand_import: LeftForHandImport = NO_HAND_IMPORT_FILES,
 ) -> RowFinished:
     return RowFinished(
         label=label, outcome=outcome, files=files, waited_s=waited, left_for_hand_import=left_for_hand_import
@@ -163,7 +163,7 @@ class TestWaitBuilders:
 
     def test_graduation_style_is_dropped_without_color(self) -> None:
         # The colorless case is style="", not None (an unstyled console line).
-        [line] = wait_graduation_lines(_grad("Show A", Outcome.IMPORTED, files=1, waited=60), detect_capabilities(None))
+        [line] = row_finished_lines(_grad("Show A", Outcome.IMPORTED, files=1, waited=60), detect_capabilities(None))
         assert line.payload == StyledLine(style="")
         assert line.message == "  ok imported    Show A  (1 file · 1m 00s)"
 
@@ -171,9 +171,9 @@ class TestWaitBuilders:
         # P6: the rendered line and severity_of/the sink admission agree -
         # FAILED carries ERROR, DEFERRED WARNING, success INFO.
         features = detect_capabilities(None)
-        assert wait_graduation_lines(_grad("A", Outcome.IMPORTED), features)[0].level == logging.INFO
-        assert wait_graduation_lines(_grad("B", Outcome.DOWNLOAD_TIMED_OUT), features)[0].level == logging.WARNING
-        assert wait_graduation_lines(_grad("C", Outcome.DOWNLOAD_ERRORED), features)[0].level == logging.ERROR
+        assert row_finished_lines(_grad("A", Outcome.IMPORTED), features)[0].level == logging.INFO
+        assert row_finished_lines(_grad("B", Outcome.DOWNLOAD_TIMED_OUT), features)[0].level == logging.WARNING
+        assert row_finished_lines(_grad("C", Outcome.DOWNLOAD_ERRORED), features)[0].level == logging.ERROR
 
 
 # --- the pure cockpit reducers ----------------------------------------------------------
@@ -350,17 +350,17 @@ def test_phase_rank_covers_every_non_terminal_phase() -> None:
 
 
 def test_graduation_tail_states_files_and_elapsed_for_an_import() -> None:
-    assert graduation_tail(_grad("A", Outcome.IMPORTED, files=12, waited=192)) == f"12 files{SEP}3m 12s"
+    assert row_finished_note(_grad("A", Outcome.IMPORTED, files=12, waited=192)) == f"12 files{SEP}3m 12s"
 
 
 def test_graduation_tail_is_empty_when_an_import_has_no_detail() -> None:
     # No files count (incomplete seed) and a sub-second wait -> nothing to say.
-    assert graduation_tail(_grad("A", Outcome.IMPORTED)) == ""
+    assert row_finished_note(_grad("A", Outcome.IMPORTED)) == ""
 
 
 def test_graduation_tail_elapsed_alone_when_files_unknown() -> None:
     # An incomplete seed map hides the files count but the wait clock still shows.
-    assert graduation_tail(_grad("A", Outcome.IMPORTED, waited=192)) == "3m 12s"
+    assert row_finished_note(_grad("A", Outcome.IMPORTED, waited=192)) == "3m 12s"
 
 
 def test_graduation_tail_says_left_pending_outcomes_retry() -> None:
@@ -372,21 +372,21 @@ def test_graduation_tail_says_left_pending_outcomes_retry() -> None:
         Outcome.NOT_READY,
         Outcome.ATTEMPT_FAILED,
     ):
-        assert graduation_tail(_grad("A", outcome)) == "retries next run"
+        assert row_finished_note(_grad("A", outcome)) == "retries next run"
 
 
 def test_graduation_tail_counts_unmatched_files_and_names_the_action() -> None:
     # Never "retries".
     event = _grad("A", Outcome.UNMATCHED, waited=15, left_for_hand_import=held_files("a.mkv", "b.mkv"))
-    assert graduation_tail(event) == "2 files matched no episode · import by hand in Sonarr"
-    assert graduation_tail(_grad("A", Outcome.UNMATCHED, left_for_hand_import=held_files("a.mkv"))) == (
+    assert row_finished_note(event) == "2 files matched no episode · import by hand in Sonarr"
+    assert row_finished_note(_grad("A", Outcome.UNMATCHED, left_for_hand_import=held_files("a.mkv"))) == (
         "1 file matched no episode · import by hand in Sonarr"
     )
 
 
 def test_graduation_tail_counts_held_back_files_and_names_the_action() -> None:
     event = _grad("A", Outcome.PARTIAL, waited=15, left_for_hand_import=held_files("a.mkv", "b.mkv"))
-    assert graduation_tail(event) == "2 files held back · import by hand in Sonarr"
+    assert row_finished_note(event) == "2 files held back · import by hand in Sonarr"
 
 
 _SEVERAL = order_only_held_back(
@@ -395,7 +395,7 @@ _SEVERAL = order_only_held_back(
 
 
 @pytest.mark.parametrize(
-    ("held", "coda", "lead"),
+    ("left", "coda", "lead"),
     [
         pytest.param(
             order_only_held_back(),
@@ -418,25 +418,25 @@ _SEVERAL = order_only_held_back(
         ),
     ],
 )
-def test_an_order_only_record_leads_with_its_unfilled_episodes(held: LeftForHandImport, coda: str, lead: str) -> None:
-    assert graduation_tail(_grad("A", Outcome.PARTIAL, left_for_hand_import=held)) == coda
-    assert held_back_sentences(held)[0] == lead
+def test_an_order_only_record_leads_with_its_unfilled_episodes(left: LeftForHandImport, coda: str, lead: str) -> None:
+    assert row_finished_note(_grad("A", Outcome.PARTIAL, left_for_hand_import=left)) == coda
+    assert hand_import_sentences(left)[0] == lead
 
 
 def test_a_lone_order_only_file_reads_in_the_singular() -> None:
     name = "[grp] Show Ending S1 - 01 [ABCD1234].mkv"
-    held = LeftForHandImport(
-        files=(HeldFile(name, OrderOnlyKey("dvd", EpisodeKey(7, 1))),), missing=(EpisodeKey(4, 1),)
+    left = LeftForHandImport(
+        files=(HandImportFile(name, OrderOnlyKey("dvd", EpisodeKey(7, 1))),), missing=(EpisodeKey(4, 1),)
     )
-    assert held_back_sentences(held)[1] == (
+    assert hand_import_sentences(left)[1] == (
         "This pack is numbered by the DVD order, and 1 of its files is one of the DVD episodes "
         "that aren't in Sonarr's list, so Pearlarr can't tell where it belongs"
     )
 
 
 def test_a_long_reason_wraps_onto_rows_that_fit_a_100_column_console() -> None:
-    held = LeftForHandImport(files=order_only_held_back().files[:1], missing=(EpisodeKey(4, 1),))
-    lines = wait_graduation_lines(_grad("A", Outcome.PARTIAL, left_for_hand_import=held), detect_capabilities(None))
+    left = LeftForHandImport(files=order_only_held_back().files[:1], missing=(EpisodeKey(4, 1),))
+    lines = row_finished_lines(_grad("A", Outcome.PARTIAL, left_for_hand_import=left), detect_capabilities(None))
     assert [line.message for line in lines[1:3]] == [
         "    reason      this pack is numbered by the DVD order, and 1 of its files is one of the DVD",
         "                episodes that aren't in Sonarr's list, so Pearlarr can't tell where it belongs",
@@ -445,16 +445,16 @@ def test_a_long_reason_wraps_onto_rows_that_fit_a_100_column_console() -> None:
 
 def test_files_keyed_by_two_orders_name_both_orders() -> None:
     files = (
-        HeldFile("a.mkv", OrderOnlyKey("dvd", EpisodeKey(7, 1))),
-        HeldFile("b.mkv", OrderOnlyKey("altdvd", EpisodeKey(3, 1))),
+        HandImportFile("a.mkv", OrderOnlyKey("dvd", EpisodeKey(7, 1))),
+        HandImportFile("b.mkv", OrderOnlyKey("altdvd", EpisodeKey(3, 1))),
     )
-    reason = held_back_sentences(LeftForHandImport(files=files, missing=(EpisodeKey(4, 1),)))[1]
+    reason = hand_import_sentences(LeftForHandImport(files=files, missing=(EpisodeKey(4, 1),)))[1]
     assert reason.startswith("This pack is numbered by the DVD and alternate DVD orders, and 2 of its files are")
 
 
 def test_an_order_only_row_says_why_then_lists_each_file_behind_its_key() -> None:
     event = _grad("Show Ending · grp · S04 E01-E12", Outcome.PARTIAL, left_for_hand_import=order_only_held_back())
-    lines = wait_graduation_lines(event, detect_capabilities(None))
+    lines = row_finished_lines(event, detect_capabilities(None))
     assert [line.message for line in lines] == [
         "  ~ partial     Show Ending · grp · S04 E01-E12  (S04 E01 still missing in Sonarr)",
         "    reason      this pack is numbered by the DVD order, and 2 of its files are DVD episodes",
@@ -467,7 +467,7 @@ def test_an_order_only_row_says_why_then_lists_each_file_behind_its_key() -> Non
 
 def test_a_held_back_row_names_five_files_and_counts_the_rest() -> None:
     names = tuple(f"[grp] Show - Part {n:02d}.mkv" for n in range(1, 8))
-    lines = wait_graduation_lines(
+    lines = row_finished_lines(
         _grad("A", Outcome.UNMATCHED, left_for_hand_import=held_files(*names)), detect_capabilities(None)
     )
     assert [line.message for line in lines[1:]] == [
@@ -478,10 +478,10 @@ def test_a_held_back_row_names_five_files_and_counts_the_rest() -> None:
 
 
 def test_a_mixed_record_keeps_its_count_and_keys_the_order_only_file() -> None:
-    held = LeftForHandImport(
-        files=(order_only_held_back().files[0], HeldFile("[grp] Show Ending S1 - 05 [ABCD1234].mkv"))
+    left = LeftForHandImport(
+        files=(order_only_held_back().files[0], HandImportFile("[grp] Show Ending S1 - 05 [ABCD1234].mkv"))
     )
-    lines = wait_graduation_lines(_grad("A", Outcome.PARTIAL, left_for_hand_import=held), detect_capabilities(None))
+    lines = row_finished_lines(_grad("A", Outcome.PARTIAL, left_for_hand_import=left), detect_capabilities(None))
     assert [line.message for line in lines] == [
         f"  ~ partial     A  (2 files held back{SEP}import by hand in Sonarr)",
         "    files       DVD S07E01  [grp] Show Ending S1 - 01 [ABCD1234].mkv",
@@ -490,4 +490,4 @@ def test_a_mixed_record_keeps_its_count_and_keys_the_order_only_file() -> None:
 
 
 def test_graduation_tail_says_a_missing_record_is_gone() -> None:
-    assert graduation_tail(_grad("A", Outcome.MISSING)) == "no longer tracked · title checked again next run"
+    assert row_finished_note(_grad("A", Outcome.MISSING)) == "no longer tracked · title checked again next run"

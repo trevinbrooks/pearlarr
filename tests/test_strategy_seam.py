@@ -69,7 +69,7 @@ from pearlarr.progress import ProgressSink
 from pearlarr.radarr_strategy import _HISTORY_SKEW_HOURS, RadarrStrategy
 from pearlarr.releases import EpisodeKey, OrderOnlyKey, PlacementSkip, ReleaseEpisode, SeadexDict
 from pearlarr.sonarr_episodes import sonarr_series_fingerprint
-from pearlarr.sonarr_state import DownloadHistoryVerdict, HistoryImport, placements_from_history
+from pearlarr.sonarr_state import DownloadHistoryState, HistoryImport, placements_from_history
 from pearlarr.sonarr_strategy import SonarrStrategy
 from pearlarr.stamps import parse_stamp, stamp_of
 from pearlarr.tvdb_orders import AIRED_ORDER, NO_INDEX_ORDERS, IndexOrders, OrderRow
@@ -77,7 +77,7 @@ from pearlarr.wait_types import (
     AttemptKind,
     AttemptResult,
     EffectStatus,
-    HeldFile,
+    HandImportFile,
     ImportProgress,
     ImportWaitMode,
     LeftForHandImport,
@@ -682,8 +682,8 @@ class _RangeFile(NamedTuple):
 class TestImportCompletedQueueState:
     """import_completed reads the queue + episode files before stepping in."""
 
-    @pytest.mark.parametrize("attempt", [AttemptKind.ORDINARY, AttemptKind.FINAL])
-    def test_queue_importing_defers_with_credit(self, attempt: AttemptKind) -> None:
+    @pytest.mark.parametrize("attempt_kind", [AttemptKind.ORDINARY, AttemptKind.FINAL])
+    def test_queue_importing_defers_with_credit(self, attempt_kind: AttemptKind) -> None:
         # Sonarr is copying this download (importing): never double-import, and
         # the copy is Sonarr's wait, so the monitor credits it (a serial pack
         # import must not expire the record at the deadline). Counts kept.
@@ -693,12 +693,12 @@ class TestImportCompletedQueueState:
             queue=[queue_record("ABC123", "importing")],
         )
 
-        result = strat.import_completed(pending, "/d", attempt)
+        result = strat.import_completed(pending, "/d", attempt_kind)
 
         assert result.all_done is False
-        assert result.deferral is PauseReason.IMPORT
+        assert result.pause_reason is PauseReason.IMPORT
         assert result.command_issued is False
-        assert (result.imported_count, result.target_count) == (0, 1)
+        assert (result.imported_count, result.file_map_episode_count) == (0, 1)
         assert sonarr.candidate_calls == []
         assert sonarr.execute_calls == []
 
@@ -714,7 +714,7 @@ class TestImportCompletedQueueState:
         result = strat.import_completed(pending, "/d", AttemptKind.ORDINARY)
 
         assert result.all_done is False
-        assert result.deferred is False
+        assert result.paused is False
         assert sonarr.candidate_calls == []
         assert sonarr.execute_calls == []
 
@@ -744,7 +744,7 @@ class TestImportCompletedQueueState:
         result = strat.import_completed(pending, "/d", AttemptKind.FINAL)
 
         assert result.all_done is False
-        assert result.deferral is PauseReason.BUSY
+        assert result.pause_reason is PauseReason.BUSY
         assert result.command_issued is False
         assert sonarr.candidate_calls == []
         assert sonarr.execute_calls == []
@@ -764,12 +764,12 @@ class TestImportCompletedQueueState:
         sonarr.commands_return = [_RESCAN_BEFORE_ADD]
         idle = strat.import_completed(pending, "/d", AttemptKind.ORDINARY)
 
-        assert busy.deferral is PauseReason.BUSY
-        assert idle.deferred is False
+        assert busy.pause_reason is PauseReason.BUSY
+        assert idle.paused is False
         assert sonarr.candidate_calls == []
 
-    @pytest.mark.parametrize("attempt", [AttemptKind.ORDINARY, AttemptKind.FINAL])
-    def test_queue_outage_retries_instead_of_stepping_in(self, attempt: AttemptKind) -> None:
+    @pytest.mark.parametrize("attempt_kind", [AttemptKind.ORDINARY, AttemptKind.FINAL])
+    def test_queue_outage_retries_instead_of_stepping_in(self, attempt_kind: AttemptKind) -> None:
         # A failed queue read must never read as "not tracked" (stepping in would
         # race an import Sonarr may be running). Waiting with no deferral credit
         # fails closed on BOTH passes: the poll loop retries, and a persistent
@@ -780,10 +780,10 @@ class TestImportCompletedQueueState:
         )
         sonarr.queue_return = None
 
-        result = strat.import_completed(pending, "/d", attempt)
+        result = strat.import_completed(pending, "/d", attempt_kind)
 
         assert result.all_done is False
-        assert result.deferred is False
+        assert result.paused is False
         assert sonarr.candidate_calls == []
         assert sonarr.execute_calls == []
 
@@ -820,9 +820,9 @@ class TestImportCompletedQueueState:
         assert result.all_done is False
         # A foreign command pauses the ready clock (BUSY, never a "still
         # importing" claim); the monitor's credit cap bounds the walk-away.
-        assert result.deferral is PauseReason.BUSY
+        assert result.pause_reason is PauseReason.BUSY
         assert result.command_issued is False
-        assert (result.imported_count, result.target_count) == (0, 1)
+        assert (result.imported_count, result.file_map_episode_count) == (0, 1)
         assert sonarr.candidate_calls == []
         assert sonarr.execute_calls == []
 
@@ -844,7 +844,7 @@ class TestImportCompletedQueueState:
 
         assert first.command_issued is True
         assert result.all_done is False
-        assert result.deferred is True
+        assert result.paused is True
         assert result.command_issued is False  # not B's command
         assert len(sonarr.execute_calls) == 1  # only A's import was POSTed
 
@@ -864,7 +864,7 @@ class TestImportCompletedQueueState:
 
         assert result.all_done is False
         assert result.command_issued is True
-        assert result.deferred is True
+        assert result.paused is True
         assert sonarr.execute_calls == []
 
     def test_two_claim_record_defers_on_the_torrents_running_import(self) -> None:
@@ -883,7 +883,7 @@ class TestImportCompletedQueueState:
 
         result = strat.import_completed(pending, "/d", AttemptKind.ORDINARY)
 
-        assert result.deferred is True
+        assert result.paused is True
         assert result.command_issued is True
         assert sonarr.execute_calls == []
 
@@ -910,7 +910,7 @@ class TestImportCompletedQueueState:
         result = strat.import_completed(pending, "/d", AttemptKind.ORDINARY)
 
         assert result.all_done is False
-        assert result.deferral is PauseReason.IMPORT
+        assert result.pause_reason is PauseReason.IMPORT
         assert result.command_issued is False
         assert sonarr.execute_calls == []
 
@@ -937,8 +937,8 @@ class TestImportCompletedQueueState:
         ]
         in_flight = strat.import_completed(pending, "/d", AttemptKind.FINAL)
 
-        assert (issued.command_issued, issued.deferral) == (True, PauseReason.ISSUED)
-        assert (in_flight.command_issued, in_flight.deferral) == (True, PauseReason.IMPORT)
+        assert (issued.command_issued, issued.pause_reason) == (True, PauseReason.ISSUED)
+        assert (in_flight.command_issued, in_flight.pause_reason) == (True, PauseReason.IMPORT)
         assert len(sonarr.execute_calls) == 1
 
     def test_run_start_clears_the_issued_command_ids(self) -> None:
@@ -954,9 +954,9 @@ class TestImportCompletedQueueState:
         strat.import_completed(pending, "/d", AttemptKind.ORDINARY)
         executor = strat._reconciler._executor
 
-        assert executor._is_own_command(42) is True
+        assert executor._is_auto_import_command(42) is True
         executor.reset()
-        assert executor._is_own_command(42) is False
+        assert executor._is_auto_import_command(42) is False
 
     def test_an_excluded_file_is_not_imported_once_the_mapped_targets_are_in(self) -> None:
         done_file = "Show - 01 [1080p].mkv"
@@ -1262,7 +1262,7 @@ class TestImportCompletedQueueState:
         store.put_pending_import_row(Arr.SONARR, pending.infohash, pending.to_json())
         mgr = make_import_wait_manager(qbit=_CompletedQbit("/d"), cache_store=store, strategy=strat)
 
-        mgr._cleanup.heal_flagged()
+        mgr._cleanup.finish_cleanups()
 
         assert len(sonarr.execute_calls) == 1
         assert mgr._pending_imports.rows()[pending.infohash].get("awaiting_cleanup") is False
@@ -1510,21 +1510,21 @@ class TestScratchResetParity:
         scratch.warned_default_quality = True
         scratch.last_rescan_monotonic = 1.0
         scratch.rescanned.add("h")
-        scratch.kept_scans["h"] = sonarr_import_module._KeptScan(
-            "/d", sonarr_import_module._CandidateScan(candidates=[], history=None), 1.0
+        scratch.kept_candidates["h"] = sonarr_import_module._KeptCandidates(
+            "/d", sonarr_import_module._FetchedCandidates(candidates=[], history=None), 1.0
         )
         scratch.issued_command_ids.add(42)
         scratch.completed_download_handling = False
-        scan = executor.scanner._scratch
+        scan = executor.candidate_fetcher._scratch
         scan.folder_pinned["h"] = True
-        scan.history_verdicts["h"] = DownloadHistoryVerdict(dead_tracked=True)
+        scan.history_states["h"] = DownloadHistoryState(history_closed=True)
         scan.path_mappings = []
         scan.translated_paths["/a"] = "/b"
 
         executor.reset()
 
         assert executor._scratch == sonarr_import_module._ImportScratch()
-        assert executor.scanner._scratch == sonarr_import_module._ScanScratch()
+        assert executor.candidate_fetcher._scratch == sonarr_import_module._FetchScratch()
 
 
 class TestInFlightManualImportGuard:
@@ -1551,7 +1551,7 @@ class TestInFlightManualImportGuard:
         # outcome reads "still importing", never "not ready") and its runtime is
         # credited back to the ready deadline.
         assert result.command_issued is True
-        assert result.deferred is True
+        assert result.paused is True
         assert sonarr.execute_calls == []
         assert sonarr.candidate_calls == []
 
@@ -1573,7 +1573,7 @@ class TestInFlightManualImportGuard:
 
         assert result.all_done is False
         assert result.command_issued is True
-        assert result.deferred is True
+        assert result.paused is True
         assert sonarr.execute_calls == []
 
     def test_completed_command_does_not_suppress(self) -> None:
@@ -1608,7 +1608,7 @@ class TestInFlightManualImportGuard:
 
         result = strat.import_completed(pending, "/d", AttemptKind.ORDINARY)
 
-        assert result.deferral is PauseReason.BUSY
+        assert result.pause_reason is PauseReason.BUSY
         assert result.command_issued is False
         assert sonarr.execute_calls == []
 
@@ -1958,7 +1958,7 @@ class TestRecordSnapshot:
     def test_statuses_classify_under_each_series_in_the_asked_order(self) -> None:
         # The grouping by series never reorders the answer, a repeat collapses, and an id no index
         # holds reads ABSENT rather than raising.
-        statuses = self._snapshot().map_statuses([201, 999, 101, 201], {})
+        statuses = self._snapshot().file_map_statuses([201, 999, 101, 201], {})
 
         assert list(statuses.by_id) == [201, 999, 101]
         assert statuses.by_id == {
@@ -2078,12 +2078,12 @@ class TestMultiSeriesImport:
         strat, sonarr = _make_sonarr_for_import(candidates=self._candidates(stray))
 
         polled = strat.import_completed(pending, "/d", AttemptKind.ORDINARY)
-        assert polled == replace(AttemptResult.waiting(), target_count=1)
+        assert polled == replace(AttemptResult.waiting(), file_map_episode_count=1)
         assert diagnostic_messages(recording, Severity.WARNING) == []
 
         deadline = strat.import_completed(pending, "/d", AttemptKind.FINAL)
 
-        assert deadline == replace(AttemptResult.waiting(), target_count=1)
+        assert deadline == replace(AttemptResult.waiting(), file_map_episode_count=1)
         assert sonarr.execute_calls == []
         [warning] = diagnostic_messages(recording, Severity.WARNING)
         assert "resolve to no series" in warning
@@ -2130,14 +2130,14 @@ class TestMultiSeriesImport:
         first = strat.import_completed(pending, "/d", AttemptKind.ORDINARY)
         assert first.all_done is False
         assert first.command_issued is True
-        assert (first.imported_count, first.target_count) == (1, 2)
+        assert (first.imported_count, first.file_map_episode_count) == (1, 2)
         assert _posted_series(sonarr) == {f"/d/{_OTHER_FILE}": 8}
 
         sonarr.episodes_by_series[8] = [sonarr_ep(1, 1, ep_id=201, release_group="SubGroup")]
         second = strat.import_completed(pending, "/d", AttemptKind.ORDINARY)
 
         assert second.all_done is True
-        assert (second.imported_count, second.target_count) == (2, 2)
+        assert (second.imported_count, second.file_map_episode_count) == (2, 2)
         assert len(sonarr.execute_calls) == 1
 
     def test_history_rows_land_under_the_admitting_claim(self) -> None:
@@ -2452,7 +2452,7 @@ def _entry_run(
 
     seadex: SeadexDict = {
         "NAN0": rg_group(
-            {_SEED_URL: url_item(url=_SEED_URL, infohash="h1", download=True, files=[f.basename for f in files])}
+            {_SEED_URL: url_item(url=_SEED_URL, infohash="h1", download=True, files=[f.file_name for f in files])}
         ),
     }
     run = _FakeRunServices(
@@ -3057,10 +3057,10 @@ class TestUnmatchedProbe:
         first = strat.import_completed(pending, "/d", AttemptKind.ORDINARY)
         second = strat.import_completed(pending, "/d", AttemptKind.ORDINARY)
 
-        assert first.unmatched_files == self._NAMES
+        assert first.unplaced_files == self._NAMES
         assert first.all_done is False
         assert first.command_issued is False
-        assert first.deferral is PauseReason.NONE
+        assert first.pause_reason is PauseReason.NONE
         assert second == first
         assert sonarr.execute_calls == []
         assert diagnostic_messages(recording, Severity.WARNING) == []
@@ -3071,7 +3071,7 @@ class TestUnmatchedProbe:
 
         result = strat.import_completed(pending, "/d", AttemptKind.ORDINARY)
 
-        assert result.unmatched_files == self._NAMES
+        assert result.unplaced_files == self._NAMES
 
     def test_every_file_excluded_at_grab_time_still_reads_unmatched(self) -> None:
         # Nothing of the record's own is on disk and nothing is authoritative: a recorded exclusion
@@ -3081,7 +3081,7 @@ class TestUnmatchedProbe:
 
         result = strat.import_completed(pending, "/d", AttemptKind.ORDINARY)
 
-        assert result.unmatched_files == self._NAMES
+        assert result.unplaced_files == self._NAMES
 
     def test_the_unmatched_names_leave_out_the_excluded_files(self) -> None:
         pending = self._unplaced_pair(excluded=self._NAMES[1:])
@@ -3089,7 +3089,7 @@ class TestUnmatchedProbe:
 
         result = strat.import_completed(pending, "/d", AttemptKind.ORDINARY)
 
-        assert result.unmatched_files == self._NAMES[:1]
+        assert result.unplaced_files == self._NAMES[:1]
         assert sonarr.execute_calls == []
 
     def test_a_hand_import_that_filled_every_intended_episode_reads_imported(self) -> None:
@@ -3125,7 +3125,7 @@ class TestUnmatchedProbe:
 
         result = strat.import_completed(pending, "/d", AttemptKind.ORDINARY)
 
-        assert result.unmatched_files == self._NAMES
+        assert result.unplaced_files == self._NAMES
 
     def test_a_seeded_file_beside_an_unmatched_one_imports_and_warns_once(self) -> None:
         # Something to import means the partial arm: today's once-a-run warning, no unmatched outcome.
@@ -3140,7 +3140,7 @@ class TestUnmatchedProbe:
         strat.import_completed(pending, "/d", AttemptKind.ORDINARY)
 
         assert first.command_issued is True
-        assert first.unmatched_files == ()
+        assert first.unplaced_files == ()
         assert sonarr.execute_calls[0][0][0].path == "/d/Show - 01 [1080p].mkv"
         warnings = [m for m in diagnostic_messages(recording, Severity.WARNING) if "could not be matched" in m]
         assert len(warnings) == 1
@@ -3286,7 +3286,7 @@ class TestOrderOnlyHalves:
         result = strat.import_completed(pending, "/d", AttemptKind.ORDINARY)
 
         assert result.left_for_hand_import == LeftForHandImport(
-            files=tuple(HeldFile(name, key) for name, key in zip(self._RUN[:2], self._KEYS, strict=True)),
+            files=tuple(HandImportFile(name, key) for name, key in zip(self._RUN[:2], self._KEYS, strict=True)),
             missing=(EpisodeKey(4, 1),),
         )
         assert sonarr.execute_calls == []
@@ -3538,7 +3538,7 @@ class TestFolderScanFallback:
         )
         # The dead-tracked note is debug-level; caplog needs a propagating logger.
         logger = debug_logger("pearlarr-dead-verdict")
-        strat._executor.scanner.logger = logger
+        strat._executor.candidate_fetcher.logger = logger
         pending = pending_import()
 
         with caplog.at_level("DEBUG"):
@@ -3832,7 +3832,7 @@ class TestFolderScanFallback:
         sonarr.commands_return = [_RESCAN_BEFORE_ADD]
         strat.import_completed(pending, "/d/Show", AttemptKind.ORDINARY)
 
-        assert blocked.deferral is PauseReason.BUSY
+        assert blocked.pause_reason is PauseReason.BUSY
         assert sonarr.execute_calls == []
 
     @pytest.mark.parametrize("history", [_clean_history(), None], ids=["clean", "unreadable"])

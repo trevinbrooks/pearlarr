@@ -26,7 +26,7 @@ from pearlarr.import_quality import QualityParts, quality_parts_from_model, reso
 from pearlarr.pending_import import PendingImport
 from pearlarr.sonarr_state import (
     ContentPaths,
-    DownloadMatch,
+    DownloadIdentifiers,
     QueueState,
     classify_queue,
     in_flight_disk_commands,
@@ -186,7 +186,7 @@ class TestClassifyRealQueue:
     def test_import_blocked_steps_in(self) -> None:
         records = self._records_by_download()
         unmatched = records["1111111111111111111111111111111111111111"]
-        assert classify_queue(unmatched) is QueueState.STEP_IN
+        assert classify_queue(unmatched) is QueueState.STUCK
 
     def test_paused_download_waits(self) -> None:
         records = self._records_by_download()
@@ -262,13 +262,15 @@ class TestManualImportInFlightFixture:
         # A started and a queued ManualImport share the downloadId: a fresh import would stack a duplicate.
         assert manual_import_in_flight(
             _commands(),
-            DownloadMatch(_STACKED_DOWNLOAD_ID, ContentPaths(raw="/downloads", sonarr_visible="/downloads"), set()),
+            DownloadIdentifiers(
+                _STACKED_DOWNLOAD_ID, ContentPaths(raw="/downloads", sonarr_visible="/downloads"), set()
+            ),
         )
 
     def test_unrelated_download_id_is_not_in_flight(self) -> None:
         assert not manual_import_in_flight(
             _commands(),
-            DownloadMatch(
+            DownloadIdentifiers(
                 "ffffffffffffffffffffffffffffffffffffffff",
                 ContentPaths(raw="/nowhere", sonarr_visible="/nowhere"),
                 set(),
@@ -279,7 +281,7 @@ class TestManualImportInFlightFixture:
         # The folder import carries no downloadId. Episode 5645 is ours.
         assert manual_import_in_flight(
             _commands(),
-            DownloadMatch("no-such-hash", ContentPaths(raw="/nowhere", sonarr_visible="/nowhere"), {5645}),
+            DownloadIdentifiers("no-such-hash", ContentPaths(raw="/nowhere", sonarr_visible="/nowhere"), {5645}),
         )
 
     def test_disk_guard_defers_on_a_queued_disk_command(self) -> None:
@@ -386,7 +388,7 @@ class TestCapturedSpecialsEndToEnd:
 
         result = specials.strat.import_completed(pending, "/downloads/yamada", AttemptKind.ORDINARY)
 
-        assert result.target_count == len(specials.files)
+        assert result.file_map_episode_count == len(specials.files)
         assert result.imported_count == 0
 
     def test_import_progress_is_read_only_and_counts_seed_targets(self) -> None:
@@ -456,4 +458,4 @@ class TestCapturedSpecialsEndToEnd:
         result = specials.strat.import_completed(pending, "/downloads/yamada", AttemptKind.ORDINARY)
 
         assert progress == ImportProgress(0, 0, determinate=False)
-        assert (result.imported_count, result.target_count) == (0, 1)
+        assert (result.imported_count, result.file_map_episode_count) == (0, 1)

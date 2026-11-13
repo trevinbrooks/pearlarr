@@ -20,7 +20,7 @@ from .output import (
     WaitSnapshot,
     emit_to_hub,
 )
-from .wait_types import NO_HELD_BACK, LeftForHandImport, Outcome, OutcomeKind
+from .wait_types import NO_HAND_IMPORT_FILES, LeftForHandImport, Outcome, OutcomeKind
 
 
 @dataclass(frozen=True, slots=True)
@@ -31,7 +31,7 @@ class WaitOutcomeRow:
     outcome: Outcome
     carried_over: bool = False
     """Whether the record predates this run. A fresh grab tallies as `added`, never `imported`."""
-    left_for_hand_import: LeftForHandImport = NO_HELD_BACK
+    left_for_hand_import: LeftForHandImport = NO_HAND_IMPORT_FILES
     """On the `UNMATCHED` and `PARTIAL` outcomes, the on-disk files left for a hand import."""
 
 
@@ -58,7 +58,7 @@ class WaitResult:
     def carried_over_imported(self) -> int:
         """Count of carried-over imported torrents, the run tally's `imported` bucket."""
 
-        return sum(1 for row in self.rows if row.carried_over and row.outcome.category is OutcomeKind.IMPORTED)
+        return sum(1 for row in self.rows if row.carried_over and row.outcome.kind is OutcomeKind.IMPORTED)
 
     @property
     def left(self) -> int:
@@ -72,22 +72,22 @@ class WaitResult:
 
         return self._count(OutcomeKind.FAILED)
 
-    def _count(self, category: OutcomeKind) -> int:
-        return sum(1 for row in self.rows if row.outcome.category is category)
+    def _count(self, kind: OutcomeKind) -> int:
+        return sum(1 for row in self.rows if row.outcome.kind is kind)
 
 
-class Graduation(NamedTuple):
+class FinishedRow(NamedTuple):
     """A newly-terminal torrent paired with its outcome."""
 
     view: TorrentView
     outcome: Outcome
 
 
-def graduations(seen: AbstractSet[str], snapshot: WaitSnapshot) -> list[Graduation]:
+def newly_finished(seen: AbstractSet[str], snapshot: WaitSnapshot) -> list[FinishedRow]:
     """The terminal torrents not yet emitted, in snapshot order."""
 
     return [
-        Graduation(torrent, torrent.outcome)
+        FinishedRow(torrent, torrent.outcome)
         for torrent in snapshot.torrents
         if torrent.phase is Phase.FINISHED and torrent.outcome is not None and torrent.key not in seen
     ]
@@ -96,7 +96,7 @@ def graduations(seen: AbstractSet[str], snapshot: WaitSnapshot) -> list[Graduati
 class WaitView(ABC):
     """The interface the engine drives while waiting. Every method MUST be total (never raise)."""
 
-    wants_telemetry: bool = True
+    wants_download_progress: bool = True
     """Whether the render surfaces show per-row download telemetry."""
 
     @abstractmethod
@@ -117,13 +117,13 @@ class HubWaitView(WaitView):
         logger: logging.Logger,
         *,
         pulse_s: float,
-        wants_telemetry: bool,
+        wants_download_progress: bool,
         kind: WaitKind,
     ) -> None:
         self._logger = logger
         self._pulse_s = pulse_s
         self._kind = kind
-        self.wants_telemetry = wants_telemetry
+        self.wants_download_progress = wants_download_progress
         # Process-global ids through the late-resolving hub seam.
         self._factory = ScopeFactory(emit_to_hub)
         self._scope: WaitScope | None = None
@@ -143,10 +143,10 @@ class HubWaitView(WaitView):
                 # WaitStarted precedes any first-snapshot graduations.
                 self._scope = self._factory.wait(total=snapshot.total(), pulse_s=self._pulse_s, kind=self._kind)
             scope = self._scope
-            for view, outcome in graduations(self._seen, snapshot):
+            for view, outcome in newly_finished(self._seen, snapshot):
                 self._seen.add(view.key)
-                self._tally[outcome.category] += 1
-                scope.graduated(
+                self._tally[outcome.kind] += 1
+                scope.row_finished(
                     RowFinished(
                         label=view.label,
                         outcome=outcome,
@@ -205,6 +205,6 @@ def make_wait_view(
     return HubWaitView(
         logger,
         pulse_s=float(max(poll_s, digest_interval)),
-        wants_telemetry=console is not None and features.can_redraw,
+        wants_download_progress=console is not None and features.can_redraw,
         kind=kind,
     )

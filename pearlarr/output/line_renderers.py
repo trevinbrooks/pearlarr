@@ -67,7 +67,7 @@ from .events import (
 )
 from .hub import Renderer
 from .scope_path import OpenScopes
-from .wait_lines import PulseThrottle, held_back_names, held_back_sentences
+from .wait_lines import PulseThrottle, hand_import_names, hand_import_sentences
 from ..log import LOG_NAME
 from ..wait_types import OutcomeKind
 
@@ -170,10 +170,10 @@ class _Fact:
     component: str = ""
 
 
-def _boot_outcome_word(category: OutcomeKind) -> str:
-    if category is OutcomeKind.FAILED:
+def _boot_outcome_word(kind: OutcomeKind) -> str:
+    if kind is OutcomeKind.FAILED:
         return "failed"
-    if category is OutcomeKind.LEFT:
+    if kind is OutcomeKind.LEFT:
         return "warned"
     return "ok"
 
@@ -254,16 +254,16 @@ def _fields_grab_action(event: GrabAction) -> tuple[Field, ...]:
     return tuple(fields)
 
 
-def _fields_graduated(event: RowFinished) -> tuple[Field, ...]:
+def _fields_row_finished(event: RowFinished) -> tuple[Field, ...]:
     fields: list[Field] = [Field("title", event.label)]
     if event.files is not None:
         fields.append(Field("files", event.files))
-    held = event.left_for_hand_import
-    if held.explained_by_order:
-        lead, reason = held_back_sentences(held)
+    left = event.left_for_hand_import
+    if left.explained_by_order:
+        lead, reason = hand_import_sentences(left)
         fields.append(Field("detail", f"{lead} {reason}."))
-    if held.files:
-        fields.append(Field("unmatched_files", "; ".join(held_back_names(held))))
+    if left.files:
+        fields.append(Field("unmatched_files", "; ".join(hand_import_names(left))))
     fields.append(Field("waited_s", event.waited_s))
     return tuple(fields)
 
@@ -309,7 +309,7 @@ def _fields_summary_head(summary: ArrRunSummary) -> tuple[Field, ...]:
         fields.append(Field("held_by_cap", tally.held_by_cap))
     if summary.wait_mode_on:
         for key, value in (
-            ("queued", tally.queued),
+            ("queued", tally.downloading),
             ("downloaded", tally.downloaded),
             ("imported", tally.imported),
         ):
@@ -467,7 +467,7 @@ def _fact_of(event: Event, crumbs: OpenScopes, severity: Severity) -> _Fact | No
         case WaitStarted(scope=scope, kind=kind):
             return _Fact("wait_started", severity, kind.live_verb, _fields_wait_started(event), scope, "wait")
         case RowFinished(scope=scope, outcome=outcome):
-            return _Fact("torrent_graduated", severity, outcome.word, _fields_graduated(event), scope, "wait")
+            return _Fact("torrent_graduated", severity, outcome.word, _fields_row_finished(event), scope, "wait")
         case WaitFinished(scope=scope):
             return _Fact("wait_finished", severity, "complete", _fields_wait_finished(event), scope, "wait")
         case ArrRunFinished(arr=arr):

@@ -171,6 +171,6 @@ def test_an_outage_leaves_a_new_series_without_orders_and_serves_the_stored_ones
     indexes = strat._series_indexes({1, 2})
     assert indexes[1].orders["dvd"].id_by_key == {(1, 1): 12, (1, 2): 11}
     assert indexes[2].orders == {}
-    seed = strat._reconciler._read_seed(pending_import(series_id=1), [11])
-    assert seed is not None
-    assert seed.snapshot.by_series[1].episodes.orders["dvd"].keys == {(1, 1), (1, 2)}
+    statuses = strat._reconciler._read_statuses(pending_import(series_id=1), [11])
+    assert statuses is not None
+    assert statuses.snapshot.by_series[1].episodes.orders["dvd"].keys == {(1, 1), (1, 2)}

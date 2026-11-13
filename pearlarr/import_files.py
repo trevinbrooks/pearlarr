@@ -20,7 +20,7 @@ _SAMPLE_TOKENS = ("sample",)
 class CandidateFile:
     """An on-disk manual-import candidate, reduced to what planning needs (`candidate_files`)."""
 
-    basename: str
+    normalized_name: str
     """The normalized match key against our authoritative map."""
 
     path: str
@@ -58,20 +58,20 @@ def candidate_files(candidates: Iterable[ManualImportCandidate]) -> dict[str, Ca
     read by attribute and the raw DTO never reaches the decision path.
     """
 
-    by_basename: dict[str, CandidateFile] = {}
+    by_name: dict[str, CandidateFile] = {}
     for candidate in candidates:
         path = candidate.path
         if not path:
             continue
         base = normalized_leaf(path)
-        by_basename[base] = CandidateFile(
-            basename=base,
+        by_name[base] = CandidateFile(
+            normalized_name=base,
             path=path,
             quality=candidate.quality,
             is_sample=_rejection_matches(candidate, _SAMPLE_TOKENS),
             is_already_imported=_rejection_matches(candidate, _ALREADY_IMPORTED_TOKENS),
         )
-    return by_basename
+    return by_name
 
 
 @dataclass(frozen=True, slots=True)
@@ -100,7 +100,7 @@ class UnplacedInFolder:
         return tuple(name for name in self.reported if name not in self.hand_import_files)
 
     @property
-    def unmatched(self) -> tuple[str, ...]:
+    def when_nothing_placed(self) -> tuple[str, ...]:
         """The names a hand import must place when nothing is mapped.
 
         The reported ones, or every name when the record excluded them all.
@@ -109,17 +109,15 @@ class UnplacedInFolder:
         return self.reported or self.names
 
 
-def disk_leftover(
-    pending: PendingImport, candidates_by_basename: Mapping[str, CandidateFile], file_map: FileEpisodeMap
+def unplaced_in_folder(
+    pending: PendingImport, candidates_by_name: Mapping[str, CandidateFile], file_map: FileEpisodeMap
 ) -> UnplacedInFolder:
     """The video files among `candidates_by_basename` that `mapped` lacks, split by what `pending` says of them."""
 
-    video = {
-        name for name, candidate in candidates_by_basename.items() if is_video_candidate(file_name(candidate.path))
-    }
+    video = {name for name, candidate in candidates_by_name.items() if is_video_candidate(file_name(candidate.path))}
     # SeaDex's order keeps the output stable from poll to poll. A file the list doesn't name follows in disk order.
     listed = dict.fromkeys(name for name in (normalized_leaf(f) for f in pending.seadex_files) if name in video)
-    ordered = [*listed, *(name for name in candidates_by_basename if name in video and name not in listed)]
+    ordered = [*listed, *(name for name in candidates_by_name if name in video and name not in listed)]
     names = tuple(name for name in ordered if name not in file_map)
     excluded = set(pending.excluded_files)
     reported = tuple(name for name in names if name not in excluded)
@@ -160,7 +158,7 @@ class ImportDecision:
     Candidates only supply the on-disk `path` and rejection flags (folded into `action`).
     """
 
-    basename: str
+    normalized_name: str
     action: ImportAction
     path: str | None
     """The on-disk path, supplied by the matched candidate."""
@@ -171,8 +169,8 @@ class ImportDecision:
 
 
 def plan_import_files(
-    authoritative_map: FileEpisodeMap,
-    candidates_by_basename: Mapping[str, CandidateFile],
+    file_map: FileEpisodeMap,
+    candidates_by_name: Mapping[str, CandidateFile],
     statuses: EpisodeStatuses,
 ) -> list[ImportDecision]:
     """Decide, for each file in OUR map (never the candidates), whether to import it and onto which episodes.
@@ -182,26 +180,26 @@ def plan_import_files(
     """
 
     decisions: list[ImportDecision] = []
-    for basename, ep_ids in authoritative_map.items():
-        candidate = candidates_by_basename.get(basename)
+    for name, ep_ids in file_map.items():
+        candidate = candidates_by_name.get(name)
         if candidate is None:
-            decisions.append(ImportDecision(basename, ImportAction.MISSING, None, None, ep_ids))
+            decisions.append(ImportDecision(name, ImportAction.MISSING, None, None, ep_ids))
             continue
         if candidate.is_sample:
-            decisions.append(ImportDecision(basename, ImportAction.SAMPLE, candidate.path, None, ()))
+            decisions.append(ImportDecision(name, ImportAction.SAMPLE, candidate.path, None, ()))
             continue
         import_ids = statuses.import_ids(ep_ids)
         if not import_ids:
             # No episode needs this file, so Sonarr's already-imported rejection agrees with us. Report `ALREADY`
             # when Sonarr raised it, else `SKIP_DONE`.
             action = ImportAction.ALREADY if candidate.is_already_imported else ImportAction.SKIP_DONE
-            decisions.append(ImportDecision(basename, action, candidate.path, None, ep_ids))
+            decisions.append(ImportDecision(name, action, candidate.path, None, ep_ids))
             continue
         # An episode still needs this file, so import it even when Sonarr says it's already imported. Sonarr says
         # that about any file already on the episode, including the one we're replacing.
         decisions.append(
             ImportDecision(
-                basename,
+                name,
                 ImportAction.IMPORT,
                 candidate.path,
                 candidate.quality,

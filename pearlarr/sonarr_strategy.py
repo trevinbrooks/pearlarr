@@ -219,7 +219,7 @@ class SonarrStrategy(ArrStrategy[SonarrItem]):
         A record's series is read at grab and import whether or not its own item needs a scan.
         """
 
-        series_ids = self._episodes.needs_scan_ids(items)
+        series_ids = self._episodes.titles_needing_check(items)
         if self._services.import_wait_mode is not ImportWaitMode.OFF:
             pending_imports = self._services.pending_imports
             series_ids.extend(
@@ -492,7 +492,7 @@ class SonarrStrategy(ArrStrategy[SonarrItem]):
         self,
         pending: PendingImport,
         content_path: str,
-        attempt: AttemptKind,
+        attempt_kind: AttemptKind,
     ) -> AttemptResult:
         """One reconcile/import poll for a completed download (delegated).
 
@@ -500,7 +500,7 @@ class SonarrStrategy(ArrStrategy[SonarrItem]):
         decision lives on `ImportReconciler`.
         """
 
-        return self._reconciler.import_completed(pending, content_path, attempt)
+        return self._reconciler.import_completed(pending, content_path, attempt_kind)
 
     @override
     def import_progress(self, pending: PendingImport) -> ImportProgress:

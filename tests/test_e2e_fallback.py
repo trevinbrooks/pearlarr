@@ -235,7 +235,7 @@ class _World:
     """Recorded qBittorrent `setCategory` calls, as `(hashes, category)`."""
     download_scan_statuses: list[int] = field(default_factory=list[int])
     folder_scans: int = 0
-    files_landed: bool = False
+    files_imported: bool = False
     cmd_seq: int = 100
     manual_commands: list[tuple[int, dict[str, Json]]] = field(default_factory=list[tuple[int, dict[str, Json]]])
     rescans: dict[int, datetime] = field(default_factory=dict[int, datetime])
@@ -263,7 +263,7 @@ class _World:
             self.cmd_seq += 1
             if name.casefold() == "manualimport":
                 self.manual_commands.append((self.cmd_seq, body))
-                self.files_landed = True
+                self.files_imported = True
             elif name.casefold() == "refreshmonitoreddownloads":
                 self.rescans[self.cmd_seq] = datetime.now(UTC)
             return self.cmd_seq
@@ -305,7 +305,7 @@ class _World:
         """The series' episodes: bare until the ManualImport lands the files."""
 
         with self.lock:
-            landed = self.files_landed
+            imported = self.files_imported
         rows: list[Json] = []
         for number, (ep_id, name) in enumerate(_EPISODES, start=1):
             row: dict[str, Json] = {
@@ -314,10 +314,10 @@ class _World:
                 "seasonNumber": 1,
                 "episodeNumber": number,
                 "monitored": True,
-                "hasFile": landed,
-                "episodeFileId": ep_id * 100 if landed else 0,
+                "hasFile": imported,
+                "episodeFileId": ep_id * 100 if imported else 0,
             }
-            if landed:
+            if imported:
                 row["episodeFile"] = {
                     "id": ep_id * 100,
                     "relativePath": f"Season 01/{name}",
@@ -714,7 +714,7 @@ def _drive(tmp_path: Path, monkeypatch: pytest.MonkeyPatch, scenario: _Scenario)
     monkeypatch.setattr(arr_http, "BACKOFF_BASE_S", 0.0)
 
     # Imported unseen: the episode files are already there when the run starts.
-    world = _World(scenario, files_landed=scenario.imported_unseen or scenario.landed_by_hand)
+    world = _World(scenario, files_imported=scenario.imported_unseen or scenario.landed_by_hand)
     with _serve(world) as (sonarr_url, qbit_url):
         # qBittorrent configured -> a real (non-preview) run whose blocking
         # monitor drives the carried-over record. 1s polls keep it quick.

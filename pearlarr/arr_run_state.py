@@ -122,7 +122,7 @@ class ArrRunStats:
         default_factory=list[NeedsActionRow],
     )
     unmonitored: int = 0
-    queued: int = 0
+    downloading: int = 0
     """Carried-over `QUEUED` records (a this-run grab stays in `added`)."""
     downloaded: int = 0
     """Carried-over `DOWNLOADED` records (a this-run grab stays in `added`)."""

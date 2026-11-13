@@ -4,7 +4,13 @@
 from typing import ClassVar
 
 from pearlarr.episode_state import EpisodeFileStatus
-from pearlarr.import_files import CandidateFile, UnplacedInFolder, candidate_files, disk_leftover, plan_import_files
+from pearlarr.import_files import (
+    CandidateFile,
+    UnplacedInFolder,
+    candidate_files,
+    plan_import_files,
+    unplaced_in_folder,
+)
 
 from .builders import manual_candidate, pending_import, target_statuses
 
@@ -13,7 +19,7 @@ def _candidate(basename: str, *, sample: bool = False, already: bool = False) ->
     """A file Sonarr found under the download, flagged as a sample or as already imported on request."""
 
     return CandidateFile(
-        basename=basename,
+        normalized_name=basename,
         path=f"/dl/{basename}",
         quality=None,
         is_sample=sample,
@@ -34,7 +40,7 @@ class TestPlanImportFiles:
         decisions = plan_import_files(
             amap, cands, target_statuses({11: EpisodeFileStatus.ABSENT, 12: EpisodeFileStatus.TRUSTED})
         )
-        by_base = {d.basename: d for d in decisions}
+        by_base = {d.normalized_name: d for d in decisions}
         assert by_base["a.mkv"].action == "import"
         assert by_base["a.mkv"].episode_ids == (11,)
         assert by_base["b.mkv"].action == "skip_done"
@@ -44,7 +50,7 @@ class TestPlanImportFiles:
         cands = {"a.mkv": _candidate("a.mkv"), "rogue.mkv": _candidate("rogue.mkv")}
         decisions = plan_import_files(amap, cands, target_statuses({11: EpisodeFileStatus.ABSENT}))
         # Only our mapped file is decided on. The rogue on-disk file is ignored.
-        assert {d.basename for d in decisions} == {"a.mkv"}
+        assert {d.normalized_name for d in decisions} == {"a.mkv"}
 
     def test_intended_file_missing_from_disk_is_flagged_not_dropped(self) -> None:
         amap = {"a.mkv": (11,), "b.mkv": (12,)}
@@ -52,7 +58,7 @@ class TestPlanImportFiles:
         decisions = plan_import_files(
             amap, cands, target_statuses({11: EpisodeFileStatus.ABSENT, 12: EpisodeFileStatus.ABSENT})
         )
-        by_base = {d.basename: d for d in decisions}
+        by_base = {d.normalized_name: d for d in decisions}
         assert by_base["a.mkv"].action == "import"
         assert by_base["b.mkv"].action == "missing"
 
@@ -142,7 +148,7 @@ class TestDiskLeftover:
             hand_import_files=["c.mkv"],
         )
 
-        leftover = disk_leftover(pending, scan, {"mapped.mkv": (101,)})
+        leftover = unplaced_in_folder(pending, scan, {"mapped.mkv": (101,)})
 
         assert leftover == UnplacedInFolder(
             names=("a.mkv", "b.mkv", "c.mkv", "extra.mkv"),

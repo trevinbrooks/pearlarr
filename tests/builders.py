@@ -95,7 +95,14 @@ from pearlarr.sonarr_strategy import SonarrStrategy
 from pearlarr.stamps import STAMP_FORMAT, parse_stamp, stamp_of
 from pearlarr.torrent_service import AddResult, AddStatus, TorrentService
 from pearlarr.tvdb_orders import NO_ORDERS, CachedOrders, IndexOrders, OrderRow, OrdersByName
-from pearlarr.wait_types import NO_HELD_BACK, AttemptResult, HeldFile, ImportWaitMode, LeftForHandImport, PauseReason
+from pearlarr.wait_types import (
+    NO_HAND_IMPORT_FILES,
+    AttemptResult,
+    HandImportFile,
+    ImportWaitMode,
+    LeftForHandImport,
+    PauseReason,
+)
 from pearlarr.window_placement import WindowedPlacements
 
 from .fakes import FakeClock, FakeRadarrClient, FakeSkyHookClient, FakeSonarrClient
@@ -1129,7 +1136,7 @@ def episode_snapshot(
     *,
     episodes: EpisodeIndex | None = None,
     trusted: TrustedGroups | None = None,
-    own: TorrentGroup = _NO_OWN_RELEASE,
+    torrent_group: TorrentGroup = _NO_OWN_RELEASE,
     owned_episode_sizes: Mapping[int, int] | None = None,
 ) -> EpisodeSnapshot:
     """An empty series index trusting no group, with no owned sizes unless given.
@@ -1139,8 +1146,8 @@ def episode_snapshot(
 
     return EpisodeSnapshot(
         episodes=episode_index([]) if episodes is None else episodes,
-        trusted=trusted or {},
-        own=own,
+        trusted_groups=trusted or {},
+        torrent_group=torrent_group,
         owned_episode_sizes=owned_episode_sizes or {},
     )
 
@@ -1455,14 +1462,14 @@ def order_only_held_back(
 
     halves = ("[grp] Show Ending S1 - 01 [ABCD1234].mkv", "[grp] Show Ending S1 - 02 [ABCD1234].mkv")
     keys = (OrderOnlyKey("dvd", EpisodeKey(7, 1)), OrderOnlyKey("dvd", EpisodeKey(7, 2)))
-    files = tuple(HeldFile(half, key) for half, key in zip(halves, keys, strict=True))
+    files = tuple(HandImportFile(half, key) for half, key in zip(halves, keys, strict=True))
     return LeftForHandImport(files=files, missing=missing, untrusted=untrusted)
 
 
 def held_files(*names: str) -> LeftForHandImport:
     """Files held back with no order-only key."""
 
-    return LeftForHandImport(files=tuple(HeldFile(name) for name in names))
+    return LeftForHandImport(files=tuple(HandImportFile(name) for name in names))
 
 
 def import_probe(
@@ -1470,11 +1477,11 @@ def import_probe(
     all_done: bool = True,
     command_issued: bool = False,
     imported_count: int = 0,
-    target_count: int = 0,
-    deferral: PauseReason = PauseReason.NONE,
+    file_map_episode_count: int = 0,
+    pause_reason: PauseReason = PauseReason.NONE,
     placements: FileEpisodeMap | None = None,
     unmatched_files: tuple[str, ...] = (),
-    left_for_hand_import: LeftForHandImport = NO_HELD_BACK,
+    left_for_hand_import: LeftForHandImport = NO_HAND_IMPORT_FILES,
 ) -> AttemptResult:
     """An `ImportProbe` defaulting to the verified-import outcome (`files_present`)."""
 
@@ -1482,10 +1489,10 @@ def import_probe(
         all_done=all_done,
         command_issued=command_issued,
         imported_count=imported_count,
-        target_count=target_count,
-        deferral=deferral,
+        file_map_episode_count=file_map_episode_count,
+        pause_reason=pause_reason,
         placements=placements or {},
-        unmatched_files=unmatched_files,
+        unplaced_files=unmatched_files,
         left_for_hand_import=left_for_hand_import,
     )
 

@@ -770,7 +770,7 @@ def _specimen_stream() -> tuple[ev.Event, ...]:
             ),
         ),
         unmonitored=0,
-        queued=0,
+        downloading=0,
         downloaded=0,
         imported=1,
         held_by_cap=0,

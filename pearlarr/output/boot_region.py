@@ -78,7 +78,7 @@ def slow_line(label: str, features: ConsoleFeatures) -> str:
     return indent_string(f"{label}{_ellipsis(features)}")
 
 
-def graduation_line(event: BootStepFinished, features: ConsoleFeatures) -> str:
+def step_finished_line(event: BootStepFinished, features: ConsoleFeatures) -> str:
     """A finished step's durable ledger line: glyph + label · detail · elapsed."""
 
     glyph = event.outcome.glyph_for(use_unicode=features.can_unicode)
@@ -139,7 +139,7 @@ class BootRegion(LiveRegion):
             case BootStepFinished():
                 if self._admits_durable():
                     style = event.outcome.style if features.can_color else ""
-                    self._print(console, Text(graduation_line(event, features), style=style))
+                    self._print(console, Text(step_finished_line(event, features), style=style))
             case BootReady(elapsed_s=elapsed_s):
                 # Teardown order: the spinner is torn down before the capstone
                 # prints (section_left stays the teardown for capstone-less ends).

@@ -13,7 +13,7 @@ from typing import TYPE_CHECKING, assert_never
 from .trace import CapturedTrace
 from ..config import Arr
 from ..releases import NO_ANOTHER_TITLES_COUNTS, AnotherTitlesCounts
-from ..wait_types import NO_HELD_BACK, LeftForHandImport, Outcome, OutcomeKind
+from ..wait_types import NO_HAND_IMPORT_FILES, LeftForHandImport, Outcome, OutcomeKind
 
 if TYPE_CHECKING:
     from ..arr_run_state import ArrRunStats
@@ -397,7 +397,7 @@ class ArrRunTally:
     no_mappings: int
     needs_action: tuple[NeedsActionFact, ...]
     unmonitored: int
-    queued: int
+    downloading: int
     downloaded: int
     imported: int
     held_by_cap: int
@@ -427,7 +427,7 @@ class ArrRunTally:
                 for n in stats.needs_action
             ),
             unmonitored=stats.unmonitored,
-            queued=stats.queued,
+            downloading=stats.downloading,
             downloaded=stats.downloaded,
             imported=stats.imported,
             held_by_cap=stats.held_by_cap,
@@ -506,7 +506,7 @@ class TorrentView:
     """"Files inserted" bar: both set = determinate, both None = indeterminate."""
     import_total: int | None = None
     """On a TERMINAL imported row, the ledger's final files count (`phase_elapsed_s` freezes as its wait clock)."""
-    left_for_hand_import: LeftForHandImport = NO_HELD_BACK
+    left_for_hand_import: LeftForHandImport = NO_HAND_IMPORT_FILES
     """On a TERMINAL unmatched or partial row, the on-disk files left for a hand import."""
     speed_history: tuple[int, ...] = ()
     """Speed samples (bytes/s, stalled = 0), newest last, bounded to `SPARK_SAMPLES`."""
@@ -607,7 +607,7 @@ class RowFinished:
     outcome: Outcome
     files: int | None
     waited_s: float
-    left_for_hand_import: LeftForHandImport = NO_HELD_BACK
+    left_for_hand_import: LeftForHandImport = NO_HAND_IMPORT_FILES
     """On the `UNMATCHED` and `PARTIAL` outcomes, the on-disk files left for a hand import."""
     scope: ScopeId | None = None
 
@@ -801,10 +801,10 @@ type Event = (
 )
 
 
-def _category_severity(category: OutcomeKind) -> Severity:
-    if category is OutcomeKind.FAILED:
+def _kind_severity(kind: OutcomeKind) -> Severity:
+    if kind is OutcomeKind.FAILED:
         return Severity.ERROR
-    if category is OutcomeKind.LEFT:
+    if kind is OutcomeKind.LEFT:
         return Severity.WARNING
     return Severity.INFO
 
@@ -826,8 +826,8 @@ def severity_of(event: Event) -> Severity:
             # itself, so an outcome-based tally would double-count it.
             return Severity.INFO
         case RowFinished(outcome=outcome):
-            # Category-based. wait_graduation_lines carries the same level.
-            return _category_severity(outcome.category)
+            # Category-based. row_finished_lines carries the same level.
+            return _kind_severity(outcome.kind)
         case (
             PearlarrStarted()
             | ScheduledRunStarted()

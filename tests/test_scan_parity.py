@@ -489,7 +489,7 @@ def _rich_stats() -> ArrRunStats:
             ),
         ],
         unmonitored=1,
-        queued=1,
+        downloading=1,
         downloaded=1,
         imported=2,
         held_by_cap=3,
@@ -733,7 +733,7 @@ def _wait_off_stats() -> ArrRunStats:
             ),
         ],
         # Non-zero pending counters that must stay hidden with the wait mode off.
-        queued=2,
+        downloading=2,
         downloaded=1,
         imported=3,
     )

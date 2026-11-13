@@ -201,7 +201,7 @@ class TestPendingImportPlacements:
             seadex_files=["Show - 01.mkv", "Show - 02.mkv"],
             excluded_files=excluded_files,
         )
-        assert pending.seed_coverage().accounted == (not pending.unplaced_names())
+        assert pending.file_map_coverage().accounted == (not pending.unplaced_names())
 
 
 class TestSizesByEpisode:
@@ -514,7 +514,7 @@ class TestPendingImportRoundTrip:
         healed = pending.with_placements({"show - 01 [1080p].mkv": (101,)})
 
         assert PendingImport.from_json(healed.to_json(), guards={}) == healed
-        assert (pending.seed_coverage().file_map, healed.seed_coverage().file_map) == (False, True)
+        assert (pending.file_map_coverage().file_map, healed.file_map_coverage().file_map) == (False, True)
 
     def test_from_json_ignores_a_blob_guards_key(self) -> None:
         # A frozen grab-time copy in the blob (the divergence the guard_facts row exists to kill)

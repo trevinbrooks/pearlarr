@@ -399,7 +399,7 @@ class TestPendingSnapshot:
         assert any(isinstance(e, TitleHeader) for e in events)
         # The reporter never touches the counters - the engine owns drop/count.
         assert state.stats.imported == 0
-        assert state.stats.queued == 0
+        assert state.stats.downloading == 0
         assert state.stats.downloaded == 0
 
     def test_missing_state_renders_nothing(self) -> None:
@@ -438,7 +438,7 @@ class TestSummaryPendingCounters:
 
     def test_counters_render_when_feature_on_and_non_zero(self) -> None:
         state = ArrRunState(arr=Arr.SONARR)
-        state.stats.queued = 2
+        state.stats.downloading = 2
         state.stats.downloaded = 1
         state.stats.imported = 3
 
@@ -454,7 +454,7 @@ class TestSummaryPendingCounters:
 
     def test_counters_hidden_when_feature_off(self) -> None:
         state = ArrRunState(arr=Arr.SONARR)
-        state.stats.queued = 2
+        state.stats.downloading = 2
         state.stats.downloaded = 1
         state.stats.imported = 3
 

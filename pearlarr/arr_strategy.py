@@ -17,7 +17,7 @@ class ImportCompleter(ABC):
         self,
         pending: PendingImport,
         content_path: str,
-        attempt: AttemptKind,
+        attempt_kind: AttemptKind,
     ) -> AttemptResult:
         """Reconcile one completed download with the arr (one poll).
 
