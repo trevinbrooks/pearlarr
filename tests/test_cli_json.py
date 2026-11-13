@@ -43,7 +43,7 @@ def _build_cache(tmp_path: Path) -> None:
 
     store = CacheStore.load(str(tmp_path / "cache.db"), config_hash="x")
     store.update_cached_title(Arr.SONARR, 7, {"name": "X"})
-    store.save(preview=False)
+    store.save(dry_run=False)
     store.close()
 
 

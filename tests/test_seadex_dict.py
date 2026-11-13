@@ -185,7 +185,7 @@ class TestGetSeadexDict:
 
     def test_keeps_private_only_group(self) -> None:
         # A group with no public option is kept here. It's only dropped later in
-        # reduce_overlapping_downloads if the Arr already has a match.
+        # reduce_overlapping_grabs if the Arr already has a match.
         filt = make_release_filter(private_releases="warn", want_best=False, prefer_dual_audio=False)
         entry = _entry(
             _torrent(release_group="A", url="priv", tracker=Tracker.ANIMEBYTES),

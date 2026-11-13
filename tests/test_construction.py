@@ -81,11 +81,11 @@ def test_services_read_selection_staleness_from_the_store_at_construction() -> N
     config = make_config()
 
     vouched_old = FakeCacheStore()
-    vouched_old.vouch_selection(Arr.SONARR, "a-previous-digest")
+    vouched_old.store_selection_hash(Arr.SONARR, "a-previous-digest")
     assert ArrRunServices(make_run_deps(config=config, cache_store=vouched_old), Arr.SONARR).selection_changed is True
 
     vouched_current = FakeCacheStore()
-    vouched_current.vouch_selection(Arr.SONARR, config.selection_hash())
+    vouched_current.store_selection_hash(Arr.SONARR, config.selection_hash())
     assert (
         ArrRunServices(make_run_deps(config=config, cache_store=vouched_current), Arr.SONARR).selection_changed is False
     )

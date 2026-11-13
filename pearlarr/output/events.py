@@ -12,7 +12,7 @@ from typing import TYPE_CHECKING, assert_never
 
 from .trace import CapturedTrace
 from ..config import Arr
-from ..releases import NO_ELSEWHERE, ElsewhereCounts
+from ..releases import NO_ANOTHER_TITLES_COUNTS, AnotherTitlesCounts
 from ..wait_types import NO_HELD_BACK, LeftForHandImport, Outcome, OutcomeKind
 
 if TYPE_CHECKING:
@@ -264,7 +264,7 @@ class ReleaseSkipped:
     tracker: str
     reason: SkipReason
     url: str | None = None
-    counts: ElsewhereCounts = NO_ELSEWHERE
+    counts: AnotherTitlesCounts = NO_ANOTHER_TITLES_COUNTS
     """For `SkipReason.PLACED_ELSEWHERE`, how many of the release's files are another title's and how many nothing
     placed."""
     scope: ScopeId | None = None

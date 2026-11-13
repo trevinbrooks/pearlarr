@@ -127,5 +127,5 @@ def _warn_on_foreign_schema(payload: dict[str, JsonValue]) -> None:
     version = payload.get("schema_version")
     if version == JSON_SCHEMA_VERSION:
         return
-    descriptor = "no schema_version" if version is None else f"schema_version {version}"
-    hub_warn(f"Stream states {descriptor}; this Pearlarr reads {JSON_SCHEMA_VERSION} - rendering best-effort")
+    version_text = "no schema_version" if version is None else f"schema_version {version}"
+    hub_warn(f"Stream states {version_text}; this Pearlarr reads {JSON_SCHEMA_VERSION} - rendering best-effort")

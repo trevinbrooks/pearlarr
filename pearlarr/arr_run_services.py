@@ -197,7 +197,7 @@ class ArrRunDeps:
         with boot.step("Opening cache"):
             cache_store = CacheStore.load(
                 cache,
-                config_hash=app_config.checksum(),
+                config_hash=app_config.config_hash(),
             )
 
         # AniList client gateway: owns the in-memory meta cache (al_cache) and the
@@ -328,7 +328,7 @@ class ArrRunServices:
         # Whether matching preferences moved since a prior full pass vouched for
         # this arr's cached verdicts. `_unchanged_cached_title` then re-checks every
         # cached entry, and the run loop re-vouches once a full sweep finishes.
-        self._selection_stale = deps.cache_store.selection_changed(arr, deps.config.selection_hash())
+        self._selection_changed = deps.cache_store.selection_changed(arr, deps.config.selection_hash())
 
         # All per-run state (stats tally, running torrent count, the active
         # title/url/coverage, the run clock, the private-only skip flags, plus the
@@ -369,7 +369,7 @@ class ArrRunServices:
         `_skippable_entry` applies.
         """
 
-        return self._selection_stale
+        return self._selection_changed
 
     def bind_arr_run(self, state: ArrRunState) -> None:
         """Bind the fresh run context to the hub and its per-id collaborators.
@@ -425,7 +425,7 @@ class ArrRunServices:
         after a switch back from fallback mode.
         """
 
-        if self._config.seadex.ignore_seadex_update_times or self._selection_stale or al_id in self._dirty_al_ids:
+        if self._config.seadex.ignore_seadex_update_times or self._selection_changed or al_id in self._dirty_al_ids:
             return None
         cached = self.cache_store.get_cached_title(self._ctx.arr, al_id)
         if cached is None or not cached.cached_under(sd_entry.updated_at):
@@ -605,7 +605,7 @@ class ArrRunServices:
         sd_entry = self._seadex.entry(al_id)
         if isinstance(sd_entry, SeaDexMiss):
             if sd_entry is SeaDexMiss.UNREACHABLE:
-                self._reporter.log_seadex_outage_skip(self._ctx, al_id)
+                self._reporter.log_seadex_unreachable(self._ctx, al_id)
             else:
                 self._reporter.log_no_sd_entry(self._ctx, al_id)
             return None

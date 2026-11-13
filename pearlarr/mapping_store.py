@@ -53,7 +53,7 @@ SOURCE_ANIDB = "anidb"
 # Digest stamped for a source populated from a pre-parsed config object rather than
 # a downloaded file: it has no file to hash, and must never be considered fresh
 # against a real file digest, so it is always repopulated.
-INLINE_DIGEST = "<inline>"
+INLINE_HASH = "<inline>"
 
 # anime_ids query columns the resolver may filter / DISTINCT on. The Literal is
 # the checker-facing vocabulary. The tuple is the runtime allowlist guarding the
@@ -329,15 +329,15 @@ class MappingStore:
 
     # -- freshness -----------------------------------------------------------
 
-    def is_fresh(self, name: str, digest: str) -> bool:
+    def is_fresh(self, name: str, source_hash: str) -> bool:
         """True iff `name`'s stored digest equals `digest` (so no re-parse)."""
 
         row = self._conn.execute("SELECT digest FROM meta WHERE name = ?", (name,)).fetchone()
-        return row is not None and row[0] == digest
+        return row is not None and row[0] == source_hash
 
     # -- atomic populate -----------------------------------------------------
 
-    def _replace(self, name: str, digest: str, write: Callable[[sqlite3.Connection], None]) -> None:
+    def _replace(self, name: str, source_hash: str, write: Callable[[sqlite3.Connection], None]) -> None:
         """Clear `name`'s tables, run `write` to repopulate, stamp the digest.
 
         All in ONE transaction (legacy/deferred control means the first DELETE opens
@@ -353,18 +353,18 @@ class MappingStore:
             self._conn.execute(
                 "INSERT INTO meta (name, digest) VALUES (?, ?) "
                 "ON CONFLICT (name) DO UPDATE SET digest = excluded.digest",
-                (name, digest),
+                (name, source_hash),
             )
             self._conn.commit()
         except BaseException:
             self._conn.rollback()
             raise
 
-    def replace_anime_ids(self, digest: str, rows: Iterable[AnimeIdRow]) -> None:
+    def replace_anime_ids(self, source_hash: str, rows: Iterable[AnimeIdRow]) -> None:
         """Atomically replace the anime_ids rows.
 
         Args:
-            digest: sha256 of the source file (or `INLINE_DIGEST`).
+            source_hash: sha256 of the source file (or `INLINE_DIGEST`).
             rows: `AnimeIdRow` tuples (column order), one per Kometa record.
         """
 
@@ -375,17 +375,17 @@ class MappingStore:
                 rows,
             )
 
-        self._replace(SOURCE_ANIME_IDS, digest, write)
+        self._replace(SOURCE_ANIME_IDS, source_hash, write)
 
     def replace_anibridge(
         self,
-        digest: str,
+        source_hash: str,
         rows: AniBridgeRows,
     ) -> None:
         """Atomically replace the anibridge tables.
 
         Args:
-            digest: sha256 of the source file (or `INLINE_DIGEST`).
+            source_hash: sha256 of the source file (or `INLINE_DIGEST`).
             rows: The row tables one graph flattens to
                 (a `range` row's `start_ep` NULL marks a present-but-empty
                 season).
@@ -411,18 +411,18 @@ class MappingStore:
                 rows.aliases,
             )
 
-        self._replace(SOURCE_ANIBRIDGE, digest, write)
+        self._replace(SOURCE_ANIBRIDGE, source_hash, write)
 
     def replace_anidb(
         self,
-        digest: str,
+        source_hash: str,
         mappings: Iterable[AnidbMappingRow],
         ambiguous: Iterable[int],
     ) -> None:
         """Atomically replace the anidb tables.
 
         Args:
-            digest: sha256 of the source file (or `INLINE_DIGEST`).
+            source_hash: sha256 of the source file (or `INLINE_DIGEST`).
             mappings: `AnidbMappingRow` tuples (column order).
             ambiguous: anidb ids appearing in more than one `<anime>` element.
         """
@@ -437,7 +437,7 @@ class MappingStore:
                 ((anidb_id,) for anidb_id in ambiguous),
             )
 
-        self._replace(SOURCE_ANIDB, digest, write)
+        self._replace(SOURCE_ANIDB, source_hash, write)
 
     # -- anime_ids queries ---------------------------------------------------
 

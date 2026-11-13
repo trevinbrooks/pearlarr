@@ -685,7 +685,7 @@ class MappingsSettings(_ConfigBase):
     """
 
 
-def _digest_canonical(value: object) -> Json:
+def _canonical_for_hash(value: object) -> Json:
     """A model-dump value as digest-stable JSON data.
 
     Sets are sorted (their iteration order is hash-seed dependent, so it differs
@@ -699,9 +699,9 @@ def _digest_canonical(value: object) -> Json:
     if isinstance(value, (set, frozenset)):
         return sorted(str(item) for item in cast("set[object] | frozenset[object]", value))
     if isinstance(value, (list, tuple)):
-        return [_digest_canonical(item) for item in cast("list[object] | tuple[object, ...]", value)]
+        return [_canonical_for_hash(item) for item in cast("list[object] | tuple[object, ...]", value)]
     if isinstance(value, dict):
-        return {str(key): _digest_canonical(item) for key, item in cast("dict[object, object]", value).items()}
+        return {str(key): _canonical_for_hash(item) for key, item in cast("dict[object, object]", value).items()}
     return str(value)
 
 
@@ -762,10 +762,10 @@ class AppConfig(_ConfigBase):
     # Set once by `load` after construction (frozen models still allow private-attr
     # assignment). The file checksum is the cache descriptor, the path feeds error text.
     _path: str = PrivateAttr(default="")
-    _checksum: str = PrivateAttr(default="")
+    _config_hash: str = PrivateAttr(default="")
     _migration: MigrationOutcome | None = PrivateAttr(default=None)
     # Memoized on first `selection_hash()` call (immutable model). "" = not yet computed.
-    _selection_digest: str = PrivateAttr(default="")
+    _selection_hash: str = PrivateAttr(default="")
 
     @field_validator("config_version")
     @classmethod
@@ -804,14 +804,14 @@ class AppConfig(_ConfigBase):
         # type checkers don't read it as a frozen-field mutation (it isn't - these are
         # private attrs, set once here at load and never again).
         object.__setattr__(config, "_path", path)
-        object.__setattr__(config, "_checksum", _config_checksum(raw, environ))
+        object.__setattr__(config, "_config_hash", _hash_config_bytes(raw, environ))
         object.__setattr__(config, "_migration", migration)
         return config
 
-    def checksum(self) -> str:
+    def config_hash(self) -> str:
         """MD5 hex digest of the config file's bytes at load time (cache descriptor)."""
 
-        return self._checksum
+        return self._config_hash
 
     def selection_hash(self) -> str:
         """SHA-256 hex over the selection-affecting settings (the cache's re-check key).
@@ -827,16 +827,16 @@ class AppConfig(_ConfigBase):
         Memoized (the model is immutable) so the run's repeated reads hash once.
         """
 
-        if not self._selection_digest:
+        if not self._selection_hash:
             payload: dict[str, object] = {
                 "rules": SELECTION_RULES_VERSION,
                 "seadex": self.seadex.model_dump(mode="python"),
                 "languages_dual": self.imports.languages_dual,
                 "languages_single": self.imports.languages_single,
             }
-            canonical = json.dumps(_digest_canonical(payload), sort_keys=True, separators=(",", ":"))
-            object.__setattr__(self, "_selection_digest", sha256(canonical.encode("utf-8")).hexdigest())
-        return self._selection_digest
+            canonical = json.dumps(_canonical_for_hash(payload), sort_keys=True, separators=(",", ":"))
+            object.__setattr__(self, "_selection_hash", sha256(canonical.encode("utf-8")).hexdigest())
+        return self._selection_hash
 
     def migration(self) -> MigrationOutcome | None:
         """The in-memory schema migration `load` applied, or None for a current file.
@@ -1011,7 +1011,7 @@ def _deep_merge(base: dict[str, object], overlay: Mapping[str, object]) -> None:
             base[key] = value
 
 
-def _config_checksum(raw: bytes, environ: Mapping[str, str]) -> str:
+def _hash_config_bytes(raw: bytes, environ: Mapping[str, str]) -> str:
     """MD5 over the config bytes plus the qualifying env overrides (the cache descriptor).
 
     Folding the overrides in means an env change registers as a config change,
@@ -1081,7 +1081,7 @@ def _validate_with_env(parsed: object, environ: Mapping[str, str]) -> AppConfig:
     return AppConfig.model_validate(parsed)
 
 
-def upgrade_config_file(path: str, expected_checksum: str | None = None) -> ConfigUpgrade:
+def upgrade_config_file(path: str, expected_hash: str | None = None) -> ConfigUpgrade:
     """Rewrite an older config file at the current schema, keeping a backup.
 
     The rewrite is the current annotated template with this file's values (and
@@ -1109,7 +1109,7 @@ def upgrade_config_file(path: str, expected_checksum: str | None = None) -> Conf
     path = os.path.realpath(path)
     with open(path, "rb") as f:
         raw = f.read()
-    if expected_checksum is not None and _config_checksum(raw, os.environ) != expected_checksum:
+    if expected_hash is not None and _hash_config_bytes(raw, os.environ) != expected_hash:
         raise ConfigRewriteError(
             f"{path} changed while the run was starting - left untouched (the next run reads the new file)",
         )

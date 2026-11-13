@@ -36,7 +36,7 @@ from pearlarr.arr_models import ArrFiles, SonarrEpisode
 from pearlarr.config import Arr
 from pearlarr.output import Severity
 from pearlarr.planner import GrabPlan, GrabPlanner
-from pearlarr.releases import GrabHold, GroupReleases, PlannedGrab, Release, ReleaseEpisode, releases_to_grab
+from pearlarr.releases import GroupReleases, PlacementSkip, PlannedGrab, Release, ReleaseEpisode, releases_to_grab
 
 from .builders import arr_releases, make_planner, rg_group, sonarr_ep, url_item
 
@@ -46,11 +46,11 @@ class TestGetAnyToDownload:
 
     def test_false_when_none_flagged(self) -> None:
         seadex = {"A": rg_group({"u": url_item(download=False)})}
-        assert GrabPlanner.get_any_to_download(seadex) is False
+        assert GrabPlanner.any_to_grab(seadex) is False
 
     def test_true_when_one_flagged(self) -> None:
         seadex = {"A": rg_group({"u": url_item(download=True)})}
-        assert GrabPlanner.get_any_to_download(seadex) is True
+        assert GrabPlanner.any_to_grab(seadex) is True
 
 
 class TestFlaggedUrls:
@@ -75,7 +75,7 @@ class TestReduceOverlappingDownloads:
             "A": rg_group({"u1": url_item(download=True)}),
             "B": rg_group({"u2": url_item(download=True)}),
         }
-        planner.reduce_overlapping_downloads(seadex)
+        planner.reduce_overlapping_grabs(seadex)
         assert seadex["A"].releases["u1"].to_grab is True
         assert seadex["B"].releases["u2"].to_grab is True
 
@@ -86,7 +86,7 @@ class TestReduceOverlappingDownloads:
             "A": rg_group({"u1": url_item(download=True)}),
             "B": rg_group({"u2": url_item(download=True)}),
         }
-        planner.reduce_overlapping_downloads(seadex)
+        planner.reduce_overlapping_grabs(seadex)
         assert seadex["A"].releases["u1"].to_grab is True
         assert seadex["B"].releases["u2"].to_grab is False
 
@@ -96,7 +96,7 @@ class TestReduceOverlappingDownloads:
             "Priv": rg_group({"u1": url_item(download=True, is_public=False)}),
             "Pub": rg_group({"u2": url_item(download=True, is_public=True)}),
         }
-        skips = planner.reduce_overlapping_downloads(seadex)
+        skips = planner.reduce_overlapping_grabs(seadex)
         assert seadex["Pub"].releases["u2"].to_grab is True
         assert seadex["Priv"].releases["u1"].to_grab is False
         # A preferred public keeper over a preferred private pick is unremarkable
@@ -106,12 +106,12 @@ class TestReduceOverlappingDownloads:
     def test_private_only_skips_and_flags(self) -> None:
         planner = make_planner()
         seadex = {"Priv": rg_group({"u1": url_item(download=True, is_public=False)})}
-        skips = planner.reduce_overlapping_downloads(seadex)
+        skips = planner.reduce_overlapping_grabs(seadex)
         assert seadex["Priv"].releases["u1"].to_grab is False
         assert skips.warned is True
         assert skips.groups == ["Priv"]
         # Plain-reason mutant killer: no fallback rides, so no stale hold.
-        assert skips.stale_held is False
+        assert skips.outdated is False
         assert len(skips.notices) == 1
         assert skips.notices[0].groups == ["Priv"]
         assert skips.notices[0].reason == "private-only (private releases not supported)"
@@ -132,7 +132,7 @@ class TestReduceOverlappingDownloads:
                 all_episodes=[ReleaseEpisode(season=1, episode=2, size=0)],
             ),
         }
-        skips = planner.reduce_overlapping_downloads(seadex)
+        skips = planner.reduce_overlapping_grabs(seadex)
         assert seadex["Priv"].releases["u1"].to_grab is False
         assert seadex["Fall"].releases["u2"].to_grab is True
         assert skips.warned is True
@@ -149,12 +149,12 @@ class TestReduceOverlappingDownloads:
             "Priv": rg_group({"u1": url_item(download=True, is_public=False)}),
             "Fall": rg_group({"u2": url_item(download=False, is_public=True, is_fallback=True)}),
         }
-        skips = planner.reduce_overlapping_downloads(seadex)
+        skips = planner.reduce_overlapping_grabs(seadex)
         assert seadex["Priv"].releases["u1"].to_grab is False
         assert seadex["Fall"].releases["u2"].to_grab is False
         assert skips.warned is True
         assert skips.groups == ["Priv"]
-        assert skips.stale_held is False
+        assert skips.outdated is False
         assert [(n.reason, n.severity) for n in skips.notices] == [
             ("private-only (private releases not supported)", Severity.WARNING),
         ]
@@ -173,7 +173,7 @@ class TestReduceOverlappingDownloads:
             ),
             "Pub": rg_group({"u3": url_item(download=True, is_public=True)}),
         }
-        skips = planner.reduce_overlapping_downloads(seadex)
+        skips = planner.reduce_overlapping_grabs(seadex)
         assert seadex["Pub"].releases["u3"].to_grab is True
         assert seadex["Mixed"].releases["u1"].to_grab is False
         assert seadex["Mixed"].releases["u2"].to_grab is False
@@ -198,7 +198,7 @@ class TestReduceOverlappingDownloads:
                 },
             ),
         }
-        planner.reduce_overlapping_downloads(seadex)
+        planner.reduce_overlapping_grabs(seadex)
         assert seadex["MixedA"].releases["u1"].to_grab is True
         assert seadex["MixedA"].releases["u2"].to_grab is True
         assert seadex["MixedB"].releases["u3"].to_grab is False
@@ -213,12 +213,12 @@ class TestReduceOverlappingDownloads:
             "Priv": rg_group({"u1": url_item(download=True, is_public=False, upgrade=True)}),
             "Fall": rg_group({"u2": url_item(download=False, is_public=True, is_fallback=True)}),
         }
-        skips = planner.reduce_overlapping_downloads(seadex)
+        skips = planner.reduce_overlapping_grabs(seadex)
         assert seadex["Fall"].releases["u2"].to_grab is False
         assert seadex["Priv"].releases["u1"].to_grab is False
         assert skips.warned is True
         assert skips.groups == ["Priv"]
-        assert skips.stale_held is True
+        assert skips.outdated is True
         assert len(skips.notices) == 1
         assert skips.notices[0].groups == ["Priv"]
         assert skips.notices[0].severity is Severity.WARNING
@@ -243,7 +243,7 @@ class TestReduceOverlappingDownloads:
             ),
             "Pub": rg_group({"u4": url_item(download=False, is_public=True)}),
         }
-        skips = planner.reduce_overlapping_downloads(seadex)
+        skips = planner.reduce_overlapping_grabs(seadex)
         assert seadex["Pub"].releases["u4"].to_grab is True
         assert seadex["MixedPub"].releases["u2"].to_grab is False
         assert seadex["MixedPub"].releases["u3"].to_grab is False
@@ -260,7 +260,7 @@ class TestReduceOverlappingDownloads:
             "Priv": rg_group({"u1": url_item(download=True, is_public=False, upgrade=True)}),
             "Pub": rg_group({"u2": url_item(download=False, is_public=True)}),
         }
-        skips = planner.reduce_overlapping_downloads(seadex)
+        skips = planner.reduce_overlapping_grabs(seadex)
         assert seadex["Pub"].releases["u2"].to_grab is True
         assert seadex["Priv"].releases["u1"].to_grab is False
         assert skips.warned is False
@@ -272,7 +272,7 @@ class TestReduceOverlappingDownloads:
         assert skips.notices[0].reason == "private-only; grabbing public alternative Pub"
 
     def test_degraded_keeper_holds_when_only_a_fallback_could_stand_in(self) -> None:
-        # A mixed group's unflagged (owned) public url makes it public_flagged
+        # A mixed group's unflagged (owned) public url makes it public_to_grab
         # and no group is fully addable. The only unflagged public alternative
         # is a FALLBACK, which never replaces M's owned stale copy: the keeper
         # degrades to M (the add-time gate then refuses its private url) and the
@@ -287,12 +287,12 @@ class TestReduceOverlappingDownloads:
             ),
             "F": rg_group({"u3": url_item(download=False, is_public=True, is_fallback=True)}),
         }
-        skips = planner.reduce_overlapping_downloads(seadex)
+        skips = planner.reduce_overlapping_grabs(seadex)
         assert seadex["F"].releases["u3"].to_grab is False
         assert seadex["M"].releases["u1"].to_grab is False
         assert seadex["M"].releases["u2"].to_grab is True
         assert skips.warned is False
-        assert skips.stale_held is True
+        assert skips.outdated is True
         assert skips.notices == []
 
     def test_degraded_keeper_promotes_preferred_public_on_size_mismatch(self) -> None:
@@ -308,12 +308,12 @@ class TestReduceOverlappingDownloads:
             ),
             "P": rg_group({"u3": url_item(download=False, is_public=True)}),
         }
-        skips = planner.reduce_overlapping_downloads(seadex)
+        skips = planner.reduce_overlapping_grabs(seadex)
         assert seadex["P"].releases["u3"].to_grab is True
         assert seadex["M"].releases["u1"].to_grab is False
         assert seadex["M"].releases["u2"].to_grab is False
         assert skips.warned is False
-        assert skips.stale_held is False
+        assert skips.outdated is False
         assert len(skips.notices) == 1
         assert skips.notices[0].groups == ["M"]
         assert skips.notices[0].severity is Severity.INFO
@@ -333,7 +333,7 @@ class TestReduceOverlappingDownloads:
             ),
             "P": rg_group({"u3": url_item(download=False, is_public=True)}),
         }
-        skips = planner.reduce_overlapping_downloads(seadex)
+        skips = planner.reduce_overlapping_grabs(seadex)
         assert seadex["Mixed"].releases["u1"].to_grab is True
         assert seadex["Mixed"].releases["u2"].to_grab is True
         assert seadex["P"].releases["u3"].to_grab is False
@@ -347,7 +347,7 @@ class TestReduceOverlappingDownloads:
             "Priv": rg_group({"u1": url_item(download=True, is_public=False)}),
             "Fall": rg_group({"u2": url_item(download=True, is_public=True, is_fallback=True)}),
         }
-        skips = planner.reduce_overlapping_downloads(seadex)
+        skips = planner.reduce_overlapping_grabs(seadex)
         assert seadex["Fall"].releases["u2"].to_grab is True
         assert seadex["Priv"].releases["u1"].to_grab is False
         assert skips.warned is False
@@ -372,7 +372,7 @@ class TestReduceOverlappingDownloads:
                 },
             ),
         }
-        skips = planner.reduce_overlapping_downloads(seadex)
+        skips = planner.reduce_overlapping_grabs(seadex)
         assert seadex["M"].releases["u_pub"].to_grab is True
         assert seadex["M"].releases["u_priv"].to_grab is True
         assert skips.warned is False
@@ -393,7 +393,7 @@ class TestReduceOverlappingDownloads:
                 },
             ),
         }
-        skips = planner.reduce_overlapping_downloads(seadex)
+        skips = planner.reduce_overlapping_grabs(seadex)
         assert seadex["M"].releases["m_pub"].to_grab is True
         assert seadex["M"].releases["m_priv"].to_grab is False  # promotion is public-only
         assert seadex["P"].releases["p"].to_grab is False
@@ -415,7 +415,7 @@ class TestReduceOverlappingDownloads:
                 all_episodes=[ReleaseEpisode(season=1, episode=2, size=0)],
             ),
         }
-        planner.reduce_overlapping_downloads(seadex)
+        planner.reduce_overlapping_grabs(seadex)
         assert seadex["A"].releases["u1"].to_grab is True
         assert seadex["B"].releases["u2"].to_grab is True
 
@@ -434,7 +434,7 @@ class TestReduceOverlappingDownloads:
                 all_episodes=[ReleaseEpisode(season=2, episode=1, size=0)],
             ),
         }
-        skips = planner.reduce_overlapping_downloads(seadex)
+        skips = planner.reduce_overlapping_grabs(seadex)
         assert seadex["P1"].releases["u1"].to_grab is False
         assert seadex["P2"].releases["u2"].to_grab is False
         assert skips.warned is True
@@ -454,12 +454,12 @@ class TestReduceOverlappingDownloads:
             "Fall1": rg_group({"u2": url_item(download=False, is_public=True, is_fallback=True)}, all_episodes=e1),
             "Priv2": rg_group({"u3": url_item(download=True, is_public=False)}, all_episodes=e2),
         }
-        skips = planner.reduce_overlapping_downloads(seadex)
+        skips = planner.reduce_overlapping_grabs(seadex)
         stale_reason = (
             "private-only; your copy is outdated (its file size no longer matches the release) "
             "and only a fallback covers it"
         )
-        assert skips.stale_held is True
+        assert skips.outdated is True
         assert skips.groups == ["Priv1", "Priv2"]
         assert [n.reason for n in skips.notices] == [stale_reason, "private-only (private releases not supported)"]
 
@@ -486,7 +486,7 @@ class TestReduceOverlappingDownloads:
             ),
             "PubB": rg_group({"u5": url_item(download=False, is_public=True)}, all_episodes=e2),
         }
-        skips = planner.reduce_overlapping_downloads(seadex)
+        skips = planner.reduce_overlapping_grabs(seadex)
         assert seadex["PubA"].releases["u2"].to_grab is True
         assert seadex["PubB"].releases["u5"].to_grab is True
         assert seadex["PrivA"].releases["u1"].to_grab is False
@@ -515,7 +515,7 @@ class TestSameGroupDuplicateDedup:
                 },
             ),
         }
-        planner.reduce_overlapping_downloads(seadex)
+        planner.reduce_overlapping_grabs(seadex)
         assert seadex["A"].releases["u1"].to_grab is True
         assert seadex["A"].releases["u2"].to_grab is False
 
@@ -532,7 +532,7 @@ class TestSameGroupDuplicateDedup:
                 },
             ),
         }
-        skips = planner.reduce_overlapping_downloads(seadex)
+        skips = planner.reduce_overlapping_grabs(seadex)
         assert seadex["Pub"].releases["u2"].to_grab is True
         assert seadex["Pub"].releases["u3"].to_grab is False
         assert seadex["Priv"].releases["u1"].to_grab is False
@@ -548,7 +548,7 @@ class TestSameGroupDuplicateDedup:
                 },
             ),
         }
-        planner.reduce_overlapping_downloads(seadex)
+        planner.reduce_overlapping_grabs(seadex)
         assert seadex["A"].releases["u1"].to_grab is True
         assert seadex["A"].releases["u2"].to_grab is True
 
@@ -564,7 +564,7 @@ class TestSameGroupDuplicateDedup:
                 },
             ),
         }
-        planner.reduce_overlapping_downloads(seadex)
+        planner.reduce_overlapping_grabs(seadex)
         assert seadex["A"].releases["u1"].to_grab is True
         assert seadex["A"].releases["u2"].to_grab is False
 
@@ -581,7 +581,7 @@ class TestSameGroupDuplicateDedup:
                 },
             ),
         }
-        planner.reduce_overlapping_downloads(seadex)
+        planner.reduce_overlapping_grabs(seadex)
         assert seadex["A"].releases["u1"].to_grab is True
         assert seadex["A"].releases["u2"].to_grab is True
 
@@ -597,7 +597,7 @@ class TestSameGroupDuplicateDedup:
                 },
             ),
         }
-        planner.reduce_overlapping_downloads(seadex)
+        planner.reduce_overlapping_grabs(seadex)
         assert seadex["A"].releases["u1"].to_grab is True
         assert seadex["A"].releases["u2"].to_grab is True
 
@@ -611,7 +611,7 @@ class TestSameGroupDuplicateDedup:
                 },
             ),
         }
-        planner.reduce_overlapping_downloads(seadex)
+        planner.reduce_overlapping_grabs(seadex)
         assert seadex["A"].releases["u1"].to_grab is True
         assert seadex["A"].releases["u2"].to_grab is True
 
@@ -630,7 +630,7 @@ class TestSameGroupDuplicateDedup:
                 all_episodes=[ReleaseEpisode(season=2, episode=1, size=0)],
             ),
         }
-        planner.reduce_overlapping_downloads(seadex)
+        planner.reduce_overlapping_grabs(seadex)
         assert seadex["A"].releases["u1"].to_grab is True
         assert seadex["B"].releases["u2"].to_grab is True
 
@@ -643,7 +643,7 @@ class TestFilterByReleaseGroup:
         seadex = {"NewRG": rg_group({"u1": url_item(episodes=[], infohash="h1")})}
         result = planner.plan(
             seadex_dict=seadex,
-            arr_releases=ArrFiles(tagged={"OldRG": (100,)}),
+            arr_releases=ArrFiles(by_group={"OldRG": (100,)}),
             ep_list=None,
         )
         assert result.seadex_dict["NewRG"].releases["u1"].to_grab is True
@@ -653,7 +653,7 @@ class TestFilterByReleaseGroup:
         seadex = {"RG": rg_group({"u1": url_item(episodes=[], size=[100], infohash="h1")})}
         result = planner.plan(
             seadex_dict=seadex,
-            arr_releases=ArrFiles(tagged={"RG": (100,)}),
+            arr_releases=ArrFiles(by_group={"RG": (100,)}),
             ep_list=None,
         )
         assert result.seadex_dict["RG"].releases["u1"].to_grab is False
@@ -663,7 +663,7 @@ class TestFilterByReleaseGroup:
         seadex = {"RG": rg_group({"u1": url_item(episodes=[], size=[200], infohash="h1")})}
         result = planner.plan(
             seadex_dict=seadex,
-            arr_releases=ArrFiles(tagged={"RG": (100,)}),
+            arr_releases=ArrFiles(by_group={"RG": (100,)}),
             ep_list=None,
         )
         assert result.seadex_dict["RG"].releases["u1"].to_grab is True
@@ -676,7 +676,7 @@ class TestFilterByReleaseGroup:
         seadex = {"Ember": rg_group({"u1": url_item(episodes=[], size=[100], infohash="h1")})}
         result = planner.plan(
             seadex_dict=seadex,
-            arr_releases=ArrFiles(tagged={"EMBER": (100,)}),
+            arr_releases=ArrFiles(by_group={"EMBER": (100,)}),
             ep_list=None,
         )
         assert result.seadex_dict["Ember"].releases["u1"].to_grab is False
@@ -690,7 +690,7 @@ class TestFilterByReleaseGroup:
         seadex = {"Ember": rg_group({"u1": url_item(episodes=[], size=[200], infohash="h1")})}
         result = planner.plan(
             seadex_dict=seadex,
-            arr_releases=ArrFiles(tagged={"EMBER": (100,)}),
+            arr_releases=ArrFiles(by_group={"EMBER": (100,)}),
             ep_list=None,
         )
         assert result.seadex_dict["Ember"].releases["u1"].to_grab is True
@@ -716,7 +716,7 @@ class TestFilterByReleaseGroup:
         seadex = {"RG": rg_group({"u1": url_item(episodes=[], size=[100], infohash="h1")})}
         result = planner.plan(
             seadex_dict=seadex,
-            arr_releases=ArrFiles(tagged={"RG": (100,)}),
+            arr_releases=ArrFiles(by_group={"RG": (100,)}),
             ep_list=[sonarr_ep(0, 21, size=100, release_group="RG")],
         )
         assert result.seadex_dict["RG"].releases["u1"].to_grab is False
@@ -732,7 +732,7 @@ class TestFilterByReleaseGroup:
         }
         result = planner.plan(
             seadex_dict=seadex,
-            arr_releases=ArrFiles(tagged={"Other": (200,)}),
+            arr_releases=ArrFiles(by_group={"Other": (200,)}),
             ep_list=[sonarr_ep(0, 21, size=200, release_group="Other")],
         )
         assert result.seadex_dict["RG"].releases["u1"].to_grab is False
@@ -746,7 +746,7 @@ class TestFilterByReleaseGroup:
         seadex = {"RG": rg_group({"u1": url_item(episodes=episodes, size=[100, 999], infohash="h1")})}
         result = planner.plan(
             seadex_dict=seadex,
-            arr_releases=ArrFiles(tagged={"RG": (100,)}),
+            arr_releases=ArrFiles(by_group={"RG": (100,)}),
             ep_list=[sonarr_ep(1, 1, size=100, release_group="RG")],
         )
         assert result.seadex_dict["RG"].releases["u1"].to_grab is True
@@ -763,7 +763,7 @@ class TestFilterByReleaseGroup:
         }
         result = planner.plan(
             seadex_dict=seadex,
-            arr_releases=ArrFiles(tagged={"Era-Raws": (100,)}),
+            arr_releases=ArrFiles(by_group={"Era-Raws": (100,)}),
             ep_list=[sonarr_ep(1, 1, size=100, release_group="Era-Raws")],
         )
         assert result.seadex_dict["Era-Raws"].releases["u1"].to_grab is False
@@ -779,7 +779,7 @@ class TestFilterByReleaseGroup:
         }
         result = planner.plan(
             seadex_dict=seadex,
-            arr_releases=ArrFiles(tagged={"SubsPlease": (100,)}),
+            arr_releases=ArrFiles(by_group={"SubsPlease": (100,)}),
             ep_list=[sonarr_ep(1, 1, size=100, release_group="SubsPlease")],
         )
         assert result.seadex_dict["Era-Raws"].releases["u1"].to_grab is True
@@ -795,7 +795,7 @@ class TestFilterByReleaseGroup:
         }
         result = planner.plan(
             seadex_dict=seadex,
-            arr_releases=ArrFiles(tagged={"Era-Raws": (100,)}),
+            arr_releases=ArrFiles(by_group={"Era-Raws": (100,)}),
             ep_list=[sonarr_ep(1, 1, size=100, release_group="Era-Raws")],
         )
         assert result.seadex_dict["Era-Raws"].releases["u1"].to_grab is True
@@ -872,7 +872,7 @@ class TestFilterByReleaseGroup:
         }
         result = planner.plan(
             seadex_dict=seadex,
-            arr_releases=ArrFiles(tagged={"Era-Raws": (999,)}),
+            arr_releases=ArrFiles(by_group={"Era-Raws": (999,)}),
             ep_list=[
                 sonarr_ep(1, 1, size=100, release_group=None),
                 sonarr_ep(1, 2, size=999, release_group="Era-Raws"),
@@ -954,7 +954,7 @@ class TestFilterByReleaseGroup:
         }
         result = planner.plan(
             seadex_dict=seadex,
-            arr_releases=ArrFiles(tagged={"Other": (100,)}),
+            arr_releases=ArrFiles(by_group={"Other": (100,)}),
             ep_list=[sonarr_ep(1, 1, size=100, release_group="Other", ep_id=101)],
         )
         assert result.guards.owned_episodes == ()
@@ -980,7 +980,7 @@ class TestFilterByReleaseGroup:
         }
         result = planner.plan(
             seadex_dict=seadex,
-            arr_releases=ArrFiles(tagged={"Era-Raws": (100, 999)}),
+            arr_releases=ArrFiles(by_group={"Era-Raws": (100, 999)}),
             ep_list=[
                 sonarr_ep(1, 1, size=100, release_group="Era-Raws"),
                 sonarr_ep(1, 2, size=999, release_group="Era-Raws"),
@@ -998,7 +998,7 @@ class TestFilterByReleaseGroup:
         seadex = {"Ember": rg_group({"u1": url_item(episodes=[], size=[100], infohash="h1")})}
         result = planner.plan(
             seadex_dict=seadex,
-            arr_releases=ArrFiles(untagged=(100,)),
+            arr_releases=ArrFiles(no_group=(100,)),
             ep_list=None,
         )
         assert result.seadex_dict["Ember"].releases["u1"].to_grab is False
@@ -1011,7 +1011,7 @@ class TestFilterByReleaseGroup:
         seadex = {"Ember": rg_group({"u1": url_item(episodes=[], size=[100, 7], infohash="h1")})}
         result = planner.plan(
             seadex_dict=seadex,
-            arr_releases=ArrFiles(untagged=(100,)),
+            arr_releases=ArrFiles(no_group=(100,)),
             ep_list=None,
         )
         assert result.seadex_dict["Ember"].releases["u1"].to_grab is False
@@ -1034,7 +1034,7 @@ class TestFilterByReleaseGroup:
         seadex = {"Ember": rg_group({"u1": url_item(episodes=[], size=[0, 100], infohash="h1")})}
         result = planner.plan(
             seadex_dict=seadex,
-            arr_releases=ArrFiles(untagged=(0,)),
+            arr_releases=ArrFiles(no_group=(0,)),
             ep_list=None,
         )
         assert result.seadex_dict["Ember"].releases["u1"].to_grab is True
@@ -1044,7 +1044,7 @@ class TestFilterByReleaseGroup:
         seadex = {"Ember": rg_group({"u1": url_item(episodes=[], size=[100], infohash="h1")})}
         result = planner.plan(
             seadex_dict=seadex,
-            arr_releases=ArrFiles(untagged=(50,)),
+            arr_releases=ArrFiles(no_group=(50,)),
             ep_list=None,
         )
         assert result.seadex_dict["Ember"].releases["u1"].to_grab is True
@@ -1058,7 +1058,7 @@ class TestFilterByReleaseGroup:
         seadex = {"": rg_group({"u1": url_item(episodes=[], size=[], infohash="h1")})}
         result = planner.plan(
             seadex_dict=seadex,
-            arr_releases=ArrFiles(untagged=(50,)),
+            arr_releases=ArrFiles(no_group=(50,)),
             ep_list=None,
         )
         assert result.seadex_dict[""].releases["u1"].to_grab is True
@@ -1072,7 +1072,7 @@ class TestFilterByReleaseGroup:
         seadex = {"": rg_group({"u1": url_item(episodes=[], size=[50], infohash="h1")})}
         result = planner.plan(
             seadex_dict=seadex,
-            arr_releases=ArrFiles(untagged=(50, 60)),
+            arr_releases=ArrFiles(no_group=(50, 60)),
             ep_list=None,
         )
         assert result.seadex_dict[""].releases["u1"].to_grab is True
@@ -1085,7 +1085,7 @@ class TestFilterByReleaseGroup:
         seadex = {"": rg_group({"u1": url_item(episodes=[], size=[100], infohash="h1")})}
         result = planner.plan(
             seadex_dict=seadex,
-            arr_releases=ArrFiles(untagged=(50,)),
+            arr_releases=ArrFiles(no_group=(50,)),
             ep_list=None,
         )
         item = result.seadex_dict[""].releases["u1"]
@@ -1104,7 +1104,7 @@ class TestFilterByReleaseGroup:
         }
         result = planner.plan(
             seadex_dict=seadex,
-            arr_releases=ArrFiles(untagged=(100, 60)),
+            arr_releases=ArrFiles(no_group=(100, 60)),
             ep_list=None,
         )
         assert result.seadex_dict[""].releases["u1"].to_grab is True
@@ -1120,7 +1120,7 @@ class TestFilterByReleaseGroup:
         }
         result = planner.plan(
             seadex_dict=seadex,
-            arr_releases=ArrFiles(untagged=(100,)),
+            arr_releases=ArrFiles(no_group=(100,)),
             ep_list=None,
         )
         assert result.seadex_dict[""].releases["u1"].to_grab is False
@@ -1150,7 +1150,7 @@ class TestFilterByReleaseGroup:
         seadex = {"RG": rg_group({"u1": url_item(episodes=[], size=[100], infohash="h1")})}
         result = planner.plan(
             seadex_dict=seadex,
-            arr_releases=ArrFiles(tagged={"RG": ()}),
+            arr_releases=ArrFiles(by_group={"RG": ()}),
             ep_list=None,
         )
         assert result.seadex_dict["RG"].releases["u1"].to_grab is True
@@ -1168,7 +1168,7 @@ class TestFilterByReleaseGroup:
         }
         result = planner.plan(
             seadex_dict=seadex,
-            arr_releases=ArrFiles(tagged={"SubsPlease": (100,)}),
+            arr_releases=ArrFiles(by_group={"SubsPlease": (100,)}),
             ep_list=[sonarr_ep(1, 1, size=100, release_group="SubsPlease")],
         )
         assert result.seadex_dict["Era-Raws"].releases["u1"].to_grab is True
@@ -1273,9 +1273,9 @@ class TestListedSizeOnTooManyEpisodes:
 
     def test_a_size_identified_episode_counts(self) -> None:
         # E02's untagged file is ours by its listed size, so size 200 sits on two episodes.
-        untagged = sonarr_ep(1, 2, size=200, release_group=None, episode_file_id=12)
+        no_group = sonarr_ep(1, 2, size=200, release_group=None, episode_file_id=12)
 
-        item = self._decide(self._listing(100, 200, 300), [self._ours(1, 200, 11), untagged, self._ours(3, 300, 13)])
+        item = self._decide(self._listing(100, 200, 300), [self._ours(1, 200, 11), no_group, self._ours(3, 300, 13)])
 
         assert (item.to_grab, item.is_upgrade) == (True, True)
 
@@ -1332,7 +1332,7 @@ class TestListedSizeOnTooManyEpisodes:
         result = self._plan(self._beside_public(is_fallback=True), [self._ours(1, 200, 11), self._ours(2, 200, 12)])
 
         assert result.seadex_dict["Pub"].releases["u2"].to_grab is False
-        assert (result.skips.warned, result.skips.stale_held) == (True, True)
+        assert (result.skips.warned, result.skips.outdated) == (True, True)
 
 
 class TestGroupVerdicts:
@@ -1346,7 +1346,7 @@ class TestGroupVerdicts:
         seadex = {"Blunt": rg_group({"u1": url_item(episodes=[], size=[100, 200], infohash="h1")})}
         result = planner.plan(
             seadex_dict=seadex,
-            arr_releases=ArrFiles(tagged={"Blunt": (100, 999)}),
+            arr_releases=ArrFiles(by_group={"Blunt": (100, 999)}),
             ep_list=None,
         )
         assert result.seadex_dict["Blunt"].releases["u1"].to_grab is False
@@ -1377,7 +1377,7 @@ class TestGroupVerdicts:
         }
         result = planner.plan(
             seadex_dict=seadex,
-            arr_releases=ArrFiles(tagged={"Y": (100, 999)}),
+            arr_releases=ArrFiles(by_group={"Y": (100, 999)}),
             ep_list=[
                 sonarr_ep(1, 1, size=100, release_group="Y"),
                 sonarr_ep(1, 13, size=999, release_group="Y"),
@@ -1395,7 +1395,7 @@ class TestGroupVerdicts:
         seadex = {"Ember": rg_group({"u1": url_item(episodes=[], size=[], infohash="h1")})}
         result = planner.plan(
             seadex_dict=seadex,
-            arr_releases=ArrFiles(tagged={"Ember": (100,)}),
+            arr_releases=ArrFiles(by_group={"Ember": (100,)}),
             ep_list=None,
         )
         url = result.seadex_dict["Ember"].releases["u1"]
@@ -1418,7 +1418,7 @@ class TestGroupVerdicts:
         }
         result = planner.plan(
             seadex_dict=seadex,
-            arr_releases=ArrFiles(tagged={"Ember": (100,)}),
+            arr_releases=ArrFiles(by_group={"Ember": (100,)}),
             ep_list=None,
         )
         assert result.seadex_dict["Ember"].releases["u2"].to_grab is False
@@ -1472,7 +1472,7 @@ class TestGroupVerdicts:
         }
         result = planner.plan(
             seadex_dict=seadex,
-            arr_releases=ArrFiles(untagged=(100,)),
+            arr_releases=ArrFiles(no_group=(100,)),
             ep_list=None,
         )
         assert result.seadex_dict["A"].releases["u1"].to_grab is False
@@ -1511,7 +1511,7 @@ class TestReduceDropRescue:
         for b_first in (False, True):
             planner = make_planner()
             seadex = self._equal_union_pair(b_first=b_first)
-            planner.reduce_overlapping_downloads(seadex)
+            planner.reduce_overlapping_grabs(seadex)
             assert seadex["A"].releases["a_pub"].to_grab is True, f"b_first={b_first}"
             assert seadex["B"].releases["b_pub"].to_grab is True, f"b_first={b_first}"
             # Exactly one private batch survives (the keeper's). The loser's is dropped.
@@ -1533,7 +1533,7 @@ class TestReduceDropRescue:
                 all_episodes=[self.E11, self.E21],
             ),
         }
-        planner.reduce_overlapping_downloads(seadex)
+        planner.reduce_overlapping_grabs(seadex)
         assert seadex["A"].releases["a_pub"].to_grab is True
         assert seadex["B"].releases["b_pub"].to_grab is False
 
@@ -1553,7 +1553,7 @@ class TestReduceDropRescue:
                 all_episodes=[self.E11],
             ),
         }
-        planner.reduce_overlapping_downloads(seadex)
+        planner.reduce_overlapping_grabs(seadex)
         assert seadex["A"].releases["a_pub"].to_grab is True
         assert seadex["B"].releases["b_pub"].to_grab is False
 
@@ -1578,7 +1578,7 @@ class TestReduceDropRescue:
                 all_episodes=shared,
             ),
         }
-        planner.reduce_overlapping_downloads(seadex)
+        planner.reduce_overlapping_grabs(seadex)
         assert seadex["A"].releases["a_pub"].to_grab is True
         assert seadex["B"].releases["b_pub"].to_grab is True  # rescued: only S2 carrier
         assert seadex["C"].releases["c_pub"].to_grab is False  # covered by keeper A
@@ -1591,7 +1591,7 @@ class TestReduceDropRescue:
             "A": rg_group({"a_pub": url_item(download=True, is_public=True, infohash="a1")}),
             "B": rg_group({"b_pub": url_item(download=True, is_public=True, infohash="b1")}),
         }
-        planner.reduce_overlapping_downloads(seadex)
+        planner.reduce_overlapping_grabs(seadex)
         assert seadex["A"].releases["a_pub"].to_grab is True
         assert seadex["B"].releases["b_pub"].to_grab is False
 
@@ -1612,7 +1612,7 @@ class TestReduceDropRescue:
                 all_episodes=[self.E11, self.E21],
             ),
         }
-        planner.reduce_overlapping_downloads(seadex)
+        planner.reduce_overlapping_grabs(seadex)
         assert seadex["A"].releases["a_pub"].to_grab is True
         assert seadex["B"].releases["b_owned"].to_grab is False
         assert seadex["B"].releases["b_priv"].to_grab is False
@@ -1624,11 +1624,13 @@ class TestRefusedPack:
     _SIZES = (100, 200, 300)
 
     @classmethod
-    def _seadex(cls, hold: GrabHold = GrabHold.MISNUMBERED, **siblings: GroupReleases) -> dict[str, GroupReleases]:
+    def _seadex(
+        cls, skip_reason: PlacementSkip = PlacementSkip.MISNUMBERED, **siblings: GroupReleases
+    ) -> dict[str, GroupReleases]:
         """The pack left for a hand import for `hold`, three files at `_SIZES` placed nowhere, beside `siblings`."""
 
         item = url_item(size=list(cls._SIZES), episodes=[], infohash="h1")
-        item.skip_reason = hold
+        item.skip_reason = skip_reason
         return {"Pack": rg_group({"u1": item}), **siblings}
 
     @staticmethod
@@ -1643,19 +1645,19 @@ class TestRefusedPack:
 
         return sonarr_ep(0, episode, size=size, release_group="Pack", episode_file_id=file_id)
 
-    @pytest.mark.parametrize("hold", [GrabHold.MISNUMBERED, GrabHold.TITLE_REFUTED])
-    def test_every_special_holding_a_pack_file_is_in_place(self, hold: GrabHold) -> None:
+    @pytest.mark.parametrize("skip_reason", [PlacementSkip.MISNUMBERED, PlacementSkip.TITLE_REFUTED])
+    def test_every_special_holding_a_pack_file_is_in_place(self, skip_reason: PlacementSkip) -> None:
         held = [self._ours(n, size, 10 + n) for n, size in enumerate(self._SIZES, 1)]
 
-        item = self._decide(self._seadex(hold), held)
+        item = self._decide(self._seadex(skip_reason), held)
 
         assert item.to_grab is False
 
-    @pytest.mark.parametrize("hold", [GrabHold.MISNUMBERED, GrabHold.TITLE_REFUTED])
-    def test_an_empty_special_flags_the_pack_as_an_upgrade(self, hold: GrabHold) -> None:
+    @pytest.mark.parametrize("skip_reason", [PlacementSkip.MISNUMBERED, PlacementSkip.TITLE_REFUTED])
+    def test_an_empty_special_flags_the_pack_as_an_upgrade(self, skip_reason: PlacementSkip) -> None:
         held = [self._ours(1, 100, 11), self._ours(2, 200, 12), sonarr_ep(0, 3, episode_file_id=0)]
 
-        item = self._decide(self._seadex(hold), held)
+        item = self._decide(self._seadex(skip_reason), held)
 
         assert (item.to_grab, item.is_upgrade) == (True, True)
 

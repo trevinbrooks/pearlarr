@@ -343,7 +343,7 @@ class TestUpgradeConfigFile:
         before = AppConfig.load(path)
 
         # The run path passes the loaded checksum; matching bytes must not refuse.
-        upgrade = upgrade_config_file(path, expected_checksum=before.checksum())
+        upgrade = upgrade_config_file(path, expected_hash=before.config_hash())
 
         assert upgrade.migration is not None
         assert upgrade.migration.from_version == 0
@@ -449,7 +449,7 @@ class TestUpgradeConfigFile:
         Path(path).write_bytes(torn.encode())
 
         with pytest.raises(ConfigRewriteError, match="changed while"):
-            upgrade_config_file(path, expected_checksum=loaded.checksum())
+            upgrade_config_file(path, expected_hash=loaded.config_hash())
         assert Path(path).read_text(encoding="utf-8") == torn
         assert sorted(p.name for p in tmp_path.iterdir()) == ["config.yml"]
 

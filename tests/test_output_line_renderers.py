@@ -90,7 +90,7 @@ from pearlarr.output import (
 from pearlarr.output.events import TitleState
 from pearlarr.output.line_renderers import _BACKUP_STAMP_FORMAT, _JSON_SKIP, _TEXT_SKIP
 from pearlarr.output.trace import CapturedTrace
-from pearlarr.releases import ElsewhereCounts
+from pearlarr.releases import AnotherTitlesCounts
 from pearlarr.wait_types import Outcome, OutcomeKind
 
 from .builders import held_files, order_only_held_back
@@ -241,7 +241,7 @@ def test_release_skipped_line_carries_its_counts() -> None:
         tracker="Nyaa",
         reason=SkipReason.PLACED_ELSEWHERE,
         url="https://x",
-        counts=ElsewhereCounts(elsewhere=12, unplaced=0),
+        counts=AnotherTitlesCounts(another_titles=12, unplaced=0),
         scope=_ENTRY,
     )
     line = _format(skipped, *_entry_context())

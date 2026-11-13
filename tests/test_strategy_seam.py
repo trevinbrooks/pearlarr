@@ -67,7 +67,7 @@ from pearlarr.placement_types import FetchedListings, TorrentListing, episode_in
 from pearlarr.planner import GrabPlan
 from pearlarr.progress import ProgressSink
 from pearlarr.radarr_strategy import _HISTORY_SKEW_HOURS, RadarrStrategy
-from pearlarr.releases import EpisodeKey, GrabHold, OrderOnlyKey, ReleaseEpisode, SeadexDict
+from pearlarr.releases import EpisodeKey, OrderOnlyKey, PlacementSkip, ReleaseEpisode, SeadexDict
 from pearlarr.sonarr_episodes import sonarr_series_fingerprint
 from pearlarr.sonarr_state import DownloadHistoryVerdict, HistoryImport, placements_from_history
 from pearlarr.sonarr_strategy import SonarrStrategy
@@ -2514,7 +2514,7 @@ class TestSonarrProcessAlIdSeeds:
         }
         # The planner judges the url by the whole map's episodes inside this entry.
         assert req.seadex_dict["NAN0"].releases[_SEED_URL].episodes == [ReleaseEpisode(season=1, episode=2, size=1000)]
-        assert req.input_missing_groups == ()
+        assert req.input_unread_groups == ()
         # The stored claim's window came off the per-run whole-series read.
         assert sonarr.episodes_calls == [7]
 
@@ -2548,10 +2548,10 @@ class TestSonarrProcessAlIdSeeds:
         strat.check_title(_Item(id=7, title="Show", tvdbId=70, imdbId=None), 5, TitleMapping(anilist_id=5))
 
         (req,) = run.grab_requests
-        assert req.seadex_dict["NAN0"].releases[_SEED_URL].skip_reason is GrabHold.MISNUMBERED
+        assert req.seadex_dict["NAN0"].releases[_SEED_URL].skip_reason is PlacementSkip.MISNUMBERED
         assert req.seadex_dict["NAN0"].releases[_SEED_URL].episodes == []
         assert req.pending_seeds["h1"].file_map == {}
-        assert req.input_missing_groups == ()
+        assert req.input_unread_groups == ()
 
     def test_a_file_placed_by_size_over_its_name_warns_once_per_url(self) -> None:
         # Two specials named as each other.
@@ -2608,9 +2608,9 @@ class TestSonarrProcessAlIdSeeds:
         run = _entry_run(files, [_EP1, _EP2], _ScriptedListings(outage=True))
 
         (req,) = run.grab_requests
-        assert req.seadex_dict["NAN0"].releases[_SEED_URL].skip_reason is GrabHold.INPUT_UNREAD
+        assert req.seadex_dict["NAN0"].releases[_SEED_URL].skip_reason is PlacementSkip.INPUT_UNREAD
         assert req.pending_seeds["h1"].file_map == {}
-        assert req.input_missing_groups == ("NAN0",)
+        assert req.input_unread_groups == ("NAN0",)
 
     def test_the_listing_read_gets_the_ignored_entries_too(self) -> None:
         # Entry 6 shares the series but is on the ignore list. It's never processed, but a torrent it lists is
@@ -2683,7 +2683,7 @@ class TestSonarrProcessAlIdSeeds:
         seed = req.pending_seeds["h1"]
         assert seed.file_map == {}
         assert seed.excluded == tuple(normalize_name(name) for name in _SEED_FILES)
-        assert req.seadex_dict["NAN0"].releases[_SEED_URL].skip_reason is GrabHold.PLACED_ELSEWHERE
+        assert req.seadex_dict["NAN0"].releases[_SEED_URL].skip_reason is PlacementSkip.PLACED_ELSEWHERE
 
     def test_wait_mode_off_reads_no_record_and_seeds_nothing(self) -> None:
         store = _CountingStore()
@@ -2710,7 +2710,7 @@ class TestPlacementDebugLine:
         with caplog.at_level("DEBUG"):
             strat._log_placements(EntryPlacements(scope, {_SEED_URL: placement}))
 
-        assert placement.hold is GrabHold.INPUT_UNREAD
+        assert placement.skip_reason is PlacementSkip.INPUT_UNREAD
         assert [r.message for r in caplog.records] == [f"{_SEED_URL}: placed nothing (not grabbed: a read failed)"]
 
     def test_a_file_left_for_a_hand_import_is_named_with_why(self, caplog: pytest.LogCaptureFixture) -> None:
@@ -3219,8 +3219,8 @@ class TestHeldBackFiles:
 
     def test_an_untagged_hand_import_at_a_listed_size_retires_the_record(self) -> None:
         strat, sonarr = self._strat()
-        untagged = sonarr_ep(1, 1, ep_id=601, title=self._TITLES[0], size=self._SIZE_ON[601], release_group=None)
-        sonarr.episodes_return = [untagged, *self._episodes(602, 603)[1:]]
+        no_group = sonarr_ep(1, 1, ep_id=601, title=self._TITLES[0], size=self._SIZE_ON[601], release_group=None)
+        sonarr.episodes_return = [no_group, *self._episodes(602, 603)[1:]]
 
         done = strat.import_completed(self._record(), "/d", AttemptKind.ORDINARY)
 
@@ -4156,7 +4156,7 @@ class TestRadarrProcessAlIdSeam:
 
         strat.check_title(_Item(id=3, title="Item Title"), 5, TitleMapping(anilist_id=5))
         # The download filter received the movie's accumulated releases.
-        assert run.filter_downloads_calls == [(seadex_dict, ArrFiles(tagged={"OldGroup": (100,)}))]
+        assert run.filter_downloads_calls == [(seadex_dict, ArrFiles(by_group={"OldGroup": (100,)}))]
         [req] = run.grab_requests
         assert req.al_id == 5
         assert req.arr_title == "Item Title"
@@ -4219,7 +4219,7 @@ class TestRadarrReleases:
         radarr = _FakeRadarr([MovieFile(release_group="A", size=100), MovieFile(release_group="B", size=200)])
         strat = make_bare_instance(RadarrStrategy, radarr=radarr)
 
-        assert strat.get_radarr_releases(7) == ArrFiles(tagged={"A": (100,), "B": (200,)})
+        assert strat.get_radarr_releases(7) == ArrFiles(by_group={"A": (100,), "B": (200,)})
 
     def test_same_group_sizes_accumulate(self) -> None:
         # CB6: two files of one group keep BOTH sizes (the old comprehension collapsed
@@ -4227,15 +4227,15 @@ class TestRadarrReleases:
         radarr = _FakeRadarr([MovieFile(release_group="A", size=100), MovieFile(release_group="A", size=200)])
         strat = make_bare_instance(RadarrStrategy, radarr=radarr)
 
-        assert strat.get_radarr_releases(7) == ArrFiles(tagged={"A": (100, 200)})
+        assert strat.get_radarr_releases(7) == ArrFiles(by_group={"A": (100, 200)})
 
     def test_untagged_files_fold_to_untagged_sizes(self) -> None:
         # No {None: [None]} placeholder and no null key: untagged files carry
-        # their sizes on `untagged`, and a no-files movie folds to the empty record.
+        # their sizes on `no_group`, and a no-files movie folds to the empty record.
         radarr = _FakeRadarr([MovieFile(release_group=None, size=100), MovieFile(release_group="A", size=200)])
         strat = make_bare_instance(RadarrStrategy, radarr=radarr)
 
-        assert strat.get_radarr_releases(7) == ArrFiles(tagged={"A": (200,)}, untagged=(100,))
+        assert strat.get_radarr_releases(7) == ArrFiles(by_group={"A": (200,)}, no_group=(100,))
 
     def test_no_files_returns_empty_record(self) -> None:
         radarr = _FakeRadarr([])
@@ -4250,7 +4250,7 @@ class TestRadarrReleases:
         radarr = _FakeRadarr([MovieFile(release_group=None, size=500), MovieFile(release_group=None, size=None)])
         strat = make_bare_instance(RadarrStrategy, radarr=radarr)
 
-        assert strat.get_radarr_releases(7) == ArrFiles(untagged=(500, 0))
+        assert strat.get_radarr_releases(7) == ArrFiles(no_group=(500, 0))
 
 
 class TestSonarrReleases:
@@ -4270,8 +4270,8 @@ class TestSonarrReleases:
             ]
         )
 
-        assert releases == ArrFiles(tagged={"RG": (800,)})
-        assert releases.untagged == ()
+        assert releases == ArrFiles(by_group={"RG": (800,)})
+        assert releases.no_group == ()
 
 
 class TestArrReleasesRecord:
@@ -4279,18 +4279,18 @@ class TestArrReleasesRecord:
 
     def test_tagged_detaches_and_rejects_mutation(self) -> None:
         source = {"RG": (100,)}
-        releases = ArrFiles(tagged=source)
+        releases = ArrFiles(by_group=source)
 
         source["Other"] = (5,)
 
-        assert dict(releases.tagged) == {"RG": (100,)}
+        assert dict(releases.by_group) == {"RG": (100,)}
         with pytest.raises(TypeError):
-            cast("MutableMapping[str, tuple[int, ...]]", releases.tagged)["X"] = (1,)
+            cast("MutableMapping[str, tuple[int, ...]]", releases.by_group)["X"] = (1,)
 
     def test_equal_records_hash_equal_across_key_order(self) -> None:
         # dict eq ignores insertion order, so the hash must too.
-        first = ArrFiles(tagged={"A": (1,), "B": (2,)}, untagged=(3,))
-        second = ArrFiles(tagged={"B": (2,), "A": (1,)}, untagged=(3,))
+        first = ArrFiles(by_group={"A": (1,), "B": (2,)}, no_group=(3,))
+        second = ArrFiles(by_group={"B": (2,), "A": (1,)}, no_group=(3,))
 
         assert first == second
         assert hash(first) == hash(second)
@@ -4304,17 +4304,17 @@ class TestArrReleasesRecord:
             MovieFile(release_group="RG", size=None),
         ]
 
-        assert ArrFiles.from_files(files, keep_untagged=True) == ArrFiles(tagged={"RG": (800,)}, untagged=(700,))
-        assert ArrFiles.from_files(files, keep_untagged=False) == ArrFiles(tagged={"RG": (800,)})
+        assert ArrFiles.from_files(files, keep_no_group=True) == ArrFiles(by_group={"RG": (800,)}, no_group=(700,))
+        assert ArrFiles.from_files(files, keep_no_group=False) == ArrFiles(by_group={"RG": (800,)})
 
     def test_groups_label_renders_untagged_and_empty(self) -> None:
-        assert ArrFiles(tagged={"A": (1,)}, untagged=(2,)).groups_label() == "A, (none)"
+        assert ArrFiles(by_group={"A": (1,)}, no_group=(2,)).groups_label() == "A, (none)"
         assert ArrFiles().groups_label() == "(no files)"
 
     def test_group_count_matches_the_rendered_entries(self) -> None:
         # Untagged files fold to the single `(none)` entry, so they count once.
-        assert ArrFiles(tagged={"A": (1,), "B": (2,)}, untagged=(3,)).group_count() == 3
+        assert ArrFiles(by_group={"A": (1,), "B": (2,)}, no_group=(3,)).group_count() == 3
         assert ArrFiles().group_count() == 0
 
     def test_replaced_groups_lists_every_tagged_name(self) -> None:
-        assert ArrFiles(tagged={"A": (1,), "B": ()}).groups() == ("A", "B")
+        assert ArrFiles(by_group={"A": (1,), "B": ()}).groups() == ("A", "B")

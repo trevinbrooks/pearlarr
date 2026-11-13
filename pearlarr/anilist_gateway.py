@@ -111,7 +111,7 @@ class AniListGateway:
         if loaded:
             self.logger.debug(f"Loaded {count_noun(loaded, 'AniList entry', 'AniList entries')} from cache")
 
-    def save_cache(self, *, preview: bool) -> None:
+    def save_cache(self, *, dry_run: bool) -> None:
         """Persist this run's fetches stamped now. The prefetch-time save is the only save.
 
         Rows past the refresh age are evicted only on a healthy, non-preview run:
@@ -119,7 +119,7 @@ class AniListGateway:
         """
 
         # A preview persists nothing, so its fetches stay in memory only.
-        if preview:
+        if dry_run:
             return
 
         now = datetime.now()
@@ -134,7 +134,7 @@ class AniListGateway:
         evicted = 0 if self.unreachable else self._cache.evict_anilist_meta(cutoff)
 
         if written or evicted:
-            self._cache.save(preview=False)
+            self._cache.save(dry_run=False)
         if evicted:
             self.logger.debug(f"Evicted {count_noun(evicted, 'stale AniList meta record')}")
 
@@ -142,7 +142,7 @@ class AniListGateway:
         self,
         al_ids: Iterable[int],
         *,
-        preview: bool,
+        dry_run: bool,
         progress: ProgressSink | None = None,
     ) -> int:
         """Batch-fetch the missing and stale ids, then persist. Returns how many needed fetching.
@@ -171,7 +171,7 @@ class AniListGateway:
                 progress.progress(done / total, f"{done}/{total}")
 
         # Persist before the main loop so the batch's work survives an early return.
-        self.save_cache(preview=preview)
+        self.save_cache(dry_run=dry_run)
         return total
 
     def _media(self, al_id: int) -> AniListMediaNode:

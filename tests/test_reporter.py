@@ -158,7 +158,7 @@ class TestStatsCounters:
         client = ScriptedAniListClient()
         reporter, events = _record(client=client)
         ctx = ArrRunState(arr=Arr.SONARR)
-        reporter.log_seadex_outage_skip(ctx, 42)
+        reporter.log_seadex_unreachable(ctx, 42)
 
         assert ctx.stats.seadex_unreachable == 1
         assert ctx.stats.no_seadex_entry == 0
@@ -174,7 +174,7 @@ class TestStatsCounters:
         client = ScriptedAniListClient()
         reporter, events = _record(_seeded_store(name="Stored Title", coverage="S01", url="u"), client=client)
         ctx = ArrRunState(arr=Arr.SONARR)
-        reporter.log_seadex_outage_skip(ctx, 1)
+        reporter.log_seadex_unreachable(ctx, 1)
 
         assert ctx.stats.seadex_unreachable == 1
         joined = "\n".join(_event_messages(events))
@@ -318,7 +318,7 @@ class TestRunSummary:
 
     def test_real_run_emits_the_scoreboard(self) -> None:
         reporter, events = _record()
-        reporter.log_run_summary(self._ctx_with_data(), preview=False, has_client=True)
+        reporter.log_run_summary(self._ctx_with_data(), dry_run=False, has_client=True)
 
         summary = self._summary_of(events).summary
         assert summary.dry_run is False and summary.dry_run_note is None
@@ -332,13 +332,13 @@ class TestRunSummary:
 
     def test_dry_run_note_wording_tracks_the_client(self) -> None:
         reporter, events = _record()
-        reporter.log_run_summary(self._ctx_with_data(), preview=True, has_client=False)
+        reporter.log_run_summary(self._ctx_with_data(), dry_run=True, has_client=False)
         summary = self._summary_of(events).summary
         assert summary.dry_run is True
         assert summary.dry_run_note == "qBittorrent not configured; nothing grabbed"
 
         reporter, events = _record()
-        reporter.log_run_summary(self._ctx_with_data(), preview=True, has_client=True)
+        reporter.log_run_summary(self._ctx_with_data(), dry_run=True, has_client=True)
         assert self._summary_of(events).summary.dry_run_note == "nothing grabbed"
 
     def test_counts_mark_stays_bound_to_the_counter_it_was_stamped_on(self) -> None:
@@ -367,7 +367,7 @@ class TestRunSummary:
         counters[-1].record(Severity.ERROR)
         counters[-1].record(Severity.ERROR)
 
-        reporter.log_run_summary(ctx, preview=False, has_client=True)
+        reporter.log_run_summary(ctx, dry_run=False, has_client=True)
         summary = self._summary_of(events).summary
         assert summary.warnings == 1  # the original counter's record, not garbage
         assert summary.errors == 0  # the swapped-in counter's errors never leak
@@ -382,7 +382,7 @@ def _summary_messages(
 
     ctx.import_wait_mode = import_wait_mode
     reporter, events = _record()
-    reporter.log_run_summary(ctx, preview=False, has_client=True)
+    reporter.log_run_summary(ctx, dry_run=False, has_client=True)
     return _event_messages(events)
 
 
@@ -591,7 +591,7 @@ class TestPrivateOnlyTip:
 def _action_messages(
     results: list[GrabResult],
     *,
-    preview: bool = False,
+    dry_run: bool = False,
     waiting_to_import: bool = False,
 ) -> list[str]:
     """The status + per-release rows log_seadex_action re-derives to.
@@ -601,7 +601,7 @@ def _action_messages(
     """
 
     reporter, events = _record()
-    reporter.log_seadex_action({}, results, preview=preview, waiting_to_import=waiting_to_import)
+    reporter.log_seadex_action({}, results, dry_run=dry_run, waiting_to_import=waiting_to_import)
     return _event_messages(events)
 
 
@@ -642,12 +642,12 @@ class TestLogSeadexAction:
         assert "keeping it" not in joined
         assert "kept" not in joined
 
-    @pytest.mark.parametrize("preview", [False, True], ids=["wait mode off", "preview"])
-    def test_already_downloading_not_waiting(self, preview: bool) -> None:
+    @pytest.mark.parametrize("dry_run", [False, True], ids=["wait mode off", "preview"])
+    def test_already_downloading_not_waiting(self, dry_run: bool) -> None:
         # State the fact, but don't promise an import, and in a preview don't say "would add".
         messages = _action_messages(
             [GrabResult(outcome=AddStatus.ALREADY_IN_QBIT, name="X", group="G")],
-            preview=preview,
+            dry_run=dry_run,
             waiting_to_import=False,
         )
         joined = "\n".join(messages)
@@ -677,7 +677,7 @@ class TestLogSeadexAction:
         # ... (dry run)" and the per-release row is labeled "would add".
         messages = _action_messages(
             [GrabResult(outcome=AddStatus.ADDED, name="Show-NAN0", group="NAN0")],
-            preview=True,
+            dry_run=True,
         )
         joined = "\n".join(messages)
 
@@ -685,9 +685,9 @@ class TestLogSeadexAction:
         assert any("would add" in m and "Show-NAN0" in m for m in messages)
         assert "adding SeaDex's recommended release" not in joined
 
-    @pytest.mark.parametrize("preview", [False, True], ids=["real run", "preview"])
-    def test_no_outcomes_emit_nothing(self, preview: bool) -> None:
-        messages = _action_messages([], preview=preview)
+    @pytest.mark.parametrize("dry_run", [False, True], ids=["real run", "preview"])
+    def test_no_outcomes_emit_nothing(self, dry_run: bool) -> None:
+        messages = _action_messages([], dry_run=dry_run)
 
         assert messages == []
 
@@ -704,7 +704,7 @@ class TestLogSeadexAction:
         reporter.log_seadex_action(
             seadex_dict,
             [GrabResult(outcome=AddStatus.ADDED, name="Show-NAN0", group="NAN0")],
-            preview=False,
+            dry_run=False,
             waiting_to_import=False,
         )
 

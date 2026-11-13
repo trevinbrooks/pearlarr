@@ -1,6 +1,6 @@
 # pyright: strict
 # pyright: reportPrivateUsage=false
-# The overlay unit tests read the private `_env_overlay`/`_config_checksum` to pin
+# The overlay unit tests read the private `_env_overlay`/`_hash_config_bytes` to pin
 # the nested-mapping shape and the digest formula directly (both unobservable
 # through a validated AppConfig). Strict re-flags that and the repo disables
 # reportPrivateUsage for tests.
@@ -19,7 +19,7 @@ import pytest
 from pydantic import ValidationError
 
 from pearlarr.bootstrap import format_validation_errors
-from pearlarr.config import AppConfig, _config_checksum, _env_overlay
+from pearlarr.config import AppConfig, _env_overlay, _hash_config_bytes
 from pearlarr.wait_types import ImportWaitMode
 
 
@@ -197,25 +197,25 @@ class TestChecksumFoldsEnv:
         raw = b"sonarr:\n  url: http://x\n"
         environ = {"PEARLARR_SEADEX__WANT_BEST": "false", "PEARLARR_DATA_DIR": "/d", "OTHER": "y"}
         assert (
-            _config_checksum(raw, environ)
+            _hash_config_bytes(raw, environ)
             == hashlib.md5(
                 raw + b"PEARLARR_SEADEX__WANT_BEST=false\n",
             ).hexdigest()
         )
         # Unrelated (delimiter-less / non-prefixed) vars leave it at the no-env digest.
-        assert _config_checksum(raw, {"PEARLARR_DATA_DIR": "/d", "OTHER": "y"}) == hashlib.md5(raw).hexdigest()
+        assert _hash_config_bytes(raw, {"PEARLARR_DATA_DIR": "/d", "OTHER": "y"}) == hashlib.md5(raw).hexdigest()
 
     def test_checksum_moves_when_an_override_changes(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
         cfg = tmp_path / "config.yml"
         cfg.write_bytes(b"sonarr:\n  url: http://x\n")
-        base = AppConfig.load(str(cfg)).checksum()
+        base = AppConfig.load(str(cfg)).config_hash()
         monkeypatch.setenv("PEARLARR_SEADEX__WANT_BEST", "false")
-        assert AppConfig.load(str(cfg)).checksum() != base
+        assert AppConfig.load(str(cfg)).config_hash() != base
 
     def test_checksum_stable_for_unrelated_env(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
         cfg = tmp_path / "config.yml"
         cfg.write_bytes(b"sonarr:\n  url: http://x\n")
-        base = AppConfig.load(str(cfg)).checksum()
+        base = AppConfig.load(str(cfg)).config_hash()
         monkeypatch.setenv("PEARLARR_DATA_DIR", str(tmp_path / "elsewhere"))
         monkeypatch.setenv("UNRELATED", "x")
-        assert AppConfig.load(str(cfg)).checksum() == base
+        assert AppConfig.load(str(cfg)).config_hash() == base

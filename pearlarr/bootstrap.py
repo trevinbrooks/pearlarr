@@ -135,7 +135,7 @@ def _rewrite_old_config(config: str, loaded: AppConfig, *, dry_run: bool) -> Non
     notes = "; ".join(outcome.notes)
     note_to_file_log(f"Config schema v{outcome.from_version} -> v{CONFIG_VERSION}: {notes or 'no functional changes'}")
     try:
-        upgraded = upgrade_config_file(config, expected_checksum=loaded.checksum())
+        upgraded = upgrade_config_file(config, expected_hash=loaded.config_hash())
     except Exception as e:
         note_to_file_log(
             f"Could not rewrite {config} in place ({_one_line_reason(e)}) - continuing on the in-memory migration",

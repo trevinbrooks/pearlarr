@@ -235,7 +235,7 @@ def _fields_release_skipped(event: ReleaseSkipped) -> tuple[Field, ...]:
         Field("reason", event.reason.name.lower()),
     ]
     if event.reason is SkipReason.PLACED_ELSEWHERE:
-        fields.extend((Field("elsewhere", event.counts.elsewhere), Field("unplaced", event.counts.unplaced)))
+        fields.extend((Field("elsewhere", event.counts.another_titles), Field("unplaced", event.counts.unplaced)))
     if event.url:
         fields.append(Field("link", event.url))
     return tuple(fields)

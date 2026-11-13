@@ -641,7 +641,7 @@ def _serve(world: _World) -> Generator[tuple[str, str]]:
             server.server_close()
 
 
-def _seed_pending(cache_path: Path, checksum: str, scenario: _Scenario) -> None:
+def _seed_pending(cache_path: Path, config_hash: str, scenario: _Scenario) -> None:
     """Plant the carried-over record a prior run's grab would have left behind.
 
     The absolute-batch scenario's record maps its two episode files and
@@ -679,18 +679,18 @@ def _seed_pending(cache_path: Path, checksum: str, scenario: _Scenario) -> None:
         excluded_files=tuple(normalize_name(name) for name in siblings),
         claims=(claim,),
     )
-    store = CacheStore.load(str(cache_path), config_hash=checksum)
+    store = CacheStore.load(str(cache_path), config_hash=config_hash)
     try:
         store.put_pending_import_row(Arr.SONARR, pending.infohash, pending.to_json())
-        store.save(preview=False)
+        store.save(dry_run=False)
     finally:
         store.close()
 
 
-def _pending_after(cache_path: Path, checksum: str) -> frozenset[str]:
+def _pending_after(cache_path: Path, config_hash: str) -> frozenset[str]:
     """The pending infohashes still in the durable store after the run."""
 
-    store = CacheStore.load(str(cache_path), config_hash=checksum)
+    store = CacheStore.load(str(cache_path), config_hash=config_hash)
     try:
         return frozenset(store.get_pending_import_rows(Arr.SONARR))
     finally:
@@ -738,13 +738,13 @@ def _drive(tmp_path: Path, monkeypatch: pytest.MonkeyPatch, scenario: _Scenario)
         config_path.chmod(0o600)
         # The run's own checksum (file bytes + env overlay), so the seeded
         # descriptor matches what the run will stamp.
-        checksum = AppConfig.load(str(config_path)).checksum()
+        config_hash = AppConfig.load(str(config_path)).config_hash()
         cache_path = tmp_path / "cache.db"
-        _seed_pending(cache_path, checksum, scenario)
+        _seed_pending(cache_path, config_hash, scenario)
 
         ok = run_single(sonarr=True)
 
-    return _RunOutcome(ok, world, _pending_after(cache_path, checksum))
+    return _RunOutcome(ok, world, _pending_after(cache_path, config_hash))
 
 
 def _flat(text: str) -> str:

@@ -70,10 +70,10 @@ class _FakeGateway:
         self,
         ids: object,
         *,
-        preview: bool = False,
+        dry_run: bool = False,
         progress: ProgressSink | None = None,
     ) -> int:
-        del ids, preview, progress
+        del ids, dry_run, progress
         return 0
 
 
@@ -101,7 +101,7 @@ class _FakeReporter:
     def scan_finished(self, arr: Arr) -> bool:
         return True
 
-    def log_run_summary(self, ctx: ArrRunState, *, preview: bool, has_client: bool) -> bool:
+    def log_run_summary(self, ctx: ArrRunState, *, dry_run: bool, has_client: bool) -> bool:
         return True
 
     def run_finished(self, arr: Arr) -> bool:
@@ -619,7 +619,7 @@ class TestSelectionRecheck:
             held_through=engine._services if held else None,
             history=[_IMPORT_EVENT],
         )
-        engine._services._selection_stale = stale
+        engine._services._selection_changed = stale
         engine.run_arr(strategy, item_id=item_id, dry_run=True, boot=BootFlow())
         return engine, recording
 
@@ -711,7 +711,7 @@ class _OrderFetchingStrategy(FakeStrategy):
     @override
     def prefetch_orders(self, items: list[FakeArrItem], *, progress: ProgressSink | None = None) -> int:
         series = [SonarrSeriesOrders(item.id, AIRED_ORDER, None) for item in items]
-        return self._skyhook.prefetch(series, preview=True, progress=progress)
+        return self._skyhook.prefetch(series, dry_run=True, progress=progress)
 
 
 @pytest.mark.parametrize(

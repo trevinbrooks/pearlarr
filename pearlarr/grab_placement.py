@@ -38,11 +38,11 @@ from .placement_types import (
     TorrentListing,
 )
 from .releases import (
-    NO_ELSEWHERE,
-    ElsewhereCounts,
+    NO_ANOTHER_TITLES_COUNTS,
+    AnotherTitlesCounts,
     EpisodeKey,
-    GrabHold,
     OrderOnlyKey,
+    PlacementSkip,
     PlannedGrab,
     Release,
     ReleaseEpisode,
@@ -206,10 +206,10 @@ class PlacedRelease:
     read, and, while a file is left to place, every parse came from Sonarr (`PlacementBatch.all_parses_known`). When
     False, a file may have been held or placed without its size, so the title gets re-checked next run."""
 
-    hold: GrabHold | None
+    skip_reason: PlacementSkip | None
     """Why the url is not grabbed this run, None when it may be."""
 
-    hold_counts: ElsewhereCounts
+    another_titles_counts: AnotherTitlesCounts
     """For `GrabHold.PLACED_ELSEWHERE`, how many of the files are another title's and how many nothing placed.
     `NO_ELSEWHERE` for any other url."""
 
@@ -290,15 +290,15 @@ def place_release(files: Sequence[ListedFile], scope: GrabbingTitle, torrent: Kn
     )
     # With nothing of the whole map on the entry, a file another title's window placed or left for a hand import is
     # that title's, and so is a mapped file on an episode another title's window holds.
-    elsewhere = frozenset[str]() if landed else view.outside | _mapped_elsewhere(batch, mapped, order)
+    another_titles = frozenset[str]() if landed else view.outside | _on_another_titles_window(batch, mapped, order)
     # A url with no video file (subs, fonts) places nothing and waits on nothing.
-    hold = None
+    skip_reason = None
     if files:
-        hold = _hold_of(
+        skip_reason = _skip_reason_of(
             misnumbered=view.misnumbered,
             unread=unread,
             hand_claim=None if landed else view.hand_claim,
-            elsewhere=bool(elsewhere),
+            another_titles=bool(another_titles),
         )
     # With every window's series read, a scope that can't place (`GrabbingTitle.can_place`) still places nothing. A new
     # torrent is then judged by group and size. A stored one's claim joins with nothing placed, a grab-time verdict
@@ -308,19 +308,23 @@ def place_release(files: Sequence[ListedFile], scope: GrabbingTitle, torrent: Kn
         files=tuple(files),
         assignment=view.assignment,
         # A pack left for a hand import adds no records: the planner judges it by what its window holds.
-        episodes=() if hold is not None and hold.hand_import else on_window.episodes,
+        episodes=() if skip_reason is not None and skip_reason.left_for_hand_import else on_window.episodes,
         covered_ids=on_window.covered_ids,
         inputs_read=not files or (known and not unread),
-        hold=hold,
-        hold_counts=(
-            _elsewhere_counts(elsewhere, view.assignment) if hold is GrabHold.PLACED_ELSEWHERE else NO_ELSEWHERE
+        skip_reason=skip_reason,
+        another_titles_counts=(
+            _another_titles_counts(another_titles, view.assignment)
+            if skip_reason is PlacementSkip.PLACED_ELSEWHERE
+            else NO_ANOTHER_TITLES_COUNTS
         ),
         pending_import=torrent.pending_import,
         intended_sizes=sizes_by_episode(mapped, sizes),
     )
 
 
-def _mapped_elsewhere(batch: PlacementBatch, mapped: FileEpisodeMap, order: WindowOrder | None) -> frozenset[str]:
+def _on_another_titles_window(
+    batch: PlacementBatch, mapped: FileEpisodeMap, order: WindowOrder | None
+) -> frozenset[str]:
     """The files to place that the whole map puts on an episode another listed title's window holds.
 
     A mapped file on an episode no listed title's window holds is nobody's and isn't among them. Judged on the whole
@@ -363,9 +367,9 @@ class _OnWindow:
         return cls(tuple(records), frozenset(claimed))
 
 
-def _hold_of(
-    *, misnumbered: bool, unread: bool, hand_claim: PlacementVerdict | None, elsewhere: bool
-) -> GrabHold | None:
+def _skip_reason_of(
+    *, misnumbered: bool, unread: bool, hand_claim: PlacementVerdict | None, another_titles: bool
+) -> PlacementSkip | None:
     """Why the url isn't grabbed: the first of these that holds, in this order.
 
     Four inputs, since their order is the rule. `misnumbered`: a file of the entry's own window is misnumbered
@@ -378,25 +382,25 @@ def _hold_of(
     """
 
     if misnumbered:
-        return GrabHold.MISNUMBERED
+        return PlacementSkip.MISNUMBERED
     if unread:
-        return GrabHold.INPUT_UNREAD
+        return PlacementSkip.INPUT_UNREAD
     if hand_claim is PlacementVerdict.TITLE_REFUTED:
-        return GrabHold.TITLE_REFUTED
+        return PlacementSkip.TITLE_REFUTED
     if hand_claim is not None:
-        return GrabHold.MISNUMBERED
-    return GrabHold.PLACED_ELSEWHERE if elsewhere else None
+        return PlacementSkip.MISNUMBERED
+    return PlacementSkip.PLACED_ELSEWHERE if another_titles else None
 
 
-def _elsewhere_counts(elsewhere: frozenset[str], assignment: BatchPlacements) -> ElsewhereCounts:
+def _another_titles_counts(another_titles: frozenset[str], assignment: BatchPlacements) -> AnotherTitlesCounts:
     """How a url whose files are another title's splits: `elsewhere`, and the files nothing placed outside it.
 
     A file another title's window left for a hand import can be skipped as well as among `elsewhere` (a claimed
     title was party to it), so it counts once.
     """
 
-    unplaced = sum(name not in elsewhere for name in assignment.unplaced)
-    return ElsewhereCounts(elsewhere=len(elsewhere), unplaced=unplaced)
+    unplaced = sum(name not in another_titles for name in assignment.unplaced)
+    return AnotherTitlesCounts(another_titles=len(another_titles), unplaced=unplaced)
 
 
 @dataclass(frozen=True, slots=True)
@@ -470,12 +474,12 @@ class EntryPlacements:
             for url, release in group_releases.releases.items():
                 placement = self.by_url[url]
                 release.episodes = list(placement.episodes)
-                release.skip_reason = placement.hold
-                release.hold_counts = placement.hold_counts
+                release.skip_reason = placement.skip_reason
+                release.another_titles_counts = placement.another_titles_counts
                 all_episodes.extend(release.episodes)
             group_releases.all_episodes = all_episodes
 
-    def input_missing_groups(self, seadex_dict: SeadexDict) -> tuple[str, ...]:
+    def input_unread_groups(self, seadex_dict: SeadexDict) -> tuple[str, ...]:
         """The groups with a url whose placement waits on a read that failed."""
 
         return tuple(
@@ -710,18 +714,18 @@ def build_pending_seed(release: SeedRelease, scope: GrabbingTitle, facts: TitleF
     )
 
 
-def build_unscoped_seed(flagged: PlannedGrab, facts: TitleFacts, stored: PendingImport | None) -> PendingImportUpdate:
+def build_unscoped_seed(planned: PlannedGrab, facts: TitleFacts, stored: PendingImport | None) -> PendingImportUpdate:
     """The seed of a torrent whose import reads nothing but its hash in qBittorrent (a Radarr grab): an id-less claim."""
 
     return PendingImportUpdate(
         facts=TorrentFacts(
-            infohash=flagged.qbit_hash,
-            release_group=flagged.group,
-            is_dual_audio=flagged.item.is_dual_audio,
+            infohash=planned.qbit_hash,
+            release_group=planned.group,
+            is_dual_audio=planned.item.is_dual_audio,
             seadex_files=(),
             release_sizes=(),
             sizes_by_name=NO_SIZES_BY_NAME,
-            cross_seed=flagged.item.cross_seed_hash is not None,
+            cross_seed=planned.item.cross_seed_hash is not None,
         ),
         file_map={},
         excluded=(),
@@ -743,10 +747,10 @@ def build_pending_seeds(
     """
 
     seeds: dict[str, PendingImportUpdate] = {}
-    for flagged in releases_to_grab(seadex_dict):
-        placement = placed.by_url[flagged.url]
+    for planned in releases_to_grab(seadex_dict):
+        placement = placed.by_url[planned.url]
         if not placement.files:
             continue
-        release = SeedRelease(flagged.group, flagged.item, flagged.qbit_hash, placement)
-        seeds[flagged.qbit_hash] = build_pending_seed(release, placed.scope, facts)
+        release = SeedRelease(planned.group, planned.item, planned.qbit_hash, placement)
+        seeds[planned.qbit_hash] = build_pending_seed(release, placed.scope, facts)
     return seeds

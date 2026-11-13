@@ -56,7 +56,7 @@ class PrivateOnlyNotices:
     """The dropped groups' names, for the run summary."""
     notices: list[PrivateOnlyNotice] = field(default_factory=list[PrivateOnlyNotice])
     """What to log for the drop."""
-    stale_held: bool = False
+    outdated: bool = False
     """A hold where the Arr owns the preferred private release at a stale size and only a fallback could
     stand in. A fallback never replaces an owned copy."""
 
@@ -80,7 +80,7 @@ class GrabPlan:
     untagged `(episode id, size)` claims. Only Sonarr's import reads it."""
 
 
-def _untagged_counter(untagged_sizes: Iterable[int]) -> Counter[int] | None:
+def _no_group_counter(untagged_sizes: Iterable[int]) -> Counter[int] | None:
     """The untagged on-disk multiset, or None when it can never claim ownership.
 
     Folded once per entry (the ownership checks run per url). None when empty,
@@ -94,7 +94,7 @@ def _untagged_counter(untagged_sizes: Iterable[int]) -> Counter[int] | None:
     return counter
 
 
-def _owns_untagged_copy(counter: Counter[int] | None, listed_sizes: Iterable[int]) -> bool:
+def _owns_no_group_copy(counter: Counter[int] | None, listed_sizes: Iterable[int]) -> bool:
     """Whether every file the arr holds untagged belongs to this listing, by exact size.
 
     Identifies an owned copy whose group tag a rename stripped. Containment runs
@@ -109,7 +109,7 @@ def _owns_untagged_copy(counter: Counter[int] | None, listed_sizes: Iterable[int
 
 
 def _doubled_sizes(
-    listed: Mapping[EpisodeKey, int], held: Mapping[EpisodeKey, int], sizes: Collection[int]
+    listed: Mapping[EpisodeKey, int], arr_sizes: Mapping[EpisodeKey, int], sizes: Collection[int]
 ) -> list[int]:
     """The listing's `sizes` held on more of the `listed` keys than the listing places them on (possibly none).
 
@@ -117,8 +117,8 @@ def _doubled_sizes(
     """
 
     placed = Counter(listed.values())
-    held_counts = Counter(size for key, size in held.items() if key in listed)
-    return sorted(size for size, count in held_counts.items() if size in sizes and placed[size] < count)
+    arr_counts = Counter(size for key, size in arr_sizes.items() if key in listed)
+    return sorted(size for size, count in arr_counts.items() if size in sizes and placed[size] < count)
 
 
 def get_episode_keys(
@@ -172,7 +172,7 @@ def get_same_files_groups(seadex_dict: SeadexDict) -> list[list[str]]:
     return list(grouped.values())
 
 
-def _is_flagged(group_releases: GroupReleases) -> bool:
+def _group_to_grab(group_releases: GroupReleases) -> bool:
     return any(u.to_grab for u in group_releases.releases.values())
 
 
@@ -188,12 +188,12 @@ def _all_public(group_releases: GroupReleases) -> bool:
     return all(u.is_public for u in group_releases.releases.values())
 
 
-def _flagged_all_addable(group_releases: GroupReleases) -> bool:
+def _grabs_all_public(group_releases: GroupReleases) -> bool:
     # No flagged private url (the add-time gate refuses those).
     return all(u.is_public for u in group_releases.releases.values() if u.to_grab)
 
 
-def _unflag(group_releases: GroupReleases, dropped: list[Release]) -> None:
+def _drop_group_grabs(group_releases: GroupReleases, dropped: list[Release]) -> None:
     """Unflag a whole group, recording the urls this pass actually dropped."""
 
     for u in group_releases.releases.values():
@@ -209,7 +209,7 @@ class _SameFilesSet:
     names: list[str]
     """Every group in the set, in first-seen order (`get_same_files_groups`)."""
 
-    flagged: list[str]
+    to_grab: list[str]
     """The subset still flagged to grab when the reduction began."""
 
     dropped: list[Release] = field(default_factory=list[Release])
@@ -291,7 +291,7 @@ def episode_coverage(
     return EpisodeCoverage(frozenset(blanket), {key: frozenset(groups) for key, groups in by_key.items()})
 
 
-class _EpisodeIdentity(NamedTuple):
+class _FileReleaseGroup(NamedTuple):
     """The effective release identity of one on-disk episode file."""
 
     group: str | None
@@ -302,7 +302,7 @@ class _EpisodeIdentity(NamedTuple):
     """The file's on-disk size (always the listed size for a `by_size` identity)."""
 
 
-class _EntryIdentities(NamedTuple):
+class _FileReleaseGroups(NamedTuple):
     """`_episode_identities`' two views of the on-disk files - deliberately OVERLAPPING.
 
     `identities` holds every identified file (tagged or size-identified);
@@ -311,17 +311,17 @@ class _EntryIdentities(NamedTuple):
     whole. The overlap is the size-identified files - do not join the views.
     """
 
-    identities: dict[EpisodeKey, _EpisodeIdentity]
+    groups: dict[EpisodeKey, _FileReleaseGroup]
     """Each identified file's effective release identity."""
 
-    untagged_by_key: dict[EpisodeKey, int]
+    no_group_sizes: dict[EpisodeKey, int]
     """Every untagged on-disk file's size (zero/unknown folded to 0)."""
 
 
-def _episode_identities(
+def _file_release_groups(
     seadex_dict: SeadexDict,
     sonarr_by_key: Mapping[EpisodeKey, SonarrEpisode],
-) -> _EntryIdentities:
+) -> _FileReleaseGroups:
     """Resolve each on-disk file's effective identity: its group tag, or the pick its size names.
 
     A library rename scheme can strip the release-group tag off a file we
@@ -336,7 +336,7 @@ def _episode_identities(
     picks list it at the same size, where either answer reads as owned.
     """
 
-    identities: dict[EpisodeKey, _EpisodeIdentity] = {}
+    identities: dict[EpisodeKey, _FileReleaseGroup] = {}
     # Every untagged on-disk file. A zero/unknown size folds to 0: it can never
     # size-match an identity below, and in the whole-copy multiset it vetoes
     # ownership (a failed copy proves nothing and stays grabbable). Almost
@@ -348,11 +348,11 @@ def _episode_identities(
             continue
         group = normalize_rg(arr_file.release_group)
         if group is not None:
-            identities[key] = _EpisodeIdentity(group, by_size=False, size=arr_file.size)
+            identities[key] = _FileReleaseGroup(group, by_size=False, size=arr_file.size)
         else:
             untagged[key] = arr_file.size or 0
     if not untagged:
-        return _EntryIdentities(identities, untagged)
+        return _FileReleaseGroups(identities, untagged)
 
     for seadex_rg, group_releases in seadex_dict.items():
         normalized = normalize_rg(seadex_rg)
@@ -360,10 +360,10 @@ def _episode_identities(
             continue
         for release in group_releases.releases.values():
             # A refused pack placed nothing: an untagged file at one of its listed sizes is its, wherever it sits.
-            if release.hand_import:
+            if release.left_for_hand_import:
                 for key, size in untagged.items():
                     if key not in identities and size > 0 and size in release.file_sizes:
-                        identities[key] = _EpisodeIdentity(normalized, by_size=True, size=size)
+                        identities[key] = _FileReleaseGroup(normalized, by_size=True, size=size)
                 continue
             for seadex_ep in release.episodes:
                 if seadex_ep.season is None or seadex_ep.episode is None:
@@ -371,8 +371,8 @@ def _episode_identities(
                 key = season_episode_key(seadex_ep.season, seadex_ep.episode)
                 if key in identities or seadex_ep.size <= 0 or untagged.get(key) != seadex_ep.size:
                     continue
-                identities[key] = _EpisodeIdentity(normalized, by_size=True, size=seadex_ep.size)
-    return _EntryIdentities(identities, untagged)
+                identities[key] = _FileReleaseGroup(normalized, by_size=True, size=seadex_ep.size)
+    return _FileReleaseGroups(identities, untagged)
 
 
 @dataclass(frozen=True, slots=True)
@@ -394,7 +394,7 @@ class _PlanContext:
     copy a pick's listed sizes identified whole (so a sibling pick is never
     grabbed over a copy only a rename left unrecognizable)."""
     sonarr_by_key: dict[EpisodeKey, SonarrEpisode]
-    episode_identities: Mapping[EpisodeKey, _EpisodeIdentity]
+    file_release_groups: Mapping[EpisodeKey, _FileReleaseGroup]
     """Each on-disk file's effective release identity (see `_episode_identities`)."""
     untagged_counter: Counter[int] | None
     """The untagged on-disk files' size multiset (Radarr's `None` key, or Sonarr's
@@ -410,7 +410,7 @@ def _window_in_place(ctx: _PlanContext, seadex_norm: str | None, listed_sizes: C
     """Whether every episode of the window holds the group's file at a listed size, or a covering pick's file."""
 
     for key in ctx.sonarr_by_key:
-        identity = ctx.episode_identities.get(key)
+        identity = ctx.file_release_groups.get(key)
         if identity is None or identity.group is None:
             return False
         covering = ctx.coverage.by_key.get(key, ())
@@ -461,27 +461,27 @@ def _group_verdicts(seadex_dict: SeadexDict, ctx: _PlanContext) -> _GroupVerdict
     # without one, the Arr's tag-keyed size map is the whole vocabulary.
     attributed: dict[str | None, list[int | None]] = {}
     if ctx.has_ep_list:
-        for identity in ctx.episode_identities.values():
+        for identity in ctx.file_release_groups.values():
             attributed.setdefault(identity.group, []).append(identity.size)
     else:
         attributed = {norm: list(sizes) for norm, sizes in ctx.arr_sizes_by_norm.items()}
 
-    current: list[str] = []
-    stale: list[str] = []
+    owned: list[str] = []
+    outdated: list[str] = []
     for rg in seadex_dict:
         norm = normalize_rg(rg)
         files = attributed.get(norm, [])
         listed = cover.get(norm, set())
         if not files:
-            current.append(rg)
+            owned.append(rg)
         elif not listed:
             continue
         elif all(size is not None and size in listed for size in files):
-            current.append(rg)
+            owned.append(rg)
         elif any(size is not None and size not in listed for size in files):
-            stale.append(rg)
+            outdated.append(rg)
         # A group whose only disagreements are unknown sizes stays unverifiable.
-    return _GroupVerdicts(tuple(current), tuple(stale))
+    return _GroupVerdicts(tuple(owned), tuple(outdated))
 
 
 class GrabPlanner:
@@ -525,7 +525,7 @@ class GrabPlanner:
         # per-URL matchers. A tagged key is truthy, so the None guard only
         # narrows the type (`normalize_rg` returns a str for truthy input).
         arr_sizes_by_norm: dict[str, list[int]] = {}
-        for arr_rg, sizes in arr_releases.tagged.items():
+        for arr_rg, sizes in arr_releases.by_group.items():
             if (norm := normalize_rg(arr_rg)) is not None:
                 arr_sizes_by_norm.setdefault(norm, []).extend(sizes)
 
@@ -546,7 +546,7 @@ class GrabPlanner:
         # Each on-disk file's effective identity - its tag, or the pick whose
         # listed size names an untagged file - decided once for the whole entry
         # so every pick's url reads the same ownership.
-        identities, untagged_by_key = _episode_identities(seadex_dict, sonarr_by_key)
+        identities, untagged_by_key = _file_release_groups(seadex_dict, sonarr_by_key)
 
         # Resolve once: the per-episode debug lines below sit in the hot
         # matching loop, so this lets us skip building their f-strings on a
@@ -568,11 +568,11 @@ class GrabPlanner:
         # multiset owns the copy, which counts as an on-disk overlap - a
         # sibling pick must hold exactly as it would had the copy kept its tag.
         # None (the common tagged library) skips the per-url compares entirely.
-        untagged_counter = _untagged_counter((*arr_releases.untagged, *untagged_by_key.values()))
+        untagged_counter = _no_group_counter((*arr_releases.no_group, *untagged_by_key.values()))
         any_release_owned = any_release_owned or (
             untagged_counter is not None
             and any(
-                _owns_untagged_copy(untagged_counter, release.file_sizes)
+                _owns_no_group_copy(untagged_counter, release.file_sizes)
                 for group_releases in seadex_dict.values()
                 for release in group_releases.releases.values()
             )
@@ -585,7 +585,7 @@ class GrabPlanner:
             arr_sizes_by_norm=arr_sizes_by_norm,
             any_release_owned=any_release_owned,
             sonarr_by_key=sonarr_by_key,
-            episode_identities=identities,
+            file_release_groups=identities,
             untagged_counter=untagged_counter,
             coverage=coverage,
             has_ep_list=ep_list is not None,
@@ -597,7 +597,7 @@ class GrabPlanner:
 
             for release in group_releases.releases.values():
                 # A pack the placement refused is judged by what its window holds, never by its numbers.
-                if release.hand_import:
+                if release.left_for_hand_import:
                     self._plan_left_for_hand_import(ctx, seadex_rg, release)
                     continue
 
@@ -611,7 +611,7 @@ class GrabPlanner:
 
         # Where multiple preferred release groups cover the same files and the
         # Arr has none of them, only grab one (preferring a public group)
-        skips = self.reduce_overlapping_downloads(seadex_dict=seadex_dict)
+        skips = self.reduce_overlapping_grabs(seadex_dict=seadex_dict)
 
         verdicts = _group_verdicts(seadex_dict, ctx)
         return GrabPlan(
@@ -673,7 +673,7 @@ class GrabPlanner:
                     f"SeaDex release group {seadex_rg} in {self.arr.capitalize()} releases: "
                     f"{ctx.arr_groups_label}, and no listed size contradicts the on-disk copy",
                 )
-        elif _owns_untagged_copy(ctx.untagged_counter, release.file_sizes):
+        elif _owns_no_group_copy(ctx.untagged_counter, release.file_sizes):
             # A rename stripped the group tag: the untagged files on disk
             # (Radarr's None key, or Sonarr's untagged episode files) all
             # belong to this listing by size, so the copy is ours.
@@ -744,7 +744,7 @@ class GrabPlanner:
         seadex_rg_normalized = normalize_rg(seadex_rg)
         # Per matched episode: each size the listing places on it, and the size our group holds there.
         listed_pairs: list[tuple[EpisodeKey, int]] = []
-        held_by_key: dict[EpisodeKey, int] = {}
+        arr_size_by_key: dict[EpisodeKey, int] = {}
 
         for seadex_idx, seadex_ep in enumerate(seadex_episodes):
             seadex_ep_season = seadex_ep.season
@@ -778,9 +778,9 @@ class GrabPlanner:
             # The file's effective identity, resolved once per entry: its own
             # tag, or - where a rename stripped it - the pick whose listed size
             # named it. Every url and sibling pick reads the same answer.
-            identity = ctx.episode_identities.get(episode_key)
+            identity = ctx.file_release_groups.get(episode_key)
             sonarr_rg_normalized = identity.group if identity else None
-            size_identified = identity is not None and identity.by_size
+            by_size = identity is not None and identity.by_size
 
             # A mismatched group flags a download unless another recommended
             # release covers it. The coverage index is keyed by normalized
@@ -817,7 +817,7 @@ class GrabPlanner:
                 # below: its size matched by construction (that is what named
                 # it), so its vote could only ever be "current" and would mask
                 # a genuinely stale release around it.
-                if not size_identified:
+                if not by_size:
                     rg_matches[seadex_idx] = True
 
                 if (
@@ -825,7 +825,7 @@ class GrabPlanner:
                     and sonarr_rg_normalized == seadex_rg_normalized
                     and sonarr_ep_size is not None
                 ):
-                    held_by_key[episode_key] = sonarr_ep_size
+                    arr_size_by_key[episode_key] = sonarr_ep_size
 
             # Now check against file size
             if size_match:
@@ -840,7 +840,7 @@ class GrabPlanner:
             release.plan_grab(upgrade=True)
 
         # An episode two listed files claim at different sizes is left out: the import cannot pick between them.
-        doubled = _doubled_sizes(unambiguous(listed_pairs), held_by_key, release.file_sizes)
+        doubled = _doubled_sizes(unambiguous(listed_pairs), arr_size_by_key, release.file_sizes)
         if doubled:
             self.logger.debug(
                 f"{url} lists size(s) {doubled} on fewer episodes than {seadex_rg} holds them, will download"
@@ -875,7 +875,7 @@ class GrabPlanner:
         self.logger.debug(f"{seadex_rg} was refused by the placement and is not in place: will download {url}")
         release.plan_grab(upgrade=seadex_norm in ctx.arr_sizes_by_norm)
 
-    def reduce_overlapping_downloads(
+    def reduce_overlapping_grabs(
         self,
         seadex_dict: SeadexDict,
     ) -> PrivateOnlyNotices:
@@ -914,11 +914,11 @@ class GrabPlanner:
 
         for names in get_same_files_groups(seadex_dict):
             # Only the release groups the Arr doesn't already have are flagged
-            flagged = [rg for rg in names if _is_flagged(seadex_dict[rg])]
-            if len(flagged) == 0:
+            to_grab = [rg for rg in names if _group_to_grab(seadex_dict[rg])]
+            if len(to_grab) == 0:
                 continue
 
-            same_files = _SameFilesSet(names=names, flagged=flagged)
+            same_files = _SameFilesSet(names=names, to_grab=to_grab)
             self._reduce_same_files_set(seadex_dict, same_files, skips)
             self._rescue_dropped_coverage(seadex_dict, same_files)
 
@@ -955,15 +955,15 @@ class GrabPlanner:
         pass unflagged on `same_files.dropped`, for the coverage rescue.
         """
 
-        flagged = same_files.flagged
-        public_flagged = [rg for rg in flagged if _is_public_group(seadex_dict[rg])]
+        to_grab = same_files.to_grab
+        public_to_grab = [rg for rg in to_grab if _is_public_group(seadex_dict[rg])]
         # The held-not-owned marker: an upgrade flag means the Arr holds the
         # release wrong (a stale size, or a file on too many episodes), so an
         # unflagged public group in this set is NOT owned and may be promoted in
         # its place. Without it, promotion would re-download owned content.
-        any_upgrade = any(u.is_upgrade for rg in flagged for u in seadex_dict[rg].releases.values())
+        any_upgrade = any(u.is_upgrade for rg in to_grab for u in seadex_dict[rg].releases.values())
 
-        if len(public_flagged) == 0:
+        if len(public_to_grab) == 0:
             # Only an unflagged preferred public group in THIS same-files set
             # can be promoted in its place (a flagged one would have taken the
             # keeper branch below). A public group covering OTHER files never
@@ -971,8 +971,8 @@ class GrabPlanner:
             if any_upgrade:
                 promoted = self._promote_public_alternative(seadex_dict, same_files)
                 if promoted is not None:
-                    skips.notices.append(_promotion_notice(flagged, "private-only", promoted))
-                    self._unflag_all(seadex_dict, same_files)
+                    skips.notices.append(_promotion_notice(to_grab, "private-only", promoted))
+                    self._drop_all_grabs(seadex_dict, same_files)
                     return
 
             # Private grabs are off and no promotable public url covers the
@@ -988,26 +988,26 @@ class GrabPlanner:
                     "private-only; your copy is outdated (its file size no longer matches the release) "
                     "and only a fallback covers it"
                 )
-                skips.stale_held = True
+                skips.outdated = True
             else:
                 reason = "private-only (private releases not supported)"
             skips.notices.append(
                 PrivateOnlyNotice(
-                    groups=list(flagged),
+                    groups=list(to_grab),
                     reason=reason,
                     severity=Severity.WARNING,
                 ),
             )
             skips.warned = True
-            skips.groups.extend(flagged)
-            self._unflag_all(seadex_dict, same_files)
+            skips.groups.extend(to_grab)
+            self._drop_all_grabs(seadex_dict, same_files)
             return
 
         # Keep the first public release group whose flagged urls are all
         # addable: a mixed group's flagged private url is refused at add time,
         # losing the coverage only it carries, so a fully-addable group wins
         # over it.
-        keeper = next((rg for rg in public_flagged if _flagged_all_addable(seadex_dict[rg])), None)
+        keeper = next((rg for rg in public_to_grab if _grabs_all_public(seadex_dict[rg])), None)
         if keeper is None:
             # No fully-addable group: when the private flags are upgrades over
             # held files, an unflagged public group covering this set still grabs
@@ -1015,23 +1015,24 @@ class GrabPlanner:
             if any_upgrade:
                 promoted = self._promote_public_alternative(seadex_dict, same_files)
                 if promoted is not None:
-                    skips.notices.append(_promotion_notice(flagged, "remaining files private-only", promoted))
-                    self._unflag_all(seadex_dict, same_files)
+                    skips.notices.append(_promotion_notice(to_grab, "remaining files private-only", promoted))
+                    self._drop_all_grabs(seadex_dict, same_files)
                     return
                 # Promotion refused with an unflagged fallback riding: an
                 # owned-at-stale-size pick a fallback must not replace. Mark the
                 # stale hold (no notice, the add-time private gate warns).
                 if any(
-                    not _is_flagged(seadex_dict[rg]) and _is_fallback_group(seadex_dict[rg]) for rg in same_files.names
+                    not _group_to_grab(seadex_dict[rg]) and _is_fallback_group(seadex_dict[rg])
+                    for rg in same_files.names
                 ):
-                    skips.stale_held = True
+                    skips.outdated = True
             # Degrade to the first public group (the add-time gate then warns).
-            keeper = public_flagged[0]
+            keeper = public_to_grab[0]
 
         # Note when the keeper is a non-preferred fallback standing in
         # for private preferred picks (a plain public-over-private keeper stays
         # a debug line, as ever).
-        private_dropped = [rg for rg in flagged if not _is_public_group(seadex_dict[rg])]
+        private_dropped = [rg for rg in to_grab if not _is_public_group(seadex_dict[rg])]
         if private_dropped and _is_fallback_group(seadex_dict[keeper]):
             skips.notices.append(
                 PrivateOnlyNotice(
@@ -1044,11 +1045,11 @@ class GrabPlanner:
         self._drop_losers(seadex_dict, same_files, keeper)
 
     @staticmethod
-    def _unflag_all(seadex_dict: SeadexDict, same_files: _SameFilesSet) -> None:
+    def _drop_all_grabs(seadex_dict: SeadexDict, same_files: _SameFilesSet) -> None:
         """Unflag every flagged group of the set, recording the drops."""
 
-        for rg in same_files.flagged:
-            _unflag(seadex_dict[rg], same_files.dropped)
+        for rg in same_files.to_grab:
+            _drop_group_grabs(seadex_dict[rg], same_files.dropped)
 
     def _drop_losers(
         self,
@@ -1058,14 +1059,14 @@ class GrabPlanner:
     ) -> None:
         """Unflag every flagged group but the keeper, recording the drops."""
 
-        for rg in same_files.flagged:
+        for rg in same_files.to_grab:
             if rg == keeper:
                 continue
 
             self.logger.debug(
                 f"Not downloading release group {rg}: release group {keeper} already covers the same files",
             )
-            _unflag(seadex_dict[rg], same_files.dropped)
+            _drop_group_grabs(seadex_dict[rg], same_files.dropped)
 
     @staticmethod
     def _promote_public_alternative(seadex_dict: SeadexDict, same_files: _SameFilesSet) -> str | None:
@@ -1080,7 +1081,7 @@ class GrabPlanner:
         candidates = [
             rg
             for rg in same_files.names
-            if not _is_flagged(seadex_dict[rg])
+            if not _group_to_grab(seadex_dict[rg])
             and _is_public_group(seadex_dict[rg])
             and not _is_fallback_group(seadex_dict[rg])
         ]
@@ -1132,7 +1133,7 @@ class GrabPlanner:
             survivor_keys |= release_keys
 
     @staticmethod
-    def get_any_to_download(seadex_dict: SeadexDict) -> bool:
+    def any_to_grab(seadex_dict: SeadexDict) -> bool:
         """Check if any torrents are marked as to download."""
 
         return any(

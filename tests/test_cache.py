@@ -85,7 +85,7 @@ class TestSchemaAndDescriptor:
 
     def test_descriptor_persists_version_and_checksum(self, tmp_path: Path) -> None:
         with _open(tmp_path) as store:
-            store.save(preview=False)
+            store.save(dry_run=False)
 
         # Read kv with a RAW connection. CacheStore.load re-stamps the descriptor on
         # open (via _reconcile), so reopening through the facade would read back the
@@ -292,7 +292,7 @@ class TestSchemaVersionGate:
         # carry that stamp into the file it writes, or every fresh install would
         # look like a v0 db on its second run.
         with _open(tmp_path) as store:
-            store.save(preview=False)
+            store.save(dry_run=False)
         assert _user_version(tmp_path / "cache.db") == SCHEMA_VERSION
 
     def test_v0_db_is_upgraded_in_place(self, tmp_path: Path) -> None:
@@ -705,7 +705,7 @@ class TestSchemaVersionGate:
         db = tmp_path / "cache.db"
         with _open(tmp_path) as store:
             store.update_cached_title(Arr.SONARR, 2, {"name": "Frieren", "url": "u"})
-            store.save(preview=False)
+            store.save(dry_run=False)
         raw = sqlite3.connect(str(db))
         raw.executescript(_V6_TORRENT_HASHES_SCHEMA)
         raw.execute("INSERT INTO torrent_hashes (arr, al_id, infohash) VALUES ('sonarr', 2, 'abc')")
@@ -723,7 +723,7 @@ class TestSchemaVersionGate:
     def test_fresh_db_starts_current_without_an_al_id_column(self, tmp_path: Path) -> None:
         db = tmp_path / "cache.db"
         with _open(tmp_path) as store:
-            store.save(preview=False)
+            store.save(dry_run=False)
         assert _user_version(db) == SCHEMA_VERSION
         assert _columns(db, "pending_imports") == ["arr", "infohash", "record"]
 
@@ -827,7 +827,7 @@ class TestFallbackSatisfied:
     def test_persists_across_save_and_reopen(self, tmp_path: Path) -> None:
         with _open(tmp_path) as store:
             store.update_cached_title(Arr.SONARR, 7, {"fallback_satisfied": True})
-            store.save(preview=False)
+            store.save(dry_run=False)
 
         with _open(tmp_path) as reopened:
             cached = reopened.get_cached_title(Arr.SONARR, 7)
@@ -855,13 +855,13 @@ class TestPreviewGate:
     def test_preview_save_on_missing_file_writes_nothing(self, tmp_path: Path) -> None:
         with _open(tmp_path) as store:
             store.update_cached_title(Arr.SONARR, 7, {"name": "Title"})
-            store.save(preview=True)
+            store.save(dry_run=True)
         assert not (tmp_path / "cache.db").exists()
 
     def test_real_save_on_missing_file_creates_and_persists(self, tmp_path: Path) -> None:
         with _open(tmp_path) as store:
             store.update_cached_title(Arr.SONARR, 7, {"name": "Title"})
-            store.save(preview=False)
+            store.save(dry_run=False)
 
         assert (tmp_path / "cache.db").exists()
         with _open(tmp_path) as reopened:
@@ -871,13 +871,13 @@ class TestPreviewGate:
         # Establish a real, committed db.
         with _open(tmp_path) as store:
             store.update_cached_title(Arr.SONARR, 7, {"name": "Original"})
-            store.save(preview=False)
+            store.save(dry_run=False)
 
         # A preview run stages changes but must persist none of them.
-        with _open(tmp_path) as preview:
-            preview.update_cached_title(Arr.SONARR, 7, {"name": "Changed"})
-            preview.update_cached_title(Arr.SONARR, 8, {"name": "New"})
-            preview.save(preview=True)
+        with _open(tmp_path) as dry_run_store:
+            dry_run_store.update_cached_title(Arr.SONARR, 7, {"name": "Changed"})
+            dry_run_store.update_cached_title(Arr.SONARR, 8, {"name": "New"})
+            dry_run_store.save(dry_run=True)
 
         with _open(tmp_path) as reopened:
             assert _entry_name(reopened, 7) == "Original"  # not "Changed"
@@ -893,8 +893,8 @@ class TestSelectionDigest:
 
     def test_vouch_round_trips_through_a_real_save(self, tmp_path: Path) -> None:
         with _open(tmp_path) as store:
-            store.vouch_selection(Arr.SONARR, "d1")
-            store.save(preview=False)
+            store.store_selection_hash(Arr.SONARR, "d1")
+            store.save(dry_run=False)
 
         with _open(tmp_path) as reopened:
             assert reopened.selection_changed(Arr.SONARR, "d1") is False
@@ -905,20 +905,20 @@ class TestSelectionDigest:
         # stages the new one, but its rollback must leave the re-check armed
         # for the next real run.
         with _open(tmp_path) as store:
-            store.vouch_selection(Arr.SONARR, "old")
-            store.save(preview=False)
+            store.store_selection_hash(Arr.SONARR, "old")
+            store.save(dry_run=False)
 
         with _open(tmp_path) as previewing:
             assert previewing.selection_changed(Arr.SONARR, "new") is True
-            previewing.vouch_selection(Arr.SONARR, "new")
-            previewing.save(preview=True)
+            previewing.store_selection_hash(Arr.SONARR, "new")
+            previewing.save(dry_run=True)
 
         with _open(tmp_path) as real:
             assert real.selection_changed(Arr.SONARR, "new") is True
 
     def test_arrs_vouch_independently(self, tmp_path: Path) -> None:
         with _open(tmp_path) as store:
-            store.vouch_selection(Arr.SONARR, "d1")
+            store.store_selection_hash(Arr.SONARR, "d1")
             assert store.selection_changed(Arr.SONARR, "d2") is True
             assert store.selection_changed(Arr.RADARR, "d2") is False
 
@@ -1193,7 +1193,7 @@ class TestTvdbOrders:
     def test_a_record_of_another_shape_reads_as_none(self, tmp_path: Path) -> None:
         db = tmp_path / "cache.db"
         with _open(tmp_path) as store:
-            store.save(preview=False)
+            store.save(dry_run=False)
         raw = sqlite3.connect(str(db))
         raw.execute("INSERT INTO tvdb_orders (tvdb_id, record) VALUES (1, jsonb(?))", (json.dumps({"orders": []}),))
         raw.commit()
@@ -1223,9 +1223,9 @@ class TestHistoryCheckpoints:
         # The dry-run gate: a previewed run must never advance the cursor.
         db = tmp_path / "cache.db"
         with _open(tmp_path) as store:
-            store.save(preview=False)  # promote so the preview below has a real file
+            store.save(dry_run=False)  # promote so the preview below has a real file
             store.put_history_checkpoint(Arr.SONARR, HistoryCheckpoint("2026-07-01T10:00:00Z", 12))
-            store.save(preview=True)
+            store.save(dry_run=True)
 
         assert db.exists()
         with _open(tmp_path) as reopened:
@@ -1244,7 +1244,7 @@ class TestPromoteFailure:
             # Scope the patch to this save only: the later `again.save` must promote for real.
             with monkeypatch.context() as mp, contextlib.suppress(OSError):
                 mp.setattr("pearlarr.cache.os.replace", _raise_os_replace)
-                store.save(preview=False)
+                store.save(dry_run=False)
 
         assert not (tmp_path / "cache.db").exists()  # no 0-byte orphan
         assert not list(tmp_path.glob("cache.db.promote*"))  # temp cleaned up
@@ -1252,7 +1252,7 @@ class TestPromoteFailure:
         # A fresh run promotes for real (the failed attempt left nothing torn behind).
         with _open(tmp_path) as again:
             again.update_cached_title(Arr.SONARR, 7, {"name": "T"})
-            again.save(preview=False)
+            again.save(dry_run=False)
         assert (tmp_path / "cache.db").exists()
 
         with _open(tmp_path) as reopened:
@@ -1282,7 +1282,7 @@ class TestRunLifecycle:
             store.put_anilist_meta(7, {"fetched_at": "2026-06-26 12:00:00", "data": {"id": 7}})
             carried = _row(pending_import(infohash="aaa", al_id=7, series_id=5))
             store.put_pending_import_row(Arr.SONARR, "aaa", carried)
-            store.save(preview=False)  # the run's commit, so the close's rollback has nothing to undo
+            store.save(dry_run=False)  # the run's commit, so the close's rollback has nothing to undo
 
         # Run 2: reopen -> cache hit, carried-over pending.
         with _open(tmp_path) as again:
@@ -1291,7 +1291,7 @@ class TestRunLifecycle:
             assert again.get_pending_import_rows(Arr.SONARR) == {"aaa": carried}
             # A completed import is dropped, and that drop persists across a save.
             again.drop_pending_import_row(Arr.SONARR, "aaa")
-            again.save(preview=False)
+            again.save(dry_run=False)
 
         with _open(tmp_path) as final:
             assert final.get_pending_import_rows(Arr.SONARR) == {}
@@ -1334,7 +1334,7 @@ class TestMaintenance:
         with _open(tmp_path) as store:
             store.update_cached_title(Arr.SONARR, 7, {"name": "T"})
             store.put_anilist_meta(1, {"fetched_at": "2026-06-26 12:00:00", "data": {}})
-            store.save(preview=False)  # promote to file so size_bytes > 0
+            store.save(dry_run=False)  # promote to file so size_bytes > 0
 
             s = store.stats()
             assert s.entries == 1
@@ -1373,7 +1373,7 @@ class TestCorruptStore:
         # quarantined: the error propagates (fail closed) and the file is untouched.
         with _open(tmp_path) as store:
             store.update_cached_title(Arr.SONARR, 7, {"name": "Keep"})
-            store.save(preview=False)
+            store.save(dry_run=False)
         db = tmp_path / "cache.db"
 
         # Simulate a transient lock at open time (e.g. the WAL switch hitting BUSY).
@@ -1399,7 +1399,7 @@ class TestCorruptStore:
         with _open(tmp_path) as store:
             assert store.get_cached_title(Arr.SONARR, 7) is None
             store.update_cached_title(Arr.SONARR, 7, {"name": "Recovered"})
-            store.save(preview=False)
+            store.save(dry_run=False)
 
         # The corrupt file was moved aside. A fresh, working db took its place.
         assert len(list(tmp_path.glob("cache.db.corrupt-*"))) == 1

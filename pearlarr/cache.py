@@ -432,7 +432,7 @@ def _arr_key(arr: Arr) -> str:
     return str(arr)
 
 
-def selection_digest_key(arr: Arr) -> str:
+def selection_hash_key(arr: Arr) -> str:
     """The `kv` key holding the selection digest an arr's verdicts were vouched under."""
 
     return f"selection_digest_{_arr_key(arr)}"
@@ -442,13 +442,13 @@ class AbstractCacheStore(ABC):
     """The instance facade run collaborators depend on. The `load` / `open_readonly` constructors stay off it."""
 
     @abstractmethod
-    def save(self, *, preview: bool) -> None: ...
+    def save(self, *, dry_run: bool) -> None: ...
     @abstractmethod
     def close(self) -> None: ...
     @abstractmethod
-    def selection_changed(self, arr: Arr, digest: str) -> bool: ...
+    def selection_changed(self, arr: Arr, selection_hash: str) -> bool: ...
     @abstractmethod
-    def vouch_selection(self, arr: Arr, digest: str) -> None: ...
+    def store_selection_hash(self, arr: Arr, selection_hash: str) -> None: ...
     @abstractmethod
     def get_cached_title(self, arr: Arr, al_id: int) -> CachedTitle | None: ...
     @abstractmethod
@@ -553,12 +553,12 @@ class CacheStore(AbstractCacheStore):
         self._set_kv("config_checksum", config_hash)
 
     @override
-    def save(self, *, preview: bool) -> None:
+    def save(self, *, dry_run: bool) -> None:
         """Persist staged writes, unless this is a preview run."""
 
         # Invariant: a preview run never commits, so every staged write is discarded on close and preview mode can
         # never mark a title as handled.
-        if preview:
+        if dry_run:
             return
         if self._on_memory:
             self._promote()
@@ -611,17 +611,17 @@ class CacheStore(AbstractCacheStore):
         return None if row is None else str(row[0])
 
     @override
-    def selection_changed(self, arr: Arr, digest: str) -> bool:
+    def selection_changed(self, arr: Arr, selection_hash: str) -> bool:
         """Whether the arr's cached verdicts predate `digest` (matching settings moved)."""
 
-        stored = self._get_kv(selection_digest_key(arr))
-        return stored is not None and stored != digest
+        stored = self._get_kv(selection_hash_key(arr))
+        return stored is not None and stored != selection_hash
 
     @override
-    def vouch_selection(self, arr: Arr, digest: str) -> None:
+    def store_selection_hash(self, arr: Arr, selection_hash: str) -> None:
         """Stage `digest` as the settings this arr's verdicts reflect. Only a full-library re-check may vouch."""
 
-        self._set_kv(selection_digest_key(arr), digest)
+        self._set_kv(selection_hash_key(arr), selection_hash)
 
     # -- per-entry records (entries) ------------------------------------------
 

@@ -42,7 +42,7 @@ def _gateway(
 
 
 def _fetches(gateway: SkyHookGateway, counts: Mapping[str, int] | None = None) -> int:
-    return gateway.prefetch([SonarrSeriesOrders(_SERIES, AIRED_ORDER, counts)], preview=True)
+    return gateway.prefetch([SonarrSeriesOrders(_SERIES, AIRED_ORDER, counts)], dry_run=True)
 
 
 def _fresh_days(gateway: SkyHookGateway) -> float:
@@ -201,13 +201,13 @@ def test_other_orders_leave_out_official_and_empty_orders() -> None:
 
 
 @pytest.mark.parametrize(
-    ("preview", "kept"), [pytest.param(False, True, id="real"), pytest.param(True, False, id="preview")]
+    ("dry_run", "kept"), [pytest.param(False, True, id="real"), pytest.param(True, False, id="preview")]
 )
-def test_each_record_is_saved_as_it_is_written_unless_previewing(tmp_path: Path, preview: bool, kept: bool) -> None:
+def test_each_record_is_saved_as_it_is_written_unless_previewing(tmp_path: Path, dry_run: bool, kept: bool) -> None:
     path = str(tmp_path / "cache.db")
     store = CacheStore.load(path, config_hash="x")
     SkyHookGateway(client=FakeSkyHookClient(_REPLIES), cache_store=store).prefetch(
-        [SonarrSeriesOrders(_SERIES, AIRED_ORDER, None)], preview=preview
+        [SonarrSeriesOrders(_SERIES, AIRED_ORDER, None)], dry_run=dry_run
     )
     # Closing without the end-of-run save is how an interrupted run ends.
     store.close()

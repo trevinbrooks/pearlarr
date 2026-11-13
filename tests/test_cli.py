@@ -128,7 +128,7 @@ def _build_cache(tmp_path: Path) -> None:
 
     store = CacheStore.load(str(tmp_path / "cache.db"), config_hash="x")
     store.update_cached_title(Arr.SONARR, 7, {"name": "X"})
-    store.save(preview=False)
+    store.save(dry_run=False)
     store.close()
 
 
@@ -1462,7 +1462,7 @@ class TestConfigAutoMigrate:
         mark = yaml.Mark(str(config), 9, 1, 4, "  api_key: hunter2-secret\n", 9)
         boom = yaml.MarkedYAMLError(problem="found character that cannot start any token", problem_mark=mark)
 
-        def refuse(path: str, expected_checksum: str | None = None) -> NoReturn:
+        def refuse(path: str, expected_hash: str | None = None) -> NoReturn:
             raise boom
 
         monkeypatch.setattr("pearlarr.bootstrap.upgrade_config_file", refuse)
@@ -1487,7 +1487,7 @@ class TestConfigAutoMigrate:
             AppConfig.model_validate({"typo_key": 1, "other_typo": 2})
         boom = excinfo.value
 
-        def refuse(path: str, expected_checksum: str | None = None) -> NoReturn:
+        def refuse(path: str, expected_hash: str | None = None) -> NoReturn:
             raise boom
 
         monkeypatch.setattr("pearlarr.bootstrap.upgrade_config_file", refuse)
