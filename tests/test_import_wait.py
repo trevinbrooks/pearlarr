@@ -34,10 +34,10 @@ from pearlarr.arr_models import HistoryRecord
 from pearlarr.config import Arr
 from pearlarr.grab_pipeline import GrabPipeline
 from pearlarr.import_wait import ImportProbes, ImportWaitManager, MonitorPass
+from pearlarr.leg_state import RunContext
 from pearlarr.log import LOG_NAME
 from pearlarr.output import SPARK_SAMPLES, Diagnostic, Phase, Severity, TorrentView, WaitKind, WaitSnapshot
 from pearlarr.pending_import import GuardFacts, PendingImport
-from pearlarr.reporter import RunContext
 from pearlarr.run_loop import RunLoop
 from pearlarr.torrents import AddOutcome
 from pearlarr.wait_types import (

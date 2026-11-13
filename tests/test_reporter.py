@@ -23,6 +23,7 @@ from seadex import Tag
 from pearlarr.anilist_client import AniListClient
 from pearlarr.cache import AbstractCacheStore, CacheRecord
 from pearlarr.config import Arr
+from pearlarr.leg_state import GrabRecord, NeedsActionKind, NeedsActionRecord, RunContext
 from pearlarr.output import (
     EntryHeader,
     Event,
@@ -36,14 +37,7 @@ from pearlarr.output import (
     Severity,
     SeverityCounts,
 )
-from pearlarr.reporter import (
-    GrabRecord,
-    NeedsActionKind,
-    NeedsActionRecord,
-    RunContext,
-    RunReporter,
-    RunStats,
-)
+from pearlarr.reporter import RunReporter
 from pearlarr.torrents import AddOutcome, ReleaseOutcome
 from pearlarr.wait_types import ImportWaitMode, PendingState
 
@@ -102,14 +96,6 @@ def _seeded_store(*, name: str, coverage: str, url: str) -> FakeCacheStore:
     store = FakeCacheStore()
     store.update_cache(Arr.SONARR, 1, CacheRecord(name=name, coverage=coverage, url=url))
     return store
-
-
-def test_run_stats_shape() -> None:
-    s = RunStats()
-    assert s.checked == 0
-    assert s.added == []
-    assert s.needs_action == []
-    assert s.unmonitored == 0
 
 
 class TestStatsCounters:

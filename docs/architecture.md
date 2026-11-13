@@ -53,7 +53,7 @@ flowchart LR
 | State | `cache`, `stamps`, `pending_records` | the SQLite decision cache, staged writes, backup/restore, the shared timestamp format, the pending-record seam over the store |
 | Output | `output/*`, `log`, `console_caps`, `boot_flow` | the event hub, renderers, the always-on file log |
 | Notifications | `notify`, `discord` | Discord embeds, the generic wait webhook |
-| Reporting | `reporter` | run summary and needs-action rows |
+| Reporting | `reporter`, `leg_state` | each leg's state and tally, the run summary and needs-action rows |
 
 ## Design notes
 

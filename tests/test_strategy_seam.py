@@ -49,6 +49,7 @@ from pearlarr.file_paths import normalize_basename
 from pearlarr.grab_pipeline import NO_SEEDS, GrabRequest
 from pearlarr.grab_placement import EntryPlacements, SeedFile, place_release
 from pearlarr.import_quality import resolve_language_objects
+from pearlarr.leg_state import EntryTitle, RunContext
 from pearlarr.mappings import ExternalIds, MappingEntry, MappingSource, ResolvedMappings
 from pearlarr.output import Severity
 from pearlarr.output.recording import RecordingHub
@@ -59,7 +60,6 @@ from pearlarr.planner import PlanResult
 from pearlarr.probe_verdicts import DownloadHistoryVerdict, HistoryImport, placements_from_history
 from pearlarr.progress import ProgressSink
 from pearlarr.releases import EpisodeKey, EpisodeRecord, GrabHold, OrderOnlyKey, SeadexDict
-from pearlarr.reporter import EntryTitle, RunContext
 from pearlarr.run_services import RunServices
 from pearlarr.seadex_radarr import _HISTORY_SKEW_HOURS, RadarrSync
 from pearlarr.seadex_sonarr import SonarrSync

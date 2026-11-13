@@ -11,7 +11,7 @@ import pytest
 
 from pearlarr.arr_models import SonarrItem, SonarrSeries
 from pearlarr.config import Arr
-from pearlarr.reporter import RunContext
+from pearlarr.leg_state import RunContext
 from pearlarr.seadex_sonarr import SonarrSync
 from pearlarr.tvdb_orders import NO_ORDERING, OrderRow, SeriesOrdering
 from pearlarr.wait_types import ImportWaitMode

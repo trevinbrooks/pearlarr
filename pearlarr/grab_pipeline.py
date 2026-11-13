@@ -12,17 +12,11 @@ from . import coverage as _coverage
 from .cache import CacheRecord
 from .config import PrivateReleaseAction
 from .grab_placement import PendingSeed
+from .leg_state import GrabRecord, NeedsActionKind, NeedsActionRecord, RunContext, is_preview
 from .notify import GrabNotice
 from .output import Accent, GrabFailed, ReleaseSkipped, SkipReason, StyledValue
 from .pending_records import PendingRecords
 from .releases import GrabHold, SeadexDict, SeadexUrlItem
-from .reporter import (
-    GrabRecord,
-    NeedsActionKind,
-    NeedsActionRecord,
-    RunContext,
-    is_preview,
-)
 from .stamps import now_stamp, stamp_of
 from .torrents import GRAB_FAILURES, PARSEABLE_TRACKERS, AddOutcome, AddResult, ReleaseOutcome
 from .wait_types import ImportWaitMode

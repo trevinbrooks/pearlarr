@@ -28,13 +28,13 @@ from pearlarr.cache import AbstractCacheStore, CacheStore
 from pearlarr.config import AppConfig, Arr
 from pearlarr.grab_pipeline import GrabRequest
 from pearlarr.import_wait import ImportWaitManager
+from pearlarr.leg_state import RunContext
 from pearlarr.log import EntryState
 from pearlarr.mappings import MappingEntry
 from pearlarr.output import BootStepFinished, CountsMark, Diagnostic, EntryHeader, Severity, SeverityCounts
 from pearlarr.output.recording import RecordingHub
 from pearlarr.progress import ProgressSink
 from pearlarr.protocols import ImportCompleter
-from pearlarr.reporter import RunContext
 from pearlarr.run_loop import RunLoop
 from pearlarr.run_services import RunServices
 from pearlarr.skyhook_gateway import SkyHookGateway

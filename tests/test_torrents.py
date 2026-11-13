@@ -29,10 +29,10 @@ import pearlarr.torrents as torrents
 from pearlarr.arr_categories import ArrCategoryResolver, CategorySources
 from pearlarr.boot_flow import BootFlow
 from pearlarr.config import Arr, ArrSettings
+from pearlarr.leg_state import RunContext
 from pearlarr.mappings import MappingResolver
 from pearlarr.output import Severity
 from pearlarr.releases import SeadexReleaseGroupItem, SeadexUrlItem
-from pearlarr.reporter import RunContext
 from pearlarr.run_services import QbitConnectionError, RunDeps, RunServices
 from pearlarr.torrent import TorrentParseError
 from pearlarr.torrents import (
